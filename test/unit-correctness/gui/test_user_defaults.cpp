@@ -8,7 +8,7 @@
 //   AC3 — sparse override round-trip (singleton config + preset library), untouched keys stay factory
 //   AC4 — invariant I1: personal defaults reach New, never a value present in a loaded file
 //   AC5 — a broken override file degrades (unknown key / wrong type / invalid JSON), never crashes
-//   D8  — load-time clamp of preset values into the classifier's tolerance domain, never silent
+//   D8  — load-time preset values stored verbatim (sticky labels ended the clamp), never announced
 //   bg_path — a personal default pointing at a missing image degrades instead of blocking startup
 //
 // The eligibility resolver and the platform config-dir helpers are pure and header-only; they
@@ -321,7 +321,7 @@ TEST_F(UserDefaults, ac3_sparse_overlay_round_trip) {
   // A preset with no entry stays "no override" rather than defaulting to something.
   EXPECT_TRUE(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kLowitz).has_value());
 
-  // A well-formed file is not a degradation, and an in-domain value is not a clamp.
+  // A well-formed file is not a degradation, and a stored value is not announced.
   EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 0);
   EXPECT_EQ(gui::TakeUserDefaultsDowngradeNotices().size(), static_cast<size_t>(0));
 
@@ -909,61 +909,41 @@ TEST_F(UserDefaults, ABrokenOverrideFileCostsTheDefaultsAndSaysSoWithoutBreaking
 }
 
 // ================================================================================
-// D8 — load-time clamp into the classifier's tolerance domain, with a visible trace
+// D8 — load-time out-of-domain preset values are stored verbatim, silently
 // ================================================================================
-// A stored preset value outside its classifier's domain is pulled back INSIDE it, not onto the
-// boundary: the domains are open, so landing exactly on 10 fails the classifier's strict `< 10` and
-// demotes the preset to Custom — which is the very thing the clamp exists to prevent. Both
-// directions are covered because the domains point opposite ways, and both ends of Column's are
-// because a zero or negative std would otherwise reach the sampler.
-TEST_F(UserDefaults, AnOutOfDomainPresetValueIsPulledStrictlyInsideItsDomain) {
-  constexpr float kInf = std::numeric_limits<float>::infinity();
-  struct ClampCase {
+// Since the axis label went sticky, an out-of-domain retune is an ordinary personal default: the
+// value comes back exactly as stored — in both directions, and at both ends of what used to be
+// Column's clamp domain — and nothing is filed as a degradation. The drift it creates is reported
+// by the crystal badge's predicate, which is where "this no longer reads as Column" lives now.
+TEST_F(UserDefaults, AnOutOfDomainPresetValueIsStoredVerbatimAndUnannounced) {
+  struct VerbatimCase {
     const char* name;
     const char* preset_key;
     gui::AxisPreset preset;
     float stored;
-    float lower;    // the domain, open at both ends
-    float upper;    // kInf for a preset whose domain has no upper end
-    float landing;  // the value that must come back — the nearest float strictly inside
   };
-  const ClampCase kCases[] = {
+  const VerbatimCase kCases[] = {
     // Hand-edited, or written by a build whose classifier was wider.
-    { "above Column's upper bound", "column", gui::AxisPreset::kColumn, 25.0f, 0.0f,
-      gui::kColumnPlateParryZenithStdUpperBound, std::nextafter(gui::kColumnPlateParryZenithStdUpperBound, 0.0f) },
-    // Zero and below are outside too: Column/Plate/Parry's domain is open at BOTH ends, and a
-    // non-positive std would otherwise reach the sampler.
-    { "below Plate's lower end of zero", "plate", gui::AxisPreset::kPlate, -3.0f, 0.0f,
-      gui::kColumnPlateParryZenithStdUpperBound, std::nextafter(0.0f, kInf) },
-    { "below Lowitz's lower bound", "lowitz", gui::AxisPreset::kLowitz, 5.0f, gui::kLowitzZenithStdLowerBound, kInf,
-      std::nextafter(gui::kLowitzZenithStdLowerBound, kInf) },
+    { "above Column's upper bound", "column", gui::AxisPreset::kColumn, 25.0f },
+    // Zero and below are outside what Column/Plate/Parry used to clamp to; stored as-is now.
+    { "below Plate's lower end of zero", "plate", gui::AxisPreset::kPlate, -3.0f },
+    { "below Lowitz's lower bound", "lowitz", gui::AxisPreset::kLowitz, 5.0f },
   };
 
-  for (const ClampCase& c : kCases) {
+  for (const VerbatimCase& c : kCases) {
     ResetUserDefaultsChannels();
     json doc;
     doc["presets"]["axis"][c.preset_key]["zenith_std"] = c.stored;
-    gui::MakeNewDocumentState(DirWith("clamp", doc));
+    gui::MakeNewDocumentState(DirWith("verbatim", doc));
 
     const auto stored = gui::GetUserAxisPresetZenithStdOverride(c.preset);
     if (!stored.has_value()) {
       ADD_FAILURE() << c.name << ": no stored override for this preset";
       continue;  // no value to compare for this row; the rest still get checked
     }
-    EXPECT_EQ(*stored, c.landing) << c.name;
-    EXPECT_GT(*stored, c.lower) << c.name;
-    EXPECT_LT(*stored, c.upper) << c.name;
-
-    // The clamp must leave a trace naming the key and the value it replaced. At load time the user
-    // is not looking at the preset panel, so a silent clamp is indistinguishable from a silent drop
-    // — the exact failure family this whole channel exists to end. And the channel is
+    EXPECT_EQ(*stored, c.stored) << c.name << ": the load path bent the value";
+    // And silently: an ordinary retune must not read as a degradation. The channel is
     // consumed-on-read, like the downgrade counter it mirrors.
-    const auto notices = gui::TakeUserDefaultsDowngradeNotices();
-    if (notices.size() != static_cast<size_t>(1)) {
-      ADD_FAILURE() << c.name << ": expected exactly 1 downgrade notice, got " << notices.size();
-      continue;  // no notice to index for this row; the rest still get checked
-    }
-    EXPECT_NE(notices[0].find(c.preset_key), std::string::npos) << c.name;
     EXPECT_TRUE(gui::TakeUserDefaultsDowngradeNotices().empty()) << c.name;
   }
 }
@@ -1076,48 +1056,30 @@ TEST_F(UserDefaults, preset_identity_survives_retuning) {
   }
 }
 
-// AC3 (store half) — an out-of-domain edit is clamped AND says so, in both directions, and an
-// in-domain edit is left exactly as typed. Both states asserted: a clamp that fired on every
-// write would satisfy a one-sided test while making the feature useless.
-//
-// Aimed at ClampAxisPresetZenithStdForSave, the single owner of both the clamp and its wording
-// (defaults_panel.cpp is its only production caller). This case is the whole repo's only direct
-// check of that wording, so the message assertions below are load-bearing, not decoration.
-TEST_F(UserDefaults, preset_write_clamps_and_reports_both_states) {
-  const auto dir = FreshOverlayDir("preset_write_clamp");
+// AC5 (store half) — an out-of-domain retune is stored VERBATIM and raises nothing: since the axis
+// label went sticky, "Column with a wide zenith" is an ordinary personal default, and the crystal
+// carrying it is where the drift shows (the out-of-domain badge), not the store. Asserted through
+// the load path, not just the in-memory adopt, so the file round trip is inside the case.
+TEST_F(UserDefaults, preset_write_stores_out_of_domain_values_verbatim) {
+  const auto dir = FreshOverlayDir("preset_write_verbatim");
   ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, dir);
 
-  // Above Column's (0, 10).
-  const auto high = gui::ClampAxisPresetZenithStdForSave(gui::AxisPreset::kColumn, 25.0f);
-  EXPECT_TRUE(high.accepted);
-  EXPECT_TRUE(high.clamped);
-  EXPECT_TRUE(high.stored_value < gui::kColumnPlateParryZenithStdUpperBound);
-  EXPECT_TRUE(!high.message.empty());
-  EXPECT_TRUE(high.message.find("Column") != std::string::npos);
-  EXPECT_TRUE(high.message.find("25") != std::string::npos);
-  // The copy must not claim the bound is physical — it is where the neighbouring criterion
-  // starts. Plate's [10, 15) dead zone is the case that makes the distinction matter.
-  EXPECT_TRUE(high.message.find("not a physical limit") != std::string::npos);
-  // Still Column afterwards, which is the point of clamping rather than rejecting. Asserted on
-  // the clamped value actually taking effect, not on the clamp result alone.
-  gui::AdoptAxisPresetZenithStdOverrideInMemory(gui::AxisPreset::kColumn, high.stored_value);
+  json doc = json::object();
+  doc["presets"]["axis"]["column"]["zenith_std"] = 25.0f;  // above Column's usual (0, 10)
+  EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
+  gui::MakeNewDocumentState(dir);
+
+  EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn), std::optional<float>(25.0f))
+      << "the store bent the value back into the classifier's domain";
+  EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 0) << "an ordinary retune must not read as a degradation";
+
   const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
-  EXPECT_EQ(
-      static_cast<int>(gui::ClassifyAxisPreset(gui::EffectiveAxisPresetZenith(column), column.azimuth, column.roll)),
-      static_cast<int>(gui::AxisPreset::kColumn));
-
-  // Below Lowitz's (15, inf) — the opposite side.
-  const auto low = gui::ClampAxisPresetZenithStdForSave(gui::AxisPreset::kLowitz, 5.0f);
-  EXPECT_TRUE(low.accepted);
-  EXPECT_TRUE(low.clamped);
-  EXPECT_TRUE(low.stored_value > gui::kLowitzZenithStdLowerBound);
-
-  // In domain: stored verbatim, nothing reported.
-  const auto ok = gui::ClampAxisPresetZenithStdForSave(gui::AxisPreset::kColumn, 0.3f);
-  EXPECT_TRUE(ok.accepted);
-  EXPECT_TRUE(!ok.clamped);
-  EXPECT_EQ(ok.stored_value, 0.3f);
-  EXPECT_TRUE(ok.message.empty());
+  const gui::AxisDist zenith = gui::EffectiveAxisPresetZenith(column);
+  EXPECT_FLOAT_EQ(zenith.std, 25.0f);
+  // And the honest statement of what that means: the composed zenith no longer reads as Column —
+  // exactly the state AxisLabelOutOfDomain exists to report on the crystal.
+  EXPECT_EQ(static_cast<int>(gui::ClassifyAxisPreset(zenith, column.azimuth, column.roll)),
+            static_cast<int>(gui::AxisPreset::kCustom));
 }
 
 // AC1 + AC5 — the whole life of a preset override on one staging: retune Column to the value the
@@ -1215,9 +1177,6 @@ TEST_F(UserDefaults, preset_without_adjustable_face_is_never_written) {
 
   json working = json::object();
   for (const auto preset : { gui::AxisPreset::kRandom, gui::AxisPreset::kCustom }) {
-    const auto result = gui::ClampAxisPresetZenithStdForSave(preset, 3.0f);
-    EXPECT_TRUE(!result.accepted);         // refused before any caller could commit it
-    EXPECT_TRUE(!result.message.empty());  // refused out loud, not silently dropped
     EXPECT_TRUE(!gui::GetUserAxisPresetZenithStdOverride(preset).has_value());
     // Both document mutators are no-ops for these presets, asserted in both directions: a write
     // must not invent a key, and an erase must not leave a `presets`/`axis` skeleton behind. They
@@ -1341,44 +1300,42 @@ TEST_F(UserDefaults, preset_identity_survives_type_retuning) {
   EXPECT_EQ(combinations, 4 + 4 + 4 + 5);  // Column / Plate / Parry gauss-like; Lowitz + zigzag
 }
 
-// The save-time judge refuses a type outside the accepted set — and, since a discrete set has no
-// nearest legal value, refusal means the FACTORY type stands rather than the last override. Both
-// halves asserted: the verdict, and what the resolution reads afterwards.
-TEST_F(UserDefaults, preset_zenith_type_rejects_types_outside_accepted_set) {
-  const auto dir = FreshOverlayDir("preset_type_reject");
+// Since the axis label went sticky, a stored type is adopted whatever the classifier would keep
+// the preset under — Column + zigzag is an ordinary retune, reported by the crystal's badge, not
+// refused. The only refusal left is a spelling the table does not know: it has no distribution to
+// name, loads as no override, and says so through the downgrade channel.
+TEST_F(UserDefaults, preset_zenith_type_stores_any_recognisable_spelling) {
+  const auto dir = FreshOverlayDir("preset_type_any");
   ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, dir);
 
-  for (const auto preset : { gui::AxisPreset::kColumn, gui::AxisPreset::kPlate, gui::AxisPreset::kParry }) {
-    const auto verdict = gui::ValidateAxisPresetZenithTypeForSave(preset, gui::AxisDistType::kZigzag);
-    EXPECT_TRUE(!verdict.accepted) << gui::AxisPresetLabel(preset);
-    EXPECT_TRUE(!verdict.message.empty()) << gui::AxisPresetLabel(preset);
-    // Wording is the refusal's, not the clamp's: it must say the value was ignored, and must not
-    // borrow the clamp sentence's "was stored instead".
-    EXPECT_NE(verdict.message.find("ignored"), std::string::npos) << verdict.message;
-    EXPECT_EQ(verdict.message.find("stored instead"), std::string::npos) << verdict.message;
-    EXPECT_NE(verdict.message.find("zigzag"), std::string::npos) << verdict.message;
-  }
-  // Lowitz is the one preset zigzag IS legal for.
-  EXPECT_TRUE(gui::ValidateAxisPresetZenithTypeForSave(gui::AxisPreset::kLowitz, gui::AxisDistType::kZigzag).accepted);
-  // Every accepted type is accepted with an empty message, for every adjustable preset.
-  for (const auto& entry : gui::kAxisPresets) {
-    if (!entry.has_adjustable_zenith_std) {
-      continue;
-    }
-    for (const auto& choice : gui::AcceptedZenithTypesForPreset(entry.id)) {
-      const auto verdict = gui::ValidateAxisPresetZenithTypeForSave(entry.id, choice.type);
-      EXPECT_TRUE(verdict.accepted) << entry.label << " / " << choice.label;
-      EXPECT_TRUE(verdict.message.empty()) << entry.label << " / " << choice.label;
-    }
-  }
-  // Random / Custom have no adjustable face: refused for every type, and the document primitives
-  // are no-ops for them in both directions, as for the std face.
+  json doc = json::object();
+  doc["presets"]["axis"]["column"]["zenith_type"] = "zigzag";     // outside the classifier's set for Column
+  doc["presets"]["axis"]["column"]["zenith_std"] = 0.3f;          // a good std in the same node is kept
+  doc["presets"]["axis"]["plate"]["zenith_type"] = "triangular";  // not a spelling at all
+  EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
+  gui::AdoptAxisPresetZenithTypeOverrideInMemory(gui::AxisPreset::kColumn,
+                                                 gui::AxisDistType::kLaplacian);  // stale
+  gui::MakeNewDocumentState(dir);
+
+  const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
+  const auto stored_type = gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn);
+  ASSERT_TRUE(stored_type.has_value()) << "a recognisable spelling outside the accepted set was refused";
+  EXPECT_EQ(static_cast<int>(*stored_type), static_cast<int>(gui::AxisDistType::kZigzag));
+  EXPECT_EQ(static_cast<int>(gui::EffectiveAxisPresetZenith(column).type),
+            static_cast<int>(gui::AxisDistType::kZigzag));
+  EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn), std::optional<float>(0.3f));
+  EXPECT_TRUE(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kPlate).has_value());
+
+  // Exactly one notice: the unspellable "triangular". The Column retune is not a degradation.
+  EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 1);
+  const auto notices = gui::TakeUserDefaultsDowngradeNotices();
+  ASSERT_EQ(notices.size(), static_cast<size_t>(1));
+  EXPECT_NE(notices[0].find("presets.axis.plate"), std::string::npos) << notices[0];
+  EXPECT_NE(notices[0].find("triangular"), std::string::npos) << notices[0];
+
+  // Random / Custom keep their no adjustable face: the document primitives are no-ops for them in
+  // both directions, as for the std face.
   for (const auto preset : { gui::AxisPreset::kRandom, gui::AxisPreset::kCustom }) {
-    for (int i = 0; i < static_cast<int>(gui::AxisDistType::kCount); ++i) {
-      const auto verdict = gui::ValidateAxisPresetZenithTypeForSave(preset, static_cast<gui::AxisDistType>(i));
-      EXPECT_TRUE(!verdict.accepted) << gui::AxisPresetLabel(preset) << " / type " << i;
-      EXPECT_TRUE(!verdict.message.empty());
-    }
     json working = json::object();
     gui::WriteAxisPresetZenithTypeToDoc(working, preset, gui::AxisDistType::kUniform);
     EXPECT_TRUE(working.empty());
@@ -1386,38 +1343,13 @@ TEST_F(UserDefaults, preset_zenith_type_rejects_types_outside_accepted_set) {
     EXPECT_TRUE(working.empty());
     EXPECT_TRUE(!gui::ReadAxisPresetZenithTypeFromDoc(working, preset).has_value());
   }
-
-  // The other half of "refused": a hand-edited file carrying Column + zigzag loads as NO type
-  // override — the factory Gauss resolves, not the file's zigzag and not some neighbour — and says
-  // so once through the downgrade channel. A good std in the same node is kept: the two faces are
-  // judged independently.
-  json doc = json::object();
-  doc["presets"]["axis"]["column"]["zenith_type"] = "zigzag";
-  doc["presets"]["axis"]["column"]["zenith_std"] = 0.3f;
-  doc["presets"]["axis"]["plate"]["zenith_type"] = "triangular";  // not a spelling at all
-  EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
-  gui::AdoptAxisPresetZenithTypeOverrideInMemory(gui::AxisPreset::kColumn, gui::AxisDistType::kLaplacian);  // stale
-  gui::MakeNewDocumentState(dir);
-  const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
-  EXPECT_TRUE(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn).has_value());
-  EXPECT_EQ(static_cast<int>(gui::EffectiveAxisPresetZenith(column).type), static_cast<int>(column.zenith.type));
-  EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn), std::optional<float>(0.3f));
-  EXPECT_TRUE(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kPlate).has_value());
-  EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 2);
-  const auto notices = gui::TakeUserDefaultsDowngradeNotices();
-  ASSERT_EQ(notices.size(), static_cast<size_t>(2));
-  EXPECT_NE(notices[0].find("presets.axis.column"), std::string::npos) << notices[0];
-  EXPECT_NE(notices[0].find("zigzag"), std::string::npos) << notices[0];
-  EXPECT_NE(notices[1].find("presets.axis.plate"), std::string::npos) << notices[1];
-  EXPECT_NE(notices[1].find("triangular"), std::string::npos) << notices[1];
 }
 
-// AC4 — the std clamp is type-blind, so switching Plate to uniform cannot open the door to the
-// full-uniform-360 zenith that would make ClassifyAxisPreset read it as Random. The reasoning is
-// mechanical: ClampZenithStdToPresetDomain caps Column/Plate/Parry at (0, 10) whatever the type,
-// so IsFullUniform360's std≈360 is unreachable. Pinned here so a future "uniform means range, let
-// it go to 360" relaxation fails this case before it reaches a user.
-TEST_F(UserDefaults, preset_plate_uniform_zenith_std_stays_clamped_not_full_360) {
+// The sticky end of the same road: a full-uniform-360 zenith retuned onto Plate is STORED as 360 —
+// and the composed preset stops reading as Plate, which is the crystal badge's job to report.
+// Pinned end-to-end so "uniform means range, let it go to 360" being allowed is a decision someone
+// can find, not an accident.
+TEST_F(UserDefaults, preset_plate_full_360_uniform_retune_is_stored_verbatim) {
   const auto dir = FreshOverlayDir("preset_plate_uniform_360");
   ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, dir);
 
@@ -1431,18 +1363,17 @@ TEST_F(UserDefaults, preset_plate_uniform_zenith_std_stays_clamped_not_full_360)
   const auto type = gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kPlate);
   ASSERT_TRUE(type.has_value());
   EXPECT_EQ(static_cast<int>(*type), static_cast<int>(gui::AxisDistType::kUniform));
-  const auto std_value = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kPlate);
-  ASSERT_TRUE(std_value.has_value());
-  EXPECT_LT(*std_value, gui::kColumnPlateParryZenithStdUpperBound);  // clamped, not 360
-  EXPECT_GT(*std_value, 0.0f);
+  EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kPlate), std::optional<float>(360.0f));
 
   const gui::AxisDist zenith = gui::EffectiveAxisPresetZenith(plate);
   EXPECT_EQ(static_cast<int>(zenith.type), static_cast<int>(gui::AxisDistType::kUniform));
-  EXPECT_TRUE(!gui::axis_preset_detail::IsFullUniform360(zenith));
+  EXPECT_TRUE(gui::axis_preset_detail::IsFullUniform360(zenith));
   EXPECT_EQ(static_cast<int>(gui::ClassifyAxisPreset(zenith, plate.azimuth, plate.roll)),
-            static_cast<int>(gui::AxisPreset::kPlate));
-  // One notice: the std clamp. The type was legal and must not have been reported.
-  EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 1);
+            static_cast<int>(gui::AxisPreset::kRandom));
+  // The drift is reportable by the one predicate the badge surfaces call.
+  EXPECT_TRUE(gui::AxisLabelOutOfDomain(gui::AxisPreset::kPlate, zenith, plate.azimuth, plate.roll));
+  // And an ordinary retune files no downgrade: zero notices.
+  EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 0);
 }
 
 // Mirror of preset_override_round_trips_across_a_reload_and_reverting_one_is_surgical for the type
@@ -1532,51 +1463,45 @@ TEST_F(UserDefaults, preset_zenith_type_override_round_trips_across_a_reload_and
 // process-wide cache), so the only place it can be observed is the composition itself. See the
 // comment on that case for why it is driven through the real Save button.
 
-// AC4 — a load-time clamp must REACH the user, not merely be counted. 405.2 built the
-// counters; until this task nothing consumed them, so a value silently adjusted at startup
-// was indistinguishable from one that had been dropped. Asserted through the same one-shot
-// warning surface an import degradation uses, from the production DoNew() path.
-TEST_F(UserDefaults, ALoadTimeClampTellsTheUserWhichValueItReplacedAndWithWhat) {
-  struct SurfacedCase {
+// AC4's successor — an ordinary out-of-domain retune must be QUIET at load. The clamp notice this
+// test used to assert is gone with the clamp: since the axis label went sticky, "Column at std 25"
+// is a value the user chose, and a startup dialog telling them it was adjusted would be describing
+// an adjustment that no longer happens. Pinned in the same both-directions sweep, because the
+// opposite failure — a notice that fires on every New with a retuned library — would train the
+// user to dismiss the dialog unread, which is the same as not having one.
+TEST_F(UserDefaults, AnOrdinaryRetuneIsQuietAtLoad) {
+  struct QuietCase {
     const char* name;
     const char* preset_key;
-    const char* preset_label;  // as the warning names it
     float stored;
-    const char* stored_text;
-    const char* clamped_text;
   };
-  const SurfacedCase kCases[] = {
-    { "above Column's upper bound", "column", "Column", 25.0f, "25", "9.99999" },
-    // The mirror direction, and not a courtesy duplicate: the panel's std cell renders with a
-    // fixed "%.7g" while this notice uses adaptive precision. nextafter(10, 0) needs 7
-    // significant digits and happened to survive the fixed format; nextafter(15, +inf) needs 8 and
-    // collapsed to bare "15" under it — printing the clamped value as the very boundary the
-    // neighbouring sentence says it must stay above. Only this direction could catch that.
-    { "below Lowitz's lower bound", "lowitz", "Lowitz", 5.0f, "5", "15.000001" },
+  const QuietCase kCases[] = {
+    { "above Column's upper bound", "column", 25.0f },
+    // The mirror direction: Lowitz with a narrow zenith, outside its usual > 15.
+    { "below Lowitz's lower bound", "lowitz", 5.0f },
   };
 
-  for (const SurfacedCase& c : kCases) {
+  for (const QuietCase& c : kCases) {
     ResetUserDefaultsChannels();
     gui::ClearLoadNotice();
     json doc;
     doc["presets"]["axis"][c.preset_key]["zenith_std"] = c.stored;
-    const auto dir = DirWith("clamp_surfaced", doc);
+    const auto dir = DirWith("retune_quiet", doc);
     ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, dir);
 
     gui::DoNew();
 
-    const std::string warning = gui::PeekLoadNotice();
-    EXPECT_FALSE(warning.empty()) << c.name;
-    EXPECT_NE(warning.find(c.preset_label), std::string::npos) << c.name;
-    EXPECT_NE(warning.find(c.stored_text), std::string::npos) << c.name;
-    // And the value they actually got, not merely that something was wrong.
-    EXPECT_NE(warning.find(c.clamped_text), std::string::npos) << c.name << ": got \"" << warning << "\"";
+    EXPECT_TRUE(gui::PeekLoadNotice().empty())
+        << c.name << ": an ordinary retune surfaced a load warning: \"" << gui::PeekLoadNotice() << "\"";
+    EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(c.preset_key == std::string("column") ? gui::AxisPreset::kColumn :
+                                                                                              gui::AxisPreset::kLowitz),
+              std::optional<float>(c.stored))
+        << c.name;
     gui::ClearLoadNotice();
   }
 
-  // The negative half: a clean override file, and a first run with no file at all, must produce
-  // NO popup. Without them, a notice that fired on every New would satisfy the rows above while
-  // training the user to dismiss the dialog unread — which is the same as not having one.
+  // The quiet halves this test always held: a clean override file, and a first run with no file at
+  // all, must produce NO popup.
   json clean;
   clean["presets"]["axis"]["column"]["zenith_std"] = 0.3f;  // inside the domain
   clean["bg_alpha"] = 0.42f;

@@ -150,13 +150,6 @@ void CloseEditModalOnDocumentReset();
 // production must not touch.
 void ResetModalState();
 
-// Clears the axis modal's per-crystal "last Custom triple" memory (g_axis_custom_memory in
-// edit_modals.cpp). Called by ResetModalState() (test teardown) and unconditionally by
-// ResetFrontendState() (production): the memory is keyed by pool crystal id, and every reset
-// reason replaces or restores the pool, so a stale entry would attach to whichever crystal next
-// lands on that id.
-void ClearAxisCustomMemory();
-
 // Render the custom-spectrum editor modal (independent of the Crystal/Axis/Filter per-entry
 // modal above). The Sun panel's Spectrum combo calls OpenSpectrumModal() when the user picks
 // "Custom..."; this function must be called each frame (from the main loop, next to
@@ -207,6 +200,7 @@ bool IsCurrentModalDApplicable();
 struct EditModalBuffers {
   CrystalConfig crystal;
   AxisDist axis[3];                      // zenith, azimuth, roll
+  AxisPreset axis_preset;                // the label buffer (the sticky label being edited)
   FilterConfig filter_top;               // name / action / sym_*; `param` is always empty here
   std::vector<std::string> filter_rows;  // one string per OR row, blank rows included
 };
@@ -269,17 +263,19 @@ std::string FormatWedgePresetLabel(int h, int l, float angle_deg);
 bool IsBuiltInWedgeMillerIndex(int h, int k, int l);
 
 // The summary line under the edit modal's crystal preview, e.g.
-// "Column · zenith G 90(1) · Prism · Height 1.000": the axis preset the triple classifies as, the
+// "Column · zenith G 90(1) · Prism · Height 1.000": the crystal's stored axis label, the
 // zenith distribution, then the crystal type and its height scalars (HeightScalarFieldsForCrystal).
 // Pure — no ImGui, no modal state — so the spelling is testable without a window.
 //
 // `axis` is {zenith, azimuth, roll} and is authoritative: the modal edits axes in a buffer of its
 // own (g_axis_buf), and the axis fields inside its crystal buffer are a stale copy until OK, so
-// `crystal`'s zenith/azimuth/roll are deliberately not read. Every piece is spelled by the formatter
+// `crystal`'s zenith/azimuth/roll are deliberately not read. `label` is the axis label the line
+// leads with — the stored sticky label, NOT a classification of `axis`: retuning the parameters
+// must not rename the line. Every piece is spelled by the formatter
 // the Summary window uses for the same fact (AxisPresetLabel, FormatAxisDistCell, CrystalTypeName,
 // kShapeScalarLabels, FormatShapeDistCell), so the live line and that page cannot spell one
 // distribution two ways.
-std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3]);
+std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3], AxisPreset label);
 
 
 // What the wedge dropdown's custom-input row should say about one Miller-index triple, in the form

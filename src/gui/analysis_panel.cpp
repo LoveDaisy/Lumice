@@ -78,7 +78,7 @@ constexpr float kConeCenterSameDirDot = 1.0f - 1e-6f;
 // test/unit-correctness/config/test_config_snapshot.cpp compiles it into a target that links no
 // ImGui at all (a `-t` build without `-g` has no ImGui source to link). So the struct cannot hold
 // an ImGuiTextFilter, and ResetFrontendState clears this one by name (ClearAnalysisSearchFilter)
-// beside its whole-struct reset — the same shape as edit_modals' ClearAxisCustomMemory.
+// beside its whole-struct reset.
 ImGuiTextFilter g_analysis_search_filter;
 
 // Case-insensitive "needle occurs in haystack"; an empty needle matches everything.

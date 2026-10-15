@@ -169,7 +169,7 @@ void ResetCrystalView(AxisPreset preset, const AxisDist params[3]) {
 
 void ResetCrystalViewToCrystal(const CrystalConfig& cr) {
   AxisDist params[3] = { cr.zenith, cr.azimuth, cr.roll };
-  ResetCrystalView(ClassifyAxisPreset(cr.zenith, cr.azimuth, cr.roll), params);
+  ResetCrystalView(cr.axis_preset, params);
 }
 
 // Apply incremental rotation from mouse drag. Rotation is composed in world

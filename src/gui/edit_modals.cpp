@@ -196,19 +196,18 @@ static bool g_pending_tab_select = false;
 // Edit buffers
 static CrystalConfig g_crystal_buf;
 static AxisDist g_axis_buf[3];  // zenith, azimuth, roll
+// The Axis tab's label buffer: the sticky label being edited. Like the axis triple, it is pulled
+// from the pool each frame and pushed on commit; pressing a Label chip writes ONLY this buffer —
+// the parameters (g_axis_buf) are never touched by the label row, which is what keeps one
+// parameter cache for the whole modal. g_crystal_buf's own axis_preset copy is dead while the
+// modal is open (CrystalTabFieldsEqual never compares it; the commit writes the buffer's value).
+static AxisPreset g_axis_label_buf = AxisPreset::kRandom;
 
 // The column-major Tab ring over the Crystal tab's two property tables (gui/table_focus_ring.hpp).
 // One instance, like g_crystal_buf: only one Edit Entry window is ever open. Its membership is
 // rebuilt every frame the tab is drawn, so switching tab or entry needs no reset — the ids it last
 // recorded simply never match a widget outside those tables, and it stands aside.
 static TableFocusRing g_crystal_table_focus_ring;
-
-// Last triple classified as Custom, per pool crystal id. Captured level-triggered inside
-// RenderAxisModal (every frame the Axis tab is the active tab) so any edit path — slider,
-// input box, type combo — is remembered without a per-widget hook. Independent of the pool:
-// the entry may since have been committed as Plate, and pressing Custom still brings this back.
-// Cleared by ClearAxisCustomMemory() (ResetModalState() + every ResetFrontendState() reason).
-static std::unordered_map<int, std::array<AxisDist, 3>> g_axis_custom_memory;
 
 // Filter modal — H5 sum-of-products editor (task-composition-editor-ui / 333.4).
 // One row per OR summand; each row is a single small-domain AND text box driven
@@ -261,6 +260,7 @@ static bool g_filter_remove_intent = false;
 // nobody had declared. doc/gui-state-governance.md §11 states the rule this now follows.
 static CrystalConfig g_crystal_buf_snapshot;
 static AxisDist g_axis_buf_snapshot[3];
+static AxisPreset g_axis_label_buf_snapshot = AxisPreset::kRandom;
 
 // Which text-backed fields the pull adopted from the pool THIS frame (a clean buffer field replaced
 // by a changed pool value). Read by the tab bodies, which pass each flag to the widget that edits
@@ -843,6 +843,7 @@ void SyncBaselineFromPool(const GuiState& state) {
   g_axis_buf_snapshot[0] = pool_crystal.zenith;
   g_axis_buf_snapshot[1] = pool_crystal.azimuth;
   g_axis_buf_snapshot[2] = pool_crystal.roll;
+  g_axis_label_buf_snapshot = pool_crystal.axis_preset;
   const FilterConfig pool_filter = entry.filter_id.has_value() ? state.filters[*entry.filter_id] : FilterConfig{};
   g_filter_top_snapshot = TopFieldsOf(pool_filter);
   g_summand_rows_snapshot = pool_filter.param;
@@ -992,9 +993,13 @@ void PullBuffersFromPool(GuiState& state) {
                   ShapeScalarAt(pool_crystal, slot));
   }
   // The axis triple lives in g_axis_buf; g_crystal_buf's own copy is dead (CrystalTabFieldsEqual).
+  // The label lives in g_axis_label_buf for the same reason. Neither enum/struct field carries an
+  // in-flight text widget, so no pull-adopted flag is needed: the chips re-derive from the buffer
+  // every frame.
   g_pull_adopted.axis[0] = PullField(g_axis_buf[0], g_axis_buf_snapshot[0], pool_crystal.zenith);
   g_pull_adopted.axis[1] = PullField(g_axis_buf[1], g_axis_buf_snapshot[1], pool_crystal.azimuth);
   g_pull_adopted.axis[2] = PullField(g_axis_buf[2], g_axis_buf_snapshot[2], pool_crystal.roll);
+  PullField(g_axis_label_buf, g_axis_label_buf_snapshot, pool_crystal.axis_preset);
 
   const FilterConfig theirs_filter = entry.filter_id.has_value() ? state.filters[*entry.filter_id] : FilterConfig{};
   // Action and the symmetry bits are radio buttons / checkboxes (no edit in flight), and the
@@ -1064,6 +1069,7 @@ void OpenEditModal(const EditRequest& req, GuiState& state) {
   g_axis_buf[0] = src_crystal.zenith;
   g_axis_buf[1] = src_crystal.azimuth;
   g_axis_buf[2] = src_crystal.roll;
+  g_axis_label_buf = src_crystal.axis_preset;
   // Filter buffers (H5 sum-of-products): top-level shared fields (name / action
   // / sym_*) go into g_filter_top; per-row SoP text goes into g_summand_rows,
   // keyed by stable uid. A default-constructed FilterConfig states nothing — its
@@ -1186,8 +1192,10 @@ static unsigned long long AdvancePreviewAnimSeed(bool has_random) {
 // `preview_px`: the image's on-screen edge, already scaled. The FBO behind it stays 512²
 // (main.cpp), so past ~1.6x the draw catches up with the texture and the supersampling margin is
 // spent. Compact passes UiPx(kModalPreviewImageSize); Expanded derives it (RenderModalTwoColumn).
-std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3]) {
-  std::string out = AxisPresetLabel(ClassifyAxisPreset(axis[0], axis[1], axis[2]));
+// `label` is the crystal's STORED axis label, passed by the caller (the modal shows what is being
+// edited); it is not re-derived from `axis`, whose values the user may have moved off it.
+std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3], AxisPreset label) {
+  std::string out = AxisPresetLabel(label);
   out += " · zenith ";
   out += FormatAxisDistCell(axis[0]);
   out += " · ";
@@ -1260,10 +1268,10 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   ImGui::PopItemWidth();
   ImGui::SameLine();
   if (ImGui::SmallButton("Reset View##modal")) {
-    // Reset to the default view derived from the current axis preset + edit-buffer
-    // distribution params. g_axis_buf reflects the user's live edits; for kCustom
+    // Reset to the default view derived from the label buffer (the sticky label being edited) +
+    // edit-buffer distribution params. g_axis_buf reflects the user's live edits; for kCustom
     // this drives a chain-formula default that matches the outer card thumbnail.
-    ResetCrystalView(ClassifyAxisPreset(g_axis_buf[0], g_axis_buf[1], g_axis_buf[2]), g_axis_buf);
+    ResetCrystalView(g_axis_label_buf, g_axis_buf);
   }
 
   // The state summary, from the edit buffers (what is being edited, not what the pool holds), so
@@ -1273,7 +1281,7 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   const float summary_top_y = ImGui::GetCursorPosY();
   ImGui::Spacing();
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-  ImGui::TextDisabled("%s", FormatCrystalPreviewSummary(g_crystal_buf, g_axis_buf).c_str());
+  ImGui::TextDisabled("%s", FormatCrystalPreviewSummary(g_crystal_buf, g_axis_buf, g_axis_label_buf).c_str());
   ImGui::PopTextWrapPos();
   // Real cursor advance at the real wrap width, before the pad-up-to-budget logic below can hide a
   // genuine overrun by forcing the cursor back down to summary_bottom_y.
@@ -1489,32 +1497,27 @@ static void RenderCrystalModal(GuiState& /*state*/) {
 // the product answers it by not inferring at all: presets are retuned where they are listed, in
 // the defaults panel's preset library, and this modal stays a pure consumer of them.
 static void RenderAxisModal(GuiState& state) {
-  // Preset buttons — the active preset (inferred from current g_axis_buf, Custom included) is
-  // filled with the palette's accent and lettered in the window background colour. The earlier
-  // fill, ImGuiCol_ButtonActive, is the same deep blue as ImGuiCol_Button one step darker, which
-  // did not read as "selected" at all. Both colours are read back from the live style
-  // (AccentColor, ImGuiCol_WindowBg), so a different palette moves them with it. The dark label is
-  // not decoration: the accent is a mid-luminance blue, and the palette's light body text on it
-  // sits near 1.8:1, where the window background reaches about 6:1. Hovered / Active are filled
-  // with the same accent so pointing at the selected button does not flip it back to unselected.
-  AxisPreset active = ClassifyAxisPreset(g_axis_buf[0], g_axis_buf[1], g_axis_buf[2]);
+  // Label row — six chips, all listed (Custom included). The highlighted one is the label
+  // buffer's, with the palette's accent and lettered in the window background colour; both colours
+  // are read back from the live style (AccentColor, ImGuiCol_WindowBg), so a different palette
+  // moves them with it. The dark label is not decoration: the accent is a mid-luminance blue, and
+  // the palette's light body text on it sits near 1.8:1, where the window background reaches about
+  // 6:1. Hovered / Active are filled with the same accent so pointing at the selected chip does
+  // not flip it back to unselected.
+  //
+  // A chip press writes ONLY the label buffer. Parameters never move here — renaming is a
+  // statement about what the current parameters are called, not a request to load a definition;
+  // that is the Apply preset combo's job, one row down. (This row used to be "Presets:", whose
+  // press loaded the preset's definition — the same pixels with different semantics, which is why
+  // the wording changed with the behavior.)
+  const AxisPreset active = g_axis_label_buf;
   const ImVec4 active_color = AccentColor();
   const ImVec4 active_text_color = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
 
-  // Level-triggered: remember this crystal's Custom-classified triple every frame it is one, so a
-  // Plate/Column/... press later does not lose it. See g_axis_custom_memory's own comment. The
-  // bounds check mirrors IsCurrentModalDApplicable(); on the real path this tab only renders after
-  // OpenEditModal bound a valid (layer, entry), so it is defensive rather than a known gap.
-  const int ly = g_modal_layer_idx;
-  const int en = g_modal_entry_idx;
-  const bool has_valid_entry = ly >= 0 && ly < static_cast<int>(state.layers.size()) && en >= 0 &&
-                               en < static_cast<int>(state.layers[ly].entries.size());
-  const int crystal_id = has_valid_entry ? state.layers[ly].entries[en].crystal_id : -1;
-  if (active == AxisPreset::kCustom && has_valid_entry) {
-    g_axis_custom_memory[crystal_id] = { g_axis_buf[0], g_axis_buf[1], g_axis_buf[2] };
+  ImGui::Text("Label:");
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", "Sets the label only — parameters are unchanged.");
   }
-
-  ImGui::Text("Presets:");
   for (const auto& entry : kAxisPresets) {
     ImGui::SameLine();
     bool highlighted = entry.id == active;
@@ -1524,31 +1527,60 @@ static void RenderAxisModal(GuiState& state) {
       ImGui::PushStyleColor(ImGuiCol_ButtonActive, active_color);
       ImGui::PushStyleColor(ImGuiCol_Text, active_text_color);
     }
-    if (ImGui::SmallButton(entry.label)) {
-      const auto remembered =
-          entry.id == AxisPreset::kCustom ? g_axis_custom_memory.find(crystal_id) : g_axis_custom_memory.end();
-      if (remembered != g_axis_custom_memory.end()) {
-        // Custom is a range, not a point: bring back what this crystal was last tuned to inside
-        // it rather than the factory row, which would silently discard that tuning.
-        g_axis_buf[0] = remembered->second[0];
-        g_axis_buf[1] = remembered->second[1];
-        g_axis_buf[2] = remembered->second[2];
-      } else {
-        // The user's tuned std when they saved one, the factory row otherwise. Resolved through
-        // the shared accessor rather than read here, so pressing Column gives exactly what the
-        // preset library says Column is. (For Custom this is the factory row: it has no override.)
-        g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
-        g_axis_buf[1] = entry.azimuth;
-        g_axis_buf[2] = entry.roll;
-      }
-      // Drive modal preview to the preset's default view (fixes the bug where
-      // switching preset only updated the outer card thumbnail). Same source
-      // as Reset View / thumbnail — see DefaultPreviewRotation.
-      ResetCrystalView(entry.id, g_axis_buf);
+    // The ##axis_label_chip suffix: the Apply combo's items spell the same words one row down, so
+    // both a click and a test assertion need the two populations addressable apart. Visible label
+    // unchanged.
+    const std::string chip_id = std::string(entry.label) + "##axis_label_chip";
+    if (ImGui::SmallButton(chip_id.c_str())) {
+      g_axis_label_buf = entry.id;
     }
     if (highlighted) {
       ImGui::PopStyleColor(4);
     }
+  }
+  // Out-of-domain badge on the active chip: the live edit buffer has drifted from the label. The
+  // tooltip reads the buffer (what the user sees), not the pool.
+  if (AxisLabelOutOfDomain(active, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2])) {
+    ImGui::SameLine();
+    ImGui::TextColored(WarningTextColor(), "%s", ICON_FA_TRIANGLE_EXCLAMATION);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", FormatAxisLabelMismatchTooltip(active, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2],
+                                                             DescribeAxisPresetDomain(active))
+                                  .c_str());
+    }
+  }
+
+  // Apply preset — a pure action combo: it loads the preset's definition (zenith through
+  // EffectiveAxisPresetZenith, i.e. the user's retuned value from the preset library when one is
+  // stored) and sets the label to match, then reads back as its placeholder until used again. The
+  // preview therefore does NOT display the current label — this control shows no state. Custom is
+  // absent: it has no definition to apply, it is the label for "none of the above".
+  ImGui::Text("Apply preset:");
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", "Loads the preset's definition and sets the label to it.");
+  }
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(UiPx(200.0f));
+  SetNextComboPopupTopMost();
+  if (ImGui::BeginCombo("###apply_axis_preset", "Pick a preset to load…")) {
+    for (const auto& entry : kAxisPresets) {
+      if (entry.id == AxisPreset::kCustom) {
+        continue;
+      }
+      // The ##apply suffix: the Label row's chips share this window and spell the same words, so
+      // both a click and a test assertion need the two populations addressable apart.
+      const std::string item_id = std::string(entry.label) + "##apply";
+      if (ImGui::Selectable(item_id.c_str())) {
+        g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
+        g_axis_buf[1] = entry.azimuth;
+        g_axis_buf[2] = entry.roll;
+        g_axis_label_buf = entry.id;
+        // Drive modal preview to the preset's default view (the same source as Reset View /
+        // thumbnail — see DefaultPreviewRotation), so Apply shows what it applied.
+        ResetCrystalView(entry.id, g_axis_buf);
+      }
+    }
+    ImGui::EndCombo();
   }
 
   ImGui::Separator();
@@ -2056,6 +2088,8 @@ void CloseEditModalOnDocumentReset() {
   g_axis_buf_snapshot[0] = {};
   g_axis_buf_snapshot[1] = {};
   g_axis_buf_snapshot[2] = {};
+  g_axis_label_buf = AxisPreset::kRandom;  // the field default; {} would spell kColumn
+  g_axis_label_buf_snapshot = AxisPreset::kRandom;
   g_filter_top = {};
   g_filter_top_snapshot = {};
   g_summand_rows.clear();
@@ -2082,7 +2116,6 @@ void ResetModalState() {
   g_next_summand_row_uid = 0;
   std::memset(g_saved_rotation, 0, sizeof(g_saved_rotation));
   g_saved_zoom = 1.0f;
-  ClearAxisCustomMemory();
   // The window's height, which a user's drag keeps for the process; in a single-process suite that
   // is a case handing its drag to the next one. Following the content again is enough to undo it:
   // the next request is made with ImGuiCond_Always, which (unlike FirstUseEver) is never used up.
@@ -2097,10 +2130,6 @@ void ResetModalState() {
   g_summary_measured_wrapped_height = -1.0f;
 }
 
-void ClearAxisCustomMemory() {
-  g_axis_custom_memory.clear();
-}
-
 EditModalBuffers GetEditModalBuffers() {
   EditModalBuffers out;
   if (g_active_modal != ActiveModal::kOpen) {
@@ -2110,6 +2139,10 @@ EditModalBuffers GetEditModalBuffers() {
   out.axis[0] = g_axis_buf[0];
   out.axis[1] = g_axis_buf[1];
   out.axis[2] = g_axis_buf[2];
+  out.axis_preset = g_axis_label_buf;
+  // The crystal copy carries the label too, so a test reading buffers.crystal never sees the
+  // stale open-time value.
+  out.crystal.axis_preset = g_axis_label_buf;
   out.filter_top = g_filter_top;
   out.filter_rows.reserve(g_summand_rows.size());
   for (const SummandRowBuf& row : g_summand_rows) {
@@ -2262,6 +2295,7 @@ ApplyBuffersResult ApplyBuffersToEntry(GuiState& state) {
   pool_crystal.zenith = g_axis_buf[0];
   pool_crystal.azimuth = g_axis_buf[1];
   pool_crystal.roll = g_axis_buf[2];
+  pool_crystal.axis_preset = g_axis_label_buf;
 
   // The pool writes below go through PropagateFilterIdToLinked / WriteFilterToPool (edit_modals.hpp),
   // the two primitives this function used to hold as local lambdas — promoted so the analysis
@@ -2456,10 +2490,10 @@ void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* a
 // calls them (same PushID(layer)/PushID(entry) scoping): those three functions know nothing about
 // which layout is drawing them.
 
-// Rows budgeted for the Axis section's presets row + its (up to) three AxisDist controls
-// (~10 rows) plus a small margin, so it gets a fixed short height and Filter (the content that
-// actually grows, up to kMaxSummandRows) gets the rest of the column.
-constexpr float kModalAxisSectionRows = 11.0f;
+// Rows budgeted for the Axis section's label row + Apply preset row + its (up to) three AxisDist
+// controls (~11 rows) plus a small margin, so it gets a fixed short height and Filter (the content
+// that actually grows, up to kMaxSummandRows) gets the rest of the column.
+constexpr float kModalAxisSectionRows = 12.0f;
 
 // Dirty-mark equivalent of RenderModalTabBar's " *"-suffixed tab labels: with no tab bar here to
 // carry the mark, it moves into the section header's own label. The header is the app's standard
@@ -2864,7 +2898,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // buffer to mirror any more under H5), so no pre-sync is needed here.
   const bool crystal_dirty = !CrystalTabFieldsEqual(g_crystal_buf, g_crystal_buf_snapshot);
   const bool axis_dirty = g_axis_buf[0] != g_axis_buf_snapshot[0] || g_axis_buf[1] != g_axis_buf_snapshot[1] ||
-                          g_axis_buf[2] != g_axis_buf_snapshot[2];
+                          g_axis_buf[2] != g_axis_buf_snapshot[2] || g_axis_label_buf != g_axis_label_buf_snapshot;
   const bool filter_dirty = IsFilterDirty();
   // Immediate mode: changes apply every frame, so "dirty" is not a meaningful
   // state — suppress the * mark on all tabs regardless of buffer vs snapshot.

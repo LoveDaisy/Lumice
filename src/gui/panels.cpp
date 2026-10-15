@@ -25,6 +25,7 @@
 #include "gui/slider_mapping.hpp"
 #include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
+#include "gui/user_defaults.hpp"  // DescribeAxisPresetDomain — the badge tooltip's second line
 #include "imgui.h"
 // imgui_internal.h for ReloadInputTextIfActive only: GetActiveID / GetInputTextState /
 // ReloadUserBufAndSelectAll have no public-header spelling (the reload is ImGui's own WIP remedy,
@@ -95,12 +96,6 @@ static bool RenderNonlinearSlider(const char* slider_id, float* value, float min
 EditRequest g_edit_request;
 
 }  // namespace
-
-// Infer axis orientation preset name from crystal config.
-// Matching logic lives in axis_presets.hpp (shared with edit_modals.cpp; unit-tested).
-std::string AxisPresetName(const CrystalConfig& c) {
-  return AxisPresetLabel(ClassifyAxisPreset(c.zenith, c.azimuth, c.roll));
-}
 
 // ---- ID-pool sharing helpers (task-gui-linked-entries) ----
 
@@ -1564,9 +1559,21 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   // distinction to gate on, and a name long enough to clip is exactly when the full one is wanted.
   emit_row(0, "Crystal", identity.c_str(), true, identity.c_str());
 
-  // Row 1: Axis preset
-  std::string preset = AxisPresetName(crystal_ref);
-  emit_row(1, "Axis", preset.c_str(), false);
+  // Row 1: Axis label — the crystal's STORED sticky label, not a re-classification of its
+  // parameters: a label the user picked survives parameter edits, and the out-of-domain badge
+  // (AxisLabelOutOfDomain) is where a divergence from the parameters is shown instead — icon after
+  // the word, the full three-line tooltip on the row.
+  std::string preset = AxisPresetLabel(crystal_ref.axis_preset);
+  std::string axis_tooltip_storage;
+  const char* axis_tooltip = nullptr;
+  if (AxisLabelOutOfDomain(crystal_ref.axis_preset, crystal_ref.zenith, crystal_ref.azimuth, crystal_ref.roll)) {
+    preset += " " ICON_FA_TRIANGLE_EXCLAMATION;
+    axis_tooltip_storage =
+        FormatAxisLabelMismatchTooltip(crystal_ref.axis_preset, crystal_ref.zenith, crystal_ref.azimuth,
+                                       crystal_ref.roll, DescribeAxisPresetDomain(crystal_ref.axis_preset));
+    axis_tooltip = axis_tooltip_storage.c_str();
+  }
+  emit_row(1, "Axis", preset.c_str(), false, axis_tooltip);
 
   // Row 2: Filter summary (may exceed value_w — clipped above).
   // For non-degenerate SoP (>1 row or >1 factor), build a tooltip listing every

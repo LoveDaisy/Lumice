@@ -2599,6 +2599,11 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemInputValue("**/###preset_std_column", 0.3f);
       ctx->Yield(2);
+      // Column folds first: with both nodes unfolded the sticky-semantics sentence (one wrapped
+      // line taller than the clamp sentence it replaced) pushes Plate's std input past the clip,
+      // and the engine's wildcard search does not pan child regions to reach it.
+      ctx->ItemClose("**/###preset_Column");
+      ctx->Yield(1);
       ctx->ItemOpen("**/###preset_Plate");
       ctx->Yield(2);
       ctx->ItemInputValue("**/###preset_std_plate", 0.5f);
@@ -2607,6 +2612,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
 
       const auto before_restore = ReadOverlayBytes(panel.dir());
       IM_CHECK(before_restore.has_value());
+      ctx->ItemOpen("**/###preset_Column");
+      ctx->Yield(2);
       ctx->ItemClick("**/###preset_restore_column");
       ctx->Yield(3);
       IM_CHECK_EQ(ReadOverlayBytes(panel.dir()), before_restore);
@@ -2820,22 +2827,23 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(ctx->ItemExists(type_combo));
 
       // Open it and read the popup: the entries ARE label-addressable (Selectable registers its
-      // label). The list must be Column's accepted set and nothing else — Zigzag, which only
-      // Lowitz keeps its identity under, must be absent.
+      // label). The list is ALL five types — since the axis label went sticky an out-of-set pick
+      // is an ordinary retune (the crystal's badge reports the drift), so Zigzag, which only
+      // Lowitz keeps its identity under, is offered here too.
       ctx->ItemClick(type_combo);
       ctx->Yield(2);
       ImGuiWindow* popup = ctx->GetWindowByRef("//$FOCUSED");
       IM_CHECK(popup != nullptr);
       const std::string popup_prefix = std::string("//") + popup->Name + "/**/";
-      for (const auto& choice : gui::AcceptedZenithTypesForPreset(gui::AxisPreset::kColumn)) {
-        if (!ctx->ItemExists((popup_prefix + choice.label).c_str())) {
-          IM_ERRORF("Column's type combo does not offer '%s'", choice.label);
+      for (int i = 0; i < static_cast<int>(gui::AxisDistType::kCount); ++i) {
+        const char* type_label = gui::AxisDistTypeLabel(static_cast<gui::AxisDistType>(i));
+        if (!ctx->ItemExists((popup_prefix + type_label).c_str())) {
+          IM_ERRORF("Column's type combo does not offer '%s'", type_label);
         }
         if (ctx->IsError()) {
           break;
         }
       }
-      IM_CHECK(!ctx->ItemExists((popup_prefix + "Zigzag").c_str()));
 
       ctx->ItemClick((popup_prefix + "Laplacian").c_str());
       ctx->Yield(3);
@@ -2894,38 +2902,36 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // A hand-edited file can hold a zenith_type this preset's classifier does not accept (a
-    // pasted-in Lowitz value under Column, say). The loader's ValidateAxisPresetZenithTypeForSave
-    // rejects it, so EffectiveCopyPresetZenith falls back to the factory type — the cell shows the
-    // untouched value. "(mine)" must agree: it would be a lie the raw JSON key tells that Save
-    // cannot correct, because Save writes back exactly what is already on screen (code-review
-    // round 1 Major #1 — has_override used to read the raw key instead of the same validated
-    // judgment the cell itself uses).
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "defaults_panel", "a_preset_zenith_type_outside_its_accepted_set_stays_unmarked");
+    // A hand-edited file can hold a zenith_type outside what the classifier keeps the preset under
+    // (a pasted-in Lowitz value under Column, say). Since the axis label went sticky that is an
+    // ordinary stored state: the cell shows it verbatim, "(mine)" marks it, and Restore offers to
+    // undo it — the three surfaces agreeing with what the store actually holds.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel",
+                                    "a_preset_zenith_type_outside_the_accepted_set_is_adopted_and_marked");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-      ScopedPanel panel(ctx, "panel_preset_type_rejected_stays_unmarked");
+      ScopedPanel panel(ctx, "panel_preset_type_adopted");
       // Written straight to the file before the panel ever opens — a hand edit, not a pick through
-      // the combo (the combo can only ever offer accepted values, so this path is unreachable any
-      // other way). No zenith_std alongside it: the claim is about the type face in isolation.
+      // the combo (the combo offers the same value now, so the file form is what makes the
+      // hand-edit reading explicit). No zenith_std alongside it: the claim is about the type face
+      // in isolation.
       WriteRawOverlay(panel.dir(), R"({"presets":{"axis":{"column":{"zenith_type":"zigzag"}}}})");
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
 
-      IM_CHECK_STR_EQ(DrawnLabel(ctx, "**/###preset_Column").c_str(), "Column###preset_Column");
+      IM_CHECK_STR_EQ(DrawnLabel(ctx, "**/###preset_Column").c_str(), "Column (mine)###preset_Column");
 
-      // Not a labeling-only bug: the cell genuinely shows the factory type, so the title agrees
-      // with what is actually in effect rather than merely looking less alarming.
-      IM_CHECK_EQ(
-          static_cast<int>(gui::EffectiveAxisPresetZenith(gui::AxisPresetEntryFor(gui::AxisPreset::kColumn)).type),
-          static_cast<int>(gui::AxisDistType::kGauss));
-
-      // Restore agrees too: there is nothing valid to restore, so the button stays disabled rather
-      // than offering to undo a change that was never in effect.
+      // Restore offers to undo it: there is something stored (in the copy) to restore.
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(2);
       const ImGuiTestItemInfo restore = ctx->ItemInfo("**/###preset_restore_column");
       IM_CHECK(restore.ID != 0);
-      IM_CHECK(IsDisabled(restore));
+      IM_CHECK(!IsDisabled(restore));
+
+      // Save, and the process-wide resolver follows the copy: the cell genuinely shows the stored
+      // type from the same accessor the modal's Apply combo reads.
+      SaveDefaultsPanel(ctx);
+      IM_CHECK_EQ(
+          static_cast<int>(gui::EffectiveAxisPresetZenith(gui::AxisPresetEntryFor(gui::AxisPreset::kColumn)).type),
+          static_cast<int>(gui::AxisDistType::kZigzag));
     };
   }
 
@@ -3092,14 +3098,15 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   // ===============================================================================================
 
   {
-    // Retune Column in the library, then press the Column button in a crystal's axis modal and
-    // confirm the crystal got the tuned value AND is still classified as Column. This is the one
-    // case that crosses both surfaces — each half passing on its own would not prove the button
-    // reads what the panel wrote.
+    // Retune Column in the library, then APPLY Column in a crystal's axis modal and confirm the
+    // crystal got the tuned value AND is still classified as Column. This is the one case that
+    // crosses both surfaces — each half passing on its own would not prove the Apply combo reads
+    // what the panel wrote. (The Label chip is deliberately not the driver: renaming must not
+    // touch parameters, which the edit-modal suite pins.)
     //
     // The explicit Save matters: without it the case would assert that an edit the user never saved
     // reached the axis modal, which is the opposite of what the copy model promises.
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_retuned_preset_reaches_the_axis_modal_button");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_retuned_preset_reaches_the_axis_modal_apply");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_library_to_modal");
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
@@ -3113,7 +3120,16 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       gui::EditRequest req{ gui::EditTarget::kAxis, /*layer_idx=*/0, /*entry_idx=*/0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);
-      ctx->ItemClick("**/Column");
+      // BeginCombo registers no item info with the test engine, so the combo is addressed by its
+      // computed ID, seeded with the label chip's parent scope (AxisDistComboId's mechanism): the
+      // "###" resets the crc to the seed but does not void it.
+      const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Random##axis_label_chip");
+      IM_CHECK(chip_anchor.ID != 0);
+      const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
+      IM_CHECK(apply_combo != 0);
+      ctx->ItemClick(apply_combo);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Column##apply");
       ctx->Yield(2);
       // Committed rather than read out of the modal's buffer: the buffer is TU-private by design
       // (OK/Cancel atomicity), and "the value reached the document" is the stronger claim anyway.
@@ -3124,6 +3140,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(edited.zenith.std, 0.3f);
       IM_CHECK_EQ(static_cast<int>(gui::ClassifyAxisPreset(edited.zenith, edited.azimuth, edited.roll)),
                   static_cast<int>(gui::AxisPreset::kColumn));
+      IM_CHECK_EQ(static_cast<int>(edited.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
     };
   }
 
@@ -3140,13 +3157,20 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_modal_no_writeback");
 
+      // A Gauss zenith, so the Zenith row's second control is the Std input (a uniform row shows a
+      // Range control instead). Seeded before the modal opens, so the buffers pull it.
+      gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].zenith =
+          gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 1.0f };
+      ctx->Yield(1);
+
       gui::EditRequest req{ gui::EditTarget::kAxis, /*layer_idx=*/0, /*entry_idx=*/0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);
 
-      // The same starting point the read case used: Column, then a std the user tuned. If any
-      // write-through survived, this is the edit it would carry into the library.
-      ctx->ItemClick("**/Column");
+      // The same starting point the read case used: the Column label, then a std the user tuned.
+      // If any write-through survived, this is the edit it would carry into the library. The label
+      // press is rename-only and must not interfere either way.
+      ctx->ItemClick("**/Column##axis_label_chip");
       ctx->Yield(2);
       ctx->ItemInputValue("**/Zenith/##Std_input", 0.3f);
       ctx->Yield(2);

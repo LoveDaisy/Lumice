@@ -77,63 +77,6 @@ std::optional<std::string> ReadEnv(const char* key) {
   return std::string(value);
 }
 
-// Clamp a stored zenith std into the domain ClassifyAxisPreset still recognizes as this preset:
-//   Column / Plate / Parry : (0, kColumnPlateParryZenithStdUpperBound)
-//   Lowitz                 : (kLowitzZenithStdLowerBound, inf)
-// Both domains are OPEN, so the clamp target is the next representable float inside the
-// interval rather than the bound itself — landing exactly on the bound would fail the
-// classifier's strict inequality and turn the preset into "Custom".
-// Returns true when the value was modified.
-bool ClampZenithStdToPresetDomain(AxisPreset preset, float& value) {
-  constexpr float kInf = std::numeric_limits<float>::infinity();
-  const float original = value;
-  if (preset == AxisPreset::kLowitz) {
-    if (!(value > kLowitzZenithStdLowerBound)) {
-      value = std::nextafter(kLowitzZenithStdLowerBound, kInf);
-    }
-  } else {
-    if (!(value > 0.0f)) {
-      value = std::nextafter(0.0f, kInf);
-    } else if (!(value < kColumnPlateParryZenithStdUpperBound)) {
-      value = std::nextafter(kColumnPlateParryZenithStdUpperBound, 0.0f);
-    }
-  }
-  return value != original;
-}
-
-// The ONE sentence describing a clamp, shared by the load path and the two edit paths (the panel's
-// warning cell and the modal's "Save as <preset>" gesture). Three call sites wording the same
-// event differently is how a user ends up believing three different things happened.
-//
-// COPY CONSTRAINT: it must not present the bound as a physical fact. Plate's dead zone [10, 15) is
-// the clearest case — a user asking for std=12 is refused because 12 is where the Lowitz criterion
-// starts, i.e. for an implementation reason. Saying "not physically possible" there would be a
-// lie, and one the user cannot check.
-std::string DescribeAxisPresetClamp(AxisPreset preset, float requested, float stored) {
-  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  // Both names: the label is what the user pressed, the dotted key is what they would search for
-  // if they open the override file to check. Naming only one leaves whichever half of that they
-  // are holding unmatched.
-  return std::string("Preset '") + entry.label + "' (presets.axis." + entry.override_json_name + "): a zenith std of " +
-         FormatAxisPresetStd(requested) + " is outside the range this preset is still recognised in, so " +
-         FormatAxisPresetStd(stored) + " was stored instead. Allowed: " + DescribeAxisPresetZenithStdDomain(preset) +
-         " — that boundary is where the neighbouring preset's criterion begins, not a physical limit.";
-}
-
-// The ONE sentence describing a refused zenith type, shared by the load path and any edit path
-// that reports one. Deliberately NOT the clamp sentence with a word swapped: std is clamped ("was
-// stored instead"), type is refused outright ("was ignored, the built-in type stands"), and two
-// notices that read alike for two different outcomes would teach a user that both do the same
-// thing.
-std::string DescribeAxisPresetTypeRejection(AxisPreset preset, const std::string& requested_spelling) {
-  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  return std::string("Preset '") + entry.label + "' (presets.axis." + entry.override_json_name +
-         "): a zenith type of '" + requested_spelling +
-         "' is not one this preset is still recognised with, so it was ignored and the built-in " +
-         AxisDistTypeLabel(entry.zenith.type) +
-         " stays in effect. Allowed: " + DescribeAxisPresetZenithTypeDomain(preset) + ".";
-}
-
 // Re-assert that the DOCUMENT half of an override file did not decide an app-preference field.
 //
 // It is the boundary between namespace 1 (the GuiState half, applied by ApplyUserDefaultsOverlay)
@@ -232,7 +175,7 @@ void ReportSchemaVersionStampIssues(const nlohmann::json& doc) {
 
     const long long version = stamp->get<long long>();
     if (version > kUserDefaultsOverlaySchemaVersion) {
-      // COPY CONSTRAINT, same one DescribeAxisPresetClamp above is written under: the sentence
+      // COPY CONSTRAINT for every downgrade sentence in this file: the sentence
       // must not assert something the user cannot check and that may well be false. A higher
       // stamp says only which build wrote the file — it does NOT imply the file holds any key
       // this build fails to recognize, and the common case is that it holds none (the stamp
@@ -456,12 +399,10 @@ AxisPresetOverrides ParseAxisPresetOverrides(const nlohmann::json& root) {
         GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_std is not finite; ignoring it",
                         entry.override_json_name);
       } else {
-        const float original = value;
-        if (ClampZenithStdToPresetDomain(entry.id, value)) {
-          // Never silent: at load time the user is not looking at the preset panel, so a clamp
-          // with no trace would be indistinguishable from the value having been dropped.
-          NoteUserDefaultsDowngrade(DescribeAxisPresetClamp(entry.id, original, value));
-        }
+        // Stored verbatim, however far outside what the classifier would keep. Since the axis label
+        // went sticky, an out-of-range retune is an ordinary state — the crystal carrying it shows
+        // the out-of-domain badge — not a value the store has to bend back into a recognizer's
+        // domain. Only the sanity checks above still refuse.
         slot.has_zenith_std = true;
         slot.zenith_std = value;
       }
@@ -474,18 +415,20 @@ AxisPresetOverrides ParseAxisPresetOverrides(const nlohmann::json& root) {
         GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_type is not a string; ignoring it",
                         entry.override_json_name);
       } else {
-        // Three outcomes and no clamp, because a discrete set has no "nearest legal value": a
-        // recognised type inside this preset's accepted set is adopted; anything else — a spelling
-        // the table does not know, or a real type the classifier would not keep this preset under
-        // (Column with zigzag) — is refused whole and the factory type stands. Both refusals are
-        // reported through the same sentence, since to the user they are the same event.
+        // Two outcomes: a spelling the shared table knows is stored verbatim — in or out of what
+        // the classifier would keep this preset under, same sticky reasoning as the std face
+        // above — and a spelling it does not know has no distribution to name, so it is refused
+        // whole (the built-in type stands) and reported.
         const std::string spelled = type_node.get<std::string>();
         const auto parsed = AxisDistTypeFromJsonName(spelled);
-        if (parsed && IsAcceptedZenithType(entry.id, *parsed)) {
+        if (parsed) {
           slot.has_zenith_type = true;
           slot.zenith_type = *parsed;
         } else {
-          NoteUserDefaultsDowngrade(DescribeAxisPresetTypeRejection(entry.id, spelled));
+          NoteUserDefaultsDowngrade(std::string("Preset '") + entry.label + "' (presets.axis." +
+                                    entry.override_json_name + "): a zenith type of '" + spelled +
+                                    "' is not a known distribution type, so it was ignored and the built-in " +
+                                    AxisDistTypeLabel(entry.zenith.type) + " stays in effect.");
         }
       }
     }
@@ -605,63 +548,28 @@ std::string DescribeAxisPresetZenithTypeDomain(AxisPreset preset) {
   return out;
 }
 
-AxisPresetTypeResult ValidateAxisPresetZenithTypeForSave(AxisPreset preset, AxisDistType requested) {
-  AxisPresetTypeResult result;
+// Assembled, not restated: the mean and its tolerance come from the preset table's own row and the
+// classifier's epsilon, the spread domain is the std-domain sentence above, and roll free/locked
+// reads the table's roll row through the classifier's own full-uniform predicate. No number in the
+// output has a second copy here — drift between this text and the badge predicate is a change to
+// one of those sources, visible everywhere at once.
+std::string DescribeAxisPresetDomain(AxisPreset preset) {
+  if (preset == AxisPreset::kRandom) {
+    return "all three axes uniform over the full 360";
+  }
+  if (preset == AxisPreset::kCustom) {
+    return "anything; Custom has no usual range";
+  }
   const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  // Same two-clause guard as ClampAxisPresetZenithStdForSave, for the same reason: a nullptr
-  // override_json_name is a crash at the write, not a refusal, and the static_assert that rules it
-  // out today is not what "refuses cleanly" should rest on.
-  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr) {
-    GUI_LOG_WARNING("[GUI] User defaults: preset '{}' has no adjustable zenith type; nothing was saved", entry.label);
-    result.message = std::string(entry.label) + " has no adjustable value, so nothing was saved.";
-    return result;
-  }
-  if (static_cast<int>(requested) < 0 || requested >= AxisDistType::kCount) {
-    GUI_LOG_WARNING("[GUI] User defaults: preset '{}' zenith type {} is not a distribution; nothing was saved",
-                    entry.label, static_cast<int>(requested));
-    result.message = "That is not a distribution type, so nothing was saved.";
-    return result;
-  }
-  if (!IsAcceptedZenithType(preset, requested)) {
-    // The UI's combo never offers a type outside the set, so this is the second defense — the one
-    // a hand-edited working copy or a future caller hits. Refused, not clamped: see the note on
-    // AxisPresetOverride for why the two faces differ here.
-    result.message = DescribeAxisPresetTypeRejection(preset, AxisDistTypeJsonName(requested));
-    return result;
-  }
-  result.accepted = true;
-  result.message.clear();
-  return result;
-}
-
-AxisPresetClampResult ClampAxisPresetZenithStdForSave(AxisPreset preset, float raw_value) {
-  AxisPresetClampResult result;
-
-  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  // Both halves tested, not just the predicate: override_json_name is what a write indexes the
-  // document with, and a nullptr there is not a refusal but a crash. The static_assert in
-  // axis_presets.hpp makes the two agree, so this second clause is unreachable today — it is here
-  // so that "refuses cleanly" does not depend on that assert still being in place.
-  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr) {
-    // Second of two defenses (the UI draws no input for these). A warning rather than an assert:
-    // an assert is compiled out of the release build, which is the build the requirement — that
-    // an unadjustable preset never reaches the override file — is actually about.
-    GUI_LOG_WARNING("[GUI] User defaults: preset '{}' has no adjustable zenith std; nothing was saved", entry.label);
-    result.message = std::string(entry.label) + " has no adjustable value, so nothing was saved.";
-    return result;
-  }
-  if (!std::isfinite(raw_value)) {
-    GUI_LOG_WARNING("[GUI] User defaults: preset '{}' zenith std is not finite; nothing was saved", entry.label);
-    result.message = "That value is not a number, so nothing was saved.";
-    return result;
-  }
-
-  float stored = raw_value;
-  result.clamped = ClampZenithStdToPresetDomain(preset, stored);
-  result.accepted = true;
-  result.stored_value = stored;
-  result.message = result.clamped ? DescribeAxisPresetClamp(preset, raw_value, stored) : std::string();
-  return result;
+  std::string out = "zenith mean within ";
+  out += FormatAxisPresetStd(axis_preset_detail::kEpsilon);
+  out += " of ";
+  out += FormatAxisPresetStd(entry.zenith.mean);
+  out += " with spread ";
+  out += DescribeAxisPresetZenithStdDomain(preset);
+  out += "; azimuth a full-circle uniform; roll ";
+  out += axis_preset_detail::IsFullUniform360(entry.roll) ? "free" : "locked near 0";
+  return out;
 }
 
 std::optional<float> ReadAxisPresetZenithStdFromDoc(const nlohmann::json& doc, AxisPreset preset) {
@@ -730,9 +638,10 @@ std::optional<AxisDistType> ReadAxisPresetZenithTypeFromDoc(const nlohmann::json
   if (value == node->end() || !value->is_string()) {
     return std::nullopt;
   }
-  // RAW in the same sense as the std reader: a recognised spelling is returned whether or not
-  // this preset accepts it — that judgement is ValidateAxisPresetZenithTypeForSave's. A spelling
-  // the shared table does not know has no AxisDistType to return and reads as absent.
+  // RAW in the same sense as the std reader: any recognised spelling is returned, in or out of
+  // what the classifier would keep this preset under (the sticky-label reasoning the std face
+  // states). A spelling the shared table does not know has no AxisDistType to return and reads as
+  // absent.
   return AxisDistTypeFromJsonName(value->get<std::string>());
 }
 
@@ -742,7 +651,7 @@ void WriteAxisPresetZenithTypeToDoc(nlohmann::json& doc, AxisPreset preset, Axis
     return;
   }
   if (static_cast<int>(stored_type) < 0 || stored_type >= AxisDistType::kCount) {
-    return;  // kCount has no spelling; the validator refuses it before any caller gets here
+    return;  // kCount has no spelling, so there is no document value it could name
   }
   if (!doc.is_object()) {
     doc = nlohmann::json::object();

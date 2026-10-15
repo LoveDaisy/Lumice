@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstring>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -329,11 +330,12 @@ inline bool IsRollLocked(const AxisDist& d) {
 }  // namespace axis_preset_detail
 
 // Which zenith distribution types a preset keeps its identity under — the SAME predicates
-// ClassifyAxisPreset applies, dispatched by preset, so the set the library offers a user and the
-// set the classifier accepts cannot be two lists. Column / Plate / Parry: the gauss-like family;
-// Lowitz: that family plus zigzag; Random and Custom have no adjustable face and accept nothing
-// (Random's zenith is a full-uniform-360 axis with no family to pick from; Custom is not an
-// identity at all).
+// ClassifyAxisPreset applies, dispatched by preset, so there is one statement of each preset's
+// accepted set. Since the sticky-label task this is ORACLE-side only: the preset library's combo
+// offers all five types and the store saves any recognisable spelling (an out-of-set value is an
+// ordinary state the crystal's badge reports), so no production writer consults this any more —
+// the classification-matrix test does, asserting the set against the classifier, and that is the
+// reason it survives.
 inline bool IsAcceptedZenithType(AxisPreset preset, AxisDistType type) {
   switch (preset) {
     case AxisPreset::kColumn:
@@ -351,7 +353,8 @@ inline bool IsAcceptedZenithType(AxisPreset preset, AxisDistType type) {
 
 // The accepted set as a list, in AxisDistType enum order, with the display name beside each — the
 // shape a combo draws from. Derived from IsAcceptedZenithType every call rather than tabulated,
-// so there is one statement of the set and this cannot fall out of step with it.
+// so there is one statement of the set and this cannot fall out of step with it. Same oracle-side
+// role as the predicate above since the sticky-label task; see its note.
 struct ZenithTypeChoice {
   AxisDistType type;
   const char* label;
@@ -416,6 +419,41 @@ inline AxisPreset ClassifyAxisPreset(const AxisDist& zenith, const AxisDist& azi
   }
 
   return AxisPreset::kCustom;
+}
+
+// Whether the crystal's STORED label has drifted from what its parameters currently read as — the
+// out-of-domain badge's one predicate. Every surface that shows the badge (the modal's label row,
+// the card's Axis row, the Summary window's Zenith cell) calls THIS, never an inline
+// `ClassifyAxisPreset(...) != label` — the inline form silently drops the kCustom exemption
+// (Custom has no usual range, so it can never be out of it) and forks the rule per surface.
+// The cascade's domains are disjoint, so "the classifier names this label" IS "the parameters are
+// inside this label's usual range"; the kRandom label obeys the same rule (leaving all-uniform
+// warns). Since the sticky-label task, this is one of the classifier's three remaining production
+// roles: badge oracle, load-time derive-once, and the classification-matrix test's oracle.
+inline bool AxisLabelOutOfDomain(AxisPreset label, const AxisDist& zenith, const AxisDist& azimuth,
+                                 const AxisDist& roll) {
+  return label != AxisPreset::kCustom && ClassifyAxisPreset(zenith, azimuth, roll) != label;
+}
+
+// The badge's three-line tooltip, exact readings throughout — the classifier is a precise
+// predicate, so a vague "may be outside" would smuggle the fuzziness the sticky label removed back
+// in through the wording. `domain_description` is the second line's text, PASSED IN rather than
+// derived here: the natural source (user_defaults.cpp's DescribeAxisPresetDomain) would make this
+// header depend on user_defaults, which already depends on it. Callers pass
+// DescribeAxisPresetDomain(label); tests pass a stub. `label` is assumed out-of-domain —
+// callers gate on AxisLabelOutOfDomain, which owns the kCustom exemption.
+inline std::string FormatAxisLabelMismatchTooltip(AxisPreset label, const AxisDist& zenith, const AxisDist& azimuth,
+                                                  const AxisDist& roll, const std::string& domain_description) {
+  const AxisPreset actual = ClassifyAxisPreset(zenith, azimuth, roll);
+  std::string out = "Parameters are outside the usual ";
+  out += AxisPresetLabel(label);
+  out += " range\n(";
+  out += AxisPresetLabel(label);
+  out += " usually means: ";
+  out += domain_description;
+  out += ")\nCurrently reads as: ";
+  out += (actual == AxisPreset::kCustom) ? "none of the built-in presets" : AxisPresetLabel(actual);
+  return out;
 }
 
 // Internal helper: only called by DefaultPreviewRotation. If reused elsewhere,

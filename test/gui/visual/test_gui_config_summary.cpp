@@ -70,6 +70,9 @@ void SeedTwoLayerDocument() {
   gui::g_state.crystals.assign(2, gui::CrystalConfig{});
   gui::g_state.crystals[0].name = "plate";
   gui::g_state.crystals[0].zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.0f };
+  // The sticky label the parameters classify as: the Zenith cell's leading label stays "Plate"
+  // and the out-of-domain badge stays off this reference document.
+  gui::g_state.crystals[0].axis_preset = gui::AxisPreset::kPlate;
   gui::g_state.crystals[1].type = gui::CrystalType::kPyramid;
   gui::g_state.crystals[1].face_distance[2] = gui::ShapeDist{ gui::ShapeDistType::kUniform, 0.9f, 0.1f };
   gui::FilterConfig f;

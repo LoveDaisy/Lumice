@@ -385,68 +385,15 @@ std::optional<AxisDistType> GetUserAxisPresetZenithTypeOverride(AxisPreset prese
 // Preset-library write side.
 //
 // The read side above (405.2) could already resolve an override; nothing could PRODUCE one. These
-// three close that loop. All of them are surgical edits of the existing override document — the
+// close that loop. All of them are surgical edits of the existing override document — the
 // GuiState half of the file and every other preset survive by construction, not by each call site
 // remembering to preserve them.
 //
-// Scope of what is storable, and why it is two zenith fields rather than a preset's nine: the
-// classifier (ClassifyAxisPreset) pins mean to within kEpsilon and requires a full-uniform-360
-// azimuth, so zenith.std — and, within the family of types the classifier already accepts for
-// that preset (IsAcceptedZenithType), zenith.type — are the only fields a user can move and still
-// have the preset keep its identity. Storing anything else would let the library define a
-// "Column" the classifier calls Custom, which is the failure this whole design exists to avoid.
-//
-// The two faces have PARALLEL families of functions (Read/Write/Erase + a save-time judge + an
-// in-memory adopt), not one generic one. That is a design decision, recorded so it is not read as
-// an abstraction someone forgot: std is a continuous quantity whose out-of-domain values are
-// clamped to the nearest legal one, type is a discrete set whose out-of-set values have no nearest
-// neighbour and are refused whole. One interface would have to give the type a clamp it cannot
-// have, or take the std's away.
+// Scope of what is storable: the two zenith faces a preset exposes, std and type. The face values
+// themselves are free — since the axis label went sticky, a preset may be retuned outside what
+// ClassifyAxisPreset would keep it under (the crystal carrying it shows the out-of-domain badge),
+// so the only refusals left are the sanity ones: a non-finite std, a type the table cannot spell.
 // --------------------------------------------------------------------------------------------------
-
-// What storing a value WOULD do, with no IO: the clamp decision on its own.
-//
-// `accepted` false means the value was refused outright (an unadjustable preset, a non-finite
-// number) and there is nothing to store; `message` then says why. `message` is a ready-to-show
-// sentence (empty when there is nothing to say) rather than a code each call site would render:
-// the panel's warning cell and any other surface reporting the same clamp must not drift into
-// describing it differently, and the wording is constrained (it must not imply the bound is
-// physical — see the note on the domain in axis_presets.hpp).
-//
-// Deliberately says nothing about whether anything reached disk: committing is the caller's own
-// step (the panel writes its whole working copy in one go), and a struct whose fields are only
-// sometimes meaningful invites reading the one that is not.
-struct AxisPresetClampResult {
-  bool accepted = false;      // the value can be stored (false ⇒ refused; `message` says why)
-  bool clamped = false;       // stored_value differs from the requested one
-  float stored_value = 0.0f;  // what would be stored; meaningful only when accepted
-  std::string message;
-};
-
-// The clamp decision on its own: what storing `raw_value` for `preset` would produce, with no IO.
-//
-// The single owner of that rule and of its wording. Its caller is the defaults panel, a pure editor
-// that keeps edits in an in-memory copy until Save, and it goes through this function twice: once
-// when the user finishes typing a value (clamp, warn, then store the clamped result in the copy),
-// and once when resolving what the copy currently means for display — a hand-edited file can hold
-// an out-of-domain value the copy keeps verbatim, and showing it raw would name a number the button
-// does not actually give. A second clamp implementation next to either call site would drift from
-// this one the first time a domain moves.
-AxisPresetClampResult ClampAxisPresetZenithStdForSave(AxisPreset preset, float raw_value);
-
-// The type face's save-time judge: whether `requested` may be stored as `preset`'s zenith type.
-//
-// No stored_value field, because there is nothing to adjust: a type is either in the set the
-// classifier keeps this preset under (accepted, message empty) or it is not (refused, `message`
-// says so and names the built-in type that stands). The panel's combo only offers the accepted
-// set, so on the UI path this always accepts — it is the second defense, the one a hand-edited
-// working copy hits. Message wording is the load path's, so a refusal reads the same in the
-// startup notice and in the panel.
-struct AxisPresetTypeResult {
-  bool accepted = false;
-  std::string message;
-};
-AxisPresetTypeResult ValidateAxisPresetZenithTypeForSave(AxisPreset preset, AxisDistType requested);
 
 // The preset library's half of an override DOCUMENT, with no IO: read / write / erase
 // presets.axis.<preset>.zenith_std.
@@ -456,10 +403,10 @@ AxisPresetTypeResult ValidateAxisPresetZenithTypeForSave(AxisPreset preset, Axis
 // so a file someone opens by hand does not accumulate `"presets": {"axis": {}}` skeletons. A preset
 // with no adjustable face has no key at all, so all three are no-ops (read: nullopt) for it.
 //
-// The read is deliberately RAW: it reports what the document says, not what the classifier would
-// accept. Clamping is ClampAxisPresetZenithStdForSave's job, and folding it in here would collapse
-// "what is stored" and "what is in effect" into one call — they are not the same thing, because a
-// hand-edited file can hold a value the loader clamps.
+// The read is deliberately RAW: it reports what the document says. Since the axis label went
+// sticky, an out-of-range value is an ordinary stored state — the crystal carrying it shows the
+// out-of-domain badge — so there is no "what is in effect" folding to avoid: what is stored IS
+// what is in effect.
 std::optional<float> ReadAxisPresetZenithStdFromDoc(const nlohmann::json& doc, AxisPreset preset);
 void WriteAxisPresetZenithStdToDoc(nlohmann::json& doc, AxisPreset preset, float stored_value);
 void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset);
@@ -469,9 +416,9 @@ void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset);
 // key leaves, so restoring one face never drops the other and never leaves a skeleton.
 //
 // The type is spelled on disk with AxisDistTypeJsonName — the table the .lmc writer uses — and
-// the read is RAW like the std one: a recognised spelling comes back whether or not this preset
-// accepts it (that is ValidateAxisPresetZenithTypeForSave's call); a spelling the table does not
-// know has no AxisDistType to return and reads as absent.
+// the read is RAW like the std one: any recognised spelling comes back, whatever the classifier
+// would keep the preset under (same sticky reasoning as the std face); a spelling the table does
+// not know has no AxisDistType to return and reads as absent.
 std::optional<AxisDistType> ReadAxisPresetZenithTypeFromDoc(const nlohmann::json& doc, AxisPreset preset);
 void WriteAxisPresetZenithTypeToDoc(nlohmann::json& doc, AxisPreset preset, AxisDistType stored_type);
 void EraseAxisPresetZenithTypeFromDoc(nlohmann::json& doc, AxisPreset preset);
@@ -489,8 +436,9 @@ void EraseAxisPresetZenithTypeFromDoc(nlohmann::json& doc, AxisPreset preset);
 void AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset preset, std::optional<float> stored_value);
 
 // The type face's adopt, under the same disk-first contract. Only the type half of the slot moves;
-// the std half carries over. The caller is expected to have judged the value with
-// ValidateAxisPresetZenithTypeForSave first — the cache is trusted at the point of use.
+// the std half carries over. The caller is expected to have judged the spelling recognisable
+// (ReadAxisPresetZenithTypeFromDoc answers nullopt for one that is not) — the cache is trusted at
+// the point of use.
 void AdoptAxisPresetZenithTypeOverrideInMemory(AxisPreset preset, std::optional<AxisDistType> stored_type);
 
 // The zenith distribution a preset button actually writes: the factory row, with the user's std
@@ -504,9 +452,17 @@ AxisDist EffectiveAxisPresetZenith(const AxisPresetEntry& entry);
 std::string DescribeAxisPresetZenithStdDomain(AxisPreset preset);
 
 // Human-readable form of the set a preset's zenith type must stay inside, e.g.
-// "Gauss, Uniform, Laplacian or Gauss (legacy)". For UI copy only; empty for a preset with no
-// adjustable face.
+// "Gauss, Uniform, Laplacian or Gauss (legacy)". Oracle-side since the sticky-label task — the
+// preset library no longer gates on this set — kept as the sentence form of
+// AcceptedZenithTypesForPreset for copy that wants it. For UI copy only; empty for a preset with
+// no adjustable face.
 std::string DescribeAxisPresetZenithTypeDomain(AxisPreset preset);
+
+// Human-readable description of a preset's USUAL parameter range — what the axis label's
+// out-of-domain tooltip quotes as "<Label> usually means: ...". Every number in it comes from the
+// existing sources (the preset table's own rows, DescribeAxisPresetZenithStdDomain, the classifier's
+// epsilon) — this assembles the sentence, it does not restate a threshold. For UI copy only.
+std::string DescribeAxisPresetDomain(AxisPreset preset);
 
 // The shortest %g precision (6..9) that still reads back as exactly this float via strtof. Shared
 // by FormatAxisPresetStd below and by the §1 panel's InputFloat display format so both places pick

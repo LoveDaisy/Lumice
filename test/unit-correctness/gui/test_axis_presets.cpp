@@ -176,6 +176,61 @@ TEST(AxisPresetTest, StoredLabelIsStickyUnderParameterEdits) {
          "longer exercises 'label survives edits it agrees with'";
 }
 
+// The out-of-domain badge predicate, at its boundaries. The flip the issue names: a Parry label on
+// parameters that read as Plate (zenith mean 0 with roll locked) — the mean moved, the label did
+// not, and that is exactly the state the badge exists to mark. The strict inequalities are probed
+// from both sides at the 10.0 bound, where "exactly at the bound" belongs to Custom, not Column.
+TEST(AxisPresetTest, AxisLabelOutOfDomainFlagsExactlyTheDriftedTriples) {
+  using lumice::gui::AxisLabelOutOfDomain;
+  const AxisDist az_full{ AxisDistType::kUniform, 0.0f, 360.0f };
+  const AxisDist roll_locked{ AxisDistType::kGauss, 0.0f, 1.0f };
+  const AxisDist roll_free{ AxisDistType::kUniform, 0.0f, 360.0f };
+
+  // Equal: never a warning.
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, 1.0f }, az_full, roll_free));
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kRandom, az_full, az_full, roll_free));
+
+  // The named flip: Parry label, Plate-reading parameters.
+  EXPECT_TRUE(AxisLabelOutOfDomain(AxisPreset::kParry, { AxisDistType::kGauss, 0.0f, 1.0f }, az_full, roll_locked));
+
+  // std exactly 10.0 is OUTSIDE Column (strict <), so a Column label warns; one ulp inside is not.
+  EXPECT_TRUE(AxisLabelOutOfDomain(AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, 10.0f }, az_full, roll_free));
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, std::nextafter(10.0f, 0.0f) },
+                                    az_full, roll_free));
+
+  // A Random label whose parameters left the full-uniform triple warns — Random is an ordinary
+  // label here, not an exemption.
+  EXPECT_TRUE(AxisLabelOutOfDomain(AxisPreset::kRandom, { AxisDistType::kUniform, 0.0f, 20.0f }, az_full, roll_free));
+
+  // kCustom never warns: it has no usual range to leave.
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kCustom, { AxisDistType::kGauss, 33.0f, 7.0f }, az_full, roll_free));
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kCustom, az_full, az_full, roll_free));
+}
+
+// The tooltip's three lines, as an exact snapshot against a stub domain description (the real one
+// is user_defaults.cpp's DescribeAxisPresetDomain, passed in by callers; a stub keeps this header's
+// tests leaf-shaped). The third line names the classifier's answer precisely — including the
+// "none of the built-in presets" spelling Custom reads as.
+TEST(AxisPresetTest, MismatchTooltipCarriesThreeExactLines) {
+  using lumice::gui::FormatAxisLabelMismatchTooltip;
+  const AxisDist az_full{ AxisDistType::kUniform, 0.0f, 360.0f };
+  const AxisDist roll_locked{ AxisDistType::kGauss, 0.0f, 1.0f };
+
+  const std::string reads_other = FormatAxisLabelMismatchTooltip(
+      AxisPreset::kParry, { AxisDistType::kGauss, 0.0f, 1.0f }, az_full, roll_locked, "stub domain text");
+  EXPECT_EQ(reads_other,
+            "Parameters are outside the usual Parry range\n"
+            "(Parry usually means: stub domain text)\n"
+            "Currently reads as: Plate");
+
+  const std::string reads_custom = FormatAxisLabelMismatchTooltip(
+      AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, 12.0f }, az_full, roll_locked, "stub domain text");
+  EXPECT_EQ(reads_custom,
+            "Parameters are outside the usual Column range\n"
+            "(Column usually means: stub domain text)\n"
+            "Currently reads as: none of the built-in presets");
+}
+
 // AxisDistTypeLabel is a view over kAxisDistTypeComboItems, so it must agree with that string
 // entry by entry — walked here independently rather than through the function under test.
 TEST(AxisPresetTest, AxisDistTypeLabelIsAViewOverTheComboItemString) {

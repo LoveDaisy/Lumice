@@ -46,6 +46,7 @@
 #include "gui/file_io.hpp"          // DeserializeFromJson / BuildExportJsonOrWarn
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"  // FromLegacyRaypath — an OR row written the way the pool holds it
+#include "gui/user_defaults.hpp"     // EffectiveAxisPresetZenith — what Apply preset loads
 // imgui_internal.h is normally an anti-pattern. Three claims here have no public reading: window
 // z-order (ImGuiContext::Windows), whether the staged form is a real modal
 // (GetTopMostPopupModal), and whether a table column's text fits (ImGuiTableColumn's layout
@@ -68,14 +69,6 @@ const char* const kHeightInput = "**/##Height##modal_cr_input";
 
 gui::CrystalConfig& EntryCrystal() {
   return gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id];
-}
-
-// The Column preset row, as a seed for the axis-memory cases: a named row the classifier
-// recognises, so one Std edit is all it takes to step into Custom and back out.
-void SeedColumnAxis(gui::CrystalConfig& cr) {
-  cr.zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 1.0f };
-  cr.azimuth = gui::kAzFullUniform;
-  cr.roll = gui::kRollFreeUniform;
 }
 
 // Whether a tab's rendered label carries the trailing " *". Read off the label ImGui actually
@@ -1296,6 +1289,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       column.zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 1.0f };
       column.azimuth = az_full;
       column.roll = roll_full;
+      column.axis_preset = gui::AxisPreset::kColumn;  // the label the parameters classify as
       IM_CHECK_EQ(static_cast<int>(gui::ClassifyAxisPreset(column.zenith, column.azimuth, column.roll)),
                   static_cast<int>(gui::AxisPreset::kColumn));
 
@@ -1308,7 +1302,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       const auto& cr0 = EntryCrystal();
       gui::AxisDist params0[3] = { cr0.zenith, cr0.azimuth, cr0.roll };
       float expected0[16] = { 0 };
-      gui::DefaultPreviewRotation(gui::ClassifyAxisPreset(cr0.zenith, cr0.azimuth, cr0.roll), params0, expected0);
+      gui::DefaultPreviewRotation(cr0.axis_preset, params0, expected0);
       gui::AxisDist params1[3] = { column.zenith, column.azimuth, column.roll };
       float expected1[16] = { 0 };
       gui::DefaultPreviewRotation(gui::AxisPreset::kColumn, params1, expected1);
@@ -1375,6 +1369,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         cr.zenith = zenith;
         cr.azimuth = azimuth;
         cr.roll = roll;
+        // The label Reset View reads is the STORED one (sticky), so the fixture states it — and the
+        // classify assertion below still holds as the premise that label and parameters agree.
+        cr.axis_preset = preset;
         IM_CHECK_EQ(static_cast<int>(gui::ClassifyAxisPreset(cr.zenith, cr.azimuth, cr.roll)),
                     static_cast<int>(preset));
 
@@ -1433,73 +1430,66 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // P94 / P95. Picking a preset in the Axis tab must move the MODAL preview too, not just the card
-  // thumbnail outside it — the bug was a user changing preset and seeing the crystal they were
-  // looking at stay put.
-  //
-  // The expected distributions are inlined from edit_modals.cpp's file-scope kAxisPresets, which is
-  // not exported. A change there must be mirrored here; that is the cost of the table being private.
+  // P94 / P95. APPLYING a preset must move the MODAL preview too, not just the card thumbnail
+  // outside it — the bug was a user changing preset and seeing the crystal they were looking at
+  // stay put. The Apply combo is the only control that changes both label and view, so it carries
+  // this case now; a Label chip press renames only and must leave the pose alone (negative half,
+  // same frame).
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "an_axis_preset_button_resets_the_modal_preview");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "applying_a_preset_resets_the_modal_preview");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-      const gui::AxisDist az_full{ gui::AxisDistType::kUniform, 0.0f, 360.0f };
-      const gui::AxisDist roll_free{ gui::AxisDistType::kUniform, 0.0f, 360.0f };
-      const gui::AxisDist roll_locked{ gui::AxisDistType::kGauss, 0.0f, 1.0f };
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
 
-      auto verify = [&](const char* label, gui::AxisPreset preset, gui::AxisDist zenith, gui::AxisDist azimuth,
-                        gui::AxisDist roll) {
-        ResetTestState();
-        const ScopedPopups popup_guard(ctx);
-        ctx->Yield(2);
-        OpenCardEditor(ctx, 0, kCrystalTabRef);
-        ctx->Yield(3);
-        ctx->ItemClick("**/###axis_tab");
-        ctx->Yield(2);
-        ctx->ItemClick(("**/" + std::string(label)).c_str());
-        ctx->Yield(2);
+      // Drag first, so the apply is distinguishable from the pose merely surviving.
+      gui::ApplyTrackballRotation(45.0f, 15.0f);
+      ctx->Yield(1);
 
-        float observed[16];
-        std::memcpy(observed, gui::g_crystal_rotation, sizeof observed);
-        gui::AxisDist params[3] = { zenith, azimuth, roll };
-        float expected[16] = { 0 };
-        gui::DefaultPreviewRotation(preset, params, expected);
-        ctx->ItemClick(kCancel);
-        ctx->Yield(2);
+      // Same computed-ID addressing as the Apply case above: BeginCombo registers no item info,
+      // so no string ref reaches the combo.
+      const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Column##axis_label_chip");
+      IM_CHECK(chip_anchor.ID != 0);
+      const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
+      IM_CHECK(apply_combo != 0);
+      ctx->ItemClick(apply_combo);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Plate##apply");
+      ctx->Yield(3);
 
-        for (int i = 0; i < 16; ++i) {
-          if (observed[i] != expected[i]) {
-            IM_ERRORF("preset=%s index=%d actual=%f expected=%f", label, i, static_cast<double>(observed[i]),
-                      static_cast<double>(expected[i]));
-          }
+      float observed[16];
+      std::memcpy(observed, gui::g_crystal_rotation, sizeof observed);
+      float expected[16] = { 0 };
+      const auto& plate = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
+      const gui::AxisDist plate_params[3] = { gui::EffectiveAxisPresetZenith(plate), plate.azimuth, plate.roll };
+      gui::DefaultPreviewRotation(gui::AxisPreset::kPlate, plate_params, expected);
+      for (int i = 0; i < 16; ++i) {
+        if (observed[i] != expected[i]) {
+          IM_ERRORF("apply moved the preview to the wrong pose: index=%d actual=%f expected=%f", i,
+                    static_cast<double>(observed[i]), static_cast<double>(expected[i]));
         }
-      };
+      }
 
-      verify("Column", gui::AxisPreset::kColumn, gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 1.0f }, az_full,
-             roll_free);
-      if (ctx->IsError()) {
-        return;
+      // Negative half: a Label chip press renames only. The pose the drag left must survive it.
+      gui::ApplyTrackballRotation(30.0f, 0.0f);
+      ctx->Yield(1);
+      float after_drag[16];
+      std::memcpy(after_drag, gui::g_crystal_rotation, sizeof after_drag);
+      if (std::memcmp(after_drag, expected, sizeof expected) == 0) {
+        IM_ERRORF("%s", "premise: the drag moved the pose, so the chip assertion below is not vacuous");
       }
-      verify("Plate", gui::AxisPreset::kPlate, gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.0f }, az_full,
-             roll_free);
-      if (ctx->IsError()) {
-        return;
+      ctx->ItemClick("**/Parry##axis_label_chip");
+      ctx->Yield(2);
+      if (std::memcmp(gui::g_crystal_rotation, after_drag, sizeof after_drag) != 0) {
+        IM_ERRORF("%s", "a Label chip press moved the preview pose");
       }
-      verify("Parry", gui::AxisPreset::kParry, gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 1.0f }, az_full,
-             roll_locked);
-      if (ctx->IsError()) {
-        return;
-      }
-      verify("Lowitz", gui::AxisPreset::kLowitz, gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 40.0f }, az_full,
-             roll_locked);
-      if (ctx->IsError()) {
-        return;
-      }
-      verify("Random", gui::AxisPreset::kRandom, az_full, az_full, roll_free);
-      if (ctx->IsError()) {
-        return;
-      }
-      verify("Custom", gui::AxisPreset::kCustom, gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 20.0f }, az_full,
-             gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 20.0f });
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
     };
   }
 
@@ -1576,166 +1566,121 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The Custom preset is a range, not a point: anything the classifier does not recognise as one
-  // of the five named rows. The tuning a user reaches inside that range lives only in the modal's
-  // edit buffer, so before this memory existed, pressing Plate and then Custom again handed back
-  // the factory Custom row and the tuning was gone. The four cases below pin the memory's shape:
-  // it survives a preset round trip (AC1), is keyed per pool crystal (AC2), outlives the modal and
-  // the committed pool contents (AC4), and dies with the document (AC5). The "no memory yet →
-  // factory row" half is already held by the two preset-button cases above and is not repeated.
-  //
-  // Std 12 is the one number every case tunes to: it sits inside Custom from both sides — over
-  // the < 10 bound Column/Plate/Parry demand and under the > 15 bound Lowitz demands — so the
-  // classifier's answer does not depend on which named row the crystal started from.
+  // ===================================================================================
+  // The label row and the Apply preset combo: the sticky axis label's two controls.
+  // ===================================================================================
+
+  // A Label chip press renames and NOTHING else. The parameters are the modal's single cache —
+  // the whole point of splitting the old "Presets:" row into Label + Apply is that A→B→A keeps
+  // the triple, so the case asserts the axis buffer value-for-value, not "changed somehow", and
+  // drifts the parameters off the default triple first so "left alone" cannot pass on a rewrite
+  // of the default back in.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_custom_memory_survives_a_preset_round_trip");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_label_chip_press_renames_without_touching_parameters");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      SeedColumnAxis(EntryCrystal());
+      EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };
       ctx->Yield(2);
+      gui::AxisDist seeded[3];
+      {
+        const auto& cr = EntryCrystal();
+        seeded[0] = cr.zenith;
+        seeded[1] = cr.azimuth;
+        seeded[2] = cr.roll;
+      }
 
-      OpenCardEditor(ctx, 0, kAxisTabRef);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
-      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
+      IM_CHECK_EQ(static_cast<int>(gui::GetEditModalBuffers().axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+
+      ctx->ItemClick("**/Column##axis_label_chip");
       ctx->Yield(2);
-      ctx->ItemClick("**/Plate");
+      {
+        const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
+        for (int i = 0; i < 3; ++i) {
+          if (!(after.axis[i] == seeded[i])) {
+            IM_ERRORF("label press moved axis[%d]", i);
+          }
+        }
+      }
+
+      // A→B→A: back to the original label, parameters still exactly what was seeded.
+      ctx->ItemClick("**/Random##axis_label_chip");
       ctx->Yield(2);
-      ctx->ItemClick("**/Custom");
-      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers round = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(round.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+        for (int i = 0; i < 3; ++i) {
+          if (!(round.axis[i] == seeded[i])) {
+            IM_ERRORF("label round trip moved axis[%d]", i);
+          }
+        }
+      }
+
       ctx->ItemClick(kOk);
       ctx->Yield(2);
-
-      const auto& cr = EntryCrystal();
-      IM_CHECK(cr.zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 12.0f }));
-      // Not the factory Custom row's 20° roll either: the whole triple comes back, not just zenith.
-      IM_CHECK(cr.azimuth == gui::kAzFullUniform);
-      IM_CHECK(cr.roll == gui::kRollFreeUniform);
+      IM_CHECK_EQ(static_cast<int>(EntryCrystal().axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+      if (!(EntryCrystal().zenith == seeded[0])) {
+        IM_ERRORF("commit moved zenith: %f %f", static_cast<double>(EntryCrystal().zenith.mean),
+                  static_cast<double>(EntryCrystal().zenith.std));
+      }
     };
   }
 
+  // The Apply preset combo is a pure action: it loads the preset's definition (zenith through
+  // EffectiveAxisPresetZenith, so a preset-library retune would come through) and sets the label
+  // to match. Custom is deliberately absent from its list — it has no definition to apply.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_custom_memory_is_per_crystal");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "applying_a_preset_loads_its_definition_and_sets_the_label");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      SeedColumnAxis(EntryCrystal());
+      ctx->Yield(2);
 
-      // A second entry on its own pool crystal, seeded as Plate so the two memories differ in mean
-      // (90 vs 0) and not only in which id they sit under: a memory that mixed the two ids up would
-      // fail on the mean, not pass on a coincidence.
-      gui::CrystalConfig second;
-      SeedColumnAxis(second);
-      second.zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.0f };
-      gui::EntryCard e_second;
-      e_second.crystal_id = static_cast<int>(gui::g_state.crystals.size());
-      gui::g_state.crystals.push_back(second);
-      gui::g_state.layers[0].entries.push_back(e_second);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
-      const int cid1 = gui::g_state.layers[0].entries[1].crystal_id;
-      IM_CHECK(cid1 != gui::g_state.layers[0].entries[0].crystal_id);
 
-      OpenCardEditor(ctx, 0, kAxisTabRef);
+      // BeginCombo registers no item info with the test engine (unlike InputFloat), so no string
+      // ref can find the combo; address it by its computed ID, the way AxisDistComboId does for
+      // the distribution combos. The seed is the label chip's parent scope — the PushID(layer) /
+      // PushID(entry) pair the tab bodies render under — the same id stack entry the combo itself
+      // hashed against; "###" only resets the crc to that seed, it does not void it.
+      const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Column##axis_label_chip");
+      IM_CHECK(chip_anchor.ID != 0);
+      const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
+      IM_CHECK(apply_combo != 0);
+      ctx->ItemClick(apply_combo);
       ctx->Yield(2);
-      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Column");
-      ctx->Yield(2);
-      ctx->ItemClick("**/Custom");
-      ctx->Yield(2);
+      IM_CHECK(ctx->ItemExists("**/Lowitz##apply"));
+      if (ctx->ItemExists("**/Custom##apply")) {
+        IM_ERRORF("%s", "Custom has no definition to apply, so it must not be listed");
+      }
+      ctx->ItemClick("**/Lowitz##apply");
+      ctx->Yield(3);
+
+      const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+      const auto& lowitz = gui::AxisPresetEntryFor(gui::AxisPreset::kLowitz);
+      if (!(after.axis[0] == gui::EffectiveAxisPresetZenith(lowitz))) {
+        IM_ERRORF("%s", "Apply did not load Lowitz's effective zenith");
+      }
+      if (!(after.axis[1] == lowitz.azimuth)) {
+        IM_ERRORF("%s", "Apply did not load Lowitz's azimuth");
+      }
+      if (!(after.axis[2] == lowitz.roll)) {
+        IM_ERRORF("%s", "Apply did not load Lowitz's roll");
+      }
+      IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kLowitz));
+
       ctx->ItemClick(kOk);
       ctx->Yield(2);
-
-      OpenCardEditor(ctx, 1, kAxisTabRef);
-      ctx->Yield(2);
-      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Plate");
-      ctx->Yield(2);
-      ctx->ItemClick("**/Custom");
-      ctx->Yield(2);
-      ctx->ItemClick(kOk);
-      ctx->Yield(2);
-
-      IM_CHECK(EntryCrystal().zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 12.0f }));
-      IM_CHECK(gui::g_state.crystals[cid1].zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 12.0f }));
-    };
-  }
-
-  {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_custom_memory_survives_modal_close_and_reopen");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ResetTestState();
-      const ScopedPopups popup_guard(ctx);
-      SeedColumnAxis(EntryCrystal());
-      ctx->Yield(2);
-
-      OpenCardEditor(ctx, 0, kAxisTabRef);
-      ctx->Yield(2);
-      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Plate");
-      ctx->Yield(2);
-      ctx->ItemClick(kOk);
-      ctx->Yield(2);
-      // The pool now holds Plate — checked, so the assertion below cannot pass on a commit that
-      // never happened. The memory has to come back from somewhere other than the pool.
-      IM_CHECK(EntryCrystal().zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.0f }));
-
-      OpenCardEditor(ctx, 0, kAxisTabRef);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Custom");
-      ctx->Yield(2);
-      ctx->ItemClick(kOk);
-      ctx->Yield(2);
-
-      IM_CHECK(EntryCrystal().zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 12.0f }));
-    };
-  }
-
-  {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_custom_memory_is_cleared_by_new_document");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ResetTestState();
-      const ScopedPopups popup_guard(ctx);
-      SeedColumnAxis(EntryCrystal());
-      ctx->Yield(2);
-
-      OpenCardEditor(ctx, 0, kAxisTabRef);
-      ctx->Yield(2);
-      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Plate");
-      ctx->Yield(2);
-      ctx->ItemClick("**/Custom");
-      ctx->Yield(2);
-      // Cancel, not OK: the memory is captured while the tab renders, so its lifetime is the
-      // document's, not the commit's — a New must clear it even though nothing was ever committed.
-      ctx->ItemClick(kCancel);
-      ctx->Yield(2);
-
-      gui::DoNew();
-      // The production entry, not ResetTestState(): that would also run ResetModalState(), whose
-      // own clear is not the one under test. DoNew rebuilds g_state from the production defaults
-      // (Compact + immediate), so the two view preferences the harness pins are re-pinned here —
-      // in immediate mode there is no OK button to press below.
-      gui::g_state.modal_layout_compact = true;
-      gui::g_state.modal_immediate_mode = false;
-      ctx->Yield(2);
-      // The new document's only entry sits on pool crystal id 0 again — the same key the memory
-      // above was stored under.
-      IM_CHECK_EQ(gui::g_state.layers[0].entries[0].crystal_id, 0);
-
-      OpenCardEditor(ctx, 0, kAxisTabRef);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Custom");
-      ctx->Yield(2);
-      ctx->ItemClick(kOk);
-      ctx->Yield(2);
-
-      // The factory Custom row, not the previous document's 12.
-      IM_CHECK(EntryCrystal().zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 20.0f }));
-      IM_CHECK(EntryCrystal().roll == (gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 20.0f }));
+      IM_CHECK_EQ(static_cast<int>(EntryCrystal().axis_preset), static_cast<int>(gui::AxisPreset::kLowitz));
+      IM_CHECK(EntryCrystal().zenith == gui::EffectiveAxisPresetZenith(lowitz));
     };
   }
 

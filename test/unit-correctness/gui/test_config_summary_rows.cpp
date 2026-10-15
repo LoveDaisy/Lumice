@@ -252,6 +252,10 @@ gui::GuiState MakeTwoLayerState() {
   state.crystals.assign(2, gui::CrystalConfig{});
   state.crystals[0].name = "plate";
   state.crystals[0].zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.0f };
+  // The sticky label a user with these parameters would have: must equal what the parameters
+  // classify as, so the Zenith cell's leading label stays "Plate" and (from the badge task on)
+  // the out-of-domain badge stays off this reference document.
+  state.crystals[0].axis_preset = gui::AxisPreset::kPlate;
   state.crystals[1].type = gui::CrystalType::kPyramid;
   state.crystals[1].face_distance[2] = gui::ShapeDist{ gui::ShapeDistType::kUniform, 0.9f, 0.1f };
   gui::FilterConfig f;
