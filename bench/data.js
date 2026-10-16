@@ -1,50 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792114225732,
+  "lastUpdate": 1792157051126,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "76be31ac78abe09f12455eb5916a081fbac528cf",
-          "message": "Merge pull request #386 from LoveDaisy/feat/parallel-rows-idle-core-budget\n\nfix(server): size ParallelRows by an explicit idle-core thread budget (undo the GUI-poll worker regression from #382)",
-          "timestamp": "2026-09-20T05:54:03+08:00",
-          "tree_id": "622c8e9b60a4128f396e320415097e083aab2610",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/76be31ac78abe09f12455eb5916a081fbac528cf"
-        },
-        "date": 1789855503430,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "Ubuntu ARM64",
-            "value": 510490.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 358818.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 354306.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4746,6 +4704,54 @@ window.BENCHMARK_DATA = {
             "value": 370640.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d3b5b77505182ea5e0fff0873d106cc506c38f0c",
+          "message": "Merge pull request #496 from LoveDaisy/feat/axis-apply-decouple\n\nfeat(gui): Apply preset is a pure parameter shortcut, label and view untouched",
+          "timestamp": "2026-10-16T21:21:19+08:00",
+          "tree_id": "4d4ba181a95d82bf92b42afdd4e29619e4d7710c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/d3b5b77505182ea5e0fff0873d106cc506c38f0c"
+        },
+        "date": 1792157049328,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 329859.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 504128.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 425721.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 499058.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
