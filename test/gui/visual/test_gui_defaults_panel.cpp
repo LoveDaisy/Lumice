@@ -52,7 +52,6 @@ enum class SceneKind {
   kFiltered,         // the search box narrowing the list
   kNoChanges,        // nothing differs from factory — every row unchecked
   kPresetsExpanded,  // §1 open with one preset unfolded — the nine typed cells and their widths
-  kPresetsWarning,   // the same, over an out-of-range stored value, so the warning column is filled
   kWedgePresets,     // the wedge-shortcut region: saved rows with their delete buttons, plus the add row
 };
 
@@ -86,7 +85,6 @@ const DefaultsPanelScene kScenes[] = {
   { "filtered",         SceneKind::kFiltered        },
   { "no_changes",       SceneKind::kNoChanges       },
   { "presets_expanded", SceneKind::kPresetsExpanded },
-  { "presets_warning",  SceneKind::kPresetsWarning  },
   { "wedge_presets",    SceneKind::kWedgePresets    },
 };
 // clang-format on
@@ -162,19 +160,6 @@ void RegisterDefaultsPanelLayoutTests(ImGuiTestEngine* engine) {
         doc["renderer"]["fov"] = 95.0f;
         IM_CHECK(gui::WriteUserDefaultsFile(dir, doc));
         gui::g_state = gui::MakeNewDocumentState();
-      } else if (scene.kind == SceneKind::kPresetsWarning) {
-        // An out-of-range value already on disk, so the row opens with its warning cell filled
-        // without the scene having to type anything. Typing would leave the input active, and an
-        // active InputText draws a caret whose phase depends on the frame count — the exact kind
-        // of pixel that makes a reference flake.
-        json doc;
-        doc["presets"]["axis"]["column"]["zenith_std"] = 25.0f;
-        IM_CHECK(gui::WriteUserDefaultsFile(dir, doc));
-        gui::g_state = gui::MakeNewDocumentState();
-        // The load clamps and files a notice; drain it so the warning POPUP does not open over the
-        // panel and land in the capture.
-        gui::TakeUserDefaultsDowngradeCount();
-        gui::TakeUserDefaultsDowngradeNotices();
       } else if (scene.kind == SceneKind::kWedgePresets) {
         // Two saved shortcuts on disk, so the region opens showing its own shape — the derived
         // labels, a delete button per row, and the add row underneath — rather than an empty list
@@ -198,8 +183,7 @@ void RegisterDefaultsPanelLayoutTests(ImGuiTestEngine* engine) {
         ApplyEdits();
       }
 
-      const bool presets_scene = scene.kind == SceneKind::kPresetsExpanded ||
-                                 scene.kind == SceneKind::kPresetsWarning || scene.kind == SceneKind::kWedgePresets;
+      const bool presets_scene = scene.kind == SceneKind::kPresetsExpanded || scene.kind == SceneKind::kWedgePresets;
       gui::OpenDefaultsPanel(
           gui::g_state, presets_scene ? gui::DefaultsPanelSection::kPresets : gui::DefaultsPanelSection::kSettings);
       ctx->Yield(4);
@@ -223,14 +207,6 @@ void RegisterDefaultsPanelLayoutTests(ImGuiTestEngine* engine) {
         // same two row functions, and unfolding all six would push the table past the panel.
         ctx->ItemOpen("**/###preset_Column");
         ctx->Yield(3);
-        if (scene.kind == SceneKind::kPresetsWarning) {
-          // The warning cell is only populated by a write, not by the load-time clamp: the panel
-          // reports what IT did. Re-committing the already-clamped value through the real input is
-          // what fills the cell, and it leaves the input deactivated (ItemInputValue presses Enter).
-          ctx->ItemInputValue("**/###preset_std_column", 25.0f);
-          ctx->Yield(3);
-          IM_CHECK(ctx->ItemExists("**/###preset_warning_column"));
-        }
       } else if (scene.kind == SceneKind::kFiltered) {
         // KeyCharsReplaceEnter (inside ItemInputValue) presses Enter, which deactivates the input:
         // an ACTIVE InputText draws a blinking caret, and a caret whose phase depends on the frame

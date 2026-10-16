@@ -47,7 +47,7 @@ TEST(CrystalPreviewSummary, PrismColumnLineIsPresetZenithTypeAndHeight) {
   const std::string expected = std::string(gui::AxisPresetLabel(gui::AxisPreset::kColumn)) + " · zenith " +
                                gui::FormatAxisDistCell(axis[0]) + " · Prism" +
                                ShapePart(crystal.height, LUMICE_SHAPE_SCALAR_HEIGHT);
-  EXPECT_EQ(gui::FormatCrystalPreviewSummary(crystal, axis), expected);
+  EXPECT_EQ(gui::FormatCrystalPreviewSummary(crystal, axis, gui::AxisPreset::kColumn), expected);
 }
 
 TEST(CrystalPreviewSummary, PyramidCustomLineListsItsThreeHeightsInModalOrder) {
@@ -66,7 +66,7 @@ TEST(CrystalPreviewSummary, PyramidCustomLineListsItsThreeHeightsInModalOrder) {
                                ShapePart(crystal.prism_h, LUMICE_SHAPE_SCALAR_PRISM_H) +
                                ShapePart(crystal.upper_h, LUMICE_SHAPE_SCALAR_UPPER_H) +
                                ShapePart(crystal.lower_h, LUMICE_SHAPE_SCALAR_LOWER_H);
-  EXPECT_EQ(gui::FormatCrystalPreviewSummary(crystal, axis), expected);
+  EXPECT_EQ(gui::FormatCrystalPreviewSummary(crystal, axis, gui::AxisPreset::kCustom), expected);
 }
 
 TEST(CrystalPreviewSummary, RandomPresetZenithTakesTheFullCircleShortForm) {
@@ -76,7 +76,7 @@ TEST(CrystalPreviewSummary, RandomPresetZenithTakesTheFullCircleShortForm) {
   gui::CrystalConfig crystal;
   crystal.type = gui::CrystalType::kPrism;
 
-  const std::string line = gui::FormatCrystalPreviewSummary(crystal, axis);
+  const std::string line = gui::FormatCrystalPreviewSummary(crystal, axis, gui::AxisPreset::kRandom);
   EXPECT_EQ(line.rfind(std::string("Random · zenith ") + gui::FormatAxisDistCell(axis[0]) + " · Prism", 0), 0u) << line;
 }
 
@@ -88,7 +88,7 @@ TEST(CrystalPreviewSummary, SyncGroupSuffixIsKeptVerbatim) {
   crystal.height = { gui::ShapeDistType::kGauss, 0.3f, 0.05f };
   crystal.height.sync_group = 2;
 
-  const std::string line = gui::FormatCrystalPreviewSummary(crystal, axis);
+  const std::string line = gui::FormatCrystalPreviewSummary(crystal, axis, gui::AxisPreset::kPlate);
   const std::string height_cell = gui::FormatShapeDistCell(crystal.height, LUMICE_SHAPE_SCALAR_HEIGHT);
   ASSERT_NE(height_cell.find(" · sync 2"), std::string::npos) << height_cell;
   EXPECT_NE(line.find(height_cell), std::string::npos) << line;

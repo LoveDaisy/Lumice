@@ -300,7 +300,7 @@ void ResetTestState() {
   // stops being submitted, so a case that unfolds a node, types into a storage-backed box or scrolls
   // a list hands that state to whichever case draws the same window next. Measured instances, each
   // of them a reference that agreed with itself only under one test order: the presets library
-  // handed on unfolded (16.8 dB on presets_expanded / presets_warning), the add row's rejected
+  // handed on unfolded (16.8 dB on presets_expanded), the add row's rejected
   // triple sitting under those two scenes' fold and reaching the pixels through the child's
   // scrollbar thumb (53.45 dB under --filter, inf under the pool), and ##RightPanel handed to the
   // fullframe capture at Scroll.y=145.

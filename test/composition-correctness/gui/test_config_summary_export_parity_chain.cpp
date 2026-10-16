@@ -963,6 +963,7 @@ void SeedRichDocument() {
   plate.zenith = AxisDist{ AxisDistType::kGauss, 0.0f, 2.5f };
   plate.azimuth = kAzFullUniform;
   plate.roll = kRollFreeUniform;
+  plate.axis_preset = AxisPreset::kPlate;  // the label the parameters classify as
   CrystalConfig& pyr = g_state.crystals[1];
   pyr.type = CrystalType::kPyramid;
   pyr.prism_h = 1.7f;
@@ -976,6 +977,7 @@ void SeedRichDocument() {
   pyr.zenith = AxisDist{ AxisDistType::kLaplacian, 90.0f, 3.0f };
   pyr.azimuth = AxisDist{ AxisDistType::kZigzag, 10.0f, 20.0f };
   pyr.roll = kRollLockedGauss;
+  pyr.axis_preset = AxisPreset::kCustom;  // the label the parameters classify as
 
   g_state.filters.assign(2, FilterConfig{});
   g_state.filters[0].name = "cza";

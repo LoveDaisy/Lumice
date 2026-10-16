@@ -806,11 +806,6 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   // structure; Revert restores it from snapshot — same reason to refresh thumbnails either way.
   g_thumbnail_cache.OnLayerStructureChanged();
 
-  // Every reason also drops the axis modal's per-crystal Custom memory: it is keyed by pool
-  // crystal id, and each of these reasons replaces or restores the pool, so what a stale entry
-  // would remember belongs to a crystal that is no longer at that id. Unconditional on purpose —
-  // not folded into any reason-grouped block below, so it cannot inherit another state's rule.
-  ClearAxisCustomMemory();
   // And every reason closes an open Edit Entry modal, for the same reason one level up: it binds
   // its entry by position into the pool these reasons replace or restore, and holds copies of that
   // entry's crystal and filter. An uncommitted edit in those copies would otherwise be committed

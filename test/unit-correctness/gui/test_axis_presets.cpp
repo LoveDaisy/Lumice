@@ -123,6 +123,114 @@ TEST(AxisPresetTest, AxisDistTypeJsonNamesRoundTripAndAreTheOnDiskSpellings) {
   EXPECT_FALSE(AxisDistTypeFromJsonName("triangular").has_value());
 }
 
+// The sticky label's stored spelling: every preset round-trips through the lowercase name, the
+// names are pinned as literals (they are the on-disk contract of .lmc axis.label), and the
+// lookup rejects anything else — including the capitalized display labels and the override-file
+// spellings' neighbours.
+TEST(AxisPresetTest, AxisPresetJsonNamesRoundTripAndAreTheOnDiskSpellings) {
+  using lumice::gui::AxisPresetFromJsonName;
+  using lumice::gui::AxisPresetJsonName;
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kColumn), "column");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kPlate), "plate");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kParry), "parry");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kLowitz), "lowitz");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kRandom), "random");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kCustom), "custom");
+  for (int i = 0; i < 6; ++i) {
+    const auto preset = static_cast<AxisPreset>(i);
+    const auto back = AxisPresetFromJsonName(AxisPresetJsonName(preset));
+    if (!back.has_value()) {
+      ADD_FAILURE() << "enumerator " << i << " does not round-trip";
+      continue;
+    }
+    EXPECT_EQ(static_cast<int>(*back), i);
+  }
+  EXPECT_FALSE(AxisPresetFromJsonName("Column").has_value());  // case matters: not a display label
+  EXPECT_FALSE(AxisPresetFromJsonName("").has_value());
+  EXPECT_FALSE(AxisPresetFromJsonName("prism").has_value());
+}
+
+// The label is sticky document state: editing the three axis distributions must not move it. This
+// is the storage-level half of AC2 — every production consumer reads the stored field (the
+// ClassifyAxisPreset call-form grep pins that), and this pins that the FIELD itself has no
+// derivation hiding inside the struct.
+TEST(AxisPresetTest, StoredLabelIsStickyUnderParameterEdits) {
+  using lumice::gui::CrystalConfig;
+  CrystalConfig c;
+  c.zenith = { AxisDistType::kGauss, 90.0f, 1.0f };
+  c.azimuth = lumice::gui::kAzFullUniform;
+  c.roll = lumice::gui::kRollFreeUniform;
+  ASSERT_EQ(ClassifyAxisPreset(c.zenith, c.azimuth, c.roll), AxisPreset::kColumn)
+      << "premise: the parameters classify as Column, matching the field default only by the "
+         "default triple — so the mutations below are real edits, not identity moves";
+  c.axis_preset = AxisPreset::kLowitz;
+
+  // Parameter edits the modal can express, applied straight to the config. The edited triple
+  // classifies as Lowitz again, so the case exercises "label survives edits it agrees with"; the
+  // disagreeing direction is the roundtrip chain's sticky case.
+  c.zenith = { AxisDistType::kGauss, 0.0f, 40.0f };
+  c.roll = { AxisDistType::kGauss, 0.0f, 1.0f };
+  EXPECT_EQ(c.axis_preset, AxisPreset::kLowitz) << "a parameter edit moved the stored label";
+  EXPECT_EQ(ClassifyAxisPreset(c.zenith, c.azimuth, c.roll), AxisPreset::kLowitz)
+      << "premise drift: the edited triple no longer classifies as the label, so this case no "
+         "longer exercises 'label survives edits it agrees with'";
+}
+
+// The out-of-domain badge predicate, at its boundaries. The flip the issue names: a Parry label on
+// parameters that read as Plate (zenith mean 0 with roll locked) — the mean moved, the label did
+// not, and that is exactly the state the badge exists to mark. The strict inequalities are probed
+// from both sides at the 10.0 bound, where "exactly at the bound" belongs to Custom, not Column.
+TEST(AxisPresetTest, AxisLabelOutOfDomainFlagsExactlyTheDriftedTriples) {
+  using lumice::gui::AxisLabelOutOfDomain;
+  const AxisDist az_full{ AxisDistType::kUniform, 0.0f, 360.0f };
+  const AxisDist roll_locked{ AxisDistType::kGauss, 0.0f, 1.0f };
+  const AxisDist roll_free{ AxisDistType::kUniform, 0.0f, 360.0f };
+
+  // Equal: never a warning.
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, 1.0f }, az_full, roll_free));
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kRandom, az_full, az_full, roll_free));
+
+  // The named flip: Parry label, Plate-reading parameters.
+  EXPECT_TRUE(AxisLabelOutOfDomain(AxisPreset::kParry, { AxisDistType::kGauss, 0.0f, 1.0f }, az_full, roll_locked));
+
+  // std exactly 10.0 is OUTSIDE Column (strict <), so a Column label warns; one ulp inside is not.
+  EXPECT_TRUE(AxisLabelOutOfDomain(AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, 10.0f }, az_full, roll_free));
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, std::nextafter(10.0f, 0.0f) },
+                                    az_full, roll_free));
+
+  // A Random label whose parameters left the full-uniform triple warns — Random is an ordinary
+  // label here, not an exemption.
+  EXPECT_TRUE(AxisLabelOutOfDomain(AxisPreset::kRandom, { AxisDistType::kUniform, 0.0f, 20.0f }, az_full, roll_free));
+
+  // kCustom never warns: it has no usual range to leave.
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kCustom, { AxisDistType::kGauss, 33.0f, 7.0f }, az_full, roll_free));
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kCustom, az_full, az_full, roll_free));
+}
+
+// The tooltip's three lines, as an exact snapshot against a stub domain description (the real one
+// is user_defaults.cpp's DescribeAxisPresetDomain, passed in by callers; a stub keeps this header's
+// tests leaf-shaped). The third line names the classifier's answer precisely — including the
+// "none of the built-in presets" spelling Custom reads as.
+TEST(AxisPresetTest, MismatchTooltipCarriesThreeExactLines) {
+  using lumice::gui::FormatAxisLabelMismatchTooltip;
+  const AxisDist az_full{ AxisDistType::kUniform, 0.0f, 360.0f };
+  const AxisDist roll_locked{ AxisDistType::kGauss, 0.0f, 1.0f };
+
+  const std::string reads_other = FormatAxisLabelMismatchTooltip(
+      AxisPreset::kParry, { AxisDistType::kGauss, 0.0f, 1.0f }, az_full, roll_locked, "stub domain text");
+  EXPECT_EQ(reads_other,
+            "Parameters are outside the usual Parry range\n"
+            "(Parry usually means: stub domain text)\n"
+            "Currently reads as: Plate");
+
+  const std::string reads_custom = FormatAxisLabelMismatchTooltip(
+      AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, 12.0f }, az_full, roll_locked, "stub domain text");
+  EXPECT_EQ(reads_custom,
+            "Parameters are outside the usual Column range\n"
+            "(Column usually means: stub domain text)\n"
+            "Currently reads as: none of the built-in presets");
+}
+
 // AxisDistTypeLabel is a view over kAxisDistTypeComboItems, so it must agree with that string
 // entry by entry — walked here independently rather than through the function under test.
 TEST(AxisPresetTest, AxisDistTypeLabelIsAViewOverTheComboItemString) {

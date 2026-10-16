@@ -44,7 +44,7 @@
 //   settings section's shape, would print every label once per entry, and on a three-entry
 //   document that was half the column. Column labels and cell text
 //   come from what the panels already use — FormatCrystalIdentity for the crystal cell,
-//   AxisPresetName for the axis preset, FilterSummary for the filter, kShapeScalarLabels for the
+//   AxisPresetLabel for the axis label, FilterSummary for the filter, kShapeScalarLabels for the
 //   shape columns — rather than from a second rendering of the same facts; a cell whose column
 //   does not apply to that row (a prism's Prism H) is empty, not "-" or "0".
 //
@@ -117,6 +117,12 @@ struct ConfigSummaryTable {
   std::vector<std::string> columns;
   struct Row {
     std::vector<std::string> cells;
+    // Optional warning mark: drawn beside cell `badge_cell` when >= 0, with `badge_tooltip` on
+    // hover. The cell TEXT is unchanged — the mark rides beside it — so row text comparisons are
+    // unaffected. (Today: the axis label's out-of-domain badge on the Zenith cell; the predicate
+    // and tooltip are the badge's single owners in axis_presets.hpp.)
+    int badge_cell = -1;
+    std::string badge_tooltip;
   };
   std::vector<Row> rows;
 };

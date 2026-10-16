@@ -16,6 +16,7 @@
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"
 #include "gui/shape_scalar_domain.hpp"
+#include "gui/user_defaults.hpp"  // DescribeAxisPresetDomain — the badge tooltip's second line
 #include "include/lumice_base.h"
 #include "include/lumice_scene.h"
 
@@ -182,14 +183,21 @@ ConfigSummaryTable BuildCrystalsTable(const GuiState& state, int layer_idx) {
     row.cells[kColEnabled] = entry.enabled ? "true" : "false";
     row.cells[kColWeight] = Format("%.1f", entry.proportion);
 
-    // The Axis tab: the preset the classifier reads off the three distributions leads the Zenith
-    // cell, and the three distributions follow in full — a preset name alone would hide a retuned
-    // zenith std, the one parameter of a preset the user can change and the one most worth
-    // comparing; the name alone in a column of its own would cost a column for a word that
-    // belongs to the zenith anyway.
-    row.cells[kColZenith] = AxisPresetName(*cr) + " · " + FormatAxisDistCell(cr->zenith);
+    // The Axis tab: the crystal's STORED sticky label leads the Zenith cell, and the three
+    // distributions follow in full — a label alone would hide a retuned zenith std, the one
+    // parameter of a preset the user can change and the one most worth comparing; the label alone
+    // in a column of its own would cost a column for a word that belongs to the zenith anyway.
+    // When the parameters have drifted from the label, the badge (Step 4) marks this cell.
+    row.cells[kColZenith] = std::string(AxisPresetLabel(cr->axis_preset)) + " · " + FormatAxisDistCell(cr->zenith);
     row.cells[kColAzimuth] = FormatAxisDistCell(cr->azimuth);
     row.cells[kColRoll] = FormatAxisDistCell(cr->roll);
+    // The out-of-domain badge rides BESIDE the Zenith cell's text (text unchanged), via the one
+    // predicate — never an inline classify comparison, which would drop the kCustom exemption.
+    if (AxisLabelOutOfDomain(cr->axis_preset, cr->zenith, cr->azimuth, cr->roll)) {
+      row.badge_cell = kColZenith;
+      row.badge_tooltip = FormatAxisLabelMismatchTooltip(cr->axis_preset, cr->zenith, cr->azimuth, cr->roll,
+                                                         DescribeAxisPresetDomain(cr->axis_preset));
+    }
 
     // The Filter tab, as the card summarises it, and the filter's name after it when it has one.
     // The card's summary truncates a long raypath and collapses a multi-row sum of products to

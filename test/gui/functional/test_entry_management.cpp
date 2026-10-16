@@ -1047,6 +1047,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       column.zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 1.0f };
       column.azimuth = az_full;
       column.roll = az_full;
+      column.axis_preset = gui::AxisPreset::kColumn;  // the label the parameters classify as
       gui::EntryCard target;
       target.crystal_id = static_cast<int>(gui::g_state.crystals.size());
       gui::g_state.crystals.push_back(column);

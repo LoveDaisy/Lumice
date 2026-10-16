@@ -253,6 +253,11 @@ static void ReadSyncGroupJson(const json& shape_j, int sync_group[LUMICE_SHAPE_S
   }
 }
 
+// Key of the sticky axis label inside the axis block. GUI-internal on purpose — the engine-side
+// shared key table (LUMICE_AxisScalarKeyName) stays untouched because the export path and the C
+// API have no preset concept. Field-name counterpart: CrystalConfig::axis_preset.
+static constexpr const char* kAxisLabelKey = "label";
+
 // Field-sync guard for SerializeCrystal.
 // If CrystalConfig gains/loses a field, sizeof changes and this fires. Developer must then
 // audit BOTH SerializeCrystal (below) and FillCrystalParam (further down this file) for
@@ -266,11 +271,14 @@ static void ReadSyncGroupJson(const json& shape_j, int sync_group[LUMICE_SHAPE_S
 //   face_distance[6] (now ShapeDist[6]; conditional serialize / c-api yes),
 //   ShapeDist::sync_group (v4.13; conditional serialize via WriteSyncGroupJson / c-api yes
 //     via FillSyncGroupArray — one int in each of the ten ShapeDist members),
-//   zenith, azimuth, roll (AxisDist, yes/yes).
+//   zenith, azimuth, roll (AxisDist, yes/yes),
+//   axis_preset (sticky label, serialize .lmc yes as axis."label" / c-api no — one name, two
+//     forms: field `axis_preset` ⇄ key axis.label; grep both when tracing this field).
 // Size grew 112 → 192 when the five shape scalars became ShapeDist (12 B each: +80 B total),
-// then 192 → 232 when ShapeDist gained sync_group (+4 B × 10 ShapeDist members).
+// then 192 → 232 when ShapeDist gained sync_group (+4 B × 10 ShapeDist members),
+// then 232 → 240 when CrystalConfig gained axis_preset (+4 B payload, +8 B as padded).
 #if defined(__APPLE__) && defined(__aarch64__)
-static_assert(sizeof(CrystalConfig) == 232,
+static_assert(sizeof(CrystalConfig) == 240,
               "CrystalConfig size changed; audit SerializeCrystal and FillCrystalParam for new/renamed fields");
 #endif
 static json SerializeCrystal(const CrystalConfig& c, int id) {
@@ -322,6 +330,12 @@ static json SerializeCrystal(const CrystalConfig& c, int id) {
   j["axis"][LUMICE_AxisScalarKeyName(LUMICE_AXIS_SCALAR_ZENITH)] = SerializeAxisDist(c.zenith);
   j["axis"][LUMICE_AxisScalarKeyName(LUMICE_AXIS_SCALAR_AZIMUTH)] = SerializeAxisDist(c.azimuth);
   j["axis"][LUMICE_AxisScalarKeyName(LUMICE_AXIS_SCALAR_ROLL)] = SerializeAxisDist(c.roll);
+  // Sticky label: written UNCONDITIONALLY, unlike name/face_distance's default-value elision. A
+  // "skip when kRandom" shortcut would drop the key exactly in the state this field exists to
+  // protect — label=Random with parameters that classify elsewhere — and derive-once on reload
+  // would then flip the label to the classifier's answer. Written by the GUI .lmc writer only;
+  // LUMICE_SceneToJson (export path) has no preset concept and must not grow this key.
+  j["axis"][kAxisLabelKey] = AxisPresetJsonName(c.axis_preset);
 
   return j;
 }
@@ -991,6 +1005,38 @@ static std::optional<CrystalConfig> ParseCrystal(const json& j, const std::strin
     c.roll = kCoreAlignedFixedAxis;
   }
 
+  // Sticky label: after both axis branches above, so derive-once sees the FINAL parameter triple
+  // (an absent `axis` block leaves the core-aligned fixed axes, which classify as Custom). The
+  // stored label wins when present and spelled recognisably; derive-once — the one legal
+  // production write of ClassifyAxisPreset — covers every other case, and covers it ONCE here:
+  // after load the field is plain document state no classifier ever overwrites again.
+  // Both load paths that carry crystals (inline .lmc crystals and the core-config `crystals`
+  // array) funnel through this function, so this single block migrates every document shape.
+  std::optional<AxisPreset> stored_label;
+  bool label_malformed = false;
+  std::string label_as_written;
+  if (j.contains("axis") && j.at("axis").contains(kAxisLabelKey)) {
+    const auto& node = j.at("axis").at(kAxisLabelKey);
+    if (node.is_string()) {
+      label_as_written = node.get<std::string>();
+      stored_label = AxisPresetFromJsonName(label_as_written);
+    } else {
+      label_as_written = node.dump();
+    }
+    label_malformed = !stored_label.has_value();
+  }
+  if (stored_label) {
+    c.axis_preset = *stored_label;
+  } else {
+    if (label_malformed) {
+      const std::string msg = crystal_label + " axis.label states " + label_as_written +
+                              ", which is not a known axis preset; deriving it from the parameters instead.";
+      GUI_LOG_WARNING("[FileIO] ParseCrystal: {}", msg);
+      AppendLoadNotice(msg);
+    }
+    c.axis_preset = ClassifyAxisPreset(c.zenith, c.azimuth, c.roll);
+  }
+
   return c;
 }
 
@@ -1499,9 +1545,9 @@ static void FillAxisDist(const AxisDist& src, LUMICE_Distribution* dst) {
 // Helper: fill a LUMICE_CrystalParam from GUI CrystalConfig.
 // `dst->id` is deliberately NOT set: LUMICE_SceneAddCrystal ignores any incoming .id and
 // assigns its own sequential id, returned via out_id (lumice_scene.h "Incremental build" contract).
-// Field-sync guard: see the static_assert(sizeof(CrystalConfig) == 232) near
-// SerializeCrystal above. One copy guards both functions (same TU, identical
-// condition); this comment keeps the pairing obvious to readers.
+// Field-sync guard: see the sizeof(CrystalConfig) static_assert near SerializeCrystal above —
+// the number itself lives only there, never here. One copy guards both functions (same TU,
+// identical condition); this comment keeps the pairing obvious to readers.
 void FillCrystalParam(const CrystalConfig& c, LUMICE_CrystalParam* dst) {
   dst->type = c.type == CrystalType::kPrism ? 0 : 1;
   // GUI shape fields are now first-class ShapeDist; map each straight to LUMICE_Distribution so a

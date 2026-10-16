@@ -9,6 +9,7 @@
 #include "gui/copyable_text.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/secondary_window_sizing.hpp"
+#include "gui/semantic_colors.hpp"  // WarningFillColor — the badge dot's tone
 #include "gui/theme.hpp"
 #include "imgui.h"
 
@@ -116,9 +117,23 @@ void DrawDocumentTable(const char* table_id, const ConfigSummaryTable& table) {
   ImGui::TableHeadersRow();
   for (const auto& row : table.rows) {
     ImGui::TableNextRow();
-    for (const auto& cell : row.cells) {
+    for (size_t c = 0; c < row.cells.size(); ++c) {
       ImGui::TableNextColumn();
-      ImGui::TextUnformatted(cell.c_str());
+      ImGui::TextUnformatted(row.cells[c].c_str());
+      if (static_cast<int>(c) == row.badge_cell) {
+        // The warning mark as a drawn color dot, not a font glyph: this is a plain ImGui table and
+        // the dot must not depend on which glyph range the atlas carries. Hover source is the cell
+        // text the dot sits beside (a DrawList primitive is no item to hover).
+        ImGui::SameLine();
+        const float dot_radius = ImGui::GetTextLineHeight() * 0.28f;
+        const ImVec2 text_max = ImGui::GetItemRectMax();
+        const ImVec2 dot_center(text_max.x + dot_radius + ImGui::GetStyle().ItemSpacing.x * 0.5f,
+                                (text_max.y + ImGui::GetItemRectMin().y) * 0.5f);
+        ImGui::GetWindowDrawList()->AddCircleFilled(dot_center, dot_radius, ImGui::GetColorU32(WarningFillColor(0.9f)));
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("%s", row.badge_tooltip.c_str());
+        }
+      }
     }
   }
   ImGui::EndTable();

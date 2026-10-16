@@ -127,6 +127,15 @@ struct AxisDist {
   friend bool operator!=(const AxisDist& a, const AxisDist& b) { return !(a == b); }
 };
 
+// The axis preset a crystal's user-chosen label names. Stored document state, NOT derived: the
+// label is whatever the user picked and survives parameter edits, so the parameter-range
+// classifier (ClassifyAxisPreset, axis_presets.hpp) never writes it — it only answers "do the
+// current parameters still read as this label" for the out-of-domain badge, and "what would an
+// old document without a stored label have been" for derive-once migration in file_io.cpp.
+// Lives beside AxisDist (not in axis_presets.hpp) because CrystalConfig holds it and
+// axis_presets.hpp already includes this header — the reverse include would be a cycle.
+enum class AxisPreset { kColumn, kPlate, kParry, kLowitz, kRandom, kCustom };
+
 // Crystal shape distribution type. Parallel to AxisDist but with a NO_RANDOM alternative that
 // axis distributions do not have (a crystal orientation is always a distribution; a shape scalar
 // may be a fixed deterministic value). Enum values are deliberately aligned 1:1 with the
@@ -222,13 +231,17 @@ struct CrystalConfig {
   AxisDist zenith{ AxisDistType::kUniform, 0.0f, 360.0f };
   AxisDist azimuth{ AxisDistType::kUniform, 0.0f, 360.0f };
   AxisDist roll{ AxisDistType::kUniform, 0.0f, 360.0f };
+  // User-chosen sticky label. Default kRandom matches the default axis triple above (three
+  // uniform-360 axes classify as Random), so a fresh crystal needs no special case. Serialized to
+  // .lmc as axis.label; never derived from the parameters after load.
+  AxisPreset axis_preset = AxisPreset::kRandom;
 
   friend bool operator==(const CrystalConfig& a, const CrystalConfig& b) {
     return a.name == b.name && a.type == b.type && a.height == b.height && a.prism_h == b.prism_h &&
            a.upper_h == b.upper_h && a.lower_h == b.lower_h && a.upper_alpha == b.upper_alpha &&
            a.lower_alpha == b.lower_alpha &&
            std::equal(std::begin(a.face_distance), std::end(a.face_distance), std::begin(b.face_distance)) &&
-           a.zenith == b.zenith && a.azimuth == b.azimuth && a.roll == b.roll;
+           a.zenith == b.zenith && a.azimuth == b.azimuth && a.roll == b.roll && a.axis_preset == b.axis_preset;
   }
   friend bool operator!=(const CrystalConfig& a, const CrystalConfig& b) { return !(a == b); }
 };
@@ -1863,6 +1876,12 @@ struct GuiState {
   // hard-reset special cases (a filter's presence flipping, a colour struct edit) serve epoch
   // accounting, not this question. A narrower struct with one question is cheaper than either
   // coupling.
+  //
+  // CrystalConfig's sticky axis label rides along inside `crystals` (the whole struct is compared
+  // by operator==), so a pure relabel — OK on an edit that changed only the label — reads as
+  // stale here. That is accepted, conservative overreach: the label is document state, the list's
+  // banner is allowed to over-report, and exempting one field would need a second comparator whose
+  // every future field would have to be weighed again. Not written as a special case on purpose.
   struct AnalysisSceneIdentity {
     std::vector<CrystalConfig> crystals;
     std::vector<Layer> layers;

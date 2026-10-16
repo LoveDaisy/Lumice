@@ -167,14 +167,14 @@ void ThumbnailCache::RenderThumbnail(int crystal_id, const GuiState& state) {
   renderer_.UpdateMesh(mesh.vertices, mesh.vertex_count, mesh.edges, mesh.edge_count, mesh.triangles,
                        mesh.triangle_count, mesh.edge_face_normals);
 
-  // Determine rotation based on axis preset (single source of truth in axis_presets.hpp;
-  // shared with the modal Reset View path so both views stay in sync). For kCustom
-  // the per-entry distribution means feed the chain formula — same construction
+  // Determine rotation based on the crystal's STORED axis label (single source of truth in
+  // axis_presets.hpp; shared with the modal Reset View path so both views stay in sync). The
+  // label is document state: retuning the parameters no longer moves the thumbnail's default
+  // view. For kCustom the per-entry distribution means feed the chain formula — same construction
   // order as g_axis_buf in edit_modals.cpp ([0]=zenith, [1]=azimuth, [2]=roll).
-  AxisPreset preset = ClassifyAxisPreset(crystal.zenith, crystal.azimuth, crystal.roll);
   AxisDist params[3] = { crystal.zenith, crystal.azimuth, crystal.roll };
   float rotation[16];
-  DefaultPreviewRotation(preset, params, rotation);
+  DefaultPreviewRotation(crystal.axis_preset, params, rotation);
 
   // Render to the shared renderer's FBO
   renderer_.Render(rotation, kDefaultCrystalZoom, CrystalStyle::kHiddenLine);

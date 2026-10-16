@@ -215,11 +215,6 @@ class TableFocusRing;
 bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, bool reload_active_inputs,
                              TableFocusRing& ring);
 
-// ---- Axis preset classification ----
-
-// Classify crystal axis configuration into a named preset (Parry/Column/Lowitz/Plate/Random/Custom).
-std::string AxisPresetName(const CrystalConfig& c);
-
 // Render filter summary text consumed by entry-card rows. Exposed so unit /
 // GUI tests can assert the rendered string directly. Format spec lives next
 // to the implementation in panels.cpp.

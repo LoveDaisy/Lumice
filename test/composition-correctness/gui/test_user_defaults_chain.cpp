@@ -220,19 +220,16 @@ TEST_F(UserDefaultsChain, PresetOverrideDocumentWriteReadEraseCompose) {
   EraseAxisPresetZenithStdFromDoc(doc, AxisPreset::kPlate);
   EXPECT_FALSE(doc.contains("presets")) << "the last erase left an empty skeleton behind: " << doc.dump();
 
-  // A preset with no adjustable face has no key at all, so all three operations are no-ops for it,
-  // and the clamp refuses out loud rather than storing something nothing ever reads.
+  // A preset with no adjustable face has no key at all, so all three operations are no-ops for it.
   WriteAxisPresetZenithStdToDoc(doc, AxisPreset::kRandom, 0.5f);
   EXPECT_FALSE(ReadAxisPresetZenithStdFromDoc(doc, AxisPreset::kRandom).has_value());
-  const AxisPresetClampResult refused = ClampAxisPresetZenithStdForSave(AxisPreset::kRandom, 0.5f);
-  EXPECT_FALSE(refused.accepted);
-  EXPECT_FALSE(refused.message.empty()) << "a refusal the user cannot read is a control that does nothing";
 }
 
-// The read is RAW on purpose: it reports what the document says, not what the classifier would
-// accept. Folding the clamp in would collapse "what is stored" and "what is in effect", and a
-// hand-edited file holding an out-of-domain value is exactly where the two differ.
-TEST_F(UserDefaultsChain, DocumentReadIsRawAndClampingIsASeparateDecision) {
+// The read is RAW on purpose: it reports what the document says. Since the axis label went sticky,
+// an out-of-domain value is not a state anything has to catch at the store — the drift it creates
+// is reported by the crystal badge's predicate, and this case pins that handoff: raw read verbatim,
+// and the predicate (not a store-side clamp) is where "Column no longer reads as Column" surfaces.
+TEST_F(UserDefaultsChain, DocumentReadIsRawAndTheBadgePredicateOwnsTheDrift) {
   nlohmann::json doc = nlohmann::json::object();
   const float kOutOfDomain = 1e6f;
   WriteAxisPresetZenithStdToDoc(doc, AxisPreset::kColumn, kOutOfDomain);
@@ -241,16 +238,24 @@ TEST_F(UserDefaultsChain, DocumentReadIsRawAndClampingIsASeparateDecision) {
   ASSERT_TRUE(stored.has_value());
   EXPECT_FLOAT_EQ(*stored, kOutOfDomain) << "the reader silently normalised a value it was asked to report";
 
-  const AxisPresetClampResult clamped = ClampAxisPresetZenithStdForSave(AxisPreset::kColumn, kOutOfDomain);
-  EXPECT_TRUE(clamped.clamped) << "the clamp decision is where an out-of-domain value is caught";
-  EXPECT_NE(clamped.stored_value, kOutOfDomain);
-  EXPECT_FALSE(clamped.message.empty()) << "a clamp the user is not told about is a value that changed by itself";
+  // The badge predicate sees exactly what the document holds, and answers honestly about it.
+  const AxisPresetEntry& entry = AxisPresetEntryFor(AxisPreset::kColumn);
+  const AxisDist zenith = EffectiveAxisPresetZenith(entry);
+  AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset::kColumn, kOutOfDomain);
+  const AxisDist overridden = EffectiveAxisPresetZenith(entry);
+  EXPECT_TRUE(AxisLabelOutOfDomain(AxisPreset::kColumn, overridden, entry.azimuth, entry.roll))
+      << "an out-of-domain override that the badge would miss";
+  EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kColumn, zenith, entry.azimuth, entry.roll))
+      << "the factory row must stay badge-negative";
+  AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset::kColumn, std::nullopt);
 
-  // The domain sentence beside the control is UI copy with a constraint on it: it must describe the
-  // bound. A placeholder here leaves the user reading a number with no stated meaning.
+  // The domain sentences beside the controls are UI copy with a constraint on them: both must
+  // describe something. A placeholder leaves the user reading a number with no stated meaning.
   for (AxisPreset preset : { AxisPreset::kColumn, AxisPreset::kPlate, AxisPreset::kParry, AxisPreset::kLowitz }) {
     EXPECT_FALSE(DescribeAxisPresetZenithStdDomain(preset).empty())
         << "preset " << AxisPresetLabel(preset) << " has an adjustable std with no description of what it may be";
+    EXPECT_FALSE(DescribeAxisPresetDomain(preset).empty())
+        << "preset " << AxisPresetLabel(preset) << " has no usual-range description for the badge tooltip";
   }
 }
 
