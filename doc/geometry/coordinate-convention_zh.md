@@ -16,7 +16,10 @@
 - `N3`（3 号面）外法向 → 局部 `+x`
 - `N1 × N3` → 局部 `+y`（右手定则）
 
-其余面由六棱柱对称性自然推出，详见 `src/core/crystal.cpp::FillHexFnMap` 中的法向表。
+其余面由六棱柱对称性自然推出。当前面槽位与面号映射声明在
+`src/core/geo3d_closedform.hpp`，由 `ComputeClosedFormPrism` /
+`ComputeClosedFormPyramid` 填充；`Crystal::PopulateFromCfGeom` 随后把这些面号直接带入
+追迹表示，不再从法向反推。
 
 `Nx` 表示 `x` 号面的外法向单位向量（由晶体内部指向外部）。本文档中 c-axis 始终指 N1 方向。
 
@@ -103,7 +106,7 @@ R(azimuth, zenith, roll) = Rz(azimuth − 180°) · Ry(−zenith) · Rz(roll)
 | Parry  | Gauss(μ=90°, σ)     | Uniform [0°, 360°)     | Gauss(μ=0°, σ) locked   |
 | Lowitz | Gauss(μ=0°, σ_L)    | Uniform [0°, 360°)     | Gauss(μ=0°, σ) locked   |
 
-"locked" 表示 GUI 把分布类型固定为 Gauss，仅 σ 可由用户调整。默认 σ 取值参见 `src/gui/edit_modals.cpp::kAxisPresets`（当前 Plate / Column / Parry σ = 1°，Lowitz σ_L = 40°）。
+"locked" 表示 GUI 把分布类型固定为 Gauss，仅 σ 可由用户调整。默认 σ 取值参见 `src/gui/axis_presets.hpp::kAxisPresets`（当前 Plate / Column / Parry σ = 1°，Lowitz σ_L = 40°）。
 
 各 preset 在运行时的视觉差异主要来自**分布形态**（Uniform vs locked Gauss、大 σ vs 小 σ），而非均值参数差异。Column 与 Parry 在默认下共享相同的 `(μ_az, μ_zenith, μ_roll)` 三元组，仅在 `roll` 采样方式上不同。
 
@@ -257,7 +260,9 @@ lat = asin(−c.y)       = asin(g_z)
 
 ### 10.2 语义保持字段
 
-- `filter.raypath`：面编号物理位置不变。`src/core/crystal.cpp` 中 `ref_norms[]` 未修改，`raypath = [3, 5]` 仍指向同一对物理面。
+- `filter.raypath`：面编号物理位置不变。`src/core/geo3d_closedform.hpp` 的闭式槽位表与
+  `ComputeClosedFormPrism` / `ComputeClosedFormPyramid` 的 `face_number` 赋值保证
+  `raypath = [3, 5]` 仍指向同一对物理面；`Crystal::PopulateFromCfGeom` 把这些面号直接复制到追迹表示。
 - `light.*`、`view.*`、`crystal.shape.*`、`filter.symmetry`：不变。
 
 ### 10.3 迁移策略
@@ -287,9 +292,9 @@ lat = asin(−c.y)       = asin(g_z)
 
 实现正确性由三层独立验证：
 
-1. **数学层**：`test/test_simulator.cpp` 单元测试（`BuildCrystalRotation.CaseA_AzOffsetOnly` ... `CaseD_RollAroundCAxis`）以 4 条数学可分辨的输入分别探查 chain 各项
+1. **数学层**：`test/unit-correctness/core/test_simulator.cpp` 单元测试（`BuildCrystalRotation.CaseA_AzOffsetOnly` ... `CaseD_RollAroundCAxis`）以 4 条数学可分辨的输入分别探查 chain 各项
 2. **结构层**：GUI 缩略图（`src/gui/thumbnail_cache.cpp`）展示 §5 中的典型 preset 姿态
-3. **物理层**：E2E 与 GUI 参考图（`test/e2e/references/*.jpg` / `test/gui/references/*.png`）核验 halo pattern 在 chain 改动前后的稳定性。所有 axis 全方位均匀采样的配置在 chain 改动下统计不变，参考图无需重新生成
+3. **物理层**：E2E 与 GUI 参考图（`test/e2e-correctness/references/*.jpg` / `test/gui/references/*.png`）核验 halo pattern 在 chain 改动前后的稳定性。所有 axis 全方位均匀采样的配置在 chain 改动下统计不变，参考图无需重新生成
 
 任意一层验证失败时，按以下优先级排查：
 
@@ -299,7 +304,8 @@ lat = asin(−c.y)       = asin(g_z)
 
 ## 附录：chain 输出速查表
 
-下表的 4 个用例数学可分辨，独立探查 chain 各项，对应 `test/test_simulator.cpp` 中的断言。
+下表的 4 个用例数学可分辨，独立探查 chain 各项，对应
+`test/unit-correctness/core/test_simulator.cpp` 中的断言。
 
 | Case | (az°, zenith°, roll°) | N1_world (= R · ê_z) | N3_world (= R · ê_x) | 验证目标             |
 |------|------------------------|----------------------|----------------------|----------------------|
@@ -317,7 +323,7 @@ Preset 与 Case 的对应关系：
 - Column 默认（zenith = 90°, roll Uniform）：均值层与 Parry 相同；preset 差异在 `roll` **分布**上，不在 chain 输出上
 - Lowitz 默认（zenith = 0° mean，大 σ）：均值层与 Plate 相同；c-axis 因大 σ 在天顶附近大幅摆动
 
-## 13. 屏幕手性（渲染投影约定）
+## 10. 屏幕手性（渲染投影约定）
 
 前面各节固定了**世界**坐标、azimuth 数学约定与相机 forward 方向，但**刻意没有**规定"azimuth 增大对应屏幕的哪一侧"。屏幕左右映射是一个**渲染呈现**层面的选择，只定义一次，并在所有渲染路径（CLI 直出图、GPU Metal/CUDA 后端、GUI 预览）上一致应用。core 模拟器（世界方向 + 旋转链）不受影响，仍遵 §3。
 
@@ -330,9 +336,9 @@ Preset 与 Case 的对应关系：
 **实现**：屏幕 x 手性落在 `lm_proj::ProjectExitToPixel`（`src/core/shared/projection_shared.h`，legacy CPU / Metal / CUDA 三端共享的单一真源）的单镜头分支，故所有后端继承同一约定。GUI 的独立 forward 实现（`preview_renderer.cpp::ProjectWorldDirToScreen`、`overlay_labels.cpp::WorldDirToPixel`）本就产出相同的 `右 = +az`。
 
 **回归守卫**：手性翻转对 forward/inverse 往返测试不可见（任何自洽约定下往返都恒闭合），故用**绝对屏幕左右符号**断言钉死：`test/golden-analytic/core/test_projection.cpp`（backend 绝对列 pin）+ `test/unit-correctness/gui/test_render_handedness_guard.cpp`（backend + 两条 GUI forward + 交互读回的跨实现对拍）。
-## 14. 像素中心约定（前向分箱 ↔ 掩码 ↔ shader）
+## 11. 像素中心约定（前向分箱 ↔ 掩码 ↔ shader）
 
-§13 固定的是「方向落在屏幕哪一侧」。本节固定它下面那个亚像素问题：**给定一个连续图像坐标，它是哪个像素？该像素的中心又在哪？** 这两半此前的答案相差恰好半个像素。
+§10 固定的是「方向落在屏幕哪一侧」。本节固定它下面那个亚像素问题：**给定一个连续图像坐标，它是哪个像素？该像素的中心又在哪？** 这两半此前的答案相差恰好半个像素。
 
 **约定：像素 `px` 覆盖连续区间 `[px - res/2, px + 1 - res/2)`，其中心在 `px + 0.5 - res/2`。** 图像关于画面中心对称，可寻址区间为 `[-res/2, res/2)`。
 
@@ -355,7 +361,7 @@ Preset 与 Case 的对应关系：
 
 第三对配对有自己的守卫，在 `test/gui/functional/test_preview_dual_fisheye_gather.cpp`。它不可能写成 C++ 往返——gather 活在 GLSL 里，而在测试里镜像一份该公式只会让断言自证自身。它改为直接跑真实 shader，并把源格式的 `r_scale` 置为 1：这使显示侧反投影与 gather 侧正投影成为同一投影、同一尺度，整条链塌缩成一个恒等映射——画布像素 `(col, row)` 必须读到源纹素 `(col, row)`。再以单纹素棋盘直接测这条约定：锐利即表示每个片元只读了一个纹素，塌成一片平坦中灰即表示它平均了一个 2×2 块。注意它的覆盖边界：它检测的是**所有像素共有的系统性偏移**，也就是约定失配本身的形态。一个把内容整体搬走却不使其糊化的投影错误（旋转、镜像圆盘）会保持棋盘锐利、在这里通过；那类问题由 `lens_proj` 参考图与 `test_visible_mask_gui_parity.cpp` 覆盖。
 
-## 15. 方向向量语义（travel 与 position）
+## 12. 方向向量语义（travel 与 position）
 
 §2–§3 固定的是**位置类**量的世界系。本节是**方向向量**的唯一权威——即流经 C API 的单位
 3 向量（`cone_center`、`incident_direction`、`target_direction`、`outgoing_direction`、
@@ -404,9 +410,9 @@ Preset 与 Case 的对应关系：
 LI kernel 的 target 是位置）与引擎 CLI 标签（也是位置 bearing）对比时，忘了两个 kernel 的
 target **字段**分别落在 travel/position 取负的两侧——标签相同，交给 kernel 的向量种类不同。
 
-## 16. 镜头落域（每 family 的全天空覆盖）
+## 13. 镜头落域（每 family 的全天空覆盖）
 
-§13/§14 修的是方向**在画布上**落哪。本节修的是一切「图像 ↔ 方向域统计」互检底下的问题：
+§10/§11 修的是方向**在画布上**落哪。本节修的是一切「图像 ↔ 方向域统计」互检底下的问题：
 **每个镜头 family 究竟把哪些方向落到画布上**——因此一张图的能量份额在被拿去与全天空
 数字（analysis 的 `total_energy`、链表份额、`mc_evidence`）比较之前，语义是什么。
 

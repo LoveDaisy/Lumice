@@ -36,8 +36,8 @@ is traced — none is discarded. One formula, `lm_pcg::entry_weight`
 (`src/core/simulator.cpp`) and the Metal and CUDA entry kernels. So the light the orientations
 actually contribute is distributed as `p(o)·A(o,d)`, and a "uniform" `p(o)` does not mean
 every orientation contributes equally. The two stages are independent — nothing here
-needs to know about the acceptance, and changing a distribution below never changes the
-acceptance formula. What the acceptance means for the `proportion` of a scattering entry
+needs to know about the entry-weight formula, and changing a distribution below never changes
+that formula. What this weighting means for the `proportion` of a scattering entry
 (a crystal count share under an equal-surface-area convention) is stated once, in
 `doc/configuration.md` under `ray_allocation`.
 
@@ -123,13 +123,15 @@ Laplace scale parameter suffices.
 
 ## 3. Supported Distribution Types
 
-Four distribution types are supported, plus a deterministic mode. All types
-share the same `mean`/`std` parameter fields in JSON; the meaning of `std`
-varies by type.
+Four recommended stochastic distribution types are supported, plus the
+`gauss_legacy` compatibility type and a deterministic mode. Object forms share
+the same `mean`/`std` parameter fields in JSON; the meaning of `std` varies by
+type.
 
 | Type | Definition | `mean` | `std` | Use Case |
 |------|-----------|--------|-------|----------|
 | `gauss` | p(θ) ∝ exp(−(θ−μ)²/2σ²) | center μ (deg) | std deviation σ (deg) | Stable-mode orientation |
+| `gauss_legacy` | same Gaussian proposal, without spherical-area weighting | center μ (deg) | std deviation σ (deg) | Reproduce pre-Jacobian simulation results only |
 | `uniform` | p(θ) = const on [μ−w/2, μ+w/2] | center μ (deg) | full width w (deg) | Random orientation; roll |
 | `zigzag` | θ = \|A·sin(2πU) + B\|, folded arcsine | tilt offset B (deg) | amplitude A (deg) | Large-crystal oscillation |
 | `laplacian` | p(θ) ∝ exp(−\|θ−μ\|/b) | center μ (deg) | scale b (deg) | Size-aggregated tilt |
@@ -139,6 +141,7 @@ every crystal receives exactly that angle with no randomization.
 
 **Parameter notes:**
 - `gauss` σ = 2° means 68% of crystals fall within ±2° of the mean.
+- `gauss_legacy` has the same μ/σ parameters but deliberately bypasses §4.1; use it only for legacy-result comparison.
 - `uniform` `std` is the full range width, not the standard deviation.
 - `zigzag` distribution has support on [0, |A|+|B|] after folding.
 - `laplacian` standard deviation is √2·b ≈ 1.41b.
@@ -161,7 +164,7 @@ Without this, sampling overconcentrates at the poles where sin(θ) → 0.
 
 `lat_path::SelectLatPath` (`src/core/shared/lat_path_selection.hpp`) is the
 single source for path selection, shared by the CPU sampler
-(`math.cpp::SampleSphericalPointsSph`) and both GPU backends. It resolves one
+(`src/core/random.cpp::RandomSampler::SampleSphericalPointsSph`) and both GPU backends. It resolves one
 of four paths:
 
 **Path 1: Full-sphere (`kFullSphere`).** Triggered when the axis distribution
@@ -183,9 +186,9 @@ a recommended type for new configs.
 
 **Path 4: Unified LUT (`kLutInverseCdf`).** Every other non-degenerate type —
 `kGaussian`, `kLaplacian`, `kUniform`, `kZigzag` — routes here. One
-precomputed inverse-CDF lookup table replaces what used to be three separate
-per-distribution samplers (Rayleigh / generic-rejection / deterministic —
-retired in 330.3, see §5.2). Described in §4.3.
+precomputed inverse-CDF lookup table replaces the three retired
+non-degenerate branches (`kRayleigh`, `kGenericReject`, and
+`kLaplacianTightEnvelope` — retired in 330.3, see §5.2). Described in §4.3.
 
 These four paths are the complete taxonomy: there is no longer a near-pole
 vs. off-pole split, and no rejection loop anywhere in this list (see
@@ -193,8 +196,8 @@ vs. off-pole split, and no rejection loop anywhere in this list (see
 
 ### 4.3 The Unified Inverse-CDF LUT (`kLutInverseCdf`)
 
-Build (host-side, once per axis distribution — `lat_lut.cpp::BuildLatLut`,
-memoized by `GetSharedLatLut` across CPU worker threads and both GPU
+Build (host-side, once per axis distribution — `src/core/lat_lut.cpp::BuildLatLut`,
+memoized by `GetSharedLatLut` declared in `src/core/lat_lut.hpp` across CPU worker threads and both GPU
 backends, never rebuilt per ray):
 
 - A deterministic quadrature evaluates the exact per-family proposal
@@ -258,17 +261,24 @@ and rejected vMF, Matrix Fisher, and Bingham distributions as alternatives.
 
 ### 5.2 Retired Per-Distribution Envelope/Rejection Architecture (pre-330.3)
 
-Between the Jacobian fix (§5.1) and 330.3, the non-degenerate distributions
-were served by three separate per-distribution paths instead of the single
-LUT in §4.3 (full record: `doc/geometry/near-pole-area-measure-sampling.md`):
+Between the Jacobian fix (§5.1) and 330.3, non-degenerate distributions
+were routed among three branches instead of the single LUT in §4.3 (full
+record: `doc/geometry/near-pole-area-measure-sampling.md`). The deterministic
+`kNoRandom` path was separate and survived 330.3; it was not one of the retired
+branches:
 
 **Path: Rayleigh (colatitude < 0.5°).** Near a pole, the Jacobian and
 Gaussian combine to give a Rayleigh distribution in the tangent plane.
 The sampler drew 2D Gaussian samples, producing correct spherical density
 without rejection. Exact, O(1) per sample.
 
-**Path: Generic rejection.** For Gaussian (non-Rayleigh), zigzag, and
-Laplacian:
+**Path: Laplacian tight envelope.** A near-pole Laplacian used the
+`Gamma(2,b)` proposal for `base_pdf(θ)·θ`, then accepted with
+`sin(θ)/θ`. Like the Rayleigh branch, this absorbed the vanishing area
+Jacobian into the proposal and avoided the generic path's near-pole collapse.
+
+**Path: Generic rejection.** For off-pole Gaussian and Laplacian, plus uniform
+and zigzag:
 
 1. Draw proposal θ from the base distribution.
 2. Accept with probability cos(φ)/M, where φ is the latitude after
@@ -281,9 +291,12 @@ Laplacian:
 | Zigzag | cos(max(\|μ\| − A, 0)°) | full amplitude |
 | Laplacian | cos(max(\|μ\| − 5b, 0)°) | 99.3% |
 
-**Path: Deterministic.** No sampling needed (this is today's `kNoRandom`).
+`kNoRandom` remained the same non-sampling path before and after this
+architecture; the retired numeric wire slots are 2 / 4 / 5 for Rayleigh /
+GenericReject / LaplacianTightEnvelope.
 
-Per-type proposal generation (Rayleigh and Deterministic need none):
+Generic-rejection proposal generation (the tight-envelope paths used their
+own Rayleigh / Gamma proposals; `kNoRandom` sampled nothing):
 
 - **Gaussian:** Normal variate × σ + μ. O(1) per proposal.
 - **Zigzag:** θ = |A · sin(2πU) + B|, U ~ Uniform(0,1). O(1).
@@ -295,7 +308,7 @@ Measured acceptance rates for the rejection path:
 - Near equator (zenith ≈ 90°): ~100% (cos φ ≈ 1)
 - Mid-latitude (zenith ≈ 45°): ~70–80%
 - Near pole (zenith ≈ 5°): ~30–40%
-- Zigzag/Laplacian: similar rates, governed by the same cos(φ)/M formula
+- Zigzag/Laplacian when routed through generic rejection: similar rates, governed by the same cos(φ)/M formula
 
 The near-pole acceptance-rate collapse was the reason this architecture was
 replaced by the unified LUT in §4.3 — see `doc/geometry/near-pole-area-measure-sampling.md`

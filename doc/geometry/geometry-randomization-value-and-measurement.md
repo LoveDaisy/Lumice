@@ -162,7 +162,7 @@ The reusable recipes, so the next person does not re-derive them:
   360 uniform (`src/gui/axis_presets.hpp` `ClassifyAxisPreset`).
 - **`uniform` vs `gauss` at matched statistical σ** to separate clean polydispersity from
   degenerate-tail artifacts. `uniform`'s `std` parameter is the *full width*
-  (`(GetUniform()−0.5)·std + mean`, `src/core/math.cpp`), so match a `gauss` σ with a `uniform`
+  (`(u−0.5)·full_range + center`, `src/core/sample_transform.cpp::TransformDistributionDraw`), so match a `gauss` σ with a `uniform`
   full width of `σ·√12`.
 - **Compare converged means with enough rays** (the bias axis compares two different converged
   images; at ~20–40M rays the mono profile is seed-stable — 3-seed ≡ 1-seed).
@@ -199,9 +199,11 @@ The reusable recipes, so the next person does not re-derive them:
   radiometric calibration / crystal population).
 - **120° parhelion anomaly** (§2.1) — mechanism unresolved; low priority.
 - **`K*(config)` auto-calibration** from §3's law, reusing the bias-axis multi-seed harness.
-- **Shrink `MakeCrystal` object construction** — the cross-backend construction wall's real
-  lever; its ROI is largest exactly on the multi-crystal scenes where K=64 is worst (see
-  `geometry-randomization-perf.md`).
+
+Completed since stage 1: the former **shrink `MakeCrystal` object construction** item landed by
+removing triangle-mesh construction from the hot path. The measured backend gains and remaining
+pool-management/H2D wall are recorded in `geometry-randomization-perf.md`; it is no longer an open
+item in this document.
 
 ---
 
@@ -215,6 +217,6 @@ The reusable recipes, so the next person does not re-derive them:
 - **变量定律（blueprint）**：`Var(K)=(σ̄²_w+K·σ²_b)/N`，`K*=√((σ̄²_w/σ²_b)·(C/c))`；靠三结构不变量
   （i.i.d. 抽 / 各 MS 层独立重采 / PCG 流隔离）保 `K` 干净线性定位；护栏红线 = 流碰撞 / 跨层复用形状 / 采样依赖形状。
 - **方法论**：散射角空间剖面（非像素配准）/ 太阳天顶→θ_s=90−lat 逐行满采样 / plate+地平线→幻日环=赤道行 /
-  uniform-vs-gauss 同 σ disentangle / 积分能量+像素数纪律 / C API 原始 XYZ（no-filter 读 `xyz_buffer`，
-  `unfiltered_xyz_buffer` 是 0x1 哨兵）。
+  uniform-vs-gauss 同 σ disentangle / 积分能量+像素数纪律 / C API 原始 XYZ（no-filter 同样读单一 `xyz_buffer`；
+  `unfiltered_xyz_buffer` 与旧 getter 已退役，`xyz_buffer == NULL` 是当前 sentinel）。
 - **两 config**：性能须含多晶多MS；正确性 = rectangular+太阳（天顶/地平线），特征位取暗区/sundog/对日弱峰/幻日环。

@@ -22,8 +22,11 @@ crystal. The convention is right-handed with:
 - `N3` (face 3) outward normal → local `+x`
 - `N1 × N3` → local `+y` (right-hand rule)
 
-Other faces follow from hexagonal symmetry; see `src/core/crystal.cpp::FillHexFnMap`
-for the full normal table.
+Other faces follow from hexagonal symmetry. The current face-slot and face-number
+mapping is declared in `src/core/geo3d_closedform.hpp` and populated by
+`ComputeClosedFormPrism` / `ComputeClosedFormPyramid`; `Crystal::PopulateFromCfGeom`
+then carries those numbers into the tracing representation without reconstructing them
+from normals.
 
 `Nx` denotes the outward unit normal of face `x` (pointing from crystal interior
 to exterior). The c-axis is identified with N1 throughout this document.
@@ -130,7 +133,7 @@ to match the spherical sampling convention used internally.
 
 "locked" means the GUI fixes the distribution type to Gaussian and only the σ
 is user-adjustable. The default σ values follow `kAxisPresets` in
-`src/gui/edit_modals.cpp` (currently σ = 1° for Plate / Column / Parry, σ_L =
+`src/gui/axis_presets.hpp` (currently σ = 1° for Plate / Column / Parry, σ_L =
 40° for Lowitz).
 
 The visual differences between presets at runtime come primarily from the
@@ -367,9 +370,11 @@ azimuth, and differ with a vertical component under elevation or roll.
 
 ### 10.2 Fields with Preserved Semantics
 
-- `filter.raypath`: Face indices remain physically anchored. The `ref_norms[]`
-  table in `src/core/crystal.cpp` is unchanged, so `raypath = [3, 5]` still
-  selects the same physical face pair.
+- `filter.raypath`: Face indices remain physically anchored. The closed-form
+  slot tables in `src/core/geo3d_closedform.hpp` and the `face_number`
+  assignments in `ComputeClosedFormPrism` / `ComputeClosedFormPyramid` keep
+  `raypath = [3, 5]` on the same physical face pair; `Crystal::PopulateFromCfGeom`
+  copies those numbers directly into the tracing representation.
 - `light.*`, `view.*`, `crystal.shape.*`, `filter.symmetry`: Unchanged.
 
 ### 10.3 Migration Strategy
@@ -413,13 +418,13 @@ Notable patterns:
 
 Implementation correctness is gated by three independent layers:
 
-1. **Mathematical**: Unit tests in `test/test_simulator.cpp`
+1. **Mathematical**: Unit tests in `test/unit-correctness/core/test_simulator.cpp`
    (`BuildCrystalRotation.CaseA_AzOffsetOnly` ... `CaseD_RollAroundCAxis`)
    assert the chain output for four distinguishable inputs that probe each
    chain term individually.
 2. **Structural**: GUI thumbnails (`src/gui/thumbnail_cache.cpp`) display
    the canonical preset poses described in §5.
-3. **Physical**: E2E reference images (`test/e2e/references/*.jpg`) and GUI
+3. **Physical**: E2E reference images (`test/e2e-correctness/references/*.jpg`) and GUI
    reference images (`test/gui/references/*.png`) verify that rendered halo
    patterns are stable across chain changes; configurations with full-azimuth
    uniform sampling are statistically invariant under the chain rework, so
@@ -434,7 +439,8 @@ If any layer fails after a chain modification, investigate in this priority:
 ## Appendix: Chain Output Quick Reference
 
 The following four cases are mathematically distinguishable, probe each chain
-term in isolation, and are exactly what `test/test_simulator.cpp` asserts.
+term in isolation, and are exactly what
+`test/unit-correctness/core/test_simulator.cpp` asserts.
 
 | Case | (az°, zenith°, roll°) | N1_world (= R · ê_z) | N3_world (= R · ê_x) | Probes               |
 |------|------------------------|----------------------|----------------------|----------------------|
