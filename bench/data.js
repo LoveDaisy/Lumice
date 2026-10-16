@@ -1,50 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792157056436,
+  "lastUpdate": 1792160494017,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "88a667fb94867eaa45b47b789e101b9b505a99ee",
-          "message": "Merge pull request #387 from LoveDaisy/docs/thread-budget-owner-ruling\n\ndocs(gui): record the owner's ruling on the capped render thread budget",
-          "timestamp": "2026-09-20T07:45:28+08:00",
-          "tree_id": "659f93e361c41c0c2e674a5a3bba6178131d04b4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/88a667fb94867eaa45b47b789e101b9b505a99ee"
-        },
-        "date": 1789862100870,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "Ubuntu ARM64",
-            "value": 510601.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 417255.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 313501.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4750,6 +4708,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 499058.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c3372ae22b354c4456f0c52e19980930451b511a",
+          "message": "Merge pull request #497 from LoveDaisy/feat/entry-edit-weight-toggle\n\nfeat(gui): entry bar in Edit Entry — weight and participation toggle in the modal",
+          "timestamp": "2026-10-16T22:18:44+08:00",
+          "tree_id": "1b15038814229189d3747ad68a70aad46c55ed88",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c3372ae22b354c4456f0c52e19980930451b511a"
+        },
+        "date": 1792160492251,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 351547.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 506160.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 429632.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 481807.7,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
