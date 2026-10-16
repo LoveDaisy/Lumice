@@ -350,7 +350,7 @@ void to_json(nlohmann::json& j, const RenderConfig& r) {
 }
 
 
-// See doc/accumulator-consumer-architecture.md §5.1 (layout vs. appearance classification),
+// See doc/rendering/accumulator-consumer-architecture.md §5.1 (layout vs. appearance classification),
 // §5.2 (field-set guard and size tripwire).
 bool NeedsRebuild(const RenderConfig& a, const RenderConfig& b) {
   // A SIZE tripwire, not the field-set guard, and the distinction is what the two comments below

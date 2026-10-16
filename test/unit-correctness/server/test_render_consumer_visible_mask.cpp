@@ -337,7 +337,7 @@ TEST_P(VisibleIsADisplayClip, RawEnergyIsIdenticalUnderUpperAndFull) {
 // the two paths two different metering rules — the exact class of core/GUI divergence this scrum
 // exists to remove.
 //
-// The consequence is deliberate and documented (doc/ev-pipeline-architecture.md §2.7): removing
+// The consequence is deliberate and documented (doc/rendering/ev-pipeline-architecture.md §2.7): removing
 // the single-lens ray cull let the excluded hemisphere reach the buffer, which moves the P99 and
 // therefore the brightness of existing single-lens + `visible != full` scenes. That migration is
 // the honest price of this rule, not a defect — so the rule is pinned here rather than left to be
@@ -380,7 +380,7 @@ ExcludedPixel FindPixelIncludedByVisibleRange(LensParam::LensType type) {
 constexpr float kBrightWeight = 1.0f;
 constexpr float kDimWeight = 0.1f;
 
-// The metering rule of doc/ev-pipeline-architecture.md 2.7, restated for the two-sided anchor.
+// The metering rule of doc/rendering/ev-pipeline-architecture.md 2.7, restated for the two-sided anchor.
 //
 // The rule used to be "the relative anchor takes the P99 of the WHOLE snapshot buffer, and the
 // `visible` clip is applied afterwards" — a discipline the code had to keep, because the anchor
@@ -450,7 +450,7 @@ TEST(RenderConsumerMeteringRule, RelativeExposureIsIndependentOfThisFramesOwnPix
   EXPECT_FLOAT_EQ(scale_kept_only, scale_upper)
       << "deleting a ray from the frame moved the exposure, from " << scale_upper << " to " << scale_kept_only
       << ". The relative anchor is a property of the SCENE, measured once per snapshot on the full-sky anchor "
-         "plane; a frame's own pixels are not allowed to move it. See doc/ev-pipeline-architecture.md 2.7.";
+         "plane; a frame's own pixels are not allowed to move it. See doc/rendering/ev-pipeline-architecture.md 2.7.";
 
   // Control: the two equalities above are not vacuous. Under the RETIRED rule both comparisons
   // moved — the `visible` one is what 478.2 measured and named in the parity fixture, and the

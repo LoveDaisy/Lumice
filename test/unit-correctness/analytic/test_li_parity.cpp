@@ -3,7 +3,7 @@
 // against this library's kernels and compared by the recipes of LI docs/analytic-parity-fixtures.md
 // section 4. The direction is one way: LI is the reference. A red here is fixed in the C++ or, when
 // the disagreement is about a tolerance or a semantic, in LI followed by a re-export — never by
-// editing a fixture or widening a bound in this file (doc/analytic-api.md, "Parity with LI").
+// editing a fixture or widening a bound in this file (doc/interfaces/analytic-api.md, "Parity with LI").
 //
 // What is compared and what is not:
 //  - Every tolerance is read from the fixture's own `tolerance.<quantity>.value`. The only numbers
@@ -18,7 +18,7 @@
 //  - The comparison geometry (rotation distance, SO(3) log/exp, densification, Hausdorff) is written
 //    out below independently of src/analytic/so3.hpp, so a defect there cannot also blind the ruler.
 //
-// symmetry_semantics: none — asserted per fixture (doc/analytic-api.md section 3.3 rule 2): a
+// symmetry_semantics: none — asserted per fixture (doc/interfaces/analytic-api.md section 3.3 rule 2): a
 // fixture that carried a symmetry reduction would not describe one concrete face sequence.
 
 #include <gtest/gtest-spi.h>
@@ -760,7 +760,7 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
   }
   EXPECT_EQ(claimed, listed.size())
       << "the manifest lists a fixture kind this reader does not replay: extend the reader first "
-         "(doc/analytic-api.md, Parity with LI)";
+         "(doc/interfaces/analytic-api.md, Parity with LI)";
   std::set<std::string> present;
   for (const auto& entry : std::filesystem::directory_iterator(FixtureDir())) {
     const std::string name = entry.path().filename().string();
@@ -830,8 +830,8 @@ TEST_P(LiParityProvenance, HeaderFieldsAndSymmetrySemantics) {
   const std::string li_rev = ReadSource().at("li_rev");
   EXPECT_EQ(f.value("format", ""), kFormat);
   EXPECT_EQ(f.value("schema_version", 0), kSchemaVersion)
-      << "schema changed in LI: update this reader first (doc/analytic-api.md, Parity with LI)";
-  // doc/analytic-api.md section 3.3 rule 2: every fixture is one concrete face sequence.
+      << "schema changed in LI: update this reader first (doc/interfaces/analytic-api.md, Parity with LI)";
+  // doc/interfaces/analytic-api.md section 3.3 rule 2: every fixture is one concrete face sequence.
   EXPECT_EQ(f.value("symmetry_semantics", ""), "none");
   EXPECT_EQ(f.at("provenance").at("li_rev").get<std::string>(), li_rev);
   EXPECT_TRUE(f.at("provenance").at("li_tracked_tree_clean").get<bool>());

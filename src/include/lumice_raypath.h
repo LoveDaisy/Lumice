@@ -16,12 +16,12 @@ extern "C" {
 // Everything computed once ONE single-layer raypath of ONE crystal entry has been chosen: the
 // components of the fiber of crystal poses that send the sun into a given sky point, each
 // component's poses with per-pose detail, and the path's deviation over the whole sun-direction
-// sphere (doc/raypath-analysis.md section 5.1.8). Synchronous and deterministic (the same scene and
+// sphere (doc/raypath/raypath-analysis.md section 5.1.8). Synchronous and deterministic (the same scene and
 // request give the same result); it runs on the calling thread, is independent of any
 // LUMICE_Server, and cannot be cancelled — sample_count bounds its cost.
 //
 // The result is an OPAQUE handle read through its JSON form (LUMICE_SinglePathResultToJson; the
-// fields are documented in doc/raypath-cli-output.md), not a C struct mirror. Deliberate: the result
+// fields are documented in doc/raypath/raypath-cli-output.md), not a C struct mirror. Deliberate: the result
 // holds variable-length nested lists (components -> points -> per-face arrays) whose fields a user
 // interface will keep adding to, and the engine is the one place it is serialized, so the CLI and
 // the GUI cannot each grow a copy. Typed readers may be appended later without changing this

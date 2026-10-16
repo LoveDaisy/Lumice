@@ -954,7 +954,7 @@ TEST_F(V3TestCrystal, PyramidFeasibilityFuzzDirectWedge_sigma03_GreenBaseline) {
 // production gate in crystal.cpp (Crystal factory boundary) — this test file
 // asserts against the real implementation instead of a hand-copied one, so a
 // future tightening of the predicate (e.g. added manifold checks per
-// doc/numerical-robustness.md) can't silently drift out of sync with what
+// doc/geometry/numerical-robustness.md) can't silently drift out of sync with what
 // these tests actually verify.
 
 // Shared fuzz driver for the prism face_distance matrix. Callers pass the
@@ -1706,7 +1706,7 @@ AxisDistribution GatingAxis(DistributionType lat_type, float lat_center, float l
   return d;
 }
 
-// The scenario rows of doc/raypath-symmetry.md §5: random, column, Parry, plate, Lowitz-like.
+// The scenario rows of doc/raypath/raypath-symmetry.md §5: random, column, Parry, plate, Lowitz-like.
 std::vector<AxisDistribution> GatingScenarioAxes() {
   return {
     GatingAxis(DistributionType::kUniform, 0.0f, 360.0f, DistributionType::kUniform, 0.0f, 360.0f),  // random

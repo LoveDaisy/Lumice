@@ -112,7 +112,7 @@ Lumice uses a small number of environment variables for build scripts and test t
 | `LUMICE_BIN` | `test/e2e/runner.py` | Override the CLI binary path for E2E subprocess tests. Defaults to `build/cmake_install/static/Lumice`. |
 | `LUMICE_LIB` | `test/e2e/capi_runner.py` | Override the shared library path for E2E C API tests. Defaults to the first existing shared-flavor candidate, starting with `build/Release/shared/lib/liblumice_testapi.dylib` (macOS) or `.so` (Linux) — the test-only superset of `liblumice` (same objects plus the `LUMICE_TEST_*` hooks of `test/support/lumice_test_api.h`), never `liblumice` itself. |
 
-**Design principle**: Deterministic simulation seeds are passed via the C API (`LUMICE_ServerConfig.sim_seed`) rather than environment variables, to keep program behavior explicit and reproducible. See the [C API documentation](c_api.md) for details.
+**Design principle**: Deterministic simulation seeds are passed via the C API (`LUMICE_ServerConfig.sim_seed`) rather than environment variables, to keep program behavior explicit and reproducible. See the [C API documentation](interfaces/c_api.md) for details.
 
 ## Code Style Guide
 
@@ -564,7 +564,7 @@ End-to-end tests verify the complete CLI simulation pipeline, from configuration
 test/e2e-correctness/           # tests (independent top-level directory)
 ├── test_smoke.py             # Smoke tests with PSNR image verification
 ├── test_cli.py                # CLI behavior
-├── ...                         # other correctness tests — see doc/testing-architecture.md §1.4
+├── ...                         # other correctness tests — see doc/testing/testing-architecture.md §1.4
 └── references/                 # Reference output images (*.jpg)
 
 test/e2e/                       # shared fixtures (independent top-level directory)
@@ -784,5 +784,5 @@ instruments -t "Time Profiler" ./build/cmake_install/static/Lumice -f examples/c
 
 - [System Architecture](architecture.md) - Understand the system design
 - [Configuration Documentation](configuration.md) - Configuration format reference
-- [C API Documentation](c_api.md) - C interface usage guide
+- [C API Documentation](interfaces/c_api.md) - C interface usage guide
 - [Documentation Index](README.md) - Navigation for all documents

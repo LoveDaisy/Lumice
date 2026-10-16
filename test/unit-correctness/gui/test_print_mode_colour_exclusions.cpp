@@ -1,4 +1,4 @@
-// The GUI half of "print takes over the colour channel" (doc/print-mode-subtractive-ink.md §7),
+// The GUI half of "print takes over the colour channel" (doc/rendering/print-mode-subtractive-ink.md §7),
 // asked the questions that need no window.
 //
 // The rule has four instances, and the GUI's job for each is to make the exclusion VISIBLE — a

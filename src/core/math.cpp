@@ -357,7 +357,7 @@ std::pair<float, bool> detail::NormalizeLatitude(float latitude_rad) {
 // (2D) or det = scalar triple product of three unit normals = sin(trihedral angle)
 // (3D), both bounded in [-1, 1]. The threshold therefore measures angular
 // degeneracy and is scale-invariant w.r.t. the caller's normal magnitudes (see
-// doc/numerical-robustness.md §2; task-solveplanes-det-normalization).
+// doc/geometry/numerical-robustness.md §2).
 // Calibrated against the double-precision sweep: legitimate triples in wedge
 // 60-89.9° geometry have min|det_norm| ≈ 2.6e-6, spurious near-degenerate
 // triples tail off below 1.6e-7 — 1e-6 sits inside that gap with margin to
@@ -513,7 +513,7 @@ bool IsInPolyhedron3D(int n, const double* coef, const double xyz[3], bool bound
 // UNIT-NORMALIZED plane normals. After in-function normalization, det equals
 // sin(trihedral angle) and is bounded in [-1, 1], so the threshold measures
 // angular degeneracy independent of the caller's normal magnitudes (see
-// doc/numerical-robustness.md §2; task-solveplanes-det-normalization).
+// doc/geometry/numerical-robustness.md §2).
 // Calibrated against the wedge sweep in V3TestCrystal (60-89.9°):
 //   - spurious near-degenerate triples tail off below |det_norm| ≈ 1.6e-7
 //   - legitimate extreme-wedge triples have min|det_norm| ≈ 2.6e-6
@@ -578,7 +578,7 @@ std::tuple<std::unique_ptr<float[]>, int> SolveConvexPolyhedronVtxD(int plane_cn
   // fragments whose Triangulate output no longer satisfies V−E+F=2 (net worse).
   // Characteristic length uses `max|d|` over the plane set so the tolerance scales
   // with crystal size instead of being fixed at some unit reference.
-  // doc/numerical-robustness.md §2 (relative tolerances).
+  // doc/geometry/numerical-robustness.md §2 (relative tolerances).
   double char_len = 1.0;
   for (int i = 0; i < plane_cnt; i++) {
     char_len = std::max(char_len, std::fabs(coef_d[i * 4 + 3]));

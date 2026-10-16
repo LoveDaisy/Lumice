@@ -148,7 +148,7 @@ static int g_modal_layer_idx = -1;
 static int g_modal_view_crystal_id = -1;
 static int g_modal_entry_idx = -1;
 
-// ---- Window height: semi-variable (doc/gui-visual-language.md §9) ----
+// ---- Window height: semi-variable (doc/gui/gui-visual-language.md §9) ----
 // Width is pinned per layout; height follows the content (HeightFollowsContentState, shared with the
 // Summary window) until the user drags it, then it is theirs for the session. Dragging only helps if
 // something inside gives way, so each layout has ONE flexible pane that absorbs the difference
@@ -257,7 +257,7 @@ static bool g_filter_remove_intent = false;
 // under Immediate mode — so anything else that wrote the same pool slot while the modal was up
 // (the analysis window's "Exclude this raypath", any code path at all) was overwritten by the
 // stale copy the next frame, and the "only synced at open" contract silently depended on a lock
-// nobody had declared. doc/gui-state-governance.md §11 states the rule this now follows.
+// nobody had declared. doc/gui/gui-state-governance.md §11 states the rule this now follows.
 static CrystalConfig g_crystal_buf_snapshot;
 static AxisDist g_axis_buf_snapshot[3];
 static AxisPreset g_axis_label_buf_snapshot = AxisPreset::kRandom;
@@ -869,7 +869,7 @@ void SyncBaselineFromPool(const GuiState& state) {
 
 // ---- The per-frame pull: pool → buffers, as a three-way merge ----
 //
-// The rule, per field (doc/gui-state-governance.md §11): base = the value the buffer was last
+// The rule, per field (doc/gui/gui-state-governance.md §11): base = the value the buffer was last
 // synced with the pool at, ours = the buffer, theirs = the pool now.
 //   theirs == base             → the pool did not move; leave ours alone, dirty or not.
 //   theirs != base, ours == base → ours is clean; adopt theirs. (Returns true: the caller may need

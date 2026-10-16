@@ -9,7 +9,7 @@
 // category error rather than an implementation bug: free-symbol algebra is the
 // algebra of the generic point and is structurally blind to degeneracy (the
 // regular pyramid a1==a2, three-face concurrency, an edge vanishing first).
-// See doc/numerical-robustness.md §8 for the full rationale.
+// See doc/geometry/numerical-robustness.md §8 for the full rationale.
 //
 // The three contracts:
 //   1. Topology  — TopologyMatchesGoldenConstants: after the closed-form
@@ -525,7 +525,7 @@ TEST(ClosedFormPyramid, VertexPlaneSelfConsistency) {
 //
 // Four assertions per case, all on cf's own output, all judged against the
 // sample's characteristic length rather than an absolute epsilon
-// (doc/numerical-robustness.md §2):
+// (doc/geometry/numerical-robustness.md §2):
 //   1. every face_vtx entry lies on its own face's plane;
 //   2. V − E + F == 2 (Euler characteristic of a sphere);
 //   3. every polygon edge is shared by exactly 2 present faces (2-manifold);

@@ -46,7 +46,7 @@ struct SummaryLayoutScene {
 // defaults_panel_layout, the group this one most resembles (tables of text, no crystal preview
 // and so no anti-aliased edge for a blob to survive tau=16 on) — this group does not run on the
 // CI llvmpipe leg today, so K has not been measured against that residue for these scenes and
-// should be when the group is added to the filter (doc/testing-architecture.md §4.6).
+// should be when the group is added to the filter (doc/testing/testing-architecture.md §4.6).
 constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/16, /*max_cc_threshold=*/40 };
 // The PSNR floor the old ruler applied; printed on the diagnostic line, not enforced.
 static constexpr double kDeterministicThresholdDb = 40.0;

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install (or remove) the launchd agent that runs scripts/local_throughput_gate.py
 # on a daily schedule on this Mac — the Metal reference machine role.
-# What the gate is and how to read its results: doc/performance-testing.md,
+# What the gate is and how to read its results: doc/testing/performance-testing.md,
 # "Precise throughput gate (local schedule)".
 #
 # Usage:

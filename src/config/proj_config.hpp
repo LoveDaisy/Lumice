@@ -12,7 +12,7 @@
 
 namespace lumice {
 
-// See doc/filter-architecture.md §1 (filter ↔ crystal single-key binding)
+// See doc/raypath/filter-architecture.md §1 (filter ↔ crystal single-key binding)
 struct ScatteringSetting {
   FilterConfig filter_;
   CrystalConfig crystal_;

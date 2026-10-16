@@ -106,7 +106,7 @@ struct RaypathHash {
 };
 
 
-// See doc/raypath-rayseg-architecture.md §1 for field invariants and state-machine semantics.
+// See doc/raypath/raypath-rayseg-architecture.md §1 for field invariants and state-machine semantics.
 struct RaySeg {
   // NOTE: if IsNormal(), d and p are in crystal-local coordinates; otherwise
   // d and p are in world coordinates.
@@ -143,7 +143,7 @@ struct RaySeg {
 
   // Derived segment-kind helpers. Invariants (mutually exclusive):
   //   IsTir()      <=> w_ < 0  (also absorbs filter-terminated outgoing candidates,
-  //                             which reuse the w_<0 sentinel — see doc/filter-architecture.md §7)
+  //                             which reuse the w_<0 sentinel — see doc/raypath/filter-architecture.md §7)
   //   IsNormal()   <=> to_face_ != kInvalidId && w_ >= 0
   //   IsOutgoing() <=> to_face_ == kInvalidId && w_ >= 0 && !is_continue_
   //   IsContinue() <=> is_continue_ (only set when to_face_ == kInvalidId && w_ >= 0)

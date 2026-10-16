@@ -2,7 +2,7 @@
 
 The band sum itself is checked in-process by test/unit-correctness/analytic/ (test_band_sum.cpp, and
 LiParityBandSum in test_li_parity.cpp on all eleven LI band_sum fixtures), which compile the kernel
-but not the C wrapper. This file owns what only the wrapper does (doc/analytic-api.md sections 4.6,
+but not the C wrapper. This file owns what only the wrapper does (doc/interfaces/analytic-api.md sections 4.6,
 5, 8.2): the problem and pixel-table structs as read through the ABI, the pose-density family
 mapping, the pixel status and rank-0 fields of the result, its release, and every call error with
 the zero-fill it promises. Two LI fixtures are replayed through the ABI as the value oracle — a
@@ -14,7 +14,7 @@ Each case runs in a child interpreter so a crash in the library is a failed case
 pytest. Needs a shared build (`./scripts/build.sh -sj release`); skipped when there is none, or in
 a CUDA configure, which does not produce the library. Free of test/e2e's helpers and of numpy.
 
-symmetry_semantics: none — every problem is one concrete face sequence (doc/analytic-api.md
+symmetry_semantics: none — every problem is one concrete face sequence (doc/interfaces/analytic-api.md
 section 3); nothing here compares face sequences across a symmetry.
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ def _find() -> Path:
     hits = sorted(p for p in SHARED_OUT.rglob(pattern) if p.is_file())
     if not hits:
         if _cuda_configured():
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/interfaces/analytic-api.md 2.3)")
         pytest.fail(f"{pattern} not found under {SHARED_OUT} although a shared build exists there")
     if len(hits) > 1:
         pytest.fail(f"more than one {pattern} under {SHARED_OUT}: {hits}")

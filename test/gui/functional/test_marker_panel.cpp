@@ -9,7 +9,7 @@
 //     document and one from a document that already has the section open. Counted by driving the
 //     real controls, not by reading the code — a count derived from the source would be a
 //     restatement of the source. This is the measure the previous panel reorganisation was faulted
-//     for never taking (doc/gui-layout-architecture.md §8: the two acceptance gates both asked
+//     for never taking (doc/gui/gui-layout-architecture.md §8: the two acceptance gates both asked
 //     whether the shape was good and never asked how many steps a common task took), so it is taken
 //     here rather than argued about.
 //

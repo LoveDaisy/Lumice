@@ -239,7 +239,7 @@ void FillCurveLabelSet(const AnnotationAnchors& cache, const std::vector<Annotat
 }
 
 // Under print, label text is ink like every other annotation layer
-// (doc/print-mode-subtractive-ink.md §7): the family colour is not read, and no plate sits behind
+// (doc/rendering/print-mode-subtractive-ink.md §7): the family colour is not read, and no plate sits behind
 // it. ImGui's dst*(1-a)+src*a with a pure-black src is algebraically the same blend
 // BlendAnnotation()'s / blendAnnotationColor()'s print branch performs (both already ignore the
 // line-colour argument under print) — so this reproduces that formula rather than inventing a
@@ -669,7 +669,7 @@ void RenderTopBar(float window_width) {
       // "legible on this app's surfaces"; a literal white is only the answer for a dark one.
       ImGui::PushStyleColor(ImGuiCol_CheckMark, ImGui::GetStyleColorVec4(ImGuiCol_Text));
     }
-    // doc/print-mode-subtractive-ink.md §7 instance 2 — the top-bar half. Its twin is the Colors
+    // doc/rendering/print-mode-subtractive-ink.md §7 instance 2 — the top-bar half. Its twin is the Colors
     // window's "Enable colors" checkbox (color_window.cpp), and the two read the same predicate and
     // the same two tooltip constants in the same priority order so they cannot drift.
     const bool print_disabled = IsPrintTone(g_state.renderer);
@@ -1133,7 +1133,7 @@ void RenderMarkersFamilyPopup() {
 
 // One auxiliary line, as the table reads it. Every row answers the same questions — colour, name,
 // line, text label, opacity — which is exactly why the table is the right shape for them
-// (doc/gui-visual-language.md §4.4). `label` is null for a row that draws no text label at all;
+// (doc/gui/gui-visual-language.md §4.4). `label` is null for a row that draws no text label at all;
 // that cell is then left EMPTY rather than filled with a disabled control or an explanatory word,
 // because "this one has no text" is what an empty cell in a labelled column already says.
 struct OverlayRowSpec {
@@ -1259,7 +1259,7 @@ void RenderOverlayRowsTable(const char* table_id, const OverlayRowSpec* rows, in
     const FieldEditorConstraint alpha_c = ConstraintFor(row.alpha_field, g_state);
     // A single DragFloat rather than the [slider][input] pair the panel used: the pair needs about
     // twice this cell's width, and the width it would take comes straight off the name column
-    // (doc/gui-visual-language.md §7 records the cell-sized single control as the verified form).
+    // (doc/gui/gui-visual-language.md §7 records the cell-sized single control as the verified form).
     ImGui::SetNextItemWidth(-FLT_MIN);
     // row.alpha_id already carries its own leading "##" (e.g. "##grid_alpha"); DragFloatField
     // prepends another "##" itself, so the +2 here skips the one already present — without it the
@@ -1304,7 +1304,7 @@ void RenderOverlayRowsTable(const char* table_id, const OverlayRowSpec* rows, in
 // the same thing measured from two centres — the same list of radii, the same editor, the same
 // rules (angular_dist_rules.hpp) — and the owner's call on seeing the split form was that they
 // belong together under the name they share. That call knowingly sets aside the argument the
-// split form rested on, doc/gui-layout-architecture.md §8's "keep the most-often-co-adjusted
+// split form rested on, doc/gui/gui-layout-architecture.md §8's "keep the most-often-co-adjusted
 // switches on one screen" (the 22°/46° switch now sits one click away, behind this header); it is
 // a decision, recorded here so that §8 is not read back into a reason to split them again.
 //
@@ -1479,7 +1479,7 @@ void RenderMarkersSection() {
     ImGui::TableSetColumnIndex(0);
     // Through ConstraintFor for the same reason the Show checkbox above is: this swatch and the
     // defaults panel's row for the very same key must not answer "can I edit this" differently.
-    // doc/print-mode-subtractive-ink.md §7 instance 4 is what makes them able to disagree.
+    // doc/rendering/print-mode-subtractive-ink.md §7 instance 4 is what makes them able to disagree.
     const FieldEditorConstraint marker_color_c = ConstraintFor(MarkerFieldKey(i, MarkerKeyPart::kColor), g_state);
     ImGui::BeginDisabled(!marker_color_c.enabled);
     ImGui::ColorEdit3((std::string("##marker_color_") + kMarkerSerialNames[i]).c_str(), m.color,
@@ -1546,7 +1546,7 @@ void RenderOverlaysTab() {
     // angular-distance circles in the section below, it owns no field of its own — the shader
     // derives the circle from the lens type, the FOV and the viewport, so there is nothing here for
     // a user to set. Null color_field: the lens border is not one of the four instances
-    // doc/print-mode-subtractive-ink.md §7 enumerates, so its swatch takes no gate — see the matching
+    // doc/rendering/print-mode-subtractive-ink.md §7 enumerates, so its swatch takes no gate — see the matching
     // note in field_editor_registry.cpp for why the boundary comes from the document rather than
     // from consistency with its neighbours.
     { "Lens Border", "##lens_border_color", g_state.lens_border_color, nullptr, "##lens_border_line",
@@ -1818,7 +1818,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     PushLabelColumnItemWidth();
     ImGui::SeparatorText("Rendering");
     // Rust-tinted input: changing Resolution re-runs the simulation and discards accumulated rays.
-    // The warning is the point — see doc/gui-visual-language.md §7.
+    // The warning is the point — see doc/gui/gui-visual-language.md §7.
     ImGui::PushStyleColor(ImGuiCol_FrameBg, WarningFillColor(0.6f));
     ImGui::Combo(PanelLabel("renderer.sim_resolution", "display").c_str(), &r.sim_resolution_index,
                  kSimResolutionLabels, kSimResolutionCount);
@@ -1902,7 +1902,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
 
     // The tone-reproduction operator, and directly under it the ONE ground control that operator
     // reads. Two rows, not three: `background` and `paper` are separate fields on purpose
-    // (doc/print-mode-subtractive-ink.md decision D5 — a single field would make "print onto the
+    // (doc/rendering/print-mode-subtractive-ink.md decision D5 — a single field would make "print onto the
     // default black background" render an all-black page), but at any instant exactly one of them
     // is live. render.cpp's `if (!print_mode)` at the background term means Screen alone reads the
     // sky; the paper is read only by the kPrint colour branch and by FillZeroEnergyImage. So the
@@ -1971,7 +1971,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       // whole empty sky to dark green.
       //
       // Inside the Screen arm, and not by mere association with the swatch it follows: the photo it
-      // samples from is itself disabled under Print (doc/print-mode-subtractive-ink.md §7 instance
+      // samples from is itself disabled under Print (doc/rendering/print-mode-subtractive-ink.md §7 instance
       // 1), so under Print this button could only ever render disabled.
       ImGui::SameLine();
       const bool bg_pick_ok = BgPhotoOnScreen(g_state);
@@ -2012,7 +2012,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       }
     }
 
-    // doc/print-mode-subtractive-ink.md §8 (owner decision D6), GUI half. Each operator has one
+    // doc/rendering/print-mode-subtractive-ink.md §8 (owner decision D6), GUI half. Each operator has one
     // degenerate ground — a near-white sky under Screen, a near-black paper under Print — and the
     // shared predicate (gui_state.hpp's ContrastHeadroomIsLowFor over util/contrast_headroom.hpp,
     // the same one src/server/server.cpp's CommitConfig notice calls) decides which, if either, the
@@ -2400,7 +2400,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     pp.exposure.intensity_factor = mono_ev.intensity_factor;
 
     // task-347 (Fix B) DECOUPLE: the composite path is now server-side self-
-    // anchored on participating-P99 (see doc/ev-pipeline-architecture.md §6.6).
+    // anchored on participating-P99 (see doc/rendering/ev-pipeline-architecture.md §6.6).
     // GUI must push ONLY the manual `exposure_offset` here — folding `ev_auto`
     // back in would multiply the auto-anchor by the auto-EV a second time and
     // reintroduce the double-count that Fix B is meant to eliminate. The mono
@@ -2478,7 +2478,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     pp.tone = rc.tone;
     pp.display_mode = rc.display_mode;
 
-    // The predicate's Print term is doc/print-mode-subtractive-ink.md §7 instance 1, and it is
+    // The predicate's Print term is doc/rendering/print-mode-subtractive-ink.md §7 instance 1, and it is
     // what makes the exclusion real rather than advisory: `bg_show` is left exactly as the user
     // set it, so switching Mode back to Screen brings the photograph straight back. Read through
     // BgPhotoOnScreen rather than spelled out again here, so the eyedropper and the photo gestures
@@ -2990,7 +2990,7 @@ void RenderStatusBar(float window_width, float window_height) {
     case SimState::kSimulating:
       // Accent, because that is what the accent is for: the one thing on screen that is live right
       // now. Not a semantic grade — a run in progress is a fact, not a judgement about the
-      // document, and doc/gui-visual-language.md section 7 is explicit that folding progress into
+      // document, and doc/gui/gui-visual-language.md section 7 is explicit that folding progress into
       // the warning grade would dilute the grade that means "you need to look at this".
       ImGui::TextColored(AccentColor(), "Simulating...");
       break;

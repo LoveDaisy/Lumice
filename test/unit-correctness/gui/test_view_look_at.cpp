@@ -91,7 +91,7 @@ TEST(ViewLookAtMath, InvertsTheCameraForwardAtHandComputedPoints) {
   }
   // Altitude = asin(-z), so the zenith is z = -1. This sign is the one thing in this coordinate
   // family that is worth a dedicated row: the same English word means the opposite z in
-  // doc/coordinate-convention.md.
+  // doc/geometry/coordinate-convention.md.
   // The poles have no bearing at all, and this is the branch that says so: left to atan2's
   // signed-zero rule they would come back at -180, half a turn of camera spin on the way to a
   // direction that does not depend on the azimuth.

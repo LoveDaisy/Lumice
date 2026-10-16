@@ -3,7 +3,7 @@
 The continuation itself is checked in-process by test/unit-correctness/analytic/
 (test_fiber_continuation.cpp, test_path_fiber.cpp: LI's conformance cases C01-C12 and two LI
 parity-fixture pins), which compile the kernel but not the C wrapper. This file owns what only the
-wrapper does (doc/analytic-api.md sections 4.3, 4.4, 8.2): one batch call over independent problems,
+wrapper does (doc/interfaces/analytic-api.md sections 4.3, 4.4, 8.2): one batch call over independent problems,
 element-level versus call-level errors, per-problem initial_tangent_sign, the N = 0 / N = 1 pointer
 rules, u = R^T (-incident), the result block and its release, the struct_size stride of the batch
 (for a version 4, a partial, a current and a newer caller), the version 5 per-pose diagnostics as
@@ -13,7 +13,7 @@ Each case runs in a child interpreter so a crash in the library is a failed case
 pytest. Needs a shared build (`./scripts/build.sh -sj release`); skipped when there is none, or in
 a CUDA configure, which does not produce the library. Free of test/e2e's helpers and of numpy.
 
-symmetry_semantics: none — every problem traces one concrete face sequence (doc/analytic-api.md
+symmetry_semantics: none — every problem traces one concrete face sequence (doc/interfaces/analytic-api.md
 section 3); nothing here compares face sequences across a symmetry.
 """
 from __future__ import annotations
@@ -57,7 +57,7 @@ def _find() -> Path:
     hits = sorted(p for p in SHARED_OUT.rglob(pattern) if p.is_file())
     if not hits:
         if _cuda_configured():
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/interfaces/analytic-api.md 2.3)")
         pytest.fail(f"{pattern} not found under {SHARED_OUT} although a shared build exists there")
     if len(hits) > 1:
         pytest.fail(f"more than one {pattern} under {SHARED_OUT}: {hits}")

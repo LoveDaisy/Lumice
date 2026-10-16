@@ -249,7 +249,7 @@
 //   * The exposure anchor. See the note above kScenes[]: both scenes pin relative EV, and what is
 //     left over after that is a measured, stated residual rather than an evasion.
 //   * A lines-only (member-mask) variant of full_sky_dual_fisheye_print. Measured before deciding,
-//     not assumed: the subtractive print operator (doc/print-mode-subtractive-ink.md) has no
+//     not assumed: the subtractive print operator (doc/rendering/print-mode-subtractive-ink.md) has no
 //     saturation floor the way the additive screen operator does — paper * 10^(-D) can only go
 //     DOWN from the paper colour, so the simulated arcs' residue always lands on the page rather
 //     than being clamped away. At the same exposure floor the screen scenes use (2^-8), the two
@@ -266,7 +266,7 @@
 // executes this fixture. The two pytest legs build with -DBUILD_GUI=OFF and do not have the binary
 // at all. Where it does run is a developer machine with a working GL context: scripts/build.sh's
 // correctness pool selects tests by a NEGATIVE filter, so this category is included by default,
-// and ./scripts/test.sh {quick,full,pr} therefore executes it. doc/testing-architecture.md 7.5 has
+// and ./scripts/test.sh {quick,full,pr} therefore executes it. doc/testing/testing-architecture.md 7.5 has
 // the mechanism, the measured cost of putting this tag in CI, and why the llvmpipe leg is not
 // currently the right home for it. This is a RECORDED STATE, not a defect awaiting a fix.
 //
@@ -402,7 +402,7 @@ struct ParityScene {
 // scene's own lens directly into the exported canvas and scales by its. The two therefore differ
 // by a fixed factor whenever the exported canvas is not the simulation texture's own shape —
 // which is the "comparable only at equal lens / FOV / resolution" boundary
-// doc/ev-pipeline-architecture.md states for absolute mode, not a defect for this fixture to
+// doc/rendering/ev-pipeline-architecture.md states for absolute mode, not a defect for this fixture to
 // report. Relative mode has no such term: both sides read ONE anchor.
 //
 // Relative mode used to leave a residual behind, and this note used to state it: the two anchors
@@ -414,7 +414,7 @@ struct ParityScene {
 // That residual is GONE. Both sides now divide by the same published sky radiance
 // (LUMICE_RawXyzResult::anchor_l99_sky) and each converts it into its own buffer's units with
 // that buffer's own on-axis solid angle (axis_solid_angle) — the CLI divides, the GUI multiplies,
-// and the two chains meet on one per-pixel expression. See doc/ev-pipeline-architecture.md 2.8.
+// and the two chains meet on one per-pixel expression. See doc/rendering/ev-pipeline-architecture.md 2.8.
 // Measured on these three scenes as the linear-light least-squares gain of CLI against GUI over
 // unsaturated lit pixels:
 //
@@ -464,7 +464,7 @@ struct ParityScene {
 //
 // RE-MEASURED, ALL THREE, when the preview shader stopped adding a second half-texel offset while
 // gathering from the dual-fisheye source texture (src/gui/preview_renderer.cpp dualFisheyeToUV;
-// doc/coordinate-convention.md §11). This fixture sees that change from both sides at once, and
+// doc/geometry/coordinate-convention.md §11). This fixture sees that change from both sides at once, and
 // the two sides pull opposite ways, so the reading is stated rather than filed as drift. Measured
 // as N=6 full-suite runs after against a matched run before, same machine, one binary per arm
 // with the two hashes checked apart:
@@ -786,7 +786,7 @@ const ParityScene kScenes[] = {
   // scene with `visible: upper` had the excluded hemisphere's rays dropped inside
   // ProjectExitToPixel, so they never landed in the buffer the CLI's relative-EV anchor is
   // measured over. After it they land and are blanked at bake time instead — and the anchor is
-  // taken BEFORE that blanking, over the whole buffer. doc/ev-pipeline-architecture.md 2.7 names
+  // taken BEFORE that blanking, over the whole buffer. doc/rendering/ev-pipeline-architecture.md 2.7 names
   // this exact combination (CLI + single lens + `visible` != full + relative) as the one whose
   // brightness moves, and states that the move has no closed form. This scene is that
   // combination; its two neighbours are not — one is `visible: full`, the other is a full-sky
@@ -904,7 +904,7 @@ const ParityScene kScenes[] = {
   // grey one would let an arm that averaged the three channels pass.
   //
   // NO CI JOB RUNS THIS ROW, as none runs any row of this category — see the "Platform reach" note at
-  // the top of this file and doc/testing-architecture.md 7.5. It is evaluated by
+  // the top of this file and doc/testing/testing-architecture.md 7.5. It is evaluated by
   // ./scripts/test.sh {quick,full,pr} on a machine with a GL context and nowhere else, so a green
   // pipeline is not evidence that the print-mode seam was checked.
   //
@@ -1034,7 +1034,7 @@ constexpr int kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);
 // absent rather than merely faint. Both arms compute out = clamp(L * scale + background) and
 // only then encode; with background = 1 the clamp returns 1 for every L >= 0, so the simulated
 // arcs leave NO trace — not a small one that a tolerance would have to absorb, none. (The same
-// algebra doc/print-mode-subtractive-ink.md records as "a white sky is always white" — the fact
+// algebra doc/rendering/print-mode-subtractive-ink.md records as "a white sky is always white" — the fact
 // that makes print mode a separate operator is the fact that makes this frame clean.) The
 // membership test is therefore exact: tau = 0, the canvas byte is (255,255,255) on both arms, and
 // each arm's most frequent colour is asserted to BE that byte so the premise is checked on every
@@ -1076,7 +1076,7 @@ constexpr int kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);
 // (test_render_consumer_print_mode.cpp, test_preview_print_mode.cpp), which is the row's own
 // argument for keeping its four switches off.
 //
-// THRESHOLD. K is placed the way the deterministic groups' K is (doc/testing-architecture.md
+// THRESHOLD. K is placed the way the deterministic groups' K is (doc/testing/testing-architecture.md
 // §4.6): between the largest honest reading and the smallest break the scene must catch, and
 // both are stated per row below. The honest reading here is not a cross-machine number — both
 // arms are made on this machine in this run — which is why tau is 0 and K is small.

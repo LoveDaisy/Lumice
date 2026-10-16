@@ -395,7 +395,7 @@ class SimResult:
     worker — so both are only meaningful once the simulation finished. The two
     are independent quantities, not a rescaling of each other: a scene of fixed
     shapes under random axes reports a tiny crystal_num and a huge
-    orientation_num. See doc/c_api.md for the contract.
+    orientation_num. See doc/interfaces/c_api.md for the contract.
     """
 
     snapshot_intensity: float
@@ -830,7 +830,7 @@ def _read_sample_counts(lib, server) -> tuple:
     #
     # LUMICE_GetDrainStatus is the server's own answer to that question, published by the
     # consumer thread once every batch this epoch will ever produce has been consumed
-    # (see doc/c_api.md). It replaces the "poll until two stats reads agree" heuristic
+    # (see doc/interfaces/c_api.md). It replaces the "poll until two stats reads agree" heuristic
     # this function used to carry: that heuristic could only ever guess from the outside
     # whether more data was coming, and a slow enough producer would have satisfied it
     # mid-run. Waiting on the signal itself is what makes the read below correct rather

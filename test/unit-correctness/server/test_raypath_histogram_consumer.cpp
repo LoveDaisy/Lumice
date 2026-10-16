@@ -1689,7 +1689,7 @@ TEST(ReducedRaypathHistogramOf, DistinctSymmetriesKeepIndependentMemosAndDoNotEv
 // ---------------------------------------------------------------------------
 // Frame-vs-analysis share calibration: the AC2 identity extended to the
 // dual-fisheye fold boundary. The calibrated lens-domain semantics and the
-// defect statement live in doc/coordinate-convention.md §13; the measured
+// defect statement live in doc/geometry/coordinate-convention.md §13; the measured
 // reference-scene gap this family of tests pins is frame ΣY / analysis Σ =
 // 0.8107.
 // ---------------------------------------------------------------------------
@@ -1766,7 +1766,7 @@ std::pair<double, double> AddTangentRays(Batch& b) {
 // branch clamps the floored integer pixel into the canvas, binning those
 // measure-zero tangent directions into the last edge bin (the same
 // boundary-belongs-to-edge-bin convention as the rect branch's lon = +pi
-// wrap; doc/coordinate-convention.md §13), so the frame keeps every ray the
+// wrap; doc/geometry/coordinate-convention.md §13), so the frame keeps every ray the
 // analysis side counts. Pre-fix reference numbers, kept as history: the drop
 // deleted 18.9% of the reference scene's frame energy (frame/analysis =
 // 0.8107; crosscheck full row 0.6021).
@@ -2053,7 +2053,7 @@ TEST(RaypathHistogramConsumer, FullSkyIdentityOnDualFisheyeFrame) {
 // family whose landing domain is the whole sky (rectangular: lon wraps; lat
 // stays in the canvas for every |polar| < 1, the exact poles being an f32
 // blade the fixture steps around — see the pole-neighbourhood member below
-// and doc/coordinate-convention.md §13). This is the green half of the
+// and doc/geometry/coordinate-convention.md §13). This is the green half of the
 // calibration: the same batch through this consumer and through a
 // full-coverage frame sums to the same number, which is what licenses the
 // frame as the energy-accounting calibration arm (measured on the reference
@@ -2196,7 +2196,7 @@ TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
 // are still admitted by `kFisheyeEqualAreaMinCz`, and the diagonal-azimuth
 // members land in the square canvas's corner region, so the up frame and the
 // down frame each deposit them once and their summed share exceeds 1
-// (measured 1.121 on the reference scene; doc/coordinate-convention.md §13).
+// (measured 1.121 on the reference scene; doc/geometry/coordinate-convention.md §13).
 // A tightening of MinCz toward 0 or a rim clip in the frame's bounds check
 // drops these directions and fails here; a canvas-map change moves their
 // landing out of the corner region. The cardinal-azimuth negative control

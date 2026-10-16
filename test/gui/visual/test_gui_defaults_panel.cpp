@@ -73,7 +73,7 @@ struct DefaultsPanelScene {
 // the smallest real drift on record for this group (86 px at this tau) 2.15x above it. tau is the
 // same 16 as modal_layout's because it describes the llvmpipe-vs-Metal noise, not the scene; K
 // differs because the AA blob size does. Measurements and provenance:
-// doc/testing-architecture.md §4.6.
+// doc/testing/testing-architecture.md §4.6.
 constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/16, /*max_cc_threshold=*/40 };
 // The PSNR floor the old ruler applied; printed on the diagnostic line, not enforced.
 constexpr double kDeterministicThresholdDb = 40.0;

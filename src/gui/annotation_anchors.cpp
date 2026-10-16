@@ -89,7 +89,7 @@ LUMICE_AnnotationView BuildAnnotationView(const AnnotationAnchors::ViewKey& key)
   view.visible = key.visible;
   view.overlap = key.overlap;
   view.front = key.front ? 1 : 0;
-  // lens_shift stays 0: the preview has no shift control (doc/gui-state-governance.md §9 names it
+  // lens_shift stays 0: the preview has no shift control (doc/gui/gui-state-governance.md §9 names it
   // among the fields the GUI does not expose), and the anchors were always placed with 0.
   return view;
 }

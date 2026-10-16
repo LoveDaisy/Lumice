@@ -10,7 +10,7 @@ LUMICE_BATCH_RAY_NUM knob was removed in scrum-268.4).
 
 Baseline policy: the denominator is always legacy CPU (env unset = the GUI's
 real path). `CpuTraceBackend` is a GPU-validation reference, NOT a perf
-baseline — see feedback_perf_baseline_is_legacy_cpu / doc/testing-architecture.md §4.1.
+baseline — see feedback_perf_baseline_is_legacy_cpu / doc/testing/testing-architecture.md §4.1.
 
 GPU pass note: the GPU route (Metal/CUDA) is single-engine (worker_count=1), so
 `benchmark` emits ONE steady "multi" pass for GPU and skips the "single" warmup
@@ -84,7 +84,7 @@ FALLBACK = "falling back"
 GPU_ROUTE_STRINGS = {"metal": ROUTE_METAL, "cuda": ROUTE_CUDA}
 
 # Canonical throughput-regime scene set (light -> heavy). Mirrors the benchmark
-# scene registry in doc/performance-testing.md ("基准场景注册表") — keep the two
+# scene registry in doc/testing/performance-testing.md ("基准场景注册表") — keep the two
 # in sync. All entries are dual_fisheye_equal_area (Metal-comparable, no CLI
 # fallback) AND completable by legacy within RUN_TIMEOUT_SEC, so every row yields
 # a real ratio. The heaviest scene `ms3_mixed_pyramid_heavy` is in the registry
@@ -143,7 +143,7 @@ RAY_NUM_INFINITE = "infinite"
 # render[].resolution per run (temp config, committed files untouched — same
 # mechanism as the ray_num override) at DEFAULT dispatch, isolating resolution as
 # the single variable. (Dispatch x resolution interaction is a separate explore;
-# see doc/performance-testing.md "分辨率是一等吞吐维度".)
+# see doc/testing/performance-testing.md "分辨率是一等吞吐维度".)
 # 2:1 aspect (dual_fisheye full-globe layout); spans the L2 knee both sides.
 RES_SWEEP_DEFAULT = [
     (256, 128), (512, 256), (768, 384), (1024, 512), (1536, 768), (2048, 1024),
@@ -265,7 +265,7 @@ def run(config_path: Path, backend_env: str | None, dispatch_num: int | None) ->
     # drain_aligned, rays_per_sec is the authoritative number and wall_rate is
     # NOT comparable (wall_sec includes StopServer teardown + IDLE wait, plus
     # rays counts sim_ray_num past the window endpoint). See
-    # doc/performance-testing.md.
+    # doc/testing/performance-testing.md.
     by_mode_wall = {}
     for b in benches:
         w = b.get("wall_sec")

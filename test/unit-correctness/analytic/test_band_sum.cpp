@@ -4,7 +4,7 @@
 // band, Kish's K_eff, a subnormal contribution, the point mass's pixel and the rank-0 masses. The
 // whole call against LI is test_li_parity.cpp (LiParityBandSum).
 //
-// symmetry_semantics: none — every case is one concrete face sequence (doc/analytic-api.md
+// symmetry_semantics: none — every case is one concrete face sequence (doc/interfaces/analytic-api.md
 // section 3).
 
 #include <gtest/gtest.h>

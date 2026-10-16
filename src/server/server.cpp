@@ -51,7 +51,7 @@ namespace lumice {
 // which doesn't guarantee fairness — a high-frequency locker (ConsumeData) can starve
 // a low-frequency waiter (Poller) indefinitely. TicketMutex guarantees FIFO ordering:
 // each waiter gets a ticket and is served in order.
-// See doc/accumulator-consumer-architecture.md §4.1.
+// See doc/rendering/accumulator-consumer-architecture.md §4.1.
 class TicketMutex {
  public:
   void lock() {  // NOLINT(readability-identifier-naming) — C++ Lockable requires lowercase
@@ -171,7 +171,7 @@ class ServerImpl {
   // Simulator. The legacy kDefaultSimulatorCnt = PhysicalCoreCount() was removed
   // along with the 12-worker queue-per-Simulator pattern. num_workers sizes the CPU
   // group on both routes: the render workers on the CPU route, the standing analysis
-  // pool on the GPU route (see the ctor). See doc/gpu-single-engine-implementation.md §6.
+  // pool on the GPU route (see the ctor). See doc/backends/gpu-single-engine-implementation.md §6.
   static constexpr int kMaxSceneCnt = 128;
   static constexpr size_t kDefaultRayNum = 128;
   // CPU route only: how much one SimBatch hands a worker at once, counted in the SimData it
@@ -179,12 +179,12 @@ class ServerImpl {
   // wavelengths, so a discrete spectrum gets proportionally fewer physics batches per
   // handoff (GenerateScene). The physics batch stays kDefaultRayNum —
   // that size is what the rest of the trace is tuned around (wavelength draws per ray,
-  // ray-allocation cadence, workspace footprint; doc/performance-testing.md "Legacy CPU
+  // ray-allocation cadence, workspace footprint; doc/testing/performance-testing.md "Legacy CPU
   // batch size") — while every queue handoff, and the wakeup it can cost, is paid once
   // per this many of them. With one handoff per 128 rays the single producer thread's
   // notify became the ceiling as soon as the workers were fast enough to drain the queue,
   // and past that point extra workers made the run slower, not faster. The value and the
-  // measurements behind it: doc/performance-testing.md, "CPU worker handoff grain".
+  // measurements behind it: doc/testing/performance-testing.md, "CPU worker handoff grain".
   static constexpr size_t kCpuHandoffBatches = 16;
   // CPU route: queued handoffs the in-flight ceiling leaves room for, per worker, on top
   // of the one each worker has in progress (GenerateScene says why a queue is needed and
@@ -197,7 +197,7 @@ class ServerImpl {
   // per worker); on native Windows the wake is cheap, and one per worker instead costs
   // the consumer-bound scenes at its default 32 workers (light -5%, a five-wavelength
   // scene -6% against the pre-split code) through the deeper backlog, which a quarter
-  // per worker recovers. Measurements: doc/performance-testing.md, "CPU worker handoff
+  // per worker recovers. Measurements: doc/testing/performance-testing.md, "CPU worker handoff
   // grain". macOS takes the non-Windows value: not measured to want otherwise.
 #if defined(OS_WIN)
   static constexpr double kQueuedHandoffsPerWorker = 0.25;
@@ -610,7 +610,7 @@ class ServerImpl {
   // route's own workers 12.8% under 20 ms GUI polling against 9.0% for a forced-serial consumer;
   // capping that same run's pool to a fixed 2 brought that down to 11.5% at the price of
   // PostSnapshot's own period rising from 39 ms to 59 ms (see
-  // doc/gui-preview-lifecycle-architecture.md §12.5 for the full three-platform table). Two threads
+  // doc/gui/gui-preview-lifecycle-architecture.md §12.5 for the full three-platform table). Two threads
   // is not a magic number tuned to that one measurement: it is the smallest budget ParallelRows
   // treats as "worth a pool" at all (its own `< 2` gate falls back to running the loop inline on
   // the calling thread), so the cap simply declines to ever hand out more pool capacity than the
@@ -760,7 +760,7 @@ void ServerImpl::RunPersistentLoop(F work_fn, std::optional<SessionKind> require
 // stays optimistic on Apple (Metal is effectively always present; a PSO failure
 // degrades to CPU via task-282, the accepted edge case).
 // (296.6: generalized from the former Metal-only ResolveMetalRoute so CUDA also
-// takes the single-engine route — see doc/seam-design.md §5.)
+// takes the single-engine route — see doc/backends/seam-design.md §5.)
 bool ResolveGpuRoute(BackendKind preferred_backend, Logger& logger, bool force_cpu) {
   // The analysis run's forced CPU route sits ABOVE the env override, as it does in
   // CreateBackend — the two must agree, and "CPU regardless of the environment" is the
@@ -965,12 +965,12 @@ ServerImpl::~ServerImpl() {
 }
 
 
-// Lifecycle reset sequence: see doc/capi-lifecycle-architecture.md §7.
+// Lifecycle reset sequence: see doc/interfaces/capi-lifecycle-architecture.md §7.
 // NOLINTNEXTLINE(readability-function-size)
 namespace {
 
 // ------------------------------------------------------------------------------------------------
-// "print takes over the colour channel" — the one rule of doc/print-mode-subtractive-ink.md §7,
+// "print takes over the colour channel" — the one rule of doc/rendering/print-mode-subtractive-ink.md §7,
 // stated once, on the CLI/server side.
 //
 // The print operator deposits a single neutral ink whose only degree of freedom is DENSITY, so
@@ -1103,7 +1103,7 @@ void WarnChannelMathIgnoredFields(Logger& logger, const std::map<IdType, RenderC
   }
 }
 
-// The other half of doc/print-mode-subtractive-ink.md §8, on the side that has no panel to put a
+// The other half of doc/rendering/print-mode-subtractive-ink.md §8, on the side that has no panel to put a
 // notice in: a config whose zero-energy colour has run out of headroom renders a picture that is
 // not there, and `Lumice -f that.json` would otherwise write the file and exit 0 with nothing said.
 //
@@ -1240,7 +1240,7 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
     return err;
   }
 
-  // The one rule of doc/print-mode-subtractive-ink.md §7, applied to the config that is about to
+  // The one rule of doc/rendering/print-mode-subtractive-ink.md §7, applied to the config that is about to
   // become live. Placed after the parse (so class_table exists) and before Stop() (so the notice
   // reaches the log alongside the commit that caused it, not one restart later). Diagnostic only —
   // it never changes `new_config` and never fails the commit: none of the three is a configuration
@@ -1294,7 +1294,7 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
   }
 
   // Check if consumers can be reused (same renderer key set, no layout changes).
-  // See doc/accumulator-consumer-architecture.md §5.4 (reuse eligibility).
+  // See doc/rendering/accumulator-consumer-architecture.md §5.4 (reuse eligibility).
   // An analysis session's consumer set (histogram + stats) is never reusable for a
   // render: it holds no RenderConsumer. `was_analysis` says so explicitly below rather
   // than leaning on the renderer-count comparison, which would let a zero-renderer
@@ -1683,7 +1683,7 @@ BackendKind ServerImpl::GetActiveBackend() const {
 }
 
 
-// See doc/accumulator-consumer-architecture.md §4.2 (two-phase snapshot protocol).
+// See doc/rendering/accumulator-consumer-architecture.md §4.2 (two-phase snapshot protocol).
 // task-342.4 Step 1: this is the single owner of the snapshot_dirty_ flag and
 // snapshot_generation_ counter. Any result-frame acquisition that needs an up-to-date
 // materialized snapshot funnels through here so that two consumers in the same
@@ -1840,7 +1840,7 @@ bool ServerImpl::DoSnapshot() {
     // first: mask 0 means "nothing was configured", print means "it was configured and cannot be
     // shown". Raypath colour puts the whole payload in the HUE — which path a ray took is read off
     // the colour and nothing else — while print deposits one neutral ink whose only degree of
-    // freedom is density (doc/print-mode-subtractive-ink.md §7). Compositing under print would
+    // freedom is density (doc/rendering/print-mode-subtractive-ink.md §7). Compositing under print would
     // collapse every class onto the same grey, i.e. produce a picture that answers no question.
     // The CONFIG is left completely alone (raypath_color_ and the class table are untouched, and
     // the consumers still accumulate their per-class lanes), so switching tone back to screen
@@ -2046,7 +2046,7 @@ void ServerImpl::Stop() {
   // exactly as GetSimLifecycle() reads kIdle. A stopped analysis is idle with a readable
   // partial result; it is not "completed".
   // Render sessions are deliberately untouched: their Stop() contract (a stop reads as
-  // idle with no data, doc/capi-lifecycle-architecture.md §7.1) is what the GUI's
+  // idle with no data, doc/interfaces/capi-lifecycle-architecture.md §7.1) is what the GUI's
   // re-simulate paths rest on. No lock is held here; DoSnapshot() takes its own two.
   if (mode_.load(std::memory_order_acquire) == SessionKind::kAnalysis) {
     DoSnapshot();
@@ -2063,7 +2063,7 @@ void ServerImpl::Stop() {
     // Don't clear consumers_ here — CommitConfig decides whether to rebuild or reuse.
     // Consumers are destroyed either by CommitConfig (rebuild path) or ~ServerImpl().
     snapshot_dirty_ = false;
-    // Resets data-valid flag: see doc/capi-lifecycle-architecture.md §7.1.
+    // Resets data-valid flag: see doc/interfaces/capi-lifecycle-architecture.md §7.1.
     has_ever_consumed_ = false;
   }
   {
@@ -2499,7 +2499,7 @@ void ServerImpl::ConsumeData() {
         // the buffered poller waits for "valid data" forever and times out at
         // 600s). The legacy CPU path never hit this because its ray_seg_count_
         // is always non-zero, so has_renderable stayed true; the exit-seam path
-        // is the first to surface it. See doc/capi-lifecycle-architecture.md
+        // is the first to surface it. See doc/interfaces/capi-lifecycle-architecture.md
         // ("zero-output completion").
         //
         // The batch contributes no pixels, but it did emit rays, and the
@@ -2687,7 +2687,7 @@ void ServerImpl::GenerateScene() {
   // a run the consumer thread cannot keep up with, the whole ceiling sits in data_queue_
   // as SimData the consumer reaches long after another core wrote them: at a fixed 128
   // handoffs a 2048x1024 scene at 10 workers lost 10%, and a five-wavelength scene at 32
-  // workers held 15x the memory. Measurements: doc/performance-testing.md, "CPU worker
+  // workers held 15x the memory. Measurements: doc/testing/performance-testing.md, "CPU worker
   // handoff grain".
   if (kGpuRoute) {
     scene_cnt_cap_.store(kMaxSceneCnt, std::memory_order_relaxed);

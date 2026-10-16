@@ -57,7 +57,7 @@
 **主要接口**：
 - `CommitConfig(const nlohmann::json&, bool* out_reused)`: 提交已解析的配置。这是 core 侧唯一的
   commit；能到达它的公开入口只有 `LUMICE_CommitScene`（C API 的 `LUMICE_Config` 值结构体及其三个
-  commit 函数已在 v4.12 移除，见 [`doc/c_api_zh.md`](c_api_zh.md)）。
+  commit 函数已在 v4.12 移除，见 [`doc/interfaces/c_api_zh.md`](interfaces/c_api_zh.md)）。
 - `CommitConfig(const std::string&)`: JSON 字符串重载，供 benchmark harness 使用
 - `AcquireResultFrame()`: 获取最新结果帧的一份所有权份额——**结果的唯一入口**。返回
   `std::shared_ptr<const ResultFrame>`（永不为空），一帧同时承载全部结果种类（mono render /
@@ -65,7 +65,7 @@
   故新鲜度与它取代的那组 per-kind getter 相同；帧内指针在调用方持有份额期间始终有效，
   因为后续快照发布的是**新**帧而不是覆写这一帧。被它取代的六个 `Get*Results` getter 已在
   v4.15 移除——所有权不变量与促成它的两次 use-after-free 复发见
-  [`doc/capi-lifecycle-architecture.md`](capi-lifecycle-architecture.md) §9。
+  [`doc/interfaces/capi-lifecycle-architecture.md`](interfaces/capi-lifecycle-architecture.md) §9。
 - `IsIdle()`: 检查是否空闲
 - `Stop()` / `Terminate()`: 停止服务器
 
@@ -345,7 +345,7 @@ LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerSta
 void LUMICE_StopServer(LUMICE_Server* server);
 ```
 
-详细用法参见 [C 接口使用文档](c_api_zh.md)。
+详细用法参见 [C 接口使用文档](interfaces/c_api_zh.md)。
 
 ## 依赖关系
 
@@ -395,5 +395,5 @@ void LUMICE_StopServer(LUMICE_Server* server);
 - [README](../README_zh.md) - 用户文档
 - [配置文档](configuration_zh.md) - 配置格式说明
 - [开发指南](developer-guide_zh.md) - 开发指南
-- [C接口文档](c_api_zh.md) - C接口使用说明
+- [C接口文档](interfaces/c_api_zh.md) - C接口使用说明
 - [文档索引](README_zh.md) - 所有文档的导航

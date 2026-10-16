@@ -1,12 +1,12 @@
 """Minimal ctypes consumer of liblumice_analytic — a sample for a Python binding.
 
-Locates the library purely by the install-tree layout doc/analytic-api.md section 8.7 fixes as a
+Locates the library purely by the install-tree layout doc/interfaces/analytic-api.md section 8.7 fixes as a
 contract, via the environment variable it names (LUMICE_ANALYTIC_INSTALL_DIR). Uses nothing from
 the engine's C API headers or test/e2e/capi_runner.py: this is the *published* engine, a distinct copy of every
 static from the test-only liblumice_testapi (section 2.6).
 
 symmetry_semantics: none — this fixture compares no face sequence across a symmetry
-(doc/analytic-api.md section 3); besides the version query it evaluates one concrete path, 3-5
+(doc/interfaces/analytic-api.md section 3); besides the version query it evaluates one concrete path, 3-5
 through a regular prism.
 """
 from __future__ import annotations

@@ -538,7 +538,7 @@ static_assert(kClosedFormPyramidSideCnt == 6,
 //
 // The tightness test reuses tol_lp, the same scale-relative tolerance this
 // function already applies to the LP-optimality and feasibility tests on the
-// same quantities (doc/numerical-robustness.md rule 2 — no absolute epsilon on
+// same quantities (doc/geometry/numerical-robustness.md rule 2 — no absolute epsilon on
 // a scale-varying geometric quantity).
 int EnumerateApexPoints(const double dist_scaled[kClosedFormPyramidSideCnt], double m_max_phys, double out_u[20],
                         double out_v[20], int out_mask[20]) {

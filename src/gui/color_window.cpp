@@ -6,7 +6,7 @@
 // live-vs-baseline every frame and routes effects onto their proper channels via
 // ApplyGuiEffects. There are NO `state.MarkStructHardDirty()` / `PushDisplayState(...)` calls in
 // this file's widget code anymore — those are effects, and the reconciler is the sole owner
-// (single-writer discipline, doc/gui-state-governance.md 支柱 2).
+// (single-writer discipline, doc/gui/gui-state-governance.md 支柱 2).
 //
 // Routing (which channel a widget mutation lands on) is derived from the ColorClassConfig
 // split introduced in M1:
@@ -103,7 +103,7 @@ bool PushDisplayState(const GuiState& state, LUMICE_Server* server) {
   // to materialize a fresh composite with the new colors, then self-pauses again (its own
   // COMPLETED-edge self-pause fires at the end of that same PollOnce, see server_poller.cpp).
   // No epoch bump, no accumulator reset, no sim restart — display-time semantics preserved
-  // (322 lifecycle clock decoupling, doc/gui-preview-lifecycle-architecture.md I1–I6).
+  // (322 lifecycle clock decoupling, doc/gui/gui-preview-lifecycle-architecture.md I1–I6).
   //
   // If the poller is already running (infinite sim / mid-run edit), WakeForRefresh is a
   // zero-overhead no-op (server_poller.hpp). WakeForRefresh (not WakeForRestart) is
@@ -632,7 +632,7 @@ struct WindowLocalState {
   // GuiState::ResetDisplayGenerationForBackendSwap — that owner drives the
   // display-generation epoch/floor/texture, a different domain from the signal-cache
   // liveness. Comparing the keys at poll entry keeps the two domains independent and
-  // single-owner per doc/gui-state-governance.md 支柱 2 (per-channel single serializer).
+  // single-owner per doc/gui/gui-state-governance.md 支柱 2 (per-channel single serializer).
   LUMICE_Server* last_server = nullptr;
   uint64_t last_committed_epoch = 0;
 };
@@ -891,7 +891,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
       ImGui::SetCursorPosX(right_edge - w);
     }
     bool checked = state.last_uploaded_as_composite;
-    // doc/print-mode-subtractive-ink.md §7 instance 2. Ordered BEFORE composite_empty in the
+    // doc/rendering/print-mode-subtractive-ink.md §7 instance 2. Ordered BEFORE composite_empty in the
     // tooltip below because it is the more fundamental reason AND the immediately decidable one:
     // composite_empty comes from a 500 ms throttled signal poll, print comes from a field the user
     // just set. The top-bar mirror in app_panels.cpp does the same two things in the same order —

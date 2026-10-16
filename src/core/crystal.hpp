@@ -48,7 +48,7 @@ bool IsLegalFace(CrystalKind kind, int face);
  *
  * @note Necessary but not sufficient: a self-intersecting mesh whose V/F
  *       counts happen to satisfy the Euler formula would pass. See
- *       doc/numerical-robustness.md for the argmax/relative-tolerance
+ *       doc/geometry/numerical-robustness.md for the argmax/relative-tolerance
  *       conventions this predicate follows.
  */
 bool IsClosedTriMesh(size_t v, size_t f);

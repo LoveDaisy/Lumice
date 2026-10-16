@@ -26,7 +26,7 @@
 晶体配置定义模拟中使用的晶体形状和朝向分布。
 
 > **坐标系与旋转约定**：世界帧、局部帧、方位角符号约定，以及 `axis.{zenith, azimuth, roll}` 背后
-> 的旋转链语义，详见 [`coordinate-convention_zh.md`](coordinate-convention_zh.md)。早期版本的配置在
+> 的旋转链语义，详见 [`coordinate-convention_zh.md`](geometry/coordinate-convention_zh.md)。早期版本的配置在
 > 当前 chain 下渲染朝向**会发生确定性变化**（除非 `axis` 为全向均匀采样）。
 
 #### 基本结构
@@ -208,7 +208,7 @@ habit（而不仅是均值对称）的唯一方式——最典型的场景是三
   并非数值相等，只是绝对值相等。机制不阻止这类组，也不做量纲可通约性校验。
 - **物理边界，如实说明**：`height` / `face_distance` 随机化只沿法向平移面，
   从不旋转面的法向方向（背景见
-  [`geometry-randomization-value-and-measurement.md`](geometry-randomization-value-and-measurement.md)）。
+  [`geometry-randomization-value-and-measurement.md`](geometry/geometry-randomization-value-and-measurement.md)）。
   sync group 继承这一边界：它本身不会在新的角度产生光晕特征。它买到的是
   **habit 保真度**——一个逐个晶体都真正对称的 ensemble（例如真正的三方 C3
   群体，而不只是均值 C3），这在 roll **不是**均匀随机时才真正显形（Parry /
@@ -289,7 +289,7 @@ habit（而不仅是均值对称）的唯一方式——最典型的场景是三
 **说明：**
 - `gauss` 和 `uniform` 是冰晕模拟中最常用的类型
 - `zigzag` 模拟高雷诺数下大晶体的振荡运动
-- `laplacian` 简化混合尺寸晶体群体的配置（物理背景见 [crystal-orientation-sampling_zh.md](crystal-orientation-sampling_zh.md)）
+- `laplacian` 简化混合尺寸晶体群体的配置（物理背景见 [crystal-orientation-sampling_zh.md](geometry/crystal-orientation-sampling_zh.md)）
 - `gauss_legacy` 复现早期程序版本的采样行为（未包含球面面积元 Jacobian 修正），仅在对比旧版模拟输出时使用
 
 **示例：**
@@ -322,7 +322,7 @@ habit（而不仅是均值对称）的唯一方式——最典型的场景是三
 |------|------|------|--------|------|
 | `id` | 整数 | 是 | - | 唯一标识符 |
 | `type` | 字符串 | 是 | - | 过滤器类型 |
-| `symmetry` | 字符串 | 否 | "" | 对称性开关：P/B/D 的任意组合——"P"（C6 旋转）、"B"（水平镜面）、"D"（竖直镜面）。启用条件与精确语义见 [Raypath 对称性](raypath-symmetry.zh.md)。 |
+| `symmetry` | 字符串 | 否 | "" | 对称性开关：P/B/D 的任意组合——"P"（C6 旋转）、"B"（水平镜面）、"D"（竖直镜面）。启用条件与精确语义见 [Raypath 对称性](raypath/raypath-symmetry.zh.md)。 |
 | `action` | 字符串 | 否 | "filter_in" | 动作："filter_in" 或 "filter_out" |
 
 #### 各类型特定参数
@@ -466,7 +466,7 @@ habit（而不仅是均值对称）的唯一方式——最典型的场景是三
 > 层结构则从头开始。日志在分到的光线数每翻一倍时报告当前份额
 > （`RayAllocationOnline: layer L entry E: p=… q=… rays=…`），run 停止时再以
 > `RayAllocationOnline(final)` 报告一次。这一个字段同时管两条提交路：光路分析会话
-> （`doc/raypath-analysis-panel.md` §10）也读它，取 `adaptive` 时绑定同一份在线统计——只在起点上
+> （`doc/raypath/raypath-analysis-panel.md` §10）也读它，取 `adaptive` 时绑定同一份在线统计——只在起点上
 > 有一处不同：分析每次提交都冷启动、从不把统计带到下一次，而渲染提交会在上面所说的「输入未变」
 > 重提交之间保留统计。拼错的取值不是错误——加载器会告警
 > （`scene.ray_allocation: unrecognized value "..." ignored; falling back to "proportional"`）
@@ -496,7 +496,7 @@ habit（而不仅是均值对称）的唯一方式——最典型的场景是三
 >   实测，这约为「以概率 `1 - A/(S/2)` 丢弃光线」这一替代做法逐像素方差的一半。
 > - **整体亮度**：默认的 `ev_mode: relative` 下按新画面重新测光，不会变暗。`ev_mode: absolute` 下光线在入射处减去的权重仍计入发射，
 >   同一 EV 画面会变暗：随机取向晶体恰好暗一档（EV 加 1，或 `intensity_factor` ×2，
->   即可对齐旧图），定向晶体视形状与太阳高度约暗 0.7–1.4 档（实测值见 `doc/ev-pipeline-architecture.md` §7.2）。
+>   即可对齐旧图），定向晶体视形状与太阳高度约暗 0.7–1.4 档（实测值见 `doc/rendering/ev-pipeline-architecture.md` §7.2）。
 > - **`proportion`** 数值不变，但语义现在是精确的：等表面积约定下的晶体个数份额（见上一条说明）。
 >   对随机取向晶体它等于该条目的光量份额；对定向晶体则不等。
 > - **光路分析**：分析窗口里的能量份额出于同一原因会变化（`doc/user-manual/06-raypath-analysis_zh.md`）。
@@ -697,14 +697,14 @@ habit（而不仅是均值对称）的唯一方式——最典型的场景是三
 | `resolution` | 整数数组 | 是 | - | 分辨率 [宽度, 高度] |
 | `lens_shift` | 整数数组 | 否 | [0, 0] | 镜头偏移 [x, y] |
 | `view` | 对象 | 否 | 见下方 | 视角配置 |
-| `visible` | 字符串 | 否 | "upper" | 可见半球："upper"、"lower"、"full"。它是**显示层裁剪**而非能量层剔除，四个镜头族（单镜头 `linear`/`fisheye_*`、`rectangular`、双鱼眼、`globe`）语义一致：光线始终按全天累积落盘，被排除的区域在出像素时才丢弃——最终既不含背景也不含光线能量。⛔ 别把它当吞吐旋钮：它不减少每条光线的计算量。曝光测光发生在裁剪**之前**、因而不受本键影响；这对既有单镜头场景有一个亮度后果，见 [`doc/ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §2.7。另注意与投影自身的结构性裁剪区分（例如正交鱼眼背后的方向根本没有像素可落），那属于投影的定义域，不是本键管的事。 |
+| `visible` | 字符串 | 否 | "upper" | 可见半球："upper"、"lower"、"full"。它是**显示层裁剪**而非能量层剔除，四个镜头族（单镜头 `linear`/`fisheye_*`、`rectangular`、双鱼眼、`globe`）语义一致：光线始终按全天累积落盘，被排除的区域在出像素时才丢弃——最终既不含背景也不含光线能量。⛔ 别把它当吞吐旋钮：它不减少每条光线的计算量。曝光测光发生在裁剪**之前**、因而不受本键影响；这对既有单镜头场景有一个亮度后果，见 [`doc/rendering/ev-pipeline-architecture.md`](rendering/ev-pipeline-architecture.md) §2.7。另注意与投影自身的结构性裁剪区分（例如正交鱼眼背后的方向根本没有像素可落），那属于投影的定义域，不是本键管的事。 |
 | `front` | 布尔 | 否 | false | 前半球裁剪：只保留相机朝向的那半边。它是**独立于 `visible` 的第二个裁剪维度**，两者相与，而不是 `visible` 的第四个取值。（写成 `"visible": "front"` 会被静默当作 `"upper"`，务必用这个独立键。） |
 | `globe_back_fade` | 浮点数 | 否 | 0.0 | 仅 `globe` 镜头（其余镜头忽略）：球的**背面**的雾化特征长度——背面透过正面看到、随离相机的距离像雾一样渐隐，权重为 `exp(−depth / globe_back_fade)`：值越大衰减越慢，且永远不会精确降到 0。单位与 globe 自身一致（单位球，相机距离 `D = 4`），背面最深处（球心正后方）比轮廓远 `(D+1) − √(D²−1) ≈ 1.127`；GUI 滑杆范围 0–2，0.3–0.6 是一层淡雾，取 2 时最深处已有约 0.57 的权重。`0` 只显示朝向相机的半球，即本键出现之前的画面。负值按 0 处理。详见下方 `globe` 镜头一节。 |
 | `display_mode` | 字符串 | 否 | `"normal"` | 屏幕信号**以什么形式显示**。`"normal"`：图像本身。`"channel_br"`：「这里偏蓝还是偏红」诊断图——每个像素变为同一曝光和视角下、**未叠加天空底色的晕图** sRGB 通道（gamma 之后，即图像软件「通道计算」做的减法）的灰度 `clamp(0.5 + 2·(B − R), 0, 1)`：中灰 = 无差异，更亮 = 偏蓝，更暗 = 偏红。该值随曝光变化，且 R 或 B 触顶处被压平，比较不同位置须在同一 EV 下。`"tone": "print"` 下不生效；开启时染色场景不产出光路合成图，非默认 `ray_color` 会让诊断失去意义（显示的是染色的固定偏移）；二者均在 commit 时记警告。天空底色不参与计算，也不在诊断之后加回；空天空显示中灰，GUI 的背景照片也排除。叠加层照常画在其上。未知取值按 `"normal"` 处理并警告。公式：`src/util/channel_math.hpp`。 |
 | `background` | 浮点数组 | 否 | [0, 0, 0] | 背景颜色 RGB，**sRGB** 空间（即取色器上显示的那组数） |
 | `ray_color` | 浮点数组 | 否 | [-1, -1, -1] | 光线颜色 RGB，-1表示使用真实颜色 |
 | `intensity_factor` | 浮点数 | 否 | 1.0 | 强度因子（`2^EV`）。只缩放光线能量：取 `0` 时画面里没有任何光，但所有注解（`grid`、`horizon`、marker、标签）照常绘制——要一张纯网格底图就这么做。 |
-| `ev_mode` | 字符串 | 否 | "relative" | 曝光锚点：`"relative"` 锚到**场景**的天空亮度——在一块固定全天缓冲上量到的 P99 辐亮度，因此 lens / FOV / 相机朝向 / `visible` / 输出分辨率都不再改变曝光，同一份 config 无论怎么看都渲染出同样的亮度（画面外观同样随 `ray_num` 增长保持稳定，即 `ray_num` 仍与亮度相关——那正是 `"absolute"` 存在的理由）；`"absolute"` 锚到光源发射的能量，使不同 config 在同一 `intensity_factor` 下直接可比（仅限同一 lens/FOV/分辨率——见 [`doc/ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §7）。缺该键或值无法识别都视为 `"relative"`。⚠️ 换锚时 `"relative"` 的输出亮度**发生了位移**：所有 config 都会动，实测语料上为 −2.02…+2.55 stop，方向取决于场景；迁移律与实测表见 [`doc/ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §2.8，若某张图需要恢复旧观感，`intensity_factor` 可精确抵消。另见 [`doc/adaptive-brightness.zh.md`](adaptive-brightness.zh.md) §3。 |
+| `ev_mode` | 字符串 | 否 | "relative" | 曝光锚点：`"relative"` 锚到**场景**的天空亮度——在一块固定全天缓冲上量到的 P99 辐亮度，因此 lens / FOV / 相机朝向 / `visible` / 输出分辨率都不再改变曝光，同一份 config 无论怎么看都渲染出同样的亮度（画面外观同样随 `ray_num` 增长保持稳定，即 `ray_num` 仍与亮度相关——那正是 `"absolute"` 存在的理由）；`"absolute"` 锚到光源发射的能量，使不同 config 在同一 `intensity_factor` 下直接可比（仅限同一 lens/FOV/分辨率——见 [`doc/rendering/ev-pipeline-architecture.md`](rendering/ev-pipeline-architecture.md) §7）。缺该键或值无法识别都视为 `"relative"`。⚠️ 换锚时 `"relative"` 的输出亮度**发生了位移**：所有 config 都会动，实测语料上为 −2.02…+2.55 stop，方向取决于场景；迁移律与实测表见 [`doc/rendering/ev-pipeline-architecture.md`](rendering/ev-pipeline-architecture.md) §2.8，若某张图需要恢复旧观感，`intensity_factor` 可精确抵消。另见 [`doc/rendering/adaptive-brightness.zh.md`](rendering/adaptive-brightness.zh.md) §3。 |
 | `grid` | 对象 | 否 | 见下方 | 网格配置 |
 | `filter` | 整数数组 | 否 | [] | 多散射过滤器ID数组 |
 
@@ -927,7 +927,7 @@ GUI 没有逐条网格线的控件：它由当前 FOV 推出**单一步长**（�
 各自的 device 面，所以一份双渲染器文档（GUI 导出的形态：预览 + 导出投影）的吞吐接近单渲染器，而不是
 两倍代价——Metal 上实测为任一单渲染器的 0.91–0.95×
 （`test/performance/test_metal_multi_renderer_throughput.py`），并且不再因为渲染器多于一个而回退到
-CPU 路。机制见 `doc/seam-design.md` §4.2.1。
+CPU 路。机制见 `doc/backends/seam-design.md` §4.2.1。
 
 GPU 路仍可能拒绝一份 config 而整批改走 CPU 路（不做逐渲染器混合）：
 
@@ -1587,7 +1587,7 @@ GUI 的日志文件原先无条件写在 `$HOME` 下，现改为与此目录同�
 - **"Current value"（当前值）**——工作副本里这个 key 的值，即此刻按下 Save 会写出的内容。它不是磁盘上这份文件现在存的值；那是另一列"Source"（"Mine" 表示面板打开时文件里已有这个 key，否则是 "Factory"）。
 - **"Origin value"（出厂值）**——字面意义的出厂值，即 `GuiState{}` 序列化后的结果，没有叠加任何东西。它不是"你开始编辑前的生效默认值"——一个你曾保存过非出厂值的 key，这一列显示的出厂值与此无关，恒定不变。
 
-面板的内部架构（一行的存在性如何从序列化文档生成、它的编辑器为何是一张独立的注册表、以及上面这套副本模型的完整形态）见 `doc/gui-state-governance.md` §8。
+面板的内部架构（一行的存在性如何从序列化文档生成、它的编辑器为何是一张独立的注册表、以及上面这套副本模型的完整形态）见 `doc/gui/gui-state-governance.md` §8。
 
 #### `--user-config` / `--no-user-config`
 
@@ -1677,7 +1677,7 @@ clamp，加 `background`，clamp，过 sRGB 传递曲线，截断到 8 位——
 - **`normalized` 永远用 absolute 模式的标量，与渲染器自己的 `ev_mode` 无关。**默认的 `"relative"`
   下，烘焙图锚到的是 `anchor_l99_sky`
   （`scale = intensity_factor · TargetWhiteToLinear(135) / (axis_solid_angle · anchor_l99_sky)`，
-  见 [`ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §2.8），此时 `normalized` 与图像差
+  见 [`ev-pipeline-architecture.md`](rendering/ev-pipeline-architecture.md) §2.8），此时 `normalized` 与图像差
   一个常数增益，这不是错误。把两者当同一尺度之前先读 sidecar 里的 `ev_mode`；想让它们一致，就给
   渲染器设 `"ev_mode": "absolute"`。
 - **`intensity_factor` 在两种模式下都不会烘进导出**。它是图像的 EV 旋钮，烘进去会让同一场景不同 EV

@@ -1,7 +1,7 @@
 #ifndef LUMICE_ANALYTIC_PATH_EVALUATION_HPP_
 #define LUMICE_ANALYTIC_PATH_EVALUATION_HPP_
 
-// The single-path evaluator of liblumice_analytic (doc/analytic-api.md section 4.3): one crystal, one
+// The single-path evaluator of liblumice_analytic (doc/interfaces/analytic-api.md section 4.3): one crystal, one
 // concrete face sequence, one pose -> outgoing direction, segment directions, interface
 // transmittances and a validity flag. LUMICE_ANALYTIC_EvaluatePath is a thin C wrapper over this;
 // fiber continuation and seed search call it directly, so there is one evaluator and the panel and
@@ -20,7 +20,7 @@
 // Precision is double throughout. The engine's float closed-form result decides which faces exist;
 // the normals and the Fresnel factor come from the same formulas the simulator uses, instantiated
 // in double (geo3d_closedform.hpp ClosedFormHexFacePlane / ClosedFormConeSlopeFromWedgeDeg,
-// optics_shared.h GetReflectRatioT) — doc/analytic-api.md section 5.4 has the measurement that ruled
+// optics_shared.h GetReflectRatioT) — doc/interfaces/analytic-api.md section 5.4 has the measurement that ruled
 // out promoting the float normals.
 
 #include <string>
@@ -80,13 +80,13 @@ struct FacePolygonTable {
 
 // Stage 1. On kOk, `out` holds the crystal's present faces and, when `polygons` is not null, their
 // corner polygons. On any other status both are empty. Fields unused by `kind` must be zero
-// (doc/analytic-api.md section 4.1); heights fold to their absolute value, as the simulator folds
+// (doc/interfaces/analytic-api.md section 4.1); heights fold to their absolute value, as the simulator folds
 // them (simulator.cpp SamplePrismShapeScalars / SamplePyramidShapeScalars).
 Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable* out,
                         FacePolygonTable* polygons = nullptr);
 
 // The crystal as the kernel's own C++ callers pass it: the fields of LUMICE_ANALYTIC_Crystal with the
-// same meaning, units and validation (doc/analytic-api.md section 4.1). It exists because outside
+// same meaning, units and validation (doc/interfaces/analytic-api.md section 4.1). It exists because outside
 // src/analytic/ the published prefix may not be spelled (scripts/check_policies.py,
 // analytic-symbol-scope), so an in-tree caller such as the single-path analysis module
 // (src/raypath/) cannot fill the C struct; the overload below converts and forwards, so there is

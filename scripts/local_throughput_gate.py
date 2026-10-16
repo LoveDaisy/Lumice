@@ -8,7 +8,7 @@ and noisier than that, so on CI the same number reads red with nothing wrong.
 The precise gate therefore runs here, on a schedule (``launchd``, installed by
 ``scripts/install_throughput_gate.sh``), and CI keeps only a loose disaster
 floor. Where it runs, how often, where results land and how to install it:
-``doc/performance-testing.md``, "Precise throughput gate (local schedule)".
+``doc/testing/performance-testing.md``, "Precise throughput gate (local schedule)".
 
 What one run does, per leg, in a fixed order:
 
@@ -976,7 +976,7 @@ def issue_body(leg: str, rec: dict, stale_since: Optional[str]) -> str:
         lines.append(f"Last real measurement (pass or fail): {stale_since}")
     lines.append("")
     lines.append("Posted by `scripts/local_throughput_gate.py`; how to read it: "
-                 "`doc/performance-testing.md`, \"Precise throughput gate (local schedule)\".")
+                 "`doc/testing/performance-testing.md`, \"Precise throughput gate (local schedule)\".")
     return "\n".join(lines)
 
 

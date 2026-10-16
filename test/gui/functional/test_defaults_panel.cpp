@@ -530,7 +530,7 @@ std::string ActivatedInputText(ImGuiTestContext* ctx, const char* ref) {
 
 void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   {
-    // Semi-variable (doc/gui-visual-language.md §9): the panel opens at its default size, the
+    // Semi-variable (doc/gui/gui-visual-language.md §9): the panel opens at its default size, the
     // user may drag its height between the floor and the work area but never its width, a
     // close-and-reopen keeps the dragged height for the session, and ResetTestState() puts the
     // default back — which is what keeps one case's drag out of defaults_panel_layout's shots.

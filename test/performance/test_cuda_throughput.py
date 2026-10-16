@@ -6,7 +6,7 @@ file owns the CUDA skip gate and the measured figures for the CUDA reference
 machine.
 
 Honesty note on this backend's margin. The CUDA reference machine
-(``doc/machines.md``: RTX 5090 D under WSL2) does not lock its clocks — the SM
+(``doc/testing/machines.md``: RTX 5090 D under WSL2) does not lock its clocks — the SM
 clock boosts 180→2407 MHz on demand — and a drain-aligned sample there carries
 a CoV of 0.10–0.17, against Metal's 0.06–0.10. Fourteen idle same-commit runs
 of the old 21-rep ratio-of-medians statistic measured the worst arm at mean

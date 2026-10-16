@@ -2,7 +2,7 @@
 #define LUMICE_RAYPATH_SINGLE_PATH_ANALYSIS_HPP_
 
 // Single-path analysis: everything the Analyze workspace computes once ONE single-layer raypath of
-// ONE crystal entry has been chosen (doc/raypath-analysis.md section 5.1.8, phase one) — the
+// ONE crystal entry has been chosen (doc/raypath/raypath-analysis.md section 5.1.8, phase one) — the
 // components of the fiber over a sky point, each component's poses with per-pose detail, and the
 // deviation over the whole sun-direction sphere. It strings liblumice_analytic's kernel
 // (src/analytic/: EvaluatePath, the fiber continuation, component discovery) to a scene config,
@@ -15,7 +15,7 @@
 // answer truthfully — a multi-layer chain, a face the crystal lacks, a wavelength outside the
 // refractive-index table — is an error with a code and a message, never a result.
 //
-// Frames and angles are doc/coordinate-convention.md's: a pose is the row-major body -> world
+// Frames and angles are doc/geometry/coordinate-convention.md's: a pose is the row-major body -> world
 // rotation R = Rz(azimuth - 180) Ry(-zenith) Rz(roll); world directions are propagation directions
 // (sky_direction.hpp: the sky point a direction comes from sits at altitude asin(-z)).
 
@@ -123,7 +123,7 @@ struct SinglePathMetadata {
   double target_altitude_deg = 0.0;
   double target_azimuth_deg = 0.0;
   double target_direction[3]{};       // world, light-travel direction arriving from the target sky point
-                                      // (doc/coordinate-convention.md "Direction-Vector Semantics")
+                                      // (doc/geometry/coordinate-convention.md "Direction-Vector Semantics")
   double target_deviation_deg = 0.0;  // angle between the sun and the target sky point
 
   double wavelength_nm = 0.0;

@@ -22,7 +22,7 @@
 namespace {
 
 // Zero-fills a caller-allocated result struct after its leading struct_size field, within the bytes
-// the caller declared (doc/analytic-api.md section 8.2) — so a caller older than the library keeps
+// the caller declared (doc/interfaces/analytic-api.md section 8.2) — so a caller older than the library keeps
 // the memory it did not size, and struct_size itself is never touched.
 template <typename T>
 void ZeroAfterStructSize(T* out) {
@@ -54,7 +54,7 @@ struct PathEvaluationStorage {
 };
 
 // The smallest FiberResult a caller may pass: the version 4 layout, everything up to the first
-// field version 5 appended (doc/analytic-api.md section 8.2). A struct_size from here up to, but not
+// field version 5 appended (doc/interfaces/analytic-api.md section 8.2). A struct_size from here up to, but not
 // including, sizeof(FiberResult) is served as version 4 was; the appended fields are written only
 // when all of them fit.
 constexpr size_t kFiberResultV4Size = offsetof(LUMICE_ANALYTIC_FiberResult, branch_margin_count);
@@ -157,7 +157,7 @@ LUMICE_ANALYTIC_FiberStatus ToStatus(lumice::analytic::FiberStatus status) {
   return LUMICE_ANALYTIC_FIBER_NUMERICAL_FAILURE;
 }
 
-// The C options onto LI's full option set (doc/analytic-api.md section 4.3): zero is the default,
+// The C options onto LI's full option set (doc/interfaces/analytic-api.md section 4.3): zero is the default,
 // negative or non-finite is invalid, and the filled-in set must pass LI's own relations.
 bool ToParams(const LUMICE_ANALYTIC_ContinuationOptions* options, lumice::analytic::ContinuationParams* p) {
   *p = lumice::analytic::ContinuationParams{};
@@ -748,7 +748,7 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(const LUMICE_ANALYTIC_
   if (out_results == nullptr) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  // The stride is the caller's sizeof (doc/analytic-api.md section 8.2). Below the version 4 layout
+  // The stride is the caller's sizeof (doc/interfaces/analytic-api.md section 8.2). Below the version 4 layout
   // it cannot be walked: only element 0 is known to exist.
   const size_t stride = out_results[0].struct_size;
   if (stride < kFiberResultV4Size) {

@@ -62,7 +62,7 @@ inline bool IsValidMarkerId(int id) {
 // the JSON->Scene path a double hop (text -> ConfigScratch -> JSON root) rather than a direct
 // parse into the handle. It was a deliberate trade — rewriting a validated parser is a far bigger
 // risk than one extra re-encode on a non-hot path — not an oversight. See
-// doc/capi-lifecycle-architecture.md for the same note on the architecture side.
+// doc/interfaces/capi-lifecycle-architecture.md for the same note on the architecture side.
 //
 // Deliberately NOT re-asserted here: the old 160 KB `static_assert` ABI ceiling. It existed
 // because the type was public and callers could put it on their stack / pass it by value across

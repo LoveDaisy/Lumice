@@ -321,7 +321,7 @@ void RayBuffer::Reset(size_t capacity, bool chain_id_enabled) {
     // layers pays no re-allocation cost. Reset does NOT zero existing slots
     // (only newly-allocated capacity is value-initialised); the mask reset for
     // MS-layer entry is done explicitly in InitRayFirstMs — see
-    // doc/raypath-rayseg-architecture.md §3 "Reset Points Summary".
+    // doc/raypath/raypath-rayseg-architecture.md §3 "Reset Points Summary".
     components_ = std::make_unique<uint64_t[]>(capacity);
     capacity_ = capacity;
     grew = true;

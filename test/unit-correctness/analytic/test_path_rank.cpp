@@ -4,7 +4,7 @@
 // incident one (deviation 0) — over every realisable face sequence of two and three faces on the
 // regular prism and the fixtures' asymmetric pyramid, and of four faces on the prism.
 //
-// symmetry_semantics: none — each sequence is one concrete path (doc/analytic-api.md section 3).
+// symmetry_semantics: none — each sequence is one concrete path (doc/interfaces/analytic-api.md section 3).
 
 #include <gtest/gtest.h>
 

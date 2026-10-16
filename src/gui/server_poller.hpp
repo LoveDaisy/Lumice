@@ -18,7 +18,7 @@ namespace lumice::gui {
 // all — it takes a share of the result frame's lifetime and points at the frame's own buffers.
 // Anti-flicker carry-forward then reuses the same shared_ptr across sparse polls, so that path
 // is a refcount bump on an object that is itself already copy-free (§5.4 of
-// doc/gui-preview-lifecycle-architecture.md and the versioned-snapshot-handoff plan).
+// doc/gui/gui-preview-lifecycle-architecture.md and the versioned-snapshot-handoff plan).
 //
 // INVARIANT: a TexturePayload is only ever shared whole, via shared_ptr<const TexturePayload>.
 // It is never copied or sliced by value — the buffer pointers below and the `frame` that keeps
@@ -135,7 +135,7 @@ struct PreviewSnapshot {
   // cache, it publishes an immutable result frame — but the conclusion has not: ServerImpl::Stop
   // clears the dirty/consumed flags and leaves the published frame alone, and only a completed
   // snapshot pass ever replaces that frame, so the previous run's stats stay readable until the
-  // new run produces its first batch (doc/accumulator-consumer-architecture.md §3.1). The bundle
+  // new run produces its first batch (doc/rendering/accumulator-consumer-architecture.md §3.1). The bundle
   // epoch advances immediately, so without this stamp a carried-forward value is
   // indistinguishable from a freshly produced one and the previous run's ray/crystal/sampling
   // counts reappear on the status bar. Consumed via ShouldApplyStats.
@@ -270,7 +270,7 @@ class ServerPoller {
   // ---- Test-only synchronous seam (see test/unit-correctness/gui/test_server_poller.cpp) ----
   // Drive exactly ONE poll against `server` on the CALLING thread, bypassing the worker
   // thread, so a regression test can deterministically construct the poll/sync interleaving
-  // that used to lose the terminal completion edge (doc/gui-preview-lifecycle-architecture.md
+  // that used to lose the terminal completion edge (doc/gui/gui-preview-lifecycle-architecture.md
   // §2/§6, invariants I3/I4). Not used in production — the real path is Start()/WorkerLoop.
   void PollOnceForTest(LUMICE_Server* server) {
     server_ = server;
@@ -355,7 +355,7 @@ class ServerPoller {
   //                        stats/lifecycle until the worker republishes.
   //   publish_reset=false (WakeForRefresh) — display-time refresh; the current snapshot must
   //                        stay `valid` across the wake so SyncFromPoller does not transiently
-  //                        observe an invalid snapshot (doc/gui-state-governance.md §4 支柱 2).
+  //                        observe an invalid snapshot (doc/gui/gui-state-governance.md §4 支柱 2).
   // Returns true iff it actually resumed (was kPaused); false on every no-op path (null server,
   // already kRunning, kTerminating) so callers log their resume line only on a real transition,
   // matching the pre-refactor behavior.
@@ -403,7 +403,7 @@ class ServerPoller {
   // Reset in Start(), updated in PollOnce() on each quality_ok pass.
   std::chrono::steady_clock::time_point last_quality_pass_time_{ std::chrono::steady_clock::now() };
 
-  // Terminal-frame rescue (invariant I6, doc/gui-preview-lifecycle-architecture.md §7 rule 2 /
+  // Terminal-frame rescue (invariant I6, doc/gui/gui-preview-lifecycle-architecture.md §7 rule 2 /
   // §9): has a payload been materialized since the worker last resumed? Scope is per-RESUME, not
   // per-poller-lifetime: it is reset alongside last_generation_/last_quality_pass_time_ at every
   // kPaused→kRunning edge (Start() and TransitionToRunning(), i.e. both WakeForRestart — a fresh

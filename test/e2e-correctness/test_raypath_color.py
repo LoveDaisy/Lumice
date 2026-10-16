@@ -7,7 +7,7 @@ mono `img_XX.<fmt>` output is still produced (additive, not a replacement).
 
 The fixture `raypath_color_three_arcs.json` is a single-MS scene under the
 Design-2 placement-scoped color model (task-engine-redirect-design2,
-doc/gui-custom-spectrum-and-raypath-color.md §4.0): two geometrically-identical
+doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0): two geometrically-identical
 crystals hold disjoint physical filters — crystal 1 (filter 1, pass-all) and
 crystal 2 (filter 4, len in {2,3}). The RED class is a match-all predicate on
 crystal 1; GREEN / BLUE are entry_exit length predicates (len==2 / len>=3) on

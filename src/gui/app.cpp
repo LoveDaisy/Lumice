@@ -1351,7 +1351,7 @@ bool MaybeReconstructServerForConstructionProperties() {
 // call this and nothing else to turn g_state into the LUMICE_Scene they submit, so the scene an
 // analysis reports on is byte-for-byte the scene a Run of the same document would render — a
 // second BuildScene call site would be a second place for the two to drift apart, and nothing
-// downstream could tell (doc/gui-state-governance.md §9: one encoder per intent). The overflow
+// downstream could tell (doc/gui/gui-state-governance.md §9: one encoder per intent). The overflow
 // report is part of the emitter for the same reason: a document too large for the ABI is refused
 // the same way, with the same message, whichever button asked.
 ScenePtr BuildCommitSceneOrWarn(const GuiState& state, bool user_initiated) {
@@ -2110,7 +2110,7 @@ void SyncFromPoller() {
   }
 
   // Mealy next-intent advance for a natural run completion (task-color-migration §3 D4 /
-  // doc/gui-state-governance.md §4 支柱 2). Symmetric to the kStopping→kStopped promote above:
+  // doc/gui/gui-state-governance.md §4 支柱 2). Symmetric to the kStopping→kStopped promote above:
   // the first time we observe a fresh COMPLETED snapshot at the committed epoch under a kRunning
   // intent, latch the intent to kRunCompleted so subsequent frames stay kDone even if a later
   // snapshot briefly observes valid=false. Same "writes INTENT only, reconcile is single-owner
@@ -2248,7 +2248,7 @@ void SyncFromPoller() {
     // Auto-EV. The anchor is the SERVER's sky radiance (LUMICE_RawXyzResult::anchor_l99_sky),
     // the same scalar RenderConsumer::ExposureScale divides by, so the preview and a CLI render
     // of this document are exposed against one number rather than two that were argued to agree
-    // (see doc/adaptive-brightness.md and doc/ev-pipeline-architecture.md).
+    // (see doc/rendering/adaptive-brightness.md and doc/rendering/ev-pipeline-architecture.md).
     //
     // Only the FIRST argument changed. snapshot_intensity stays the real value, because it is
     // not a leftover: ComputeEvAuto puts it in the numerator, ComputeMonoExposure's kRelative

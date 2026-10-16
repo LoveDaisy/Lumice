@@ -337,7 +337,7 @@ TEST(RenderConfigEvModeTest, OperatorEq_ComparesEvMode) {
 
 // ===== tone / paper: defaults, JSON round trip, warn-and-fall-back, appearance classification =====
 //
-// The two fields of the print display mode (doc/print-mode-subtractive-ink.md). No operator reads
+// The two fields of the print display mode (doc/rendering/print-mode-subtractive-ink.md). No operator reads
 // either of them yet — the field chain lands ahead of the operator on purpose — so what is pinned
 // here is the chain itself: the values survive JSON both ways, an unknown tone SAYS SO instead of
 // silently becoming `screen`, and neither field is mistaken for a layout field.
@@ -350,7 +350,7 @@ TEST(RenderConfigToneTest, DefaultIsScreen) {
 // White, the opposite of background_'s black, and the whole reason `paper` is a second field
 // rather than a reuse of `background`: under the subtractive operator a black ground gives
 // out = 0 * 10^(-D) == 0 for every pixel, an all-black page reachable by merely ticking the mode
-// on. See doc/print-mode-subtractive-ink.md decision D5.
+// on. See doc/rendering/print-mode-subtractive-ink.md decision D5.
 TEST(RenderConfigPaperTest, DefaultIsWhite) {
   lumice::RenderConfig cfg;
   EXPECT_FLOAT_EQ(cfg.paper_[0], 1.0f);
@@ -696,7 +696,7 @@ TEST(RenderConfigMarkersTest, FromJson_EveryIdSpellingRoundTrips) {
 TEST(RenderConfigMarkersTest, FromJson_UnknownIdIsRejected) {
   // The point of the whole hand-written codec. NLOHMANN_JSON_SERIALIZE_ENUM would map this to the
   // FIRST entry (the zenith) and report nothing — the same silent-mapping defect
-  // doc/gui-state-governance.md records for "front" becoming "upper".
+  // doc/gui/gui-state-governance.md records for "front" becoming "upper".
   lumice::MarkerStyleParam m;
   const nlohmann::json j = nlohmann::json::parse(R"({ "id": "sundog" })");
   EXPECT_THROW(j.get_to(m), nlohmann::json::exception);

@@ -15,7 +15,7 @@
 // half-plane problem over the six directions with per-direction offset
 // (√3/4)·(distᵢ − m(z)) — the closed-form pyramid solver reduces to
 // repeated calls to the shared 2D solver at a handful of candidate heights.
-// See doc/crystal-geometry-representation.md §4 for the design rationale.
+// See doc/geometry/crystal-geometry-representation.md §4 for the design rationale.
 //
 // Every non-opposite direction pair has determinant sin 60° = √3/2 exactly;
 // opposite pairs are exactly parallel (skipped by construction, no threshold).
@@ -289,7 +289,7 @@ struct ClosedFormPyramidResult {
 //   - float: math::kSqrt3_4 / math::kDegreeToRad, exactly the expression the MC path has always
 //     evaluated — bit for bit the slope every simulated crystal is built with;
 //   - double: the constants to double precision, for liblumice_analytic, whose tolerances are set in
-//     double (doc/analytic-api.md section 5.4). The float constants alone put a ~1e-8 relative error
+//     double (doc/interfaces/analytic-api.md section 5.4). The float constants alone put a ~1e-8 relative error
 //     on the slope, four orders above what that library must meet.
 // No legality gate here: the caller decides whether a cone exists (0.1..89.9 degrees, height > 0).
 template <typename Real>
@@ -316,7 +316,7 @@ void ClosedFormHexFacePlane(int slot, double a1, double a2, double h2_2, double 
 // the cut is the shoulder, z = ±h2/2. The apex-collapse gate is evaluated on `dist` rounded to
 // float, as the engine evaluates it (it decides topology, which stays the engine's float decision);
 // everything else is double. liblumice_analytic reads it to place its face polygons in double
-// (doc/analytic-api.md section 5.4).
+// (doc/interfaces/analytic-api.md section 5.4).
 void ClosedFormPyramidBasalHeights(double upper_wedge_deg, double lower_wedge_deg, double h1, double h2, double h3,
                                    const double dist[6], double* z_top, double* z_bot);
 

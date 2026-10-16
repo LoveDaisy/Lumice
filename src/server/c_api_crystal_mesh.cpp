@@ -30,7 +30,7 @@ namespace ns = lumice;
 // All three reversals are gone: face_numbers per triangle come from the
 // Crystal's fn_map_ (parametric, populated from cf_geom_.face_number in
 // PopulateFromCfGeom), and face_vtx_pool / face_normals come straight from
-// cf_geom_. See doc/crystal-geometry-representation.md §1 for the wider
+// cf_geom_. See doc/geometry/crystal-geometry-representation.md §1 for the wider
 // "delete the reversal, read the constant" story.
 // Fold a 64-bit sample seed into the 32-bit seed RandomNumberGenerator accepts.
 // XOR-fold (both halves participate) rather than truncate: truncation would make any

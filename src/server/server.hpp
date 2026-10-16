@@ -91,7 +91,7 @@ enum class ServerStatus {
  * @details Replaces the historical side-signal disambiguation (bare kIdle +
  *          has_ever_consumed_ + stats>0). Derived in one place
  *          (ServerImpl::GetSimLifecycle); ServerStatus / QueryServerState become
- *          projections of it. See doc/gui-preview-lifecycle-architecture.md §4/§5.
+ *          projections of it. See doc/gui/gui-preview-lifecycle-architecture.md §4/§5.
  *          - kCompleted = a finite run drained clean (includes the zero-output /
  *            all-filter-rejected convergence, capi-lifecycle §3.6).
  *          - kIdle      = never run, or reset (post-Stop) with no data consumed.
@@ -146,7 +146,7 @@ class Server {
    *        ServerImpl::AutomaticWorkerBaseAndCap() in server.cpp). A value > 0 is honoured verbatim, above that
    *        cap included. On the CPU route these are the render workers, which also run an
    *        analysis. On the GPU/Metal/CUDA route the render engine is always a single
-   *        Simulator (doc/gpu-single-engine-implementation.md) and this count sizes the standing
+   *        Simulator (doc/backends/gpu-single-engine-implementation.md) and this count sizes the standing
    *        CPU analysis pool instead —
    *        the workers a StartRaypathAnalysis session runs on. The route is fixed at
    *        construction (see preferred_backend).
@@ -183,7 +183,7 @@ class Server {
 
   /**
    * @brief Start an ANALYSIS run — the other kind of run this server's one lifecycle
-   *        carries (doc/raypath-analysis-panel.md §3): no image, a histogram of
+   *        carries (doc/raypath/raypath-analysis-panel.md §3): no image, a histogram of
    *        complete raypath chains over the committed scene.
    * @details Same Stop → rebuild consumers → Start sequence as CommitConfig, on the
    *          scene already committed; only the consumer set differs (a

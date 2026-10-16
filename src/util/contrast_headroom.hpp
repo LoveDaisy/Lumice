@@ -7,7 +7,7 @@ namespace lumice {
 // =================================================================================================
 // The ONE contrast-headroom predicate, shared by both renderers.
 //
-// Each tone operator has a degenerate direction, and doc/print-mode-subtractive-ink.md §8 (owner
+// Each tone operator has a degenerate direction, and doc/rendering/print-mode-subtractive-ink.md §8 (owner
 // decision D6) is that the two are ONE idea and must therefore be ONE predicate:
 //
 //   tone      zero-energy colour   the law's far end   headroom
@@ -60,7 +60,7 @@ enum class ToneLawLimit {
 // 8-bit levels of the sRGB-encoded output.
 //
 // WHY TEN — the chain, which is an engineering inference of this task and NOT an owner decision
-// (doc/print-mode-subtractive-ink.md's decision table carries no number for it; §11.2's discipline
+// (doc/rendering/print-mode-subtractive-ink.md's decision table carries no number for it; §11.2's discipline
 // applies, so treat this as questionable and say so if evidence disagrees):
 //
 //  1. `margin` is an UPPER BOUND on contrast, not a typical value. A real feature only ever

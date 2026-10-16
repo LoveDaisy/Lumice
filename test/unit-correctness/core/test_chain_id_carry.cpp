@@ -1,6 +1,6 @@
 // Whitebox verification of the raypath-analysis foundation: the per-ray chain
 // id carried across MS layers and the interning table that turns it back into
-// a printable chain (doc/raypath-analysis-panel.md §3.1–§3.2).
+// a printable chain (doc/raypath/raypath-analysis-panel.md §3.1–§3.2).
 //
 // Four things are pinned here, each on its own mechanism rather than on a
 // statistic:

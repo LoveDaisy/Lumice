@@ -1,5 +1,5 @@
 // Tests for src/config/color_gate_table.hpp — Design 2 (2026-07-08,
-// doc/gui-custom-spectrum-and-raypath-color.md §4.0) CPU-only,
+// doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0) CPU-only,
 // placement-scoped color-predicate → component-bit source.
 //
 // These tests lock down: bit allocation, structural dedup, layer-key

@@ -129,7 +129,7 @@ typedef struct LUMICE_RenderResult_ {
   // union of NON-ZERO UNEXPOSED (raw lane) Y values across every participating color
   // class (the anchor the GUI's auto-EV feeds into ComputeEvAuto for composite display).
   // 0 on the composite path means no participating class carried any positive Y this
-  // snapshot (all-black composite / all classes hidden). See doc/ev-pipeline-architecture.md
+  // snapshot (all-black composite / all classes hidden). See doc/rendering/ev-pipeline-architecture.md
   // §2.4 for why this field is composite-only.
   float composite_p99_y;
 } LUMICE_RenderResult;
@@ -230,7 +230,7 @@ typedef struct LUMICE_ServerConfig_ {
                           // NOT subject to that cap. On the CPU route these are the render
                           // workers (which also run an analysis). On the GPU/Metal/CUDA route
                           // the render engine stays a single Simulator (N engines would contend
-                          // one GPU; see doc/gpu-single-engine-implementation.md) and this
+                          // one GPU; see doc/backends/gpu-single-engine-implementation.md) and this
                           // count sizes the server's standing CPU ANALYSIS POOL — the workers
                           // LUMICE_StartRaypathAnalysis runs on. BEHAVIOUR CHANGE: before that
                           // pool existed the field was ignored on the GPU route; a caller that
@@ -313,7 +313,7 @@ typedef struct LUMICE_ColorClassDisplay_ {
 // Thread safety: display-time only; safe relative to OTHER display-time readers
 // (LUMICE_AcquireResultFrame, LUMICE_GetSimLifecycle, etc.). NOT thread-safe with a concurrent
 // LUMICE_CommitScene — the existing single-owner commit rule
-// (doc/capi-lifecycle-architecture.md §4) still applies to this setter.
+// (doc/interfaces/capi-lifecycle-architecture.md §4) still applies to this setter.
 LUMICE_API LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_ColorClassDisplay* classes,
                                                     int class_count, const int* z_order, int mode);
 
@@ -378,7 +378,7 @@ LUMICE_API LUMICE_ErrorCode LUMICE_SetCompositeBackground(LUMICE_Server* server,
 LUMICE_API LUMICE_ErrorCode LUMICE_GetColorClassSignal(LUMICE_Server* server, int* out_flags, int class_count);
 
 // =============== Results ===============
-// See doc/capi-lifecycle-architecture.md §5 for sentinel contract.
+// See doc/interfaces/capi-lifecycle-architecture.md §5 for sentinel contract.
 // Unified pattern: (server, out, max_count) -> LUMICE_ErrorCode, sentinel-terminated.
 // Sentinel is written at out[count] only when count < max_count.
 // When the array is full (count == max_count), no sentinel slot is written;
@@ -540,7 +540,7 @@ LUMICE_API LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int inf
                                                   LUMICE_RayCount additional_ray_num);
 
 // =============== Raypath Analysis Run ===============
-// The other kind of run a server can carry (doc/raypath-analysis-panel.md): no image, a
+// The other kind of run a server can carry (doc/raypath/raypath-analysis-panel.md): no image, a
 // histogram of COMPLETE raypath chains — which crystal, and which face sequence through it,
 // on every scattering layer a ray traversed — with the energy each chain delivered into a
 // region of interest, sorted by that energy. Same lifecycle as a render run, one request
@@ -572,7 +572,7 @@ LUMICE_API LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int inf
 //      after the previous commit would have.
 //
 // CPU, always. The chain ids the histogram is built from exist on the legacy CPU path only
-// (v1 — doc/raypath-analysis-panel.md §2 ruling 1), so the analysis run forces that route
+// (v1 — doc/raypath/raypath-analysis-panel.md §2 ruling 1), so the analysis run forces that route
 // for its duration, ahead of BOTH LUMICE_SetPreferredBackend and the LUMICE_TRACE_BACKEND
 // environment override. It is a session property, not a fallback: the preference is left
 // as it was and the next render honours it; LUMICE_GetBackendFallbackFlag stays 0; and
@@ -639,7 +639,7 @@ typedef struct LUMICE_RaypathAnalysisRequest_ {
   // direction in this API uses (the direction light TRAVELS: altitude = asin(-z), the zenith is
   // z = -1 — LUMICE_UnprojectPixel below returns one; the full travel-vs-position semantics,
   // including why the travel direction of sky point P selects P itself here, is
-  // doc/coordinate-convention.md "Direction-Vector Semantics"). Need not be normalized; a zero
+  // doc/geometry/coordinate-convention.md "Direction-Vector Semantics"). Need not be normalized; a zero
   // vector is rejected. `cone_radius_rad` must be positive. `cone_ring_count` splits [0, radius] into
   // that many equal angular-distance rings, 1..LUMICE_MAX_RAYPATH_CONE_RINGS. There is no
   // per-cone stop (removed in v4.34): the run's length is the ray budget below, or

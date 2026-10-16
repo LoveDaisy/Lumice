@@ -58,7 +58,7 @@ The `Server` class is the central entry point of the architecture. It uses the P
 - `CommitConfig(const nlohmann::json&, bool* out_reused)`: Submit a parsed configuration.
   This is the single core-side commit; the only public entry point that reaches it is
   `LUMICE_CommitScene` (the C API's `LUMICE_Config` value struct and its three commit
-  functions were removed in v4.12 — see [`doc/c_api.md`](c_api.md)).
+  functions were removed in v4.12 — see [`doc/interfaces/c_api.md`](interfaces/c_api.md)).
 - `CommitConfig(const std::string&)`: JSON-string overload used by the benchmark harness
 - `AcquireResultFrame()`: Acquire a share of the most recent result frame — THE result entry
   point. Returns a `std::shared_ptr<const ResultFrame>` (never null) carrying every kind of
@@ -67,7 +67,7 @@ The `Server` class is the central entry point of the architecture. It uses the P
   as fresh as the per-kind getters it replaced; the pointers inside stay valid for as long as
   the caller keeps its share, because a later snapshot publishes a *new* frame rather than
   overwriting this one. The six `Get*Results` getters this replaced were removed in v4.15 —
-  see [`doc/capi-lifecycle-architecture.md`](capi-lifecycle-architecture.md) §9 for the
+  see [`doc/interfaces/capi-lifecycle-architecture.md`](interfaces/capi-lifecycle-architecture.md) §9 for the
   ownership invariant and the two use-after-free recurrences that motivated it.
 - `IsIdle()`: Check whether the server is idle
 - `Stop()` / `Terminate()`: Stop the server
@@ -349,7 +349,7 @@ LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerSta
 void LUMICE_StopServer(LUMICE_Server* server);
 ```
 
-For detailed usage, see the [C API documentation](c_api.md).
+For detailed usage, see the [C API documentation](interfaces/c_api.md).
 
 ## Dependencies
 
@@ -399,5 +399,5 @@ All dependencies are managed automatically via [CPM.cmake](https://github.com/cp
 - [README](../README.md) - User documentation
 - [Configuration Guide](configuration.md) - Configuration format reference
 - [Developer Guide](developer-guide.md) - Developer guide
-- [C API Documentation](c_api.md) - C API usage reference
+- [C API Documentation](interfaces/c_api.md) - C API usage reference
 - [Documentation Index](README.md) - Navigation for all documentation

@@ -9,7 +9,7 @@
 // event, not a malformed state. A low pass-rate filter tripped it in Debug builds (SIGABRT). The
 // assertion was rewritten to the real Design A invariant —
 // outgoing_d_.size() == 3 * outgoing_w_.size() (the parallel-array sizing
-// documented in sim_data.hpp). See doc/filter-architecture.md §4
+// documented in sim_data.hpp). See doc/raypath/filter-architecture.md §4
 // "Empty-batch contract".
 //
 // Coverage:

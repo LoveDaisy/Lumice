@@ -246,7 +246,7 @@ struct ColorFieldDragState {
 // risk of inventing a constraint that disagrees with one.
 //
 // It takes an applicability for the same reason the four factories above do, and gained one for a
-// concrete case: doc/print-mode-subtractive-ink.md §7 instance 4, where the annotation colours stop
+// concrete case: doc/rendering/print-mode-subtractive-ink.md §7 instance 4, where the annotation colours stop
 // being read under the print operator. Defaulted, so every caller that has no gate reads as it did.
 FieldEditorEntry ColorField(SlotFn<float> access, ApplicabilityFn applicable = AlwaysApplies) {
   FieldEditorEntry entry;
@@ -368,7 +368,7 @@ Applicability WhenGlobe(const GuiState& state) {
   return {};
 }
 
-// doc/print-mode-subtractive-ink.md §7 instance 1. Ordered BEFORE the "is an image loaded" check on
+// doc/rendering/print-mode-subtractive-ink.md §7 instance 1. Ordered BEFORE the "is an image loaded" check on
 // purpose: when both reasons hold, print is the one the user has to act on — loading an image would
 // not enable the control, and a reason that stops being true when you satisfy it is the wrong
 // reason to show.
@@ -400,7 +400,7 @@ Applicability WhenBackgroundLoaded(const GuiState& state) {
   return {};
 }
 
-// doc/print-mode-subtractive-ink.md §7 instance 4. Named in the same verb form as NotUnderFullSky
+// doc/rendering/print-mode-subtractive-ink.md §7 instance 4. Named in the same verb form as NotUnderFullSky
 // above, and gating the same kind of thing: a field that still HAS a value and still round-trips,
 // but that the current configuration gives no way to observe.
 //
@@ -419,7 +419,7 @@ Applicability NotUnderPrintMode(const GuiState& state) {
   return {};
 }
 
-// The two GROUND colours, one per operator (doc/print-mode-subtractive-ink.md: `background` is the
+// The two GROUND colours, one per operator (doc/rendering/print-mode-subtractive-ink.md: `background` is the
 // sky light is added to, `paper` is the sheet ink is laid on, and the panel shows one swatch or the
 // other — app_panels.cpp's Display group alternates them in place). Written here as a pair of gates
 // so that "which ground applies right now" has one owner: the main UI's if/else reads
@@ -842,7 +842,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     map.emplace("overlay_sun_circles_alpha",
                 FloatField([](GuiState& s) { return &s.sun_circles_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
     // The axis-referenced ring family: the same four editors the sun circles get, under the same
-    // print gate on the colour (doc/print-mode-subtractive-ink.md §7 instance 4 is the annotation
+    // print gate on the colour (doc/rendering/print-mode-subtractive-ink.md §7 instance 4 is the annotation
     // colour fields, and this is one). Its angle list is the third deliberately unregistered leaf
     // (see the header); its section fold state is registered further down beside the markers'.
     map.emplace("overlay_view_dist_line", BoolField([](GuiState& s) { return &s.show_view_dist_line; }));
@@ -877,7 +877,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     map.emplace("overlay_lens_border_line", BoolField([](GuiState& s) { return &s.show_lens_border_line; }));
     // NO NotUnderPrintMode here, unlike the three line families and the markers above, and it is a
     // scope decision rather than an omission: the four instances of the print rule are enumerated in
-    // doc/print-mode-subtractive-ink.md §7 and the lens border is not one of them. Widening the rule
+    // doc/rendering/print-mode-subtractive-ink.md §7 and the lens border is not one of them. Widening the rule
     // to "every field print happens not to read" is the same judgement the import notices already
     // declined to make (see WarnUnsupportedByDesign in file_io.cpp, which covers three named fields
     // and not every core key the GUI drops) — the boundary has to come from the document, not from a

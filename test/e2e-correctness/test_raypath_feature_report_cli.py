@@ -2,7 +2,7 @@
 
 The schema-three route consumes physical input and reports bounded numerical evidence: the
 geometry layer's structural objects and delta-axis support block are the primary record
-(doc/raypath-cli-output.md §7), and the Monte-Carlo side rides along as corroboration
+(doc/raypath/raypath-cli-output.md §7), and the Monte-Carlo side rides along as corroboration
 (``mc_evidence``). Scientific kernels have independent fixtures in the analytic and
 composition layers; this layer owns the CLI, spectrum choice, scope, budget and output-file
 contracts. The corpus-cell wiring (C01-C16 anchors and the dissolved (iii) red states) lives

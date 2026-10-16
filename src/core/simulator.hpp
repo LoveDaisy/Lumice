@@ -83,7 +83,7 @@ struct SimBatch {
   // back to back: each is traced exactly as a batch of that size used to be when
   // it was queued on its own, so the per-ray work and the RNG stream a worker
   // consumes are unchanged, and only the number of cross-thread handoffs per ray
-  // drops. (Why that number had to drop: doc/performance-testing.md, "CPU worker
+  // drops. (Why that number had to drop: doc/testing/performance-testing.md, "CPU worker
   // handoff grain".)
   size_t physics_ray_num_ = 0;
 
@@ -108,7 +108,7 @@ struct SimBatch {
 // of that scene (SimBatch::ray_alloc_online_). Both scene publishers bind one —
 // a render commit and an analysis submission — off the same scene field; the
 // analysis starts cold on every submission where the render may carry its tally
-// across a recommit (doc/raypath-analysis-panel.md §10).
+// across a recommit (doc/raypath/raypath-analysis-panel.md §10).
 //
 // Two operations, both thread-safe, both O(entries):
 //   Load()       — the snapshot to deal the NEXT batch by. Never null: the
@@ -192,7 +192,7 @@ class Simulator {
   // and the worker thread reaching CreateBackend does not read as "fell back".
   bool BackendActive() const { return backend_active_.load(std::memory_order_acquire); }
 
-  // Raypath-analysis mode for the next Run() entry (doc/raypath-analysis-panel.md
+  // Raypath-analysis mode for the next Run() entry (doc/raypath/raypath-analysis-panel.md
   // §3). While `enabled`, the legacy CPU path allocates the per-ray chain-id
   // column, interns every layer traversal into this Simulator's own
   // ChainIdInterningTable (cleared at Run() entry — one Run() is one analysis
@@ -671,7 +671,7 @@ void ResetHitLoopBuffers(RayBuffer buffer_data[2], size_t ray_num, bool chain_id
 //
 // Internal: exposed for unit testing; not part of the public C API.
 //
-// Design 2 (2026-07-08, doc/gui-custom-spectrum-and-raypath-color.md §4.0):
+// Design 2 (2026-07-08, doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0):
 // the emit gate has two decoupled predicates, evaluated on the same ray:
 //   - `spec` (physical filter) — decides whether the ray survives.
 //   - `color_spec` (color predicate, non-destructive pass) — decides which
@@ -718,7 +718,7 @@ void CollectData(RandomNumberGenerator& rng, const MsInfo& ms_info, const Filter
 // Implements the chain  R = Rz(az - pi) * Ry(-zenith) * Rz(roll),
 // where zenith = pi/2 - latitude. Inputs are in radians and follow the convention
 // produced by RandomSampler::SampleSphericalPointsSph: azimuth around +z,
-// latitude = asin(u) ∈ [-pi/2, +pi/2]. See doc/coordinate-convention.md.
+// latitude = asin(u) ∈ [-pi/2, +pi/2]. See doc/geometry/coordinate-convention.md.
 //
 // Internal: exposed for unit testing; not part of the public C API.
 Rotation BuildCrystalRotation(float azimuth_rad, float latitude_rad, float roll_rad);

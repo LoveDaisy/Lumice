@@ -1,6 +1,6 @@
 // "a ground with no headroom left says so", asserted on the server/CLI side.
 //
-// doc/print-mode-subtractive-ink.md §8 (owner decision D6) gives the two tone operators ONE
+// doc/rendering/print-mode-subtractive-ink.md §8 (owner decision D6) gives the two tone operators ONE
 // degenerate direction each and requires ONE predicate over both. util/contrast_headroom.hpp is that
 // predicate and test/unit-correctness/util/test_contrast_headroom.cpp asserts what it computes; what
 // this file owns is the half no assertion on the function can see:

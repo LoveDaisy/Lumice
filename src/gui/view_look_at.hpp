@@ -29,7 +29,7 @@ namespace lumice::gui {
 // went wrong, which is why this is stated rather than assumed).
 //
 // The bearings are RELATIVE TO THE SUN, not compass points: the GUI pins the sun at azimuth 0
-// (doc/gui-state-governance.md §9.3), so a label reading "East" would send the user looking for a
+// (doc/gui/gui-state-governance.md §9.3), so a label reading "East" would send the user looking for a
 // compass the scene does not have.
 
 // The first id of the Horizon series, for a caller that wants to draw a section header before it.

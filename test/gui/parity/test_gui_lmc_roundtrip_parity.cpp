@@ -54,7 +54,7 @@
 // re-save of it shows", stated on pixels.
 //
 // Cadence and assets. No committed reference image, so this case must never enter
-// scripts/regen_gui_test_refs.py's GROUPS registry (doc/testing-architecture.md §4.10). Like the
+// scripts/regen_gui_test_refs.py's GROUPS registry (doc/testing/testing-architecture.md §4.10). Like the
 // rest of the parity tag it runs on a developer machine with a real GL context via
 // ./scripts/test.sh {quick,full,pr} and in no CI job today (§7.5).
 
@@ -374,7 +374,7 @@ bool RunToDoneAndSettle(ImGuiTestContext* ctx) {
   }
   IM_CHECK_RETV(gui::g_state.sim_state == gui::GuiState::SimState::kDone, false);
   IM_CHECK_RETV(gui::g_state.texture_upload_count > 0, false);
-  // Completion implies the poller has drained (doc/gui-preview-lifecycle-architecture.md I7), so
+  // Completion implies the poller has drained (doc/gui/gui-preview-lifecycle-architecture.md I7), so
   // the upload that is on screen now is the final one. A few more frames make that a checked
   // fact rather than a belief: the premise assertions below hold the upload count still.
   ctx->Yield(5);

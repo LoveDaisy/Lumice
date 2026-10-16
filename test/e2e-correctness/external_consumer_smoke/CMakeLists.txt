@@ -6,14 +6,14 @@ cmake_minimum_required(VERSION 3.14)
 project(LumiceAnalyticExternalConsumerSmoke C)
 
 # ExactVersion while at 0.x: this must equal the installed LUMICE_ANALYTIC_API_VERSION
-# (doc/analytic-api.md sections 8.3 / 8.4).
+# (doc/interfaces/analytic-api.md sections 8.3 / 8.4).
 find_package(LumiceAnalytic 8 REQUIRED)
 
 add_executable(external_consumer_smoke main.c)
 target_link_libraries(external_consumer_smoke PRIVATE Lumice::lumice_analytic)
 
 # Windows has no rpath: the DLL must sit next to the executable to be found at run time
-# (doc/analytic-api.md section 8.4).
+# (doc/interfaces/analytic-api.md section 8.4).
 if(WIN32)
   add_custom_command(TARGET external_consumer_smoke POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

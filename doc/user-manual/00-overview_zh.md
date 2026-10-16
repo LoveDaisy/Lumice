@@ -42,10 +42,10 @@
 | 主题 | 参考文档 |
 |------|----------|
 | 完整 JSON 配置 schema | [`configuration_zh.md`](../configuration_zh.md) |
-| 坐标系约定 | [`coordinate-convention_zh.md`](../coordinate-convention_zh.md) |
-| GUI 内部结构与面板参考 | [`gui-guide_zh.md`](../gui-guide_zh.md) |
-| 嵌入用 C API | [`c_api_zh.md`](../c_api_zh.md) |
-| 性能调优与 benchmark | [`performance-testing_zh.md`](../performance-testing_zh.md) |
+| 坐标系约定 | [`coordinate-convention_zh.md`](../geometry/coordinate-convention_zh.md) |
+| GUI 内部结构与面板参考 | [`gui-guide_zh.md`](../gui/gui-guide_zh.md) |
+| 嵌入用 C API | [`c_api_zh.md`](../interfaces/c_api_zh.md) |
+| 性能调优与 benchmark | [`performance-testing_zh.md`](../testing/performance-testing_zh.md) |
 | 系统架构 | [`architecture_zh.md`](../architecture_zh.md) |
 
 ## 本手册的约定

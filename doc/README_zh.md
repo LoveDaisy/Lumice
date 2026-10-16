@@ -2,148 +2,136 @@
 
 # 文档索引
 
-欢迎查阅 Lumice 项目文档。本文档提供所有文档的导航和索引。
+Lumice 文档按受众与主题组织。产品使用从用户手册开始；参与开发先读架构与开发指南；深入具体子系统时进入对应专题目录。
 
-## 文档结构
+## 从这里开始
 
-```
-doc/
-├── README.md / README_zh.md                         # 文档索引（英文/中文）
-├── architecture.md / _zh.md                         # 系统架构文档
-├── configuration.md / _zh.md                        # 配置文档
-├── filter-architecture.md / _zh.md                  # Filter 子系统设计约束（Design A）
-├── adaptive-brightness.md / .zh.md                  # 自适应亮度：算法、双模式语义、可加性
-├── raypath-symmetry.md / _zh.md                     # Raypath 对称性：P/B/D 过滤器语义
-├── c_api.md / _zh.md                                # C接口使用文档
-├── developer-guide.md / _zh.md                      # 开发指南
-├── gui-guide.md / _zh.md                            # GUI 使用指南
-├── performance-testing.md / _zh.md                  # 性能测试指南
-├── windows-remote-testing.md / _zh.md               # Windows 远程测试指南
-├── machines.md                                      # 验证机器清单：角色 → 主机绑定
-├── crystal-orientation-sampling.md / _zh.md         # 晶体取向采样（研究）
-├── research/                                        # 研究文档（未在生产中实现）
-│   ├── beam-tracing.md / _zh.md                     # 光束追踪算法
-│   └── inverse-rendering.md / _zh.md                # 逆渲染
-├── api/                                             # API文档（Doxygen生成）
-└── figs/                                            # 图片资源
-```
+### 用户
 
-## 用户文档
+- [用户手册](user-manual/00-overview_zh.md)：安装、GUI 与 CLI 快速上手、配方、FAQ、光路分析和配置摘要
+- [配置参考](configuration_zh.md)：JSON 配置字段、默认值与校验规则
+- [GUI 指南](gui/gui-guide_zh.md)：应用工作流、预览与 `.lmc` 项目文件
+- [C API 参考](interfaces/c_api_zh.md)：引擎 API 用法、错误、所有权与集成
 
-面向使用本项目的用户：
+### 开发者
 
-- **[用户手册](user-manual/00-overview_zh.md)**: 面向新手的旅程式入门指南
-  - 安装、GUI 快速上手、CLI 快速上手
-  - 3 个现成的光晕配方
-  - FAQ、默认值、GUI 与 JSON 能力差异
+- [系统架构](architecture_zh.md)：模块、依赖与数据流
+- [开发指南](developer-guide_zh.md)：环境配置、编码约定、测试与调试
+- [测试架构](testing/testing-architecture_zh.md)：测试分层、归属、执行范围与比较标尺
+- [环境变量策略](env-var-policy.md)：环境开关的决策闸与单一 owner
+- [贡献指南](../CONTRIBUTING.md)：分支、Pull Request、发布与贡献流程
 
-- **[配置文档](configuration_zh.md)**: 配置文件的完整说明
-  - 配置项详细说明和默认值
-  - 配置验证规则
-  - 常见配置错误和解决方案
-  - GUI 个人默认值：独立的 `user_defaults.json` 文件、各平台的存放位置、`--user-config`/`--no-user-config` 开关
+## 专题文档
 
-- **[Filter 子系统架构](filter-architecture_zh.md)**: Filter 子系统核心设计约束
-  - Filter ↔ 晶体单键绑定模型
-  - Simulation 端 filter 门控（Design A）：失败 ray 在 simulator 中丢弃
-  - 多重散射剪枝语义与性能影响
-  - 历史脉络：task-200 路由决策与回退理由
-  - C API `unfiltered_*` 字段废弃及 GUI Off 模式临时禁用
+### 几何
 
-- **[自适应亮度](adaptive-brightness.zh.md)**: GUI 自动 EV 归一化
-  - P99.5 锚点算法与目标白点映射（始终启用，无开关）
-  - sRGB gamma 非线性 caveat
+坐标约定、晶体表达、取向采样、数值谓词与几何随机化行为：
 
-- **[Raypath 对称性](raypath-symmetry.zh.md)**: P、B、D 过滤器开关语义
-  - Raypath 等价性的两类来源（晶体几何 vs 取向分布）
-  - P、B、D 的精确语义与启用条件
-  - σ-by-roll-mean 推导与参考表
-  - GUI 提示行为说明
+- [坐标约定](geometry/coordinate-convention_zh.md)（[English](geometry/coordinate-convention.md)）
+- [晶体几何表达](geometry/crystal-geometry-representation.md)
+- [晶体取向采样](geometry/crystal-orientation-sampling_zh.md)（[English](geometry/crystal-orientation-sampling.md)）
+- [几何随机化性能](geometry/geometry-randomization-perf.md)
+- [几何随机化价值与测量](geometry/geometry-randomization-value-and-measurement.md)
+- [近极面积测度采样](geometry/near-pole-area-measure-sampling.md)
+- [数值鲁棒性](geometry/numerical-robustness.md)
 
-- **[系统架构文档](architecture_zh.md)**: 系统架构设计
-  - 服务器-消费者架构说明
-  - 模块职责和依赖关系
-  - 数据流和处理流程
-  - 程序入口说明
+### GUI
 
-- **[GUI 使用指南](gui-guide_zh.md)**: GUI 应用使用说明
-  - 应用功能和界面布局
-  - 晶体预览和渲染预览
-  - 项目文件格式（`.lmc`）
-  - 构建和运行 GUI
+GUI 使用、状态归属、生命周期、布局历史与视觉语言：
 
-## 开发者文档
+- [GUI 指南](gui/gui-guide_zh.md)（[English](gui/gui-guide.md)）
+- [自定义光谱与光路染色](gui/gui-custom-spectrum-and-raypath-color.md)
+- [GUI 预览生命周期架构](gui/gui-preview-lifecycle-architecture.md)
+- [GUI 状态治理](gui/gui-state-governance.md)
+- [GUI 视觉语言](gui/gui-visual-language.md)
+- [GUI 布局架构与处置记录](gui/gui-layout-architecture.md)
 
-面向项目开发者和贡献者：
+### 光路
 
-- **[开发指南](developer-guide_zh.md)**: 开发指南
-  - 开发环境设置
-  - 代码风格指南
-  - 如何添加新功能
-  - 测试指南
-  - 调试技巧
+光路表达、过滤与对称、分析产品、报告 schema 与诊断研究：
 
-- **[C接口使用文档](c_api_zh.md)**: C接口API使用说明
-  - C API完整参考
-  - 使用示例
-  - 错误处理指南
-  - 线程安全性说明
-  - 与其他语言集成示例
+- [光路与光段架构](raypath/raypath-rayseg-architecture.md)
+- [Filter 架构](raypath/filter-architecture_zh.md)（[English](raypath/filter-architecture.md)）
+- [光路对称](raypath/raypath-symmetry.zh.md)（[English](raypath/raypath-symmetry.md)）
+- [光路分析](raypath/raypath-analysis.md)
+- [光路分析面板](raypath/raypath-analysis-panel.md)
+- [光路 CLI 输出](raypath/raypath-cli-output.md)
+- [Schema 3 分层设计](raypath/raypath-schema3-layered-design.md)
+- [特征诊断验收](raypath/raypath-feature-diagnostic-acceptance.md)
+- [特征诊断发现研究](raypath/feature-diagnostic-discovery-research.md)
 
-- **[性能测试指南](performance-testing_zh.md)**: 性能测试指南
-  - CLI 基准测试、GUI 自动化测试、手动/远程测试
-  - 使用 `scripts/analyze_perf_log.py` 分析日志
+### 渲染
 
-- **[验证机器清单](machines.md)**: 角色 → 主机绑定（单一真源）
-  - 哪台机器承担哪个验证角色，及其路径 / CUDA 版本
-  - 换机器只改这一份；各 recipe 正文只写角色
+累积与消费、曝光、投影注解，以及屏幕/印刷显示模型：
 
-- **[Windows 远程测试指南](windows-remote-testing_zh.md)**: Windows 远程测试指南
-  - 通过 watcher 和 SSH 在 Windows 上执行测试
-  - VSync/DWM 真实显示器测试
+- [累积器—消费者架构](rendering/accumulator-consumer-architecture.md)
+- [自适应亮度](rendering/adaptive-brightness.zh.md)（[English](rendering/adaptive-brightness.md)）
+- [EV 管线架构](rendering/ev-pipeline-architecture.md)
+- [Overlay 标签放置](rendering/overlay-label-placement.md)
+- [Print 模式减色墨](rendering/print-mode-subtractive-ink.md)
 
-- **[API文档](api/html/)**: 自动生成的API文档
-  - 使用Doxygen生成
-  - 包含所有公共API的详细说明
-  - **本地生成**：运行 `doxygen .doxygen-config`（在项目根目录下）
-  - 生成的文档位于 `doc/api/html/`
+### 后端
 
-## 研究文档
+Host/device seam 与已验证的 GPU 执行架构：
 
-实验性和理论性探索（未在生产代码中实现）：
+- [TraceBackend seam 设计](backends/seam-design.md)
+- [Trace backend 帧生命周期](backends/trace-backend-frame-lifecycle.md)
+- [GPU 单引擎实现](backends/gpu-single-engine-implementation.md)
+- [GPU 路线历史](backends/gpu-route-history.md)
 
-- **[光束追踪](research/beam-tracing_zh.md)**: 光束追踪算法研究
-  - 理论分析与实验结果
-  - 与蒙特卡罗光线追踪的对比
+### 测试
 
-- **[晶体取向采样](crystal-orientation-sampling_zh.md)**: 晶体取向采样方法
-  - SO(3) 采样策略与收敛性分析
+测试组织、性能测量、验证机器与远端验证流程：
 
-- **[逆渲染](research/inverse-rendering_zh.md)**: 逆渲染研究
-  - 从观测到的冰晕图像估计参数
+- [测试架构](testing/testing-architecture_zh.md)（[English](testing/testing-architecture.md)）
+- [性能测试](testing/performance-testing_zh.md)（[English](testing/performance-testing.md)）
+- [验证机器](testing/machines.md)
+- [远端 CUDA 构建与测试](testing/gpu-remote-cuda-build-testing.md)
+- [Windows 远端测试](testing/windows-remote-testing_zh.md)（[English](testing/windows-remote-testing.md)）
+- [XYZ 统计工具](testing/xyz-stats-tool.md)
 
-## 快速链接
+### 接口
 
-- [项目 README](../README.md)
-- [项目中文 README](../README_zh.md)
-- [配置示例文件](../examples/config_example.json)
+公开 C 接口、生命周期规则、打包边界与产品线决策：
 
-## 文档语言策略
+- [C API 参考](interfaces/c_api_zh.md)（[English](interfaces/c_api.md)）
+- [C API 生命周期架构](interfaces/capi-lifecycle-architecture.md)
+- [Analytic API](interfaces/analytic-api.md)
+- [API 分层与产品线](interfaces/api-layering-and-product-lines.md)
 
-- **双语文档**：所有文档提供中英文两个版本
-- **中文版**：文件名以 `_zh` 后缀标记
-- **英文版**：文件名不带后缀（默认）
-- **代码注释**：使用英文
-- **API文档**：Doxygen生成，使用英文
+## 其他文档集合
 
-### 文档生成
+- [`user-manual/`](user-manual/00-overview_zh.md)：面向任务的产品文档
+- [`research/`](research/beam-tracing_zh.md)：保留原有状态与范围的研究记录
+- [`cases/`](cases/raypath-analysis-cases.md)：已登记的光路分析测验场景语料
+- [`prototypes/`](prototypes/analyze-workspace.html)：交互式设计原型
+- [`api/`](api/html/doxygen_crawl.html)：Doxygen 输出；用 `doxygen .doxygen-config` 重新生成
+- [`figs/`](figs/)：文档共用图片
 
-**API文档生成**（本地验证）：
+## 根目录文档
+
+`doc/` 根目录只保留入口与跨主题参考：
+
+- [文档索引](README_zh.md)（[English](README.md)）
+- [系统架构](architecture_zh.md)（[English](architecture.md)）
+- [配置参考](configuration_zh.md)（[English](configuration.md)）
+- [开发指南](developer-guide_zh.md)（[English](developer-guide.md)）
+- [环境变量策略](env-var-policy.md)
+
+## 语言与生成文档
+
+英文是默认语言。存在中文伙伴的文档使用 `_zh.md` 或 `.zh.md` 后缀；并非每篇专题设计记录都有双语版本。源码注释和生成的 API 文档使用英文。
+
+在仓库根目录生成 Doxygen 文档：
+
 ```bash
 doxygen .doxygen-config
 ```
-生成的文档位于 `doc/api/html/`。
 
-## 反馈和建议
+生成结果仍位于 `doc/api/html/`。
 
-如发现文档问题或有改进建议，欢迎通过Issue或Pull Request反馈。
+## 项目链接
+
+- [项目 README](../README.md)
+- [项目英文 README](../README_zh.md)
+- [配置示例](../examples/config_example.json)

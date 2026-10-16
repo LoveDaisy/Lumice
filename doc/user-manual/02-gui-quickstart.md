@@ -116,5 +116,5 @@ To keep the picture itself, use `Save ▶ Screenshot...`. Before asking for a fi
 - Reproduce classic halos with ready-made recipes → [`04-recipes.md`](04-recipes.md)
 - Find out which raypaths make a halo, and exclude one → [`06-raypath-analysis.md`](06-raypath-analysis.md)
 - Share your configuration as one screenshot → [`07-config-summary.md`](07-config-summary.md)
-- Full panel reference → [`../gui-guide.md`](../gui-guide.md)
+- Full panel reference → [`../gui-guide.md`](../gui/gui-guide.md)
 - All field names and types → [`../configuration.md`](../configuration.md)

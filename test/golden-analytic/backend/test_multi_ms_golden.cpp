@@ -15,7 +15,7 @@
 // §1.2 purpose-primary split. The first three anchors (NormalIncidence /
 // Snell30 / EnergyConservation) validate the continuation engine;
 // MultiMsContinuationNormalIncidence is the G3 anchor for the device-resident
-// continuation path. See doc/testing-architecture.md §1.2 and §6.
+// continuation path. See doc/testing/testing-architecture.md §1.2 and §6.
 
 #include <gtest/gtest.h>
 

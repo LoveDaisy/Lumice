@@ -33,7 +33,7 @@
 // bench/bench_geom_closedform.cpp as ExactPrismCornerCount. It was moved here
 // so there is exactly ONE implementation. bench_geom_closedform.cpp
 // includes this header and delegates its ExactPrismCornerCount wrapper
-// (doc/numerical-robustness.md rule 4: one predicate, one owner).
+// (doc/geometry/numerical-robustness.md rule 4: one predicate, one owner).
 //
 // A second, INDEPENDENT oracle (Python `Fraction`, general three-plane
 // enumeration that does NOT bake the 6-direction structure into its logic) is

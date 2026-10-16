@@ -111,7 +111,7 @@ Lumice 仅在构建脚本和测试工具中使用少量环境变量。产品代�
 | `LUMICE_BIN` | `test/e2e/runner.py` | 覆盖 E2E 子进程测试使用的 CLI 可执行文件路径。默认为 `build/cmake_install/static/Lumice`。 |
 | `LUMICE_LIB` | `test/e2e/capi_runner.py` | 覆盖 E2E C API 测试使用的共享库路径。默认为第一个存在的 shared flavor 候选，首选 `build/Release/shared/lib/liblumice_testapi.dylib`（macOS）或 `.so`（Linux）——即 `liblumice` 的测试专用超集（同一份对象文件，外加 `test/support/lumice_test_api.h` 的 `LUMICE_TEST_*` 钩子），而不是 `liblumice` 本身。 |
 
-**设计原则**：确定性模拟种子通过 C API（`LUMICE_ServerConfig.sim_seed`）传递，而非环境变量，以确保程序行为显式且可复现。详见 [C 接口文档](c_api_zh.md)。
+**设计原则**：确定性模拟种子通过 C API（`LUMICE_ServerConfig.sim_seed`）传递，而非环境变量，以确保程序行为显式且可复现。详见 [C 接口文档](interfaces/c_api_zh.md)。
 
 ## 代码风格指南
 
@@ -563,7 +563,7 @@ t->TestFunc = [](ImGuiTestContext* ctx) {
 test/e2e-correctness/            # 测试本体（独立顶层目录）
 ├── test_smoke.py             # 冒烟测试（PSNR 图像验证）
 ├── test_cli.py                # CLI 行为
-├── ...                          # 其它正确性测试 — 见 doc/testing-architecture.md §1.4
+├── ...                          # 其它正确性测试 — 见 doc/testing/testing-architecture.md §1.4
 └── references/                  # 参考输出图片（*.jpg）
 
 test/e2e/                         # 共用 fixture（独立顶层目录）
@@ -782,5 +782,5 @@ instruments -t "Time Profiler" ./build/cmake_install/static/Lumice -f examples/c
 
 - [系统架构文档](architecture_zh.md) - 了解系统设计
 - [配置文档](configuration_zh.md) - 配置格式说明
-- [C接口文档](c_api_zh.md) - C接口使用说明
+- [C接口文档](interfaces/c_api_zh.md) - C接口使用说明
 - [文档索引](README_zh.md) - 所有文档的导航

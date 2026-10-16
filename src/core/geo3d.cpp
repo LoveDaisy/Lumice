@@ -392,7 +392,7 @@ size_t FillHexCrystalCoef(float upper_alpha, float lower_alpha, float h1, float 
   // computes Vec3FromTo(body_center, face_center) → (0,0,0), and Normalize3 produces
   // NaN normals that silently poison the renderer. Emit a warning and short-circuit
   // to an empty plane set, mirroring the kMaxPyramidAlpha degradation pattern.
-  // (doc/numerical-robustness.md §5: use <eps, not ==0.)
+  // (doc/geometry/numerical-robustness.md §5: use <eps, not ==0.)
   // TODO(tech-debt): the basal+prism plane equations above are written into out_coef
   // before this early return — wasted writes but no UB since callers honor the
   // returned plane_cnt as the effective length. A future refactor could hoist

@@ -10,7 +10,7 @@ namespace lumice {
 // it comes FROM sits at altitude = asin(-z) (the zenith is z = -1) and its azimuth is measured as
 // the sun's is — the sun at azimuth 0 sits at lon 180, i.e. az = atan2(y, x) - 180.
 //
-// HOW THE CONSUMERS FIT TOGETHER (doc/coordinate-convention.md "Direction-vector semantics" is
+// HOW THE CONSUMERS FIT TOGETHER (doc/geometry/coordinate-convention.md "Direction-vector semantics" is
 // the single authority; this is the working summary). A sky point's POSITION vector in the world
 // frame (+z the zenith, azimuth counter-clockwise from +x) is the NEGATION of what AltAzToDir
 // returns: position(alt, az) = (cos·cos az, cos·sin az, +sin alt), and AltAzToDir hands back the

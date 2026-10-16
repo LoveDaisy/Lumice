@@ -122,7 +122,7 @@
 - `axis.zenith ~ Gauss(0, 1°)` 把 c 轴近似垂直（片状取向），加点小抖动模拟现实。
 - `roll ~ Uniform(0, 360°)` 让棱柱绕垂直轴自由旋转。
 
-完整分布语法（`gauss`、`uniform`、`laplacian`、`zigzag`）见 [`../crystal-orientation-sampling_zh.md`](../crystal-orientation-sampling_zh.md)。
+完整分布语法（`gauss`、`uniform`、`laplacian`、`zigzag`）见 [`../crystal-orientation-sampling_zh.md`](../geometry/crystal-orientation-sampling_zh.md)。
 
 ---
 
@@ -189,4 +189,4 @@
 - 任意调整配方再用 CLI 跑一次 → [`03-cli-quickstart_zh.md`](03-cli-quickstart_zh.md)。
 - 理解性能权衡（`ray_num × 波长数`）→ [`05-faq_zh.md`](05-faq_zh.md)。
 - 完整字段表 → [`../configuration_zh.md`](../configuration_zh.md)。
-- `altitude` / `zenith` / `azimuth` 的坐标约定 → [`../coordinate-convention_zh.md`](../coordinate-convention_zh.md)。
+- `altitude` / `zenith` / `azimuth` 的坐标约定 → [`../coordinate-convention_zh.md`](../geometry/coordinate-convention_zh.md)。

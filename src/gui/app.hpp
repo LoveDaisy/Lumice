@@ -95,7 +95,7 @@ extern BgColorPickState g_bg_pick;
 
 // "There is a background photo on screen to act on" — a photo is loaded AND it is being shown AND
 // the mode is one that composites it (Screen; Print keeps the photograph out of the frame,
-// doc/print-mode-subtractive-ink.md §7 instance 1). The single owner of that judgement, asked by
+// doc/rendering/print-mode-subtractive-ink.md §7 instance 1). The single owner of that judgement, asked by
 // three features: the frame itself (`PreviewParams::bg.enabled` is this predicate, not a second
 // copy of it), the eyedropper (button disabled state, the preview panel's pick branch, the
 // mid-mode bail-out) and the photo's own drag/wheel gestures. Sharing is deliberate — all ask the
@@ -469,7 +469,7 @@ bool DocumentContinuable(const GuiState& state);
 // and the log line are raised here (with DoRun's `user_initiated` reopen rule), and the caller
 // submits nothing. Exposed so the composition layer can pin that the two callers share it.
 ScenePtr BuildCommitSceneOrWarn(const GuiState& state, bool user_initiated);
-// Start a raypath analysis run on the document on the panels (doc/raypath-analysis-panel.md),
+// Start a raypath analysis run on the document on the panels (doc/raypath/raypath-analysis-panel.md),
 // with the ROI GuiState::analysis describes: the scene BuildCommitSceneOrWarn builds — the same
 // one DoRun would commit — is handed to LUMICE_StartRaypathAnalysis, so no Run has to precede
 // it and an edited document analyses as edited. Same poller, same lifecycle as a render run;

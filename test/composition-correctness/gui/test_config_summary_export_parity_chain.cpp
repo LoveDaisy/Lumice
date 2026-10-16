@@ -325,7 +325,7 @@ struct Exclusion {
 const Exclusion kExcluded[] = {
   { R"(^scene\.light_source\.type$)", "constant \"sun\"; not a setting" },
   { R"(^scene\.light_source\.azimuth$)",
-    "fixed at 0 with no control (doc/gui-state-governance.md §9) — asserted ABSENT from the page below" },
+    "fixed at 0 with no control (doc/gui/gui-state-governance.md §9) — asserted ABSENT from the page below" },
   { R"(^render\[0\]\.id$)", "bookkeeping" },
   { R"(^crystal\[\d+\]\.id$)", "bookkeeping: the core id, which the page maps back to the pool id" },
   { R"(^filter$)", "an empty filter list: nothing to show" },
@@ -594,7 +594,7 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
     ExpectGatedNumber(state, page, "renderer.paper", "Render", "Paper Color", v);
   });
   add(R"(^render\[0\]\.intensity_factor$)", [&](const std::smatch&, const json& v) {
-    // The export bakes 2^exposure_offset (doc/ev-pipeline-architecture.md §2.4); the page shows
+    // The export bakes 2^exposure_offset (doc/rendering/ev-pipeline-architecture.md §2.4); the page shows
     // the EV the user set. Same quantity, the user's spelling.
     ExpectPageNumber(page, "Render", "EV", json(std::log2(v.get<double>())));
   });

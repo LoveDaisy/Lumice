@@ -389,7 +389,7 @@ void InitRayOtherMs(RandomNumberGenerator& rng, const RayBuffer init_data[2], si
 
   // 1.4 reset is_continue_ (pool-reuse guard: init_data carries is_continue_=true
   // from CollectData; must reset before entering the new MS layer's hit loop)
-  // See doc/raypath-rayseg-architecture.md §3 "Reset Points Summary".
+  // See doc/raypath/raypath-rayseg-architecture.md §3 "Reset Points Summary".
   for (auto& r : buffer_data[0]) {
     r.is_continue_ = false;
   }
@@ -911,7 +911,7 @@ void FillRayOtherInfo(const Crystal& curr_crystal, RayBuffer buffer_data[2]) {
 
 
 // Design A filter semantics: filter-fail = ray terminates (not outgoing, not continue).
-// See doc/raypath-rayseg-architecture.md §3 for the segment state-machine transition rules.
+// See doc/raypath/raypath-rayseg-architecture.md §3 for the segment state-machine transition rules.
 //
 // Multi-group implementation (scrum-color-predicate-symmetry): `color_groups`
 // carries one entry per distinct color-predicate symmetry value at this

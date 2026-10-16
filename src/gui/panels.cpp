@@ -1476,7 +1476,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   // Leading labels (label left, value right) rather than the trailing ones this card used to have:
   // with the label at the END of the row, the value and its name sat ~190px apart with an Edit
   // button between them, so reading "what kind of crystal is this" meant crossing the row. See
-  // doc/gui-visual-language.md §5, which names leading labels as the resolution of exactly this.
+  // doc/gui/gui-visual-language.md §5, which names leading labels as the resolution of exactly this.
   //
   // The three Edit buttons that used to occupy the middle column are gone. They were never three
   // things: the modal they opened is ONE modal with a tab bar, and clicking anywhere on the card

@@ -226,7 +226,7 @@ LUMICE_API void LUMICE_ReleaseAnnotationAnchors(LUMICE_AnnotationAnchors* anchor
 //
 // The convention is the one every direction in this family uses: the direction light TRAVELS, so
 // altitude = asin(-z) and the ZENITH IS z = -1 (travel-vs-position semantics:
-// doc/coordinate-convention.md "Direction-Vector Semantics"). `sun_dir` need not be a unit vector — it is
+// doc/geometry/coordinate-convention.md "Direction-Vector Semantics"). `sun_dir` need not be a unit vector — it is
 // normalized on entry, exactly like LUMICE_AnnotationRequest::reference_dir — and is ignored
 // outright by the two pole ids.
 //
@@ -347,7 +347,7 @@ LUMICE_API LUMICE_ErrorCode LUMICE_XyzToSrgbUint8WithBackground(const float* xyz
                                                                 const float* background_linear);
 
 // =============== EV Auto Anchor ===============
-// P99 anchor of the auto-EV pipeline (doc/ev-pipeline-architecture.md §2.2/§2.5).
+// P99 anchor of the auto-EV pipeline (doc/rendering/ev-pipeline-architecture.md §2.2/§2.5).
 // When downsample_factor > 1 the Y channel is box-summed onto a
 // (img_width/f) x (img_height/f) coarse grid, the P99 is taken over the non-zero coarse bins
 // and divided by f^2, so the result is a **fine-equivalent** P99 rather than a true per-pixel Y

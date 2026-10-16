@@ -1,7 +1,7 @@
 #ifndef LUMICE_GUI_ANALYSIS_RESULT_HPP
 #define LUMICE_GUI_ANALYSIS_RESULT_HPP
 
-// The raypath-analysis result as the GUI carries it (doc/raypath-analysis-panel.md): the entries
+// The raypath-analysis result as the GUI carries it (doc/raypath/raypath-analysis-panel.md): the entries
 // of one analysis frame, copied out of the C API, plus the frame's identity. Shared between the
 // poller (which reads it off the result frame on its own thread) and GuiState (which holds the
 // one currently shown), so it lives in a header neither of those two owns.

@@ -222,7 +222,7 @@ Examples:
   ./build/cmake_install/static/Lumice analyze -f config.json --symmetry none --rays 5M --seed 7
 ```
 
-`Lumice raypath -h`——接在 `analyze` **之后**的一步：从它的列表里选定一条光路后，只针对这一条问下去。给它一个晶体条目上的一条单层光路和一个天空点，它写出一份 JSON：使太阳落到该点的晶体姿态纤维的各个分量（每个分量带逐点详情），以及这条光路在整个太阳方向球上的偏折角。字段含义见 [`../raypath-cli-output.md`](../raypath-cli-output.md)。选项：
+`Lumice raypath -h`——接在 `analyze` **之后**的一步：从它的列表里选定一条光路后，只针对这一条问下去。给它一个晶体条目上的一条单层光路和一个天空点，它写出一份 JSON：使太阳落到该点的晶体姿态纤维的各个分量（每个分量带逐点详情），以及这条光路在整个太阳方向球上的偏折角。字段含义见 [`../raypath-cli-output.md`](../raypath/raypath-cli-output.md)。选项：
 
 | 选项 | 含义 |
 |---|---|
@@ -249,7 +249,7 @@ Examples:
 ./build/cmake_install/static/Lumice raypath -f examples/config_example.json --crystal 6 --path 3-6-4-8 --target 20,140 -o r.json
 ```
 
-第一条得到 `outcome: "discovered"` 与一个 `closed` 分量。后两条是退化情形，值得读一遍。`3-6-4-8` 是绕 c 轴的一次转动，所以它的偏折角只取决于太阳在晶体系中的纬度：等值线是一条纬线圈，而纤维是它的一段**圆弧**，不是闭环。片晶上两次运行都返回 `components: []`，靠 `reach.target_in_range` 区分：`20,120`（偏折角 108.9°）时为 `true`——纤维存在，只是这么矮的晶体没有任何光线沿它通过（同一目标点上，高 1.2 的棱柱即晶体 1 能找到两段圆弧）；`20,140`（偏折角 124.0°，超过这条光路 120° 的最大值）时为 `false`：这类晶体无论取什么姿态都不能把太阳送到那里。出射方向与姿态根本无关的光路（片晶的 `1-2`）则返回 `outcome: "point_mass"`。三种空结果的完整读法见 [`../raypath-cli-output.md`](../raypath-cli-output.md) §3.9 的表。
+第一条得到 `outcome: "discovered"` 与一个 `closed` 分量。后两条是退化情形，值得读一遍。`3-6-4-8` 是绕 c 轴的一次转动，所以它的偏折角只取决于太阳在晶体系中的纬度：等值线是一条纬线圈，而纤维是它的一段**圆弧**，不是闭环。片晶上两次运行都返回 `components: []`，靠 `reach.target_in_range` 区分：`20,120`（偏折角 108.9°）时为 `true`——纤维存在，只是这么矮的晶体没有任何光线沿它通过（同一目标点上，高 1.2 的棱柱即晶体 1 能找到两段圆弧）；`20,140`（偏折角 124.0°，超过这条光路 120° 的最大值）时为 `false`：这类晶体无论取什么姿态都不能把太阳送到那里。出射方向与姿态根本无关的光路（片晶的 `1-2`）则返回 `outcome: "point_mass"`。三种空结果的完整读法见 [`../raypath-cli-output.md`](../raypath/raypath-cli-output.md) §3.9 的表。
 
 要点：
 
@@ -259,7 +259,7 @@ Examples:
 - `--workers <N>` 覆盖自动 worker 数（Linux/macOS 上每个物理核一个、Windows 上每个逻辑核一个，各有一个按平台实测的上限；该上限只作用于自动值，你显式给出的 `N` 永远不受它约束）。它是命令行开关而不是 config 字段，是有意的：worker 数描述的是**机器**，而 config 文件会在机器之间流转。非法值（`0` / 负数 / 非数字）以非零退出，不静默回退到默认值。
 - `Lumice analyze -f <config>` 不渲染，而是向场景提一个问题：哪些光路链把能量送进了天空的某个区域，结果是 stdout 上的 CSV（或 `--csv <path>` 写文件）。config 只是场景；区域、行合并所用的对称性、光线预算与随机种子全是选项，从不读 config——所以脚本可以拿同一份 config 问多个问题，加 `--seed` 即可复现任何一次。`ray_num` 为 `"infinite"` 的场景会一直跑到 Ctrl-C，仍然写出结果；带 `--csv` 时文件每秒原子重写，任何时刻读到的都是完整文件。进度行走 stderr，stdout 只有 CSV。
 - `Lumice raypath -f <config> --crystal <id> --path <faces> --target <alt>,<az>` 针对单条光路而不是列表提问：先从 `analyze` 的输出里选一条光路，再问它在某个天空点上对应哪些晶体姿态。结果是 stdout 上的 JSON（或 `-o <path>`，原子写入）；它是确定性的，同一个问题跑两次输出逐字节相同。
-- `Lumice benchmark -f <config>` 用于性能回归测试 — 详见 [`../performance-testing_zh.md`](../performance-testing_zh.md)，**不是**普通模拟用法；它只接受 `-f`、`--backend`、`-v`、`-d`、`-h`（没有 `-o`：它不写文件；没有 `--workers`：worker 数就是测量口径本身）。原来的 `--benchmark` 旗现在会报错并给出指向这里的迁移提示。
+- `Lumice benchmark -f <config>` 用于性能回归测试 — 详见 [`../performance-testing_zh.md`](../testing/performance-testing_zh.md)，**不是**普通模拟用法；它只接受 `-f`、`--backend`、`-v`、`-d`、`-h`（没有 `-o`：它不写文件；没有 `--workers`：worker 数就是测量口径本身）。原来的 `--benchmark` 旗现在会报错并给出指向这里的迁移提示。
 
 ## 5. 性能预期
 
@@ -270,7 +270,7 @@ Lumice 按波长追踪光线。对于离散波长 spectrum（典型场景：`lig
 - 想几秒看到结果？把 `ray_num` 降到 `1e6`，spectrum 改成单波长（`[{"wavelength": 550, "weight": 1.0}]`）。
 - 想出版级清晰度？把 `ray_num` 保持在 `4.5e8` 以上 + 完整 9 段 spectrum，预期在现代多核笔记本上约 2 分钟。
 
-`ray_num` × batch × wavelength 的精确关系，以及更深入的性能调优，见 [`05-faq_zh.md`](05-faq_zh.md) "ray_num × wavelength 语义" 和 [`../performance-testing_zh.md`](../performance-testing_zh.md)。
+`ray_num` × batch × wavelength 的精确关系，以及更深入的性能调优，见 [`05-faq_zh.md`](05-faq_zh.md) "ray_num × wavelength 语义" 和 [`../performance-testing_zh.md`](../testing/performance-testing_zh.md)。
 
 ## 延伸阅读
 

@@ -33,7 +33,7 @@ constexpr const char* kWindowName = ICON_FA_FILE_LINES " Summary###ConfigSummary
 
 // The window's height follows its content — the page grows and shrinks with the document, as
 // AlwaysAutoResize did — until the user drags it, and from then on it is theirs for the session
-// (doc/gui-visual-language.md §9, "semi-variable"; mechanism in secondary_window_sizing.hpp). With
+// (doc/gui/gui-visual-language.md §9, "semi-variable"; mechanism in secondary_window_sizing.hpp). With
 // no measurement yet the request is an auto-fit, which for a brand-new window is also what hides it
 // for its first frame while it is measured, exactly as AlwaysAutoResize used to.
 HeightFollowsContentState g_height_state;

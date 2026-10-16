@@ -3,7 +3,7 @@
 // LI's seeds, scenes and expectations. The direction and its derivative are checked against
 // EvaluatePath and against a central difference that does not use Jet.
 //
-// symmetry_semantics: none — every case traces one concrete face sequence (doc/analytic-api.md
+// symmetry_semantics: none — every case traces one concrete face sequence (doc/interfaces/analytic-api.md
 // section 3).
 
 #include <gtest/gtest.h>
@@ -772,7 +772,7 @@ TEST(PathFiber, MatchesLiParityFixturePins) {
   }
 }
 
-// doc/analytic-api.md section 5.3: the continuation's callees (fiber_continuation, so3, jet,
+// doc/interfaces/analytic-api.md section 5.3: the continuation's callees (fiber_continuation, so3, jet,
 // path_chain, path_fiber) hold no static or thread_local state, so concurrent traces on distinct
 // outputs are bit-identical to serial ones — each thread builds its own table, as the C wrapper does.
 TEST(PathFiberConcurrency, ConcurrentTracesMatchSerialResults) {

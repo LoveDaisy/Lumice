@@ -15,7 +15,7 @@
 //
 // The budgets below are floors, not targets. They are set an order of magnitude under what any
 // machine that can run this suite at all produces, because their job is to catch "the loop
-// stopped", not to police throughput — throughput belongs to doc/performance-testing.md and its
+// stopped", not to police throughput — throughput belongs to doc/testing/performance-testing.md and its
 // own harness, which reads the [PERF] line each case still prints.
 
 #include <chrono>

@@ -110,7 +110,7 @@ void CompositeAdditivePixel(const std::vector<ActiveClass>& active, const ColorC
 // Painter: Porter-Duff "over" front-to-back with `alpha = min(ey, 1)` where
 // `ey = lane[p] * participating_exposure_scale` (self-anchor only — NO
 // display_exposure_scale here; the caller post-multiplies display EV after
-// composite; see doc/gui-custom-spectrum-and-raypath-color.md §4.8). List
+// composite; see doc/gui/gui-custom-spectrum-and-raypath-color.md §4.8). List
 // order is ascending z_order (list-first = top layer), so the front-to-back
 // recurrence walks the list in-order without reversing:
 //   T = 1 (unoccluded transmittance)

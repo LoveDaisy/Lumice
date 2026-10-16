@@ -108,7 +108,7 @@ TEST_F(ThemeScale, AtOneTheOutletIsTheIdentityForStyleFontAndPixels) {
   EXPECT_FLOAT_EQ(gui::UiPx(1.5f), 1.5f);
   EXPECT_EQ(gui::UiPxI(400), 400);
   ASSERT_FALSE(io.Fonts->Fonts.empty());
-  EXPECT_FLOAT_EQ(io.Fonts->Fonts[0]->FontSize, 15.0f) << "the 15px body font of doc/gui-visual-language.md §4.1";
+  EXPECT_FLOAT_EQ(io.Fonts->Fonts[0]->FontSize, 15.0f) << "the 15px body font of doc/gui/gui-visual-language.md §4.1";
 }
 
 TEST_F(ThemeScale, ALargerScaleReachesTheFontAndThePixelOutletAlike) {

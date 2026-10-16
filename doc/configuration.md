@@ -26,7 +26,7 @@ The crystal configuration defines the crystal shapes and orientation distributio
 
 > **Coordinate / rotation convention**: For the world frame, local frame, azimuth sign convention,
 > and the rotation chain semantics behind `axis.{zenith, azimuth, roll}`, see
-> [`coordinate-convention.md`](coordinate-convention.md). Configurations from earlier releases will
+> [`coordinate-convention.md`](geometry/coordinate-convention.md). Configurations from earlier releases will
 > render with different orientations under the current chain (deterministic break for any non
 > full-sphere-uniform `axis` configuration).
 
@@ -229,7 +229,7 @@ hexagonal crystal, where faces 0/2/4 must always equal each other and faces
 - **Physical scope, stated honestly**: `height` / `face_distance`
   randomization only translates a face along its normal — it never rotates
   the face's normal direction (see
-  [`geometry-randomization-value-and-measurement.md`](geometry-randomization-value-and-measurement.md)
+  [`geometry-randomization-value-and-measurement.md`](geometry/geometry-randomization-value-and-measurement.md)
   for the underlying measurement). Sync groups inherit that limit: they do
   not, by themselves, produce halo features at new angles. What they buy is
   **habit fidelity** — an ensemble whose individual crystals are genuinely
@@ -319,7 +319,7 @@ Many parameters support distribution types, which can be:
 **Notes:**
 - `gauss` and `uniform` are the most commonly used types for halo simulation
 - `zigzag` models the oscillatory motion of large crystals at high Reynolds numbers
-- `laplacian` simplifies configuration for mixed-size crystal populations (see [crystal-orientation-sampling.md](crystal-orientation-sampling.md) for physical background)
+- `laplacian` simplifies configuration for mixed-size crystal populations (see [crystal-orientation-sampling.md](geometry/crystal-orientation-sampling.md) for physical background)
 - `gauss_legacy` reproduces the sampling behavior of earlier program versions that did not apply the spherical area Jacobian correction; use only when comparing against legacy simulation outputs
 
 **Examples:**
@@ -352,7 +352,7 @@ Filters are used to filter ray paths or directions.
 |-------|------|----------|---------|-------------|
 | `id` | integer | yes | - | Unique identifier |
 | `type` | string | yes | - | Filter type |
-| `symmetry` | string | no | "" | Symmetry toggles: any combination of "P" (C6 rotational), "B" (horizontal mirror), "D" (vertical mirror). See [Raypath Symmetry](raypath-symmetry.md) for enabling conditions and precise semantics. |
+| `symmetry` | string | no | "" | Symmetry toggles: any combination of "P" (C6 rotational), "B" (horizontal mirror), "D" (vertical mirror). See [Raypath Symmetry](raypath/raypath-symmetry.md) for enabling conditions and precise semantics. |
 | `action` | string | no | "filter_in" | Action: "filter_in" or "filter_out" |
 
 #### Type-Specific Parameters
@@ -523,7 +523,7 @@ The scene configuration defines the simulation scene, including the light source
 > starts it over. The log reports the running shares at each doubling of the dealt count
 > (`RayAllocationOnline: layer L entry E: p=… q=… rays=…`) and once more, as
 > `RayAllocationOnline(final)`, when the run stops. The same field governs both scene
-> publishers: a raypath analysis session (`doc/raypath-analysis-panel.md` §10) reads it too
+> publishers: a raypath analysis session (`doc/raypath/raypath-analysis-panel.md` §10) reads it too
 > and, when it is `adaptive`, binds the same online tally — with one difference in what it
 > starts from: an analysis starts cold on every submission and never carries a tally forward,
 > where a render commit keeps its tally across the unchanged-input recommits described above.
@@ -567,7 +567,7 @@ The scene configuration defines the simulation scene, including the light source
 >   counts as emitted, so the picture darkens at the same EV: exactly one stop for randomly oriented
 >   crystals (raise the EV by 1, or `intensity_factor` ×2, to match an old render), and
 >   roughly 0.7–1.4 stop for oriented ones depending on shape and sun altitude
->   (`doc/ev-pipeline-architecture.md` §7.2 has measured values).
+>   (`doc/rendering/ev-pipeline-architecture.md` §7.2 has measured values).
 > - **`proportion`** keeps its number but has a precise meaning now: a crystal count share
 >   under an equal-surface-area convention (the note above). For randomly oriented crystals
 >   that equals the entry's share of the light; for oriented crystals it does not.
@@ -750,14 +750,14 @@ The render configuration defines the renderer parameters.
 | `resolution` | integer array | yes | - | Resolution [width, height] |
 | `lens_shift` | integer array | no | [0, 0] | Lens shift [x, y] |
 | `view` | object | no | see below | View configuration |
-| `visible` | string | no | "upper" | Visible hemisphere: "upper", "lower", or "full". A **display clip**, not an energy cull, and the same statement for all four lens families (single-lens `linear`/`fisheye_*`, `rectangular`, dual-fisheye, `globe`): rays always accumulate into the full-sky buffer, and the excluded region is dropped afterwards, on the way to pixels — so it renders as neither background nor ray energy. Do not read it as a throughput knob: it does not reduce the work done per ray. Exposure is metered **before** the clip and is therefore unaffected by this key; that has a brightness consequence for pre-existing single-lens scenes, spelled out in [`doc/ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §2.7. Not to be confused with the structural clipping a projection does on its own (a direction behind an orthographic fisheye's camera has no pixel to land on at all); that is the projection's domain, not this key. |
+| `visible` | string | no | "upper" | Visible hemisphere: "upper", "lower", or "full". A **display clip**, not an energy cull, and the same statement for all four lens families (single-lens `linear`/`fisheye_*`, `rectangular`, dual-fisheye, `globe`): rays always accumulate into the full-sky buffer, and the excluded region is dropped afterwards, on the way to pixels — so it renders as neither background nor ray energy. Do not read it as a throughput knob: it does not reduce the work done per ray. Exposure is metered **before** the clip and is therefore unaffected by this key; that has a brightness consequence for pre-existing single-lens scenes, spelled out in [`doc/rendering/ev-pipeline-architecture.md`](rendering/ev-pipeline-architecture.md) §2.7. Not to be confused with the structural clipping a projection does on its own (a direction behind an orthographic fisheye's camera has no pixel to land on at all); that is the projection's domain, not this key. |
 | `front` | boolean | no | false | Front-hemisphere clip: keep only what the camera faces. A SECOND clip dimension, independent of `visible` and ANDed with it — not a fourth `visible` value. (Writing `"visible": "front"` is silently read as `"upper"`, so use this key.) |
 | `globe_back_fade` | float | no | 0.0 | `globe` lens only (every other lens ignores it): the fog length of its **far side**, seen through the near side and fading like fog with distance from the camera: the far side's weight is `exp(−depth / globe_back_fade)`, so a larger value fades more slowly and nothing ever fades to exactly 0. In the globe's own units (unit sphere, camera `D = 4` away), so the far side's deepest point — straight behind the centre — sits `(D+1) − √(D²−1) ≈ 1.127` behind the silhouette; the GUI slider runs 0–2, where 0.3–0.6 reads as a light haze and 2 already shows the deepest point at ~0.57. `0` shows the camera-facing hemisphere only, which is the look before this key existed. Negative values are clamped to 0. See the `globe` lens section below. |
 | `display_mode` | string | no | `"normal"` | How the screen signal is **displayed**. `"normal"`: the image itself. `"channel_br"`: the "bluer or redder here" diagnostic — each pixel becomes grey `clamp(0.5 + 2·(B − R), 0, 1)` of the halo-only sRGB channels at the same exposure and view, **before adding sky colour** (after gamma, the same subtraction an image editor's channel calculator does): mid grey = no difference, lighter = bluer, darker = redder. The value moves with exposure and flattens where R or B clips, so compare places at the same EV. Inert under `"tone": "print"`; while it is on, a colour-classed scene produces no raypath composite, and a non-default `ray_color` makes the diagnostic meaningless (it shows the tint's constant offset); each is logged as a warning at commit. Sky colour is excluded, not added back after the diagnostic; empty sky is mid grey. Background photos are excluded in the GUI. Overlays are drawn on top unchanged. An unknown value falls back to `"normal"` with a warning. Formula: `src/util/channel_math.hpp`. |
 | `background` | float array | no | [0, 0, 0] | Background color RGB, in **sRGB** (the numbers a color picker shows) |
 | `ray_color` | float array | no | [-1, -1, -1] | Ray color RGB; -1 means use true color |
 | `intensity_factor` | float | no | 1.0 | Intensity factor (`2^EV`). Scales the ray energy only: `0` renders a frame with no light at all but with every annotation (`grid`, `horizon`, markers, labels) still drawn, which is how to get a bare grid to draw over. |
-| `ev_mode` | string | no | "relative" | Exposure anchor: `"relative"` anchors to the **scene's** sky brightness — a P99 radiance measured on a fixed full-sky buffer, so the lens, FOV, camera pose, `visible` and output resolution no longer move the exposure, and the same document renders at the same brightness however you look at it (the image also keeps its look as `ray_num` grows, so `ray_num` still co-determines brightness — that is what `"absolute"` is for). `"absolute"` anchors to the light source's emitted energy, so two renders at the same `intensity_factor` are directly comparable across configs (only within one lens/FOV/resolution — see [`doc/ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §7). A missing key or an unrecognized string both mean `"relative"`. ⚠️ `"relative"` output brightness **moved** when that anchor changed — every config, by −2.02…+2.55 stop across the measured corpus, in a direction that depends on the scene; the migration law and the table are in [`doc/ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §2.8, and `intensity_factor` cancels the shift exactly if a specific render needs its old look. See [`doc/adaptive-brightness.md`](adaptive-brightness.md) §3. |
+| `ev_mode` | string | no | "relative" | Exposure anchor: `"relative"` anchors to the **scene's** sky brightness — a P99 radiance measured on a fixed full-sky buffer, so the lens, FOV, camera pose, `visible` and output resolution no longer move the exposure, and the same document renders at the same brightness however you look at it (the image also keeps its look as `ray_num` grows, so `ray_num` still co-determines brightness — that is what `"absolute"` is for). `"absolute"` anchors to the light source's emitted energy, so two renders at the same `intensity_factor` are directly comparable across configs (only within one lens/FOV/resolution — see [`doc/rendering/ev-pipeline-architecture.md`](rendering/ev-pipeline-architecture.md) §7). A missing key or an unrecognized string both mean `"relative"`. ⚠️ `"relative"` output brightness **moved** when that anchor changed — every config, by −2.02…+2.55 stop across the measured corpus, in a direction that depends on the scene; the migration law and the table are in [`doc/rendering/ev-pipeline-architecture.md`](rendering/ev-pipeline-architecture.md) §2.8, and `intensity_factor` cancels the shift exactly if a specific render needs its old look. See [`doc/rendering/adaptive-brightness.md`](rendering/adaptive-brightness.md) §3. |
 | `grid` | object | no | see below | Grid configuration |
 | `filter` | integer array | no | [] | Multi-scattering filter ID array |
 
@@ -996,7 +996,7 @@ ray is projected once per renderer inside the trace kernel's exit tail, into one
 renderer, so a two-renderer document (the shape the GUI exports: preview + export projection) runs
 at close to a single renderer's throughput rather than twice its cost — measured at 0.91–0.95× of
 either renderer alone on Metal (`test/performance/test_metal_multi_renderer_throughput.py`) — and
-no longer falls back to the CPU path because it has more than one renderer. `doc/seam-design.md`
+no longer falls back to the CPU path because it has more than one renderer. `doc/backends/seam-design.md`
 §4.2.1 describes the mechanism.
 
 The GPU route can still decline a config and run it on the CPU path, batch-wide (there is no
@@ -1646,7 +1646,7 @@ The panel's table names two different values of the same key, which is worth spe
 - **"Current value"** — the working copy's value for this key, i.e. what Save would write right now. It is not what the file on disk currently holds; that is a separate "Source" column ("Mine" when the key is present in the file as it was when the panel opened, "Factory" otherwise).
 - **"Origin value"** — the literal factory value, `GuiState{}` serialized with nothing layered on top. It is not "the effective default before you started editing" — a key you have saved a non-factory value for shows the same Origin value regardless of what is stored.
 
-See `doc/gui-state-governance.md` §8 for the panel's internal architecture (how a row's existence is generated from the serialized document while its editor is a separate registered table, and the full shape of the copy model above).
+See `doc/gui/gui-state-governance.md` §8 for the panel's internal architecture (how a row's existence is generated from the serialized document while its editor is a separate registered table, and the full shape of the copy model above).
 
 #### `--user-config` / `--no-user-config`
 
@@ -1749,7 +1749,7 @@ at one LSB. Two consequences worth spelling out:
 - **`normalized` always uses the absolute-mode scale, whatever the renderer's `ev_mode` is.**
   Under the default `"relative"`, the baked image is anchored to `anchor_l99_sky` instead
   (`scale = intensity_factor · TargetWhiteToLinear(135) / (axis_solid_angle · anchor_l99_sky)`,
-  see [`ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §2.8), and `normalized` and
+  see [`ev-pipeline-architecture.md`](rendering/ev-pipeline-architecture.md) §2.8), and `normalized` and
   the image then differ by a constant gain that is not an error. Read `ev_mode` from the sidecar
   before treating the two as the same scale; set `"ev_mode": "absolute"` on the renderer if you
   want them to be.

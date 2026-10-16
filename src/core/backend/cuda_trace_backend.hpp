@@ -104,7 +104,7 @@ class CudaTraceBackend : public TraceBackend {
   // A session serves ALL of SessionSpec::renders at once — the physics is
   // per-session, each renderer owns its own projection + accumulation targets,
   // and the trace kernel projects every emitted ray into each of them inside
-  // the one dispatch (doc/seam-design.md §4.2 as-built; same shape as Metal).
+  // the one dispatch (doc/backends/seam-design.md §4.2 as-built; same shape as Metal).
   bool SupportsDeviceXyzAccum() const override;
   // One call per drain covers every renderer: `xyz[i]` (caller-sized to
   // renderer i's resolution) receives its plane, `landed_weight[i]` its

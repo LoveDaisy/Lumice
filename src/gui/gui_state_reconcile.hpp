@@ -4,7 +4,7 @@
 #include "include/lumice_base.h"  // LUMICE_Server (opaque handle in ApplyGuiEffects signature)
 
 // GUI-state reconciler (scrum-gui-state-reconcile T0 geodetics). Blueprint doc:
-// doc/gui-state-governance.md. Field-tier registry: gui_state_tiers.hpp.
+// doc/gui/gui-state-governance.md. Field-tier registry: gui_state_tiers.hpp.
 //
 // This is the second single-owner reconciler in the GUI (companion to ReconcileSimState in app.cpp).
 // It closes the "widget → dirty" seam that today is scattered across ~30 DIRTY_IF / MarkDirty /
@@ -32,7 +32,7 @@
 // during T0-T4; both mechanisms write dirty=true into the same field. Because MarkDirty is
 // idempotent within a frame, dual-writing is harmless. T2-T4 will remove the DIRTY_IF wrappers as
 // each subsystem migrates. (T1 fully migrates the color-window edit sites — see
-// doc/gui-state-governance.md.)
+// doc/gui/gui-state-governance.md.)
 //
 // Fields participating in the auto-diff (kFieldTierTable entries with auto_diff_excluded=false and
 // tier in {kStructHard, kStructSoft, kDisplay}):
@@ -68,7 +68,7 @@ struct GuiEffects {
   }
   friend bool operator!=(const GuiEffects& a, const GuiEffects& b) { return !(a == b); }
   // TODO(T3): add need_reset when ResetFrontendState command owner lands
-  // (doc/gui-state-governance.md T3).
+  // (doc/gui/gui-state-governance.md T3).
 };
 
 // Pure function: does the document on the panels still describe the scene the last commit sent,

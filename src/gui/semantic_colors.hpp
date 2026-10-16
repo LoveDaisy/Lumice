@@ -38,7 +38,7 @@
 // accent means interaction state, and a button tinted with it would read as
 // "currently selected" (which is exactly what the tinted Colors button means).
 // It lives here because this file owns every named button colour that is not
-// the palette's default; see doc/gui-visual-language.md §4.8.
+// the palette's default; see doc/gui/gui-visual-language.md §4.8.
 
 namespace lumice::gui {
 
@@ -68,7 +68,7 @@ ImVec4 DestructiveFillColor(float alpha);
 // The destructive *button* triple is PushDestructiveStyle/PopDestructiveStyle in
 // gui/destructive_style.hpp — the already-validated implementation with 12 paired
 // call sites. It is deliberately not re-declared here: one grade, one owner per
-// form. See doc/gui-visual-language.md §7.
+// form. See doc/gui/gui-visual-language.md §7.
 
 }  // namespace lumice::gui
 

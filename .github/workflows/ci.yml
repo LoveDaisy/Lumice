@@ -76,7 +76,7 @@ jobs:
             # The one leg that both builds the GUI and has a headless GL stack available
             # (Xvfb + Mesa llvmpipe), so it is where the visual-regression layer actually
             # runs. Which reference groups it may run, and why not the others, is measured
-            # and argued in doc/testing-architecture.md §4.6 — read that before widening it.
+            # and argued in doc/testing/testing-architecture.md §4.6 — read that before widening it.
             run_gui_visual: ON
 
           - name: Ubuntu ARM64
@@ -472,7 +472,7 @@ jobs:
       # The GUI visual-regression layer, actually executed. Until this step existed, gui_test was
       # built on three platforms and run on none, so a reference-image regression could only be
       # caught by whoever happened to run it locally — and the five merged PRs that did go red
-      # this way were all released as "known flake" (doc/testing-architecture.md §4.6 has the
+      # this way were all released as "known flake" (doc/testing/testing-architecture.md §4.6 has the
       # audit, the per-scene cross-platform PSNR measurements, and the disposition checklist a red
       # here obliges you to follow).
       #
@@ -490,7 +490,7 @@ jobs:
         if: matrix.run_gui_visual == 'ON'
         shell: bash
         # The spike that qualified this step's two groups also found a timing-sensitive defect
-        # in a third group under software rasterization (doc/testing-architecture.md §4.6,
+        # in a third group under software rasterization (doc/testing/testing-architecture.md §4.6,
         # "Why lens_proj is not in CI") — evidence that this layer can behave non-deterministically
         # under llvmpipe. A bounded timeout keeps a similar stall in a covered group from hanging
         # this required check indefinitely instead of failing loudly.
@@ -599,7 +599,7 @@ jobs:
       # than the full ~2 GB toolkit. This is enough for nvcc to compile .cu
       # files and for CMake's find_package(CUDAToolkit) / CUDA::cudart link
       # target to resolve. Pinned to CUDA 12.9 — the last 12.x minor, the same
-      # toolkit both CUDA reference boxes (doc/machines.md) build and validate
+      # toolkit both CUDA reference boxes (doc/testing/machines.md) build and validate
       # with, and the first minor after 12.8 introduced sm_120, so the fatbin
       # gains native Blackwell SASS (CMakeLists.txt gates `120-real` on
       # toolkit >= 12.8). apt resolves the newest 12.9 patch on its own. Stay
@@ -753,7 +753,7 @@ jobs:
   #     image drift is debuggable from any run).
   #   - CUDA: 12.9.2 — latest 12.x patch (12.9 is the last 12.x minor; 12.9.2
   #     ships the same nvcc 12.9.86 / cudart 12.9.79 as 12.9.1, the version
-  #     the CUDA reference boxes in doc/machines.md validated compute_61 on),
+  #     the CUDA reference boxes in doc/testing/machines.md validated compute_61 on),
   #     matches the Linux `cuda-compile` job above (one CUDA major across all
   #     CI legs) and supports VS 2022.
   #     Do NOT use CUDA 11.x — its `_MSC_VER` ceiling (~1930) is below recent
@@ -957,7 +957,7 @@ jobs:
   # Bench compile-only: builds the `lumice_bench` target so BUILD_BENCH=ON cannot
   # rot again. It does NOT run the benchmarks — numbers off a shared, throttled
   # CI runner are noise, and running them would only add PR latency. Perf work
-  # measures on the dedicated machines instead (doc/performance-testing.md).
+  # measures on the dedicated machines instead (doc/testing/performance-testing.md).
   #
   # Why this job exists (2026-07-16): neither CI nor
   # the pre-commit hook passed -b / -DBUILD_BENCH=ON, so nothing ever compiled
@@ -1239,7 +1239,7 @@ jobs:
       # and a 17% hit rate, and it read as a slow leg, not a red. At 800M the same directory
       # measured 42% of the cap and the warm Build fell from 681 s to 7-17 s.
       #
-      # A cap is not a footprint (doc/testing-architecture.md §7.1): the quota is charged by
+      # A cap is not a footprint (doc/testing/testing-architecture.md §7.1): the quota is charged by
       # what is stored, so compare legs by their measured directories, not by their caps.
       #
       # If `ccache --show-stats` ever reports Cache size at Max cache size, the cap is
@@ -1362,7 +1362,7 @@ jobs:
         # it stays. `--durations=20` makes the slowest cases visible in the log —
         # see the timeout-minutes comment below for why that matters.
         # `-p duration_report_plugin --duration-report` writes every test's cost for
-        # the "Check test durations" step below (doc/testing-architecture.md §7.7).
+        # the "Check test durations" step below (doc/testing/testing-architecture.md §7.7).
         run: |
           nproc
           rm -rf "$RUNNER_TEMP/e2e-phase"
@@ -1373,11 +1373,11 @@ jobs:
               -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations.json"
         env:
           PYTHONPATH: scripts
-        # This is an owner-set BUDGET, not a hang detector (see doc/testing-architecture.md
+        # This is an owner-set BUDGET, not a hang detector (see doc/testing/testing-architecture.md
         # §7): if the suite cannot fit in 10 minutes, that means the suite is too
         # large, not that the timeout should grow. On red here, read this step's
         # --durations=20 output first to decide what to trim or fix — do not just
-        # rerun; see doc/testing-architecture.md §7 for the full disposition rule.
+        # rerun; see doc/testing/testing-architecture.md §7 for the full disposition rule.
         timeout-minutes: 10
 
       - name: Show E2E duration report
@@ -1397,7 +1397,7 @@ jobs:
       - name: Check test durations
         # Runtime gate, not a diff check: every test over the threshold in this run
         # must be registered in test/duration_registry.json with a reason
-        # (doc/testing-architecture.md §7.7). On red, the log names the test and
+        # (doc/testing/testing-architecture.md §7.7). On red, the log names the test and
         # prints the registry line to add — or make the test faster instead.
         run: >
           python3 scripts/check_test_durations.py --job "e2e-test"
@@ -1578,7 +1578,7 @@ jobs:
         run: cmake --build build --parallel
 
       # The analytic library's install rules and package config (root CMakeLists.txt,
-      # doc/analytic-api.md section 8.4) run nowhere else in CI: the tests below read the build
+      # doc/interfaces/analytic-api.md section 8.4) run nowhere else in CI: the tests below read the build
       # tree. Installing the `analytic` component alone into a scratch prefix and checking the
       # files it must produce turns a broken install rule into a red leg rather than a silent
       # gap. Whether an outside project can then find_package and link it is the
@@ -1596,7 +1596,7 @@ jobs:
             test -f "$RUNNER_TEMP/analytic-install/$f" || { echo "::error::analytic install is missing $f"; exit 1; }
           done
           # The package's headers are exactly these two: no engine header (src/include/lumice_*.h)
-          # ships with it, so a consumer cannot compile against both (doc/analytic-api.md section 2.6).
+          # ships with it, so a consumer cannot compile against both (doc/interfaces/analytic-api.md section 2.6).
           headers="$(cd "$RUNNER_TEMP/analytic-install/include" && find . -type f | LC_ALL=C sort | tr '\n' ' ')"
           test "$headers" = "./lumice_analytic.h ./lumice_analytic_core.h " || { echo "::error::analytic install ships headers [$headers], expected exactly lumice_analytic.h and lumice_analytic_core.h"; exit 1; }
           find "$RUNNER_TEMP/analytic-install" -type f | sort
@@ -1669,7 +1669,7 @@ jobs:
           # floor (0.75 over 5 reps), not the precise 0.85 over 21 — a hosted
           # runner's per-arm CoV (0.155-0.229) reads the precise number red with
           # nothing wrong. A red here is a red PR. The precise gate runs on the
-          # reference machines on a schedule (doc/performance-testing.md,
+          # reference machines on a schedule (doc/testing/performance-testing.md,
           # "Precise throughput gate (local schedule)"); why the two numbers:
           # test/e2e/_multi_renderer_throughput.py. -rP keeps the gates' measured
           # ratio/CoV lines in the log when they pass, which pytest otherwise drops.
@@ -1871,7 +1871,7 @@ jobs:
             }
           }
           # The package's headers are exactly these two: no engine header (src/include/lumice_*.h)
-          # ships with it (doc/analytic-api.md section 2.6).
+          # ships with it (doc/interfaces/analytic-api.md section 2.6).
           $names = @(Get-ChildItem -Recurse -File (Join-Path $prefix 'include') | ForEach-Object { $_.Name })
           $headers = $names -join ' '
           if ($names.Count -ne 2 -or $names -notcontains 'lumice_analytic.h' -or $names -notcontains 'lumice_analytic_core.h') {

@@ -1,6 +1,6 @@
 // "The channel-B-R display mode takes over the colour channel", asserted on the server/CLI side.
 //
-// The same rule doc/print-mode-subtractive-ink.md §7 states for print — a mode that takes over the
+// The same rule doc/rendering/print-mode-subtractive-ink.md §7 states for print — a mode that takes over the
 // colour channel says which colour fields it leaves unread, and nothing is dropped silently — applied
 // to the diagnostic display mode. What differs from print, and why this is its own file rather than
 // more cases in test_print_mode_colour_exclusions.cpp:

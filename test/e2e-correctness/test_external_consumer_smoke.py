@@ -7,8 +7,8 @@ under external_consumer_smoke/ run against that prefix and nothing else —
 
 - a standalone CMake project that does find_package(LumiceAnalytic), links
   Lumice::lumice_analytic and compares LUMICE_ANALYTIC_GetApiVersion() with the header's
-  LUMICE_ANALYTIC_API_VERSION (the run-time check of doc/analytic-api.md section 8.1);
-- smoke.py, which finds the library by the install-tree layout of doc/analytic-api.md section 8.7
+  LUMICE_ANALYTIC_API_VERSION (the run-time check of doc/interfaces/analytic-api.md section 8.1);
+- smoke.py, which finds the library by the install-tree layout of doc/interfaces/analytic-api.md section 8.7
   through LUMICE_ANALYTIC_INSTALL_DIR, and doubles as the sample for a Python binding.
 
 "Install tree alone" is asserted, not assumed: every include directory in the C project's
@@ -24,7 +24,7 @@ test/e2e's helpers and of numpy/Pillow, like its two siblings, so the Windows sh
 can run it too.
 
 symmetry_semantics: none — neither consumer compares a face sequence across a symmetry
-(doc/analytic-api.md section 3); besides the version query each evaluates one concrete path (3-5
+(doc/interfaces/analytic-api.md section 3); besides the version query each evaluates one concrete path (3-5
 through a regular prism) and checks only that it comes back valid.
 """
 from __future__ import annotations
@@ -63,7 +63,7 @@ def _shared_build_dir() -> Path:
         if not re.search(r"^BUILD_SHARED_LIBS:[A-Z]+=ON$", text, re.MULTILINE):
             continue
         if re.search(r"^LUMICE_CUDA_ENABLED:[A-Z]+=ON$", text, re.MULTILINE):
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/interfaces/analytic-api.md 2.3)")
         return build
     pytest.skip(f"no shared build among {[str(b) for b in _BUILD_CANDIDATES]} (./scripts/build.sh -sj release)")
 

@@ -6,7 +6,7 @@
 // counts are compared exactly and lengths to the fixtures' 2e-3 relative (LI
 // docs/analytic-parity-fixtures.md: closed_arclength_relative).
 //
-// symmetry_semantics: none — every case discovers one concrete face sequence (doc/analytic-api.md
+// symmetry_semantics: none — every case discovers one concrete face sequence (doc/interfaces/analytic-api.md
 // section 3).
 
 #include <gtest/gtest.h>
@@ -1148,7 +1148,7 @@ TEST(IceDiscovery, PipelineOnLiParityFixtureBandsMatchesLiCountsAndSeeds) {
   }
 }
 
-// doc/analytic-api.md section 5.3: discovery holds no static or thread_local state; concurrent calls on
+// doc/interfaces/analytic-api.md section 5.3: discovery holds no static or thread_local state; concurrent calls on
 // distinct outputs are bit-identical to serial ones.
 TEST(IceDiscoveryConcurrency, ConcurrentDiscoveriesMatchSerialResults) {
   const Vec targets[] = { kPixel150, kPixel151, TargetAtDeviation(32.4379) };

@@ -331,7 +331,7 @@ LM_FN void normalize_latitude(float phi, LM_THREAD float& phi_out, LM_THREAD boo
 }
 
 // Unified area-measure latitude sampler (330.2 core-lut-sampler; design:
-// doc/near-pole-area-measure-sampling.md + explore unify-orientation-sampling-cosine-measure).
+// doc/geometry/near-pole-area-measure-sampling.md + explore unify-orientation-sampling-cosine-measure).
 // Numerical inverse-CDF over a uniform-theta node table: theta_nodes[i] / cdf_nodes[i]
 // for i in [0, n_nodes-1], with cdf_nodes STRICTLY increasing (BuildLatLut enforces the
 // monotonicity lift; both the search predicate and the interpolation denominator rely on

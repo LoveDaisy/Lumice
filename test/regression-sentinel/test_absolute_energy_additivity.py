@@ -22,7 +22,7 @@ weight the server reports (``snapshot_intensity``). The scalar reading is roughl
 5x tighter than the image one.
 
 Not a per-pixel criterion, deliberately. Filter-fail rays terminate early
-(``doc/filter-architecture.md``, Design A), which changes how fast the shared RNG
+(``doc/raypath/filter-architecture.md``, Design A), which changes how fast the shared RNG
 stream is consumed, so the three runs do not light the same pixels -- the per-pixel
 relative difference has a median near 1.0 while the surplus and the deficit cancel
 almost exactly in the sum. Integrated calibers are the ones that survive that, and

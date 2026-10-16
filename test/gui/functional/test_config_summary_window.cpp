@@ -195,7 +195,7 @@ void SeedManyLayerDocument(int layers) {
 void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
   {
     // The height is the content's until the user drags it, then the user's for the session
-    // (doc/gui-visual-language.md §9): a taller document grows an untouched window; once dragged,
+    // (doc/gui/gui-visual-language.md §9): a taller document grows an untouched window; once dragged,
     // neither a taller document nor a close-and-reopen moves it; the width is never the user's;
     // and ResetTestState() puts it back under the content's control, which is what keeps one
     // case's drag out of the next case's reference shot.

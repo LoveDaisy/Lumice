@@ -445,7 +445,7 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // doc/print-mode-subtractive-ink.md §7 instance 1. A background photograph is a picture of the sky
+  // doc/rendering/print-mode-subtractive-ink.md §7 instance 1. A background photograph is a picture of the sky
   // the halo is drawn ON TOP of, which only means anything under an operator that ADDS light; print
   // multiplies the paper down by a transmittance, so blending the two would darken the photograph
   // exactly where the halo is brightest — wrong in kind, not in taste.

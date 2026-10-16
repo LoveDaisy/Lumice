@@ -2,7 +2,7 @@
 //
 // The lines already are: the preview shader's blendAnnotationColor() and the CLI's
 // BlendAnnotation() / PaintLabels() ignore the family colour under print and only darken the paper
-// by coverage (doc/print-mode-subtractive-ink.md §7, the annotation instance). The GUI's labels
+// by coverage (doc/rendering/print-mode-subtractive-ink.md §7, the annotation instance). The GUI's labels
 // take neither path — they are built by the four Build*LabelSet functions (app_panels.cpp) and
 // rasterized through an ImGui draw list — which is exactly how they were missed when that rule's
 // call sites were counted, and why the proposition needs a gate of its own: export_parity excludes

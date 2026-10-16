@@ -91,7 +91,7 @@ inline std::vector<float> DownsampleBoxSumY(const T* xyz_data, int img_width, in
   return coarse;
 }
 
-// See doc/ev-pipeline-architecture.md §2.2 (zero-skip semantics), §2.5 (GUI usage)
+// See doc/rendering/ev-pipeline-architecture.md §2.2 (zero-skip semantics), §2.5 (GUI usage)
 // Compute the P99 of the non-zero Y values in a packed XYZ buffer.
 //
 // When `downsample_factor > 1`, the Y channel is first box-summed onto a

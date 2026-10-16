@@ -630,7 +630,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleAcceptanceRateMatchesDocAnchors) {
   struct Case {
     const char* label;
     DistributionType lat_type;
-    float anchor_mean_attempts;  // doc/near-pole-area-measure-sampling.md §附录
+    float anchor_mean_attempts;  // doc/geometry/near-pole-area-measure-sampling.md §附录
   };
   const Case kCases[] = {
     // Laplacian b=5 (mean=90°, i.e. zenith=0): scrum-328.4 routes this to
@@ -643,7 +643,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleAcceptanceRateMatchesDocAnchors) {
     // this config now routes to kLatPathRayleigh with the tight-envelope
     // sin(θ)/θ accept step. Anchor is the measured device mean(attempts) with
     // seed 42 / 65536 rays (captured during scrum-328.3 Step 4); Python MC in
-    // doc/near-pole-area-measure-sampling.md §附录 predicts ≈ 1.002 (99.8%
+    // doc/geometry/near-pole-area-measure-sampling.md §附录 predicts ≈ 1.002 (99.8%
     // acceptance). ±5% band absorbs both MC noise and the Python-vs-device
     // arithmetic tolerance.
     { "Gaussian σ=5", DistributionType::kGaussian, 1.002 },
@@ -692,7 +692,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleAcceptanceRateMatchesDocAnchors) {
 
     // ±5% band (plan §Step 1 test point). Anchors from
     // scratchpad/explore-near-pole-latitude-sampling-divergence/insights.md
-    // and doc/near-pole-area-measure-sampling.md §附录, verified by CPU
+    // and doc/geometry/near-pole-area-measure-sampling.md §附录, verified by CPU
     // instrumentation of math.cpp:503 rejection loop.
     const double lo = c.anchor_mean_attempts * 0.95;
     const double hi = c.anchor_mean_attempts * 1.05;

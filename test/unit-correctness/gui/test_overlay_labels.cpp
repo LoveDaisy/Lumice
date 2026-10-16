@@ -17,7 +17,7 @@
 // the coverage it was made under.
 //
 // The last three cases are the regression anchors for the four placement gaps audited in
-// doc/overlay-label-placement.md; their assertion semantics must not be weakened.
+// doc/rendering/overlay-label-placement.md; their assertion semantics must not be weakened.
 
 #include <gtest/gtest.h>
 
@@ -621,7 +621,7 @@ TEST(OverlayToggle, TheZeroDegreeLabelBelongsToTheHorizonAndTheGridDoesNotRepeat
   EXPECT_LE(CountText(Compute(grid_only, 200.0f, 200.0f), zero), 1);
 }
 
-// ---- The four placement gaps of doc/overlay-label-placement.md ----
+// ---- The four placement gaps of doc/rendering/overlay-label-placement.md ----
 //
 // Each of these was a projection where the user could see grid curves with no numbers on them at
 // all, or the opposite — one curve wearing a pile of them. The first three are counts because the

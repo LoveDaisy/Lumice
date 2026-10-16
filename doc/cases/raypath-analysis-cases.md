@@ -4,8 +4,8 @@
 > C07/C08 归组与溯源、C13 能力更正、C16 机制终态——并新增 C17/C18（3157/357 两格，owner 授权增补）。
 > 各条「终态补充/增补」段即为该轮结论；人工讨论完成不等于产品全 PASS，未做 owner 独立目视的条目不标人工验收）。「光路分析功能」的测验场景语料的统一登记处：后续相关任务
 > （验收电池、普适性测量、GUI 案例矩阵、缺陷回归）从这里取场景，新发现的典型光路在此汇总。
-> 它不是一级设计文档——机制与路线图在 [`raypath-analysis.md`](../raypath-analysis.md)，字段契约在
-> [`raypath-cli-output.md`](../raypath-cli-output.md)，本文只回答「测什么场景、每个场景考察什么、
+> 它不是一级设计文档——机制与路线图在 [`raypath-analysis.md`](../raypath/raypath-analysis.md)，字段契约在
+> [`raypath-cli-output.md`](../raypath/raypath-cli-output.md)，本文只回答「测什么场景、每个场景考察什么、
 > 已知事实是什么」。
 
 ## 0. 使用规则
@@ -20,12 +20,12 @@
 - **面号**：prism 基面 1/2、侧面 3–8（相邻侧面 60°）；pyramid 用其自身编号空间。GUI 晶体 id（0–4）
   与 config/CSV id（1–5）差一；present-face id（0–5）≠ raypath 面号（1–8）。
 - **角度**：δ = display 散角（与太阳 label 的角距）。方向向量语义（travel vs position、display 规则、
-  外部工具换算）以 [`coordinate-convention.md`](../coordinate-convention.md) §12 为唯一权威；跨
+  外部工具换算）以 [`coordinate-convention.md`](../geometry/coordinate-convention.md) §12 为唯一权威；跨
   Lumice Integral 对照时其角度在 heading 空间（LI az = label az + 180°，LI scatter θ = 180° − δ）。
 - **对表域**：定量对照一律线性域（专用分析运行 CSV、`ev_mode: absolute` + `--format npy` 导出），
   不与 tone map 后的 8-bit 渲染比。
 - **标号变体**：拆变体用 `--symmetry none`；L1 标号等价 vs L2 物理等价的语义见
-  [`raypath-symmetry.md`](../raypath-symmetry.md)。
+  [`raypath-symmetry.md`](../raypath/raypath-symmetry.md)。
 
 ## 2. 能力考察维度（条目「考察点」的词表）
 
@@ -44,7 +44,7 @@
 
 | # | 链 / 格 | 场景 | 考察点 | 已知事实（锚点 / 方法） | 已锚定资产 |
 |---|---|---|---|---|---|
-| C01 | `3-5`（random 正六棱柱） | 22° halo 基线 | 位置 / 色散 / 收敛 | 最小偏折色散内缘：n=1.307/1.317 → δ=21.612°/22.371°（闭式 `2·asin(n/2)−60°`，e2e 以 1e-10 钉住）；D65 首个能量像素 21.532°、红端在内侧；定向族纤维交点性质见 `raypath-analysis.md` §5.1.8 核验注；**份额对表事实（2026-10-10）**：PBD `3-5` 全天份额 21.8117% ↔ filter 臂帧 sumY 和吻合（差 +0.04%，cone 同域互检的先例）；`analyze --roi frame`（dual）与渲染帧 sumY 逐位一致、（rect）= 全部 segment——帧域判定两路同源；全天空 rect 帧与 analysis total 一致到 4e-8 相对（校准臂）；镜头落域语义与 dual 折叠边界丢失（2026-10-10 已修复：切点集归边 bin，dual 帧总能量回归全天空恒等）见 `doc/coordinate-convention.md` §13；**终态补充（2026-10-14 人工讨论）**：22° 内缘是边（最小偏折色散边界），不是自动等于本格的聚光峰——边的位置正确不蕴含峰形已被解释 | config `test/e2e/configs/raypath_feature_random_regular.json`；e2e `test_raypath_feature_report_cli.py` |
+| C01 | `3-5`（random 正六棱柱） | 22° halo 基线 | 位置 / 色散 / 收敛 | 最小偏折色散内缘：n=1.307/1.317 → δ=21.612°/22.371°（闭式 `2·asin(n/2)−60°`，e2e 以 1e-10 钉住）；D65 首个能量像素 21.532°、红端在内侧；定向族纤维交点性质见 `raypath-analysis.md` §5.1.8 核验注；**份额对表事实（2026-10-10）**：PBD `3-5` 全天份额 21.8117% ↔ filter 臂帧 sumY 和吻合（差 +0.04%，cone 同域互检的先例）；`analyze --roi frame`（dual）与渲染帧 sumY 逐位一致、（rect）= 全部 segment——帧域判定两路同源；全天空 rect 帧与 analysis total 一致到 4e-8 相对（校准臂）；镜头落域语义与 dual 折叠边界丢失（2026-10-10 已修复：切点集归边 bin，dual 帧总能量回归全天空恒等）见 `doc/geometry/coordinate-convention.md` §13；**终态补充（2026-10-14 人工讨论）**：22° 内缘是边（最小偏折色散边界），不是自动等于本格的聚光峰——边的位置正确不蕴含峰形已被解释 | config `test/e2e/configs/raypath_feature_random_regular.json`；e2e `test_raypath_feature_report_cli.py` |
 | C02 | `3-1-5`（random，h/a=2） | 一条路径双特征 | 位置 / 机制 / 色偏 | **太阳侧**最小偏折色散内缘：实测红 21.686°/蓝 22.298°（与 C01 内缘同位——跨基面中转不改净几何，但峰形不同：C01 内缘峰 5.98 vs 本格 21.5–25° 区间仍升、峰仅 0.0308，**未证明本格自身有聚光峰**）；**反日侧** TIR 权重折线蓝带：δ=127.451–143.365°、kink 131.030°、blue/red 0.859–2.543、R=1 反事实降至 0.7–1.2（Fresnel 权重导数折断机制：两侧路径仍有效、能量连续，非能量跳变/出射门）；schema2 下 TIR 以 conditional candidate（判别式 ≈0）表达、不自动断言可见蓝带。**终态补充（2026-10-14 人工讨论）**：太阳侧普通色散内缘、反日侧宽 TIR 倾向区与软暗洞是三个独立对象，须分别说明，不得互相替代；等价 uniform 参数的识别不一致已有探针证据，但未证明 MC 存在显著分布错误——登记为生产消费缺口，非引擎缺陷裁定 | configs `raypath_feature_random_315_{render,focused_render}.json`；e2e `test_315_report_keeps_conditional_tir_distinct_from_observed_colour`；`raypath-feature-diagnostic-acceptance.md` |
 | C03 | `3-5-6-7` | 内反射 fiber | 收敛 / 空态 | fiber↔水平集对应逐点成立（\|R·u+s\|≤3e-15、\|out−T\|≤4.5e-12）；开弧端点为有效域边界事件（`tir_boundary` / `path_infeasible`）；**终态补充（2026-10-14 人工讨论）**：约 141.916° 处有结构边界；姿态分量之间的连接与光能不成简单倍数——完整的 ρAT/J 联合解释保留，不得把 `D_P` 临界值 / 分量数直接称作天空可见亮度特征 | `raypath-analysis.md` §5.1.8 核验注 |
 | C04 | `3-1-4-5` / `3-4-1-5` | 含反射开弧一致性 / 反射顺序等价 | 空态 / 收敛 | **处置更正（2026-10-14，owner 确认收口）**：编号保留，原「fiber 为多分量 arc；`TopologyEscape` 变体无完整对照（开放）」的错误绑定撤销——最初拆条时把本格误绑到未指定的 escape 变体上。本格考察开弧一致性与反射顺序等价：LI `test_topology_escape_fiber_support.py` 的 18 例 fiber/store 替代对照已核验含内反射等值线↔fiber（δ69/101.7 各 1 arc），后续薄颈审计修复 3567，其完整 partition 核验即 C03——本格与 C03 只差反射顺序变体。原始 escape 三路径是 3567/3157/357，其中 3157/357 另立 C17/C18 | —（绑定更正后待重新锚定；LI 对照存在，本仓 fixture 未钉） |

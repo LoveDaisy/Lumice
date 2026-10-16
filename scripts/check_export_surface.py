@@ -192,7 +192,7 @@ def find_all(directory: Path, target: str, plat: str | None = None) -> list[Path
 
 def cuda_configured(root: Path = ROOT) -> bool:
     """True if a shared configure in `root`'s build tree has CUDA on (liblumice_analytic is then
-    not produced, doc/analytic-api.md section 2.3)."""
+    not produced, doc/interfaces/analytic-api.md section 2.3)."""
     for cache in (root / "build" / "CMakeCache.txt", root / "build" / "cmake_build" / "shared" / "CMakeCache.txt"):
         if cache.is_file():
             text = cache.read_text(encoding="utf-8", errors="replace")

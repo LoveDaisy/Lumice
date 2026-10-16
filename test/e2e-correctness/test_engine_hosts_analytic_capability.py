@@ -24,12 +24,12 @@ What this does not cover: the release packages' engines. Their two ISA builds pe
 build rests on their being built from the same lumice_obj.
 
 Each case runs in a child interpreter so the engine copy never shares this process with the library
-the rest of the suite loads (doc/analytic-api.md section 2.6). Needs a shared build
+the rest of the suite loads (doc/interfaces/analytic-api.md section 2.6). Needs a shared build
 (`./scripts/build.sh -sj release`); skipped when there is none. In a CUDA configure
 liblumice_analytic is not produced and case 1 skips; cases 2 and 3 still run. Free of test/e2e's
 helpers and of numpy/Pillow, so the Windows shared-export CI legs can run it.
 
-symmetry_semantics: none — one concrete face sequence is evaluated (doc/analytic-api.md section 3).
+symmetry_semantics: none — one concrete face sequence is evaluated (doc/interfaces/analytic-api.md section 3).
 """
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def _find(lib: str) -> Path:
     hits = ces.find_all(SHARED_OUT, lib)
     if not hits:
         if lib == "lumice_analytic" and ces.cuda_configured(ROOT):
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/interfaces/analytic-api.md 2.3)")
         pytest.fail(f"{ces.PATTERNS[lib][ces.platform_key()]} not found under {SHARED_OUT}")
     if len(hits) > 1:
         pytest.fail(f"more than one {lib} under {SHARED_OUT}: {hits}")

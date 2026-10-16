@@ -231,7 +231,7 @@ constexpr int kBenchmarkGpuWarmupRays = 100'000;
 // steadier window than N=5 at negligible cost and no thermal regrowth. On a Mac
 // laptop, Metal throughput is environment-dominated (thermal / GPU boost swing
 // it ~2x run-to-run, CoV 8-28%) and NO N stabilizes it — Mac Metal is treated
-// as approximate (phase-1), not canonical. See doc/performance-testing.md.
+// as approximate (phase-1), not canonical. See doc/testing/performance-testing.md.
 constexpr int kBenchmarkDrainWindows = 10;
 
 // --- Subcommands -------------------------------------------------------------
@@ -423,7 +423,7 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
          << "of them. Target mode uses the nominal crystal and point sun. Report mode instead\n"
          << "uses the actual shape/pose/source/spectrum measure, including the solar disc.\n"
          << "\n"
-         << "Output: one JSON document (target schema 1; report schema 3; doc/raypath-cli-output.md)\n"
+         << "Output: one JSON document (target schema 1; report schema 3; doc/raypath/raypath-cli-output.md)\n"
          << "to stdout, or to -o <path> instead (never both). Progress goes to stderr. Target\n"
          << "mode logs start/end; report mode also logs its stages and can retain partial results\n"
          << "at its numerical budget; target mode has no partial result. Ctrl-C ends the process\n"
@@ -1112,7 +1112,7 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
       // the shell's configure, not the engine that ran the pass — measured on the reference
       // box as a v3 engine reporting "baseline". The engine's answer is resolved by the same
       // condition that gates its -march flag, so it reads "baseline" whenever no flag was
-      // applied (any non-Release config included); see doc/performance-testing.md.
+      // applied (any non-Release config included); see doc/testing/performance-testing.md.
       result["isa"] = LUMICE_GetEngineIsaLevel();
       // Which trace backend the measured pass ran on, and whether a GPU route
       // silently degraded to the legacy CPU path — a throughput number without
@@ -1144,7 +1144,7 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
                     << "and is not a steady trace rate; do not use for perf comparison.\n";
         } else if (std::string_view(rate_basis) == "active_short") {
           // Mechanism: see the `active_short` branch comment above (where rate_basis is
-          // assigned) and doc/performance-testing.md §C rule 5. Not re-derived here so the
+          // assigned) and doc/testing/performance-testing.md §C rule 5. Not re-derived here so the
           // two sites can't drift apart.
           std::cerr << "Warning: [BENCHMARK] mode=" << mode
                     << " rate_basis=active_short — the run produced only a single "
@@ -2144,7 +2144,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
 // physical-core parallel efficiency, which is what this pass is FOR — the one number defined
 // independently of whatever the default picks, so it can be compared against it. That is why
 // this is the one of the three worker-count consumers (render/analyze default, GUI preference,
-// this pass) that does not share the automatic rule. doc/performance-testing.md says the same
+// this pass) that does not share the automatic rule. doc/testing/performance-testing.md says the same
 // thing to whoever reads the number.
 int RunBenchmark(const BenchmarkOptions& opts) {
   const SharedOptions& shared = opts.shared;

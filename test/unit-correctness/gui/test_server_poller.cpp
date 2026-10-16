@@ -1,5 +1,5 @@
 // What the poller publishes while a real simulation runs — see
-// doc/gui-preview-lifecycle-architecture.md §2/§6.
+// doc/gui/gui-preview-lifecycle-architecture.md §2/§6.
 //
 // Every case here drives a REAL server and, where the property is about cadence, a real worker
 // thread. That is faithful rather than expensive: the invariants are about the handoff between a
@@ -312,7 +312,7 @@ TEST_F(ServerPoller, ATerminalFrameBelowTheQualityGateIsStillUploadedOnEveryResu
 // must ignore the stale terminal snapshot. WakeForRefresh preserves it: a display-time refresh must
 // not fabricate a transient valid=false window, because ReconcileSimState reads that window as
 // "no observation yet" and pulls a completed sim back into kSimulating (activity-bug root cause (a),
-// doc/gui-state-governance.md §4 支柱 2).
+// doc/gui/gui-state-governance.md §4 支柱 2).
 //
 // The valid=false publish is a TRANSIENT and the observation of it races the worker, which the wake
 // releases in the same call and which republishes valid=true on its first poll. So the two arms are

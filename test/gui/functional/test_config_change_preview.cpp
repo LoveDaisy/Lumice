@@ -1,7 +1,7 @@
 // What the preview shows in the frames after the user changes the simulation config.
 //
 // A config edit never blanks the frame on screen; the new generation replaces it under
-// doc/gui-preview-lifecycle-architecture.md §7's rules (quality gate, 500 ms timeout fallback,
+// doc/gui/gui-preview-lifecycle-architecture.md §7's rules (quality gate, 500 ms timeout fallback,
 // terminal frame always uploaded). Each case runs a real simulation, applies one config change
 // through the path the user takes, and watches the shader's mono intensity scale frame by frame for
 // a fixed wall-clock window (0 means the shader multiplies every texel by zero — a black preview).

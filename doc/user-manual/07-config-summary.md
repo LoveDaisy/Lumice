@@ -41,5 +41,5 @@ For the page as text rather than as a picture, **Copy as text** at the right end
 
 ## 4. See also
 
-- The exported config JSON, which describes the same picture in a form the CLI can render → Top Bar **Save** → `Config JSON...` ([gui-guide.md](../gui-guide.md))
-- Save your current settings as personal defaults → the **Settings** panel, which lists the same settings rows with their factory values ([gui-guide.md](../gui-guide.md))
+- The exported config JSON, which describes the same picture in a form the CLI can render → Top Bar **Save** → `Config JSON...` ([gui-guide.md](../gui/gui-guide.md))
+- Save your current settings as personal defaults → the **Settings** panel, which lists the same settings rows with their factory values ([gui-guide.md](../gui/gui-guide.md))

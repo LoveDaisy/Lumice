@@ -12,7 +12,7 @@
 // deviation.
 //
 // Three layers, deliberately decoupled so a bug in one cannot mask a bug in
-// another (doc/numerical-robustness.md rule 4 "one predicate, one owner"):
+// another (doc/geometry/numerical-robustness.md rule 4 "one predicate, one owner"):
 //   1. Analytic math (Newell area / 2D polygon + triangle moments) — pure
 //      geometry, no sampling, self-checkable against hand-computed values.
 //   2. Target distributions built from `CrystalGeom` (present-slot compact order,

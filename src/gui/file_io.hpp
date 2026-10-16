@@ -67,7 +67,7 @@ struct GridOverflowInfo {
 };
 
 // Which consumer a BuildScene result is destined for. The two differ in exactly ONE field —
-// renderer intensity_factor — and that divergence is deliberate (doc/ev-pipeline-architecture.md
+// renderer intensity_factor — and that divergence is deliberate (doc/rendering/ev-pipeline-architecture.md
 // §2.4): the GUI carries manual + auto EV at display time, the CLI has no display-time EV concept
 // at all, so a config exported for the CLI must bake the current exposure to render at the same
 // brightness the user is looking at. Everything else about the two scenes is identical.

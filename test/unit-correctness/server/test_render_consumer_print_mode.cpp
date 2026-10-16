@@ -10,7 +10,7 @@
 //   - print is BLIND to the colour controls the screen operator reads. Not "happens to compute
 //     something similar" — literally byte-identical output when ray_color_, the annotation colours
 //     or the sky background are changed underneath it. That is the executable form of "ink has one
-//     degree of freedom" (doc/print-mode-subtractive-ink.md §5) and of AC4's "annotation does not
+//     degree of freedom" (doc/rendering/print-mode-subtractive-ink.md §5) and of AC4's "annotation does not
 //     read the colour field", and it is stated as "change the input, the bytes do not move" rather
 //     than by inspecting which functions the code calls, because the latter pins an implementation
 //     detail instead of the promise.
@@ -184,7 +184,7 @@ TEST(RenderConsumerPrintMode, PrintIgnoresRayColor) {
   ASSERT_EQ(print_warm.size(), static_cast<size_t>(kTotalPix) * 3);
   EXPECT_EQ(CountDifferingBytes(print_warm, print_cool), 0u)
       << "ray_color_ reached the print branch — it must not; print is greyscale ink on paper "
-         "(doc/print-mode-subtractive-ink.md §5). If this is red, do not relax it: the branch is "
+         "(doc/rendering/print-mode-subtractive-ink.md §5). If this is red, do not relax it: the branch is "
          "reading a colour field it was designed to skip.";
 
   // The control: the same two configs on the SCREEN operator have to differ, or the case above is
@@ -199,7 +199,7 @@ TEST(RenderConsumerPrintMode, PrintIgnoresRayColor) {
 }
 
 // print must also ignore the SKY. `background` and `paper` are separate fields precisely so that
-// "print onto the default black background" cannot happen (doc/print-mode-subtractive-ink.md §6);
+// "print onto the default black background" cannot happen (doc/rendering/print-mode-subtractive-ink.md §6);
 // the observable half of that is the print frame not moving when the sky colour does.
 TEST(RenderConsumerPrintMode, PrintIgnoresSkyBackground) {
   RenderConfig black_sky = MakeConfig(RenderConfig::kPrint);
@@ -447,7 +447,7 @@ TEST(RenderConsumerPrintMode, AnnotationColourDoesNotReachThePaper) {
       << "an annotation's colour reached the printed page. Under kPrint every annotation is ink and "
          "carries only a coverage — see BlendAnnotation() in src/server/render.cpp. Do not fix this "
          "by giving print its own line palette; that reintroduces exactly the shadow state the "
-         "design rejected (doc/print-mode-subtractive-ink.md §5).";
+         "design rejected (doc/rendering/print-mode-subtractive-ink.md §5).";
 
   // The control, again: on the screen operator these two configs must differ, or "the colour did
   // not reach the page" is a statement about a fixture that draws no annotations.

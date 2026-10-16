@@ -11,7 +11,7 @@ class RenderConsumer;
 struct ColorClassTable;
 
 // task-339.4: how per-color-class Y-lanes are combined into one displayed color
-// per pixel (see doc/gui-custom-spectrum-and-raypath-color.md §4.7 + §4.8).
+// per pixel (see doc/gui/gui-custom-spectrum-and-raypath-color.md §4.7 + §4.8).
 // dominant / additive share the SINGLE mono-image exposure scale
 // (RenderConsumer::ExposureScale()) — there is never a per-lane / per-composite
 // renormalization (that was the spike's false-color bug). painter's exposure
@@ -27,7 +27,7 @@ CompositeMode ParseCompositeMode(const std::string& mode_str);
 
 // Composite the consumer's per-color-class Y-lanes into a W*H*3 linear-RGB
 // image. Classes are traversed in ascending z_order (list-first = top layer,
-// see doc/gui-custom-spectrum-and-raypath-color.md §4.7). The self-anchor
+// see doc/gui/gui-custom-spectrum-and-raypath-color.md §4.7). The self-anchor
 //   `A = consumer.ParticipatingExposureScale(participating_p99_y)`
 // is task-347 (Fix B): server-side self-anchored off the participating-P99 of
 // the currently-visible class union (computed BEFORE the pixel loop, in-scope

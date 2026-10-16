@@ -44,9 +44,9 @@ nlohmann::ordered_json Conventions() {
   return {
     { "frames",
       "world: +z is the zenith, azimuth counter-clockwise from +x seen from +z; body: the crystal frame, +z its "
-      "c-axis (face 1's outward normal) (doc/coordinate-convention.md)" },
+      "c-axis (face 1's outward normal) (doc/geometry/coordinate-convention.md)" },
     { "directions",
-      "unit 3-vectors follow the light-travel convention (doc/coordinate-convention.md, Direction-Vector "
+      "unit 3-vectors follow the light-travel convention (doc/geometry/coordinate-convention.md, Direction-Vector "
       "Semantics): incident_direction is the propagation sun -> crystal; target_direction is the propagation of "
       "light arriving from the target sky point (the kernel seeks exits displayed there); outgoing_direction is "
       "the exit propagation, displayed at the sky point it comes from; for any such d that point sits at "

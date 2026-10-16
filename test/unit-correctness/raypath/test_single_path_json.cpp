@@ -1,10 +1,10 @@
 // The JSON form of a single-path result (src/raypath/single_path_json.hpp) and its warm-seed reader:
-// the key set a shell and doc/raypath-cli-output.md rely on, null for NaN, the two outcomes' mutually
+// the key set a shell and doc/raypath/raypath-cli-output.md rely on, null for NaN, the two outcomes' mutually
 // exclusive fields, the bit-exact seed round trip and the grid's 9-digit rounding. The key table
-// below is the second copy of doc/raypath-cli-output.md's field table; a field added to one is added
+// below is the second copy of doc/raypath/raypath-cli-output.md's field table; a field added to one is added
 // to the other.
 //
-// symmetry_semantics: none — every case analyses one concrete face sequence (doc/analytic-api.md
+// symmetry_semantics: none — every case analyses one concrete face sequence (doc/interfaces/analytic-api.md
 // section 3).
 
 #include <gtest/gtest.h>

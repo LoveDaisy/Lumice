@@ -888,7 +888,7 @@ TEST(AnalysisPanelLogic, FormatSegmentRaypathTextJoinsFacesWithDashes) {
 }
 
 // The four display forms the C API contract names (lumice_engine.h at LUMICE_RaypathHistogramEntry,
-// doc/c_api.md): "3-5", "C1(3-5)", "(3-5) -> (1-3)", "C1(1-3) -> C4(3-5)". Only the layer joiner
+// doc/interfaces/c_api.md): "3-5", "C1(3-5)", "(3-5) -> (1-3)", "C1(1-3) -> C4(3-5)". Only the layer joiner
 // is rewritten, to the icon between single spaces; a one-layer text passes through untouched,
 // and the joiner is found however many times it occurs.
 TEST(AnalysisPanelLogic, JoinerForDisplayRedrawsOnlyTheLayerJoiner) {

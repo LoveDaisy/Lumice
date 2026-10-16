@@ -103,7 +103,7 @@ struct ChainIdLayerContext {
 // drawing from that layer's AxisDistribution with no memory of the orientation
 // the ray had one crystal earlier. Each segment's symmetry equivalence class
 // is therefore a property of its own layer's crystal ensemble alone, which is
-// the single-layer case doc/raypath-symmetry.md §2b argues for (that document
+// the single-layer case doc/raypath/raypath-symmetry.md §2b argues for (that document
 // says nothing about cross-layer independence; the independence rests on the
 // two InitRay_rot call sites, not on the document).
 ChainIdLayerContext MakeChainIdLayerContext(ChainIdInterningTable& table, const Crystal& crystal, IdType crystal_id,

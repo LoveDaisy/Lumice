@@ -9,7 +9,7 @@ kinks, the rhombic plate's blue tint), the declared threshold snapshot, and the 
 gate. Needs a shared build (`./scripts/build.sh -sj release`); skipped when there is none, or in
 a CUDA configure, which does not produce the library.
 
-symmetry_semantics: none — every call evaluates one concrete face sequence (doc/analytic-api.md
+symmetry_semantics: none — every call evaluates one concrete face sequence (doc/interfaces/analytic-api.md
 section 3); the class tint's members are the PBD label orbit (L1), compared to no symmetry
 reduction of the representative.
 """
@@ -54,7 +54,7 @@ def _find() -> Path:
     hits = sorted(p for p in SHARED_OUT.rglob(pattern) if p.is_file())
     if not hits:
         if _cuda_configured():
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/interfaces/analytic-api.md 2.3)")
         pytest.fail(f"{pattern} not found under {SHARED_OUT} although a shared build exists there")
     if len(hits) > 1:
         pytest.fail(f"more than one {pattern} under {SHARED_OUT}: {hits}")

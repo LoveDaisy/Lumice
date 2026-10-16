@@ -7,7 +7,7 @@
 // These tests therefore assert cf's topology against a stored snapshot of cf's
 // own output — a pure integer/bitmask equality with zero platform surface,
 // rather than adjudicating a fragile exact-arithmetic witness. See
-// doc/numerical-robustness.md §8 for why a free-symbol exact oracle was
+// doc/geometry/numerical-robustness.md §8 for why a free-symbol exact oracle was
 // retired in favor of this contract.
 //
 // Each entry is (vtx_cnt, face_present_mask, path_tag_union) for the

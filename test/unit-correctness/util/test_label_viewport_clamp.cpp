@@ -53,7 +53,7 @@ TEST(LabelViewportClamp, ALabelIsPulledBackInsideTheViewportOnEveryEdge) {
     const LabelViewport vp{ kVp.x, kVp.y, c.vp_w, kVp.h };
     const LabelPos clamped = ClampLabelPosToViewport(c.pos, LabelSize{ kTextW, kTextH }, vp);
     // Non-fatal: this loop is a table of independent propositions, and one bad edge must not hide
-    // the state of the other five (doc/testing-architecture.md §4.9).
+    // the state of the other five (doc/testing/testing-architecture.md §4.9).
     EXPECT_EQ(clamped.x, c.expected.x) << c.name;
     EXPECT_EQ(clamped.y, c.expected.y) << c.name;
   }

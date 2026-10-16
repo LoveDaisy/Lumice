@@ -43,10 +43,10 @@ This manual does **not** replicate the technical references already in `doc/`. F
 | Topic | Reference |
 |-------|-----------|
 | Full JSON configuration schema | [`configuration.md`](../configuration.md) |
-| Coordinate system conventions | [`coordinate-convention.md`](../coordinate-convention.md) |
-| GUI internals and panel reference | [`gui-guide.md`](../gui-guide.md) |
-| C API for embedding | [`c_api.md`](../c_api.md) |
-| Performance tuning and benchmarks | [`performance-testing.md`](../performance-testing.md) |
+| Coordinate system conventions | [`coordinate-convention.md`](../geometry/coordinate-convention.md) |
+| GUI internals and panel reference | [`gui-guide.md`](../gui/gui-guide.md) |
+| C API for embedding | [`c_api.md`](../interfaces/c_api.md) |
+| Performance tuning and benchmarks | [`performance-testing.md`](../testing/performance-testing.md) |
 | System architecture | [`architecture.md`](../architecture.md) |
 
 ## Conventions in this manual

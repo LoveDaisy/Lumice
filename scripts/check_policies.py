@@ -21,7 +21,7 @@ Checks:
      second widget domain (only RECONCILE_ALLOWED_GUI_INCLUDES is permitted).
      The reconciler is the single owner of effects; a reverse dependency on a
      widget is the shape that governance is meant to prevent. Register a push
-     handler instead (doc/gui-state-governance.md §4 支柱 2).
+     handler instead (doc/gui/gui-state-governance.md §4 支柱 2).
   5. no-using-namespace — `using namespace` is banned in src/ (AGENTS.md).
   6. struct-layout-parity — canonical/mirror struct pairs (currently just
      `GenRootKernelParams` between pcg_shared.h and metal_trace_backend.mm) must
@@ -45,7 +45,7 @@ Checks:
      new GuiState field without touching the tiers header is a violation.
      Closes the "unregistered field silently escapes governance" loophole
      that scrum-gui-state-reconcile T0 (reconcile-foundation) was built to
-     prevent (doc/gui-state-governance.md).
+     prevent (doc/gui/gui-state-governance.md).
   9. no-msvc-unsafe-builtin — MSVC does not recognise the GCC/Clang
      `__builtin_popcount*` / `__builtin_ctz*` / `__builtin_clz*` intrinsic
      families and reports C3861. src/ and test/ must route through
@@ -151,7 +151,7 @@ Checks:
      cmake/export_surfaces.cmake: lumice_analytic_core.h + lumice_analytic.h)
      names no other LUMICE_ identifier, so it shares no type with the engine headers and a
      consumer of the published header never compiles against the engine's
-     (doc/analytic-api.md section 7). Code is not restricted: the engine
+     (doc/interfaces/analytic-api.md section 7). Code is not restricted: the engine
      libraries export the analytic capability (lumice_analytic_core.h), so
      shells and bridges may call it. Each library's export list is generated
      from the headers export_surfaces.cmake gives it, so (a) is also what keeps
@@ -491,7 +491,7 @@ def check_gui_api_boundary() -> list[Violation]:
 # (widget depends on reconciler abstraction, not the reverse). That is acceptable for a SINGLE
 # domain but must not accrete: the moment a second `need_X_push` display channel would add a
 # second widget-header include here, the author must instead introduce a push-handler registration/
-# dispatch abstraction (doc/gui-state-governance.md §4 支柱 2). The inline comment + doc were the
+# dispatch abstraction (doc/gui/gui-state-governance.md §4 支柱 2). The inline comment + doc were the
 # only guard, i.e. a soft constraint; this gate hardens it (决策公理 a09). Any `#include "gui/..."`
 # in this file outside the allowlist below fails — forcing exactly that evaluation.
 RECONCILE_CPP = SRC / "gui" / "gui_state_reconcile.cpp"
@@ -524,7 +524,7 @@ def check_reconciler_widget_include() -> list[Violation]:
                     f'gui_state_reconcile.cpp must not add #include "{m.group(1)}": the '
                     "reconciler is the single owner of effects and must not reverse-depend on a "
                     "second widget domain. Introduce a push-handler registration/dispatch "
-                    "abstraction instead (doc/gui-state-governance.md §4 支柱 2), or if this is a "
+                    "abstraction instead (doc/gui/gui-state-governance.md §4 支柱 2), or if this is a "
                     "pure data/utility header, add it to RECONCILE_ALLOWED_GUI_INCLUDES.",
                 )
             )
@@ -1038,7 +1038,7 @@ def check_gui_state_field_tier_registration() -> list[Violation]:
                 f"GuiState field `{name}` is not registered in kFieldTierTable "
                 "or kDerivedFieldsExcludeList (src/gui/gui_state_tiers.hpp); "
                 "pick a FieldTier or add it to kDerivedFieldsExcludeList "
-                "(see doc/gui-state-governance.md).",
+                "(see doc/gui/gui-state-governance.md).",
             )
         )
     dup = sorted(tier_names & exclude_names)
@@ -1576,7 +1576,7 @@ def check_user_defaults_single_write_path() -> list[Violation]:
 #   deviate from shell semantics and split genuinely contiguous tokens.
 #   MISS 5 — that fold is bash's, and it is applied to every fenced block
 #   regardless of the fence's language tag. Fences are still SCANNED whatever
-#   the dialect (the Windows recipe in doc/gpu-remote-cuda-build-testing.md is
+#   the dialect (the Windows recipe in doc/testing/gpu-remote-cuda-build-testing.md is
 #   inside a ```bat fence and is checked); only the CONTINUATION syntax is
 #   assumed to be bash's trailing `\`. cmd/bat continues a line with `^` and
 #   PowerShell with a backtick, so a recipe that folds `-m` onto a `^`- or
@@ -2147,7 +2147,7 @@ def check_analytic_symbol_scope() -> list[Violation]:
                             rule,
                             f"`{m.group(0)}` in an analytic header: the published headers share "
                             "no type or name with the engine headers / the test surface "
-                            "(doc/analytic-api.md section 7). Define an LUMICE_ANALYTIC_* "
+                            "(doc/interfaces/analytic-api.md section 7). Define an LUMICE_ANALYTIC_* "
                             "counterpart instead.",
                         )
                     )

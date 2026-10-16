@@ -439,7 +439,7 @@ inline MaskDir RectangularPixelToWorld(const lm_proj::ProjParams& p, const Rotat
 // SYNC:visible-hemisphere-predicate — the GUI preview states the same rule a second time, in
 // GLSL, because the language boundary makes sharing a function body impossible: preview_renderer.cpp's
 // fragment shader computes `lat = asin(-world_dir.z)` (the light-travel reading of world_dir —
-// doc/coordinate-convention.md "Direction-Vector Semantics") and discards on `u_visible == 0 && lat < 0`
+// doc/geometry/coordinate-convention.md "Direction-Vector Semantics") and discards on `u_visible == 0 && lat < 0`
 // / `u_visible == 1 && lat > 0`. The two are equivalent rather than merely similar
 // (lat < 0 <=> -z < 0 <=> z > 0, which is this function's `kUpper && wz > 0`), and the
 // equivalence is not left to that derivation: test_visible_mask_gui_parity.cpp compares the two
@@ -576,7 +576,7 @@ inline float WrapAngleDiffDeg(float diff) {
 //                * kAnnotationLineHalfWidthPx;   on the line <=> |field - level| < half_width
 // The shader's `lineCoverage` applies that same `<` threshold directly (a hard set, not an
 // antialiased falloff — measured against a smoothstep profile and found to under-cover by half
-// the ink, see doc/testing-architecture.md §4.10). `fwidth` here is |dFdx| + |dFdy|, computed the
+// the ink, see doc/testing/testing-architecture.md §4.10). `fwidth` here is |dFdx| + |dFdy|, computed the
 // same way on both sides: a forward difference against the right and lower neighbours (the last
 // row/column differences backwards instead). The shader does this by re-projecting the
 // right/bottom neighbour pixels through `inverseWorldDir` rather than reading the hardware

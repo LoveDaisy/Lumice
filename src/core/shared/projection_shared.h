@@ -385,7 +385,7 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
     //   lon_quad = -c.x — the quadrature axis, whose sign is what makes this construction
     //                     POINTWISE identical to the azimuth-only form it replaces whenever
     //                     el = roll = 0 (the pose every full-sky lens is pinned to on the GUI
-    //                     side). doc/coordinate-convention.md carries the derivation;
+    //                     side). doc/geometry/coordinate-convention.md carries the derivation;
     //                     LmProj.RectangularAtZeroElevationAndRollReproducesTheAzimuthOnlyForm
     //                     is the assertion. Other permutations satisfy "follows the pose" but
     //                     break that degeneracy, so this is not a free choice.
@@ -442,7 +442,7 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
     // consumer's bounds check would silently drop the energy (the direct-through
     // directions of a horizon sun land exactly there). Clamp the INT pixel into
     // the last edge bin; boundary-belongs-to-edge-bin, the same convention as
-    // the rect branch's lon = +pi modulo wrap (doc/coordinate-convention.md
+    // the rect branch's lon = +pi modulo wrap (doc/geometry/coordinate-convention.md
     // §13). The clamped displacement is bounded by ~1 ulp of the disk radius —
     // no genuinely off-canvas direction can be pulled in. DualFisheyeToPixelXY's
     // float output stays untouched (bit-level mirror of projection.cpp's

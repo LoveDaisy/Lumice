@@ -17,12 +17,12 @@ namespace lumice {
 // src/gui/{gui_state,file_io}.cpp — the GUI layer cannot include this header
 // per AGENTS.md (GUI→core goes through the C API), so those literals are
 // mirrored there and kept in sync by convention. See
-// doc/gui-custom-spectrum-and-raypath-color.md §4.8.
+// doc/gui/gui-custom-spectrum-and-raypath-color.md §4.8.
 inline constexpr const char* kDefaultCompositeMode = "painter";
 
 // User-visible schema for per-raypath color display.
 //
-// Design 2 (2026-07-08, doc/gui-custom-spectrum-and-raypath-color.md §4.0
+// Design 2 (2026-07-08, doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0
 // SUPERSEDES §4.1 Fork C + §4.7): a color class is decoupled from the physical
 // filter. `match[]` is a list of placement-scoped color PREDICATES — each
 // atom `{layer, crystal, <predicate>}` is one component bit, evaluated as a

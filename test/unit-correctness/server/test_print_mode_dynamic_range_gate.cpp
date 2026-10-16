@@ -3,7 +3,7 @@
 // Every other print-mode fixture asserts that the subtractive operator computes what the design
 // says it computes. This one asserts the thing the design was commissioned FOR. The user's report
 // was not "the formula is wrong", it was "I picked a white background and the halo disappeared";
-// the mechanism (doc/print-mode-subtractive-ink.md §1) is that `out = clamp(L * c + background)` is
+// the mechanism (doc/rendering/print-mode-subtractive-ink.md §1) is that `out = clamp(L * c + background)` is
 // monotonically non-decreasing in radiance, so on a white ground every exposure saturates to the
 // same white. A mode built to fix that owes a demonstration that it actually resolves a scene the
 // additive path cannot, and that demonstration is what lives here.
@@ -303,7 +303,7 @@ TEST_F(PrintModeDynamicRangeGate, ScreenOnWhiteBackgroundSaturatesAllThreeToOneW
   EXPECT_EQ(faint, white);
   EXPECT_EQ(blank, white) << "all three probes must be pure white: clamp(rgb + 1.0, 0, 1) == 1.0 for "
                              "every rgb >= 0, whatever the exposure. If this is red the additive "
-                             "operator has stopped being additive, and doc/print-mode-subtractive-ink.md "
+                             "operator has stopped being additive, and doc/rendering/print-mode-subtractive-ink.md "
                              "§1's diagnosis — the reason this whole mode was commissioned — no longer "
                              "describes the code.";
   EXPECT_EQ(bright, faint);

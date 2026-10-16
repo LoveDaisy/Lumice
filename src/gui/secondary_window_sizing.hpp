@@ -1,7 +1,7 @@
 #ifndef LUMICE_GUI_SECONDARY_WINDOW_SIZING_HPP
 #define LUMICE_GUI_SECONDARY_WINDOW_SIZING_HPP
 
-// What every "semi-variable" secondary window shares (doc/gui-visual-language.md §9: one axis
+// What every "semi-variable" secondary window shares (doc/gui/gui-visual-language.md §9: one axis
 // pinned, the other dragged by the user between a floor and the work area): how tall such a window
 // may get, and — for the ones whose height follows their content until dragged — the state machine
 // that does the following. Each piece used to have exactly one caller; with two, a copy in each is

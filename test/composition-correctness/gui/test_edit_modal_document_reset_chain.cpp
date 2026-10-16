@@ -10,7 +10,7 @@
 // copies describe a crystal the document no longer holds. Under Immediate mode the modal writes
 // those copies into its bound slot every frame, so a modal left open across a reset overwrites the
 // new document's entry with the old one's crystal, with no error anywhere. Closing is the rule
-// doc/gui-state-governance.md §11 states for a positional reference whose index space is replaced
+// doc/gui/gui-state-governance.md §11 states for a positional reference whose index space is replaced
 // wholesale: there is nothing to compensate to.
 //
 // The frame-level half — that an Immediate modal really does not push into the new document — is

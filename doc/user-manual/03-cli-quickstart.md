@@ -222,7 +222,7 @@ Examples:
   ./build/cmake_install/static/Lumice analyze -f config.json --symmetry none --rays 5M --seed 7
 ```
 
-`Lumice raypath -h` — the step *after* `analyze`: once you have picked one raypath from its listing, ask about that path alone. It takes one single-layer raypath of one crystal entry and one sky point, and writes one JSON document: the components of the fiber of crystal poses that send the sun into that point (each with per-pose detail), and the path's deviation over the whole sun-direction sphere. What the fields mean is in [`../raypath-cli-output.md`](../raypath-cli-output.md). Options:
+`Lumice raypath -h` — the step *after* `analyze`: once you have picked one raypath from its listing, ask about that path alone. It takes one single-layer raypath of one crystal entry and one sky point, and writes one JSON document: the components of the fiber of crystal poses that send the sun into that point (each with per-pose detail), and the path's deviation over the whole sun-direction sphere. What the fields mean is in [`../raypath-cli-output.md`](../raypath/raypath-cli-output.md). Options:
 
 | Option | Meaning |
 |---|---|
@@ -249,7 +249,7 @@ Two examples, both runnable as they stand from the repository root (crystal 1 is
 ./build/cmake_install/static/Lumice raypath -f examples/config_example.json --crystal 6 --path 3-6-4-8 --target 20,140 -o r.json
 ```
 
-The first gives `outcome: "discovered"` with one `closed` component. The other two are the degenerate case, and worth reading once. `3-6-4-8` is a turn about the c-axis, so its deviation depends only on the sun's latitude in the crystal frame: the level set is a latitude circle, and the fiber is an *arc* of it, not a closed loop. On the plate, both runs return `components: []`, told apart by `reach.target_in_range`: at `20,120` (deviation 108.9°) it is `true` — the fiber exists, but the short crystal passes no ray along it (the height-1.2 prism, crystal 1, finds two arcs at the same target) — while at `20,140` (deviation 124.0°, past this path's 120° maximum) it is `false`: no orientation of any such crystal can send the sun there. A path whose outgoing direction ignores the orientation altogether (a plate's `1-2`) comes back as `outcome: "point_mass"` instead. The full reading of the three empty results is the table in [`../raypath-cli-output.md`](../raypath-cli-output.md) §3.9.
+The first gives `outcome: "discovered"` with one `closed` component. The other two are the degenerate case, and worth reading once. `3-6-4-8` is a turn about the c-axis, so its deviation depends only on the sun's latitude in the crystal frame: the level set is a latitude circle, and the fiber is an *arc* of it, not a closed loop. On the plate, both runs return `components: []`, told apart by `reach.target_in_range`: at `20,120` (deviation 108.9°) it is `true` — the fiber exists, but the short crystal passes no ray along it (the height-1.2 prism, crystal 1, finds two arcs at the same target) — while at `20,140` (deviation 124.0°, past this path's 120° maximum) it is `false`: no orientation of any such crystal can send the sun there. A path whose outgoing direction ignores the orientation altogether (a plate's `1-2`) comes back as `outcome: "point_mass"` instead. The full reading of the three empty results is the table in [`../raypath-cli-output.md`](../raypath/raypath-cli-output.md) §3.9.
 
 Notes:
 
@@ -259,7 +259,7 @@ Notes:
 - `--workers <N>` overrides the automatic worker count (one per physical core on Linux/macOS, one per logical core on Windows, each capped at a measured per-platform ceiling; the cap applies to the automatic value only, never to an `N` you name). It is a switch rather than a config field on purpose: a worker count describes the machine, and a config file travels between machines. An illegal value (`0`, negative, non-numeric) exits non-zero rather than falling back to the default.
 - `Lumice analyze -f <config>` asks a question of the scene rather than rendering it: which raypath chains delivered energy into a region of the sky, as CSV on stdout (or `--csv <path>`). The config is the scene; the region, the symmetry the rows are merged under, the ray budget and the seed are all options, never config fields — so one config can be asked several questions from a script, and a `--seed` makes any of them reproducible. A scene whose `ray_num` is `"infinite"` runs until Ctrl-C and still writes its result; with `--csv` the file is rewritten atomically every second, so it is complete whenever it is read. Progress goes to stderr; stdout is the CSV alone.
 - `Lumice raypath -f <config> --crystal <id> --path <faces> --target <alt>,<az>` asks about one raypath rather than a listing: pick the path from `analyze`'s output, then ask where its crystal poses lie for one sky point. The answer is JSON on stdout (or `-o <path>`, written atomically); it is deterministic, so two runs of one question are byte-identical.
-- `Lumice benchmark -f <config>` is for performance regression testing — see [`../performance-testing.md`](../performance-testing.md). It is **not** how you run a normal simulation, and it takes only `-f`, `--backend`, `-v`, `-d`, `-h` (no `-o`: it writes nothing; no `--workers`: the worker counts are the measurement itself). The former `--benchmark` flag exits with a hint pointing here.
+- `Lumice benchmark -f <config>` is for performance regression testing — see [`../performance-testing.md`](../testing/performance-testing.md). It is **not** how you run a normal simulation, and it takes only `-f`, `--backend`, `-v`, `-d`, `-h` (no `-o`: it writes nothing; no `--workers`: the worker counts are the measurement itself). The former `--benchmark` flag exits with a hint pointing here.
 
 ## 5. Performance expectations
 
@@ -270,7 +270,7 @@ Practical first-run advice:
 - Want a result in seconds? Drop `ray_num` to `1e6` and use a single wavelength (e.g. `[{"wavelength": 550, "weight": 1.0}]`).
 - Want a publication-quality image? Keep `ray_num` at `4.5e8` or higher with the full 9-wavelength spectrum, and expect about 2 minutes on a modern multi-core laptop.
 
-For the precise relationship between `ray_num`, batches, and wavelengths, and for performance tuning beyond the basics, see [`05-faq.md`](05-faq.md) "ray_num × wavelength semantics" and [`../performance-testing.md`](../performance-testing.md).
+For the precise relationship between `ray_num`, batches, and wavelengths, and for performance tuning beyond the basics, see [`05-faq.md`](05-faq.md) "ray_num × wavelength semantics" and [`../performance-testing.md`](../testing/performance-testing.md).
 
 ## Further reading
 

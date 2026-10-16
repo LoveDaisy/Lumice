@@ -65,7 +65,7 @@ def classify_pixels_by_color_direction(
       EQUAL to the winning class's `color_` direction, decoupled from the
       exposure scalar `ey`.
       It is NOT valid for `painter` mode: since the alpha-over redesign
-      (doc/gui-custom-spectrum-and-raypath-color.md §4.8) painter composites
+      (doc/gui/gui-custom-spectrum-and-raypath-color.md §4.8) painter composites
       `out = over(alpha_c * color_c)`, blending several classes, so a lit
       pixel's direction is a convex combination rather than one class's color.
       It is likewise NOT valid for `additive` mode (linear class mix ->

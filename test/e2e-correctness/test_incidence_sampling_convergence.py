@@ -116,7 +116,7 @@ def _make_self_consistency_test(config_name: str, floor: float):
 
 # One pytest item per config, rather than one item looping over both: xdist
 # distributes by item, so a single looping item pins every config to one worker
-# and becomes the whole set's wall clock (doc/testing-architecture.md §7.0).
+# and becomes the whole set's wall clock (doc/testing/testing-architecture.md §7.0).
 # `unittest.TestCase` methods cannot be driven by @pytest.mark.parametrize, hence
 # the setattr generation below (same shape as test_smoke.py).
 for _config_name, _floor in SELF_CONSISTENCY_FLOOR.items():

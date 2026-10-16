@@ -1,5 +1,5 @@
 // Tests for src/config/raypath_color_config.hpp — JSON round-trip of the
-// Design-2 (2026-07-08, doc/gui-custom-spectrum-and-raypath-color.md §4.0
+// Design-2 (2026-07-08, doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0
 // SUPERSEDES 339/§4.7) placement-scoped predicate schema and its optional
 // wiring through ConfigManager. The backward-compat guarantee (missing
 // top-level "raypath_color" key → empty classes_) is unchanged.
