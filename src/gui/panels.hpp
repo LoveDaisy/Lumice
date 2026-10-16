@@ -246,6 +246,27 @@ struct CardDragPayload {
 // would leave the order unchanged (either gap adjacent to the dragged card).
 int DropGapToMoveTarget(int from_idx, int insert_before);
 
+// ---- Card ↔ modal shared control copy ----
+//
+// The Edit Entry modal's top entry bar mirrors the card's Weight row and participation toggle, so
+// the strings both sites show live here — one authority, two readers (the card had the wording
+// first; it is kept verbatim). These are plain string constants on purpose: panels.hpp stays
+// ImGui-free, and a tooltip needs nothing more.
+
+// Hover text for a Weight control whose entry is excluded: the number is currently inert but
+// preserved, which is what makes re-enabling lossless.
+constexpr char kWeightInertTooltip[] = "Weight is inert while this crystal is excluded. The value is kept.";
+
+// The participation toggle's two-level tooltip — what clicking does from the current state. The
+// excluded branch names why the glyph is not an eye: exclusion is "hand the ray share back on the
+// next run", not display-time subtraction.
+inline const char* ParticipationToggleTooltip(bool enabled) {
+  return enabled ? "Participating. Click to exclude this crystal from the next run — its share of "
+                   "the total ray count goes to the other crystals (they get more samples)." :
+                   "Excluded from the next run. Its Weight is kept and takes effect again when you "
+                   "turn it back on.";
+}
+
 // Render a single entry card within a layer.
 EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx);
 

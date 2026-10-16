@@ -2940,6 +2940,60 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     }
   }
 
+  // ---- Entry bar: this entry's own weight / participation (the card's other two controls) ----
+  // One full-window-width row between the sharing block and the layout dispatch, so both layouts
+  // move their content down as a whole and the Expanded columns' separator lines stay aligned —
+  // the bar is drawn OUTSIDE the two column children, never inside ##modal_expanded_left (which
+  // would break the preview_px derivation). Data plane is the g_entry_buf pair: pulled every
+  // frame (the card's slider and toggle are the outside writers), pushed by the commit path like
+  // every other buffer. Staged shows no dirty mark here — the OK/Cancel row below IS the commit
+  // semantics; a second indicator would be a second place to disagree.
+  {
+    // "###": the visible glyph flips with the state — with "##" the id would hash the whole label
+    // and the button would become a different widget the instant it is clicked (card slot 0's
+    // rationale). Fixed width from the wider glyph so the Weight slider does not shift on flip.
+    const float toggle_w =
+        std::max(ImGui::CalcTextSize(ICON_FA_TOGGLE_ON).x, ImGui::CalcTextSize(ICON_FA_TOGGLE_OFF).x) +
+        ImGui::GetStyle().FramePadding.x * 2.0f;
+    char toggle_id[40];
+    snprintf(toggle_id, sizeof(toggle_id), "%s###modal_entry_enabled",
+             g_entry_buf.enabled ? ICON_FA_TOGGLE_ON : ICON_FA_TOGGLE_OFF);
+    if (!g_entry_buf.enabled) {
+      // Theme-owned disabled tone, card slot 0's exact convention.
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    }
+    const bool toggle_clicked = ImGui::Button(toggle_id, ImVec2(toggle_w, ImGui::GetFrameHeight()));
+    if (!g_entry_buf.enabled) {
+      ImGui::PopStyleColor();
+    }
+    if (toggle_clicked) {
+      g_entry_buf.enabled = !g_entry_buf.enabled;
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", ParticipationToggleTooltip(g_entry_buf.enabled));
+    }
+    ImGui::SameLine();
+    if (g_pull_adopted.entry_proportion) {
+      // The pull adopted a new weight (the card's slider is the outside writer): reload the
+      // input box's private edit copy BEFORE the widget submits, or an active box writes the
+      // stale value back over the adopted one (gui/input_text_reload.hpp). Same ID scope and
+      // same just-before-the-widget order as SliderWithPresetEdit above.
+      ReloadSliderInputIfActive("Weight##modal_entry");
+    }
+    // Greyed while excluded — the number is inert, and the tooltip says the value is kept
+    // (BeginDisabled only blocks interaction; the buffer keeps its value, card Weight row's
+    // convention). The grey predicate reads the BUFFER, not the entry: an uncommitted Staged
+    // toggle must grey the row immediately.
+    ImGui::BeginDisabled(!g_entry_buf.enabled);
+    SliderWithInput("Weight##modal_entry", &g_entry_buf.proportion, 0.0f, 100.0f, "%.1f", SliderScale::kLinear,
+                    LabelPlacement::kLeading);
+    ImGui::EndDisabled();
+    if (!g_entry_buf.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("%s", kWeightInertTooltip);
+    }
+    ImGui::Separator();
+  }
+
   // Per-tab dirty detection. The label picks up a trailing " *" when the
   // in-flight buffer differs from the baseline (the pool as of the last sync). All
   // labels share a fixed `###` suffix — with three hashes ImGui derives the
