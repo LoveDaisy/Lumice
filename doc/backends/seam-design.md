@@ -1,8 +1,13 @@
 # TraceBackend host/device seam 重新设计 — 设计讨论
 
-> 本文整理 explore-256 收敛后、owner 与 assistant 的架构讨论，作为 explore-257 各假设的论证底稿。
-> 性质：**设计推理记录**，不是定稿规范。记录"为什么这么想"、考虑过的替代、以及尚未拍板的待定项。
-> 事实基座：`../explore-metal-gui-perf/`（exp#1/#4/#5）。
+> 本文整理 GPU seam 重设时的架构讨论，保留“为什么这样设计”、被否决的替代与实现过程中纠正的前提。
+> 性质：**设计推理记录 + 仍有效的不变量**，不是逐节都描述当前代码。§4.8 是离散显存上的后续收敛，
+> 会覆盖 §4.1–§4.7 的 buffer-egress 推演；§5–§8 保留原始蓝图与路线，当前落地状态以
+> `gpu-single-engine-implementation.md` §0/§10 和 `gpu-route-history.md` Phase 10–14 为准。
+>
+> 当前代码仍兑现蓝图的核心：CPU/GPU 编排不镜像、几何构造留 host 单源后上传池、GPU 层间续传
+> device-resident、trace/filter/projection/累加融合、dispatch 与 readback 时钟分离。改变这些边界前，
+> 应先说明是在推进哪条不变量，而不是从历史中任选一版数据流照搬。
 
 ---
 
@@ -165,9 +170,12 @@ CPU 批的原因是 cache/setup 摊薄("32 光线/晶体"是 CPU 决策)；GPU �
 
 大 batch 下 image 出口回读是固定 O(W×H)、摊到每光线趋近 0、投影在 GPU；buffer 出口导出 O(出射光线)、每光线常数成本不随 batch 摊薄。所以"视角固定熬收敛"的稳态里 image 出口更省。**→ GUI 选 buffer 出口的理由是灵活性/可迭代性，不是速度。**
 
-### 4.4 收口：seam 永在出射光线，投影是可插拔策略
+### 4.4 当时的收口：seam 在出射光线，投影作可插拔策略
 
-- **seam(出射记录 buffer)= 永久规范边界。**
+> **历史裁决，后由 §4.8 在离散显存证据下修正。** 它解释了为何曾建立 rich exit seam，
+> 但不是当前 Metal/CUDA 生产 egress；今天 device-fused 后端不物化逐出射记录。
+
+- **当时的 seam 候选**：出射记录 buffer，保留下游重投影能力。
 - **投影 = 挂在 seam 下游的可配置 stage**：GUI 用 CPU consumer(灵活)；bulk 用 device-fused image(吞吐)。
 - 两个出口安放成"按 workload 选策略"，不是二选一/先后取代。
 - v2 级 hybrid：当前视角 device 累加快速收敛 + 出射光线 ring buffer 让视角切换瞬间重投影预览、后台重 trace 热身。
@@ -224,11 +232,14 @@ owner 洞察：渲染图只需"方向+强度"；filter 作用在 trace 过程（
 - **后端投影不再固定，但仍在 device 融合**（更新：scrum-315，2026-07-02）：设计当初（owner 2026-06-28）判断"GUI 只请求 dual_fisheye、其他镜头前端重投影"故后端只需 2 种固定投影；scrum-315 把 forward 投影统一进共享 `projection_shared.h`，device 融合消费端改为对 `proj_type` 做 dispatch，**全部 11 种投影（含新增 globe）都在 GPU 内完成**（CLI 批渲染所有镜头都吃 GPU 加速，不再静默回落 legacy CPU）。这与本节结论**正交**：仍是"一条 device 流水线、不物化出射 buffer"，只是投影从固定单支变成共享 dispatch——§4.2-§4.3 的"buffer-egress 换灵活性"顾虑在离散显存上依旧不成立。GUI 显示重投影那套（inverse 重采样固定 dual-fisheye 全天图）不进 shared、不变。
 - **消费端（filter+投影+累加）= device 共享核**（`accum_shared.h` host/MSL/CUDA 单源）；Metal 也收编进同一核（统一性 + 单源），host consumer 只留 legacy CPU。
 
-**落地状态（scrum-302）**：Metal（S1）+ CUDA（S2）device-fused 均落地、parity 全绿。⚠️ **但 CUDA 吞吐仍 0.16-0.40× legacy = 缺陷信号待追**（compute-bound + 疑 per-CI 串行 dispatch；见 `gpu-route-history.md` Phase 10 + backlog）——device-fused 是吞吐的**必要非充分**条件。
+**落地状态**：Metal + CUDA device-fused 均已落地，生产渲染不物化 exit buffer，parity 由各后端套件守住。
+早期 CUDA 在 ad-hoc 口径下只有 0.16–0.40× legacy，后来由持久 buffer、后端专属大 dispatch 与
+third-clock readback 收口；那组数字不是当前性能基准。现行数据只看
+`../testing/performance-testing.md` 的 canonical 表，机制演进见 `gpu-route-history.md` Phase 10–11。
 
 ---
 
-## 5. 统一后的 seam 形态（待验证草案）
+## 5. 原始统一 seam 草图（历史；egress 已由 §4.8 取代）
 
 ```
 host 一次/session:
@@ -250,7 +261,12 @@ device 巨型 dispatch (batch = 纯性能旋钮):
               (导出 O(光线), 解 exp#4 痛点)                         只回读图像(显示节奏/一次)
 ```
 
-三时钟独立：几何=逐线程(池索引)、trace=dispatch 尺寸纯性能、回读=下游策略各自节奏。
+这张图保留的是当时验证“几何、trace、回读三时钟必须解耦”的推理形态；**不要按图重建 host-consumer
+生产路**。当前映射是：几何池由 host 构造、每 ray 在 device 选；trace 使用后端专属大 dispatch；
+filter + projection + N renderer 累加在 device exit tail 融合；host 只按 third-clock drain 读取图像面。
+逐出射记录仅在 CPU 路径和特定 parity/诊断接口物化。
+
+三时钟独立这一结论保留：几何=逐线程池索引，trace=dispatch 尺寸纯性能，回读=显示/收尾节奏。
 
 > ✅ **第三时钟已落地（scrum-312，2026-07-01）**：readback 从 trace 时钟解耦到显示节奏（device 持久累加 +
 > GUI 按显示节奏回读 / CLI 收尾一次，精度用 periodic-drain=float32 + host 侧 double 累加；写这段时
@@ -261,24 +277,24 @@ device 巨型 dispatch (batch = 纯性能旋钮):
 
 ---
 
-## 6. 待定项（收敛前需各下判断）
+## 6. 原始待定项与当前处置
 
-1. 池化 K 的方差标定；device 侧池 vs host 上传一次。
-2. 出射记录精确 schema：dir 精度、面序列定长宽度、crystal_id 宽度、**MS 多层作用域**。
-3. 混合晶体类型控制 divergence：是否需 wavefront 排序(v1 可缓)。
-4. 寄存器压力：复杂晶体(pyramid)面数多压低 occupancy。
-5. explore-256 插桩去向：回退 vs 转正(`LUMICE_BATCH_RAY_NUM` 可能成正式旋钮)。
+1. **几何池 K**：已落地为 host 构造的 K-shape pool + device per-ray 选取；CPU/GPU 几何时钟分别由现有配置/实验入口控制。质量与性能结论在 geometry 文档中单独维护。
+2. **富出射 schema / MS 作用域**：`ExitRayRecord` 已在 CPU 与测试路径存在，但 Metal/CUDA 生产渲染走 device-fused，不以它为默认 egress。若未来要做逐光线回溯，仍须单独裁定物化范围，不能从 parity helper 外推产品 schema。
+3. **混合晶体 divergence**：K-shape 路已覆盖多晶体；未建立自适应 wavefront 分桶，当前也没有证据要求新增它。
+4. **寄存器压力**：Metal 融合核的历史 occupancy 下降经吞吐验证接受；CUDA 各自按原生 profiler 与当前 kernel 评估，不能沿用 Metal 数字。
+5. **旧 batch 双重身份**：已拆成 dispatch、commit 和 readback 三个独立节拍；`LUMICE_BATCH_RAY_NUM` 只保留为 deprecated commit-granularity fallback。
 
-## 7. 关键风险点（各需最小原型实测）
+## 7. 原始风险探针与结论
 
-- per-ray 不同晶体的 divergence 实测开销(vs 全批共享一晶体)。
-- 富出射记录导出带宽(30B/ray × N vs 整幅图)在 GUI 默认分辨率的实测。
-- buffer 出口 + consumer 投影在 GUI 默认 2048×1024 是否复现 legacy 量级吞吐(正面解 exp#4)。
+- per-ray 几何池已在 Metal/CUDA 落地并有随机几何 parity；没有出现需要回到 per-batch 单形状的证据。
+- rich exit 的 host 带宽在离散显存上被证明不适合作为默认生产出口；因此不是继续优化 30B record，而是生产路不物化它。
+- GUI 的 host-consumer buffer-egress 方向被离散显存证据淘汰；当前 GUI/CLI 共用 device-fused 流水线，只在 readback 节奏上不同。
 
-## 8. 建议分步实现路线（草案，待探索验证后细化）
+## 8. 原始分步路线的实际结果
 
-- **P0 验证(本探索)**：三个风险点各跑最小原型，定 schema 与 K，出数据流定稿。
-- **P1 出口侧先行**：backend 改 buffer 出口(富出射记录)+ consumer 投影/filter。**单独即可解 owner 的 GUI 痛点**(导出 O(光线) 非 O(W×H))，且复用现有 consumer，风险最低。
-- **P2 入口侧上移**：几何池上传 + per-ray 采样/晶体索引上 GPU，解耦几何时钟、消 host-bound。
-- **P3 bulk 路径**：device 侧 filter+投影(image 出口)，服务 CUDA/offline 吞吐。
-- parity 全程改统计级口径(累加图像 corr)。
+- **P0 风险验证**：完成；最重要的反证是离散显存下逐出射 D2H 主导成本。
+- **P1 buffer-egress**：曾落地并修复 frame/filter 语义，随后从 GPU 生产路退出；其数据结构与测试价值保留。
+- **P2 入口上移**：Metal/CUDA 均已用 device root generation + host-built geometry pool 落地，host generation 保留为显式 fallback。
+- **P3 device 消费**：已成为 GPU 生产路径；filter、投影、N renderer XYZ/颜色 lane/曝光锚在 device exit tail 消费。
+- parity 仍以统计图像、能量账本、解析锚和负对照组合判断，不要求逐光线 RNG identity。

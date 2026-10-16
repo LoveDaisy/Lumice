@@ -2,10 +2,13 @@
 
 # Beam Tracing
 
-This document describes an experimental beam tracing (BT) approach explored as an alternative
-to the default Monte Carlo (MC) ray tracing. The implementation lives on the `exp/beam_tracing`
-branch and is **not merged into main** — this document explains the approach, results,
-and why the cost-benefit trade-off does not favor adoption.
+This document records an experimental beam tracing (BT) approach explored as an alternative
+to the default Monte Carlo (MC) ray tracer. **Current disposition (verified 2026-10-17):** the
+nine experiment commits ending at `3482b59` remain on `exp/beam_tracing` and are not ancestors
+of `main`; the current tree contains no `BeamTrace` implementation or `use_beam_tracing`
+configuration field. Code, tests, and paths named below are therefore branch-local historical
+evidence, not commands or APIs available from a current build. The measured cost-benefit result
+is why the experiment was not adopted.
 
 ## Motivation
 
@@ -154,9 +157,10 @@ each orientation costs 219x more to compute).
 In short: BT spends ~219x compute to exactly solve a sub-problem that MC solves adequately
 with ~30 samples, while the actual bottleneck (orientation sampling) remains unchanged.
 
-## Integration Status
+## Experiment-Branch Integration
 
-The `exp/beam_tracing` branch includes full integration with the simulation pipeline:
+The `exp/beam_tracing` branch integrated BT with the simulation pipeline at the time of the
+experiment. None of these surfaces exist on `main`:
 
 - **CLI output**: BT data flows through `RenderConsumer` to produce images
 - **Render-level filters**: Supported via a 2-node `RaySeg` chain workaround (entry + outgoing),
@@ -180,9 +184,11 @@ d0fb711 fix(server): BT CLI output by replacing rays_.Empty() shutdown sentinel
 3482b59 feat(beam-tracer): render-level filter via 2-node RaySeg chain
 ```
 
-## Potential Optimizations (Not Implemented)
+## Potential Optimizations (Historical, Not a Product Roadmap)
 
-If BT is revisited in the future, the main optimization opportunities are:
+These were the remaining branch-local ideas when the experiment stopped. They do not override
+the measured rejection above or constitute active implementation work; revisiting BT would first
+need new evidence that changes the cost/variance conclusion.
 
 1. **Cache `ExtractPolygonFaceVertices`** (~40% of BFS cost): For a fixed crystal, the 8
    polygon face vertex sets are constant across all BFS nodes and orientations. Currently
