@@ -1546,10 +1546,18 @@ static void RenderAxisModal(GuiState& state) {
     }
   }
   // Out-of-domain badge on the active chip: the live edit buffer has drifted from the label. The
-  // tooltip reads the buffer (what the user sees), not the pool.
+  // tooltip reads the buffer (what the user sees), not the pool. A Selectable rather than plain
+  // text — text registers no item, so the badge could be neither explained on hover nor asserted
+  // by a test (defaults_panel's RenderNoteCell is the same move); the size is pinned to the glyph
+  // and the text colour is pushed explicitly, so the visible pixels are the TextColored ones
+  // this used to draw.
   if (AxisLabelOutOfDomain(active, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2])) {
     ImGui::SameLine();
-    ImGui::TextColored(WarningTextColor(), "%s", ICON_FA_TRIANGLE_EXCLAMATION);
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    const std::string badge_id = ICON_FA_TRIANGLE_EXCLAMATION "###axis_label_mismatch";
+    ImGui::Selectable(badge_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups,
+                      ImVec2(ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x, 0.0f));
+    ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("%s", FormatAxisLabelMismatchTooltip(active, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2],
                                                              DescribeAxisPresetDomain(active))
