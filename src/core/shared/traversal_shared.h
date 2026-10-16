@@ -7,7 +7,7 @@
 // in the CUDA path by porting to legacy `PropagateSlab` (optics.cpp). The
 // fix lived as three independent inline copies across CUDA/Metal/CPU; this
 // header collapses them to a single source so the absolute-ε anti-pattern
-// (doc/numerical-robustness.md约定 2) cannot silently regress in any backend.
+// (doc/geometry/numerical-robustness.md约定 2) cannot silently regress in any backend.
 //
 // Surface contract: scalar value semantics only. No pointer or address-space
 // parameters — caller reads face data (normal + plane constant) and passes

@@ -81,13 +81,13 @@ before downloading into it).
   headers `path_feature_report.hpp` / `single_path_analysis.hpp` / `single_path_json.hpp` (the
   bridge `src/server/c_api_raypath.cpp` compiles exactly these); everything under
   `src/raypath/detail/` is internal implementation, includable only by the module itself and
-  its own tests (`doc/raypath-cli-output.md` §8).
+  its own tests (`doc/raypath/raypath-cli-output.md` §8).
 - `src/gui/`: GUI app, panels, preview, file IO, poller
 - `src/server/`: server-side render, consumer, stats, C API bridge
 - `src/util/`: logger, threading, queue, arguments, color data
 - `src/analytic/`: implementation of the published analytic library `liblumice_analytic`
   (header `src/include/lumice_analytic.h` over `lumice_analytic_core.h`, prefix `LUMICE_ANALYTIC_`;
-  design in `doc/analytic-api.md`). The engine libraries export the capability too: which headers
+  design in `doc/interfaces/analytic-api.md`). The engine libraries export the capability too: which headers
   each shared library exports is declared once in `cmake/export_surfaces.cmake`.
 - `src/include/`: the C API, one header per capability — `lumice_{base,scene,render,editor,engine,raypath}.h`
   (the engine surface; no umbrella header) plus `lumice_analytic{,_core}.h` (the analytic capability). The C
@@ -98,7 +98,7 @@ Layers: `cmake/lumice_layers.cmake` assigns every file under `src/` (the shell �
 `launcher/`, `main.cpp` — aside) to one of nine layers, lowest first: foundation, analytic, scene,
 view, sim, render, engine, raypath, capi. It is the single statement of the layering, read by both
 sides: CMake builds `lumice_foundation_obj` from its foundation list (`liblumice_analytic` links
-foundation and the analytic kernel only, `doc/analytic-api.md` §2.1), and
+foundation and the analytic kernel only, `doc/interfaces/analytic-api.md` §2.1), and
 `scripts/check_policies.py`'s `layer-inversion` rule rejects any `#include` that points at a
 higher layer, any `src/` file the manifest does not own, and any manifest entry naming no file. A
 new source file therefore goes into the manifest in the same change. The existing inversions are
@@ -218,7 +218,7 @@ deleting its line, and an entry whose edge is gone fails the check.
   may run under a software rasterizer is a measured fact, not a preference — the per-scene
   numbers, the reason `lens_proj` is excluded despite its pixels being portable, and **the
   checklist a red in this layer obliges you to follow instead of calling it a known flake** are
-  all in `doc/testing-architecture.md` §4.6
+  all in `doc/testing/testing-architecture.md` §4.6
   (whose numbers, as that section itself flags, were measured on an arm64 proxy for the amd64
   runner this step actually runs on — read the caveat, not just the table).
   Read that before widening the CI filter, and before dispositioning a visual-regression failure.
@@ -230,7 +230,7 @@ deleting its line, and an entry whose edge is gone fails the check.
   cross-channel consistency check, a multi-step lifecycle — but still no rendered frame or
   synthesized input event. Chain length (how many units the proposition needs) and mechanical
   need (whether it needs a frame or an input event) are independent axes; conflating them is
-  what used to make GUI test suite entropy — see `doc/testing-architecture.md` §1 for the full
+  what used to make GUI test suite entropy — see `doc/testing/testing-architecture.md` §1 for the full
   argument. Rule of thumb for a new `src/gui/` test: needs a rendered frame or an
   `ImGuiTestContext` → `gui_test`; needs ≥2 collaborating units but no mechanics →
   `composition_correctness_test`; a single unit's pure logic → `gui_unit_test` (or
@@ -246,7 +246,7 @@ deleting its line, and an entry whose edge is gone fails the check.
   way `unit-correctness`'s `gui` subsystem is — every case there already needs `lumice_gui_obj`,
   so there is no header-only half to separate out, and it carries its own CTest LABEL
   (`composition-correctness`), not `unit-correctness`.
-  Design reasoning and the target-naming rule: `doc/testing-architecture.md` §2 and §5.
+  Design reasoning and the target-naming rule: `doc/testing/testing-architecture.md` §2 and §5.
   That boundary is a **gate, not a rule of thumb**, for cases you add:
   `scripts/check_new_gui_tests.py` is a third, diff-scoped entry point alongside
   `check_policies.py` and `check_new_refs.py` (CI `new-refs` job on PRs vs merge-base;
@@ -299,13 +299,13 @@ deleting its line, and an entry whose edge is gone fails the check.
   CLI seam, since the CLI bakes the projection's solid-angle Jacobian and the GUI's resampling of
   an equal-area texture does not; and a scene built on the 8-bit `UploadTexture` path is blind to
   exposure, sky and vignetting divergence, because that texture mode's shader branch reads none of
-  them) rather than by preference. `doc/testing-architecture.md` §4.10 has the full statement,
+  them) rather than by preference. `doc/testing/testing-architecture.md` §4.10 has the full statement,
   including the CMake shape a second child-process test would need. A fourth thing, easiest of all
   to get wrong because it is invisible from a green pipeline: **no CI job runs this tag today**.
   The one leg that executes `gui_test` names a positive filter of two reference groups that does
   not include it, and the `E2E Slow` legs build with `-DBUILD_GUI=OFF` and have no such binary, so
   `./scripts/test.sh {quick,full,pr}` on a machine with a GL context is the only place either
-  fixture is ever evaluated. `doc/testing-architecture.md` §7.5 has the mechanism, the measured cost of
+  fixture is ever evaluated. `doc/testing/testing-architecture.md` §7.5 has the mechanism, the measured cost of
   enabling it, and why the llvmpipe leg is not currently the right home for it.
 - `scripts/check_loop_fatal_asserts.py` is a **fourth** diff-scoped entry point, alongside
   `check_policies.py`, `check_new_refs.py`, and `check_new_gui_tests.py` above (same "checker is
@@ -315,7 +315,7 @@ deleting its line, and an entry whose edge is gone fails the check.
   or the non-fatal `IM_ERRORF`) must not be followed by code that keeps driving the same test
   context — a fatal assert directly inside a `for` loop body silently hides every row after the
   first failure, and a non-fatal report followed by continued driving cascades false reds off an
-  already-invalid state. See `doc/testing-architecture.md` §4.9 for the full rule statement and
+  already-invalid state. See `doc/testing/testing-architecture.md` §4.9 for the full rule statement and
   the four defect-shape generalizations (syntax → fatality → loop order → parameter binding) that
   motivated it — a checker for only the first of those reads a clean scan as "does not occur
   here" on exactly the inputs it was meant to catch.
@@ -335,9 +335,9 @@ deleting its line, and an entry whose edge is gone fails the check.
   budgets containing `build`; it never excuses test runtime or correctness, and a PR whole-run/job
   rerun cannot consume it again. A new test job is not covered until it wires reports, checker and
   artifacts, and nothing audits that automatically. Full registry rules, the 60 s / 2× calibration,
-  phase boundaries and uncovered jobs: `doc/testing-architecture.md` §7.7. The cold-build protocol's
+  phase boundaries and uncovered jobs: `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
   single authority is §7.8.
-- E2E test layout (purpose-primary; see `doc/testing-architecture.md` §6):
+- E2E test layout (purpose-primary; see `doc/testing/testing-architecture.md` §6):
   - `test/e2e-correctness/` — full-stack correctness via CLI/PSNR (smoke, CLI behavior, raypath equivalence) + `references/*.jpg`
   - `test/parity-cross-backend/backend/` — backend-equivalence oracles (Metal exit-seam parity, device-gen default path, cpu_backend route, Metal batch invariance) + C++ siblings from 270.3
   - `test/performance/` — throughput gates (Metal throughput)
@@ -356,7 +356,7 @@ deleting its line, and an entry whose edge is gone fails the check.
     full set; because a command-line `-m` overrides `addopts`'s `-m` value rather than combining
     with it (any other `addopts` flags stay in effect), any invocation that needs the full set
     (or a marker CI never uses) must pass `-m` explicitly.
-    See `doc/testing-architecture.md` §5 for the `addopts` rationale and the incident it fixed.
+    See `doc/testing/testing-architecture.md` §5 for the `addopts` rationale and the incident it fixed.
   - `@pytest.mark.slow` tests require the shared-lib build (`./scripts/build.sh -sj release` —
     `-g`/`-t` alone never produce it, see "Build trees..." above) and are excluded from CI's fast
     leg. Run them locally with `pytest -v -m slow` before opening a PR that touches the simulator
@@ -372,7 +372,7 @@ deleting its line, and an entry whose edge is gone fails the check.
     process loads exactly one of the two. `test/e2e/capi_runner.py::lib_candidates` is the single
     authority on which file that is; `scripts/check_policies.py`'s `no-test-symbol-in-src` rule
     keeps the `LUMICE_TEST_` prefix out of `src/` so the two surfaces cannot grow back together.
-    The third, `liblumice_analytic`, is the published analytic library (`doc/analytic-api.md`),
+    The third, `liblumice_analytic`, is the published analytic library (`doc/interfaces/analytic-api.md`),
     built from the engine's foundation objects and the analytic kernel only (not `lumice_obj`),
     exporting only `LUMICE_ANALYTIC_*`; it is not produced by a CUDA
     configure. What each of the three exports is its own export list, generated from its headers
@@ -399,7 +399,7 @@ deleting its line, and an entry whose edge is gone fails the check.
 
     What each row **costs** in measured seconds, what each scope catches that the cheaper one is
     structurally unable to report, and the budget rule naming who has to answer for the spend and
-    when, are in `doc/testing-architecture.md` §7. They are deliberately not duplicated here: two
+    when, are in `doc/testing/testing-architecture.md` §7. They are deliberately not duplicated here: two
     copies of a measurement drift apart, and the copy in this table would be the stale one.
     The same section says where each test runs beyond these commands — the PR layer, `main` only,
     the reference machines' daily schedule, release, a developer machine; there is no nightly —
@@ -438,7 +438,7 @@ deleting its line, and an entry whose edge is gone fails the check.
   the whole run's exit code (a leak is a run-level red, and it also stops a regen driver's
   full-suite run on purpose — fix the leak, then reshoot).
 - Windows physical-desktop validation uses `scripts/win_remote_test.sh` together with `scripts/win_test_watcher.ps1`.
-- Performance diagnostics and workflows are documented in `doc/performance-testing.md`.
+- Performance diagnostics and workflows are documented in `doc/testing/performance-testing.md`.
 
 ### GUI Test Reference Regeneration (reference groups)
 
@@ -499,7 +499,7 @@ compare pixel-identical on the reference machine, so their judge is the pixel ru
 a PSNR statistic — the 40 dB floor they used to sit at let a 127-px text row through at 42.6 dB.
 This group's `kRuler` is τ=16, K=70, set by the CI llvmpipe leg's residue (a 35-px anti-aliased
 segment of the crystal preview) against the smallest real drift on record (95 px); the
-measurements and margins are in `doc/testing-architecture.md` §4.6. Regen trigger: any layout
+measurements and margins are in `doc/testing/testing-architecture.md` §4.6. Regen trigger: any layout
 change to the edit modal (slider/input widths, property-table columns, control ordering,
 auto-resize behavior), or a harness window size / font atlas / ImGui style change. Command:
 `python scripts/regen_gui_test_refs.py --group modal_layout` — a single run per phase by default;
@@ -517,7 +517,7 @@ because with no crystal preview in the frame nothing survives τ=16 on the CI le
 passed at 53.45 dB, reads 86 px: four over the merged
 settings list (`pending_changes` / `other_expanded` / `filtered` / `no_changes` — the two-section
 diff/adopt split these names once referred to was merged into one list with an inline-edited "Current
-value" column; see `doc/gui-state-governance.md` §8.5), two over the preset library
+value" column; see `doc/gui/gui-state-governance.md` §8.5), two over the preset library
 (`presets_expanded` / `presets_warning`, one preset unfolded to show the nine typed cells, the live
 std input and the warning column beside it) and one over the wedge-shortcut region under it
 (`wedge_presets`, scrolled to the bottom of the same child). Every scene installs an explicit, freshly
@@ -551,7 +551,7 @@ deterministic scenes (`default_document`, `two_layers`: a pyramid, a named raypa
 randomized face, an excluded entry), judged by the pixel ruler at τ=16, K=40 — K inherited from
 `defaults_panel_layout` as the nearest group in kind (tables of text, no crystal preview), **not**
 measured against a llvmpipe residue: this group is not in the CI filter today, so measure K
-(`doc/testing-architecture.md` §4.6) before adding it. What the page PRINTS is asserted without a
+(`doc/testing/testing-architecture.md` §4.6) before adding it. What the page PRINTS is asserted without a
 frame — `test/unit-correctness/gui/test_config_summary_rows.cpp` (which serialized root keys reach
 the settings section, decided by `gui_state_tiers.hpp`'s tier table) and
 `test/composition-correctness/gui/test_config_summary_export_parity_chain.cpp` (every leaf of
@@ -605,7 +605,7 @@ A scene whose frame is deterministic (no simulation, no RNG) compares pixel-iden
 `PSNR=inf`, which leaves `mean − 4σ` no finite sample. Phase B records `identical_runs` for such
 scenes and still writes the historical 40 dB `threshold`, but that number is no longer a bound:
 the deterministic groups are judged by the pixel ruler, whose cross-machine K is measured from CI
-llvmpipe captures (`doc/testing-architecture.md` §4.6) and lives in the test source. What Phase B
+llvmpipe captures (`doc/testing/testing-architecture.md` §4.6) and lives in the test source. What Phase B
 adds for them is `maxcc_tau` / `maxcc_local_max`, the audit that the reference machine still
 matches its own references byte-for-byte.
 

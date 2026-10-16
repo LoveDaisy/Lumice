@@ -6,7 +6,7 @@ file owns the Metal skip gate and the measured figures for the Metal reference
 machine.
 
 Measured (Apple M-series development Mac, the Metal reference machine role in
-``doc/machines.md``; ``multi_renderer_throughput_{dual,single_a,single_b}``
+``doc/testing/machines.md``; ``multi_renderer_throughput_{dual,single_a,single_b}``
 fixtures — the user's document, 3 crystals + 3 raypath filters, D65,
 fisheye_equidistant 1024² + dual_fisheye_equal_area 2048×1024; drain-aligned
 rate over 10 drains of 2,097,152 rays; the gate's own 21 interleaved reps):

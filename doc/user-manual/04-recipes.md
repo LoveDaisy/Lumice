@@ -122,7 +122,7 @@ Notes:
 - `axis.zenith ~ Gauss(0, 1°)` keeps the c-axis nearly vertical (plate orientation), with a small wobble for realism.
 - `roll ~ Uniform(0, 360°)` lets the prism rotate freely around its vertical axis.
 
-For the full distribution syntax (`gauss`, `uniform`, `laplacian`, `zigzag`), see [`../crystal-orientation-sampling.md`](../crystal-orientation-sampling.md).
+For the full distribution syntax (`gauss`, `uniform`, `laplacian`, `zigzag`), see [`../crystal-orientation-sampling.md`](../geometry/crystal-orientation-sampling.md).
 
 ---
 
@@ -189,4 +189,4 @@ Notes:
 - Tweak any recipe and re-run from the CLI → [`03-cli-quickstart.md`](03-cli-quickstart.md).
 - Understand performance trade-offs (`ray_num × wavelengths`) → [`05-faq.md`](05-faq.md).
 - Full schema with every field → [`../configuration.md`](../configuration.md).
-- Coordinate system used by `altitude` / `zenith` / `azimuth` → [`../coordinate-convention.md`](../coordinate-convention.md).
+- Coordinate system used by `altitude` / `zenith` / `azimuth` → [`../coordinate-convention.md`](../geometry/coordinate-convention.md).

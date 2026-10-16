@@ -76,7 +76,7 @@ constexpr int kPollIntervalMs = 20;  // Server poll interval (T_poll, ms). Short
 // Slow heartbeat used once the poller believes the run has reached its terminal state and has
 // self-paused (ServerPoller::State::kIdleHeartbeat). Invariant I3's second clause — "idle may
 // throttle to a slow heartbeat, but must never fall so silent it cannot self-heal"
-// (doc/gui-preview-lifecycle-architecture.md §9) — is what this exists for: without it, the one
+// (doc/gui/gui-preview-lifecycle-architecture.md §9) — is what this exists for: without it, the one
 // poll that observes the terminal edge is the ONLY chance to get the terminal truth on screen,
 // which turns a level-triggered reconciler back into an edge-triggered one.
 // Invariant: kIdleHeartbeatIntervalMs > kPollIntervalMs (a heartbeat that is not a throttle down
@@ -189,7 +189,7 @@ constexpr float kDefaultCrystalZoom = 1.4f;
 // world coordinates while the camera position stays put.
 constexpr float kCameraTiltDeg = 15.0f;
 
-// Raypath analysis panel (analysis_panel.cpp, doc/raypath-analysis-panel.md). The CONE request
+// Raypath analysis panel (analysis_panel.cpp, doc/raypath/raypath-analysis-panel.md). The CONE request
 // the panel sends is always the FULL cone below, split into kAnalysisConeRingCount equal rings;
 // the angular-radius slider then decides, at display time, how many of those rings the list sums
 // over — so dragging it never starts a run. Its default is the panel's opening radius and its

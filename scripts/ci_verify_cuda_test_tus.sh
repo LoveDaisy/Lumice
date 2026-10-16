@@ -17,7 +17,7 @@
 #
 # Scope: this is COMPILE coverage. Every case here is expected to report SKIPPED, because no GPU
 # is attached to these runners. Runtime and parity validation still run on the CUDA reference
-# machines under the manual protocol in doc/gpu-remote-cuda-build-testing.md; a green run here
+# machines under the manual protocol in doc/testing/gpu-remote-cuda-build-testing.md; a green run here
 # must not be read as "CUDA all green".
 
 set -euo pipefail

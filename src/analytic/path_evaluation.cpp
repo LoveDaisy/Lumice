@@ -45,7 +45,7 @@ double Det3(const double a[3], const double b[3], const double c[3]) {
 // face `slot` itself and every present face whose plane passes within `tolerance`), and the corner
 // is the intersection of the best-conditioned triple of them (the largest |det| of normals that
 // includes `slot`), solved in double from the double normals and `offsets`. Topology stays the
-// engine's float decision (doc/analytic-api.md section 4.1); only the coordinates are refined, from
+// engine's float decision (doc/interfaces/analytic-api.md section 4.1); only the coordinates are refined, from
 // about 1e-7 relative to the double rounding of the closed form. A corner with fewer than three
 // independent planes (no such corner exists on a closed-form crystal) keeps the float value.
 void RefineCorner(const FaceNormalTable& table, const double* offsets, int slot, double tolerance,
@@ -172,7 +172,7 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
     // Coupled derivations: the simulator's prism takes these slots' normals from the kHexFace*
     // direction tables (geo3d_closedform.cpp), not from this plane table. The two agree to within
     // an ulp, and test_path_evaluation.cpp holds the result to the star directions at 1e-15 — a
-    // change to either derivation must keep that test green (doc/analytic-api.md section 5.4).
+    // change to either derivation must keep that test green (doc/interfaces/analytic-api.md section 5.4).
     double plane[4];
     ClosedFormHexFacePlane(s, a1, a2, 0.0, 0.0, plane);
     const double mag = std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);

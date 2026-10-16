@@ -157,7 +157,7 @@ typedef struct LUMICE_CrystalParam_ {
   LUMICE_Distribution face_distance[6];
 
   // Axis distributions. Sampled values feed the rotation chain (angles in degrees)
-  // R = Rz(azimuth - 180°) * Ry(-zenith) * Rz(roll); see doc/coordinate-convention.md.
+  // R = Rz(azimuth - 180°) * Ry(-zenith) * Rz(roll); see doc/geometry/coordinate-convention.md.
   LUMICE_Distribution zenith;
   LUMICE_Distribution azimuth;
   LUMICE_Distribution roll;
@@ -297,7 +297,7 @@ _Static_assert(sizeof(LUMICE_SpectrumEntry) == 2 * sizeof(float),
 #endif
 
 // =============== Raypath Color Classes (BREAKING v4.7) ===============
-// Design 2 (2026-07-08, doc/gui-custom-spectrum-and-raypath-color.md §4.0): each color class
+// Design 2 (2026-07-08, doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0): each color class
 // is decoupled from the physical filter. A class has an RGB color + a set of "match" refs;
 // each ref is a placement-scoped predicate {layer, crystal, predicate} that decides which
 // surviving rays get color-tagged. Predicate types are a NARROWED reuse of LUMICE_FilterParam
@@ -420,7 +420,7 @@ typedef struct LUMICE_ColorClass_ {
 // Which operator turns accumulated radiance into pixels (mirrors core RenderConfig::Tone).
 //   SCREEN — the additive operator: out = clamp(L * c + background). Monotonically non-decreasing
 //            in radiance, so a light background can only stay light.
-//   PRINT  — the subtractive (density) operator of doc/print-mode-subtractive-ink.md: ink is laid
+//   PRINT  — the subtractive (density) operator of doc/rendering/print-mode-subtractive-ink.md: ink is laid
 //            ON the paper, out = paper * 10^(-D), so a white paper CAN go dark.
 // SCREEN == 0 is the default: a zero-initialized LUMICE_RenderParam asks for the operator this API
 // has always used, which is also what a config with no "tone" key means.
@@ -652,7 +652,7 @@ typedef struct LUMICE_RenderParam_ {
   // LIVE as of v4.27's operator: LUMICE_TONE_PRINT makes PostSnapshot take the density transfer
   // curve of src/util/ink_transfer.hpp instead of the additive one, greyscale by construction — the
   // gamut clip, the XYZ->RGB matrix and `ray_color` are all skipped. See
-  // doc/print-mode-subtractive-ink.md for what the mode does and does not promise.
+  // doc/rendering/print-mode-subtractive-ink.md for what the mode does and does not promise.
   int tone;
   float paper[3];
   // ADDED (v4.39). Circles of constant angular distance from the camera's OPTICAL AXIS — the

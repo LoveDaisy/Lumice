@@ -393,7 +393,7 @@ TEST(GeometrySource, OrbitStreamCarriesTrueBodyFrameU) {
   // product at ~1, whose resolution floor is sqrt(ulp) ~= 1.5e-8 rad — a tolerance below that
   // rejects genuine on-orbit samples on rounding dice (5/256 at 1e-9, measured). The adapter's
   // certificate calls therefore pass orbit tolerances at 1e-6; the finding is registered in the
-  // task's G ledger (the acos-floor criterion belongs to doc/numerical-robustness.md's rule 1).
+  // task's G ledger (the acos-floor criterion belongs to doc/geometry/numerical-robustness.md's rule 1).
   EXPECT_EQ(in_support, 256) << "a producer u off the declared orbit is the G5 defect shape";
 }
 

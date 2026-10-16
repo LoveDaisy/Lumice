@@ -253,7 +253,7 @@ extern "C" {
 // struct: its JSON default is WHITE, so a zero-initialized struct names BLACK paper. Under the
 // subtractive operator black paper renders an all-black page, since out = paper * 10^(-D). Set it,
 // or go through JSON. The reason `paper` is a field of its own rather than a reuse of `background`
-// is exactly this degenerate state — see doc/print-mode-subtractive-ink.md decision D5.
+// is exactly this degenerate state — see doc/rendering/print-mode-subtractive-ink.md decision D5.
 // Both fields are LIVE: LUMICE_TONE_PRINT selects the subtractive operator in the renderer
 // (src/server/render.cpp's PostSnapshot, through src/util/ink_transfer.hpp) and in the GUI's preview
 // shader, and `paper` is the ground it lays ink on.
@@ -508,8 +508,8 @@ extern "C" {
 // ADDED (v4.50): single-path analysis, a pure append — LUMICE_SinglePathRequest,
 // LUMICE_SinglePathResult (opaque), LUMICE_AnalyzeSinglePath, LUMICE_SinglePathResultToJson and
 // LUMICE_SinglePathResultDestroy: the fiber, per-pose detail and sun-direction sphere of ONE
-// single-layer raypath of one crystal entry over one sky point (doc/raypath-analysis.md section
-// 5.1.8; the `Lumice raypath` subcommand; output fields in doc/raypath-cli-output.md). No existing
+// single-layer raypath of one crystal entry over one sky point (doc/raypath/raypath-analysis.md section
+// 5.1.8; the `Lumice raypath` subcommand; output fields in doc/raypath/raypath-cli-output.md). No existing
 // symbol or struct changed. ADDED alongside: LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT.
 // BEHAVIOR (v4.50): LUMICE_SetLogLevel accepts a NULL server and then
 // sets the engine-wide log level (it used to do nothing), since a single-path caller has no server.

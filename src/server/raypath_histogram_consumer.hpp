@@ -1,5 +1,5 @@
 // The analysis run's consumer: no image, a histogram of complete raypath
-// chains (doc/raypath-analysis-panel.md §3). Every outgoing ray a batch
+// chains (doc/raypath/raypath-analysis-panel.md §3). Every outgoing ray a batch
 // delivers carries a chain id (SimData::outgoing_chain_id_); this consumer
 // resolves it to a session-wide id through ChainIdMerger, decides whether the
 // ray's exit direction is inside the requested ROI, and if so adds the ray's
@@ -70,7 +70,7 @@ struct SceneConfig;
 // Row capacity of one consumer (k in the class comment) when the analysis
 // request names none: the bound on the finest record's memory and on what a
 // read-time reduction has to walk. Calibrated by measurement
-// (doc/raypath-analysis-panel.md carries the table): equal to the producers'
+// (doc/raypath/raypath-analysis-panel.md carries the table): equal to the producers'
 // ChainIdInterningTable::kDefaultCapacity, which keeps the 22° reference scene
 // (11.7k finest chains at 200k rays) exact end to end — the two bounds are
 // only ever both exact or both not — and reads back in 15 ms on the

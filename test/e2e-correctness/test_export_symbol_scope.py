@@ -23,7 +23,7 @@ declares"). What that cannot see — a declaration that lost its visibility mark
 sides at once — the generator itself refuses at build time.
 
 Each library is also loaded, in a child process so its engine copy never shares this process with
-the test library the rest of the suite loads (doc/analytic-api.md section 2.6), and the analytic
+the test library the rest of the suite loads (doc/interfaces/analytic-api.md section 2.6), and the analytic
 placeholder is called: its answer must equal the header's LUMICE_ANALYTIC_API_VERSION.
 Separately, the engine must not carry liblumice_analytic's management functions: linked in, the
 management TU would remove the engine's console sink at load.
@@ -65,7 +65,7 @@ def _find_all(lib: str) -> list[Path]:
     hits = ces.find_all(SHARED_OUT, lib)
     if not hits:
         if lib == "lumice_analytic" and ces.cuda_configured(ROOT):
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/interfaces/analytic-api.md 2.3)")
         pattern = ces.PATTERNS[lib][ces.platform_key()]
         pytest.fail(f"{pattern} not found under {SHARED_OUT} although a shared build exists there")
     return hits
@@ -102,7 +102,7 @@ def test_export_set_equals_header_declarations(lib: str) -> None:
 
 
 def test_analytic_exports_only_its_own_prefix() -> None:
-    """doc/analytic-api.md section 7, stated independently of the header parse: every exported
+    """doc/interfaces/analytic-api.md section 7, stated independently of the header parse: every exported
     name is LUMICE_ANALYTIC_*, and there is at least one."""
     actual = _exported(_find("lumice_analytic"))
     assert actual

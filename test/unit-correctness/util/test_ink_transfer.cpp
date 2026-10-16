@@ -42,7 +42,7 @@ TEST(InkTransfer, NegativeExposureIsClampedToTransparent) {
 // hand-fitted shoulder would usually be spliced in.
 TEST(InkTransfer, TransmittanceIsStrictlyDecreasingInExposure) {
   // Deliberately spanning several decades rather than a uniform ramp: the typical non-zero `e` in
-  // this project's scenes is 1e-3..1e-1 (doc/print-mode-subtractive-ink.md §3.2), so a uniform
+  // this project's scenes is 1e-3..1e-1 (doc/rendering/print-mode-subtractive-ink.md §3.2), so a uniform
   // sample over [0, 10] would put almost no points where the picture actually lives.
   const float kSamples[] = { 0.0f, 1e-4f, 1e-3f, 3e-3f, 1e-2f, 3e-2f, 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 5.0f, 10.0f };
   float prev = 2.0f;  // above any possible transmittance, so the first comparison is meaningful
@@ -79,7 +79,7 @@ TEST(InkTransfer, MatchesTheClosedFormOfTheDesignDocument) {
   }
 }
 
-// kInkGamma is an owner-accepted calibration (doc/print-mode-subtractive-ink.md §3.2), not a free
+// kInkGamma is an owner-accepted calibration (doc/rendering/print-mode-subtractive-ink.md §3.2), not a free
 // parameter. Pinning it does not make it right — it makes a change to it LOUD, so that whoever
 // re-tunes the look of print has to face the fact that they are overruling a decision, rather than
 // nudging a constant that nothing appeared to depend on.

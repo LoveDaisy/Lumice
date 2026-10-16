@@ -73,7 +73,7 @@ _MAX_USEFUL_SPREAD = 0.10
 # kernel change is per-backend, so a test that only ever asks for "metal" would
 # report a clean run on the CUDA box while never having executed the CUDA code it
 # is meant to be checking. Detection reuses the repository's existing CUDA test
-# gate (`platform` + LUMICE_HAS_CUDA, see doc/gpu-remote-cuda-build-testing.md §1)
+# gate (`platform` + LUMICE_HAS_CUDA, see doc/testing/gpu-remote-cuda-build-testing.md §1)
 # rather than introducing a knob of its own.
 _DEVICE_ROUTE = (
     "cuda"

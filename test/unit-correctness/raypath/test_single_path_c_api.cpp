@@ -4,7 +4,7 @@
 // LUMICE_SinglePathResultToJson. The analysis itself is test_single_path_analysis.cpp's subject and
 // the JSON's shape test_single_path_json.cpp's; here only what the bridge adds.
 //
-// symmetry_semantics: none — every case analyses one concrete face sequence (doc/analytic-api.md
+// symmetry_semantics: none — every case analyses one concrete face sequence (doc/interfaces/analytic-api.md
 // section 3).
 
 #include <gtest/gtest.h>

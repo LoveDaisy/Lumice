@@ -311,7 +311,7 @@ vec2 dualFisheyeToUV(vec2 xy_norm, bool is_upper) {
                   xy_norm.x * R + tex_res.y * 0.5);
   }
   // `pixel` is in core's binning convention (ProjectExitToPixel takes floor of it), so texel `px`
-  // owns [px, px+1) and its centre is px + 0.5 — see doc/coordinate-convention.md §11. GL's own
+  // owns [px, px+1) and its centre is px + 0.5 — see doc/geometry/coordinate-convention.md §11. GL's own
   // addressing is stated in exactly those terms: `uv * tex_res` = px + 0.5 hits the centre of
   // texel px. So the conversion is the plain division and nothing else. Adding 0.5 here applies
   // the same half-texel centring a SECOND time, which does not read a different texel — it moves
@@ -1200,7 +1200,7 @@ void main() {
           // branch: its texture is the live frame's linear XYZ and takes the kTexModeXyz arm above,
           // print included. An older document keeps the screen result until the next simulation
           // run (or a re-save after one) replaces the texture with a v5 one.
-          // See doc/print-mode-subtractive-ink.md.
+          // See doc/rendering/print-mode-subtractive-ink.md.
           tex_color = clampAndGamma(radiance_linear + u_background);
         } else {
           // Both texture modes have halo-only linear light here, after visibility and vignetting.

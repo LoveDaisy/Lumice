@@ -81,7 +81,7 @@ struct MarkerStyleParam {
 // Hand-written on both sides, and the from_json half deliberately does NOT go through
 // NLOHMANN_JSON_SERIALIZE_ENUM for `id_`: that macro maps any unregistered string to the FIRST
 // table entry without an error, so a typo would land silently on the zenith. The same failure mode
-// is on record for `visible` (doc/gui-state-governance.md §9: "front" silently becoming "upper"),
+// is on record for `visible` (doc/gui/gui-state-governance.md §9: "front" silently becoming "upper"),
 // which is why an unknown id here throws instead.
 void to_json(nlohmann::json& j, const MarkerStyleParam& m);
 void from_json(const nlohmann::json& j, MarkerStyleParam& m);
@@ -143,7 +143,7 @@ struct RenderConfig {
   };
 
   // Which anchor the mono/composite exposure scale is measured against. See
-  // doc/ev-pipeline-architecture.md and RenderConsumer::ExposureScale().
+  // doc/rendering/ev-pipeline-architecture.md and RenderConsumer::ExposureScale().
   //   kRelative — anchor to the frame's own P99 (what the GUI has always displayed): the image
   //               keeps its look as ray_num grows, but the config alone does NOT determine the
   //               output brightness (ray_num co-determines it). This is the default.
@@ -157,7 +157,7 @@ struct RenderConfig {
   // The tone-reproduction mode: which operator turns accumulated radiance into pixels.
   //   kScreen — the additive operator this project has always used: out = clamp(L * c + background).
   //             Monotonically non-decreasing in radiance, so a light background can only stay light.
-  //   kPrint  — the subtractive (density) operator of doc/print-mode-subtractive-ink.md: ink is
+  //   kPrint  — the subtractive (density) operator of doc/rendering/print-mode-subtractive-ink.md: ink is
   //             deposited ON the paper, out = paper * 10^(-D), so a white paper CAN go dark.
   // Structurally non-overlapping, not two parameter ranges of one formula, which is why this is an
   // enum and not a knob — see that document's second law.
@@ -195,7 +195,7 @@ struct RenderConfig {
   // Linear RGB. The JSON "background" key is sRGB; to_json / ParseRenderConfig convert.
   float background_[3]{};
   // The PAPER colour under kPrint — the ground the ink is laid on, and a separate field from
-  // background_ on purpose (doc/print-mode-subtractive-ink.md, decision D5): background_ defaults
+  // background_ on purpose (doc/rendering/print-mode-subtractive-ink.md, decision D5): background_ defaults
   // to BLACK, so a print mode that reused it would make out = 0 * 10^(-D) == 0, an all-black page,
   // the state a user reaches by merely ticking the mode on. A second field with the opposite
   // default makes that degenerate state structurally unreachable.

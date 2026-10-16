@@ -677,7 +677,7 @@ void EraseWorkerCountFromDoc(nlohmann::json& doc);
 
 // The third member of the `app` namespace, and the first that is NOT a construction-time server
 // property: the UI scale multiplier the user chose on top of the monitor's own content scale
-// (doc/gui-visual-language.md §4.1). It qualifies for this namespace on the same criterion as the
+// (doc/gui/gui-visual-language.md §4.1). It qualifies for this namespace on the same criterion as the
 // other two — it describes the machine and the person at it, not the halo — and unlike them it
 // has NO GuiState field at all: it is read here at startup, held by app.cpp's
 // g_ui_scale_multiplier, and applied by theme.cpp; it never enters a document, and it is not

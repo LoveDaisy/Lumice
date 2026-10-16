@@ -87,7 +87,7 @@ namespace lumice {
 //      as a mandatory check. (Metal once shipped this bug: exit directions were
 //      projected in crystal-local space, scattering the 22° halo into a band.)
 //      As-built lifecycle (host/kernel transform points, multi-MS transit,
-//      parity harness): see doc/trace-backend-frame-lifecycle.md.
+//      parity harness): see doc/backends/trace-backend-frame-lifecycle.md.
 //
 // State machine
 //   Legal call sequence (per backend instance):
@@ -205,7 +205,7 @@ struct SessionSpec {
   // element, indexed by position here — the same position RenderConsumer
   // holds as `renderer_index_`). This is the as-built form of the "image
   // egress = N device accumulation targets + N projections per exit" shape
-  // doc/seam-design.md §4.2 describes: a device-fused backend projects every
+  // doc/backends/seam-design.md §4.2 describes: a device-fused backend projects every
   // emitted ray once per element of this vector, inside the one dispatch, and
   // never hands the host a per-ray record to project. Non-empty; CanUseBackend() has already
   // bounded size() by TraceBackend::MaxRenderers() and checked every element

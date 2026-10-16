@@ -4,7 +4,7 @@
 // First-order forward-mode dual numbers: a value and its gradient with respect to N inputs. The
 // continuation's Jacobians (the 2x3 residual Jacobian and the 3x3 bordered Newton system) are
 // computed by evaluating the same templated code once with Jet<3> in place of double, so there is
-// no second, hand-derived copy of any derivative (doc/raypath-analysis.md section 5.1.6: no AD
+// no second, hand-derived copy of any derivative (doc/raypath/raypath-analysis.md section 5.1.6: no AD
 // framework). Only the operations that code uses are defined; an expression that needs another one
 // fails to compile rather than silently dropping a derivative term.
 //

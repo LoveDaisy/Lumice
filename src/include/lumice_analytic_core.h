@@ -2,7 +2,7 @@
 #define LUMICE_ANALYTIC_CORE_H_
 
 // The analytic capability of Lumice: its types and computation functions. Design:
-// doc/analytic-api.md. A consumer of the published library includes lumice_analytic.h, which
+// doc/interfaces/analytic-api.md. A consumer of the published library includes lumice_analytic.h, which
 // includes this header and adds the two library-management functions (version, log callback).
 //
 // The split is the packaging boundary. The functions declared HERE are exported by every library
@@ -14,18 +14,18 @@
 //
 // Independent of the engine's lumice_*.h headers: it includes nothing from them and shares none of their types. A
 // process loads one of liblumice / liblumice_testapi / liblumice_analytic, never two: each carries its own copy of the
-// engine and its statics (doc/analytic-api.md section 2.6).
+// engine and its statics (doc/interfaces/analytic-api.md section 2.6).
 //
-// 0.x is experimental: the interface may change between versions (doc/analytic-api.md section 8).
+// 0.x is experimental: the interface may change between versions (doc/interfaces/analytic-api.md section 8).
 //
-// Conventions: frames, face numbers and the pose chain are those of doc/coordinate-convention.md;
+// Conventions: frames, face numbers and the pose chain are those of doc/geometry/coordinate-convention.md;
 // this header passes them, it does not define them. Symmetry: every function takes one concrete
-// face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
+// face sequence and performs no symmetry reduction (doc/interfaces/analytic-api.md section 3).
 //
 // Version 8 adds the u-S^2 field layer of one fixed face sequence (kind-1/2/3 critical structure,
 // the delta-axis partition with its escape regimes, per-wavelength onset tables, the restricted
 // family curve and the chromatic verdicts).
-// Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+// Version notes, newest first (every bump says what changed, doc/interfaces/analytic-api.md section 8.1):
 //   8  ADDED LUMICE_ANALYTIC_WalkStatus, LUMICE_ANALYTIC_EscapeRegime, LUMICE_ANALYTIC_CriticalKind,
 //      LUMICE_ANALYTIC_OnsetLocation, LUMICE_ANALYTIC_OnsetSource, LUMICE_ANALYTIC_OnsetProfile,
 //      LUMICE_ANALYTIC_KinkCoverage, LUMICE_ANALYTIC_CurveExistence,
@@ -98,12 +98,12 @@ extern "C" {
 #define LUMICE_ANALYTIC_API __attribute__((visibility("default")))
 #endif
 
-// Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
+// Interface version, a single integer (doc/interfaces/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
 #define LUMICE_ANALYTIC_API_VERSION 8
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
-// the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
+// the same thing there; the type is this header's own (doc/interfaces/analytic-api.md section 5.2). A numerical
 // outcome of a computation (an invalid path at a pose) is result data, never an error code.
 typedef enum LUMICE_ANALYTIC_ErrorCode_ {
   LUMICE_ANALYTIC_OK = 0,
@@ -115,7 +115,7 @@ typedef enum LUMICE_ANALYTIC_ErrorCode_ {
 
 // ---------------------------------------------------------------------------------------------
 // Crystal: one deterministic closed-form crystal, the scalars of one sampled Lumice instance
-// (doc/analytic-api.md section 4.1). Field semantics are doc/configuration.md's prism / pyramid
+// (doc/interfaces/analytic-api.md section 4.1). Field semantics are doc/configuration.md's prism / pyramid
 // shape fields; heights fold to their absolute value as the simulator folds them. Scale-free.
 //
 // Every field must be finite and representable as float (the engine's closed-form factory takes
@@ -126,7 +126,7 @@ typedef enum LUMICE_ANALYTIC_ErrorCode_ {
 // Which faces exist is decided by the engine's closed-form geometry in float, exactly as for a
 // simulated crystal; the face normals and the optics are evaluated in double.
 // Known limitation: on deliberately constructed degenerate inputs the closed-form pyramid can yield
-// an open surface that still passes the gate (doc/analytic-api.md section 4.1). Degradation of a
+// an open surface that still passes the gate (doc/interfaces/analytic-api.md section 4.1). Degradation of a
 // crystal (a dropped face, a cone collapsed to its apex) is visible only as an absent face number,
 // not as a separate result field.
 // ---------------------------------------------------------------------------------------------
@@ -146,7 +146,7 @@ typedef struct LUMICE_ANALYTIC_Crystal_ {
 } LUMICE_ANALYTIC_Crystal;
 
 // ---------------------------------------------------------------------------------------------
-// Single-pose path evaluation (doc/analytic-api.md section 4.3).
+// Single-pose path evaluation (doc/interfaces/analytic-api.md section 4.3).
 // ---------------------------------------------------------------------------------------------
 typedef struct LUMICE_ANALYTIC_PathEvaluation_ {
   uint32_t struct_size;                    // caller sets sizeof(*out) before the call (section 8.2)
@@ -195,7 +195,7 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluatePath(
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleasePathEvaluation(LUMICE_ANALYTIC_PathEvaluation* eval);
 
 // ---------------------------------------------------------------------------------------------
-// Fiber continuation from a seed (doc/analytic-api.md section 4.3): the component of
+// Fiber continuation from a seed (doc/interfaces/analytic-api.md section 4.3): the component of
 // { R : outgoing_direction(R) = target_direction } reachable from seed_pose, traced by LI's
 // predictor-corrector reference solver (LI docs/phase1-math-contract.md sections 5-10). One call
 // traces one component from one seed; it never claims there is no other.
@@ -353,7 +353,7 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseFiberResult(LUMICE_ANALYTIC_FiberResult* result);
 
 // ---------------------------------------------------------------------------------------------
-// Component discovery / seed search (doc/analytic-api.md section 4.3): for one path and one target
+// Component discovery / seed search (doc/interfaces/analytic-api.md section 4.3): for one path and one target
 // direction, the seeds of the fiber { R : outgoing_direction(R) = target_direction }, each distinct
 // component traced once (TraceFiber's solver) and classified. LI docs/phase1-math-contract.md
 // section 9.5, strategy reference-discovery-v1; the step order and gates are that section's.
@@ -495,7 +495,7 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverComponents
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseDiscoveryResult(LUMICE_ANALYTIC_DiscoveryResult* result);
 
 // ---------------------------------------------------------------------------------------------
-// Band sum: the single-path brightness map (doc/analytic-api.md section 4.6; LI
+// Band sum: the single-path brightness map (doc/interfaces/analytic-api.md section 4.6; LI
 // docs/band-sum-contract.md). For one concrete face sequence, one refractive index and one pose
 // density, the value of each pixel of a caller-given table: the power per steradian the path sends
 // toward that pixel from one crystal of the ensemble, per unit incident irradiance, for a crystal
@@ -760,7 +760,7 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBa
     uint64_t max_evaluations, int budget_ms, LUMICE_ANALYTIC_DiagnosticResult* out);
 
 // ---------------------------------------------------------------------------------------------
-// Version 8: the u-S^2 field layer of one fixed face sequence (doc/analytic-api.md section 4.8).
+// Version 8: the u-S^2 field layer of one fixed face sequence (doc/interfaces/analytic-api.md section 4.8).
 // By the u-S^2 reduction (LI docs/phase2.md section 1) every geometric and optical weight of a
 // path is a function of u alone — the sun direction in the crystal frame — at the identity pose.
 // These calls publish that layer's objects: the deviation field's critical structure (kind-1
@@ -772,7 +772,7 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBa
 // dp_focusing / dp_chromatic modules; JAX is the authority, these are derived implementations.
 //
 // Every call builds its field from scratch and keeps no state between calls (no handle: a handle
-// freezes once published, and waits for a real consumer, doc/analytic-api.md section 9 item 15).
+// freezes once published, and waits for a real consumer, doc/interfaces/analytic-api.md section 9 item 15).
 // Costs are lattice-scale: the walks seed from a 20000-point Fibonacci lattice, the partition
 // adds a 20000-point topology lattice and (on a plural count) a chart-grid audit; each call is
 // seconds at most and single-threaded. Deterministic: no random numbers anywhere on this layer

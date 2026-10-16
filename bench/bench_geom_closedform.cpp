@@ -70,7 +70,7 @@ struct ClosedFormResult {
 // Half-plane intersection over the 6 fixed prism directions. Every candidate
 // corner is the intersection of two non-opposite faces; opposite faces (j==i+3)
 // are parallel and skipped. Feasibility uses a tolerance RELATIVE to the
-// crystal's own scale (doc/numerical-robustness.md rule 2).
+// crystal's own scale (doc/geometry/numerical-robustness.md rule 2).
 template <typename T>
 ClosedFormResult<T> ClosedFormPrism(const float* dist, T feas_tol_rel) {
   ClosedFormResult<T> out;

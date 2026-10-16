@@ -181,7 +181,7 @@ struct PreviewParams {
   // photo behind the halo, `background_color_linear` is the SKY the halo's light is added to, and
   // this is the SHEET the ink is laid on. They are separate fields so that "print onto the default
   // black background" is not a state the document can reach at all — see
-  // doc/print-mode-subtractive-ink.md §6.
+  // doc/rendering/print-mode-subtractive-ink.md §6.
   //
   // LINEAR RGB, on the same terms as background_color_linear: converted from
   // GuiState::RenderConfig::paper (sRGB, what the picker shows) by whoever fills this struct, and

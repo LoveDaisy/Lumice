@@ -15,7 +15,7 @@
 //
 // And the output of THAT is a candidate list, never a verdict: a colour can legitimately be
 // palette-independent (a user-chosen data colour, a mark drawn on the rendered image). Every
-// candidate is dispositioned by hand against the criteria in doc/gui-visual-language.md section 7.
+// candidate is dispositioned by hand against the criteria in doc/gui/gui-visual-language.md section 7.
 //
 // Why they are still assertions rather than a bare export. Each case checks that the state it meant
 // to reach was actually reached (the tinted branch is live, the modal really opened) and that the

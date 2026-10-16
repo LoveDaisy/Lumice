@@ -46,7 +46,7 @@ std::vector<unsigned char> StripAlpha(const unsigned char* rgba, int width, int 
 //                       is a semantic change; `threshold` is then not consulted at all (pass the
 //                       group's documented PSNR floor so the call still reads as one). Rationale
 //                       and the values in use: support/pixel_diff_metrics.hpp and
-//                       doc/testing-architecture.md §4.6.
+//                       doc/testing/testing-architecture.md §4.6.
 // PSNR is computed and printed under both rulers: scripts/regen_gui_test_refs.py's Phase B
 // parses the "PSNR=" line, and under the pixel ruler it also parses the "n_diff=... maxcc=..."
 // line printed next to it.

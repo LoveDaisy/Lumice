@@ -1169,7 +1169,7 @@ TEST(JsonParserParity, GridMarkersEmptyArrayIsAcceptedByBothParsers) {
 TEST(JsonParserParity, GridMarkersUnknownIdRejectedByBothParsers) {
   // The rule the whole hand-written codec exists for. NLOHMANN_JSON_SERIALIZE_ENUM would map this
   // to the FIRST table entry — the zenith — and report nothing, which is the same silent-mapping
-  // defect doc/gui-state-governance.md records for "front" becoming "upper".
+  // defect doc/gui/gui-state-governance.md records for "front" becoming "upper".
   const std::string text = WrapRenderWithGrid(R"({ "markers": [ { "id": "sundog" } ] })");
   const auto core = ParseWithCore(text);
   EXPECT_FALSE(core.ok) << "core must refuse an id it does not know";

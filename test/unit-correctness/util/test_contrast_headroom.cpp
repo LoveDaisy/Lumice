@@ -7,7 +7,7 @@
 // the answer; this file asserts what the predicate IS.
 //
 // Numbers here are written as /255 fractions on purpose rather than as decimals. The threshold is
-// stated in 8-bit levels (doc/print-mode-subtractive-ink.md §8 + kContrastHeadroomWarnLevels), so a
+// stated in 8-bit levels (doc/rendering/print-mode-subtractive-ink.md §8 + kContrastHeadroomWarnLevels), so a
 // case that spells its input the same way can be checked by eye against that argument — a reviewer
 // can read "sky at 250/255" and recompute the expected 5/255 headroom without running anything.
 
@@ -68,7 +68,7 @@ TEST(ContrastHeadroom, MarginIsTheDistanceToTheLawsFarEnd) {
   EXPECT_NEAR(ContrastHeadroomMargin(paper.c, ToneLawLimit::kWhite), 248.0f * kLevel, 1e-6f);
 }
 
-// doc/print-mode-subtractive-ink.md §8: per channel, then the MINIMUM across channels. The case is
+// doc/rendering/print-mode-subtractive-ink.md §8: per channel, then the MINIMUM across channels. The case is
 // built so that every other plausible reduction gives a different answer — the mean and the CIE-Y
 // luminance of this colour are both far above the threshold while the red channel is already on the
 // floor, so a luminance-based predicate would stay silent on a paper whose red content is gone.

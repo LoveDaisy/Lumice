@@ -63,7 +63,7 @@ interleaved reps, whose measured power is >= 99.9% against a true ratio of 0.6
 and 91% against 0.7. It catches a disaster (the second plane costing a large
 fraction of the session) and deliberately cannot see a 10% regression; that is
 the precise gate's job, run on the reference machines on a schedule
-(``doc/performance-testing.md``, "Precise throughput gate (local schedule)").
+(``doc/testing/performance-testing.md``, "Precise throughput gate (local schedule)").
 The power figures cover within-run variance only: the two runs' median ratios
 differed by 0.17, which the bootstrap does not model.
 

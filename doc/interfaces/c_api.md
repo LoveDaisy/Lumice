@@ -1,0 +1,1545 @@
+[中文版](c_api_zh.md)
+
+# C API Documentation
+
+This document provides detailed instructions on how to use the C API.
+
+## Overview
+
+Lumice provides a complete C interface for easy integration with other languages. The C interface wraps the C++ implementation and exposes a concise API.
+
+### Header File
+
+Lumice's C API is split by capability into six headers, one per capability; include the ones
+declaring what you use. There is no umbrella header.
+
+| Header | Holds |
+|---|---|
+| `lumice_base.h` | Symbol visibility, `LUMICE_API_VERSION`, opaque handles, error codes, logging, product version. Every other header includes it |
+| `lumice_scene.h` | Scene description value types and the `LUMICE_Scene` build / JSON API |
+| `lumice_render.h` | Renderer parameters, annotation, projection |
+| `lumice_editor.h` | Editor support: key names, legality checks, crystal mesh, raypath text validation, Miller conversion |
+| `lumice_engine.h` | Server lifecycle, committing a scene, result frames, raypath analysis run, trace backend selection |
+| `lumice_raypath.h` | Target-point single-path analysis and target-free feature reports (opaque results + JSON) |
+
+```c
+#include "lumice_engine.h"  // includes lumice_base.h, lumice_render.h and lumice_scene.h
+```
+
+The examples below need `lumice_engine.h` (server, commit, results) and `lumice_scene.h`
+(building a scene); the first already includes the second.
+
+### Link Library
+
+Link against the `lumice` static library.
+
+### Design Principles
+
+- **Unified error codes**: Most APIs return `LUMICE_ErrorCode`, with actual outputs passed via pointer parameters
+- **Array + sentinel pattern**: Result retrieval APIs use fixed-size arrays with sentinel termination, requiring no heap allocation
+- **Zero-copy**: The `img_buffer` in render results points directly to the internal buffer, with no copy overhead
+
+## API Reference
+
+### Constants
+
+```c
+#define LUMICE_API_VERSION 451        // ABI version, encoded major*100 + minor (v4.51)
+#define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
+#define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
+```
+
+`LUMICE_API_VERSION` lets a caller pin the ABI it was compiled against and fail loudly on a
+mismatch instead of hitting silent UB from a struct-layout drift, e.g.:
+
+```c
+static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integration");
+```
+
+It is bumped when the public symbol set grows and on every BREAKING struct-layout change.
+
+**v4.52** appends one complete budget/observation/layer-selection group to
+`LUMICE_PathFeatureReportRequest`; a v4.51 prefix still works with the new defaults. The report's
+JSON contract becomes schema 2: actual product input and spectrum, bounded numerical discovery,
+separate actual/candidate/unfinished records, partial work and explicit unsupported multi-crystal
+outcomes. Its numerical capability is shared with analytic API 7; the two version counters remain
+independent. No target-point/fiber/warm field or calculation changes. See `raypath-cli-output.md` §7.
+
+**v4.51** was a pure append (its schema-1 detector semantics are superseded by v4.52). Added the target-free path feature report:
+`LUMICE_PathFeatureReportRequest`, the opaque `LUMICE_PathFeatureReport`,
+`LUMICE_AnalyzePathFeatureReport`, `LUMICE_PathFeatureReportToJson`, and
+`LUMICE_PathFeatureReportDestroy`, plus sample-, wavelength-count, and combined-work bounds. It evaluates
+finite-crystal `A*T` by concrete physical-L2 member and discrete wavelength and uses the separate
+`lumice.path-feature-report` JSON schema. The v4.50 target request, JSON, and warm-start contract
+acquire no fields. See `raypath-cli-output.md` section 7.
+
+**v4.50** is a pure append. Added: single-path analysis — `LUMICE_SinglePathRequest` (with a
+`struct_size` head), the opaque `LUMICE_SinglePathResult`, `LUMICE_AnalyzeSinglePath(scene, request,
+&out, err_buf, err_size)`, `LUMICE_SinglePathResultToJson` (the `LUMICE_SceneToJson` buffer contract)
+and `LUMICE_SinglePathResultDestroy`, plus `LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`. The result is read
+through its JSON form, documented in `raypath-cli-output.md`. Behavior: `LUMICE_SetLogLevel(NULL,
+level)` now sets the engine-wide log level (it used to do nothing), for a caller with no server.
+
+**v4.49** is a pure append plus a behavior restoration. Added: `LUMICE_CouldFilterMatchFace(crystal,
+face, symmetry)` — `LUMICE_CouldCrystalHaveFace` with the filter's own P/B/D taken into account
+(a face with no area still matches through the faces the filter's symmetry relabels it to) — and
+`LUMICE_ExpandRaypathClass(crystal, faces, n, symmetry, semantics, out, &count)`, a raypath's
+class under a bit set in one of two meanings (`LUMICE_SYMMETRY_SEMANTICS_LABEL` /
+`LUMICE_SYMMETRY_SEMANTICS_PHYSICAL`, at most `LUMICE_MAX_RAYPATH_CLASS_MEMBERS` members). Behavior:
+a **filter's** P/B/D is a label equivalence again, as up to v4.46 — P and B apply whatever the
+crystal's shape and orientation, D as before. The narrowing v4.47 and v4.48 describe below now
+applies to the raypath-analysis list's grouping only; `LUMICE_GetCrystalSymmetry` and
+`LUMICE_IsPApplicable` / `LUMICE_IsBApplicable` keep their meaning and feed that grouping and the
+filter editor's hints (see `raypath-symmetry.md` §1.1). No struct changed.
+
+**v4.48 is the latest such break.** `LUMICE_CrystalSymmetry` gains trailing `p_effective` and
+`b_effective` after `d_effective` (sizeof 16 → 24); `LUMICE_GetCrystalSymmetry` writes the whole
+struct, so recompile. Added alongside: `LUMICE_IsPApplicable(roll type, roll full range)` and
+`LUMICE_IsBApplicable(azimuth type, azimuth full range, zenith type, zenith centre, zenith full
+range)`, the orientation halves of P and B (counterparts of `LUMICE_IsDApplicable`). Raypath
+reduction now applies P only when roll is invariant under a 60° shift (a full-turn uniform) and B
+only when the zenith is symmetric about 90° with a full-turn uniform azimuth: a Parry arc no longer
+merges 3-5 with 4-6, a plate no longer merges 1-3 with 2-3. `p_effective` / `b_effective` are
+those conditions intersected with the shape (`rotation_step < 6` / `horizontal_mirror`).
+
+**v4.47** is a pure append: `LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam*,
+LUMICE_CrystalSymmetry*)` reports which P / B / D elements a crystal's shape admits — the rotation
+step P may use (1, 2, 3 or 6), the valid vertical mirrors, the horizontal mirror — and whether D
+acts on it at all (the `LUMICE_IsDApplicable` axis condition AND the shape having the mirror that
+axis selects). Raypath reduction intersects the requested toggles with these, so a low-symmetry
+shape (e.g. `face_distance` `[1, 1.2, 1, 1.2, 1, 1.2]`) is no longer reduced as a regular
+hexagon. No struct changed; `LUMICE_IsDApplicable` keeps its meaning.
+
+**v4.46** `LUMICE_RenderParam` gains a trailing `display_mode`
+(`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`) after `globe_back_fade`
+(sizeof 6456 → 6460); recompile. JSON key `render.display_mode`, `"normal"` or `"channel_br"`.
+The field introduced a post-gamma sRGB B − R diagnostic; it has no effect
+under `tone: print`, and a colour-classed scene produces no raypath composite while it is on.
+Zero means normal, so a zero-initialized struct and a document without the key render as before.
+
+**Current `channel_br` contract (subsequent semantic correction, no layout change):**
+`clamp(0.5 + 2·(B − R), 0, 1)` reads the **halo-only** post-gamma sRGB channels at the same
+exposure and view, excluding sky colour and background photos. Sky is not added back afterwards;
+empty sky is mid grey. Exposure and clipping still affect the diagnostic; compare at the same EV.
+Overlays retain their own colours. This does not retroactively describe v4.46's sky-inclusive input.
+
+**v4.45 is such a break.** `LUMICE_RenderParam` gains a trailing `float globe_back_fade` after
+`view_dist_label` (sizeof 6452 → 6456), so callers recompile. It is the `globe` lens's far-side
+fade range — how far behind the sphere's silhouette its far side stays visible, fading with
+distance from the camera (JSON key `globe_back_fade`, see `configuration.md`). Every other lens
+ignores it, and 0 — the zero-initialised value and the JSON default — is the camera-facing
+hemisphere alone, the image every earlier version drew. Nothing is removed or reordered.
+
+**v4.39 is such a break.** A fifth annotation family — the view-distance circles, circles of
+constant angular distance from the camera's **optical axis**, the axis-referenced twin of
+`angular_dist` (which is referenced to the sun) — grows two structs at their tails, so callers
+recompile. `LUMICE_RenderParam` gains `view_dist[]` / `view_dist_count` / `view_dist_line` /
+`view_dist_label` after `paper` (sizeof 4904 → 6452), mirroring the `angular_dist` four field for
+field; `LUMICE_AnnotationRequest` gains `view_dist_deg` / `view_dist_count` after `marker_count`
+(128 → 144), and its labels come back with kind `LUMICE_ANNOTATION_VIEW_DIST` (4). The JSON keys
+are `grid.view_dist`, `grid.view_dist_line` (default true) and `grid.view_dist_label` (default
+false), shaped exactly like the `angular_dist` three, and absent keys leave the family off, so a
+document written before v4.39 renders as it did. Nothing is removed or reordered. Two things are
+deliberately **not** there. There is no `reference_dir_view`: the centre is the view's own
+forward (elevation / azimuth / roll), which core already derives for the front-hemisphere clip, so
+the request determines it and a second direction field would be a second copy of it — and it is
+independent of `lens_shift` by construction, since a shifted lens moves the axis's *pixel*, not
+the axis, and the circles follow the axis. And the zero-initialised `LUMICE_RenderParam` caveat
+the other three line switches carry applies here too: `view_dist_line` reads 0 in a zeroed struct
+where the JSON default is true, so set it or go through JSON. Both structs now carry an exact-size
+`static_assert` in the header, so the next tail append is a compile error until the version is
+bumped with it.
+
+**v4.13 is such a break.** `LUMICE_CrystalParam` gained a field appended at the end of the
+struct: `int sync_group[LUMICE_SHAPE_SCALAR_COUNT]`, alongside ten new `LUMICE_SHAPE_SCALAR_*`
+index constants. The core simulator has expressed shape-scalar sync groups (grouped shape
+scalars sharing one random draw per crystal instance — see
+[`configuration.md`'s Shape-Scalar Sync Groups](../configuration.md#shape-scalar-sync-groups) for
+the full semantics) since v4.12, but `LUMICE_CrystalParam` had no slot for the declaration, so
+the only path a config file, the GUI, or a caller of this API ever takes silently dropped it on
+the floor — core always received an all-independent struct and nothing warned. The struct's
+layout changed, so callers must recompile; behavior does not change for an existing caller, since
+a zero-initialized `sync_group` (the same state a zeroed/`{}`-initialized `LUMICE_CrystalParam`
+already had) means every scalar independent, exactly as before. `LUMICE_SHAPE_SCALAR_*` indexes
+`sync_group[]` in **RNG draw order** (prism: `HEIGHT` then `FACE_0..FACE_5`; pyramid: `UPPER_H`
+then `PRISM_H` then `LOWER_H` then `FACE_0..FACE_5`), which is deliberately **not** the field
+declaration order of `LUMICE_CrystalParam` itself (`height` / `prism_h` / `upper_h` / `lower_h`
+— note `upper_h` and `prism_h` are transposed relative to the draw order). A group's leader —
+the member whose distribution the whole group is normalized to — is defined as its lowest
+`LUMICE_SHAPE_SCALAR_*` index, so this ordering is load-bearing: aligning it to the struct's
+field order would silently redefine which member of a mixed group owns the distribution.
+
+**v4.12 is also a break.** The wide `LUMICE_Config` value struct and everything that existed only
+to feed it were removed: `LUMICE_Config` itself, the three commit entry points
+(`LUMICE_CommitConfig` / `LUMICE_CommitConfigFromFile` / `LUMICE_CommitConfigStruct`),
+`LUMICE_ParseConfigString` / `LUMICE_ParseConfigFile` / `LUMICE_ConfigToJson`, the
+`LUMICE_ConfigCreateColorClasses` / `LUMICE_ConfigReleaseColorClasses` /
+`LUMICE_ConfigReleaseCompositions` ownership helpers, and the C++ RAII header
+`src/include/lumice_config_scope.hpp`. `LUMICE_Scene` replaces all of them. There is no shim and
+no alias: code calling a removed symbol fails to compile, which is the intended migration signal.
+
+### Data Types
+
+#### LUMICE_Server
+
+Server handle, an opaque pointer type.
+
+```c
+typedef struct LUMICE_Server_ LUMICE_Server;
+```
+
+#### LUMICE_Scene
+
+Scene handle, an opaque pointer type. This is the configuration container of the API — see
+[Configuration](#configuration) for its full lifecycle.
+
+```c
+typedef struct LUMICE_Scene_ LUMICE_Scene;
+```
+
+#### LUMICE_ErrorCode
+
+Error code enum. The return type of most APIs.
+
+```c
+typedef enum LUMICE_ErrorCode_ {
+  LUMICE_OK = 0,             // Success
+  LUMICE_ERR_NULL_ARG,       // NULL argument
+  LUMICE_ERR_INVALID_JSON,   // Invalid JSON format
+  LUMICE_ERR_INVALID_CONFIG, // Invalid configuration content
+  LUMICE_ERR_MISSING_FIELD,  // Missing required field
+  LUMICE_ERR_INVALID_VALUE,  // Invalid field value
+  LUMICE_ERR_FILE_NOT_FOUND, // File not found / cannot be opened
+  LUMICE_ERR_SERVER,         // Internal server error
+} LUMICE_ErrorCode;
+```
+
+#### LUMICE_ServerState
+
+Server state enum.
+
+```c
+typedef enum LUMICE_ServerState_ {
+  LUMICE_SERVER_IDLE,      // Idle
+  LUMICE_SERVER_RUNNING,   // Running
+  LUMICE_SERVER_NOT_READY, // Not ready
+} LUMICE_ServerState;
+```
+
+#### LUMICE_LogLevel
+
+Log level enum.
+
+```c
+typedef enum LUMICE_LogLevel_ {
+  LUMICE_LOG_TRACE,    // Trace
+  LUMICE_LOG_DEBUG,    // Debug
+  LUMICE_LOG_INFO,     // Info (default)
+  LUMICE_LOG_WARNING,  // Warning
+  LUMICE_LOG_ERROR,    // Error
+  LUMICE_LOG_OFF,      // Logging disabled
+} LUMICE_LogLevel;
+```
+
+#### LUMICE_RenderResult
+
+Render result structure.
+
+```c
+typedef struct LUMICE_RenderResult_ {
+  int renderer_id;                   // Renderer ID
+  int img_width;                     // Image width (pixels)
+  int img_height;                    // Image height (pixels)
+  const unsigned char* img_buffer;   // Image data buffer (RGB format, read-only)
+} LUMICE_RenderResult;
+```
+
+**Notes**:
+- The image data pointed to by `img_buffer` is managed internally by the library and does not need to be freed manually
+- `img_buffer` is a read-only view into the `LUMICE_ResultFrame` it was obtained from, and stays
+  valid until that frame is released with `LUMICE_ReleaseResultFrame()` — holding the frame is what
+  keeps the pixels alive, so a second reader acquiring its own frame cannot invalidate yours
+- If you need the data to outlive the frame, `memcpy` it yourself before releasing
+- Image data is in RGB format, with 3 bytes per pixel (R, G, B)
+- Image data size = `img_width * img_height * 3` bytes
+- Sentinel marker: `img_buffer == NULL`
+
+#### LUMICE_StatsResult
+
+Statistics result structure.
+
+```c
+typedef struct LUMICE_StatsResult_ {
+  unsigned long ray_seg_num;   // Number of ray segments
+  unsigned long sim_ray_num;   // Number of simulated rays
+  unsigned long crystal_num;   // Distinct crystal geometries this run sampled (see Notes)
+} LUMICE_StatsResult;
+```
+
+**Notes**:
+- Sentinel marker: all zeros (`sim_ray_num == 0`)
+- `crystal_num` is **how many distinct crystal geometries the run actually
+  sampled**, not how many crystal objects it built. A shape defined by fixed
+  numbers is drawn once and reused for the rest of the run, so a scene with
+  no random shape distributions reports exactly its (scattering layer × entry)
+  count — 3 entries in layer 1 plus 2 in layer 2 reports 5, whatever `ray_num`
+  is. Give a shape a distribution (`{"type": "gauss", ...}` on `height` or
+  `face_distance`) and the count rises with the number of geometries actually
+  drawn, which is how you confirm shape randomization is taking effect.
+- **Not comparable across backends.** The CPU route samples a fresh geometry per
+  ray-group; the GPU route samples per (layer, entry) per dispatch unless the
+  K-shape geometry clock is enabled, which is off by default. The same scene
+  therefore reports different values on different backends. That gap is the
+  sampling-density difference between the routes, not an inconsistency to
+  reconcile.
+- Independent of `num_workers` and of the batch/dispatch grain. The fixed-shape
+  part of a scene is counted once from the committed config, not once per worker
+  or per batch, so a performance knob can never move it. The randomly-drawn part
+  is summed over every draw, which is the intended answer: those really are
+  different geometries.
+- A fixed-shape entry counts even if it never receives rays (e.g.
+  `crystal_proportion` 0). The count describes the scene, not the schedule.
+
+#### LUMICE_ServerConfig
+
+Server configuration structure for `LUMICE_CreateServerEx()`.
+
+```c
+typedef struct LUMICE_ServerConfig_ {
+  int num_workers;        // CPU worker count. 0 = automatic: min(physical core count, 10) on
+                          // Linux/macOS, the full logical core count on Windows —
+                          // ServerImpl::AutomaticWorkerBaseAndCap() in server.cpp is the
+                          // per-platform pair and carries the measurements behind it. A value
+                          // > 0 is honoured verbatim, above the cap included.
+  unsigned int sim_seed;  // Deterministic seed for worker RNGs. 0 = random (default).
+                          // Non-zero collapses to 1 worker for bit-stable results.
+  int preferred_backend;  // LUMICE_BACKEND_CPU / LUMICE_BACKEND_METAL / LUMICE_BACKEND_CUDA
+} LUMICE_ServerConfig;
+```
+
+**Notes**:
+- Zero-initialized struct (`= {0}`) is equivalent to default behavior (auto worker count, random seed,
+  CPU backend)
+- `num_workers` sizes the server's CPU worker group on **both** routes. On the CPU route these are the
+  render workers, which also run an analysis. On the GPU route (Metal/CUDA) the render engine stays a
+  single `Simulator` whatever this says (N engines would contend one GPU — see
+  `doc/backends/gpu-single-engine-implementation.md`), and the count sizes the server's **standing CPU analysis
+  pool**: the workers `LUMICE_StartRaypathAnalysis` runs on, built at construction and woken only by an
+  analysis session.
+  **⚠️ BEHAVIOUR CHANGE** (with the standing pool): before it existed the field was ignored on the GPU
+  route — an analysis there ran on the single engine with CPU forced, one core. A caller that passed a
+  non-zero `num_workers` to a GPU-preferred server now gets an analysis pool of that size; a caller that
+  left it 0 gets the automatic size. The render is unaffected either way.
+- When `sim_seed != 0`, the server forces `num_workers = 1` to ensure deterministic ray tracing results —
+  on the GPU route this collapses the analysis pool to one worker by the same rule, and that worker holds
+  `sim_seed` exactly as the CPU route's one worker does, so a seeded analysis reproduces across the
+  backend toggle, not only across sessions of one server.
+  The determinism is per run, for EVERY run of the server's life: each `LUMICE_CommitScene` /
+  `LUMICE_StartRaypathAnalysis` session re-seeds the worker from `sim_seed` at its start, so the tenth
+  session of one server reproduces the first bit for bit (the worker's RNG used to be seeded at
+  construction only, which made every session after the first continue the previous one's stream).
+- `sim_seed == 0` is "random" but **not fully unseeded** since 260.6: the root-ray PCG stream derives its
+  `effective_seed_` from a global atomic counter (reproducible per process by `Simulator` construction order),
+  while the host `rng_` used for crystal geometry stays `time ^ thread_id` random. So "0 = random" holds at the
+  whole-render level, but the root-ray substream is deterministic given construction order — relevant when
+  diffing two runs that build simulators in the same sequence.
+
+### Server Lifecycle
+
+#### LUMICE_CreateServer
+
+Creates a server instance.
+
+```c
+LUMICE_Server* LUMICE_CreateServer(void);
+```
+
+**Return value**:
+- On success: returns a server handle pointer
+- On failure: returns `NULL`
+
+**Notes**:
+- The returned handle must be freed using `LUMICE_DestroyServer()`
+
+#### LUMICE_CreateServerEx
+
+Creates a server instance with custom configuration.
+
+```c
+LUMICE_Server* LUMICE_CreateServerEx(const LUMICE_ServerConfig* config);
+```
+
+**Parameters**:
+- `config`: pointer to a `LUMICE_ServerConfig` struct; passing `NULL` is equivalent to `LUMICE_CreateServer()`
+
+**Return value**:
+- On success: returns a server handle pointer
+- On failure: returns `NULL`
+
+**Notes**:
+- The returned handle must be freed using `LUMICE_DestroyServer()`
+- Use this instead of `LUMICE_CreateServer()` when you need to set a deterministic seed or control worker count
+
+#### LUMICE_DestroyServer
+
+Destroys a server instance.
+
+```c
+void LUMICE_DestroyServer(LUMICE_Server* server);
+```
+
+**Parameters**:
+- `server`: server handle pointer; passing `NULL` is safe
+
+**Notes**:
+- Destroying the server stops all ongoing processing
+- The handle must not be used after destruction
+
+### Logging
+
+#### LUMICE_SetLogLevel
+
+Sets the log level.
+
+```c
+void LUMICE_SetLogLevel(LUMICE_Server* server, LUMICE_LogLevel level);
+```
+
+### Configuration
+
+A configuration lives in a `LUMICE_Scene` — an opaque, incrementally-built handle. There is
+exactly one way to configure a server: build or parse a scene, then commit it.
+
+```
+   LUMICE_SceneCreate + Add*/Set*  ─┐
+                                    ├─→  LUMICE_Scene  ──→  LUMICE_CommitScene(server, scene)
+   LUMICE_SceneFromJson{,File}     ─┘         │
+                                              └──→  LUMICE_SceneToJson  (save / inspect)
+```
+
+Authoring (JSON or programmatic) and committing are deliberately separate: `SceneFromJson` never
+touches a server, and `CommitScene` never takes a document. A handle is caller-owned, may be
+committed repeatedly, and must eventually be destroyed.
+
+#### JSON schema strictness (`LUMICE_SceneFromJson` / `LUMICE_SceneFromJsonFile`)
+
+All C API entry points that read a config document share one parser, and that parser accepts
+**exactly what the simulator's own config parser accepts** — same required keys, same defaults for
+omitted optional keys. This is a hard contract, not a best effort: the handle path is the only way
+to feed a config into the library, so a parser that is stricter would reject configs the CLI reads
+today, and one that is looser would silently accept a document the commit stage then refuses.
+
+The contract is enforced mechanically rather than by review: `JsonParserParity.*` in
+`test/unit-correctness/server/test_json_parser_parity.cpp` runs both parsers over every config
+file tracked in the repository (enumerated from disk, so new files are covered automatically) and
+fails on any input one accepts and the other rejects, or any input both accept but decode to
+different values.
+
+Two deliberate exceptions:
+
+- **Invalid enum strings are rejected, not silently reinterpreted.** Where the core parser maps an
+  unrecognized `type` / `action` / `spectrum` string onto a plausible-looking fallback, the C API
+  returns `LUMICE_ERR_INVALID_VALUE` instead — a typo should surface, not quietly change the
+  simulation.
+- **Value-range checks fire at commit, not at parse.** Bounds such as `max_hits ∈ [1, 64]` stay
+  single-source in the core and are reported by `LUMICE_CommitScene`, so a parse that succeeds is
+  not by itself a promise that the commit will. End to end the document is still rejected; only
+  the reporting point differs.
+
+Separately from the core's own rules, the C API enforces per-kind soft capacity ceilings
+(`LUMICE_MAX_CONFIG_*`, listed in `lumice_scene.h`) at `Add*` / parse time — e.g. at most
+`LUMICE_MAX_CONFIG_COLOR_REFS` match refs on one color class. Exceeding one returns
+`LUMICE_ERR_INVALID_CONFIG`.
+
+Renderers round-trip in full. Up to v4.10 a renderer's `lens` / `lens_shift` / `view` /
+`visible` / `background` / `ray_color` / `grid` / `horizon` had no fields in
+`LUMICE_RenderParam`, so they were dropped on parse and replaced with a hardcoded
+`dual_fisheye_equal_area` / fov 180 / view {0,0,0} / `visible=full` / black-background renderer on
+re-serialization — a document could parse cleanly and then be simulated through a projection the
+caller never asked for. v4.11 widened the struct to the full renderer description, and the parity
+test now compares renderers with core's own `RenderConfig::operator==`, with no field whitelist.
+
+#### Scene lifecycle
+
+```c
+LUMICE_Scene* LUMICE_SceneCreate(void);
+LUMICE_Scene* LUMICE_SceneClone(const LUMICE_Scene* scene);
+void          LUMICE_SceneDestroy(LUMICE_Scene* scene);
+```
+
+- `SceneCreate` returns an empty handle, or `NULL` on allocation failure. The caller owns it and
+  must eventually pass it to `SceneDestroy`.
+- `SceneClone` deep-copies a scene into a fully independent handle (no aliasing). This is what
+  the old wide-struct value semantics really bought — atomic modal edit with a Cancel path — now
+  one call instead of a six-figure-byte stack copy. Each handle must be destroyed independently.
+  Returns `NULL` if `scene` is `NULL` or on allocation failure.
+- `SceneDestroy` is a `NULL`-safe no-op. Each handle must be destroyed exactly once; destroying
+  twice is undefined behavior (same contract as `LUMICE_DestroyServer`).
+
+#### Building a scene: `LUMICE_SceneAdd*`
+
+```c
+LUMICE_ErrorCode LUMICE_SceneAddCrystal(LUMICE_Scene*, const LUMICE_CrystalParam*, int* out_id);
+LUMICE_ErrorCode LUMICE_SceneAddFilter(LUMICE_Scene*, const LUMICE_FilterParam*, int* out_id);
+LUMICE_ErrorCode LUMICE_SceneAddComplexFilter(LUMICE_Scene*, const LUMICE_FilterParam*,
+                                              const LUMICE_ComplexComposition*, int* out_id);
+LUMICE_ErrorCode LUMICE_SceneAddRenderer(LUMICE_Scene*, const LUMICE_RenderParam*, int* out_id);
+LUMICE_ErrorCode LUMICE_SceneAddScatterLayer(LUMICE_Scene*, const LUMICE_ScatterLayer*, int* out_id);
+LUMICE_ErrorCode LUMICE_SceneAddColorClass(LUMICE_Scene*, const LUMICE_ColorClass*, int* out_id);
+```
+
+Every `Add*` appends one item and writes its 0-based sequence id — its index among items of the
+same kind, in insertion order — to `*out_id`.
+
+- **The scene assigns ids; it ignores any `.id` field on the incoming struct.** Cross-referencing
+  fields you build later (`LUMICE_FilterParam.crystal_id`, `LUMICE_ScatterEntry.crystal_id` /
+  `.filter_id`, a composition's term ids) MUST use the returned `out_id` values, never an id you
+  chose yourself.
+- **Every input is deep-copied immediately.** The leaf struct you pass in may be a stack temporary
+  that you reuse or discard as soon as the call returns — there is no "must outlive the commit"
+  lifetime rule anywhere in this API. `SceneAddComplexFilter` also copies the composition's
+  `term_ids` / `term_counts` heap arrays, so you may release them right after it returns.
+- **Validation is per-call.** Each `Add*` validates that one item's shape and enums before
+  writing; on failure the scene is left completely unchanged (no partial write).
+- `SceneAddFilter` handles the SIMPLE arms only (`none` / `raypath` / `entry_exit` / `direction` /
+  `crystal`). A filter with `type == LUMICE_FILTER_TYPE_COMPLEX` is rejected — use
+  `SceneAddComplexFilter`, which takes the filter identity and its composition together and
+  ignores `filter->type` / `filter->composition_index`.
+
+**Return value** (all of them):
+- `LUMICE_OK`: success, `*out_id` written.
+- `LUMICE_ERR_NULL_ARG`: `scene`, the input pointer, or `out_id` is `NULL`.
+- `LUMICE_ERR_INVALID_CONFIG`: invalid item — bad enum, out-of-range count, or the scene already
+  holds the matching `LUMICE_MAX_CONFIG_*` capacity of that kind.
+
+#### Reading a renderer back: `LUMICE_SceneGetRenderer`
+
+```c
+LUMICE_ErrorCode LUMICE_SceneGetRenderer(const LUMICE_Scene*, int index, LUMICE_RenderParam* out);
+```
+
+The read-back inverse of `SceneAddRenderer` (v4.40). `*out` is the `LUMICE_RenderParam` the
+engine will actually use for that entry: core's defaults are applied for every key the source
+omitted, and the enum-valued fields come back as `LUMICE_LENS_TYPE_*` / `LUMICE_VISIBLE_*` /
+`LUMICE_EV_MODE_*` / `LUMICE_TONE_*` constants. It behaves the same on a handle built
+incrementally and on one loaded through `SceneFromJson` / `SceneFromJsonFile`.
+
+- **`index` is the entry's 0-based array position in insertion order — the value space of
+  `SceneAddRenderer`'s `*out_id` — not the entry's `.id` field.** The two coincide for a handle
+  built with `SceneAddRenderer` (it assigns ids sequentially) but need not for one loaded from
+  JSON, where `render[].id` keeps whatever the document declared: a document whose first entry
+  says `"id": 7` reads back at index 0 with `out->id == 7`. To find an entry by declared id,
+  enumerate from index 0 and compare `out->id`.
+- **There is no count getter.** Enumerate until the call fails — the same "read to the sentinel"
+  idiom `LUMICE_FrameGetRaypathAnalysis` uses.
+
+**Return value**:
+- `LUMICE_OK`: success, `*out` written.
+- `LUMICE_ERR_NULL_ARG`: `scene` or `out` is `NULL`.
+- `LUMICE_ERR_INVALID_VALUE`: `index` is negative or `>=` the number of renderers — the natural
+  loop terminator.
+- `LUMICE_ERR_INVALID_CONFIG`: the stored entry could not be decoded (not reachable through this
+  API's own writers).
+
+#### Scene settings: `LUMICE_SceneSet*`
+
+```c
+LUMICE_ErrorCode LUMICE_SceneSetLightSource(LUMICE_Scene*, float sun_altitude, float sun_azimuth,
+                                            float sun_diameter, const char* spectrum);
+LUMICE_ErrorCode LUMICE_SceneSetCustomSpectrum(LUMICE_Scene*, const LUMICE_SpectrumEntry*, int count);
+LUMICE_ErrorCode LUMICE_SceneSetSimParams(LUMICE_Scene*, int infinite, LUMICE_RayCount ray_num,
+                                          int max_hits, int geom_clock);
+LUMICE_ErrorCode LUMICE_SceneSetRayAllocation(LUMICE_Scene*, int mode);
+LUMICE_ErrorCode LUMICE_SceneSetColorMode(LUMICE_Scene*, int raypath_color_mode);
+```
+
+Each `Set*` is idempotent (last write wins) and callable in any order. Returns
+`LUMICE_ERR_NULL_ARG` for a `NULL` scene, `LUMICE_ERR_INVALID_CONFIG` / `LUMICE_ERR_INVALID_VALUE`
+for an invalid value.
+
+`LUMICE_SceneSetRayAllocation` (v4.38) sets `scene.ray_allocation` — the per-crystal ray
+allocation mode of `doc/configuration.md`. `mode` is `LUMICE_RAY_ALLOCATION_PROPORTIONAL` (0,
+wire string `"proportional"`: each crystal gets its population share of the rays) or
+`LUMICE_RAY_ALLOCATION_ADAPTIVE` (1, `"adaptive"`: rays are dealt by each crystal's measured
+per-ray energy variance — same expected image, noise made more even across crystals). It is
+deliberately not a parameter of the positional `LUMICE_SceneSetSimParams`. A handle that never
+calls it omits the key, so the core default applies at commit; `LUMICE_SceneFromJson` / `ToJson`
+still carry a document's own spelling verbatim.
+
+Light source and spectrum interact, and the interaction is order-independent by design: a discrete
+spectrum (`SetCustomSpectrum` with `count > 0`) takes precedence over the `spectrum` string, so
+`SetLightSource` does NOT overwrite a discrete spectrum already set. Both call orders converge to
+the same result. `SetCustomSpectrum` with `count == 0` clears the discrete spectrum and falls back
+to the string (default `"D65"`).
+
+`SetSimParams` takes `infinite` (1 = run forever, 0 = stop after `ray_num` rays), `max_hits`, and
+`geom_clock` (geometry-resampling clock K; 0 = let the core derive a default).
+
+#### Serialization: `LUMICE_SceneToJson` / `SceneFromJson` / `SceneFromJsonFile`
+
+```c
+LUMICE_ErrorCode LUMICE_SceneToJson(const LUMICE_Scene* scene, char* out_buf, size_t buf_size,
+                                    size_t* out_len);
+LUMICE_ErrorCode LUMICE_SceneFromJson(const char* json_str, LUMICE_Scene** out_scene);
+LUMICE_ErrorCode LUMICE_SceneFromJsonFile(const char* filename, LUMICE_Scene** out_scene);
+```
+
+These are the JSON authoring half, and they never touch a `LUMICE_Server`: parsing produces a
+handle, nothing more. Round-trip is lossless — `SceneFromJson(SceneToJson(scene))` is semantically
+equal to the original. The document format is the same one the CLI reads; see
+[Configuration Documentation](../configuration.md).
+
+`SceneToJson` uses an snprintf-style caller buffer with no cross-ABI allocation:
+
+- Pass `out_buf == NULL` (or `buf_size == 0`) to query the length without writing.
+- On a too-small buffer the output is truncated but **always** NUL-terminated.
+- `*out_len` (when non-`NULL`) always reports the full, untruncated length, so the output was
+  truncated iff `*out_len >= buf_size`. The usual two-call pattern is: query, allocate
+  `*out_len + 1`, call again.
+- Returns `LUMICE_ERR_NULL_ARG` for a `NULL` scene, `LUMICE_ERR_INVALID_CONFIG` if the scene
+  cannot be serialized (e.g. a `Set*` was handed a string that is not valid UTF-8).
+
+`SceneFromJson` / `SceneFromJsonFile` allocate a brand-new handle into `*out_scene` on success —
+you own it and must eventually `SceneDestroy` it. **On any failure `*out_scene` is set to `NULL`
+and no handle is leaked**, so you never destroy a handle that was not produced.
+
+**Return value**:
+- `LUMICE_OK`: success, `*out_scene` owns a new handle.
+- `LUMICE_ERR_NULL_ARG`: `json_str` / `filename` or `out_scene` is `NULL`.
+- `LUMICE_ERR_INVALID_JSON`: syntax error.
+- `LUMICE_ERR_MISSING_FIELD`: a required field is absent.
+- `LUMICE_ERR_INVALID_VALUE` / `LUMICE_ERR_INVALID_CONFIG`: bad enum or value, or a
+  `LUMICE_MAX_CONFIG_*` soft cap exceeded.
+- `LUMICE_ERR_FILE_NOT_FOUND` (`SceneFromJsonFile` only): the file cannot be opened.
+
+#### LUMICE_CommitScene
+
+Commits a scene to a server. This is the **only** commit entry point in the API.
+
+```c
+LUMICE_ErrorCode LUMICE_CommitScene(LUMICE_Server* server, const LUMICE_Scene* scene,
+                                    int* out_reused);
+```
+
+**Parameters**:
+- `server`: server handle.
+- `scene`: scene handle. Read as `const`; **neither consumed nor destroyed**. The server keeps no
+  reference to it, you still own it, and the same handle may be committed repeatedly (edit via
+  `Add*`/`Set*`, commit again).
+- `out_reused`: optional (may be `NULL`). When non-`NULL`, receives `1` if the server reused the
+  existing consumers/renderers across this commit (no renderer-layout change), `0` if they were
+  rebuilt.
+
+**Return value**:
+- `LUMICE_OK`: success — the server stops the current run and starts the new one immediately.
+- `LUMICE_ERR_NULL_ARG`: `server` or `scene` is `NULL`.
+- `LUMICE_ERR_INVALID_CONFIG` / `LUMICE_ERR_MISSING_FIELD` / `LUMICE_ERR_INVALID_VALUE` /
+  `LUMICE_ERR_INVALID_JSON`: the core refused the configuration.
+- `LUMICE_ERR_SERVER`: server-side failure.
+
+On any error `*out_reused` is left untouched. Note that no whole-scene re-validation happens here:
+every `Add*`/`Set*` already validated its own input, so what this can still surface is
+cross-field / semantic rejection from the core (e.g. `max_hits` out of range).
+
+#### Per-raypath color classes (`raypath_color`) and `LUMICE_SetRaypathColors`
+
+A scene carries an optional set of *color classes*: each has an RGB color plus a set of
+placement-scoped *match* predicates `{layer, crystal, predicate}` that decide which surviving rays
+get color-tagged. The composite mode (`LUMICE_COLOR_MODE_DOMINANT` / `_ADDITIVE` / `_PAINTER`) is
+a scene setting. A scene with no color classes disables color entirely — the mono
+`LUMICE_FrameGetRender` output and the emitted JSON are byte-identical to a config that never
+mentioned the feature.
+
+```c
+LUMICE_ErrorCode LUMICE_SceneAddColorClass(LUMICE_Scene*, const LUMICE_ColorClass*, int* out_id);
+LUMICE_ErrorCode LUMICE_SceneSetColorMode(LUMICE_Scene*, int raypath_color_mode);
+```
+
+**There is no ownership contract to honor.** `SceneAddColorClass` deep-copies the class you hand
+it, and the scene owns its color-class storage for as long as the handle lives; `SceneDestroy`
+releases everything. Up to v4.11 this was the API's sharpest edge — `LUMICE_Config.raypath_color`
+was a caller-owned heap pointer with `Create`/`Release` functions, implicit-allocation paths, a
+"do not copy the struct by value" rule and a C++ RAII guard to make early returns safe. All of
+that is gone with the struct.
+
+> **WARNING** — `LUMICE_ColorClass.visible` is a plain 0/1 field applied verbatim, so a
+> zero-initialized `LUMICE_ColorClass{}` has `visible == 0` (INVISIBLE), the opposite of the core
+> JSON default. Set `visible = 1` explicitly for every class you want shown, or the compositor
+> silently omits it.
+
+Two disjoint change paths — pick by whether the *members* change:
+
+- **Structure change** (`match[]` refs / `combine`) → **re-simulation**. Rebuild the scene's color
+  classes and re-commit with `LUMICE_CommitScene`. Read the composite images via
+  `LUMICE_FrameGetComposite` (one sRGB `LUMICE_RenderResult` per colored renderer).
+- **Appearance change** (RGB / visible / solo / z-order / composite mode) →
+  **no re-simulation**:
+
+```c
+LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server,
+                                         const LUMICE_ColorClassDisplay* classes,
+                                         int class_count, const int* z_order, int mode);
+```
+
+**Parameters**:
+- `classes`: per-class appearance patch (color, visible, solo). `class_count`
+  must equal the committed `raypath_color_count`.
+- `z_order`: optional (`NULL` = unchanged); when set, must be a permutation of
+  `[0, class_count)` where `z_order[i]` is the new drawing rank of class `i`.
+- `mode`: `LUMICE_COLOR_MODE_*`.
+
+**Return value**:
+- `LUMICE_OK`: success — the next `LUMICE_FrameGetComposite` re-composites the
+  already-accumulated data with the new appearance. The simulation epoch and
+  accumulator are untouched (no restart).
+- `LUMICE_ERR_NULL_ARG`: `server` is `NULL`, or `classes` is `NULL` with
+  `class_count > 0`.
+- `LUMICE_ERR_INVALID_VALUE`: `mode` out of range.
+- `LUMICE_ERR_INVALID_CONFIG`: `class_count` mismatch (structure changed —
+  re-commit the config) or `z_order` is not a valid permutation.
+
+#### LUMICE_GetColorClassSignal (AC4 empty-arc detector)
+
+```c
+LUMICE_ErrorCode LUMICE_GetColorClassSignal(LUMICE_Server* server, int* out_flags, int class_count);
+```
+
+For each committed color class, reports whether it has captured any rays yet —
+i.e. whether its snapshot Y-lane has any non-zero pixel on any active
+`RenderConsumer`. Intended for GUI empty-arc warnings when a physical filter
+has silently blocked all rays that would have matched a color class's
+predicate (a footgun the color-tag/physical-filter decoupling in §4.0 of
+`doc/gui/gui-custom-spectrum-and-raypath-color.md` makes possible: a color
+predicate can reference a raypath the physical filter already excludes).
+
+**Parameters**:
+- `out_flags`: caller-owned buffer of length `class_count`. On success,
+  `out_flags[i] = 1` iff class `i` has signal, `0` otherwise.
+- `class_count`: must equal the committed `raypath_color_count`; `0` is a
+  valid no-op (`out_flags` untouched).
+
+**Return value**:
+- `LUMICE_OK`: success.
+- `LUMICE_ERR_NULL_ARG`: `server` is `NULL`, or `out_flags` is `NULL` with
+  `class_count > 0`.
+- `LUMICE_ERR_INVALID_CONFIG`: `class_count` mismatch.
+
+Reads the frozen snapshot state (no `DoSnapshot` trigger) — callers relying on
+freshness should call `LUMICE_AcquireResultFrame` first, which materializes a
+pending snapshot. `O(W*H * class_count * consumers)` scan; intended for infrequent polls
+(commit-debounce cadence, ~1 Hz), not per render frame — the GUI color window
+throttles its poll to 500ms (`kSignalPollIntervalSec` in `color_window.cpp`).
+
+### Retrieving Results
+
+Results are read from a **result frame** — an immutable snapshot of the simulation that the
+caller holds a share of. Acquire one, read as many of its four views as you need, release it:
+
+```c
+LUMICE_ResultFrame* frame = NULL;
+if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
+    LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
+    LUMICE_FrameGetRender(frame, renders, LUMICE_MAX_RENDER_RESULTS);
+    // ... use renders[i].img_buffer ...
+    LUMICE_ReleaseResultFrame(frame);
+}
+```
+
+**Why a frame and not a getter on the server**: the buffers a read hands back are views into
+library-owned memory. With server-taking getters that memory was only valid until the *next*
+getter call on the same server, so one reader's read invalidated another reader's still-in-use
+pixels — a use-after-free, not merely a stale read. A frame gives the reader a real share of the
+data's lifetime, so the pixels stay valid until *that* reader releases *its* frame.
+
+Two further properties come free from the model:
+- **Same generation by construction.** Any two reads off one frame describe the same snapshot,
+  so no combined "xyz + composite" entry point is needed to pair them.
+- **Frames are independent.** Acquiring a second frame does not affect the first, and a caller
+  may hold as many as it likes — including across a server teardown.
+
+The four read functions keep the array + sentinel shape of the getters they replace, so only the
+first argument differs:
+- The `out` array must be at least `max_count + 1` in size (to include the sentinel entry)
+- A zero-valued sentinel entry immediately follows the valid results
+- The caller loops until it encounters the sentinel
+- All of them return `LUMICE_ERR_NULL_ARG` on a `NULL` frame or `out`
+
+#### LUMICE_AcquireResultFrame
+
+```c
+LUMICE_ErrorCode LUMICE_AcquireResultFrame(LUMICE_Server* server, LUMICE_ResultFrame** out_frame);
+```
+
+Materializes a pending snapshot (as the getters it replaces did), then writes a new frame handle
+to `*out_frame`. The caller owns that handle and MUST eventually pass it to
+`LUMICE_ReleaseResultFrame`.
+
+**Return value**:
+- `LUMICE_OK`: success. `*out_frame` is never `NULL` — even before the first snapshot, where the
+  frame simply reads as "no results" (every `LUMICE_FrameGet*` writes its sentinel / all-zero struct)
+- `LUMICE_ERR_NULL_ARG`: `server` or `out_frame` is `NULL`
+
+#### LUMICE_ReleaseResultFrame
+
+```c
+void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
+```
+
+NULL-safe no-op (same contract as `LUMICE_DestroyServer`). Each handle must be released exactly
+once; releasing the same handle twice is undefined behavior — this mirrors `LUMICE_DestroyServer`
+and every other handle in this API, so there is no double-free sentinel.
+
+**Failure mode if you forget**: that one frame leaks, and nothing else. It cannot corrupt memory
+or affect any other reader, because a frame is immutable and separately reference-counted; a leak
+is what ASan/LSan/valgrind already report. After the release, every pointer read out of that frame
+is dangling — copy what you still need first.
+
+#### LUMICE_FrameGetRender
+
+Mono / full-spectrum sRGB uint8 images.
+
+```c
+LUMICE_ErrorCode LUMICE_FrameGetRender(const LUMICE_ResultFrame* frame, LUMICE_RenderResult* out, int max_count);
+```
+
+**Sentinel**: the trailing entry has `img_buffer == NULL`. `composite_p99_y` is left at 0 on this
+path and must be ignored. Recommended `max_count`: `LUMICE_MAX_RENDER_RESULTS`.
+
+#### LUMICE_FrameGetComposite
+
+Per-raypath composite sRGB images, one per colored renderer.
+
+```c
+LUMICE_ErrorCode LUMICE_FrameGetComposite(const LUMICE_ResultFrame* frame, LUMICE_RenderResult* out, int max_count);
+```
+
+**Sentinel**: the trailing entry has `img_buffer == NULL`; the result is empty (`out[0]` is the
+sentinel) when no `raypath_color` is configured, which leaves the mono path unaffected.
+`composite_p99_y` is meaningful here.
+
+#### LUMICE_FrameGetRawXyz
+
+Raw XYZ float data plus the intensity scalars.
+
+```c
+LUMICE_ErrorCode LUMICE_FrameGetRawXyz(const LUMICE_ResultFrame* frame, LUMICE_RawXyzResult* out, int max_count);
+```
+
+**Sentinel**: the trailing entry has `xyz_buffer == NULL`.
+
+#### LUMICE_FrameGetStats
+
+Simulation statistics — a single value, so no `max_count`.
+
+```c
+LUMICE_ErrorCode LUMICE_FrameGetStats(const LUMICE_ResultFrame* frame, LUMICE_StatsResult* out);
+```
+
+Writes an all-zero struct when the frame carries no stats (e.g. it was acquired before the first
+snapshot).
+
+### State and Control
+
+#### LUMICE_QueryServerState
+
+Queries the server state.
+
+```c
+LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerState* out);
+```
+
+**Parameters**:
+- `server`: server handle pointer
+- `out`: pointer to receive the state
+
+**Return value**:
+- `LUMICE_OK`: success, state written to `*out`
+- `LUMICE_ERR_NULL_ARG`: `server` or `out` is `NULL`
+
+#### LUMICE_GetSimLifecycle
+
+Reads the explicit simulation lifecycle — the single-source truth `LUMICE_QueryServerState`
+is a projection of — together with the current epoch and the kind of the current session.
+
+```c
+typedef enum LUMICE_SimLifecycle_ {
+  LUMICE_LIFECYCLE_IDLE = 0,      // never run, or reset (post-Stop) with no data consumed
+  LUMICE_LIFECYCLE_RUNNING,       // pending work / workers active
+  LUMICE_LIFECYCLE_COMPLETED,     // a finite run drained clean (incl. zero-output convergence)
+} LUMICE_SimLifecycle;
+
+typedef enum LUMICE_SessionKind_ {
+  LUMICE_SESSION_RENDER = 0,      // a render run (LUMICE_CommitScene); the default before any run
+  LUMICE_SESSION_ANALYSIS = 1,    // a raypath-analysis run (LUMICE_StartRaypathAnalysis)
+} LUMICE_SessionKind;
+
+typedef struct LUMICE_SimLifecycleResult_ {
+  int lifecycle;                  // one of LUMICE_SimLifecycle
+  unsigned long long epoch;       // monotonic, ++ on each run start; 0 before any commit
+  int session_kind;               // one of LUMICE_SessionKind (v4.37)
+} LUMICE_SimLifecycleResult;
+
+LUMICE_ErrorCode LUMICE_GetSimLifecycle(LUMICE_Server* server, LUMICE_SimLifecycleResult* out);
+```
+
+**Parameters**:
+- `server`: server handle pointer
+- `out`: pointer to receive `{lifecycle, epoch, session_kind}`
+
+**Return value**:
+- `LUMICE_OK`: success
+- `LUMICE_ERR_NULL_ARG`: `server` or `out` is `NULL`
+
+**`epoch`**: read back after a synchronous `LUMICE_CommitScene` to learn the epoch it just
+minted (the commit signature does not change). Every run start advances it: a commit, an
+analysis run, and a `LUMICE_ContinueRender` (v4.44) — the one start that resets no accumulator,
+and advances the epoch anyway because the drain signal and a frame's freshness are keyed on it.
+
+**`session_kind`** (v4.37): which kind of run the session that is **current at the time of the
+call** is — not "the kind at the last commit". It is written only by the two calls that
+(re)start a run, `LUMICE_CommitScene` (→ `RENDER`) and `LUMICE_StartRaypathAnalysis`
+(→ `ANALYSIS`); `LUMICE_StopServer` and completion leave it alone, so a finished or stopped
+analysis still reads `ANALYSIS` until the next commit. It is the server's own
+"was the previous session an analysis" term of the consumer-reuse decision `LUMICE_CommitScene`
+makes (an analysis session's consumers are never reused), exposed so a client that predicts that
+decision — the GUI does, to know whether to stop its poller before the commit — reads the same
+value instead of keeping a shadow flag of its own. Sample it **before** the commit whose decision
+you are predicting: the commit itself flips it back to `RENDER`.
+
+The three fields are each individually current, not one atomic snapshot of each other — the
+same property `lifecycle` and `epoch` have always had.
+
+#### LUMICE_GetDrainStatus
+
+Reads the consumer-side drain status: whether the current epoch's data has been fully
+consumed, so the accumulated statistics are final.
+
+```c
+typedef struct LUMICE_DrainResult_ {
+  unsigned long long drained_epoch;
+  unsigned long long current_epoch;
+} LUMICE_DrainResult;
+
+LUMICE_ErrorCode LUMICE_GetDrainStatus(LUMICE_Server* server, LUMICE_DrainResult* out);
+```
+
+**Parameters**:
+- `server`: server handle pointer
+- `out`: pointer to receive `{drained_epoch, current_epoch}`
+
+**Return value**:
+- `LUMICE_OK`: success
+- `LUMICE_ERR_NULL_ARG`: `server` or `out` is `NULL`
+
+**Contract**: the current epoch is fully drained iff `drained_epoch == current_epoch`.
+`current_epoch` is the same value `LUMICE_GetSimLifecycle()` reports, sampled in this call
+so no second round trip is needed to compare them.
+
+**Why `LUMICE_SERVER_IDLE` is not enough**: `LUMICE_QueryServerState` /
+`LUMICE_GetSimLifecycle` derive their verdict from producer-side predicates only — no
+simulator busy, no pending scenes, scene generation finished. None of them asks whether
+the consumer thread has drained its queue. Statistics
+(`LUMICE_FrameGetStats` → `crystal_num` / `orientation_num` / `sim_ray_num`) are running
+totals frozen at snapshot time, so a read taken the moment the server first reports IDLE
+can return a **partial** total — observed as `orientation_num` 19616 against an expected
+20000, exactly a whole number of dispatch grains short. Any reader that needs final
+totals must poll this call, not the state enum.
+
+**Cost**: O(1) atomic reads, same class as `LUMICE_GetSimRayCount` — no snapshot, no
+render, no lock. Safe to call on every poll iteration.
+
+**Edge cases**:
+- An infinite run (`ray_num` unbounded) never drains, mirroring the way its lifecycle
+  never reaches `COMPLETED`.
+- `LUMICE_StopServer()` does **not** publish a drain. Stopping discards whatever is still
+  queued, so "stopped" stays distinguishable from "drained" rather than being reported as
+  a clean finish.
+- `drained_epoch` is monotonic and never reset. A new commit — or a `LUMICE_ContinueRender` —
+  advances `current_epoch` past it, which makes the equality test read "not drained yet" on its
+  own.
+
+**Typical use**:
+
+```c
+LUMICE_DrainResult drain;
+for (;;) {
+    if (LUMICE_GetDrainStatus(server, &drain) != LUMICE_OK) { /* handle */ }
+    if (drain.drained_epoch == drain.current_epoch) {
+        break;  // totals are final; safe to acquire a result frame and read stats
+    }
+    sleep_ms(10);
+}
+```
+
+#### LUMICE_StopServer
+
+Stops the server.
+
+```c
+void LUMICE_StopServer(LUMICE_Server* server);
+```
+
+**Parameters**:
+- `server`: server handle pointer; passing `NULL` is safe
+
+**Notes**:
+- After stopping, you can still submit new configurations
+- Stopping does not release server resources; call `LUMICE_DestroyServer()` to release them
+- A stopped render keeps its accumulation: `LUMICE_ContinueRender()` can add to it later
+
+#### LUMICE_ContinueRender
+
+Traces more rays **into** the accumulation the last render run left behind, instead of starting
+over (v4.44). `LUMICE_CommitScene` always starts from zero; this is the other way to start a run.
+
+```c
+LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMICE_RayCount additional_ray_num);
+```
+
+**Parameters**:
+- `server`: server handle pointer
+- `infinite`: non-zero runs until `LUMICE_StopServer()` and ignores `additional_ray_num`
+- `additional_ray_num`: how many **more** rays to trace, total across wavelengths — an
+  increment, not a new total (unlike the `ray_num` of `LUMICE_SceneSetSimParams`, which is the
+  whole run's budget)
+
+**Return value**:
+- `LUMICE_OK`: the continuation is running
+- `LUMICE_ERR_NULL_ARG`: `server` is `NULL`
+- `LUMICE_ERR_INVALID_VALUE`: `infinite == 0` with `additional_ray_num == 0`
+- `LUMICE_ERR_SERVER`: nothing to continue — no render was ever committed, or the current
+  session is a raypath analysis (commit a render again first), a run is in progress, or a
+  just-completed run's last batches did not finish draining within an internal wait bound (retry
+  shortly). The four causes share the code; a caller that must tell them apart can read
+  `LUMICE_GetSimLifecycle()` (`lifecycle`, `session_kind`) first.
+
+A rejected call changes nothing — including the drain-timeout case: rather than proceed and
+silently discard the undrained batches, the call fails so "no traced ray is dropped" (below)
+holds unconditionally, not just in the common case.
+
+**What carries over**: everything a commit would reset — the render planes (raw XYZ and the
+images made from them), `sim_ray_num` and the other statistics, `emitted_energy`, and the
+exposure anchor (`anchor_l99_sky`). Every result read afterwards describes the earlier rays and
+the new ones together, so the picture does not jump in brightness beyond what more samples
+themselves change. The scene is the committed one; only the budget is new.
+
+**New samples, also under a fixed seed**: each continuation traces a random stream of its own.
+A server created with a non-zero `sim_seed` would otherwise restart its stream at every run start
+and trace the same rays a second time — and so would every GPU route, whose backend seeds itself
+per run even when `sim_seed` is 0. The continuation's seed is derived from the server's seed and
+a per-server continuation counter, so a fixed-seed server stays reproducible: the same sequence
+of commits and continuations traces the same rays.
+
+**Lifecycle**: works after a render `COMPLETED` (its finite budget ran out) or was stopped
+(`IDLE`). On success the lifecycle reads `RUNNING` and the epoch has advanced by one, exactly as
+after a commit; poll `LUMICE_GetSimLifecycle()` / `LUMICE_GetDrainStatus()` as for any run. A
+completed run whose last batches are still being consumed is drained before the continuation
+starts, so no traced ray is dropped — if that drain does not finish within 5s (a normal consumer
+pass is orders of magnitude faster; hitting the bound means the consumer is stuck, not merely
+slow), the call returns `LUMICE_ERR_SERVER` instead of proceeding and dropping them.
+
+### Raypath Analysis Run
+
+The other kind of run a server can carry (v4.29; design in `raypath-analysis-panel.md`): no
+image, a histogram of complete raypath chains with the energy each delivered into a region of
+interest, sorted by energy. It shares the render run's lifecycle — the same
+`LUMICE_GetSimLifecycle` / `LUMICE_GetDrainStatus` / `LUMICE_AcquireResultFrame` — and the two
+exclude each other.
+
+```c
+LUMICE_ErrorCode LUMICE_StartRaypathAnalysis(LUMICE_Server* server, const LUMICE_Scene* scene,
+                                             const LUMICE_RaypathAnalysisRequest* request);
+LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysisInfo(const LUMICE_ResultFrame* frame, int chain_id_symmetry, LUMICE_RaypathAnalysisInfo* out);
+LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysis(const LUMICE_ResultFrame* frame, int chain_id_symmetry, LUMICE_RaypathHistogramEntry* out, int max_count);
+LUMICE_ErrorCode LUMICE_UnprojectPixel(const LUMICE_AnnotationView* view, int px, int py, float out_dir[3], int* out_valid);
+LUMICE_ErrorCode LUMICE_ProjectDirection(const LUMICE_AnnotationView* view, const float dir[3], float* out_px,
+                                         float* out_py, int* out_valid);
+LUMICE_ErrorCode LUMICE_GetActiveBackend(LUMICE_Server* server, int* out_backend);
+```
+
+**Lifecycle**:
+1. Build the scene to analyse (`LUMICE_SceneFromJson` / `_FromJsonFile`, or the scratch route),
+   exactly as for `LUMICE_CommitScene`. No commit is needed first (v4.36): the analysis is a
+   submission of its own, and a server that has never committed anything analyses just the same.
+2. If a render is in progress, `LUMICE_StopServer` or wait for it to complete. An analysis
+   cannot start over a render in progress and a commit cannot start over an analysis in
+   progress: both return `LUMICE_ERR_SERVER` and interrupt nothing.
+3. `LUMICE_StartRaypathAnalysis` with the scene and a request. The scene is read at the call and
+   deep-copied (the handle stays the caller's); a scene the server cannot use is rejected with
+   the code `LUMICE_CommitScene` would give it, with nothing stopped or replaced. The run
+   advances the lifecycle epoch like a commit does — a frame of it is never mistaken for the
+   last render's — and leaves the render's committed config alone, so the `LUMICE_CommitScene`
+   after it judges consumer reuse against the last render, as if no analysis had happened —
+   except that it never reuses an analysis session's consumers, and `LUMICE_GetSimLifecycle`'s
+   `session_kind` (v4.37) is how a caller reads that term before the commit.
+   `roi_mode` is `LUMICE_RAYPATH_ROI_FULL_SKY`,
+   `_IN_FRAME` (membership in `frame_view`, a `LUMICE_AnnotationView`) or `_CONE` (`cone_center`,
+   `cone_radius_rad`, `cone_ring_count`). A cone has no stop of its own (v4.34): in every mode
+   the run ends on its ray budget or on `LUMICE_StopServer`. The request names no
+   symmetry (v4.33): the run records every chain unreduced, and the P/B/D reduction is a
+   parameter of the read (step 4). The run's ray budget is the request's
+   own (v4.32): `infinite = 1` traces until stopped — and a run ended by `LUMICE_StopServer`
+   keeps what it accumulated: the frame acquired after the stop returns carries the histogram
+   consumed up to it (v4.34), so a partial result is readable — `infinite = 0` traces `ray_num` rays in total across every wavelength, and
+   `infinite = LUMICE_RAYPATH_RAY_BUDGET_SCENE_DEFAULT` traces the submitted scene's own
+   `ray_num` / `infinite` — the behaviour before v4.32. A zero-initialized request asks for
+   **zero** rays, not for the scene's budget; set the field. Any other `infinite` is
+   `LUMICE_ERR_INVALID_VALUE`. The scene is never edited by the run: the next
+   `LUMICE_CommitScene` traces the document's own budget. Calling it while an analysis is
+   already in progress restarts the analysis with the new scene and request.
+4. Poll as for a render; read through a frame. Both getters take `chain_id_symmetry`, a bit set
+   of `LUMICE_RAYPATH_SYMMETRY_P` / `_B` / `_D` (0..7, else `LUMICE_ERR_INVALID_VALUE`; 0 is
+   "no reduction"): the frame's recorded chains are reduced per layer under it — with that
+   layer's crystal's D parameters, the same rule a filter on that crystal canonicalises by — and
+   chains that meet on one reduced form are merged into one row whose `energy`, `count` and
+   `ring_energy` are the sums. This happens on the read, from the frame's unreduced record, so
+   one frame can be read under several symmetries and the sums are the same at every one; the
+   two calls must be given the same value, since `entry_count` is the merged row count.
+   `LUMICE_FrameGetRaypathAnalysisInfo` says whether the frame is an analysis frame (`present`)
+   and how many rows it holds under that symmetry; the entries follow the `(out, max_count)`
+   sentinel contract of `LUMICE_FrameGetRawXyz` with `count == 0` as the sentinel, and are
+   copied (they outlive the frame). On an analysis frame the render / raw-XYZ getters write
+   their sentinel at `out[0]`; on a render frame `present` is 0.
+5. The next `LUMICE_CommitScene` is a render run again.
+
+**CPU, always**: the chain ids exist on the legacy CPU path only, so the analysis run forces that
+route ahead of both `LUMICE_SetPreferredBackend` and `LUMICE_TRACE_BACKEND`, as a session property
+(the preference is untouched and the next render honours it; `LUMICE_GetBackendFallbackFlag` stays
+0). `LUMICE_GetActiveBackend` reads what the simulation actually runs on — `LUMICE_BACKEND_CPU`
+for the whole analysis session — as opposed to what was asked for.
+
+**Bounded record** (v4.35): the run keeps a fixed number of rows, whatever the ray count or the
+number of scattering layers — per worker at most `ChainIdInterningTable::kDefaultCapacity` distinct
+chains are interned, and the server keeps at most `kRaypathHistogramCapacity` rows (Space-Saving:
+a chain arriving with no row while every row is taken takes over the lowest-energy row and records
+the energy it took over as its uncertainty). What that costs is reported, not hidden.
+`LUMICE_RaypathHistogramEntry::error_bound` is how much of a row's `energy` may belong to another
+chain — the true energy lies within `[energy - error_bound, energy]`, 0 for a row that never took
+a slot over, and under a symmetry the sum over the merged rows. `LUMICE_RaypathAnalysisInfo`
+carries the record-level account: `other_energy` / `other_count` are the rays whose chain the
+producer had no room for, as one bucket that is never an entry (so Σ entries + other is every
+counted ray, under every symmetry — a consumer shows it as one more line so the percentages add
+up); `truncated_chain_count` is how many times a ray's chain hit the full record (arrivals, not
+distinct chains — a turned-away chain is not remembered, so it counts again when it comes back);
+`max_row_error` is the largest `error_bound` over the entries under the read's symmetry, 0 when
+no row was ever taken over and every entry is exact — the shape of every run that fits, which
+reads exactly as it did before v4.35.
+
+**Chain text**: `LUMICE_RaypathHistogramEntry::display` is a byte copy of the server's one chain
+formatter (v4.33 format): faces joined by `-`; a layer that holds more than one crystal in the
+scene names its crystal as `C<id>`, a layer with one crystal does not; with more than one layer
+every layer is parenthesised and layers are joined by ` -> `, root first — `3-5`, `C1(3-5)`,
+`(3-5) -> (1-3)`, `C1(1-3) -> C4(3-5)`. Print this field rather than re-assembling it from
+`chain[]`. The joiner is ASCII in every consumer; the GUI's list redraws it as an arrow icon at
+render time only, and that presentation never reaches this field.
+
+**Pixel → direction**: `LUMICE_UnprojectPixel` turns a pixel index of a `LUMICE_AnnotationView`
+canvas into the world direction it images (unit vector, the direction light travels), through the
+same inverse the render-domain mask and the IN_FRAME test are built from; `*out_valid` is 0 for a
+pixel outside the canvas, outside the lens's image domain, or clipped by `visible` / `front`. It is
+how a click becomes a cone centre.
+
+**Direction → pixel** (v4.31): `LUMICE_ProjectDirection` is the forward half `LUMICE_UnprojectPixel`
+is the inverse of, on a direction the caller already holds rather than one of the six named marker
+ids `LUMICE_ComputeAnnotationAnchors` projects. It is the same sampler those markers use
+(projection, canvas clamp, half-degree hemisphere slack — deliberately not `LUMICE_UnprojectPixel`'s
+exact render-domain verdict, since a marker should appear and disappear the way the other markers
+do), so a caller that keeps a direction of its own — the analysis panel keeps its cone centre as
+one — can place it on the picture every frame and have it move with the view exactly as the zenith
+or the sun marker does. `*out_px`/`*out_py` are written only when `*out_valid` is 1; zero
+allocation, no storage handle, designed to be called per frame from a hover test.
+
+## Usage Examples
+
+### Basic Example
+
+```c
+#include "lumice_engine.h"
+#include <stdio.h>
+
+int main() {
+    // 1. Create server
+    LUMICE_Server* server = LUMICE_CreateServer();
+    if (!server) {
+        fprintf(stderr, "Failed to create server\n");
+        return 1;
+    }
+
+    // 2. Parse the config file into a scene handle, commit it, then release the handle.
+    //    (The server keeps no reference to the scene, so it can go away right after commit.)
+    LUMICE_Scene* scene = NULL;
+    if (LUMICE_SceneFromJsonFile("config.json", &scene) != LUMICE_OK) {
+        LUMICE_DestroyServer(server);
+        return 1;
+    }
+    LUMICE_ErrorCode commit_err = LUMICE_CommitScene(server, scene, NULL);
+    LUMICE_SceneDestroy(scene);
+    if (commit_err != LUMICE_OK) {
+        LUMICE_DestroyServer(server);
+        return 1;
+    }
+
+    // 4. Poll for results
+    while (1) {
+        usleep(1000000);  // 1 second
+
+        // Acquire one frame; renders and stats below are read off the same snapshot
+        LUMICE_ResultFrame* frame = NULL;
+        if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
+            LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
+            if (LUMICE_FrameGetRender(frame, renders, LUMICE_MAX_RENDER_RESULTS) == LUMICE_OK) {
+                for (int i = 0; renders[i].img_buffer != NULL; i++) {
+                    printf("Render[%02d]: %dx%d\n",
+                           renders[i].renderer_id, renders[i].img_width, renders[i].img_height);
+                }
+            }
+
+            LUMICE_StatsResult stats;
+            if (LUMICE_FrameGetStats(frame, &stats) == LUMICE_OK) {
+                printf("Stats: rays=%lu, crystals=%lu\n", stats.sim_ray_num, stats.crystal_num);
+            }
+
+            LUMICE_ReleaseResultFrame(frame);
+        }
+
+        // Check if processing is complete
+        LUMICE_ServerState state;
+        if (LUMICE_QueryServerState(server, &state) == LUMICE_OK && state == LUMICE_SERVER_IDLE) {
+            break;
+        }
+    }
+
+    // 5. Destroy server
+    LUMICE_DestroyServer(server);
+    return 0;
+}
+```
+
+### Full Example (with Error Handling)
+
+```c
+#include "lumice_engine.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <config.json>\n", argv[0]);
+        return 1;
+    }
+
+    // 1. Create server
+    LUMICE_Server* server = LUMICE_CreateServer();
+    if (!server) {
+        fprintf(stderr, "Error: Failed to create server\n");
+        return 1;
+    }
+
+    // 2. Set log level (optional, default is INFO)
+    LUMICE_SetLogLevel(server, LUMICE_LOG_INFO);
+
+    // 3. Load configuration: file -> scene handle -> commit -> release handle.
+    LUMICE_Scene* scene = NULL;
+    LUMICE_ErrorCode err = LUMICE_SceneFromJsonFile(argv[1], &scene);
+    if (err != LUMICE_OK) {
+        fprintf(stderr, "Error: Failed to parse config (error code: %d)\n", err);
+        LUMICE_DestroyServer(server);
+        return 1;
+    }
+    err = LUMICE_CommitScene(server, scene, NULL);
+    LUMICE_SceneDestroy(scene);   // committed or not, the handle is ours to free
+    if (err != LUMICE_OK) {
+        fprintf(stderr, "Error: Failed to commit config (error code: %d)\n", err);
+        LUMICE_DestroyServer(server);
+        return 1;
+    }
+
+    // 4. Poll for results
+    while (1) {
+        usleep(1000000);
+
+        // One frame per poll: the images stay valid until this frame is released,
+        // no matter what any other thread reads in the meantime.
+        LUMICE_ResultFrame* frame = NULL;
+        if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
+            LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
+            if (LUMICE_FrameGetRender(frame, renders, LUMICE_MAX_RENDER_RESULTS) == LUMICE_OK) {
+                for (int i = 0; renders[i].img_buffer != NULL; i++) {
+                    printf("Render[%02d]: %dx%d, buffer=%p\n",
+                           renders[i].renderer_id, renders[i].img_width, renders[i].img_height,
+                           (const void*)renders[i].img_buffer);
+
+                    // Save image (example)
+                    char filename[256];
+                    snprintf(filename, sizeof(filename), "output_%d_%dx%d.raw",
+                             renders[i].renderer_id, renders[i].img_width, renders[i].img_height);
+                    FILE* img_file = fopen(filename, "wb");
+                    if (img_file) {
+                        size_t img_size = (size_t)renders[i].img_width * renders[i].img_height * 3;
+                        fwrite(renders[i].img_buffer, 1, img_size, img_file);
+                        fclose(img_file);
+                    }
+                }
+            }
+
+            LUMICE_StatsResult stats;
+            if (LUMICE_FrameGetStats(frame, &stats) == LUMICE_OK) {
+                printf("Stats: rays=%lu, segments=%lu, crystals=%lu\n",
+                       stats.sim_ray_num, stats.ray_seg_num, stats.crystal_num);
+            }
+
+            LUMICE_ReleaseResultFrame(frame);
+        }
+
+        // Check if processing is complete
+        LUMICE_ServerState state;
+        if (LUMICE_QueryServerState(server, &state) == LUMICE_OK && state == LUMICE_SERVER_IDLE) {
+            break;
+        }
+    }
+
+    // 5. Clean up
+    LUMICE_DestroyServer(server);
+    return 0;
+}
+```
+
+## Error Handling
+
+### LUMICE_ErrorCode Error Codes
+
+All configuration, query, and result retrieval APIs return `LUMICE_ErrorCode`. Best practice:
+
+```c
+LUMICE_Scene* scene = NULL;
+LUMICE_ErrorCode err = LUMICE_SceneFromJsonFile("config.json", &scene);
+if (err != LUMICE_OK) {
+    switch (err) {
+        case LUMICE_ERR_NULL_ARG:
+            fprintf(stderr, "Null argument\n");
+            break;
+        case LUMICE_ERR_FILE_NOT_FOUND:
+            fprintf(stderr, "Config file not found\n");
+            break;
+        case LUMICE_ERR_INVALID_JSON:
+            fprintf(stderr, "Invalid JSON format\n");
+            break;
+        default:
+            fprintf(stderr, "Error code: %d\n", err);
+            break;
+    }
+}
+```
+
+### Error Handling Best Practices
+
+1. **Check error codes**: Always check the return value of all functions that return `LUMICE_ErrorCode`
+2. **Check creation results**: `LUMICE_CreateServer()` returns `NULL` on failure
+3. **Resource cleanup**: Ensure `LUMICE_DestroyServer()` is called on all exit paths
+
+## Thread Safety
+
+### Reading Results Is Thread-Safe — By Holding a Share, Not by Being Lucky
+
+`LUMICE_AcquireResultFrame`, `LUMICE_ReleaseResultFrame`, and all four `LUMICE_FrameGet*`
+functions are **thread-safe**: any number of threads may acquire, read, and release frames
+concurrently, with no external locking. This is not an incidental property to verify per call —
+it is the reason the frame model exists (see [Retrieving Results](#retrieving-results)). A
+pointer a `FrameGet*` call hands back (`img_buffer` / `xyz_buffer`) is a borrow into a frame the
+caller holds a real share of; it stays valid for exactly as long as *that* frame is held, until
+the matching `LUMICE_ReleaseResultFrame` — independent of what any other thread does to the
+server, and independent of how many *other* frames exist. Two frames never interfere with each
+other, whether held by the same thread or different ones.
+
+`LUMICE_FrameGetStats` is not part of that borrow family: it copies a **plain value** struct with
+no pointer into the frame, so nothing dangles after release. It rides the same acquire/release
+envelope as the other three only because all four reads come from one frame, not because it needs
+the borrow protection they do.
+
+`LUMICE_QueryServerState()` is also thread-safe and may be called from any thread at any time.
+
+### Non-Thread-Safe APIs
+
+The following mutate shared server state directly and must not be called concurrently with each
+other or with any other call on the same server:
+- `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()` / `LUMICE_DestroyServer()`: server lifecycle
+  management
+- `LUMICE_CommitScene()`: configuration submission
+- `LUMICE_StopServer()`: server shutdown
+- `LUMICE_Scene*` handle mutation (`LUMICE_SceneAdd*` / `LUMICE_SceneSet*` / `LUMICE_SceneDestroy`
+  on one handle) — a handle has no internal locking. Distinct handles are independent, so building
+  two scenes on two threads is fine.
+
+### Multithreading Recommendations
+
+1. **Single server, multiple threads**: designate one owner thread for `LUMICE_CommitScene()` /
+   `LUMICE_StopServer()` / `LUMICE_DestroyServer()`. Any number of other threads may freely
+   acquire and read result frames concurrently with that owner and with each other — no mutex
+   needed on the read side.
+2. **Multiple servers**: use a separate server instance per thread.
+
+## Integration with Other Languages
+
+### Python Integration (using ctypes)
+
+```python
+import ctypes
+import json
+
+# Load library
+lib = ctypes.CDLL('./liblumice.so')  # Linux
+# lib = ctypes.CDLL('./liblumice.dylib')  # macOS
+
+# Define types
+class LUMICE_RenderResult(ctypes.Structure):
+    _fields_ = [
+        ('renderer_id', ctypes.c_int),
+        ('img_width', ctypes.c_int),
+        ('img_height', ctypes.c_int),
+        ('img_buffer', ctypes.POINTER(ctypes.c_ubyte)),
+    ]
+
+class LUMICE_StatsResult(ctypes.Structure):
+    _fields_ = [
+        ('ray_seg_num', ctypes.c_ulong),
+        ('sim_ray_num', ctypes.c_ulong),
+        ('crystal_num', ctypes.c_ulong),
+    ]
+
+LUMICE_MAX_RENDER_RESULTS = 16
+LUMICE_MAX_STATS_RESULTS = 1
+
+# Define function signatures
+lib.LUMICE_CreateServer.restype = ctypes.c_void_p
+lib.LUMICE_DestroyServer.argtypes = [ctypes.c_void_p]
+lib.LUMICE_SceneFromJsonFile.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
+lib.LUMICE_SceneFromJsonFile.restype = ctypes.c_int
+lib.LUMICE_CommitScene.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+lib.LUMICE_CommitScene.restype = ctypes.c_int
+lib.LUMICE_SceneDestroy.argtypes = [ctypes.c_void_p]
+lib.LUMICE_SceneDestroy.restype = None
+# The frame handle is opaque, so c_void_p is the whole binding — no struct layout to mirror.
+lib.LUMICE_AcquireResultFrame.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+lib.LUMICE_AcquireResultFrame.restype = ctypes.c_int
+lib.LUMICE_ReleaseResultFrame.argtypes = [ctypes.c_void_p]
+lib.LUMICE_ReleaseResultFrame.restype = None
+lib.LUMICE_FrameGetRender.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_RenderResult), ctypes.c_int]
+lib.LUMICE_FrameGetRender.restype = ctypes.c_int
+lib.LUMICE_FrameGetStats.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_StatsResult)]
+lib.LUMICE_FrameGetStats.restype = ctypes.c_int
+lib.LUMICE_QueryServerState.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+lib.LUMICE_QueryServerState.restype = ctypes.c_int
+lib.LUMICE_StopServer.argtypes = [ctypes.c_void_p]
+
+# Usage example
+def simulate(config_file):
+    server = lib.LUMICE_CreateServer()
+    if not server:
+        raise RuntimeError("Failed to create server")
+
+    try:
+        scene = ctypes.c_void_p()
+        err = lib.LUMICE_SceneFromJsonFile(config_file.encode('utf-8'), ctypes.byref(scene))
+        if err != 0:
+            raise RuntimeError(f"Failed to parse config (error: {err})")
+        try:
+            err = lib.LUMICE_CommitScene(server, scene, None)
+            if err != 0:
+                raise RuntimeError(f"Failed to commit config (error: {err})")
+        finally:
+            lib.LUMICE_SceneDestroy(scene)
+
+        import time
+        while True:
+            time.sleep(1)
+
+            # Get render results off a frame
+            frame = ctypes.c_void_p()
+            if lib.LUMICE_AcquireResultFrame(server, ctypes.byref(frame)) == 0:
+                try:
+                    renders = (LUMICE_RenderResult * (LUMICE_MAX_RENDER_RESULTS + 1))()
+                    if lib.LUMICE_FrameGetRender(frame, renders, LUMICE_MAX_RENDER_RESULTS) == 0:
+                        for r in renders:
+                            if not r.img_buffer:
+                                break
+                            print(f"Render[{r.renderer_id:02d}]: {r.img_width}x{r.img_height}")
+                finally:
+                    lib.LUMICE_ReleaseResultFrame(frame)
+
+            # Check state
+            state = ctypes.c_int()
+            if lib.LUMICE_QueryServerState(server, ctypes.byref(state)) == 0 and state.value == 0:
+                break
+    finally:
+        lib.LUMICE_DestroyServer(server)
+```
+
+### Rust Integration
+
+```rust
+use std::ffi::CString;
+use std::os::raw::{c_char, c_int, c_uchar, c_ulong, c_void};
+
+const LUMICE_MAX_RENDER_RESULTS: usize = 16;
+const LUMICE_MAX_STATS_RESULTS: usize = 1;
+
+#[repr(C)]
+struct LUMICE_RenderResult {
+    renderer_id: c_int,
+    img_width: c_int,
+    img_height: c_int,
+    img_buffer: *const c_uchar,
+}
+
+#[repr(C)]
+struct LUMICE_StatsResult {
+    ray_seg_num: c_ulong,
+    sim_ray_num: c_ulong,
+    crystal_num: c_ulong,
+}
+
+#[link(name = "lumice")]
+extern "C" {
+    fn LUMICE_CreateServer() -> *mut c_void;
+    fn LUMICE_DestroyServer(server: *mut c_void);
+    fn LUMICE_SceneFromJsonFile(filename: *const c_char, out_scene: *mut *mut c_void) -> c_int;
+    fn LUMICE_CommitScene(server: *mut c_void, scene: *const c_void, out_reused: *mut c_int) -> c_int;
+    fn LUMICE_SceneDestroy(scene: *mut c_void);
+    fn LUMICE_AcquireResultFrame(server: *mut c_void, out_frame: *mut *mut c_void) -> c_int;
+    fn LUMICE_ReleaseResultFrame(frame: *mut c_void);
+    fn LUMICE_FrameGetRender(frame: *const c_void, out: *mut LUMICE_RenderResult, max_count: c_int) -> c_int;
+    fn LUMICE_FrameGetStats(frame: *const c_void, out: *mut LUMICE_StatsResult) -> c_int;
+    fn LUMICE_QueryServerState(server: *mut c_void, out: *mut c_int) -> c_int;
+    fn LUMICE_StopServer(server: *mut c_void);
+}
+```
+
+## FAQ
+
+### Q1: How do I load a configuration from a file?
+
+**A**: `LUMICE_SceneFromJsonFile()` parses the file into a scene handle; `LUMICE_CommitScene()` then submits it, and `LUMICE_SceneDestroy()` frees the handle. If you already have the document in memory, use `LUMICE_SceneFromJson()` instead — the rest is identical. Parsing and committing are separate calls on purpose: parsing never touches the server, so you can validate or edit a config without disturbing a running simulation.
+
+### Q2: What is the image data format?
+
+**A**: RGB format, 3 bytes per pixel (R, G, B), stored row by row. Image size = `img_width * img_height * 3` bytes.
+
+### Q3: When does img_buffer become invalid?
+
+**A**: When you release the frame it came from. `img_buffer` is a read-only view into a `LUMICE_ResultFrame`, and holding that frame keeps the pixels alive — no other reader's activity, and no new snapshot, can invalidate them while you hold it. Call `LUMICE_ReleaseResultFrame()` when you are done, and `memcpy` beforehand anything you need to outlive the frame.
+
+### Q4: Can the server process multiple configurations simultaneously?
+
+**A**: No. Each call to `LUMICE_CommitScene()` stops the current task and starts a new one. To process in parallel, create multiple server instances. (A single scene handle may be committed to several servers — commit reads it as `const` and keeps no reference.)
+
+### Q5: How do I check if the result array is empty?
+
+**A**: Check whether the first element is the sentinel. For render and composite results: `renders[0].img_buffer == NULL` means no results; for raw XYZ, `xyz[0].xyz_buffer == NULL`. `LUMICE_FrameGetStats` writes a single value rather than an array, so its "no results" form is an all-zero struct (`sim_ray_num == 0`).
+
+## Related Documentation
+
+- [Configuration Documentation](../configuration.md) - Detailed configuration format reference
+- [System Architecture](../architecture.md) - System architecture design
+- [Developer Guide](../developer-guide.md) - Development guide
+- [Documentation Index](../README.md) - Navigation for all documentation

@@ -75,7 +75,7 @@ class CudaTraceBackendTestHooks {
   size_t ReadbackRngProbe(std::vector<float>& out, size_t count);
 
   // scrum-328.2 Step 1: per-ray attempt-count observation (mean(attempts) =
-  // 1/accept_ratio at the gen sampler; doc/near-pole-area-measure-sampling.md
+  // 1/accept_ratio at the gen sampler; doc/geometry/near-pole-area-measure-sampling.md
   // anchors 4.90/3.76 for Laplacian b=5 / Gaussian σ=5).
   void EnableGenAttemptCount(size_t count, size_t ci_start = 0);
   size_t ReadbackGenAttemptCount(std::vector<int>& out, size_t count);

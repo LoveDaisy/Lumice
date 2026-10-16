@@ -258,7 +258,7 @@ void SunWorldDir(const SunParam& sun, float* out);
 // therefore z = -1, NOT z = +1.
 //
 // That sign is the one thing in this file worth stating twice, because the SAME English word means
-// the opposite z here and in doc/coordinate-convention.md: the crystal-orientation sampler puts +z
+// the opposite z here and in doc/geometry/coordinate-convention.md: the crystal-orientation sampler puts +z
 // at the zenith, this module puts -z there. They are different coordinate systems that happen to
 // share the vocabulary, so "zenith is +z" is true of one of them and a defect in the other. The
 // authority for THIS one is the sun convention SunWorldDir documents above, and the equivalence
@@ -329,7 +329,7 @@ Anchors ComputeAnchors(const Request& req);
 // belongs to the inverse (LUMICE_UnprojectPixel), not to a marker.
 //
 // `dir` is in the convention every direction here is in (light TRAVELS, zenith is z = -1; the
-// travel-vs-position semantics live in doc/coordinate-convention.md "Direction-Vector
+// travel-vs-position semantics live in doc/geometry/coordinate-convention.md "Direction-Vector
 // Semantics"); it need not be normalized, and a zero vector falls back to the zenith the way
 // Request::reference_dir does. A degenerate view (non-positive width / height) yields `valid == false`. Cost: one
 // projection — no allocation, no walk — so it is safe to call per frame, per marker.

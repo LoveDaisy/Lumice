@@ -37,7 +37,7 @@ the GUI-regime throughput leg only. First-frame latency is deliberately NOT gate
 here: it is a perf-harness metric, measured off a real app log by
 `scripts/analyze_perf_log.py` ("First upload:" line), per test_gui_perf.cpp's own
 policy that budgets gate "the loop stopped" floors while throughput/latency
-belongs to doc/performance-testing.md's harness.
+belongs to doc/testing/performance-testing.md's harness.
 
 @pytest.mark.slow — needs the GUI test binary + a display/GL context; Darwin-only
 (Metal). Skips gracefully when the binary is absent or no display is available.

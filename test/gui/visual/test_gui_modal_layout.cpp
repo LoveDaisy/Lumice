@@ -69,7 +69,7 @@ struct ModalLayoutScene {
 // of the preview, identical across the three prism scenes) is at least 2x below K while the
 // smallest real drift on record for this group (95 px at this tau) stays at least 1.3x above it:
 // K = 70 gives 70/35 = 2.0x and 95/70 = 1.36x. Measurements, provenance and the jitter check:
-// doc/testing-architecture.md §4.6.
+// doc/testing/testing-architecture.md §4.6.
 constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/16, /*max_cc_threshold=*/70 };
 // The PSNR floor the old ruler applied; printed on the diagnostic line, not enforced.
 static constexpr double kDeterministicThresholdDb = 40.0;

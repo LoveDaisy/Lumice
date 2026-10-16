@@ -1,6 +1,6 @@
 // "print takes over the colour channel", asserted on the server/CLI side.
 //
-// doc/print-mode-subtractive-ink.md §7 states ONE rule — the print operator lays a single neutral
+// doc/rendering/print-mode-subtractive-ink.md §7 states ONE rule — the print operator lays a single neutral
 // ink whose only degree of freedom is density, so every field that carries information in a HUE is
 // mutually exclusive with it — and lists four instances of it. Two of the four are settled
 // elsewhere and are deliberately NOT restated here: that print produces the same bytes whatever

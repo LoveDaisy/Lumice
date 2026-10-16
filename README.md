@@ -82,7 +82,7 @@ hand-editing JSON.
 The GUI panels cover crystal geometry & axis distributions, lens & view, filters,
 multi-scattering layers, and project save/load (`.lmc`). Detailed walkthroughs of each
 panel — including all lens projections, crystal preview modes, and editing dialogs —
-live in [`doc/gui-guide.md`](doc/gui-guide.md).
+live in [`doc/gui/gui-guide.md`](doc/gui/gui-guide.md).
 
 ## Documentation
 
@@ -90,17 +90,17 @@ live in [`doc/gui-guide.md`](doc/gui-guide.md).
 |----------|----------|----------------|
 | [Documentation index](doc/README.md) | All | Top-level navigation across docs |
 | [Configuration guide](doc/configuration.md) | Users | Every JSON field, every lens type, every scattering option |
-| [Adaptive Brightness](doc/adaptive-brightness.md) | Users | Automatic EV normalization: algorithm, Off/On mode semantics, XYZ additivity invariant |
-| [Raypath symmetry](doc/raypath-symmetry.md) | Users / Contributors | P, B, D filter toggle semantics, D enabling condition, σ derivation |
-| [GUI guide](doc/gui-guide.md) | Users | Panel-by-panel walkthrough with screenshots |
-| [Coordinate convention](doc/coordinate-convention.md) | Users / Authors | Rotation chain, axis sign convention, **v3 breaking change notes** |
+| [Adaptive Brightness](doc/rendering/adaptive-brightness.md) | Users | Automatic EV normalization: algorithm, Off/On mode semantics, XYZ additivity invariant |
+| [Raypath symmetry](doc/raypath/raypath-symmetry.md) | Users / Contributors | P, B, D filter toggle semantics, D enabling condition, σ derivation |
+| [GUI guide](doc/gui/gui-guide.md) | Users | Panel-by-panel walkthrough with screenshots |
+| [Coordinate convention](doc/geometry/coordinate-convention.md) | Users / Authors | Rotation chain, axis sign convention, **v3 breaking change notes** |
 | [Developer guide](doc/developer-guide.md) | Contributors | Build options, dependency list, build script reference, project layout |
 | [Architecture](doc/architecture.md) | Contributors | Module layout, data flow, threading model |
-| [C API](doc/c_api.md) | Integrators | Embedding Lumice via the C interface |
+| [C API](doc/interfaces/c_api.md) | Integrators | Embedding Lumice via the C interface |
 | [API reference](doc/api/html/) | Contributors | Doxygen-generated (run `doxygen .doxygen-config` locally) |
 
 > Configurations from earlier releases may need to be re-authored: v3 reworked the rotation
-> chain. See the breaking-change note at the top of `doc/coordinate-convention.md`.
+> chain. See the breaking-change note at the top of `doc/geometry/coordinate-convention.md`.
 
 ## Acknowledgements
 

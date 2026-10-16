@@ -28,7 +28,7 @@ CPMAddPackage(
 #   - gui_unit_test         (LABEL unit-correctness — same layer, second target; see below)
 #   - parity_test           (LABEL parity, abbreviated; full layer name is parity-cross-backend)
 #   - golden_analytic_test  (LABEL golden-analytic)
-# See doc/testing-architecture.md §5 for the naming contract.
+# See doc/testing/testing-architecture.md §5 for the naming contract.
 
 # --------------------------------------------------------------------------------------------------
 # unit_correctness_test
@@ -275,7 +275,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_capi.cpp"
   # Parity with Lumice Integral: replays LI's exported fixtures (test/fixtures/li-parity/) against
   # the same kernels. Unit-correctness rather than parity-cross-backend: that layer's oracle is the
-  # legacy CPU backend (doc/testing-architecture.md section 3, step 5), and this target already
+  # legacy CPU backend (doc/testing/testing-architecture.md section 3, step 5), and this target already
   # links the analytic kernels.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_li_parity.cpp"
   # raypath/: the single-path analysis module (scene config -> the analytic kernel above -> fibers,
@@ -500,7 +500,7 @@ set_tests_properties("LumiceGoldenAnalyticTest" PROPERTIES LABELS "golden-analyt
 # LABEL — the split is a LINK boundary (these cases call into file_io.cpp / user_defaults.cpp),
 # not a layer or subsystem boundary. Sharing the label is what lets the existing
 # `ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"` selector in CI and scripts/test.sh pick it
-# up with no change. See doc/testing-architecture.md §5 for why this is a second target rather
+# up with no change. See doc/testing/testing-architecture.md §5 for why this is a second target rather
 # than a second layer, and for the naming rule that lets it keep a link-derived name.
 #
 # imgui_te_stubs.cpp is in the source list for the same reason LumiceGUI has it: lumice_gui_obj
@@ -557,7 +557,7 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_color_window_logic.cpp"
     # The faces a filter row names, as the modal checks them against LUMICE_CouldCrystalHaveFace.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_factor_face_numbers.cpp"
-    # The GUI half of doc/print-mode-subtractive-ink.md §7's exclusion rule: which controls report
+    # The GUI half of doc/rendering/print-mode-subtractive-ink.md §7's exclusion rule: which controls report
     # themselves inapplicable under the print tone, and the import notice standing in for the one
     # instance that has no control at all.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_print_mode_colour_exclusions.cpp"

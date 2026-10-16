@@ -14,7 +14,7 @@ namespace lumice {
 //   D     = kInkGamma * log10(1 + e) // optical density
 //   out_j = paper_j * 10^(-D)        // transmittance times the paper's own colour
 //
-// which is the second law of doc/print-mode-subtractive-ink.md §3.2. It is structurally NOT the
+// which is the second law of doc/rendering/print-mode-subtractive-ink.md §3.2. It is structurally NOT the
 // additive operator with different parameters: 10^(-D) <= 1 for every D >= 0, so ink can only ever
 // make the paper darker, while `L * c + background` is monotonically non-decreasing in radiance.
 // That is why the two are a mode enum rather than two ends of one knob.
@@ -41,7 +41,7 @@ namespace lumice {
 
 // The density slope. Calibrated from data, not chosen: the P95 of the non-zero exposed scalar `e`
 // over four scenes was solved back to D = 0.5 and the geometric mean taken, and the owner accepted
-// the result by eye (doc/print-mode-subtractive-ink.md §3.2).
+// the result by eye (doc/rendering/print-mode-subtractive-ink.md §3.2).
 //
 // It is deliberately NOT a config field and NOT a parameter of the functions below — see that
 // document's §9.2. Do not re-calibrate it here; a change to this number is a change to the
@@ -54,7 +54,7 @@ inline constexpr float kInkGamma = 11.0f;
 // `e` is CIE Y after ExposureScale() and nothing else. This curve was calibrated on that domain
 // alone: do NOT hand it an annotation's alpha (that path is a plain coverage multiply, `1 - alpha`
 // — see BlendAnnotation() in src/server/render.cpp), and do not hand it a per-channel value (print
-// is greyscale by construction, doc/print-mode-subtractive-ink.md §5).
+// is greyscale by construction, doc/rendering/print-mode-subtractive-ink.md §5).
 //
 // Negative `e` is clamped to zero rather than rejected: log10 of a negative is NaN, and a caller
 // that has clamped nothing upstream should get the paper back, not a poisoned pixel.

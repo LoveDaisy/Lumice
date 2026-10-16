@@ -222,7 +222,7 @@ it was thinking of and false of the C struct beside it.
   an empty result three ways — a degenerate point-mass path, a geometrically unreachable
   target, and a target not excluded but not found (most often because no finite crystal admits
   the passage). `--warm` re-reads a previous run's JSON and densifies from its seeds. The result
-  is serialized once in the engine (target schema 1, `doc/raypath-cli-output.md`; user-manual
+  is serialized once in the engine (target schema 1, `doc/raypath/raypath-cli-output.md`; user-manual
   section in en/zh). This is the analysis half of the raypath feature: the GUI workspace it
   feeds is still being designed, and the JSON grows by appended fields only.
 - **Added: `Lumice raypath --report` — target-free feature diagnostics** (#464, #468). Instead
@@ -234,7 +234,7 @@ it was thinking of and false of the C struct beside it.
   numerical budget bounds the work (`--budget-ms`, default 15 s, max 120 s;
   `--max-evaluations`; `--max-field-evaluations`); a run that exhausts it still emits its
   partial report marked `partial`, and a report that fails to parse leaves stdout empty.
-  Serialization is report schema 2 (`doc/raypath-cli-output.md` §7); the target/fiber/`--warm`
+  Serialization is report schema 2 (`doc/raypath/raypath-cli-output.md` §7); the target/fiber/`--warm`
   contracts above are unchanged.
 
 ### GUI
@@ -331,7 +331,7 @@ it was thinking of and false of the C struct beside it.
   behavior is unchanged from v4.7.0** — it stays a label equivalence (P: any 60° face relabeling;
   B: 1↔2 and upper/lower cone swap) whatever the crystal's shape or orientation, exactly as
   before this release; only the analysis list's grouping and the editor's hints are new. See
-  `doc/raypath-symmetry.md` §1.1/§2a for the two meanings of the same P/B/D bits.
+  `doc/raypath/raypath-symmetry.md` §1.1/§2a for the two meanings of the same P/B/D bits.
 - **`sim.ray_allocation`'s Settings editor is a two-option combo instead of a bare checkbox**
   (#434). The row's label was only the key path, so nothing said whether checked meant adaptive
   or proportional; it is now an explicit `adaptive` / `proportional` combo. The underlying field
@@ -455,7 +455,7 @@ it was thinking of and false of the C struct beside it.
   column down every row before moving to the Spread column, matching how face distances are
   actually edited; Shift+Tab reverses.
 - **Settings and Summary windows keep the height you drag them to** (#399). Both become
-  "semi-variable" under a newly documented sizing policy (`doc/gui-visual-language.md`): width
+  "semi-variable" under a newly documented sizing policy (`doc/gui/gui-visual-language.md`): width
   pinned per window, height free until the user drags it and then remembered for the session;
   Summary still auto-fits its content until that first drag.
 - **The Edit Entry popup has two shapes: Compact and Expanded** (#401). A side-by-side tab layout
@@ -520,7 +520,7 @@ it was thinking of and false of the C struct beside it.
   exactly one stop dimmer; other configurations move by a scene-dependent amount. Energy-share
   numbers in the raypath analysis panel move accordingly. `proportion`'s own meaning — a crystal's
   count share **under an equal-surface-area convention** — is unchanged, and there is no C API
-  change. Migration notes: `doc/configuration.md`, `doc/ev-pipeline-architecture.md` §7.2,
+  change. Migration notes: `doc/configuration.md`, `doc/rendering/ev-pipeline-architecture.md` §7.2,
   `doc/user-manual/06-raypath-analysis.md`.
 - **The "front" clip checkbox now reflects what it actually does under full-sky and Globe lenses**
   (#415). Those lens types ignore `front` by design, and the checkbox was greyed out to say so —
@@ -1254,7 +1254,7 @@ it was thinking of and false of the C struct beside it.
   0.980, so re-deriving it would move full-sphere scenes by only +0.029 stop against the cost of
   every reference image. Separately, an undersampled scene darkens as `ray_num` grows under either
   denominator (measured slope ~ -1.03 for both) — an honest Monte-Carlo estimator property, not
-  something this change introduces; see `doc/ev-pipeline-architecture.md` §7.4 before reporting it
+  something this change introduces; see `doc/rendering/ev-pipeline-architecture.md` §7.4 before reporting it
   as a regression.
 - **`relative` mode now anchors to the same fixed reference buffer the GUI has always used,
   instead of to the render's own output** (#299). The CLI's `relative` implementation (above)
@@ -1644,7 +1644,7 @@ it was thinking of and false of the C struct beside it.
   regression. The value is now independent of `num_workers` and of the dispatch grain — the
   fixed-shape part of a scene is counted once from the committed config rather than once per worker
   per batch — but remains non-comparable across backends (CPU samples per ray-group, the GPU
-  K-shape clock is off by default). See `doc/c_api.md` and the contract block on
+  K-shape clock is off by default). See `doc/interfaces/c_api.md` and the contract block on
   `TraceBackend::GetLastBatchStochasticCrystalSampleCount`.
   **What to do**: nothing in code — the field name and type are unchanged. Do not compare a
   `crystals=N` recorded before this release with one recorded after; they count different things.
@@ -2160,7 +2160,7 @@ it was thinking of and false of the C struct beside it.
   consumer-side design** (#104). The consumer-side redesign introduced two regressions — a
   layer with continuation probability 0 could leak rays past it, and a scene with more than one
   active filter could render completely black — both traced to the same missing (layer, crystal)
-  binding. Reverting is the documented original design; see the new `doc/filter-architecture.md`
+  binding. Reverting is the documented original design; see the new `doc/raypath/filter-architecture.md`
   for the rationale this time, so the constraint doesn't have to be rediscovered again. As a
   consequence, the "unfiltered" buffer's brief life as a genuinely filter-independent readout (see
   4.2.5's breaking-change entry) ends here — see the ABI note below.
@@ -2352,7 +2352,7 @@ it was thinking of and false of the C struct beside it.
   Rz(roll)`, chosen so preset poses (e.g. Plate's default face-up, Parry's default column axis)
   match the convention used by the HaloRay reference tool; the modal preview's Reset View and the
   entry-card thumbnail now derive from one shared default-view formula instead of two.
-  `doc/coordinate-convention.md` documents the frame, the convention, and the `azimuth − 180°`
+  `doc/geometry/coordinate-convention.md` documents the frame, the convention, and the `azimuth − 180°`
   offset. See the breaking-change note below — **this changes what an existing config's
   `crystal.axis.{zenith, azimuth, roll}` values produce**.
 - **The modal preview's trackball drag rotates the crystal in world coordinates** (#76), so a
@@ -2366,7 +2366,7 @@ it was thinking of and false of the C struct beside it.
   different pose than before**, because the rotation convention itself changed (#76, see Changed
   above). There is no simple per-field conversion — the chain's structure changed, not just an
   offset on one axis — so **what to do**: after upgrading, re-check any saved orientation against
-  the new convention documented in `doc/coordinate-convention.md`, or re-pose visually in the GUI
+  the new convention documented in `doc/geometry/coordinate-convention.md`, or re-pose visually in the GUI
   and re-save. A distribution that samples azimuth and roll uniformly over the full circle (the
   common case) renders statistically unchanged.
 

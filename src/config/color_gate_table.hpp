@@ -1,7 +1,7 @@
 #ifndef CONFIG_COLOR_GATE_TABLE_H_
 #define CONFIG_COLOR_GATE_TABLE_H_
 
-// CPU-only, Design-2 (2026-07-08, doc/gui-custom-spectrum-and-raypath-color.md
+// CPU-only, Design-2 (2026-07-08, doc/gui/gui-custom-spectrum-and-raypath-color.md
 // §4.0) placement-scoped color-predicate → component-bit table. Consumed by
 // the CPU emit gate (simulator.cpp legacy path + cpu_trace_backend.cpp) as a
 // non-destructive pass beside the physical filter check.
@@ -79,7 +79,7 @@ struct ColorGatePlacement {
 
 // Build the CPU-only color-predicate → component-bit table for one commit.
 //
-// Semantics (see doc/gui-custom-spectrum-and-raypath-color.md §4.0):
+// Semantics (see doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0):
 //   - Walk color_cfg.classes_[].match_[]; for each ref, verify (layer,
 //     crystal_id) is in scope and, per placement, resolve to EXACTLY ONE
 //     scattering setting on that layer (§3.2 decision 2(b) — throw on

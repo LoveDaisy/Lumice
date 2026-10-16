@@ -5,7 +5,7 @@
 int main(void) {
   int version = LUMICE_ANALYTIC_GetApiVersion();
   printf("LUMICE_ANALYTIC_GetApiVersion=%d\n", version);
-  /* Header/library mismatch check: the run-time check of doc/analytic-api.md section 8.1. */
+  /* Header/library mismatch check: the run-time check of doc/interfaces/analytic-api.md section 8.1. */
   if (version != LUMICE_ANALYTIC_API_VERSION) {
     return 1;
   }

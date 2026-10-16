@@ -2127,7 +2127,7 @@ TEST(RayAllocationLegacyPath, ColdStartOnUniformPIsBitIdenticalToProportional) {
 
 TEST(RayAllocationLegacyPath, NoSnapshotMakesTheLayerProportional) {
   // adaptive mode, but the batch binds no RayAllocationOnline — the shape of an
-  // analysis session (doc/raypath-analysis-panel.md §10): the layer deals by p,
+  // analysis session (doc/raypath/raypath-analysis-panel.md §10): the layer deals by p,
   // whole. Pinned by the dealt counts (500/500) and by every correction being
   // exactly 1.0f (root birth weights == w, emitted == N).
   constexpr size_t kN = 1000;

@@ -110,7 +110,7 @@ void LUMICE_SetLogCallback(LUMICE_LogCallback callback) {
 }
 
 
-// Display-time color update: see doc/capi-lifecycle-architecture.md §4 / §6.4.
+// Display-time color update: see doc/interfaces/capi-lifecycle-architecture.md §4 / §6.4.
 // It does NOT restart the simulation — accumulator, epoch, and consumers are
 // untouched. Only the next acquired result frame re-composites with the new appearance.
 LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_ColorClassDisplay* classes,
@@ -315,7 +315,7 @@ LUMICE_ErrorCode LUMICE_FrameGetRawXyz(const LUMICE_ResultFrame* frame, LUMICE_R
     out[i].axis_solid_angle = results[i].axis_solid_angle_;
   }
 
-  // Sentinel: see doc/capi-lifecycle-architecture.md §5.2 (fix: 5287efe).
+  // Sentinel: see doc/interfaces/capi-lifecycle-architecture.md §5.2 (fix: 5287efe).
   if (count < max_count) {
     std::memset(&out[count], 0, sizeof(LUMICE_RawXyzResult));
   }
@@ -344,7 +344,7 @@ LUMICE_ErrorCode LUMICE_FrameGetComposite(const LUMICE_ResultFrame* frame, LUMIC
     out[i].composite_p99_y = results[i].p99_y_;
   }
 
-  // Sentinel: see doc/capi-lifecycle-architecture.md §5.2 (fix: 5287efe).
+  // Sentinel: see doc/interfaces/capi-lifecycle-architecture.md §5.2 (fix: 5287efe).
   if (count < max_count) {
     std::memset(&out[count], 0, sizeof(LUMICE_RenderResult));
   }
@@ -373,7 +373,7 @@ LUMICE_ErrorCode LUMICE_FrameGetRender(const LUMICE_ResultFrame* frame, LUMICE_R
     out[i].composite_p99_y = 0.0f;
   }
 
-  // Sentinel: see doc/capi-lifecycle-architecture.md §5.2 (fix: 5287efe).
+  // Sentinel: see doc/interfaces/capi-lifecycle-architecture.md §5.2 (fix: 5287efe).
   if (count < max_count) {
     std::memset(&out[count], 0, sizeof(LUMICE_RenderResult));
   }

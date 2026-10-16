@@ -2,7 +2,7 @@
 
 The corpus (`doc/cases/raypath-analysis-cases.md`, C01-C16) and the redesign conclusions fix the
 anchors; this layer pins them against the schema_version-3 report face
-(`doc/raypath-cli-output.md` §7): the delta-axis support block, structural-object records and
+(`doc/raypath/raypath-cli-output.md` §7): the delta-axis support block, structural-object records and
 the derived buckets. The (iii) cells are the schema-2 "seed did not solve" red states: under
 schema3 the geometry layer replaces that path structurally, so each cell must complete with
 computed objects.

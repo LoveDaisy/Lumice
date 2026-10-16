@@ -1,5 +1,5 @@
 // Interning table for cross-MS-layer raypath chains (raypath-analysis
-// foundation; design in doc/raypath-analysis-panel.md §3.2).
+// foundation; design in doc/raypath/raypath-analysis-panel.md §3.2).
 //
 // A "chain" is the complete raypath of one ray from the light source to the
 // camera: one segment per MS layer it traversed, each segment being that
@@ -79,7 +79,7 @@ class ChainIdInterningTable {
   // is what "unset" means and nothing more. One table per simulation worker,
   // so a process holds worker_count × the capacity in chains at most on the
   // producer side (plus the consumer's merge of them, the same number again
-  // at most). Calibrated by measurement (doc/raypath-analysis-panel.md carries the
+  // at most). Calibrated by measurement (doc/raypath/raypath-analysis-panel.md carries the
   // table): the 22° single-prism reference scene records 11.7k distinct
   // finest chains at 200k rays, so 16384 keeps that scene EXACT, and on the
   // two-layer plate+column scene that motivated the bound (838k distinct

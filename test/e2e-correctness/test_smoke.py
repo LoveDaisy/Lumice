@@ -28,7 +28,7 @@ PSNR_FAILURE_DIR = get_project_root() / "scratchpad" / "e2e-failures"
 #
 # Six of these (color_01, cza_01, multi_lens_01/02/03, parhelion_01) were re-shot on 2026-09-02,
 # when forward binning stopped carrying an extra half pixel and started agreeing with the pixel
-# centre the render-domain mask and the GUI shader had always used (doc/coordinate-convention.md
+# centre the render-domain mask and the GUI shader had always used (doc/geometry/coordinate-convention.md
 # "Pixel Centre Convention"). Every pixel of every render moved by up to one pixel, so every
 # reference in this table drifted; these six are the ones whose drift was worth acting on, and
 # each is re-shot rather than absorbed:
@@ -48,10 +48,10 @@ PSNR_FAILURE_DIR = get_project_root() / "scratchpad" / "e2e-failures"
 #
 # Every key below was re-shot together on 2026-09-24, when entry acceptance started weighting each
 # crystal orientation by the area it presents to the sun (doc/configuration.md, `proportion`;
-# doc/ev-pipeline-architecture.md §7.2). Every config here uses `ev_mode: absolute`, and the
+# doc/rendering/ev-pipeline-architecture.md §7.2). Every config here uses `ev_mode: absolute`, and the
 # weight a ray loses at entry still counts as emitted energy, so every picture got dimmer — by exactly one
 # stop where the crystals are randomly oriented and by a scene-dependent amount where they are
-# not (doc/ev-pipeline-architecture.md §7.2). Eleven configs crossed their thresholds;
+# not (doc/rendering/ev-pipeline-architecture.md §7.2). Eleven configs crossed their thresholds;
 # the other three (filters_01, halo_22_01, orthographic_180_01) did not, only because a darker image
 # scores a higher PSNR against a brighter one than its run-to-run noise would allow: they sat
 # 5-8 dB below their own run-to-run floor. For halo_22 that drift was checked against a binary

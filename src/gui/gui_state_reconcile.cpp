@@ -165,7 +165,7 @@ void DiffAgainstCommitBaseline(const GuiState& state, GuiEffects& effects, bool 
   // T-struct·soft: re-sim carry-forward. Renderer comparison uses RenderConfigResimFields
   // (defined in gui_state.hpp): it excludes `exposure_offset`, which is a pure display-time
   // field pushed every frame via LUMICE_SetCompositeExposure and never baked into the sim
-  // (doc/ev-pipeline-architecture.md §6.4/§6.5). Excluding EV here is what makes dragging the
+  // (doc/rendering/ev-pipeline-architecture.md §6.4/§6.5). Excluding EV here is what makes dragging the
   // EV slider not falsely flip a finished sim into kModified. `background` is excluded on the
   // same grounds — the rays are unchanged, only what shows behind them — but it differs in that
   // Revert still restores it, out of ConfigSnapshot::renderer_background rather than out of the

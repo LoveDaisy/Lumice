@@ -109,7 +109,7 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     //   app_preference_eligible=true — the user CAN store this one as a personal default, but only
     //                                  through the override file's `app` root key, never through
     //                                  the document half. See user_defaults.hpp's app-preferences
-    //                                  block and doc/gui-state-governance.md §8.
+    //                                  block and doc/gui/gui-state-governance.md §8.
     { "use_gpu_backend",            FieldTier::kStructSoft, true, true },
     // worker_count: the same two bits for the same two reasons as the row above — it is outside
     // ConfigSnapshot (no Revert baseline to diff against), and its only legitimate default channel
@@ -132,7 +132,7 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // its own channel — struct-part diff → need_hard_reset (drives MarkStructHardDirty);
     // display-part diff → need_display_push (drives LUMICE_SetRaypathColors, orthogonal to
     // dirty/epoch). Formerly auto_diff_excluded=true; the exclusion is dropped now that the
-    // routing is expressible in the diff logic. See doc/gui-state-governance.md T1.
+    // routing is expressible in the diff logic. See doc/gui/gui-state-governance.md T1.
     { "raypath_color",              FieldTier::kStructHard, false },
 
     // ==== T-display: display-time push, no dirty/epoch touch ====================================

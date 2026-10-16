@@ -8,8 +8,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 REGISTRY_PATH = REPO_ROOT / "test" / "duration_registry.json"
-ENGLISH_DOC_PATH = REPO_ROOT / "doc" / "testing-architecture.md"
-CHINESE_DOC_PATH = REPO_ROOT / "doc" / "testing-architecture_zh.md"
+ENGLISH_DOC_PATH = REPO_ROOT / "doc" / "testing" / "testing-architecture.md"
+CHINESE_DOC_PATH = REPO_ROOT / "doc" / "testing" / "testing-architecture_zh.md"
 AGENTS_PATH = REPO_ROOT / "AGENTS.md"
 AUTH_EXPRESSION = (
     "${{ github.event_name == 'pull_request' && github.run_attempt == 1 && "

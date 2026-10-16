@@ -4,7 +4,7 @@ The evaluator's physics is checked in-process by
 test/unit-correctness/analytic/test_path_evaluation.cpp, which compiles the kernel but not the C
 wrapper (the wrapper's load-time initialiser silences the engine's console sink for the whole
 process). This file owns what only the wrapper does: return codes, the zero-fill of the result
-after struct_size on every error (doc/analytic-api.md sections 4.4 and 8.2), library-owned storage
+after struct_size on every error (doc/interfaces/analytic-api.md sections 4.4 and 8.2), library-owned storage
 and its release, the mapping of a valid=0 pose to a successful call, and the crystal-construction
 warning reaching the host's log callback instead of stderr (section 6) — the end-to-end half that
 test_analytic_log_sink.py could not drive before the library had a function that builds a crystal.
@@ -13,7 +13,7 @@ Each case runs in a child interpreter so a crash in the library is a failed case
 pytest. Needs a shared build (`./scripts/build.sh -sj release`); skipped when there is none, or in
 a CUDA configure, which does not produce the library. Free of test/e2e's helpers and of numpy.
 
-symmetry_semantics: none — every call evaluates one concrete face sequence (doc/analytic-api.md
+symmetry_semantics: none — every call evaluates one concrete face sequence (doc/interfaces/analytic-api.md
 section 3); nothing here compares face sequences across a symmetry.
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ def _find() -> Path:
     hits = sorted(p for p in SHARED_OUT.rglob(pattern) if p.is_file())
     if not hits:
         if _cuda_configured():
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/interfaces/analytic-api.md 2.3)")
         pytest.fail(f"{pattern} not found under {SHARED_OUT} although a shared build exists there")
     if len(hits) > 1:
         pytest.fail(f"more than one {pattern} under {SHARED_OUT}: {hits}")

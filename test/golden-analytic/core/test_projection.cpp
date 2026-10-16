@@ -1215,7 +1215,7 @@ TEST(LmProj, RectangularWrapWhileVsFloorEquivalence) {
 // config could tilt or roll the camera and get a bit-identical frame back. Owner decision
 // 2026-09-02: core keeps maximum flexibility and follows the full pose; the GUI deliberately does
 // NOT (it wants a fixed all-sky texture and does every pose transform on the front end) — see
-// doc/coordinate-convention.md and test_visible_mask_gui_parity.cpp for that half.
+// doc/geometry/coordinate-convention.md and test_visible_mask_gui_parity.cpp for that half.
 
 // The frame a rectangular ray lands in, for one camera pose.
 std::array<int, 2> RectangularPixel(float az, float el, float ro, const float d[3]) {

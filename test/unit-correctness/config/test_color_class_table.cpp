@@ -1,5 +1,5 @@
 // Tests for src/config/color_class_table.hpp — Design 2 (2026-07-08,
-// doc/gui-custom-spectrum-and-raypath-color.md §4.0) BuildColorClassTable
+// doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0) BuildColorClassTable
 // contract on the join of DTO × SceneConfig × ColorGateTable.
 //
 // After Design 2, ambiguity / OOB errors have moved to BuildColorGateTable

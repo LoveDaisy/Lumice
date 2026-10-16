@@ -604,7 +604,7 @@ void RegisterPreviewBackgroundTests(ImGuiTestEngine* engine) {
   // The lens is EQUAL-AREA, and that is now load-bearing rather than incidental. The XYZ branch
   // multiplies each sample by the target lens's relative illumination — its per-pixel solid angle
   // normalized on axis, so that the preview carries the projection's natural vignetting the way a
-  // CLI render does (src/gui/preview_jacobian.hpp, doc/ev-pipeline-architecture.md §7.5). The 8-bit
+  // CLI render does (src/gui/preview_jacobian.hpp, doc/rendering/ev-pipeline-architecture.md §7.5). The 8-bit
   // branch cannot: its texels were already clipped to [0,1] and already have the sky composited
   // into them, so neither the halo term nor the sky term can be recovered to scale one and not the
   // other. On an equal-area projection that factor is exactly 1 on both sides and this case

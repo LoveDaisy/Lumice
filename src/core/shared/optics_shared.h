@@ -19,7 +19,7 @@ namespace lm_optics {
 // GetReflectRatio wrapper below — the call sites never name the template), and its arithmetic is
 // the float expression this function has always been. `double` is instantiated on the host only, by
 // liblumice_analytic (src/analytic/path_evaluation.cpp), whose tolerances are set in double
-// (doc/analytic-api.md section 5.4); giving it its own copy of the formula would put a second
+// (doc/interfaces/analytic-api.md section 5.4); giving it its own copy of the formula would put a second
 // implementation of this primitive in the tree.
 template <typename T>
 LM_FN T GetReflectRatioT(T delta, T rr) {

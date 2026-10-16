@@ -25,7 +25,7 @@ namespace lumice::analytic {
 enum class PoseFamily { kRandom, kColumn, kPlate, kParry, kLowitz };
 
 // Degrees, as the contract and the Lumice configuration spell them. A field the family does not use
-// must be exactly 0 (the C ABI's convention for unused fields, doc/analytic-api.md section 4.1).
+// must be exactly 0 (the C ABI's convention for unused fields, doc/interfaces/analytic-api.md section 4.1).
 struct PoseDensitySpec {
   PoseFamily family = PoseFamily::kRandom;
   double zenith_mean_deg = 0.0;

@@ -111,7 +111,7 @@ constexpr float kOutlineSrgb[3]{ 0.8f, 0.2f, 0.2f };
 //
 // screen is the additive path's usual `mix`, unchanged. print does NOT read line_rgb at all: under
 // kPrint the annotation is ink like everything else, and ink has only one degree of freedom —
-// how much of it there is (doc/print-mode-subtractive-ink.md §5, "one rule, four instances"). This
+// how much of it there is (doc/rendering/print-mode-subtractive-ink.md §5, "one rule, four instances"). This
 // is what makes the print annotations visible on white paper BY CONSTRUCTION rather than by
 // choosing a colour that happens to contrast: multiplying by (1 - alpha) can only darken.
 //
@@ -613,7 +613,7 @@ void RenderConsumer::Consume(const SimData& data) {
     }
   }
 
-  // Design A: filter runs simulator-side (see doc/filter-architecture.md §2).
+  // Design A: filter runs simulator-side (see doc/raypath/filter-architecture.md §2).
   // All rays in data.outgoing_* have already been filter-gated; the consumer
   // simply projects and accumulates. No per-Consume FilterSpec table needed.
   const auto proj_params = BuildProjParams(config_, rot_, short_pix_);
@@ -633,7 +633,7 @@ void RenderConsumer::Consume(const SimData& data) {
   // Consume() batch having every candidate ray rejected (outgoing_* empty while
   // ray_seg_count_ is non-zero) is a legitimate tail event, not a malformed state — normal
   // per-batch pass rates are already well under 1% (see
-  // doc/filter-architecture.md §4 "Empty-batch contract"). What Design A DOES
+  // doc/raypath/filter-architecture.md §4 "Empty-batch contract"). What Design A DOES
   // promise is the outgoing_d_/outgoing_w_ parallel-array sizing invariant
   // documented in sim_data.hpp: three direction floats per weight.
   assert(data.outgoing_d_.size() == 3 * data.outgoing_w_.size());
@@ -851,8 +851,8 @@ void RenderConsumer::LogConsumeProfile() const {
             consume_count_, avg_total, avg_proj, avg_proj / avg_total * 100, avg_accum, avg_accum / avg_total * 100);
 }
 
-// See doc/ev-pipeline-architecture.md §2.2
-// See doc/accumulator-consumer-architecture.md §4.2 (two-phase snapshot protocol, Phase 1).
+// See doc/rendering/ev-pipeline-architecture.md §2.2
+// See doc/rendering/accumulator-consumer-architecture.md §4.2 (two-phase snapshot protocol, Phase 1).
 void RenderConsumer::PrepareSnapshot() {
   size_t total = static_cast<size_t>(config_.resolution_[0]) * config_.resolution_[1] * 3u;
   // Borrow a FRESH buffer for this snapshot instead of rewriting the previous one:
@@ -889,7 +889,7 @@ void RenderConsumer::PrepareSnapshot() {
   }
 }
 
-// See doc/accumulator-consumer-architecture.md §4.2 (Phase 1.5 — runs outside consumer_mutex_).
+// See doc/rendering/accumulator-consumer-architecture.md §4.2 (Phase 1.5 — runs outside consumer_mutex_).
 void RenderConsumer::CountEffectivePixels() {
   int total_pix = config_.resolution_[0] * config_.resolution_[1];
   int count = 0;
@@ -1273,7 +1273,7 @@ void RenderConsumer::PostSnapshot() {
 
         float rgb[3];
         if (print_mode) {
-          // Print is greyscale by construction (doc/print-mode-subtractive-ink.md §5): the gamut clip,
+          // Print is greyscale by construction (doc/rendering/print-mode-subtractive-ink.md §5): the gamut clip,
           // the XYZ->RGB matrix and the ray_color tint are all skipped, not because they are expensive
           // but because "which arc is this" cannot be carried by hue on paper at all — an ink whose
           // absorption is the complement of the light would make a neutral feature (a sun pillar, a
@@ -1495,7 +1495,7 @@ Result RenderConsumer::GetResult() const {
   return RenderResult{ config_.id_, config_.resolution_[0], config_.resolution_[1], snapshot_image_buffer_.get() };
 }
 
-// See doc/ev-pipeline-architecture.md §2.3
+// See doc/rendering/ev-pipeline-architecture.md §2.3
 RawXyzResult RenderConsumer::GetRawXyzResult() const {
   int total_pix = config_.resolution_[0] * config_.resolution_[1];
   float per_pixel_intensity =
@@ -1524,8 +1524,8 @@ RawXyzResult RenderConsumer::GetRawXyzResult() const {
   return r;
 }
 
-// See doc/ev-pipeline-architecture.md §3.2
-// See doc/accumulator-consumer-architecture.md §3.1 (reset path).
+// See doc/rendering/ev-pipeline-architecture.md §3.2
+// See doc/rendering/accumulator-consumer-architecture.md §3.1 (reset path).
 void RenderConsumer::Reset() {
   total_intensity_ = 0;
   snapshot_intensity_ = 0;
@@ -1547,7 +1547,7 @@ void RenderConsumer::Reset() {
   // until new data arrives, preventing stale snapshot reads.
 }
 
-// See doc/accumulator-consumer-architecture.md §5.3 (ResetWith path — layout fields guaranteed identical).
+// See doc/rendering/accumulator-consumer-architecture.md §5.3 (ResetWith path — layout fields guaranteed identical).
 void RenderConsumer::ResetWith(const RenderConfig& new_config, const SunParam& new_sun) {
   // NeedsRebuild guarantees layout fields (resolution, lens, view, visible, filter) are identical,
   // so assigning the full config is safe — layout-derived state (rot_, buffers) stays valid.

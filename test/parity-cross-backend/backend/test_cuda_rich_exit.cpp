@@ -684,7 +684,7 @@ TEST(RngObservabilityFacilitySmoke, MultiCiAttemptWindowsDoNotOverwrite) {
 // Step 5). This test is the runtime evidence that the source mirror actually
 // takes effect on device — required on dev49, skipped on Mac (no CUDA device).
 // Anchor mean(attempts) ≈ 1.002 mirrors the Metal-side Gaussian anchor and the
-// doc/near-pole-area-measure-sampling.md §附录 Python MC prediction.
+// doc/geometry/near-pole-area-measure-sampling.md §附录 Python MC prediction.
 TEST(RngObservabilityFacilitySmoke, NearPoleGaussianTightEnvelopeAcceptanceRate) {
   if (!CudaDeviceAvailable()) {
     GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";

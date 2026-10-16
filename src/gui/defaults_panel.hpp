@@ -39,7 +39,7 @@ enum class DefaultsPanelSection {
 // entry point and the window it opens look like two different features.
 inline constexpr const char* kDefaultsPanelTitle = "Settings";
 
-// The panel's geometry (doc/gui-visual-language.md §9, "semi-variable"): the width is pinned, the
+// The panel's geometry (doc/gui/gui-visual-language.md §9, "semi-variable"): the width is pinned, the
 // height opens at the default and is the user's to drag between the floor and the work area. The
 // default is the rectangle defaults_panel_layout's references are shot at. The floor is the
 // shortest window in which both sections at their own floor (a frozen header row plus one row

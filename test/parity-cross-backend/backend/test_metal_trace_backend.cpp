@@ -284,7 +284,7 @@ TEST(MetalTraceBackend, TraceLayerKernelOccupancy) {
          "448 @dual-fisheye fold-boundary int clamp) — "
          "re-measure multi-MS+filter throughput vs the active D1 gate and reconsider "
          "plan R1 option B (split filter gate into independent dispatch); see "
-         "doc/gpu-single-engine-implementation.md for context.";
+         "doc/backends/gpu-single-engine-implementation.md for context.";
 }
 
 // =============================================================================

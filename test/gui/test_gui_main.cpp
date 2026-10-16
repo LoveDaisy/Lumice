@@ -316,7 +316,7 @@ void ResetTestState() {
   // re-pinned by the app every frame, and the floating windows are parked by the scenes that
   // capture them (modal_layout's WindowMove) because the park spot is part of the scene, not a
   // default to return to. The two exceptions are the semi-variable windows, Settings and Summary
-  // (doc/gui-visual-language.md §9): each has a default height that IS the rectangle its reference
+  // (doc/gui/gui-visual-language.md §9): each has a default height that IS the rectangle its reference
   // group is shot at, and each keeps a user's drag for the process on purpose — so each puts its
   // own size back through its ResetXxxTestState() above, and this loop still does not touch Size.
   //

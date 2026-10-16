@@ -193,7 +193,7 @@ void ServerPoller::SetCalibratedThreshold(unsigned long long threshold) {
   GUI_LOG_INFO("[Poller] calibration set: threshold={}", threshold);
 }
 
-// Three cadences, not two (invariant I3, doc/gui-preview-lifecycle-architecture.md §9):
+// Three cadences, not two (invariant I3, doc/gui/gui-preview-lifecycle-architecture.md §9):
 //   kRunning        — poll every kPollIntervalMs.
 //   kIdleHeartbeat  — poll every kIdleHeartbeatIntervalMs. The run is believed over and drained;
 //                     the heartbeat is the second chance that makes that a BELIEF rather than a
@@ -272,7 +272,7 @@ bool ShouldSelfPause(const LUMICE_SimLifecycleResult& lc, const LUMICE_DrainResu
   return drain.drained_epoch == lc.epoch && drain.current_epoch == lc.epoch;
 }
 
-// See doc/accumulator-consumer-architecture.md §8.1 (polling contract), §8.3 (data flow).
+// See doc/rendering/accumulator-consumer-architecture.md §8.1 (polling contract), §8.3 (data flow).
 //
 // Reads the two server clocks (lifecycle heartbeat, raw XYZ) then builds ONE coherent immutable
 // PreviewSnapshot and atomically publishes it (invariant I5). Building the candidate payload moves
@@ -346,7 +346,7 @@ void ServerPoller::PollOnce() {
   // acquired on every poll regardless of has_new_snapshot, so reading stats off it costs nothing
   // extra; gating this read behind has_new_snapshot/force_final_upload was a readability bug (the
   // lifecycle heartbeat above already reads unconditionally per the same invariant), not a cost
-  // tradeoff. See doc/gui-preview-lifecycle-architecture.md §6/§9 (I4).
+  // tradeoff. See doc/gui/gui-preview-lifecycle-architecture.md §6/§9 (I4).
   //
   // has_valid_data is load-bearing here, not belt-and-braces: a restart does NOT clear the
   // stats a frame carries (ServerImpl::Stop resets snapshot_dirty_ + has_ever_consumed_ and
@@ -377,7 +377,7 @@ void ServerPoller::PollOnce() {
   }
 
   // Terminal-frame rescue (invariant I6, "the final frame always reaches the screen" — the
-  // blueprint's §7 rule 2 / §9; see doc/gui-preview-lifecycle-architecture.md). The quality gate below
+  // blueprint's §7 rule 2 / §9; see doc/gui/gui-preview-lifecycle-architecture.md). The quality gate below
   // suppresses sparse snapshots on the premise that a denser one is still coming; once the run has
   // COMPLETED that premise is false, and the sparse result IS the result. The gate's 500ms timeout
   // fallback cannot cover this: the self-pause at the bottom of this very function fires in the
@@ -438,7 +438,7 @@ void ServerPoller::PollOnce() {
     // is why the decision has to be made here.
     //
     // The full mechanism (why the buffer survives a restart, why the floor cannot see it, and what
-    // this gate restores) is written up once in doc/gui-preview-lifecycle-architecture.md §9, in the
+    // this gate restores) is written up once in doc/gui/gui-preview-lifecycle-architecture.md §9, in the
     // "I1 的前提「世代号是诚实的」曾不成立" patch note — that section is the authority; keep the
     // reasoning there rather than growing a second copy here.
     //
@@ -522,7 +522,7 @@ void ServerPoller::PollOnce() {
         payload->is_composite = true;
       }
       // task-345.3: composite P99 anchor comes from the server (union of participating
-      // classes' unexposed lanes — see doc/ev-pipeline-architecture.md §2.4 for the
+      // classes' unexposed lanes — see doc/rendering/ev-pipeline-architecture.md §2.4 for the
       // "P99 is composite-only C API field" carve-out). The two paths do NOT converge — mixing
       // full-spectrum pixels back in was the "composite too dim" root cause that task fixes.
       //

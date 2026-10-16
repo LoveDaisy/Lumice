@@ -11,7 +11,7 @@
 // geometry/feasibility.py (corridor_polygons, perp_bases, _ensure_ccw, _clip_halfplane, area_eps),
 // step for step and with the same status names in the same gate order, so a disagreement can be
 // read against LI line by line. Primitive layer: LI keeps its own copy and the two are checked
-// against each other (doc/analytic-api.md section 3), which is why this is a second implementation
+// against each other (doc/interfaces/analytic-api.md section 3), which is why this is a second implementation
 // by design, not a fork to be merged.
 //
 // One deliberate difference, documented at its site: the corners are the engine's float closed-form

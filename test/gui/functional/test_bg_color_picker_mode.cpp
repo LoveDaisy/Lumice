@@ -153,7 +153,7 @@ void RegisterBgColorPickerModeTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // Print takes the photo out of the frame (doc/print-mode-subtractive-ink.md §7 instance 1), and
+  // Print takes the photo out of the frame (doc/rendering/print-mode-subtractive-ink.md §7 instance 1), and
   // the eyedropper's button leaves the panel with it — it lives in the Screen arm of the ground
   // row. So an armed pick has to be dropped by the mode switch itself, the same way it is dropped
   // by hiding the photo: otherwise the mode stays armed with no visible way out, the photo

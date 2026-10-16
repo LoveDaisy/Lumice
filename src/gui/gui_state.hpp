@@ -46,7 +46,7 @@ enum class CrystalType { kPrism, kPyramid };
 //                   directly to kDone regardless of subsequent snapshot volatility (e.g. a
 //                   transient valid=false observation) — closing off AC1's root cause (b)
 //                   "completion state not latched, recomputed each frame from volatile inputs"
-//                   (task-color-migration §3 D4 / doc/gui-state-governance.md §4 支柱 2).
+//                   (doc/gui/gui-state-governance.md §4 支柱 2).
 //                   DoRun writes run_intent = kRunning unconditionally on a successful commit
 //                   (app.cpp), naturally re-arming the latch for the next run.
 enum class RunIntent { kNone, kLoaded, kRunning, kStopping, kStopped, kRunCompleted };
@@ -482,7 +482,7 @@ struct RenderConfig {
   // WHITE by default, the opposite of `background`, and that opposition is the whole reason it is a
   // second field rather than a reuse of `background`: under the subtractive operator a black ground
   // renders an all-black page, so reusing `background` would put that state one tick-box away. See
-  // doc/print-mode-subtractive-ink.md decision D5.
+  // doc/rendering/print-mode-subtractive-ink.md decision D5.
   float paper[3] = { 1.0f, 1.0f, 1.0f };
   // Serialized only (file_io.cpp) — no editor registers it (field_editor_registry.cpp), so
   // nothing in the running GUI can change it. See the RenderConfigResimFields comment below.
@@ -507,7 +507,7 @@ struct RenderConfig {
   // excluded from RenderConfigResimFields for the same reason — see the static_assert note further
   // down. Read through IsPrintTone() below rather than compared inline; the operator itself now
   // lives in the preview shader and in the CLI's PostSnapshot, and the fields it takes the colour
-  // channel over from are listed at doc/print-mode-subtractive-ink.md §7.
+  // channel over from are listed at doc/rendering/print-mode-subtractive-ink.md §7.
   int tone = 0;
   // Globe lens only: how far behind the sphere's silhouette its far side stays visible, fading
   // like fog (lm_proj::GlobeBackFadeWeight on the core side; the shader's globeBackFadeWeight
@@ -536,7 +536,7 @@ struct RenderConfig {
 
 // Is this renderer under the subtractive (print) operator?
 //
-// The ONE place the GUI spells this comparison. doc/print-mode-subtractive-ink.md §7's rule — print
+// The ONE place the GUI spells this comparison. doc/rendering/print-mode-subtractive-ink.md §7's rule — print
 // takes over the colour channel, so every field that carries information in a hue is mutually
 // exclusive with it — has four instances and therefore at least six call sites; six hand-written
 // `tone == 1` are six chances to write `!=` and one place for a future third tone to be missed.
@@ -567,7 +567,7 @@ inline bool BgPhotoInFrame(bool has_background, bool bg_show, const RenderConfig
 
 // Has this renderer's ground run out of room for the picture to show against?
 //
-// doc/print-mode-subtractive-ink.md §8 (owner decision D6): the two tone operators have one
+// doc/rendering/print-mode-subtractive-ink.md §8 (owner decision D6): the two tone operators have one
 // degenerate direction each — a white sky under screen, a black paper under print — and they are ONE
 // idea, so they are ONE predicate. That predicate is util/contrast_headroom.hpp's, which the CLI
 // calls too (src/server/server.cpp's WarnLowContrastHeadroom); these two functions exist only to
@@ -628,7 +628,7 @@ inline void ApplyHeadroomFix(RenderConfig& renderer) {
 // a Revert baseline wider than the predicate would discard edits the UI never counted as changes
 // (a view drag never lights the Revert button, so Revert must not undo it).
 //
-// EXCLUDED — T-view fields (doc/gui-state-governance.md §2 row "T-view"): the simulation always
+// EXCLUDED — T-view fields (doc/gui/gui-state-governance.md §2 row "T-view"): the simulation always
 // renders a fixed full-sky dual-fisheye and the GUI reprojects it in the preview GL shader, so
 // these are pure client-side reprojection / crop parameters uploaded as shader uniforms
 // (preview_renderer.cpp: u_lens_type / u_visible / u_front) and never travel to the server:
@@ -641,7 +641,7 @@ inline void ApplyHeadroomFix(RenderConfig& renderer) {
 //   visible, front                            — upper/lower/full hemisphere clip (display crop).
 //   globe_back_fade                           — the globe lens's far-side fade: a second sample of
 //                                                the same full-sky texture (u_globe_back_fade).
-//   exposure_offset                           — EV (doc/ev-pipeline-architecture.md §6.4/§6.5;
+//   exposure_offset                           — EV (doc/rendering/ev-pipeline-architecture.md §6.4/§6.5;
 //                                                pushed every frame via LUMICE_SetCompositeExposure).
 //
 //   background                                — the colour shown behind the rays. Unlike every other
@@ -650,7 +650,7 @@ inline void ApplyHeadroomFix(RenderConfig& renderer) {
 //                                                ConfigSnapshot::renderer_background, so an edit is
 //                                                undoable without ever counting as a change. That is
 //                                                the "not dirty / not epoch" half of T-display in
-//                                                doc/gui-state-governance.md §2; the other half (a
+//                                                doc/gui/gui-state-governance.md §2; the other half (a
 //                                                display-time push to the server) does not exist yet,
 //                                                so a background edit currently reaches nothing until
 //                                                the next commit. Do not read this entry as "the push
@@ -1128,7 +1128,7 @@ struct FilterConfig {
 // Propagation owner: ApplyBuffersToEntry in edit_modals.cpp via the local
 // `propagate_filter_id_to_linked` lambda. Touch that lambda's call sites if
 // you add a new filter_id-flipping path.
-// See doc/filter-architecture.md §1 for the core/sim-side view of the same invariant.
+// See doc/raypath/filter-architecture.md §1 for the core/sim-side view of the same invariant.
 
 // GUI-only data structure: one crystal+filter entry card in the layer model.
 //
@@ -1188,7 +1188,7 @@ struct Layer {
 // Mirrors LUMICE_ColorClassRef / LUMICE_ColorClass but with GUI-friendly types
 // (crystal pool ids instead of LUMICE C-API ids, predicate text instead of a
 // filled LUMICE_ColorPredicate). Full design in
-// doc/gui-custom-spectrum-and-raypath-color.md §4.0.
+// doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0.
 struct ColorClassRefConfig {
   int layer_idx = 0;           // scattering layer index
   int crystal_pool_id = 0;     // index into GuiState::crystals (NOT the LUMICE C-API id)
@@ -1210,7 +1210,7 @@ struct ColorClassRefConfig {
 };
 
 // task-color-migration (T1) — ColorClassConfig split into structural vs display sub-structs so
-// the reconciler can route them onto separate channels (doc/gui-state-governance.md §4 支柱 1).
+// the reconciler can route them onto separate channels (doc/gui/gui-state-governance.md §4 支柱 1).
 // Public inheritance chosen over nested named members: keeps every existing `cls.combine` /
 // `cls.color` / `cls.z_order` etc. field-access site working unchanged (base-class member lookup),
 // while giving the type system the "a function signature that receives `const ColorClassStructState&`
@@ -1427,7 +1427,7 @@ struct GuiState {
   // Physical array order == LUMICE class id == lane binding. `z_order` inside
   // ColorClassConfig is a separate display-only field — the UI list may be
   // rendered in z_order but this vector's order MUST stay stable across
-  // reorder-drag operations (see doc/gui-custom-spectrum-and-raypath-color.md §4.0).
+  // reorder-drag operations (see doc/gui/gui-custom-spectrum-and-raypath-color.md §4.0).
   std::vector<ColorClassConfig> raypath_color;
   // Default = painter (mirrors core `kDefaultCompositeMode` per doc §4.8). GUI
   // cannot include config/raypath_color_config.hpp per AGENTS.md, so the enum
@@ -1590,7 +1590,7 @@ struct GuiState {
   // the Settings panel and saves has made exactly the explicit choice reason 3 asks for, and
   // storing it is honouring that choice rather than the program making one for them. The stored
   // value lives under the override file's `app` root key — never the document half — see
-  // user_defaults.hpp's app-preferences block and doc/gui-state-governance.md §8.
+  // user_defaults.hpp's app-preferences block and doc/gui/gui-state-governance.md §8.
   bool use_gpu_backend = false;
 
   // Number of CPU simulation workers a NEW server is constructed with. 0 = automatic: one per
@@ -1610,7 +1610,7 @@ struct GuiState {
   // drift" doc/env-var-policy.md refuses to accept from environment variables, arriving through a
   // different carrier. So its only storage channel is the override file's `app` root key, the same
   // one use_gpu_backend uses, where a value stays on the machine that chose it. See
-  // user_defaults.hpp's app-preferences block and doc/gui-state-governance.md §8.
+  // user_defaults.hpp's app-preferences block and doc/gui/gui-state-governance.md §8.
   //
   // No upper bound is enforced here, and that stays true now that the AUTOMATIC value has a
   // measured one (ServerImpl::AutomaticWorkerBaseAndCap(), server.cpp): the cap answers "what
@@ -1636,7 +1636,7 @@ struct GuiState {
   // Mark a struct-tier hard change. Any struct-tier field diff (filter topology, MS layer
   // count, projection, ray_num, etc. — see gui_state_tiers.hpp T-struct·hard) requires the
   // next struct commit to rebuild the server (epoch++) rather than reuse consumers. Named
-  // "struct-hard" to align with doc/gui-state-governance.md §档位表 T-struct·hard; the
+  // "struct-hard" to align with doc/gui/gui-state-governance.md §档位表 T-struct·hard; the
   // pre-353.5 name `MarkFilterDirty` was misleading (it never was filter-only — any struct
   // hard-reset routed through here). Beyond MarkDirty it raises display_epoch_floor to the
   // current committed_epoch, so any payload still being produced by the OLD generation
@@ -1735,7 +1735,7 @@ struct GuiState {
   // restores that document under it.
   bool config_summary_window_open = false;
 
-  // The "Raypath Analysis" window (analysis_panel.cpp, doc/raypath-analysis-panel.md). ONE
+  // The "Raypath Analysis" window (analysis_panel.cpp, doc/raypath/raypath-analysis-panel.md). ONE
   // session-tier field rather than eight: everything in it is the tool's own state — which window
   // is open, which region the user pointed at, which row they selected — none of it is part of the
   // document (not serialized, not in ConfigSnapshot, not diffed for dirty) and none of it reaches
@@ -1899,7 +1899,7 @@ struct GuiState {
   // SyncFromPoller (adoption of a new payload) and by the panel (re-sort on the radius slider),
   // never by a widget writing a document field. Kept apart from PreviewSnapshot / the texture
   // payload on purpose: the two arrive on different clocks and are consumed by different code,
-  // and a struct that carries two lifetimes is the shape doc/gui-preview-lifecycle-architecture.md
+  // and a struct that carries two lifetimes is the shape doc/gui/gui-preview-lifecycle-architecture.md
   // warns against.
   struct AnalysisResultView {
     std::shared_ptr<const AnalysisPayload> payload;

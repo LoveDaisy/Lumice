@@ -25,7 +25,7 @@ constexpr ImVec4 kGoodBtnActive{ 0.10f, 0.35f, 0.10f, 1.0f };
 // Continue-button triple: an action-identity colour, not a grade (semantic_colors.hpp). Chosen
 // from three screenshotted candidates by hue distance from the four colours it shares the bar
 // with — Run's green, Stop's red, the palette's blue button, and the accent-tinted Colors button;
-// candidates and the reasons for this one are in doc/gui-visual-language.md §4.8.
+// candidates and the reasons for this one are in doc/gui/gui-visual-language.md §4.8.
 constexpr ImVec4 kContinueBtnNormal{ 0.38f, 0.24f, 0.58f, 1.0f };
 constexpr ImVec4 kContinueBtnHovered{ 0.46f, 0.31f, 0.68f, 1.0f };
 constexpr ImVec4 kContinueBtnActive{ 0.30f, 0.18f, 0.48f, 1.0f };

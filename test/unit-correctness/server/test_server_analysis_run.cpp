@@ -511,7 +511,7 @@ TEST_F(ServerAnalysisRun, RenderAfterStoppedAnalysisProducesAFrame) {
 }
 
 // The boundary of the analysis-only stop rule: a RENDER session's Stop() still reads as
-// idle with no data (doc/capi-lifecycle-architecture.md §7.1) — the contract the GUI's
+// idle with no data (doc/interfaces/capi-lifecycle-architecture.md §7.1) — the contract the GUI's
 // re-simulate paths rest on, which the analysis branch in Stop() must not widen.
 TEST_F(ServerAnalysisRun, RenderStopStillReadsAsIdleWithNoData) {
   ASSERT_FALSE(server_.CommitConfig(Halo22Config("infinite")));

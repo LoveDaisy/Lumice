@@ -4,7 +4,7 @@
 The question this answers is the one the theme cannot answer about itself: given a second,
 deliberately distant palette, WHICH PIXELS COME OUT THE SAME? A pixel that is identical under both
 palettes was drawn with a colour some call site chose on its own — either a leak to fix, or an
-exemption that needs a name and a reason (doc/gui-visual-language.md, section 7).
+exemption that needs a name and a reason (doc/gui/gui-visual-language.md, section 7).
 
 It only ever produces CANDIDATES. A pixel can legitimately be palette-independent (a user-chosen
 data colour, a mark drawn on top of the rendered image), so nothing here is a verdict; the

@@ -407,7 +407,7 @@ void RegisterColorWindowTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // doc/print-mode-subtractive-ink.md §7 instance 2, on the same two mirrors as the case above and
+  // doc/rendering/print-mode-subtractive-ink.md §7 instance 2, on the same two mirrors as the case above and
   // for the same reason they are asserted together: the pair is wired to one predicate precisely so
   // a user cannot meet a greyed checkbox beside a live toggle.
   //

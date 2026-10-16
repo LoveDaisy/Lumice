@@ -41,5 +41,5 @@ Summary 窗口把当前配置摊在一页上——晶体及其形状、朝向，
 
 ## 4. 另见
 
-- 导出的 config JSON——用 CLI 能渲染的形式描述同一张图 → 顶栏 **Save** → `Config JSON...`（[gui-guide_zh.md](../gui-guide_zh.md)）
-- 把当前设置存为个人默认值 → **Settings** 面板，它列出同一批设置行及其出厂值（[gui-guide_zh.md](../gui-guide_zh.md)）
+- 导出的 config JSON——用 CLI 能渲染的形式描述同一张图 → 顶栏 **Save** → `Config JSON...`（[gui-guide_zh.md](../gui/gui-guide_zh.md)）
+- 把当前设置存为个人默认值 → **Settings** 面板，它列出同一批设置行及其出厂值（[gui-guide_zh.md](../gui/gui-guide_zh.md)）

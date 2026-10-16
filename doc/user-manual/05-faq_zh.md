@@ -23,7 +23,7 @@ Lumice 的 JSON schema 只要求少量字段，其他字段都有默认值。下
 | `render[].visible` | 否 | `"upper"` | 半球遮罩：`"upper"` / `"lower"` / `"full"` |
 | `render[].background` | 否 | `[0, 0, 0]` | RGB 背景 |
 
-> 字段名为 JSON parser 实际接受的名称。C API 镜像了其中一部分 — 见 [`../c_api_zh.md`](../c_api_zh.md)。
+> 字段名为 JSON parser 实际接受的名称。C API 镜像了其中一部分 — 见 [`../c_api_zh.md`](../interfaces/c_api_zh.md)。
 
 ## 2. `ray_num` × 波长语义 — "光线数"到底是什么意思？
 
@@ -102,7 +102,7 @@ GUI 包了同一个引擎，但**并非** JSON config 的完全超集 — 一些
 ## 延伸阅读
 
 - 完整 schema → [`../configuration_zh.md`](../configuration_zh.md)
-- 坐标约定（高度角 / 天顶角 / 方位角的符号） → [`../coordinate-convention_zh.md`](../coordinate-convention_zh.md)
-- 性能调优 → [`../performance-testing_zh.md`](../performance-testing_zh.md)
-- GUI 面板参考 → [`../gui-guide_zh.md`](../gui-guide_zh.md)
-- 嵌入用 C API → [`../c_api_zh.md`](../c_api_zh.md)
+- 坐标约定（高度角 / 天顶角 / 方位角的符号） → [`../coordinate-convention_zh.md`](../geometry/coordinate-convention_zh.md)
+- 性能调优 → [`../performance-testing_zh.md`](../testing/performance-testing_zh.md)
+- GUI 面板参考 → [`../gui-guide_zh.md`](../gui/gui-guide_zh.md)
+- 嵌入用 C API → [`../c_api_zh.md`](../interfaces/c_api_zh.md)

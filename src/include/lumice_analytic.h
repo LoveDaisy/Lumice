@@ -1,7 +1,7 @@
 #ifndef LUMICE_ANALYTIC_H_
 #define LUMICE_ANALYTIC_H_
 
-// The published analytic interface of Lumice (liblumice_analytic). Design: doc/analytic-api.md.
+// The published analytic interface of Lumice (liblumice_analytic). Design: doc/interfaces/analytic-api.md.
 //
 // The whole interface: the capability (types and computation functions, lumice_analytic_core.h,
 // which also holds LUMICE_ANALYTIC_API_VERSION and the version notes) plus the two functions that
@@ -22,7 +22,7 @@ LUMICE_ANALYTIC_API int LUMICE_ANALYTIC_GetApiVersion(void);
 
 // Logging: the library writes nothing by default — no console, no file — until the host installs a
 // callback, which then receives the engine's diagnostics, including crystal-construction warnings
-// (doc/analytic-api.md section 6). This differs from lumice_base.h's LUMICE_SetLogCallback, which only
+// (doc/interfaces/analytic-api.md section 6). This differs from lumice_base.h's LUMICE_SetLogCallback, which only
 // adds a destination next to a console sink the host cannot remove.
 //
 // The level values match spdlog's six levels, which is what the engine's messages carry; a
@@ -46,7 +46,7 @@ typedef void (*LUMICE_ANALYTIC_LogCallback)(LUMICE_ANALYTIC_LogLevel level, cons
 // itself so the host can see the wiring work; this is not a one-time event — every call with a
 // non-NULL callback logs it again, including a call that merely replaces an already-installed one.
 // NULL stops forwarding; the library is then silent again. An initialisation call: make it before
-// any computation, from one thread (doc/analytic-api.md section 5.3). Do not call this function
+// any computation, from one thread (doc/interfaces/analytic-api.md section 5.3). Do not call this function
 // again from inside `callback` itself — the sink holds a non-recursive mutex across the callback
 // invocation, and a reentrant call would deadlock (the same known limitation as lumice_base.h's
 // LUMICE_SetLogCallback).

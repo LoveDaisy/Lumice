@@ -160,7 +160,7 @@ void BM_Stage_Triangulate(benchmark::State& state, StageInput in) {
 // The work it actually performs is "which vertices lie on which plane", which is
 // one pass: O(P*V) dot products, no allocation. This prototype measures that
 // ceiling. It is a MEASUREMENT ONLY -- not a proposed implementation, and not
-// equivalence-checked against every degenerate case (see doc/numerical-robustness.md
+// equivalence-checked against every degenerate case (see doc/geometry/numerical-robustness.md
 // before touching a real predicate). Equivalence is spot-checked below.
 
 constexpr double kProtoEps = 1e-6;

@@ -3,7 +3,7 @@
 A Metal session serves every renderer of the config at once: the exit tail
 projects each exit ray onto N device planes (one per renderer), accumulates N
 landed-weight slots, and the host reads N planes back
-(``MetalTraceBackend::Impl::AccumRendererPlanes``; ``doc/seam-design.md`` §4.2).
+(``MetalTraceBackend::Impl::AccumRendererPlanes``; ``doc/backends/seam-design.md`` §4.2).
 Before that, ``Simulator::CanUseBackend`` refused any config with more than one
 renderer and the whole session ran on the legacy CPU path — so every existing
 parity file, which runs one renderer, was structurally blind to the N-plane

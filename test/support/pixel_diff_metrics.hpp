@@ -20,7 +20,7 @@
 // edges (|delta| up to ~98, but in small disconnected specks). `tau` removes the first kind
 // outright and shrinks the second; the per-group `max_cc_threshold` then sits between what the
 // second kind leaves and the smallest real drift on record. The values in use, the measurements
-// behind them and their margins are in doc/testing-architecture.md §4.6.
+// behind them and their margins are in doc/testing/testing-architecture.md §4.6.
 //
 // Single authority. This header is the only implementation of the ruler in C++: the gui_test
 // comparison (test/gui/test_screenshot.cpp) and the unit case that pins the ruler's own behaviour

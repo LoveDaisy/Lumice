@@ -1223,7 +1223,7 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
     // as the exit face. Convex-crystal invariant guarantees one face is
     // always found — no absolute-ε face-miss bug (the Möller-Trumbore route
     // dropped TIR-reflected near-parallel rays via `det ∈ [-1e-8, 1e-8]`
-    // and `t > 1e-6f` thresholds; see doc/numerical-robustness.md约定 2).
+    // and `t > 1e-6f` thresholds; see doc/geometry/numerical-robustness.md约定 2).
     // Single-source per-face intersect lives in lm_traversal::SlabFaceT;
     // see src/core/shared/traversal_shared.h for the denom-gate /
     // from-face exclusion contract shared with Metal + CPU.
@@ -1950,7 +1950,7 @@ __global__ void shuffle_cont_kernel(const float* __restrict__    in_d,
 // atomicAdds every exit into the fp32 plane `src`; left alone for a whole drain
 // window (64 batches) a hot pixel's chain gets long enough that its ulp swallows
 // the small weights and the plane measurably drifts against the host's double
-// ledger (doc/gpu-single-engine-implementation.md §10 has the figure, the single
+// ledger (doc/backends/gpu-single-engine-implementation.md §10 has the figure, the single
 // measurement point) — the same defect the landed-weight scalar had, one level
 // down. This kernel
 // runs on the session stream every Simulator::kXyzFoldEveryBatches (8) batches,
@@ -1961,7 +1961,7 @@ __global__ void shuffle_cont_kernel(const float* __restrict__    in_d,
 // accumulates in `fold` with double's ulp instead of float's. Eight, not one:
 // every pass reads the whole plane, and a pass per batch pays measurably more
 // throughput than this 8-batch cadence for a drift improvement below the
-// cadence's own margin — see doc/gpu-single-engine-implementation.md §10 for
+// cadence's own margin — see doc/backends/gpu-single-engine-implementation.md §10 for
 // the throughput/drift numbers across cadences, the single measurement point.
 //
 // A batch of 262144 rays touches a small fraction of a multi-megapixel plane, so

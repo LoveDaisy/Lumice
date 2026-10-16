@@ -160,7 +160,7 @@ ImGuiWindow* TopmostRootWindow() {
 // ===== The pull: what an outside write to the pool does to an open modal =====
 //
 // The modal's buffers are re-synced with the pool every frame as a per-field three-way merge
-// (edit_modals.cpp PullBuffersFromPool; doc/gui-state-governance.md §11). The cases below write the
+// (edit_modals.cpp PullBuffersFromPool; doc/gui/gui-state-governance.md §11). The cases below write the
 // pool DIRECTLY from the test coroutine, which runs between frames — the same place in the frame
 // order as the analysis window's Exclude, which runs before RenderEditModals within a frame — so
 // what they drive is the merge itself, not any one writer. The Exclude button's own end-to-end
@@ -313,7 +313,7 @@ std::string JoinNames(const std::vector<const char*>& names) {
 }
 
 
-// The height half of the semi-variable window (doc/gui-visual-language.md §9), in one layout: the
+// The height half of the semi-variable window (doc/gui/gui-visual-language.md §9), in one layout: the
 // user drags the bottom edge up, and (a) the drag sticks — the window does not snap back to its
 // content, (b) the window itself does not scroll, because the layout's flexible pane gave up the
 // difference, so (c) the action row is still inside the window, (d) the width cannot be dragged at
@@ -818,7 +818,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
   // The same gate's positive branch, paired with the case above: a gate stuck closed would pass
   // that one on its own. Remove Filter is the edit because it is the cheapest change that must fire
   // all three effects (Modified, dirty, the epoch fence). The picture itself stays on screen — a
-  // hard edit no longer clears it (doc/gui-preview-lifecycle-architecture.md §7.1).
+  // hard edit no longer clears it (doc/gui/gui-preview-lifecycle-architecture.md §7.1).
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "ok_with_a_change_marks_the_result_out_of_date");
     t->TestFunc = [](ImGuiTestContext* ctx) {

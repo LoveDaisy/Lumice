@@ -91,7 +91,7 @@
 //
 // No committed reference image, so this case must never enter scripts/regen_gui_test_refs.py's
 // GROUPS registry — the same property that puts it under test/gui/parity/ rather than
-// test/gui/visual/ (doc/testing-architecture.md §4.10). Like the rest of that tag it runs on a
+// test/gui/visual/ (doc/testing/testing-architecture.md §4.10). Like the rest of that tag it runs on a
 // developer machine with a real GL context via ./scripts/test.sh {quick,full,pr} and in no CI job
 // today (§7.5).
 

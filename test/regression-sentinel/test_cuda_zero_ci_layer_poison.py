@@ -67,7 +67,7 @@ machine, by hand, and nowhere else:
     ./scripts/build.sh -sj release        # shared lib, CUDA-enabled build
     LUMICE_HAS_CUDA=1 pytest -v -m slow test/regression-sentinel/test_cuda_zero_ci_layer_poison.py
 
-Do not cite CI for this guard. See `doc/gpu-remote-cuda-build-testing.md` for the
+Do not cite CI for this guard. See `doc/testing/gpu-remote-cuda-build-testing.md` for the
 reference-machine protocol and for why `LUMICE_HAS_CUDA` (this un-skip gate) and
 `LUMICE_CUDA_ENABLED` (the build switch) must both be set and are not the same thing.
 

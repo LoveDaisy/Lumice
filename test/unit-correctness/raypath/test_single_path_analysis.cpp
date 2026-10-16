@@ -4,7 +4,7 @@
 // order, BuildCrystalRotation, the analyze --center direction formula) or are the kernel's own
 // single-pose evaluator at an independently built pose, never the module's own helpers.
 //
-// symmetry_semantics: none — every case analyses one concrete face sequence (doc/analytic-api.md
+// symmetry_semantics: none — every case analyses one concrete face sequence (doc/interfaces/analytic-api.md
 // section 3).
 
 #include <gtest/gtest.h>

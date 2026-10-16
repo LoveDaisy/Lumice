@@ -169,7 +169,7 @@ bool SolvePlanes(const float* coef1, const float* coef2, const float* coef3, flo
  *        `FillHexCrystalCoef` apex/anti-apex solve) and by the double mesh
  *        builder (`SolveConvexPolyhedronVtxD` / `CollectSurfaceVtxD`).
  *        Single source of truth — no manual copy of this routine should live
- *        in callers (see doc/numerical-robustness.md §4).
+ *        in callers (see doc/geometry/numerical-robustness.md §4).
  *
  * @param coef1 Coefficients for 1st plane. [a, b, c, d]
  * @param coef2 Coefficients for 2nd plane. [a, b, c, d]
@@ -210,7 +210,7 @@ bool IsInPolyhedron3(int n, const float* coef, const float xyz[3], bool boundary
 /**
  * @brief Double-precision variant of @ref IsInPolyhedron3. Containment threshold is
  *        `kIncidenceEpsD = 1e-5` (matches the float-input precision floor; see
- *        doc/numerical-robustness.md §4 "single source of truth").
+ *        doc/geometry/numerical-robustness.md §4 "single source of truth").
  *
  * @param n Number of half spaces.
  * @param coef Coefficients of half spaces, [a, b, c, d] × n.

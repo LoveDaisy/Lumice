@@ -168,7 +168,7 @@ void RegisterOverlayControlTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK_GT(line_x, 0.0f);  // a run of three misses would leave this unset
 
-      // "Empty cell IS the information" (doc/gui-visual-language.md §4.4): the lens border row draws
+      // "Empty cell IS the information" (doc/gui/gui-visual-language.md §4.4): the lens border row draws
       // a circle, not a word, so its Label cell holds nothing — not a disabled checkbox, not a dash.
       // Asserted against the two rows that DO have one, so the claim is about that row and not
       // about the id being spelled some other way.

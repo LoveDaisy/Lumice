@@ -28,7 +28,7 @@
 // value, so even the NUMBER of engine outputs it consumes varies. Such a table
 // can therefore only ever hold on the standard library it was captured on. Same
 // defect family as the platform-dependent pyramid oracle retired in
-// doc/numerical-robustness.md §8, and the same resolution: align on the
+// doc/geometry/numerical-robustness.md §8, and the same resolution: align on the
 // contract, retire the absolute oracle.
 
 namespace {

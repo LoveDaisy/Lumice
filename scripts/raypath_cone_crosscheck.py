@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cone-domain cross-check between a render frame and a raypath analysis run.
 
-The frame-vs-analysis share calibration (doc/coordinate-convention.md §13): the only exact form of an
+The frame-vs-analysis share calibration (doc/geometry/coordinate-convention.md §13): the only exact form of an
 image <-> analysis share comparison is same-domain — a cone ROI on both sides.
 This tool drives both arms, integrates the frame over the cone's pixels through
 the inverse of the engine's own projection (equal-area single fisheye and

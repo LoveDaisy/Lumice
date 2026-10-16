@@ -127,7 +127,7 @@ struct RenderResult {
   // The composite path's auto-EV anchor — P99 over the union of
   // NON-ZERO UNEXPOSED (raw lane) Y values across every participating class.
   // ONLY populated by the composite path; mono paths leave this
-  // at 0 and consumers ignore it (see doc/ev-pipeline-architecture.md §2.4
+  // at 0 and consumers ignore it (see doc/rendering/ev-pipeline-architecture.md §2.4
   // for why this is a composite-only field).
   float composite_p99_y_ = 0.0f;
 
@@ -170,7 +170,7 @@ struct RawXyzResult {
   float axis_solid_angle_ = 0.0f;
   // Lifecycle epoch (committed_epoch_ at snapshot time). Stamped when the frame is
   // acquired; consumed by the GUI display-keying in 1.5. See
-  // doc/gui-preview-lifecycle-architecture.md §4/§5.
+  // doc/gui/gui-preview-lifecycle-architecture.md §4/§5.
   uint64_t epoch_ = 0;
 };
 

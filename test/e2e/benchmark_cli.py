@@ -78,7 +78,7 @@ def run_benchmark(
     `backend_env` is the LUMICE_TRACE_BACKEND value to run under (``"metal"``,
     ``"cuda"``), or None for the legacy CPU route (the variable is removed from
     the child's environment — legacy is "env unset", NOT ``cpu_backend``, see
-    doc/testing-architecture.md §4.1). The env override is used rather than
+    doc/testing/testing-architecture.md §4.1). The env override is used rather than
     ``--backend`` so this matches ``scripts/bench_throughput.py``'s selection.
     """
     env = dict(os.environ)

@@ -107,7 +107,7 @@ inline RateEstimate EstimateBenchmarkRate(const RateObservation& obs) {
     // rate rather than an unbounded upward fantasy. Same formula as `wall_fallback`, but the basis
     // label is deliberately kept distinct: the two say different things (`active_short` = exactly
     // one counter publish observed; `wall_fallback` = no usable active window at all), and merging
-    // them would change the rate_basis value set for no gain. See doc/performance-testing.md §C
+    // them would change the rate_basis value set for no gain. See doc/testing/performance-testing.md §C
     // rule 5 for the full derivation (quantum value, 240-run measurement, short-window bias decay
     // curve).
     est.rays_per_sec = wall_bounded_rate;

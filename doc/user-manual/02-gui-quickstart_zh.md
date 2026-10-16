@@ -110,5 +110,5 @@ Run 不能恢复被丢弃的 filter 或不支持的分布。
 - 用现成 recipe 复现经典光晕 → [`04-recipes_zh.md`](04-recipes_zh.md)
 - 查一道晕是哪些光路做出来的，并排除某一条 → [`06-raypath-analysis_zh.md`](06-raypath-analysis_zh.md)
 - 把自己的配置截成一张图分享给别人 → [`07-config-summary_zh.md`](07-config-summary_zh.md)
-- 完整 GUI 面板参考 → [`../gui-guide_zh.md`](../gui-guide_zh.md)
+- 完整 GUI 面板参考 → [`../gui-guide_zh.md`](../gui/gui-guide_zh.md)
 - 全部字段名与类型 → [`../configuration_zh.md`](../configuration_zh.md)

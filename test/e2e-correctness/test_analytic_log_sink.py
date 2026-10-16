@@ -3,7 +3,7 @@
 Every engine binary inherits a console sink on stderr from util/logger.hpp's GetSharedSink().
 liblumice_analytic takes that sink out of its own copy while the library loads (a namespace-scope
 object in src/analytic/analytic_lib.cpp) and hands diagnostics to the host only through
-LUMICE_ANALYTIC_SetLogCallback (doc/analytic-api.md section 6).
+LUMICE_ANALYTIC_SetLogCallback (doc/interfaces/analytic-api.md section 6).
 
 What this proves, and what it does not. LUMICE_ANALYTIC_SetLogCallback logs one INFO line through
 the engine's global logger when a callback is installed. That line is the observable here: it
@@ -60,7 +60,7 @@ def _find() -> Path:
     hits = sorted(p for p in SHARED_OUT.rglob(pattern) if p.is_file())
     if not hits:
         if _cuda_configured():
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/interfaces/analytic-api.md 2.3)")
         pytest.fail(f"{pattern} not found under {SHARED_OUT} although a shared build exists there")
     if len(hits) > 1:
         pytest.fail(f"more than one {pattern} under {SHARED_OUT}: {hits}")

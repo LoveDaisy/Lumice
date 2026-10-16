@@ -95,11 +95,11 @@ class FrameBufferPool : public std::enable_shared_from_this<FrameBufferPool<T>> 
   size_t element_count_ = 0;
 };
 
-// See doc/accumulator-consumer-architecture.md §3 (state machine), §4 (thread safety), §6 (invariants).
+// See doc/rendering/accumulator-consumer-architecture.md §3 (state machine), §4 (thread safety), §6 (invariants).
 class RenderConsumer : public IConsume {
  public:
   // task-339.3: `class_table` drives per-color-class rule-lane allocation
-  // (see doc/gui-custom-spectrum-and-raypath-color.md §4.7). Each class in the
+  // (see doc/gui/gui-custom-spectrum-and-raypath-color.md §4.7). Each class in the
   // table gets one W*H Y-lane; Consume() runs each class's `any`/`all` predicate
   // over every ray's component mask and accumulates Y into the matching lane.
   // Default (empty table) = pre-336 behavior bit-for-bit (no lane state).
@@ -226,7 +226,7 @@ class RenderConsumer : public IConsume {
   //     Being anchored to an accumulated statistic rather than to emitted energy, it still
   //     carries no energy term: the image keeps its look as ray_num grows. What CHANGED with the
   //     anchor is which parts of the config move the brightness — see the migration law in
-  //     doc/ev-pipeline-architecture.md and the derivation at the definition in render.cpp.
+  //     doc/rendering/ev-pipeline-architecture.md and the derivation at the definition in render.cpp.
   float ExposureScale() const;
 
   // The snapshot's exposure anchor, pushed in by ServerImpl::DoSnapshot between
@@ -256,7 +256,7 @@ class RenderConsumer : public IConsume {
   // hiding a bright class instantly re-brightens the remaining dim classes,
   // in the same DoSnapshot call, without any GUI auto-EV round-trip.
   //   = config_.intensity_factor_ * target_linear / participating_p99_y
-  // (see doc/ev-pipeline-architecture.md §6.6). Note: the snapshot_intensity
+  // (see doc/rendering/ev-pipeline-architecture.md §6.6). Note: the snapshot_intensity
   // factor that appears in ComputeEvAuto's numerator does NOT appear here —
   // that factor cancels against the mono shader's `intensity_scale =
   // intensity_factor / snapshot_intensity` post-processing step. Composite

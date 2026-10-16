@@ -150,7 +150,7 @@ bool NoVisibleMatchedColorClass(const GuiState& state, const std::vector<int>& s
 // covers both empty-composite roots: (a) no rays match any class; (b) matches
 // exist but every matching class is currently hidden (visible=false, or solo'd
 // out by another class).
-// doc/print-mode-subtractive-ink.md §7 instance 2, and the sibling of kColorsDisabledNoMatchTooltip
+// doc/rendering/print-mode-subtractive-ink.md §7 instance 2, and the sibling of kColorsDisabledNoMatchTooltip
 // below in every respect: one string read by BOTH the top-bar Colored toggle and the Colors-window
 // Enable checkbox, so the two cannot come to disagree about why the control is off.
 //

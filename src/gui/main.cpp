@@ -168,7 +168,7 @@ int main(int argc, char** argv) {
   // with a large Dock or 125% DPI scaling, spawning a scrollbar on the right
   // panel. Falls through to defaults on headless / nullptr-monitor environments.
   //
-  // The creation size is scaled first (doc/gui-visual-language.md §4.1): the user's multiplier is
+  // The creation size is scaled first (doc/gui/gui-visual-language.md §4.1): the user's multiplier is
   // read from disk here, before the window exists, and the primary monitor's content scale is
   // the best estimate of the one the window will land on — an estimate for the same reason the
   // work-area clamp below is one (multi-monitor: the window may open elsewhere), corrected by the

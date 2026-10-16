@@ -2,149 +2,138 @@
 
 # Documentation Index
 
-Welcome to the Lumice project documentation. This page provides navigation and index for all documents.
+Lumice documentation is organized by audience and topic. Start with the user manual for product use, the architecture and developer guides for contribution, or the topic collections for subsystem details.
 
-## Document Structure
+## Start Here
 
-```
-doc/
-├── README.md / README_zh.md                         # Documentation index (English/Chinese)
-├── architecture.md / _zh.md                         # System architecture
-├── configuration.md / _zh.md                        # Configuration guide
-├── filter-architecture.md / _zh.md                  # Filter subsystem design constraints (Design A)
-├── adaptive-brightness.md / .zh.md                  # Adaptive Brightness: algorithm, modes, additivity
-├── raypath-symmetry.md / _zh.md                     # Raypath symmetry: P/B/D filter semantics
-├── c_api.md / _zh.md                                # C API reference
-├── developer-guide.md / _zh.md                      # Developer guide
-├── gui-guide.md / _zh.md                            # GUI application guide
-├── performance-testing.md / _zh.md                  # Performance testing guide
-├── windows-remote-testing.md / _zh.md               # Windows remote testing guide
-├── machines.md                                      # Verification machines: role -> host bindings
-├── crystal-orientation-sampling.md / _zh.md         # Crystal orientation sampling (research)
-├── research/                                        # Research documents (not in production)
-│   ├── beam-tracing.md / _zh.md                     # Beam tracing algorithm
-│   └── inverse-rendering.md / _zh.md                # Inverse rendering
-├── api/                                             # API docs (Doxygen-generated)
-└── figs/                                            # Image resources
-```
+### Users
 
-## User Documentation
+- [User manual](user-manual/00-overview.md): installation, GUI and CLI quickstarts, recipes, FAQ, raypath analysis, and configuration summaries
+- [Configuration reference](configuration.md): JSON configuration fields, defaults, and validation
+- [GUI guide](gui/gui-guide.md): application workflow, previews, and `.lmc` project files
+- [C API reference](interfaces/c_api.md): engine API usage, errors, ownership, and integration
 
-For users of this project:
+### Contributors
 
-- **[User Manual](user-manual/00-overview.md)**: Beginner-friendly journey-based guide
-  - Install, GUI quickstart, CLI quickstart
-  - 3 ready-made halo recipes
-  - FAQ, defaults, GUI vs JSON capabilities
+- [System architecture](architecture.md): modules, dependencies, and data flow
+- [Developer guide](developer-guide.md): setup, coding conventions, testing, and debugging
+- [Testing architecture](testing/testing-architecture.md): test layers, ownership, scope, and comparison rulers
+- [Environment-variable policy](env-var-policy.md): decision gate and ownership rules for environment knobs
+- [Contributing guide](../CONTRIBUTING.md): branches, pull requests, releases, and contributor workflow
 
-- **[Configuration Guide](configuration.md)**: Complete configuration reference
-  - Detailed configuration options and defaults
-  - Validation rules
-  - Common configuration errors and solutions
-  - GUI personal defaults: the separate `user_defaults.json` file, its location per platform, and
-    the `--user-config`/`--no-user-config` switches
+## Topic Collections
 
-- **[Filter Architecture](filter-architecture.md)**: Core design constraints for the filter subsystem
-  - Filter ↔ crystal single-key binding model
-  - Simulation-side filter gate (Design A): filter-fail rays are dropped in the simulator
-  - Multi-scatter pruning semantics and performance implications
-  - Historical context: task-200 routing decision and revert rationale
-  - C API `unfiltered_*` field deprecation and GUI Off-mode temporary disable
+### Geometry
 
-- **[Adaptive Brightness](adaptive-brightness.md)**: Automatic EV normalization in the GUI
-  - P99.5-anchored algorithm and target-white mapping (always on, no toggle)
-  - sRGB gamma caveat
+Coordinate conventions, crystal representation, orientation sampling, numerical predicates, and geometry-randomization behavior:
 
-- **[Raypath Symmetry](raypath-symmetry.md)**: P, B, D filter toggle semantics
-  - Two sources of raypath equivalence (crystal geometry vs orientation distribution)
-  - Precise semantics and enabling conditions for P, B, and D
-  - σ-by-roll-mean derivation and reference table
-  - GUI indicator behavior
+- [Coordinate convention](geometry/coordinate-convention.md) ([中文](geometry/coordinate-convention_zh.md))
+- [Crystal geometry representation](geometry/crystal-geometry-representation.md)
+- [Crystal orientation sampling](geometry/crystal-orientation-sampling.md) ([中文](geometry/crystal-orientation-sampling_zh.md))
+- [Geometry randomization performance](geometry/geometry-randomization-perf.md)
+- [Geometry randomization value and measurement](geometry/geometry-randomization-value-and-measurement.md)
+- [Near-pole area-measure sampling](geometry/near-pole-area-measure-sampling.md)
+- [Numerical robustness](geometry/numerical-robustness.md)
 
-- **[System Architecture](architecture.md)**: System architecture design
-  - Server-Consumer architecture
-  - Module responsibilities and dependencies
-  - Data flow and processing pipeline
-  - Program entry points
+### GUI
 
-- **[GUI Guide](gui-guide.md)**: GUI application usage
-  - Application features and UI layout
-  - Crystal preview and render preview
-  - Project file format (`.lmc`)
-  - Building and running the GUI
+GUI usage, state ownership, lifecycle, layout history, and visual language:
 
-## Developer Documentation
+- [GUI guide](gui/gui-guide.md) ([中文](gui/gui-guide_zh.md))
+- [Custom spectrum and raypath color](gui/gui-custom-spectrum-and-raypath-color.md)
+- [GUI preview lifecycle architecture](gui/gui-preview-lifecycle-architecture.md)
+- [GUI state governance](gui/gui-state-governance.md)
+- [GUI visual language](gui/gui-visual-language.md)
+- [GUI layout architecture and disposition](gui/gui-layout-architecture.md)
 
-For project developers and contributors:
+### Raypath
 
-- **[Developer Guide](developer-guide.md)**: Developer guide
-  - Development environment setup
-  - Code style guide
-  - How to add new features
-  - Testing guide
-  - Debugging tips
+Raypath representation, filtering and symmetry, analysis products, report schemas, and diagnostic research:
 
-- **[C API Reference](c_api.md)**: C interface API reference
-  - Complete C API reference
-  - Usage examples
-  - Error handling guide
-  - Thread safety notes
-  - Integration with other languages
+- [Raypath and ray-segment architecture](raypath/raypath-rayseg-architecture.md)
+- [Filter architecture](raypath/filter-architecture.md) ([中文](raypath/filter-architecture_zh.md))
+- [Raypath symmetry](raypath/raypath-symmetry.md) ([中文](raypath/raypath-symmetry.zh.md))
+- [Raypath analysis](raypath/raypath-analysis.md)
+- [Raypath analysis panel](raypath/raypath-analysis-panel.md)
+- [Raypath CLI output](raypath/raypath-cli-output.md)
+- [Schema 3 layered design](raypath/raypath-schema3-layered-design.md)
+- [Feature-diagnostic acceptance](raypath/raypath-feature-diagnostic-acceptance.md)
+- [Feature-diagnostic discovery research](raypath/feature-diagnostic-discovery-research.md)
 
-- **[Performance Testing](performance-testing.md)**: Performance testing guide
-  - CLI benchmarks, GUI automated tests, manual/remote testing
-  - Log analysis with `scripts/analyze_perf_log.py`
+### Rendering
 
-- **[Verification Machines](machines.md)**: role -> host bindings (single source)
-  - Which machine fills which verification role, and its paths / CUDA version
-  - Change machines here only; the recipes speak in roles
+Accumulation, exposure, projection overlays, and screen/print display models:
 
-- **[Windows Remote Testing](windows-remote-testing.md)**: Windows remote testing guide
-  - Running tests on Windows via watcher and SSH
-  - VSync/DWM real-display testing
+- [Accumulator–consumer architecture](rendering/accumulator-consumer-architecture.md)
+- [Adaptive brightness](rendering/adaptive-brightness.md) ([中文](rendering/adaptive-brightness.zh.md))
+- [EV pipeline architecture](rendering/ev-pipeline-architecture.md)
+- [Overlay label placement](rendering/overlay-label-placement.md)
+- [Print-mode subtractive ink](rendering/print-mode-subtractive-ink.md)
 
-- **[API Documentation](api/html/)**: Auto-generated API docs
-  - Generated with Doxygen
-  - Complete reference for all public APIs
-  - **Generate locally**: run `doxygen .doxygen-config` (from project root)
-  - Generated docs are located at `doc/api/html/`
+### Backends
 
-## Research Documentation
+The host/device seam and the verified GPU execution architecture:
 
-Experimental and theoretical explorations (not implemented in production):
+- [TraceBackend seam design](backends/seam-design.md)
+- [Trace-backend frame lifecycle](backends/trace-backend-frame-lifecycle.md)
+- [GPU single-engine implementation](backends/gpu-single-engine-implementation.md)
+- [GPU route history](backends/gpu-route-history.md)
 
-- **[Beam Tracing](research/beam-tracing.md)**: Beam tracing algorithm research
-  - Theoretical analysis and experimental results
-  - Comparison with Monte Carlo ray tracing
+### Testing
 
-- **[Crystal Orientation Sampling](crystal-orientation-sampling.md)**: Crystal orientation sampling methods
-  - SO(3) sampling strategies and convergence analysis
+Test organization, performance measurement, reference machines, and remote verification workflows:
 
-- **[Inverse Rendering](research/inverse-rendering.md)**: Inverse rendering research
-  - Parameter estimation from observed halo images
+- [Testing architecture](testing/testing-architecture.md) ([中文](testing/testing-architecture_zh.md))
+- [Performance testing](testing/performance-testing.md) ([中文](testing/performance-testing_zh.md))
+- [Verification machines](testing/machines.md)
+- [Remote CUDA build and testing](testing/gpu-remote-cuda-build-testing.md)
+- [Windows remote testing](testing/windows-remote-testing.md) ([中文](testing/windows-remote-testing_zh.md))
+- [XYZ statistics tool](testing/xyz-stats-tool.md)
 
-## Quick Links
+### Interfaces
 
-- [Project README](../README.md)
-- [Project Chinese README](../README_zh.md)
-- [Configuration Example](../examples/config_example.json)
+Published C surfaces, lifecycle rules, package boundaries, and product-line decisions:
 
-## Documentation Language Policy
+- [C API reference](interfaces/c_api.md) ([中文](interfaces/c_api_zh.md))
+- [C API lifecycle architecture](interfaces/capi-lifecycle-architecture.md)
+- [Analytic API](interfaces/analytic-api.md)
+- [API layering and product lines](interfaces/api-layering-and-product-lines.md)
 
-- **Bilingual documentation**: All documents are available in both English and Chinese
-- **Chinese version**: Filenames marked with `_zh` suffix
-- **English version**: Filenames without suffix (default)
-- **Code comments**: Written in English
-- **API documentation**: Generated by Doxygen, in English
+## Other Collections
 
-### Generating API Documentation
+- [`user-manual/`](user-manual/00-overview.md): task-oriented product documentation
+- `research/`: research records that retain their original status and scope
+  - [Inverse-rendering research](research/inverse-rendering.md) ([中文](research/inverse-rendering_zh.md))
+  - [Beam-tracing research](research/beam-tracing.md) ([中文](research/beam-tracing_zh.md))
+- [`cases/`](cases/raypath-analysis-cases.md): registered raypath-analysis case corpus
+- [`prototypes/`](prototypes/analyze-workspace.html): interactive design prototypes
+- [`api/`](api/html/): Doxygen output; generate it locally with `doxygen .doxygen-config`
+- [`figs/`](figs/): shared documentation images
 
-**API documentation generation** (local verification):
+## Root Documents
+
+The `doc/` root is reserved for entry points and cross-topic references:
+
+- [Documentation index](README.md) ([中文](README_zh.md))
+- [System architecture](architecture.md) ([中文](architecture_zh.md))
+- [Configuration reference](configuration.md) ([中文](configuration_zh.md))
+- [Developer guide](developer-guide.md) ([中文](developer-guide_zh.md))
+- [Environment-variable policy](env-var-policy.md)
+
+## Language and Generated Documentation
+
+English is the default language. Documents with `_zh.md` or `.zh.md` suffixes are Chinese partners where one exists; not every specialist design record is bilingual. Source comments and generated API documentation are in English.
+
+Generate the Doxygen documentation from the repository root:
+
 ```bash
 doxygen .doxygen-config
 ```
-Generated docs are located at `doc/api/html/`.
 
-## Feedback and Suggestions
+The generated output remains under `doc/api/html/`.
 
-If you find documentation issues or have improvement suggestions, feel free to submit an Issue or Pull Request.
+## Project Links
+
+- [Project README](../README.md)
+- [Project README in Chinese](../README_zh.md)
+- [Example configuration](../examples/config_example.json)

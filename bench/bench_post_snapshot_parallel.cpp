@@ -1,5 +1,5 @@
 // Developer microbench for RenderConsumer::PostSnapshot()'s fused pixel loop at the HI-RES tier,
-// the segment that doc/gui-preview-lifecycle-architecture.md §12.1 measured at 94.7% of DoSnapshot
+// the segment that doc/gui/gui-preview-lifecycle-architecture.md §12.1 measured at 94.7% of DoSnapshot
 // (87,614 us of 92,520 us at 2048x1024). It is a manual before/after tool for changes to that loop
 // — the row-parallel dispatch (core/parallel_rows.hpp) was accepted on this bench's same-process
 // controlled A/B (§12.4) — and sits on the same footing as the other bench_*.cpp files here: built
@@ -23,7 +23,7 @@ using namespace lumice;  // NOLINT(google-build-using-namespace) benchmark code
 
 namespace {
 
-// Matches doc/gui-preview-lifecycle-architecture.md §12.1's HI-RES tier (2048x1024, dual-fisheye,
+// Matches doc/gui/gui-preview-lifecycle-architecture.md §12.1's HI-RES tier (2048x1024, dual-fisheye,
 // no raypath colouring) as closely as a standalone microbench can, so its numbers sit on the same
 // footing as the segment-timing baseline they are compared against.
 RenderConfig MakeHiResConfig(bool with_markers) {

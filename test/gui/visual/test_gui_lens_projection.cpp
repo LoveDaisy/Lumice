@@ -161,7 +161,7 @@ struct LensProjScene {
 // and rectangular. Those are exactly the group's NON-EQUAL-AREA projections, and they were
 // re-shot when the preview shader gained the target lens's relative illumination — its per-pixel
 // solid angle normalized on axis, which the CLI has always had baked in and the GUI had not (see
-// doc/ev-pipeline-architecture.md §7.5, src/gui/preview_jacobian.hpp). Their pixels changed by
+// doc/rendering/ev-pipeline-architecture.md §7.5, src/gui/preview_jacobian.hpp). Their pixels changed by
 // construction: measured against the previous references, the new captures fall off toward the
 // frame edge on linear (ratio 0.973 at the centre against 0.422 at 1.3 image radii), brighten
 // toward the rim on orthographic (1.05 to 1.74), and darken toward the poles on rectangular
@@ -184,7 +184,7 @@ struct LensProjScene {
 //
 // ============================================================================================
 // RE-SHOT, ALL NINE, when the mono exposure anchor became a property of the SCENE rather than of
-// the displayed buffer (doc/ev-pipeline-architecture.md §2.8). Every row's mean moved DOWN by a
+// the displayed buffer (doc/rendering/ev-pipeline-architecture.md §2.8). Every row's mean moved DOWN by a
 // strikingly uniform amount, and since a mean moving down is what a defect also looks like from
 // here, the reading is stated rather than filed as drift:
 //
@@ -224,7 +224,7 @@ struct LensProjScene {
 //
 // RE-SHOT, ALL NINE, again when the preview shader stopped adding a second half-texel offset when
 // it gathers from the dual-fisheye source texture (src/gui/preview_renderer.cpp, dualFisheyeToUV;
-// doc/coordinate-convention.md §11). Until then every fragment sampled a texel CORNER and came
+// doc/geometry/coordinate-convention.md §11). Until then every fragment sampled a texel CORNER and came
 // back a 2x2 bilinear average, so these references were captured through a half-texel blur that
 // the product no longer applies. Measured against the OLD references, the same build with and
 // without that offset (one binary each, hashes checked apart), post = 3 full-suite runs:

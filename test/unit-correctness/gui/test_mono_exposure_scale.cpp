@@ -73,7 +73,7 @@ TEST(MonoExposureScale, RelativeIgnoresEmittedEnergyEntirely) {
 // value. This pins that two-hop cancellation across three distinct snapshot_intensity values, so
 // a change that breaks the identity (e.g. hardcoding either hop's argument) fails here instead of
 // silently reintroducing a spurious 1/snapshot_intensity factor into displayed brightness. See
-// doc/ev-pipeline-architecture.md §2.5.
+// doc/rendering/ev-pipeline-architecture.md §2.5.
 TEST(MonoExposureScale, ChainedWithComputeEvAutoTheSnapshotIntensityCancels) {
   // Chosen close to TargetWhiteToLinear(135) so ev_auto stays well inside ComputeEvAuto's
   // [-6, 6] clamp across all three snapshot_intensity values below -- a clamped ev_auto would

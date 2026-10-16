@@ -10,7 +10,7 @@
 namespace lumice {
 
 // Precomputed inverse-CDF lookup table for unified area-measure latitude sampling
-// (330.2 core-lut-sampler; design: doc/near-pole-area-measure-sampling.md + explore
+// (330.2 core-lut-sampler; design: doc/geometry/near-pole-area-measure-sampling.md + explore
 // unify-orientation-sampling-cosine-measure). One branchless path replaces the near-pole
 // tight-envelope (Rayleigh/Gamma) and off-pole generic-rejection latitude samplers.
 //

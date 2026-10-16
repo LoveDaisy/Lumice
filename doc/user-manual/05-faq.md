@@ -23,7 +23,7 @@ Lumice's JSON schema requires only a handful of fields; the rest fall back to de
 | `render[].visible` | no | `"upper"` | Hemisphere mask: `"upper"`, `"lower"`, or `"full"` |
 | `render[].background` | no | `[0, 0, 0]` | RGB background |
 
-> All field names are exactly as accepted by the JSON parser. The C API mirrors a subset of these — see [`../c_api.md`](../c_api.md).
+> All field names are exactly as accepted by the JSON parser. The C API mirrors a subset of these — see [`../c_api.md`](../interfaces/c_api.md).
 
 ## 2. `ray_num` × wavelength semantics — what does "ray count" really mean?
 
@@ -104,7 +104,7 @@ beyond that.
 ## Further reading
 
 - Full schema → [`../configuration.md`](../configuration.md)
-- Coordinate convention (altitude / zenith / azimuth signs) → [`../coordinate-convention.md`](../coordinate-convention.md)
-- Performance tuning → [`../performance-testing.md`](../performance-testing.md)
-- GUI panel reference → [`../gui-guide.md`](../gui-guide.md)
-- C API for embedding → [`../c_api.md`](../c_api.md)
+- Coordinate convention (altitude / zenith / azimuth signs) → [`../coordinate-convention.md`](../geometry/coordinate-convention.md)
+- Performance tuning → [`../performance-testing.md`](../testing/performance-testing.md)
+- GUI panel reference → [`../gui-guide.md`](../gui/gui-guide.md)
+- C API for embedding → [`../c_api.md`](../interfaces/c_api.md)

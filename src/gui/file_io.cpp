@@ -2108,7 +2108,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
         dst.resolution_h = ratio >= 1.0f ? res : long_edge;
       }
     }
-    // doc/ev-pipeline-architecture.md §2.4/§4 — the ONE field where the two
+    // doc/rendering/ev-pipeline-architecture.md §2.4/§4 — the ONE field where the two
     // SceneIntent arms differ, and the reason SceneIntent exists at all:
     //
     // kSimCommit (GUI Run): intensity_factor must stay at RenderConfig::intensity_factor_'s
@@ -2417,7 +2417,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
   // So this line is not waiting on a control. If a document states a non-zero azimuth,
   // DeserializeFromJson says so out loud (WarnUnsupportedByDesign) rather than turning the sky
   // silently, and that notice — not a future widget — is the whole of the answer.
-  // doc/gui-state-governance.md 9.3 carries the same statement where a reader looking for the
+  // doc/gui/gui-state-governance.md 9.3 carries the same statement where a reader looking for the
   // design decision rather than for this call would find it.
   const char* spectrum_name = "D65";
   const bool use_custom_spectrum =
@@ -2731,7 +2731,7 @@ static bool TryReconstructComplexFilter(const json& jf, const std::map<int, json
 // lens shift, `SimConfig` has no geometry clock. The asymmetry with the CLI is intentional and
 // stays — the owner ruling is that the GUI and the CLI need not match feature for feature, and the
 // sun sitting at azimuth 0 is a fixed property of the GUI's world, not a control someone forgot to
-// add. See doc/gui-state-governance.md 9.3.
+// add. See doc/gui/gui-state-governance.md 9.3.
 //
 // What the notice buys is therefore not a chance to recover the value — nothing downstream can —
 // but the difference between a picture that is quietly not the one the document asked for, and a
@@ -3341,7 +3341,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
     r.display_mode =
         DisplayModeFromString(jr.value("display_mode", kDisplayModeJsonNames[RenderConfig{}.display_mode]));
 
-    // doc/print-mode-subtractive-ink.md §7 instance 3. This is the ONLY route by which the
+    // doc/rendering/print-mode-subtractive-ink.md §7 instance 3. This is the ONLY route by which the
     // combination can reach the GUI at all: no editor registers renderer.ray_color, and both
     // BuildScene arms pin it to core's {-1,-1,-1} "natural spectral colour" sentinel, so a GUI
     // session can READ this pairing out of a hand-written core config but can never produce one.

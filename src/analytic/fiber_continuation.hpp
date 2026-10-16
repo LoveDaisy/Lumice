@@ -3,7 +3,7 @@
 
 // Predictor-corrector continuation along one fiber X_(P,d) = { R : F_P(R) = d } of SO(3), from one
 // seed. A port of LI's reference solver (src/lumice_integral/continuation.py at the revision named
-// in doc/analytic-api.md section 4.3), function for function; each function below names its LI
+// in doc/interfaces/analytic-api.md section 4.3), function for function; each function below names its LI
 // counterpart. The contract is LI docs/phase1-math-contract.md sections 5-10; the reference defaults
 // are its section 10.1 and live in ContinuationParams.
 //
@@ -64,7 +64,7 @@ bool IsEventReason(FiberReason reason);
 // LI ContinuationOptions, every field, with LI docs/phase1-math-contract.md section 10.1's reference
 // defaults (the reference-continuation-v1 strategy; its convergence evidence is that section's
 // text and the conformance tests it names). The C ABI exposes seven of these
-// (doc/analytic-api.md section 4.3); the rest stay at these values there.
+// (doc/interfaces/analytic-api.md section 4.3); the rest stay at these values there.
 struct ContinuationParams {
   // Precision and root.
   double unit_tolerance = 1e-10;

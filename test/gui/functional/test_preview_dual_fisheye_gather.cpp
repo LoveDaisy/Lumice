@@ -1,7 +1,7 @@
 // Where the preview shader READS the dual-fisheye source texture.
 //
 // Core writes that texture with `px = floor(fx)` — texel `px` owns the continuous interval
-// `[px, px+1)`, so its centre sits at `fx = px + 0.5` (doc/coordinate-convention.md §11). The
+// `[px, px+1)`, so its centre sits at `fx = px + 0.5` (doc/geometry/coordinate-convention.md §11). The
 // preview's fragment shader runs the same projection backwards to decide which texel a canvas
 // pixel should read, and its `dualFisheyeToUV` has to hand GL a UV in that same convention.
 // GL's own texture addressing already places texel centres at `uv * tex_res = px + 0.5`, so the

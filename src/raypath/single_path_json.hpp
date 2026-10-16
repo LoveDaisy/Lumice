@@ -5,7 +5,7 @@
 // subcommand writes and a GUI shell will read through the same lumice_raypath.h entry point — and its one
 // reader, ParseWarmSeeds, which takes an earlier output back as warm starts. Writer and reader sit
 // in one file so the keys they share cannot drift apart. The field-by-field description is
-// doc/raypath-cli-output.md.
+// doc/raypath/raypath-cli-output.md.
 //
 // Numbers: every value is written as the shortest decimal that reads back to the same double
 // (nlohmann's dump), so a seed round-trips bit-exactly; the three sun-grid arrays are first rounded

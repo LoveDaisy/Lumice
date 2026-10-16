@@ -9,7 +9,7 @@ description: >
 
   One copy, used by every Windows job that caches compilation. The version is not a free
   parameter to bump: 0.17.0 is the version this repository's MSVC + Ninja + CPM combination was
-  measured against (doc/testing-architecture.md §7.1), and moving it means re-measuring.
+  measured against (doc/testing/testing-architecture.md §7.1), and moving it means re-measuring.
 
 inputs:
   cache-dir:

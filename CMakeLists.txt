@@ -49,7 +49,7 @@ set(CMAKE_C_STANDARD 11)              # C11...
 #   baseline   no -march flag: the x86-64-v1 floor every x86_64 CPU runs; what CI tests
 #   x86-64-v3  -march=x86-64-v3 (AVX2+FMA): the second Windows release variant (clang-cl —
 #              LLVM takes its whole ~2.26x at v3, where GCC takes none of it; see
-#              doc/performance-testing.md)
+#              doc/testing/performance-testing.md)
 #   x86-64-v4  -march=x86-64-v4 (AVX-512): the second Linux release variant
 #   native     -march=native: local default, a developer machine builds for itself
 set(LUMICE_ISA_LEVEL "native" CACHE STRING
@@ -105,7 +105,7 @@ endif()
 # the Linux x64 package once at baseline and once at x86-64-v4. That default is deliberate
 # (a developer machine should build for itself and run fast); what it must not do is stay
 # invisible at the point where someone reads a throughput number off this build and
-# compares it with another platform. See doc/performance-testing.md, section "Local builds
+# compares it with another platform. See doc/testing/performance-testing.md, section "Local builds
 # are not the shipped binary".
 # Deliberately conditional wording ("would apply"): this message runs once at configure
 # time, whereas the -march gate below adds $<CONFIG:Release> and is only resolved
@@ -118,7 +118,7 @@ elseif(LUMICE_ISA_LEVEL STREQUAL "native")
   message(STATUS "LUMICE_ISA_LEVEL=native (local default): a Release build would apply "
                  "-march=native, so its binary is NOT one release ships. Fine for local "
                  "iteration; take any cross-platform or externally quoted throughput number "
-                 "with -DLUMICE_ISA_LEVEL=baseline instead. See doc/performance-testing.md.")
+                 "with -DLUMICE_ISA_LEVEL=baseline instead. See doc/testing/performance-testing.md.")
 elseif(LUMICE_ISA_LEVEL STREQUAL "x86-64-v3")
   message(STATUS "LUMICE_ISA_LEVEL=x86-64-v3: a Release build would apply -march=x86-64-v3 "
                  "(AVX2+FMA); this is the Windows release's second engine DLL (clang-cl) and "
@@ -998,7 +998,7 @@ function(lumice_apply_engine_compile_options target)
   if(LUMICE_CLANG_CL)
     # clang-cl reports MSVC=TRUE but IS a Clang frontend that honors -march: measured on the
     # Windows reference box, -march=x86-64-v3 is ~2.26x real MSVC's release build at W=1, where
-    # cl.exe's own /arch flags move nothing (doc/performance-testing.md). Deliberately NOT folded
+    # cl.exe's own /arch flags move nothing (doc/testing/performance-testing.md). Deliberately NOT folded
     # into the if(NOT MSVC) block above: that block also turns on -Wall/-Werror=switch,
     # SPDLOG_ACTIVE_LEVEL=TRACE and -fvisibility=hidden, none of which the Windows release needs
     # or has been validated under clang-cl. The march-flag mapping itself is the shared
@@ -1232,7 +1232,7 @@ if(BUILD_SHARED_LIBS)
   install(TARGETS lumice_testapi LIBRARY DESTINATION lib)
 endif()
 
-# The published analytic library (doc/analytic-api.md): the engine's foundation objects and the
+# The published analytic library (doc/interfaces/analytic-api.md): the engine's foundation objects and the
 # analytic kernel — not lumice_obj, which it no longer links (section 2.1) — its own header
 # (src/include/lumice_analytic.h over lumice_analytic_core.h), its own prefix, and an export list
 # naming only the LUMICE_ANALYTIC_* functions — so, unlike lumice_testapi, it does NOT re-export
@@ -1242,7 +1242,7 @@ endif()
 # analytic_lib.cpp — GetApiVersion, SetLogCallback, and the load-time object that removes the
 # console sink — is a direct source of this target and nothing else: linked into the engine it
 # would silence the engine's console, which no export table shows.
-# Three rules from doc/analytic-api.md section 2:
+# Three rules from doc/interfaces/analytic-api.md section 2:
 #   - only from a build without CUDA (2.3): the published artifact must load on a machine without
 #     the CUDA runtime. foundation links no CUDA target, so this is no longer what keeps cudart
 #     out; the target still does not exist in a CUDA configure.
@@ -1253,7 +1253,7 @@ endif()
 #   - the ISA tier is a property of the configure it is produced from (2.4): publish it from
 #     -DLUMICE_ISA_LEVEL=baseline, never from the local default `native`. Not enforced here.
 # Installed with a CMake package config, so an outside project finds it with
-# find_package(LumiceAnalytic <version>) and links Lumice::lumice_analytic (doc/analytic-api.md
+# find_package(LumiceAnalytic <version>) and links Lumice::lumice_analytic (doc/interfaces/analytic-api.md
 # section 8.4). Tests in this tree still load it from the build tree.
 if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   add_library(lumice_analytic SHARED
@@ -1315,7 +1315,7 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
 
   # Standard bin/ + lib/ layout — deliberately not `lumice`'s DLL-at-the-prefix-root one, which
   # serves the release shell loading its engine from its own directory. This is a library for
-  # other projects' builds (doc/analytic-api.md section 8.7 fixes these relative paths as a
+  # other projects' builds (doc/interfaces/analytic-api.md section 8.7 fixes these relative paths as a
   # contract for non-CMake consumers). Every rule below is in the `analytic` component, so
   # `cmake --install <build> --component analytic` installs exactly this package — from a tree
   # that built only some targets (CI's windows-shared-export), or into a separate artifact.
@@ -1325,7 +1325,7 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
     ARCHIVE DESTINATION lib COMPONENT analytic)
   # These two headers only (lumice_analytic.h includes the core one), never the whole
   # src/include/: the engine's lumice_*.h capability headers are not published, and a consumer must not be able to compile both
-  # (doc/analytic-api.md section 2.6).
+  # (doc/interfaces/analytic-api.md section 2.6).
   install(FILES
     "${PROJ_SRC_DIR}/include/lumice_analytic.h"
     "${PROJ_SRC_DIR}/include/lumice_analytic_core.h"

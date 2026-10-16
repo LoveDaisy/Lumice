@@ -57,7 +57,7 @@ namespace {
 // unanswerable from the screen. One commit point removes the question.
 //
 // DEPENDENCY, stated because it is invisible from here — the copy is synced with `current` once,
-// at open, and a copy synced only at open rests on a lock (doc/gui-state-governance.md §11). This
+// at open, and a copy synced only at open rests on a lock (doc/gui/gui-state-governance.md §11). This
 // one's lock has two halves, and both are needed:
 //   - the USER half: the panel is a BeginPopupModal, so nothing in the main UI can be edited
 //     while it is open, and no user action moves `current` underneath the copy;
@@ -438,7 +438,7 @@ void RenderAppPreferences(const GuiState& state) {
   // property of THIS MACHINE, not of the halo a document describes, so it must not travel inside a
   // document to another machine — the silent per-machine drift doc/env-var-policy.md refuses from
   // environment variables would simply have found a different carrier. See gui_state.hpp's
-  // worker_count comment and doc/gui-state-governance.md §8.
+  // worker_count comment and doc/gui/gui-state-governance.md §8.
   //
   // No upper bound. A ceiling HAS since been measured, but it caps the automatic value only
   // (ServerImpl::AutomaticWorkerBaseAndCap(), server.cpp): it answers "what should the program
@@ -1180,7 +1180,7 @@ void RenderDefaultsPanel(GuiState& state) {
     ImGui::OpenPopup(kDefaultsPanelTitle);
   }
 
-  // Semi-variable (doc/gui-visual-language.md §9): the width is pinned, the height is the user's
+  // Semi-variable (doc/gui/gui-visual-language.md §9): the width is pinned, the height is the user's
   // to drag between a floor and the work area, and the DEFAULT size is fixed — not derived from the
   // content. The content is a table whose height is a function of how many settings differ, and
   // a modal that changed size with the diff would make every visual-regression scene a different
@@ -1196,7 +1196,7 @@ void RenderDefaultsPanel(GuiState& state) {
   // also where gui_test reads it. Through UiPx here: these are screen sizes, and the row heights
   // they budget for scale with the font.
   //
-  // Semi-variable (doc/gui-visual-language.md §9): width pinned, height the user's to drag between
+  // Semi-variable (doc/gui/gui-visual-language.md §9): width pinned, height the user's to drag between
   // kDefaultsPanelMinHeight and the work area, and kept for the session — hence FirstUseEver for
   // the default height rather than Appearing, which would overwrite the drag on every reopen.
   //

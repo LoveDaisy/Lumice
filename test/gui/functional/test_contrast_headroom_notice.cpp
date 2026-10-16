@@ -1,6 +1,6 @@
 // The contrast-headroom notice, driven on a real window.
 //
-// doc/print-mode-subtractive-ink.md §8 (owner decision D6) gives each tone operator one degenerate
+// doc/rendering/print-mode-subtractive-ink.md §8 (owner decision D6) gives each tone operator one degenerate
 // ground, and the predicate that decides it is shared with the CLI
 // (util/contrast_headroom.hpp; the unit tests over it and over gui_state.hpp's wrappers own what it
 // COMPUTES and what the repair CHANGES). Three things are left over that no test without a window

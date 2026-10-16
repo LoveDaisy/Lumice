@@ -1,7 +1,7 @@
 #ifndef LUMICE_GUI_ANALYSIS_PANEL_HPP
 #define LUMICE_GUI_ANALYSIS_PANEL_HPP
 
-// The "Raypath Analysis" window (doc/raypath-analysis-panel.md): a non-modal window beside the
+// The "Raypath Analysis" window (doc/raypath/raypath-analysis-panel.md): a non-modal window beside the
 // preview that starts an analysis run on the committed scene, lets the user say WHERE in the sky
 // they are asking about (the whole sky, the frame on screen, or a cone around a point they click
 // on the preview), lists the raypath chains that delivered energy there, and turns a selected
@@ -335,7 +335,7 @@ bool ApplyExcludeSelectedRaypath(GuiState& state);
 
 // One greyed row of the result list: a raypath the document's filters exclude, shown under the
 // result rows so the user can see what they have excluded so far and take it back. Pure
-// derivation (doc/gui-state-governance.md §10), recomputed every frame from two things that are
+// derivation (doc/gui/gui-state-governance.md §10), recomputed every frame from two things that are
 // both already on hand — the Out filters on the crystals the document commits, and the result on
 // show — and cached nowhere: the exclusion's one authority is the document's filter, and a row
 // here is only that filter read back. The single piece that is remembered rather than derived is

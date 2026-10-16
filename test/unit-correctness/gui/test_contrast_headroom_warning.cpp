@@ -1,4 +1,4 @@
-// The GUI half of the contrast-headroom warning (doc/print-mode-subtractive-ink.md §8, owner
+// The GUI half of the contrast-headroom warning (doc/rendering/print-mode-subtractive-ink.md §8, owner
 // decision D6), asked the questions that need no window.
 //
 // Two propositions live here, and neither is reachable from the predicate's own test

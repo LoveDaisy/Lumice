@@ -219,7 +219,7 @@ _PSNR_RE = re.compile(r"\[(\w+)\]\s+(\S+):\s+PSNR=(inf|[0-9.]+)\s+dB")
 # scene compared under lumice::test::MaxCcRuler (test/support/pixel_diff_metrics.hpp). Phase B
 # records tau and the largest maxcc seen per scene as an audit trail only. It does NOT derive a
 # threshold from them: every deterministic group's K is a cross-machine number, measured from the
-# CI llvmpipe leg's captures against Metal-shot references (doc/testing-architecture.md §4.6), and
+# CI llvmpipe leg's captures against Metal-shot references (doc/testing/testing-architecture.md §4.6), and
 # this driver only ever runs on the reference machine, where the honest reading is maxcc = 0.
 # A non-zero maxcc_local_max here therefore means the scene is no longer deterministic on the
 # machine that shot its reference, which is the thing to investigate before re-shooting.
