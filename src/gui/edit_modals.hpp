@@ -205,6 +205,9 @@ struct EditModalBuffers {
                                                  // well-defined value like every other member
   FilterConfig filter_top;                       // name / action / sym_*; `param` is always empty here
   std::vector<std::string> filter_rows;          // one string per OR row, blank rows included
+  float entry_proportion = 100.0f;               // the entry bar's Weight (entry-private scalar,
+                                                 // never part of a pool slot)
+  bool entry_enabled = true;                     // the entry bar's participation toggle
 };
 EditModalBuffers GetEditModalBuffers();
 
