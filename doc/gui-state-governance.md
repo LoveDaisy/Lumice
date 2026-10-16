@@ -528,6 +528,10 @@
   base 追平、无采纳。
 - **粒度**：Crystal 按 `name` / `type` / `upper_alpha` / `lower_alpha` + 10 个 shape 槽位（复用 `ShapeScalarAt`
   单一权威）逐字段；Axis 每个 `AxisDist` 整体一个单元（预设按钮本就把三者原子写）；Filter 顶部 5 字段逐字段；
+  **entry 级两组标量**（`proportion` / `enabled`，2026-10-16 随 Edit Entry 弹窗顶部 entry 条加入，同一机制、同守
+  `SyncBaselineFromPool` / `PullBuffersFromPool` / `ApplyBuffersToEntry` 三处对称律）：`theirs` 取 entry 本身而非
+  pool 槽位——weight/participation 是 entry 私有标量，不参与 Link 共享（`CountEntriesSharing` 只看
+  crystal_id + filter_id），enabled 无在飞文本控件、不需 adopted 标记；
   **SoP 行列表按行文本的多重集合并**（`PullSummandRows`）：行只增删、不就地改写——外部改了某行文本 = 删旧 + 增新，
   用户已改过的行不再匹配旧文本，自然被保留（「两边都变 → 保留 ours」的行形态）；`c_theirs == c_base` 不动，
   `c_ours != c_base` 保留 ours（也是挡住「上一帧自己 push 的行回流成第二份」的那条），否则按差值增删。空白行是编辑器
@@ -544,7 +548,8 @@
   `InputFloat` 是每帧格式化一次的 `InputText`，同理。于是被 pull 采纳的值一帧后会被活动框静默撤销，**且永久**——
   `PullField` 对 base 的推进是无条件的，机制不会再次尝试采纳。解法：`PullBuffersFromPool` 把「本帧哪些文本类字段被
   采纳」记进 `g_pull_adopted`，各 Tab 体把标记传给编辑该字段的控件（`RenderShapeDistTableRow` / `RenderAxisDist` /
-  `SliderWithPresetEdit` 的 `reload_active_inputs` 参数；`##crystal_name` 就地），控件在**自己的 ID 作用域内**、
+  `SliderWithPresetEdit` 的 `reload_active_inputs` 参数；`##crystal_name` 就地；entry 条的 Weight 经
+  `ReloadSliderInputIfActive("Weight##modal_entry")` 就地），控件在**自己的 ID 作用域内**、
   提交前调 `ReloadInputTextIfActive(id)`（gate 在 `GetActiveID() == id`——`GetInputTextState` 对上一个失活框也非空，
   不能单靠它），即 ImGui 自己对 #2890 的补救 `ReloadUserBufAndSelectAll`。SoP 行不需要：行级合并只增删不就地改写，
   新行不可能是活动控件。`g_pull_adopted` 寿命一帧，靠顺序不变量成立；`RenderModalTabBar` 入口断言
@@ -553,8 +558,9 @@
   断言，落地时否决——reload 检查作为参数传给行 helper，「接线」就是传参本身，「做过检查」只能在渲染了该行的路径上
   置位，而 Tab 未激活、Face Distance 折叠、类型不同时那一行根本不渲染：断言要么同义反复（只在渲染了的行上比），
   要么在这些完全合法的场景里误报。
-  `test/gui/functional/test_edit_modal.cpp` 的 `an_active_box_reloads_when_its_value_arrives_from_the_pool`（19 行
-  表驱动：10 个 shape center + Height spread + 3 轴 × (Mean, Range) + 2 个 wedge）与 name 用例是真正的闸——
+  `test/gui/functional/test_edit_modal.cpp` 的 `an_active_box_reloads_when_its_value_arrives_from_the_pool`（20 行
+  表驱动：10 个 shape center + Height spread + 3 轴 × (Mean, Range) + 2 个 wedge + entry 条 Weight）与 name 用例是
+  真正的闸——
   两枚红态探针证实：全局把 reload 置空第一行即红；只拆掉 `Azimuth` 一行的接线，恰好 `Azimuth mean` 红、其余绿。
 
 ### 11.4 普查结果（`src/gui/` 全部视图侧模型副本与位置引用；三档裁定，每条给理由）
@@ -564,7 +570,7 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 
 | # | 位置 | 形态 | 裁定 | 理由 |
 |---|---|---|---|---|
-| S1 | `edit_modals.cpp` `g_crystal_buf` / `g_axis_buf` / `g_filter_top` / `g_summand_rows` + 各 `_snapshot` | 模型副本 | **同根因，已修** | 只在开窗时同步、Immediate 每帧写通从不回读——§11.2；现按 §11.3 每帧 pull。测试：`test_raypath_analysis_panel.cpp` 两例（真实 Exclude，情形 A/B，修前均红）+ `test_edit_modal.cpp` 四例（半行、Staged 脏字段、表驱动 reload、name） |
+| S1 | `edit_modals.cpp` `g_crystal_buf` / `g_axis_buf` / `g_filter_top` / `g_summand_rows` + 各 `_snapshot`（2026-10-16 起另有 `g_entry_buf` / `g_entry_buf_snapshot`，entry 私有 weight/participation 两组标量——同一机制扩成员，见 §11.3 粒度条） | 模型副本 | **同根因，已修** | 只在开窗时同步、Immediate 每帧写通从不回读——§11.2；现按 §11.3 每帧 pull。测试：`test_raypath_analysis_panel.cpp` 两例（真实 Exclude，情形 A/B，修前均红）+ `test_edit_modal.cpp` 四例（半行、Staged 脏字段、表驱动 reload、name）+ entry 条三例（表驱动 Weight 行、Staged OK/Cancel、卡片拖动被 Immediate pull 采纳） |
 | S2 | `defaults_panel.cpp` `g_snapshot_doc` / `g_copy_doc` / `g_opening_current_values` / `g_initial_checked_keys` | 模型副本（开窗时冻结） | **合规，但锁的表述须改（已改）** | 源码注释原本把锁写成「panel 是 `BeginPopupModal`，主 UI 改不到值」——那只挡用户输入，挡不住后台每帧跑的 `SyncFromPoller`。真正生效的锁是**结构性的**：面板的行集合由 `BuildDefaultDiffRows` 对 `SerializeGuiStateJson(current)` 的输出取叶子生成，而该序列化器是逐字段手写赋值；`SyncFromPoller` 独占写入的全部派生字段（`kDerivedFieldsExcludeList` 的 21 个：`sim_state` / `stats_*` / `analysis_result` / `p99_raw_y` / `ev_auto` / `target_white` …）在其函数体内零命中，天然落在行集合之外。注释已按此改写；若面板改成非 modal，UI 写者那一半锁消失，届时该按 §11.3 补 pull |
 | S3 | `edit_modals.cpp` `g_modal_layer_idx` / `g_modal_entry_idx` | 位置引用 | **合规，无动作**（删除分支既有；文档切换分支 = S9） | 层/条目**重排**：全仓 `state.layers` / `entries` 除 `push_back` 与 `panels.cpp` 里的两处 `erase` 外无任何原地重排/换位入口（`grep -rniE "reorder\|move[_ ]?up\|swap.*(layer\|entry)\|drag.*(layer\|entry)"` 唯一命中是 `color_window.cpp` 的 `z_order`，独立数组）。**Duplicate**（`panels.cpp`）：`entries.push_back` + pool `push_back` 纯末尾追加。**Unlink**（`UnlinkEntryFromPool`）：只重写 `crystal_id` / `filter_id`，从不读写下标 |
 | S5 | `ColorClassRefConfig.layer_idx` / `crystal_pool_id` | 位置引用 | **合规，无动作** | 层删除已由 `NotifyLayerDeleted` 补偿（§10.2）；重排 / Duplicate / Unlink 同 S3；pool append-only 故 `crystal_pool_id` 稳定（§10.2 已注明「当前不存在这个攻击面」） |
