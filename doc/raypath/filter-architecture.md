@@ -13,21 +13,22 @@ code-review against Design A.
 
 ---
 
-## §1 Binding Model: Filter ↔ Crystal (Single-Key)
+## §1 Binding Model: Filter Is Per Scattering Entry
 
-A filter is bound to a **crystal**, not to a layer, stage, or scattering entry.
-The mapping is one-to-one:
+A filter is bound to a **scattering entry**, alongside that entry's crystal reference. Crystal and
+filter identities are two independent axes:
 
 ```
-crystal_id  ──────────────  filter_id   (single-key pair)
+entry  ──► crystal_id
+       └─► optional filter_id
 ```
 
 ### JSON / Configuration
 
-In the JSON configuration, `scattering[].entries[].filter` is a *serialization detail*.
-Semantically it is equivalent to "the filter of the crystal referenced by this entry."
-A given `crystal_id` is expected to have the same filter across all scattering entries
-that reference it — the GUI enforces this invariant (see §5); a JSON loader may assert it.
+`scene.scattering[].entries[].filter` is the semantic binding. `ParseScatteringInfo` resolves the
+crystal and optional filter for each entry into one `ScatteringSetting`; two entries may reference
+the same crystal while naming different filters, or while only one names a filter. The parser must
+not collapse those bindings by crystal id.
 
 ### GUI Linked Entries
 
@@ -49,15 +50,16 @@ Edit propagation rules — automatic vs needs explicit propagation:
 4. **Filter remove** (`entry.filter_id: Some → None`): needs propagation.
    Linked siblings must also have `filter_id` cleared.
 
-See `src/gui/gui_state.hpp:294-328` for the authoritative comment block and propagation
-owner (`ApplyBuffersToEntry` via the `propagate_filter_id_to_linked` lambda).
+See the "Linked group invariants" block in `src/gui/gui_state.hpp` and the propagation owner
+`PropagateFilterIdToLinked` in `src/gui/edit_modals.cpp`.
 
-### "Same Parameters, Different Filter"
+### Same Crystal, Different Filters
 
-If you want two crystals with identical geometry but different filters, create **two
-independent `crystal_id` instances**. The GUI provides link/unlink operations for this:
-"Link to…" adopts the target's `(crystal_id, filter_id)` atomically; "Unlink" forks a
-private clone.
+The core configuration permits two entries to reuse one crystal id while naming different filter
+ids (or no filter on one entry). They share crystal content but not filter content and are not a GUI
+linked group, because the pair differs. If both crystal and filter edits must be independent, use
+the GUI's "Unlink" or "Duplicate" operation to fork private pool slots. "Link to…" does the
+opposite: it adopts the target's `(crystal_id, filter_id)` pair atomically.
 
 ---
 
@@ -78,9 +80,8 @@ ray exits crystal
                                   nor forwarded to the next MS layer)
 ```
 
-`FilterSpec::Check(ray)` is called once per outgoing-ray candidate, bound to the filter
-of the crystal that just emitted it.  A failing ray does not appear in any downstream
-buffer.
+`FilterSpec::Check(ray)` is called once per outgoing-ray candidate, using the filter resolved on the
+active scattering entry. A failing ray does not appear in any downstream buffer.
 
 ### Design Rationale
 
@@ -96,7 +97,9 @@ gives two benefits:
 
 ## §3 Multi-Scatter Semantics
 
-In a multi-scatter (MS) configuration, each layer is a `(prob, crystal, filter)` triple.
+In a multi-scatter (MS) configuration, each layer carries one `prob` and a list of scattering
+entries. For a ray routed through entry *i*, the decision tuple is `(prob_layer, crystal_i,
+filter_i)`:
 
 ```
 Layer 0:  prob₀ × crystal₀ × filter₀
@@ -110,9 +113,9 @@ Layer 1:  prob₁ × crystal₁ × filter₁
          ...
 ```
 
-Filter is evaluated at **each crystal exit** within the simulator.  Layer N's filter
-controls which rays are eligible to enter layer N+1.  Rays that fail the filter at any
-layer are dropped; they do not propagate further and do not appear in the output buffers.
+Filter is evaluated at **each crystal exit** within the simulator. The active entry's filter at
+layer N controls whether that ray may enter layer N+1. Rays that fail at any layer are dropped;
+they do not propagate further and do not appear in the output buffers.
 
 Higher filter selectivity → faster simulation: the surviving ray fraction compounds
 multiplicatively as `∏ᵢ (pass_rateᵢ × probᵢ)` across layers.
@@ -131,9 +134,8 @@ simulator output  →  RenderConsumer  →  projection  →  XYZ accumulate
                                          (no filter)
 ```
 
-`RenderConfig` does not hold a filter field.  The previously present `ms_filter_` field
-is removed in task-revert (Design A target, removed in task-revert 219.4).  Any attempt
-to apply filters at the consumer level is a design violation.
+`RenderConfig` does not hold a filter field. The former `ms_filter_` field was removed when 219.4
+restored Design A. Applying filters at the consumer level is a design violation.
 
 ### Empty-batch contract
 
@@ -145,7 +147,7 @@ this**: with `outgoing_w_.size() == 0` the copy, projection, and accumulation lo
 no-ops and `snapshot_intensity_` stays zero. The consumer may **not** assume that a non-empty
 `rays_` implies non-empty `outgoing_*`; the only sizing invariant it may rely on is the
 `outgoing_d_.size() == 3 * outgoing_w_.size()` parallel-array relationship documented in
-`sim_data.hpp` (asserted in `RenderConsumer::Consume`, `src/server/render.cpp:262`).
+`sim_data.hpp` (asserted by `RenderConsumer::Consume` in `src/server/render.cpp`).
 
 > A stale assertion in that same spot used to encode "`rays_` non-empty ⟹ `outgoing_w_`
 > non-empty", causing a Debug-only `SIGABRT` whenever a filtered batch happened to empty out.
@@ -158,18 +160,19 @@ no-ops and `snapshot_intensity_` stays zero. The consumer may **not** assume tha
 
 ### Config representation
 
-Filter data is stored in `SceneConfig.ms_.setting_[].filter_` (`ScatteringSetting.filter_`,
-per-entry, in `src/config/proj_config.hpp`).
+Each `SceneConfig.ms_.setting_[]` is a `ScatteringSetting` that carries both the resolved
+`crystal_` and that entry's resolved `filter_` (`src/config/proj_config.hpp`). Reusing a crystal id
+in source JSON does not merge the settings or their filters.
 
-**Underlying assumption**: each `crystal_id` carries the same filter across all scattering
-entries that reference it.  The GUI `linked-crystal` invariant enforces this at the GUI
-layer.  A JSON loader assertion can enforce it at parse time.
+The GUI keeps crystal and filter objects in separate pools. An `EntryCard` stores both ids; pool
+content is shared only along the corresponding id, while the linked badge and add/remove
+propagation use the complete `(crystal_id, filter_id)` pair (§1).
 
 ### Filter check entry point
 
 Every outgoing-ray candidate in the simulator calls `FilterSpec::Check(ray)` once.
-`FilterSpec::Create(config, crystal, axis_dist)` builds the spec from the filter config
-bound to that crystal.
+`FilterSpec::Create(config, crystal, axis_dist)` builds a spec from that entry's filter config and
+its referenced crystal/axis context.
 
 The call site is in `CollectData()` inside `src/core/simulator.cpp` — see §2 for the
 decision rule.
@@ -184,7 +187,7 @@ The `entry_exit` filter type accepts two orthogonal axes of constraint:
 
 1. **Structural axis** — entry-face set × exit-face set, each side independently
    either a single face number, a list of faces (OR), or wildcard (any face).
-2. **Length axis** — minimum and / or maximum path-length bounds on `RaySeg.rp_.size_`.
+2. **Length axis** — minimum and / or maximum bounds on the parallel `RaypathRecorder::size_`.
 
 The core schema reflects this directly:
 
@@ -202,27 +205,26 @@ Match semantics (`EntryExitSpec::Match`, `src/core/filter_spec.cpp`):
 
 | Branch                  | Structural check                                                    |
 |-------------------------|---------------------------------------------------------------------|
-| both ends set           | orbit on `[entry, exit]` against `[rp_[0], rp_[size−1]]`            |
-| only `entry_` set       | orbit on `[entry]` against `[rp_[0]]`                               |
-| only `exit_` set        | orbit on `[exit]` against `[rp_[size−1]]`                           |
-| both wildcard           | structural check skipped; length bounds alone decide                |
+| both ends set           | orbit on `[entry, exit]` against the recorder's first/last face |
+| only `entry_` set       | orbit on `[entry]` against the recorder's first face           |
+| only `exit_` set        | orbit on `[exit]` against the recorder's last face              |
+| both wildcard           | structural check skipped; length bounds alone decide            |
 
-Length bounds are evaluated before the orbit check; `size == 0` always rejects
-to keep `rp_[0]` access well-defined.
+Length bounds are evaluated before the orbit check; `size == 0` always rejects before either
+endpoint is read.
 
-**Multi-value OR routing** lives in the GUI → core translation layer
-(`src/gui/file_io.cpp::SerializeFilterForCore`).  `EntryExitParams.entry_text`
-and `.exit_text` accept comma-separated face numbers; empty text encodes the
-wildcard.  The serializer takes the cartesian product, emits one EE
-`SimpleFilter` per `(entry, exit)` pair (each carrying the same length bounds),
-then wraps them in a single `ComplexFilter` whose composition is
-`[[id0],[id1],…]`.  This mirrors the raypath multi-segment OR path and keeps
-all "composition" semantics inside `ComplexFilter` — `EntryExitFilterParam`
-itself stays a pure per-end constraint.
+**Multi-value and composition routing** live in the GUI → scene translation layer. The GUI stores
+a filter as sum-of-products rows: one row is an AND of raypath or EntryExit factors, and rows are
+OR alternatives. An EntryExit factor uses the text grammar `entry:<faces> & exit:<faces> &
+len:<bounds>`; comma-separated face lists are OR alternatives within that factor. Empty entry or
+exit text is the wildcard.
 
-The GUI input form is correspondingly two text inputs + a four-mode length
-dropdown (no constraint / strict N / at most N / range [N,M]); see
-`src/gui/edit_modals.cpp::RenderEntryExitSubpanel`.
+`ExpandSopToClauses` (`src/gui/file_io.cpp`) expands each EntryExit face-list cartesian product and
+each row's factor alternatives into simple core filters, then `ExpandFilterToScene` registers those
+terms and, where needed, one `ComplexFilter` composition. This keeps the core
+`EntryExitFilterParam` a pure single-entry/single-exit predicate while the GUI can express mixed
+raypath/EntryExit AND terms and multiple OR rows. The editor is the row-based filter surface in
+`src/gui/edit_modals.cpp`; `src/gui/raypath_segments.hpp` owns the small-domain grammar.
 
 JSON schema is backward compatible: pre-uplift `{"entry": 3, "exit": 5}`
 deserializes to `entry_=3, exit_=5, min_len_=1, max_len_=nullopt` with no
@@ -232,31 +234,38 @@ when it carries the default value.
 
 ---
 
-## §5.1 Device-Side Filter-Match (scrum-267 + explore-266 E4)
+## §5.1 Device-Side Filter Match (Metal and CUDA)
 
-> Prior to scrum-267 (and as stated in `seam-design.md §4.5` before its update),
-> filter evaluation was assumed to require host-side crystal configuration and
-> therefore could not be moved to the device. **explore-266 E4 refuted this.**
+> Before the device-match port (and as stated in `doc/backends/seam-design.md` §4.5 before its
+> update), filter evaluation was assumed to require host-side crystal configuration and therefore
+> could not move to a device. **The isolated device-match parity spike refuted this.**
 
-**What changed**: the `ReduceBuffer` core of raypath filter matching was ported to
-MSL and validated against the full real-host filter check:
+**What changed first (Metal)**: the `ReduceBuffer` core of raypath filter matching was
+ported to MSL and validated against the full host filter check:
 - **1.44M per-ray checks, 0 mismatches** across all filter types (None, Direction,
   Crystal, Raypath/EntryExit, Complex).
-- **No register pressure impact** (1.3–2.7 GB/s, well within the trace kernel budget).
+- **No register pressure impact** (1.3–2.7 GB/s, well within the trace-kernel budget).
+
+**Current shared route**: `src/core/device_filter_desc.hpp` is the host-side descriptor authority
+for both GPU backends. Metal evaluates it through `DeviceFilterCheck` in
+`src/core/metal/lumice_trace.metal`; CUDA evaluates the same fields through the shared matcher in
+`src/core/shared/filter_shared.h`. CUDA's fused emit gates run the matcher on device, while final-
+layer records drained on the host still run `FilterSpec::Check`; `test_cuda_filter_parity.py`
+exercises both arms. CPU continues to use `FilterSpec::Check` directly.
 
 **Decision breakdown** (per filter type):
 | Filter type | Device match feasibility |
 |-------------|-------------------------|
 | `None` | trivial |
 | `Direction` | trivial (solid-angle comparison) |
-| `Crystal` | trivial (`gate_slot % max_ci == crystal_id`) |
+| `Crystal` | `ray_crystal_config_id == descriptor.crystal_id` |
 | `Raypath` / `EntryExit` | `ReduceBuffer` + `GetFn` table + memcmp + length bound |
 | `Complex` | boolean composition of the above |
 
-The key insight: §4.5 of seam-design conflated orbit **construction** (config-dependent,
-host-side, per-session once) with per-ray orbit **matching** (bounded integer kernel,
-fully portable to device). Only the match is hot-path; the orbit table is built once
-and bound as a Metal buffer.
+The key insight: §4.5 of `doc/backends/seam-design.md` conflated orbit **construction**
+(config-dependent, host-side, per-session once) with per-ray orbit **matching** (bounded integer
+kernel, fully portable to a device). Only the match is hot-path; the orbit table is built once and
+bound in each backend's device buffers.
 
 **As-built (scrum-267)**: `DeviceFilterCheck` is inlined into the trace kernel's
 per-ray emit gate (ms_mode==1 branch). Each ray that leaves a crystal is immediately
@@ -271,7 +280,8 @@ emit gate (in trace kernel, per-ray leaving):
 
 This gate is **correct-by-construction** for the multi-MS +16% bug: the path
 accumulator `path[]` lives in registers at the moment of gating, identical to
-CPU `CollectData`'s `raypath.rp_` at the same decision point (simulator.cpp:426).
+CPU `CollectData`'s parallel `RaypathRecorder` at the same decision point (`CollectData` in
+`src/core/simulator.cpp`).
 
 **Parity validation**: `test_metal_filter_match_parity.mm` —
 `kFilterMatchTestKernelSrc` micro-kernel isolates `DeviceFilterCheck` against the
@@ -353,31 +363,49 @@ Filter-fail rays carry no special flag — `w_ = -1.0f` (the TIR sentinel) is re
 exclude them from `IsOutgoing()` and `IsContinue()`. They remain in `all_data` (with
 TIR-like semantics) but never reach the consumer's outgoing accumulator.
 
-### EV Offset Source
+### Current relative-exposure anchor
 
-The EV offset is sourced from the current frame's visible framebuffer:
+Filter termination changes which rays land, but it does not give the relative exposure path a
+private metering rule. The current mono relative scale is scene-anchored:
 
 ```
-ev = log2(target_linear / (p99_y / snapshot_intensity))
+scale = intensity_factor × TargetWhiteToLinear(135)
+        / (axis_solid_angle × anchor_l99_sky)
 ```
 
-The P99 anchor is computed in the poller thread — the `ComputeP99Y` call inside
-`ServerPoller::PollOnce` (`server_poller.cpp:513`) — over the staged XYZ data, using an
-f=8 box-sum downsample. See `doc/rendering/ev-pipeline-architecture.md §2.5` and
-`doc/rendering/adaptive-brightness.md` for full EV semantics.
+`anchor_l99_sky` is the P99 sky radiance measured on the session's fixed full-sky equal-area
+anchor plane. It is independent of lens, FOV, view, `visible`, and output resolution.
+`axis_solid_angle` converts that radiance into the per-pixel integrated-radiance units held by this
+renderer. `RenderConsumer::ExposureScale` owns the server/CLI formula; the GUI reads both fields
+from `LUMICE_RawXyzResult` and reaches the same per-pixel result through `LUMICE_ComputeEvAuto`
+plus the preview shader's relative-illumination factor. The two expressions deliberately look
+different because the server buffer and GUI source texture use different units.
+
+This is the **current** contract. The self-P99.5 rule in §6 is retained only as the dated state
+introduced by the 2026-05-28 anchor-lane removal and later replaced. See `doc/rendering/ev-pipeline-architecture.md` §2.8
+for the derivation and migration history.
 
 ---
 
-## §8 Invariant Automation (Future Work — Placeholder)
+## §8 Invariant Automation Status
 
-The following automated checks are not yet implemented.  They are listed here as
-anchor points for future contributors:
+The routing invariant is automated at each implemented seam:
 
-- **Simulator output assertion**: a unit test that verifies no ray in the simulator's
-  outgoing buffer fails the configured filter.  Guards against reintroduction of the
-  task-200 consumer-side filter routing.
-- **Linked-crystal invariant assertion**: a JSON-loader assertion that every `crystal_id`
-  appearing in multiple `scattering.entries` references the same `filter` config.
+- `test_simulator.cpp`'s `CollectDataFilterDispatch` cases pin all three CPU branch outcomes,
+  including filter-fail termination even when the probability branch would continue.
+- `test_render_consumer_empty_batch.cpp` pins the resulting consumer contract: a fully filtered
+  batch is legal, but mismatched `outgoing_d_` / `outgoing_w_` arrays are not.
+- `test_device_filter_check_host.cpp`, `test_metal_filter_match_parity.mm`, and
+  `test_cuda_filter_parity.py` compare the device matcher and backend routing against the host
+  semantics. `test_ms_filter_leak.py` is the full-stack regression sentinel that filter-fail rays
+  do not leak into later MS layers.
+- GUI tests pin atomic filter add/remove propagation for entries sharing a `(crystal_id,
+  filter_id)` pair.
+
+There is deliberately no loader assertion that all uses of one crystal id name the same filter:
+that would reject the valid per-entry state defined in §1. The relevant obligations are instead
+that each entry resolves its own filter, and that operations advertised as editing a linked pair
+propagate filter-id changes to every member of that pair.
 
 ---
 
@@ -385,12 +413,13 @@ anchor points for future contributors:
 
 | Concern | Location |
 |---------|----------|
-| Binding model, GUI linked-group invariants | `src/gui/gui_state.hpp:294-328` |
-| Filter ↔ crystal per-entry config | `src/config/proj_config.hpp` — `ScatteringSetting` |
+| Binding model, GUI linked-group invariants | `src/gui/gui_state.hpp` — `Linked group invariants`; `src/gui/edit_modals.cpp` — `PropagateFilterIdToLinked` |
+| Per-entry crystal/filter config | `src/config/proj_config.hpp` — `ScatteringSetting` |
 | Simulator-side filter check (Design A gate) | `src/core/simulator.cpp` — `CollectData()` |
 | Empty-batch consumer contract (Design A) | `src/server/render.cpp` — `RenderConsumer::Consume()` |
 | FilterSpec algorithm interface | `src/core/filter_spec.hpp` |
-| EV pipeline (single-lane, P99 anchor) | `doc/rendering/ev-pipeline-architecture.md` |
+| Relative-exposure result fields | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult.anchor_l99_sky` / `axis_solid_angle` |
+| EV pipeline (scene-sky relative anchor) | `doc/rendering/ev-pipeline-architecture.md` |
 | Filter JSON schema | `doc/configuration.md` |
 | Raypath semantics, P/B/D filter toggles | `doc/raypath/raypath-symmetry.md` |
 | Adaptive Brightness Off mode, additivity | `doc/rendering/adaptive-brightness.md` |
