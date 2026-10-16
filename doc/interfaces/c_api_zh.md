@@ -43,7 +43,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ### 常量
 
 ```c
-#define LUMICE_API_VERSION 451        // ABI 版本，编码为 major*100 + minor（v4.51）
+#define LUMICE_API_VERSION 453        // ABI 版本，编码为 major*100 + minor（v4.53）
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
 #define LUMICE_MAX_STATS_RESULTS 1    // 统计结果数组最大容量
 ```
@@ -55,6 +55,15 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 ```
 
 公开符号集增加或结构体布局发生 BREAKING 变更时都会 bump。
+
+**v4.53** 将无 target 的 `lumice.path-feature-report` 文档升级为 schema 3：结构对象、support、
+features、未归因结构、MC 证据与 coverage 分层表达；schema 2 读者必须拒读 schema 3。请求结构体以及
+v4.50 的 target/fiber/warm schema 1 接口不变。字段见 `raypath-cli-output.md` §7。
+
+**v4.52** 在 `LUMICE_PathFeatureReportRequest` 尾部追加完整的预算、观察与层选择字段组；v4.51
+前缀在新默认值下仍可使用。报告 JSON 升为 schema 2，记录实际产品输入与光谱、有界数值发现、
+actual/candidate/unfinished 分离、partial work 和显式的不支持多晶体结果；其数值能力与 analytic API 7
+共享。target/fiber/warm 的 schema 1 字段和计算均不变。
 
 **v4.51** 是纯追加。新增不接受天空 target 的路径级 feature report：
 `LUMICE_PathFeatureReportRequest`、不透明的 `LUMICE_PathFeatureReport`、
@@ -115,7 +124,8 @@ typedef enum LUMICE_ErrorCode_ {
   LUMICE_ERR_MISSING_FIELD,  // 缺少必填字段
   LUMICE_ERR_INVALID_VALUE,  // 字段值无效
   LUMICE_ERR_FILE_NOT_FOUND, // 文件不存在/无法打开
-  LUMICE_ERR_SERVER,         // 服务器内部错误
+  LUMICE_ERR_SERVER,         // 服务器错误
+  LUMICE_ERR_UNKNOWN,        // 未被以上类别覆盖的内部失败
 } LUMICE_ErrorCode;
 ```
 
@@ -139,6 +149,7 @@ typedef enum LUMICE_ServerState_ {
 typedef enum LUMICE_LogLevel_ {
   LUMICE_LOG_TRACE,    // 追踪
   LUMICE_LOG_DEBUG,    // 调试
+  LUMICE_LOG_VERBOSE,  // 介于 DEBUG 与 INFO 之间的详细诊断
   LUMICE_LOG_INFO,     // 信息（默认）
   LUMICE_LOG_WARNING,  // 警告
   LUMICE_LOG_ERROR,    // 错误
@@ -174,15 +185,22 @@ typedef struct LUMICE_RenderResult_ {
 统计结果结构体。
 
 ```c
+typedef unsigned long long LUMICE_RayCount;
+
 typedef struct LUMICE_StatsResult_ {
-  unsigned long ray_seg_num;   // 光线段数量
-  unsigned long sim_ray_num;   // 模拟光线数量
-  unsigned long crystal_num;   // 本次 run 实际采样出的不同晶体几何数（见"注意"）
+  LUMICE_RayCount ray_seg_num;      // 光线段数量
+  LUMICE_RayCount sim_ray_num;      // 模拟光线数量
+  LUMICE_RayCount crystal_num;      // 本次 run 实际采样出的不同晶体几何数（见“注意”）
+  LUMICE_RayCount orientation_num;  // 本次 run 实际采样出的不同晶体取向数（见“注意”）
 } LUMICE_StatsResult;
 ```
 
+`LUMICE_RayCount` 在所有平台上都至少为 64 位，包括 `unsigned long` 只有 32 位的 Windows。
+
 **注意**：
 - 哨兵标识：全零（`sim_ray_num == 0`）
+- `orientation_num` 将取向与几何分开计数。固定形状配随机轴时可以只有一个几何，却有大量取向；
+  与 `crystal_num` 相同，它受 CPU/GPU 采样密度影响，不能作为跨后端 parity 断言。
 - `crystal_num` 是**本次 run 实际采样出了几个不同的晶体几何**，不是构造了几个晶体对象。
   形状由固定数值给定时只会抽样一次、之后全程复用，所以形状不含随机分布的场景恰好报出
   它的（散射层 × entry）总数 —— 第 1 层 3 个 entry 加第 2 层 2 个就报 5，与 `ray_num`
@@ -203,15 +221,22 @@ typedef struct LUMICE_StatsResult_ {
 
 ```c
 typedef struct LUMICE_ServerConfig_ {
-  int num_workers;        // 模拟器工作线程数。0 = 默认（hardware_concurrency - 2）
+  int num_workers;        // CPU worker 数。0 = 自动：Linux/macOS 取物理核心数，Windows
+                          // 取完整逻辑核心数，并应用平台上限；具体单源为
+                          // ServerImpl::AutomaticWorkerBaseAndCap()。显式正值原样采用。
   unsigned int sim_seed;  // 确定性 RNG 种子。0 = 随机（默认）。
-                          // 非零时强制为单线程以确保结果可复现。
+                          // 非零时收缩为单 worker，以获得逐位稳定结果。
+  int preferred_backend;  // LUMICE_BACKEND_CPU / LUMICE_BACKEND_METAL / LUMICE_BACKEND_CUDA
 } LUMICE_ServerConfig;
 ```
 
 **注意**：
-- 零初始化的结构体（`= {0}`）等同于默认行为（自动线程数、随机种子）
-- 当 `sim_seed != 0` 时，服务器强制 `num_workers = 1` 以确保确定性光线追踪结果
+- 零初始化的结构体（`= {0}`）等同于默认行为（自动 worker 数、随机种子、CPU 后端）
+- `num_workers` 在 CPU 路线决定渲染 worker 数；在 Metal/CUDA 路线不改变单 GPU render engine，
+  而是决定常驻 CPU analysis pool 的大小，即 `LUMICE_StartRaypathAnalysis` 使用的 worker 数
+- 当 `sim_seed != 0` 时，服务器把 CPU worker 组（GPU 路线上的 analysis pool 亦同）收缩为 1，
+  使固定调用序列可复现
+- `preferred_backend` 在构造时选择路线；`LUMICE_TRACE_BACKEND` 开发环境覆盖仍具有更高优先级
 
 ### 服务器生命周期
 
@@ -512,6 +537,38 @@ LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerSta
 - `LUMICE_OK`: 成功，状态写入 `*out`
 - `LUMICE_ERR_NULL_ARG`: `server` 或 `out` 为 `NULL`
 
+#### LUMICE_GetSimLifecycle
+
+读取权威的三态生命周期、当前 epoch 与 session 类型；`LUMICE_QueryServerState` 只是它的二态投影。
+
+```c
+typedef enum LUMICE_SimLifecycle_ {
+  LUMICE_LIFECYCLE_IDLE = 0,
+  LUMICE_LIFECYCLE_RUNNING,
+  LUMICE_LIFECYCLE_COMPLETED,
+} LUMICE_SimLifecycle;
+
+typedef enum LUMICE_SessionKind_ {
+  LUMICE_SESSION_RENDER = 0,
+  LUMICE_SESSION_ANALYSIS = 1,
+} LUMICE_SessionKind;
+
+typedef struct LUMICE_SimLifecycleResult_ {
+  int lifecycle;
+  unsigned long long epoch;
+  int session_kind;
+} LUMICE_SimLifecycleResult;
+
+LUMICE_ErrorCode LUMICE_GetSimLifecycle(LUMICE_Server* server, LUMICE_SimLifecycleResult* out);
+```
+
+- `COMPLETED` 表示有限 run 的生产侧已自然完成；需要终值统计时仍须等待下面的 drain 相等判据
+- 每次 `LUMICE_CommitScene`、`LUMICE_StartRaypathAnalysis` 或 `LUMICE_ContinueRender` 成功启动 run，
+  `epoch` 都递增
+- `session_kind` 只由 render commit 或 analysis start 改写；完成与 Stop 均保留它，因此停止后的
+  analysis 仍读作 `ANALYSIS`，直到下一次 render commit
+- 三个字段分别保持当前，但不构成彼此的单次原子快照
+
 #### LUMICE_GetDrainStatus
 
 读取消费端排空状态：当前世代的数据是否已被完全消费，即累计统计量是否已是终值。
@@ -552,8 +609,8 @@ LUMICE_ErrorCode LUMICE_GetDrainStatus(LUMICE_Server* server, LUMICE_DrainResult
 - 无限运行（`ray_num` 无上限）永远不会排空，与其生命周期永远不会到达 `COMPLETED` 同形。
 - `LUMICE_StopServer()` **不会**发布排空信号。停止会丢弃仍在排队的数据，因此"已停止"
   与"已排空"保持可区分，而不是被当作一次干净的完成上报。
-- `drained_epoch` 单调且从不重置。新一次提交会让 `current_epoch` 越过它，相等判据自身
-  就会读作"尚未排空"。
+- `drained_epoch` 单调且从不重置。新一次提交或 `LUMICE_ContinueRender` 会让
+  `current_epoch` 越过它，相等判据自身就会读作“尚未排空”。
 
 **典型用法**：
 
@@ -582,6 +639,24 @@ void LUMICE_StopServer(LUMICE_Server* server);
 **注意**：
 - 停止后可以继续提交新配置
 - 停止不会释放服务器资源，需要调用 `LUMICE_DestroyServer()` 释放
+- 停止后的 render 保留累积结果，可由 `LUMICE_ContinueRender()` 继续追加
+
+#### LUMICE_ContinueRender
+
+不重置累积结果，为最近一次 render 追加新光线（v4.44）。
+
+```c
+LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite,
+                                       LUMICE_RayCount additional_ray_num);
+```
+
+- 只适用于已经提交过 render、且当前没有 run 正在执行的 render session；analysis session 必须先
+  重新提交 render
+- `additional_ray_num` 是跨波长的**增量**而非新总量；`infinite != 0` 时忽略该值并运行到 Stop
+- 成功后保留此前图像、统计、`emitted_energy` 与曝光锚点，同时启动新 epoch；有限追加完成后仍须
+  按 `LUMICE_GetDrainStatus` 等待终值
+- 无可继续的 render、run 正在执行或完成批次未能在内部时限内排空时返回
+  `LUMICE_ERR_SERVER`，且拒绝路径不改变现有状态
 
 ## 使用示例
 
@@ -617,7 +692,14 @@ int main() {
     while (1) {
         usleep(1000000);  // 1 second
 
-        // 取一帧；下面的渲染结果与统计读自同一次快照
+        LUMICE_DrainResult drain;
+        if (LUMICE_GetDrainStatus(server, &drain) != LUMICE_OK) {
+            break;  // 生产代码应处理错误
+        }
+        int done = drain.drained_epoch == drain.current_epoch;
+
+        // 在 drain 采样之后取帧，保证 done 这一轮读到的是终值；
+        // 下面的渲染结果与统计读自同一次快照
         LUMICE_ResultFrame* frame = NULL;
         if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
             LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
@@ -630,15 +712,14 @@ int main() {
 
             LUMICE_StatsResult stats;
             if (LUMICE_FrameGetStats(frame, &stats) == LUMICE_OK) {
-                printf("Stats: rays=%lu, crystals=%lu\n", stats.sim_ray_num, stats.crystal_num);
+                printf("Stats: rays=%llu, crystals=%llu, orientations=%llu\n",
+                       stats.sim_ray_num, stats.crystal_num, stats.orientation_num);
             }
 
             LUMICE_ReleaseResultFrame(frame);
         }
 
-        // 检查是否完成
-        LUMICE_ServerState state;
-        if (LUMICE_QueryServerState(server, &state) == LUMICE_OK && state == LUMICE_SERVER_IDLE) {
+        if (done) {
             break;
         }
     }
@@ -693,8 +774,15 @@ int main(int argc, char* argv[]) {
     while (1) {
         usleep(1000000);
 
-        // 每次轮询取一帧：在这一帧被释放前，图像一直有效，
-        // 无论其间别的线程读了什么。
+        LUMICE_DrainResult drain;
+        if (LUMICE_GetDrainStatus(server, &drain) != LUMICE_OK) {
+            fprintf(stderr, "Error: Failed to query drain status\n");
+            break;
+        }
+        int done = drain.drained_epoch == drain.current_epoch;
+
+        // 每次轮询在 drain 采样后取一帧，因此 done 这一轮是终值；
+        // 在帧释放之前图像一直有效，无论其间别的线程读了什么。
         LUMICE_ResultFrame* frame = NULL;
         if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
             LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
@@ -719,16 +807,14 @@ int main(int argc, char* argv[]) {
 
             LUMICE_StatsResult stats;
             if (LUMICE_FrameGetStats(frame, &stats) == LUMICE_OK) {
-                printf("Stats: rays=%lu, segments=%lu, crystals=%lu\n",
-                       stats.sim_ray_num, stats.ray_seg_num, stats.crystal_num);
+                printf("Stats: rays=%llu, segments=%llu, crystals=%llu, orientations=%llu\n",
+                       stats.sim_ray_num, stats.ray_seg_num, stats.crystal_num, stats.orientation_num);
             }
 
             LUMICE_ReleaseResultFrame(frame);
         }
 
-        // 检查是否完成
-        LUMICE_ServerState state;
-        if (LUMICE_QueryServerState(server, &state) == LUMICE_OK && state == LUMICE_SERVER_IDLE) {
+        if (done) {
             break;
         }
     }
@@ -788,21 +874,23 @@ if (err != LUMICE_OK) {
 不会有任何指针悬垂。它与另外三个共用同一套取帧/释放包络，只是因为四种读取都来自同一帧，
 而不是因为它也需要那三者所需的借用保护。
 
-`LUMICE_QueryServerState()` 同样线程安全，可在任意线程的任意时刻调用。
+`LUMICE_QueryServerState()`、`LUMICE_GetSimLifecycle()`、`LUMICE_GetDrainStatus()` 与
+`LUMICE_GetSimRayCount()` 也都是线程安全的只读轮询，可在任意线程的任意时刻调用。
 
 ### 非线程安全API
 
 以下API直接修改共享的 server 状态，不应与彼此、也不应与同一 server 上的其他调用同时发生：
 - `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()` / `LUMICE_DestroyServer()`: 服务器生命周期管理
-- `LUMICE_CommitScene()`: 配置提交
+- `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()`：run 提交与重启
 - `LUMICE_StopServer()`: 服务器停止
 - 对同一个 `LUMICE_Scene*` 句柄的修改（`LUMICE_SceneAdd*` / `LUMICE_SceneSet*` / `LUMICE_SceneDestroy`）——句柄内部没有加锁。不同句柄互相独立，两个线程各建各的场景是安全的。
 
 ### 多线程使用建议
 
-1. **单服务器多线程**：指定一个 owner 线程专门调用 `LUMICE_CommitScene()` /
+1. **单服务器多线程**：指定一个 owner 线程执行 run 启动与生命周期修改：
+   `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()` /
    `LUMICE_StopServer()` / `LUMICE_DestroyServer()`；其余任意数量的线程可以与该 owner
-   以及彼此并发地取帧读结果——读侧不需要互斥锁。
+   以及彼此并发地轮询 lifecycle/drain/ray count，并取帧读结果——读侧不需要互斥锁。
 2. **多服务器**：每个线程使用独立的服务器实例
 
 ## 与其他语言集成
@@ -828,9 +916,16 @@ class LUMICE_RenderResult(ctypes.Structure):
 
 class LUMICE_StatsResult(ctypes.Structure):
     _fields_ = [
-        ('ray_seg_num', ctypes.c_ulong),
-        ('sim_ray_num', ctypes.c_ulong),
-        ('crystal_num', ctypes.c_ulong),
+        ('ray_seg_num', ctypes.c_ulonglong),
+        ('sim_ray_num', ctypes.c_ulonglong),
+        ('crystal_num', ctypes.c_ulonglong),
+        ('orientation_num', ctypes.c_ulonglong),
+    ]
+
+class LUMICE_DrainResult(ctypes.Structure):
+    _fields_ = [
+        ('drained_epoch', ctypes.c_ulonglong),
+        ('current_epoch', ctypes.c_ulonglong),
     ]
 
 LUMICE_MAX_RENDER_RESULTS = 16
@@ -854,8 +949,8 @@ lib.LUMICE_FrameGetRender.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_Ren
 lib.LUMICE_FrameGetRender.restype = ctypes.c_int
 lib.LUMICE_FrameGetStats.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_StatsResult)]
 lib.LUMICE_FrameGetStats.restype = ctypes.c_int
-lib.LUMICE_QueryServerState.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-lib.LUMICE_QueryServerState.restype = ctypes.c_int
+lib.LUMICE_GetDrainStatus.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_DrainResult)]
+lib.LUMICE_GetDrainStatus.restype = ctypes.c_int
 lib.LUMICE_StopServer.argtypes = [ctypes.c_void_p]
 
 # 使用示例
@@ -880,7 +975,12 @@ def simulate(config_file):
         while True:
             time.sleep(1)
 
-            # 获取渲染结果
+            drain = LUMICE_DrainResult()
+            if lib.LUMICE_GetDrainStatus(server, ctypes.byref(drain)) != 0:
+                raise RuntimeError("Failed to query drain status")
+            done = drain.drained_epoch == drain.current_epoch
+
+            # 在 drain 采样后取帧，保证 done 这一轮读到终值
             frame = ctypes.c_void_p()
             if lib.LUMICE_AcquireResultFrame(server, ctypes.byref(frame)) == 0:
                 try:
@@ -893,9 +993,7 @@ def simulate(config_file):
                 finally:
                     lib.LUMICE_ReleaseResultFrame(frame)
 
-            # 检查状态
-            state = ctypes.c_int()
-            if lib.LUMICE_QueryServerState(server, ctypes.byref(state)) == 0 and state.value == 0:
+            if done:
                 break
     finally:
         lib.LUMICE_DestroyServer(server)
@@ -905,7 +1003,7 @@ def simulate(config_file):
 
 ```rust
 use std::ffi::CString;
-use std::os::raw::{c_char, c_int, c_uchar, c_ulong, c_void};
+use std::os::raw::{c_char, c_int, c_uchar, c_ulonglong, c_void};
 
 const LUMICE_MAX_RENDER_RESULTS: usize = 16;
 const LUMICE_MAX_STATS_RESULTS: usize = 1;
@@ -920,9 +1018,10 @@ struct LUMICE_RenderResult {
 
 #[repr(C)]
 struct LUMICE_StatsResult {
-    ray_seg_num: c_ulong,
-    sim_ray_num: c_ulong,
-    crystal_num: c_ulong,
+    ray_seg_num: c_ulonglong,
+    sim_ray_num: c_ulonglong,
+    crystal_num: c_ulonglong,
+    orientation_num: c_ulonglong,
 }
 
 #[link(name = "lumice")]

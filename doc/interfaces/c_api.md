@@ -44,7 +44,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 451        // ABI version, encoded major*100 + minor (v4.51)
+#define LUMICE_API_VERSION 453        // ABI version, encoded major*100 + minor (v4.53)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -57,6 +57,11 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 ```
 
 It is bumped when the public symbol set grows and on every BREAKING struct-layout change.
+
+**v4.53** changes the target-free `lumice.path-feature-report` document to schema 3: structural
+objects, support, features, unattributed structures, MC evidence, and coverage are now separate
+layers. A schema-2 reader must reject schema 3. The request struct and the v4.50 target/fiber/warm
+schema-1 surface are unchanged. See `raypath-cli-output.md` §7.
 
 **v4.52** appends one complete budget/observation/layer-selection group to
 `LUMICE_PathFeatureReportRequest`; a v4.51 prefix still works with the new defaults. The report's
@@ -210,7 +215,8 @@ typedef enum LUMICE_ErrorCode_ {
   LUMICE_ERR_MISSING_FIELD,  // Missing required field
   LUMICE_ERR_INVALID_VALUE,  // Invalid field value
   LUMICE_ERR_FILE_NOT_FOUND, // File not found / cannot be opened
-  LUMICE_ERR_SERVER,         // Internal server error
+  LUMICE_ERR_SERVER,         // Server error
+  LUMICE_ERR_UNKNOWN,        // Internal failure not covered above
 } LUMICE_ErrorCode;
 ```
 
@@ -234,6 +240,7 @@ Log level enum.
 typedef enum LUMICE_LogLevel_ {
   LUMICE_LOG_TRACE,    // Trace
   LUMICE_LOG_DEBUG,    // Debug
+  LUMICE_LOG_VERBOSE,  // Verbose diagnostics between DEBUG and INFO
   LUMICE_LOG_INFO,     // Info (default)
   LUMICE_LOG_WARNING,  // Warning
   LUMICE_LOG_ERROR,    // Error
@@ -269,15 +276,24 @@ typedef struct LUMICE_RenderResult_ {
 Statistics result structure.
 
 ```c
+typedef unsigned long long LUMICE_RayCount;
+
 typedef struct LUMICE_StatsResult_ {
-  unsigned long ray_seg_num;   // Number of ray segments
-  unsigned long sim_ray_num;   // Number of simulated rays
-  unsigned long crystal_num;   // Distinct crystal geometries this run sampled (see Notes)
+  LUMICE_RayCount ray_seg_num;      // Number of ray segments
+  LUMICE_RayCount sim_ray_num;      // Number of simulated rays
+  LUMICE_RayCount crystal_num;      // Distinct crystal geometries this run sampled (see Notes)
+  LUMICE_RayCount orientation_num;  // Distinct crystal orientations sampled (see Notes)
 } LUMICE_StatsResult;
 ```
 
+`LUMICE_RayCount` is always at least 64 bits, including Windows where `unsigned long` is only
+32 bits.
+
 **Notes**:
 - Sentinel marker: all zeros (`sim_ray_num == 0`)
+- `orientation_num` counts sampled orientations separately from geometry. A fixed shape under a
+  random axis can therefore report one geometry and many orientations. Like `crystal_num`, it is
+  not a backend-parity metric because CPU and GPU routes sample at different densities.
 - `crystal_num` is **how many distinct crystal geometries the run actually
   sampled**, not how many crystal objects it built. A shape defined by fixed
   numbers is drawn once and reused for the rest of the run, so a scene with
@@ -306,11 +322,10 @@ Server configuration structure for `LUMICE_CreateServerEx()`.
 
 ```c
 typedef struct LUMICE_ServerConfig_ {
-  int num_workers;        // CPU worker count. 0 = automatic: min(physical core count, 10) on
-                          // Linux/macOS, the full logical core count on Windows —
-                          // ServerImpl::AutomaticWorkerBaseAndCap() in server.cpp is the
-                          // per-platform pair and carries the measurements behind it. A value
-                          // > 0 is honoured verbatim, above the cap included.
+  int num_workers;        // CPU worker count. 0 = automatic: the physical core count on
+                          // Linux/macOS, the full logical core count on Windows, each capped
+                          // per platform by ServerImpl::AutomaticWorkerBaseAndCap(). A value
+                          // > 0 is honoured verbatim and is not subject to that cap.
   unsigned int sim_seed;  // Deterministic seed for worker RNGs. 0 = random (default).
                           // Non-zero collapses to 1 worker for bit-stable results.
   int preferred_backend;  // LUMICE_BACKEND_CPU / LUMICE_BACKEND_METAL / LUMICE_BACKEND_CUDA
@@ -1183,7 +1198,14 @@ int main() {
     while (1) {
         usleep(1000000);  // 1 second
 
-        // Acquire one frame; renders and stats below are read off the same snapshot
+        LUMICE_DrainResult drain;
+        if (LUMICE_GetDrainStatus(server, &drain) != LUMICE_OK) {
+            break;  // handle the error in production code
+        }
+        int done = drain.drained_epoch == drain.current_epoch;
+
+        // Acquire after the drain sample, so the frame read on the done iteration is final.
+        // Renders and stats below are read off the same snapshot.
         LUMICE_ResultFrame* frame = NULL;
         if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
             LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
@@ -1196,15 +1218,14 @@ int main() {
 
             LUMICE_StatsResult stats;
             if (LUMICE_FrameGetStats(frame, &stats) == LUMICE_OK) {
-                printf("Stats: rays=%lu, crystals=%lu\n", stats.sim_ray_num, stats.crystal_num);
+                printf("Stats: rays=%llu, crystals=%llu, orientations=%llu\n",
+                       stats.sim_ray_num, stats.crystal_num, stats.orientation_num);
             }
 
             LUMICE_ReleaseResultFrame(frame);
         }
 
-        // Check if processing is complete
-        LUMICE_ServerState state;
-        if (LUMICE_QueryServerState(server, &state) == LUMICE_OK && state == LUMICE_SERVER_IDLE) {
+        if (done) {
             break;
         }
     }
@@ -1259,8 +1280,15 @@ int main(int argc, char* argv[]) {
     while (1) {
         usleep(1000000);
 
-        // One frame per poll: the images stay valid until this frame is released,
-        // no matter what any other thread reads in the meantime.
+        LUMICE_DrainResult drain;
+        if (LUMICE_GetDrainStatus(server, &drain) != LUMICE_OK) {
+            fprintf(stderr, "Error: Failed to query drain status\n");
+            break;
+        }
+        int done = drain.drained_epoch == drain.current_epoch;
+
+        // One frame per poll, acquired after the drain sample so the done iteration is final.
+        // The images stay valid until this frame is released, no matter what another thread reads.
         LUMICE_ResultFrame* frame = NULL;
         if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
             LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
@@ -1285,16 +1313,14 @@ int main(int argc, char* argv[]) {
 
             LUMICE_StatsResult stats;
             if (LUMICE_FrameGetStats(frame, &stats) == LUMICE_OK) {
-                printf("Stats: rays=%lu, segments=%lu, crystals=%lu\n",
-                       stats.sim_ray_num, stats.ray_seg_num, stats.crystal_num);
+                printf("Stats: rays=%llu, segments=%llu, crystals=%llu, orientations=%llu\n",
+                       stats.sim_ray_num, stats.ray_seg_num, stats.crystal_num, stats.orientation_num);
             }
 
             LUMICE_ReleaseResultFrame(frame);
         }
 
-        // Check if processing is complete
-        LUMICE_ServerState state;
-        if (LUMICE_QueryServerState(server, &state) == LUMICE_OK && state == LUMICE_SERVER_IDLE) {
+        if (done) {
             break;
         }
     }
@@ -1357,7 +1383,9 @@ no pointer into the frame, so nothing dangles after release. It rides the same a
 envelope as the other three only because all four reads come from one frame, not because it needs
 the borrow protection they do.
 
-`LUMICE_QueryServerState()` is also thread-safe and may be called from any thread at any time.
+`LUMICE_QueryServerState()`, `LUMICE_GetSimLifecycle()`, `LUMICE_GetDrainStatus()`, and
+`LUMICE_GetSimRayCount()` are also thread-safe read-only polls and may be called from any thread at
+any time.
 
 ### Non-Thread-Safe APIs
 
@@ -1365,7 +1393,8 @@ The following mutate shared server state directly and must not be called concurr
 other or with any other call on the same server:
 - `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()` / `LUMICE_DestroyServer()`: server lifecycle
   management
-- `LUMICE_CommitScene()`: configuration submission
+- `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()`: run
+  submission and restart
 - `LUMICE_StopServer()`: server shutdown
 - `LUMICE_Scene*` handle mutation (`LUMICE_SceneAdd*` / `LUMICE_SceneSet*` / `LUMICE_SceneDestroy`
   on one handle) — a handle has no internal locking. Distinct handles are independent, so building
@@ -1373,10 +1402,11 @@ other or with any other call on the same server:
 
 ### Multithreading Recommendations
 
-1. **Single server, multiple threads**: designate one owner thread for `LUMICE_CommitScene()` /
-   `LUMICE_StopServer()` / `LUMICE_DestroyServer()`. Any number of other threads may freely
-   acquire and read result frames concurrently with that owner and with each other — no mutex
-   needed on the read side.
+1. **Single server, multiple threads**: designate one owner thread for run-start and lifecycle
+   mutations: `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` /
+   `LUMICE_ContinueRender()` / `LUMICE_StopServer()` / `LUMICE_DestroyServer()`. Any number of
+   other threads may poll lifecycle/drain/ray-count state and acquire/read/release result frames
+   concurrently with that owner and with each other — no mutex needed on the read side.
 2. **Multiple servers**: use a separate server instance per thread.
 
 ## Integration with Other Languages
@@ -1402,9 +1432,16 @@ class LUMICE_RenderResult(ctypes.Structure):
 
 class LUMICE_StatsResult(ctypes.Structure):
     _fields_ = [
-        ('ray_seg_num', ctypes.c_ulong),
-        ('sim_ray_num', ctypes.c_ulong),
-        ('crystal_num', ctypes.c_ulong),
+        ('ray_seg_num', ctypes.c_ulonglong),
+        ('sim_ray_num', ctypes.c_ulonglong),
+        ('crystal_num', ctypes.c_ulonglong),
+        ('orientation_num', ctypes.c_ulonglong),
+    ]
+
+class LUMICE_DrainResult(ctypes.Structure):
+    _fields_ = [
+        ('drained_epoch', ctypes.c_ulonglong),
+        ('current_epoch', ctypes.c_ulonglong),
     ]
 
 LUMICE_MAX_RENDER_RESULTS = 16
@@ -1428,8 +1465,8 @@ lib.LUMICE_FrameGetRender.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_Ren
 lib.LUMICE_FrameGetRender.restype = ctypes.c_int
 lib.LUMICE_FrameGetStats.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_StatsResult)]
 lib.LUMICE_FrameGetStats.restype = ctypes.c_int
-lib.LUMICE_QueryServerState.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-lib.LUMICE_QueryServerState.restype = ctypes.c_int
+lib.LUMICE_GetDrainStatus.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_DrainResult)]
+lib.LUMICE_GetDrainStatus.restype = ctypes.c_int
 lib.LUMICE_StopServer.argtypes = [ctypes.c_void_p]
 
 # Usage example
@@ -1454,7 +1491,12 @@ def simulate(config_file):
         while True:
             time.sleep(1)
 
-            # Get render results off a frame
+            drain = LUMICE_DrainResult()
+            if lib.LUMICE_GetDrainStatus(server, ctypes.byref(drain)) != 0:
+                raise RuntimeError("Failed to query drain status")
+            done = drain.drained_epoch == drain.current_epoch
+
+            # Acquire after the drain sample, so the frame on the done iteration is final.
             frame = ctypes.c_void_p()
             if lib.LUMICE_AcquireResultFrame(server, ctypes.byref(frame)) == 0:
                 try:
@@ -1467,9 +1509,7 @@ def simulate(config_file):
                 finally:
                     lib.LUMICE_ReleaseResultFrame(frame)
 
-            # Check state
-            state = ctypes.c_int()
-            if lib.LUMICE_QueryServerState(server, ctypes.byref(state)) == 0 and state.value == 0:
+            if done:
                 break
     finally:
         lib.LUMICE_DestroyServer(server)
@@ -1479,7 +1519,7 @@ def simulate(config_file):
 
 ```rust
 use std::ffi::CString;
-use std::os::raw::{c_char, c_int, c_uchar, c_ulong, c_void};
+use std::os::raw::{c_char, c_int, c_uchar, c_ulonglong, c_void};
 
 const LUMICE_MAX_RENDER_RESULTS: usize = 16;
 const LUMICE_MAX_STATS_RESULTS: usize = 1;
@@ -1494,9 +1534,10 @@ struct LUMICE_RenderResult {
 
 #[repr(C)]
 struct LUMICE_StatsResult {
-    ray_seg_num: c_ulong,
-    sim_ray_num: c_ulong,
-    crystal_num: c_ulong,
+    ray_seg_num: c_ulonglong,
+    sim_ray_num: c_ulonglong,
+    crystal_num: c_ulonglong,
+    orientation_num: c_ulonglong,
 }
 
 #[link(name = "lumice")]

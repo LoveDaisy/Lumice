@@ -52,53 +52,61 @@ Key source files:
 
 ### §2.1 State Transitions
 
-The server's externally observable state is a projection of the internal
-`ServerState` enum (`server.cpp`): `kStopped` / `kRunning` / `kTerminating`.
+The authoritative externally observable state is `LUMICE_SimLifecycle`: `IDLE`, `RUNNING`, or
+`COMPLETED`. `LUMICE_QueryServerState` is only its compatibility projection
+(`RUNNING` → `LUMICE_SERVER_RUNNING`; `IDLE | COMPLETED` → `LUMICE_SERVER_IDLE`). The orthogonal
+`LUMICE_SessionKind` says whether the current session is a render or an analysis and survives both
+completion and `LUMICE_StopServer`.
 
 ```
 LUMICE_CreateServer / LUMICE_CreateServerEx
     |
     v
-[Idle — kStopped, no config committed, threads in cv.wait]
-    |
-    |  LUMICE_CommitScene ──> internally: Stop() → rebuild consumers → Start()
-    v
-[Running — kRunning, simulation active]
-    |                                              ^
-    |  simulation completes (finite rays)          |
-    |  or LUMICE_StopServer                        |
-    v                                              |
-[Idle — kStopped, has_ever_consumed_=false]        |
-    |                                              |
-    +---- LUMICE_CommitScene (re-launch) ----------+
-    |
-    |  LUMICE_DestroyServer ──> Terminate()
-    v
-[Destroyed — impl_ reset, handle invalid]
+[IDLE / RENDER — no run submitted]
+    |  LUMICE_CommitScene                 |  LUMICE_StartRaypathAnalysis
+    v                                     v
+[RUNNING / RENDER]                    [RUNNING / ANALYSIS]
+    | finite producer settles             | finite producer settles
+    v                                     v
+[COMPLETED / RENDER]                  [COMPLETED / ANALYSIS]
+    |  LUMICE_ContinueRender              |  LUMICE_CommitScene
+    +------------------> RUNNING / RENDER <+
+
+LUMICE_StopServer: RUNNING or COMPLETED -> IDLE, preserving session kind
+LUMICE_DestroyServer: any live state -> Destroyed (handle invalid)
 ```
 
 Key observations:
 
-- There is no explicit `Run()` API. The server transitions to Running
-  *inside* the commit, which calls `Stop() → rebuild → Start()`.
-- `LUMICE_SERVER_NOT_READY` is defined in the `LUMICE_ServerState` enum but
-  is never returned by `LUMICE_QueryServerState`. The implementation maps
-  to either `LUMICE_SERVER_IDLE` or `LUMICE_SERVER_RUNNING`. This enum
-  value is dead code retained for potential future use.
+- There is no explicit `Run()` API. A successful `LUMICE_CommitScene`,
+  `LUMICE_StartRaypathAnalysis`, or `LUMICE_ContinueRender` starts work and increments the epoch.
+- Render and analysis starts do not silently interrupt each other: committing while an analysis is
+  running, or starting analysis while a render is running, returns `LUMICE_ERR_SERVER`. Starting
+  analysis over a running analysis deliberately restarts it; a render commit over a running render
+  retains the historical Stop → rebuild/reuse → Start behavior.
+- `COMPLETED` is a producer-side finite-run verdict. Final accumulated totals additionally require
+  `LUMICE_GetDrainStatus().drained_epoch == current_epoch`.
+- `LUMICE_SERVER_NOT_READY` is defined in `LUMICE_ServerState` but is never returned by
+  `LUMICE_QueryServerState`.
 - `LUMICE_DestroyServer(NULL)` is safe (early return on null check).
 
 ### §2.2 State Table
 
 | Current State | API Call | Next State | Notes |
 |---------------|----------|------------|-------|
-| Idle | `CommitScene` | Running | Stop (no-op if already stopped) → rebuild → Start |
-| Idle | `StopServer` | Idle | No-op (already stopped) |
-| Idle | `DestroyServer` | Destroyed | `Terminate()` → `~ServerImpl` joins all threads |
-| Running | `CommitScene` | Running | Stop (drains workers) → rebuild → Start |
-| Running | `StopServer` | Idle | Drains queues, waits for `active_workers_==0` |
-| Running | `DestroyServer` | Destroyed | `Terminate()` calls Stop first |
-| Running | `AcquireResultFrame` | Running | Triggers snapshot if `snapshot_dirty_`; always returns a valid frame |
-| Running | `QueryServerState` | Running | Read-only status check |
+| Idle / Completed | `CommitScene` | Running / Render | Stop → rebuild or reuse consumers → Start |
+| Running / Render | `CommitScene` | Running / Render | Replaces the running render through the same restart path |
+| Running / Analysis | `CommitScene` | Unchanged | Rejected with `LUMICE_ERR_SERVER` |
+| Idle / Completed | `StartRaypathAnalysis` | Running / Analysis | Replaces the previous session; always uses the CPU analysis workers |
+| Running / Analysis | `StartRaypathAnalysis` | Running / Analysis | Restarts analysis with the new scene and request |
+| Running / Render | `StartRaypathAnalysis` | Unchanged | Rejected with `LUMICE_ERR_SERVER` |
+| Idle / Completed Render | `ContinueRender` | Running / Render | Preserves accumulation; requires an existing render and a positive finite increment or infinite mode |
+| Any Analysis / Running Render | `ContinueRender` | Unchanged | Rejected with `LUMICE_ERR_SERVER` |
+| Running / Completed | `StopServer` | Idle, same session kind | Stops workers; does not publish a drain |
+| Running finite run | producer settles | Completed, same session kind | Consumer drain may still lag |
+| Any live state | `AcquireResultFrame` | Unchanged | Materializes a pending snapshot; always returns a valid frame on success |
+| Any live state | `QueryServerState` | Unchanged | Read-only two-state projection |
+| Any live state | `DestroyServer` | Destroyed | `Terminate()` → `~ServerImpl` joins all threads |
 | Destroyed | Any | UB | Handle is invalid after `DestroyServer` |
 
 ---
@@ -114,8 +122,10 @@ Key observations:
   threads spawned and waiting in `cv.wait` (state = `kStopped`).
 - **Error**: returns `NULL` only on allocation failure.
 - **Side effects**: registers the global logger sink (`spdlog`). The
-  `LUMICE_ServerConfig` struct allows setting `num_workers` and `sim_seed`;
-  `NULL` config or zero fields use defaults.
+  `LUMICE_ServerConfig` struct allows setting `num_workers`, `sim_seed`, and
+  `preferred_backend`; `NULL` config or zero fields select the automatic worker count,
+  random seed, and CPU preference. On a GPU-preferred server, `num_workers` sizes the standing
+  CPU analysis pool rather than multiplying the single GPU render engine.
   (`c_api_engine.cpp` `LUMICE_CreateServer` / `LUMICE_CreateServerEx`)
 
 #### `LUMICE_DestroyServer(server)`
@@ -233,7 +243,11 @@ tempted to reach back for a per-server cache.
 - **Precondition**: same as above.
 - **Postcondition**: `out[0..count-1]` filled with raw XYZ float data plus metadata
   (`snapshot_intensity`, `intensity_factor`, `has_valid_data`, `snapshot_generation`,
-  `effective_pixels`, `epoch`). `xyz_buffer` stays valid for as long as `frame` is held.
+  `effective_pixels`, `emitted_energy`, `epoch`, `anchor_l99_sky`, `axis_solid_angle`).
+  `emitted_energy` is the absolute-exposure denominator; `anchor_l99_sky` is the frame-level
+  full-sky radiance anchor repeated on every row; `axis_solid_angle` is the per-renderer optical-axis
+  pixel solid angle that bridges that radiance to the pixel-integrated XYZ buffer. `xyz_buffer`
+  stays valid for as long as `frame` is held.
 - **Internal**: reads `frame->frame_->xyz_results_` (`c_api_engine.cpp` `LUMICE_FrameGetRawXyz`), lock-free for the
   same reason as above.
 
@@ -253,12 +267,42 @@ tempted to reach back for a per-server cache.
 #### `LUMICE_QueryServerState(server, out)`
 
 - **Precondition**: `server != NULL`, `out != NULL`.
-- **Postcondition**: `*out` set to `LUMICE_SERVER_IDLE` or
-  `LUMICE_SERVER_RUNNING`.
-- **Internal**: maps `GetSimLifecycle()` (`kRunning` → `LUMICE_SERVER_RUNNING`, else
-  `LUMICE_SERVER_IDLE`), which itself calls `GetStatus()` — reads `status_` under
-  `status_mutex_`; if Running, also polls simulator idle state and `scene_gen_active_` flag.
-  (`c_api_engine.cpp` `LUMICE_QueryServerState`, `server.cpp:978–1004` `GetStatus`, `server.cpp:1036–1049` `GetSimLifecycle`)
+- **Postcondition**: `*out` set to `LUMICE_SERVER_RUNNING` only while the authoritative lifecycle
+  is `RUNNING`; both `IDLE` and `COMPLETED` map to `LUMICE_SERVER_IDLE`.
+- **Internal**: `c_api_engine.cpp::LUMICE_QueryServerState` projects
+  `ServerImpl::GetSimLifecycle`; it is not an independent state derivation.
+
+#### `LUMICE_GetSimLifecycle(server, out)` / `LUMICE_GetDrainStatus(server, out)`
+
+- **Precondition**: `server != NULL`, `out != NULL`.
+- **Postcondition**: the first writes the authoritative `{lifecycle, epoch, session_kind}`; the
+  second writes `{drained_epoch, current_epoch}`. `current_epoch` is the same counter as the
+  lifecycle result's `epoch`.
+- **Completion rule**: `COMPLETED` says finite production settled. Final totals require the
+  independent consumer-side predicate `drained_epoch == current_epoch`; `StopServer` deliberately
+  does not publish it.
+- **Internal**: `ServerImpl::GetSimLifecycle` derives `RUNNING` from `GetStatus()` and distinguishes
+  settled `COMPLETED` from reset/stopped `IDLE` with `has_ever_consumed_`. The drain pair is read
+  from monotonic atomics, drained first so a concurrent new epoch can only under-report completion.
+
+#### `LUMICE_ContinueRender(server, infinite, additional_ray_num)`
+
+- **Precondition**: a render has been committed, no run is currently `RUNNING`, and either
+  `infinite != 0` or `additional_ray_num > 0`.
+- **Postcondition**: on success starts a new render epoch without resetting accumulated images,
+  statistics, emitted energy, or the exposure anchor. A rejected call changes nothing.
+- **Error returns**: `LUMICE_ERR_NULL_ARG`, `LUMICE_ERR_INVALID_VALUE`, or `LUMICE_ERR_SERVER`
+  for a non-render session, no committed render, a running session, or a completed epoch that did
+  not drain within the bounded wait.
+
+#### `LUMICE_StartRaypathAnalysis(server, scene, request)`
+
+- **Precondition**: valid handles/request and no render currently `RUNNING`.
+- **Postcondition**: starts or restarts an analysis epoch over a deep copy of `scene`; the caller
+  retains the scene handle. The run uses the CPU analysis workers and publishes histogram/stats
+  through the same result-frame and drain lifecycle as a render.
+- **Mutual exclusion**: a running render is rejected rather than interrupted; another running
+  analysis is deliberately replaced by the new request.
 
 #### `LUMICE_StopServer(server)`
 
@@ -329,13 +373,14 @@ false and no snapshot is ever prepared). It still does **not** call
 |----------|-------------|------------|-------|
 | `LUMICE_CreateServer*` | No | — | Global logger sink registration is not atomic |
 | `LUMICE_DestroyServer` | No | — | Destructor joins threads; concurrent calls UB |
-| `LUMICE_CommitScene` | No | — | Modifies `config_manager_`, calls Stop/Start |
+| `LUMICE_CommitScene` / `ContinueRender` / `StartRaypathAnalysis` | No | — | Run-start mutators share the server's single-owner rule; cross-kind running sessions are rejected, not serialized |
 | `LUMICE_SceneCreate` / `Clone` / `Destroy` / `Add*` / `Set*` | Per-handle | — | A handle has no internal locking, so one handle has one owner thread. Distinct handles are fully independent — building two scenes on two threads is safe. |
 | `LUMICE_SceneToJson` / `SceneFromJson` / `SceneFromJsonFile` | Per-handle | — | Never touch a server. `FromJson*` only writes the fresh handle it allocates. |
 | `LUMICE_StopServer` | No | — | Direct state/queue mutation |
 | `LUMICE_SetLogCallback` | No | static bool (non-atomic) | First-call sink registration has a race window |
 | `LUMICE_SetLogLevel` | Conditional | spdlog internal lock | Thread-safe for concurrent calls; ordering not guaranteed |
-| `LUMICE_QueryServerState` | Yes | `status_mutex_` | Read-only poll; safe from any thread |
+| `LUMICE_QueryServerState` / `GetSimLifecycle` | Yes | internal mutexes + atomics | Read-only lifecycle polls; each returned field is individually current |
+| `LUMICE_GetDrainStatus` / `GetSimRayCount` | Yes | atomics | Cheap O(1) read-only polls; no snapshot or render |
 | `LUMICE_AcquireResultFrame` | Yes | `do_snapshot_mutex_` (serializes the two-phase snapshot pass) + `consumer_mutex_` (reads `has_ever_consumed_`) + atomic `published_frame_` load | Materializes a pending snapshot if any, then hands the caller an independent, reference-counted share of the published frame — see §9 |
 | `LUMICE_ReleaseResultFrame` | Yes | `shared_ptr` control-block refcount (atomic) | NULL-safe no-op; drops one reference. The underlying pixels are freed only when the LAST holder — of any frame sharing that publication — releases |
 | `LUMICE_FrameGetRender` / `FrameGetComposite` / `FrameGetRawXyz` / `FrameGetStats` | Yes | none needed | The frame is immutable once published, so reading it — even the SAME frame from multiple threads — needs no lock |
@@ -359,10 +404,10 @@ false and no snapshot is ever prepared). It still does **not** call
   `start_mutex_`, `prod_mutex_`, `scene_mutex_`.
 
 **Practical rule**: a single "owner thread" should perform all non-thread-safe
-operations (`Create`, `CommitScene`, `Stop`, `Destroy`). Any number of other
-threads may safely call `QueryServerState` and acquire/read/release result
-frames concurrently — with that owner and with each other, no external mutex
-needed on the read side.
+operations (`Create`, `CommitScene`, `ContinueRender`, `StartRaypathAnalysis`, `Stop`, `Destroy`).
+Any number of other threads may safely poll lifecycle/drain/ray-count state and acquire/read/release
+result frames concurrently — with that owner and with each other, no external mutex needed on the
+read side.
 
 ---
 
