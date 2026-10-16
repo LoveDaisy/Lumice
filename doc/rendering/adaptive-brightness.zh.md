@@ -2,7 +2,8 @@
 
 # 自适应亮度（Adaptive Brightness）
 
-本文档介绍 Lumice 的**自适应亮度**功能：基于当前帧可见 framebuffer 自动计算 EV 偏移量。
+本文档介绍 Lumice 的**自适应亮度**功能：根据 server 发布的固定全天场景锚点与当前快照的 landed
+强度自动计算 EV 偏移量。
 
 **目标读者**：希望了解 Lumice 如何挑选合理 EV 起点的进阶用户，以及需要理解 EV 归一化流水线的贡献者。
 
@@ -12,10 +13,10 @@
 
 冰晕模拟的原始 XYZ 辐射度数值在不同场景配置下量级差异悬殊——数百万条 22° 晕圈光线积累出的 buffer 远亮于稀有弧的 buffer。若无归一化，比较两种配置需要手动调 EV 滑条。
 
-**自适应亮度**自动化了此 EV 调整过程。GUI 计算 EV 偏移量（在**右侧面板 → Display**节里手动 EV 滑条旁，形如 `+N.NN EV auto`），并将其应用于后处理流水线，使一定比例的亮像素落在用户可配置的目标亮度附近。
+**自适应亮度**自动化了此 EV 调整过程。GUI 计算 EV 偏移量（在**右侧面板 → Display**节里手动 EV 滑条旁，形如 `+N.NN EV auto`），并将其应用于后处理流水线，使亮部落在固定目标亮度附近。
 
 锚点本身**始终计算、始终显示**——这一点没有开关。有开关的是"计算出的曝光是否真的被采用"：
-Display 分组的 **Mode** 控件（Relative / Absolute，见 §3）在两套曝光公式间切换，本文的 P99 self-anchor
+Display 分组的 **Mode** 控件（Relative / Absolute，见 §3）在两套曝光公式间切换，本文的 P99 场景锚点
 只被其中一套消费。以下第 2 节描述的是 `Relative` 模式——它是默认值，且行为与本文最初记录的单模式行为一致。
 
 ---
@@ -69,8 +70,8 @@ landed 强度。三个字段均无条件填充，没有按 filter 分支。
 本身已经在缓冲的单位里，不需要换算。）
 
 ```cpp
-g_state.p99_raw_y = data.p99_y;
-g_state.ev_auto = ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, target_white);
+g_state.p99_raw_y = payload->axis_solid_angle * payload->anchor_l99_sky;
+g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, target_white);
 ```
 
 ### 2.3 Filter 交互
@@ -79,7 +80,7 @@ g_state.ev_auto = ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, t
 `CollectData` 中立即终止），锚点缓冲也不例外。锚点 / `snapshot_intensity` 二元组因此追踪 filter
 子集；切换或开关 filter 通常会改变 EV 刻度，因为分子分母都基于新的射线集合计算。
 
-这是有意取舍：之前版本使用 anchor lane 让 EV 在 filter 切换时保持稳定，但内测表明该功能极少使用，且 multi-scattering 开销巨大（`ms_prob=0.5` 时约 2×）。在 `task-remove-anchor-lane` 中移除 anchor lane，回退到更简单的 self-P99 路径。
+这是有意取舍：之前版本使用 anchor lane 让 EV 在 filter 切换时保持稳定，但内测表明该功能极少使用，且 multi-scattering 开销巨大（`ms_prob=0.5` 时约 2×）。该 lane 已在 PR #115（`6375ee03c`）移除，回到单 ray lane；现行全天 `AnchorConsumer` 是同一批 filter-pass rays 的第二个投影目标，不是让 filter-fail rays 继续追迹的旧 lane。
 
 > ⚠️ **不要把这件事与 `Absolute` 模式的 filter 无关性（§3）混为一谈。**
 > `Absolute` 模式的归一化是 filter 无关的——filter 改变了落到像素上的东西，却不再改变显示尺度，
@@ -129,9 +130,10 @@ composite 在同一 EV 下依然可比。
 | 锚点测量 | `src/server/anchor_consumer.cpp`、`src/core/anchor_buffer.hpp` | 每 session 一块全天平面，发布 `anchor_l99_sky` |
 | 锚点传输 | `src/gui/server_poller.cpp` | 把 `anchor_l99_sky` + `axis_solid_angle` 带进 `TexturePayload`，不做任何统计 |
 | EV 数据源 | `src/gui/app.cpp` — `SyncFromPoller()` | 将 `p99_y` + `snapshot_intensity` 映射为 `ev_auto` |
-| 模式感知曝光（单一 owner） | `src/gui/mono_exposure_scale.hpp` | `ComputeMonoExposure()`——按 `ev_mode` 分叉；供显示/导出/`.lmc` 缩略图共用 |
+| 模式感知曝光（单一 owner） | `src/gui/mono_exposure_scale.hpp` | `ComputeMonoExposure()`——按 `ev_mode` 分叉；供显示/导出与重开 `.lmc` v5 XYZ 时复用 |
+| `.lmc` v5 源数据持久化 | `src/gui/app.cpp`、`src/gui/file_io.cpp` | 保存未曝光 XYZ 与曝光元数据；Open 后重新计算显示曝光 |
 | GUI 显示 | `src/gui/app_panels.cpp` | Mode 下拉、EV 读数文本 |
-| C API 字段 | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult` | `xyz_buffer`, `snapshot_intensity`, `emitted_energy` |
+| C API 字段 | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult` | `xyz_buffer`, `snapshot_intensity`, `emitted_energy`, `anchor_l99_sky`, `axis_solid_angle` |
 | C API 字段 | `src/include/lumice_scene.h` — `LUMICE_RenderParam` | `ev_mode`（`LUMICE_EV_MODE_RELATIVE` / `LUMICE_EV_MODE_ABSOLUTE`） |
 
 ### 相关文档

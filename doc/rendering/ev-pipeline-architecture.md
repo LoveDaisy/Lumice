@@ -37,7 +37,7 @@ cover:
 |------|------------|
 | **internal buffer** | Per-`Consume()` accumulation target (`internal_xyz_`). Written under the consumer mutex; never read by the GUI. |
 | **snapshot buffer** | Point-in-time copy of the internal buffer (`snapshot_xyz_`). Produced by `PrepareSnapshot()`; read by `GetRawXyzResult()` and the poller. |
-| **EV anchor (P99)** | The P99 of the non-zero Y channel of the snapshot, computed via `LUMICE_ComputeP99Y` (algorithm: `core/ev_anchor.hpp`) — GUI-side for the mono preview, server-side (`ComputeParticipatingP99Y`) for the composite path. Drives `ev_auto`. Consumed only by the `kRelative` anchor (§2.6); `kAbsolute` does not read it for the exposure scale itself, though the GUI still computes and displays it (§2.6). |
+| **EV anchor (P99)** | Mono relative exposure uses `anchor_l99_sky`: the P99 radiance per steradian of the session's fixed full-sky equal-area anchor plane, computed by `AnchorConsumer` and paired with each renderer's `axis_solid_angle`. The GUI reads those published fields and calls `LUMICE_ComputeEvAuto`; it does not compute a P99 over its texture. Composite relative exposure is the deliberate exception: `ComputeParticipatingP99Y` measures participating color-class lanes in the current view. `kAbsolute` uses neither P99 as its scale denominator, though the GUI still computes and displays mono `ev_auto`. |
 | **`kNormScale`** | Display brightness baseline constant (0.08), defined once in `core/color_util.hpp`. Maps per-pixel radiance to a [0, 1] range at EV = 0 so that the average illuminated pixel is ~5% brightness and bright halo features (~20× average) approach full white. Independent of resolution and FOV. Under `ev_mode = kAbsolute` it is a live factor of `ExposureScale()` (§2.3, §2.6); under `kRelative` it only reaches the C API caller inside `snapshot_intensity` and cancels out of the self-anchored formula, exactly as before this pipeline had two modes. |
 | **`ev_mode`** | `RenderConfig::EvMode` (`kRelative` default / `kAbsolute`) — a first-class, appearance-only config field (does not trigger `NeedsRebuild`) selecting which exposure anchor `ExposureScale()`/`CompositeAnchorScale()` use. See §2.6. |
 | **emitted energy** | `SimData::emitted_energy_`, summed into `RenderConsumer::total_/snapshot_emitted_energy_` and exposed as `LUMICE_RawXyzResult::emitted_energy`. The total spectral energy the light source emitted into the snapshot — fixed by the source and the ray budget, unaffected by filters, scene pass rate, or lens clipping. The `kAbsolute` denominator. See §2.6 and §7. |
@@ -48,47 +48,46 @@ cover:
 
 ### §2.1 Per-Consume Accumulation
 
-`RenderConsumer::Consume()` (`render.cpp:336`) processes one batch of simulator
-output. There is a **single accumulation lane**:
+A `RenderConsumer` has one XYZ accumulation target, `internal_xyz_`, but a batch can arrive in three
+payload forms (full dispatch and fallback rules: `accumulator-consumer-architecture.md` §1.1):
 
-- Projects `data.outgoing_d_` / `data.outgoing_w_` (already filter-gated by the
-  simulator — Design A, see `filter-architecture.md §2`) through the lens projection.
-- Compacts valid in-viewport pixels and accumulates via
-  `SpectrumToXyz()` → `internal_xyz_`.
-- `total_intensity_ += landed_weight` (sum of all landed ray weights).
+- a device-fused `xyz_pixel_data_` plane, folded by `ConsumeDeviceFused`;
+- worker-projected sidecars on the legacy CPU render route;
+- exit-seam rays, projected by the consumer through `ProjectAndClassifyRay`.
 
-**Design A**: the filter runs simulator-side, so all rays in `data.outgoing_*` have
-already passed the filter. Filter-fail rays are terminated in the simulator (they are
-never emitted to the consumer); there is no second buffer for them. The consumer
-simply projects and accumulates.
+All three feed the same `double` running sum and the same landed-intensity accounting. The simulator
+has already applied Design A filtering before any of them reaches the consumer; there is no second
+ray lane for filter-fail emission. The device/worker forms move projection work, not the meaning of
+the accumulated XYZ.
 
-**Linearity invariant**: accumulation is linear in XYZ space — each ray's
-contribution is `CMF(wavelength) × weight`, summed per pixel.
+**Linearity invariant**: accumulation is linear in XYZ space. Per-ray routes add
+`CMF(wavelength) × weight`; device-fused planes carry the corresponding sum.
 
-**Overlap dual-write** (`render.cpp:452-486`): for dual fisheye lens types, pass 2
-re-projects overlap-zone rays to the opposite hemisphere, filling the ring
-`r ∈ (r_scale, 1]`. This pass does **not** update `total_intensity_` — it preserves
-normalization (the overlap ring is a small geometric artifact).
+**Overlap dual-write**: dual-fisheye overlap hits fill the opposite hemisphere's ring but do not add
+a second copy to `total_intensity_`; `ProjectAndClassifyRay` owns that shared classification for the
+worker and consumer-projected forms.
 
 ### §2.2 PrepareSnapshot and Effective Pixels
 
-`PrepareSnapshot()` (`render.cpp:508`) creates a point-in-time snapshot under the
-consumer mutex. It is intentionally minimal — no percentile is computed server-side:
+`PrepareSnapshot()` runs under the consumer mutex and borrows a **fresh** float XYZ buffer from
+`FrameBufferPool` for every snapshot. It narrows the `double` running sums into that buffer once,
+then snapshots both landed intensity and emitted energy. Previous buffers remain owned by their
+immutable `ResultFrame`; a later snapshot never rewrites a reader's storage.
 
-1. `snapshot_xyz_` ← memcpy of `internal_xyz_`.
-2. `snapshot_intensity_` ← `total_intensity_`.
+`CountEffectivePixels()` then runs outside the consumer mutex but inside the serialized snapshot
+pass and counts non-zero pixels (floored to ≥ 1) for stats display. The outer
+`do_snapshot_mutex_` prevents a second `PrepareSnapshot` from re-pointing the member between this
+scan and Phase 2.
 
-`CountEffectivePixels()` (`render.cpp:515`, runs outside the mutex) then counts
-non-zero pixels into `effective_pix_` (floored to ≥ 1), used for stats display.
-
-**Zero-skip semantics**: the EV anchor population excludes pixels with zero Y. This
-exclusion happens in `LUMICE_ComputeP99Y()` (algorithm: `core/ev_anchor.hpp`, §2.5), which only
-pushes `Y > 0` entries (or `> 0` coarse bins under downsampling) into the percentile
-population. The server snapshot itself is not filtered — it carries the full buffer.
+For the current mono relative path, percentile measurement is not performed on this renderer buffer:
+`AnchorConsumer` measures the fixed full-sky plane and publishes `anchor_l99_sky` (§2.8). The
+`LUMICE_ComputeP99Y` primitive remains a public/shared P99 implementation and the composite path uses
+the same `NthElementP99` owner over its participating lanes; neither changes the full snapshot
+buffer carried through the C API.
 
 ### §2.3 kNormScale and Per-Pixel Intensity
 
-`GetRawXyzResult()` (`render.cpp:593`) converts the raw accumulated
+`GetRawXyzResult()` converts the raw accumulated
 `snapshot_intensity_` to a per-pixel intensity:
 
 ```
@@ -150,7 +149,7 @@ Both fields are needed, and a consumer that holds a buffer of its own must use t
 output (§2.5). Before v4.23 only the first field was published, which left the relative branch
 the one formula in this API a consumer could not reproduce (§2.8).
 
-> **Composite-path exception (task-345.3)**: `LUMICE_RenderResult::composite_p99_y`
+> **Composite-path exception**: `LUMICE_RenderResult::composite_p99_y`
 > IS a C API field, but ONLY on the composite path — today that is
 > `LUMICE_FrameGetComposite(frame, out, max_count)` (before v4.15: `LUMICE_GetCompositeResults`
 > / `LUMICE_GetRawXyzAndCompositeResults`'s `composite_out`; the pairing getter is gone because
@@ -167,8 +166,7 @@ the one formula in this API a consumer could not reproduce (§2.8).
 > boundary (`src/gui/` may only see the C API surface), so the GUI cannot derive this
 > statistic itself the way it does for the mono path. Also, the composite path needs
 > a "participating classes union" anchor rather than the mono full-spectrum P99: mixing
-> non-participating pixels back in was the "composite too dim" root cause task-345.3
-> fixes. The algorithm (`nth_element` at `⌊count × 0.99⌋`) has a **single owner**,
+> non-participating pixels back in was the historical "composite too dim" root cause. The algorithm (`nth_element` at `⌊count × 0.99⌋`) has a **single owner**,
 > `core/ev_anchor.hpp::NthElementP99`; both this composite anchor
 > (`ComputeParticipatingP99Y`) and the mono-path `LUMICE_ComputeP99Y` call it, and what
 > stays local to each is only the question of which values participate. No mirror
@@ -186,12 +184,11 @@ frame and cannot disturb this one.
 > be there rather than a lifetime the reader controls; two use-after-free recurrences came
 > out of it. See [`doc/interfaces/capi-lifecycle-architecture.md`](../interfaces/capi-lifecycle-architecture.md) §9.
 
-**Composite EV setter**: `LUMICE_SetCompositeExposure(server, ev_total)` (task-345.3) is
+**Composite EV setter**: `LUMICE_SetCompositeExposure(server, ev_total)` is
 the display-time counterpart to `LUMICE_SetRaypathColors` — the GUI uses it to push the
 combined manual + auto EV onto the composite bake. `ev_total` is applied as `2^ev_total`
-inside the compositor as a single global scalar shared by every color class (per-lane
-renormalization stays structurally excluded — that was the false-color bug from the
-scrum-336 spike). No accumulator reset, no epoch bump; flips `snapshot_dirty_` so the
+inside the compositor as a single global scalar shared by every color class (per-lane renormalization stays structurally excluded — that was the false-color failure found during
+its original design). No accumulator reset, no epoch bump; flips `snapshot_dirty_` so the
 next result-frame acquisition rebakes the composite. Mono path is untouched.
 
 ### §2.5 GUI Poller and SyncFromPoller
@@ -548,47 +545,51 @@ raypath colour changes how the brightness responds to a fov change.
 
 ## §3 Snapshot and Reset Lifecycle
 
-### §3.1 Buffer Allocation
+### §3.1 Buffer Ownership
 
-`RenderConsumer` allocates its four buffers eagerly in the constructor
-(`render.cpp:321-333`), sized to `resolution[0] × resolution[1] × 3`:
-`internal_xyz_`, `snapshot_xyz_`, `snapshot_work_`, `snapshot_image_buffer_`. There
-is no lazy/conditional allocation — every consumer has exactly one accumulation lane.
+`RenderConsumer` keeps the long-lived running accumulators (`internal_xyz_`, optional far plane,
+color-class lanes) for its fixed layout. Their running sums are `double`. Published XYZ and image
+buffers are different: `snapshot_xyz_` and `snapshot_image_buffer_` are `shared_ptr` buffers borrowed
+fresh from `FrameBufferPool` for each snapshot, so an immutable `ResultFrame` can outlive both the
+next snapshot and the consumer that produced it. Snapshot lanes are float shadows, narrowed once in
+`PrepareSnapshot`.
+
+The constructor borrows initial snapshot buffers so getters never expose null storage before the
+first pass; that does not make them fixed allocations. See `accumulator-consumer-architecture.md`
+§4.2–§4.3 for the two-phase protocol and storage anchors.
 
 ### §3.2 Reset Conditions
 
-Two events clear accumulation state:
+Two events clear or retire accumulation state:
 
-1. **`Reset()`** (`render.cpp:609`): zeros `total_intensity_`, `snapshot_intensity_`,
-   `effective_pix_`, and `internal_xyz_`. It does **not** zero `snapshot_xyz_`
-   (the next `PrepareSnapshot()` memcpys over it) and does **not** deallocate buffers.
-   `has_ever_consumed_ = false` (set in `Stop()`) ensures `LUMICE_FrameGetRawXyz` reports
-   `has_valid_data = false` until new data arrives, preventing stale snapshot reads.
+1. **`Reset()`** zeros landed/emitted totals, effective-pixel count, `internal_xyz_`, the optional far
+   plane and double color-class lanes. It deliberately does not zero snapshot buffers: the next
+   `PrepareSnapshot()` overwrites every published element in a freshly borrowed XYZ buffer, while
+   `has_ever_consumed_ = false` (set by `Stop`) prevents stale pixels being reported as current data.
+2. **Consumer destruction** releases its own accumulators. Published snapshot/image buffers can remain
+   alive through their `ResultFrame`; each pool-buffer deleter co-owns the pool, so this lifetime does
+   not depend on the `RenderConsumer` surviving.
 
-2. **Consumer destruction**: the `RenderConsumer` destructor releases all buffers via
-   `unique_ptr` RAII (the full-rebuild path, §6.2).
-
-`Reset()` is called by `ResetWith()` (`render.cpp:621`) — the consumer-reuse path
-triggered when `CommitConfig()` calls `Stop()` → `ResetWith()` → `Reset()`.
+`Reset()` is reached through `ResetWith(new_config, new_sun)` on the reuse path after annotation masks
+and marker points are refreshed.
 
 ---
 
-## §4 Three Consumption Paths
+## §4 Display-Time Consumers and Persisted Source
 
-Three GUI code paths consume the EV pipeline output and compute an
-`intensity_factor` / `intensity_scale` pair for the **mono** preview. All three call
-the same function, `ComputeMonoExposure()` (`src/gui/mono_exposure_scale.hpp`) —
-before this scrum each site carried its own hand-written copy of the formula; three
-independent mirrors of one formula is exactly the shape of drift a single shared
-function removes.
+The on-screen mono preview and Screenshot/export paths compute an
+`intensity_factor` / `intensity_scale` pair from the same function,
+`ComputeMonoExposure()` (`src/gui/mono_exposure_scale.hpp`). `.lmc` v5 takes a different but
+complementary path: it persists the **unexposed linear XYZ source** plus exposure metadata, then a
+reopened document calls the same display-time function again. It no longer freezes one exposed
+thumbnail as the authority.
 
 `ComputeMonoExposure(ev_mode, MonoExposureInput)` branches on `ev_mode` the same way
 §2.6's server-side `ExposureScale()` does, because the two must agree bit-for-bit in
 `kRelative` (§6.5):
 
 ```
-kRelative (default, unchanged from before this scrum — every existing document and
-           every committed reference image depends on this branch bit-for-bit):
+kRelative (default; existing documents and committed reference images depend on this branch):
     intensity_factor = 2^(exposure_offset + ev_auto)
     intensity_scale  = intensity_factor / snapshot_intensity
                         (0 if snapshot_intensity ≤ 0)
@@ -627,17 +628,22 @@ the frame white.
 the same `ComputeMonoExposure()`, so an exported PNG matches the on-screen preview in
 both modes.
 
-### §4.3 Screenshot / .lmc Thumbnail
+### §4.3 `.lmc` v5 Persisted Source
 
-`RefreshCpuTextureForSave()` (`app.cpp`) — CPU-side XYZ→sRGB for the `.lmc`
-thumbnail. Calls `ComputeMonoExposure()` and feeds the result to
-`LUMICE_XyzToSrgbUint8`. This may lag the display path by at most one frame, which is
-acceptable for thumbnails (saved on user action, not streamed).
+`RefreshCpuTextureForSave()` copies the retained frame's unexposed linear XYZ into the preview's CPU
+mirror and records `snapshot_intensity`, `emitted_energy`, and
+`axis_solid_angle × anchor_l99_sky` beside it. Save serializes those values; Open uploads the XYZ via
+`UploadXyzTexture`, restores the metadata, and the ordinary per-frame `ComputeMonoExposure` path
+reconstructs the display. Exposure, sky, target-lens relative illumination and tone therefore remain
+editable after reopen rather than being baked into bytes.
+
+v≤4 compatibility textures have different semantics; see §7.5 and
+`print-mode-subtractive-ink.md` §10 for the limits of radiance-only/composited legacy pixels.
 
 ### §4.4 Consistency Invariant
 
-All three paths call the same function by construction, so they cannot drift from
-each other. Within `kRelative`, `ev_auto`'s numerator (`p99_raw_y`) and the
+All display/export paths call the same function by construction, and `.lmc` v5 stores that function's
+inputs rather than a second implementation's output. Within `kRelative`, `ev_auto`'s numerator (`p99_raw_y`) and the
 `snapshot_intensity` denominator both derive from the same snapshot, so the EV is
 source-coherent without any cross-source guard. Within `kAbsolute`,
 `snapshot_emitted_energy` and `total_pixels` both come from the same
@@ -685,16 +691,15 @@ deliberately **not** the same as what is shown once a filter removes rays.
 
 ## §6 CommitConfig Impact
 
-`CommitConfig()` (`server.cpp:227`) always calls `Stop()` before modifying consumers.
-`Stop()` (`server.cpp:487`) transitions the server to stopped and sets
-`has_ever_consumed_ = false` (`server.cpp:529`).
+`CommitConfig()` always calls `Stop()` before modifying consumers; `Stop()` transitions the server
+to stopped and clears `has_ever_consumed_`.
 
 ### §6.1 Reuse Path
 
 When `NeedsRebuild()` returns false (layout fields unchanged):
 
 ```
-CommitConfig → Stop() → ResetWith(new_config) → Reset()   (server.cpp:296)
+CommitConfig → Stop() → ResetWith(new_config, new_sun) → Reset()
 ```
 
 `Reset()` zeros the accumulators but retains the buffers for reuse.
@@ -704,7 +709,7 @@ CommitConfig → Stop() → ResetWith(new_config) → Reset()   (server.cpp:296)
 When `NeedsRebuild()` returns true (layout fields changed):
 
 ```
-CommitConfig → Stop() → consumers_.clear() → new RenderConsumer(...)   (server.cpp:304)
+CommitConfig → Stop() → consumers_.clear() → new RenderConsumer(...)
 ```
 
 `consumers_.clear()` triggers `~RenderConsumer()`, releasing all buffers via
@@ -720,22 +725,21 @@ re-derives from the new filtered image (§5).
 
 ### §6.4 NeedsRebuild Trigger Fields
 
-`NeedsRebuild()` (`render_config.cpp:165`) compares layout-affecting fields only:
+`NeedsRebuild()` compares layout-affecting fields only:
 
-| Field | Triggers rebuild |
-|-------|:---:|
-| `resolution_` | ✓ |
-| `lens_` | ✓ |
-| `lens_shift_` | ✓ |
-| `view_` | ✓ |
-| `visible_` | ✓ |
-| `overlap_` | ✓ |
-| `background_`, `ray_color_`, `opacity_`, `intensity_factor_`, `ev_mode_`, grids | ✗ (appearance only) |
+| Field group | Triggers rebuild |
+|---|:---:|
+| `resolution_`, `lens_`, `lens_shift_`, `view_` | ✓ |
+| `visible_`, `front_`, `overlap_`, `globe_back_fade_` | ✓ |
+| `background_`, `paper_`, `ray_color_`, `intensity_factor_` | ✗ |
+| `ev_mode_`, `tone_`, `display_mode_`, all grid/marker appearance | ✗ |
 
-A `static_assert(sizeof(RenderConfig) == 144)` guards against silent field additions
-(`render_config.cpp:167`).
+`RenderConfigFieldSetGuard` makes an added/removed member a compile error; the complementary
+`static_assert(sizeof(RenderConfig) == 280)` catches nested-field/type growth. Neither guard decides
+the classification: a maintainer must still place the changed semantics on the correct side of the
+table.
 
-### §6.5 GUI Run Path: `intensity_factor` is Neutral (task-346.1)
+### §6.5 GUI Run Path: `intensity_factor` is Neutral
 
 The GUI Run path (`FillLumiceConfig` in `src/gui/file_io.cpp`) **always** commits
 `renderers[i].intensity_factor = 1.0f`, matching `RenderConfig::intensity_factor_`'s
@@ -807,7 +811,7 @@ Regression pins:
   mechanism layer below (`test_component_compositor.cpp`) is unaffected and still pins the scale
   arithmetic.
 
-### §6.6 Composite-path server-side self-anchor (task-fix-composite-participating-exposure-anchor)
+### §6.6 Composite-path server-side self-anchor
 
 The composite exposure scalar `s` was originally sourced from `RenderConsumer::ExposureScale()`
 — the same mono-path integrated-intensity normalization used by the standalone Y-lane. That
@@ -1213,37 +1217,24 @@ quietly drifting into re-lighting pixels it cannot re-light.
 | Invariant / Concept | Source Location |
 |---|---|
 | `kNormScale` definition (0.08) | `core/color_util.hpp` |
-| `RenderConfig::EvMode` (`kRelative`/`kAbsolute`) | `config/render_config.hpp` |
+| `RenderConfig::EvMode`; field-set and size guards; `NeedsRebuild()` | `config/render_config.{hpp,cpp}`, `config/config_compare.hpp` |
 | `ExposureScale()` / `ParticipatingExposureScale()` / `CompositeAnchorScale()` | `server/render.{hpp,cpp}` |
-| `SimData::emitted_energy_` | `config/sim_data.hpp` |
+| `SimData::emitted_energy_` and adaptive-allocation correction | `config/sim_data.hpp`, `core/simulator.{hpp,cpp}` |
 | `MeanIlluminantWeight()` (band-expectation charge) | `util/illuminant.{hpp,cpp}` |
-| `LUMICE_RawXyzResult::emitted_energy` (C API) | `include/lumice_engine.h` |
-| `LUMICE_RenderParam::ev_mode`, `LUMICE_EV_MODE_*` (C API) | `include/lumice_scene.h` |
-| `ComputeMonoExposure()` / `MonoExposureInput` / `MonoEvMode` (GUI mono exposure, single owner) | `gui/mono_exposure_scale.hpp` |
-| `Consume()` — single-lane accumulation | `render.cpp:336` |
-| Overlap dual-write (pass 2) | `render.cpp:452-486` |
-| `PrepareSnapshot()` — snapshot + intensity | `render.cpp:508` |
-| `CountEffectivePixels()` | `render.cpp:515` |
-| `PostSnapshot()` — CLI/server 8-bit image | `render.cpp:528` |
-| `GetRawXyzResult()` — per-pixel intensity formula | `render.cpp:593` |
-| `Reset()` — zeroing semantics | `render.cpp:609` |
-| `ResetWith()` — config update + reset | `render.cpp:621` |
-| Constructor — eager buffer allocation | `render.cpp:321-333` |
-| `RawXyzResult` (internal struct) | `server.hpp:134` |
-| `LUMICE_RawXyzResult` (C API) | `lumice_engine.h` |
-| `CommitConfig()` — Stop→Reset/Rebuild | `server.cpp:227` |
-| `Stop()` — `has_ever_consumed_` reset | `server.cpp:487,529` |
-| `NeedsRebuild()` — layout field comparison | `render_config.cpp:165-175` |
-| `sizeof(RenderConfig)` static_assert (144) | `render_config.cpp:167` |
+| `LUMICE_RawXyzResult` exposure fields (`emitted_energy`, `anchor_l99_sky`, `axis_solid_angle`) | `include/lumice_engine.h`, `server/c_api_engine.cpp` |
+| `LUMICE_RenderParam::ev_mode`, `LUMICE_EV_MODE_*` | `include/lumice_scene.h` |
+| `ComputeMonoExposure()` / `MonoExposureInput` / `MonoEvMode` | `gui/mono_exposure_scale.hpp` |
+| Three batch payload forms and double accumulation | `server/render.cpp` — `RenderConsumer::Consume`, `ConsumeDeviceFused` |
+| Fresh pooled XYZ/image snapshots and one-time narrowing | `server/render.{hpp,cpp}` — `FrameBufferPool`, `PrepareSnapshot`, `PostSnapshot` |
+| Reset and reuse | `server/render.cpp` — `Reset`, `ResetWith` |
+| Immutable frame storage and publication | `server/result_types.hpp`, `server/server.{hpp,cpp}` — `ResultFrame`, `DoSnapshot` |
 | `DownsampleBoxSumY()` / `ComputeP99Y()` / `ComputeEvAuto()` / `NthElementP99()` / `TargetWhiteToLinear()` | `core/ev_anchor.hpp` |
-| `LUMICE_ComputeP99Y` / `LUMICE_ComputeEvAuto` (C API surface) | `include/lumice_render.h`, `c_api_render.cpp` |
+| `LUMICE_ComputeP99Y` / `LUMICE_ComputeEvAuto` | `include/lumice_render.h`, `server/c_api_render.cpp` |
 | `kMonoAnchorDownsampleFactor` (8) / `kAnchorTargetWhite` (135) | `core/ev_anchor.hpp` |
-| `AnchorL99Sky()` / anchor plane geometry | `core/anchor_buffer.hpp` |
-| `ComputeAxisSolidAngle()` — the per-view unit bridge | `core/lens_proj_build.hpp` |
-| `AnchorConsumer` — the session's one anchor accumulator | `server/anchor_consumer.{hpp,cpp}` |
-| Anchor push into the renderers, per snapshot | `server.cpp` — `ServerImpl::DoSnapshot()` |
-| Poller anchor transport (computes no statistic) | `server_poller.cpp` — `ServerPoller::PollOnce()` |
-| `SyncFromPoller()` — ev_auto computation | `app.cpp:741` |
-| `BuildExportParams()` — export EV consistency | `app.cpp:284-289` |
-| `RefreshCpuTextureForSave()` — .lmc thumbnail EV | `app.cpp:227-248` |
-| Display path `ev_total` / `intensity_scale` | `app_panels.cpp:820-823` |
+| `AnchorL99Sky()` / fixed anchor-plane geometry | `core/anchor_buffer.hpp` |
+| `ComputeAxisSolidAngle()` — per-view unit bridge | `core/lens_proj_build.hpp` |
+| Session anchor accumulation and same-frame push into renderers | `server/anchor_consumer.{hpp,cpp}`, `ServerImpl::DoSnapshot` |
+| Poller anchor transport (computes no statistic) | `gui/server_poller.cpp` — `ServerPoller::PollOnce()` |
+| GUI auto-EV and export exposure | `gui/app.cpp` — `SyncFromPoller`, `BuildExportParams` |
+| `.lmc` v5 unexposed XYZ + exposure metadata persistence | `gui/app.cpp::RefreshCpuTextureForSave`, `gui/file_io.cpp` |
+| Display path `ev_total` / `intensity_scale` | `gui/app_panels.cpp` — `RenderPreviewPanel` |
