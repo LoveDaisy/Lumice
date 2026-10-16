@@ -1,50 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792160498932,
+  "lastUpdate": 1792173201757,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "61b01911736670be1cb86ee587fc006d12b7eefd",
-          "message": "Merge pull request #383 from LoveDaisy/fix/cuda-drain-window-fp32-plane\n\nfix(cuda): fold the fp32 XYZ device plane into a double plane every 8 batches (drain-window ledger drift)",
-          "timestamp": "2026-09-20T09:41:39+08:00",
-          "tree_id": "7251f6578c75bb2a709a992bf46e1bc045a57fe2",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/61b01911736670be1cb86ee587fc006d12b7eefd"
-        },
-        "date": 1789869282759,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "Ubuntu ARM64",
-            "value": 511239.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 360820.4,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 317142,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4758,6 +4716,54 @@ window.BENCHMARK_DATA = {
             "value": 481807.7,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "661f6814adafc3ae410096f9f67ed0cbcfe37403",
+          "message": "Merge pull request #498 from LoveDaisy/chore/doc-topic-organization\n\ndocs: organize documentation into topic directories",
+          "timestamp": "2026-10-17T01:50:13+08:00",
+          "tree_id": "c1cf0a07d8d95b945e5279c062b26efaf6c926b0",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/661f6814adafc3ae410096f9f67ed0cbcfe37403"
+        },
+        "date": 1792173200286,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 405752.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 504222.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 367247,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 309514.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
