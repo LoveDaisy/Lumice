@@ -225,15 +225,16 @@ Geometry of the crystal:
 
 ### Axis Tab
 
-The tab's first two rows name and shape the orientation; the three distribution controls below refine it.
+Three sections top to bottom: the Label row names the orientation, the three distribution rows shape it, and the Apply preset row is the shortcut that loads a shape in.
 
 - **Label**: six chips (`Column` / `Plate` / `Parry` / `Lowitz` / `Random` / `Custom`). The highlighted one is the crystal's axis label — a name you choose, stored with the document. Clicking a chip only renames; the three distributions below are untouched, so renaming never loses a tuning. If the current parameters have drifted outside the label's usual range, a warning mark appears beside the active chip; hover it for a three-line explanation ending in what the parameters read as right now.
-- **Apply preset**: a dropdown listing the five built-in presets (Custom is a label, not a definition, so it is not listed). Picking one loads that preset's definition into the three distributions — your retuned value from the preset library where you saved one — sets the label to match, and turns the preview to the preset's default view. Until used it shows only its placeholder; it displays no state.
 
 Three independent angular distributions controlling crystal orientation: `zenith`, `azimuth`, `roll`. Each distribution has:
 
 - A type radio: `Gauss`, `Uniform`, `Zigzag`, `Laplacian`, or the legacy `GaussLegacy`.
 - A `mean` (the centre angle) and a `std` whose meaning depends on the type — standard deviation for Gauss, full range for Uniform, amplitude for Zigzag, and scale for Laplacian.
+
+- **Apply preset**: the tab's last row — a dropdown listing the five built-in presets (Custom is a label, not a definition, so it is not listed). Picking one loads that preset's definition into the three distributions above — your retuned value from the preset library where you saved one — and nothing else: the label is not touched and the preview's view does not move. The row sits below the parameters because that is where its effects land: the distribution values, the preview's summary line, and the label's warning mark are all an apply changes. Until used it shows only its placeholder; it displays no state.
 
 Retuning the distributions never renames the label, and the label survives saving and reopening the document (stored in the `.lmc`). Files saved before labels existed get theirs derived once from the parameters on load.
 

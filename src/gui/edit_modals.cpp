@@ -1507,9 +1507,9 @@ static void RenderAxisModal(GuiState& state) {
   //
   // A chip press writes ONLY the label buffer. Parameters never move here — renaming is a
   // statement about what the current parameters are called, not a request to load a definition;
-  // that is the Apply preset combo's job, one row down. (This row used to be "Presets:", whose
-  // press loaded the preset's definition — the same pixels with different semantics, which is why
-  // the wording changed with the behavior.)
+  // that is the Apply preset combo's job, below the parameter rows. (This row used to be
+  // "Presets:", whose press loaded the preset's definition — the same pixels with different
+  // semantics, which is why the wording changed with the behavior.)
   const AxisPreset active = g_axis_label_buf;
   const ImVec4 active_color = AccentColor();
   const ImVec4 active_text_color = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
@@ -1531,9 +1531,9 @@ static void RenderAxisModal(GuiState& state) {
       ImGui::PushStyleColor(ImGuiCol_ButtonActive, active_color);
       ImGui::PushStyleColor(ImGuiCol_Text, active_text_color);
     }
-    // The ##axis_label_chip suffix: the Apply combo's items spell the same words one row down, so
-    // both a click and a test assertion need the two populations addressable apart. Visible label
-    // unchanged.
+    // The ##axis_label_chip suffix: the Apply combo's items below the parameter rows spell the
+    // same words, so both a click and a test assertion need the two populations addressable apart.
+    // Visible label unchanged.
     const std::string chip_id = std::string(entry.label) + "##axis_label_chip";
     if (ImGui::SmallButton(chip_id.c_str())) {
       g_axis_label_buf = entry.id;
@@ -1546,48 +1546,23 @@ static void RenderAxisModal(GuiState& state) {
     }
   }
   // Out-of-domain badge on the active chip: the live edit buffer has drifted from the label. The
-  // tooltip reads the buffer (what the user sees), not the pool.
+  // tooltip reads the buffer (what the user sees), not the pool. A Selectable rather than plain
+  // text — text registers no item, so the badge could be neither explained on hover nor asserted
+  // by a test (defaults_panel's RenderNoteCell is the same move); the size is pinned to the glyph
+  // and the text colour is pushed explicitly, so the visible pixels are the TextColored ones
+  // this used to draw.
   if (AxisLabelOutOfDomain(active, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2])) {
     ImGui::SameLine();
-    ImGui::TextColored(WarningTextColor(), "%s", ICON_FA_TRIANGLE_EXCLAMATION);
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    const std::string badge_id = ICON_FA_TRIANGLE_EXCLAMATION "###axis_label_mismatch";
+    ImGui::Selectable(badge_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups,
+                      ImVec2(ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x, 0.0f));
+    ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("%s", FormatAxisLabelMismatchTooltip(active, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2],
                                                              DescribeAxisPresetDomain(active))
                                   .c_str());
     }
-  }
-
-  // Apply preset — a pure action combo: it loads the preset's definition (zenith through
-  // EffectiveAxisPresetZenith, i.e. the user's retuned value from the preset library when one is
-  // stored) and sets the label to match, then reads back as its placeholder until used again. The
-  // preview therefore does NOT display the current label — this control shows no state. Custom is
-  // absent: it has no definition to apply, it is the label for "none of the above".
-  ImGui::Text("Apply preset:");
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", "Loads the preset's definition and sets the label to it.");
-  }
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(UiPx(200.0f));
-  SetNextComboPopupTopMost();
-  if (ImGui::BeginCombo("###apply_axis_preset", "Pick a preset to load…")) {
-    for (const auto& entry : kAxisPresets) {
-      if (entry.id == AxisPreset::kCustom) {
-        continue;
-      }
-      // The ##apply suffix: the Label row's chips share this window and spell the same words, so
-      // both a click and a test assertion need the two populations addressable apart.
-      const std::string item_id = std::string(entry.label) + "##apply";
-      if (ImGui::Selectable(item_id.c_str())) {
-        g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
-        g_axis_buf[1] = entry.azimuth;
-        g_axis_buf[2] = entry.roll;
-        g_axis_label_buf = entry.id;
-        // Drive modal preview to the preset's default view (the same source as Reset View /
-        // thumbnail — see DefaultPreviewRotation), so Apply shows what it applied.
-        ResetCrystalView(entry.id, g_axis_buf);
-      }
-    }
-    ImGui::EndCombo();
   }
 
   ImGui::Separator();
@@ -1612,6 +1587,42 @@ static void RenderAxisModal(GuiState& state) {
   RenderAxisDist("Azimuth", g_axis_buf[1], 0.0f, 360.0f, g_pull_adopted.axis[1]);
   SetNextComboPopupTopMost();
   RenderAxisDist("Roll", g_axis_buf[2], 0.0f, 360.0f, g_pull_adopted.axis[2]);
+
+  // Apply preset — a pure parameter shortcut: it loads the preset's definition (zenith through
+  // EffectiveAxisPresetZenith, i.e. the user's retuned value from the preset library when one is
+  // stored) into the three distribution rows above, and nothing else. The label is not touched —
+  // the Label row is its only writer — and neither is the preview pose: the modal preview is
+  // pixel-identical across an apply (CrystalParamHash does not hash the axis triple, the mesh is
+  // built in canonical orientation, and the rendered orientation lives only in
+  // g_crystal_rotation), so every visible effect already sits above: the three parameter rows,
+  // the preview's summary line, and the Label row's mismatch badge. The combo reads back as its
+  // placeholder until used again — it shows no state. Custom is absent: it has no definition to
+  // apply, it is the label for "none of the above". The block lives BELOW the parameter rows on
+  // purpose: the control sits where its effects land, and adjacency to the Label row would
+  // suggest a relationship (apply renames) that was removed deliberately.
+  ImGui::Text("Apply preset:");
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", "Loads the preset's definition — the label and the view are unchanged.");
+  }
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(UiPx(200.0f));
+  SetNextComboPopupTopMost();
+  if (ImGui::BeginCombo("###apply_axis_preset", "Pick a preset to load…")) {
+    for (const auto& entry : kAxisPresets) {
+      if (entry.id == AxisPreset::kCustom) {
+        continue;
+      }
+      // The ##apply suffix: the Label row's chips share this window and spell the same words, so
+      // both a click and a test assertion need the two populations addressable apart.
+      const std::string item_id = std::string(entry.label) + "##apply";
+      if (ImGui::Selectable(item_id.c_str())) {
+        g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
+        g_axis_buf[1] = entry.azimuth;
+        g_axis_buf[2] = entry.roll;
+      }
+    }
+    ImGui::EndCombo();
+  }
 
   // OK / Cancel handled at modal level (RenderEditModals).
 }

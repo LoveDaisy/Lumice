@@ -3125,7 +3125,12 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(edited.zenith.std, 0.3f);
       IM_CHECK_EQ(static_cast<int>(gui::ClassifyAxisPreset(edited.zenith, edited.azimuth, edited.roll)),
                   static_cast<int>(gui::AxisPreset::kColumn));
-      IM_CHECK_EQ(static_cast<int>(edited.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
+      // The definition reached the document (the parameters classify as Column above), but the
+      // label is not apply's to write — the Label row is the only writer. The default document
+      // label Random survives, which is also the honest outcome for a retuned library: what was
+      // applied is the user's own variant of Column, and stamping the name on it is exactly the
+      // "control sets a label it mislabels" shape the apply decoupling removed.
+      IM_CHECK_EQ(static_cast<int>(edited.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
     };
   }
 

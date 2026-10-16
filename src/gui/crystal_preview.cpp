@@ -162,6 +162,12 @@ void ResetCrystalView() {
   g_crystal_zoom = kDefaultCrystalZoom;
 }
 
+// Writer closure: `preset` must always BE a label — the crystal's stored axis label
+// (ResetCrystalViewToCrystal: modal open, app/test init) or the label being edited
+// (edit_modals' Reset View button reads g_axis_label_buf). The Apply preset combo deliberately
+// does NOT call this: apply is a parameter shortcut, and driving the view from the applied
+// preset rather than the label would jump the pose the user is looking at. The functional test
+// applying_a_preset_leaves_the_modal_preview_pose_alone enforces the Apply half of this.
 void ResetCrystalView(AxisPreset preset, const AxisDist params[3]) {
   DefaultPreviewRotation(preset, params, g_crystal_rotation);
   g_crystal_zoom = kDefaultCrystalZoom;

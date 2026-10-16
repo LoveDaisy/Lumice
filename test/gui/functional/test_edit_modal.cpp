@@ -1430,13 +1430,13 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // P94 / P95. APPLYING a preset must move the MODAL preview too, not just the card thumbnail
-  // outside it — the bug was a user changing preset and seeing the crystal they were looking at
-  // stay put. The Apply combo is the only control that changes both label and view, so it carries
-  // this case now; a Label chip press renames only and must leave the pose alone (negative half,
-  // same frame).
+  // P94 / P95. APPLYING a preset must leave the MODAL preview's pose exactly where the user left
+  // it — apply is a parameter shortcut: it writes the three distribution buffers and nothing
+  // else, so the label buffer and the pose the user is looking at both survive (what it DOES
+  // write is the loads-its-definition case's subject). A Label chip press renames only and must
+  // leave the pose alone too (negative half, same frame).
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "applying_a_preset_resets_the_modal_preview");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "applying_a_preset_leaves_the_modal_preview_pose_alone");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -1446,12 +1446,20 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
 
-      // Drag first, so the apply is distinguishable from the pose merely surviving.
+      float at_open[16];
+      std::memcpy(at_open, gui::g_crystal_rotation, sizeof at_open);
+
+      // Drag first, so a pose-moving apply is distinguishable from the pose merely surviving.
       gui::ApplyTrackballRotation(45.0f, 15.0f);
       ctx->Yield(1);
+      float dragged[16];
+      std::memcpy(dragged, gui::g_crystal_rotation, sizeof dragged);
+      if (std::memcmp(dragged, at_open, sizeof dragged) == 0) {
+        IM_ERRORF("%s", "premise: the drag moved the pose, so the apply assertion below is not vacuous");
+      }
 
-      // Same computed-ID addressing as the Apply case above: BeginCombo registers no item info,
-      // so no string ref reaches the combo.
+      // Same computed-ID addressing as the loads-its-definition case: BeginCombo registers no
+      // item info, so no string ref reaches the combo.
       const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Column##axis_label_chip");
       IM_CHECK(chip_anchor.ID != 0);
       const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
@@ -1461,17 +1469,19 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/Plate##apply");
       ctx->Yield(3);
 
+      // Premise: the apply actually happened — the zenith buffer now holds Plate's effective
+      // value (the default document label is Random, whose zenith is the full uniform span), so
+      // a silently skipped apply cannot pass the pose assertion below.
+      const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+      const auto& plate = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
+      if (!(after.axis[0] == gui::EffectiveAxisPresetZenith(plate))) {
+        IM_ERRORF("%s", "premise: Apply did not load Plate's zenith, so the pose assertion below is vacuous");
+      }
+
       float observed[16];
       std::memcpy(observed, gui::g_crystal_rotation, sizeof observed);
-      float expected[16] = { 0 };
-      const auto& plate = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
-      const gui::AxisDist plate_params[3] = { gui::EffectiveAxisPresetZenith(plate), plate.azimuth, plate.roll };
-      gui::DefaultPreviewRotation(gui::AxisPreset::kPlate, plate_params, expected);
-      for (int i = 0; i < 16; ++i) {
-        if (observed[i] != expected[i]) {
-          IM_ERRORF("apply moved the preview to the wrong pose: index=%d actual=%f expected=%f", i,
-                    static_cast<double>(observed[i]), static_cast<double>(expected[i]));
-        }
+      if (std::memcmp(observed, dragged, sizeof observed) != 0) {
+        IM_ERRORF("%s", "Apply moved the preview pose; it must leave it exactly where the drag left it");
       }
 
       // Negative half: a Label chip press renames only. The pose the drag left must survive it.
@@ -1479,7 +1489,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(1);
       float after_drag[16];
       std::memcpy(after_drag, gui::g_crystal_rotation, sizeof after_drag);
-      if (std::memcmp(after_drag, expected, sizeof expected) == 0) {
+      if (std::memcmp(after_drag, dragged, sizeof after_drag) == 0) {
         IM_ERRORF("%s", "premise: the drag moved the pose, so the chip assertion below is not vacuous");
       }
       ctx->ItemClick("**/Parry##axis_label_chip");
@@ -1631,11 +1641,15 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The Apply preset combo is a pure action: it loads the preset's definition (zenith through
-  // EffectiveAxisPresetZenith, so a preset-library retune would come through) and sets the label
-  // to match. Custom is deliberately absent from its list — it has no definition to apply.
+  // The Apply preset combo is a pure parameter shortcut: it loads the preset's definition
+  // (zenith through EffectiveAxisPresetZenith, so a preset-library retune comes through) into
+  // the three distribution buffers — and nothing else. The label buffer is NOT written: the
+  // Label row is its only writer, so applying a preset whose name differs from the label leaves
+  // the label in place (and the mismatch badge, addressed by the badge case below, reports the
+  // drift honestly). Custom is deliberately absent from its list — it has no definition to apply.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "applying_a_preset_loads_its_definition_and_sets_the_label");
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "applying_a_preset_loads_its_definition_and_leaves_the_label_alone");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -1661,6 +1675,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       if (ctx->ItemExists("**/Custom##apply")) {
         IM_ERRORF("%s", "Custom has no definition to apply, so it must not be listed");
       }
+      const gui::AxisPreset label_before = gui::GetEditModalBuffers().axis_preset;
       ctx->ItemClick("**/Lowitz##apply");
       ctx->Yield(3);
 
@@ -1675,12 +1690,49 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       if (!(after.axis[2] == lowitz.roll)) {
         IM_ERRORF("%s", "Apply did not load Lowitz's roll");
       }
-      IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kLowitz));
+      // The label is byte-identical across the apply: the default document label is Random, and
+      // it must stay Random even though the applied preset's name is Lowitz.
+      IM_CHECK_EQ(static_cast<int>(label_before), static_cast<int>(gui::AxisPreset::kRandom));
+      IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(label_before));
 
       ctx->ItemClick(kOk);
       ctx->Yield(2);
-      IM_CHECK_EQ(static_cast<int>(EntryCrystal().axis_preset), static_cast<int>(gui::AxisPreset::kLowitz));
+      IM_CHECK_EQ(static_cast<int>(EntryCrystal().axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
       IM_CHECK(EntryCrystal().zenith == gui::EffectiveAxisPresetZenith(lowitz));
+    };
+  }
+
+  // The badge reports the decoupling honestly: applying a preset whose distributions leave the
+  // label's domain lights the mismatch badge on the label chip — the label now names parameters
+  // the buffer no longer holds. Default document label is Random (three uniform-360 spans) and
+  // Lowitz's narrow Gaussians are outside that domain (predicate pinned in the axis-preset unit
+  // tests), so the badge must be absent before the apply and present after.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "applying_a_mismatched_preset_lights_the_label_badge");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+
+      IM_CHECK(!ctx->ItemExists("**/###axis_label_mismatch"));
+
+      const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Column##axis_label_chip");
+      IM_CHECK(chip_anchor.ID != 0);
+      const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
+      IM_CHECK(apply_combo != 0);
+      ctx->ItemClick(apply_combo);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Lowitz##apply");
+      ctx->Yield(3);
+
+      IM_CHECK(ctx->ItemExists("**/###axis_label_mismatch"));
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
     };
   }
 
