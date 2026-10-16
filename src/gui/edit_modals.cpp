@@ -262,6 +262,19 @@ static CrystalConfig g_crystal_buf_snapshot;
 static AxisDist g_axis_buf_snapshot[3];
 static AxisPreset g_axis_label_buf_snapshot = AxisPreset::kRandom;
 
+// Entry-private scalars (weight / participation) — the fourth buffer group. Unlike crystal/axis/
+// filter these do NOT edit a pool-shared object: `proportion` and `enabled` live on the EntryCard
+// itself, the sharing predicate (CountEntriesSharing) never reads them, and so the pull's `theirs`
+// is the entry struct, not a pool slot. The widget side is the modal's top entry bar; the card
+// keeps its own copy of both controls, and every outside write to the entry (the card's slider and
+// toggle, a Duplicate) is adopted through the same per-frame pull as everything else.
+struct EntryEditBuf {
+  float proportion = 100.0f;
+  bool enabled = true;
+};
+static EntryEditBuf g_entry_buf;
+static EntryEditBuf g_entry_buf_snapshot;
+
 // Which text-backed fields the pull adopted from the pool THIS frame (a clean buffer field replaced
 // by a changed pool value). Read by the tab bodies, which pass each flag to the widget that edits
 // the field so it can reload its private edit copy if it is the active one — see panels.hpp
@@ -275,7 +288,10 @@ struct PullAdoptedFlags {
   bool wedge_upper_alpha = false;
   bool wedge_lower_alpha = false;
   bool shape_slot[LUMICE_SHAPE_SCALAR_COUNT] = {};
-  bool axis[3] = {};  // zenith, azimuth, roll — one flag per AxisDist, the merge unit
+  bool axis[3] = {};              // zenith, azimuth, roll — one flag per AxisDist, the merge unit
+  bool entry_proportion = false;  // the entry bar's Weight box is an InputFloat (in-flight copy);
+                                  // the participation toggle is a button, no flag — same reasoning
+                                  // as crystal type / filter action above
 };
 static PullAdoptedFlags g_pull_adopted;
 // ImGui::GetFrameCount() at the last PullBuffersFromPool; ImGui's own counter rather than one of
@@ -848,6 +864,7 @@ void SyncBaselineFromPool(const GuiState& state) {
   g_filter_top_snapshot = TopFieldsOf(pool_filter);
   g_summand_rows_snapshot = pool_filter.param;
   g_filter_present_baseline = entry.filter_id.has_value();
+  g_entry_buf_snapshot = { entry.proportion, entry.enabled };
 }
 
 // ---- The per-frame pull: pool → buffers, as a three-way merge ----
@@ -1012,6 +1029,13 @@ void PullBuffersFromPool(GuiState& state) {
   PullSummandRows(theirs_filter.param);
   g_filter_present_baseline = entry.filter_id.has_value();
 
+  // Entry-private scalars: `theirs` is the entry itself (weight / participation are not part of
+  // any pool slot — see the buffer declaration). The card's slider and toggle are the outside
+  // writers the pull adopts from.
+  g_pull_adopted.entry_proportion =
+      PullField(g_entry_buf.proportion, g_entry_buf_snapshot.proportion, entry.proportion);
+  PullField(g_entry_buf.enabled, g_entry_buf_snapshot.enabled, entry.enabled);
+
   g_pull_generation = ImGui::GetFrameCount();
 }
 
@@ -1088,6 +1112,9 @@ void OpenEditModal(const EditRequest& req, GuiState& state) {
   g_filter_top.sym_d = src.sym_d;
   SetRowsFromSop(src.param);
   g_filter_remove_intent = false;
+  // Entry-private scalars (weight / participation) — the entry bar's buffers. Copied from the
+  // entry itself, not from any pool slot; the baseline below pins the snapshot to the same values.
+  g_entry_buf = { entry.proportion, entry.enabled };
   // The first baseline (Crystal/Axis/Filter + filter presence) — the buffers were just copied
   // from the pool, so buffer == baseline == pool on this frame. Trackball save is initialized
   // separately below — it is Open-time state, not a baseline.
@@ -2114,6 +2141,8 @@ void CloseEditModalOnDocumentReset() {
   g_summand_rows_snapshot.clear();
   g_filter_present_baseline = false;
   g_filter_remove_intent = false;
+  g_entry_buf = {};  // {} is the field default (100.0 / enabled) via the struct's member initializers
+  g_entry_buf_snapshot = {};
   g_pull_adopted = {};
   // A deferred open or a mode switch in flight was for the modal that just closed.
   g_pending_open = false;
@@ -2166,6 +2195,8 @@ EditModalBuffers GetEditModalBuffers() {
   for (const SummandRowBuf& row : g_summand_rows) {
     out.filter_rows.emplace_back(row.text);
   }
+  out.entry_proportion = g_entry_buf.proportion;
+  out.entry_enabled = g_entry_buf.enabled;
   return out;
 }
 
@@ -2314,6 +2345,12 @@ ApplyBuffersResult ApplyBuffersToEntry(GuiState& state) {
   pool_crystal.azimuth = g_axis_buf[1];
   pool_crystal.roll = g_axis_buf[2];
   pool_crystal.axis_preset = g_axis_label_buf;
+
+  // Entry-private scalars (weight / participation) — the entry bar's buffers. No pool slot, no
+  // propagation: these land on the entry struct itself, and the `entry != old_entry` diff below
+  // picks them up through EntryCard::operator==, so no second change channel is needed.
+  entry.proportion = g_entry_buf.proportion;
+  entry.enabled = g_entry_buf.enabled;
 
   // The pool writes below go through PropagateFilterIdToLinked / WriteFilterToPool (edit_modals.hpp),
   // the two primitives this function used to hold as local lambdas — promoted so the analysis
@@ -2901,6 +2938,60 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       }
       ImGui::Separator();
     }
+  }
+
+  // ---- Entry bar: this entry's own weight / participation (the card's other two controls) ----
+  // One full-window-width row between the sharing block and the layout dispatch, so both layouts
+  // move their content down as a whole and the Expanded columns' separator lines stay aligned —
+  // the bar is drawn OUTSIDE the two column children, never inside ##modal_expanded_left (which
+  // would break the preview_px derivation). Data plane is the g_entry_buf pair: pulled every
+  // frame (the card's slider and toggle are the outside writers), pushed by the commit path like
+  // every other buffer. Staged shows no dirty mark here — the OK/Cancel row below IS the commit
+  // semantics; a second indicator would be a second place to disagree.
+  {
+    // "###": the visible glyph flips with the state — with "##" the id would hash the whole label
+    // and the button would become a different widget the instant it is clicked (card slot 0's
+    // rationale). Fixed width from the wider glyph so the Weight slider does not shift on flip.
+    const float toggle_w =
+        std::max(ImGui::CalcTextSize(ICON_FA_TOGGLE_ON).x, ImGui::CalcTextSize(ICON_FA_TOGGLE_OFF).x) +
+        ImGui::GetStyle().FramePadding.x * 2.0f;
+    char toggle_id[40];
+    snprintf(toggle_id, sizeof(toggle_id), "%s###modal_entry_enabled",
+             g_entry_buf.enabled ? ICON_FA_TOGGLE_ON : ICON_FA_TOGGLE_OFF);
+    if (!g_entry_buf.enabled) {
+      // Theme-owned disabled tone, card slot 0's exact convention.
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    }
+    const bool toggle_clicked = ImGui::Button(toggle_id, ImVec2(toggle_w, ImGui::GetFrameHeight()));
+    if (!g_entry_buf.enabled) {
+      ImGui::PopStyleColor();
+    }
+    if (toggle_clicked) {
+      g_entry_buf.enabled = !g_entry_buf.enabled;
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", ParticipationToggleTooltip(g_entry_buf.enabled));
+    }
+    ImGui::SameLine();
+    if (g_pull_adopted.entry_proportion) {
+      // The pull adopted a new weight (the card's slider is the outside writer): reload the
+      // input box's private edit copy BEFORE the widget submits, or an active box writes the
+      // stale value back over the adopted one (gui/input_text_reload.hpp). Same ID scope and
+      // same just-before-the-widget order as SliderWithPresetEdit above.
+      ReloadSliderInputIfActive("Weight##modal_entry");
+    }
+    // Greyed while excluded — the number is inert, and the tooltip says the value is kept
+    // (BeginDisabled only blocks interaction; the buffer keeps its value, card Weight row's
+    // convention). The grey predicate reads the BUFFER, not the entry: an uncommitted Staged
+    // toggle must grey the row immediately.
+    ImGui::BeginDisabled(!g_entry_buf.enabled);
+    SliderWithInput("Weight##modal_entry", &g_entry_buf.proportion, 0.0f, 100.0f, "%.1f", SliderScale::kLinear,
+                    LabelPlacement::kLeading);
+    ImGui::EndDisabled();
+    if (!g_entry_buf.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("%s", kWeightInertTooltip);
+    }
+    ImGui::Separator();
   }
 
   // Per-tab dirty detection. The label picks up a trailing " *" when the

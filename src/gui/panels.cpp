@@ -400,7 +400,7 @@ void PushLabelColumnItemWidth() {
 // Writes slider_id and input_id buffers, returns the computed slider width.
 // The id string of the input box SliderWithInput / SliderIntWithInput submit for `label`. The one
 // owner of that rule: PrepareSliderLayout builds the widget's id from it, and
-// ReloadSliderInputIfActive (panels.hpp) asks it which widget to reload.
+// ReloadSliderInputIfActive (input_text_reload.hpp) asks it which widget to reload.
 static void FormatSliderInputId(const char* label, char* input_id, size_t input_id_size) {
   snprintf(input_id, input_id_size, "##%s_input", label);
 }
@@ -1612,7 +1612,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
                   nullptr, nullptr, row_w);
   ImGui::EndDisabled();
   if (!entry.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Weight is inert while this crystal is excluded. The value is kept.");
+    ImGui::SetTooltip("%s", kWeightInertTooltip);
   }
 
   // ---- Icon rail: four always-visible slots down the right edge ----
@@ -1664,11 +1664,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
       entry.enabled = !entry.enabled;
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", entry.enabled ?
-                                  "Participating. Click to exclude this crystal from the next run — its share of "
-                                  "the total ray count goes to the other crystals (they get more samples)." :
-                                  "Excluded from the next run. Its Weight is kept and takes effect again when you "
-                                  "turn it back on.");
+      ImGui::SetTooltip("%s", ParticipationToggleTooltip(entry.enabled));
     }
   }
 

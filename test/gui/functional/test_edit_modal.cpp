@@ -3513,6 +3513,24 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           break;
         }
       }
+      // The entry bar's Weight box sits ABOVE the tab bar (always drawn), so the tab choice is
+      // irrelevant; [0,100] domain, its own triple like the wedges. This row is the reload
+      // semantics' dedicated gate for the entry bar — the card-drag case below covers only the
+      // pull adoption, on a box that is not active while it runs.
+      const ActiveBoxRow entry_bars[] = {
+        { "Entry weight", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, false, "**/##Weight##modal_entry_input",
+          nullptr, [](float v) { gui::g_state.layers[0].entries[0].proportion = v; },
+          [] { return gui::g_state.layers[0].entries[0].proportion; }, [](const B& b) { return b.entry_proportion; } },
+      };
+      for (const ActiveBoxRow& row : entry_bars) {
+        ctx->LogInfo("active box: %s", row.name);
+        if (!DriveActiveBoxReload(ctx, row, 30.0f, "45", 45.0f, 60.0f)) {
+          IM_ERRORF("active box \"%s\": the reload under the cursor failed (see the check above)", row.name);
+        }
+        if (ctx->IsError()) {
+          break;
+        }
+      }
     };
   }
 
@@ -3550,6 +3568,114 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
+    };
+  }
+
+  // The entry bar's weight + participation, both commit paths. OK half: an untouched commit that
+  // carries only these two fields must still reach the entry — EntryCard::operator== detects them
+  // for free, and this turns that inference into a checked fact. Cancel half: the same two edits
+  // discarded. The weight input is filled before the toggle click in the first half (toggling
+  // disables it) and after it in the second half (the modal reopens with the committed
+  // enabled=false, so the row starts greyed).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "staged_ok_commits_and_cancel_reverts_weight_and_participation");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = false;
+      ctx->Yield(2);
+      auto& entry = gui::g_state.layers[0].entries[0];
+      const float orig_prop = entry.proportion;
+      const bool orig_enabled = entry.enabled;
+
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      ctx->ItemInputValue("**/##Weight##modal_entry_input", 45.0f);
+      ctx->Yield(2);
+      ctx->ItemClick("**/###modal_entry_enabled");  // exclude
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(buffers.entry_proportion, 45.0f);
+        IM_CHECK(!buffers.entry_enabled);
+        IM_CHECK_EQ(entry.proportion, orig_prop);  // staged: nothing pushed yet
+        IM_CHECK_EQ(entry.enabled, orig_enabled);
+      }
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+      IM_CHECK_EQ(entry.proportion, 45.0f);
+      IM_CHECK(!entry.enabled);
+
+      // Cancel half: reopen shows the committed values; the same two edits revert on Cancel.
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      {
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(buffers.entry_proportion, 45.0f);
+        IM_CHECK(!buffers.entry_enabled);
+      }
+      ctx->ItemClick("**/###modal_entry_enabled");  // back to participating; re-enables the weight row
+      ctx->Yield(2);
+      ctx->ItemInputValue("**/##Weight##modal_entry_input", 70.0f);
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(buffers.entry_proportion, 70.0f);
+        IM_CHECK(buffers.entry_enabled);
+      }
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+      IM_CHECK_EQ(entry.proportion, 45.0f);
+      IM_CHECK(!entry.enabled);
+    };
+  }
+
+  // Immediate mode, the card's weight dragged while the editor is open: the card is an outside
+  // writer, the pull adopts the value into the entry bar's buffer, and the two controls converge.
+  // (The active-box reload semantics this row deliberately does NOT cover are the table-driven
+  // "Entry weight" row's subject — the box is never active during this drag.)
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_weight_drag_is_pulled_into_the_immediate_editor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = true;
+      const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
+      gui::OpenEditModal(req, gui::g_state);
+      ctx->Yield(4);
+      IM_CHECK(gui::IsEditModalOpen());
+      // Out of the left panel's way, so the drag below lands on the card's slider and not on the
+      // editor's title bar.
+      ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
+      ctx->Yield(2);
+
+      auto& entry = gui::g_state.layers[0].entries[0];
+      const float before = entry.proportion;
+
+      // Drag the card's Weight track: down on its left, right, up (the colour picker's
+      // MouseMoveToPos/MouseDown/MouseUp shape).
+      const ImGuiTestItemInfo slider = ctx->ItemInfo("**/##Weight##prop_0_0_slider");
+      IM_CHECK(slider.ID != 0);
+      const ImVec2 lo = slider.RectFull.Min;
+      const ImVec2 hi = slider.RectFull.Max;
+      ctx->MouseMoveToPos(ImVec2(lo.x + (hi.x - lo.x) * 0.15f, (lo.y + hi.y) * 0.5f));
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(lo.x + (hi.x - lo.x) * 0.85f, (lo.y + hi.y) * 0.5f));
+      ctx->Yield(2);
+      ctx->MouseUp(0);
+      // Two frames after release: one for the pull+push to settle, one to show it is stable
+      // rather than mid-flight.
+      ctx->Yield(2);
+      ctx->LogInfo("pool proportion after the drag: %f (was %f)", entry.proportion, before);
+      IM_CHECK(entry.proportion != before);
+      const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+      IM_CHECK_EQ(buffers.entry_proportion, entry.proportion);
+
+      ctx->ItemClick(kClose);
+      ctx->Yield(2);
+      gui::g_state.modal_immediate_mode = false;
     };
   }
   // A document reset (New / Open / Revert) replaces the pool the open editor is bound to. The
