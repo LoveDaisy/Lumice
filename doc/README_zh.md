@@ -102,10 +102,12 @@ Host/device seam 与已验证的 GPU 执行架构：
 ## 其他文档集合
 
 - [`user-manual/`](user-manual/00-overview_zh.md)：面向任务的产品文档
-- [`research/`](research/beam-tracing_zh.md)：保留原有状态与范围的研究记录
+- `research/`：保留原有状态与范围的研究记录
+  - [逆向渲染研究](research/inverse-rendering_zh.md)（[English](research/inverse-rendering.md)）
+  - [光束追迹研究](research/beam-tracing_zh.md)（[English](research/beam-tracing.md)）
 - [`cases/`](cases/raypath-analysis-cases.md)：已登记的光路分析测验场景语料
 - [`prototypes/`](prototypes/analyze-workspace.html)：交互式设计原型
-- [`api/`](api/html/doxygen_crawl.html)：Doxygen 输出；用 `doxygen .doxygen-config` 重新生成
+- [`api/`](api/html/)：Doxygen 输出；用 `doxygen .doxygen-config` 在本地生成
 - [`figs/`](figs/)：文档共用图片
 
 ## 根目录文档
@@ -132,6 +134,6 @@ doxygen .doxygen-config
 
 ## 项目链接
 
-- [项目 README](../README.md)
-- [项目英文 README](../README_zh.md)
+- [项目英文 README](../README.md)
+- [项目中文 README](../README_zh.md)
 - [配置示例](../examples/config_example.json)

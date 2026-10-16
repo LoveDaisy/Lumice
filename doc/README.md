@@ -102,10 +102,12 @@ Published C surfaces, lifecycle rules, package boundaries, and product-line deci
 ## Other Collections
 
 - [`user-manual/`](user-manual/00-overview.md): task-oriented product documentation
-- [`research/`](research/beam-tracing.md): research records that retain their original status and scope
+- `research/`: research records that retain their original status and scope
+  - [Inverse-rendering research](research/inverse-rendering.md) ([中文](research/inverse-rendering_zh.md))
+  - [Beam-tracing research](research/beam-tracing.md) ([中文](research/beam-tracing_zh.md))
 - [`cases/`](cases/raypath-analysis-cases.md): registered raypath-analysis case corpus
 - [`prototypes/`](prototypes/analyze-workspace.html): interactive design prototypes
-- [`api/`](api/html/doxygen_crawl.html): Doxygen output; regenerate with `doxygen .doxygen-config`
+- [`api/`](api/html/): Doxygen output; generate it locally with `doxygen .doxygen-config`
 - [`figs/`](figs/): shared documentation images
 
 ## Root Documents
