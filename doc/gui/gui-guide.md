@@ -24,7 +24,7 @@ The main window is split into six regions. The same numbering is used in the lab
 
 | # | Region | Purpose |
 |---|--------|---------|
-| 1 | Top Bar | File operations (New / Open / Save), simulation Run / Stop / Revert, panel collapse toggles |
+| 1 | Top Bar | File operations (New / Open / Save), simulation Run / Stop / Continue / Revert, panel collapse toggles |
 | 2 | Left Panel — Crystal Parameters | Scattering layers and the crystal cards inside each layer (geometry / axis / filter / proportion) |
 | 3 | Right Panel — View Parameters | Scene (Sun + Simulation), View (Projection + Camera), Display (Resolution / EV / Aspect / Background), Overlay |
 | 4 | Render Preview | The lens-projected halo image accumulated as rays land |
@@ -40,9 +40,10 @@ Read-only text can be copied: right-click a line of the log panel, a row of the 
 From left to right, the Top Bar exposes:
 
 - **Left panel collapse**: `<` collapses the left panel; `>` expands it again (also bound to the `[` key).
-- **Run / Stop**: a single fixed-width button that toggles between green **Run** and red **Stop** depending on the simulation state. Disabled controls during a running simulation are re-enabled once the run finishes.
-- **New / Open**: project lifecycle actions (disabled while simulating).
-- **Save**: opens a popup menu containing:
+- **Run / Stop**: a single fixed-width button that toggles between green **Run**, red **Stop**, and disabled **Stopping...** depending on the render lifecycle. Crystal, scene, view, and display controls remain editable during a run; simulation-affecting edits are live-committed at a throttled cadence while display/view edits update without restarting the accumulation. Backend-construction controls remain gated while the backend is busy.
+- **Continue**: adds the current `Rays(M)` budget to a completed or manually stopped render instead of starting from zero. It is disabled when there is no live accumulation, a run or analysis is busy, the last server session was an analysis, or simulation-affecting configuration has changed; its tooltip states the blocking reason.
+- **New / Open**: project lifecycle actions, disabled while a render, Stop drain, or raypath analysis owns the backend.
+- **Save**: opens a popup menu. The menu itself remains reachable while the backend is busy so read-only exports do not disappear; `Save` / `Save Copy` are disabled until the backend is available. It contains:
   - `Save` / `Save Copy` — write the project as a `.lmc` file
   - `Screenshot...` — export the current Render Preview as PNG. It first opens a small options
     window, prefilled with what the preview shows: per overlay family a **Line** and a **Label**
@@ -54,7 +55,7 @@ From left to right, the Top Bar exposes:
     Colored raypath composite is switched on for a coloured run, where the other mode would need a
     different picture than the one uploaded for the screen (both greyed, with the reason on hover). **Export...**
     then asks for the file name.
-  - `Dual Fisheye Equal Area...` / `Equirectangular...` — server-side off-screen exports (require a finished simulation)
+  - `Dual Fisheye Equal Area...` / `Equirectangular...` — server-side off-screen exports, available after a render session exists (including while it is still accumulating)
   - `Config JSON...` — export the configuration in JSON form, for re-rendering with the CLI. The
     exported renderer describes what the Render Preview is currently showing: the display
     projection and FOV, the view angles, the visible hemisphere, the background colour, the horizon
@@ -66,9 +67,7 @@ From left to right, the Top Bar exposes:
     ratio that a saved config could reproduce on another machine; and a view with the **Front**
     hemisphere clip enabled is refused with a warning rather than exported, since the config format
     has no way to express that clip and the CLI would otherwise render the un-clipped view.
-  - `Include Texture in .lmc` — toggle for the next save. A screenshot has no overlay toggle of its own:
-    it shows the overlay the screen shows, so a clean image comes from turning the families off in the
-    Overlay panel.
+  - `Include Texture in .lmc` — toggle for the next save. Screenshot lines and labels are controlled by the one-shot options window described above; they do not modify the Overlay panel. The two server-side panorama exports do not carry the preview's text-label layer.
 - **Colors / Analysis / Summary**: three buttons that each open an independent, non-modal window
   beside the preview — the raypath colour classes, the Raypath Analysis tool, and the read-only
   **Summary**, one page of the current configuration (version, sun, simulation, render settings,
@@ -106,7 +105,8 @@ Each crystal card reflects one entry in the scattering layer:
 - **Crystal row**: type (`Prism` / `Pyramid`) + an `Edit` button that opens the Popup Editor on the Crystal tab.
 - **Axis row**: the crystal's axis label (`Parry` / `Column` / `Lowitz` / `Plate` / `Random` / `Custom`) + `Edit` opens the Axis tab. The label is whatever you picked for the crystal — it does not follow the parameters — and a warning mark after the word means the parameters have drifted outside the label's usual range (hover for the details).
 - **Filter row**: a one-line summary of the ray-path filter + `Edit` opens the Filter tab.
-- **Proportion slider** (`prop.`): how this entry is weighted within the layer (0 – 100).
+- **Weight slider**: how this entry shares its layer's ray budget (0–100). It is retained but becomes inert while the entry is excluded.
+- **Action rail** (right): four always-visible slots for participation, Link, Duplicate, and Delete.
 
 The thumbnail can be drawn in four render styles. The style selector lives in the Popup Editor's preview pane, which both of that editor's shapes keep on screen the whole time — see the [Popup Editor](#popup-editor) section.
 
@@ -114,14 +114,16 @@ The thumbnail can be drawn in four render styles. The style selector lives in th
 
 The bottom of each layer carries a `+ Crystal` button (add another entry) and the layer header carries a right-aligned `x` (delete the layer; disabled when only one layer remains). A bottom-of-panel `+ Layer` button adds a new scattering layer.
 
-### Card Hover Actions
+### Card Action Rail
 
-Hovering a crystal card reveals two small action buttons in its top-right corner:
+The right edge of every card carries four always-visible buttons, one per row:
 
-- `D` — duplicate the entry into the same layer, directly below the original (deep copy of crystal / axis / filter / proportion).
-- `×` — delete the entry. Coloured red and disabled when the layer would otherwise be empty.
+- **Participation toggle** — include or exclude this entry on the next run. Excluding it dims the thumbnail and disables the Weight row without discarding the stored weight; it does not subtract already-accumulated pixels from the current image.
+- **Link** — enter pick mode for this entry. An accent outline on the same button indicates that the entry currently belongs to a linked group; hover lists the other members.
+- **Duplicate** — create an independent deep copy directly below the original, including crystal / axis / filter / weight / participation state.
+- **Delete** — remove the entry. It is destructive-styled and disabled when the layer would otherwise be empty.
 
-The buttons fade in / out via alpha so the card layout stays stable; clicks are routed even on the very first hovered frame.
+The fixed rail keeps card geometry stable and makes all four actions reachable without first hovering.
 
 **Reordering** — drag a card by its thumbnail and drop it on another card of the same layer: the upper half of the target card places it above, the lower half below, and an accent line in the gap shows where it will land. Cards cannot be dragged into a different layer. A click on the thumbnail that does not turn into a drag opens the editor, like a click anywhere else on the card.
 
@@ -129,9 +131,9 @@ The buttons fade in / out via alpha so the card layout stays stable; clicks are 
 
 Two or more crystal cards that share the same crystal configuration and filter configuration form a **linked group**. Edits made through any member — crystal shape, axis distribution, or filter — are automatically visible on every other member in the group.
 
-**fa-link badge** — A chain link icon appears below the hover action buttons on the card's right edge whenever the card belongs to a linked group (at least one other entry shares the same crystal and filter). Hovering the badge shows a tooltip listing the other entries in the group by layer and index. The badge is always visible (not hover-revealed) because it reflects a persistent state.
+**Link status and pick mode** — The card rail's Link button is both the action and the persistent status indicator: an accent outline means at least one other entry shares the same crystal and filter, and its tooltip lists those members by layer and index. The editor repeats the same sharing status and also offers **Link to...** and **Unlink**.
 
-**"Link to..." — entering pick mode** — Open the popup editor for any card by clicking its `Edit` button. At the top of the editor you will see a sharing status line (`Not shared` or `Shared with N other entries`). Click **Link to...** to enter pick mode: the modal closes and a yellow hint bar appears at the top of the left panel:
+Click Link on the card, or **Link to...** in the editor, to enter pick mode. If the editor was open it closes, and a yellow hint bar appears at the top of the left panel:
 
 > Pick mode: click an entry to share crystal/filter from Layer X / Entry Y (Esc to cancel)
 
@@ -141,13 +143,13 @@ Click any *other* card to link the current entry to it — the current entry ado
 
 **"Unlink"** — When the card belongs to a linked group, an **Unlink** button appears in the sharing status row of the popup editor. Clicking it forks the shared pool slots: the entry receives a private copy of its crystal and filter and leaves the group. Other members are unaffected.
 
-**"D" (Duplicate) vs Link** — The `D` hover button (see [Card Hover Actions](#card-hover-actions)) creates a fully independent copy of the entry with its own crystal and filter. Unlike linking, the duplicate is born unlinked; subsequent edits to the original and the copy never affect each other.
+**Duplicate vs Link** — The Duplicate rail button (see [Card Action Rail](#card-action-rail)) creates a fully independent copy of the entry. Unlike linking, subsequent edits to the original and the copy never affect each other.
 
 **Edit propagation in a linked group:**
 - Crystal and filter content edits in the popup editor are automatically reflected on all group members via the shared pool — no extra action required.
-- Adding or removing a filter on one member also updates the filter reference for the entire group, so the fa-link badge remains visible and the group stays coherent.
+- Adding or removing a filter on one member also updates the filter reference for the entire group, so the Link button's accent outline remains and the group stays coherent.
 
-**Co-shared highlight** — While the popup editor is open, other cards in the same linked group display an orange border. This makes it easy to see which entries will be affected by the current editing session.
+**Co-shared highlight** — While the popup editor is open, other cards in the same linked group display an accent-coloured border. This makes it easy to see which entries will be affected by the current editing session.
 
 ## Right Panel — View Parameters
 
@@ -160,8 +162,8 @@ The right panel groups every parameter that influences how the simulated rays ar
 
 ### View
 
-- **Projection**: `Lens Type` chooses among 10 lens projections — Linear, Rectangular, Fisheye (Equidistant / Equal Area / Stereographic / Orthographic), and Dual Fisheye (Equidistant / Equal Area / Stereographic / Orthographic). The combo presents them grouped so orthographic variants sit next to their siblings. `FOV` is clamped per lens; `Visible` (front / back / all) restricts which hemispheres of rays render. Under the Globe lens a `Back fade` slider appears beside them: it lets the far side of the sphere — its light and its grid lines — show through the near side, fading like fog with distance from the camera (the value is the fog length, 0–2; 0 = near side only; see `globe_back_fade` in `configuration.md`).
-- **Camera**: `Elevation`, `Azimuth`, `Roll`. Disabled and forced to zero for full-sky lenses (the dual variants and the equirectangular export).
+- **Projection**: `Lens Type` chooses among 11 lens projections — Linear, Rectangular, Globe, Fisheye (Equidistant / Equal Area / Stereographic / Orthographic), and Dual Fisheye (Equidistant / Equal Area / Stereographic / Orthographic). The combo presents them grouped so orthographic variants sit next to their siblings. `FOV` is clamped per lens. Under `Visibility`, `Upper` / `Full` / `Lower` select the vertical sky range, while the separate `Front` checkbox clips to the camera-facing hemisphere; full-sky lenses disable both controls, and Globe disables `Front`. Under Globe a `Back fade` slider appears: it lets the far side of the sphere — light and grid alike — show through the near side with fog-like attenuation (0–2; 0 shows only the near side).
+- **Camera**: `Elevation`, `Azimuth`, `Roll`. The dual-fisheye full-sky lenses disable them and use the canonical zero pose.
   The bottom row is `Reset` → `Look At` → `Lock`. The `Look At` combo points the camera at a named direction immediately: the six reference points the Overlay panel can draw (Zenith, Nadir, Sun, Subsun, Anthelion, Antisolar), and a **Horizon** series of four level bearings relative to the sun — `Toward sun`, `Sun +90°`, `Away from sun`, `Sun -90°` (elevation 0; the number is what the `Azimuth` slider will read, since the sun sits at azimuth 0). The choice writes only `Elevation` and `Azimuth`; `Roll` and `FOV` remain as framed. With `Lock` checked, the camera keeps following the selected direction as scene values such as Sun altitude change, without requiring Run. Editing `Elevation` or `Azimuth`, or dragging the preview to rotate it, turns Lock off and keeps that manual view; changing `Roll`, `FOV`, or preview zoom does not. The selected target is retained so checking Lock again resumes it. `Reset`, a different lens, or a document New/Open/Revert turns Lock off; document changes also restore the selected target to Sun. Full-sky lenses disable both controls.
 
 The lens choice changes the geometry of the projected image dramatically:
@@ -171,7 +173,7 @@ The lens choice changes the geometry of the projected image dramatically:
 ### Display
 
 - **Rendering**: `Resolution` (512 / 1024 / 2048 / 4096; highlighted in brown to flag that changing it re-runs the simulation), and `EV` (-6 to +6 stops of exposure offset).
-- **Adaptive Brightness**: always on — no toggle. The P99.5 brightness of the current scene (filter-independent F1 anchor) is mapped to a fixed target level; the applied offset is shown as `+N.NN EV auto` next to the manual EV slider. Filter switches do not jump the EV. See [`doc/rendering/adaptive-brightness.md`](../rendering/adaptive-brightness.md) for the full algorithm and additivity invariant.
+- **Adaptive Brightness**: always on — no toggle. Relative mode uses the scene's fixed all-sky P99 radiance (`anchor_l99_sky`), independent of lens / FOV / camera / visible range / output resolution; the applied offset is shown as `+N.NN EV auto` next to the manual EV slider. Filter switches do not jump the anchor. See [`doc/rendering/adaptive-brightness.md`](../rendering/adaptive-brightness.md) for the full algorithm and additivity invariant.
 - **Aspect Ratio**: a `Preset` combo (Free, 16:9, 3:2, 4:3, 1:1, 2:1, Match Background) plus a `Portrait` ↔ `Landscape` flip button. When the requested aspect cannot be honoured (window too small) a warning row reports the achieved versus requested ratio.
 - **Background**: `Load Bg...`, `Clear`, `Show` checkbox, and an `Alpha` slider for compositing the loaded background under the rendered halo.
 
@@ -199,18 +201,25 @@ The central area shows the live, lens-projected halo image. While idle the area 
 
 ## Popup Editor
 
-`Edit` buttons on a crystal card open a single modal editor holding the same three sections — Crystal, Axis and Filter — plus a crystal preview that redraws every frame, so geometry and axis edits are visible immediately. A sharing status row at the top shows whether the card belongs to a linked group and provides **Link to...** and **Unlink** actions; see [Linked Entries](#linked-entries).
+`Edit` buttons on a crystal card open one **Edit Entry** window holding Crystal, Axis, and Filter plus a crystal preview that redraws every frame. Its top area shows sharing state, then a full-width entry bar with the participation toggle and Weight control; these entry-private values are not shared by Link. Two independent controls on the bottom row choose layout and commit mode.
 
-The selector on the button row picks between two shapes, and the choice is saved with the document:
+The layout selector chooses between two shapes, and the choice is saved with the document:
 
 - **Compact** — the preview on top, the three sections stacked below it behind a tab bar. Narrow, and it keeps most of the halo preview behind the modal visible; you click a tab to move between sections. This is the default.
 - **Expanded** — the preview and Crystal in a left column, Axis over Filter in a right column, no tab bar. All three sections are visible at once, at the cost of covering nearly all of the preview.
 
-In both layouts the window's width is fixed, but its height is yours: drag the bottom edge to make it shorter or taller. The preview and the button row keep their size and the section area gives or takes the difference, so the OK / Cancel row stays in view at any height. On a screen too short for the whole window it opens already fitted to the screen. A height you drag is kept until the app is closed.
+The **Immediate** checkbox chooses how edits commit:
+
+- **Immediate on (default)** — a regular non-modal window. Valid changes are applied every frame, the halo preview remains interactive, and the action button is **Close**; closing cannot undo changes already applied.
+- **Immediate off (Staged)** — a blocking modal with **OK / Cancel**. Tab labels gain `*` for uncommitted changes; OK commits all sections atomically, while Cancel, Esc, or the title-bar close discards them.
+
+Switching Staged → Immediate commits the in-flight buffers before reopening in Immediate mode. Switching the other way rebases the staged buffers on the current document.
+
+In both layouts the window's width is fixed, but its height is yours: drag the bottom edge to make it shorter or taller. The preview and action row keep their size and the section area gives or takes the difference, so **Close** or **OK / Cancel** stays in view at any height. On a screen too short for the whole window it opens already fitted to the screen. A height you drag is kept until the app is closed.
 
 A document saved by an older version that used the earlier side-by-side tab layout opens as **Expanded**, its closest successor; that layout no longer exists.
 
-Since v15 the modal can be detached as its own OS window via ImGui multi-viewport — drag the title bar outside the host window to float it.
+Since v15 the Edit Entry window can be detached as its own OS window via ImGui multi-viewport — drag the title bar outside the host window to float it.
 
 ![Popup Editor — Crystal, Axis, Filter](../figs/gui_edit_modal_combined.jpg)
 
@@ -289,7 +298,7 @@ For the filter architecture behind this editor (physical gate semantics, the `Co
 
 From left to right:
 
-- **Simulation state**: `Ready` (green), `Simulating...` (yellow), `Done` (blue), `Modified` (orange).
+- **Simulation state**: `Ready` (good/green), `Simulating...` (accent), `Stopping...` (dimmed), `Done` (neutral), `Modified` (warning).
 - **Rays accumulated** (when non-zero): scaled to `x10^3 / x10^6 / x10^9`.
 - **Resolution / lens / FOV**: e.g. `1024x512 Fisheye Equal Area FOV:180`.
 - **File name** with `*` indicator when the project has unsaved changes.
@@ -306,7 +315,7 @@ From left to right:
 | `[` | Toggle left panel collapse |
 | `]` | Toggle right panel collapse |
 
-Run, Stop, New, and Open are not bound to keys — use the Top Bar buttons. Export operations (Screenshot, Dual Fisheye Equal Area, Equirectangular, Config JSON) are reachable through the Save menu popup.
+Run, Stop, Continue, New, and Open are not bound to keys — use the Top Bar buttons. Export operations (Screenshot, Dual Fisheye Equal Area, Equirectangular, Config JSON) are reachable through the Save menu popup.
 
 ### Project File Format (`.lmc`)
 
@@ -364,16 +373,19 @@ When the project has unsaved changes (`*` indicator in the status bar), the appl
 
 The warning popup offers `Save`, `Don't Save`, and `Cancel`.
 
+Saving while the status is `Modified` raises a separate **Save Modified Config** prompt because the on-screen picture still reflects the previous simulation config. **Run first** starts a fresh render and cancels the pending save; **Save anyway** writes the current config together with the stale preview only after this explicit confirmation and leaves the `Modified` cue intact; **Cancel** does neither.
+
 ## Simulation Workflow
 
 1. **Configure**: set up scattering layers and crystal cards in the left panel, then scene / view / display / overlay in the right panel.
-2. **Run**: click `Run` in the Top Bar. The current configuration is serialised and submitted to the simulation core; parameter widgets are disabled during the run.
-3. **Monitor**: the Status Bar reports the running state and accumulated ray count; the Render Preview updates continuously.
-4. **View**: results stay in the Render Preview after the run finishes (state `Done`).
-5. **Stop**: click `Stop` to halt early. Results accumulated up to that point remain visible.
-6. **Revert**: if you have changed parameters after the run finished (state `Modified`), `Revert` restores the configuration that produced the last result.
+2. **Run**: click `Run` in the Top Bar. The current configuration is submitted to the simulation core and accumulation starts from zero.
+3. **Edit while running**: parameter controls remain available. Simulation-affecting edits are live-committed at most once per 70 ms; view/display edits update the current frame without discarding accumulated rays.
+4. **Monitor**: the Status Bar reports lifecycle and accumulated ray count; the Render Preview updates continuously.
+5. **Finish or Stop**: a bounded run ends at `Done`. `Stop` first shows `Stopping...` while the backend drains, then preserves the partial accumulation as `Done`.
+6. **Continue**: after a completed or stopped render, use `Continue` to add the current ray budget to the same accumulation. If simulation-affecting configuration changed, use `Run` to start over instead.
+7. **Revert**: after a finished render, a simulation-affecting edit changes the status to `Modified`; `Revert` restores the configuration that produced the picture while keeping view/display choices that are not part of the simulation baseline.
 
-The simulation state — `Ready`, `Simulating`, `Done`, `Modified` — is shown in the status bar and gates which Top Bar actions are enabled.
+The status bar derives `Ready` / `Simulating...` / `Stopping...` / `Done` / `Modified` from the current run intent, backend lifecycle, committed generation, and whether the document differs from that generation. The Top Bar gates each action from the same lifecycle facts.
 
 ## Related Documentation
 

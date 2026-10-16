@@ -1,6 +1,6 @@
 # GUI 预览生命周期 — 后台 worker × 前台实时显示的时钟解耦设计
 
-> 性质：**设计蓝图（blueprint / 设计推理记录）**，不是 as-built 规范。记录"这个机制第一性原理上应该怎么设计"、为什么、以及要守的不变量。落地进度见 scrum-gui-lifecycle-clock-decouple。
+> 性质：**设计蓝图 + as-built 合规记录**。§1–§9 保留第一性原理、历史缺陷与 I1–I7；§10 的状态表及各条追记说明当前落地边界。I1/I2/I3/I5/I6 已合规，I4 只完成“不被快照 gate”的前半句，I7 的 drain-aware 终态已落地但 Stop 销毁路径仍会丢弃排队项；完整边界见 §10。
 > 缘起事实：内测反馈 + owner 复现的"GPU 跑完但 GUI 仍显示 Simulating / 按钮仍是 Stop / 状态栏仍 simulating"卡死（Metal + CUDA 双平台复现，与 GPU 硬件无关）。
 > 关联：`seam-design.md`（GPU 侧三时钟解耦，本文是它在 GUI 侧的对偶）、`accumulator-consumer-architecture.md`（§8 poll 契约）、`capi-lifecycle-architecture.md`（server 生命周期 / zero-output completion）。
 
@@ -111,7 +111,7 @@ owner 的三时钟直觉正确，但"生命周期"与"像素帧"成本差几个�
 
 两个衍生洞察：
 - 20ms poll 快于 batch 时，读到的 stats 根本不变（所以老代码才把它 gate 在 generation 上）。**数据的真实节奏是 batch 时钟**；poll 时钟合法的存在理由只是"给昂贵帧物化限流"，不是"数据刷新"。
-- ④ 的廉价读取原语已经存在——task-317 的 `GetLiveSimRayCount`（O(1) 读运行计数，不触发 render-per-poll）。当前只是没把它用于生命周期跃迁。
+- ④ 的廉价读取原语已经存在：公开 C API `LUMICE_GetSimRayCount` 以 O(1) 原子读取运行计数，不触发结果帧物化；生命周期与 drain 也分别由 `LUMICE_GetSimLifecycle` / `LUMICE_GetDrainStatus` 提供。
 
 （激进可选版：batch 边界由后端主动 push 帧进 triple-buffer，② 退化掉。本蓝图不要求，留作后续。）
 
@@ -438,7 +438,7 @@ CUDA 超大 batch 中途无法响应。第一性原理：
 - CQS 命令通道 + 乐观 "Stopping…" UI；
 - （激进）后端 push 帧、退化 poll 时钟。
 
-**落地状态（2026-08-06 核对，逐条据 §9 各条追记）**：
+**落地状态（截至 2026-09-20，逐条据 §9 追记与当前实现核对）**：
 
 | 不变量 | 状态 | 落地方式 |
 |---|---|---|
@@ -448,6 +448,7 @@ CUDA 超大 batch 中途无法响应。第一性原理：
 | I4 廉价可读（两分句） | 🟡 前半句合规，后半句明示留白 | §9 2026-08-06 追记；三个计数无廉价 C API 路径判「已知已接受，不修」，见该追记的重开条件 |
 | I5 原子快照 | ✅ 合规 | 更早一轮改动（PR 见 git log），`published_` 原子指针交换落地 |
 | I6 gate 不越权 | ✅ 合规 | §9 2026-08-01 追记（终帧无条件上屏救援） |
+| I7 完成蕴含排空 | 🟡 终态判据合规，销毁后半句未落实 | `ShouldSelfPause` 同时校验 lifecycle + `drained_epoch` + `current_epoch`；但 `Queue::Shutdown()` 在 Stop 路径仍会丢弃未消费队列项，见 §9 I7 追记 |
 
 上表之外，「（激进）后端 push 帧、退化 poll 时钟」**未落地，明示保留为后续 stretch 项**——
 它是一个吞吐/延迟优化方向，不对应任何一条 I1–I7 不变量的合规性，不受本表约束。
