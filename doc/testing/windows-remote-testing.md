@@ -101,7 +101,7 @@ Parameters:
 ## See Also
 
 - [Performance Testing Guide](performance-testing.md) — comprehensive perf testing overview
-- [Remote CUDA Build / Test Recipe](gpu-remote-cuda-build-testing.md) — **different concern**: CUDA
-  compile + parity/correctness on a Linux and a Windows NVIDIA host, headless (⛔ that recipe's two
-  machines are retired and its commands no longer run — see the banner at the top of it). This guide (Windows
-  remote testing) is for GUI VSync perf on a *physical desktop session*; that one is for CUDA build+parity.
+- [Remote CUDA Build / Test Recipe](gpu-remote-cuda-build-testing.md) — **different concern**:
+  headless CUDA compile + parity/correctness on the current Linux and Windows CUDA reference roles.
+  This guide is for GUI VSync perf in a *physical desktop session*; that one does not require the
+  GUI desktop workflow. Current host bindings live in [machines.md](machines.md).

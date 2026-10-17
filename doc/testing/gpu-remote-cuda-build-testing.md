@@ -36,9 +36,10 @@
 
 ## 1. 通用约定（两个角色都适用）
 
-- **un-skip 闸**：CUDA parity pytest 用 `pytest.mark.skipif(platform in (Linux,Windows) and
-  os.environ["LUMICE_HAS_CUDA"]=="1")`。**必须设 `LUMICE_HAS_CUDA=1`** 才会跑（不是
-  `LUMICE_CUDA_ENABLED`——那个是 runtime 路由用的，**两个都要设**）。
+- **un-skip 闸**：CUDA parity pytest 先以 `platform in (Linux, Windows) and
+  os.environ["LUMICE_HAS_CUDA"] == "1"` 计算 CUDA 可用谓词，再对其取反做 `skipif`。
+  **必须设 `LUMICE_HAS_CUDA=1`** 才会跑（不是 `LUMICE_CUDA_ENABLED`——那个是 runtime 路由用的，
+  **两个都要设**）。
 - **CApiRunner 找 lib**：`LUMICE_LIB` 指向 shared lib（`.so`/`.dll`），cudart 需与之**同目录**。
   ⚠️ **仅 Linux 上"或在 PATH（`LD_LIBRARY_PATH`）"成立——Windows 不成立**：Python 3.8+ 起
   `ctypes.CDLL` 在 Windows 上不再搜索 `PATH`（改为显式 `add_dll_directory`），把 CUDA `bin`

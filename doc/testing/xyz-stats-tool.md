@@ -1,10 +1,22 @@
 # XYZ Stats Tool
 
-Batch-runs 9 e2e scenes via the C API (`liblumice.dylib`) and extracts per-scene
-normalized linear-Y percentile statistics from both the `unfiltered_xyz_buffer` and
-`xyz_buffer`. Outputs per-scene JSON and a consolidated Markdown table.
+> **Current status: unavailable with the current C API.** `scripts/dump_xyz_stats.py` still mirrors
+> the pre-v4.23 `LUMICE_RawXyzResult` layout, where the tail held
+> `unfiltered_xyz_buffer` / `unfiltered_snapshot_intensity`. The current structure instead publishes
+> `emitted_energy`, `epoch`, `anchor_l99_sky`, and `axis_solid_angle`. Both layouts are 72 bytes on
+> 64-bit builds, so the script's size assertion cannot detect the mismatch and a run may interpret
+> `epoch` as a pointer. Do not run the commands below until the script is migrated to the installed
+> C API contract in `src/include/lumice_engine.h`.
+>
+> The remainder records the tool's historical input/output contract. Its auto-EV explanation is
+> likewise historical: current mono relative exposure uses `axis_solid_angle * anchor_l99_sky`, not
+> a percentile of the current view's pixels.
 
-## Prerequisites
+Historically, the tool batch-ran 9 e2e scenes via the C API (`liblumice.dylib`) and extracted
+per-scene normalized linear-Y percentile statistics from both the `unfiltered_xyz_buffer` and
+`xyz_buffer`, producing per-scene JSON and a consolidated Markdown table.
+
+## Historical prerequisites (do not run against the current ABI)
 
 ```bash
 # Build release shared library first
@@ -14,7 +26,7 @@ normalized linear-Y percentile statistics from both the `unfiltered_xyz_buffer` 
 
 Python dependencies: `numpy` (standard in the project Python environment).
 
-## Usage
+## Historical usage (not runnable on the current ABI)
 
 ```bash
 # All 9 scenes → xyz_stats_output/
