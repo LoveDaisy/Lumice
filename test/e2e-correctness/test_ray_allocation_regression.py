@@ -43,21 +43,25 @@ and placing the threshold about 1 dB under it, floored to 0.5 dB -- the
 test_raypath_equivalence.py's 3 dB margin: at 3 dB this ruler was measured to
 let a halving of the main crystal's share through (34.0 dB against a 33.0 dB
 floor at 5,000,000 rays), i.e. it could not see the regression it is for.
-Calibration on 2026-09-12 (128×128, 10,000,000 rays, legacy CPU path):
-  proportional × adaptive : [39.82, 39.73, 39.81, 39.97, 39.77, 39.95, 39.89, 39.82, 39.82] dB
-  proportional × proportional (noise floor): [39.73, 39.76, 39.90] dB
-  adaptive × adaptive (noise floor):         [39.85, 39.86, 39.78] dB
-  min cross-mode = 39.73 dB → threshold 38.5 dB.
+Calibration on 2026-10-17 (128×128, 5,000,000 rays, legacy CPU path; the ray
+budget was halved from the 10,000,000 of the 2026-09-12 calibration purely for
+step-budget cost, and the full 3×3 protocol was re-run at the new budget):
+  proportional × adaptive : [41.80, 41.94, 41.79, 41.72, 41.74, 41.49, 41.72, 41.75, 41.64] dB
+  proportional × proportional (noise floor): [41.63, 41.56, 41.35] dB
+  adaptive × adaptive (noise floor):         [42.06, 41.97, 41.98] dB
+  min cross-mode = 41.49 dB → threshold 40.5 dB.
 The cross-mode pairs sit inside the within-mode band, which is the claim.
 Red / green samples for this ruler, same day, deliberately broken configs
-compared against the 3 proportional frames:
-  main crystal's proportion 100 → 50 (a 2× share error): 35.88–35.95 dB → RED.
-  the 10 % crystal's proportion 10 → 0 (dropped outright): 39.22–39.31 dB → still
-  GREEN -- an error confined to a 10 % share sits under this ruler's resolution at
-  this ray budget (doubling the rays was measured to buy ~0.5 dB more, not enough
-  to change that). That is why the mechanism test below exists: this PSNR pair
-  answers "is the expected image unchanged to within MC noise", not "did adaptive
-  do anything".
+compared against a fresh proportional frame:
+  main crystal's proportion 100 → 50 (a 2× share error): 38.42 dB → RED
+  (2.1 dB under the threshold; the 10,000,000-ray calibration measured
+  35.88–35.95 dB against its 38.5 dB threshold, the same ~2× shape).
+  the 10 % crystal's proportion 10 → 0 (dropped outright): measured still GREEN
+  at 10,000,000 rays (39.22–39.31 dB against a 39.73 dB floor) -- an error
+  confined to a 10 % share sits under this ruler's resolution (doubling the
+  rays was measured to buy ~0.5 dB more, not enough to change that). That is
+  why the mechanism test below exists: this PSNR pair answers "is the expected
+  image unchanged to within MC noise", not "did adaptive do anything".
 Online q on that scene at the end of the run (measured by the render itself, so
 it carries the run's own sampling noise; 10,000,000 rays, legacy CPU path, 3 runs
 on 2026-09-12): p = 100/50/10 -> q = 0.6353/0.302/0.0627 on every run (shares
@@ -90,7 +94,7 @@ if HAS_PILLOW:
 CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
 
 # See the module docstring for the calibration behind both numbers.
-ZERO_REGRESSION_PSNR_THRESHOLD = 38.5
+ZERO_REGRESSION_PSNR_THRESHOLD = 40.5
 MECHANISM_MIN_RELATIVE_SHARE_MOVE = 0.25
 
 PROPORTIONAL = "ray_allocation_no_filter_proportional"
