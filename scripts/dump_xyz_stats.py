@@ -1,28 +1,54 @@
 #!/usr/bin/env python3
-"""Batch XYZ percentile statistics tool for Lumice auto-EV algorithm exploration.
+"""Batch XYZ percentile statistics tool for Lumice exposure-anchor exploration.
 
-Runs 9 e2e scenes via C API (ctypes), extracts unfiltered/filtered XYZ buffers,
-computes normalized linear-Y percentile + distribution stats, outputs per-scene JSON
-and a consolidated summary.
+Runs the e2e scenes through the Lumice CLI's public float32 export
+(`Lumice -f <config> -o <dir> --format npy --raw-normalization raw`), loads the
+per-renderer `img_XX.npy` accumulators plus their sidecar JSON, computes
+anchor-relative linear-Y percentile + distribution stats, and writes per-scene
+JSON plus a consolidated summary.
+
+No in-process ABI binding and no shared library: the only machine-facing contract
+consumed is
+the CLI npy sidecar, whose key set is pinned key-by-key by
+test/e2e-correctness/test_raw_float_export.py (the fast pytest leg), so a
+schema drift turns the contract test red before this tool can misread a file.
 
 Usage:
-    python scripts/dump_xyz_stats.py [--scenes <s1,s2,...>] [--output <dir>] [--no-rp46]
+    python scripts/dump_xyz_stats.py [--scenes <s1,s2,...>] [--output <dir>]
+                                    [--no-rp46] [--seed <N>|random]
 
 Prerequisites:
-    Build release: ./scripts/build.sh -j release
-    Library:       build/Release/shared/lib/liblumice.dylib  (override via LUMICE_LIB env)
+    Build the static release CLI: ./scripts/build.sh -j release
+    Binary: build/cmake_install/static/Lumice  (override via LUMICE_BIN env)
+
+Normalization:
+    norm_y = Y(pixel) / (axis_solid_angle * anchor_l99_sky)
+
+    This is the per-pixel relative illumination the mono relative exposure
+    anchor publishes (ev-pipeline-architecture.md §2.8; the GUI consumes the
+    same product as `g_state.p99_raw_y` before `LUMICE_ComputeEvAuto`).
+    norm_y > 1.0 means the pixel sits above the target_white-mapped level,
+    which is what `saturation_rate` counts. A seeded run is single-threaded by
+    CLI contract; the fixed default seed exists so cross-version comparisons
+    compare the engine, not Monte-Carlo noise.
 """
 
 import argparse
-import contextlib
-import ctypes
 import datetime
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 
 import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_BIN = REPO_ROOT / "build" / "cmake_install" / "static" / "Lumice"
+DEFAULT_SEED = 7
 
 # ─── Scene table ──────────────────────────────────────────────────────────────
 
@@ -39,128 +65,11 @@ ALL_SCENES = {
 }
 RP46_SCENES = {"rp46", "rp46_nof"}
 
-TIMEOUT_DEFAULT_S = 60
+TIMEOUT_DEFAULT_S = 180
 TIMEOUT_RP46_S = 90
 
 PERCENTILE_KEYS = ["p50", "p70", "p90", "p95", "p99", "p99_3", "p99_5", "p99_7", "p99_9", "p99_95", "p99_99"]
 PERCENTILE_VALUES = [50.0, 70.0, 90.0, 95.0, 99.0, 99.3, 99.5, 99.7, 99.9, 99.95, 99.99]
-
-# ─── ctypes structs ───────────────────────────────────────────────────────────
-
-# Mirrors LUMICE_RawXyzResult from src/include/lumice_engine.h
-# Layout verified by manual offset calculation (72 bytes on 64-bit macOS).
-class LUMICE_RawXyzResult(ctypes.Structure):
-    _fields_ = [
-        ("renderer_id",                   ctypes.c_int),
-        ("img_width",                     ctypes.c_int),
-        ("img_height",                    ctypes.c_int),
-        # implicit pad 4B (pointer alignment)
-        ("xyz_buffer",                    ctypes.POINTER(ctypes.c_float)),
-        ("snapshot_intensity",            ctypes.c_float),
-        ("intensity_factor",              ctypes.c_float),
-        ("has_valid_data",                ctypes.c_int),
-        # implicit pad 4B (uint64 alignment)
-        ("snapshot_generation",           ctypes.c_uint64),
-        ("effective_pixels",              ctypes.c_int),
-        # implicit pad 4B (pointer alignment)
-        ("unfiltered_xyz_buffer",         ctypes.POINTER(ctypes.c_float)),
-        ("unfiltered_snapshot_intensity", ctypes.c_float),
-        # implicit pad 4B (struct tail alignment to 8)
-    ]
-
-
-assert ctypes.sizeof(LUMICE_RawXyzResult) == 72, (
-    f"LUMICE_RawXyzResult size mismatch: {ctypes.sizeof(LUMICE_RawXyzResult)} != 72 — "
-    "check lumice_engine.h and re-verify field layout"
-)
-
-# LUMICE_ServerState constants (lumice_engine.h)
-LUMICE_SERVER_IDLE      = 0
-LUMICE_SERVER_RUNNING   = 1
-LUMICE_SERVER_NOT_READY = 2
-
-# ─── Library loading ──────────────────────────────────────────────────────────
-
-def load_lib():
-    lib_path = os.environ.get("LUMICE_LIB", "build/Release/shared/lib/liblumice.dylib")
-    if not os.path.exists(lib_path):
-        print(f"[ERROR] Library not found: {lib_path}", file=sys.stderr)
-        print("[ERROR] Build first: ./scripts/build.sh -j release", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        lib = ctypes.CDLL(lib_path)
-    except OSError as e:
-        print(f"[ERROR] Failed to load {lib_path}: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    lib.LUMICE_CreateServer.restype  = ctypes.c_void_p
-    lib.LUMICE_CreateServer.argtypes = []
-
-    lib.LUMICE_DestroyServer.restype  = None
-    lib.LUMICE_DestroyServer.argtypes = [ctypes.c_void_p]
-
-    lib.LUMICE_SceneFromJsonFile.restype  = ctypes.c_int
-    lib.LUMICE_SceneFromJsonFile.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
-
-    lib.LUMICE_CommitScene.restype  = ctypes.c_int
-    lib.LUMICE_CommitScene.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-
-    lib.LUMICE_SceneDestroy.restype  = None
-    lib.LUMICE_SceneDestroy.argtypes = [ctypes.c_void_p]
-
-    lib.LUMICE_QueryServerState.restype  = ctypes.c_int
-    lib.LUMICE_QueryServerState.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-
-    lib.LUMICE_AcquireResultFrame.restype  = ctypes.c_int
-    lib.LUMICE_AcquireResultFrame.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
-
-    lib.LUMICE_ReleaseResultFrame.restype  = None
-    lib.LUMICE_ReleaseResultFrame.argtypes = [ctypes.c_void_p]
-
-    lib.LUMICE_FrameGetRawXyz.restype  = ctypes.c_int
-    lib.LUMICE_FrameGetRawXyz.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(LUMICE_RawXyzResult),
-        ctypes.c_int,
-    ]
-
-    return lib
-
-
-@contextlib.contextmanager
-def _result_frame(lib, server):
-    """Acquire a result frame, yield the handle, release it on the way out.
-
-    Everything LUMICE_FrameGetRawXyz writes points INTO the frame, so any use of those
-    pointers — compute_stats() reading xyz_buffer, for one — has to happen inside the
-    `with`, not after it.
-    """
-    frame = ctypes.c_void_p()
-    err = lib.LUMICE_AcquireResultFrame(server, ctypes.byref(frame))
-    if err != 0:
-        raise RuntimeError(f"AcquireResultFrame failed: err={err}")
-    try:
-        yield frame
-    finally:
-        lib.LUMICE_ReleaseResultFrame(frame)
-
-
-def _commit_via_scene_handle(lib, server, config_path):
-    """Parse `config_path` into a LUMICE_Scene handle and commit it, then free the handle."""
-    scene = ctypes.c_void_p()
-    err = lib.LUMICE_SceneFromJsonFile(str(config_path).encode("utf-8"), ctypes.byref(scene))
-    if err != 0:
-        raise RuntimeError(f"SceneFromJsonFile failed: err={err}, config={config_path}")
-    if not scene:
-        raise RuntimeError(f"SceneFromJsonFile returned a NULL handle for {config_path}")
-    try:
-        # CommitScene deep-copies what it needs; the handle stays caller-owned.
-        err = lib.LUMICE_CommitScene(server, scene, None)
-        if err != 0:
-            raise RuntimeError(f"CommitScene failed: err={err}, config={config_path}")
-    finally:
-        lib.LUMICE_SceneDestroy(scene)
 
 # ─── Statistics computation ───────────────────────────────────────────────────
 
@@ -177,28 +86,19 @@ def _zero_stats(pixel_count):
     }
 
 
-def compute_stats(ptr, pixel_count, intensity):
-    """Compute normalized linear-Y statistics from an XYZ float buffer pointer."""
-    if not ptr or pixel_count <= 0 or intensity <= 0.0:
+def compute_stats(xyz, pixel_count, denom):
+    """Anchor-relative linear-Y stats: norm_y = Y / (axis_solid_angle * anchor_l99_sky)."""
+    if xyz is None or pixel_count <= 0 or denom <= 0.0:
         return _zero_stats(pixel_count)
 
-    addr = ctypes.cast(ptr, ctypes.c_void_p).value
-    if not addr:
-        return _zero_stats(pixel_count)
-
-    n = pixel_count * 3
-    float_arr = (ctypes.c_float * n).from_address(addr)
-    raw = np.frombuffer(float_arr, dtype=np.float32).copy()
-
-    # Y channel: index 1 of each XYZ triplet
-    y_all = raw[1::3]
+    y_all = xyz[..., 1].ravel() if xyz.ndim == 3 else np.asarray(xyz).ravel()[1::3]
     nonzero_mask = y_all > 0.0
     nonzero_count = int(nonzero_mask.sum())
 
     if nonzero_count == 0:
         return _zero_stats(pixel_count)
 
-    norm_y = y_all[nonzero_mask] / intensity
+    norm_y = y_all[nonzero_mask].astype(np.float64) / denom
     pct_vals = np.percentile(norm_y, PERCENTILE_VALUES)
 
     mean_v = float(np.mean(norm_y))
@@ -216,87 +116,116 @@ def compute_stats(ptr, pixel_count, intensity):
         "saturation_rate": float(np.sum(norm_y > 1.0) / nonzero_count),
     }
 
+# ─── Export-directory loading ────────────────────────────────────────────────
+
+def load_renderer_outputs(tmpdir):
+    """Load every `img_*.npy` + sidecar pair from a CLI export directory.
+
+    Returns (rows, unreadable): rows is a list of (meta_dict, xyz_array) sorted
+    by renderer id, unreadable counts npy/sidecar pairs that could not be read
+    (a kill landing mid-write). A row whose sidecar is unreadable is dropped:
+    without the sidecar's anchor scalars the accumulator cannot be normalized.
+    """
+    rows = []
+    unreadable = 0
+    for npy_path in sorted(tmpdir.glob("img_*.npy")):
+        meta = None
+        meta_path = npy_path.with_suffix(".json")
+        if meta_path.is_file():
+            try:
+                with open(meta_path, encoding="utf-8") as f:
+                    meta = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                meta = None
+        try:
+            xyz = np.load(npy_path)
+        except Exception:
+            xyz = None
+
+        if meta is None or xyz is None or xyz.ndim < 1 or xyz.shape[-1] != 3:
+            unreadable += 1
+            continue
+        rows.append((meta, xyz))
+    return rows, unreadable
+
 # ─── Per-scene runner ─────────────────────────────────────────────────────────
 
-def run_scene(lib, scene_name, config_path, timeout_s):
-    """Run one scene; returns result dict. Raises RuntimeError on fatal failure."""
-    print(f"  [{scene_name}] Starting (timeout={timeout_s}s)...", flush=True)
+def run_scene(scene_name, config_path, timeout_s, lumice_bin, seed):
+    """Run one scene via the CLI; returns its result dict (never raises)."""
+    print(f"  [{scene_name}] Starting (timeout={timeout_s}s, seed={seed})...", flush=True)
     t_start = time.time()
 
-    server = lib.LUMICE_CreateServer()
-    if not server:
-        raise RuntimeError(f"LUMICE_CreateServer returned NULL")
+    tmpdir = Path(tempfile.mkdtemp(prefix=f"xyz_stats_{scene_name}_"))
+    cmd = [str(lumice_bin), "-f", str(config_path), "-o", str(tmpdir),
+           "--format", "npy", "--raw-normalization", "raw"]
+    if seed != "random":
+        cmd += ["--seed", str(seed)]
 
     truncated = False
+    error = None
     try:
-        _commit_via_scene_handle(lib, server, config_path)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+        if proc.returncode != 0:
+            tail = (proc.stderr or "").strip().splitlines()[-3:]
+            error = f"Lumice exited {proc.returncode}: {' | '.join(tail)}"
+    except subprocess.TimeoutExpired:
+        truncated = True
+        print(f"  [{scene_name}] Timeout after {timeout_s}s — using last saved frame (truncated)",
+              file=sys.stderr, flush=True)
 
-        # result array: 1 renderer + 1 sentinel slot
-        results = (LUMICE_RawXyzResult * 2)()
-        state_out = ctypes.c_int(0)
+    rows, unreadable = load_renderer_outputs(tmpdir)
+    if error is None and not rows:
+        error = "no readable img_*.npy/img_*.json pair in the export directory"
+    elif error is None and unreadable:
+        error = f"{unreadable} img_* export file pair(s) unreadable (corrupt write?)"
 
-        while True:
-            elapsed = time.time() - t_start
+    renderers = []
+    api_version = None
+    for meta, xyz in rows:
+        renderer_id = meta.get("renderer_id")
+        pixel_count = int(xyz.size // 3)
+        denom = float(meta["axis_solid_angle"]) * float(meta["anchor_l99_sky"])
+        if denom <= 0.0:
+            print(f"  [{scene_name}] WARNING: renderer {renderer_id} anchor product "
+                  f"(axis_solid_angle * anchor_l99_sky) is {denom}; emitting zero stats",
+                  file=sys.stderr, flush=True)
+            stats = _zero_stats(pixel_count)
+        else:
+            stats = compute_stats(xyz, pixel_count, denom)
+        renderers.append({
+            "renderer_id": renderer_id,
+            "ev_mode":     meta.get("ev_mode"),
+            "anchor": {
+                "anchor_l99_sky":  meta.get("anchor_l99_sky"),
+                "axis_solid_angle": meta.get("axis_solid_angle"),
+                "emitted_energy":  meta.get("emitted_energy"),
+                "intensity_factor": meta.get("intensity_factor"),
+                "sim_ray_num":     meta.get("sim_ray_num"),
+            },
+            "stats": stats,
+        })
+        if api_version is None and isinstance(meta.get("lumice_api_version"), int):
+            api_version = meta["lumice_api_version"]
 
-            if elapsed > timeout_s:
-                with _result_frame(lib, server) as frame:
-                    err = lib.LUMICE_FrameGetRawXyz(frame, results, 1)
-                    usable = err == 0 and results[0].has_valid_data and results[0].xyz_buffer
-                if usable:
-                    print(f"  [{scene_name}] Timeout ({elapsed:.1f}s) — using current data (truncated)", flush=True)
-                    truncated = True
-                    break
-                raise RuntimeError(f"Timeout after {elapsed:.1f}s with no valid data")
+    result = {
+        "scene":          scene_name,
+        "config":         config_path,
+        "timestamp":      datetime.datetime.now().isoformat(),
+        "run_duration_s": round(time.time() - t_start, 2),
+        "truncated":      truncated,
+        "cli": {
+            "binary":            str(lumice_bin),
+            "seed":              seed if seed == "random" else int(seed),
+            "lumice_api_version": api_version,
+        },
+        "renderers": renderers,
+    }
+    if error is not None:
+        result["error"] = error
+        result["renderers"] = []
 
-            with _result_frame(lib, server) as frame:
-                err = lib.LUMICE_FrameGetRawXyz(frame, results, 1)
-            if err != 0:
-                raise RuntimeError(f"FrameGetRawXyz failed: err={err}")
-
-            err2 = lib.LUMICE_QueryServerState(server, ctypes.byref(state_out))
-            if err2 != 0:
-                raise RuntimeError(f"QueryServerState failed: err={err2}")
-
-            state = state_out.value
-            if state == LUMICE_SERVER_NOT_READY:
-                raise RuntimeError("Server NOT_READY — failed to initialize")
-
-            if results[0].has_valid_data and state == LUMICE_SERVER_IDLE:
-                elapsed = time.time() - t_start
-                print(f"  [{scene_name}] Done in {elapsed:.1f}s", flush=True)
-                break
-
-            time.sleep(0.5)
-
-        # Re-read under a held frame: the poll loop released each frame as it went, so the
-        # pointers in `results` are stale by now. The server is idle (or the run was
-        # truncated), so this reads the same snapshot the loop stopped on.
-        with _result_frame(lib, server) as frame:
-            err = lib.LUMICE_FrameGetRawXyz(frame, results, 1)
-            if err != 0:
-                raise RuntimeError(f"FrameGetRawXyz failed: err={err}")
-
-            r = results[0]
-            pixel_count = r.img_width * r.img_height
-
-            if r.xyz_buffer is None:
-                print(f"  [{scene_name}] WARNING: xyz_buffer is NULL despite has_valid_data", file=sys.stderr)
-
-            filtered_stats   = compute_stats(r.xyz_buffer,            pixel_count, r.snapshot_intensity)
-            unfiltered_stats = compute_stats(r.unfiltered_xyz_buffer, pixel_count, r.unfiltered_snapshot_intensity)
-
-        return {
-            "scene":         scene_name,
-            "config":        config_path,
-            "timestamp":     datetime.datetime.now().isoformat(),
-            "run_duration_s": round(time.time() - t_start, 2),
-            "truncated":     truncated,
-            "unfiltered":    unfiltered_stats,
-            "filtered":      filtered_stats,
-        }
-
-    finally:
-        lib.LUMICE_DestroyServer(server)
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    return result
 
 # ─── Summary Markdown ─────────────────────────────────────────────────────────
 
@@ -307,30 +236,30 @@ def build_summary_md(all_results, total_elapsed_s):
     lines = []
     lines.append("# XYZ Stats Summary\n")
     lines.append(f"Generated: {datetime.datetime.now().isoformat()}  ")
-    lines.append(f"Total wall-time: {total_elapsed_s:.1f}s\n")
+    lines.append(f"Total wall-time: {total_elapsed_s:.1f}s  ")
+    lines.append("Normalization: norm_y = Y / (axis_solid_angle * anchor_l99_sky)\n")
 
-    cols = ["scene", "dur_s", "trunc"]
-    for prefix in ("unf", "flt"):
-        for p in _SUMMARY_PCTS:
-            cols.append(f"{prefix}.{p}")
-        cols += [f"{prefix}.max", f"{prefix}.sat_rate"]
+    cols = ["scene", "rend", "dur_s", "trunc"] + _SUMMARY_PCTS + ["max", "sat_rate", "l99_sky", "omega_axis"]
     lines.append("| " + " | ".join(cols) + " |")
     lines.append("| " + " | ".join(["---"] * len(cols)) + " |")
 
     for r in all_results:
         if r.get("error"):
-            row = [r["scene"], "ERR", "-"] + ["ERR"] * (len(cols) - 3)
+            row = [r["scene"], "-", "-", "N"] + ["ERR"] * (len(cols) - 4)
             lines.append("| " + " | ".join(row) + " |")
             continue
-        row = [r["scene"], str(r["run_duration_s"]), "Y" if r["truncated"] else "N"]
-        for side in ("unfiltered", "filtered"):
-            d = r[side]
+        for rend in r["renderers"]:
+            d = rend["stats"]
+            row = [r["scene"], str(rend["renderer_id"]), str(r["run_duration_s"]),
+                   "Y" if r["truncated"] else "N"]
             for p in _SUMMARY_PCTS:
                 val = d["percentiles"].get(p, float("nan"))
                 row.append(f"{val:.5f}")
             row.append(f"{d['max']:.5f}")
             row.append(f"{d['saturation_rate']:.5f}")
-        lines.append("| " + " | ".join(row) + " |")
+            row.append(f"{rend['anchor']['anchor_l99_sky']:.6g}")
+            row.append(f"{rend['anchor']['axis_solid_angle']:.6g}")
+            lines.append("| " + " | ".join(row) + " |")
 
     return "\n".join(lines) + "\n"
 
@@ -344,7 +273,21 @@ def main():
                         help="Output directory (default: xyz_stats_output/)")
     parser.add_argument("--no-rp46", action="store_true",
                         help="Skip rp46 and rp46_nof scenes")
+    parser.add_argument("--seed", type=str, default=str(DEFAULT_SEED),
+                        help="Fixed RNG seed forwarded to the CLI (default: 7) so cross-version "
+                             "runs compare the engine, not Monte-Carlo noise; seeded runs are "
+                             "single-threaded by CLI contract. Pass 'random' for CLI-default "
+                             "randomness per run.")
     args = parser.parse_args()
+
+    if args.seed != "random":
+        try:
+            if int(args.seed) <= 0:
+                raise ValueError
+        except ValueError:
+            print(f"[ERROR] --seed must be a positive integer or 'random', got '{args.seed}'",
+                  file=sys.stderr)
+            sys.exit(1)
 
     if args.scenes:
         scene_names = [s.strip() for s in args.scenes.split(",")]
@@ -360,33 +303,26 @@ def main():
         scene_names = [s for s in scene_names if s not in RP46_SCENES]
         print("[INFO] --no-rp46: skipping rp46/rp46_nof", flush=True)
 
+    lumice_bin = Path(os.environ.get("LUMICE_BIN", str(DEFAULT_BIN)))
+    if not lumice_bin.is_absolute():
+        lumice_bin = REPO_ROOT / lumice_bin
+    if not lumice_bin.is_file():
+        print(f"[ERROR] Lumice binary not found: {lumice_bin}", file=sys.stderr)
+        print("[ERROR] Build first: ./scripts/build.sh -j release", file=sys.stderr)
+        sys.exit(1)
+
     os.makedirs(args.output, exist_ok=True)
-    lib = load_lib()
-    lib_path = os.environ.get("LUMICE_LIB", "build/Release/shared/lib/liblumice.dylib")
-    print(f"[INFO] Loaded: {lib_path}", flush=True)
+    print(f"[INFO] Binary: {lumice_bin}", flush=True)
+    print(f"[INFO] Seed: {args.seed}", flush=True)
     print(f"[INFO] Running {len(scene_names)} scene(s): {', '.join(scene_names)}", flush=True)
 
     all_results = []
     t_total = time.time()
 
     for scene_name in scene_names:
-        config_path = ALL_SCENES[scene_name]
+        config_path = str(REPO_ROOT / ALL_SCENES[scene_name])
         timeout_s = TIMEOUT_RP46_S if scene_name in RP46_SCENES else TIMEOUT_DEFAULT_S
-
-        try:
-            result = run_scene(lib, scene_name, config_path, timeout_s)
-        except Exception as e:
-            print(f"  [{scene_name}] ERROR: {e}", file=sys.stderr, flush=True)
-            result = {
-                "scene":         scene_name,
-                "config":        config_path,
-                "timestamp":     datetime.datetime.now().isoformat(),
-                "run_duration_s": 0.0,
-                "truncated":     False,
-                "error":         str(e),
-                "unfiltered":    None,
-                "filtered":      None,
-            }
+        result = run_scene(scene_name, config_path, timeout_s, lumice_bin, args.seed)
 
         all_results.append(result)
         out_path = os.path.join(args.output, f"{scene_name}.json")
