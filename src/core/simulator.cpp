@@ -2217,9 +2217,10 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
   } session_guard{ backend };
 
   // Drive (TraceLayer -> Recombine)* n -> TraceLayer (tail) -> ReadbackImage.
-  // The first call must be a host RootRaySource; per trace_backend.hpp lines
-  // 118-124, backends self-generate initial rays from scene config, so the
-  // d/p/w/tf pointers stay null and only `count` is consumed.
+  // The first call must be a host RootRaySource; per the HostRayBatch contract
+  // in core/backend/trace_backend.hpp, backends self-generate initial rays from
+  // scene config, so the d/p/w/tf pointers stay null and only `count` is
+  // consumed.
   HostRayBatch host{};
   host.count = ray_num;
   RootRaySource roots = RootRaySource::FromHost(host);

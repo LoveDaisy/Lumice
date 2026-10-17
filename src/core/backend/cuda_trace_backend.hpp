@@ -9,10 +9,12 @@
 // Apple unified-memory + NVIDIA discrete-memory PCIe) — see
 // core/backend/trace_backend.hpp design invariant #4.
 //
-// MVP scope (scrum-cuda-backend-mvp subtask 3): single MS, no filter, no prob
-// 分流, host root upload, per-ray crystal orientation, WlPoolSize()=0
-// (discrete-wl path). multi-MS / device root-gen / WlPool / GUI throughput
-// live in follow-up subtasks.
+// As-built scope: multi-MS (Recombine continuations fed back through
+// RootRaySource::FromDevice), device root generation (gen_root_kernel; the
+// host InitRayFirstMs upload survives as the disable_device_gen_ fallback),
+// device-side filter evaluation, per-ray crystal orientation, WlPoolSize()=M
+// (296.6 DR-3 per-ray wl), and device-fused XYZ accumulation with third-clock
+// drain.
 //
 // Build gate: header body is compiled only when LUMICE_CUDA_ENABLED is defined
 // (set by CMake when LUMICE_CUDA_ENABLED=ON). Other translation units include
@@ -52,8 +54,7 @@ std::string CudaDeviceDiagnostics();
 // CudaLayerHandle — opaque per-layer handle. Mirrors MetalLayerHandle: the only
 // host-visible scalar produced per TraceLayer is the continuation count
 // (populated from a 4-byte cudaMemcpy D2H). Continuation ray buffers live in
-// the session-level Impl::cont_* pool when multi-MS lands; MVP returns 0
-// continuation count because Recombine is a stub.
+// the session-level Impl::cont_* pool, ping-pong-slotted across MS layers.
 class CudaLayerHandle : public LayerHandle {
  public:
   explicit CudaLayerHandle(size_t continuation_count, LayerStats stats)
@@ -68,19 +69,23 @@ class CudaLayerHandle : public LayerHandle {
 
 // CudaTraceBackend — NVIDIA GPU backend for TraceBackend.
 //
-// MVP constraints:
-//   - Single MS only (no Recombine continuation; final-layer DrainExits is the
-//     only egress).
-//   - No DeviceFilter / prob 分流 — every traced ray is emitted.
+// Multi-MS capabilities (as-built):
+//   - Recombine continuations: non-final layers route surviving rays through
+//     the per-emit PCG gate into a device continuation ring; Recombine hands
+//     them back as RootRaySource::FromDevice for the next TraceLayer, and the
+//     final layer egresses through DrainExits.
+//   - DeviceFilter / prob 分流 evaluated on device (lm_filter::DeviceFilterCheck
+//     inside the trace kernel).
 //   - WlPoolSize() == M (296.6 DR-3) — one session covers the whole spectrum via
 //     a device wl_pool; each ray carries a per-ray wl_idx and the exit records
 //     feed SimData.outgoing_wl_ for host-side per-ray CMF (mirrors Metal).
-//   - Per-ray crystal orientation — InitRayFirstMs samples one orientation
-//     per root ray (halo-ring distribution comes from this); the kernel
-//     indexes the per-ray d_rot_c2w buffer by tid before applying frame
-//     invariant 6 (mirrors metal_trace_backend.mm's per-ray rot upload).
-//   - HostRayBatch ingest only — RootRaySource::FromDevice never reaches
-//     TraceLayer.
+//   - Per-ray crystal orientation — sampled one orientation per root ray
+//     (halo-ring distribution comes from this): device-gen samples inside
+//     gen_root_kernel, the host fallback samples via InitRayFirstMs; the
+//     kernel indexes the per-ray rotation buffer by tid before applying frame
+//     invariant 6 (mirrors metal_trace_backend.mm).
+//   - HostRayBatch ingest on the first layer; every later layer consumes the
+//     RootRaySource::FromDevice continuations Recombine returned.
 class CudaTraceBackend : public TraceBackend {
  public:
   explicit CudaTraceBackend(Logger* logger = nullptr);

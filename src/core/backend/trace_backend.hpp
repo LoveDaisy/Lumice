@@ -33,31 +33,42 @@ namespace lumice {
 //      dispatches. Fine-grained dispatches would force intermediate state to
 //      DRAM and forfeit register-resident-fusion throughput on GPU backends.
 //
-//   2) Host pointers do not cross the seam, except at two explicit boundaries:
-//        - HostRayBatch: the ingest boundary (only at the first MS layer).
-//        - ReadbackExitRays: the sole device->host boundary (exit-ray
-//          buffer-egress — N `ExitRayRecord`s, each 96B (size single-sourced
-//          by the static_assert in core/exit_seam.hpp) carrying
-//          {dir, weight, path, crystal_id, ms_layer_idx}).
+//   2) Host pointers do not cross the seam, except at explicit boundaries:
+//        - Ingest: HostRayBatch on the first MS layer (count-only in practice —
+//          backends generate the roots themselves, see the HostRayBatch note
+//          below), then the DeviceRayBatch each Recombine returns
+//          (device-resident continuations).
+//        - Egress: DrainExits / ReadbackExitRays hand back N `ExitRayRecord`s,
+//          each 96B (size single-sourced by the static_assert in
+//          core/exit_seam.hpp) carrying {dir, weight, path, crystal_id,
+//          ms_layer_idx}; a device-fused backend additionally publishes its
+//          accumulation state once per drain window — ReadbackXyzAccum /
+//          ReadbackFarXyzAccum (XYZ planes), ReadbackClassLanes (per-class Y
+//          lanes) and ReadbackAnchorBuffer (exposure-anchor plane) — on the
+//          third-clock cadence the simulator drives
+//          (LUMICE_XYZ_DRAIN_BATCHES); the only other host-visible egress is
+//          LayerHandle::ContinuationCount(), a 4-byte counter.
 //      Ray data and layer-local buffers otherwise live as backend-owned,
 //      opaque, device-resident handles. (scrum-258.1: ReadbackImage was
 //      retired from this seam; CPU/Metal still expose it as a non-virtual
 //      concrete helper for the parity harness only.)
 //
 //   3) Discrete-memory semantics. Even when the underlying memory is unified
-//      (CPU heap, Apple M2 unified memory), the contract is written as if a
-//      PCIe transfer separates host from device. A CUDA backend must be able
-//      to implement this interface without any change to upper layers:
-//        - HostRayBatch -> cudaMemcpyAsync(host, device, ...) inside TraceLayer
-//          (or stashed in BeginSession state, depending on backend).
-//        - DeviceRayBatch::backend_ptr binds to a cudaMalloc-allocated pointer.
+//      (CPU heap, Apple unified memory), the contract is written as if a
+//      PCIe transfer separates host from device. Both GPU backends — CUDA
+//      (discrete memory) and Metal (unified memory) — implement it without
+//      any change to upper layers:
+//        - HostRayBatch -> an async H2D copy inside TraceLayer (or stashed
+//          in BeginSession state, depending on backend).
+//        - DeviceRayBatch::backend_ptr binds to a device-allocated pointer
+//          (cudaMalloc on CUDA, id<MTLBuffer> on Metal).
 //        - LayerHandle wraps backend-specific device-resident state.
-//        - Recombine maps to a stream-compaction kernel (thrust or hand-written).
-//          The only host-visible side-effect is reading ContinuationCount() —
-//          a single 4-byte cudaMemcpy.
-//        - ReadbackExitRays performs a single device->host copy of
-//          N `ExitRayRecord`s (96B each, size single-sourced by the
-//          static_assert in core/exit_seam.hpp) for N exit rays.
+//        - Recombine maps to a stream-compaction kernel. The only
+//          host-visible side-effect is reading ContinuationCount() — a
+//          single 4-byte device->host copy.
+//        - DrainExits performs a device->host copy of N `ExitRayRecord`s
+//          (96B each, size single-sourced by the static_assert in
+//          core/exit_seam.hpp) for N exit rays.
 //
 //   4) Metal co-design as a second orthogonal view. The contract is validated
 //      by at least one Metal skeleton implementation so the seam does not
@@ -244,10 +255,10 @@ struct SessionSpec {
 // TraceLayer call that receives this batch.
 // -----------------------------------------------------------------------------
 // Design note: d / p / w / tf are the reserved "external ray ingest" path.
-// Current CpuTraceBackend and MetalTraceBackend skeleton do NOT consume these
-// fields — they generate initial rays internally from the scene config via
-// InitRayFirstMs. These fields will be wired in a future integration task once
-// Simulator routes its pre-sampled rays through the seam. Until then, callers
+// No backend consumes these fields — each generates initial rays internally
+// from the scene config (CpuTraceBackend host-side via InitRayFirstMs; Metal /
+// CUDA on device via gen_root_kernel). Wiring them in is deferred until a task
+// routes Simulator's pre-sampled rays through the seam. Until then, callers
 // SHOULD leave d/p/w/tf null/zero. (crystal / refractive_index / crystal_id
 // ARE consumed by CpuTraceBackend when crystal != nullptr.)
 struct HostRayBatch {

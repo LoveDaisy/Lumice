@@ -8,8 +8,10 @@
 // types behind an opaque pimpl. The seam validates the contract from a second,
 // orthogonal vantage point (see core/backend/trace_backend.hpp design invariant #4) —
 // recorder runs backend-local, continuation rays stay device-resident across
-// the layer boundary, and only a 4-byte counter readback crosses host/device
-// mid-session.
+// the layer boundary, and host/device traffic stays on the declared seam
+// boundaries: the 4-byte continuation counter per layer, the exit-record
+// drains, and the per-drain accumulation egress (XYZ planes / class lanes /
+// anchor plane) of the third clock.
 
 #if defined(__APPLE__)
 
@@ -65,9 +67,17 @@ class MetalLayerHandle : public LayerHandle {
 
 // MetalTraceBackend — Metal GPU backend for TraceBackend.
 //
-// v1 constraints:
-//   - kRectangular lens and zenith view (el≈90°) only.
-//   - Each MS layer must have exactly one crystal setting.
+// Capabilities (as-built):
+//   - Every forward lens type renders on device: the exit tail projects via
+//     lm_proj::ProjectExitToPixel (the same single source as the CPU parity
+//     oracle), so IsCompatible is unconditional.
+//   - Multi-MS: continuation layers enter through transit_root_kernel on
+//     device-resident rays; Recombine hands the compacted pool back as
+//     RootRaySource::FromDevice.
+//   - Roots are generated on device (gen_root_kernel); filters are evaluated
+//     on device (DeviceFilterCheck).
+//   - A layer may hold several crystals — its rays are partitioned into
+//     contiguous per-ci slices, each traced through its own geometry.
 //
 // Recombine honors RecombineSpec.shuffle: when true, a device-side
 // shuffle_cont_kernel (Feistel gather) decorrelates the continuation pool's
@@ -134,8 +144,11 @@ class MetalTraceBackend : public TraceBackend {
   // TraceBackend::ReadbackAnchorBuffer for why a device-fused backend must accumulate one.
   void ReadbackAnchorBuffer(std::vector<float>& anchor_y) override;
   // scrum-312.4: Metal joins the third clock (persistent cross-batch XYZ
-  // accumulator + display-cadence drain). Unlike CUDA the payoff is architectural
-  // uniformity, not throughput — unified-memory readback was already ~free.
+  // accumulator + display-cadence drain). The payoff is measured throughput,
+  // not only architectural uniformity with CUDA: at real GUI resolution
+  // (2048×1024) Metal went from ~11 to ~32 M/s once the per-batch synchronous
+  // readback left the batch path (as-built numbers:
+  // doc/backends/gpu-single-engine-implementation.md §0.1).
   bool SupportsThirdClockDrain() const override { return true; }
   void EndSession() override;
   bool IsCompatible(const RenderConfig& render) const override;

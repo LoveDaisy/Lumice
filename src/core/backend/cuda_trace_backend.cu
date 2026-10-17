@@ -1,22 +1,23 @@
 // CUDA backend for TraceBackend (NVIDIA GPUs).
 //
-// MVP scope (scrum-cuda-backend-mvp subtask 4, M2–M5):
+// As-built scope:
 //   - BeginSession / EndSession / Reset: device lifecycle + geometry H2D.
-//   - TraceLayer: host-side InitRayFirstMs root-gen + H2D + megakernel
-//     trace_single_ms_kernel + 4B exit-count readback.
-//   - DrainExits: bulk D2H copy of ExitRayRecord buffer.
-//   - Recombine: single-MS stub (returns empty DeviceRayBatch).
-//   - Per-ray crystal orientation: InitRayFirstMs samples an independent
-//     orientation per root ray (the halo-ring distribution comes from this);
-//     d_rot_c2w_ is sized n_roots × 9 and indexed by tid in the kernel.
-//     Mirrors metal_trace_backend.mm's per-ray rot upload path.
-//   - HostRayBatch ingest only; RootRaySource::FromDevice never reaches this
-//     backend (single-MS).
+//   - TraceLayer: device root generation (gen_root_kernel) on the first layer,
+//     transit_multi_ms_kernel on continuation layers, then the polygon-slab
+//     trace kernel, with 4B exit/continuation count readbacks. The host
+//     InitRayFirstMs upload survives as the disable_device_gen_ fallback.
+//   - DrainExits: bulk D2H copy of the ExitRayRecord buffer (destructive; the
+//     buffer recycles across MS layers).
+//   - Recombine: compaction of the continuation ring (optional
+//     shuffle_cont_kernel), returning RootRaySource::FromDevice for the next
+//     TraceLayer.
+//   - Per-ray crystal orientation: sampled on device in gen/transit
+//     (d_root_rot, 9 × n_rays, crystal→world) — the halo-ring distribution
+//     comes from this; the host fallback samples via InitRayFirstMs.
+//   - DeviceFilter / prob 分流 evaluated on device (lm_filter::DeviceFilterCheck).
 //   - WlPoolSize()=M (296.6 DR-3): one session covers the whole spectrum via a
-//     device wl_pool; each ray draws a per-ray wl_idx (host first-layer sample;
-//     transit carries it through) and the kernel reads d_wl_pool_[wl_idx].n_idx.
-//   - Device root-gen (gen_root_kernel) is the remaining 296.6 piece; the host
-//     InitRayFirstMs path above is the per-ray-wl fallback.
+//     device wl_pool; each ray draws a per-ray wl_idx and the kernel reads
+//     d_wl_pool_[wl_idx].n_idx.
 //
 // Build gate: this entire translation unit is added to lumice_obj only when
 // LUMICE_CUDA_ENABLED is ON (see CMakeLists.txt). Other backends are
