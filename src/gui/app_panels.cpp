@@ -1543,9 +1543,10 @@ void RenderOverlaysTab() {
       "##grid_label", &g_state.show_grid_label, "##grid_alpha", "overlay_grid_alpha", &g_state.grid_alpha, nullptr,
       std::nullopt, nullptr, 0 },
     // The lens image circle. No text label (null label id, empty cell) and no fold: unlike the
-    // angular-distance circles in the section below, it owns no field of its own — the shader
-    // derives the circle from the lens type, the FOV and the viewport, so there is nothing here for
-    // a user to set. The swatch is wired to overlay_lens_border_color so the print gate reaches it
+    // angular-distance circles in the section below, the circle itself owns no field of its own —
+    // the shader derives it from the lens type, the FOV and the viewport, and the colour, line and
+    // alpha cells of this row are drawing attributes. The swatch is wired to
+    // overlay_lens_border_color so the print gate reaches it
     // (doc/rendering/print-mode-subtractive-ink.md §7 instance 4) — see the matching note in
     // field_editor_registry.cpp for why the boundary comes from the document rather than
     // from consistency with its neighbours.
