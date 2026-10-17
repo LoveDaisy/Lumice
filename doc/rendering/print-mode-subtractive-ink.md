@@ -174,10 +174,11 @@ print 把输出的色度自由度整个消耗掉了：每个像素的颜色由 `
 必须被告知。后来加入的 `display_mode: channel_br` 同样接管色彩通道：screen 下它生成 B−R 灰度诊断，
 print 下因从不计算独立 R/B 而保留字段但 inert；server 对该组合告警，CLI 与 GUI 都跳过诊断后处理。
 
-> **已知实现偏差（2026-10-17）：** lens border 已在 shader 中按 annotation 密度绘制，
-> 因而 `lens_border_color` 在 print 下不参与输出；但 GUI registry 仍让该颜色控件可编辑，并有测试反向钉住
-> 这一状态。它违反本节“annotation 颜色字段”这一类别规则，是范围外实现缺陷，不是合理例外；后续应统一
-> gate/提示。本记录不把缺陷改写成规范。
+> **已修复的实现偏差（2026-10-17）：** lens border 在 shader 中按 annotation 密度绘制，
+> 因而 `lens_border_color` 在 print 下不参与输出；该状态曾未被 GUI registry gate——颜色控件仍可编辑，
+> 且有测试反向钉住这一状态，违反本节“annotation 颜色字段”这一类别规则，是范围外实现缺陷而非合理例外。
+> 已于同日随 registry 统一修复：colour 加入既有 `NotUnderPrintMode` gate 家族，line 开关与 alpha 不 gate
+> （print 的密度分支仍消费两者），边界测试同步翻转。本记录保留偏差事实供 §11.3 A3 行引用，不把缺陷改写成规范。
 
 ## 8. 余量谓词：一个纯函数，两侧共用
 
@@ -281,7 +282,7 @@ print 下因从不计算独立 R/B 而保留字段但 inert；server 对该组�
 |---|------|------------------|----------|
 | A1 | 传递曲线取 `D = γ·log10(1+e)`，`out_j = paper_j · 10^(-D)` | 换曲线不改本设计的结构 | ✅ 已由离线标定在 4 场景上验证并经 owner 眼判接受（`γ = 11`，§3.2）。**as-built**：`src/util/ink_transfer.hpp` 的 `InkOpticalDensity` / `InkTransmittance` 是 C++ 侧单一 owner；GLSL 的 `subtractiveInk()` 是受限手抄副本，注释指回权威 |
 | A2 | 灰度标量可直接复用 `RenderConsumer::PostSnapshot` 非真实色分支的前半段（取 CIE Y → D65 灰） | 若复用不成立，算子落地的规模上升 | ⚠️ **部分证伪，但代价反向**：实际没有复用那个分支的代码——print 自己取 CIE Y 直接送进传递曲线，**跳过 D65 白点矩阵**（矩阵只在需要 RGB 色度时必要）。A2 预判的"若复用不成立，规模上升"没有发生：实际分支更短 |
-| A3 | annotation 层在 print 下改走**密度乘法**，因而**不需要** per-mode 调色板；"ink 接管色彩通道"这条规则覆盖四个原始功能类别 | 若不成立，需回退到"Print 预设写入线条颜色"，那会带回覆盖用户值/影子状态问题 | ✅ **机制成立，但曾暴露过清点盲区**。CLI 统一经 `BlendAnnotation`（含 `PaintLabels`），GUI shader 统一经 `blendAnnotationColor`，ImGui 文字经 `ApplyPrintInk` 收口为黑墨且无底板。早期只数前两个算子的调用点，漏掉了不经过 shader 的 ImGui 文字路径；`test_overlay_label_print_ink.cpp` 钉住第三条。当前 lens-border 颜色控件的 registry 偏差见 §7；它说明功能类别不能被误读为当时调用点的封闭枚举。可迁移判据：**"某层已收敛于单一算子"若靠数调用点来证，先问清点范围是不是该层的全部绘制路径** |
+| A3 | annotation 层在 print 下改走**密度乘法**，因而**不需要** per-mode 调色板；"ink 接管色彩通道"这条规则覆盖四个原始功能类别 | 若不成立，需回退到"Print 预设写入线条颜色"，那会带回覆盖用户值/影子状态问题 | ✅ **机制成立，但曾暴露过清点盲区**。CLI 统一经 `BlendAnnotation`（含 `PaintLabels`），GUI shader 统一经 `blendAnnotationColor`，ImGui 文字经 `ApplyPrintInk` 收口为黑墨且无底板。早期只数前两个算子的调用点，漏掉了不经过 shader 的 ImGui 文字路径；`test_overlay_label_print_ink.cpp` 钉住第三条。lens-border 颜色控件曾出现未被 registry gate 的偏差（已修复，见 §7 修复记录）；它说明功能类别不能被误读为当时调用点的封闭枚举。可迁移判据：**"某层已收敛于单一算子"若靠数调用点来证，先问清点范围是不是该层的全部绘制路径** |
 | A4 | 余量谓词可做成 `src/util/` 纯函数、GUI 与 CLI 共用 | 影响谓词的落点，不影响它的存在性 | ✅ **成立**。`src/util/contrast_headroom.hpp`，无 core/config 类型依赖，`server.cpp` 与 `gui_state.hpp` 双侧调用同一实现（落点见 §11.1 的 D6 行） |
 | A5 | 被 mask 区域可统一表述为"零能量"，screen 的显式黑色特例随之消失 | 若不成立，print 下 mask 外的颜色需单独裁决 | ⚠️ **机制被证伪，效果达成**：screen 的显式黑色特例没有消失，只是被 `!print_mode` 卫护；print 走另一条路——无背景绘制时令 `e = 0`，经 `InkTransmittance(InkOpticalDensity(0)) == 1` 落地为纸色。所以 A5 的主张（print 下 mask 区域是零能量色，不是黑）成立，但实现形态是新增独立分支而非消除旧特例 |
 

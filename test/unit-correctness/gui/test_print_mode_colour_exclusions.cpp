@@ -42,14 +42,15 @@ bool Mentions(const char* haystack, const char* needle) {
   return haystack != nullptr && std::string(haystack).find(needle) != std::string::npos;
 }
 
-// The three overlay families whose colour doc §7 lists, plus one marker. Checked as a group rather
+// The four overlay families whose colour doc §7 lists, plus one marker. Checked as a group rather
 // than one case each because they are one rule with one gate — a per-family case would suggest
-// three independent decisions and would still not catch the interesting failure, which is a family
+// four independent decisions and would still not catch the interesting failure, which is a family
 // left off the list.
 const char* const kGatedColourFields[] = {
   "overlay_horizon_color",
   "overlay_grid_color",
   "overlay_sun_circles_color",
+  "overlay_lens_border_color",
 };
 
 }  // namespace
@@ -77,13 +78,19 @@ TEST(PrintModeColourExclusionsGui, OverlayColourSwatchesAreInapplicableUnderPrin
   EXPECT_TRUE(gui::ConstraintFor(marker_key, screen).enabled);
 }
 
-// The scope boundary, asserted rather than left to the reader of the registry. The lens border is a
-// colour that print does not read either, and it is STILL not gated — because doc §7 enumerates
-// four instances and it is not one of them. Without this case, "gate every colour that print
-// ignores" would pass every other case in this file, and the boundary would quietly move.
-TEST(PrintModeColourExclusionsGui, TheLensBorderColourIsNotGated) {
-  EXPECT_TRUE(gui::ConstraintFor("overlay_lens_border_color", StateWithTone(LUMICE_TONE_PRINT)).enabled);
-  EXPECT_TRUE(gui::ConstraintFor("overlay_lens_border_color", StateWithTone(LUMICE_TONE_SCREEN)).enabled);
+// The other half of the same boundary, asserted rather than left to the reader of the registry. The
+// lens border colour joined the gated family when doc §7's instance-4 enumeration put it in the
+// annotation colour category (PR #500 — the document moved first, the registry and this file
+// followed; an earlier revision of both pinned the opposite boundary). Only the colour is in that
+// category: the line switch and the alpha next to it stay ungated because print still consumes
+// both — the print branch multiplies by (1 - t*alpha), so the alpha IS the ink coverage, and the
+// switch still turns the border off. Without this case, "gate every lens-border field" would pass
+// every other case in this file, and the boundary would quietly move again — in the other direction.
+TEST(PrintModeColourExclusionsGui, TheLensBorderCompanionsAreNotGated) {
+  for (const int tone : { LUMICE_TONE_SCREEN, LUMICE_TONE_PRINT }) {
+    EXPECT_TRUE(gui::ConstraintFor("overlay_lens_border_line", StateWithTone(tone)).enabled) << "tone " << tone;
+    EXPECT_TRUE(gui::ConstraintFor("overlay_lens_border_alpha", StateWithTone(tone)).enabled) << "tone " << tone;
+  }
 }
 
 // The two GROUND colours are gated in opposite directions: `background` (the sky light is added
