@@ -1,50 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792228679801,
+  "lastUpdate": 1792230022584,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "distinct": true,
-          "id": "81e8d18a17511e66af4f6e17ce5e75a7c7996daf",
-          "message": "Merge pull request #392 from LoveDaisy/chore/test-hygiene-sweep\n\nchore: test hygiene sweep — shared LogCapture, static_assert, wire-table test, guard hardening (chore-584)",
-          "timestamp": "2026-09-20T20:34:42+08:00",
-          "tree_id": "06eb85faf160e5faed09fee676e77bd65d583e70",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/81e8d18a17511e66af4f6e17ce5e75a7c7996daf"
-        },
-        "date": 1789908524407,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 370448.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 356296.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 310950.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4782,6 +4740,54 @@ window.BENCHMARK_DATA = {
             "value": 368547.3,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "43a72d655ad2a9f3ab50650b80bc0bafeddeb49a",
+          "message": "Merge pull request #505 from LoveDaisy/chore/source-comment-consistency\n\nchore(source-comment-consistency): rewrite five drift groups of src/ comments",
+          "timestamp": "2026-10-17T17:35:59+08:00",
+          "tree_id": "d4e5b5d64f6ec519bee36522169fafe1ef1e335a",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/43a72d655ad2a9f3ab50650b80bc0bafeddeb49a"
+        },
+        "date": 1792230020749,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 306154.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 506185.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 484721.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 310487.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
