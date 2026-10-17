@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792250649841,
+  "lastUpdate": 1792250652450,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4806,54 +4806,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "3442752646d7a6d1d1e7c71045a958be19025e4f",
-          "message": "Merge pull request #393 from LoveDaisy/feat/look-at-horizon-series\n\nfeat(gui): Look At — Horizon series of four sun-relative level bearings (task-586)",
-          "timestamp": "2026-09-20T21:18:38+08:00",
-          "tree_id": "2ea46a896126f59b8ad9e871c17836f0b16a9f3b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/3442752646d7a6d1d1e7c71045a958be19025e4f"
-        },
-        "date": 1789910919448,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1153857.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1016466.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 708568.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 571880,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "a9eb84bee60644a8d4838c4051be47e0b5cda60a",
           "message": "Merge pull request #394 from LoveDaisy/feat/analyze-chain-table-capacity\n\nfeat(analyze): runtime chain-record capacity — --chain-capacity / C API chain_capacity (task-583)",
           "timestamp": "2026-09-20T21:46:35+08:00",
@@ -9578,6 +9530,54 @@ window.BENCHMARK_DATA = {
             "value": 921974.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e74a6fad65c33336e274a3929c5f9121f4339a44",
+          "message": "Merge pull request #507 from LoveDaisy/chore/e2e-step-budget-runner-variance\n\ntest/e2e cost trims + shadow bench probe (697 PR1: restore work headroom, instrument the budget)",
+          "timestamp": "2026-10-17T23:21:07+08:00",
+          "tree_id": "b3064b0619f8ecd539d6992a56acf002c7bac678",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/e74a6fad65c33336e274a3929c5f9121f4339a44"
+        },
+        "date": 1792250652046,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1229014.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1011444.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 850256.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 587972.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
