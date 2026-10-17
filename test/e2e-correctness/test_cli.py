@@ -125,7 +125,7 @@ class TestCli(LumiceTestCase):
         explicitly -- it is the drift this test exists for (`-v` sets LUMICE_LOG_VERBOSE,
         and trace is a *different*, more chatty level: trace(0) < debug(1) < verbose(2),
         see src/util/logger.hpp). That ParseSharedOption maps the flags to those levels
-        is pinned separately by test_v_and_d_flags_set_verbose_and_debug_levels; these
+        is pinned separately by test_v_and_d_flags_log_level_thresholds; these
         two tests together are the pair that keeps help text and flag behavior from
         drifting apart again.
         """
@@ -193,6 +193,7 @@ class TestCli(LumiceTestCase):
                     tags,
                     f"-d arm shows a [T] line -- -d set TRACE, not DEBUG:\n{result.stderr[:500]}",
                 )
+
 
 class TestSubcommands(LumiceTestCase):
     """The CLI's subcommand surface: `render` (implicit by default) and `benchmark`.
