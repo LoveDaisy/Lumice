@@ -1269,10 +1269,14 @@ SharedStep ParseSharedOption(int argc, char** argv, int& i, SharedOptions& out) 
   }
   if (arg == "-v") {
     out.log_level = LUMICE_LOG_VERBOSE;
+    // Emitted at parse time, so it fires exactly when the flag is given
+    // explicitly (INFO passes the threshold under every explicit level).
+    LOG_INFO("Log level set to verbose");
     return SharedStep::kConsumed;
   }
   if (arg == "-d") {
     out.log_level = LUMICE_LOG_DEBUG;
+    LOG_INFO("Log level set to debug");
     return SharedStep::kConsumed;
   }
   if (arg == "-h" || arg == "--help") {

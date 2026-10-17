@@ -51,6 +51,8 @@
 
 `-v` 大致是"按 batch 显示生成进度"；`-d` 额外输出 RNG seed、散射层调度等诊断信息。先用 `-v`，只在追 bug 时再上 `-d`。
 
+显式的级别旗标会在启动时自报：紧跟版本行之后，`-v` 打一行 INFO（`Log level set to verbose`），`-d` 打 `Log level set to debug`。默认运行两行都没有——这行确认行本身就是旗标在其级别自身消息之外的可观测差异。
+
 ## 4. 完整 flag 一览
 
 CLI 有四个子命令：`render`、`benchmark`、`analyze` 与 `raypath`。`render` 是默认值：`Lumice -f config.json` 与 `Lumice render -f config.json` 是同一条命令，所以上面所有示例跑的都是 render。每个子命令只接受自己的选项；`Lumice <子命令> -h` 打印该子命令的帮助页。
