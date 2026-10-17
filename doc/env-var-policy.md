@@ -60,8 +60,6 @@ env 是标准做法，不在治理范围内。
 - 注意：CLI `--backend auto` 与 `--backend cpu` 当前行为相同（都选 CPU 路由），且二者都会被
   `LUMICE_TRACE_BACKEND` 覆盖——`--backend cpu` 不是"硬钉 CPU 屏蔽 env"。这是有意设计（env 覆盖
   位于 `CreateBackend` 内部，对所有 preference 一视同仁），非缺陷。
-- 缺口在 **CLI**：CLI 没有一等公民的 `--backend` flag，目前后端选择依赖此 env
-  （见 `server.cpp:207` 注释 "CLI / --benchmark"）。这正是需要补的显式路径。
 
 ### B 类 — 测试 / 构建基础设施（正当用途，不治理）
 
@@ -111,20 +109,17 @@ env 是标准做法，不在治理范围内。
 ## 5. 门禁（这道策略怎么"长出牙齿"）
 
 策略不靠自觉，靠检查 artifact 的确定性门禁（a04：固化为自动化门禁；a01：验证 artifact 而非
-自我声明）。task-287 落地：
+自我声明）。当前接线：
 
-- **`scripts/check_policies.py`**（确定性，无版本依赖）：
-  - getenv 集中化——`getenv("LUMICE_*")` 只能出现在 `src/util/env_knobs.cpp`，其余一律 fail；
-  - getenv 注册——`env_knobs.cpp` 引用的每个 `LUMICE_*` 名字必须出现在本文档，否则 fail；
-  - GUI/core API 边界——`src/gui/**` 不得直接 `#include "core/.."`/`"config/.."`；
-  - `using namespace` 禁用（src/）。
-- **CI `policy` job**（`.github/workflows/ci.yml`，权威门禁，绕不过）：跑 `check_policies.py`。
-  clang-format 由既有的独立 `format-check` job 负责（两者分开，互不耦合）。
-- **本地 pre-commit hook**（`scripts/hooks/pre-commit`，装：`./scripts/install-hooks.sh`）：
-  非交互镜像 CI 的 policy + format 检查（后者用 `scripts/format.sh --check` 对暂存文件），提交前
-  快速反馈；`git commit --no-verify` 可单次绕过；不动 git-lfs 其他 hook。
-- **判断类项**（机械化不了的，如"这个 env 是否改变用户输出"）放 `.github/PULL_REQUEST_TEMPLATE.md`，
-  由 reviewer 用正交视角核对，而非作者在 hook 里自答。
+- **`scripts/check_policies.py`**（whole-tree，确定性）拥有 env 的两条机械规则：
+  `getenv("LUMICE_*")` 读取只能在 `src/util/env_knobs.cpp`，且该文件引用的每个旋钮都必须登记在本文
+  §2 A 类表。该脚本还承载其他工程策略；其规则集合以脚本和 `AGENTS.md` 为准，本文不复制清单。
+- **CI `policy` job** 运行 `check_policies.py`；`format-check` 与 diff-scoped gates 保持独立入口。
+- **本地 pre-commit hook**（`scripts/hooks/pre-commit`，由 `./scripts/install-hooks.sh` 安装）先执行
+  main-worktree guard，再运行 whole-tree policy、`check_new_refs.py`、`check_new_gui_tests.py`、
+  `check_loop_fatal_asserts.py` 与暂存 C/C++ 格式检查。CI 仍是权威门禁；hook 只提供更快反馈。
+- **判断类项**（机械化不了的，如“这个 env 是否改变用户输出”）放
+  `.github/PULL_REQUEST_TEMPLATE.md`，由 reviewer 核对，而非作者在 hook 里自答。
 
 ## 6. 维护约定
 

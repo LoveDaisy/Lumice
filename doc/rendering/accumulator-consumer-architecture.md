@@ -11,7 +11,7 @@ reuse path.
 **Scope**: internal invariants and data-flow contracts. This document does **not**
 cover:
 
-- EV auto algorithm, P99.5 computation, or adaptive brightness
+- EV auto algorithm, P99 computation, or adaptive brightness
   — see [`doc/rendering/ev-pipeline-architecture.md`](ev-pipeline-architecture.md).
 - Filter subsystem internals or Design A gate semantics
   — see [`doc/raypath/filter-architecture.md`](../raypath/filter-architecture.md).
@@ -375,16 +375,15 @@ compares layout-affecting fields between old and new `RenderConfig`:
 
 | Triggers rebuild (`true`) | Does NOT trigger rebuild (`false`) |
 |---------------------------|------------------------------------|
-| `resolution_` | `background_` |
-| `lens_` (type + fov) | `ray_color_` |
-| `lens_shift_` | `intensity_factor_` |
-| `view_` | `angular_dist_grid_` / `elevation_grid_` / `longitude_grid_` / `horizon_` |
-| `visible_` | |
-| `overlap_` | |
+| `resolution_` | `background_` / `paper_` |
+| `lens_` (type + fov) | `ray_color_` / `intensity_factor_` |
+| `lens_shift_` | `ev_mode_` / `tone_` / `display_mode_` |
+| `view_` | all grid lists, line/label switches, marker appearance |
+| `visible_` / `front_` | |
+| `overlap_` / `globe_back_fade_` | |
 
-Those six are the whole of the comparison — the function's `return` expression has
-no other term. `id_` appears in neither column and is excluded on purpose: map-key
-matching (§5.4 condition 4) already guarantees id agreement on the reuse path.
+Those eight layout terms are the whole comparison. `id_` appears in neither column and is excluded
+on purpose: map-key matching (§5.4 condition 4) already guarantees id agreement on the reuse path.
 
 **Filter changes do not trigger NeedsRebuild.** Filter specs belong to
 `SceneConfig`, not `RenderConfig`. When a filter changes, consumers walk the
@@ -411,7 +410,7 @@ inline void RenderConfigFieldSetGuard(const RenderConfig& c) {
 }
 
 // render_config.cpp, first statement of NeedsRebuild — the size tripwire
-static_assert(sizeof(RenderConfig) == 224,
+static_assert(sizeof(RenderConfig) == 280,
               "RenderConfig layout changed — re-check the classification in NeedsRebuild");
 ```
 
@@ -421,8 +420,8 @@ unaffected by how the compiler lays the members out.
 
 The **size tripwire** does not make that guarantee, and an earlier revision of this
 section said it did. A field that lands in an alignment hole leaves `sizeof`
-unchanged and the assert silent — measured on this struct twice: adding a `bool` to
-the run below `horizon_` keeps it at 224, and removing `opacity_` (a `float`) once
+unchanged and the assert silent — measured on this struct repeatedly: adding a `bool` to
+the run below `horizon_` kept it at 224, and removing the historical `opacity_` field once
 kept it at 136. What the tripwire *does* catch is a change **within** a field — a
 nested struct gaining a member, a type widening — which moves the byte size without
 moving the field count, and which the guard is in turn blind to. Hence both.
@@ -487,7 +486,7 @@ destroying and reconstructing consumers.
 | `snapshot_image_buffer_` = a `shared_ptr<uint8_t[]>` of `W × H × 3` bytes, **re-borrowed per snapshot** | `RenderConsumer::PostSnapshot` (`image_pool_->Acquire`) | Same treatment as above; borrowed *before* the `total_pix <= 0 / snapshot_intensity_ <= 0` early-out so both exits hand the frame a buffer this snapshot owns |
 | A `FrameBufferPool` serves exactly one element count | `FrameBufferPool::Acquire` | A request for a different count drops the free list rather than growing a size-indexed structure. Free list is capped at `kMaxFreeBuffers` (8); beyond it a returned buffer is simply freed |
 | `d_buf_`/`w_buf_`/`xy_buf_`/`overlap_w_buf_`/`wl_buf_`/`overlap_wl_buf_` capacity ≥ max(rays, outgoing) | `RenderConsumer::Consume` (`render.cpp:220-228`, the `needed > buf_capacity_` block) | Grow-only; never shrink. `comp_buf_`/`overlap_comp_buf_` grow in the same block but **only** when the class table is non-empty (zero-config = zero extra allocation) |
-| Per-class lanes: `lane_y_` and `snapshot_lane_y_`, each `class_count` arrays of `W × H` floats | `RenderConsumer::RenderConsumer`; shadowed in `PrepareSnapshot` | Allocated only when the class table is non-empty. `Reset()` zeros `lane_y_` but deliberately **not** `snapshot_lane_y_` — `PrepareSnapshot` memcpys over it, mirroring `snapshot_xyz_` |
+| Per-class lanes: `lane_y_` (`double`) and `snapshot_lane_y_` (`float`), each `class_count` arrays of `W × H` values | `RenderConsumer::RenderConsumer`; narrowed in `PrepareSnapshot` | Allocated only when the class table is non-empty. `Reset()` zeros `lane_y_` but deliberately **not** `snapshot_lane_y_` — `PrepareSnapshot` overwrites every element, mirroring `snapshot_xyz_` |
 | The buffer behind a published view is valid for as long as its frame is held | `ResultFrame` doc comment (`server.hpp`) | Not "until the next call": a later snapshot publishes a *new* frame and cannot disturb an outstanding one. §4.3 |
 | StatsConsumer accumulation **and** snapshot counters zeroed on `Reset()` | `StatsConsumer::Reset` | All ten fields — both halves of each split counter and all four snapshot fields |
 
@@ -515,23 +514,24 @@ When a filter spec changes:
    describes the currently visible (filtered) image; there is no separate
    filter-independent lane to fill.
 
-### §7.2 EV Reference: The Visible Framebuffer, Not a Filter-Independent Lane
+### §7.2 EV Reference: A Fixed Full-Sky Anchor over the Filtered Session
 
-**Note (2026-05-28)**: an earlier design accumulated filter-fail
-emission into a separate "anchor lane" (`anchor_internal_xyz_` /
-`anchor_snapshot_xyz_`) to provide a filter-independent EV reference. That
-lane was removed — filter-fail rays now terminate immediately in
-`CollectData` and never reach the consumer at all (`doc/raypath/filter-architecture.md
-§7`). Neither field exists anywhere under `src/` today.
+**Historical note (2026-05-28)**: an earlier design accumulated filter-fail emission into a separate
+"anchor lane" (`anchor_internal_xyz_` / `anchor_snapshot_xyz_`) to provide a filter-independent EV
+reference. That ray lane was removed in PR #115 (`6375ee03c`): filter-fail rays terminate immediately
+and never reach any consumer.
 
-Under the current design (Design A) there is no separate filter-independent
-statistic — the EV always anchors on the visible (filtered) framebuffer:
-`snapshot_xyz_`, its P99 anchor, and `snapshot_intensity` all describe exactly
-what filter-pass emission produced. Switching filters changes the EV anchor
-because the visible image changed; this is intentional.
+The current relative anchor is neither that removed lane nor a P99 over this renderer's framebuffer.
+`AnchorConsumer` bins the same filter-pass rays into one fixed full-sky equal-area plane and publishes
+`anchor_l99_sky`; no renderer lens, FOV, pose, `visible` clip or resolution can affect it.
+`RenderConsumer::ExposureScale` combines that scene radiance with this renderer's
+`AxisSolidAngle()`, while the GUI reads the same two C API fields. `snapshot_intensity` remains the
+landed per-pixel denominator on the GUI chain. A filter can still move both accumulated quantities,
+because rejected rays feed neither consumer; what no longer moves the anchor is the act of looking
+at the scene through a different view.
 
-See `doc/rendering/ev-pipeline-architecture.md §5` for the full before/after rationale
-and `§2` for the EV data flow.
+See `doc/rendering/ev-pipeline-architecture.md` §2.5–§2.8 for the complete unit conversion and the
+retired per-view rule.
 
 ---
 

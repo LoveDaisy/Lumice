@@ -1,20 +1,19 @@
-# Overlay Label Placement — curve-centric design
+# Overlay Label Placement — curve-centric 设计与落地记录
 
-> Status: **design / blueprint**（explore-288.5 收敛，2026-06-23）。实施见 task 288.6
-> (`label-placement-impl`)。本文从 scratchpad explore 提升为 tracked 设计记录，避免
-> 推理丢失（信息价值 = 内在价值 × 被检索到的概率）。
+> 状态：**as-built 设计记录**。curve-centric 模型于 2026-06-23 定案，commit `6844a5431`
+> 首次实现，之后 placement 收敛到 core annotation 管线。下文的历史诊断与测量仍是现行机制的设计理由。
 
 ## 范围
 
-GUI 预览区 overlay 文字 **label**（坐标网格的纬度/经度、地平线、角距圈数值）的**放置**
-逻辑——即 `src/gui/overlay_labels.cpp` 的 `ComputeOverlayLabels`。不涉及 overlay **线**
-的绘制（那是 `preview_renderer.cpp` 片元着色器 `overlayAuxLines`，另见 GUI overlay 的
-三套渲染机制说明）。
+坐标网格、地平线、太阳角距圈与视轴角距圈的 overlay 文字 label 放置。生产路径只有一个
+placement owner：`src/core/annotation_overlay.cpp::ComputeAnchors`；GUI 通过
+`LUMICE_ComputeAnnotationAnchors` 消费发布的锚点，再做外观转换、碰撞抑制与绘制。参考点 marker
+复用同一套投影与可见性机制，但它们是点而不是曲线 label。Overlay **线**属于 renderer 的另一阶段。
 
-## 现状（boundary-centric 5-source）与其缺陷
+## 实施前基线（boundary-centric 5-source）与缺陷
 
-现 `ComputeOverlayLabels` 是 **boundary-centric**：沿若干"边界曲线"采样，再检测网格值在
-相邻采样间是否穿越，命中则放 label。共 5 个 sample source：
+commit `6844a5431` 之前，GUI 侧 `ComputeOverlayLabels` 是 **boundary-centric**：沿若干边界曲线
+采样，检测相邻样本间的网格值穿越，并在穿越处放置 label。它有五个 sample source：
 
 1. `sample_viewport_edges` — 视口矩形四边（所有 lens）。
 2. `sample_hemisphere_equator` — 赤道边界（`!full_sky` 且 visible∈{upper,lower}）。
@@ -22,7 +21,7 @@ GUI 预览区 overlay 文字 **label**（坐标网格的纬度/经度、地平�
 4. `sample_interior_latitudes` — 纬度环 interior label（`!full_sky` 且 lens≠linear）。
 5. `sample_sun_circle_interior` — 角距圈 interior label（`!full_sky` 且 show_sun_circles）。
 
-**实测审计（explore-288.5 实验1，512² 视口 elev=20 visible=full）暴露 4 个独立缺口**：
+**2026-06-23 的 512² 白盒探针（elev=20，visible=full）暴露 4 个独立缺口**：
 
 | projection | 现状 | 根因 |
 |------------|------|------|
@@ -56,12 +55,12 @@ sun_dist=const）：
 
 ### 为什么一个机制同解 4 缺口
 
-- globe / dual_fisheye 经度：经线 walk 会穿 disc 轮廓 → 边界模式产 label（实验2 实测
+- globe / dual_fisheye 经度：经线 walk 会穿 disc 轮廓 → 边界模式产 label（原探针实测
   globe 经度 0→36/36，全有边界锚）。
 - rectangular 经度：按经线**自身的 azimuth 值**在其视口边出口放 label，绕开"沿边采样
   在极点处算方位"的奇异。
-- dual_fisheye：补 forward 投影器后，曲线裁剪到两圆盘 → 有锚点。
-- 成簇：每条曲线只产一个（边界模式）或 N 个（内部模式按类型）label，不再是每个边采样
+- dual_fisheye：forward 投影后，曲线裁剪到两圆盘 → 有锚点。
+- 成簇：每条可见弧只产一个边界锚；完整曲线只产该类型规定的少数锚点，不再是每个边采样
   穿越各产一个。
 
 ### 内部模式的一般性
@@ -70,7 +69,7 @@ sun_dist=const）：
 完整圈，同样触发内部模式。角距环的"4 label"只是它的内部锚点参数。现 Source 4/5 被
 收编为两类曲线的内部模式，而非并列特例。
 
-## 锚点取点规则（实施细化，task 288.6 + 复核修正）
+## 锚点取点规则（实施细化与复核修正）
 
 边界模式"label 落边界交点"对**纬圈/角距环**直接取可见弧的 invis→vis 入口即可（这些
 曲线的入口点彼此分离）。但**子午线（经度曲线）不能用通用入口锚点**：所有子午线都过极点，
@@ -85,27 +84,40 @@ alt=0（可见时），否则可见范围内最接近赤道的纬度（从 alt=0
 （rectangular 等亦如此，更"在线上"），修复退化且不退化已正常的 lens。实测修复后 globe /
 dual_fisheye 经度 x-span 114/256px → 227/384px，各点唯一。
 
-## 实施要点（task 288.6）
+## 当前实现
 
-1. **full_sky lens 需补 forward 投影器**：`overlay_labels::WorldDirToPixel` 当前对
-   rect/dual_fisheye/dual_ortho 直接 `return {0,0,false}`。需补 forward 数学——
-   **沿用 overlay_labels 已镜像 shader 公式的本地实现模式**（不直接 `#include` core，
-   遵守 GUI↔core API 边界）；core `src/core/projection.hpp` 的 `RectangularForward` /
-   `FisheyeXxxForward` 是镜像参考。dual_fisheye 需处理"哪个圆盘"分支。
-2. **内部模式 per-type 锚点**：角距 4 个、纬经地平线 1–2 个。
-3. **半球 / front 裁剪**：curve walk 时复用现有 `is_visible` 谓词。
-4. **dedup / 遮挡**：每曲线一个/少数 label 大幅缓解；保留 draw 时 bbox 抑制作第二道。
+1. `src/core/annotation_overlay.cpp::ComputeAnchors` 构造一份投影/可见性 frame 并 walk 所有请求的
+   曲线家族。所有 lens 都调用 `lm_proj::ProjectExitToPixel`；生产路径不再有 GUI 自己的 forward
+   projection 或 curve walk。
+2. `EmitCurveLabel` 在每条可见弧的 invis→vis 入口产一个锚。完全可见的纬圈或地平线退回一个
+   canonical 可见样本；`WalkRingFamily` 为完全可见的太阳角距圈或视轴角距圈产至多四个 90° 间隔锚点。
+3. 子午线使用上文 owner 选定的赤道优先规则，不走通用弧入口。
+4. 当前曲线家族为 horizon、elevation、longitude、以太阳为中心的 angular-distance circle 和以
+   lens center 为中心的 view-distance circle。具名天空 marker 作为点样本复用同一投影/可见性 frame。
+5. GUI `annotation_anchors.cpp` 把 C API 结果转换成带类型的 anchor sets；`overlay_labels.cpp` 负责
+   外观、视口 clamp 与碰撞抑制。因此 CLI 与 GUI 共享 placement 语义和 clamp 规则，但末端有意分叉：
+   GUI 可抑制拥挤 label，CLI 绘制 core 交付的每一个 anchor。
 
-## 验收（task 288.6）
+## Screenshot 与导出边界
 
-- globe / rectangular 出现经度 label；dual_fisheye 不再零 label；角距完整环 4 锚点；
-  linear/fisheye 边缘不再重复成簇。
-- 现有 `overlay_labels` 单测（clamp_label_pos / project_world_dir）不回归；新增
-  curve-centric 覆盖单测。
-- GUI 视觉硬核验（导出各 projection label 实图）。
+live preview 每帧发布一份 frame 参数与 label sets。**Screenshot** 从这份已发布状态出发，可通过一次性
+选项删减家族，再把剩余 sets 交给 `RenderExportToRgba`。屏幕与 Screenshot 都到达
+`RenderFrameContentToBoundFbo`；`test_gui_preview_export_parity.cpp` 从同一 snapshot 对两臂做 byte-exact
+比较。该 gate 今天仍只在本地求值：`parity` tag 没有 CI job；其 1× test surface 也覆盖不了 Retina
+DPI，显式 DPI 的单臂 export test 负责这条正交轴。
 
-## 取证资产
+Dual Fisheye PNG 与 Equirectangular PNG 是 panorama export，不是 Screenshot 别名。它们调用
+`RenderExportToRgba` 时不传 label sets，因此不含 overlay 文字。"导出包含 label"只对选择了 label
+家族的 Screenshot 成立。
 
-explore-288.5 探针代码（白盒，直接调 `ComputeOverlayLabels` / 加 forward hook 跑 curve
-walk）存于 `scratchpad/scrum-overlay-marker-lines/explore-overlay-label-placement/`
-（`probe_labelset.cpp.txt`、`probe_curvecentric.cpp.txt`），288.6 可复用作覆盖测试基础。
+## 回归锚点
+
+- Globe 与 rectangular 的经度 label、dual-fisheye 两个圆盘和掠射曲线去簇均由
+  `test/unit-correctness/gui/test_overlay_labels.cpp` 覆盖。
+- 完整角距圈的 90° 间隔锚和子午线赤道优先规则，是 `src/core/annotation_overlay.cpp` 内的结构性
+  契约；修改时应保留曲线类型差异，而不是恢复 boundary sampler。
+- 生产演进：curve-centric 初版 `6844a5431`；core annotation 地基 `5c678fa9b`；角距圈接入
+  `92f75cf9a`；网格接入 `141526f73`；地平线接入并删除 GUI walk `0433e0dac`；preview/Screenshot
+  共用 FBO 路径 `c8a364a7e`。
+
+上文原始探针数字作为历史证据保留；其 ignored 工作文件不是当前契约的依赖。

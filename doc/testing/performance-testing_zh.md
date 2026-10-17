@@ -6,9 +6,9 @@
 
 > **范围**：本指南保留稳定的操作手册 + **当前 canonical** 吞吐参考。历史 per-run 实测详录
 > （带日期的表、原始 reps、各 effort 的方法论）放在 git-ignored 的 `scratchpad/perf-results-log.md`
-> ——新 per-run 数字追加那里，只有成为新 canonical 锚时才提升进本文档。远程机器上的 CUDA build +
-> parity/正确性验证是另一件事——见 [`gpu-remote-cuda-build-testing.md`](gpu-remote-cuda-build-testing.md)
-> （⛔ 该 recipe 的两台机器已退役、命令不可执行——先读那份文件顶部的横幅）。
+> ——新 per-run 数字追加那里，只有成为新 canonical 锚时才提升进本文档。参照机上的 CUDA build +
+> parity/正确性验证是另一件事——见 [`gpu-remote-cuda-build-testing.md`](gpu-remote-cuda-build-testing.md)；
+> 当前角色到主机的绑定与工具链路径只在 [`machines.md`](machines.md) 维护。
 > 下面哪些吞吐数字仍可复现，按 host 块标在「canonical 吞吐结果」一节里；
 > **把任何数字当判据之前先读那个状态。**
 
@@ -218,6 +218,25 @@ GPU 吞吐唯一的判据是 `[BENCHMARK]` 行的 `rays_per_sec`，以及（kern
 **观测通道不得挂在被测线程的临界路径上。** 一行 DEBUG 日志或一个 Python 日志回调曾经把
 `DoSnapshot` 的墙钟时间直接拖长一倍——观测这个动作本身改变了被观测的数字。新增任何插桩都要绕开
 临界路径（采样、独立线程、事后计数），而不是挂在它上面。
+
+
+## 精确吞吐闸（本地定时）
+
+双 renderer 吞吐闸要求 dual rays/s 分别达到两个 single renderer 的 **0.85×**。同一测试提供两个
+profile（由 `--dual-gate-profile` 选择），但两者服务不同失败路径：
+
+| Profile | 阈值 × reps | 执行位置 | 红态出口 |
+|---|---|---|---|
+| `ci` 灾难地板 | **0.75 × 5** | 每个 PR 与 push 到 `main` 的 `E2E Slow (macOS ARM64 rest)` phase 2 | PR / `main` CI 红 |
+| `precise` | **0.85**；Metal 21 次 ratio-of-medians；CUDA 63 次、10% winsorized paired-ratio mean | 参照机本地每日定时 | `[throughput-gate] <leg> fail` GitHub issue |
+
+`scripts/local_throughput_gate.py` 是唯一入口：在 gate 自有 clone 上取 `origin/main` → idle 检查 →
+build → 冷却与二次 idle 检查 → pytest → 记录 → 通知。Metal 参照机运行 `metal` leg，并按
+`machines.md` 的角色绑定通过 SSH 派发 `cuda` leg；两角色的当前主机不在本节重复。安装、更新与移除
+由 `scripts/install_throughput_gate.sh` 管理。结果写入
+`~/.local/state/lumice-throughput-gate/`，`pass` / `fail` 与 `skipped` / `error` 分开记录；连续无真实
+测量会触发 stale issue。该层是 **local schedule**，不是仓库不存在的 nightly workflow；完整标定、
+idle 判据、记录 schema 与告警闭环见英文伙伴同名章节。
 
 
 ## GPU 占用率天花板：寄存器压力是真实代价，不是编译器冗余

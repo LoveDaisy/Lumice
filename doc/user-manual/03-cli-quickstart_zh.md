@@ -45,7 +45,7 @@
 ## 3. Verbose 与 Debug 模式
 
 ```bash
-./build/cmake_install/static/Lumice -f config.json -v   # trace 级日志
+./build/cmake_install/static/Lumice -f config.json -v   # verbose 级日志
 ./build/cmake_install/static/Lumice -f config.json -d   # debug 级日志
 ```
 
@@ -81,8 +81,16 @@ Subcommands:
 Options for render (the default subcommand):
   -f <file>          Specify the configuration file (required)
   -o <dir>           Output directory for rendered images (default: current directory)
-  --format <fmt>     Output image format: jpg or png (default: jpg)
-  --quality <1-100>  JPEG quality (default: 95, ignored for PNG)
+  --format <fmt>     Output format: jpg, png, or npy (default: jpg). npy writes each
+                     renderer's unexposed linear XYZ accumulator as float32 (H, W, 3)
+                     plus an img_XX.json sidecar with exposure scalars; a raypath-color
+                     composite, when configured, is still written as jpg.
+  --quality <1-100>  JPEG quality (default: 95, ignored for PNG and npy)
+  --raw-normalization <raw|normalized>
+                     With --format npy only: write the accumulator as-is (raw), or
+                     multiplied by the absolute-mode exposure scale at intensity_factor 1
+                     (normalized). Overrides raw_export.normalization in the config.
+                     Default: raw.
   --seed <N>         Fix the simulation's random seed (a positive integer) so two runs
                      of the same config are the same run; this also sizes the pool to
                      one worker (a seeded run is single-threaded by contract).
@@ -99,7 +107,7 @@ Options for render (the default subcommand):
                      a config-file field: a config travels between machines and a
                      worker count should not travel with it. Ignored on a GPU route
                      (single engine).
-  -v                 Verbose output (trace level logging)
+  -v                 Verbose output (verbose-level logging)
   -d                 Debug output (debug level logging)
   -h, --help         Show this help message and exit
 
@@ -107,6 +115,7 @@ Examples:
   ./build/cmake_install/static/Lumice -f config.json
   ./build/cmake_install/static/Lumice -f config.json -o /tmp/output
   ./build/cmake_install/static/Lumice -f config.json --format png
+  ./build/cmake_install/static/Lumice -f config.json --format npy --raw-normalization normalized
   ./build/cmake_install/static/Lumice -f config.json --quality 80
   ./build/cmake_install/static/Lumice -f config.json --seed 7
   ./build/cmake_install/static/Lumice -f config.json --backend metal
@@ -135,7 +144,7 @@ Options:
                      'auto' and 'cpu' both select the CPU route today; 'metal'
                      falls back to CPU if unavailable. The LUMICE_TRACE_BACKEND
                      env var, if set, still overrides this (debug/CI only).
-  -v                 Verbose output (trace level logging)
+  -v                 Verbose output (verbose-level logging)
   -d                 Debug output (debug level logging)
   -h, --help         Show this help message and exit
 
@@ -211,7 +220,7 @@ Options:
                      a config-file field: a config travels between machines and a
                      worker count should not travel with it. Ignored on a GPU route
                      (single engine).
-  -v                 Verbose output (trace level logging)
+  -v                 Verbose output (verbose-level logging)
   -d                 Debug output (debug level logging)
   -h, --help         Show this help message and exit
 
@@ -254,7 +263,7 @@ Examples:
 要点：
 
 - `-f` 是唯一必需 flag。不带它会以非零退出并打印 usage 提示。
-- `--format png` 切到无损 PNG，此时 `--quality` 被忽略。
+- `--format png` 切到无损 PNG；PNG 与 NPY 都忽略 `--quality`。`--format npy` 为每个 renderer 写出未曝光的线性 XYZ 累积器，并附一份 `img_XX.json` 元数据。`--raw-normalization normalized` 会在写出前应用 absolute 模式的曝光归一，但不应用显示 EV 或 tone mapping；完整契约见 [`../configuration_zh.md`](../configuration_zh.md) 的 `raw_export`。
 - `--backend <name>` 只是**请求**一个 trace 后端；这次运行实际拿到了什么，看 `Stats:` 行：`backend=<cpu|metal|cuda>` 是运行真正跑在哪个后端上，`fell_back=true` 表示 GPU 后端曾拿到、随后丢失或被拒绝（运行中途设备出错，或 config 是它服务不了的），其余部分改走了 CPU 路——原因是 stderr 上的一条 `WARN`。本构建或本机根本提供不了的后端（比如在 Mac 上 `--backend cuda`）不算回退：运行从一开始就按 CPU 路配置，读到的是 `backend=cpu, fell_back=false`，外加启动时的一条警告。`benchmark` 子命令的 `[BENCHMARK]` JSON 带同样的两个字段。多渲染器 config（GUI 导出的文档带两个）在 GPU 路上作为一个 session 运行——见 [`../configuration_zh.md`](../configuration_zh.md#多个渲染器与-gpu-路)。
 - `--workers <N>` 覆盖自动 worker 数（Linux/macOS 上每个物理核一个、Windows 上每个逻辑核一个，各有一个按平台实测的上限；该上限只作用于自动值，你显式给出的 `N` 永远不受它约束）。它是命令行开关而不是 config 字段，是有意的：worker 数描述的是**机器**，而 config 文件会在机器之间流转。非法值（`0` / 负数 / 非数字）以非零退出，不静默回退到默认值。
 - `Lumice analyze -f <config>` 不渲染，而是向场景提一个问题：哪些光路链把能量送进了天空的某个区域，结果是 stdout 上的 CSV（或 `--csv <path>` 写文件）。config 只是场景；区域、行合并所用的对称性、光线预算与随机种子全是选项，从不读 config——所以脚本可以拿同一份 config 问多个问题，加 `--seed` 即可复现任何一次。`ray_num` 为 `"infinite"` 的场景会一直跑到 Ctrl-C，仍然写出结果；带 `--csv` 时文件每秒原子重写，任何时刻读到的都是完整文件。进度行走 stderr，stdout 只有 CSV。

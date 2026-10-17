@@ -1,11 +1,9 @@
 # 设计：GUI 自定义光谱 + per-raypath 颜色标记
 
-状态：
-- **功能 1（自定义离散光谱）已由 task-323 落地**（2026-07-03，见 `scratchpad/task-gui-custom-spectrum/`；同批完成 `ray_num` 语义统一为总数）。
-- **功能 2（per-raypath 颜色标记）：地基（phase-1 CPU + phase-2 GPU）已由 scrum-331 落地合入 main**（PR #175 merge `aff094ef`，2026-07-06）——per-ray uint64 component 掩码三后端（CPU/Metal/CUDA）产出 + 跨 MS 层前向累积 + 交付 consumer，parity 亲验，生产默认 gated off、渲染逐位不变。**剩 phase-3 上层**（binning / 颜色分组层 / rule editor / 合成 shader）。
-- **2026-07-05 设计深化 session（owner × AI）**：把功能 2 从最初"独立全局 classifier + 单层 bitmask"深化为 **跨层 component 掩码地基 + summand 级色桶（Fork C）+ 跨层 rule 层**。本文档据此重写 §1 / §4 / §5 / §6。核心结论：**地基窄而稳**——只需"产出 + 跨层累积 + 交付 per-ray component 掩码"三件事；binning 模型、rule 层、UI 全属地基之上，可延后，且**更换它们不需要重打三后端 seam**。
-- **2026-07-06 phase-3 产品模型深化 session（owner × AI）**：地基焊好后进一步收敛"用户能做什么"这层，见 §4.1 / §4.6 / §5 台账 #17–#20。要点：① **色桶粒度收敛为"UI filter = 一个颜色类"**（拍平进 core 记边界，见 §4.1）；② **放弃放宽 1:1（Fork A）**——一个复杂 filter 已能表达任意跨 type 并集，多绑定无必要；③ **事实纠正**：core 的 `ComplexFilterParam` **本就支持跨 type OR/AND**（`filter_config.hpp:40`），缺口在 GUI 编辑器；④ **component 位预算 = 去重后按需分配的谓词原子**，颜色/rule 是免费的位集组合，超预算优雅降级（§4.6）。
-- **⭐2026-07-08 Design-2 重定向 session（owner × AI，3b 开工前）**：owner 灵光一现——**把"颜色类"与"晶体上绑定的物理 filter"解耦**。颜色类不再是 filter 的 summand（推翻 Fork C），而是一张**独立的 placement-scoped 颜色谓词列表**，gate 上非破坏评估。物理 filter 决定存活、颜色谓词决定被画，两者独立；被门挡掉的染色路径自然不出弧。**见新增 §4.0（数据模型以它为准；§4.1 Fork C + §4.7 schema 标 SUPERSEDED）**。
+状态：**两项功能均已 as-built；本文保留设计演进与被推翻分支。**
+- **功能 1（自定义离散光谱）**已落地：GUI `RenderSpectrumModal`、`.lmc` / config round-trip 与“`ray_num` 为跨波长总数”的语义均为当前行为（CHANGELOG 4.3.4）。
+- **功能 2（per-raypath 颜色标记）**已全栈交付（CHANGELOG 4.3.5–4.3.6）：placement-scoped 谓词、跨层 component 掩码、rule-lane consumer、CPU / Metal / CUDA parity、C API、非模态 Colors 窗、host composite 预览、display-time recolor / visibility / z-order，以及默认 painter alpha-over 合成均已落地。当前实现入口见 `src/config/raypath_color_config.hpp`、`src/server/component_compositor.cpp`、`src/gui/color_window.cpp` 与三后端 trace backend。
+- §1、§4.1、§4.3 与 §4.7 中 Fork C、per-bit lane、默认 dominant、GUI / GPU “待做”等表述是**带日期的历史推理**；§4.0 的 Design-2、其后的 as-built 追记、§4.8 与 §6 当前状态优先。
 
 功能 1 部分的 as-built 见 `doc/configuration.md` 的 `ray_num` 语义章节与 `src/gui/edit_modals.cpp::RenderSpectrumModal`。
 
@@ -49,7 +47,7 @@ owner 计划扩展两个相关但不同的功能：
 
 ---
 
-## 2. 当前架构现状（explore 实测 2026-07-03 + 跨层核实 2026-07-05）
+## 2. 实施前架构基线（2026-07-03～05）
 
 ### 2.1 光谱 / 颜色管道
 - core + config-JSON 层**完全支持**自定义离散光谱：`SpectrumConfig = std::variant<std::vector<WlParam>, IlluminantType>`（`src/config/light_config.hpp:24`）。功能1 已把这条通到 GUI（task-323）。
@@ -254,7 +252,7 @@ consumer 收到 (pixel, Y, component 掩码)  ──►  地基到此为止；�
 > 4. **可见性（show/hide/solo）与合成方式正交、且更日常**：单独 lane 图始终是最诚实的检查视图。故 display 控制 = **两正交轴**（可见性 / 合成方式）。
 > 5. **overlap / z-order 降级为小 tiebreaker**：曝光共享后重叠区多由物理强度自然定色；早先把 z-order 当载重决策是**高估**（源于上面归一化 bug 的误判，已纠正）。下方"z-order/桶重叠"条据此降级。
 >
-> spike 代码已 revert（价值提取完毕），证据图留在 `scratchpad/three-arcs-*.png`（components=per-lane 假洋红 / shared=共享曝光 / dominant=默认）。
+> spike 代码已 revert（价值提取完毕）；本段保留的数值与正反例就是其长期证据，tracked 文档不依赖已归档的临时图片。
 
 - **consumer binning（延后定，二者同一地基）**：
   - **按 rule 分桶**（丢掉掩码）：改 rule 成员 → 重仿真；lane 数 = 用户 rule 数（少）。
@@ -352,7 +350,7 @@ consumer 收到 (pixel, Y, component 掩码)  ──►  地基到此为止；�
 
 ### 4.8 ⭐合成算法重设计:painter = 亮度即 alpha 的 over 合成(2026-07-15 owner×AI 定案)
 
-> **背景**:scrum-362(task-metal-green-pixel-floor 机制调查)暴露 `dominant` 合成的**噪声敏感**——见 `scratchpad/backlog.md`「渲染/合成算法」条(本节落地后从 backlog 移除)。owner×AI 一次设计 session 把三模式当一个整体重推,收敛出下面的定案。**改 compositor(`src/server/component_compositor.cpp`)前先读本节。**
+> **背景**：一次 Metal 绿像素机制调查暴露 `dominant` 合成的**噪声敏感**。owner 与实现者把三模式作为整体重推，收敛出下面的定案；该定案随后在 PR #199 落地。**改 compositor（`src/server/component_compositor.cpp`）前先读本节。**
 
 **根因(机制层,a04):`argmax` 是一个不连续的归约。** `dominant` = 每像素 `argmax_c ey_c`(`component_compositor.cpp:70` `CompositeDominantPixel`)。tie 附近一个无穷小扰动就翻转胜者 → 输出颜色整类跳变(RED→BLUE)。噪声、`ray_num`、跨后端的任何微小差异都被这个不连续性放大成"类归属剧变"。**即使各类 radiance 完全正确也发生**——scrum-362 用 additive 隔离测到跨层 AND 类 MAGENTA 的 radiance Metal/CPU=1.05(1:1),证明 radiance 无问题、抖动纯来自 argmax。这与 362.2 修的"dominant pixel-count 跨后端断言不可移植"是**同一个根、两处症状**(测试断言层面 vs 渲染效果层面)。
 
@@ -439,28 +437,25 @@ out     = clamp( display_exposure_scale · rgb , 0, 1 )    # display EV = 纯后
 
 ---
 
-## 6. 推进节奏（phase-1/2 地基 ✅ 已由 scrum-331 落地；phase-3 上层待立项）
+## 6. 当前落地状态
 
-1. **功能1** —— 已完成（task-323）。
-2. **功能2 分三阶段，先解耦**：
-   - **phase-1 地基（core + CPU）—— ✅ 已完成**（scrum-331，2026-07-06 合 main PR #175）：component 掩码产出（复用 §5.1）+ 跨层前向累积（全新 `RayBuffer` 并行数组，见 §2.4 更正）+ 交付 consumer；CPU 白盒（§4.5）钉死三后端跨层掩码一致性语义。
-   - **phase-2 GPU parity —— ✅ 已完成**（scrum-331 T5/T6）：Metal（`70ea738c`）+ CUDA（`2ed31715`，dev49 亲验）gate 产同一 component 掩码，parity 锚定；device 续传 shuffle 的掩码携带陷阱（§4.2）已在 gather kernel + host swap 两处处理。
-   - **phase-3 上层（待做，可另立 scrum）**，三条相对独立的线程：
-     - **(a) 颜色分组层 + binning**（display 侧，core 不动）：定 consumer binning（§4.3，rule-lanes 倾向）+ 位**按需分配**（§4.6，收敛掉 `BuildComponentTable` 的急切分配）+ 去重（§4.6）+ none-filter 对称色 + 超预算降级。
-     - **(b) GUI 编辑器**（§4.4）：**复杂 filter 编辑器**（补 backlog #178 缺口，让用户能编跨 type / 多 summand filter——core 已就绪）+ "UI filter = 色"分组编辑（§4.1，含拍平记边界）+ 全局 filter 列表**非模态**面板 + rule editor + display 多色合成 shader。
-     - **(c) GPU handoff 解耦**：T5/T6 把"产位"与 test-only host capture ring 共用了 `capture_component` 一个 flag；须解耦——产位 → device 侧 component 累加（per-component atomicAdd lanes），不走 host readback ring。
-   - **顺序理由**：地基的跨层 seam 最难回填，已钉死；上层三线程换之不动 seam。(a) 是最小可视化闭环的关键路径，(b) 的编辑器可增量铺，(c) 是 GPU 转正前提。
+1. **自定义光谱**：已完成；GUI、`.lmc`、config JSON 与 C API 使用同一离散波长/权重语义。
+2. **per-raypath 颜色标记**：设计中的三层已经闭环：
+   - **地基与三后端**：placement-scoped component 位按颜色谓词构建，随 ray 跨 MS 层携带；CPU、Metal、CUDA 都能在 device/host 对应路径累计 color-class lane，并有 parity 与多 batch 回归。
+   - **引擎与 ABI**：rule-lane consumer 支持 `any` / `all`、整晶体、P/B/D、三种合成模式与 display-time `LUMICE_SetRaypathColors`；`LUMICE_Config` 的动态色类数组由 Create/Release 管理。
+   - **GUI 与预览**：非模态 Colors 窗负责谓词、颜色、可见性、solo、z-order 与模式；结构编辑触发重仿真，颜色 / 显隐 / 顺序即时重合成。顶栏可在 Colored 与 Full Spectrum 间切换，host 预览按实际 payload 选择 XYZ 或 sRGB-radiance 纹理。
+   - **默认合成**：painter 已按 §4.8 改为亮度驱动 alpha-over，display EV 后置，dominant / additive 保留为诊断模式。
+3. **明确未做而非遗留交付缺口**：通用嵌套布尔（NOT / 任意表达式树）、per-class 透明度与多 lane shader 没有已证实需求；当前 host composite + flat any/all 是产品形态，不应按早期“phase-3 待做”重新立项。
 
 ---
 
-## 7. 顺带要修的债
+## 7. 已处理的文档债
 
-- `doc/rendering/accumulator-consumer-architecture.md` 的 anchor-lane 章节（§6.1/§7.2 及 ON/OFF anchor 引用）是 **stale**——该 lane 已被删除，`render.hpp` 无 anchor 成员。`raypath-rayseg-architecture.md` 里"filter 失败 route 到 anchor lane"的措辞属同一片 stale 债（`is_prior_filter_failed_` 的下游路由目标）。碰这块时顺手修，免误导后来人。
+早期记录点名的 anchor lane 与 `is_prior_filter_failed_` 陈述已经从当前渲染 / raypath 架构文档移除；现行跨层持久状态是 component 掩码，filter fail 直接终止该光线。历史段落保留旧名时只作设计演进证据，不是当前接口。
 
 ---
 
 ## 8. 关联
 
-- **代码事实**：filter↔crystal 1:1（`proj_config.hpp`、`filter-architecture.md §1`）；多值 OR 已是 `ComplexFilterParam`（`file_io.cpp::SerializeFilterForCore`）；跨层链 `prev_ray_idx_`/`root_ray_idx_` + `rp_` per-crystal（`core/raypath.hpp`、`simulator.cpp`）。⚠️ 早先说的"唯一跨层 per-ray bool `is_prior_filter_failed_`"**已过时**——该字段被 scrum-237 删除（task-331.1 核实，见 §2.4）；跨层持久 per-ray 状态现由 task-331.1 新建的 component 掩码承担。
-- **doc**：`filter-architecture.md`（§1 绑定不变量、§5.1 device filter-match、§多值 OR routing、§6 task-200 revert 史）、`raypath-rayseg-architecture.md`（跨层链、`is_prior_filter_failed_`）、`ev-pipeline-architecture.md`（单 lane、EV anchor）、`accumulator-consumer-architecture.md`（consumer buffer 模型 + §7 stale 债）。
-- **相关 memory**：`project_design_gui_spectrum_filter_color`（本设计索引，需据本次深化更新）；filter 物理门 vs 渲染分类的区分即本设计核心。
+- **代码事实**：物理 filter 与 crystal 保持 1:1；颜色谓词独立于物理门，以 `(layer, crystal)` 为 placement key；跨层 component 掩码沿 ray buffer 携带，consumer 按 color class 聚合。
+- **长期文档**：[`filter-architecture.md`](../raypath/filter-architecture.md)、[`raypath-rayseg-architecture.md`](../raypath/raypath-rayseg-architecture.md)、[`ev-pipeline-architecture.md`](../rendering/ev-pipeline-architecture.md)、[`accumulator-consumer-architecture.md`](../rendering/accumulator-consumer-architecture.md)。

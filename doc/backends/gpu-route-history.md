@@ -1,6 +1,6 @@
-# GPU 路线系统回顾（#250 → #312 + Phase 13/14，截至 2026-09-19）
+# GPU 路线系统回顾（#250 → #312 + Phase 13/14；历史截止 2026-09-19，处置核对 2026-10-17）
 
-> §一~§四 = Metal 单引擎弧（#250→268，原始回顾，截至 2026-06-13）；§五 Phase 10 = CUDA 第二步 + device-fused（#294→302）；§六 Phase 11 = CUDA 吞吐收口 + Windows 交付 + 第三时钟（#303→312）；§七 Phase 12 = 投影全量对齐；§八 Phase 13 = 多 renderer N 面累加；§九 Phase 14 = CUDA 空闲间隙的机制层否定结果（异步化第三次被拒，这次带机制）。
+> §一~§四 = Metal 单引擎弧（#250→268，原始回顾，截至 2026-06-13）；§五 Phase 10 = CUDA 第二步 + device-fused（#294→302）；§六 Phase 11 = CUDA 吞吐收口 + Windows 交付 + 第三时钟（#303→312）；§七 Phase 12 = 投影全量对齐；§八 Phase 13 = 多 renderer N 面累加；§九 Phase 14 = CUDA 空闲间隙的机制层否定结果。§三的“遗留项”是 2026-06-13 当时的队列，新增的当前处置列才回答今天是否仍待办。
 
 > 目的：把 GPU 迁移一路的决策演进、已积累数据、遗留项盘点清楚，作为重新深想的全局参照系。
 > 触发：owner 反思"行动前想得不够深→地基不稳、结论来回摇摆、积累不成形"。
@@ -56,7 +56,7 @@
   - **concern #2 已解**：`LUMICE_BATCH_RAY_NUM` 拆为 `LUMICE_DISPATCH_RAY_NUM`（GPU dispatch 粒度）+ `LUMICE_COMMIT_RAY_NUM`（GUI commit 粒度）双旋钮（268.4）。
   - **+16% bug correct-by-construction 修复**：随 `CopyContSliceToRootBuf` 删除自愈，parity matrix 10/10。
   - PR #129，合 main 2026-06-17。
-- **吞吐数字纠偏（task-fix-throughput-bench-honesty，2026-06-19）**：scrum-268 收尾时记的 "CLI 9.5× / GUI 2.07× / 6× poller headroom" 三处均为测量假象——① `--benchmark` 把 setup 计入分母低估快后端（修复后引擎 8–10×）；② GUI 2.07× 是 task-272 修 complex-filter 导入前的无 culling 数（修复后 ~9.5×）；③ 同口径下引擎 ≈ GUI，**无 poller headroom gap**（poller 整幅回读是 per-commit 延迟成本，非吞吐天花板，explore-271 E3 已证）。原始数据见 `scratchpad/task-fix-throughput-bench-honesty/data/`。
+- **吞吐数字纠偏（2026-06-19）**：原收尾记录的 "CLI 9.5× / GUI 2.07× / 6× poller headroom" 三处均为测量假象——① `--benchmark` 把 setup 计入分母低估快后端（修复后引擎 8–10×）；② GUI 2.07× 是 complex-filter 导入修复前的无 culling 数（修复后 ~9.5×）；③ 同口径下引擎 ≈ GUI，**无 poller headroom gap**（poller 整幅回读是 per-commit 延迟成本，非吞吐天花板）。现行口径与 canonical 数字见 `../testing/performance-testing.md`。
 
 ### 演进的元模式
 1. **战略意图始终是"GPU 求吞吐、两步走"**，但 #256 起逐步滑向"在开发机 Mac GUI 上把 Metal 调好"。
@@ -97,19 +97,19 @@
 
 ---
 
-## 三、遗留项盘点（现在看：仍有价值 / 已过时 / 已被取代）
+## 三、2026-06-13 遗留项与后续处置
 
-| backlog 条目 | 现状判断 |
-|---|---|
-| **CUDA Step 2（离散显存重测 + master plan 第二步）** [425/120] | ⭐**最高战略价值，未动**。真实部署目标（Windows 用户 + dev49 bench 都是 NVIDIA）。所有 Metal"便宜"结论带统一内存 caveat，CUDA 才是真正受检处。seam 全部设计就是为它零上层改动。 |
-| **commit↔batch 解耦（concern #2）** [565] | ✅**仍有价值，且已被 #265 跨 regime 证明必要**。启动条件（#264 落地）**已满足**。是 GUI 吞吐+响应的根治解。 |
-| **P3 bulk device-fused** [557] | ✅仍有价值，但**属 CUDA/offline 吞吐**（非 GUI），已标 phase-2 CUDA 开篇。 |
-| **golden 光线 absolute 锚测试** [438] | ✅仍有价值，尤其"CUDA backend 立项时一并做"——第二后端正需 absolute 锚分辨"kernel 错"vs"两后端一致都错"。 |
-| **自适应 gen 策略** [579] | ⚠️**部分过时**。#265 显示重场景要小 batch，可能仍相关；但大半被 decouple 工作吸收，待 decouple 后重估。 |
-| **Metal 收尾：默认 batch 调优** [544] | ⚠️**已被 #265 细化/取代**——不是简单"调高默认"，是 concern #2 / regime-aware 问题。 |
-| Metal 收尾：sim_seed 文档 / rpath / single_ms_filter [544] | ✅小清理仍有效。 |
-| **Metal device-RNG root supply** [410] | ❌**已被 scrum-260 实现/取代**，应关闭。 |
-| roofline 内存天花板 [368] / fuse trace→consume [388] | ◽CPU 侧高端 perf，与 GPU 路线正交；仍有效但低优先（多数用户 8C16T 不撞墙）。 |
+| 当时的 backlog 条目 | 当时判断 | 截至 2026-10-17 的处置 |
+|---|---|---|
+| **CUDA Step 2（离散显存重测 + master plan 第二步）** [425/120] | 最高战略价值，尚未启动 | ✅ Phase 10–12 已完成 CUDA 多 CI、device-fused、Windows 交付、third-clock 与 11 投影；CUDA 现为正式 GPU 后端。 |
+| **commit↔batch 解耦（concern #2）** [565] | 跨 regime 必要，启动条件已满足 | ✅ 已拆为 dispatch、commit、readback 三个节拍；Metal/CUDA 分别采用 32768/262144 默认 dispatch，CPU 保持 128 physics batch。 |
+| **P3 bulk device-fused** [557] | CUDA/offline 吞吐的下一步 | ✅ Phase 10 落地并成为 Metal/CUDA 生产路径；逐出射 record 不再默认跨 PCIe。 |
+| **golden 光线 absolute 锚测试** [438] | CUDA 立项时应补 | ◐ CPU/Metal 已有并列闭式 golden anchors；CUDA 仍主要由共享原语、白盒 kernel 测试与 cross-backend parity 约束，不能把前两者外推为 CUDA absolute anchor 已闭合。 |
+| **自适应 gen 策略** [579] | 可能被解耦吸收，待重估 | ◐ 原问题已被后端专属 dispatch、device root-gen 与 K-shape pool 吸收；没有落地自动策略，也没有当前证据要求再立项。 |
+| **Metal 默认 batch 调优** [544] | 不是单纯调高，而是 regime-aware 问题 | ✅ 由 backend-aware dispatch 默认值和独立 commit/readback 节拍取代。 |
+| Metal 小清理：`sim_seed` / raypath / single-MS filter [544] | 仍有效 | ✅ 默认 device-gen、固定 seed、single-MS filter 与 raypath parity 均有现行测试；不再作为 GPU 路线活跃条目。 |
+| **Metal device-RNG root supply** [410] | 已被实现取代 | ✅ 保持关闭；device root generation 是 Metal/CUDA 默认路径，host generation 仅为显式 fallback。 |
+| roofline 内存天花板 [368] / fuse trace→consume [388] | CPU 侧高端 perf，和 GPU 路线正交 | 未由本路线处理；仍是异根因 CPU 性能题，不能列作 GPU 未完成项。 |
 
 ---
 

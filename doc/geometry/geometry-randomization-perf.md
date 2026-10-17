@@ -200,12 +200,12 @@ C should not be re-attempted on the current representation.
 - **Use a large enough `ray_num`** that trace dominates fixed overhead.
 - **Trust only `rate_basis` = `steady`.** `active_short` and `wall_fallback` are both a
   conservative wall-clock lower bound (`rays / wall_sec`), not a steady-state rate — see
-  `performance-testing.md` §C rule 4/5 for the mechanism (a too-short `ray_num` degrades
+  `../testing/performance-testing.md` §C rule 4/5 for the mechanism (a too-short `ray_num` degrades
   `active_short` to dividing by IDLE-detection latency instead of trace duration, which used
   to produce 14–29x phantom rates before that branch was fixed to use `wall_sec`). Discard
   both when comparing throughput; only `steady` measures what this section's numbers need.
 - Perf baseline is legacy CPU (state the denominator); the GPU throughput bar is hardware/competitor class, not merely "beats legacy".
 
-See also: `seam-design.md` (§3.2 per-ray shape pool, §5 single-engine three-clock target),
-`gpu-single-engine-implementation.md` (as-built), `numerical-robustness.md` (the geometry-predicate
-high-risk zone), `performance-testing.md` (benchmark caveats), `crystal-orientation-sampling.md`.
+See also: `../backends/seam-design.md` (§3.2 per-ray shape pool, §5 single-engine three-clock target),
+`../backends/gpu-single-engine-implementation.md` (as-built), `numerical-robustness.md` (the geometry-predicate
+high-risk zone), `../testing/performance-testing.md` (benchmark caveats), `crystal-orientation-sampling.md`.

@@ -1,16 +1,27 @@
 # GPU 单引擎实现设计（seam-design §5 落地）
 
-> 本文是 §5 单引擎 GPU simulator **重写**的实现设计与上下文锚，供后续 scrum 引用。
+> 本文是 §5 单引擎 GPU simulator **重写**的实现设计、历史测量与当前机制锚。
 > 配套（读这些获取完整推理）：
-> - `doc/backends/seam-design.md` —— §5 目标架构蓝图（§3.6 原始之罪 / §4.5 filter 出口 / §5 统一 seam 形态）。
-> - `doc/backends/gpu-route-history.md` —— GPU 迁移 #250→268 全程回顾（§9 = 单引擎弧高潮）。
-> - `doc/backends/trace-backend-frame-lifecycle.md` —— Metal 帧生命周期 as-built（§8 = DR-3 波长）。
-> - `doc/testing/testing-architecture.md §4.2` —— parity metric-masks-bugs battery 方法论（cross-seed + 能量守恒 + golden 锚 + 人眼）。
-> - `scratchpad/explore-gpu-single-engine/{SUMMARY,insights,experiments}.md` —— explore-266 de-risk 细节（gitignored，本文固化其 durable 结论）。
+> - `seam-design.md` —— 三时钟、CPU/GPU 非镜像与 device-fused seam 的设计演进。
+> - `gpu-route-history.md` —— GPU 迁移全程回顾与后续处置。
+> - `trace-backend-frame-lifecycle.md` —— CPU/Metal/CUDA 当前帧生命周期。
+> - `../testing/testing-architecture.md §4.2` —— parity metric-masks-bugs battery 方法论。
+>
+> 设计期细节保留在 §1–§7；接手当前实现先读 §0、§8.1 与 §10，不要把设计期的“未来 CUDA”、
+> 12-worker Metal 或 host-side continuation 当成现状。
 
-## 0. ⭐ As-Built 状态（scrum-267 + scrum-268 完成，2026-06-17）
+## 0. ⭐ 当前落地状态（2026-10-17 核对；历史吞吐仍按原日期保留）
 
-> 本节为接手须知。两个 scrum 均已合 main；下方 §1-§7 保留设计推理原文。
+| 维度 | 当前权威形态 |
+|---|---|
+| 路由 | `ResolveGpuRoute` 与 `CreateBackend` 共用优先级：analysis 强制 CPU > `LUMICE_TRACE_BACKEND` 调试覆盖 > API/CLI preference；不可用 GPU 回退 legacy CPU。 |
+| 编排 | CPU render 为多 worker；Metal/CUDA render 为单 engine。GPU-preferred server 另常备 CPU analysis pool，`num_workers` 在该路由上决定 analysis pool 大小。 |
+| 首层与续传 | Metal/CUDA 默认 device root generation；续传全程 device-resident。`LUMICE_DISABLE_DEVICE_GEN=1` 只保留 host-generation 诊断 fallback。 |
+| 消费 | 两个 GPU 后端都在 exit tail 内做 filter、11 种 forward projection、最多 4 个 renderer 的 XYZ/颜色 lane/曝光锚累加；生产路径不物化逐出射 record。 |
+| 三时钟 | CPU physics batch 128；Metal/CUDA 默认 dispatch 分别 32768/262144；commit 独立；两 GPU 后端都启用 third-clock drain，窗口默认 64 batch。CUDA 每 8 batch 将 fp32 XYZ 平面折入 device double 平面。 |
+| 用户默认 | GUI 新安装仍默认 CPU；用户可将 GPU 选择保存为机器级 app preference。 |
+
+早期单引擎实现于 2026-06-17 合入；下表保留当时 Metal 验收和后续多 renderer 数据，不充当今天的跨机器性能基准。当前 canonical 吞吐只看 `../testing/performance-testing.md`。
 
 > ⚠️ **吞吐数字 2026-06-19 受控重测后纠偏**（task-fix-throughput-bench-honesty）。
 > 原表的 "CLI 9.5× / GUI 2.07× / 6× poller headroom" 三处均为测量假象，已替换为下方
@@ -22,7 +33,7 @@
 | **GUI steady 吞吐**（真实 GUI regime，infinite + reconstruct 路径，dual_fisheye 512×256，M2 Max） | 重场景 **~9.5× legacy**（轻 1.8× / 中 2.2× / 最重棱锥 5.7×） |
 | **GUI first_upload**（median，regime 相关） | 重场景 ~18ms / 中场景 ~71ms（均 < 150ms 冻结阈） |
 | **引擎 vs GUI** | **同口径下 ≈ 1:1（无 headroom gap）**——引擎 8–10× ≈ GUI ~9.5×；旧"6× poller headroom"是假象 |
-| **dispatch 甜点** | **32768**（backend-aware 默认；`LUMICE_DISPATCH_RAY_NUM`）。512/2048 仍饿死 GPU（0.2–0.8×），128 在大 ray_num 直接挂死 |
+| **Metal dispatch 甜点（历史 M2 测量）** | **32768**（backend-aware 默认；`LUMICE_DISPATCH_RAY_NUM`）。512/2048 仍饿死 GPU（0.2–0.8×），128 在大 ray_num 直接挂死；CUDA 当前默认 262144，不能复用此数 |
 | **commit↔batch 解耦** | ✅ `LUMICE_DISPATCH_RAY_NUM` + `LUMICE_COMMIT_RAY_NUM` 双旋钮（concern #2 已解） |
 | **parity matrix** | **10/10**（含 D65 illuminant + DR-3 波长） |
 | **occupancy**（trace_layer_kernel PSO） | **640**（benign：R1 不触发，见 §6.1 最终裁决） |
@@ -34,7 +45,7 @@
 - **"GUI 2.07× legacy"**：是 **task-272 修 complex-filter 导入前**测的——GUI 静默丢 filter → 跑无 culling 的重 workload → 被压低。修复后真实重场景 = ~9.5×。
 - **"6× poller headroom（引擎 9.5× 在 GUI 仅兑现 2.07×，差 poller 20ms 整幅回读）"**：不存在。同口径下引擎 ≈ GUI（甚至 GUI steady 绝对值更高，因 `--benchmark` 旧口径低估引擎）。poller 整幅回读是**每次 commit 的延迟成本**（体现在 first_upload，全部 < 150ms），不是吞吐天花板（explore-271 E3 已证 poll 间隔不影响吞吐）。
 - **错误 config 名**：原表 `ms3_multi_crystal_complex_filter` 不存在；真名为 `ms_multi_crystal_complex_filter`（无 `3`）。
-- **度量教训**：吞吐对比必须 ① 排除 setup（rate = 稳态 active 窗口）；② 对齐 workload（filter culling 与否）与投影（GUI 强制 dual_fisheye_equal_area，见 `file_io.cpp` `SerializeCoreConfig`）；③ 只比同方法学内的 ratio-over-legacy，跨方法学相除无意义。原始数据：`scratchpad/task-fix-throughput-bench-honesty/data/`。
+- **度量教训**：吞吐对比必须 ① 排除 setup（rate = 稳态 active 窗口）；② 对齐 workload（filter culling 与否）与投影（GUI 强制 dual_fisheye_equal_area，见 `file_io.cpp` `SerializeCoreConfig`）；③ 只比同方法学内的 ratio-over-legacy，跨方法学相除无意义。现行方法与结果集中在 `../testing/performance-testing.md`，不要从本节历史数字推导当前硬件性能。
 
 **已删除的遗留结构**（§5.1 reuse/discard 账本承诺的删法）：
 - `CopyContSliceToRootBuf`（host-side 续传）→ 删，由 `transit_root_kernel` 取代。
@@ -48,7 +59,7 @@
 
 ### 0.1 ⭐ CUDA backend as-built（全量多 CI + 诚实吞吐基线，2026-06-27，task-cuda-throughput-bench）
 
-> CUDA 是 seam 的第二个真实消费者。scrum-295/296 落地单 CI MVP；本轮把它推到**与 legacy 完全对齐的全量多 CI**，并取到第一份**诚实**吞吐基线。设计蓝图细节见 `scratchpad/task-cuda-throughput-bench/MULTI_CI_DESIGN.md`（git-ignored），分支 `feat/cuda-multi-ci-correctness`。
+> CUDA 是 seam 的第二个真实消费者。单 CI MVP 后扩到全量多 CI，并取得第一份离散显存诚实基线；后续 device-fused、持久 buffer 与 third-clock 结果见 `gpu-route-history.md` Phase 10–11。
 
 - **多 CI（每层多晶体带 proportion）全量落地，对标 Metal 惰性-transit-per-CI 模型**（CUDA 此前是 single-CI MVP：BeginSession 只传 1 晶体、TraceLayer/Recombine/DrainExits 用 setting_[0]）。结构改动：
   - 几何 per-CI：`UploadCrystalGeometry`/`EnsureGeomCapacity`（grow-only），对标 Metal `UploadCrystal`。
@@ -60,7 +71,7 @@
 - **验证（dev49/44 RTX 4060 Ti，全对 legacy）**：parity-cross-backend 11/11（单MS / ms_prob05 2层 / ms_multi_crystal 2层多CI ds_corr 0.913→0.9998 / **ms3_multi_crystal 3层多CI [4,3,2] 含 final** / filter / cross-seed 自洽）；e2e-correctness 15/15（CUDA 路由确认）；ctest golden-analytic 100%。**未修前 ms_multi_crystal 静默错（ds_corr 0.913，energy+cross-seed 都掩盖）——parity 漏因只测了 single-CI 的 ms_prob05。**
 - **诚实吞吐基线（干净机 44-GPU，GPU 0%/CPU idle 99%）**：light_single_ms CUDA ≈ **0.10–0.12× legacy，flat（与 dispatch 无关）**；瓶颈 100% = **出射记录主机往返**（DrainExits D2H + 主机 filter + 下游 XYZ 累加，线性于 exit 数 ~54ns/exit），trace kernel 极小。
   - ⚠️ **推翻 scrum-296 Step D（49-GPU 旧单 CI 代码）"大 dispatch 1.6–2.2×"**——那是 exit 64MiB 硬顶丢弃 87% exit 的假象（drain 被封顶→虚高）。处理全部 exit 后 = ~0.1× flat。**"加大 dispatch 让 CUDA 赢"失效。**
-  - 唯一有意义优化 = **device 侧 XYZ 累加**（不每 dispatch 把裸 records 过 PCIe+主机处理），非 dispatch/batch 调参。详见 `scratchpad/backlog.md` seam 条目（待单起 explore）。
+  - 当时唯一有意义的下一步是 **device 侧 XYZ 累加**（不每 dispatch 把裸 records 过 PCIe+主机处理），而不是继续调 dispatch；该方向后来已落地并成为生产路径，见下方 superseded 说明。
   - 仪表瑕疵待修：多 CI 重写把 cudaEvent `ev_end_kernel_` 记录点挪到 per-CI 循环外，TraceLayer kernel 计时失真（≈0ms 假象）；profiling 前先修 event placement。
 
 > ⚠️ **SUPERSEDED（2026-07-01，scrum-313 doc 审计）**——上面这份 "CUDA ≈ 0.10–0.12× legacy，flat，
@@ -160,7 +171,7 @@
 - trace kernel **内层 optics**（`mm:157-382`：`GetReflectRatio`/折射反射 TIR/面求交/`path[]` 记录）= #250 寄存器驻留核，逐字搬。
 - exit-seam 出射记录写出（`mm:276-294`，ms_mode==0 分支）= 规范出口。
 - `gen_root_kernel`（PCG device root-gen，scrum-260，`mm:688`）→ 复用为 frame-transit 取向采样。
-- `exit_seam.hpp` schema / `ReadbackExitRays` / parity harness / `CpuTraceBackend` oracle / `ReduceBuffer` MSL spike（E4 `scratchpad/explore-gpu-single-engine/spike/`）。
+- `exit_seam.hpp` schema / `ReadbackExitRays` / parity harness / `CpuTraceBackend` oracle / 已验证的 device filter reduction。
 - 机械管线（PSO / `Ensure*` buffer / `UploadCrystal`）= backend 脚手架非罪，**共享复用，不重写**。
 
 **重写 / 删除（原始之罪，device 续传缺口）：**
@@ -192,7 +203,7 @@
 - **D3 plan-review / code-review 必答三问（不答即 block）**：每个实现子任务的 plan 和 diff 显式回答——①推进了哪条 §5 不变量？②**删除**了什么（不只是加了什么）？③是否依赖 legacy 结构（12-worker / host-hop）？若是——是带 delete-ticket 的临时脚手架，还是漂移？挂在 scrum-drive 已强制的 review 门上。
 - **D4 过程信号当架构警报（tripwire）**：**若某实现子任务的 diff 在 legacy 结构之上净增、且没删任何东西 → 停。** 净加 = 又在镜像 CPU 结构。这是停下来回看大目标的硬信号，不是继续走小步的理由。
 
-> 各 scrum 的具体验收门数值是 scrum-specific，落在该 scrum 的 `scratchpad/scrum-*/scrum.md`，不进本 doc。
+> 各阶段的数值验收门属于当时实施记录；本文只保留可迁移的反漂移纪律，当前门槛以现行测试和 `../testing/testing-architecture.md` 为准。
 
 ## 7. 验证策略（贯穿两 scrum）
 

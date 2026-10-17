@@ -1,399 +1,183 @@
 [English version](architecture.md)
 
-# 系统架构文档
+# 系统架构
 
-本文档描述 Lumice 项目的系统架构设计。
+本文描述 Lumice 当前的高层架构。完整 API 声明、配置字段和测试矩阵各有独立权威文档，本文不复制这些易漂移清单。
 
-## 概述
+## 1. 系统形态
 
-项目采用服务器-消费者（Server-Consumer）架构模式，支持多线程并行光线追踪和批量处理。
+Lumice 在同一引擎之上提供两个应用壳：
 
-### 设计目标
+- `Lumice`：命令行应用；
+- `LumiceGUI`：交互式 GUI。
 
-1. **高性能**：通过多线程并行处理提升模拟速度
-2. **可扩展性**：支持多渲染器并行处理
-3. **模块化**：清晰的模块划分，便于维护和扩展
-4. **灵活性**：灵活的配置系统，支持复杂的模拟场景
+两者都只经 `src/include/` 下的公开 C 能力头使用引擎。GUI 不直接包含引擎的 `core/` 或 `config/` 头。场景提交到 server 后，渲染或分析 session 产生 batch，consumer 把 batch 约化为结果，调用方再获取一帧不可变发布结果。
 
-### 架构特点
-
-- **服务器-消费者模式**：采用生产者-消费者模式，实现模拟和渲染的解耦
-- **多线程并行**：默认使用 `max(1, hardware_concurrency - 2)` 个模拟器线程并行处理
-- **队列系统**：使用线程安全的队列进行数据传递
-- **单项目模式**：每次提交一个项目配置（包含一个场景和多个渲染器）
-
-## 整体架构
-
-采用三层架构：
-
-```
-┌─────────────────────────────────────────┐
-│           配置层 (Config)                │
-│  ConfigManager, 各种Config类            │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│         服务器层 (Server)                │
-│  Server, ServerImpl, 队列系统            │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│       处理层 (Processing)                │
-│  Simulator, Consumer, Render            │
-└─────────────────────────────────────────┘
+```text
+JSON / GUI 文档
+        │
+        ▼
+公开 C 能力（`lumice_*.h`）
+        │
+        ▼
+场景提交 ──► session 编排 ──► CPU worker 或单个 GPU engine
+                                      │
+                                      ▼
+                                   SimData
+                                      │
+                 ┌────────────────────┼────────────────────┐
+                 ▼                    ▼                    ▼
+             渲染 / 锚点             统计             光路直方图
+                 └────────────────────┼────────────────────┘
+                                      ▼
+                           不可变 `ResultFrame`
+                                      │
+                                      ▼
+                              CLI / GUI / C 客户端
 ```
 
-## 核心组件
-
-### 1. Server（服务器）
-
-`Server` 类是架构的核心入口，采用 PIMPL 模式将实现隐藏在 `ServerImpl` 中。负责：
-
-- 配置管理：解析和管理 JSON 配置文件
-- 任务调度：将项目配置分发到模拟器
-- 结果收集：从消费者收集处理结果
-- 生命周期管理：控制服务器启动和停止
-
-**主要接口**：
-- `CommitConfig(const nlohmann::json&, bool* out_reused)`: 提交已解析的配置。这是 core 侧唯一的
-  commit；能到达它的公开入口只有 `LUMICE_CommitScene`（C API 的 `LUMICE_Config` 值结构体及其三个
-  commit 函数已在 v4.12 移除，见 [`doc/interfaces/c_api_zh.md`](interfaces/c_api_zh.md)）。
-- `CommitConfig(const std::string&)`: JSON 字符串重载，供 benchmark harness 使用
-- `AcquireResultFrame()`: 获取最新结果帧的一份所有权份额——**结果的唯一入口**。返回
-  `std::shared_ptr<const ResultFrame>`（永不为空），一帧同时承载全部结果种类（mono render /
-  composite / raw XYZ / stats），因此任取其二在构造上必属同一世代。它会先物化待处理的快照，
-  故新鲜度与它取代的那组 per-kind getter 相同；帧内指针在调用方持有份额期间始终有效，
-  因为后续快照发布的是**新**帧而不是覆写这一帧。被它取代的六个 `Get*Results` getter 已在
-  v4.15 移除——所有权不变量与促成它的两次 use-after-free 复发见
-  [`doc/interfaces/capi-lifecycle-architecture.md`](interfaces/capi-lifecycle-architecture.md) §9。
-- `IsIdle()`: 检查是否空闲
-- `Stop()` / `Terminate()`: 停止服务器
-
-**错误处理**：
-```cpp
-struct Error {
-  ErrorCode code;   // kSuccess, kInvalidJson, kInvalidConfig, kMissingField, ...
-  std::string message;
-  std::string field;
-};
-```
-
-### 2. Simulator（模拟器）
-
-`Simulator` 负责光线追踪模拟：
-
-- 从场景队列获取场景配置
-- 执行光线追踪计算
-- 将模拟结果放入数据队列
-
-**特点**：
-- 多实例并行：默认创建 `max(1, hardware_concurrency - 2)` 个 Simulator 实例
-- 独立线程：每个 Simulator 运行在独立线程中
-- 独立随机数生成器：每个实例使用不同的种子
-
-### 3. Consumer（消费者）
-
-`IConsume` 接口定义了消费者的抽象：
-
-- `Consume(const SimData&)`: 消费模拟数据
-- `GetResult()`: 获取处理结果
-
-**实现类**：
-- `RenderConsumer`: 渲染消费者，将模拟数据渲染为图像
-- `StatsConsumer`: 统计消费者，收集光线数量、晶体数量等统计信息
-
-### 4. 队列系统
-
-使用线程安全的 `Queue<T>` 模板进行数据传递，基于 `std::mutex` 和 `std::condition_variable` 实现阻塞式获取：
-
-- `scene_queue_`: 场景配置队列（多个 Simulator 共享）
-- `data_queue_`: 模拟数据队列（多个 Simulator 共享）
-
-## 数据流
-
-### 配置加载流程
-
-```
-JSON配置文件
-    ↓
-ConfigManager (解析)
-    ↓
-各种Config对象 (LightSourceConfig, CrystalConfig, etc.)
-    ↓
-ProjConfig (组合场景和渲染器)
-    ↓
-CommitConfig() (创建Consumer, 启动线程)
-```
-
-### 模拟流程
-
-```
-ProjConfig (从config_manager_.project_)
-    ↓
-GenerateScene() (生成SceneConfig)
-    ↓
-scene_queue_ (场景队列，共享)
-    ↓
-Simulator (多个并行)
-    ↓
-SimData (模拟数据)
-    ↓
-data_queue_ (数据队列，共享)
-```
-
-### 渲染流程
-
-```
-SimData (从data_queue_)
-    ↓
-ConsumeData() (分发到Consumer)
-    ↓
-RenderConsumer / StatsConsumer
-    ↓
-RenderResult / StatsResult
-    ↓
-DoSnapshot() 发布一帧不可变 ResultFrame
-    ↓
-AcquireResultFrame()（调用方持有它的一份份额）
-```
-
-### 完整流程
-
-```
-配置文件
-  ↓
-Server::CommitConfig()
-  ↓
-ConfigManager (解析配置)
-  ↓
-创建 Consumer (Render/Stats)
-  ↓
-Start() → GenerateScene() (生成场景)
-  ↓
-scene_queue_ (场景队列) ──→ Simulator × N (并行, N = max(1, hardware_concurrency - 2))
-  ↓                                    ↓
-data_queue_ (数据队列) ←──────────────┘
-  ↓
-ConsumeData() (分发, consumer_mutex_ 保护)
-  ↓
-Consumer (Render/Stats)
-  ↓
-Result (结果, consumer_mutex_ 保护)
-  ↓
-Server::GetResults()
-```
-
-## 线程模型
-
-使用多线程架构：
-
-1. **主线程**：运行 `main()` 函数，调用 `Server::CommitConfig()` 和结果获取接口
-2. **模拟器线程**：默认 `max(1, hardware_concurrency - 2)` 个线程，每个运行一个 `Simulator::Run()`
-3. **场景生成线程**：`GenerateScene()` 线程，从项目配置生成场景并放入 `scene_queue_`
-4. **数据消费线程**：`ConsumeData()` 线程，从数据队列分发数据到消费者
-
-**线程同步**：
-- 使用 `std::mutex` 保护共享资源
-- `consumer_mutex_`：保护 `consumers_` 的 `Consume()` 和 `GetResult()` 调用，防止数据消费线程与主线程之间的竞争
-- 使用 `std::condition_variable` 进行线程间通信
-- 使用原子变量（`std::atomic_bool`）控制线程状态
-
-## 模块说明
-
-### config 模块
-
-**职责**：配置解析和管理
-
-**主要类**：
-- `ConfigManager`: 统一配置管理器，持有所有配置对象的映射（`std::map<IdType, *Config>`）
-- `LightSourceConfig`: 光源配置
-- `CrystalConfig`: 晶体配置
-- `FilterConfig`: 过滤器配置
-- `RenderConfig`: 渲染配置
-- `SceneConfig`: 场景配置（包含散射设置 `ScatteringSetting`、多次散射信息 `MsInfo`）
-- `ProjConfig`: 项目配置（组合场景和渲染器引用）
-- `SimData`: 模拟输出数据结构（包含 `RayBuffer` 和晶体列表）
-
-**依赖**：
-- 依赖 `nlohmann/json` 进行 JSON 解析
-- 依赖 `core/math` 中的 `Distribution` 类型
-
-### core 模块
-
-**职责**：核心物理算法实现
-
-**主要类**：
-- `Crystal`: 晶体几何表示（三角面片网格），支持创建六棱柱（`CreatePrism`）和六棱锥（`CreatePyramid`）
-- `Simulator`: 光线追踪模拟器，从队列获取场景、执行光线追踪、输出 `SimData`
-- `Filter`: 过滤器系统，支持光线路径、入射/出射面、方向等多种过滤方式
-- `RayPath` / `RaySeg`: 光线路径和光线段数据结构
-- `Optics`: 光学计算（折射、反射、菲涅尔系数）
-- `Geo3D`: 3D 几何计算（三角形相交、法向量等）
-- `Math`: 数学工具（向量运算、矩阵、随机数分布等）
-
-### server 模块
-
-**职责**：服务器架构实现
-
-**主要类**：
-- `Server`: 服务器公开接口（PIMPL 模式）
-- `ServerImpl`: 服务器内部实现，管理线程、队列和消费者
-- `IConsume`: 消费者抽象接口
-- `RenderConsumer`: 渲染消费者，实现各种镜头投影算法
-- `StatsConsumer`: 统计消费者
-- `c_api_*.cpp`: C API 封装实现，每个能力头一个桥文件
-
-**特点**：
-- 线程安全的队列系统
-- 多线程并行处理
-- 非阻塞的结果获取
-
-### util 模块
-
-**职责**：工具和基础设施
-
-**主要类**：
-- `Queue<T>`: 线程安全的阻塞队列模板，基于 `std::condition_variable`
-- `ThreadingPool`: 线程池，支持范围分步（range-step）/ 范围分片（range-slice）任务提交
-- `log.hpp`: spdlog 薄封装，提供 `LOG_DEBUG` / `LOG_INFO` 等宏和 `GetLogger()` 命名 logger
-- `ArgParser`: 命令行参数解析器
-- `json_util.hpp`: JSON 辅助宏
-- `color_data.hpp`: CIE 色彩匹配函数数据
-
-### gui 模块
-
-**职责**：图形用户界面应用
-
-**主要组件**：
-- `app.cpp/hpp`：主应用循环、面板渲染、全局状态管理（从 `main.cpp` 提取以支持测试）
-- `gui_state.hpp`：`GuiState` 结构体，定义完整的 GUI 状态模型（晶体、过滤器、渲染器、场景设置）
-- `panels.cpp/hpp`：ImGui 面板实现（Crystal、Render、Filter、Scene 四个标签页）
-- `crystal_renderer.cpp/hpp`：基于 OpenGL FBO 的晶体 3D 预览（线框、隐藏线、着色三种风格）
-- `preview_renderer.cpp/hpp`：等距圆柱投影纹理预览，带镜头投影 shader
-- `file_io.cpp/hpp`：`.lmc` 项目文件格式读写（二进制头 + JSON + 可选 PNG 纹理）
-- `main.cpp`：GUI 入口，GLFW/OpenGL 初始化
-
-**关键设计决策**：
-- GUI 逻辑位于 `lumice::gui` 命名空间，使用全局状态（`g_state`、`g_preview` 等）
-- 通过 C API（`lumice_*.h`）与模拟核心通信（与 CLI 使用相同接口）
-- `lumice_gui_obj` OBJECT library 在 `LumiceGUI` 和 `gui_test` 间共享编译产物
-
-**依赖**：
-- Dear ImGui v1.91.8-docking（即时模式 GUI）
-- GLFW 3.4（窗口管理）
-- nfd v1.2.1（原生文件对话框）
-- OpenGL 3.2 Core Profile
-- stb（`.lmc` 纹理的 PNG 读写）
-
-### include 模块
-
-**职责**：公共 C API 头文件
-
-- `lumice_{base,scene,render,editor,engine,raypath}.h`: 对外暴露的 C 接口头文件，每个能力一个，使用不透明指针（opaque pointer）模式
-
-## 程序入口
-
-**`main.cpp` → `Lumice`**（CLI）
-- 功能：命令行模拟程序
-- 通过公共 C API（`lumice_*.h`） 与核心库交互
-- 使用方式：
-  ```bash
-  ./build/cmake_install/static/Lumice -f examples/config_example.json
-  ```
-
-**`src/gui/main.cpp` → `LumiceGUI`**（GUI，需要 `-g` 构建选项）
-- 功能：图形界面，用于交互式模拟配置和预览
-- 提供晶体 3D 预览、渲染预览、参数编辑和 `.lmc` 文件管理
-- 使用方式：
-  ```bash
-  ./build/cmake_install/static/LumiceGUI
-  ```
-
-构建目标：
-- `lumice`: 核心静态/共享库（默认静态，`-DBUILD_SHARED_LIBS=ON` 编译为共享库）
-- `Lumice`: CLI 可执行文件，链接 `lumice` 库
-- `LumiceGUI`: GUI 可执行文件（`-DBUILD_GUI=ON` 时构建），链接 `lumice_gui_obj` 和 `lumice`
-- `gui_test`: GUI 测试可执行文件（同时 `-DBUILD_GUI=ON` 和 `-DBUILD_TESTING=ON` 时构建）
-
-## C API
-
-公共 API 通过 C 接口（`lumice_*.h`，每个能力一个头）暴露，使用不透明指针模式。大多数 API 返回 `LUMICE_ErrorCode` 错误码，实际输出通过指针参数传递：
-
-```c
-// 服务器生命周期
-LUMICE_Server* LUMICE_CreateServer(void);
-void LUMICE_DestroyServer(LUMICE_Server* server);
-
-// 日志
-void LUMICE_SetLogLevel(LUMICE_Server* server, LUMICE_LogLevel level);
-
-// 配置：先构建或解析出场景句柄，再提交它（返回 LUMICE_ErrorCode）
-LUMICE_ErrorCode LUMICE_SceneFromJsonFile(const char* filename, LUMICE_Scene** out_scene);
-LUMICE_ErrorCode LUMICE_CommitScene(LUMICE_Server* server, const LUMICE_Scene* scene, int* out_reused);
-void LUMICE_SceneDestroy(LUMICE_Scene* scene);
-
-// 结果获取：取帧 → 从帧上读 → 释放帧。帧交出的缓冲区在**该帧**被释放前始终有效，
-// 期间服务端发布多少次快照都不影响——句柄的意义正是持有生命周期的一份真实份额。
-// （数组读取仍是数组+哨兵模式；均返回 LUMICE_ErrorCode）
-LUMICE_ErrorCode LUMICE_AcquireResultFrame(LUMICE_Server* server, LUMICE_ResultFrame** out_frame);
-LUMICE_ErrorCode LUMICE_FrameGetRender(const LUMICE_ResultFrame* frame, LUMICE_RenderResult* out, int max_count);
-LUMICE_ErrorCode LUMICE_FrameGetStats(const LUMICE_ResultFrame* frame, LUMICE_StatsResult* out);
-void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
-
-// 状态与控制
-LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerState* out);
-void LUMICE_StopServer(LUMICE_Server* server);
-```
-
-详细用法参见 [C 接口使用文档](interfaces/c_api_zh.md)。
-
-## 依赖关系
-
-所有依赖通过 [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake) 自动管理：
-
-| 依赖 | 版本 | 用途 |
-|------|------|------|
-| [nlohmann/json](https://github.com/nlohmann/json) | v3.10.5 | JSON 配置解析 |
-| [spdlog](https://github.com/gabime/spdlog) | v1.15.0 | 日志系统 |
-| [tl-expected](https://github.com/TartanLlama/expected) | v1.1.0 | C++17 `expected<T,E>` |
-| [GoogleTest](https://github.com/google/googletest) | v1.15.2 | 单元测试 |
-| [Dear ImGui](https://github.com/ocornut/imgui) | v1.91.8-docking | GUI（启用 `-g` 时）|
-| [GLFW](https://www.glfw.org/) | 3.4 | 窗口管理（启用 `-g` 时）|
-| [nfd](https://github.com/btzy/nativefiledialog-extended) | v1.2.1 | 原生文件对话框（启用 `-g` 时）|
-| [imgui_test_engine](https://github.com/ocornut/imgui_test_engine) | v1.91.8 | GUI 测试（同时启用 `-g` + `-t` 时）|
-
-## 扩展点
-
-### 添加新的消费者
-
-1. 继承 `IConsume` 接口
-2. 实现 `Consume()` 方法处理数据
-3. 实现 `GetResult()` 方法返回结果
-4. 在 `ServerImpl` 中注册消费者
-
-### 添加新的配置类型
-
-1. 定义配置结构体
-2. 实现 `to_json()` 和 `from_json()` 函数
-3. 在 `ConfigManager` 中添加管理逻辑
-
-### 自定义模拟器
-
-1. 继承或修改 `Simulator` 类
-2. 实现自定义的光线追踪逻辑
-3. 在 `ServerImpl` 中使用自定义模拟器
-
-## 注意事项
-
-1. **线程安全**：所有共享资源都需要适当的同步机制
-2. **内存管理**：注意队列中数据的生命周期
-3. **错误处理**：配置解析错误需要适当处理
-4. **性能调优**：模拟器线程数默认为 `max(1, hardware_concurrency - 2)`，自动随硬件扩展
+引擎一次持有一个已提交项目；一个项目含一个 scene 和任意多个 render 条目。
+
+## 2. 受门禁约束的源码分层
+
+`cmake/lumice_layers.cmake` 是引擎分层的单一真源。CMake 用它构建 foundation 对象集，`scripts/check_policies.py` 读取同一份 manifest，拒绝无归属文件和向上层 include。
+
+从低到高：
+
+| 层 | 主要职责 |
+|---|---|
+| `foundation` | 几何、光学、buffer、host/device 共用原语、基础设施与 base API |
+| `analytic` | 对外 analytic kernel 及其 C bridge |
+| `scene` | 配置模型、场景构建、scene/editor 能力 |
+| `view` | 投影与 annotation view 构建 |
+| `sim` | simulator、光线生成、CPU/Metal/CUDA trace backend |
+| `render` | consumer、曝光、合成、结果类型 |
+| `engine` | server 编排与 engine 能力 |
+| `raypath` | 单光路分析与报告装配 |
+| `capi` | 其余公开 C bridge 与打包 surface |
+
+源码只能 include 本层或更低层。存量例外列在只减不增的 `cmake/lumice_layer_allowlist.txt`。
+
+应用壳有意不进入该 manifest：
+
+- `src/gui/` 只用引擎的 `lumice_*.h` 能力头，以及 `src/util/` 的纯无状态 helper；
+- `src/launcher/` 是 Windows 引擎加载前的壳；
+- `src/main.cpp` 是 CLI 壳。
+
+## 3. 运行时 session
+
+### 3.1 场景提交
+
+`src/config/` 把配置 JSON 解析成 scene 模型。GUI 文档也先投影成同一公开 scene 能力再提交。`ServerImpl` 持有已提交场景、session epoch、worker 组、consumer 与发布结果。
+
+普通 commit 可以复用兼容的引擎状态，但会开启新的渲染 epoch。`LUMICE_ContinueRender` 是另一种 append 操作：它在当前兼容累积上追加光线，不重置已有结果。
+
+### 3.2 CPU 与 GPU 路由
+
+`ResolveGpuRoute` 是 server 定型时的单一路由裁决。
+
+- CPU 路使用按平台实测的自动 worker 数；调用方可显式指定，固定 seed 的运行按契约只用一个 worker。
+- Metal 与 CUDA 走 GPU 单引擎路：由一个 simulator 驱动大 dispatch，而不是照抄 CPU 多 worker 管线。
+- 光路分析 session 始终走 CPU。按 GPU 路定型的 server 常备一组 CPU 分析 worker；CPU server 复用普通 worker 组。
+
+后端 seam 是 `TraceBackend`。host 拥有 scene/config 语义，backend 拥有设备执行。详细契约见 `backends/seam-design.md` 与 `backends/trace-backend-frame-lifecycle.md`。
+
+### 3.3 Batch 生产与消费
+
+worker 通过 server 队列发布 `SimData` batch。payload 会随路由成为 legacy 出射光线、worker-projected sidecar 或 device-fused plane。一个 server-owned session 下的 consumer 解释这些 payload：
+
+- `RenderConsumer`：每个 render 的累积、投影、曝光、annotation 与可选 color-class lane；
+- `AnchorConsumer`：每个渲染 session 一份的场景级 relative-exposure 锚；
+- `StatsConsumer`：光线与几何统计；
+- `RaypathHistogramConsumer`：分析 session 的完整光路能量聚合。
+
+渲染 session 为每个 render 条目建立一个 `RenderConsumer`，另有一个 session 级 anchor consumer 与统计。分析 session 则以光路直方图 consumer 加统计替代渲染/锚点 consumer。
+
+### 3.4 发布帧与完成判定
+
+`DoSnapshot()` 发布新的不可变 `ResultFrame`，不会覆写已经交给读者的 buffer。C 调用方必须获取 `LUMICE_ResultFrame*`，读取所需结果族，再释放该帧；句柄就是读者对结果生命周期持有的真实份额。
+
+仿真生命周期与结果排空是两个事实：
+
+- `LUMICE_GetSimLifecycle` 报告生产处于 running、stopping 还是 complete；
+- `LUMICE_GetDrainStatus` 报告本 epoch 产生的 batch 是否已全部到达 consumer；
+- `LUMICE_AcquireResultFrame` 获取 render、raw XYZ、composite、stats 或 analysis 的同世代快照。
+
+最终结果要求生产完成且 drain 完成。完整 C 契约见 `interfaces/c_api_zh.md` 与 `interfaces/capi-lifecycle-architecture.md`。
+
+## 4. 几何、渲染与分析
+
+### 几何与仿真
+
+晶体是参数化的有限小族。平面、稳定面号槽位与闭式轮廓是主表达；需要多边形或三角形的消费者再由其派生。CPU 与 GPU 路共享面编号、光学原语、投影约定和 host 侧场景语义。
+
+修改几何或谓词前先读 `geometry/crystal-geometry-representation.md`、`geometry/coordinate-convention_zh.md` 与 `geometry/numerical-robustness.md`。
+
+### 渲染与曝光
+
+渲染以线性 XYZ 累积。mono relative 曝光锚在固定全天等面积域上测量；absolute 曝光使用 emitted energy。显示转换、print、annotation 与 color-class 合成在累积后按 render 配置执行。
+
+权威公式与 owner 见 `rendering/accumulator-consumer-architecture.md` 和 `rendering/ev-pipeline-architecture.md`。
+
+### 光路产品
+
+两种产品彼此不同：
+
+- `analyze`：专用 CPU Monte Carlo session，按天空 ROI 排完整光路链的能量；
+- `raypath`：由 `src/raypath/` 基于 analytic 能力实现的确定性单光路 fiber / feature 分析与 JSON 报告。
+
+光路模块只向 engine 暴露已登记的公开头；`src/raypath/detail/` 保持内部实现。见 `raypath/raypath-analysis.md` 与 `raypath/raypath-cli-output.md`。
+
+## 5. 公开 surface 与打包
+
+项目没有 umbrella `lumice.h`。引擎能力拆为：
+
+- `lumice_base.h`
+- `lumice_scene.h`
+- `lumice_render.h`
+- `lumice_editor.h`
+- `lumice_engine.h`
+- `lumice_raypath.h`
+
+analytic 计算能力使用 `lumice_analytic_core.h`；独立 analytic 库另以 `lumice_analytic.h` 提供库管理函数。
+
+shared 构建产生三个不同库：
+
+- `liblumice`：产品引擎能力；
+- `liblumice_testapi`：同一引擎对象加测试专用 hook；
+- `liblumice_analytic`：仅 foundation + analytic kernel（受支持的非 CUDA shared 构建）。
+
+每个包的导出列表由自身头文件生成，并与实际二进制导出表对账。引擎与 analytic 库各自独立版本。见 `interfaces/api-layering-and-product-lines.md` 与 `interfaces/analytic-api.md`。
+
+## 6. GUI 边界
+
+`src/gui/` 是应用壳，不是第二份引擎实现。它负责：
+
+- 交互式文档态与显示态；
+- 经公开 C API 构建和提交 scene；
+- 轮询 lifecycle、drain 与获取的结果帧；
+- 把引擎的全天预览纹理重投影到交互式镜头；
+- 将 `.lmc` 持久化为含 JSON 状态与可选预览 payload 的二进制容器；
+- 通过另一份 GUI 状态投影导出 CLI-compatible config JSON。
+
+仿真 commit 投影与 JSON export 投影在 GUI 显示语义要求处有意分叉。见 `gui/gui-state-governance.md` 与 `gui/gui-preview-lifecycle-architecture.md`。
+
+## 7. 构建与验证边界
+
+主要 target：
+
+- `lumice` 与 `Lumice`：引擎库和 CLI；
+- `BUILD_GUI=ON` 时的 `LumiceGUI` 与 `lumice_gui_obj`；
+- 对应选项启用时的 unit、composition、parity、golden、GUI、E2E、performance 与 regression 测试。
+
+使用 `scripts/build.sh` 与 `scripts/test.sh`，不要手工重建 target 组合。测试归属和执行范围以 `testing/testing-architecture_zh.md` 为准；贡献命令与源码边界见 `developer-guide_zh.md`。
 
 ## 相关文档
 
-- [README](../README_zh.md) - 用户文档
-- [配置文档](configuration_zh.md) - 配置格式说明
-- [开发指南](developer-guide_zh.md) - 开发指南
-- [C接口文档](interfaces/c_api_zh.md) - C接口使用说明
-- [文档索引](README_zh.md) - 所有文档的导航
+- [配置参考](configuration_zh.md)
+- [开发指南](developer-guide_zh.md)
+- [C API 参考](interfaces/c_api_zh.md)
+- [后端 seam 设计](backends/seam-design.md)
+- [累积器—消费者架构](rendering/accumulator-consumer-architecture.md)
+- [GUI 状态治理](gui/gui-state-governance.md)
+- [测试架构](testing/testing-architecture_zh.md)

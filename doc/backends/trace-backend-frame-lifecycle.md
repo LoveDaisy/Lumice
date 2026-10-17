@@ -1,14 +1,12 @@
 # TraceBackend Frame Lifecycle (as-built)
 
-This document describes the **as-built** ray-frame lifecycle across the
+This document describes the **current** ray-frame lifecycle across the
 `TraceBackend` seam — how ray directions move between the world frame and each
 crystal's local frame as rays cross the seam and pass between multi-scattering
-(MS) layers. It reflects the implementation landed by scrum
-`metal-frame-correctness` (sub-tasks 253.1 single-MS frame fix + 253.2 multi-MS
-frame transit). The design rationale lives in
-`scratchpad/scrum-metal-frame-correctness/DESIGN-trace-backend-frame-lifecycle.md`;
-**this file documents what the code actually does** — where the two diverge,
-the code wins.
+(MS) layers. The original world-return fixes landed in `4b2639486` and
+`55cd8773f`; device-resident continuation replaced the host transit in
+`a91cc5a53`, and CUDA later adopted the same lifecycle. The code is authoritative
+where historical mechanism descriptions differ.
 
 ## 1. Why frames matter
 
@@ -27,174 +25,156 @@ apply the rotation, rendered the ring correctly).
 
 ## 2. Invariant 6 — ray-frame lifecycle (the contract)
 
-Codified in `src/core/trace_backend.hpp:60` (Design invariant 6):
+Codified in `src/core/backend/trace_backend.hpp` (design invariant 6):
 
 - Rays **crossing the seam are always world-space**: `TraceLayer`'s input rays
   (host ingest or device continuation) and any ray that **leaves** a backend
-  (projection, continuation export, readback) are world-space.
+  (projection, continuation export, or readback) are world-space.
 - The **crystal-local frame is a backend-internal detail**. A backend may
   transform world→local on ingest and **must** transform local→world before a
   ray leaves it.
 - **Per-ray crystal orientation never crosses the seam**: each backend samples
-  and owns its own per-ray rotations internally. How they are supplied (host-
-  sampled upload vs device-side RNG) is a backend performance choice; the
-  invariant is supply-agnostic.
+  and owns its rotations internally. Whether the root buffers were filled by a
+  device kernel or by the explicit host-generation fallback is not observable
+  above the backend.
 
-This is a **documentation contract, not an automated gate** (comments can
-drift). Its closure is procedural: a future CUDA backend's plan-review must list
-"exit rays returned to world space before leaving the kernel" as a mandatory
-check.
-
-The CPU backend already modelled this before the contract was written — it is
-the reference implementation (§3).
+This is not a type-system gate. The independent evidence is the CPU-vs-Metal
+spatial parity pair in
+`test/parity-cross-backend/backend/test_metal_trace_parity.cpp`, the Metal and
+CUDA root-generation parity tests, and the closed-form CPU/Metal anchors under
+`test/golden-analytic/backend/`.
 
 ## 3. CPU reference (the frame chain to mirror)
 
 `src/core/simulator.cpp`:
 
-- **Ingest (world→local)**: `InitRay_rot` samples a per-ray `crystal_rot_`
-  (`simulator.cpp:177` first MS, `:203` later MS); `ApplyInverse(r.d_)` rotates
-  the world-space direction into the crystal-local frame for tracing.
-- **Exit projection (local→world)**: `CollectData` applies
-  `r.crystal_rot_.Apply(r.d_)` (`simulator.cpp:437` / `:441`) to return the exit
-  direction to world space before projecting.
-- **Inter-layer transit (`InitRayOtherMs`, `simulator.cpp:199-210`)**: only the
-  **direction** carries across a layer boundary, via world space — the previous
-  layer leaves the ray world-space, then the next layer resamples a **new**
-  `crystal_rot_` (`InitRay_rot`, `:203`), `ApplyInverse`-es into the new local
-  frame, and **resamples the entry point + hit face on the new crystal**
-  (`InitRay_p_fid`, `:210`). Position `p` and `to_face` are NOT carried over —
-  they are re-derived on the next crystal.
+- **Ingest (world→local)**: `InitRay_rot` samples a per-ray `crystal_rot_`;
+  `InitRayFirstMs` initializes the first-layer direction and
+  `InitRayOtherMs` applies `ApplyInverse(r.d_)` to a carried world-space
+  direction before tracing the next crystal.
+- **Exit / continuation (local→world)**: `CollectData` applies
+  `r.crystal_rot_.Apply` to direction and position before filter, outgoing, or
+  continuation handling.
+- **Inter-layer transit**: only the direction and carried ray state survive a
+  layer boundary. `InitRayOtherMs` samples a **new** `crystal_rot_`, rotates the
+  world-space direction into that crystal's local frame, and calls
+  `InitRay_p_fid` to resample the entry point and hit face. Position and face
+  identity from the previous crystal are not reused.
 
-## 4. Metal backend (as-built)
+## 4. GPU backends (as-built)
 
-`src/core/metal_trace_backend.mm`. The transform lands in two places (DESIGN D2):
-ingest on the host, exit/continuation return **in-kernel** (DESIGN D3: any ray
-leaving the kernel is world-space).
+Metal and CUDA share the same frame lifecycle. Their root-generation and
+continuation kernels use the sampling and rotation primitives in
+`src/core/shared/pcg_shared.h`; each backend keeps its own native kernel and
+buffer implementation.
 
-### 4.1 Supply form — host-sampled per-ray rotation upload
+### 4.1 Supply form — device generation by default, host fallback retained
 
-Metal v1 samples per-ray orientations on the host and uploads each ray's 3×3
-rotation matrix (9 floats, row-major, identical layout to `Rotation::mat_`; see
-`Rotation::GetMat()` in `geo3d.hpp`):
+The default production path generates one rotation matrix per ray on device:
 
-- `GenerateFirstLayerRootsForCi` (`metal_trace_backend.mm:554`) runs the same
-  `InitRayFirstMs` path as the CPU, then uploads each ray's `crystal_rot_.GetMat()`
-  into `root_rot_buf` (`:590`).
-- `root_rot_buf` is bound to the kernel at **buffer index 17**
-  (`trace_layer_kernel` signature, `:85`).
+- Metal `gen_root_kernel` and CUDA `gen_root_kernel` sample orientation, build
+  the row-major crystal→world matrix, rotate the incident world direction into
+  crystal-local coordinates, and write the matrix to `root_rot`.
+- Each trace kernel loads that matrix for the ray. The matrix is backend-local
+  state; the host-facing `RootRaySource` carries only the root count on the
+  production path.
+- `LUMICE_DISABLE_DEVICE_GEN=1` selects the explicit diagnostic fallback. That
+  path runs `InitRayFirstMs` on the host and copies the same per-ray matrices
+  into the root buffers. Metal's device-vs-host test and CUDA's host-generation
+  parity test keep the fallback statistically aligned with the default path.
+- Closed-form golden-ray tests may inject host roots with identity rotations;
+  this is a test-only path, not the normal root supply.
 
-The contract is supply-agnostic: a CUDA backend may instead generate rotations
-device-side (GPU-RNG). On discrete GPUs the per-layer host-sample-and-upload
-becomes a real PCIe round-trip, so device-gen may be preferred there — the seam
-does not need to change.
+Device generation removes a per-ray host upload from the default path without
+changing the seam invariant: orientation stays owned below `TraceBackend` in
+both forms.
 
-### 4.2 Single-MS exit projection (local→world, in-kernel)
+### 4.2 Exit projection (local→world, in-kernel)
 
-The kernel loads the per-ray matrix once at entry (`m[9]`) and, in the exit-
-projection block (`metal_trace_backend.mm:213-217`), applies `world = m · v` to
-the exit direction **before** the forward projection — the exact analogue of
-CPU `CollectData`'s `crystal_rot_.Apply`. The multiply is **row-major
-`mat·v`** (mirroring `Rotation::Apply`'s `Dot3(mat_ + k*3, v)`), **not** the
-transpose (`ApplyInverse` is the transpose) — a transpose here re-introduces a
-mis-oriented ring.
+Both GPU trace kernels load the per-ray row-major crystal→world matrix and
+apply `world = m · local` before handing the direction to the shared
+`lm_proj::ProjectExitToPixel` projection. This is the exact frame analogue of
+CPU `CollectData`'s `crystal_rot_.Apply`. Using the transpose here would apply
+`ApplyInverse` a second time and reintroduce the mis-oriented ring.
 
-> **Note (scrum-315, 2026-07-02)**: what this section calls "the equirect
-> projection" was originally the single fixed in-kernel projection. The exit block
-> now dispatches over **all 11 `LensType` projections** via the shared
-> `src/core/shared/projection_shared.h::ProjectExitToPixel` (equirect =
-> `rectangular` is just one branch). The world-space rotation step described here
-> is unchanged and still precedes the forward projection for every type.
+Every one of the 11 forward projection types enters through
+`src/core/shared/projection_shared.h`; frame return therefore precedes the same
+projection implementation on Metal, CUDA, and the legacy CPU oracle. Each
+emitted ray is projected into every renderer in the session inside the same
+kernel tail.
 
 ### 4.3 Multi-MS inter-layer transit
 
-> **⚠️ Superseded by scrum-267 (device-resident continuation engine, 2026-06-14).**
-> The host-side `CopyContSliceToRootBuf` path described in earlier revisions of
-> this section has been **deleted** (scrum-267 task-device-resident-continuation).
-> Inter-layer transit is now entirely device-side via `transit_root_kernel`.
-> The frame-lifecycle invariant (§2) is unchanged — the mechanism moved to device.
+Inter-layer transit is entirely device-side on both GPU backends. Metal names
+its pass `transit_root_kernel`; CUDA's corresponding continuation kernel uses
+the same shared PCG and rotation primitives. The former host
+`CopyContSliceToRootBuf` path is deleted.
 
-Two halves, mirroring the CPU chain (§3):
+Two halves mirror the CPU chain (§3):
 
-1. **In-kernel world-return** (continuation emit gate, `metal_trace_backend.mm`
-   ms_mode==1 branch): when the trace kernel decides a ray must continue to the
-   next MS layer, it applies `world = m · v` to the local-frame exit direction
-   before writing `cont_d_out[tid]`. The continuation buffer therefore holds
-   **world-space** directions, satisfying invariant 6 at the layer boundary.
-   The ray's lifetime wavelength index `wl_idx` is also written to
-   `cont_wl_idx_out[tid]` (DR-3, scrum-268.8 — see §8).
-   (`out_p` / `out_tf` slots in the old host-transit interface are now retired
-   dead writes, documented in the kernel source.)
+1. **World return at the emit gate.** When a trace kernel emits a ray for the
+   next MS layer, it multiplies the local exit direction by that ray's
+   crystal→world matrix before writing the continuation direction. The same
+   write carries weight, lifetime wavelength index, and the per-ray component
+   mask; it does not carry the previous crystal's entry point or face.
 
-2. **Device resample-to-new-local** (`transit_root_kernel`, `:957`): a device
-   kernel (scrum-267) replaces the former host `CopyContSliceToRootBuf`. It:
-   - Samples a **fresh per-ray crystal orientation** on-device (same PCG +
-     `sample_lat_lon_roll` as `gen_root_kernel`) keyed by a derived `transit_seed`
-     + monotone `transit_ray_count_` counter (unique per layer/ci/batch/tid across
-     the full Run() PCG range).
-   - Reads the **world-space** continuation direction from `cont_d_in[tid]` and
-     rotates it into the new crystal-local frame via `apply_inverse_mat9`.
-   - Triangle area-weighted picks the **new entry point + face** on the destination
-     crystal (`:1002-1040`), writing `root_p` / `root_tf`.
-   - Pass-through copies `cont_wl_idx_in → root_wl_idx_out` so the wavelength
-     tag survives the layer hop intact (DR-3).
+2. **Resample into the next crystal.** The next layer's transit pass samples a
+   fresh orientation and a fresh geometry-pool member, rotates the world-space
+   continuation direction into the new local frame, samples the new entry point
+   and face with projected-area weighting, and copies the carried wavelength
+   and component state into the new root buffers.
 
-   After `transit_root_kernel`, `root_d` / `root_p` / `root_tf` / `root_rot` /
-   `root_wl_idx_out` are fully populated with zero host-side per-ray work; the
-   host only dispatches the kernel and reads back the continuation counter.
+The host dispatches these passes and observes only aggregate counters. No
+per-ray direction, rotation, entry point, or face crosses back to host between
+MS layers. Single-MS and multi-MS therefore follow one rule: local coordinates
+exist only while a ray is inside one backend-owned crystal traversal.
 
-This is single-MS and multi-MS derived from **one rule** (leave-kernel ⇒ world),
-not two patches.
+### 4.4 Historical async-rotation proposal
 
-### 4.4 Performance note — async rotation pool (moot since scrum-267)
-
-DESIGN D6 proposed an async producer/consumer pool to overlap host orientation
-sampling with device tracing for multi-MS. **It was never implemented**, and is
-now **moot**: scrum-267 moved orientation sampling entirely to `transit_root_kernel`
-on-device, so there is no host-side sampling to overlap. §4.3 now describes the
-current behaviour (device-resident); D6 is a superseded design note.
+The original design proposed a producer/consumer pool to overlap host
+orientation sampling with device tracing. It was never needed on the current
+production path: first-layer and continuation orientations are generated on
+device, while the host generator is an explicit diagnostic fallback. There is
+no host rotation stream to overlap.
 
 ## 5. Parity harness methodology (how this is guarded)
 
-`test/test_metal_trace_parity.cpp`:
+`test/parity-cross-backend/backend/test_metal_trace_parity.cpp`:
 
 - **Independent oracle, not a kernel mirror.** Structural correctness is checked
-  against the real `CpuTraceBackend` (which projects in world space), NOT the
-  in-test `OracleTraceLayer` kernel mirror. The mirror shares the kernel's frame
-  handling, so it is **blind to frame bugs** — the original 251.4 harness used a
-  kernel-mirror oracle and missed the band-vs-ring bug entirely.
-- **Spatially-sensitive metric, not an energy sum.** Comparison is a per-pixel
-  Y-channel Pearson correlation, not `ChannelSum` (a whole-image energy total).
-  A correlation distinguishes a world-space ring from a crystal-local band;
-  an energy sum does not (rotation conserves total landed energy).
-  - `MetalVsCpuSingleLayerSpatialStructure` (`test:1012`): single-MS, measured
-    correlation ≈ 0.9999 (fixed) vs ≈ 0.028 (deliberately local-frame control).
-  - `MetalVsCpuMultiLayerSpatialStructure` (`test:1120`): two MS layers, measured
-    correlation ≈ 0.997.
-- **Negative control.** The single-MS test also feeds a crystal-local image
-  (the pre-fix behaviour) and asserts its correlation collapses — proving the
-  metric is not spatially blind (i.e. would catch a frame regression).
+  against the real `CpuTraceBackend`, not only the in-test kernel-shaped oracle.
+  The latter shares frame assumptions and is blind to the original class of bug.
+- **Spatially-sensitive metric, not an energy sum.** The
+  `MetalVsCpuSingleLayerSpatialStructure` and
+  `MetalVsCpuMultiLayerSpatialStructure` cases compare per-pixel Y-channel
+  structure. A whole-image energy total cannot distinguish a world-space ring
+  from a crystal-local band because rotation preserves total energy.
+- **Negative control.** The single-layer case also evaluates the deliberately
+  local-frame form and requires its correlation to collapse, proving the ruler
+  can see the defect it claims to guard.
 
-The retired kernel-mirror multi-MS assertions (`TwoLayerExitStatsAndXyz`,
-`MultiPopTwoLayerExitStatsAndXyz`) keep only their still-valid layer-0 exit-stats
-checks; their layer-1 comparison was removed because the kernel-mirror re-entry
-(local-frame, no world-transit) is exactly the pre-253.2 bug.
+The retained `TwoLayerExitStatsAndXyz` and
+`MultiPopTwoLayerExitStatsAndXyz` cases keep only assertions their in-test
+oracle can answer honestly; the world-transit proposition belongs to the
+independent CPU comparison above. Root-generation parity and the CPU/Metal
+golden anchors provide separate evidence for the two ends of the chain.
 
 ## 6. Brightness ratio (resolved, no fix needed)
 
-A ~1.35× Metal/CPU brightness ratio observed pre-fix was a **broken-frame
-artifact** (measured on the band-state render, where ring-vs-band pixel
-brightness is not comparable). After the frame fix the energy ratio
-`ΣY_metal / ΣY_cpu` self-heals to ≈ 1.0 (measured 1.00011 on the full-random
-ring scene). The `ΣY/kCmfY` total-landed-weight formula
-(`simulator.cpp:902-914`) is correct; no fix was required. See
-`scratchpad/scrum-metal-frame-correctness/explore-y-channel-brightness/SUMMARY.md`.
+A ~1.35× Metal/CPU brightness ratio observed before the frame correction was a
+**broken-frame artifact**: ring and band pixel values were not comparable. The
+corrected full-random ring scene measured `ΣY_metal / ΣY_cpu ≈ 1.00011`; no
+brightness compensation was required. This is a historical measurement, not a
+current cross-machine tolerance. Current energy and image agreement is guarded
+by the backend parity suites rather than by that single number.
 
 ## 7. Public-API impact
 
-None. The frame lifecycle is entirely internal to `core`. the `src/include/lumice_*.h` capability headers,
-`src/gui/`, and `src/server/` are unchanged and unaware of which backend or frame
-convention is in use (seam invariant 5).
+No frame-convention detail crosses the public C API. Backend selection and
+fallback are observable through the engine capability, and `src/server/` owns
+the CPU-multiworker versus GPU-single-engine routing, but consumers never see a
+rotation matrix or local-frame ray. The frame lifecycle remains internal to
+`src/core/`.
 
 ## 8. Per-ray wavelength (DR-3, scrum-268.8)
 

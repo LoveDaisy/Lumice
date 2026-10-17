@@ -12,14 +12,12 @@ silently diverge.
 **Target audience**: contributors adding or moving tests; reviewers checking that a new test
 landed in the right layer with the right oracle; anyone reorganizing the test suite.
 
-> **Status note (read first).** This document defines the **target-state** architecture
-> (purpose-primary, layer × subsystem). The physical migration is in progress under
-> milestone-cleanup tasks 270.3–270.7: 270.3 split the unit gtest layer into
-> `unit_correctness_test` / `golden_analytic_test` / `parity_test`, 270.4 reorganized the
-> pytest tree under `test/e2e-correctness/`, `test/parity-cross-backend/`, `test/performance/`,
-> `test/gui/`, `test/regression-sentinel/`, and 270.5 (this layer) moved the GUI tests into
-> `test/gui/{functional,visual,responsiveness}/` and renamed the target to `gui_test`. §6 gives
-> both the **historical** and **target** columns so you can trace where a test came from.
+> **Status note (read first).** The purpose-primary, layer × subsystem architecture is the
+> **as-built** organization. The 270.3–270.7 migration created the current purpose-named CMake
+> targets, moved the pytest tree under `test/{e2e-correctness,parity-cross-backend,performance,gui,regression-sentinel}/`,
+> and established `test/gui/{functional,visual,responsiveness,parity}/`. §6 is retained as migration
+> provenance, not as a second current inventory; current wiring is authoritative in
+> `test/CMakeLists.txt`, `test/gui/CMakeLists.txt`, `pyproject.toml`, and `scripts/test.sh`.
 
 ---
 
@@ -74,8 +72,8 @@ already living, unlabelled, inside both `unit-correctness` and `gui` (§1.2, §1
 ## §1 The eight layers
 
 Each layer is defined by six fields: **purpose / oracle / threshold convention / run cadence /
-naming convention / physical location**. Cadence values: `CI-fast` (every push, fast leg),
-`PR` (pull request), `nightly` (scheduled / local heavy), `local` (developer-run).
+naming convention / physical location**. Cadence names refer to the five actual execution tiers in
+§7.0: PR, `main` only, local schedule, release, and developer machine. There is no nightly tier.
 
 ### §1.1 `unit-correctness`
 
@@ -88,13 +86,14 @@ naming convention / physical location**. Cadence values: `CI-fast` (every push, 
 - **Cadence**: `CI-fast` — every commit.
 - **Naming**: `test_<component>.{cpp}`; gtest `TEST(<Component>, <behavior>)`. Python members
   follow pytest's own convention: `test_<component>.py`, `test_<behavior>` functions.
-- **Physical location**: target-state `test/unit-correctness/<subsystem>/`; current `unit_test`
-  target. The layer is not C++-only: a component written in Python is tested in Python under
-  the same path (`test/unit-correctness/scripts/`, run by pytest). Those files are deliberately
-  **not** in `pyproject.toml`'s `testpaths` — that list is the e2e surface, and bare `pytest`
-  should keep meaning "the end-to-end suite". The `policy` CI job names them explicitly, which
-  also gets them this layer's every-commit cadence; the e2e job runs on PR/main only and waits
-  on a build.
+- **Physical location**: `test/unit-correctness/<subsystem>/`, built primarily by
+  `unit_correctness_test`; GUI cases that require `lumice_gui_obj` use the separate
+  link-boundary target `gui_unit_test` while keeping the same `unit-correctness` label. The layer
+  is not C++-only: Python components are tested under `test/unit-correctness/scripts/`. Those files
+  are deliberately **not** in `pyproject.toml`'s `testpaths` — that list is the e2e surface, and
+  bare `pytest` should keep meaning "the end-to-end suite". The `policy` CI job names them
+  explicitly, which also gets them this layer's every-commit cadence; the e2e job runs on PR/main
+  only and waits on a build.
 
 ### §1.2 `composition-correctness`
 
@@ -111,8 +110,8 @@ naming convention / physical location**. Cadence values: `CI-fast` (every push, 
 - **Naming**: `test_<chain-topic>_chain.cpp`; gtest `TEST(<ChainTopic>Chain, <behavior>)`, where
   `<chain-topic>` names the collaboration (e.g. document round trip, run lifecycle), never a
   single `src/` file — a chain that spans several units does not compress into one unit's name.
-- **Physical location**: `test/composition-correctness/<subsystem>/`; today populated only by
-  `test/composition-correctness/gui/`.
+- **Physical location**: `test/composition-correctness/<subsystem>/`; today populated by
+  `gui` (`composition_correctness_test`) and `raypath` (`raypath_composition_test`).
 - **Membership test (what distinguishes this layer from its two neighbors)**: does falsifying the
   proposition require **two or more collaborating `src/` units** (not one built only to construct
   a fixture for the other), **and** does it need **neither a live frame nor a synthesized input
@@ -137,13 +136,12 @@ naming convention / physical location**. Cadence values: `CI-fast` (every push, 
 - **Cadence**: `CI-fast` — every commit (these are deterministic).
 - **Naming**: `<Phenomenon>AnalyticTruth` / `...NormalIncidence`-style names that make the
   analytic anchor explicit.
-- **Physical location**: target-state `test/golden-analytic/<subsystem>/`; currently embedded
-  in `unit_test` (e.g. the analytic anchor inside `test_metal_trace_parity.cpp`) and possibly
-  in `test_projection` / `test_optics`.
+- **Physical location**: `test/golden-analytic/<subsystem>/`, built by
+  `golden_analytic_test` and labelled `golden-analytic`.
 
 ### §1.4 `parity-cross-backend`
 
-- **Purpose**: a non-legacy backend (Metal; future CUDA) is statistically equivalent to the
+- **Purpose**: a non-legacy backend (Metal or CUDA) is statistically equivalent to the
   **legacy CPU** reference for the same scene.
 - **Oracle**: **legacy CPU is ground truth.** Equivalence is asserted *not by correlation
   alone* — correlation has twice masked real bugs (scrum-267). It must be backed by the full
@@ -155,8 +153,8 @@ naming convention / physical location**. Cadence values: `CI-fast` (every push, 
   2026-08-11 along with the `heavy` marker — no workflow has a `schedule:` trigger, so nothing
   ever ran them.)
 - **Naming**: `test_<backend>_<aspect>_parity.{cpp,py}`; `...Parity` gtest suites.
-- **Physical location**: target-state `test/parity-cross-backend/<subsystem>/`; current
-  `unit_test` (`.cpp`/`.mm`) + `test/e2e/` (pytest parity tests).
+- **Physical location**: `test/parity-cross-backend/<subsystem>/`; C++ cases are built by
+  `parity_test`, while backend pytest cases live under the same purpose tree.
 - **Projection subsystem (315.5)**: `test/parity-cross-backend/backend/test_{metal,cuda}_projection_parity.py`
   drive one legacy-oracle comparison per LensType so that **all 11 projections** (now rendered on
   Metal + CUDA via the shared `src/core/shared/projection_shared.h::ProjectExitToPixel`) are held
@@ -172,8 +170,8 @@ naming convention / physical location**. Cadence values: `CI-fast` (every push, 
 - **Threshold convention**: per-scene PSNR floor (tracked in the test); exit-code / file
   non-empty checks for smoke-level coverage.
 - **Cadence**: `PR` (fast subset runs `-m "not slow"`; shared-lib variants run `-m slow`).
-- **Naming**: `test_<feature>.py` under `test/e2e/`.
-- **Physical location**: target-state `test/e2e-correctness/`; current `test/e2e/`.
+- **Naming**: `test_<feature>.py` under `test/e2e-correctness/`.
+- **Physical location**: `test/e2e-correctness/`.
 
 ### §1.6 `performance`
 
@@ -184,15 +182,17 @@ naming convention / physical location**. Cadence values: `CI-fast` (every push, 
   baseline (see §4.1). Report `median` + `CoV` across repeats.
 - **Threshold convention**: ratio-to-legacy-CPU floor; statistics reported with `median` and
   coefficient of variation; floors tightened once a committed bench harness provides `CoV`.
-- **Cadence**: `PR` (cheap sentinels — e.g. `test_metal_throughput`) and `nightly` (full bench
-  sweep via `scripts/bench_throughput.py`, landed task-270.6). The committed harness is the
-  standard tool for any `Lumice benchmark`-based throughput claim in this repo; ad-hoc
-  one-off scripts in `scratchpad/bench/` are not authoritative.
+- **Cadence**: the `ci` throughput profile runs in the PR layer as a disaster floor; the
+  `precise` profile runs on the reference machines' local daily schedule. `Lumice benchmark`
+  history runs on pushes to `main`. §7.0 is the authority for these execution tiers; there is no
+  nightly tier. The committed `scripts/bench_throughput.py` harness remains the standard tool for
+  any `Lumice benchmark`-based throughput claim in this repo; ad-hoc one-off scripts in ignored
+  working directories are not authoritative.
 - **Naming**: `test_<backend>_throughput.py`; `scripts/bench_throughput.py` is the committed
   harness (matrix = {legacy, cpu_backend, metal} × heavy configs × Metal dispatch sweep,
   median+CoV, ratio denominator locked to legacy CPU).
-- **Physical location**: target-state `test/performance/`; current `test/e2e/` (throughput
-  sentinel) + the CI `Benchmark` step (`benchmark -f examples/bench_config.json`).
+- **Physical location**: `test/performance/`; CI also invokes `Lumice benchmark` directly for
+  the `main`-only benchmark history.
 - **Boundary note**: GUI frame-latency / responsiveness tests (`test_gui_perf`) are **not** in
   this layer — their oracle is an absolute frame budget, not a ratio to legacy CPU. They belong
   to `gui` (responsiveness tag). See §4.4.
@@ -242,8 +242,7 @@ naming convention / physical location**. Cadence values: `CI-fast` (every push, 
   the specific invariant that was violated).
 - **Cadence**: `CI-fast` / `PR` depending on harness — every commit where cheap.
 - **Naming**: `test_<bug-symptom>.py/.cpp`, with a comment linking the fixing commit / issue.
-- **Physical location**: target-state `test/regression-sentinel/`; current `test/e2e/`
-  (`test_capi_sentinel_overflow.py`, `test_ms_filter_leak.py`, `test_errors.py`).
+- **Physical location**: `test/regression-sentinel/`.
 
 #### §1.8.1 Detection power: which oracles can rot in silence
 
@@ -1363,15 +1362,11 @@ this table summarizes):
 
 ## §5 Physical-layout naming conventions
 
-Three naming systems must stay aligned across a migration (270.3–270.5):
+The as-built tree keeps three naming systems aligned:
 
-- **CMake targets**: target-state introduces purpose-named targets in place of the flat
-  `unit_test`. **Naming pattern: `<layer-snake>_test`** (snake_case, matching the existing
-  `unit_test` / `integration_test` convention) — e.g. `unit_correctness_test`, `parity_test`,
-  `golden_analytic_test`, `composition_correctness_test`; the GUI layer's target is `gui_test`
-  (renamed from `LumiceGUITests` in 270.5). Whether targets are split further per subsystem (one
-  `unit_correctness_test` vs `unit_correctness_core_test` + …) is **270.3's call**, but the
-  *pattern* above is fixed here so the naming does not drift.
+- **CMake targets**: purpose-named targets use the pattern `<layer-snake>_test` —
+  `unit_correctness_test`, `parity_test`, `golden_analytic_test`, and
+  `composition_correctness_test`; the GUI layer's target is `gui_test`.
   **Exception, stated as a rule rather than as a list of cases**: when a target exists because of
   a *link* boundary rather than a layer/subsystem boundary, name it after the link dependency
   instead of `<layer-snake>_test`. `gui_test` is the original instance (it is the `gui` layer's
@@ -1380,21 +1375,20 @@ Three naming systems must stay aligned across a migration (270.3–270.5):
   with `unit_correctness_test` while hiding the only thing that actually differs, the
   `lumice_gui_obj` dependency. Layer identity lives in the CTest LABEL, which is where selectors
   read it from anyway, so the target name is free to carry the link fact instead.
-- **CTest LABELS**: target-state adds a purpose-axis label per layer:
+- **CTest LABELS**: the compiled layers carry purpose-axis labels:
   `unit-correctness`, `composition-correctness`, `golden-analytic`, `parity` (the LABEL is the
   abbreviated form of the `parity-cross-backend` layer — the full name is verbose for CMake;
-  this is the **only** abbreviated label, do not similarly truncate the others —
-  `unit-correctness` must not become `unit`, which would collide with the legacy mechanism-axis
-  label, and `composition-correctness` must not become `composition` for the same reason),
-  `performance`, `gui`, `regression-sentinel`. The current labels are mechanism-axis (`unit` /
-  `integration` / `gui`). `ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"`
-  is the selector `scripts/test.sh`'s `quick`/`full`/`pr` modes use to pick up all four
-  non-flat layers with no per-target knowledge.
+  this is the **only** abbreviated label, do not similarly truncate the others), and `gui`.
+  Pytest-only purposes such as `e2e-correctness`, `performance`, and `regression-sentinel` are
+  selected by path/marker rather than invented CTest labels.
+  `ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"` is the selector
+  `scripts/test.sh`'s `quick`/`full`/`pr` modes use to pick up all four compiled correctness layers
+  with no per-target knowledge.
 - **pytest markers**: `slow` (requires shared-lib build; excluded from CI fast path) is the one
   run-cadence marker and stays. A second marker, `heavy`, was registered until 2026-08-11: it
   named a "run locally/nightly" cadence no workflow ever supplied, so its three tests never ran
-  anywhere; they and the registration were deleted together. Layer/subsystem are expressed via
-  directory + marker in the target state.
+  anywhere; they and the registration were deleted together. Layer/subsystem identity is expressed
+  by the current directory layout plus marker/label.
 - **`addopts = ["-m", "not slow"]` (`pyproject.toml`)**: bare `pytest` is pinned to the fast
   subset so the "bare pytest = e2e fast subset" claim above is structurally true rather than a
   convention callers must remember. Before this was added, bare `pytest` collected the full
@@ -1407,34 +1401,34 @@ Three naming systems must stay aligned across a migration (270.3–270.5):
   this path" default needs an explicit `-m` added — see `doc/testing/gpu-remote-cuda-build-testing.md`'s
   CUDA parity recipes for one such fix.
 
-**Migration anchor checklist (mandatory for every 270.3–270.7 move).** CI hard-codes these;
-any rename/move/marker-change that misses one turns CI red:
+**Rename/move checklist.** The migration is complete, but these current anchors still make a future
+rename or move cross-cutting:
 
-- [ ] `ctest -R LumiceUnitTest` (and any other `-R`/`-L` selector) in `.github/workflows/ci.yml`
-      still resolves after a target rename.
-- [ ] pytest path arguments in `ci.yml` still resolve — the E2E-Slow matrix references specific
-      files by name (`test_metal_exit_seam_parity.py` parity leg; the `--ignore=...` rest leg).
+- [ ] `scripts/test.sh` and `.github/workflows/ci.yml` purpose-label selectors still resolve.
+- [ ] pytest paths named by `ci.yml` still resolve, including each `E2E Slow` leg's explicit files
+      and ignores.
 - [ ] marker selectors `-m "not slow"` / `-m slow` still select the intended set.
-- [ ] reference paths (`test/e2e/references/`, `test/gui/references/`) and their `.gitignore`
-      un-ignore rules move together with the tests that read them.
-- [ ] `release.yml` is unaffected (it runs no tests) — confirm, don't assume.
+- [ ] reference paths (`test/e2e-correctness/references/`, `test/gui/references/`) and their
+      `.gitignore` un-ignore rules move together with the tests that read them.
+- [ ] `release.yml` remains unaffected, or is updated explicitly if the change reaches release
+      validation.
 
 ---
 
-## §6 Existing tests → eight layers (exhaustiveness map)
+## §6 Migration provenance: existing tests → eight layers
 
-This table proves the eight layers cover the entire existing suite with **no orphans**, and is
-the migration source-of-truth for 270.3–270.7. The **Migration constraint** column flags
-health items that must not be moved/deleted casually.
+The table below records how the pre-migration suite was assigned to the eight layers and preserves
+health constraints learned during that move. It is **provenance, not a current exhaustive
+inventory**; current target membership and paths come from the CMake files and filesystem named in
+the status note. The constraints remain normative where the referenced test still exists.
 
-> Target-state directory rule (resolves the "subdirectory or flat?" ambiguity for 270.3):
-> layers with a **natural subsystem split** (`unit-correctness`, `composition-correctness`,
-> `parity-cross-backend`, `golden-analytic`) use `test/<layer>/<subsystem>/`; layers whose
-> subsystem boundary is fuzzy (`e2e-correctness`, `performance`, `regression-sentinel`) stay
-> **flat** as `test/<layer>/`, with subsystem encoded by marker/label. The `gui` layer uses
-> `test/gui/<tag>/` (functional/visual/responsiveness).
+> As-built directory rule: layers with a **natural subsystem split** (`unit-correctness`,
+> `composition-correctness`, `parity-cross-backend`, `golden-analytic`) use
+> `test/<layer>/<subsystem>/`; layers whose subsystem boundary is fuzzy (`e2e-correctness`,
+> `performance`, `regression-sentinel`) stay **flat** as `test/<layer>/`. The `gui` layer uses
+> `test/gui/<tag>/`.
 
-| Layer | Target-state path | Current C++ (unit/integration) | Current e2e (pytest) | Current gui | Migration constraint |
+| Layer | As-built path | C++ provenance | Pytest provenance | GUI provenance | Preserved constraint |
 |-------|-------------------|-------------------------------|----------------------|-------------|----------------------|
 | **unit-correctness** | `test/unit-correctness/<subsystem>/` | `test_math`, `test_geo3d`, `test_optics`†, `test_crystal`, `test_rng`, `test_queue`, `test_threading_pool`, `test_color_space`, `test_json`, `test_filter`, `test_filter_spec`, `test_config_snapshot`, `test_render_config`, `test_sim_data`, `test_simulator`, `test_cpu_info`, `test_raypath_segments`, `test_reduce_raypath_audit`, `test_c_api`, `test_exit_records`, `test_proj`(integration), `test_integration_main`; `gui` subsystem, first target `unit_correctness_test` (`lumice_obj` only, header-only-reachable): `test_axis_presets`, `test_filter_sop_grammar`, `test_gui_widget_rules` (which absorbed the former standalone `test_slider_mapping` and `test_window_sizing` files — their `SliderMapping` / `WindowSizingTest` suites live there now), `test_user_defaults_eligibility`; second target, `gui_unit_test` (see below): `test_defaults_diff`, `test_state_reconcile`, `test_preview_renderer`, `test_export_params`, `test_crystal_renderer`, `test_render_handedness_guard` (render `right=+az` cross-implementation handedness guard — absolute screen-side, pairs with the `test_projection` golden absolute-column pins; it is the one case that needs `lumice_gui_obj` and `lumice_obj` linked together, which is why `gui_unit_test` is its only possible home), `test_axis_absent_alignment`, `test_user_defaults`, `test_render_bg_logic`, `test_sampling_density_stats`, `test_server_poller`, `test_face_number_overlay`, `test_overlay_labels`, `test_composite_preview`, `test_color_window_logic`, plus `gui_unit_test_env` (installs this target's personal-defaults isolation baseline before any case runs) | — | — | `test/unit-correctness/scripts/test_check_new_refs.py` is a pytest member of this layer, run by the `policy` CI job and deliberately outside `testpaths` (§1.1). It is a regression net over a diff parser whose failures are silent — a broken parse reports success — so **do not delete a case for being redundant** without re-running it against the defect it pins. This layer's `gui` subsystem directory is shared by **two** CMake targets split on a link boundary (§2): `unit_correctness_test` (`lumice_obj` only) and `gui_unit_test` (also `lumice_gui_obj`, windowless). Both carry LABEL `unit-correctness`, so no `-L` selector changes when a case moves between them — but a file **does** have to move between the two `add_executable` source lists, and `gui_unit_test` only exists under `if(BUILD_GUI)`. |
 | **composition-correctness** | `test/composition-correctness/<subsystem>/` | **raypath** subsystem, `raypath_composition_test`: `test_input_assembly_chain`, `test_schema3_report_assembly_chain` (real report → structural enumeration → MC attribution wiring; serializer-only field tests stay in unit-correctness); **gui** subsystem, `composition_correctness_test`: `test_document_roundtrip_chain`, `test_document_defaults_chain`, `test_document_switch_chain`, `test_legacy_document_chain`, `test_scene_commit_chain`, `test_filter_reconstruct_chain`, `test_raypath_color_document_chain`, `test_run_lifecycle_chain`, `test_run_warning_chain`, `test_user_defaults_chain`, `test_field_editor_chain`, `test_edit_modal_chain`, `test_preview_projection_chain` | — | — | Newest layer (§1.2), now populated by the `gui` and `raypath` subsystems. A file name is the chain's topic, never a single `src/` unit's name — see §1.2's naming rule. |

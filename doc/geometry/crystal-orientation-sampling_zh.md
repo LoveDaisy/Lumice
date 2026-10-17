@@ -12,7 +12,7 @@
 
 这种分解具有物理动机：重力定义了一个优选方向（竖直方向），而气动阻力主要沿此方向作用。由此产生的取向球面上的概率分布是一个**纬度带（zonal band）**——集中在某一优选余纬度附近，方位角均匀分布。这与旋转对称的球冠（cap）有本质区别：对称轴是重力矢量，而非晶体的 c 轴。这正是 von Mises–Fisher（vMF）分布不适用的原因——vMF 产生的是球冠而非纬度带。
 
-**本文描述的是取向*密度* `p(o)`，而不是每个取向分到的光量。** 处于取向 `o` 的晶体截获的阳光正比于它沿光线方向 `d` 呈现的投影面积 `A(o,d)`——正对太阳的片状晶体比侧对太阳的同一片晶体截获多得多。下文所有采样都只按 `p(o)` 抽取 `o`；缺失的 `A(o,d)` 因子在下一阶段、入射时补上：发给被抽中晶体的每条光线进入时权重乘以 `A/(S/2)`（`S` 为晶体总表面积，对凸体该比值不超过 1），每条光线都被追迹，没有光线被丢弃。同一个公式 `lm_pcg::entry_weight`（`src/core/shared/pcg_shared.h`）服务所有路线：CPU 的 `InitRay_p_fid`（`src/core/simulator.cpp`）与 Metal、CUDA 入射 kernel。因此各取向真正贡献的光量服从 `p(o)·A(o,d)`，「均匀」的 `p(o)` 并不意味着每个取向贡献相等。两个阶段相互独立——本文各节无需知道接受这一步，改动下文任一分布也不会改变接受公式。接受对散射条目 `proportion` 语义的影响（等表面积约定下的晶体个数份额）只在一处陈述：`doc/configuration_zh.md` 的 `ray_allocation` 说明。
+**本文描述的是取向*密度* `p(o)`，而不是每个取向分到的光量。** 处于取向 `o` 的晶体截获的阳光正比于它沿光线方向 `d` 呈现的投影面积 `A(o,d)`——正对太阳的片状晶体比侧对太阳的同一片晶体截获多得多。下文所有采样都只按 `p(o)` 抽取 `o`；缺失的 `A(o,d)` 因子在下一阶段、入射时补上：发给被抽中晶体的每条光线进入时权重乘以 `A/(S/2)`（`S` 为晶体总表面积，对凸体该比值不超过 1），每条光线都被追迹，没有光线被丢弃。同一个公式 `lm_pcg::entry_weight`（`src/core/shared/pcg_shared.h`）服务所有路线：CPU 的 `InitRay_p_fid`（`src/core/simulator.cpp`）与 Metal、CUDA 入射 kernel。因此各取向真正贡献的光量服从 `p(o)·A(o,d)`，「均匀」的 `p(o)` 并不意味着每个取向贡献相等。两个阶段相互独立——本文各节无需知道入射权重公式，改动下文任一分布也不会改变该公式。该权重对散射条目 `proportion` 语义的影响（等表面积约定下的晶体个数份额）只在一处陈述：`doc/configuration_zh.md` 的 `ray_allocation` 说明。
 
 
 ## 2. 冰晶运动模式与分布选择
@@ -64,11 +64,12 @@ p(θ) ∝ exp(-|θ - μ| / b)
 
 ## 3. 支持的分布类型
 
-支持四种分布类型以及一种确定性模式。所有类型在 JSON 中共享相同的 `mean`/`std` 参数字段；`std` 的含义因类型而异。
+支持四种推荐的随机分布类型，以及用于兼容旧结果的 `gauss_legacy` 和一种确定性模式。对象形式在 JSON 中共享相同的 `mean`/`std` 参数字段；`std` 的含义因类型而异。
 
 | 类型 | 定义 | `mean` | `std` | 适用场景 |
 |------|------|--------|-------|----------|
 | `gauss` | p(θ) ∝ exp(−(θ−μ)²/2σ²) | 中心值 μ（度） | 标准差 σ（度） | 稳定模式取向 |
+| `gauss_legacy` | 同一高斯候选，但不做球面面积加权 | 中心值 μ（度） | 标准差 σ（度） | 仅用于复现 Jacobian 修复前的结果 |
 | `uniform` | p(θ) = 常数，定义域 [μ−w/2, μ+w/2] | 中心值 μ（度） | 全宽 w（度） | 随机取向；自转角 |
 | `zigzag` | θ = \|A·sin(2πU) + B\|，折叠反正弦 | 倾斜偏移 B（度） | 幅度 A（度） | 大晶体振荡 |
 | `laplacian` | p(θ) ∝ exp(−\|θ−μ\|/b) | 中心值 μ（度） | 尺度参数 b（度） | 尺寸聚合倾斜 |
@@ -77,6 +78,7 @@ JSON 中的**标量值**（如 `"zenith": 90`）视为确定性模式：每个�
 
 **参数说明：**
 - `gauss` σ = 2° 意味着 68% 的晶体落在均值 ±2° 范围内。
+- `gauss_legacy` 使用相同的 μ/σ 参数，但有意绕过 §4.1；仅用于比较旧版结果。
 - `uniform` 的 `std` 是全范围宽度，而非标准差。
 - `zigzag` 分布在折叠后的支撑集（support）为 [0, |A|+|B|]。
 - `laplacian` 的标准差为 √2·b ≈ 1.41b。
@@ -96,7 +98,7 @@ p_sphere(θ) ∝ p_distribution(θ) · sin(θ)
 
 ### 4.2 采样路径
 
-`lat_path::SelectLatPath`（`src/core/shared/lat_path_selection.hpp`）是路径选择的单一权威源，被 CPU 采样器（`math.cpp::SampleSphericalPointsSph`）与两个 GPU 后端共用。它在四条路径中选择其一：
+`lat_path::SelectLatPath`（`src/core/shared/lat_path_selection.hpp`）是路径选择的单一权威源，被 CPU 采样器（`src/core/random.cpp::RandomSampler::SampleSphericalPointsSph`）与两个 GPU 后端共用。它在四条路径中选择其一：
 
 **路径 1：全天球（`kFullSphere`）。** 当轴分布是全天球均匀分布时触发（`AxisDistribution::IsFullSphereUniform()`：方位角与纬度均为全 360° 的 `uniform`，且自转角绕轴旋转对称）。纬度直接按面积测度采样——θ = asin(u)，u ~ U(-1,1)——给出球面均匀分布，无需拒绝。精确，O(1)。
 
@@ -104,13 +106,13 @@ p_sphere(θ) ∝ p_distribution(θ) · sin(θ)
 
 **路径 3：遗留高斯（`kGaussLegacy`）。** 当纬度分布类型为 `kGaussianLegacy` 时触发（JSON 中的 `"gauss_legacy"`）。此路径有意跳过 §4.1 描述的 sin(θ) 面积测度加权——仅用于复现雅可比修复（§5.1）之前的仿真结果，不建议在新配置中使用。
 
-**路径 4：统一 LUT（`kLutInverseCdf`）。** 其余所有非退化类型——`kGaussian`、`kLaplacian`、`kUniform`、`kZigzag`——均走此路径。一张预计算的逆 CDF 查找表取代了此前三条独立的按分布采样器（瑞利 / 通用拒绝 / 确定性——已于 330.3 退役，见 §5.2）。详见 §4.3。
+**路径 4：统一 LUT（`kLutInverseCdf`）。** 其余所有非退化类型——`kGaussian`、`kLaplacian`、`kUniform`、`kZigzag`——均走此路径。一张预计算的逆 CDF 查找表取代了三条已退役的非退化分支（`kRayleigh` / `kGenericReject` / `kLaplacianTightEnvelope`，已于 330.3 退役，见 §5.2）。详见 §4.3。
 
 以上四条路径即当前完整的分类：不再有近极/远极的区分，本清单中也不再有任何拒绝循环（退役记录见 `doc/geometry/near-pole-area-measure-sampling.md`）。
 
 ### 4.3 统一逆 CDF LUT（`kLutInverseCdf`）
 
-构建（host 侧，每个轴分布仅构建一次——`lat_lut.cpp::BuildLatLut`，由 `GetSharedLatLut` 在 CPU 工作线程与两个 GPU 后端间共享缓存，绝不逐光线重建）：
+构建（host 侧，每个轴分布仅构建一次——`src/core/lat_lut.cpp::BuildLatLut`，由 `src/core/lat_lut.hpp` 声明的 `GetSharedLatLut` 在 CPU 工作线程与两个 GPU 后端间共享缓存，绝不逐光线重建）：
 
 - 确定性求积（deterministic quadrature）计算每族分布的精确候选密度，经采样器自身所用的同一个 `normalize_latitude` 折叠处理，并按 sin(θ)——即 §4.1 的球面面积雅可比——加权，产生 `LatLut::kNodes = 257` 个等间隔余纬度节点及其严格递增的 CDF。
 - 逐 bin 的 `flip_prob` 记录该 bin 内样本越过极点、需要将方位角/自转角翻转 π 的概率，以保持近极候选的对称性。
@@ -154,11 +156,15 @@ p_sphere(θ) ∝ p_distribution(θ) · sin(θ)
 
 ### 5.2 已退役的按分布包络/拒绝架构（330.3 之前）
 
-在雅可比修复（§5.1）之后、330.3 之前，非退化分布由三条独立的按分布路径提供服务，而非 §4.3 的单一 LUT（完整记录见 `doc/geometry/near-pole-area-measure-sampling.md`）：
+在雅可比修复（§5.1）之后、330.3 之前，非退化分布在三条分支间路由，而非统一走 §4.3 的 LUT（完整记录见 `doc/geometry/near-pole-area-measure-sampling.md`）。确定性的 `kNoRandom` 始终是独立路径，330.3 也保留了它；它不是被退役的三条分支之一：
 
 **路径：瑞利分布（Rayleigh）（余纬度 < 0.5°）。** 在极点附近，雅可比因子与高斯分布结合后在切平面上给出瑞利分布。采样器抽取二维高斯样本，无需拒绝即可产生正确的球面密度。精确，每个样本 O(1)。
 
-**路径：通用拒绝采样（generic rejection）。** 适用于高斯（非瑞利情形）、之字形和拉普拉斯分布：
+**路径：拉普拉斯 tight envelope。** 近极拉普拉斯分布以 `Gamma(2,b)` 作为
+`base_pdf(θ)·θ` 的提案，再按 `sin(θ)/θ` 接受。它与 Rayleigh 分支一样，把趋零的面积
+Jacobian 吸收到提案中，避开了通用路径在近极的接受率崩溃。
+
+**路径：通用拒绝采样（generic rejection）。** 适用于离极的高斯与拉普拉斯，以及均匀和之字形分布：
 
 1. 从基础分布中抽取候选 θ。
 2. 以概率 cos(φ)/M 接受，其中 φ 为经 `NormalizeLatitude` 折叠后的纬度，M 为 `ComputeJacobianEnvelope()` 计算的包络常数：
@@ -169,9 +175,9 @@ p_sphere(θ) ∝ p_distribution(θ) · sin(θ)
 | 之字形（Zigzag） | cos(max(\|μ\| − A, 0)°) | 全幅度 |
 | 拉普拉斯（Laplacian） | cos(max(\|μ\| − 5b, 0)°) | 99.3% |
 
-**路径：确定性（deterministic）。** 无需采样（即今天的 `kNoRandom`）。
+`kNoRandom` 在这套架构前后都是同一条不采样路径；退役的 wire 数字槽位是 2 / 4 / 5，分别对应 Rayleigh / GenericReject / LaplacianTightEnvelope。
 
-各类型的候选生成（瑞利与确定性路径均无需候选生成）：
+通用拒绝分支的各类型候选生成（两条 tight-envelope 分支分别使用 Rayleigh / Gamma 提案；`kNoRandom` 不采样）：
 
 - **高斯：** 正态变量 × σ + μ。每个候选 O(1)。
 - **之字形：** θ = |A · sin(2πU) + B|，U ~ Uniform(0,1)。O(1)。
@@ -183,7 +189,7 @@ p_sphere(θ) ∝ p_distribution(θ) · sin(θ)
 - 赤道附近（天顶角 ≈ 90°）：~100%（cos φ ≈ 1）
 - 中纬度（天顶角 ≈ 45°）：~70–80%
 - 极点附近（天顶角 ≈ 5°）：~30–40%
-- 之字形/拉普拉斯分布：接受率类似，由相同的 cos(φ)/M 公式决定
+- 之字形/拉普拉斯分布走通用拒绝分支时：接受率类似，由相同的 cos(φ)/M 公式决定
 
 正是这个近极接受率崩溃的问题，促使该架构被 §4.3 的统一 LUT 取代——完整设计推理与退役记录见 `doc/geometry/near-pole-area-measure-sampling.md`。
 

@@ -12,29 +12,33 @@ multi-scatter propagation, or consumer pipeline.
 
 ## §1 RaySeg Field Semantics & Invariants
 
-`RaySeg` is defined in `src/core/raypath.hpp:50-140`. Each field is listed below with its
-semantic role, valid range, and sentinel values.
+`RaySeg` is defined in `src/core/raypath.hpp`. Each field is listed below with its semantic role,
+valid range, and sentinel values.
 
 ### Geometric Fields
 
 | Field | Type | Semantics | Coordinate Space | Source |
 |-------|------|-----------|-----------------|--------|
-| `d_[3]` | `float[3]` | Ray direction (unit vector). | Crystal-local when `IsNormal()`; world-space after `CollectData` rotation for outgoing/TIR. | `src/core/raypath.hpp:53` |
-| `p_[3]` | `float[3]` | Ray **end** point (not start point). | Same coordinate-space rule as `d_`. | `src/core/raypath.hpp:54` |
-| `w_` | `float` | Ray weight (intensity fraction). Non-negative for live rays; `-1.0f` is the TIR sentinel. | — | `src/core/raypath.hpp:55` |
-| `from_face_` | `IdType` | Polygon-face index the segment originated from (parent's `to_face_`). `kInvalidId` for the first segment of a chain. | — | `src/core/raypath.hpp:57-61` |
-| `to_face_` | `IdType` | Polygon-face index this segment hit. `kInvalidId` means "no hit" — either outgoing candidate or TIR-stopped. | — | `src/core/raypath.hpp:62-66` |
+| `d_[3]` | `float[3]` | Ray direction (unit vector). | Crystal-local when `IsNormal()`; world-space after `CollectData` rotation for outgoing/TIR. | `RaySeg::d_` |
+| `p_[3]` | `float[3]` | Ray **end** point (not start point). | Same coordinate-space rule as `d_`. | `RaySeg::p_` |
+| `w_` | `float` | Ray weight (intensity fraction). Non-negative for live rays; `-1.0f` is the TIR/filter-termination sentinel. | — | `RaySeg::w_` |
+| `from_face_` | `IdType` | Polygon-face index the segment originated from (parent's `to_face_`). `kInvalidId` for the first segment of a chain. | — | `RaySeg::from_face_` |
+| `to_face_` | `IdType` | Polygon-face index this segment hit. `kInvalidId` means "no hit" — either outgoing candidate or TIR-stopped. | — | `RaySeg::to_face_` |
 
 ### Chain & Identity Fields
 
 | Field | Type | Semantics | Source |
 |-------|------|-----------|--------|
-| `prev_ray_idx_` | `size_t` | Index of parent segment in `all_data`. `kInfSize` for root rays (first MS layer). | `src/core/raypath.hpp:68` |
-| `root_ray_idx_` | `size_t` | Index of the chain root in `all_data`. All segments in one ray tree share this value. | `src/core/raypath.hpp:69` |
-| `crystal_idx_` | `IdType` | Index into `SimData::crystals_[]`. Range: `[0, kMaxCrystalNum)` or `kInvalidId` (init sentinel). | `src/core/raypath.hpp:71` |
-| `crystal_config_id_` | `IdType` | `Crystal::config_id_` — ties the segment to its configuration-level crystal identity. | `src/core/raypath.hpp:72` |
-| `crystal_rot_` | `Rotation` | Crystal-to-world rotation matrix. Sampled per root ray; propagated to all children. | `src/core/raypath.hpp:73` |
-| `rp_` | `RaypathRecorder` | Raypath in the **current** crystal, as a face-number sequence. | `src/core/raypath.hpp:91` |
+| `prev_ray_idx_` | `size_t` | Legacy bookkeeping slot. The current CPU path initializes roots to `kInfSize` and has no reader that reconstructs a parent chain from it. | `RaySeg::prev_ray_idx_` |
+| `root_ray_idx_` | `size_t` | Index of this crystal trace's entry segment in `all_data`; reset at each MS-layer crystal entry, then copied to hit-loop children. | `RaySeg::root_ray_idx_` |
+| `crystal_idx_` | `IdType` | Index into `SimData::crystals_[]`. Range: `[0, kMaxCrystalNum)` or `kInvalidId` (init sentinel). | `RaySeg::crystal_idx_` |
+| `crystal_config_id_` | `IdType` | `Crystal::config_id_` — ties the segment to its configuration-level crystal identity. | `RaySeg::crystal_config_id_` |
+| `crystal_rot_` | `Rotation` | Crystal-to-world rotation matrix. Sampled per root ray; propagated to all children. | `RaySeg::crystal_rot_` |
+
+The current-crystal face sequence is **not a `RaySeg` field**. `RayBuffer` stores one parallel
+`RaypathRecorder` in `recorders_` for each segment and exposes it through `RecorderAt(idx)`; fan-out,
+buffer moves, and filter calls must carry the segment and recorder together. This split keeps
+`sizeof(RaySeg) == 96` while allowing recorder overflow storage (§2).
 
 ### State Flags
 
@@ -51,8 +55,10 @@ the authoritative post-removal semantics.
 
 ### N4 Construction-Time Invariants
 
-Checked by `RaySeg::IsValidComplete()` at `RayBuffer::EmplaceBack(RaySeg)` entry
-(debug-only via `assert`). Source: `src/core/raypath.hpp:106-139`.
+Checked by `RaySeg::IsValidComplete()` in the two single-segment `RayBuffer::EmplaceBack`
+overloads (debug-only via `assert`; definitions in `src/core/raypath.hpp` and
+`src/config/sim_data.cpp`). The buffer-to-buffer batch overload copies previously validated slots
+and does not repeat the assertion.
 
 | ID | Invariant | Predicate |
 |----|-----------|-----------|
@@ -69,8 +75,8 @@ Checked by `RaySeg::IsValidComplete()` at `RayBuffer::EmplaceBack(RaySeg)` entry
 ### all_data Layout
 
 `all_data` (`RayBuffer`) is the flat append-only store for all segments across all crystals
-and MS layers within one `SimulateOneWavelength` call. Segments are appended in
-initialization order (source: `src/core/simulator.cpp:182,215,699`):
+and MS layers within one CPU simulation run. Segments are appended by `InitRayFirstMs`,
+`InitRayOtherMs`, and the hit-loop batch moves in `src/core/simulator.cpp`:
 
 ```
 all_data = [ init_segs_crystal_0 | init_segs_crystal_1 | ... |
@@ -78,52 +84,50 @@ all_data = [ init_segs_crystal_0 | init_segs_crystal_1 | ... |
              hit2_children_c0    | ...                        ]
 ```
 
-### prev_ray_idx_ / root_ray_idx_ Semantics
+### `prev_ray_idx_` / `root_ray_idx_` Bookkeeping
 
-- **Root rays** (first MS layer): `prev_ray_idx_ = kInfSize`. `root_ray_idx_` is the
-  segment's own index in `all_data` (source: `src/core/simulator.cpp:151`).
-- **Continuation rays** (subsequent MS layers): `prev_ray_idx_` inherits from the
-  `is_continue_` parent in the prior layer (the value is NOT reset in `InitRayOtherMs`
-  because it was already valid from the prior layer's `CollectData`).
-  `root_ray_idx_` is reassigned to the new `all_data` offset
-  (source: `src/core/simulator.cpp:207`).
-- **Hit-loop children**: `TraceRayBasicInfo` copies `root_ray_idx_` from parent to both
-  child segments (reflect + refract). `prev_ray_idx_` is NOT set by `TraceRayBasicInfo` —
-  it remains whatever value the buffer slot held. In practice, the reflect/refract children
-  are new slots written by `Propagate`/`HitSurface` and then field-copied in the manual
-  loop (source: `src/core/simulator.cpp:380-396`).
+- `InitRay_d_w_previdx` initializes first-layer `prev_ray_idx_` to `kInfSize`. The current tree walk,
+  filter path, and consumers do not read it, and no current assignment turns hit-loop children into
+  a parent-index linked list. It must not be used as one without restoring and testing that contract.
+- `InitRay_other_info` assigns `root_ray_idx_` from the entry segment's forthcoming `all_data`
+  position. `TraceRayBasicInfo` copies that value to reflect/refract children.
+- `InitRayOtherMs` calls `InitRay_other_info` again, so the value names the root of the **current
+  crystal trace**, not a root spanning the whole multi-scatter chain. Cross-layer analysis identity
+  is carried separately by `RayBuffer::chain_ids_`.
+
 
 ### crystal_idx_ Chain-Aware Propagation
 
-`crystal_idx_` is set once per crystal in `InitRay_other_info`
-(source: `src/core/simulator.cpp:149`) and propagated to both child segments in
-`TraceRayBasicInfo` (source: `src/core/simulator.cpp:388-389`). It identifies which
-`Crystal` instance (in `SimData::crystals_[]`) the segment belongs to.
+`crystal_idx_` is set once per crystal trace in `InitRay_other_info` and propagated to both child
+segments in `TraceRayBasicInfo`. It identifies which `Crystal` instance in
+`SimData::crystals_[]` the segment belongs to.
 
 ### from_face_ / to_face_ Split
 
 The `from_face_` / `to_face_` pair implements a linked-list of polygon faces along the ray:
 
 1. **Entry segment** (`InitRay_p_fid`): `from_face_ = kInvalidId`, `to_face_` = sampled
-   polygon face (source: `src/core/simulator.cpp:76-77`).
+   polygon face.
 2. **Hit-loop children** (`TraceRayBasicInfo`): each child's `from_face_` = parent's
    `to_face_` (the face just hit); `to_face_` = result of `Propagate` (next face hit, or
-   `kInvalidId` for outgoing/TIR) (source: `src/core/simulator.cpp:371-377,383-385`).
+   `kInvalidId` for outgoing/TIR).
 
 The source-face guard passed to `Propagate` uses the parent's `to_face_` via
 `BufferWrapper` with `step=2` (shared by reflect+refract pair), NOT `from_face_`
 directly.
 
-### Raypath Recorder (rp_)
+### Parallel Raypath Recorder
 
-- Initialized in `InitRay_other_info`: cleared, then first face-number appended via
-  `crystal.GetFn(to_face_)` (source: `src/core/simulator.cpp:152-153`).
-- Extended in `FillRayOtherInfo`: each child with `to_face_ != kInvalidId` gets the
-  face-number appended (source: `src/core/simulator.cpp:403-410`).
-- Copied from parent to both children in `TraceRayBasicInfo`
-  (source: `src/core/simulator.cpp:381-382`).
-- Maximum length: `kMaxHits` (64). Overflow silently drops
-  (source: `src/core/raypath.cpp:6-8`).
+- `InitRay_other_info` calls `RecorderClear(i)` and appends the entry face with
+  `RecorderAppend(i, crystal.GetFn(to_face_))`.
+- `TraceRayBasicInfo` copies each parent recorder to both child slots through
+  `RayBuffer::RecorderFanOut`; overflow slots are duplicated into the destination buffer's arena.
+- `FillRayOtherInfo` appends the next face for each child that hit one.
+- `RayBuffer::EmplaceBack` overloads move the segment and its parallel recorder together across
+  hit-loop and MS-layer buffers.
+- Length is capped at `kMaxHits` (64). The first `RaypathRecorder::kInlineCap` (15) face bytes live
+  inline; longer paths use `RayBuffer::overflow_arena_` rather than being silently truncated at the
+  inline capacity. `RecorderDataPtr` / the arena pointer passed to a filter resolves that storage.
 
 ---
 
@@ -171,11 +175,10 @@ duplicate it to avoid a second drift point.
 **Pre-loop reset** (pool-reuse guard): `is_continue_` is explicitly reset to
 `false` for every segment at the top of the `CollectData` loop.
 
-**Coordinate rotation**: outgoing candidates have `d_` and `p_` rotated from crystal-local
-to world-space (`crystal_rot_.Apply`) **before** the filter check
-(source: `src/core/simulator.cpp:442-443`). TIR segments are rotated **after** the state
-branch (source: `src/core/simulator.cpp:463-466`). Normal segments remain in crystal-local
-coordinates.
+**Coordinate rotation**: outgoing candidates have `d_` and `p_` rotated from crystal-local to
+world space with `crystal_rot_.Apply` before the filter check. TIR segments are rotated in the
+preceding TIR branch. Normal segments remain in crystal-local coordinates (`CollectData` in
+`src/core/simulator.cpp`).
 
 **Routing after state assignment**:
 - `IsNormal()` → re-enters `buffer_data[0]` for the next hit iteration.
@@ -191,12 +194,10 @@ coordinates.
 | `is_continue_` | `InitRayOtherMs` step 1.4 | Pool-reuse guard for MS layer entry |
 | Raypath recorder | `InitRay_other_info` | Each crystal initialization |
 
-**Note (scrum-237, 2026-05-28)**: post-anchor-lane removal there is no cross-MS-layer
-persistent per-ray state carried by `RaySeg` itself — a filter-fail simply sets
-`w_ = -1.0f` and the ray terminates. Any future cross-layer per-ray state (e.g.
-the phase-2 raypath-color foundation's per-ray component mask) is added as a
-**parallel array on `RayBuffer`**, not as a `RaySeg` field, to preserve the
-`sizeof(RaySeg) == 96` SoA-prize invariant.
+**Note (current layout)**: no cross-MS filter-failure state lives in `RaySeg` — a filter-fail sets
+`w_ = -1.0f` and terminates. Cross-layer state that does exist today is kept in `RayBuffer` parallel
+columns: `components_` carries the raypath-colour component mask, and `chain_ids_` carries the
+analysis chain id. This preserves the `sizeof(RaySeg) == 96` hot-loop invariant.
 
 ---
 
@@ -204,37 +205,37 @@ the phase-2 raypath-color foundation's per-ray component mask) is added as a
 
 ### FilterSpec::Check Preconditions
 
-`FilterSpec::Check(const RaySeg& ray)` is called inside `CollectData` on outgoing
-candidates only (source: `src/core/simulator.cpp:445`). At the point of call:
+`FilterSpec::Check(const RaySeg& ray, const RaypathRecorder& rec, const uint8_t* overflow_arena)`
+is called inside `CollectData` for outgoing candidates. At the call:
 
-1. **Coordinate space**: `d_` and `p_` have already been rotated to world-space via
-   `crystal_rot_.Apply()` (source: `src/core/simulator.cpp:442-443`).
-2. **Raypath**: `rp_` is fully populated for the current crystal (all face-numbers appended
-   by `FillRayOtherInfo`).
+1. **Coordinate space**: `ray.d_` and `ray.p_` have already been rotated to world space through
+   `crystal_rot_.Apply()`.
+2. **Raypath**: `rec` is `buffer_data[1].RecorderAt(idx)` and is fully populated for the current
+   crystal. When `rec.HasOverflow()`, `overflow_arena` points at that buffer's recorder arena.
 3. **Segment kind**: `to_face_ == kInvalidId && w_ >= 0` (outgoing candidate).
 
-### Fields Consumed by Filter Implementations
+The segment and recorder are one logical input even though they occupy separate arrays. Calling a
+raypath-dependent spec with a recorder from another slot violates the contract just as surely as
+passing the wrong `RaySeg` did before the storage split.
 
-| FilterSpec subclass | RaySeg fields consumed | Source |
-|--------------------|----------------------|--------|
-| `NoneSpec` | None (always returns true) | `src/core/filter_spec.cpp:144` |
-| `RaypathSpec` | `rp_` (via `RaypathOrbit::Contains`) | `src/core/filter_spec.cpp:152` |
-| `EntryExitSpec` | `rp_[0]` and `rp_[size_-1]` (entry/exit face numbers) | `src/core/filter_spec.cpp:163-169` |
-| `DirectionSpec` | `d_[3]` (world-space direction, dot product against target) | `src/core/filter_spec.cpp:185` |
-| `CrystalSpec` | `crystal_config_id_` | `src/core/filter_spec.cpp:195` |
-| `ComplexSpec` | Delegates to sub-filters (OR-of-AND composition) | `src/core/filter_spec.cpp:206-219` |
+### Inputs Consumed by Filter Implementations
+
+| FilterSpec subclass | Inputs consumed | Source |
+|--------------------|-----------------|--------|
+| `NoneSpec` | None (always matches) | `src/core/filter_spec.cpp` — `NoneSpec::Match` |
+| `RaypathSpec` | `rec` + optional overflow arena (`RaypathOrbit::Contains`) | `src/core/filter_spec.cpp` — `RaypathSpec::Match` |
+| `EntryExitSpec` | recorder length and first/last face bytes | `src/core/filter_spec.cpp` — `EntryExitSpec::Match` |
+| `DirectionSpec` | `ray.d_[3]` (world-space direction) | `src/core/filter_spec.cpp` — `DirectionSpec::Match` |
+| `CrystalSpec` | `ray.crystal_config_id_` | `src/core/filter_spec.cpp` — `CrystalSpec::Match` |
+| `ComplexSpec` | Delegates the same segment/recorder/arena tuple to sub-filters | `src/core/filter_spec.cpp` — `ComplexSpec::Match` |
 
 ### FilterSpec::Create
 
-`FilterSpec::Create(config, crystal, axis_dist)` builds the spec from the filter
-configuration bound to a crystal (source: `src/core/filter_spec.cpp:277-284`). It
-pre-computes:
-- `d_applicable`: whether D symmetry applies (azimuth uniform + roll mean at 30° multiple).
-- `sigma_a`: the mirror parameter for D symmetry reduction.
-- `action_`: filter-in or filter-out (set after construction).
+`FilterSpec::Create(config, crystal, axis_dist)` builds a spec from one scattering entry's filter
+configuration plus its referenced crystal and orientation context (`src/core/filter_spec.cpp`). It
+pre-computes the requested symmetry's canonical/orbit data and action. These are construction-time
+computations; `Match()` is stateless and performs no per-ray mutation.
 
-These are **construction-time** computations. The `Match()` call on the hot path is
-stateless — no per-ray mutation.
 
 ---
 
@@ -243,11 +244,11 @@ stateless — no per-ray mutation.
 | Concern | This document | `doc/raypath/raypath-symmetry.md` |
 |---------|--------------|--------------------------|
 | RaySeg struct fields & invariants | §1 — full field table, sentinel values, N4 checks | Not covered |
-| Ray chain construction (prev/root indices) | §2 — all_data layout, index propagation | Not covered |
+| Ray chain bookkeeping (`root_ray_idx_`; `prev_ray_idx_` is currently legacy/unread) | §2 — current assignments and scope | Not covered |
 | Segment state machine (TIR/Normal/Outgoing/Continue/FilterDropped) | §3 — derivation rules, CollectData branch table, reset points | Not covered |
 | Filter interface contract | §4 — preconditions, consumed fields per FilterSpec | Not covered |
 | P, B, D symmetry toggles | Not covered (see cross-ref below) | §3 — full toggle semantics, enabling conditions |
-| Face-number encoding (fn) | §2 (briefly, as raypath recorder input) | §2a — face numbering convention table |
+| Face-number encoding (fn) | §2 (briefly, as parallel recorder input) | §2a — face numbering convention table |
 | Canonical form / orbit reduction | Not covered | §3-§4 — P/B/D reduction formulas |
 | GUI filter behavior | Not covered | §6 — D checkbox, informational indicator |
 
@@ -264,8 +265,8 @@ stateless — no per-ray mutation.
 
 | Constant | Value | Defined in | Usage |
 |----------|-------|-----------|-------|
-| `kInvalidId` | `0xffff` | `src/core/def.hpp:11` | "No face" / "no crystal" sentinel for `IdType` fields |
-| `kInfSize` | `SIZE_MAX` | `src/core/def.hpp:12` | "No parent" sentinel for `prev_ray_idx_` |
-| `kMaxHits` | `64` | `src/core/def.hpp:24` | Maximum face hits per crystal; caps `RaypathRecorder` |
-| `kMaxCrystalNum` | `16` | `src/core/def.hpp:26` | Upper bound for `crystal_idx_` (N4-4) |
-| `kSmallBatchRayNum` | `32` | `src/core/simulator.hpp:64` | Inner-loop batch size for ray tracing |
+| `kInvalidId` | `0xffff` | `src/core/def.hpp` | "No face" / "no crystal" sentinel for `IdType` fields |
+| `kInfSize` | `SIZE_MAX` | `src/core/def.hpp` | Legacy/unset sentinel for `prev_ray_idx_` |
+| `kMaxHits` | `64` | `src/core/def.hpp` | Maximum recorded face count per crystal |
+| `kMaxCrystalNum` | `16` | `src/core/def.hpp` | Upper bound for `crystal_idx_` (N4-4) |
+| `kSmallBatchRayNum` | `32` | `src/core/simulator.hpp` — `Simulator::kSmallBatchRayNum` | Default CPU inner-loop batch size |

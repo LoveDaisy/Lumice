@@ -2,787 +2,255 @@
 
 # Developer Guide
 
-This document provides guidance for project developers on development environment setup, code style, feature extension, testing, and debugging.
+This guide is the practical entry point for contributors. Architecture decisions live in the topic documents; repository-wide engineering rules live in `AGENTS.md`; branch, pull-request, and release policy lives in `CONTRIBUTING.md`.
 
-## Development Environment Setup
+## 1. Prerequisites
 
-### System Requirements
+Lumice is a C++17 CMake project built with Ninja. A normal development machine needs:
 
-- **Operating System**: macOS 13.0+ (Ventura), Linux (Ubuntu 24.04+), or Windows 10+
-- **Compiler**: C++17-compatible compiler (GCC, Clang, or MSVC)
-- **CMake**: >= 3.14
-- **Ninja** (recommended): Default build generator, provides faster incremental builds with automatic parallelism
+- Apple Clang 14+, GCC 11+, or MSVC 2022;
+- CMake 3.14+;
+- Ninja 1.10+;
+- Python 3.9+ (used during every build to embed assets and by E2E tooling);
+- for GUI builds on Linux, OpenGL, X11, and GTK 3 development packages.
 
-All other dependencies are automatically downloaded and managed via [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake):
-- [nlohmann/json](https://github.com/nlohmann/json) v3.10.5 — JSON parsing (header-only)
-- [spdlog](https://github.com/gabime/spdlog) v1.15.0 — Logging (header-only)
-- [tl-expected](https://github.com/TartanLlama/expected) v1.1.0 — C++17 `expected<T,E>` (header-only)
-- [GoogleTest](https://github.com/google/googletest) v1.15.2 — Unit testing (downloaded when `-t` is enabled)
+Dependencies are fetched by CPM.cmake and cached per machine under `$HOME/.cache/lumice-cpm` by default. `CPM_SOURCE_CACHE` overrides that location. Build and install trees remain per worktree and per library flavor.
 
-> **About Ninja**: If Ninja is not installed, you can remove `-G Ninja` from `scripts/build.sh`, and CMake will fall back to the system default generator (typically Unix Makefiles).
+## 2. Build commands and output trees
 
-### Installing Dependencies
-
-#### macOS
+Use the repository script:
 
 ```bash
-# Using Homebrew
-brew install cmake ninja
+./scripts/build.sh -j release       # static CLI/library
+./scripts/build.sh -gj release      # add the GUI
+./scripts/build.sh -tj release      # build tests and run CTest correctness labels
+./scripts/build.sh -gtj release     # add gui_test; requires a display
+./scripts/build.sh -bj release      # add benchmarks
+./scripts/build.sh -sj release      # shared libraries
 ```
 
-#### Linux (Ubuntu/Debian)
+Options compose:
 
-```bash
-sudo apt-get update
-sudo apt-get install cmake ninja-build
+- `-t`, `-g`, and `-b` choose what is built;
+- `-s` alone changes the library flavor from static to shared;
+- `-k` removes the selected flavor's CMake build/install trees but leaves compiler output and the machine CPM cache;
+- `-x` removes all repository-local `build/` output, but still leaves the machine CPM cache.
+
+Paths:
+
+| Purpose | Path |
+|---|---|
+| CMake build tree | `build/cmake_build/<static|shared>/` |
+| Install tree | `build/cmake_install/<static|shared>/` |
+| Compiler output | `build/<BUILD_TYPE>/<static|shared>/{bin,lib}/` |
+| CLI | `build/cmake_install/static/Lumice` |
+| GUI | `build/cmake_install/static/LumiceGUI` after a `-g` build |
+
+For the complete current option text, run `./scripts/build.sh -h` rather than copying flags from this page into another specification.
+
+## 3. Source organization and boundaries
+
+The engine layer order is defined once in `cmake/lumice_layers.cmake`:
+
+```text
+foundation → analytic → scene → view → sim → render → engine → raypath → capi
 ```
 
-### Build Configuration
+Every engine file under `src/` belongs to that manifest. A file may include its own or a lower layer. `scripts/check_policies.py` rejects unowned files, missing manifest entries, and new upward dependencies.
 
-The project uses CMake for building and provides a `scripts/build.sh` script to simplify the build process:
+Major directories:
 
-```bash
-./scripts/build.sh -j release    # Release build (recommended)
-./scripts/build.sh -j debug      # Debug build (for debugging)
+| Directory | Responsibility |
+|---|---|
+| `src/config/` | JSON parsing and scene/config data |
+| `src/core/` | geometry, optics, simulator, buffers, projection, backends |
+| `src/server/` | session orchestration, consumers, results, C bridges |
+| `src/raypath/` | raypath reports and single-path analysis |
+| `src/analytic/` | the published analytic capability |
+| `src/include/` | public C capability headers |
+| `src/gui/` | interactive application shell |
+| `src/util/` | infrastructure and pure shared helpers |
+| `test/` | C++ and Python verification layers |
+
+### Public API boundary
+
+There is no umbrella header. Include the capability that declares what you use:
+
+```text
+lumice_base.h  lumice_scene.h  lumice_render.h
+lumice_editor.h  lumice_engine.h  lumice_raypath.h
 ```
 
-**Build options**:
-- `-t`: Compile and run tests
-- `-g`: Build GUI application (Dear ImGui + GLFW + OpenGL)
-- `-b`: Build benchmarks (Google Benchmark)
-- `-j`: Parallel compilation
-- `-k`: Clean build artifacts (keep dependency cache)
-- `-x`: Wipe `build/` entirely (both flavors). It does **not** clear the CPM
-  dependency-source cache — that defaults to a machine-level directory outside
-  `build/` (`$HOME/.cache/lumice-cpm`) shared with every other clone and worktree.
-  Delete that directory by hand to force a re-download.
-- `-s`: Build shared libraries (static libraries by default)
-- `-h`: Show help information
+The GUI may include these engine capability headers, but it may not include `core/`, `config/`, or the analytic-family public headers. A helper shared by GUI and engine belongs in `src/util/` only when it is pure, stateless, and carries no simulation/configuration semantics.
 
-**Common flag combinations**:
-- `./scripts/build.sh -gj release`: Build GUI without tests
-- `./scripts/build.sh -gtj release`: Build GUI + run all tests (unit + GUI)
-- `./scripts/build.sh -tj release`: Build core + run unit tests only (no GUI)
+`src/raypath/detail/` is internal to the raypath module and its tests. The engine-facing raypath headers are the documented public module surface.
 
-### IDE Configuration
+## 4. Style and diagnostics
 
-#### CLion
+Follow `.clang-format` and `.clang-tidy`.
 
-1. Open the project root directory
-2. CLion will automatically detect the CMake configuration
-3. Configure CMake options (if needed)
+Naming:
 
-#### VS Code
+- types: `CamelCase`;
+- functions: `CamelCase`;
+- variables: `lower_case`;
+- private members: `lower_case_`;
+- constants: `kCamelCase`;
+- namespace: `lumice`.
 
-1. Install the C/C++ extension
-2. Install the CMake Tools extension
-3. Open the project root directory
-4. Configure CMake (as needed)
+Prefer `const`, `constexpr`, smart pointers, `nullptr`, and `override`. Do not use raw `new`/`delete` or `using namespace`.
 
-#### Other IDEs
+Run formatting before committing:
 
-- Use CMake to generate project files
-- Configure include paths and library paths
-
-### Debugging Environment Configuration
-
-#### Using LLDB (macOS)
-
-```bash
-./scripts/build.sh debug
-lldb ./build/Debug/static/bin/Lumice
-(lldb) run -f examples/config_example.json
-```
-
-#### Using GDB (Linux)
-
-```bash
-./scripts/build.sh debug
-gdb ./build/Debug/static/bin/Lumice
-(gdb) run -f examples/config_example.json
-```
-
-### Environment Variables
-
-Lumice uses a small number of environment variables for build scripts and test tooling. The product code (C++ source under `src/`) does **not** read any environment variables at runtime.
-
-| Variable | Where | Purpose |
-|----------|-------|---------|
-| `LUMICE_SKIP_GUI_TESTS` | `scripts/build.sh` | Set to `1` to skip GUI test compilation and execution. CI auto-detects headless environments via the `CI` variable. |
-| `LUMICE_BIN` | `test/e2e/runner.py` | Override the CLI binary path for E2E subprocess tests. Defaults to `build/cmake_install/static/Lumice`. |
-| `LUMICE_LIB` | `test/e2e/capi_runner.py` | Override the shared library path for E2E C API tests. Defaults to the first existing shared-flavor candidate, starting with `build/Release/shared/lib/liblumice_testapi.dylib` (macOS) or `.so` (Linux) — the test-only superset of `liblumice` (same objects plus the `LUMICE_TEST_*` hooks of `test/support/lumice_test_api.h`), never `liblumice` itself. |
-
-**Design principle**: Deterministic simulation seeds are passed via the C API (`LUMICE_ServerConfig.sim_seed`) rather than environment variables, to keep program behavior explicit and reproducible. See the [C API documentation](interfaces/c_api.md) for details.
-
-## Code Style Guide
-
-### General Principles
-
-- Use the C++17 standard
-- Follow the existing code style of the project
-- Use `clang-format` to automatically format code
-
-### Naming Conventions
-
-#### Class Names
-
-- Use `PascalCase`
-- Examples: `Crystal`, `ServerImpl`, `ConfigManager`
-
-```cpp
-class Crystal {
-  // ...
-};
-
-class ServerImpl {
-  // ...
-};
-```
-
-#### Function Names
-
-- Use `PascalCase` (consistent with class methods)
-- Examples: `CreatePrism()`, `GetResults()`, `CommitConfig()`
-
-```cpp
-class Server {
- public:
-  void CommitConfig(const std::string& config);
-  std::vector<Result> GetResults();
-};
-```
-
-#### Variable Names
-
-- Use `snake_case`
-- Member variables may use a trailing `_` suffix (e.g., `server_`, `config_`)
-- Examples: `ray_num`, `max_hits`, `img_buffer_`
-
-```cpp
-int ray_num = 1000000;
-size_t max_hits_ = 7;
-float* img_buffer_ = nullptr;
-```
-
-#### Constant Names
-
-- Use `k` prefix + `PascalCase`
-- Examples: `kDefaultSimulatorCnt`, `kMaxSceneCnt`
-
-```cpp
-static constexpr int kDefaultSimulatorCnt = 4;
-static constexpr size_t kMaxSceneCnt = 128;
-```
-
-#### Namespaces
-
-- Use `snake_case`
-- All code uses the `lumice` namespace
-
-```cpp
-namespace lumice {
-
-class Crystal {
-  // ...
-};
-
-}  // namespace lumice
-```
-
-### Code Formatting
-
-The project uses a `.clang-format` configuration file. Key rules:
-
-- **Indentation**: 2 spaces
-- **Line width**: 120 characters
-- **Pointer alignment**: Left-aligned (`int* ptr`)
-- **Namespaces**: Not indented
-- **Brace style**: Attach style
-
-**Format code**:
 ```bash
 ./scripts/format.sh
+./scripts/format.sh --check
 ```
 
-### File Organization
+### Logging
 
-#### Header Files
-
-- Use the `.hpp` extension
-- Include header guards:
-```cpp
-#ifndef MODULE_FILE_H_
-#define MODULE_FILE_H_
-// ...
-#endif  // MODULE_FILE_H_
-```
-
-#### Source Files
-
-- Use the `.cpp` extension
-- Place the corresponding header file in the same directory
-
-#### Include Order
-
-1. Corresponding header file
-2. C++ standard library
-3. Third-party libraries
-4. Other project header files
+Engine and server diagnostics use `src/util/logger.hpp`:
 
 ```cpp
-#include "config/config_manager.hpp"  // 1. Corresponding header file
-
-#include <vector>                     // 2. C++ standard library
-#include <memory>
-
-#include <nlohmann/json.hpp>           // 3. Third-party libraries
-
-#include "core/crystal.hpp"           // 4. Other project header files
-#include "util/log.hpp"
+ILOG_INFO(logger_, "Committed epoch {}", epoch);
+LOG_WARNING("Configuration uses a deprecated field");
 ```
 
-### Commenting Conventions
+GUI diagnostics use `GUI_LOG_*` from `src/gui/gui_logger.hpp`. Do not add `printf`, `fprintf`, `std::cout`, or `std::cerr` under `src/`; raw output bypasses the configured sinks and may disappear in the Windows GUI. The only named exceptions are the CLI product output in `src/main.cpp`, the pre-abort owner in `src/util/fatal.hpp`, and the pre-engine Windows launcher.
 
-#### File Header Comments (Optional)
+CLI product output uses stdout; diagnostic logging uses stderr.
 
-```cpp
-/**
- * @file crystal.hpp
- * @brief Crystal geometry and operations
- */
-```
+## 5. Adding or changing code
 
-#### Class Comments
+Before editing a subsystem, read the relevant design document from `doc/README.md`. In particular:
 
-```cpp
-/**
- * @brief Crystal geometry representation
- * @details This class represents a crystal with triangular mesh.
- *          It provides methods for creating crystals and querying geometry data.
- */
-class Crystal {
-  // ...
-};
-```
+- geometry or predicates: `geometry/crystal-geometry-representation.md` and `geometry/numerical-robustness.md`;
+- GPU paths: `backends/seam-design.md` plus the backend lifecycle documents;
+- exposure/display: `rendering/ev-pipeline-architecture.md`;
+- GUI state: `gui/gui-state-governance.md`;
+- raypath analysis: `raypath/raypath-analysis.md` and `raypath/raypath-analysis-panel.md`;
+- tests: `testing/testing-architecture.md`.
 
-#### Function Comments
+For a new engine source file:
 
-```cpp
-/**
- * @brief Create a hexagonal prism crystal
- * @param h Height-to-diameter ratio (h/a)
- * @param fd Face distance array [d1, d2, d3, d4, d5, d6], optional
- * @return A Crystal object representing the prism
- * @note Default face distances are [1,1,1,1,1,1] for regular hexagon
- */
-static Crystal CreatePrism(float h, const float* fd = nullptr);
-```
+1. choose the lowest layer that owns its semantics;
+2. add it to `cmake/lumice_layers.cmake` in the same change;
+3. keep includes within the allowed direction;
+4. expose functionality through an existing capability, or make an explicit API design decision before adding a new surface;
+5. add the smallest test whose oracle matches the behavior.
 
-#### Inline Comments
+For a public C API change:
 
-- Use English for comments
-- Explain "why" rather than "what"
-- Complex logic must be commented
+1. place the declaration in the capability header that owns the operation;
+2. use that header's export macro;
+3. implement it in the matching `src/server/c_api_<capability>.cpp` bridge;
+4. update the API version and compatibility record when required;
+5. verify the generated export surface and external-consumer contract.
 
-```cpp
-// Multiply by sqrt(3)/4 to convert face distance to actual distance
-x.mean *= math::kSqrt3_4;
-```
+Do not copy one semantic implementation into the GUI, CLI, and engine. Put the authority at the lowest valid shared layer and have each shell consume it.
 
-## How to Add New Features
+### Environment variables
 
-### Adding a New Crystal Type
+Before adding `std::getenv`, apply `env-var-policy.md`. User-facing behavior belongs in CLI/config/API, not in a silent machine-local variable. All runtime `LUMICE_*` reads are centralized in `src/util/env_knobs.cpp` and must be registered and logged.
 
-#### Steps
+## 6. Testing
 
-1. **Add a parameter struct in `crystal_config.hpp`**:
-```cpp
-struct NewCrystalParam {
-  Distribution param1_;
-  Distribution param2_[6];
-};
-```
-
-2. **Update the `CrystalParam` variant**:
-```cpp
-using CrystalParam = std::variant<PrismCrystalParam, PyramidCrystalParam, NewCrystalParam>;
-```
-
-3. **Implement JSON parsing in `crystal_config.cpp`**:
-```cpp
-void from_json(const nlohmann::json& j, NewCrystalParam& p) {
-  // Parsing logic
-}
-```
-
-4. **Add a creation method in `crystal.hpp`**:
-```cpp
-static Crystal CreateNewType(float param1, const float* param2);
-```
-
-5. **Implement the creation logic in `crystal.cpp`**:
-```cpp
-Crystal Crystal::CreateNewType(float param1, const float* param2) {
-  // Creation logic
-}
-```
-
-6. **Update the configuration documentation**: Add a description of the new type in `configuration.md`
-
-### Adding a New Filter Type
-
-#### Steps
-
-1. **Add a parameter struct in `filter_config.hpp`**:
-```cpp
-struct NewFilterParam {
-  IdType target_id_;
-  float threshold_;
-};
-```
-
-2. **Update the `SimpleFilterParam` variant**:
-```cpp
-using SimpleFilterParam = std::variant<
-    NoneFilterParam, RaypathFilterParam, EntryExitFilterParam,
-    DirectionFilterParam, CrystalFilterParam, NewFilterParam>;
-```
-
-3. **Implement JSON parsing in `filter_config.cpp`**:
-```cpp
-void from_json(const nlohmann::json& j, FilterConfig& f) {
-  // ...
-  else if (type == "new_filter") {
-    NewFilterParam p{};
-    j.at("target_id").get_to(p.target_id_);
-    j.at("threshold").get_to(p.threshold_);
-    f.param_ = p;
-  }
-}
-```
-
-4. **Implement the filtering logic in `filter.cpp`**:
-```cpp
-bool Filter::ApplyNewFilter(const NewFilterParam& param, const RaySeg& ray) {
-  // Filtering logic
-}
-```
-
-5. **Update the configuration documentation**: Add a description of the new filter type in `configuration.md`
-
-### Adding a New Consumer
-
-#### Steps
-
-1. **Inherit the `IConsume` interface**:
-```cpp
-#include "server/consumer.hpp"
-
-namespace lumice {
-
-class MyConsumer : public IConsume {
- public:
-  void Consume(const SimData& data) override {
-    // Process data
-  }
-
-  Result GetResult() const override {
-    // Return result
-    return MyResult{};
-  }
-};
-
-}  // namespace lumice
-```
-
-2. **Register the consumer in `ServerImpl`**:
-```cpp
-// In ServerImpl::Start() or a similar location
-consumers_.emplace_back(std::make_unique<MyConsumer>());
-```
-
-3. **Update the documentation**: Add consumer description in `architecture.md`
-
-### Adding a New Configuration Type
-
-#### Steps
-
-1. **Define the configuration struct**:
-```cpp
-struct MyConfig {
-  IdType id_;
-  // Other fields
-};
-```
-
-2. **Implement JSON serialization**:
-```cpp
-void to_json(nlohmann::json& j, const MyConfig& c);
-void from_json(const nlohmann::json& j, MyConfig& c);
-```
-
-3. **Add management in `ConfigManager`**:
-```cpp
-struct ConfigManager {
-  std::map<IdType, MyConfig> my_configs_;
-  // ...
-};
-```
-
-4. **Update the configuration documentation**: Add a description of the new configuration type in `configuration.md`
-
-## Testing Guide
-
-### Unit Testing
-
-#### Testing Framework
-
-The project uses the GoogleTest framework for unit testing.
-
-#### Writing Tests
-
-1. **Create test files**:
-   - Location: `test/` directory
-   - Naming: `test_*.cpp`
-
-2. **Test structure**:
-```cpp
-#include <gtest/gtest.h>
-#include "core/crystal.hpp"
-
-using namespace lumice;
-
-TEST(CrystalTest, CreatePrism) {
-  auto crystal = Crystal::CreatePrism(1.3);
-  EXPECT_GT(crystal.TotalTriangles(), 0);
-  EXPECT_GT(crystal.TotalVertices(), 0);
-}
-
-TEST(CrystalTest, CreatePyramid) {
-  auto crystal = Crystal::CreatePyramid(0.1, 1.2, 0.5);
-  EXPECT_GT(crystal.TotalTriangles(), 0);
-}
-```
-
-3. **Test Fixtures**:
-```cpp
-class CrystalTest : public ::testing::Test {
- protected:
-  void SetUp() override {
-    crystal_ = Crystal::CreatePrism(1.3);
-  }
-
-  Crystal crystal_;
-};
-
-TEST_F(CrystalTest, GetTriangleVtx) {
-  const auto* vtx = crystal_.GetTriangleVtx();
-  ASSERT_NE(vtx, nullptr);
-}
-```
-
-#### Running Tests
+Build tests first, then use the scope that matches the decision:
 
 ```bash
-# Using the build script
-./scripts/build.sh -t release
-
-# Or run manually
-cd build/cmake_build/static
-ctest
+LUMICE_SKIP_GUI_TESTS=1 ./scripts/build.sh -gtj release
+./scripts/test.sh quick   # verify the change just made
+./scripts/test.sh full    # broader local sweep, including real-timing GUI pool
+./scripts/test.sh pr      # pre-PR shape, including shared-lib slow E2E
 ```
 
-### GUI Testing
-
-The project uses [ImGui Test Engine](https://github.com/ocornut/imgui_test_engine) for GUI automated testing. Tests run in a hidden-window mode and cover widget interactions and visual regression.
-
-#### Running GUI Tests
+Direct Python entry points:
 
 ```bash
-# Build and run all tests (unit + GUI)
-./scripts/build.sh -gtj release
+pytest -v                 # fast subset, matching CI
+pytest -v -m ''           # full E2E set
+pytest -v -m slow         # slow tests; requires ./scripts/build.sh -sj release
 ```
 
-#### Test Structure
+The command's exit code is the pass/fail verdict. Do not pipe a test command through `tail` without `pipefail`, and do not infer success from a stale binary after a failed build.
 
-GUI tests are located in `test/gui/` and organized by priority:
+### Where a new test belongs
 
-- **Smoke tests**: Basic application state verification
-- **P0 (File operations)**: New, Save/Open roundtrip, Run/Stop UI
-- **P1 (CRUD)**: Crystal/Filter add/delete with confirmation popups
-- **P2 (Parameters)**: Lens switching, mark-dirty detection
-- **Screenshot tests**: FBO capture and PSNR comparison
-- **Visual regression tests**: Crystal preview (Prism/Pyramid, Wireframe/HiddenLine/Shaded) and render preview data correctness
+Choose by verification purpose first:
 
-#### Writing GUI Tests
+| Proposition | Location / target |
+|---|---|
+| one pure unit | `test/unit-correctness/` |
+| two or more collaborating units, no live frame/input | `test/composition-correctness/` |
+| backend equivalence | `test/parity-cross-backend/` |
+| closed-form or analytic oracle | `test/golden-analytic/` |
+| CLI/full-stack behavior | `test/e2e-correctness/` |
+| throughput gate | `test/performance/` |
+| rendered frame or synthesized GUI input | `test/gui/` / `gui_test` |
+| a specific escaped defect | `test/regression-sentinel/` |
 
-GUI tests use the GuiFunc (main thread) + TestFunc (test thread) pattern:
+For `src/gui/` specifically:
 
-```cpp
-ImGuiTest* t = IM_REGISTER_TEST(engine, "category", "test_name");
-t->GuiFunc = [](ImGuiTestContext* ctx) {
-  // Runs on main thread — safe for GL calls
-};
-t->TestFunc = [](ImGuiTestContext* ctx) {
-  // Runs on test thread — drive UI interactions
-  ctx->ItemClick("##TopBar/New");
-  IM_CHECK(gui::g_state.is_dirty == false);
-};
-```
+- one unit's pure logic: `gui_unit_test` (or `unit_correctness_test` for header-only code);
+- collaborating GUI units without a frame: `composition_correctness_test`;
+- a rendered frame or `ImGuiTestContext`: `gui_test`.
 
-#### Visual Regression Reference Images
+Do not update visual references by copying one failed output over the expected image. Use the registered regeneration workflow and its full-suite sampling rules from `testing/testing-architecture.md`.
 
-Reference images are in `test/gui/references/`. To update:
-1. Run `./scripts/build.sh -gtj release` to generate new screenshots
-2. Copy updated images to `test/gui/references/`
-3. Rebuild and verify PSNR = inf (pixel-identical)
+## 7. Policy checks
 
-> **Note**: Reference images are generated on macOS + Apple Silicon. Cross-platform PSNR may differ.
-
-#### Testing Best Practices
-
-- **Test naming**: `TestSuiteName_TestCaseName`
-- **Test independence**: Each test should be independent and not rely on other tests
-- **Test data**: Use fixed data or random seeds to ensure reproducibility
-- **Assertion choice**:
-  - `EXPECT_*`: Test continues execution on failure
-  - `ASSERT_*`: Test stops immediately on failure
-
-### E2E Testing
-
-End-to-end tests verify the complete CLI simulation pipeline, from configuration parsing to image output.
-
-#### Framework
-
-- **Python**: pytest + Pillow (for image comparison)
-- **Location**: `test/e2e-correctness/` (tests); `test/e2e/` holds only shared fixtures the
-  layers import from — see `test/e2e/README.md`
-
-#### Test Structure
-
-```
-test/e2e-correctness/           # tests (independent top-level directory)
-├── test_smoke.py             # Smoke tests with PSNR image verification
-├── test_cli.py                # CLI behavior
-├── ...                         # other correctness tests — see doc/testing/testing-architecture.md §1.4
-└── references/                 # Reference output images (*.jpg)
-
-test/e2e/                       # shared fixtures (independent top-level directory)
-├── configs/                     # Scenario JSON configs shared across layers
-└── runner.py, base.py, ...      # Shared fixtures — see test/e2e/README.md
-```
-
-#### Running E2E Tests
+Run the whole-tree policy check when changing structure or boundaries:
 
 ```bash
-# Requires a built binary at build/cmake_install/static/Lumice
-pytest -v          # fast subset (pinned by pyproject.toml addopts; matches CI)
-pytest -v -m ''     # full set
+python3 scripts/check_policies.py
 ```
 
-#### Image Verification
-
-E2E smoke tests compare output images against reference images using PSNR (Peak Signal-to-Noise Ratio):
-- Reference images are stored in `test/e2e-correctness/references/*.jpg`
-- PSNR threshold: calibrated per output as `min_psnr - 3 dB` from 3 reference runs, floored to
-  0.5 dB precision — see the `PSNR_THRESHOLDS` dict and its per-entry comments in
-  `test/e2e-correctness/test_smoke.py` for the current values and their calibration history
-- To update reference images: run the simulation with the test config and replace the reference file
-
-#### Adding New E2E Tests
-
-1. Create a configuration JSON in `test/e2e/configs/`
-2. Generate the reference image by running the CLI with the new config
-3. Save the reference to `test/e2e-correctness/references/`
-4. Add a test case in `test_smoke.py` or a new test file
-
-## Debugging Tips
-
-### Logging System
-
-The project uses [spdlog](https://github.com/gabime/spdlog) as the logging backend, with convenient macros provided through `util/log.hpp`.
-
-#### Log Levels
-
-- `TRACE` / `VERBOSE`: Most detailed trace information
-- `DEBUG`: Debug information
-- `INFO`: General information (default level)
-- `WARNING`: Warning messages
-- `ERROR`: Error messages
-- `CRITICAL` / `FATAL`: Critical error messages
-
-#### Using Logging
-
-```cpp
-#include "util/log.hpp"
-
-LOG_DEBUG("Debug message: {}", value);
-LOG_VERBOSE("Verbose message");
-LOG_INFO("Info message");
-LOG_WARNING("Warning message");
-LOG_ERROR("Error message: {}", error_str);
-```
-
-Logging uses [fmt](https://fmt.dev/) formatting syntax (`{}` placeholders), not `printf`-style `%d`/`%s`.
-
-#### Class-Level Logging
-
-For logs that need to distinguish their source, use a named logger:
-
-```cpp
-#include "util/log.hpp"
-
-class MyClass {
-  static auto logger = lumice::GetLogger("MyClass");
-
-  void DoWork() {
-    logger->info("Working on task {}", task_id);
-    logger->debug("Detail: {}", detail);
-  }
-};
-```
-
-#### Setting the Log Level
-
-The log level can be set programmatically via `lumice::SetLogLevel()`:
-
-```cpp
-#include "util/logger.hpp"
-
-// Global logger auto-initializes at kInfo level on first use; no explicit init needed.
-lumice::GetGlobalLogger().SetLevel(lumice::LogLevel::kDebug);  // Set to debug level
-```
-
-### Debugging Tools
-
-#### GDB/LLDB Basic Commands
+Before committing, the hook runs formatting plus the diff-scoped gates. They can also be invoked directly:
 
 ```bash
-# Start debugging
-lldb ./build/Debug/static/bin/Lumice
-
-# Set breakpoints
-(lldb) breakpoint set --file crystal.cpp --line 100
-(lldb) b crystal.cpp:100
-
-# Run the program
-(lldb) run -f examples/config_example.json
-
-# Inspect variables
-(lldb) print variable_name
-(lldb) p variable_name
-
-# View the call stack
-(lldb) bt
-
-# Step execution
-(lldb) step      # Step into function
-(lldb) next      # Next line
-(lldb) continue  # Continue execution
+python3 scripts/check_new_refs.py --staged
+python3 scripts/check_new_gui_tests.py --staged
+python3 scripts/check_loop_fatal_asserts.py --staged
 ```
 
-#### Valgrind Memory Check (Linux)
+Install the repository hook once with `./scripts/install-hooks.sh`. Do not bypass a failing hook; fix the underlying issue.
+
+## 8. Debugging and profiling
+
+Build a debug flavor with `./scripts/build.sh -gj debug`. The executable is installed under `build/cmake_install/static/`; compiler output remains under `build/Debug/static/`.
+
+Useful first steps:
+
+- run the CLI with `-v` or `-d`; logs are on stderr;
+- for intermittent failures, map the complete data flow and instrument silent-return paths before changing behavior;
+- for parity failures, compare both routes at successive internal stages and locate the first divergence;
+- for GPU changes, use the documented reference-machine protocol rather than extrapolating from a host without that backend;
+- use ASan/UBSan, LLDB/GDB, Instruments, or `perf` according to platform and failure shape.
+
+Performance claims require a rebuilt binary, a correctness sanity gate, an idle reference machine, and the baseline specified by `testing/performance-testing.md`.
+
+## 9. Documentation and contribution
+
+Generate Doxygen locally with:
 
 ```bash
-valgrind --leak-check=full ./build/Debug/static/bin/Lumice -f examples/config_example.json
+doxygen .doxygen-config
 ```
 
-#### Performance Profiling
+Output lands under `doc/api/html/` and is not a substitute for the stable capability documentation.
 
-```bash
-# Using perf (Linux)
-perf record ./build/cmake_install/static/Lumice -f examples/config_example.json
-perf report
+Before opening a pull request:
 
-# Using Instruments (macOS)
-instruments -t "Time Profiler" ./build/cmake_install/static/Lumice -f examples/config_example.json
-```
+1. run the relevant focused checks and `./scripts/test.sh pr` when the change reaches the simulator, C API, or shared-library path;
+2. inspect the complete diff and staged set;
+3. keep permanent prose free of ignored working-note references;
+4. follow `CONTRIBUTING.md` for branch, PR, and release procedure.
 
-### Common Troubleshooting
+## Related documentation
 
-#### Compilation Errors
-
-1. **Header file not found**:
-   - Check include paths in `CMakeLists.txt`
-   - Verify the header file path is correct
-
-2. **Linking errors**:
-   - Check that libraries are linked correctly
-   - Verify the library paths are correct
-
-3. **C++17 features not supported**:
-   - Check the compiler version
-   - Verify the C++ standard setting in the CMake configuration
-
-#### Runtime Errors
-
-1. **Segmentation Fault**:
-   - Debug with GDB/LLDB
-   - Check for null pointer dereferences
-   - Check for array out-of-bounds access
-
-2. **Configuration parsing errors**:
-   - Verify the JSON format is correct
-   - Enable verbose logging to view error messages
-   - Refer to the configuration documentation to validate configuration entries
-
-3. **Memory leaks**:
-   - Check with Valgrind
-   - Verify that resources are properly released
-
-#### Performance Issues
-
-1. **Slow execution**:
-   - Check whether you are using a Debug build (use Release build instead)
-   - Use profiling tools to locate bottlenecks
-
-2. **High memory usage**:
-   - Check for memory leaks
-   - Review whether data structures are appropriate
-   - Consider using object pools to reduce allocations
-
-## Contribution Guide
-
-### Code Submission Workflow
-
-1. **Create a branch**:
-   ```bash
-   git checkout -b feature/my-feature
-   ```
-
-2. **Write code**:
-   - Follow the code style guide
-   - Add necessary tests
-   - Update relevant documentation
-
-3. **Commit code**:
-   ```bash
-   git add .
-   git commit -m "feat: add new feature"
-   ```
-
-4. **Push and create a PR**:
-   ```bash
-   git push origin feature/my-feature
-   ```
-
-### Pull Request Guidelines
-
-- **Title**: Concisely describe the changes
-- **Description**: Explain the reason for and impact of the changes in detail
-- **Testing**: Describe how to test the changes
-- **Documentation**: Update relevant documentation (if needed)
-
-### Code Review Requirements
-
-- Code style conforms to project standards
-- Adequate test coverage is provided
-- Documentation is updated (if needed)
-- No new warnings or errors are introduced
-
-## Related Documentation
-
-- [System Architecture](architecture.md) - Understand the system design
-- [Configuration Documentation](configuration.md) - Configuration format reference
-- [C API Documentation](interfaces/c_api.md) - C interface usage guide
-- [Documentation Index](README.md) - Navigation for all documents
+- [System architecture](architecture.md)
+- [Configuration reference](configuration.md)
+- [Testing architecture](testing/testing-architecture.md)
+- [C API reference](interfaces/c_api.md)
+- [Environment-variable policy](env-var-policy.md)
+- [Contributing guide](../CONTRIBUTING.md)

@@ -2,12 +2,12 @@
 
 > 状态：设计蓝图（explore-326 GO + scrum-328 子任务 328.1 收敛，2026-07-04）。**已被统一 LUT 取代并落地——见下方「收尾（330.x）」。**
 > 改近极朝向采样 / GPU device gen sampler / 统一 LUT 路 前先读。
-> 关联：`crystal-orientation-sampling.md`、`numerical-robustness.md`、`gpu-single-engine-implementation.md`。
+> 关联：`crystal-orientation-sampling.md`、`numerical-robustness.md`、`../backends/gpu-single-engine-implementation.md`。
 
 > ## 收尾（330.x：统一 inverse-CDF LUT 取代本文 §2 分支）
 >
 > scrum-unify-orientation-sampling-cosine-measure 用**单一数值 inverse-CDF 面积测度 LUT**（`kLutInverseCdf`）取代了本文 §2 描述的**每分布 tight-envelope 分支**（Rayleigh / Gamma(2,b)）**及** off-pole generic-rejection：
-> - 330.2 落地统一 LUT（`lat_lut.cpp::BuildLatLut` + `pcg_shared.h::invert_lat_lut`/`lat_lut_bin`），三后端验证（CPU + Metal + CUDA dev49 parity 10/10），并把 `SelectLatPath` 全部路由到 `kLutInverseCdf`。
+> - 330.2 落地统一 LUT（`src/core/lat_lut.cpp::BuildLatLut` + `pcg_shared.h::invert_lat_lut`/`lat_lut_bin`），三后端验证（CPU + Metal + CUDA dev49 parity 10/10），并把 `SelectLatPath` 全部路由到 `kLutInverseCdf`。
 > - 330.3 **删除**已不可达的死分支：`sample_lat_lon_roll` / `SampleSphericalPointsSph` 的 Rayleigh / LaplacianTightEnvelope / GenericReject 分支体、`ComputeJacobianEnvelope` 及其 host 镜像、`pcg_sinc`/`pcg_gamma2` helper、`LatPathKind` 的 kRayleigh(2)/kGenericReject(4)/kLaplacianTightEnvelope(5) 枚举值与对应 `lm_pcg::kLatPath*` 常量（wire 数值 0/1/3/6 保持不变，2/4/5 留空位）。
 > - §2 的**精确性推导（`sinθ≤θ` 上界、`base_pdf·θ` 提案、`sinθ/θ` 接受）仍是 LUT 目标密度 `∝ base_pdf(θ)·sinθ` 的理论依据**，故本文保留作设计记录；但 §2/§4 描述的分支实现已不在代码中。
 > - `GenRootKernelParams` 的 `lat_dist_type`/`lat_rejection_m` 字段现为死字段（wire 布局冻结，标注 `// dead post-330.3`）。
@@ -68,27 +68,32 @@ proposed 采样器**有意偏离**当前采样器（更精确）：
 | 层 | 位置 | 现状（统一 LUT） |
 |----|------|------|
 | **device sampler（单源→Metal shader+CUDA）** | `pcg_shared.h::sample_lat_lon_roll` | 仅 `kLatPathLutInverseCdf` 分支：`invert_lat_lut` + `lat_lut_bin`（一次 uniform draw，无拒绝循环）；另存 `kFullSphere`/`kNoRandom`/`kGaussLegacy` 退化路 |
-| **CPU sampler** | `math.cpp::SampleSphericalPointsSph` | 镜像同上（共享 `invert_lat_lut`/`lat_lut_bin`）|
-| **LUT 构建（host）** | `lat_lut.cpp::BuildLatLut` | 一次性 per-axis 构建 theta/cdf/flip 节点表（`lm_pcg::normalize_latitude` 单源折叠），线程本地缓存 |
+| **CPU sampler** | `src/core/random.cpp::RandomSampler::SampleSphericalPointsSph` | 镜像同上（共享 `invert_lat_lut`/`lat_lut_bin`）|
+| **LUT 构建（host）** | `src/core/lat_lut.cpp::BuildLatLut` | 一次性 per-axis 构建 theta/cdf/flip 节点表（`lm_pcg::normalize_latitude` 单源折叠），线程本地缓存 |
 | **host path-selection ×3** | `lat_path::SelectLatPath`（`lat_path_selection.hpp`，单源） | 非退化分布 → `{kLutInverseCdf, 1.0f}`；三后端各调同一函数 |
-| **struct 镜像** | `GenRootKernelParams`（pcg_shared.h）↔ `metal.mm` | 布局冻结（`lat_dist_type`/`lat_rejection_m` 死字段）；LUT 数组走独立 device buffer（不入 setBytes struct）|
+| **struct 镜像** | `GenRootKernelParams`（`pcg_shared.h`）↔ `metal_trace_backend.mm` | 布局冻结（`lat_dist_type`/`lat_rejection_m` 死字段）；LUT 数组走独立 device buffer（不入 setBytes struct）|
 
 > `pcg_shared.h` 被 `lumice_trace.metal`(shader) + `cuda_trace_backend.cu` + `metal_trace_backend.mm` 同编 → device sampler 一处即两 GPU 后端；`SelectLatPath` 已在 `lat_path_selection.hpp` 单源，不再三后端手工镜像。
 
-## 5. device RNG-stream 可观测性设施 co-design
+## 5. device RNG-stream 可观测性设施 co-design（历史记录）
 
-近极 sampler 三后端 parity 是 backlog「device RNG-stream 一等可观测性设施」的第 2 消费者（第 1 = task-325 的 5 个 test-only hook）。设施（3 组件）：
+以下是设计阶段列出的第二消费场景与设施形态，不是当前 backlog。330.x 最终选择统一 LUT 后，
+采样正确性由真实 `sample_lat_lon_roll` 路径和三后端 parity 验证；本节保留当时为何需要观察
+RNG stream 的推理：
 1. **raw-gen harness**：只驱动 gen kernel + 读回（朝向 lat/lon/roll + attempt count），补齐 Metal 侧缺失的 `ReadbackGenDirsForTest`（现只有 `ReadbackRootRotForTest`），跨三后端对称。
 2. **显式选流 enum 探针**：`enum RngStream{gen, gate_ms1, gate_final, transit}` + payload `{raw_uN, attempt_count, lat_lon_roll}`，取代隐式时机路由 + 裸 tid（加 `ci_start` 偏移）。
 3. **`TraceBackendTestHooks` struct**：test-only inject/readback 从生产 backend public 接口剥离，消除现有 Metal/CUDA 方法不对称。
-+ 债：`SelectLatPath()` / `ComputeJacobianEnvelope` 下沉共享头；struct 布局门禁；scene helper 去重。
++ 当时记录的债：`SelectLatPath()` 下沉共享头、struct 布局门禁、scene helper 去重。
+  `SelectLatPath` 已落在 `lat_path_selection.hpp`；`ComputeJacobianEnvelope` 随拒绝分支删除，
+  不再是待下沉项。
 
-## 6. 落地任务
+## 6. 历史落地分解（已完成）
 
-scrum-328 `near-pole-area-measure-sampling`：328.2（设施）→ 328.3（统一核心 + Gaussian + uniform）→ 328.4（Laplacian）。CUDA 硬件验证后置 dev49（与 task-325 wl_stream FU 合并）。
+当时的分解是 328.2（设施）→ 328.3（统一核心 + Gaussian + uniform）→ 328.4
+（Laplacian）；其后 330.2/330.3 以统一 LUT 收口，CUDA 硬件验证也已完成（见本文开头收尾记录）。
 
-## 附：一手实测锚点（explore 328.1，Python MC，a01 双锚对齐 explore-326 真 C++ 插桩）
+## 附：一手实测锚点（Python MC 与真实 C++ 插桩双链对齐）
 
 - Laplacian b5：当前 20.4%（att 4.90 ≈ 真码 4.91）→ 提案 99.3%；KS(提案 vs current M=1)匹配。
 - Gaussian σ5：当前 26.8%（att 3.76 ≈ 真码 3.73）→ 提案 99.8%；KS(提案 vs ground truth)=0.0026<crit。
-- 复现脚本：`scratchpad/scrum-near-pole-area-measure-sampling/explore-unified-sampler-impl-details/exp{1,2,3}_*.py`。
+- 实现与退役锚点：`15455723c`（tight-envelope 核心）、`631092ee4`（Laplacian 实例）、`3827011dc`（统一 LUT 激活）、`646fb5cbd`（删除旧分支）。

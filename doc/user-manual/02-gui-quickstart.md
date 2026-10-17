@@ -4,7 +4,7 @@
 
 This chapter walks you through your first interactive simulation in the Lumice GUI: launch the app, load the bundled example, run, and read the preview. By the end you will know which panels to click and what the floating overlays mean.
 
-> **Prerequisite**: a release build with the GUI enabled (`./scripts/build.sh -j release` produces `build/cmake_install/static/LumiceGUI`).
+> **Prerequisite**: a release build with the GUI enabled (`./scripts/build.sh -gj release` produces `build/cmake_install/static/LumiceGUI`).
 
 ## 1. Launch
 
@@ -35,7 +35,7 @@ The annotated screenshot below labels the six regions you will use most often. T
 
 ## 3. Load the bundled example
 
-`File ▶ Open` and choose `examples/config_example.json`. The Left Panel populates with the example's four crystals, light source, scattering layers, and one render entry:
+`File ▶ Open` and choose `examples/config_example.json`. The Left Panel populates with the example scene's crystal pool, light source, scattering layer, and imported render view:
 
 ![Example loaded](../figs/gui_screenshot_example_01.jpg)
 
@@ -87,12 +87,10 @@ Want to build a halo recipe yourself instead of opening the example? The shortes
 
    ![Crystal editor dialog](../figs/gui_edit_crystal.jpg)
 
-   Pick a preset (e.g. **Hexagonal Prism**), tweak `height` if you wish, and confirm. (Other shape fields like `face_distance` are accepted by the schema but are not yet active in the engine — see [`05-faq.md`](05-faq.md) §4.)
-3. Open **Light Source** in the Left Panel and set `azimuth` (sun direction) and `altitude` (sun height above horizon).
+   Pick a preset (e.g. **Hexagonal Prism**), tweak `height` or the face distances if you wish, and confirm.
+3. Open **Light Source** in the Left Panel and set `altitude` (sun height above the horizon). The GUI deliberately keeps the sun at azimuth 0; rotate the view around it instead.
 4. Open **Render** and pick a lens, resolution, and field of view — the Floating Lens Bar can re-project later, so any sane default is fine.
 5. Press **Run**.
-
-> 📷 待补：Crystal Tab 整体截图（registered in `progress.md` placeholder list; will be folded into SUMMARY.md "待补充清单" at closeout).
 
 ## 6. Save and reload
 

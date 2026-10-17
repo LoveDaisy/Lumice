@@ -281,9 +281,9 @@ L0 引擎（几何、求交、折射、采样）仍然**没有**独立的 C 出�
 
 | 打包 | 链接 | 导出（函数个数） |
 |---|---|---|
-| `liblumice`（Windows 为 `lumice-engine.<tier>.dll`） | `lumice_obj` + foundation + raypath + 解析核 | 六个能力头 + `lumice_analytic_core.h`（93） |
-| `liblumice_testapi` | 同上，同一批对象 | 引擎全集 + `LUMICE_TEST_*` 钩子（95） |
-| `liblumice_analytic` | 只有 foundation + 解析核 | `lumice_analytic.h` 加 `lumice_analytic_core.h`（11） |
+| `liblumice`（Windows 为 `lumice-engine.<tier>.dll`） | `lumice_obj` + foundation + raypath + 解析核 | 六个能力头 + `lumice_analytic_core.h`（116） |
+| `liblumice_testapi` | 同上，同一批对象 | 引擎全集 + `LUMICE_TEST_*` 钩子（118） |
+| `liblumice_analytic` | 只有 foundation + 解析核 | `lumice_analytic.h` 加 `lumice_analytic_core.h`（31） |
 
 要点：
 

@@ -9,13 +9,12 @@
 **目标读者**：新增或迁移测试的贡献者；核查新测试是否落在正确层、用对 oracle 的评审者；任何重排
 测试套件的人。
 
-> **状态声明（先读）。** 本文定义的是**目标态**架构（purpose 主轴，层 × subsystem）。物理迁移
-> 在 milestone-cleanup 的 270.3–270.7 子任务中陆续落地：270.3 将单元 gtest 层拆分为
-> `unit_correctness_test` / `golden_analytic_test` / `parity_test`，270.4 将 pytest 树重组到
-> `test/e2e-correctness/`、`test/parity-cross-backend/`、`test/performance/`、`test/gui/`、
-> `test/regression-sentinel/`，270.5（本层）将 GUI 测试迁入
-> `test/gui/{functional,visual,responsiveness}/` 并把 target 重命名为 `gui_test`。§6 同时给出
-> **历史**与**目标态**两栏，便于追溯测试来源。
+> **状态声明（先读）。** purpose 主轴、层 × subsystem 架构已经是**当前落地形态**。270.3–270.7
+> 迁移建立了现行 purpose 命名 CMake target，把 pytest 树迁入
+> `test/{e2e-correctness,parity-cross-backend,performance,gui,regression-sentinel}/`，并建立
+> `test/gui/{functional,visual,responsiveness,parity}/`。§6 只保留迁移来源记录，不构成第二份当前清单；
+> 当前接线以 `test/CMakeLists.txt`、`test/gui/CMakeLists.txt`、`pyproject.toml` 与
+> `scripts/test.sh` 为准。
 
 ---
 
@@ -58,8 +57,8 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
 
 ## §1 八层
 
-每层由六个字段定义：**目的 / oracle / 阈值约定 / 运行节奏 / 命名约定 / 物理位置**。节奏取值：
-`CI-fast`（每次 push 的快速腿）、`PR`（拉取请求）、`nightly`（定时 / 本地 heavy）、`local`（开发者本地跑）。
+每层由六个字段定义：**目的 / oracle / 阈值约定 / 运行节奏 / 命名约定 / 物理位置**。节奏名称以
+§7.0 的五个真实执行层为准：PR、仅 `main`、本地定时、release 与开发者机器。本仓没有 nightly 层。
 
 ### §1.1 `unit-correctness`
 
@@ -68,7 +67,9 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
 - **阈值约定**：精确或紧容差（`EXPECT_EQ` / `EXPECT_NEAR` 小 epsilon）。无统计阈值。
 - **节奏**：`CI-fast`——每 commit。
 - **命名**：`test_<component>.{cpp}`；gtest `TEST(<Component>, <behavior>)`。
-- **物理位置**：目标态 `test/unit-correctness/<subsystem>/`；现状 `unit_test` target。
+- **物理位置**：`test/unit-correctness/<subsystem>/`，主要由 `unit_correctness_test` 构建；
+  需要 `lumice_gui_obj` 的 GUI 用例按链接边界进入独立 `gui_unit_test`，但仍挂
+  `unit-correctness` label。Python 组件放在 `test/unit-correctness/scripts/`。
 
 ### §1.2 `composition-correctness`
 
@@ -103,12 +104,12 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
 - **阈值约定**：对解析值的绝对容差；容差由物理而非 run-to-run 噪声决定。
 - **节奏**：`CI-fast`——每 commit（确定性）。
 - **命名**：`<Phenomenon>AnalyticTruth` / `...NormalIncidence` 式，使解析锚显式。
-- **物理位置**：目标态 `test/golden-analytic/<subsystem>/`；现状嵌在 `unit_test`（如
-  `test_metal_trace_parity.cpp` 内的解析锚），可能也在 `test_projection` / `test_optics`。
+- **物理位置**：`test/golden-analytic/<subsystem>/`，由 `golden_analytic_test` 构建并挂
+  `golden-analytic` label。
 
 ### §1.4 `parity-cross-backend`
 
-- **目的**：非 legacy 后端（Metal；未来 CUDA）在同一场景下与 **legacy CPU** 参考统计等价。
+- **目的**：非 legacy 后端（Metal 或 CUDA）在同一场景下与 **legacy CPU** 参考统计等价。
 - **oracle**：**legacy CPU 是 ground truth。** 等价**不可仅凭相关性**断言——相关性已两次掩盖真
   bug（scrum-267）。必须配齐 metric-masks-bugs 全套：跨 seed 自洽 + 总能量守恒 + golden/解析锚 +
   人眼核查 + revert 反验（见 §4.2）。
@@ -116,8 +117,8 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
 - **节奏**：`PR`。（本行原先列的 `nightly` heavy 变体已于 2026-08-11 随 `heavy` marker 一并删除
   ——没有任何 workflow 带 `schedule:` 触发器，所以它们从来没跑过。）
 - **命名**：`test_<backend>_<aspect>_parity.{cpp,py}`；`...Parity` gtest suite。
-- **物理位置**：目标态 `test/parity-cross-backend/<subsystem>/`；现状 `unit_test`（`.cpp`/`.mm`）
-  + `test/e2e/`（pytest parity 测试）。
+- **物理位置**：`test/parity-cross-backend/<subsystem>/`；C++ 用例由 `parity_test` 构建，
+  backend pytest 用例位于同一 purpose 树下。
 - **projection 子系统（315.5）**：`test/parity-cross-backend/backend/test_{metal,cuda}_projection_parity.py`
   对每种 LensType 做一次 legacy-oracle 对照，使**全部 11 种投影**（现经共享
   `src/core/shared/projection_shared.h::ProjectExitToPixel` 在 Metal + CUDA 上渲染）保持 cross-backend
@@ -130,8 +131,8 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
 - **oracle**：tracked 参考图按 **PSNR** 对比；或非图像场景的 CLI 退出码 + 输出形状断言。
 - **阈值约定**：每场景 PSNR 地板（钉在测试里）；冒烟级用退出码 / 文件非空检查。
 - **节奏**：`PR`（快速子集跑 `-m "not slow"`；shared-lib 变体跑 `-m slow`）。
-- **命名**：`test/e2e/` 下 `test_<feature>.py`。
-- **物理位置**：目标态 `test/e2e-correctness/`；现状 `test/e2e/`。
+- **命名**：`test/e2e-correctness/` 下 `test_<feature>.py`。
+- **物理位置**：`test/e2e-correctness/`。
 
 ### §1.6 `performance`
 
@@ -140,14 +141,15 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
   绝不可作 perf 基线（见 §4.1）。报告跨重复的 `median` + `CoV`。
 - **阈值约定**：对 legacy CPU 的比值地板；统计以 `median` 与变异系数报告；有 committed bench
   harness 提供 `CoV` 后收紧地板。
-- **节奏**：`PR`（廉价哨兵——如 `test_metal_throughput`）与 `nightly`（完整 bench 扫描，跑
-  `scripts/bench_throughput.py`，task-270.6 落地）。该 committed harness 是仓内所有
-  `Lumice benchmark` 类吞吐声明的标准工具；git-ignored 工作区里的临时脚本不具权威性。
+- **节奏**：`ci` 吞吐 profile 作为灾难地板运行在 PR 层；`precise` profile 每日在参照机的本地
+  定时层运行；`Lumice benchmark` 历史在 push 到 `main` 时运行。§7.0 是这些执行层的权威，本仓没有
+  nightly 层。仓内所有 `Lumice benchmark` 类吞吐声明统一使用 committed
+  `scripts/bench_throughput.py` harness；ignored 工作目录里的临时脚本不具权威性。
 - **命名**：`test_<backend>_throughput.py`；`scripts/bench_throughput.py` 是 committed harness
   （矩阵 = {legacy, cpu_backend, metal} × heavy config × Metal dispatch sweep，median+CoV，
   比值分母锁 legacy CPU）。
-- **物理位置**：目标态 `test/performance/`；现状 `test/e2e/`（吞吐哨兵）+ CI `Benchmark` 步骤
-  （`benchmark -f examples/bench_config.json`）。
+- **物理位置**：`test/performance/`；CI 另直接调用 `Lumice benchmark` 维护仅 `main` 的 benchmark
+  历史。
 - **边界注**：GUI 帧延迟 / 响应性测试（`test_gui_perf`）**不**在本层——其 oracle 是绝对帧预算，
   而非对 legacy CPU 的比值。它属于 `gui`（响应 tag）。见 §4.4。
 
@@ -184,8 +186,7 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
 - **阈值约定**：当初能抓到该 bug 的断言（精确，或被违反的那条具体不变量）。
 - **节奏**：依 harness 取 `CI-fast` / `PR`——廉价处每 commit。
 - **命名**：`test_<bug-symptom>.py/.cpp`，注释链到修复 commit / issue。
-- **物理位置**：目标态 `test/regression-sentinel/`；现状 `test/e2e/`
-  （`test_capi_sentinel_overflow.py`、`test_ms_filter_leak.py`、`test_errors.py`）。
+- **物理位置**：`test/regression-sentinel/`。
 
 #### §1.8.1 探测力：哪一类 oracle 会无声腐坏
 
@@ -860,32 +861,29 @@ PSNR 看不见"的缺陷——每一对因场景改动而变化的读数，都�
 
 ## §5 物理布局命名约定
 
-迁移（270.3–270.5）时三套命名系统必须保持对齐：
+当前落地树让三套命名系统保持对齐：
 
-- **CMake target**：目标态引入按 purpose 命名的 target 取代扁平 `unit_test`。**命名模式：
-  `<layer-snake>_test`**（snake_case，沿用现有 `unit_test` / `integration_test` 约定）——如
-  `unit_correctness_test`、`parity_test`、`golden_analytic_test`、`composition_correctness_test`；
-  GUI 层的 target 为 `gui_test`（270.5 由 `LumiceGUITests` 重命名而来）。是否再按 subsystem 进一步
-  拆 target（单个 `unit_correctness_test` vs `unit_correctness_core_test`+…）由 **270.3 裁定**，
-  但上述*模式*在此固定，防命名漂移。
+- **CMake target**：purpose 命名 target 遵循 `<layer-snake>_test` 模式：
+  `unit_correctness_test`、`parity_test`、`golden_analytic_test`、
+  `composition_correctness_test`；GUI 层 target 为 `gui_test`。
   **例外——写成一般化规则，而非逐个具名的特例清单**：当一个 target 的存在理由是**链接边界**
   而非层/subsystem 边界时，它按链接依赖命名，不套 `<layer-snake>_test`。`gui_test` 是第一个
   实例（它是 `gui` 层的 target，但名字说的是"链 GUI 的那个"）；`gui_unit_test` 是第二个——
   严格套模式应叫 `unit_correctness_gui_test`，那个名字说的是它与 `unit_correctness_test`
   **共有**的层，反而藏起了唯一真正不同的东西：`lumice_gui_obj` 依赖。层身份由 CTest LABEL
   承载（选择器本来就从那里读），所以 target 名可以腾出来表达链接事实。
-- **CTest LABELS**：目标态为每层加 purpose 轴 label：`unit-correctness`、`composition-correctness`、
-  `golden-analytic`、`parity`（该 LABEL 是 `parity-cross-backend` 层名的缩写——全名对 CMake 过长；
-  这是**唯一**缩写 label，其余层名**不可**同样截断——`unit-correctness` 不可缩成 `unit`，会与旧
-  机制轴 label 冲突，`composition-correctness` 同理不可缩成 `composition`）、`performance`、`gui`、
-  `regression-sentinel`。现状 label 是机制轴（`unit` / `integration` / `gui`）。
+- **CTest LABELS**：compiled 层挂 purpose 轴 label：`unit-correctness`、
+  `composition-correctness`、`golden-analytic`、`parity`（该 LABEL 是
+  `parity-cross-backend` 层名的缩写——全名对 CMake 过长；这是**唯一**缩写 label，其余层名不可
+  同样截断）与 `gui`。只由 pytest 承载的 `e2e-correctness`、`performance`、
+  `regression-sentinel` 通过路径/marker 选择，不虚构 CTest label。
   `ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"` 是
-  `scripts/test.sh` 的 `quick`/`full`/`pr` 模式用来一次选中这四个非平铺层的选择器，不需要任何
-  per-target 知识。
+  `scripts/test.sh` 的 `quick`/`full`/`pr` 模式用来一次选中四个 compiled correctness 层的选择器，
+  不需要任何 per-target 知识。
 - **pytest marker**：`slow`（需 shared-lib 构建；排除出 CI 快路径）是**唯一**的运行节奏 marker，
   保留。另一个 marker `heavy` 注册到 2026-08-11 为止：它命名的是「本地/nightly 跑」这一从未有任何
-  workflow 提供的节奏，因此它那三条测试哪里都没跑过；测试与注册已一并删除。层/subsystem 在目标态
-  用目录 + marker 表达。
+  workflow 提供的节奏，因此它那三条测试哪里都没跑过；测试与注册已一并删除。层/subsystem 身份由
+  当前目录布局与 marker/label 共同表达。
 - **`addopts = ["-m", "not slow"]`（`pyproject.toml`）**：裸 `pytest` 被钳定到 fast 子集，让上文
   "裸 pytest = e2e fast 子集" 的说法从需要调用方记住的约定变成结构性事实。加之前，裸 `pytest`
   实测 collected 全集 166 个（而非 `-m "not slow"` 选出的 81 个 fast 子集），尽管 `AGENTS.md`
@@ -896,32 +894,29 @@ PSNR 看不见"的缺陷——每一对因场景改动而变化的读数，都�
   = 跑该路径下全部」默认语义的 pytest 调用点都需要补上显式 `-m`——见
   `doc/testing/gpu-remote-cuda-build-testing.md` 里 CUDA parity recipe 的修正案例。
 
-**迁移锚 checklist（每次 270.3–270.7 移动强制）。** CI 硬编码了以下锚点；任何 rename/move/marker
-改动漏掉一条都会让 CI 变红：
+**rename/move checklist。** 迁移已经完成，但将来任何 rename/move 仍须同步以下当前锚点：
 
-- [ ] `.github/workflows/ci.yml` 中 `ctest -R LumiceUnitTest`（及任何 `-R`/`-L` selector）在
-      target 改名后仍能解析。
-- [ ] `ci.yml` 中 pytest 路径参数仍能解析——E2E-Slow matrix 按文件名引用具体文件
-      （parity 腿 `test_metal_exit_seam_parity.py`；rest 腿 `--ignore=...`）。
+- [ ] `scripts/test.sh` 与 `.github/workflows/ci.yml` 的 purpose-label selector 仍能解析。
+- [ ] `ci.yml` 点名的 pytest 路径仍能解析，包括各 `E2E Slow` leg 的显式文件与 ignore。
 - [ ] marker selector `-m "not slow"` / `-m slow` 仍选中预期集合。
-- [ ] 参考图路径（`test/e2e/references/`、`test/gui/references/`）及其 `.gitignore` un-ignore 规则
-      随读取它们的测试一起移动。
-- [ ] `release.yml` 不受影响（它不跑测试）——确认，别假设。
+- [ ] 参考图路径（`test/e2e-correctness/references/`、`test/gui/references/`）及其 `.gitignore`
+      un-ignore 规则随读取它们的测试一起移动。
+- [ ] `release.yml` 保持不受影响；若改动触及 release 验证，则显式同步更新。
 
 ---
 
-## §6 现存测试 → 八层（exhaustiveness 映射）
+## §6 迁移来源：现存测试 → 八层
 
-下表证明八层覆盖整个现存套件、**无孤儿**，并作为 270.3–270.7 的迁移源。**迁移约束**列标出不可
-随意移动/删除的健康项。
+下表记录迁移前套件如何归入八层，并保留迁移中识别出的健康约束。它是**来源记录，不是当前完整清单**；
+当前 target 成员与路径以上方状态声明点名的 CMake 文件和文件系统为准。只要所指测试仍存在，约束列仍具
+规范效力。
 
-> 目标态目录规则（为 270.3 解决"子目录还是平铺"的歧义）：有**自然 subsystem 划分**的层
-> （`unit-correctness`、`composition-correctness`、`parity-cross-backend`、`golden-analytic`）
-> 用 `test/<layer>/<subsystem>/`；subsystem 边界模糊的层（`e2e-correctness`、`performance`、
-> `regression-sentinel`）**平铺**为 `test/<layer>/`，subsystem 用 marker/label 编码。`gui` 层用
-> `test/gui/<tag>/`（功能/视觉/响应）。
+> 当前目录规则：有自然 subsystem 划分的层（`unit-correctness`、`composition-correctness`、
+> `parity-cross-backend`、`golden-analytic`）使用 `test/<layer>/<subsystem>/`；subsystem 边界模糊的层
+> （`e2e-correctness`、`performance`、`regression-sentinel`）平铺为 `test/<layer>/`；`gui` 层使用
+> `test/gui/<tag>/`。
 
-| 层 | 目标态路径 | 现状 C++（unit/integration） | 现状 e2e（pytest） | 现状 gui | 迁移约束 |
+| 层 | 当前路径 | C++ 来源 | pytest 来源 | GUI 来源 | 保留约束 |
 |----|-----------|-------------------------------|---------------------|----------|----------|
 | **unit-correctness** | `test/unit-correctness/<subsystem>/` | `test_math`、`test_geo3d`、`test_optics`†、`test_crystal`、`test_rng`、`test_queue`、`test_threading_pool`、`test_color_space`、`test_json`、`test_filter`、`test_filter_spec`、`test_config_snapshot`、`test_render_config`、`test_sim_data`、`test_simulator`、`test_cpu_info`、`test_raypath_segments`、`test_reduce_raypath_audit`、`test_c_api`、`test_exit_records`、`test_proj`(integration)、`test_integration_main`；`gui` subsystem 第一个 target `unit_correctness_test`（只链 `lumice_obj`，header-only 可达）：`test_axis_presets`、`test_filter_sop_grammar`、`test_gui_widget_rules`（已吸收原先独立的 `test_slider_mapping` 与 `test_window_sizing` 两个文件——`SliderMapping` / `WindowSizingTest` 两个 suite 现住在这里）、`test_user_defaults_eligibility`；第二个 target `gui_unit_test`（见右）：`test_defaults_diff`、`test_state_reconcile`、`test_preview_renderer`、`test_export_params`、`test_crystal_renderer`、`test_render_handedness_guard`（渲染 `right=+az` 跨实现手性 guard——绝对屏侧判据，与 `test_projection` 的 golden 绝对列钉子配对；它是唯一需要 `lumice_gui_obj` 与 `lumice_obj` 一起链接的用例，因而 `gui_unit_test` 是它唯一可能的归宿）、`test_axis_absent_alignment`、`test_user_defaults`、`test_render_bg_logic`、`test_sampling_density_stats`、`test_server_poller`、`test_face_number_overlay`、`test_overlay_labels`、`test_composite_preview`、`test_color_window_logic`，外加 `gui_unit_test_env`（在任何用例跑之前安装本 target 的个人默认值隔离基线） | — | — | 本层的 `gui` subsystem 目录由**两个**按链接边界拆开的 CMake target 共用（§2）：`unit_correctness_test`（只链 `lumice_obj`）与 `gui_unit_test`（额外链 `lumice_gui_obj`，无窗口）。两者同挂 LABEL `unit-correctness`，所以用例在两者之间搬家**不需要**改任何 `-L` 选择器——但**需要**在两个 `add_executable` 的源文件列表之间搬，且 `gui_unit_test` 只在 `if(BUILD_GUI)` 门内存在。 |
 | **composition-correctness** | `test/composition-correctness/<subsystem>/` | `raypath` subsystem，`raypath_composition_test`：`test_input_assembly_chain`、`test_schema3_report_assembly_chain`（真实 report→结构枚举→MC 归因接线；纯 serializer 字段命题留在 unit）；`gui` subsystem，`composition_correctness_test`：`test_document_roundtrip_chain`、`test_document_defaults_chain`、`test_document_switch_chain`、`test_legacy_document_chain`、`test_scene_commit_chain`、`test_filter_reconstruct_chain`、`test_raypath_color_document_chain`、`test_run_lifecycle_chain`、`test_run_warning_chain`、`test_user_defaults_chain`、`test_field_editor_chain`、`test_edit_modal_chain`、`test_preview_projection_chain` | — | — | 最新的一层（§1.2）；今天已有 `gui` 与 `raypath` 两个 subsystem。文件名是链条的主题，绝不是某个单一 `src/` 单元的名字——见 §1.2 的命名规则。 |

@@ -10,21 +10,20 @@
 
 ---
 
-## §1 绑定模型：Filter ↔ 晶体（单键绑定）
+## §1 绑定模型：Filter 属于 Scattering Entry
 
-Filter 绑定到**晶体**（crystal），而非 layer、stage 或 scattering entry。
-映射关系为一对一：
+Filter 与晶体引用并列绑定到一个 **scattering entry**；crystal 与 filter 是两个独立身份轴：
 
 ```
-crystal_id  ──────────────  filter_id   （单键对）
+entry  ──► crystal_id
+       └─► optional filter_id
 ```
 
 ### JSON / 配置表示
 
-JSON 配置中的 `scattering[].entries[].filter` 是**序列化细节**。
-语义上等同于"该 entry 所引用晶体的 filter"。
-同一 `crystal_id` 在所有引用它的 scattering entries 中预期持有相同的 filter——
-GUI 在 UI 层强制此不变式（见 §5）；JSON 加载器可在解析时断言。
+`scene.scattering[].entries[].filter` 是语义绑定，不是单纯序列化细节。`ParseScatteringInfo`
+逐 entry 解析晶体与可选 filter，组成一个 `ScatteringSetting`。两个 entry 可以引用同一晶体但使用
+不同 filter，也可以只有一个带 filter；parser 不得按 crystal id 把这些绑定折叠。
 
 ### GUI 链接条目（Linked Entries）
 
@@ -43,13 +42,15 @@ GUI 在 ≥ 2 个 entry 构成此配对时显示 link 徽章。
 4. **Filter 移除**（`entry.filter_id: Some → None`）：需显式传播。
    链接兄弟条目也需清空 `filter_id`。
 
-参见 `src/gui/gui_state.hpp:294-328` 的权威注释块和传播所有者（`ApplyBuffersToEntry` 中的 `propagate_filter_id_to_linked` lambda）。
+参见 `src/gui/gui_state.hpp` 的 `Linked group invariants` 权威注释块，以及
+`src/gui/edit_modals.cpp` 的传播 owner `PropagateFilterIdToLinked`。
 
-### "相同参数晶体，不同 filter"
+### 同一晶体，不同 Filter
 
-若需要两个几何参数相同但 filter 不同的晶体，应创建**两个独立的 `crystal_id` 实例**。
-GUI 提供 link/unlink 操作：
-"Link to…" 原子地采用目标的 `(crystal_id, filter_id)` 对；"Unlink" 拆分出独立克隆。
+core 配置允许两个 entry 复用同一 crystal id、同时引用不同 filter id（或其中一个没有 filter）。
+它们共享晶体内容但不共享 filter 内容；由于 pair 不同，在 GUI 中也不构成 linked group。若晶体与
+filter 的编辑都要彼此独立，使用 GUI 的「Unlink」或「Duplicate」分叉私有 pool slot；「Link to…」
+则相反，会原子采用目标的 `(crystal_id, filter_id)` pair。
 
 ---
 
@@ -69,8 +70,8 @@ ray 退出晶体
                               也不传递到下一 MS 层）
 ```
 
-`FilterSpec::Check(ray)` 在每个 outgoing-ray 候选点被调用一次，绑定到刚发射该 ray 的晶体的 filter。
-失败的 ray 不会出现在任何下游 buffer 中。
+`FilterSpec::Check(ray)` 在每个 outgoing-ray 候选点调用一次，使用当前 scattering entry 已解析的
+filter。失败的 ray 不会出现在任何下游 buffer 中。
 
 ### 设计理由
 
@@ -84,7 +85,8 @@ ray 退出晶体
 
 ## §3 多重散射（Multi-Scatter）语义
 
-在多重散射（MS）配置中，每一层是一个 `(prob, crystal, filter)` 三元组。
+在多重散射（MS）配置中，每一层包含一个 `prob` 与一组 scattering entries。对被路由到 entry *i*
+的 ray，决策三元组是 `(prob_layer, crystal_i, filter_i)`：
 
 ```
 第 0 层：prob₀ × crystal₀ × filter₀
@@ -98,9 +100,8 @@ ray 退出晶体
          ……
 ```
 
-Filter 在 simulator 内部的**每个 crystal 退出点**进行评估。
-第 N 层的 filter 决定哪些 ray 有资格进入第 N+1 层。
-在任意层 filter 失败的 ray 被丢弃，不再传播，也不出现在输出 buffer 中。
+Filter 在 simulator 内部的**每个 crystal 退出点**进行评估。第 N 层当前 entry 的 filter 决定该
+ray 是否有资格进入第 N+1 层。任意层 filter 失败都会丢弃该 ray：不再传播，也不进入输出 buffer。
 
 Filter 选择性越高 → simulation 越快：幸存 ray 比例以 `∏ᵢ (pass_rateᵢ × probᵢ)` 的方式跨层叠乘剪枝。
 
@@ -118,7 +119,7 @@ simulator 输出  →  RenderConsumer  →  投影  →  XYZ 累积
                                       （无 filter）
 ```
 
-`RenderConfig` 不持有 filter 字段。先前存在的 `ms_filter_` 字段将在 task-revert（Design A 目标，219.4 删除）中移除。
+`RenderConfig` 不持有 filter 字段。此前的 `ms_filter_` 已在 219.4 恢复 Design A 时删除。
 在 consumer 层应用 filter 是设计违规。
 
 ### 空批次契约（Empty-batch contract）
@@ -127,9 +128,9 @@ simulator 输出  →  RenderConsumer  →  投影  →  XYZ 累积
 （见 §7 分支表——低通过率 filter 出现「这一批零幸存」是正常的分布尾部事件，而非畸形状态），
 `outgoing_d_` 与 `outgoing_w_` **可能同时为空而 `rays_` 非空**。`RenderConsumer` **必须容忍这一状态**：
 当 `outgoing_w_.size() == 0` 时，拷贝、投影、累积循环全部退化为 no-op，`snapshot_intensity_` 保持为零。
-consumer **不得**假设「`rays_` 非空 ⟹ `outgoing_*` 非空」；它唯一可依赖的尺寸不变式是 `sim_data.hpp`
-中记录的 `outgoing_d_.size() == 3 * outgoing_w_.size()` parallel-array 关系（在
-`RenderConsumer::Consume` 中断言，`src/server/render.cpp:262`）。
+consumer **不得**假设「`rays_` 非空 ⟹ `outgoing_*` 非空」；它唯一可依赖的尺寸不变式是
+`sim_data.hpp` 记录的 `outgoing_d_.size() == 3 * outgoing_w_.size()` parallel-array 关系，
+由 `RenderConsumer::Consume`（`src/server/render.cpp`）断言。
 
 > 同一处曾有一条陈旧断言编码「`rays_` 非空 ⟹ `outgoing_w_` 非空」，导致只要某个过滤后的批次恰好
 > 被清空，Debug 构建就会 `SIGABRT`。现已替换为上述尺寸自洽检查——因为它当年触发的「空批次」状态正是
@@ -141,23 +142,87 @@ consumer **不得**假设「`rays_` 非空 ⟹ `outgoing_*` 非空」；它唯�
 
 ### 配置表示
 
-Filter 数据存储于 `SceneConfig.ms_.setting_[].filter_`（`ScatteringSetting.filter_`，
-per-entry，位于 `src/config/proj_config.hpp`）。
+每个 `SceneConfig.ms_.setting_[]` 都是一个 `ScatteringSetting`，同时携带已解析的 `crystal_`
+与该 entry 自己的 `filter_`（`src/config/proj_config.hpp`）。源 JSON 复用 crystal id 不会合并这些
+setting 或它们的 filter。
 
-**底层假设**：同一 `crystal_id` 在所有引用它的 scattering entries 中持有相同 filter。
-GUI `linked-crystal` 不变式在 UI 层强制此约束。
-JSON 加载器可在解析时断言。
+GUI 把 crystal 与 filter 放在两个独立 pool 中；`EntryCard` 同时保存两个 id。内容是否共享分别由
+对应 id 决定，而 link 徽章及添加/移除传播使用完整 `(crystal_id, filter_id)` pair（§1）。
 
 ### Filter 检查入口
 
 Simulator 中每个 outgoing-ray 候选均调用一次 `FilterSpec::Check(ray)`。
-`FilterSpec::Create(config, crystal, axis_dist)` 根据绑定到该晶体的 filter config 构建 spec。
+`FilterSpec::Create(config, crystal, axis_dist)` 由该 entry 的 filter config 与其引用的
+crystal/axis 上下文构建 spec。
 
 调用点位于 `src/core/simulator.cpp` 中的 `CollectData()` 函数——决策规则见 §2。
 
 ### RenderConfig 不变式
 
 `RenderConfig` 不得持有 filter 字段。Filter 是纯 simulation 端关注点。
+
+### EntryExit filter 的表达能力
+
+`entry_exit` filter 有两个正交约束轴：
+
+1. **结构轴**——entry face 与 exit face 各自可以是一个面号或 wildcard。
+2. **长度轴**——并行 `RaypathRecorder::size_` 的可选最短/最长边界。
+
+core schema 直接表达一个原子谓词：
+
+```cpp
+// src/config/filter_config.hpp
+struct EntryExitFilterParam {
+  std::optional<IdType> entry_;     // nullopt = wildcard
+  std::optional<IdType> exit_;      // nullopt = wildcard
+  size_t min_len_ = 1;              // path-length lower bound
+  std::optional<size_t> max_len_;   // nullopt = no upper bound
+};
+```
+
+`EntryExitSpec::Match`（`src/core/filter_spec.cpp`）先检查 recorder 长度，再按已设置的端点读取
+recorder 的首/末面；两端都是 wildcard 时只由长度边界决定，`size == 0` 始终在读取端点前拒绝。
+
+多值与组合语义位于 GUI → Scene 翻译层。GUI 把 filter 存成 sum-of-products 行：一行是多个
+raypath / EntryExit factor 的 AND，多行互为 OR。EntryExit factor 使用
+`entry:<faces> & exit:<faces> & len:<bounds>` 小语法；entry/exit 中逗号分隔的面号是该 factor
+内部的 OR，空 entry 或 exit 是 wildcard。
+
+`src/gui/file_io.cpp` 的 `ExpandSopToClauses` 展开 EntryExit 面号的笛卡尔积及各 factor 的备选，
+`ExpandFilterToScene` 再把原子项注册成 simple filter，并在需要时注册一个 `ComplexFilter`
+组合。由此 core 的 `EntryExitFilterParam` 始终只表示单 entry / 单 exit 原子谓词，而 GUI 可表达
+raypath 与 EntryExit 的混合 AND 及多行 OR。编辑面位于 `src/gui/edit_modals.cpp`，语法的单一
+owner 是 `src/gui/raypath_segments.hpp`。
+
+JSON 保持向后兼容：旧的 `{"entry": 3, "exit": 5}` 仍解析为 entry=3、exit=5、
+`min_len=1`、无上限；缺失或显式 null 的 entry/exit/max_len 映射为 `nullopt`。
+
+## §5.1 设备侧 Filter Match（Metal 与 CUDA）
+
+早期设计认为 filter 求值依赖 host 侧晶体配置，不能移到设备；隔离的 device-match parity 探针推翻了
+这个前提。首个 Metal 实现把 raypath filter matching 的 `ReduceBuffer` 核移植到 MSL，并用全部真实 filter
+类型对照 host：144 万次逐 ray 检查零 mismatch，且没有可测的寄存器压力代价。
+
+当前共享路线以 `src/core/device_filter_desc.hpp` 为两种 GPU backend 的 host descriptor 权威：
+Metal 由 `src/core/metal/lumice_trace.metal` 的 `DeviceFilterCheck` 求值；CUDA 读取相同字段，
+由 `src/core/shared/filter_shared.h` 的共享 matcher 求值。CUDA 的 fused emit gate 在设备上检查，
+final-layer host drain 仍调用 `FilterSpec::Check`；`test_cuda_filter_parity.py` 同时覆盖两条分支。
+CPU 直接调用 `FilterSpec::Check`。
+
+各 filter 类型的设备可行性：
+
+| Filter 类型 | 设备 match 机制 |
+|-------------|-----------------|
+| `None` | 直接通过 |
+| `Direction` | 立体角比较 |
+| `Crystal` | crystal id 比较 |
+| `Raypath` / `EntryExit` | `ReduceBuffer` + `GetFn` 表 + 字节比较 + 长度边界 |
+| `Complex` | 上述原子谓词的布尔组合 |
+
+关键分解是：orbit **构造**依赖 config，只在 host 每 session 做一次；逐 ray orbit **匹配**只是有界
+整数核，可移植到设备。Metal 与 CUDA 的 fused device 路径都在 ray 离开晶体的 emit gate 执行
+prob 决策与 filter 门控，filter-fail 不写 continue 或 exit 输出，从结构上保持 Design A 的跨 MS
+终止语义；CUDA 的 final-layer host drain 是上文已点名的另一条执行臂。
 
 ---
 
@@ -215,26 +280,43 @@ task-revert（219.4）迁移 filter 调用点（consumer → simulator），但�
 
 filter-fail 射线不携带任何特殊标记——复用 `w_ = -1.0f`（TIR sentinel）以从 `IsOutgoing()` / `IsContinue()` 中排除。它们仍保留在 `all_data` 中（语义类似 TIR），但永远到达不了 consumer 的 outgoing accumulator。
 
-### EV 偏移来源
+### 当前 relative exposure 锚点
 
-EV 偏移量取自当前帧的可见 framebuffer：
+Filter 终止会改变实际落地的 ray，但不会让 relative exposure 获得一套私有测光规则。当前 mono
+relative scale 锚到场景天空：
 
 ```
-ev = log2(target_linear / (p995_y / snapshot_intensity))
+scale = intensity_factor × TargetWhiteToLinear(135)
+        / (axis_solid_angle × anchor_l99_sky)
 ```
 
-P99.5 在 poller 线程中计算（`server_poller.cpp::PollOnce`），基于 staged XYZ 数据。完整 EV 语义见 `doc/rendering/adaptive-brightness.md`。
+`anchor_l99_sky` 是 session 固定全天等面积锚平面上的天空辐亮度 P99，与 lens、FOV、view、
+`visible` 和输出分辨率无关；`axis_solid_angle` 把辐亮度换到当前 renderer 每像素积分辐亮度的单位。
+server/CLI 公式由 `RenderConsumer::ExposureScale` 单一持有。GUI 从 `LUMICE_RawXyzResult` 读取这两个
+字段，经 `LUMICE_ComputeEvAuto` 与 preview shader 的相对照度因子到达同一逐像素结果；两侧公式外形
+不同，是因为 server buffer 与 GUI 源纹理的单位不同。
+
+这是**当前契约**。§6 中的 self-P99.5 是 2026-05-28 移除 anchor lane 时引入、后来被替换的历史状态，
+而不再作为现行规则。推导与迁移记录见 `doc/rendering/ev-pipeline-architecture.md` §2.8。
 
 ---
 
-## §8 不变式自动化（未来工作——占位）
+## §8 不变式自动化状态
 
-以下自动化检查尚未实现，此处作为未来贡献者的锚点：
+已实施的每一条 seam 都有对应自动化：
 
-- **Simulator 输出断言**：单元测试验证 simulator 的 outgoing buffer 中无任何 ray 未通过所配置的 filter。
-  防止 task-200 consumer 端 filter 路由的回归引入。
-- **Linked-crystal 不变式断言**：JSON 加载器断言，确保所有在多个 `scattering.entries` 中出现的 `crystal_id`
-  引用相同的 `filter` 配置。
+- `test_simulator.cpp` 的 `CollectDataFilterDispatch` 用例钉住 CPU 三种分支，包括 prob 本会继续时
+  filter-fail 仍必须终止。
+- `test_render_consumer_empty_batch.cpp` 钉住下游契约：整批被过滤为空合法，
+  `outgoing_d_` / `outgoing_w_` 尺寸不一致不合法。
+- `test_device_filter_check_host.cpp`、`test_metal_filter_match_parity.mm` 与
+  `test_cuda_filter_parity.py` 对照 host 语义检查设备 matcher 与 backend 路由；
+  `test_ms_filter_leak.py` 是 filter-fail 不泄漏到后续 MS 层的全栈 regression sentinel。
+- GUI 测试钉住共享 `(crystal_id, filter_id)` pair 的 entry 在 filter 添加/移除时原子传播。
+
+这里有意**不存在**「同一 crystal id 的所有引用必须使用同一 filter」的 loader 断言：那会拒绝 §1
+定义的合法 per-entry 状态。真正的义务是每个 entry 独立解析自己的 filter，以及凡被 UI 声明为编辑
+linked pair 的操作，都要把 filter-id 变化传播到该 pair 的每个成员。
 
 ---
 
@@ -242,12 +324,13 @@ P99.5 在 poller 线程中计算（`server_poller.cpp::PollOnce`），基于 sta
 
 | 关注点 | 位置 |
 |--------|------|
-| 绑定模型、GUI linked-group 不变式 | `src/gui/gui_state.hpp:294-328` |
-| Filter ↔ 晶体 per-entry 配置 | `src/config/proj_config.hpp` — `ScatteringSetting` |
+| 绑定模型、GUI linked-group 不变式 | `src/gui/gui_state.hpp` — `Linked group invariants`；`src/gui/edit_modals.cpp` — `PropagateFilterIdToLinked` |
+| entry 级 crystal/filter 配置 | `src/config/proj_config.hpp` — `ScatteringSetting` |
 | Simulator 端 filter 检查（Design A 门控） | `src/core/simulator.cpp` — `CollectData()` |
 | 空批次 consumer 契约（Design A） | `src/server/render.cpp` — `RenderConsumer::Consume()` |
 | FilterSpec 算法接口 | `src/core/filter_spec.hpp` |
-| C API anchor 字段（F1 anchor lane） | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult.anchor_p995_y` / `anchor_snapshot_intensity` |
+| 设备 filter descriptor / matcher | `src/core/device_filter_desc.hpp`；`src/core/shared/filter_shared.h` |
+| relative exposure 结果字段 | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult.anchor_l99_sky` / `axis_solid_angle` |
 | Filter JSON schema | `doc/configuration.md` |
 | Raypath 语义、P/B/D filter 开关 | `doc/raypath/raypath-symmetry.md` |
 | 自适应亮度 Off 模式、可加性 | `doc/rendering/adaptive-brightness.md` |

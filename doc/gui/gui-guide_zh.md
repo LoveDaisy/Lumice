@@ -24,7 +24,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 | # | 区域 | 用途 |
 |---|------|------|
-| 1 | Top Bar（顶栏） | 文件操作（New / Open / Save）、模拟控制（Run / Stop / Revert）、面板折叠按钮 |
+| 1 | Top Bar（顶栏） | 文件操作（New / Open / Save）、模拟控制（Run / Stop / Continue / Revert）、面板折叠按钮 |
 | 2 | Left Panel — Crystal Parameters（左侧面板，晶体参数） | 散射层及每层中的晶体卡片（几何 / 取向 / 过滤器 / 占比） |
 | 3 | Right Panel — View Parameters（右侧面板，视觉参数） | Scene（光源 + 模拟）、View（投影 + 相机）、Display（分辨率 / EV / 长宽比 / 背景）、Overlay（辅助线） |
 | 4 | Render Preview（渲染预览） | 光线累计形成的、按 lens 投影的冰晕图像 |
@@ -40,9 +40,10 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 从左到右：
 
 - **左面板折叠按钮**：`<` 收起左面板，`>` 展开（也可用快捷键 `[`）。
-- **Run / Stop**：固定宽度的按钮，根据模拟状态在绿色 **Run** 与红色 **Stop** 之间切换。模拟期间禁用的控件在运行结束后会自动恢复可用。
-- **New / Open**：项目生命周期操作（模拟期间禁用）。
-- **Save**：点击后弹出子菜单，包含：
+- **Run / Stop**：固定宽度的按钮，根据渲染生命周期在绿色 **Run**、红色 **Stop** 与禁用的 **Stopping...** 之间切换。运行期间 crystal / scene / view / display 控件仍可编辑：影响仿真的字段按限频节奏实时提交，纯显示 / 视角字段则不重启累计、直接更新；服务器构造属性在后端繁忙时仍禁用。
+- **Continue**：在一次已完成或手动停止的渲染上继续增加当前 `Rays(M)` 所指定的光线预算，而不是从零开始。没有可继续的在线累计、渲染或分析正忙、服务端最后一次会话是分析、或影响仿真的配置已变化时会禁用；悬停会说明具体原因。
+- **New / Open**：项目生命周期操作；渲染、Stop 排空或光路分析占用后端时禁用。
+- **Save**：打开子菜单。后端繁忙时菜单本身仍可打开，以保留只读导出入口；`Save` / `Save Copy` 会禁用到后端可用。菜单包含：
   - `Save` / `Save Copy` —— 写入 `.lmc` 文件
   - `Screenshot...` —— 把当前 Render Preview 导出为 PNG。会先弹出一个小的选项窗口，按预览当前显示
     的内容预填：每个 overlay 族一个 **Line** 框、一个 **Label** 框，外加显示模式（Normal / Channel
@@ -51,7 +52,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
     所示重新预填。显示模式可以为这次导出任意切换，例外是 Print 下（与预览一致）以及正在显示光路染色
     Colored 合成图开关对一次染色运行打开时——另一种模式需要的是与屏幕所用不同的另一张图（两种情况都置灰，悬停显示原因）。点
     **Export...** 后再选择文件名。
-  - `Dual Fisheye Equal Area...` / `Equirectangular...` —— 服务端离屏渲染导出（需要已完成的模拟）
+  - `Dual Fisheye Equal Area...` / `Equirectangular...` —— 服务端离屏渲染导出；一次渲染会话存在后即可使用，包括仍在累计时
   - `Config JSON...` —— 把配置导出为 JSON，供 CLI 重新渲染。导出的 renderer 描述的是 Render
     Preview 当前显示的那张图：显示投影与 FOV、视角、可见半球、背景色、地平线开关，以及画幅预设
     对应的画布形状；手动 EV 会烘焙进 `intensity_factor`（CLI 没有显示期曝光）。三处有意的缺口：
@@ -59,8 +60,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
     表达）；`Free` 与 `Match Background` 两个画幅预设退回仿真纹理自身的 2:1，因为两者都不给出
     一个换台机器仍能复现的比例；开启 **Front** 半球裁剪时导出会被拒绝并给出提示，而不是导出——
     config 格式无法表达这个裁剪，否则 CLI 会渲出未裁剪的画面。
-  - `Include Texture in .lmc` —— 控制下次保存的 toggle。截图没有自己的 overlay 开关：它显示的就是
-    屏幕上显示的那层 overlay，要干净的图就在 Overlay 面板里关掉对应的族。
+  - `Include Texture in .lmc` —— 控制下次保存的 toggle。Screenshot 的线与文字由上面所述的一次性选项窗口控制，不会改写 Overlay 面板；两个服务端全景导出不携带预览的文字 label 层。
 - **Colors / Analysis / Summary**：三个按钮各自打开一个独立的非模态窗口，可与预览并排——光路染色类、光路分析工具，
   以及只读的 **Summary**：把当前配置摊成一页（版本号、太阳、仿真、渲染设置，再逐层列出每个条目的晶体、形状、
   朝向与 filter），左右两栏排版、一屏 1280 × 900 看全，专为截图分享而排——每一行用面板自己的标签，
@@ -90,9 +90,10 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 - **缩略图**（左）：晶体几何的小尺寸 3D 预览；几何或取向变化时缓存自动重画。
 - **Crystal 行**：类型（`Prism` / `Pyramid`）+ `Edit` 按钮，打开 Popup Editor 的 Crystal tab。
-- **Axis 行**：取向分布的命名预设（`Parry` / `Column` / `Lowitz` / `Plate` / `Random` / `Custom`）+ `Edit` 打开 Axis tab。
+- **Axis 行**：晶体的 axis 标签（`Parry` / `Column` / `Lowitz` / `Plate` / `Random` / `Custom`）+ `Edit` 打开 Axis tab。标签是用户选择并随文档保存的名字，不会随参数自动改变；参数漂出该标签常用域时，文字后出现警告标记，悬停可看详情。
 - **Filter 行**：光路过滤器的单行摘要 + `Edit` 打开 Filter tab。
-- **占比滑块**（`prop.`）：本条目在所属 Layer 中的权重（0 – 100）。
+- **占比滑块**（`Weight`）：本条目在所属 Layer 中的光线预算权重（0–100）；条目被排除时数值保留但不参与分配。
+- **操作轨**（右侧）：四个常驻槽位依次为参与开关、Link、Duplicate、Delete。
 
 缩略图支持 4 种渲染风格。风格选择器位于 Popup Editor 的预览面板里，两种形态下它都常驻可见 —— 详见下文 [Popup Editor](#popup-editor编辑弹窗) 节。
 
@@ -100,14 +101,16 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 每个 Layer 底部有 `+ Crystal` 按钮（添加同层条目），Layer 头部右对齐 `x` 用于删除整个 Layer（仅有一层时禁用）。整个面板底部有 `+ Layer` 按钮新增散射层。
 
-### 卡片悬停操作（Card Hover Actions）
+### 卡片操作轨（Card Action Rail）
 
-把鼠标悬停在某张卡片上时，右上角会出现两个小按钮：
+每张卡片右缘有四个常驻按钮，与四行内容一一对齐：
 
-- `D` —— 在同层复制该条目，副本紧跟在原卡片正下方（深拷贝 crystal / axis / filter / proportion 全部字段）。
-- `×` —— 删除该条目。红色作为破坏性操作提示；当该层只剩这一条时禁用。
+- **参与开关** —— 决定本条目是否参加下一次运行。关闭后缩略图变暗、Weight 行禁用，但权重值仍保留；它不会从当前已经累计的画面中即时扣除这颗晶体。
+- **Link** —— 让本条目进入 pick 模式。同一按钮出现强调色边框表示当前已属于链接组；悬停可查看其他成员。
+- **Duplicate** —— 在原卡片正下方创建独立深拷贝，包括 crystal / axis / filter / weight / participation 状态。
+- **Delete** —— 删除条目；使用破坏性颜色，且该层只剩一项时禁用。
 
-按钮通过 alpha 渐变显示 / 隐藏，所以卡片布局保持稳定；点击在首次悬停帧即生效。
+固定操作轨不依赖悬停，因此卡片几何稳定，四个动作也始终可见。
 
 **调整顺序** —— 按住卡片的缩略图拖到同层另一张卡片上松手：落在目标卡片上半部分即插到它上方，下半部分即插到它下方，拖动过程中卡片之间的缝隙里会出现一条强调色的线标出落点。卡片不能拖到另一层。在缩略图上单击（没有拖动）仍会打开编辑器，与点卡片其它空白处相同。
 
@@ -115,9 +118,9 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 共享同一晶体配置和滤镜配置的两张或多张卡片，构成一个**链接组（linked group）**。通过任意成员所做的编辑——晶体形状、轴分布或滤镜——都会自动反映在组内所有成员上。
 
-**fa-link 徽章** —— 当某张卡片属于链接组（即与至少一条其他条目共享晶体和滤镜）时，卡片右侧按钮列下方会出现一个链条图标，位于悬停操作按钮（`×` / `D`）的正下方。悬停该徽章可查看 tooltip，其中按层和条目序号列出了组内其他成员。该徽章始终可见（无需悬停卡片），因为它反映的是一种持久状态。
+**链接状态与 pick 模式** —— 卡片操作轨的 Link 按钮同时承担动作和持久状态：出现强调色边框表示至少还有一条 entry 共享同一 crystal/filter，tooltip 按层和条目序号列出这些成员。编辑器顶部也重复显示共享状态，并提供 **Link to...** 与 **Unlink**。
 
-**"Link to..." — 进入 pick 模式** —— 点击任意卡片的 `Edit` 按钮打开弹窗编辑器。编辑器顶部会显示共享状态说明（`Not shared` 或 `Shared with N other entries`）。点击 **Link to...** 进入 pick 模式：弹窗关闭，左侧面板顶部出现黄色提示条：
+点击卡片上的 Link，或编辑器中的 **Link to...**，即可进入 pick 模式。若编辑器正开着会先关闭，左侧面板顶部出现黄色提示条：
 
 > Pick mode: click an entry to share crystal/filter from Layer X / Entry Y (Esc to cancel)
 
@@ -127,13 +130,13 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 **"Unlink"** —— 当卡片属于链接组时，弹窗编辑器的共享状态行还会显示 **Unlink** 按钮。点击后，该条目将获得自己的私有晶体和滤镜副本，退出链接组；组内其他成员不受影响。
 
-**"D"（复制）与 Link 的语义差异** —— `D` 悬停按钮（见[卡片悬停操作](#卡片悬停操作card-hover-actions)）会创建一个完全独立的新条目，拥有自己的晶体和滤镜副本。与链接不同，复制出的条目天生独立——对原始条目和副本的后续编辑互不影响。
+**Duplicate 与 Link 的语义差异** —— Duplicate 操作轨按钮（见[卡片操作轨](#卡片操作轨card-action-rail)）会创建完全独立的新条目；与链接不同，原条目和副本的后续编辑互不影响。
 
 **链接组内的编辑传播：**
 - 在弹窗编辑器中对晶体和滤镜内容所做的编辑，会通过共享池槽自动反映在所有组成员上，无需额外操作。
-- 对某个成员**添加或移除滤镜**时，该操作会同步更新整个组的滤镜引用，fa-link 徽章保持可见，链接组保持一致。
+- 对某个成员**添加或移除滤镜**时，该操作会同步更新整个组的滤镜引用，Link 按钮的强调色边框仍保留，链接组保持一致。
 
-**co-shared 高亮** —— 弹窗编辑器打开期间，同链接组内的其他卡片会显示橙色边框，帮助直观地看出本次编辑将影响哪些条目。
+**co-shared 高亮** —— Edit Entry 窗口打开期间，同链接组内的其他卡片会显示强调色边框，帮助直观看出本次编辑将影响哪些条目。
 
 ## Right Panel — View Parameters（右侧面板）
 
@@ -146,8 +149,8 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 ### View（视图）
 
-- **Projection**：`Lens Type` 提供 10 种 lens 投影 —— Linear、Rectangular、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族。`FOV` 由具体 lens 限定上限；`Visible`（front / back / all）控制只渲染哪一半球的光线。
-- **Camera**：`Elevation`、`Azimuth`、`Roll`。Full-sky lens（dual 系列与 Equirectangular 导出格式）下三者均禁用并强制为 0。
+- **Projection**：`Lens Type` 提供 11 种 lens 投影 —— Linear、Rectangular、Globe、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族；`FOV` 由具体 lens 限定上限。`Visibility` 中 `Upper` / `Full` / `Lower` 选择天空的垂直范围，独立的 `Front` 复选框再裁掉相机背向半球；full-sky lens 同时禁用两者，Globe 则禁用 `Front`。Globe 下另显示 `Back fade`：让球体背面的光与网格像雾一样透过近侧（0–2；0 只显示近侧）。
+- **Camera**：`Elevation`、`Azimuth`、`Roll`。Dual-fisheye 这些 full-sky lens 会禁用三者并使用规范化的零姿态。
   底行依次为 `Reset` → `Look At` → `Lock`。`Look At` 下拉框会立即把相机指向一个具名方向：Overlay 面板能画出的六个参考点（Zenith、Nadir、Sun、Subsun、Anthelion、Antisolar），以及一组相对太阳的 **Horizon** 地平线方位——`Toward sun`、`Sun +90°`、`Away from sun`、`Sun -90°`（仰角 0；标签里的数就是选中后 `Azimuth` 滑条会显示的数，因为太阳固定在方位角 0）。选择只写 `Elevation` 与 `Azimuth`，`Roll` 与 `FOV` 保持原取景。勾选 `Lock` 后，太阳高度等场景值变化时相机会持续跟随所选方向，无须先 Run。手动修改 `Elevation` / `Azimuth` 或在预览中拖动旋转会关闭 Lock 并保留本次手动视角；修改 `Roll`、`FOV` 或滚轮缩放不会解锁。所选目标仍会保留，再次勾选 Lock 即可恢复跟随。`Reset`、切换到不同 lens、文档 New/Open/Revert 都会关闭 Lock；文档切换还会把所选目标恢复为 Sun。Full-sky lens 下两个控件均禁用。
 
 不同 lens 的成像几何差异显著：
@@ -157,7 +160,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 ### Display（显示）
 
 - **Rendering**：`Resolution`（512 / 1024 / 2048 / 4096；以棕色高亮提示更改会触发重新模拟）；`EV`（曝光偏移，-6 ~ +6 stops）。
-- **Adaptive Brightness（自适应亮度）**：始终启用，无开关。以 filter-independent F1 anchor 的 P99.5 亮度为锚点映射到固定目标亮度，偏移量以 `+N.NN EV auto` 显示在手动 EV 滑条旁。切换 filter 不会造成 EV 跳变。完整算法与可加性不变量见 [`doc/rendering/adaptive-brightness.zh.md`](../rendering/adaptive-brightness.zh.md)。
+- **Adaptive Brightness（自适应亮度）**：始终启用，无开关。Relative 模式使用场景固定全天平面的 P99 天空辐亮度 `anchor_l99_sky`，不受 lens / FOV / 相机 / visible 范围 / 输出分辨率影响；偏移量以 `+N.NN EV auto` 显示在手动 EV 滑条旁。切换 filter 不会改变锚点。完整算法与可加性不变量见 [`doc/rendering/adaptive-brightness.zh.md`](../rendering/adaptive-brightness.zh.md)。
 - **Aspect Ratio**：`Preset` 下拉框（Free、16:9、3:2、4:3、1:1、2:1、Match Background）+ `Portrait` ↔ `Landscape` 切换按钮。请求的长宽比无法满足（窗口太小）时会出现提示行，显示实际可用比与请求比。
 - **Background**：`Load Bg...`、`Clear`、`Show` 复选框、以及 `Alpha` 滑块（控制背景在渲染图下的合成透明度）。
 
@@ -185,18 +188,25 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 
 ## Popup Editor（编辑弹窗）
 
-晶体卡片上的 `Edit` 按钮会打开**单一**的模态编辑器，含 Crystal / Axis / Filter 三个区块，以及每帧重画的晶体预览——所以几何或取向的修改可立刻看见。顶部的共享状态行显示该卡片是否属于链接组，并提供 **Link to...** 和 **Unlink** 操作；详见[链接条目](#链接条目linked-entries)一节。
+晶体卡片上的 `Edit` 按钮会打开一个 **Edit Entry** 窗口，包含 Crystal / Axis / Filter 与每帧重画的晶体预览。顶部先显示共享状态，再是一条全宽 entry bar，包含参与开关与 Weight；这两个 entry 私有值不参与 Link 共享。底栏上的两个独立控件分别选择布局与提交模式。
 
-按钮行上的选择器在两种形态之间切换，选择会随文档保存：
+布局选择器在两种形态之间切换，选择会随文档保存：
 
 - **Compact（紧凑）**——预览在上，三个区块在下方共用一条 tab 栏。窗口窄，能留住弹窗后面大半的冰晕预览；换区块要点一次 tab。这是默认形态。
 - **Expanded（展开）**——左列是预览 + Crystal，右列是 Axis 叠 Filter，没有 tab 栏。三个区块一次全可见，代价是几乎盖住整个预览。
 
-两档的宽度都是固定的，高度则可以拖：拖动窗口下边缘即可拉矮或拉高。预览和底部按钮行保持原尺寸，高度差由区块区域吸收，所以不论拉到多高，OK / Cancel 那一行都留在窗口里。屏幕矮到放不下整个窗口时，窗口打开时就已经贴合屏幕。拖过的高度在关闭应用前一直保留。
+**Immediate** 复选框决定编辑如何提交：
+
+- **Immediate 开（默认）** —— 普通非模态窗口。合法改动每帧应用，背后的冰晕预览仍可交互，动作按钮为 **Close**；关闭不会撤销已经应用的改动。
+- **Immediate 关（Staged）** —— 阻塞式 modal，底栏为 **OK / Cancel**。带未提交改动的 tab 显示 `*`；OK 原子提交全部区块，Cancel、Esc 或标题栏关闭则丢弃。
+
+从 Staged 切到 Immediate 会先提交当前缓冲区再重开；反向切换则以当前文档重新建立 staged baseline。
+
+两档布局的宽度都是固定的，高度则可以拖：拖动窗口下边缘即可拉矮或拉高。预览和动作行保持原尺寸，高度差由区块区域吸收，所以 **Close** 或 **OK / Cancel** 始终留在窗口里。屏幕矮到放不下整个窗口时，窗口打开时就已经贴合屏幕；拖过的高度在关闭应用前一直保留。
 
 用旧版本的「并排 tab」布局保存的文档，打开后会显示为 **Expanded**——那种布局已不存在，Expanded 是与它最接近的继任者。
 
-自 v15 起，借助 ImGui multi-viewport，可以把弹窗拖出主窗口、独立成一个 OS 窗口。
+自 v15 起，借助 ImGui multi-viewport，可以把 Edit Entry 窗口拖出主窗口、独立成一个 OS 窗口。
 
 ![Popup Editor — Crystal / Axis / Filter](../figs/gui_edit_modal_combined.jpg)
 
@@ -226,13 +236,40 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 
 ### Filter Tab
 
-光路过滤器配置。Filter 既可指定特定面序列（含对称选项 `P` / `B` / `D`），也可只限定入射 / 出射面。最终结果会在对应的晶体卡片 Filter 行以单行摘要展示。
+配置光路过滤器。Filter 分成两部分：
+
+1. **共享控制**：Action，以及适用于整个 filter 的 `P` / `B` / `D` 对称复选框。
+2. **sum-of-products（SoP）行编辑器**：输入谓词；对应晶体卡片会显示单行摘要。
+
+#### Filter 输入 mini-DSL
+
+谓词是**积之和**：多行之间是 OR，每行内部的 factor 用 `&` 做 AND。
+
+- `+ Add OR row` 新增一个 OR 项；任意一行匹配即整个 filter 匹配。
+- `3-5 & entry:2` 表示同一条光线同时满足两个 factor。
+- 空行不表达谓词，因此提交时丢弃；所有行都为空就等于没有 filter，不是 match-all。
+
+| Factor | 语法 | 含义 |
+|---|---|---|
+| Raypath | `3-5`、`1-3` | 面序列 |
+| Raypath OR 备选 | `1-3;3-5` | `;` 分隔备选，并对同一行的 `&` 做分配 |
+| 入射面 | `entry:2`、`entry:1,2` | 从面 2 入射；逗号表示面 1 **或** 2 |
+| 出射面 | `exit:4` | 从面 4 出射 |
+| 精确长度 | `len:3` | 光路长度恰为 3 |
+| 最大长度 | `len:<=5` | 光路长度 ≤ 5 |
+| 长度范围 | `len:2-3` | 光路长度在 [2, 3] |
+
+`,` **不是** raypath 连接符：同一路径只能用 `-`，备选路径用 `;`。同一行的 `entry:` / `exit:` / `len:` 会合并成一个 entry-exit factor，重复同类 token 是错误。`1-3;3-5 & entry:2` 会展开为 `(1-3 & entry:2) OR (3-5 & entry:2)`。编辑器下方的实时 Preview 使用与提交路径相同的解析 / 展开逻辑；ⓘ tooltip 列出完整语法。
+
+手写 core config 仍可用 `{"type":"none"}` 明确表达 match-all。相反，`{"type":"raypath","raypath":[]}` 匹配不到任何光线，编辑器没有能诚实表达它的行，因此导入时会告警并丢弃，而不会伪装成空行。
+
+架构细节见 [`filter-architecture.md`](../raypath/filter-architecture.md)。
 
 ## Status Bar（状态栏）
 
 从左到右：
 
-- **模拟状态徽标**：`Ready`（绿）、`Simulating...`（黄）、`Done`（蓝）、`Modified`（橙）。
+- **模拟状态徽标**：`Ready`（good/绿色）、`Simulating...`（强调色）、`Stopping...`（暗淡）、`Done`（中性）、`Modified`（warning）。
 - **累计光线数**（仅在非 0 时显示）：按数量级缩放为 `x10^3 / x10^6 / x10^9`。
 - **分辨率 / lens / FOV**：例如 `1024x512 Fisheye Equal Area FOV:180`。
 - **文件名**，未保存的修改用 `*` 标记。
@@ -249,7 +286,7 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 | `[` | 切换左面板折叠 |
 | `]` | 切换右面板折叠 |
 
-Run / Stop / New / Open 没有绑定快捷键 —— 通过 Top Bar 按钮触达（导出类操作走 Save 子菜单）。
+Run / Stop / Continue / New / Open 没有绑定快捷键 —— 通过顶栏按钮触达（导出类操作走 Save 子菜单）。
 
 ### 项目文件格式（`.lmc`）
 
@@ -298,16 +335,19 @@ Run 不能恢复被丢弃的 filter 或不支持的分布。
 
 提示弹窗提供 `Save`、`Don't Save`、`Cancel` 三个按钮。
 
+状态为 `Modified` 时保存会再弹出独立的 **Save Modified Config** 提示，因为屏上画面仍来自上一次仿真配置。**Run first** 先重跑并取消这次待保存动作；**Save anyway** 只有在明确确认后才把当前配置与陈旧预览一起写入，并保留 `Modified` 提示；**Cancel** 两者都不做。
+
 ## 模拟工作流
 
 1. **配置**：在左面板设置散射层与晶体卡片，再到右面板设置 scene / view / display / overlay。
-2. **运行**：点击 Top Bar 的 `Run`。当前配置被序列化并提交给模拟核心；模拟期间参数控件被禁用。
-3. **监控**：状态栏显示运行状态和累计光线数；Render Preview 持续刷新。
-4. **查看**：模拟结束后（状态 `Done`）结果继续保留在 Render Preview 中。
-5. **停止**：点击 `Stop` 提前终止；停止时已累积的光线仍然可见。
-6. **恢复**：模拟完成后又改了参数（状态 `Modified`）时，`Revert` 把配置还原到产生上次结果时的状态。
+2. **运行**：点击顶栏 `Run`，当前配置提交给模拟核心，并从零开始累计。
+3. **运行中编辑**：参数控件保持可用。影响仿真的字段最多每 70 ms 实时提交一次；视角 / 显示字段则在不丢弃累计光线的前提下更新当前画面。
+4. **监控**：状态栏显示生命周期与累计光线数，Render Preview 持续刷新。
+5. **完成或停止**：有限运行正常结束后进入 `Done`；点击 `Stop` 会先显示 `Stopping...`，待后端排空后以 `Done` 保留已经累计的部分结果。
+6. **继续累计**：完成或停止后可点 `Continue`，把当前光线预算追加到同一份累计；若影响仿真的配置已经变化，应改点 `Run` 从零重跑。
+7. **恢复配置**：完成后修改影响仿真的字段会进入 `Modified`；`Revert` 恢复产生当前画面的配置，但保留不属于仿真 baseline 的视角 / 显示选择。
 
-模拟状态 —— `Ready` / `Simulating` / `Done` / `Modified` —— 由状态栏显示，并控制 Top Bar 上各动作的可用性。
+状态栏的 `Ready` / `Simulating...` / `Stopping...` / `Done` / `Modified` 由当前运行意图、后端生命周期、提交世代与文档是否偏离该世代共同派生；顶栏动作读取同一组生命周期事实决定可用性。
 
 ## 相关文档
 

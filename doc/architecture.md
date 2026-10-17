@@ -2,402 +2,182 @@
 
 # System Architecture
 
-This document describes the system architecture design of the Lumice project.
+This document describes Lumice's current high-level architecture. It intentionally avoids duplicating complete API declarations, configuration fields, and test matrices; those have dedicated authorities linked below.
 
-## Overview
+## 1. System shape
 
-The project adopts a Server-Consumer architecture pattern, supporting multi-threaded parallel ray tracing and batch processing.
+Lumice has two application shells over one engine:
 
-### Design Goals
+- `Lumice`, the command-line application;
+- `LumiceGUI`, the interactive GUI.
 
-1. **High Performance**: Improve simulation speed through multi-threaded parallel processing
-2. **Scalability**: Support multiple renderers running in parallel
-3. **Modularity**: Clear module boundaries for easier maintenance and extension
-4. **Flexibility**: A flexible configuration system that supports complex simulation scenarios
+Both use the public C capability headers under `src/include/`. The GUI does not include the engine's `core/` or `config/` headers directly. A committed scene enters the server, a render or analysis session produces batches, consumers reduce those batches into results, and callers acquire an immutable published frame.
 
-### Architecture Highlights
-
-- **Server-Consumer Pattern**: Uses a producer-consumer pattern to decouple simulation from rendering
-- **Multi-threaded Parallelism**: Uses `max(1, hardware_concurrency - 2)` simulator threads in parallel by default
-- **Queue System**: Uses thread-safe queues for data transfer
-- **Single-Project Mode**: One project configuration (containing one scene and multiple renderers) is submitted at a time
-
-## Overall Architecture
-
-The system follows a three-layer architecture:
-
-```
-┌─────────────────────────────────────────┐
-│           Config Layer (Config)         │
-│  ConfigManager, various Config classes  │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│          Server Layer (Server)          │
-│  Server, ServerImpl, Queue System      │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│       Processing Layer (Processing)     │
-│  Simulator, Consumer, Render           │
-└─────────────────────────────────────────┘
+```text
+JSON / GUI document
+        │
+        ▼
+public C capabilities (`lumice_*.h`)
+        │
+        ▼
+scene commit ──► session orchestration ──► CPU workers or one GPU engine
+                                              │
+                                              ▼
+                                           SimData
+                                              │
+                      ┌───────────────────────┼──────────────────────┐
+                      ▼                       ▼                      ▼
+                render / anchor          statistics       raypath histogram
+                      └───────────────────────┼──────────────────────┘
+                                              ▼
+                                  immutable `ResultFrame`
+                                              │
+                                              ▼
+                                    CLI / GUI / C client
 ```
 
-## Core Components
-
-### 1. Server
-
-The `Server` class is the central entry point of the architecture. It uses the PIMPL pattern to hide the implementation inside `ServerImpl`. Its responsibilities include:
-
-- Configuration management: parsing and managing JSON configuration files
-- Task scheduling: dispatching project configurations to simulators
-- Result collection: collecting processed results from consumers
-- Lifecycle management: controlling server startup and shutdown
-
-**Main Interface**:
-- `CommitConfig(const nlohmann::json&, bool* out_reused)`: Submit a parsed configuration.
-  This is the single core-side commit; the only public entry point that reaches it is
-  `LUMICE_CommitScene` (the C API's `LUMICE_Config` value struct and its three commit
-  functions were removed in v4.12 — see [`doc/interfaces/c_api.md`](interfaces/c_api.md)).
-- `CommitConfig(const std::string&)`: JSON-string overload used by the benchmark harness
-- `AcquireResultFrame()`: Acquire a share of the most recent result frame — THE result entry
-  point. Returns a `std::shared_ptr<const ResultFrame>` (never null) carrying every kind of
-  result at once (mono render, composite, raw XYZ, stats), so any two of them are
-  same-generation by construction. It materializes a pending snapshot first, so the frame is
-  as fresh as the per-kind getters it replaced; the pointers inside stay valid for as long as
-  the caller keeps its share, because a later snapshot publishes a *new* frame rather than
-  overwriting this one. The six `Get*Results` getters this replaced were removed in v4.15 —
-  see [`doc/interfaces/capi-lifecycle-architecture.md`](interfaces/capi-lifecycle-architecture.md) §9 for the
-  ownership invariant and the two use-after-free recurrences that motivated it.
-- `IsIdle()`: Check whether the server is idle
-- `Stop()` / `Terminate()`: Stop the server
-
-**Error Handling**:
-```cpp
-struct Error {
-  ErrorCode code;   // kSuccess, kInvalidJson, kInvalidConfig, kMissingField, ...
-  std::string message;
-  std::string field;
-};
-```
-
-### 2. Simulator
-
-The `Simulator` is responsible for ray tracing simulation:
-
-- Fetches scene configurations from the scene queue
-- Performs ray tracing computations
-- Puts simulation results into the data queue
-
-**Characteristics**:
-- Multiple parallel instances: `max(1, hardware_concurrency - 2)` `Simulator` instances are created by default
-- Independent threads: each `Simulator` runs in its own thread
-- Independent RNG: each instance uses a different random seed
-
-### 3. Consumer
-
-The `IConsume` interface defines the consumer abstraction:
-
-- `Consume(const SimData&)`: Consume simulation data
-- `GetResult()`: Retrieve processed results
-
-**Implementations**:
-- `RenderConsumer`: Renders simulation data into images
-- `StatsConsumer`: Collects statistics such as ray count and crystal count
-
-### 4. Queue System
-
-Thread-safe `Queue<T>` templates are used for data transfer, implementing blocking retrieval based on `std::mutex` and `std::condition_variable`:
-
-- `scene_queue_`: Scene configuration queue (shared by multiple Simulators)
-- `data_queue_`: Simulation data queue (shared by multiple Simulators)
-
-## Data Flow
-
-### Configuration Loading Flow
-
-```
-JSON configuration file
-    ↓
-ConfigManager (parsing)
-    ↓
-Various Config objects (LightSourceConfig, CrystalConfig, etc.)
-    ↓
-ProjConfig (combines scene and renderers)
-    ↓
-CommitConfig() (creates Consumers, starts threads)
-```
-
-### Simulation Flow
-
-```
-ProjConfig (from config_manager_.project_)
-    ↓
-GenerateScene() (generates SceneConfig)
-    ↓
-scene_queue_ (scene queue, shared)
-    ↓
-Simulator (multiple in parallel)
-    ↓
-SimData (simulation data)
-    ↓
-data_queue_ (data queue, shared)
-```
-
-### Rendering Flow
-
-```
-SimData (from data_queue_)
-    ↓
-ConsumeData() (dispatches to Consumers)
-    ↓
-RenderConsumer / StatsConsumer
-    ↓
-RenderResult / StatsResult
-    ↓
-DoSnapshot() publishes an immutable ResultFrame
-    ↓
-AcquireResultFrame() (caller holds a share of it)
-```
-
-### Complete Flow
-
-```
-Configuration file
-  ↓
-Server::CommitConfig()
-  ↓
-ConfigManager (parse configuration)
-  ↓
-Create Consumers (Render/Stats)
-  ↓
-Start() → GenerateScene() (generate scenes)
-  ↓
-scene_queue_ (scene queue) ──→ Simulator × N (parallel, N = max(1, hardware_concurrency - 2))
-  ↓                                    ↓
-data_queue_ (data queue) ←──────────────┘
-  ↓
-ConsumeData() (dispatch, protected by consumer_mutex_)
-  ↓
-Consumer (Render/Stats)
-  ↓
-Result (protected by consumer_mutex_)
-  ↓
-Server::GetResults()
-```
-
-## Threading Model
-
-The system uses a multi-threaded architecture:
-
-1. **Main thread**: Runs `main()`, calls `Server::CommitConfig()` and result retrieval APIs
-2. **Simulator threads**: `max(1, hardware_concurrency - 2)` threads by default, each running a `Simulator::Run()`
-3. **Scene generation thread**: The `GenerateScene()` thread generates scenes from the project configuration and enqueues them into `scene_queue_`
-4. **Data consumption thread**: The `ConsumeData()` thread dequeues data and dispatches it to consumers
-
-**Thread Synchronization**:
-- `std::mutex` is used to protect shared resources
-- `consumer_mutex_`: Protects `Consume()` and `GetResult()` calls on `consumers_`, preventing races between the data consumption thread and the main thread
-- `std::condition_variable` is used for inter-thread communication
-- Atomic variables (`std::atomic_bool`) are used to control thread state
-
-## Module Descriptions
-
-### config Module
-
-**Responsibility**: Configuration parsing and management
-
-**Main Classes**:
-- `ConfigManager`: Unified configuration manager; holds mappings of all configuration objects (`std::map<IdType, *Config>`)
-- `LightSourceConfig`: Light source configuration
-- `CrystalConfig`: Crystal configuration
-- `FilterConfig`: Filter configuration
-- `RenderConfig`: Render configuration
-- `SceneConfig`: Scene configuration (includes `ScatteringSetting` and multi-scattering info `MsInfo`)
-- `ProjConfig`: Project configuration (combines scene and renderer references)
-- `SimData`: Simulation output data structure (contains `RayBuffer` and crystal list)
-
-**Dependencies**:
-- Depends on `nlohmann/json` for JSON parsing
-- Depends on the `Distribution` type from `core/math`
-
-### core Module
-
-**Responsibility**: Core physics algorithm implementation
-
-**Main Classes**:
-- `Crystal`: Crystal geometry representation (triangle mesh), supports creating hexagonal prisms (`CreatePrism`) and hexagonal pyramids (`CreatePyramid`)
-- `Simulator`: Ray tracing simulator; fetches scenes from queue, performs ray tracing, outputs `SimData`
-- `Filter`: Filter system supporting multiple filtering criteria such as ray path, entry/exit face, and direction
-- `RayPath` / `RaySeg`: Ray path and ray segment data structures
-- `Optics`: Optical computations (refraction, reflection, Fresnel coefficients)
-- `Geo3D`: 3D geometry computations (triangle intersection, normals, etc.)
-- `Math`: Math utilities (vector operations, matrices, random distributions, etc.)
-
-### server Module
-
-**Responsibility**: Server architecture implementation
-
-**Main Classes**:
-- `Server`: Public server interface (PIMPL pattern)
-- `ServerImpl`: Internal server implementation; manages threads, queues, and consumers
-- `IConsume`: Abstract consumer interface
-- `RenderConsumer`: Render consumer; implements various lens projection algorithms
-- `StatsConsumer`: Statistics consumer
-- `c_api_*.cpp`: C API wrapper implementation, one bridge per capability header
-
-**Characteristics**:
-- Thread-safe queue system
-- Multi-threaded parallel processing
-- Non-blocking result retrieval
-
-### util Module
-
-**Responsibility**: Utilities and infrastructure
-
-**Main Classes**:
-- `Queue<T>`: Thread-safe blocking queue template based on `std::condition_variable`
-- `ThreadingPool`: Thread pool with support for range-step / range-slice task submission
-- `log.hpp`: Thin wrapper around spdlog, providing `LOG_DEBUG` / `LOG_INFO` macros and `GetLogger()` named loggers
-- `ArgParser`: Command-line argument parser
-- `json_util.hpp`: JSON helper macros
-- `color_data.hpp`: CIE color matching function data
-
-### gui Module
-
-**Responsibility**: Graphical user interface application
-
-**Main Components**:
-- `app.cpp/hpp`: Main application loop, panel rendering, global state management (extracted from `main.cpp` for testability)
-- `gui_state.hpp`: `GuiState` struct defining the complete GUI state model (crystals, filters, renderers, scene settings)
-- `panels.cpp/hpp`: ImGui panel implementations (Crystal, Render, Filter, Scene tabs)
-- `crystal_renderer.cpp/hpp`: OpenGL FBO-based crystal 3D preview (wireframe, hidden-line, shaded styles)
-- `preview_renderer.cpp/hpp`: Equirectangular texture preview with lens projection shaders
-- `file_io.cpp/hpp`: `.lmc` project file format read/write (binary header + JSON + optional PNG texture)
-- `main.cpp`: GUI entry point, GLFW/OpenGL initialization
-
-**Key Design Decisions**:
-- GUI logic lives in `lumice::gui` namespace with global state (`g_state`, `g_preview`, etc.)
-- Communicates with the simulation core via the C API (`lumice_*.h`, same interface as the CLI)
-- `lumice_gui_obj` OBJECT library shares compiled GUI + ImGui code between `LumiceGUI` and `gui_test`
-
-**Dependencies**:
-- Dear ImGui v1.91.8-docking (immediate-mode GUI)
-- GLFW 3.4 (window management)
-- nfd v1.2.1 (native file dialogs)
-- OpenGL 3.2 Core Profile
-- stb (PNG read/write for `.lmc` textures)
-
-### include Module
-
-**Responsibility**: Public C API header files
-
-- `lumice_{base,scene,render,editor,engine,raypath}.h`: Public C interface headers, one per capability, using an opaque pointer pattern
-
-## Program Entry Points
-
-**`main.cpp` → `Lumice`** (CLI)
-- Purpose: Command-line simulation program
-- Interacts with the core library through the public C API (`lumice_*.h`)
-- Usage:
-  ```bash
-  ./build/cmake_install/static/Lumice -f examples/config_example.json
-  ```
-
-**`src/gui/main.cpp` → `LumiceGUI`** (GUI, requires `-g` build flag)
-- Purpose: Graphical interface for interactive simulation configuration and preview
-- Provides crystal 3D preview, render preview, parameter editing, and `.lmc` file management
-- Usage:
-  ```bash
-  ./build/cmake_install/static/LumiceGUI
-  ```
-
-Build targets:
-- `lumice`: Core static/shared library (static by default; use `-DBUILD_SHARED_LIBS=ON` to build as a shared library)
-- `Lumice`: CLI executable, linked against the `lumice` library
-- `LumiceGUI`: GUI executable (built when `-DBUILD_GUI=ON`), linked against `lumice_gui_obj` and `lumice`
-- `gui_test`: GUI test executable (built when both `-DBUILD_GUI=ON` and `-DBUILD_TESTING=ON`)
-
-## C API
-
-The public API is exposed through a C interface (`lumice_*.h`, one header per capability) using an opaque pointer pattern. Most APIs return a `LUMICE_ErrorCode` error code, with actual output passed via pointer parameters:
-
-```c
-// Server lifecycle
-LUMICE_Server* LUMICE_CreateServer(void);
-void LUMICE_DestroyServer(LUMICE_Server* server);
-
-// Logging
-void LUMICE_SetLogLevel(LUMICE_Server* server, LUMICE_LogLevel level);
-
-// Configuration: build or parse a scene handle, then commit it (returns LUMICE_ErrorCode)
-LUMICE_ErrorCode LUMICE_SceneFromJsonFile(const char* filename, LUMICE_Scene** out_scene);
-LUMICE_ErrorCode LUMICE_CommitScene(LUMICE_Server* server, const LUMICE_Scene* scene, int* out_reused);
-void LUMICE_SceneDestroy(LUMICE_Scene* scene);
-
-// Result retrieval: acquire a frame, read from it, release it. The buffers a frame hands out
-// stay valid until THAT frame is released, no matter how many snapshots the server publishes
-// meanwhile — that share of the lifetime is what the handle is for.
-// (Array reads keep the array + sentinel pattern; all return LUMICE_ErrorCode.)
-LUMICE_ErrorCode LUMICE_AcquireResultFrame(LUMICE_Server* server, LUMICE_ResultFrame** out_frame);
-LUMICE_ErrorCode LUMICE_FrameGetRender(const LUMICE_ResultFrame* frame, LUMICE_RenderResult* out, int max_count);
-LUMICE_ErrorCode LUMICE_FrameGetStats(const LUMICE_ResultFrame* frame, LUMICE_StatsResult* out);
-void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
-
-// State and control
-LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerState* out);
-void LUMICE_StopServer(LUMICE_Server* server);
-```
-
-For detailed usage, see the [C API documentation](interfaces/c_api.md).
-
-## Dependencies
-
-All dependencies are managed automatically via [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake):
-
-| Dependency | Version | Purpose |
-|------------|---------|---------|
-| [nlohmann/json](https://github.com/nlohmann/json) | v3.10.5 | JSON configuration parsing |
-| [spdlog](https://github.com/gabime/spdlog) | v1.15.0 | Logging system |
-| [tl-expected](https://github.com/TartanLlama/expected) | v1.1.0 | C++17 `expected<T,E>` |
-| [GoogleTest](https://github.com/google/googletest) | v1.15.2 | Unit testing |
-| [Dear ImGui](https://github.com/ocornut/imgui) | v1.91.8-docking | GUI (when `-g` enabled) |
-| [GLFW](https://www.glfw.org/) | 3.4 | Window management (when `-g` enabled) |
-| [nfd](https://github.com/btzy/nativefiledialog-extended) | v1.2.1 | Native file dialogs (when `-g` enabled) |
-| [imgui_test_engine](https://github.com/ocornut/imgui_test_engine) | v1.91.8 | GUI testing (when `-g` + `-t` enabled) |
-
-## Extension Points
-
-### Adding a New Consumer
-
-1. Inherit from the `IConsume` interface
-2. Implement the `Consume()` method to process data
-3. Implement the `GetResult()` method to return results
-4. Register the consumer in `ServerImpl`
-
-### Adding a New Configuration Type
-
-1. Define a configuration struct
-2. Implement `to_json()` and `from_json()` functions
-3. Add management logic in `ConfigManager`
-
-### Custom Simulator
-
-1. Inherit from or modify the `Simulator` class
-2. Implement custom ray tracing logic
-3. Use the custom simulator in `ServerImpl`
-
-## Important Notes
-
-1. **Thread Safety**: All shared resources require appropriate synchronization mechanisms
-2. **Memory Management**: Pay attention to the lifecycle of data in queues
-3. **Error Handling**: Configuration parsing errors must be handled properly
-4. **Performance Tuning**: The number of simulator threads defaults to `max(1, hardware_concurrency - 2)` and scales automatically with hardware
-
-## Related Documentation
-
-- [README](../README.md) - User documentation
-- [Configuration Guide](configuration.md) - Configuration format reference
-- [Developer Guide](developer-guide.md) - Developer guide
-- [C API Documentation](interfaces/c_api.md) - C API usage reference
-- [Documentation Index](README.md) - Navigation for all documentation
+The engine supports one committed project at a time. A project has one scene and may have multiple render entries.
+
+## 2. Enforced source layers
+
+`cmake/lumice_layers.cmake` is the single source of truth for engine layering. CMake uses it to build the foundation object set, and `scripts/check_policies.py` uses the same manifest to reject unowned files and upward includes.
+
+From lowest to highest:
+
+| Layer | Main responsibility |
+|---|---|
+| `foundation` | geometry, optics, buffers, shared host/device primitives, utility infrastructure, base API |
+| `analytic` | published analytic kernels and their C bridge |
+| `scene` | configuration model, scene construction, scene/editor capabilities |
+| `view` | projection and annotation-view construction |
+| `sim` | simulator, ray generation, CPU/Metal/CUDA trace backends |
+| `render` | consumers, exposure, composition, result types |
+| `engine` | server orchestration and engine capability |
+| `raypath` | path-analysis and report assembly |
+| `capi` | remaining public C bridges and package surface |
+
+A source may include its own layer or a lower layer. Existing exceptions are enumerated in `cmake/lumice_layer_allowlist.txt`, which only shrinks.
+
+The application shell is outside this manifest by design:
+
+- `src/gui/` uses only the engine's `lumice_*.h` capability headers plus stateless helpers from `src/util/`;
+- `src/launcher/` contains the Windows pre-engine loader;
+- `src/main.cpp` is the CLI shell.
+
+## 3. Runtime sessions
+
+### 3.1 Scene commit
+
+Configuration JSON is parsed into the scene model in `src/config/`. GUI documents are projected into the same public scene capability before commit. `ServerImpl` owns the committed scene, session epoch, worker groups, consumers, and published results.
+
+A commit may reuse compatible engine state, but it starts a new render epoch. `LUMICE_ContinueRender` is the distinct append operation: it adds rays to the current compatible accumulation instead of resetting it.
+
+### 3.2 CPU and GPU routes
+
+`ResolveGpuRoute` is the single routing decision used when the server is sized.
+
+- The CPU route uses a measured, platform-aware worker count. A caller may provide an explicit count; a fixed seed uses one worker by contract.
+- Metal and CUDA use the GPU single-engine route: one simulator owns a large device dispatch rather than mirroring the CPU worker pipeline.
+- Raypath-analysis sessions always trace on CPU. A GPU-sized server keeps a standing CPU analysis pool; a CPU-sized server reuses its ordinary worker group.
+
+The backend seam is `TraceBackend`. Host code owns scene/configuration semantics; backend implementations own device execution. See `backends/seam-design.md` and `backends/trace-backend-frame-lifecycle.md` for the detailed contract.
+
+### 3.3 Batch production and consumption
+
+Workers publish `SimData` batches through the server queues. The payload shape depends on the route: legacy outgoing rays, worker-projected sidecars, or device-fused planes. Consumers interpret those payloads through one server-owned session:
+
+- `RenderConsumer`: per-render accumulation, projection, exposure, annotations, and optional color-class lanes;
+- `AnchorConsumer`: the scene-wide relative-exposure anchor, once per render session;
+- `StatsConsumer`: ray and geometry counters;
+- `RaypathHistogramConsumer`: complete-path energy aggregation for analysis sessions.
+
+A render session has one `RenderConsumer` per render entry, one session-wide anchor consumer, and statistics. An analysis session replaces render/anchor consumers with a histogram consumer plus statistics.
+
+### 3.4 Published frames and completion
+
+`DoSnapshot()` publishes a new immutable `ResultFrame`; it does not overwrite buffers already handed to a reader. C callers must acquire `LUMICE_ResultFrame*`, read any result families they need, then release that frame. This handle is the reader's real share of the result lifetime.
+
+Simulation lifecycle and result drainage are separate facts:
+
+- `LUMICE_GetSimLifecycle` reports whether production is running, stopping, or complete;
+- `LUMICE_GetDrainStatus` reports whether every produced batch for the epoch has reached the consumers;
+- `LUMICE_AcquireResultFrame` obtains a same-generation snapshot of render, raw XYZ, composite, statistics, or analysis data.
+
+A final result requires both production completion and drain completion. The detailed C contract is in `interfaces/c_api.md` and `interfaces/capi-lifecycle-architecture.md`.
+
+## 4. Geometry, rendering, and analysis
+
+### Geometry and simulation
+
+The crystal family is parameterized and bounded. Planes, stable face-number slots, and closed-form outlines are the primary representation; polygon/triangle forms are derived for consumers that need them. CPU and GPU routes share the same face numbering, optical primitives, projection conventions, and host-side scene semantics.
+
+See `geometry/crystal-geometry-representation.md`, `geometry/coordinate-convention.md`, and `geometry/numerical-robustness.md` before changing geometry or predicates.
+
+### Rendering and exposure
+
+Render accumulation is linear XYZ. The relative mono exposure anchor is measured on a fixed full-sky equal-area domain; absolute exposure uses emitted energy. Display conversion, print mode, annotations, and color-class composition happen after accumulation according to the render configuration.
+
+See `rendering/accumulator-consumer-architecture.md` and `rendering/ev-pipeline-architecture.md` for the authoritative formulas and ownership.
+
+### Raypath products
+
+There are two distinct products:
+
+- `analyze`: a dedicated CPU Monte Carlo session that ranks complete raypath chains in a sky ROI;
+- `raypath`: deterministic single-path fiber/feature analysis and JSON reporting implemented by `src/raypath/` over the analytic capability.
+
+The raypath module exposes only its documented public headers to the engine; `src/raypath/detail/` remains internal. See `raypath/raypath-analysis.md` and `raypath/raypath-cli-output.md`.
+
+## 5. Public surfaces and packages
+
+There is no umbrella `lumice.h`. Engine capabilities are split across:
+
+- `lumice_base.h`
+- `lumice_scene.h`
+- `lumice_render.h`
+- `lumice_editor.h`
+- `lumice_engine.h`
+- `lumice_raypath.h`
+
+The analytic capability uses `lumice_analytic_core.h`; the standalone analytic library adds `lumice_analytic.h` for library management.
+
+Shared builds produce three distinct libraries:
+
+- `liblumice`: product engine capabilities;
+- `liblumice_testapi`: the same engine objects plus test-only hooks;
+- `liblumice_analytic`: foundation plus analytic kernel only, on supported non-CUDA shared builds.
+
+Export lists are generated from each package's headers and verified against built binaries. API versions for the engine and analytic library are independent. See `interfaces/api-layering-and-product-lines.md` and `interfaces/analytic-api.md`.
+
+## 6. GUI boundary
+
+`src/gui/` is an application shell, not a second engine implementation. It:
+
+- owns interactive document and display state;
+- builds/commits scenes through the public C API;
+- polls lifecycle, drain, and acquired result frames;
+- reprojects the engine's full-sky preview texture for interactive lenses;
+- persists `.lmc` documents as a binary container with JSON state and an optional preview payload;
+- exports CLI-compatible configuration JSON through a separate projection of GUI state.
+
+The simulation-commit projection and JSON-export projection intentionally differ where GUI display semantics require it. See `gui/gui-state-governance.md` and `gui/gui-preview-lifecycle-architecture.md`.
+
+## 7. Build and verification boundaries
+
+The principal targets are:
+
+- `lumice` and `Lumice` for the engine library and CLI;
+- `LumiceGUI` and `lumice_gui_obj` when `BUILD_GUI=ON`;
+- unit, composition, parity, golden, GUI, E2E, performance, and regression suites when their build options are enabled.
+
+Use `scripts/build.sh` and `scripts/test.sh` rather than reconstructing target combinations by hand. Test ownership and execution scope are specified in `testing/testing-architecture.md`; contributor commands and source-boundary rules are summarized in `developer-guide.md`.
+
+## Related documentation
+
+- [Configuration reference](configuration.md)
+- [Developer guide](developer-guide.md)
+- [C API reference](interfaces/c_api.md)
+- [Backend seam design](backends/seam-design.md)
+- [Accumulator–consumer architecture](rendering/accumulator-consumer-architecture.md)
+- [GUI state governance](gui/gui-state-governance.md)
+- [Testing architecture](testing/testing-architecture.md)

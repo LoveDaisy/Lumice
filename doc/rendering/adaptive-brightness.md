@@ -2,8 +2,8 @@
 
 # Adaptive Brightness
 
-This document describes Lumice's Adaptive Brightness feature: the algorithm
-that auto-computes an EV offset from each frame's visible framebuffer.
+This document describes Lumice's Adaptive Brightness feature: the algorithm that derives an EV
+offset from the server-published full-sky scene anchor and the current snapshot's landed intensity.
 
 **Target audience**: users who want to understand how Lumice picks a
 reasonable starting EV, and contributors who need to reason about the
@@ -21,13 +21,12 @@ normalization, comparing two configurations requires manual EV slider tuning.
 **Adaptive Brightness** automates this EV adjustment. The GUI computes an EV offset
 (displayed as `+N.NN EV auto` next to the manual EV slider in the **right panel →
 Display** section) and applies it to the post-processing pipeline so that a perceptually
-significant fraction of the bright pixels lands at a user-configurable target brightness
-on screen.
+significant fraction of the bright pixels lands at a fixed target brightness on screen.
 
 The auto anchor itself is always computed and always shown — there is no toggle for
 *that*. What became a toggle is whether the exposure it feeds actually applies: the
 Display group's **Mode** control (Relative / Absolute, see §3) selects between two
-exposure formulas, and this document's P99 self-anchor is consumed by only one of
+exposure formulas, and this document's P99 scene anchor is consumed by only one of
 them. Everything in §2 below describes the `Relative` mode, which is the default and
 is unchanged from the single-mode behavior this document originally documented.
 
@@ -63,14 +62,14 @@ The core algorithm (`ComputeEvAuto`, `src/core/ev_anchor.hpp` — reached via th
    ```
    p99_norm = y_p99 / snapshot_intensity
    ```
-4. **Map** `p99_norm` to `target_white` on the sRGB [0, 255] scale.
+3. **Map** `p99_norm` to `target_white` on the sRGB [0, 255] scale.
    `target_white` is fixed at 135.
    The mapping applies the sRGB transfer function inverse to obtain a linear target:
    ```
    t = target_white / 255
    target_linear = (t ≤ 0.04045) ? t / 12.92 : ((t + 0.055) / 1.055)^2.4
    ```
-5. **Compute the EV offset** in stops, clamped to [−6, +6]:
+4. **Compute the EV offset** in stops, clamped to [−6, +6]:
    ```
    ev_auto = log2(target_linear / p99_norm)
    ```
@@ -104,8 +103,7 @@ set of rays.
 This is a deliberate trade-off: prior revisions implemented a filter-independent
 anchor lane to keep EV stable across filter toggles. Internal testing showed the
 feature was rarely used and the multi-scattering overhead was substantial
-(~2× at `ms_prob=0.5`). The anchor lane was removed in
-`task-remove-anchor-lane` in favor of the simpler self-P99 path.
+(~2× at `ms_prob=0.5`). The anchor lane was removed in PR #115 (`6375ee03c`) in favor of the simpler single-ray-lane path.
 
 > ⚠️ **Do not confuse this with `Absolute` mode's filter-independence (§3).**
 > `Absolute` mode's normalization is filter-independent — a filter changing what
@@ -176,9 +174,10 @@ mechanism (§2.6, §4, §7).
 | Anchor measurement | `src/server/anchor_consumer.cpp`, `src/core/anchor_buffer.hpp` | One full-sky plane per session; publishes `anchor_l99_sky` |
 | Anchor transport | `src/gui/server_poller.cpp` | Carries `anchor_l99_sky` + `axis_solid_angle` into `TexturePayload`; computes no statistic |
 | EV source | `src/gui/app.cpp` — `SyncFromPoller()` | Maps `p99_y` + `snapshot_intensity` → `ev_auto` |
-| Mode-aware exposure (single owner) | `src/gui/mono_exposure_scale.hpp` | `ComputeMonoExposure()` — branches on `ev_mode`; feeds display, export, and `.lmc` thumbnail |
+| Mode-aware exposure (single owner) | `src/gui/mono_exposure_scale.hpp` | `ComputeMonoExposure()` — branches on `ev_mode`; feeds display/export and re-displays `.lmc` v5 persisted XYZ |
+| `.lmc` v5 source persistence | `src/gui/app.cpp`, `src/gui/file_io.cpp` | Stores unexposed XYZ plus exposure metadata; Open recomputes display exposure |
 | GUI display | `src/gui/app_panels.cpp` | Mode combo, EV readout text |
-| C API fields | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult` | `xyz_buffer`, `snapshot_intensity`, `emitted_energy` |
+| C API fields | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult` | `xyz_buffer`, `snapshot_intensity`, `emitted_energy`, `anchor_l99_sky`, `axis_solid_angle` |
 | C API fields | `src/include/lumice_scene.h` — `LUMICE_RenderParam` | `ev_mode` (`LUMICE_EV_MODE_RELATIVE` / `LUMICE_EV_MODE_ABSOLUTE`) |
 
 ### Related Documentation

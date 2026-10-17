@@ -44,7 +44,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 451        // ABI version, encoded major*100 + minor (v4.51)
+#define LUMICE_API_VERSION 453        // ABI version, encoded major*100 + minor (v4.53)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -57,6 +57,11 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 ```
 
 It is bumped when the public symbol set grows and on every BREAKING struct-layout change.
+
+**v4.53** changes the target-free `lumice.path-feature-report` document to schema 3: structural
+objects, support, features, unattributed structures, MC evidence, and coverage are now separate
+layers. A schema-2 reader must reject schema 3. The request struct and the v4.50 target/fiber/warm
+schema-1 surface are unchanged. See `raypath-cli-output.md` §7.
 
 **v4.52** appends one complete budget/observation/layer-selection group to
 `LUMICE_PathFeatureReportRequest`; a v4.51 prefix still works with the new defaults. The report's
@@ -210,7 +215,8 @@ typedef enum LUMICE_ErrorCode_ {
   LUMICE_ERR_MISSING_FIELD,  // Missing required field
   LUMICE_ERR_INVALID_VALUE,  // Invalid field value
   LUMICE_ERR_FILE_NOT_FOUND, // File not found / cannot be opened
-  LUMICE_ERR_SERVER,         // Internal server error
+  LUMICE_ERR_SERVER,         // Server error
+  LUMICE_ERR_UNKNOWN,        // Internal failure not covered above
 } LUMICE_ErrorCode;
 ```
 
@@ -234,6 +240,7 @@ Log level enum.
 typedef enum LUMICE_LogLevel_ {
   LUMICE_LOG_TRACE,    // Trace
   LUMICE_LOG_DEBUG,    // Debug
+  LUMICE_LOG_VERBOSE,  // Verbose diagnostics between DEBUG and INFO
   LUMICE_LOG_INFO,     // Info (default)
   LUMICE_LOG_WARNING,  // Warning
   LUMICE_LOG_ERROR,    // Error
@@ -269,15 +276,24 @@ typedef struct LUMICE_RenderResult_ {
 Statistics result structure.
 
 ```c
+typedef unsigned long long LUMICE_RayCount;
+
 typedef struct LUMICE_StatsResult_ {
-  unsigned long ray_seg_num;   // Number of ray segments
-  unsigned long sim_ray_num;   // Number of simulated rays
-  unsigned long crystal_num;   // Distinct crystal geometries this run sampled (see Notes)
+  LUMICE_RayCount ray_seg_num;      // Number of ray segments
+  LUMICE_RayCount sim_ray_num;      // Number of simulated rays
+  LUMICE_RayCount crystal_num;      // Distinct crystal geometries this run sampled (see Notes)
+  LUMICE_RayCount orientation_num;  // Distinct crystal orientations sampled (see Notes)
 } LUMICE_StatsResult;
 ```
 
+`LUMICE_RayCount` is always at least 64 bits, including Windows where `unsigned long` is only
+32 bits.
+
 **Notes**:
 - Sentinel marker: all zeros (`sim_ray_num == 0`)
+- `orientation_num` counts sampled orientations separately from geometry. A fixed shape under a
+  random axis can therefore report one geometry and many orientations. Like `crystal_num`, it is
+  not a backend-parity metric because CPU and GPU routes sample at different densities.
 - `crystal_num` is **how many distinct crystal geometries the run actually
   sampled**, not how many crystal objects it built. A shape defined by fixed
   numbers is drawn once and reused for the rest of the run, so a scene with
@@ -306,11 +322,10 @@ Server configuration structure for `LUMICE_CreateServerEx()`.
 
 ```c
 typedef struct LUMICE_ServerConfig_ {
-  int num_workers;        // CPU worker count. 0 = automatic: min(physical core count, 10) on
-                          // Linux/macOS, the full logical core count on Windows —
-                          // ServerImpl::AutomaticWorkerBaseAndCap() in server.cpp is the
-                          // per-platform pair and carries the measurements behind it. A value
-                          // > 0 is honoured verbatim, above the cap included.
+  int num_workers;        // CPU worker count. 0 = automatic: the physical core count on
+                          // Linux/macOS, the full logical core count on Windows, each capped
+                          // per platform by ServerImpl::AutomaticWorkerBaseAndCap(). A value
+                          // > 0 is honoured verbatim and is not subject to that cap.
   unsigned int sim_seed;  // Deterministic seed for worker RNGs. 0 = random (default).
                           // Non-zero collapses to 1 worker for bit-stable results.
   int preferred_backend;  // LUMICE_BACKEND_CPU / LUMICE_BACKEND_METAL / LUMICE_BACKEND_CUDA
@@ -392,8 +407,13 @@ void LUMICE_DestroyServer(LUMICE_Server* server);
 - `server`: server handle pointer; passing `NULL` is safe
 
 **Notes**:
-- Destroying the server stops all ongoing processing
-- The handle must not be used after destruction
+- Destroying the server stops all ongoing processing.
+- `LUMICE_DestroyServer` is a lifetime barrier, not synchronization for external callers. Before
+  calling it, prevent new calls that take this server handle and wait for every in-flight call to
+  return (for example by joining the caller threads or using an external teardown lock). After it
+  returns, the server handle must not be used again.
+- Result frames acquired before teardown are independent handles: they may still be read and
+  released after the server is destroyed, subject to each frame's own lifetime rules below.
 
 ### Logging
 
@@ -787,7 +807,10 @@ void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
 
 NULL-safe no-op (same contract as `LUMICE_DestroyServer`). Each handle must be released exactly
 once; releasing the same handle twice is undefined behavior — this mirrors `LUMICE_DestroyServer`
-and every other handle in this API, so there is no double-free sentinel.
+and every other handle in this API, so there is no double-free sentinel. Do not release a frame
+while another thread is calling `FrameGet*` on that same handle or still using a pointer borrowed
+from it; wait for those operations to finish, then release the handle once. Independently acquired
+frame handles do not share this wrapper lifetime and may be read or released concurrently.
 
 **Failure mode if you forget**: that one frame leaks, and nothing else. It cannot corrupt memory
 or affect any other reader, because a frame is immutable and separately reference-counted; a leak
@@ -1183,7 +1206,14 @@ int main() {
     while (1) {
         usleep(1000000);  // 1 second
 
-        // Acquire one frame; renders and stats below are read off the same snapshot
+        LUMICE_DrainResult drain;
+        if (LUMICE_GetDrainStatus(server, &drain) != LUMICE_OK) {
+            break;  // handle the error in production code
+        }
+        int done = drain.drained_epoch == drain.current_epoch;
+
+        // Acquire after the drain sample, so the frame read on the done iteration is final.
+        // Renders and stats below are read off the same snapshot.
         LUMICE_ResultFrame* frame = NULL;
         if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
             LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
@@ -1196,15 +1226,14 @@ int main() {
 
             LUMICE_StatsResult stats;
             if (LUMICE_FrameGetStats(frame, &stats) == LUMICE_OK) {
-                printf("Stats: rays=%lu, crystals=%lu\n", stats.sim_ray_num, stats.crystal_num);
+                printf("Stats: rays=%llu, crystals=%llu, orientations=%llu\n",
+                       stats.sim_ray_num, stats.crystal_num, stats.orientation_num);
             }
 
             LUMICE_ReleaseResultFrame(frame);
         }
 
-        // Check if processing is complete
-        LUMICE_ServerState state;
-        if (LUMICE_QueryServerState(server, &state) == LUMICE_OK && state == LUMICE_SERVER_IDLE) {
+        if (done) {
             break;
         }
     }
@@ -1259,8 +1288,15 @@ int main(int argc, char* argv[]) {
     while (1) {
         usleep(1000000);
 
-        // One frame per poll: the images stay valid until this frame is released,
-        // no matter what any other thread reads in the meantime.
+        LUMICE_DrainResult drain;
+        if (LUMICE_GetDrainStatus(server, &drain) != LUMICE_OK) {
+            fprintf(stderr, "Error: Failed to query drain status\n");
+            break;
+        }
+        int done = drain.drained_epoch == drain.current_epoch;
+
+        // One frame per poll, acquired after the drain sample so the done iteration is final.
+        // The images stay valid until this frame is released, no matter what another thread reads.
         LUMICE_ResultFrame* frame = NULL;
         if (LUMICE_AcquireResultFrame(server, &frame) == LUMICE_OK) {
             LUMICE_RenderResult renders[LUMICE_MAX_RENDER_RESULTS + 1];
@@ -1285,16 +1321,14 @@ int main(int argc, char* argv[]) {
 
             LUMICE_StatsResult stats;
             if (LUMICE_FrameGetStats(frame, &stats) == LUMICE_OK) {
-                printf("Stats: rays=%lu, segments=%lu, crystals=%lu\n",
-                       stats.sim_ray_num, stats.ray_seg_num, stats.crystal_num);
+                printf("Stats: rays=%llu, segments=%llu, crystals=%llu, orientations=%llu\n",
+                       stats.sim_ray_num, stats.ray_seg_num, stats.crystal_num, stats.orientation_num);
             }
 
             LUMICE_ReleaseResultFrame(frame);
         }
 
-        // Check if processing is complete
-        LUMICE_ServerState state;
-        if (LUMICE_QueryServerState(server, &state) == LUMICE_OK && state == LUMICE_SERVER_IDLE) {
+        if (done) {
             break;
         }
     }
@@ -1340,44 +1374,56 @@ if (err != LUMICE_OK) {
 
 ## Thread Safety
 
-### Reading Results Is Thread-Safe — By Holding a Share, Not by Being Lucky
+### Server Calls and Frame Reads Have Different Lifetimes
 
-`LUMICE_AcquireResultFrame`, `LUMICE_ReleaseResultFrame`, and all four `LUMICE_FrameGet*`
-functions are **thread-safe**: any number of threads may acquire, read, and release frames
-concurrently, with no external locking. This is not an incidental property to verify per call —
-it is the reason the frame model exists (see [Retrieving Results](#retrieving-results)). A
-pointer a `FrameGet*` call hands back (`img_buffer` / `xyz_buffer`) is a borrow into a frame the
-caller holds a real share of; it stays valid for exactly as long as *that* frame is held, until
-the matching `LUMICE_ReleaseResultFrame` — independent of what any other thread does to the
-server, and independent of how many *other* frames exist. Two frames never interfere with each
-other, whether held by the same thread or different ones.
+The read-only server polls (`LUMICE_QueryServerState`, `LUMICE_GetSimLifecycle`,
+`LUMICE_GetDrainStatus`, and `LUMICE_GetSimRayCount`) and `LUMICE_AcquireResultFrame` may run on
+multiple threads while the server handle is alive. They may overlap one another and the serialized
+run-start/stop operations below; their internal synchronization protects server state during the
+call. It does **not** keep the `LUMICE_Server*` wrapper alive.
 
-`LUMICE_FrameGetStats` is not part of that borrow family: it copies a **plain value** struct with
-no pointer into the frame, so nothing dangles after release. It rides the same acquire/release
-envelope as the other three only because all four reads come from one frame, not because it needs
-the borrow protection they do.
+`LUMICE_DestroyServer` is therefore a separate teardown barrier. Before calling it, the owner must
+stop admitting new calls that take that server handle and wait for all such in-flight calls to
+return, using thread joins or external synchronization. `DestroyServer` may not overlap polling,
+frame acquisition, mutation, or any other call that dereferences the same server handle; after it
+returns, no server call is valid.
 
-`LUMICE_QueryServerState()` is also thread-safe and may be called from any thread at any time.
+Each successful `LUMICE_AcquireResultFrame` returns an independent handle holding a reference to an
+immutable published frame. Acquired frames may outlive the server and do not interfere with one
+another. Any number of threads may call `LUMICE_FrameGet*` functions on the same live frame without
+a read-side lock. A pointer returned by `FrameGet*` (`img_buffer` / `xyz_buffer`) remains a borrow
+into that frame, so the caller must not call `LUMICE_ReleaseResultFrame` on that handle until all
+`FrameGet*` calls and all uses of those pointers have finished. Release each handle exactly once;
+distinct acquired handles may be read and released concurrently.
 
-### Non-Thread-Safe APIs
+`LUMICE_FrameGetStats` is not part of the pointer-borrow family: it copies a **plain value** struct
+with no pointer into the frame, so nothing dangles after the call returns. It uses the same
+acquire/release envelope only because every result read comes from a frame.
 
-The following mutate shared server state directly and must not be called concurrently with each
-other or with any other call on the same server:
-- `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()` / `LUMICE_DestroyServer()`: server lifecycle
-  management
-- `LUMICE_CommitScene()`: configuration submission
-- `LUMICE_StopServer()`: server shutdown
+### Serialized APIs
+
+The following boundaries require caller-side serialization; they do not impose a blanket exclusion
+between a live server's documented read-only calls and every non-destroy owner operation:
+- `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()`: concurrent first-time creation is not
+  guaranteed safe because logger sink registration is process-global.
+- `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()` /
+  `LUMICE_StopServer()`: serialize run-start and stop operations on one owner thread.
+- `LUMICE_DestroyServer()`: apply the full server-handle teardown barrier described above.
 - `LUMICE_Scene*` handle mutation (`LUMICE_SceneAdd*` / `LUMICE_SceneSet*` / `LUMICE_SceneDestroy`
-  on one handle) — a handle has no internal locking. Distinct handles are independent, so building
+  on one handle): a handle has no internal locking. Distinct handles are independent, so building
   two scenes on two threads is fine.
 
 ### Multithreading Recommendations
 
-1. **Single server, multiple threads**: designate one owner thread for `LUMICE_CommitScene()` /
-   `LUMICE_StopServer()` / `LUMICE_DestroyServer()`. Any number of other threads may freely
-   acquire and read result frames concurrently with that owner and with each other — no mutex
-   needed on the read side.
-2. **Multiple servers**: use a separate server instance per thread.
+1. **Single server, multiple threads**: designate one owner thread to serialize
+   `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()` /
+   `LUMICE_StopServer()`. Reader threads may poll and acquire frames concurrently while the server
+   remains live. For teardown, first stop new server calls and join or otherwise wait for every
+   in-flight server call, then invoke `LUMICE_DestroyServer()`.
+2. **Frames across teardown**: already-acquired frames may remain with reader threads after server
+   teardown. Join all users of a particular frame handle before releasing that handle; no mutex is
+   needed for concurrent `FrameGet*` reads while the handle is held.
+3. **Multiple servers**: use a separate server instance per thread.
 
 ## Integration with Other Languages
 
@@ -1402,9 +1448,16 @@ class LUMICE_RenderResult(ctypes.Structure):
 
 class LUMICE_StatsResult(ctypes.Structure):
     _fields_ = [
-        ('ray_seg_num', ctypes.c_ulong),
-        ('sim_ray_num', ctypes.c_ulong),
-        ('crystal_num', ctypes.c_ulong),
+        ('ray_seg_num', ctypes.c_ulonglong),
+        ('sim_ray_num', ctypes.c_ulonglong),
+        ('crystal_num', ctypes.c_ulonglong),
+        ('orientation_num', ctypes.c_ulonglong),
+    ]
+
+class LUMICE_DrainResult(ctypes.Structure):
+    _fields_ = [
+        ('drained_epoch', ctypes.c_ulonglong),
+        ('current_epoch', ctypes.c_ulonglong),
     ]
 
 LUMICE_MAX_RENDER_RESULTS = 16
@@ -1428,8 +1481,8 @@ lib.LUMICE_FrameGetRender.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_Ren
 lib.LUMICE_FrameGetRender.restype = ctypes.c_int
 lib.LUMICE_FrameGetStats.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_StatsResult)]
 lib.LUMICE_FrameGetStats.restype = ctypes.c_int
-lib.LUMICE_QueryServerState.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-lib.LUMICE_QueryServerState.restype = ctypes.c_int
+lib.LUMICE_GetDrainStatus.argtypes = [ctypes.c_void_p, ctypes.POINTER(LUMICE_DrainResult)]
+lib.LUMICE_GetDrainStatus.restype = ctypes.c_int
 lib.LUMICE_StopServer.argtypes = [ctypes.c_void_p]
 
 # Usage example
@@ -1454,7 +1507,12 @@ def simulate(config_file):
         while True:
             time.sleep(1)
 
-            # Get render results off a frame
+            drain = LUMICE_DrainResult()
+            if lib.LUMICE_GetDrainStatus(server, ctypes.byref(drain)) != 0:
+                raise RuntimeError("Failed to query drain status")
+            done = drain.drained_epoch == drain.current_epoch
+
+            # Acquire after the drain sample, so the frame on the done iteration is final.
             frame = ctypes.c_void_p()
             if lib.LUMICE_AcquireResultFrame(server, ctypes.byref(frame)) == 0:
                 try:
@@ -1467,9 +1525,7 @@ def simulate(config_file):
                 finally:
                     lib.LUMICE_ReleaseResultFrame(frame)
 
-            # Check state
-            state = ctypes.c_int()
-            if lib.LUMICE_QueryServerState(server, ctypes.byref(state)) == 0 and state.value == 0:
+            if done:
                 break
     finally:
         lib.LUMICE_DestroyServer(server)
@@ -1479,7 +1535,7 @@ def simulate(config_file):
 
 ```rust
 use std::ffi::CString;
-use std::os::raw::{c_char, c_int, c_uchar, c_ulong, c_void};
+use std::os::raw::{c_char, c_int, c_uchar, c_ulonglong, c_void};
 
 const LUMICE_MAX_RENDER_RESULTS: usize = 16;
 const LUMICE_MAX_STATS_RESULTS: usize = 1;
@@ -1494,9 +1550,10 @@ struct LUMICE_RenderResult {
 
 #[repr(C)]
 struct LUMICE_StatsResult {
-    ray_seg_num: c_ulong,
-    sim_ray_num: c_ulong,
-    crystal_num: c_ulong,
+    ray_seg_num: c_ulonglong,
+    sim_ray_num: c_ulonglong,
+    crystal_num: c_ulonglong,
+    orientation_num: c_ulonglong,
 }
 
 #[link(name = "lumice")]
@@ -1527,7 +1584,7 @@ extern "C" {
 
 ### Q3: When does img_buffer become invalid?
 
-**A**: When you release the frame it came from. `img_buffer` is a read-only view into a `LUMICE_ResultFrame`, and holding that frame keeps the pixels alive — no other reader's activity, and no new snapshot, can invalidate them while you hold it. Call `LUMICE_ReleaseResultFrame()` when you are done, and `memcpy` beforehand anything you need to outlive the frame.
+**A**: When you release the frame it came from. `img_buffer` is a read-only view into a `LUMICE_ResultFrame`, and holding that frame keeps the pixels alive — no activity through a distinct frame handle, and no new snapshot, can invalidate them while you hold it. All users of this frame handle must finish before its single `LUMICE_ReleaseResultFrame()` call. `memcpy` beforehand anything you need to outlive the frame.
 
 ### Q4: Can the server process multiple configurations simultaneously?
 

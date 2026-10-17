@@ -4,7 +4,7 @@
 
 本章带你在 Lumice GUI 中完成首次交互式模拟：启动应用、加载内置示例、跑一次模拟、读懂预览。看完你会知道点哪些面板、各浮窗是什么含义。
 
-> **前置**：构建产物含 GUI（`./scripts/build.sh -j release` 会同时产出 `build/cmake_install/static/LumiceGUI`）。
+> **前置**：构建产物含 GUI（`./scripts/build.sh -gj release` 会产出 `build/cmake_install/static/LumiceGUI`）。
 
 ## 1. 启动
 
@@ -35,7 +35,7 @@
 
 ## 3. 加载内置示例
 
-`File ▶ Open` 选择 `examples/config_example.json`。左侧面板会被填充示例的 4 个晶体、光源、散射层和 1 个渲染条目：
+`File ▶ Open` 选择 `examples/config_example.json`。左侧面板会载入示例场景的晶体池、光源、散射层和导入的渲染视图：
 
 ![加载示例](../figs/gui_screenshot_example_01.jpg)
 
@@ -83,12 +83,10 @@ Continue 追加多少——曝光、叠加线、视角也都可以随便调。�
 
    ![晶体编辑对话框](../figs/gui_edit_crystal.jpg)
 
-   选个预设（例如 **Hexagonal Prism**），如有需要可调 `height`，确认。（其它形状字段如 `face_distance` schema 中接受但当前引擎尚未实现 — 详见 [`05-faq_zh.md`](05-faq_zh.md) §4。）
-3. 打开 **Light Source**，设 `azimuth`（太阳方位角）和 `altitude`（太阳高度角）。
+   选个预设（例如 **Hexagonal Prism**），如有需要可调 `height` 或各面距离，确认。
+3. 打开 **Light Source**，设置 `altitude`（太阳高度角）。GUI 有意把太阳方位固定为 0；需要改变相对方位时旋转视角。
 4. 打开 **Render**，挑镜头、分辨率、视场角 — 浮动镜头条之后还能切换，所以默认值就行。
 5. 点 **Run**。
-
-> 📷 待补：Crystal Tab 整体截图（已登记到 `progress.md` 占位锚清单；closeout 阶段会汇总进 SUMMARY.md "待补充清单"）。
 
 ## 6. 保存与重载
 

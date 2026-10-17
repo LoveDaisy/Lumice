@@ -1406,8 +1406,8 @@ gone. Throughout this document, "the engine headers" means that set.
   declaration out of foundation or the kernel either, and `-fvisibility=hidden` alone would export
   whatever one of them marks. The guarantee comes from the **per-library export list** (§2.5),
   declared once in `cmake/export_surfaces.cmake`: engine = the six engine headers plus
-  `lumice_analytic_core.h` (109 names), `liblumice_testapi` = engine plus the `LUMICE_TEST_*` hooks
-  (111), `liblumice_analytic` = `lumice_analytic.h` plus the core header (24). Its test is
+  `lumice_analytic_core.h` (116 names), `liblumice_testapi` = engine plus the `LUMICE_TEST_*` hooks
+  (118), `liblumice_analytic` = `lumice_analytic.h` plus the core header (31). Its test is
   mechanical: `scripts/check_export_surface.py` compares a built binary's export table with the
   names its surface headers declare, and both `test_export_symbol_scope.py` and `release.yml`
   (every packaged engine file, both ISA builds) run it.
@@ -1428,9 +1428,9 @@ subsections keep that number.
 ### 8.1 What the version is
 
 - **An independent counter**, `LUMICE_ANALYTIC_API_VERSION`, not tied to `LUMICE_API_VERSION`.
-  The two surfaces change at rates an order of magnitude apart (the engine's `LUMICE_API_VERSION` is at 450 after the
-  classified churn in `doc/interfaces/api-layering-and-product-lines.md` §8), and a consumer of one must not
-  see the other's churn as a version bump.
+  The two surfaces change at rates an order of magnitude apart (the engine header's own version
+  history records its faster churn), and a consumer of one must not see the other's churn as a
+  version bump.
 - **A single integer, and the only version.** It is bumped on every incompatible change (§8.2),
   with a one-line note at the top of the header saying what changed — the same style as the
   `BREAKING` / `ADDED` / `BEHAVIOR` notes above `LUMICE_API_VERSION` in `lumice_base.h`. There is no
@@ -1518,7 +1518,7 @@ and clang-cl) and checks the files are there (`e2e-slow`, `windows-shared-export
 A consumer's CMake:
 
 ```cmake
-find_package(LumiceAnalytic 1 REQUIRED)   # 1 = the LUMICE_ANALYTIC_API_VERSION written against
+find_package(LumiceAnalytic 8 REQUIRED)   # 8 = the LUMICE_ANALYTIC_API_VERSION written against
 add_executable(app main.c)
 target_link_libraries(app PRIVATE Lumice::lumice_analytic)
 ```

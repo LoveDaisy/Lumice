@@ -9,9 +9,9 @@ All commands assume the working directory is the project root.
 > reference. Historical per-run measurement dumps (dated tables, raw reps, per-effort
 > methodology notes) live in the git-ignored `scratchpad/perf-results-log.md` — append new
 > per-run numbers there, and promote a number here only when it becomes the new canonical
-> anchor. CUDA build + parity/correctness on the remote boxes is a separate concern — see
-> [`gpu-remote-cuda-build-testing.md`](gpu-remote-cuda-build-testing.md) (⛔ its two machines are
-> retired and its commands no longer run — read the banner at the top of that file first).
+> anchor. CUDA build + parity/correctness on the reference machines is a separate concern — see
+> [`gpu-remote-cuda-build-testing.md`](gpu-remote-cuda-build-testing.md); the current role-to-host
+> bindings and toolchain paths live only in [`machines.md`](machines.md).
 > Which throughput numbers below are still reproducible is stated per host block under
 > "Canonical throughput results"; **read that status before using any number as a criterion.**
 

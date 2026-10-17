@@ -1,7 +1,7 @@
 # 设计：GUI 状态治理（染色 / 仿真前端状态的统一转换模型）
 
-> 状态：blueprint（explore-gui-state-governance 收敛，2026-07-11）。改动 GUI 状态转换 / 染色 display 通道 / 文档切换重置 / 仿真生命周期显示联动前先读。
-> 关联：`doc/gui/gui-preview-lifecycle-architecture.md`（epoch / 四时钟 / I1–I6，本文的 sim 生命周期地基）、`doc/gui/gui-custom-spectrum-and-raypath-color.md` §4.0/§5#25（re-sim vs display-time 分流铁律，本文形式化的对象）。
+> 状态：**设计推理 + as-built 治理记录**（2026-07-11 起持续回写）。§1–§7 保留实施前诊断、目标模型与拆解理由；其中 A–D 已落地修复，不得按“当前 bug”读取。§8–§12 记录当前用户默认值、Scene 双投影、面板派生态、视图副本重同步与 UI scale 机制。改动 GUI 状态转换 / 染色 display 通道 / 文档切换重置 / 仿真生命周期显示联动前先读。
+> 关联：`doc/gui/gui-preview-lifecycle-architecture.md`（epoch / 四时钟 / I1–I7，本文的 sim 生命周期地基）、`doc/gui/gui-custom-spectrum-and-raypath-color.md` §4.0（re-sim vs display-time 分流铁律，本文形式化的对象）。
 
 ## 0. 为什么要这份文档
 
@@ -9,13 +9,13 @@
 
 > **每一个「用户操作」 → ① 内部状态如何转换？ ② 所有相关显示如何更新？**
 
-## 1. 诊断（一句话）
+## 1. 实施前诊断（一句话）
 
-**`GuiState` 的数据模型是集中的（好）；散乱的是"状态转换"。而且几乎所有偏离点都不在 sim 生命周期本体，而在 display 通道与 sim 通道的交界处。**
+**`GuiState` 的数据模型是集中的（好）；当时散乱的是“状态转换”，且几乎所有偏离点都聚在 display 通道与 sim 通道的交界处。**
 
-- **sim 生命周期本体治理严整**，是正解样板：`ReconcileSimState`（app.cpp:945）是生产环境唯一写 `sim_state` 的地方（I2），每帧从 `(run_intent, committed_epoch, snapshot 观测, dirty)` 纯函数派生；业务操作只写这三个输入；epoch 栅栏（I1）弃陈旧世代；immediate 模式 filter/crystal 的 diff-gated 双档 mark 干净。
-- **散乱集中在交界**：display 通道（`PushDisplayState`→`LUMICE_SetRaypathColors`+`EnsureRunning`）与 sim 通道（`FillColorClasses`→`CommitConfigStruct`）字段割裂、互不重推、且 display-time 操作会借用 re-sim 味的原语污染 sim_state。
-- **根因不是缺中心数据结构，是缺"字段 → 转换档位 → 下游通道"的单一分类器**——今天每个 widget 就地决定发 `MarkDirty` / `MarkStructHardDirty`（旧名 `MarkFilterDirty`） / `PushDisplayState` / 直接赋值。
+- **sim 生命周期本体治理严整**，是正解样板：`ReconcileSimState` 是生产环境唯一写 `sim_state` 的地方（I2），每帧从 `(run_intent, committed_epoch, snapshot 观测, dirty)` 纯函数派生；业务操作只写这些输入；epoch 栅栏（I1）弃陈旧世代；Immediate 模式 filter/crystal 的 diff-gated 双档 mark 干净。
+- **当时的散乱集中在交界**：display 通道与 sim 通道字段割裂、互不重推，且 display-time 操作借用了 re-sim 生命周期原语；§3 保留具体故障链。
+- **根因不是缺中心数据结构，而是缺“字段 → 转换档位 → 下游通道”的单一分类。** 当前结构已以 `kFieldTierTable`、structure/display 子类型、frame-tail reconciler 与 effects baseline 收口主要缺口；后续新增字段仍须沿这条分类链登记。
 
 ## 2. 两组正交的转换档位（读表前必读）
 
@@ -24,20 +24,20 @@
 | **T-struct·hard** | 拓扑变，抬 epoch floor 栅栏旧世代的迟到帧；**不清屏**，屏上画面保持到新世代替换（`gui-preview-lifecycle-architecture.md` §7.1） | `MarkStructHardDirty()`（`gui_state.hpp`；前名 `MarkFilterDirty`，被 S4 正名）= MarkDirty + display_epoch_floor=committed_epoch（2026-09-28 前还当场清零 snapshot_intensity / p99_raw_y，已去掉） | 编辑谓词/combine/增删类/增删 ref、filter 结构变、staged filter commit |
 | **T-struct·soft** | 配置脏但保留 carry-forward 纹理，旧世代迟到帧不设栅栏 | `MarkDirty()`（gui_state.hpp:693）只置 dirty | 晶体几何/朝向、光谱、layer/prob、sim_resolution |
 | **T-display** | 纯显示，即时下发 server，**不 dirty / 不 epoch** | `PushDisplayState`→`LUMICE_SetRaypathColors` | color rgb / visible / solo / z_order / composite mode |
-| **T-view** | 纯客户端，仅 preview shader 实时重投影 | 无 server 下发（仿真投影固定全天空 dual-fisheye） | lens / fov / view / exposure |
+| **T-view** | 纯客户端，仅 preview shader 实时重投影 / 合成 | 无 server 下发（仿真投影固定全天空 dual-fisheye） | lens / fov / view / exposure / background |
 | **T-session** | 会话偏好，不持久、不 dirty、不进 ConfigSnapshot | 直接改字段 | show_composite_preview / color_window_open / trackball / look_at |
 
 **Look At 跟随（as-built）**：`GuiState::look_at` 只保存所选具名目标与跟随意图，是 T-session，不是相机姿态的第二份副本。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，再保留本次输入；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁；`Reset` 解除 Lock 但保留目标。`ResetFrontendState` 对 New / 成功 Open / Revert 都恢复 `Sun + unlocked`，失败或取消的 Open 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim；太阳高度本身原有的 sim effect 不变。
 
-> ⚠️ `renderer.background`（画面背景色，与 `bg_show` / `bg_path` 那组**背景图 overlay** 字段是两回事）**曾**列在 T-view 行的示例里，现已移出：它不是纯客户端重投影参数，编辑它必须能被 Revert 撤销。它今天处在 T-display 的**一半**上——「不 dirty / 不 epoch」已成立（`RenderConfigResimFields` 不再含它，Revert 改由 `ConfigSnapshot::renderer_background` 这个独立槽位追踪），而「即时下发 server」那一半**尚未建立**，所以一次背景色编辑目前不会到达任何地方，要等下一次 commit。故意不写进 T-display 行的示例列：写上去会读成"通道已通"。
+> `renderer.background`（画面天空色，与 `bg_show` / `bg_path` 的背景照片 overlay 不同）当前是客户端 shader 的 display-time 输入：编辑后立即进入 `PreviewParams::background_color_linear`，不 dirty、不 bump epoch、也不下发 server。它仍由 `ConfigSnapshot::renderer_background` 独立记录，因而 Revert 可以恢复；这说明“纯客户端显示字段”与“是否可被 Revert 撤销”是两个正交维度。
 
-> 关键机制：**auto-commit 只在 kSimulating 下发生**（main.cpp:285-299：`dirty && sim_state==kSimulating` 每 kCommitIntervalMs 自动 DoRun）。**kModified（kDone+dirty）不会自动重跑**——用户必须手点 Run。
+> 关键机制：**auto-commit 只在 kSimulating 下发生**（`main.cpp` 的 live-edit block：`dirty && sim_state==kSimulating` 每 `kCommitIntervalMs` 自动 `DoRun`）。**kModified（kDone+dirty）不会自动重跑**——用户必须手点 Run。
 
-## 3. 全表：用户操作 × ①状态转换 × ②显示更新（spec 骨架）
+## 3. 历史诊断：用户操作 × 状态转换 × 显示更新
 
-完整逐操作表（~35 操作，带 file:line）见 `scratchpad/explore-gui-state-governance/`（E2 全表）。此处固化**偏离点**——即"用户做了操作，但状态转换或显示更新不对齐"的地方，按治理优先级排列：
+本节记录实施前确认的 A–D 四个偏离及其根因，供解释后续结构为何长成现在这样；**四项均已修复**：display 刷新走 `WakeForRefresh`，完成态由 `RunIntent::kRunCompleted` latch，`ColorClassConfig` 拆成 structure/display 两个子结构，frame-tail reconciler 统一 diff/push，`DoRun` / Revert / backend swap 通过 `InvalidateEffectsBaselines` 强制重推。以下机制描述中的“现象”“漏字段”“不重推”均是 as-was，不是当前行为。
 
-### 偏离 A（活 bug，owner 头号症状）— display-time 颜色操作闪 Simulating / Run→Stop
+### 偏离 A（历史缺陷，已修）— display-time 颜色操作闪 Simulating / Run→Stop
 - **现象**：有限仿真完成后，改颜色 / show-hide / solo / z_order / 切合成模式，Run 按钮瞬间变红 Stop、状态栏闪 "Simulating..."，随即恢复。
 - **机制（白盒确认）**：
   1. 有限完成后 `run_intent` **停在 kRunning**（app.cpp 只有 New/Open/Run/Stop 写它，完成不改），`sim_state=kDone` 完全靠每帧"fresh valid COMPLETED 快照"派生——**未 latch**。
@@ -46,14 +46,14 @@
   4. poller 醒来重发 COMPLETED → 回 kDone，闪烁结束。
 - **双重根因**：(a) display-time 操作借用 re-sim 味原语（EnsureRunning+PublishValidReset）；(b) `valid` 语义重载（"重启待定" vs "显示刷新待定"不分）+ 完成态未 latch，靠 volatile 输入每帧重算。color_window.cpp:79 注释自称 "display-time semantics preserved"，与实际相悖。
 
-### 偏离 B — display 通道 vs commit 通道字段割裂（S1）
+### 偏离 B（历史缺陷，已修）— display 通道 vs commit 通道字段割裂（S1）
 - commit 通道 `FillColorClasses`（file_io.cpp:1440-1461）发 color/combine/visible/solo/match/mode 但**漏 z_order**；display 通道 `PushDisplayState`（color_window.cpp:52-63）发 color/visible/solo/z_order/mode 但**漏 combine/match**。两通道各按不同字段子集下发同一份 `raypath_color`，靠"都从同一 state 读"维持一致——脆弱。
 - **动态后果（偏离 B'）**：`DoRun` 走 commit 通道且不调 `PushDisplayState`，故每次 Run 重建 composite consumer 后 z_order 排序失效，dominant/painter 优先级错乱，直到用户下一次触碰任一颜色控件才恢复。
 
-### 偏离 C — Revert 不重推 display 状态（S7）
+### 偏离 C（历史缺陷，已修）— Revert 不重推 display 状态（S7）
 - `DoRevert`（app.cpp:913-932）只 `ApplyTo` 恢复 GuiState（含 raypath_color）+ `dirty=false`，**无 `PushDisplayState`**。若 revert 掉的是颜色 display 编辑，server 仍持 revert 前的 display 状态，composite 预览要等下一次颜色编辑或 Run 才纠正。
 
-### 偏离 D — 结构态与显示态挤在同一结构（S3，是 A–C 的共因）
+### 偏离 D（历史缺陷，已修）— 结构态与显示态挤在同一结构（S3，是 A–C 的共因）
 - `ColorClassConfig`（gui_state.hpp:536-551）把 combine/match（改了要 re-sim）与 color/visible/solo/z_order（纯 display）放同一 struct。字段级路由只能在每个 widget 逐字段手判 → 是"漏推""漏发字段""发错通道"的温床。
 
 ### 其它（已固化，供裁定，非本次主线）
@@ -66,12 +66,12 @@
   ⚠️ 后续补充：「不在 `renderer_resim` 里」与「不在 Revert 基线里」这个等价关系**对 `background` 不成立**。它已从 `RenderConfigResimFields` 移出（改背景色不再算改动、不再触发重跑），但仍在 Revert 基线里——走的是 `ConfigSnapshot::renderer_background` 这个与 `renderer_resim` 并列的独立槽位。`RenderConfigResimFields` 单个类型表达不了这个组合（进了它，捕获/判定/恢复三件事绑在一起），所以第三种处置是「排除出判定、但另开槽位保留 Revert 追踪」。加 `RenderConfig` 字段时的三选一，见 `gui_state.hpp` 该类型上方的注释块。
 - **已证伪**：sim_resolution 改动**确实** MarkDirty（app_panels.cpp:726）——非偏离。
 
-## 4. 目标模型：三支柱 + 文档重置 owner
+## 4. 目标模型与当前落地：三支柱 + 文档重置 owner
 
-无约束最优 = **一切下游 / server 可见态由单一 owner 从 `GuiState` 派生，而非在编辑点命令式推送**。约束（perf：whole-table server push 不能每帧做）剪枝为三支柱：
+无约束最优 = **一切下游 / server 可见态由单一 owner 从 `GuiState` 派生，而非在编辑点命令式推送**。约束（whole-table server push 不能每帧做）剪枝为三支柱；下面同时记录目标与当前落点。
 
 ### 支柱 1 — field→tier 分类器（声明式，单源）
-每个可编辑字段声明**唯一**转换档位（§2 的五档），集中为一张"字段 → 档位"声明表 + 单一 dispatch，取代今天每个 widget 就地手挑。最强的结构强制：**把 `ColorClassConfig` 拆成结构态子结构（combine/match）+ 显示态子结构（color/visible/solo/z_order/mode）**，让类型系统告诉你字段属哪条通道（消偏离 D，进而堵住 A–C 的共因）。
+每个 `GuiState` 顶层字段由 `kFieldTierTable` 登记一个转换档位，policy gate 检查遗漏 / 重复；染色域进一步把 `ColorClassConfig` 拆成 `ColorClassStructState` 与 `ColorClassDisplayState`，让类型系统区分 re-sim 与 display push。具体字段 diff 仍在 reconciler 中显式书写以保持可读，meta-test 负责让它与 tier 表一致；这不是“所有 widget 已经走一个泛型 dispatch”的过度承诺。
 
 ### 支柱 2 — 每通道单一序列化器 + 重推纪律
 - commit 通道与 display 通道**都从同一个显示态子结构派生完整 payload** → 字段子集割裂（偏离 B）在结构上不可能。
@@ -83,8 +83,8 @@
 - (b) 有限完成后 **latch COMPLETED 边沿**（run_intent kRunning→终态，或 reconcile 记住完成边沿），使单帧 valid=false 不再把 kDone 降级 kSimulating。与 lifecycle 蓝图"完成是电平可观测"一致，加边沿 latch 让 display 刷新惰性。
 - 合起来消偏离 A。
 
-### 文档重置 owner（支柱 1 应用于 New/Open/Revert = backlog #5）
-单一 `ResetFrontendState(reason)` owner，按文档切换原因确定性重置**全部**前端态：预览纹理 + GL blank + poller staged（`InvalidateStagedTexture`）+ epoch floor + display 态重推 + trackball + run_intent + sim_state 输入 + signal cache。今天 New / Open(.lmc±baked) / Open(.json) / Revert 各手工重置不同子集——正是"Open 残留旧渲染连修三个错误层"（task-349.1→350→351）的根因。可顺带把文档切换视作 epoch 递增事件，统一栅栏陈旧快照。
+### 文档重置 owner（as-built）
+`ResetFrontendState(reason)` 已是 New / Open(.lmc±baked) / Open(.json) / Revert 的单一前端重置 owner。它按 reason 重置预览纹理、poller staged、epoch/display 基线、trackball、分析/编辑器会话态等；Revert 只执行其有意的保留子集并通过 `InvalidateEffectsBaselines` 重推显示态。新增文档切换路径必须进入这个 owner，不能重新手写一份重置字段集。
 
 ### 与既有蓝图自洽
 - §5#25 re-sim/display-time 边界 = 支柱 1 的 field→tier 分类器（形式化，不改语义）。
@@ -97,20 +97,22 @@
 - **I-serialize**：commit 与 display 两通道从同一显示态子结构派生；新增显示态字段不能只改一条通道（编译期强制）。
 - **I-repush**：DoRun / DoRevert / 后端切换后，server 侧 display 态 == GuiState 显示态子结构（端到端 GL 像素回归可钉）。
 - **I-display-inert**：display-time 操作不得改变 `sim_state` / `run_intent` / epoch（gui_test 断言：有限完成后 toggle 任一显示态 → sim_state 恒 kDone）。
-- **I-reset-complete**：每条文档切换路径重置完整前端集（GL 像素 blank + poller staged 丢弃 + display 态），task-351 类回归栅栏。
+- **I-reset-complete**：每条文档切换路径都进入 `ResetFrontendState(reason)`，按 reason 重置完整前端集（GL/纹理、poller staged、会话派生态与显示重推基线）。
 
-## 6. 后续 scrum 拆解建议（无环依赖，逐 task 端到端可观察 AC）
+## 6. 历史实施拆解（T1–T6 均已落地）
+
+下表保留当时的依赖与可观察 AC，解释为什么实现按这个顺序形成；它不是待办。当前落点分别是 `WakeForRefresh` + `RunIntent::kRunCompleted`、`kFieldTierTable`、`ColorClassStructState` / `ColorClassDisplayState`、`InvalidateEffectsBaselines` 与 `ResetFrontendState(reason)`。
 
 | Task | 内容 | AC（可观察，非 proxy） | 依赖 |
 |---|---|---|---|
-| **T1** 活 bug（最高 ROI，独立） | 修偏离 A：display-time 唤醒不闪 Simulating（拆 refresh/restart wake 或 latch COMPLETED） | 有限完成后 toggle visible/solo/color → sim_state 恒 kDone（gui_test 断言 sim_state 本身） | 无 |
+| **T1** 历史最高 ROI 缺陷 | 修偏离 A：display-time 唤醒不闪 Simulating（拆 refresh/restart wake 或 latch COMPLETED） | 有限完成后 toggle visible/solo/color → sim_state 恒 kDone（gui_test 断言 sim_state 本身） | 无 |
 | **T2** spec+doc（地基） | 本文 promote 到 doc/ + field→tier 声明表 | doc 落地 + 索引 | 无 |
 | **T3** 结构拆分（使能后续） | 拆 ColorClassConfig 结构态/显示态子结构（D）+ 两序列化器共派生显示态子结构（B） | 单序列化器；加字段不能使通道脱同步（编译期）；逐像素等价回归 | T2 |
 | **T4** 重推纪律 | DoRun/DoRevert/后端切换重建完整 display 态（B'+C） | Revert 掉颜色编辑后 composite 无需再交互即匹配；Run 后 z_order 即时生效 | T3 |
 | **T5** 文档重置 owner（backlog #5） | 单一 ResetFrontendState(reason) 覆盖 New/Open×3/Revert（可选 epoch 递增） | 各路重置完整前端集（GL 像素 + poller staged + display 态） | T3（受益） |
 | **T6** 清理/加固（scrum-353.5，已落地） | ✅ MarkFilterDirty→MarkStructHardDirty 正名（S4）、✅ signal cache 按 epoch/server 键控（S5）、✅ 裁定 Save（偏离 E owner 裁定 = 提示需 Run + 用户显式确认 Save anyway）、审计确认无 docking 死状态可删（活功能，a01 优先于 a05） | 各自小 AC，全部收敛 | 收尾 |
 
-推荐序：T1→T2→T3→T4→T5→T6（T1、T2 可并行）。
+历史推荐序：T1→T2→T3→T4→T5→T6；该顺序已经完成，不据此新建任务。
 
 ## 7. 反模式警示（历史反复踩过，AC 设计须规避）
 - **绿测 ≠ 真行为**：渲染/多状态类 bug 的 AC 必须验实际可观察输出（GL 像素 / sim_state 值 / FBO 抓图），不可断言 CPU 代理标志（`HasTexture()` 曾连续两次假绿到 owner 肉眼才暴露）。

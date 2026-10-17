@@ -7,7 +7,13 @@ Monte Carlo (MC) pipeline with a deterministic, per-pixel computation based on p
 standard events. The idea is inspired by the rotational covariance theory in Gislén et al.
 (2004) but adapted for parallel-light (solar) halo simulation.
 
-**Status**: Theoretical design — not yet implemented.
+**Status (verified 2026-10-17): historical, unimplemented proposal.** The current tree has no
+precomputed-standard-event store or per-pixel inverse renderer. The analytic library's path
+evaluation, fiber continuation, and layered feature diagnostics solve a different problem: they
+analyze specified raypaths and geometric/measure structures, but do not implement the renderer
+proposed here. Consequently, the exactness, noise, and cost statements below are design
+hypotheses and estimates, not product guarantees or measured current performance. Current
+raypath-analysis mechanisms are documented under `../raypath/`.
 
 ## Motivation
 
@@ -311,7 +317,10 @@ The sampling density on S² must be sufficient to resolve rapid variations in th
 function, particularly near total internal reflection boundaries and raypath transitions.
 Adaptive refinement in these regions may be beneficial.
 
-## Suggested Validation Plan
+## Original Validation Plan (Not Executed)
+
+The proposal identified the following checks, but this repository has no recorded implementation
+or results for them:
 
 1. **Single raypath prototype**: Implement for one raypath only (e.g., the 22° halo prism
    path, faces 3→1). Compare with MC output at the same sun elevation.

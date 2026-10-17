@@ -136,11 +136,11 @@ three-way golden-analytic sweep at
 `test/golden-analytic/core/test_closed_form_prism.cpp` (well-conditioned 1e5
 samples; degenerate σ ∈ {0.3, 0.5, 0.8}, 4e4 each). **The swap-in has landed
 (PR #214): `ComputeClosedFormPrism` is now the production construction path
-(`crystal.cpp:363`).** Construction cost measured
+(the `Crystal::CreatePrism` factory in `src/core/crystal.cpp`).** Construction cost measured
 against `BM_MakeCrystal/prism_random` (10970 ns baseline) and
 `BM_TopologyReuse/prism` (130 ns floor): the closed-form implementation runs at
 ~96 ns per prism on Apple Silicon (`BM_ComputeClosedFormPrism`), ~114× faster
-than the production path and comparable to the reuse floor.
+than the pre-swap `BM_MakeCrystal/prism_random` baseline and comparable to the reuse floor.
 
 ### 4.b Landing status (pyramid)
 
@@ -154,7 +154,8 @@ degenerate σ ∈ {0.30, 0.50}; shoulder / apex / face-drop specialty cases with
 a `path_tag_union` assertion that these walk the same solver branches as
 regular samples — the "no special-case branch" invariant is executable, not
 just review-time). **The swap-in has landed (PR #214): `ComputeClosedFormPyramid`
-is now the production construction path (`crystal.cpp:402`).**
+is now the production construction path (`Crystal::CreatePyramid` in
+`src/core/crystal.cpp`).**
 
 The pyramid side originally shipped with a second `__int128` exact oracle
 that carried the cone angles as *free symbols* (general C(n,3) plane-triple
@@ -179,7 +180,7 @@ Construction cost measured in the same session as
 `BM_ComputeClosedFormPrism` (93.9 ns): the closed-form pyramid runs at
 ~1938 ns fixed / ~2885 ns random per pyramid on Apple Silicon
 (`BM_ComputeClosedFormPyramid_fixed` / `_random`), **~17× faster** than the
-production path. The gap versus prism (30× more work per call) tracks the
+pre-swap `BM_MakeCrystal/pyramid_random` baseline. The gap versus prism (30× more work per call) tracks the
 structural cost: pyramid enumerates up to 20 candidate z-events and per-event
 corner deaths across 20 direction triples, vs prism's single 2D solve.
 
@@ -187,7 +188,8 @@ corner deaths across 20 direction triples, vs prism's single 2D solve.
 
 Precisely, as-built after PR #214 (do not over-read "as-built" as "every §1 artifact is gone"):
 
-- **Landed.** Closed-form construction is the production path (`crystal.cpp:363`/`:402`). A flat
+- **Landed.** Closed-form construction is the production path (`Crystal::CreatePrism` /
+  `Crystal::CreatePyramid` in `src/core/crystal.cpp`). A flat
   per-face representation carries face vertices (`kCrystalGeomMaxVtxPerFace`) with
   `poly_face_n_` no longer populated from a back-derived table. The **two-hop face-number
   reversal is deleted** — `FillPerFaceTopology` and `poly_face_tri_id_` survive only as

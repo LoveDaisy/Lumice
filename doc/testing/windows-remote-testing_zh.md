@@ -92,3 +92,6 @@ PowerShell watcher，在 Windows 物理会话中运行。监控触发文件，�
 ## 另见
 
 - [性能测试指南](performance-testing_zh.md) — 完整的性能测试概述
+- [远程 CUDA 编译 / 测试流程](gpu-remote-cuda-build-testing.md) — **不同关注点**：在当前 Linux / Windows
+  CUDA 参照角色上做无头编译与 parity/正确性验证。本指南处理物理桌面会话里的 GUI VSync 性能；
+  CUDA 流程不依赖该 GUI 桌面工作流。当前主机绑定见 [machines.md](machines.md)。
