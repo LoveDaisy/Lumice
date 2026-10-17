@@ -115,6 +115,84 @@ class TestCli(LumiceTestCase):
             f"No images found in {self.output_dir}",
         )
 
+    def test_log_flag_help_rows_match_their_levels(self):
+        """Every help page describes `-v`/`-d` with the level each flag actually sets.
+
+        The two rows are one shared fragment (`kHelpLogAndHelpOptions`, src/main.cpp)
+        printed by all five pages, so this pins fragment text x every consuming page.
+        The assertions are whole lines, not keywords: column width, wording or the
+        level word moving at all turns this red. `trace level logging` is named
+        explicitly -- it is the drift this test exists for (`-v` sets LUMICE_LOG_VERBOSE,
+        and trace is a *different*, more chatty level: trace(0) < debug(1) < verbose(2),
+        see src/util/logger.hpp). That ParseSharedOption maps the flags to those levels
+        is pinned separately by test_v_and_d_flags_set_verbose_and_debug_levels; these
+        two tests together are the pair that keeps help text and flag behavior from
+        drifting apart again.
+        """
+        v_row = "  -v                 Verbose output (verbose-level logging)"
+        d_row = "  -d                 Debug output (debug level logging)"
+        for args in (["-h"], ["render", "-h"], ["benchmark", "-h"], ["analyze", "-h"], ["raypath", "-h"]):
+            result = self.run_lumice(args)
+            self.assertEqual(result.returncode, 0, f"{args}: rc={result.returncode}, stderr={result.stderr}")
+            self.assertIn(v_row, result.stdout, f"{args}: the -v row no longer says verbose level")
+            self.assertIn(d_row, result.stdout, f"{args}: the -d row no longer says debug level")
+            self.assertNotIn("trace level logging", result.stdout, f"{args}: -v described as trace level")
+
+    def test_v_and_d_flags_log_level_thresholds(self):
+        """The `-v`/`-d` log thresholds, observed black-box as far as stderr allows.
+
+        Seam: CLI flag -> stderr log line. The log pattern's custom `%*` flag prints
+        this repo's six-level short tag (T/D/V/I/W/E, src/util/spdlog_levels.hpp),
+        so a line's `[D]`/`[T]` tag is the level it was emitted at. Three arms over
+        one plain cheap render (`_cheap_halo_22_config`; level order
+        trace(0) < debug(1) < verbose(2) < info(3), src/util/logger.hpp):
+
+          default  -- no `[D]`, no `[T]`: the INFO control arm;
+          `-v`     -- no `[D]`: a DEBUG or TRACE threshold would let the 350-odd
+                      `[D]` lines through, so the threshold sits strictly above
+                      DEBUG. That `-v` is VERBOSE and not merely INFO is NOT
+                      pinned, on purpose: the only `ILOG_VERBOSE` site in src/
+                      today (the dual-fisheye-orthographic overlap note,
+                      src/server/render.cpp) is dead on both production consume
+                      paths, so `-v` has no black-box witness that INFO would
+                      hide. When a live VERBOSE witness exists, add the `[V]`
+                      arm here;
+          `-d`     -- a `[D]` line appears AND no `[T]` line: threshold <= DEBUG
+                      and > TRACE, i.e. exactly DEBUG. The `[T]` half is not
+                      vacuous -- the `ILOG_TRACE` sites (src/core/simulator.cpp
+                      `SimulateOneWavelength` / `Run(backend)`) sit on the CPU
+                      run path this render executes, as the `[D]` lines from the
+                      same functions prove.
+
+        Together the `-v` and `-d` arms pin the pair as far as it is observable:
+        `-d` = DEBUG exactly, `-v` strictly above DEBUG. That ParseSharedOption
+        sets these levels is what the help text claims
+        (test_log_flag_help_rows_match_their_levels); this test is the behavior
+        half of that pair.
+        """
+        tag_line = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[([TD])\] ")
+        cfg = _cheap_halo_22_config(self.output_dir)
+        arms = {"default": [], "-v": ["-v"], "-d": ["-d"]}
+        for label, flag in arms.items():
+            result = self.run_lumice(["-f", str(cfg), "-o", self.output_dir] + flag)
+            self.assertEqual(result.returncode, 0, f"{label}: rc={result.returncode}, stderr={result.stderr[:500]}")
+            tags = {m.group(1) for line in result.stderr.splitlines() if (m := tag_line.match(line))}
+            if label == "default":
+                self.assertNotIn("D", tags, f"default arm shows a [D] line -- the level is not INFO:\n{result.stderr[:500]}")
+                self.assertNotIn("T", tags, f"default arm shows a [T] line -- the level is not INFO:\n{result.stderr[:500]}")
+            elif label == "-v":
+                self.assertNotIn(
+                    "D",
+                    tags,
+                    f"-v arm shows a [D] line -- -v set DEBUG (or TRACE), not VERBOSE:\n{result.stderr[:500]}",
+                )
+            else:
+                self.assertIn("D", tags, f"-d arm shows no [D] line:\n{result.stderr[:500]}")
+                self.assertNotIn(
+                    "T",
+                    tags,
+                    f"-d arm shows a [T] line -- -d set TRACE, not DEBUG:\n{result.stderr[:500]}",
+                )
 
 class TestSubcommands(LumiceTestCase):
     """The CLI's subcommand surface: `render` (implicit by default) and `benchmark`.
