@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792230028249,
+  "lastUpdate": 1792234608159,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3442752646d7a6d1d1e7c71045a958be19025e4f",
-          "message": "Merge pull request #393 from LoveDaisy/feat/look-at-horizon-series\n\nfeat(gui): Look At — Horizon series of four sun-relative level bearings (task-586)",
-          "timestamp": "2026-09-20T21:18:38+08:00",
-          "tree_id": "2ea46a896126f59b8ad9e871c17836f0b16a9f3b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/3442752646d7a6d1d1e7c71045a958be19025e4f"
-        },
-        "date": 1789910914914,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 380763.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 510410.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 359838.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 310158.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4788,6 +4740,54 @@ window.BENCHMARK_DATA = {
             "value": 310487.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9f6df4d7e70c2cd552b73298382577b9399e17d1",
+          "message": "Merge pull request #506 from LoveDaisy/fix/verbose-witness-dead-site\n\nfeat(cli): make -v/-d observable — drop dead VERBOSE site, add parse-time level lines",
+          "timestamp": "2026-10-17T18:54:32+08:00",
+          "tree_id": "4ad751e4775236fa65d6490bf1d0dd4ec37524c1",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/9f6df4d7e70c2cd552b73298382577b9399e17d1"
+        },
+        "date": 1792234605854,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 459104.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 504915,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 486182.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 487028.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
