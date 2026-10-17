@@ -11,7 +11,7 @@ floor q_i ≥ p_norm_i / R in ComputeAdaptiveRayAllocationWeights
 
 Scene (`ray_allocation_narrow_arc_starvation.json`): a Parry arc -- randomly
 oriented columns (entry 0) next to Parry-oriented columns filtered to the [3, 5]
-raypath (entry 1), equal proportions, sun at 4°, 512×384, 2,000,000 rays.
+raypath (entry 1), equal proportions, sun at 4°, 512×384, 1,000,000 rays.
 
 Method: every arm is rendered twice with two fixed seeds (a seeded run is
 single-threaded and reproducible, so the outcome is deterministic on a given
@@ -31,16 +31,22 @@ Pooling over absolute differences is safe here only because the mask holds the
 arc alone: a mask that took in the sun's disk would be dominated by a handful of
 its bins.
 
-Calibration (2026-09-28, legacy CPU path on arm64 macOS, seed pairs 1:2 … 15:16):
-  red   (pure Neyman, i.e. without the relative floor): 2.07 – 2.57 (seed 1:2: 2.29)
-  green (relative floor at R = 2):                     1.06 – 1.22 (seed 1:2: 1.19)
-Threshold 1.6 -- the geometric midpoint of the worst red and the worst green,
-leaving about 1.3× on either side. A different platform draws a different
-sample from the same distribution (the seeds fix the stream, not the floating
-point), which is what the margin on the green side is for.
+Calibration (2026-10-17, legacy CPU path on arm64 macOS, seed pairs 1:2 … 15:16,
+base ray budget 1,000,000 -- halved from the 2,000,000 of the 2026-09-28
+calibration purely for step-budget cost, with both bands re-measured at the
+new budget; the ratio metric is scale-free, so only the estimation spread
+moves):
+  green (relative floor at R = 2):                     1.076 – 1.308
+  red   (pure Neyman, i.e. without the relative floor): 2.094 – 2.499
+Threshold 1.65 -- the geometric midpoint of the worst red (2.094) and the
+worst green (1.308), leaving about 1.27x on either side. A different platform
+draws a different sample from the same distribution (the seeds fix the stream,
+not the floating point), which is what the margin on the green side is for;
+the previous calibration on the same platform family read 1.06–1.22 green
+against 2.07–2.57 red at 2,000,000 rays (threshold then 1.6).
 
-Cost: four 2M-ray renders plus one 4M-ray mask render, single-threaded -- about
-23 s on the calibration machine.
+Cost: four 1M-ray renders plus one 2M-ray mask render, single-threaded -- about
+12 s on the calibration machine.
 """
 
 import json
@@ -57,7 +63,7 @@ from test.e2e.runner import get_project_root
 CONFIG = get_project_root() / "test" / "e2e" / "configs" / "ray_allocation_narrow_arc_starvation.json"
 
 # See the module docstring for the calibration behind the number.
-MAX_ADAPTIVE_OVER_PROPORTIONAL_ARC_NOISE = 1.6
+MAX_ADAPTIVE_OVER_PROPORTIONAL_ARC_NOISE = 1.65
 SEEDS = (1, 2)
 MASK_SEED = 3
 FILTERED_ENTRY = 1

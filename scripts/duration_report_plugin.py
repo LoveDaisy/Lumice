@@ -31,9 +31,18 @@ Under xdist each worker times its own fixtures and attaches them to the setup
 report through `user_properties`, which xdist forwards to the controller; the
 controller alone holds the complete set and is the only process that writes
 the file (a worker writing too would race it with a partial file).
+
+The controller rewrites the file atomically (temporary file + `os.replace`)
+after every report, not only at session finish. A step that kills the session
+(a budget timeout, a harness crash) therefore leaves behind every report that
+was already delivered — the disposal rule for an over-budget step says "read
+the per-test durations first", and a file written only at session end is
+exactly the instrument that a kill removes. Readers see either the previous
+complete file or the new one, never a half-written one.
 """
 
 import json
+import os
 import time
 
 import pytest
@@ -77,6 +86,13 @@ class _DurationRecorder:
         self._path = path
         self._totals = {}
 
+    def _flush(self):
+        tmp = self._path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(dict(sorted(self._totals.items())), f, indent=1)
+            f.write("\n")
+        os.replace(tmp, self._path)
+
     def pytest_runtest_logreport(self, report):
         seconds = report.duration
         if report.when == "setup":
@@ -89,11 +105,10 @@ class _DurationRecorder:
                 seconds -= fixture_seconds
                 self._totals[key] = max(self._totals.get(key, 0.0), fixture_seconds)
         self._totals[report.nodeid] = self._totals.get(report.nodeid, 0.0) + max(seconds, 0.0)
+        self._flush()
 
     def pytest_sessionfinish(self, session):
-        with open(self._path, "w", encoding="utf-8") as f:
-            json.dump(dict(sorted(self._totals.items())), f, indent=1)
-            f.write("\n")
+        self._flush()
 
 
 def pytest_addoption(parser):

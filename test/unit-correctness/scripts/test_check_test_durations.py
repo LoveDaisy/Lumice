@@ -368,3 +368,41 @@ def test_plugin_under_xdist_writes_one_complete_file(tmp_path):
     assert len([k for k in data if "<fixture:" not in k]) == 5
     assert data["test_probe.py::<fixture:shared>"] >= 0.4
     assert all(data[f"test_probe.py::test_uses_shared[{i}]"] < 0.2 for i in range(3))
+
+
+KILL_PROBE = '''
+import time
+
+import pytest
+
+
+@pytest.mark.parametrize("i", range(4))
+def test_slow(i):
+    time.sleep(2)
+'''
+
+
+def test_plugin_leaves_a_parseable_report_behind_when_the_session_is_killed(tmp_path):
+    # The disposal rule for an over-budget step reads the per-test durations
+    # first; a report written only at session finish is gone exactly when the
+    # step was killed for being over budget. The plugin rewrites the file after
+    # every report, so a SIGKILL mid-session must leave the finished tests'
+    # entries behind, in a complete (atomically replaced) file.
+    (tmp_path / "test_kill_probe.py").write_text(KILL_PROBE, encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(SCRIPTS)}
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "duration_report_plugin",
+         "--duration-report=out.json", "test_kill_probe.py"],
+        cwd=tmp_path, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    report = tmp_path / "out.json"
+    deadline = time.monotonic() + 60
+    while not report.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert report.exists(), "the plugin wrote nothing before the first test finished"
+    assert proc.poll() is None, "the probe session finished before it could be killed mid-run"
+    proc.kill()
+    proc.wait(timeout=30)
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert "test_kill_probe.py::test_slow[0]" in data
+    assert "test_kill_probe.py::test_slow[3]" not in data

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -32,10 +33,41 @@ def _binary():
         pytest.skip(str(error))
 
 
-def _report(config: Path, path: str, *args: str):
-    return run_lumice(
+@lru_cache(maxsize=None)
+def _cached_report(config: Path, path: str, args: tuple[str, ...]) -> tuple[int, str, str]:
+    result = run_lumice(
         ["raypath", "-f", str(config), "--crystal", "1", "--path", path, "--report", *args]
     )
+    return result.returncode, result.stdout, result.stderr
+
+
+class _ReportResult:
+    """The CompletedProcess surface the assertions read, backed by the cache."""
+
+    def __init__(self, returncode: int, stdout: str, stderr: str):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _report(config: Path, path: str, *args: str):
+    if "-o" in args:
+        # Each call writes a fresh output file from a fresh solve — the file
+        # contract is the proposition, so there is nothing to dedup.
+        return run_lumice(
+            ["raypath", "-f", str(config), "--crystal", "1", "--path", path, "--report", *args]
+        )
+    returncode, stdout, stderr = _cached_report(config, path, args)
+    return _ReportResult(returncode, stdout, stderr)
+
+# The cache is per process, exactly like test_raypath_feature_schema3_cases.py's
+# document cache: it dedups repeated identical solves within one pytest worker
+# (today: the uncapped 3-1-5 @ 8192/550 document that test_315_report and the
+# complete arm of test_endpoint_bisection both consume), so under xdist the
+# saving lands only when the consumers share a worker. Engine output re-seeds
+# its Monte-Carlo side per process — the same invocation in two processes is
+# NOT byte-identical — which is why the cache must stay inside one process and
+# why every consumer re-parses the shared stdout instead of sharing a doc.
 
 
 def test_v2_reader_rejects_a_v3_document_naming_both_versions():
