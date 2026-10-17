@@ -465,7 +465,51 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
          << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-1-5 --report\n"
          << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --grid 180 -o r.json\n"
          << "  " << prog_name
-         << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --events 10M --warm r.json\n";
+         << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --events 10M --warm r.json\n"
+         << "\n"
+         << "Survey mode: `" << prog_name
+         << " raypath survey -f config.json --crystal 1 --path 1-2` routes the path's class at\n"
+         << "the algebra layer (schema 4; -h after `survey` for its options).\n";
+}
+
+// `raypath survey`'s own usage page: the L1 census face — one path class, routed at the algebra
+// layer, one schema-4 document.
+void PrintSurveyUsage(const char* prog_name, std::ostream& output = std::cout) {
+  output << "Usage: " << prog_name << " raypath survey -f <config_file> --crystal <id> --path <faces> [options]\n"
+         << "\n"
+         << "Survey ONE single-layer raypath class of one crystal entry: the path is expanded\n"
+         << "under its scope (the physical P|B|D class by default, the literal sequence with\n"
+         << "--literal) and routed at the algebra layer. When every member of the class carries\n"
+         << "the identity certificate (fold matrix M = I and zero wedge — the sun comes straight\n"
+         << "back out), the class collapses to one source_image object AT THE SUN and the\n"
+         << "configurational analysis stops there. Any other member verdict ships the T0 facts\n"
+         << "and leaves the deeper object kinds unevaluated, with the named reason.\n"
+         << "\n"
+         << "Output: one JSON document (schema lumice.path-survey, schema_version 4;\n"
+         << "doc/raypath/raypath-cli-output.md) to stdout, or to -o <path> instead. Every block\n"
+         << "carries its evidence state (certified / finite / refused / unevaluated). Progress\n"
+         << "goes to stderr. Ctrl-C ends the process and writes nothing.\n"
+         << "\n"
+         << "Options:\n"
+         << kHelpConfigOption
+         << "  --crystal <id>     The crystal entry (its config id) the path runs through (required).\n"
+         << "  --path <faces>     The raypath as `analyze` prints it, e.g. 1-2 (face numbers joined\n"
+         << "                     by '-'). Required. Multi-layer chains are refused.\n"
+         << "  --literal          Route the literal face sequence only, instead of its physical\n"
+         << "                     P|B|D class (the same narrowing --symmetry literal spells for\n"
+         << "                     `analyze`).\n"
+         << "  --lambda <nm>      The reference wavelength, in [350, 900]. Default: the config's\n"
+         << "                     single wavelength or 550. (Named --lambda, not --wavelength: it\n"
+         << "                     selects the routing reference, not a spectral integral.)\n"
+         << "  --budget <N>[s]    Integer seconds, the 's' optional (default 15; max 120). Recorded\n"
+         << "                     in the document's budget block; the v1 routing leg is millisecond\n"
+         << "                     work and does not consume it yet.\n"
+         << "  -o <path>          Write the JSON to this file instead of stdout.\n"
+         << kHelpLogAndHelpOptions << "\n"
+         << "Examples:\n"
+         << "  " << prog_name << " raypath survey -f config.json --crystal 1 --path 1-2\n"
+         << "  " << prog_name << " raypath survey -f config.json --crystal 1 --path 1-2 --literal -o s.json\n"
+         << "  " << prog_name << " raypath survey -f config.json --crystal 1 --path 3-5 --lambda 550 --budget 30s\n";
 }
 
 // Top-level `-h` (no subcommand named): the subcommand overview followed by the
@@ -477,6 +521,7 @@ void PrintTopLevelUsage(const char* prog_name) {
             << "       " << prog_name << " analyze -f <config_file> [options]\n"
             << "       " << prog_name
             << " raypath -f <config_file> --crystal <id> --path <faces> (--target <alt>,<az> | --report)\n"
+            << "       " << prog_name << " raypath survey -f <config_file> --crystal <id> --path <faces>\n"
             << "       " << prog_name << " --version\n"
             << "       " << prog_name << " <subcommand> -h\n"
             << "\n"
@@ -491,7 +536,8 @@ void PrintTopLevelUsage(const char* prog_name) {
             << "                     (`" << prog_name << " analyze -h` for its options)\n"
             << "  raypath            Analyse one raypath over one sky point, or produce its target-free\n"
             << "                     physical-member feature report, as JSON\n"
-            << "                     (`" << prog_name << " raypath -h` for its options)\n"
+            << "                     (`" << prog_name << " raypath -h` for its options; `raypath survey`\n"
+            << "                     routes one path class at the algebra layer, schema 4)\n"
             << "\n"
             << "Options for render (the default subcommand):\n";
   PrintRenderOptions();
@@ -1233,6 +1279,21 @@ struct RaypathOptions {
   bool grid_given = false;
   std::filesystem::path warm_path;    // empty = no warm start
   std::filesystem::path output_path;  // empty = stdout
+};
+
+// `raypath survey`: the L1 census request. Shares the scene/path spine with RaypathOptions and
+// nothing else — the survey takes no target, no sampling and no warm state.
+struct SurveyOptions {
+  SharedOptions shared;
+  std::optional<int> crystal_id;
+  std::vector<int> faces;
+  std::vector<int> layer_face_counts;
+  std::vector<int> path_crystals;       // the ids of layers written C<id>(...)
+  std::string path_text;                // as typed, for the progress line
+  bool literal = false;                 // --literal: the literal sequence, not the physical class
+  std::optional<double> wavelength_nm;  // --lambda; nullopt = the engine's reference choice
+  int budget_seconds = 15;              // --budget; the engine's ms constants clamp it
+  std::filesystem::path output_path;    // empty = stdout
 };
 
 // Outcome of offering argv[i] to the option set every subcommand shares.
@@ -2648,6 +2709,195 @@ int RunAnalyze(const AnalyzeOptions& opts) {
   return rc;
 }
 
+// Parses argv[first..) as the `raypath survey` option set: -f, -v, -d, -h, --crystal, --path,
+// --literal, --lambda, --budget, -o. Returns the process exit code, or -1 to proceed to RunSurvey.
+int ParseSurveyOptions(int argc, char** argv, int first, SurveyOptions& opts) {
+  for (int i = first; i < argc; i++) {
+    std::string_view arg = argv[i];
+    switch (ParseSharedOption(argc, argv, i, opts.shared)) {
+      case SharedStep::kConsumed:
+        continue;
+      case SharedStep::kHelp:
+        PrintSurveyUsage(argv[0]);
+        return 0;
+      case SharedStep::kError:
+        PrintSurveyUsage(argv[0], std::cerr);
+        return 1;
+      case SharedStep::kNotShared:
+        break;
+    }
+    const bool takes_value =
+        arg == "--crystal" || arg == "--path" || arg == "--lambda" || arg == "--budget" || arg == "-o";
+    if (takes_value && i + 1 >= argc) {
+      std::cerr << "Error: " << arg << " requires an argument\n\n";
+      PrintSurveyUsage(argv[0], std::cerr);
+      return 1;
+    }
+    if (arg == "--crystal") {
+      const std::string_view value = argv[++i];
+      const auto id = ParseStrictUnsigned(value);
+      if (!id.has_value() || *id > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
+        std::cerr << "Error: --crystal requires a non-negative integer (a crystal entry's id), got '" << value
+                  << "'\n\n";
+        PrintSurveyUsage(argv[0], std::cerr);
+        return 1;
+      }
+      opts.crystal_id = static_cast<int>(*id);
+    } else if (arg == "--path") {
+      const std::string_view value = argv[++i];
+      opts.faces.clear();
+      opts.layer_face_counts.clear();
+      opts.path_crystals.clear();
+      if (!ParseRaypathText(value, &opts.faces, &opts.layer_face_counts, &opts.path_crystals)) {
+        std::cerr << "Error: --path must be face numbers joined by '-' (e.g. 1-2), got '" << value << "'\n\n";
+        PrintSurveyUsage(argv[0], std::cerr);
+        return 1;
+      }
+      opts.path_text = std::string(value);
+    } else if (arg == "--literal") {
+      opts.literal = true;
+    } else if (arg == "--lambda") {
+      const std::string_view value = argv[++i];
+      const auto nm = ParseStrictDouble(value);
+      // The range itself is the engine's to decide (it owns the refractive-index table).
+      if (!nm.has_value() || !(*nm > 0.0)) {
+        std::cerr << "Error: --lambda must be a positive number of nanometres, got '" << value << "'\n\n";
+        PrintSurveyUsage(argv[0], std::cerr);
+        return 1;
+      }
+      opts.wavelength_nm = nm;
+    } else if (arg == "--budget") {
+      std::string_view value = argv[++i];
+      if (!value.empty() && value.back() == 's') {
+        value.remove_suffix(1);
+      }
+      const auto seconds = ParseStrictUnsigned(value);
+      if (!seconds.has_value() || *seconds == 0 || *seconds > 120) {
+        std::cerr << "Error: --budget requires an integer number of seconds in [1, 120], got '" << value << "'\n\n";
+        PrintSurveyUsage(argv[0], std::cerr);
+        return 1;
+      }
+      opts.budget_seconds = static_cast<int>(*seconds);
+    } else if (arg == "-o") {
+      opts.output_path = argv[++i];
+      if (opts.output_path.empty()) {
+        std::cerr << "Error: -o requires a file path\n\n";
+        PrintSurveyUsage(argv[0], std::cerr);
+        return 1;
+      }
+    } else {
+      std::cerr << "Error: unknown option: " << arg << "\n\n";
+      PrintSurveyUsage(argv[0], std::cerr);
+      return 1;
+    }
+  }
+
+  const char* missing = !opts.crystal_id.has_value()   ? "--crystal <id>" :
+                        opts.layer_face_counts.empty() ? "--path <faces>" :
+                                                         nullptr;
+  if (missing != nullptr) {
+    std::cerr << "Error: " << missing << " is required\n\n";
+    PrintSurveyUsage(argv[0], std::cerr);
+    return 1;
+  }
+  for (const int id : opts.path_crystals) {
+    if (opts.layer_face_counts.size() == 1 && opts.crystal_id.has_value() && id != *opts.crystal_id) {
+      std::cerr << "Error: --path names crystal C" << id << " but --crystal is " << *opts.crystal_id << "\n\n";
+      PrintSurveyUsage(argv[0], std::cerr);
+      return 1;
+    }
+  }
+
+#ifdef _WIN32
+  ReparseWidePathArgs(opts.shared.config_filename, &opts.output_path, /*csv_path=*/nullptr, /*warm_path=*/nullptr);
+#endif
+
+  if (!FinishSharedOptions(opts.shared)) {
+    PrintSurveyUsage(argv[0], std::cerr);
+    return 1;
+  }
+  return -1;
+}
+
+// Survey: one synchronous call into the engine (LUMICE_AnalyzePathSurvey), no server. The v1
+// routing leg is millisecond work with no cancellation point, so Ctrl-C keeps its default
+// meaning (the process ends, nothing is written) — the same contract as the target/report modes.
+int RunSurvey(const SurveyOptions& opts) {
+  const SharedOptions& shared = opts.shared;
+  LUMICE_SetLogLevel(nullptr, shared.log_level);
+
+  LUMICE_Scene* raw_scene = nullptr;
+  if (auto err = LUMICE_SceneFromJsonFile(shared.config_filename.u8string().c_str(), &raw_scene); err != LUMICE_OK) {
+    std::cerr << "Error: failed to load configuration from file '" << shared.config_filename.u8string()
+              << "' (error code " << static_cast<int>(err) << ")\n";
+    return 1;
+  }
+  ScenePtr scene(raw_scene);
+
+  // An -o target that cannot be written is found out before the analysis, not after it.
+  if (!opts.output_path.empty()) {
+    const auto parent = opts.output_path.parent_path();
+    if (!parent.empty() && !std::filesystem::is_directory(parent)) {
+      std::cerr << "Error: -o directory does not exist: " << parent.u8string() << "\n";
+      return 1;
+    }
+  }
+
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = *opts.crystal_id;
+  request.faces = opts.faces.data();
+  request.face_count = static_cast<int>(opts.faces.size());
+  request.layer_face_counts = opts.layer_face_counts.data();
+  request.layer_count = static_cast<int>(opts.layer_face_counts.size());
+  request.wavelength_nm = opts.wavelength_nm.value_or(0.0);
+  request.budget_ms = opts.budget_seconds * 1000;
+  request.symmetry_bits_plus_one = opts.literal ? 1 : 0;
+
+  std::cerr << "[raypath survey] crystal " << *opts.crystal_id << ", path " << opts.path_text << " ("
+            << (opts.literal ? "literal" : "physical PBD class") << "), reference lambda "
+            << (opts.wavelength_nm.has_value() ? std::to_string(*opts.wavelength_nm) : "scene default") << ", budget "
+            << opts.budget_seconds << "s\n";
+  const auto start = std::chrono::steady_clock::now();
+  LUMICE_PathSurvey* raw_survey = nullptr;
+  char err_buf[1024] = {};
+  if (auto err = LUMICE_AnalyzePathSurvey(scene.get(), &request, &raw_survey, err_buf, sizeof(err_buf));
+      err != LUMICE_OK) {
+    if (err_buf[0] != '\0') {
+      std::cerr << "Error: " << err_buf << "\n";
+    } else {
+      std::cerr << "Error: path survey failed (error code " << static_cast<int>(err) << ")\n";
+    }
+    return 1;
+  }
+  const std::unique_ptr<LUMICE_PathSurvey, void (*)(LUMICE_PathSurvey*)> survey(raw_survey, LUMICE_PathSurveyDestroy);
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+  size_t len = 0;
+  LUMICE_PathSurveyToJson(survey.get(), nullptr, 0, &len);
+  std::string text(len + 1, '\0');
+  LUMICE_PathSurveyToJson(survey.get(), text.data(), text.size(), &len);
+  text.resize(len);
+  text += '\n';
+
+  // The closing line reports time and size only: the document's schema is the engine's alone,
+  // so the shell does not read fields back out of it.
+  std::cerr << "[raypath survey] done in " << std::fixed << std::setprecision(2) << seconds << " s, " << text.size()
+            << " bytes" << std::defaultfloat << "\n";
+
+  if (opts.output_path.empty()) {
+    std::cout << text;
+    std::cout.flush();
+    return std::cout.good() ? 0 : 1;
+  }
+  std::string error;
+  if (!WriteFileAtomically(opts.output_path, text, &error)) {
+    std::cerr << "Error: " << error << "\n";
+    return 1;
+  }
+  return 0;
+}
+
 // Raypath: one synchronous call into the engine (LUMICE_AnalyzeSinglePath), no server. There is
 // no progress to report mid-call and nothing to interrupt: the call has no cancellation point, so
 // Ctrl-C keeps its default meaning (the process ends, nothing is written) rather than the
@@ -2856,6 +3106,15 @@ int main(int argc, char** argv) {
   }
 
   if (subcommand == kSubcommandRaypath) {
+    // The survey is a nested subcommand: it dispatches only when argv[2] spells it, so the
+    // existing --target/--report option parsing never sees the word.
+    if (argc > 2 && std::string_view(argv[2]) == "survey") {
+      SurveyOptions survey_opts;
+      if (int rc = ParseSurveyOptions(argc, argv, /*first=*/3, survey_opts); rc >= 0) {
+        return rc;
+      }
+      return RunSurvey(survey_opts);
+    }
     RaypathOptions opts;
     if (int rc = ParseRaypathOptions(argc, argv, /*first=*/2, opts); rc >= 0) {
       return rc;

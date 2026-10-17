@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <string>
@@ -10,9 +11,10 @@
 namespace lumice::raypath::survey {
 namespace {
 
-// The C14 shape in memory: a hexagonal plate prism (zenith Gaussian at 0 with a 0.3-degree
-// sigma, azimuth and roll uniform over 360), sun at 20/0 — the same numbers the corpus config
-// carries, without the corpus file (which never enters the tree).
+// The C14 shape in memory: a hexagonal plate prism — c axis at the zenith (config zenith 0, the
+// latitude slot's 90) with a 0.3-degree Gaussian wobble, azimuth and roll uniform over 360 — sun
+// at 20/0. The same numbers the corpus config carries, without the corpus file (which never
+// enters the tree). Note the axis lives in the config's latitude slot, where 90 IS zenith 0.
 ConfigManager PlateScene() {
   PrismCrystalParam prism;
   prism.h_ = { DistributionType::kNoRandom, 0.3f, 0 };
@@ -22,7 +24,7 @@ ConfigManager PlateScene() {
   CrystalConfig crystal{};
   crystal.id_ = 1;
   crystal.param_ = prism;
-  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0, 0.3f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 90, 0.3f };
   crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
   ConfigManager config;
   config.crystals_.emplace(1, crystal);
@@ -52,8 +54,11 @@ TEST(SurveyAssembly, RankZeroClassCollapsesToOneSourceImageCardAndStops) {
   EXPECT_EQ(card.kind, SurveyObjectKind::kSourceImage);
   EXPECT_EQ(card.evidence.state, EvidenceState::kCertified);
   EXPECT_TRUE(CertifiedMethodRegistered(card.evidence.method));
-  // The card is the sky-side object; the PBD class's two members are its preimage decomposition.
-  ASSERT_EQ(card.members.size(), 2u);
+  // The card is the sky-side object; the PBD class's one member is its preimage. The physical
+  // plate ensemble is not symmetric under c -> -c (zenith 0 wobble is not zenith 180 wobble), so
+  // the horizontal mirror is not applicable and the reversed sequence 2-1 is NOT in the class.
+  ASSERT_EQ(card.members.size(), 1u);
+  EXPECT_EQ(card.members.front(), std::vector<int>({ 1, 2 }));
   EXPECT_TRUE(card.has_position);
   EXPECT_DOUBLE_EQ(card.position_altitude_deg, 20.0);
   EXPECT_DOUBLE_EQ(card.position_azimuth_deg, 0.0);
@@ -66,7 +71,7 @@ TEST(SurveyAssembly, RankZeroClassCollapsesToOneSourceImageCardAndStops) {
   EXPECT_EQ(document.evidence.state, EvidenceState::kCertified);
   EXPECT_EQ(document.wavelength_source, std::string(WavelengthSourceName(WavelengthSource::kDefault)));
   EXPECT_DOUBLE_EQ(document.wavelength_nm, 550.0);
-  EXPECT_DOUBLE_EQ(document.refractive_index, document.refractive_index);
+  EXPECT_TRUE(std::isfinite(document.refractive_index));
   EXPECT_EQ(document.scene_layer.value_or(-1), 0);
 }
 
