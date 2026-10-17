@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792210806370,
+  "lastUpdate": 1792210808628,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9548,45 +9548,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "61b01911736670be1cb86ee587fc006d12b7eefd",
-          "message": "Merge pull request #383 from LoveDaisy/fix/cuda-drain-window-fp32-plane\n\nfix(cuda): fold the fp32 XYZ device plane into a double plane every 8 batches (drain-window ledger drift)",
-          "timestamp": "2026-09-20T09:41:39+08:00",
-          "tree_id": "7251f6578c75bb2a709a992bf46e1bc045a57fe2",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/61b01911736670be1cb86ee587fc006d12b7eefd"
-        },
-        "date": 1789869289289,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "747b2ec2a60ffe5e75331b2c0b3753ed05411959",
           "message": "Merge pull request #388 from LoveDaisy/fix/startup-calibration-test-address-reuse\n\ntest(gui): evidence the startup-calibration server rebuild by its worker-count tracker, not by address",
           "timestamp": "2026-09-20T10:28:39+08:00",
@@ -13896,6 +13857,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a8a3d13f7e30f924bc710a8e6693a2e9a3cfc20c",
+          "message": "Merge pull request #500 from LoveDaisy/docs/doc-code-consistency\n\ndocs: reconcile guides and architecture with current implementation",
+          "timestamp": "2026-10-17T12:16:41+08:00",
+          "tree_id": "0c9364b710adfa1f3ffbca4ad5afb4d536b131ab",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a8a3d13f7e30f924bc710a8e6693a2e9a3cfc20c"
+        },
+        "date": 1792210808010,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 90.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 96.8,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.5,
             "unit": "%"
           }
         ]
