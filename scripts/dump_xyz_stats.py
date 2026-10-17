@@ -65,7 +65,7 @@ ALL_SCENES = {
 }
 RP46_SCENES = {"rp46", "rp46_nof"}
 
-TIMEOUT_DEFAULT_S = 60
+TIMEOUT_DEFAULT_S = 180
 TIMEOUT_RP46_S = 90
 
 PERCENTILE_KEYS = ["p50", "p70", "p90", "p95", "p99", "p99_3", "p99_5", "p99_7", "p99_9", "p99_95", "p99_99"]
