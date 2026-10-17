@@ -340,12 +340,12 @@ struct RenderConfig {
 // WHAT IT MEASURES: the number of non-static data members. A structured binding is checked against
 // the member DECLARATIONS, so a field that costs no bytes still changes the count.
 //
-// WHY IT IS NOT THE sizeof PIN: the two `static_assert(sizeof(RenderConfig) == 224)` in
+// WHY IT IS NOT THE sizeof PIN: the `static_assert(sizeof(RenderConfig) == …)` pins in
 // NeedsRebuild (render_config.cpp) and operator== (config_compare.hpp) measure the byte size, and
 // a field that lands in an alignment hole does not change it. That is measured, not theorised:
-// adding a bool to the run below `horizon_` leaves sizeof at 224 and every sizeof pin silent, and
-// removing `opacity_` (a float) once left it at 136 for the same reason. A binding list has no
-// padding for a field to hide in.
+// adding a bool to the run below `horizon_` once left sizeof unchanged and every sizeof pin
+// silent, and removing `opacity_` (a float) once left it at 136 for the same reason. A binding
+// list has no padding for a field to hide in.
 //
 // WHEN IT FIRES the compiler says "decomposes into N elements, but M names were provided" on the
 // binding below. A field was added or removed, and three duties follow:

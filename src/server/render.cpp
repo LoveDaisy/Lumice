@@ -1542,7 +1542,9 @@ void RenderConsumer::Reset() {
   for (auto& lane : lane_y_) {
     std::fill_n(lane.get(), lane_pixel_count_, 0.0);
   }
-  // snapshot_xyz_ not zeroed: PrepareSnapshot will memcpy over it.
+  // snapshot_xyz_ not zeroed: PrepareSnapshot rebuilds it from internal_xyz_
+  // into a freshly borrowed buffer (element-wise double->float narrowing over
+  // every element), so its previous contents never matter.
   // has_ever_consumed_ = false (set in Stop) ensures the frame's xyz results report has_valid_data_=false
   // until new data arrives, preventing stale snapshot reads.
 }

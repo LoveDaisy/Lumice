@@ -361,8 +361,8 @@ bool NeedsRebuild(const RenderConfig& a, const RenderConfig& b) {
   // widening — which leaves the field count alone and moves the byte size. Neither subsumes the
   // other, which is why both are kept.
   // What this one is blind to, measured rather than theorised: a field that lands in an alignment
-  // hole. Adding a bool to the run below horizon_ leaves sizeof at 224 and this assert silent;
-  // removing opacity_ (a float) once left it at 136 the same way.
+  // hole. Adding a bool to the run below horizon_ once left sizeof unchanged and this assert
+  // silent; removing opacity_ (a float) once left it at 136 the same way.
   // Which one fired says what has to be classified, and the two are not the same question. The
   // guard firing means a field was added or removed: classify that field, layout or appearance.
   // This assert firing ALONE means no field was added or removed — some existing field grew — so
