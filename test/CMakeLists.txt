@@ -328,7 +328,11 @@ add_executable(unit_correctness_test
   # The path survey: the schema-4 document family — the evidence-state vocabulary (four-value
   # closed enum + the default finite-with-coverage rule) and the six-kind object registry, on
   # hand-built documents.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_json_v4.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_json_v4.cpp"
+  # The survey's T0 assembly: the rank-0 class collapses to one source_image card and stops (the
+  # C14 shape in memory), the literal scope keeps one member, a deviating class ships the
+  # unevaluated skeleton, and the refusals reuse the report error semantics.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_assembly.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE
