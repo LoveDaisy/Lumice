@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792210808628,
+  "lastUpdate": 1792223718125,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "94b90ab6c623e1aa3679f7aa1718a7cd0730b4fb",
-          "message": "Merge pull request #389 from LoveDaisy/task/gui-view-copy-resync-mechanism\n\nfix(gui): resync the edit modal from the pool every frame — Exclude no longer overwritten while the editor is open",
-          "timestamp": "2026-09-20T16:23:59+08:00",
-          "tree_id": "be5ece68186e20452d6b1ff247e8d4d66e216b7c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/94b90ab6c623e1aa3679f7aa1718a7cd0730b4fb"
-        },
-        "date": 1789893319397,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 413660.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 510017.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 361757.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 315206.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4764,6 +4716,54 @@ window.BENCHMARK_DATA = {
             "value": 309413.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7578ffac709fd28e350dc9de11f7cd14c68c6bd0",
+          "message": "Merge pull request #501 from LoveDaisy/fix/xyz-stats-current-capi\n\nFix dump_xyz_stats.py: consume current C API contract via CLI npy export",
+          "timestamp": "2026-10-17T15:52:48+08:00",
+          "tree_id": "b76c99c2e7759bc60276b944ee897ddb60ef96a4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/7578ffac709fd28e350dc9de11f7cd14c68c6bd0"
+        },
+        "date": 1792223715903,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 327955.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 504214.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 481738.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 480727.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
