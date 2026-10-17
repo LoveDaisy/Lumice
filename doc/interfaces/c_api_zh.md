@@ -45,7 +45,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ```c
 // lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
 //（lumice_base.h 刻意不包含它，原因见下）
-#define LUMICE_API_VERSION 453        // ABI 版本，编码为 major*100 + minor（v4.53）
+#define LUMICE_API_VERSION 454        // ABI 版本，编码为 major*100 + minor（v4.54）
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
@@ -62,6 +62,14 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 `lumice_api_version.h`：宏**值**变化会使其包含闭包内全部 TU 的编译缓存条目失效，把 define 挡在
 `lumice_base.h` 的宽闭包之外，bump 就只需重编文本上使用该宏的文件。凡引用 `LUMICE_API_VERSION`
 处请直接包含 `lumice_api_version.h`。
+
+**v4.54** 是纯追加。新增光路 survey——带 `struct_size` 头的 `LUMICE_PathSurveyRequest`、不透明的
+`LUMICE_PathSurvey`、`LUMICE_AnalyzePathSurvey`、`LUMICE_PathSurveyToJson`（与
+`LUMICE_SceneToJson` 同一缓冲区契约）、`LUMICE_PathSurveyDestroy`，以及
+`LUMICE_PATH_SURVEY_MAX_BUDGET_MS`。survey 在代数层路由一个单层光路类：全体成员都带 kernel 的
+rank-0 恒等证书时，整类坍缩为太阳处的一个 `source_image` 对象并早停；否则如实输出 T0 事实、
+T1/T2 对象类目记为 unevaluated。JSON 是新的 schema 族 `lumice.path-survey`，schema_version 4
+（`raypath-cli-output.md` §9）；与 schema-1/3 文档不共享字段。既有符号与结构体零变化。
 
 **v4.53** 将无 target 的 `lumice.path-feature-report` 文档升级为 schema 3：结构对象、support、
 features、未归因结构、MC 证据与 coverage 分层表达；schema 2 读者必须拒读 schema 3。请求结构体以及

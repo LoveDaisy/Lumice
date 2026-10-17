@@ -332,7 +332,10 @@ add_executable(unit_correctness_test
   # The survey's T0 assembly: the rank-0 class collapses to one source_image card and stops (the
   # C14 shape in memory), the literal scope keeps one member, a deviating class ships the
   # unevaluated skeleton, and the refusals reuse the report error semantics.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_assembly.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_assembly.cpp"
+  # The survey's C bridge (v4.54): struct_size and null-arg contracts, the stable refusal names,
+  # the happy path's schema-4 document with the request echo.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_c_api.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE

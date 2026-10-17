@@ -150,6 +150,63 @@ LUMICE_API LUMICE_ErrorCode LUMICE_PathFeatureReportToJson(const LUMICE_PathFeat
 // Release a report. NULL is a no-op.
 LUMICE_API void LUMICE_PathFeatureReportDestroy(LUMICE_PathFeatureReport* result);
 
+// =============== Path Survey (L1 census) ===============
+// A separate contract for the survey face of the diagnostic pipeline: one single-layer raypath
+// class of one crystal entry, routed at the algebra layer (T0). A class whose every member
+// carries the identity certificate (the fold matrix is I and the wedge is zero — the kernel's
+// rank-0 test) collapses to exactly one source_image object at the sun and the configurational
+// analysis stops there; any other member verdict ships the T0 facts and leaves the T1/T2 object
+// kinds unevaluated with the named reason. The result is the schema-4 document
+// ("lumice.path-survey", doc/raypath/raypath-cli-output.md), serialized engine-side once — the
+// CLI and the GUI read the same bytes. Synchronous, deterministic, and independent of any
+// LUMICE_Server; it runs on the calling thread and cannot be cancelled (the v1 routing leg is
+// millisecond work, so no budget is enforced yet — see the document's budget block).
+
+// The largest budget_ms a survey request may carry, mirroring the report request's bound. The
+// v1 leg does not consume it; the constant exists so a shell can validate before the engine does.
+#define LUMICE_PATH_SURVEY_MAX_BUDGET_MS 120000
+
+typedef struct LUMICE_PathSurveyRequest {
+  size_t struct_size;
+  int crystal_id;  // a crystal entry of the scene
+  // The raypath as the user wrote it, in Lumice face numbers, with the same layer encoding as
+  // LUMICE_SinglePathRequest. Exactly one layer is routed; more than one is refused as
+  // multi_layer_unsupported.
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  // <= 0 or NaN: unset — the scene's wavelength if its spectrum is exactly one discrete
+  // wavelength, else 550 nm. Otherwise must lie in [350, 900].
+  double wavelength_nm;
+  // 0 selects the 15000 ms default; at most LUMICE_PATH_SURVEY_MAX_BUDGET_MS. Recorded in the
+  // document's budget block; not enforced by the v1 routing leg.
+  int budget_ms;
+  // 0 = the physical P|B|D class (the default); 1 = the literal requested sequence — the report
+  // request's symmetry_bits_plus_one encoding.
+  int symmetry_bits_plus_one;
+} LUMICE_PathSurveyRequest;
+
+typedef struct LUMICE_PathSurvey_ LUMICE_PathSurvey;
+
+// Analyse and serialize. On LUMICE_OK *out is a new handle the caller owns (release with
+// LUMICE_PathSurveyDestroy) whose JSON is produced once and never changes. On failure *out is
+// NULL and err_buf holds "<reason>: <detail>" as LUMICE_AnalyzeSinglePath spells it; the request
+// refusals are the report's: unknown_crystal_id, invalid_path, multi_layer_unsupported,
+// face_not_in_crystal, wavelength_out_of_range, plus invalid_argument (symmetry bits or budget
+// out of range), crystal_rejected (the nominal shape builds no crystal), null_arg and internal
+// with the same meanings. Return codes match LUMICE_AnalyzeSinglePath's.
+LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurveyRequest* request,
+                                                     LUMICE_PathSurvey** out, char* err_buf, size_t err_size);
+
+// The result's JSON document (UTF-8, schema "lumice.path-survey", schema_version 4), with the
+// snprintf-style buffer contract of LUMICE_SinglePathResultToJson.
+LUMICE_API LUMICE_ErrorCode LUMICE_PathSurveyToJson(const LUMICE_PathSurvey* result, char* out_buf, size_t buf_size,
+                                                    size_t* out_len);
+
+// Release a survey result. NULL is a no-op.
+LUMICE_API void LUMICE_PathSurveyDestroy(LUMICE_PathSurvey* result);
+
 #ifdef __cplusplus
 }
 #endif

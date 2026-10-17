@@ -496,6 +496,13 @@
 // CHANGED (v4.53): the target-free feature report document is schema 3 (the structural-object
 // report: scope/support/features/unattributed_structures/mc_evidence/coverage; v2 readers must
 // reject v3); the request struct and the old schema-1 target/fiber/warm face are unchanged.
-#define LUMICE_API_VERSION 453
+// ADDED (v4.54): the path survey, a pure append — LUMICE_PathSurveyRequest,
+// LUMICE_PathSurvey (opaque), LUMICE_AnalyzePathSurvey, LUMICE_PathSurveyToJson and
+// LUMICE_PathSurveyDestroy, plus LUMICE_PATH_SURVEY_MAX_BUDGET_MS. The survey routes one
+// single-layer raypath class at the algebra layer: an all-members rank-0 class collapses to one
+// source_image object at the sun and stops; otherwise the T0 facts ship and the T1/T2 kinds
+// ride unevaluated. New JSON schema "lumice.path-survey", schema_version 4
+// (doc/raypath/raypath-cli-output.md §9). No existing symbol or struct changed.
+#define LUMICE_API_VERSION 454
 
 #endif  // LUMICE_API_VERSION_H_
