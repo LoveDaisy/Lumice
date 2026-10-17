@@ -115,6 +115,28 @@ class TestCli(LumiceTestCase):
             f"No images found in {self.output_dir}",
         )
 
+    def test_log_flag_help_rows_match_their_levels(self):
+        """Every help page describes `-v`/`-d` with the level each flag actually sets.
+
+        The two rows are one shared fragment (`kHelpLogAndHelpOptions`, src/main.cpp)
+        printed by all five pages, so this pins fragment text x every consuming page.
+        The assertions are whole lines, not keywords: column width, wording or the
+        level word moving at all turns this red. `trace level logging` is named
+        explicitly -- it is the drift this test exists for (`-v` sets LUMICE_LOG_VERBOSE,
+        and trace is a *different*, more chatty level: trace(0) < debug(1) < verbose(2),
+        see src/util/logger.hpp). That ParseSharedOption maps the flags to those levels
+        is pinned separately by test_v_and_d_flags_set_verbose_and_debug_levels; these
+        two tests together are the pair that keeps help text and flag behavior from
+        drifting apart again.
+        """
+        v_row = "  -v                 Verbose output (verbose-level logging)"
+        d_row = "  -d                 Debug output (debug level logging)"
+        for args in (["-h"], ["render", "-h"], ["benchmark", "-h"], ["analyze", "-h"], ["raypath", "-h"]):
+            result = self.run_lumice(args)
+            self.assertEqual(result.returncode, 0, f"{args}: rc={result.returncode}, stderr={result.stderr}")
+            self.assertIn(v_row, result.stdout, f"{args}: the -v row no longer says verbose level")
+            self.assertIn(d_row, result.stdout, f"{args}: the -d row no longer says debug level")
+            self.assertNotIn("trace level logging", result.stdout, f"{args}: -v described as trace level")
 
 class TestSubcommands(LumiceTestCase):
     """The CLI's subcommand surface: `render` (implicit by default) and `benchmark`.

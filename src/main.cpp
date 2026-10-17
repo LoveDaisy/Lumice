@@ -262,7 +262,7 @@ constexpr const char* kHelpBackendOption =
     "                     falls back to CPU if unavailable. The LUMICE_TRACE_BACKEND\n"
     "                     env var, if set, still overrides this (debug/CI only).\n";
 constexpr const char* kHelpLogAndHelpOptions =
-    "  -v                 Verbose output (trace level logging)\n"
+    "  -v                 Verbose output (verbose-level logging)\n"
     "  -d                 Debug output (debug level logging)\n"
     "  -h, --help         Show this help message and exit\n";
 
