@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792223722534,
+  "lastUpdate": 1792223724952,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9548,50 +9548,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "747b2ec2a60ffe5e75331b2c0b3753ed05411959",
-          "message": "Merge pull request #388 from LoveDaisy/fix/startup-calibration-test-address-reuse\n\ntest(gui): evidence the startup-calibration server rebuild by its worker-count tracker, not by address",
-          "timestamp": "2026-09-20T10:28:39+08:00",
-          "tree_id": "1b37adad964db6f5ecb871687f0eeb0ee499b8f3",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/747b2ec2a60ffe5e75331b2c0b3753ed05411959"
-        },
-        "date": 1789871950707,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 91.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 101.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 85.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "94b90ab6c623e1aa3679f7aa1718a7cd0730b4fb",
           "message": "Merge pull request #389 from LoveDaisy/task/gui-view-copy-resync-mechanism\n\nfix(gui): resync the edit modal from the pool every frame — Exclude no longer overwritten while the editor is open",
           "timestamp": "2026-09-20T16:23:59+08:00",
@@ -13901,6 +13857,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7578ffac709fd28e350dc9de11f7cd14c68c6bd0",
+          "message": "Merge pull request #501 from LoveDaisy/fix/xyz-stats-current-capi\n\nFix dump_xyz_stats.py: consume current C API contract via CLI npy export",
+          "timestamp": "2026-10-17T15:52:48+08:00",
+          "tree_id": "b76c99c2e7759bc60276b944ee897ddb60ef96a4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/7578ffac709fd28e350dc9de11f7cd14c68c6bd0"
+        },
+        "date": 1792223724257,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 90.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.8,
             "unit": "%"
           }
         ]
