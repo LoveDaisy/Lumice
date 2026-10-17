@@ -1341,6 +1341,22 @@ jobs:
       - name: Install
         run: cmake --install build
 
+      - name: Benchmark probe (shadow)
+        # Records this runner's compute tier — the legacy-CPU `mode:single` pass,
+        # the same fixed 2M-ray measurement the gh-pages benchmark history uses —
+        # so each run's e2e step below can be read as workload
+        # (seconds x rays-per-sec) rather than raw wall clock. The hosted-runner
+        # pool has 3-4 discrete CPU tiers ~1.5x apart, which is how the same
+        # suite reads 341s green on one runner and 610s timeout on another.
+        # Shadow mode: an unusable probe is a ::warning, never red; anything
+        # that enforces on probe.json decides for itself and fails closed.
+        run: >
+          python3 scripts/run_bench_probe.py
+          --binary build/cmake_install/static/Lumice
+          --base-config examples/bench_config.json
+          --ray-num 3000000
+          --output "$RUNNER_TEMP/bench-probe/probe.json"
+
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
@@ -1412,6 +1428,15 @@ jobs:
           path: |
             ${{ runner.temp }}/durations.json
             ${{ runner.temp }}/e2e-phase
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload bench probe evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-probe
+          path: ${{ runner.temp }}/bench-probe
           if-no-files-found: warn
           retention-days: 30
 
