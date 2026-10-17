@@ -875,14 +875,17 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     map.emplace(kMarkersSectionOpenKey, BoolField([](GuiState& s) { return &s.markers_section_open; }));
     map.emplace(kAngularDistSectionOpenKey, BoolField([](GuiState& s) { return &s.angular_dist_section_open; }));
     map.emplace("overlay_lens_border_line", BoolField([](GuiState& s) { return &s.show_lens_border_line; }));
-    // NO NotUnderPrintMode here, unlike the three line families and the markers above, and it is a
-    // scope decision rather than an omission: the four instances of the print rule are enumerated in
-    // doc/rendering/print-mode-subtractive-ink.md §7 and the lens border is not one of them. Widening the rule
-    // to "every field print happens not to read" is the same judgement the import notices already
-    // declined to make (see WarnUnsupportedByDesign in file_io.cpp, which covers three named fields
-    // and not every core key the GUI drops) — the boundary has to come from the document, not from a
-    // reviewer's sense of consistency with the three neighbours above.
-    map.emplace("overlay_lens_border_color", ColorField([](GuiState& s) { return s.lens_border_color; }));
+    // The colour below IS in the annotation colour category of doc/rendering/print-mode-subtractive-ink.md
+    // §7 instance 4 — it is drawn through the preview shader's blendAnnotationColor, whose print branch
+    // multiplies by ink coverage and never reads the hue — so it takes the family gate. The section did not
+    // always list the lens border, and this entry once carried a note declining the gate; the document moved
+    // first (PR #500 put the lens border into the instance-4 enumeration and recorded the still-editable
+    // control as a known deviation), and this entry follows it. The boundary rule itself is unchanged: it
+    // comes from the document, not from a sense of consistency with the neighbours. The two companions here
+    // stay ungated because print still consumes both — the branch's alpha IS the ink coverage, and the switch
+    // above still turns the border off.
+    map.emplace("overlay_lens_border_color",
+                ColorField([](GuiState& s) { return s.lens_border_color; }, NotUnderPrintMode));
     map.emplace("overlay_lens_border_alpha",
                 FloatField([](GuiState& s) { return &s.lens_border_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
 

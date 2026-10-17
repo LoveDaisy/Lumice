@@ -1545,13 +1545,13 @@ void RenderOverlaysTab() {
     // The lens image circle. No text label (null label id, empty cell) and no fold: unlike the
     // angular-distance circles in the section below, it owns no field of its own — the shader
     // derives the circle from the lens type, the FOV and the viewport, so there is nothing here for
-    // a user to set. Null color_field: the lens border is not one of the four instances
-    // doc/rendering/print-mode-subtractive-ink.md §7 enumerates, so its swatch takes no gate — see the matching
-    // note in field_editor_registry.cpp for why the boundary comes from the document rather than
+    // a user to set. The swatch is wired to overlay_lens_border_color so the print gate reaches it
+    // (doc/rendering/print-mode-subtractive-ink.md §7 instance 4) — see the matching note in
+    // field_editor_registry.cpp for why the boundary comes from the document rather than
     // from consistency with its neighbours.
-    { "Lens Border", "##lens_border_color", g_state.lens_border_color, nullptr, "##lens_border_line",
-      &g_state.show_lens_border_line, nullptr, nullptr, "##lens_border_alpha", "overlay_lens_border_alpha",
-      &g_state.lens_border_alpha, nullptr, std::nullopt, nullptr, 0 },
+    { "Lens Border", "##lens_border_color", g_state.lens_border_color, "overlay_lens_border_color",
+      "##lens_border_line", &g_state.show_lens_border_line, nullptr, nullptr, "##lens_border_alpha",
+      "overlay_lens_border_alpha", &g_state.lens_border_alpha, nullptr, std::nullopt, nullptr, 0 },
   };
 
   // The Alpha column width is calibrated against THIS panel's width budget, not carried over from
