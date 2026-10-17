@@ -115,8 +115,8 @@ inline lm_proj::ProjParams BuildProjParams(const RenderConfig& cfg, const Rotati
       break;
     case LensParam::kDualFisheyeOrthographic:
       // Overlap support requires a non-trivial ComputeORScale derivation and
-      // is deferred (see server/render.cpp legacy note). r_scale stays 1.0,
-      // max_abs_dz stays 0 → ProjectExitToPixel emits primary hit only.
+      // is deferred indefinitely. r_scale stays 1.0, max_abs_dz stays 0 →
+      // ProjectExitToPixel emits primary hit only.
       break;
     case LensParam::kGlobe:
       // Globe carries no r_scale / max_abs_dz; its perspective scale is in

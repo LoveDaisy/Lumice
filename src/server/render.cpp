@@ -617,12 +617,6 @@ void RenderConsumer::Consume(const SimData& data) {
   // All rays in data.outgoing_* have already been filter-gated; the consumer
   // simply projects and accumulates. No per-Consume FilterSpec table needed.
   const auto proj_params = BuildProjParams(config_, rot_, short_pix_);
-  // Verbose diagnostic for the dual-fisheye-orthographic no-overlap policy —
-  // matches the legacy log message so downstream tooling (docs/tests grep-ing
-  // the string) keeps functioning.
-  if (config_.overlap_ > 0 && config_.lens_.type_ == LensParam::kDualFisheyeOrthographic) {
-    ILOG_VERBOSE(logger_, "Dual Fisheye Orthographic: overlap parameter is ignored in this release");
-  }
 
   // Copy pre-filtered outgoing rays into contiguous buffers (Design A:
   // simulator-side filter has already dropped non-matching rays).
