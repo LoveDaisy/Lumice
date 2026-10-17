@@ -407,8 +407,13 @@ void LUMICE_DestroyServer(LUMICE_Server* server);
 - `server`: server handle pointer; passing `NULL` is safe
 
 **Notes**:
-- Destroying the server stops all ongoing processing
-- The handle must not be used after destruction
+- Destroying the server stops all ongoing processing.
+- `LUMICE_DestroyServer` is a lifetime barrier, not synchronization for external callers. Before
+  calling it, prevent new calls that take this server handle and wait for every in-flight call to
+  return (for example by joining the caller threads or using an external teardown lock). After it
+  returns, the server handle must not be used again.
+- Result frames acquired before teardown are independent handles: they may still be read and
+  released after the server is destroyed, subject to each frame's own lifetime rules below.
 
 ### Logging
 
@@ -802,7 +807,10 @@ void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
 
 NULL-safe no-op (same contract as `LUMICE_DestroyServer`). Each handle must be released exactly
 once; releasing the same handle twice is undefined behavior — this mirrors `LUMICE_DestroyServer`
-and every other handle in this API, so there is no double-free sentinel.
+and every other handle in this API, so there is no double-free sentinel. Do not release a frame
+while another thread is calling `FrameGet*` on that same handle or still using a pointer borrowed
+from it; wait for those operations to finish, then release the handle once. Independently acquired
+frame handles do not share this wrapper lifetime and may be read or released concurrently.
 
 **Failure mode if you forget**: that one frame leaks, and nothing else. It cannot corrupt memory
 or affect any other reader, because a frame is immutable and separately reference-counted; a leak
@@ -1366,48 +1374,56 @@ if (err != LUMICE_OK) {
 
 ## Thread Safety
 
-### Reading Results Is Thread-Safe — By Holding a Share, Not by Being Lucky
+### Server Calls and Frame Reads Have Different Lifetimes
 
-`LUMICE_AcquireResultFrame`, `LUMICE_ReleaseResultFrame`, and all four `LUMICE_FrameGet*`
-functions are **thread-safe**: any number of threads may acquire, read, and release frames
-concurrently, with no external locking. This is not an incidental property to verify per call —
-it is the reason the frame model exists (see [Retrieving Results](#retrieving-results)). A
-pointer a `FrameGet*` call hands back (`img_buffer` / `xyz_buffer`) is a borrow into a frame the
-caller holds a real share of; it stays valid for exactly as long as *that* frame is held, until
-the matching `LUMICE_ReleaseResultFrame` — independent of what any other thread does to the
-server, and independent of how many *other* frames exist. Two frames never interfere with each
-other, whether held by the same thread or different ones.
+The read-only server polls (`LUMICE_QueryServerState`, `LUMICE_GetSimLifecycle`,
+`LUMICE_GetDrainStatus`, and `LUMICE_GetSimRayCount`) and `LUMICE_AcquireResultFrame` may run on
+multiple threads while the server handle is alive. They may overlap one another and the serialized
+run-start/stop operations below; their internal synchronization protects server state during the
+call. It does **not** keep the `LUMICE_Server*` wrapper alive.
 
-`LUMICE_FrameGetStats` is not part of that borrow family: it copies a **plain value** struct with
-no pointer into the frame, so nothing dangles after release. It rides the same acquire/release
-envelope as the other three only because all four reads come from one frame, not because it needs
-the borrow protection they do.
+`LUMICE_DestroyServer` is therefore a separate teardown barrier. Before calling it, the owner must
+stop admitting new calls that take that server handle and wait for all such in-flight calls to
+return, using thread joins or external synchronization. `DestroyServer` may not overlap polling,
+frame acquisition, mutation, or any other call that dereferences the same server handle; after it
+returns, no server call is valid.
 
-`LUMICE_QueryServerState()`, `LUMICE_GetSimLifecycle()`, `LUMICE_GetDrainStatus()`, and
-`LUMICE_GetSimRayCount()` are also thread-safe read-only polls and may be called from any thread at
-any time.
+Each successful `LUMICE_AcquireResultFrame` returns an independent handle holding a reference to an
+immutable published frame. Acquired frames may outlive the server and do not interfere with one
+another. Any number of threads may call `LUMICE_FrameGet*` functions on the same live frame without
+a read-side lock. A pointer returned by `FrameGet*` (`img_buffer` / `xyz_buffer`) remains a borrow
+into that frame, so the caller must not call `LUMICE_ReleaseResultFrame` on that handle until all
+`FrameGet*` calls and all uses of those pointers have finished. Release each handle exactly once;
+distinct acquired handles may be read and released concurrently.
 
-### Non-Thread-Safe APIs
+`LUMICE_FrameGetStats` is not part of the pointer-borrow family: it copies a **plain value** struct
+with no pointer into the frame, so nothing dangles after the call returns. It uses the same
+acquire/release envelope only because every result read comes from a frame.
 
-The following mutate shared server state directly and must not be called concurrently with each
-other or with any other call on the same server:
-- `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()` / `LUMICE_DestroyServer()`: server lifecycle
-  management
-- `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()`: run
-  submission and restart
-- `LUMICE_StopServer()`: server shutdown
+### Serialized APIs
+
+The following boundaries require caller-side serialization; they do not impose a blanket exclusion
+between a live server's documented read-only calls and every non-destroy owner operation:
+- `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()`: concurrent first-time creation is not
+  guaranteed safe because logger sink registration is process-global.
+- `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()` /
+  `LUMICE_StopServer()`: serialize run-start and stop operations on one owner thread.
+- `LUMICE_DestroyServer()`: apply the full server-handle teardown barrier described above.
 - `LUMICE_Scene*` handle mutation (`LUMICE_SceneAdd*` / `LUMICE_SceneSet*` / `LUMICE_SceneDestroy`
-  on one handle) — a handle has no internal locking. Distinct handles are independent, so building
+  on one handle): a handle has no internal locking. Distinct handles are independent, so building
   two scenes on two threads is fine.
 
 ### Multithreading Recommendations
 
-1. **Single server, multiple threads**: designate one owner thread for run-start and lifecycle
-   mutations: `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` /
-   `LUMICE_ContinueRender()` / `LUMICE_StopServer()` / `LUMICE_DestroyServer()`. Any number of
-   other threads may poll lifecycle/drain/ray-count state and acquire/read/release result frames
-   concurrently with that owner and with each other — no mutex needed on the read side.
-2. **Multiple servers**: use a separate server instance per thread.
+1. **Single server, multiple threads**: designate one owner thread to serialize
+   `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()` /
+   `LUMICE_StopServer()`. Reader threads may poll and acquire frames concurrently while the server
+   remains live. For teardown, first stop new server calls and join or otherwise wait for every
+   in-flight server call, then invoke `LUMICE_DestroyServer()`.
+2. **Frames across teardown**: already-acquired frames may remain with reader threads after server
+   teardown. Join all users of a particular frame handle before releasing that handle; no mutex is
+   needed for concurrent `FrameGet*` reads while the handle is held.
+3. **Multiple servers**: use a separate server instance per thread.
 
 ## Integration with Other Languages
 
@@ -1568,7 +1584,7 @@ extern "C" {
 
 ### Q3: When does img_buffer become invalid?
 
-**A**: When you release the frame it came from. `img_buffer` is a read-only view into a `LUMICE_ResultFrame`, and holding that frame keeps the pixels alive — no other reader's activity, and no new snapshot, can invalidate them while you hold it. Call `LUMICE_ReleaseResultFrame()` when you are done, and `memcpy` beforehand anything you need to outlive the frame.
+**A**: When you release the frame it came from. `img_buffer` is a read-only view into a `LUMICE_ResultFrame`, and holding that frame keeps the pixels alive — no activity through a distinct frame handle, and no new snapshot, can invalidate them while you hold it. All users of this frame handle must finish before its single `LUMICE_ReleaseResultFrame()` call. `memcpy` beforehand anything you need to outlive the frame.
 
 ### Q4: Can the server process multiple configurations simultaneously?
 

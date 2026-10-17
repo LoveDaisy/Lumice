@@ -286,8 +286,12 @@ void LUMICE_DestroyServer(LUMICE_Server* server);
 - `server`: 服务器句柄指针，可以为 `NULL`（安全）
 
 **注意**：
-- 销毁服务器会停止所有正在进行的处理
-- 销毁后不应再使用该句柄
+- 销毁服务器会停止所有正在进行的处理。
+- `LUMICE_DestroyServer` 是生命周期屏障，不会替外部调用方做并发同步。调用前必须阻止新的
+  server 句柄调用，并等待全部在途调用返回（例如 join 调用线程，或使用外部销毁锁）；返回后不得
+  再使用该 server 句柄。
+- 销毁前已取得的结果帧是独立句柄，仍可在 server 销毁后读取和释放，但须遵守下文每帧自己的
+  生命周期规则。
 
 ### 日志
 
@@ -471,7 +475,9 @@ void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
 
 NULL-safe no-op（与 `LUMICE_DestroyServer` 同契约）。每个句柄必须恰好释放一次；重复释放同一
 句柄是未定义行为——这与 `LUMICE_DestroyServer` 以及本 API 中其他所有句柄一致，因此**刻意不设**
-double-free 哨兵。
+double-free 哨兵。同一帧句柄仍有线程在调用 `FrameGet*`，或仍在使用从它借出的指针时，不得释放
+该句柄；等待这些操作全部结束后再释放一次。各次独立 acquire 得到的帧句柄不共享这层 wrapper
+生命周期，可以彼此并发地读取或释放。
 
 **忘记释放的失效模式**：只泄漏那一帧，仅此而已。它不会破坏内存、也不会影响任何其他读者，
 因为帧是不可变的、且各自独立引用计数；而泄漏正是 ASan/LSan/valgrind 本来就会报的东西。
@@ -860,38 +866,49 @@ if (err != LUMICE_OK) {
 
 ## 线程安全性
 
-### 读结果是线程安全的——靠持有一份份额，不是靠运气
+### Server 调用与帧读取有不同的生命周期
 
-`LUMICE_AcquireResultFrame`、`LUMICE_ReleaseResultFrame`，以及全部四个 `LUMICE_FrameGet*`
-函数都是**线程安全**的：任意数量的线程可以并发取帧、读帧、释放帧，无需任何外部加锁。这不是
-一条要逐个调用点核实的偶然性质——它正是帧模型存在的理由（见[结果获取](#结果获取)）。
-`FrameGet*` 返回的指针（`img_buffer` / `xyz_buffer`）是借入调用方持有的那一帧内部的视图，
-它的有效期恰好等于**那一帧**被持有的时长，直到匹配的 `LUMICE_ReleaseResultFrame`
-为止——与其间任何其他线程对 server 做了什么无关，也与同时存在多少**其他**帧无关。
-两帧之间互不干扰，不论持有者是同一线程还是不同线程。
+只读 server 轮询（`LUMICE_QueryServerState`、`LUMICE_GetSimLifecycle`、
+`LUMICE_GetDrainStatus`、`LUMICE_GetSimRayCount`）与 `LUMICE_AcquireResultFrame` 可以在
+server 句柄存活期间由多个线程调用。这些调用可以彼此并发，也可以与下文串行化的 run 启动/停止
+操作并发；内部同步会在调用期间保护 server 状态，但**不会**延长 `LUMICE_Server*` wrapper 的
+生命周期。
 
-`LUMICE_FrameGetStats` 不属于这条借用族：它拷贝的是一个不含指针的**纯值**结构体，释放后
-不会有任何指针悬垂。它与另外三个共用同一套取帧/释放包络，只是因为四种读取都来自同一帧，
-而不是因为它也需要那三者所需的借用保护。
+因此，`LUMICE_DestroyServer` 是单独的销毁屏障。调用前，owner 必须停止接受所有使用该 server
+句柄的新调用，并通过 join 或外部同步等待全部在途调用返回。`DestroyServer` 不得与轮询、取帧、
+修改或任何其他解引用同一 server 句柄的调用重叠；返回后任何 server 调用都不再合法。
 
-`LUMICE_QueryServerState()`、`LUMICE_GetSimLifecycle()`、`LUMICE_GetDrainStatus()` 与
-`LUMICE_GetSimRayCount()` 也都是线程安全的只读轮询，可在任意线程的任意时刻调用。
+每次成功的 `LUMICE_AcquireResultFrame` 都返回一个独立句柄，持有不可变发布帧的一份引用。已取得
+的帧可以比 server 活得更久，彼此互不干扰。任意数量的线程都可以在同一存活帧上调用
+`LUMICE_FrameGet*`，读侧无需加锁。`FrameGet*` 返回的指针（`img_buffer` / `xyz_buffer`）仍然是
+该帧内部的借用，因此同一帧句柄上的全部 `FrameGet*` 调用与借出指针使用结束前，不得调用
+`LUMICE_ReleaseResultFrame`。每个句柄只释放一次；各次独立 acquire 得到的句柄可以彼此并发地
+读取或释放。
 
-### 非线程安全API
+`LUMICE_FrameGetStats` 不属于指针借用族：它拷贝的是一个不含指针的**纯值**结构体，所以调用
+返回后不会留下悬垂指针。它使用相同的取帧/释放包络，只是因为所有结果读取都来自帧。
 
-以下API直接修改共享的 server 状态，不应与彼此、也不应与同一 server 上的其他调用同时发生：
-- `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()` / `LUMICE_DestroyServer()`: 服务器生命周期管理
-- `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()`：run 提交与重启
-- `LUMICE_StopServer()`: 服务器停止
-- 对同一个 `LUMICE_Scene*` 句柄的修改（`LUMICE_SceneAdd*` / `LUMICE_SceneSet*` / `LUMICE_SceneDestroy`）——句柄内部没有加锁。不同句柄互相独立，两个线程各建各的场景是安全的。
+### 需要串行化的 API
+
+以下边界需要调用方串行化；这不表示存活 server 上已有文档说明的只读调用与每个非销毁 owner
+操作之间都要相互排斥：
+- `LUMICE_CreateServer()` / `LUMICE_CreateServerEx()`：首次创建时会注册进程级全局 logger sink，
+  不保证并发创建安全。
+- `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()` /
+  `LUMICE_StopServer()`：由一个 owner 线程串行执行 run 启动与停止操作。
+- `LUMICE_DestroyServer()`：执行上文完整的 server 句柄销毁屏障。
+- 对同一个 `LUMICE_Scene*` 句柄的修改（`LUMICE_SceneAdd*` / `LUMICE_SceneSet*` /
+  `LUMICE_SceneDestroy`）：句柄内部没有加锁。不同句柄互相独立，两个线程各建各的场景是安全的。
 
 ### 多线程使用建议
 
-1. **单服务器多线程**：指定一个 owner 线程执行 run 启动与生命周期修改：
-   `LUMICE_CommitScene()` / `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()` /
-   `LUMICE_StopServer()` / `LUMICE_DestroyServer()`；其余任意数量的线程可以与该 owner
-   以及彼此并发地轮询 lifecycle/drain/ray count，并取帧读结果——读侧不需要互斥锁。
-2. **多服务器**：每个线程使用独立的服务器实例
+1. **单服务器多线程**：指定一个 owner 线程串行执行 `LUMICE_CommitScene()` /
+   `LUMICE_StartRaypathAnalysis()` / `LUMICE_ContinueRender()` / `LUMICE_StopServer()`。
+   server 仍存活时，读线程可以并发轮询和取帧。销毁时先阻止新的 server 调用，并 join 或以其他
+   方式等待全部在途 server 调用结束，再调用 `LUMICE_DestroyServer()`。
+2. **跨销毁持有帧**：已经取得的帧可在 server 销毁后继续由读线程持有。释放某个帧句柄前，先
+   等待该句柄的全部使用者结束；句柄仍被持有时，并发 `FrameGet*` 读取无需互斥锁。
+3. **多服务器**：每个线程使用独立的服务器实例。
 
 ## 与其他语言集成
 
@@ -1052,7 +1069,7 @@ extern "C" {
 
 ### Q3: img_buffer 何时失效？
 
-**A**: 直到你释放它所属的那一帧。`img_buffer` 是 `LUMICE_ResultFrame` 的只读视图，持有帧即保住像素——其他读者的动作、以及新的快照，都无法在你持有期间让它失效。用完调用 `LUMICE_ReleaseResultFrame()`；需要活得比帧更久的数据请提前 `memcpy`。
+**A**: 直到你释放它所属的那一帧。`img_buffer` 是 `LUMICE_ResultFrame` 的只读视图，持有帧即保住像素——其他独立帧句柄的动作、以及新的快照，都无法在你持有期间让它失效。同一帧句柄的全部使用者结束后，才能执行它唯一一次 `LUMICE_ReleaseResultFrame()`；需要活得比帧更久的数据请提前 `memcpy`。
 
 ### Q4: 服务器可以同时处理多个配置吗？
 
