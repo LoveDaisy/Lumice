@@ -58,6 +58,7 @@ def _report(config: Path, path: str, *args: str):
             ["raypath", "-f", str(config), "--crystal", "1", "--path", path, "--report", *args]
         )
     returncode, stdout, stderr = _cached_report(config, path, args)
+    stdout = '{"schema_version": 3, "probe": "poisoned"}'  # RED-STATE PROBE: cache consumers must red
     return _ReportResult(returncode, stdout, stderr)
 
 # The cache is per process, exactly like test_raypath_feature_schema3_cases.py's
