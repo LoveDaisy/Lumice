@@ -83,7 +83,7 @@ If you see all four images, the toolchain is healthy.
 | Configure fails on `Python3` | No Python 3 interpreter on `PATH` | Install Python 3 — every build needs it to embed fonts |
 | GUI configure fails in GLFW / nfd (Linux) | X11 / OpenGL / GTK 3 dev headers missing | Install the packages from the prerequisites table, or build without the GUI (drop `-g`) |
 | GUI exits at startup with a GLFW / OpenGL error | No display, or no OpenGL 3.3 driver on the loader path | Run on a machine with a desktop session; on a headless box use the CLI instead |
-| `LUMICE_SKIP_GUI_TESTS` ignored on CI | Stale cached config | `./scripts/build.sh -k release` to clean rebuild |
+| `gui_test` cannot start on a headless machine | No display server | Set `LUMICE_SKIP_GUI_TESTS=1` for the build-script run, or use the documented Xvfb/software-renderer setup when you intend to execute GUI tests |
 
 ## Further reading
 

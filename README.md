@@ -90,11 +90,11 @@ live in [`doc/gui/gui-guide.md`](doc/gui/gui-guide.md).
 |----------|----------|----------------|
 | [Documentation index](doc/README.md) | All | Top-level navigation across docs |
 | [Configuration guide](doc/configuration.md) | Users | Every JSON field, every lens type, every scattering option |
-| [Adaptive Brightness](doc/rendering/adaptive-brightness.md) | Users | Automatic EV normalization: algorithm, Off/On mode semantics, XYZ additivity invariant |
+| [Adaptive Brightness](doc/rendering/adaptive-brightness.md) | Users | Relative and absolute EV anchors, convergence behavior, and XYZ additivity |
 | [Raypath symmetry](doc/raypath/raypath-symmetry.md) | Users / Contributors | P, B, D filter toggle semantics, D enabling condition, σ derivation |
 | [GUI guide](doc/gui/gui-guide.md) | Users | Panel-by-panel walkthrough with screenshots |
 | [Coordinate convention](doc/geometry/coordinate-convention.md) | Users / Authors | Rotation chain, axis sign convention, **v3 breaking change notes** |
-| [Developer guide](doc/developer-guide.md) | Contributors | Build options, dependency list, build script reference, project layout |
+| [Developer guide](doc/developer-guide.md) | Contributors | Build/test commands, source boundaries, style, logging, and policy gates |
 | [Architecture](doc/architecture.md) | Contributors | Module layout, data flow, threading model |
 | [C API](doc/interfaces/c_api.md) | Integrators | Embedding Lumice via the C interface |
 | [API reference](doc/api/html/) | Contributors | Doxygen-generated (run `doxygen .doxygen-config` locally) |

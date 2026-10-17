@@ -60,7 +60,7 @@
 }
 ```
 
-三个欧拉角各自配 `uniform`（`mean=0, std=360`）让晶体取向在球面上各向同性——sampler 会把这个组合识别为标准全球面采样（见 `src/core/math.cpp` 中的 `AxisDistribution::IsFullSphereUniform`）。如果省略 `axis` 块，晶体会默认为单一固定取向，输出只会是弧线或亮斑，无法形成完整的 22° 圆环。单条 `scattering` 配 `prob: 0.0` 表示每条出射光线直接射出（单次散射 recipe）；多次散射写法见配方 3。
+三个欧拉角各自配 `uniform`（`mean=0, std=360`）让晶体取向在球面上各向同性。`src/core/random.cpp` 的 `AxisDistribution::IsFullSphereUniform` 识别该情形，`src/core/shared/lat_path_selection.hpp` 的 `lat_path::SelectLatPath` 再选择三后端共用的全球面路径。如果省略 `axis` 块，晶体会默认为单一固定取向，输出只会是弧线或亮斑，无法形成完整的 22° 圆环。单条 `scattering` 配 `prob: 0.0` 表示每条出射光线直接射出（单次散射 recipe）；多次散射写法见配方 3。
 
 跑：`./build/cmake_install/static/Lumice -f recipes/22-halo.json -o /tmp/out`
 
@@ -73,8 +73,6 @@
 太阳左右两侧约 22° 的明亮光斑，由 c 轴垂直（基底面水平）取向的六角片晶折射形成。日出日落时太阳低角度时常见。
 
 **预期输出**：在太阳高度上、左右两侧 ~22° 方位的两团亮斑。`sun.altitude=10` 是教科书构图。
-
-> 📷 待补：配方 2 的参考渲染（已登记到 `progress.md` 占位锚清单 — closeout 阶段会汇总进 SUMMARY.md "待补充清单"）。
 
 **配置**（`recipes/sun-dogs.json`，inline）：
 
@@ -128,9 +126,9 @@
 
 ## 配方 3 — 多重散射 44° parhelia
 
-> **CLI only — 多层散射只能用 JSON 配置；详见 [`05-faq_zh.md`](05-faq_zh.md) "GUI 与 JSON 能力差异"。**
+GUI 也能用 **+ Layer** 搭出同一场景；下方 JSON 是便于复现的 CLI 形式。
 
-光线被两次平行片晶散射后，会在 ~44°（两倍棱镜偏折角）出现一圈较暗的环。复现需要**两层 scattering**，且每层独立配置 — 这只在 JSON 里支持。
+光线被两次平行片晶散射后，会在 ~44°（两倍棱镜偏折角）出现一圈较暗的环。复现需要**两层 scattering**，每层可在 GUI 或 JSON 中独立配置。
 
 **预期输出**：除了 22° 主环（单次散射）外，外侧出现一圈暗 44° 环。参考渲染：
 

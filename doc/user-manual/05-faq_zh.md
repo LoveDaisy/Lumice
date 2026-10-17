@@ -62,11 +62,11 @@ GUI 包了同一个引擎，但**并非** JSON config 的完全超集 — 一些
 | 能力 | GUI | JSON / CLI | 说明 |
 |------|-----|------------|------|
 | 多 `render` 条目 | ❌（只一个预览）| ✅ | JSON 可声明任意多个 `render: [...]`；CLI 每个 entry 出一张图 |
-| 多层 scattering（≥ 2 个 entry） | ❌ | ✅ | 配方 3 在 [`04-recipes_zh.md`](04-recipes_zh.md) 中要求 JSON |
+| 多层 scattering（≥ 2 个 entry） | ✅ | ✅ | GUI 的 `+ Layer` 编辑与 JSON `scene.scattering` 相同的有序层模型。 |
 | 镜头投影切换 | ✅（浮动镜头条）| ✅（`render[].lens.type`） | GUI 实时重投影；JSON 一次设定每个 render 的镜头 |
 | Overlay 网格 / 圈 / 参考点 | ✅（实时） | ✅（`render[].grid`） | 两边都画。GUI 把每个 overlay 开关、颜色、角度列表都存进 `.lmc`，`File ▶ Export Config` 把它们写成 `render[].grid`；CLI 把同样的线、圈、标注、标记合成到输出图上（自 v4.18 起）。详见 [`../configuration_zh.md`](../configuration_zh.md) "grid" |
 | 晶体预览样式（线框 / 隐藏线 / 透视 / 着色）| ✅ | ❌ | 纯 GUI 状态，与模拟无关 |
-| `.lmc` 保存/加载 | ✅ | ✅ | `.lmc` 即 JSON，两边读同一个文件 |
+| `.lmc` 保存/加载 | ✅ | ❌ | `.lmc` 是 GUI 的二进制项目容器（JSON 文档状态 + 可选预览 payload）；给 CLI 用时导出 **Config JSON**。 |
 
 经验法则：**交互式探索**走 GUI，**批处理 / 可复现的跑**走 JSON + CLI。
 
@@ -75,18 +75,18 @@ GUI 包了同一个引擎，但**并非** JSON config 的完全超集 — 一些
 少数 JSON 字段在 schema 里存在但当前实现未生效（前向兼容）。parser 不会报错，引擎也不会使用 — 它们就是没效果而已：
 
 - `render[].grid[*].width` — 每个 grid 条目的 `width` 会被读取、校验并原样写回，但不影响任何像素；线宽由投影推导（见 [`../configuration_zh.md`](../configuration_zh.md) "四族线各自画什么、忽略什么"）。`grid` 块本身 CLI **是**会渲染的——它曾被列在这里当作"仅 GUI"，自 v4.18 起已不成立。
-- 个别 `crystal[].shape` 分布字段在异常组合下不生效 — 详见与文档任务并行维护的 `known_mismatch.md` 登记。
+- Shape 分布与 `sync_group` 都是已生效的引擎输入；支持形态与几何边界见 [`../configuration_zh.md`](../configuration_zh.md) 的 `crystal[].shape`。
 
 如果你"在 JSON 里设了 X 但没效果"，先查这一节，再查 [`../configuration_zh.md`](../configuration_zh.md)，最后再开 issue。
 
 ## 5. 输出文件去哪儿了？
 
-- CLI：写到 `-o <dir>` 指定的目录（默认当前目录）。每个 `render` entry 一张图，命名 `<render_id>.<format>`（默认 `jpg`，可用 `--format png` 切到 PNG）。
-- GUI：渲染图存内存里，`File ▶ Export` 才落盘。GUI 不会自动写文件。
+- CLI：写到 `-o <dir>` 指定的目录（默认当前目录）。JPG/PNG 下每个 `render` entry 一张图，命名 `img_<两位补零的 render id>.<format>`，例如 `img_01.jpg`。`--format npy` 改为每个 renderer 写 `img_XX.npy` 与 `img_XX.json` 元数据 sidecar；已配置的彩色合成图仍是图片文件。
+- GUI：渲染图留在内存，选择 **Save ▶ Screenshot...**（或某个全景导出）才落盘；GUI 不会自行写出渲染图。
 
 ## 6. "我的光晕看上去淡 / 噪点多 / 不对" — 排查清单
 
-1. **太淡？** 升 `scene.ray_num`（光线数 ×4 ≈ 噪声 ÷2）。
+1. **太淡？** 先区分亮度与噪声。默认 `relative` EV 模式下，增加光线应让画面收敛稳定，而不是系统性变亮；曝光太低时调高 EV。`absolute` 模式下，欠采样场景可能确实落入能量不足，此时提高 `scene.ray_num` 会同时影响可见度与收敛。
 2. **噪点多？** 升 `scene.ray_num`，或者把 spectrum 收窄一点（如果色散噪声占主导）。若只是某一个晕的边缘比画面其余部分粗糙（弱晕挨着亮晕），确认 `scene.ray_allocation` 是 `"adaptive"`——GUI 里就是 Settings 里的 `sim.ray_allocation`，默认 `adaptive`，可切到 `proportional`。
 3. **完全没光晕？** 确认相机指向太阳：`render[].view.elevation` ≈ `scene.light_source.altitude`，`view.azimuth` ≈ `light_source.azimuth`。
 4. **形状不对？** 检查 `crystal[].axis` — 随机取向出圆环，定向片晶出弧线和亮斑。

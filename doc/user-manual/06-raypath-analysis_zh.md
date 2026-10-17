@@ -109,9 +109,9 @@ P / B / D 决定。各列含义：
 指的是同样三个对称元（棱面旋转、底面反射、镜像），但这里只合并**物理上等价**的光路，使一行对应一个
 物理类。规则晶体、随机取向下三个全开（默认）时，`3-5` 的六个旋转和它的镜像合成一行；关掉 D，镜像路径 `3-7` 会单独成行；关掉 P，每个旋转都各成一行。复选框只是请求：
 每个晶体只按它的形状与取向真正具备的对称合并——Parry 弧 roll 锁定，即使开着 P，`3-5` 的各个旋转也
-分开；板状晶体即使开着 B，`1-3` 与 `2-3` 也分开（条件见 [`../raypath-symmetry.zh.md`](../raypath/raypath-symmetry.zh.md)
+分开；板状晶体即使开着 B，`1-3` 与 `2-3` 也分开（条件见 [`../raypath/raypath-symmetry.zh.md`](../raypath/raypath-symmetry.zh.md)
 §2b，filter 编辑器的 `(i)` 提示会说明某个晶体适用哪些）。filter 的 P / B / D 不同：它不论晶体如何都按面编号
-重新标号，所以在这样的晶体上合并得比这里的一行更多（[`../raypath-symmetry.zh.md`](../raypath/raypath-symmetry.zh.md) §1.1）。这是**显示态**
+重新标号，所以在这样的晶体上合并得比这里的一行更多（[`../raypath/raypath-symmetry.zh.md`](../raypath/raypath-symmetry.zh.md) §1.1）。这是**显示态**
 的选择：分析记录的是未约化的每一条路径，切换复选框会立刻用手头的结果重新分组——不重跑、总量
 不变，选中的行只要它的光路仍然是一行就保持选中（被并进别的行的光路则自然取消选中）。如果分析
 之后又按过 Run，手头的结果就不能再重新分组了；窗口会提示列表当前按哪种对称显示，下一次
@@ -236,12 +236,12 @@ schema 3 使用实际产品的 shape/取向/太阳盘/光谱、物理 L2 成员�
 
 `--target`、`--grid`、`--warm` 仍属未改变的目标点 fiber 流程，不能与 `--report` 混用。
 位置、观察量、尺度响应、源事件范围的精确定义，以及 schema 2 → schema 3 的迁移说明见
-[`../raypath-cli-output.md`](../raypath/raypath-cli-output.md) §7。
+[`../raypath/raypath-cli-output.md`](../raypath/raypath-cli-output.md) §7。
 
 ## 延伸阅读
 
 - 完整面板参考 → [`../gui-guide.md`](../gui/gui-guide.md)
 - 「Exclude this raypath」用到的 filter 语法 → [`../gui-guide.md`](../gui/gui-guide.md) 「Filter Tab」一节
-- 设计记录与机制细节 → [`../raypath-analysis-panel.md`](../raypath/raypath-analysis-panel.md)
-- 功能为什么这么拆、接下来往哪走 → [`../raypath-analysis.md`](../raypath/raypath-analysis.md)
-- CLI report 的完整字段与边界 → [`../raypath-cli-output.md`](../raypath/raypath-cli-output.md) §7
+- 设计记录与机制细节 → [`../raypath/raypath-analysis-panel.md`](../raypath/raypath-analysis-panel.md)
+- 功能为什么这么拆、接下来往哪走 → [`../raypath/raypath-analysis.md`](../raypath/raypath-analysis.md)
+- CLI report 的完整字段与边界 → [`../raypath/raypath-cli-output.md`](../raypath/raypath-cli-output.md) §7

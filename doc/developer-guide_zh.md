@@ -2,785 +2,255 @@
 
 # 开发指南
 
-本文档为项目开发者提供开发环境设置、代码风格、功能扩展、测试和调试等方面的指导。
+本文是贡献者的实操入口。架构裁决在各专题文档；全仓工程规则在 `AGENTS.md`；分支、Pull Request 与发布流程以 `CONTRIBUTING.md` 为准。
 
-## 开发环境设置
+## 1. 前置依赖
 
-### 系统要求
+Lumice 是 C++17 + CMake + Ninja 项目。常规开发机需要：
 
-- **操作系统**: macOS 13.0+（Ventura）、Linux（Ubuntu 24.04+）或 Windows 10+
-- **编译器**: 支持 C++17 的编译器（GCC、Clang 或 MSVC）
-- **CMake**: >= 3.14
-- **Ninja**（推荐）: 默认构建生成器，增量构建更快且自动并行
+- Apple Clang 14+、GCC 11+ 或 MSVC 2022；
+- CMake 3.14+；
+- Ninja 1.10+；
+- Python 3.9+（每次构建都用来嵌入资产，E2E 工具也依赖它）；
+- Linux GUI 构建另需 OpenGL、X11 与 GTK 3 开发包。
 
-所有其他依赖通过 [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake) 自动下载和管理：
-- [nlohmann/json](https://github.com/nlohmann/json) v3.10.5 — JSON 解析（header-only）
-- [spdlog](https://github.com/gabime/spdlog) v1.15.0 — 日志（header-only）
-- [tl-expected](https://github.com/TartanLlama/expected) v1.1.0 — C++17 `expected<T,E>`（header-only）
-- [GoogleTest](https://github.com/google/googletest) v1.15.2 — 单元测试（启用 `-t` 时下载）
+依赖由 CPM.cmake 拉取，默认按机器缓存在 `$HOME/.cache/lumice-cpm`；`CPM_SOURCE_CACHE` 可覆盖该位置。构建树与安装树仍按 worktree 和库 flavor 分开。
 
-> **关于 Ninja**: 若未安装 Ninja，可将 `scripts/build.sh` 中的 `-G Ninja` 删除，CMake 将回退到系统默认生成器（通常为 Unix Makefiles）。
+## 2. 构建命令与产物目录
 
-### 依赖安装
-
-#### macOS
+使用仓库脚本：
 
 ```bash
-# 使用 Homebrew
-brew install cmake ninja
+./scripts/build.sh -j release       # static CLI / library
+./scripts/build.sh -gj release      # 再构建 GUI
+./scripts/build.sh -tj release      # 构建测试并运行 CTest correctness labels
+./scripts/build.sh -gtj release     # 再运行 gui_test；需要显示服务器
+./scripts/build.sh -bj release      # 再构建 benchmark
+./scripts/build.sh -sj release      # shared libraries
 ```
 
-#### Linux (Ubuntu/Debian)
+选项可组合：
+
+- `-t`、`-g`、`-b` 决定构建什么；
+- 只有 `-s` 改变库 flavor（static → shared）；
+- `-k` 删除所选 flavor 的 CMake build/install 树，但保留 compiler output 与机器级 CPM cache；
+- `-x` 删除仓库内全部 `build/` 产物，但仍保留机器级 CPM cache。
+
+路径：
+
+| 用途 | 路径 |
+|---|---|
+| CMake build tree | `build/cmake_build/<static|shared>/` |
+| install tree | `build/cmake_install/<static|shared>/` |
+| compiler output | `build/<BUILD_TYPE>/<static|shared>/{bin,lib}/` |
+| CLI | `build/cmake_install/static/Lumice` |
+| GUI | 经过 `-g` 构建后的 `build/cmake_install/static/LumiceGUI` |
+
+完整当前选项以 `./scripts/build.sh -h` 为准，不要把本文 flag 再复制成另一份规格。
+
+## 3. 源码组织与边界
+
+引擎层次只在 `cmake/lumice_layers.cmake` 定义一次：
+
+```text
+foundation → analytic → scene → view → sim → render → engine → raypath → capi
+```
+
+`src/` 下每个引擎文件都归该 manifest 所有，只能 include 本层或更低层。`scripts/check_policies.py` 拒绝无归属文件、失效 manifest 项和新增向上依赖。
+
+主要目录：
+
+| 目录 | 职责 |
+|---|---|
+| `src/config/` | JSON 解析与 scene/config 数据 |
+| `src/core/` | 几何、光学、simulator、buffer、投影与 backend |
+| `src/server/` | session 编排、consumer、结果与 C bridge |
+| `src/raypath/` | 光路报告与单光路分析 |
+| `src/analytic/` | 对外 analytic 能力 |
+| `src/include/` | 公开 C 能力头 |
+| `src/gui/` | 交互式应用壳 |
+| `src/util/` | 基础设施与纯共享 helper |
+| `test/` | C++ / Python 验证层 |
+
+### 公开 API 边界
+
+项目没有 umbrella header。按使用的能力分别 include：
+
+```text
+lumice_base.h  lumice_scene.h  lumice_render.h
+lumice_editor.h  lumice_engine.h  lumice_raypath.h
+```
+
+GUI 可以 include 这些引擎能力头，但不得 include `core/`、`config/` 或 analytic family 的公开头。只有纯、无状态且不携带仿真/配置语义的共用 helper 才放进 `src/util/`。
+
+`src/raypath/detail/` 只供 raypath 模块及其测试使用；engine-facing 光路头以已登记模块 surface 为准。
+
+## 4. 风格与诊断
+
+遵守 `.clang-format` 与 `.clang-tidy`。
+
+命名：
+
+- 类型：`CamelCase`；
+- 函数：`CamelCase`；
+- 变量：`lower_case`；
+- 私有成员：`lower_case_`；
+- 常量：`kCamelCase`；
+- namespace：`lumice`。
+
+优先 `const`、`constexpr`、智能指针、`nullptr` 与 `override`。禁止裸 `new`/`delete` 和 `using namespace`。
+
+提交前运行：
 
 ```bash
-sudo apt-get update
-sudo apt-get install cmake ninja-build
+./scripts/format.sh
+./scripts/format.sh --check
 ```
 
-### 构建配置
+### 日志
 
-项目使用CMake构建，提供了 `scripts/build.sh` 脚本简化构建过程：
+引擎与 server 诊断使用 `src/util/logger.hpp`：
 
-```bash
-./scripts/build.sh -j release    # Release版本（推荐）
-./scripts/build.sh -j debug      # Debug版本（用于调试）
+```cpp
+ILOG_INFO(logger_, "Committed epoch {}", epoch);
+LOG_WARNING("Configuration uses a deprecated field");
 ```
 
-**构建选项**：
-- `-t`: 编译并运行测试
-- `-g`: 构建 GUI 应用（Dear ImGui + GLFW + OpenGL）
-- `-b`: 构建基准测试（Google Benchmark）
-- `-j`: 并行编译
-- `-k`: 清理构建产物（保留依赖缓存）
-- `-x`: 清空整个 `build/`（两种 flavor 都清）。它**不会**清 CPM 依赖源码缓存——
-  该缓存默认落在 `build/` 之外的机器级目录（`$HOME/.cache/lumice-cpm`），
-  与本机其他 clone / worktree 共享。确需强制重下时手动删除该目录。
-- `-s`: 构建共享库（默认为静态库）
-- `-h`: 显示帮助信息
+GUI 诊断使用 `src/gui/gui_logger.hpp` 的 `GUI_LOG_*`。不要在 `src/` 新增 `printf`、`fprintf`、`std::cout` 或 `std::cerr`；它们绕过统一 sink，在 Windows GUI 中还可能完全不可见。具名例外只有 `src/main.cpp` 的 CLI 产品输出、`src/util/fatal.hpp` 的 abort 前 owner，以及引擎加载前的 Windows launcher。
 
-**常用选项组合**：
-- `./scripts/build.sh -gj release`：构建 GUI（不运行测试）
-- `./scripts/build.sh -gtj release`：构建 GUI + 运行所有测试（单元测试 + GUI 测试）
-- `./scripts/build.sh -tj release`：仅构建核心 + 运行单元测试（不含 GUI）
+CLI 产品输出走 stdout，诊断日志走 stderr。
 
-### IDE配置
+## 5. 添加或修改代码
 
-#### CLion
+修改子系统前先从 `doc/README_zh.md` 找到对应设计文档。尤其是：
 
-1. 打开项目根目录
-2. CLion会自动识别CMake配置
-3. 配置CMake选项（如需要）
+- 几何或谓词：`geometry/crystal-geometry-representation.md`、`geometry/numerical-robustness.md`；
+- GPU 路：`backends/seam-design.md` 与 backend lifecycle 文档；
+- 曝光/显示：`rendering/ev-pipeline-architecture.md`；
+- GUI 状态：`gui/gui-state-governance.md`；
+- 光路分析：`raypath/raypath-analysis.md`、`raypath/raypath-analysis-panel.md`；
+- 测试：`testing/testing-architecture_zh.md`。
 
-#### VS Code
+新增引擎源码文件：
 
-1. 安装C/C++扩展
-2. 安装CMake Tools扩展
-3. 打开项目根目录
-4. 配置CMake（按需）
+1. 选择语义所属的最低层；
+2. 在同一变更中加入 `cmake/lumice_layers.cmake`；
+3. 保持 include 方向合法；
+4. 通过既有 capability 暴露；若确需新 surface，先明确 API 设计；
+5. 添加 oracle 与行为匹配的最小测试。
 
-#### 其他IDE
+修改公开 C API：
 
-- 使用CMake生成项目文件
-- 配置包含路径和库路径
+1. 把声明放入拥有该操作的 capability header；
+2. 使用该头对应的 export macro；
+3. 在匹配的 `src/server/c_api_<capability>.cpp` bridge 实现；
+4. 按兼容性规则更新 API version 与记录；
+5. 验证生成的 export surface 和外部消费者契约。
 
-### 调试环境配置
-
-#### 使用LLDB (macOS)
-
-```bash
-./scripts/build.sh debug
-lldb ./build/Debug/static/bin/Lumice
-(lldb) run -f examples/config_example.json
-```
-
-#### 使用GDB (Linux)
-
-```bash
-./scripts/build.sh debug
-gdb ./build/Debug/static/bin/Lumice
-(gdb) run -f examples/config_example.json
-```
+不要在 GUI、CLI、engine 各抄一份同一语义；把权威实现放到合法的最低共享层，各壳只消费它。
 
 ### 环境变量
 
-Lumice 仅在构建脚本和测试工具中使用少量环境变量。产品代码（`src/` 下的 C++ 源码）在运行时**不读取**任何环境变量。
+新增 `std::getenv` 前先应用 `env-var-policy.md`。用户可见行为应进入 CLI/config/API，不应藏在机器本地 env 中。运行时 `LUMICE_*` 读取统一位于 `src/util/env_knobs.cpp`，且必须登记并在启动时记录。
 
-| 变量 | 位置 | 用途 |
-|------|------|------|
-| `LUMICE_SKIP_GUI_TESTS` | `scripts/build.sh` | 设为 `1` 可跳过 GUI 测试的编译和执行。CI 通过 `CI` 变量自动检测无头环境。 |
-| `LUMICE_BIN` | `test/e2e/runner.py` | 覆盖 E2E 子进程测试使用的 CLI 可执行文件路径。默认为 `build/cmake_install/static/Lumice`。 |
-| `LUMICE_LIB` | `test/e2e/capi_runner.py` | 覆盖 E2E C API 测试使用的共享库路径。默认为第一个存在的 shared flavor 候选，首选 `build/Release/shared/lib/liblumice_testapi.dylib`（macOS）或 `.so`（Linux）——即 `liblumice` 的测试专用超集（同一份对象文件，外加 `test/support/lumice_test_api.h` 的 `LUMICE_TEST_*` 钩子），而不是 `liblumice` 本身。 |
+## 6. 测试
 
-**设计原则**：确定性模拟种子通过 C API（`LUMICE_ServerConfig.sim_seed`）传递，而非环境变量，以确保程序行为显式且可复现。详见 [C 接口文档](interfaces/c_api_zh.md)。
-
-## 代码风格指南
-
-### 总体原则
-
-- 使用C++17标准
-- 遵循项目现有的代码风格
-- 使用 `clang-format` 自动格式化代码
-
-### 命名规范
-
-#### 类名
-
-- 使用 `PascalCase`（大驼峰）
-- 示例：`Crystal`, `ServerImpl`, `ConfigManager`
-
-```cpp
-class Crystal {
-  // ...
-};
-
-class ServerImpl {
-  // ...
-};
-```
-
-#### 函数名
-
-- 使用 `PascalCase`（与类方法一致）
-- 示例：`CreatePrism()`, `GetResults()`, `CommitConfig()`
-
-```cpp
-class Server {
- public:
-  void CommitConfig(const std::string& config);
-  std::vector<Result> GetResults();
-};
-```
-
-#### 变量名
-
-- 使用 `snake_case`（小写下划线）
-- 成员变量可以加后缀 `_`（如 `server_`, `config_`）
-- 示例：`ray_num`, `max_hits`, `img_buffer_`
-
-```cpp
-int ray_num = 1000000;
-size_t max_hits_ = 7;
-float* img_buffer_ = nullptr;
-```
-
-#### 常量名
-
-- 使用 `k` 前缀 + `PascalCase`
-- 示例：`kDefaultSimulatorCnt`, `kMaxSceneCnt`
-
-```cpp
-static constexpr int kDefaultSimulatorCnt = 4;
-static constexpr size_t kMaxSceneCnt = 128;
-```
-
-#### 命名空间
-
-- 使用 `snake_case`
-- 所有代码使用 `lumice` 命名空间
-
-```cpp
-namespace lumice {
-
-class Crystal {
-  // ...
-};
-
-}  // namespace lumice
-```
-
-### 代码格式
-
-项目使用 `.clang-format` 配置文件，主要规则：
-
-- **缩进**: 2个空格
-- **行宽**: 120字符
-- **指针对齐**: 左对齐 (`int* ptr`)
-- **命名空间**: 不缩进
-- **括号风格**: Attach风格
-
-**格式化代码**：
-```bash
-./scripts/format.sh
-```
-
-### 文件组织
-
-#### 头文件
-
-- 使用 `.hpp` 扩展名
-- 包含头文件保护：
-```cpp
-#ifndef MODULE_FILE_H_
-#define MODULE_FILE_H_
-// ...
-#endif  // MODULE_FILE_H_
-```
-
-#### 源文件
-
-- 使用 `.cpp` 扩展名
-- 对应的头文件放在同一目录
-
-#### Include顺序
-
-1. 对应的头文件
-2. C++标准库
-3. 第三方库
-4. 项目其他头文件
-
-```cpp
-#include "config/config_manager.hpp"  // 1. 对应头文件
-
-#include <vector>                     // 2. C++标准库
-#include <memory>
-
-#include <nlohmann/json.hpp>           // 3. 第三方库
-
-#include "core/crystal.hpp"           // 4. 项目其他头文件
-#include "util/log.hpp"
-```
-
-### 注释规范
-
-#### 文件头注释（可选）
-
-```cpp
-/**
- * @file crystal.hpp
- * @brief Crystal geometry and operations
- */
-```
-
-#### 类注释
-
-```cpp
-/**
- * @brief Crystal geometry representation
- * @details This class represents a crystal with triangular mesh.
- *          It provides methods for creating crystals and querying geometry data.
- */
-class Crystal {
-  // ...
-};
-```
-
-#### 函数注释
-
-```cpp
-/**
- * @brief Create a hexagonal prism crystal
- * @param h Height-to-diameter ratio (h/a)
- * @param fd Face distance array [d1, d2, d3, d4, d5, d6], optional
- * @return A Crystal object representing the prism
- * @note Default face distances are [1,1,1,1,1,1] for regular hexagon
- */
-static Crystal CreatePrism(float h, const float* fd = nullptr);
-```
-
-#### 行内注释
-
-- 使用英文注释
-- 解释"为什么"而不是"是什么"
-- 复杂逻辑必须注释
-
-```cpp
-// Multiply by sqrt(3)/4 to convert face distance to actual distance
-x.mean *= math::kSqrt3_4;
-```
-
-## 如何添加新功能
-
-### 添加新的晶体类型
-
-#### 步骤
-
-1. **在 `crystal_config.hpp` 中添加参数结构**：
-```cpp
-struct NewCrystalParam {
-  Distribution param1_;
-  Distribution param2_[6];
-};
-```
-
-2. **更新 `CrystalParam` variant**：
-```cpp
-using CrystalParam = std::variant<PrismCrystalParam, PyramidCrystalParam, NewCrystalParam>;
-```
-
-3. **在 `crystal_config.cpp` 中实现JSON解析**：
-```cpp
-void from_json(const nlohmann::json& j, NewCrystalParam& p) {
-  // 解析逻辑
-}
-```
-
-4. **在 `crystal.hpp` 中添加创建方法**：
-```cpp
-static Crystal CreateNewType(float param1, const float* param2);
-```
-
-5. **在 `crystal.cpp` 中实现创建逻辑**：
-```cpp
-Crystal Crystal::CreateNewType(float param1, const float* param2) {
-  // 创建逻辑
-}
-```
-
-6. **更新配置文档**：在 `configuration.md` 中添加新类型的说明
-
-### 添加新的过滤器类型
-
-#### 步骤
-
-1. **在 `filter_config.hpp` 中添加参数结构**：
-```cpp
-struct NewFilterParam {
-  IdType target_id_;
-  float threshold_;
-};
-```
-
-2. **更新 `SimpleFilterParam` variant**：
-```cpp
-using SimpleFilterParam = std::variant<
-    NoneFilterParam, RaypathFilterParam, EntryExitFilterParam,
-    DirectionFilterParam, CrystalFilterParam, NewFilterParam>;
-```
-
-3. **在 `filter_config.cpp` 中实现JSON解析**：
-```cpp
-void from_json(const nlohmann::json& j, FilterConfig& f) {
-  // ...
-  else if (type == "new_filter") {
-    NewFilterParam p{};
-    j.at("target_id").get_to(p.target_id_);
-    j.at("threshold").get_to(p.threshold_);
-    f.param_ = p;
-  }
-}
-```
-
-4. **在 `filter.cpp` 中实现过滤逻辑**：
-```cpp
-bool Filter::ApplyNewFilter(const NewFilterParam& param, const RaySeg& ray) {
-  // 过滤逻辑
-}
-```
-
-5. **更新配置文档**：在 `configuration.md` 中添加新过滤器类型的说明
-
-### 添加新的消费者
-
-#### 步骤
-
-1. **继承 `IConsume` 接口**：
-```cpp
-#include "server/consumer.hpp"
-
-namespace lumice {
-
-class MyConsumer : public IConsume {
- public:
-  void Consume(const SimData& data) override {
-    // 处理数据
-  }
-
-  Result GetResult() const override {
-    // 返回结果
-    return MyResult{};
-  }
-};
-
-}  // namespace lumice
-```
-
-2. **在 `ServerImpl` 中注册消费者**：
-```cpp
-// 在 ServerImpl::Start() 或类似位置
-consumers_.emplace_back(std::make_unique<MyConsumer>());
-```
-
-3. **更新文档**：在 `architecture.md` 中添加消费者说明
-
-### 添加新的配置类型
-
-#### 步骤
-
-1. **定义配置结构体**：
-```cpp
-struct MyConfig {
-  IdType id_;
-  // 其他字段
-};
-```
-
-2. **实现JSON序列化**：
-```cpp
-void to_json(nlohmann::json& j, const MyConfig& c);
-void from_json(const nlohmann::json& j, MyConfig& c);
-```
-
-3. **在 `ConfigManager` 中添加管理**：
-```cpp
-struct ConfigManager {
-  std::map<IdType, MyConfig> my_configs_;
-  // ...
-};
-```
-
-4. **更新配置文档**：在 `configuration.md` 中添加新配置类型的说明
-
-## 测试指南
-
-### 单元测试
-
-#### 测试框架
-
-项目使用GoogleTest框架进行单元测试。
-
-#### 编写测试
-
-1. **创建测试文件**：
-   - 位置：`test/` 目录
-   - 命名：`test_*.cpp`
-
-2. **测试结构**：
-```cpp
-#include <gtest/gtest.h>
-#include "core/crystal.hpp"
-
-using namespace lumice;
-
-TEST(CrystalTest, CreatePrism) {
-  auto crystal = Crystal::CreatePrism(1.3);
-  EXPECT_GT(crystal.TotalTriangles(), 0);
-  EXPECT_GT(crystal.TotalVertices(), 0);
-}
-
-TEST(CrystalTest, CreatePyramid) {
-  auto crystal = Crystal::CreatePyramid(0.1, 1.2, 0.5);
-  EXPECT_GT(crystal.TotalTriangles(), 0);
-}
-```
-
-3. **测试Fixture**：
-```cpp
-class CrystalTest : public ::testing::Test {
- protected:
-  void SetUp() override {
-    crystal_ = Crystal::CreatePrism(1.3);
-  }
-
-  Crystal crystal_;
-};
-
-TEST_F(CrystalTest, GetTriangleVtx) {
-  const auto* vtx = crystal_.GetTriangleVtx();
-  ASSERT_NE(vtx, nullptr);
-}
-```
-
-#### 运行测试
+先构建测试，再按决策需要选择 scope：
 
 ```bash
-# 使用构建脚本
-./scripts/build.sh -t release
-
-# 或手动运行
-cd build/cmake_build/static
-ctest
+LUMICE_SKIP_GUI_TESTS=1 ./scripts/build.sh -gtj release
+./scripts/test.sh quick   # 验证刚做的改动
+./scripts/test.sh full    # 更宽本地 sweep，含 GUI real-timing pool
+./scripts/test.sh pr      # PR 前形态，含 shared-lib slow E2E
 ```
 
-### GUI 测试
-
-项目使用 [ImGui Test Engine](https://github.com/ocornut/imgui_test_engine) 进行 GUI 自动化测试。测试在隐藏窗口模式下运行，覆盖控件交互和视觉回归。
-
-#### 运行 GUI 测试
+Python 直接入口：
 
 ```bash
-# 构建并运行所有测试（单元测试 + GUI 测试）
-./scripts/build.sh -gtj release
+pytest -v                 # fast 子集，与 CI 一致
+pytest -v -m ''           # 完整 E2E 集
+pytest -v -m slow         # slow；先运行 ./scripts/build.sh -sj release
 ```
 
-#### 测试结构
+命令退出码才是 pass/fail 判据。没有 `pipefail` 时不要把测试命令 pipe 给 `tail`；构建失败后也不得用旧二进制的结果推断新代码通过。
 
-GUI 测试位于 `test/gui/`，按优先级组织：
+### 新测试放在哪里
 
-- **Smoke 测试**：基本应用状态验证
-- **P0（文件操作）**：New、Save/Open 往返、Run/Stop UI
-- **P1（CRUD）**：晶体/过滤器增删（含确认弹窗）
-- **P2（参数）**：镜头切换、dirty 状态检测
-- **截图测试**：FBO 截图捕获 + PSNR 比对
-- **视觉回归测试**：Crystal preview（Prism/Pyramid、线框/隐藏线/着色）和 Render preview 数据正确性
+先按验证目的分类：
 
-#### 编写 GUI 测试
+| 命题 | 位置 / target |
+|---|---|
+| 一个纯 unit | `test/unit-correctness/` |
+| 两个以上 unit 协作、无需 live frame/input | `test/composition-correctness/` |
+| backend 等价 | `test/parity-cross-backend/` |
+| 闭式或 analytic oracle | `test/golden-analytic/` |
+| CLI / full-stack 行为 | `test/e2e-correctness/` |
+| 吞吐闸 | `test/performance/` |
+| rendered frame 或合成 GUI input | `test/gui/` / `gui_test` |
+| 某个已逃逸缺陷 | `test/regression-sentinel/` |
 
-GUI 测试采用 GuiFunc（主线程）+ TestFunc（测试线程）模式：
+对 `src/gui/`：
 
-```cpp
-ImGuiTest* t = IM_REGISTER_TEST(engine, "category", "test_name");
-t->GuiFunc = [](ImGuiTestContext* ctx) {
-  // 在主线程运行 — 可安全执行 GL 调用
-};
-t->TestFunc = [](ImGuiTestContext* ctx) {
-  // 在测试线程运行 — 驱动 UI 交互
-  ctx->ItemClick("##TopBar/New");
-  IM_CHECK(gui::g_state.is_dirty == false);
-};
-```
+- 一个 unit 的纯逻辑：`gui_unit_test`（header-only 则可进 `unit_correctness_test`）；
+- 多个 GUI unit 协作、无需 frame：`composition_correctness_test`；
+- 需要 rendered frame 或 `ImGuiTestContext`：`gui_test`。
 
-#### 视觉回归参考图片
+不要把一次失败输出直接覆盖 reference image。按 `testing/testing-architecture_zh.md` 中登记的 regeneration workflow 与 full-suite 采样规则重拍。
 
-参考图片位于 `test/gui/references/`。更新流程：
-1. 运行 `./scripts/build.sh -gtj release` 生成新截图
-2. 将更新后的图片拷贝到 `test/gui/references/`
-3. 重新构建并验证 PSNR = inf（像素一致）
+## 7. Policy 检查
 
-> **注意**：参考图片在 macOS + Apple Silicon 上生成，跨平台 PSNR 可能有差异。
-
-#### 测试最佳实践
-
-- **测试命名**：`TestSuiteName_TestCaseName`
-- **测试独立性**：每个测试应该独立，不依赖其他测试
-- **测试数据**：使用固定数据或随机种子确保可复现
-- **断言选择**：
-  - `EXPECT_*`: 测试失败继续执行
-  - `ASSERT_*`: 测试失败立即停止
-
-### E2E 测试
-
-端到端测试验证完整的 CLI 模拟管线，从配置解析到图像输出。
-
-#### 框架
-
-- **Python**：pytest + Pillow（图像比较）
-- **位置**：`test/e2e-correctness/`（测试本体）；`test/e2e/` 现在只存放各层共用的 fixture，
-  见 `test/e2e/README.md`
-
-#### 测试结构
-
-```
-test/e2e-correctness/            # 测试本体（独立顶层目录）
-├── test_smoke.py             # 冒烟测试（PSNR 图像验证）
-├── test_cli.py                # CLI 行为
-├── ...                          # 其它正确性测试 — 见 doc/testing/testing-architecture.md §1.4
-└── references/                  # 参考输出图片（*.jpg）
-
-test/e2e/                         # 共用 fixture（独立顶层目录）
-├── configs/                      # 各层共用的场景 JSON 配置
-└── runner.py, base.py, ...       # 共用 fixture — 见 test/e2e/README.md
-```
-
-#### 运行 E2E 测试
+修改结构或边界时运行 whole-tree policy：
 
 ```bash
-# 需要已构建的二进制文件 build/cmake_install/static/Lumice
-pytest -v           # fast 子集（由 pyproject.toml 的 addopts 钉住；与 CI 一致）
-pytest -v -m ''      # 全量
+python3 scripts/check_policies.py
 ```
 
-#### 图像验证
-
-E2E 冒烟测试使用 PSNR（峰值信噪比）将输出图像与参考图像进行比较：
-- 参考图片存放在 `test/e2e-correctness/references/*.jpg`
-- PSNR 阈值：按 `min_psnr - 3 dB`（3 次参考运行取最小值，向 0.5 dB 精度取整）逐个输出标定 —
-  现行数值与标定历史见 `test/e2e-correctness/test_smoke.py` 的 `PSNR_THRESHOLDS` 字典及其逐条注释
-- 更新参考图片：使用测试配置运行 CLI 模拟，替换参考文件
-
-#### 添加新的 E2E 测试
-
-1. 在 `test/e2e/configs/` 中创建配置 JSON
-2. 使用新配置运行 CLI 生成参考图像
-3. 将参考图像保存到 `test/e2e-correctness/references/`
-4. 在 `test_smoke.py` 或新测试文件中添加测试用例
-
-## 调试技巧
-
-### 日志系统
-
-项目使用 [spdlog](https://github.com/gabime/spdlog) 作为日志后端，通过 `util/log.hpp` 提供便捷宏。
-
-#### 日志级别
-
-- `TRACE` / `VERBOSE`: 最详细的跟踪信息
-- `DEBUG`: 调试信息
-- `INFO`: 一般信息（默认级别）
-- `WARNING`: 警告信息
-- `ERROR`: 错误信息
-- `CRITICAL` / `FATAL`: 严重错误信息
-
-#### 使用日志
-
-```cpp
-#include "util/log.hpp"
-
-LOG_DEBUG("Debug message: {}", value);
-LOG_VERBOSE("Verbose message");
-LOG_INFO("Info message");
-LOG_WARNING("Warning message");
-LOG_ERROR("Error message: {}", error_str);
-```
-
-日志使用 [fmt](https://fmt.dev/) 格式化语法（`{}` 占位符），而非 `printf` 风格的 `%d`/`%s`。
-
-#### 类级别日志
-
-对于需要区分来源的日志，可使用命名 logger：
-
-```cpp
-#include "util/log.hpp"
-
-class MyClass {
-  static auto logger = lumice::GetLogger("MyClass");
-
-  void DoWork() {
-    logger->info("Working on task {}", task_id);
-    logger->debug("Detail: {}", detail);
-  }
-};
-```
-
-#### 设置日志级别
-
-日志级别可通过 `lumice::SetLogLevel()` 在程序中设置：
-
-```cpp
-#include "util/logger.hpp"
-
-// 全局 logger 首次访问时自动以 kInfo 级别初始化，无需显式调用。
-lumice::GetGlobalLogger().SetLevel(lumice::LogLevel::kDebug);  // 设置为 debug 级别
-```
-
-### 调试工具
-
-#### GDB/LLDB基本命令
+pre-commit 会运行格式检查与 diff-scoped gates，也可直接调用：
 
 ```bash
-# 启动调试
-lldb ./build/Debug/static/bin/Lumice
-
-# 设置断点
-(lldb) breakpoint set --file crystal.cpp --line 100
-(lldb) b crystal.cpp:100
-
-# 运行程序
-(lldb) run -f examples/config_example.json
-
-# 查看变量
-(lldb) print variable_name
-(lldb) p variable_name
-
-# 查看调用栈
-(lldb) bt
-
-# 单步执行
-(lldb) step      # 进入函数
-(lldb) next      # 下一行
-(lldb) continue  # 继续执行
+python3 scripts/check_new_refs.py --staged
+python3 scripts/check_new_gui_tests.py --staged
+python3 scripts/check_loop_fatal_asserts.py --staged
 ```
 
-#### Valgrind内存检查（Linux）
+用 `./scripts/install-hooks.sh` 一次性安装仓库 hook。不要绕过失败 hook，应修正根因。
+
+## 8. 调试与性能分析
+
+用 `./scripts/build.sh -gj debug` 构建 debug flavor。可执行文件安装到 `build/cmake_install/static/`，compiler output 保留在 `build/Debug/static/`。
+
+优先步骤：
+
+- CLI 用 `-v` 或 `-d`，日志在 stderr；
+- 间歇性问题先画完整数据流，对 silent return 加可观测性，再改行为；
+- parity 红先逐阶段比两条路，定位第一个分叉点；
+- GPU 改动按 reference machine 协议验证，不从没有该 backend 的 host 外推；
+- 按平台和缺陷形态使用 ASan/UBSan、LLDB/GDB、Instruments 或 `perf`。
+
+性能结论必须来自重新构建的二进制、正确性 sanity gate、空闲参照机和 `testing/performance-testing_zh.md` 指定的 baseline。
+
+## 9. 文档与贡献
+
+本地生成 Doxygen：
 
 ```bash
-valgrind --leak-check=full ./build/Debug/static/bin/Lumice -f examples/config_example.json
+doxygen .doxygen-config
 ```
 
-#### 性能分析
+输出在 `doc/api/html/`；生成文档不替代稳定 capability 文档。
 
-```bash
-# 使用 perf (Linux)
-perf record ./build/cmake_install/static/Lumice -f examples/config_example.json
-perf report
+开 PR 前：
 
-# 使用 Instruments (macOS)
-instruments -t "Time Profiler" ./build/cmake_install/static/Lumice -f examples/config_example.json
-```
-
-### 常见问题排查
-
-#### 编译错误
-
-1. **找不到头文件**：
-   - 检查 `CMakeLists.txt` 中的包含路径
-   - 检查头文件路径是否正确
-
-2. **链接错误**：
-   - 检查库是否正确链接
-   - 检查库路径是否正确
-
-3. **C++17特性不支持**：
-   - 检查编译器版本
-   - 检查CMake配置中的C++标准设置
-
-#### 运行时错误
-
-1. **段错误（Segmentation Fault）**：
-   - 使用GDB/LLDB调试
-   - 检查空指针访问
-   - 检查数组越界
-
-2. **配置解析错误**：
-   - 检查JSON格式是否正确
-   - 启用详细日志查看错误信息
-   - 参考配置文档验证配置项
-
-3. **内存泄漏**：
-   - 使用Valgrind检查
-   - 检查资源是否正确释放
-
-#### 性能问题
-
-1. **运行缓慢**：
-   - 检查是否使用了Debug版本（应使用Release版本）
-   - 使用性能分析工具定位瓶颈
-
-2. **内存占用高**：
-   - 检查是否有内存泄漏
-   - 检查数据结构是否合理
-   - 考虑使用对象池减少分配
-
-## 贡献指南
-
-### 代码提交流程
-
-1. **创建分支**：
-   ```bash
-   git checkout -b feature/my-feature
-   ```
-
-2. **编写代码**：
-   - 遵循代码风格指南
-   - 添加必要的测试
-   - 更新相关文档
-
-3. **提交代码**：
-   ```bash
-   git add .
-   git commit -m "feat: add new feature"
-   ```
-
-4. **推送并创建PR**：
-   ```bash
-   git push origin feature/my-feature
-   ```
-
-### Pull Request规范
-
-- **标题**：简洁描述变更内容
-- **描述**：详细说明变更原因和影响
-- **测试**：说明如何测试变更
-- **文档**：更新相关文档（如需要）
-
-### 代码审查要求
-
-- 代码风格符合项目规范
-- 有适当的测试覆盖
-- 文档已更新（如需要）
-- 没有引入新的警告或错误
+1. 运行针对性检查；改动触及 simulator、C API 或 shared-library 路时运行 `./scripts/test.sh pr`；
+2. 检查完整 diff 与 staged set；
+3. 永久 prose 不引用 ignored working notes；
+4. 按 `CONTRIBUTING.md` 执行分支、PR 与发布流程。
 
 ## 相关文档
 
-- [系统架构文档](architecture_zh.md) - 了解系统设计
-- [配置文档](configuration_zh.md) - 配置格式说明
-- [C接口文档](interfaces/c_api_zh.md) - C接口使用说明
-- [文档索引](README_zh.md) - 所有文档的导航
+- [系统架构](architecture_zh.md)
+- [配置参考](configuration_zh.md)
+- [测试架构](testing/testing-architecture_zh.md)
+- [C API 参考](interfaces/c_api_zh.md)
+- [环境变量策略](env-var-policy.md)
+- [贡献指南](../CONTRIBUTING.md)

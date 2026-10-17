@@ -60,7 +60,7 @@ The most familiar halo: a bright ring at exactly 22° from the sun, caused by li
 }
 ```
 
-The three `uniform` distributions (`mean=0, std=360` on each Euler angle) make the orientation isotropic on the sphere — the sampler recognises this as the canonical full-sphere case (`AxisDistribution::IsFullSphereUniform` in `src/core/math.cpp`). Without `axis`, the crystal is locked to a single fixed orientation and you get arcs/spots, not a closed 22° ring. The single scattering entry with `prob: 0.0` makes every outgoing ray exit (single-scatter recipe); see Recipe 3 for the multi-scatter form.
+The three `uniform` distributions (`mean=0, std=360` on each Euler angle) make the orientation isotropic on the sphere. `AxisDistribution::IsFullSphereUniform` in `src/core/random.cpp` recognizes the case, and `lat_path::SelectLatPath` in `src/core/shared/lat_path_selection.hpp` selects the shared full-sphere path used by all backends. Without `axis`, the crystal is locked to a single fixed orientation and you get arcs/spots, not a closed 22° ring. The single scattering entry with `prob: 0.0` makes every outgoing ray exit (single-scatter recipe); see Recipe 3 for the multi-scatter form.
 
 Run: `./build/cmake_install/static/Lumice -f recipes/22-halo.json -o /tmp/out`.
 
@@ -73,8 +73,6 @@ For the prism field semantics, see [`../configuration.md`](../configuration.md) 
 Bright spots ~22° to the **left and right** of the sun, caused by hexagonal **plate** crystals oriented with their c-axis vertical (basal faces horizontal). They are common around sunrise/sunset when the sun is low.
 
 **Expected output**: two concentrated bright patches at the sun's altitude, on each side at ~22° azimuth. Use `sun.altitude=10` for a textbook view.
-
-> 📷 待补：Recipe 2 reference render (registered in `progress.md` placeholder list — to be folded into SUMMARY.md "待补充清单" at closeout).
 
 **Config** (`recipes/sun-dogs.json`, inline):
 
@@ -128,9 +126,9 @@ For the full distribution syntax (`gauss`, `uniform`, `laplacian`, `zigzag`), se
 
 ## Recipe 3 — 44° parhelia from multiple scattering
 
-> **CLI only — multi-layer scattering requires JSON config; see [`05-faq.md`](05-faq.md) §"GUI vs JSON capabilities".**
+The GUI can build the same scene with **+ Layer**; the JSON below is the reproducible CLI form.
 
-When light is scattered twice by parallel plate crystals, a fainter ring appears at ~44° from the sun (twice the prism deviation). Reproducing it requires **two scattering layers**, each independently configurable — something only the JSON config supports.
+When light is scattered twice by parallel plate crystals, a fainter ring appears at ~44° from the sun (twice the prism deviation). Reproducing it requires **two scattering layers**, each independently configurable in either the GUI or JSON.
 
 **Expected output**: a dim outer ring at ~44°, in addition to the bright 22° halo (from single scattering). Reference renders:
 

@@ -82,7 +82,7 @@ mkdir -p /tmp/lumice-smoke
 | configure 在 `Python3` 处失败 | `PATH` 上没有 Python 3 解释器 | 安装 Python 3——每次构建都靠它嵌入字体 |
 | GUI configure 在 GLFW / nfd 处失败（Linux） | 缺 X11 / OpenGL / GTK 3 开发头文件 | 按前置依赖表安装，或去掉 `-g` 不构建 GUI |
 | GUI 启动时报 GLFW / OpenGL 错误退出 | 没有显示器，或 loader 路径上没有 OpenGL 3.3 驱动 | 在有桌面会话的机器上运行；无显示器的机器改用 CLI |
-| `LUMICE_SKIP_GUI_TESTS` 在 CI 上不生效 | 配置缓存陈旧 | `./scripts/build.sh -k release` 清理重建 |
+| 无桌面机器无法启动 `gui_test` | 没有显示服务器 | 本次构建脚本设 `LUMICE_SKIP_GUI_TESTS=1`；若本来就要执行 GUI 测试，则按测试文档配置 Xvfb / 软件渲染器 |
 
 ## 延伸阅读
 

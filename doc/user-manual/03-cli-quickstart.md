@@ -45,7 +45,7 @@ Two streams, on purpose: the product lines — `Saved:` / `Stats:` here, the `[B
 ## 3. Verbose and debug modes
 
 ```bash
-./build/cmake_install/static/Lumice -f config.json -v   # trace-level logs
+./build/cmake_install/static/Lumice -f config.json -v   # verbose-level logs
 ./build/cmake_install/static/Lumice -f config.json -d   # debug-level logs
 ```
 
@@ -81,8 +81,16 @@ Subcommands:
 Options for render (the default subcommand):
   -f <file>          Specify the configuration file (required)
   -o <dir>           Output directory for rendered images (default: current directory)
-  --format <fmt>     Output image format: jpg or png (default: jpg)
-  --quality <1-100>  JPEG quality (default: 95, ignored for PNG)
+  --format <fmt>     Output format: jpg, png, or npy (default: jpg). npy writes each
+                     renderer's unexposed linear XYZ accumulator as float32 (H, W, 3)
+                     plus an img_XX.json sidecar with exposure scalars; a raypath-color
+                     composite, when configured, is still written as jpg.
+  --quality <1-100>  JPEG quality (default: 95, ignored for PNG and npy)
+  --raw-normalization <raw|normalized>
+                     With --format npy only: write the accumulator as-is (raw), or
+                     multiplied by the absolute-mode exposure scale at intensity_factor 1
+                     (normalized). Overrides raw_export.normalization in the config.
+                     Default: raw.
   --seed <N>         Fix the simulation's random seed (a positive integer) so two runs
                      of the same config are the same run; this also sizes the pool to
                      one worker (a seeded run is single-threaded by contract).
@@ -99,7 +107,7 @@ Options for render (the default subcommand):
                      a config-file field: a config travels between machines and a
                      worker count should not travel with it. Ignored on a GPU route
                      (single engine).
-  -v                 Verbose output (trace level logging)
+  -v                 Verbose output (verbose-level logging)
   -d                 Debug output (debug level logging)
   -h, --help         Show this help message and exit
 
@@ -107,6 +115,7 @@ Examples:
   ./build/cmake_install/static/Lumice -f config.json
   ./build/cmake_install/static/Lumice -f config.json -o /tmp/output
   ./build/cmake_install/static/Lumice -f config.json --format png
+  ./build/cmake_install/static/Lumice -f config.json --format npy --raw-normalization normalized
   ./build/cmake_install/static/Lumice -f config.json --quality 80
   ./build/cmake_install/static/Lumice -f config.json --seed 7
   ./build/cmake_install/static/Lumice -f config.json --backend metal
@@ -135,7 +144,7 @@ Options:
                      'auto' and 'cpu' both select the CPU route today; 'metal'
                      falls back to CPU if unavailable. The LUMICE_TRACE_BACKEND
                      env var, if set, still overrides this (debug/CI only).
-  -v                 Verbose output (trace level logging)
+  -v                 Verbose output (verbose-level logging)
   -d                 Debug output (debug level logging)
   -h, --help         Show this help message and exit
 
@@ -211,7 +220,7 @@ Options:
                      a config-file field: a config travels between machines and a
                      worker count should not travel with it. Ignored on a GPU route
                      (single engine).
-  -v                 Verbose output (trace level logging)
+  -v                 Verbose output (verbose-level logging)
   -d                 Debug output (debug level logging)
   -h, --help         Show this help message and exit
 
@@ -254,7 +263,7 @@ The first gives `outcome: "discovered"` with one `closed` component. The other t
 Notes:
 
 - `-f` is the only required flag. Without it, Lumice exits non-zero with a usage hint.
-- `--format png` switches to lossless PNG; `--quality` is ignored in that case.
+- `--format png` switches to lossless PNG; `--quality` is ignored for PNG and NPY. `--format npy` writes each renderer's unexposed linear XYZ accumulator plus an `img_XX.json` metadata sidecar. `--raw-normalization normalized` applies the absolute-mode exposure normalization before writing, without applying display EV or tone mapping; the full contract is under `raw_export` in [`../configuration.md`](../configuration.md).
 - `--backend <name>` asks for a trace backend; whether the run actually got it is on the `Stats:` line: `backend=<cpu|metal|cuda>` is what the run executed on, and `fell_back=true` means a GPU backend was obtained and then lost or refused (a device failure mid-run, or a config it could not serve) so the rest of the run went on the CPU path — the reason is a `WARN` on stderr. A backend this build or machine cannot provide at all (`--backend cuda` on a Mac, say) is not a fallback: the run is sized for the CPU route from the start and reads `backend=cpu, fell_back=false`, with a warning at startup. The `benchmark` subcommand's `[BENCHMARK]` JSON carries the same two fields. Multi-renderer configs (the GUI's exported documents carry two) run on the GPU route as one session — see [`../configuration.md`](../configuration.md#multiple-renderers-and-the-gpu-route).
 - `--workers <N>` overrides the automatic worker count (one per physical core on Linux/macOS, one per logical core on Windows, each capped at a measured per-platform ceiling; the cap applies to the automatic value only, never to an `N` you name). It is a switch rather than a config field on purpose: a worker count describes the machine, and a config file travels between machines. An illegal value (`0`, negative, non-numeric) exits non-zero rather than falling back to the default.
 - `Lumice analyze -f <config>` asks a question of the scene rather than rendering it: which raypath chains delivered energy into a region of the sky, as CSV on stdout (or `--csv <path>`). The config is the scene; the region, the symmetry the rows are merged under, the ray budget and the seed are all options, never config fields — so one config can be asked several questions from a script, and a `--seed` makes any of them reproducible. A scene whose `ray_num` is `"infinite"` runs until Ctrl-C and still writes its result; with `--csv` the file is rewritten atomically every second, so it is complete whenever it is read. Progress goes to stderr; stdout is the CSV alone.

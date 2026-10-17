@@ -62,11 +62,11 @@ The GUI wraps the same engine as the CLI but is **not a complete superset** of J
 | Feature | GUI | JSON / CLI | Notes |
 |---------|-----|------------|-------|
 | Multiple `render` entries | ❌ (only one preview) | ✅ | A JSON config can declare any number of `render: [...]` entries; CLI emits one image per entry. |
-| Multi-layer scattering (≥ 2 `scattering` entries) | ❌ | ✅ | Recipe 3 in [`04-recipes.md`](04-recipes.md) requires JSON. |
+| Multi-layer scattering (≥ 2 `scattering` entries) | ✅ | ✅ | The GUI's `+ Layer` control edits the same ordered layer model that JSON stores in `scene.scattering`. |
 | Lens projection switch | ✅ (Floating Lens Bar) | ✅ (`render[].lens.type`) | GUI re-projects on the fly; JSON sets it once per render entry. |
 | Overlay grid / circles / reference points | ✅ (live) | ✅ (`render[].grid`) | Both sides draw them. The GUI saves every overlay switch, colour and angle list into the `.lmc`, and `File ▶ Export Config` writes them out as `render[].grid`; the CLI composites the same lines, circles, labels and markers onto its output image (since v4.18). See [`../configuration.md`](../configuration.md) "grid". |
 | Crystal preview style (wireframe / hidden line / x-ray / shaded) | ✅ | ❌ | Pure GUI state; not part of the simulation. |
-| Save/load `.lmc` | ✅ | ✅ | The `.lmc` is plain JSON; both sides read the same file. |
+| Save/load `.lmc` | ✅ | ❌ | `.lmc` is the GUI's binary project container (JSON document state plus an optional preview payload). Export **Config JSON** for the CLI. |
 
 Rule of thumb: **interactive exploration** in the GUI, **batch / reproducible runs** via JSON + CLI.
 
@@ -75,18 +75,18 @@ Rule of thumb: **interactive exploration** in the GUI, **batch / reproducible ru
 A few JSON fields exist in the schema for forward compatibility but are not active in the current build. They are accepted by the parser and ignored by the engine, so they will not error — they just have no effect:
 
 - `render[].grid[*].width` — every grid entry's `width` is read, validated and round-tripped but changes no pixel; a line's thickness is derived from the projection (see [`../configuration.md`](../configuration.md) "What the four line families draw, and what they ignore"). The `grid` block itself IS rendered by the CLI — it used to be listed here as GUI-only, which stopped being true in v4.18.
-- Some `crystal[].shape` distribution fields under unusual combinations — see the `known_mismatch.md` registry maintained alongside the documentation tasks for the current set.
+- Shape distributions and `sync_group` are active engine inputs. Their supported forms and geometric boundary behavior are documented under `crystal[].shape` in [`../configuration.md`](../configuration.md).
 
 If you hit "I set X in the JSON and nothing happened", check this list first, then [`../configuration.md`](../configuration.md), then file an issue.
 
 ## 5. Where do output files go?
 
-- CLI: into the directory passed via `-o <dir>` (default: current working directory). One image per `render` entry, named `<render_id>.<format>` (default `jpg`, override with `--format png`).
-- GUI: rendered images stay in memory until you `File ▶ Export` them. The GUI never writes to disk on its own.
+- CLI: into the directory passed via `-o <dir>` (default: current working directory). For JPG/PNG, one image per `render` entry is named `img_<render-id padded to two digits>.<format>` — for example `img_01.jpg`. `--format npy` instead writes `img_XX.npy` plus an `img_XX.json` metadata sidecar per renderer; a configured color composite remains an image file.
+- GUI: rendered images stay in memory until you choose **Save ▶ Screenshot...** (or one of the panorama exports). The GUI never writes a rendered image on its own.
 
 ## 6. "My halo looks faint / noisy / wrong" — checklist
 
-1. **Faint?** Raise `scene.ray_num` (4× more rays = 2× cleaner image, roughly).
+1. **Faint?** First distinguish brightness from noise. In the default `relative` EV mode, adding rays should stabilize the image rather than systematically brighten it; raise EV if the exposure is too low. In `absolute` mode an undersampled scene can genuinely accumulate too little landed energy, so raising `scene.ray_num` may change both visibility and convergence.
 2. **Noisy?** Increase `scene.ray_num`, or narrow the wavelength band if the colour fringing dominates. If one halo's edge is rougher than the rest of the image (a faint halo next to bright ones), make sure `scene.ray_allocation` is `"adaptive"` — in the GUI that is Settings' `sim.ray_allocation`, default `adaptive`, switchable to `proportional`.
 3. **No halo at all?** Verify the camera points at the sun: set `render[].view.elevation` ≈ `scene.light_source.altitude` and `view.azimuth` ≈ `light_source.azimuth`.
 4. **Wrong shape?** Check `crystal[].axis` — random orientation gives circles; oriented plates give arcs and spots.
