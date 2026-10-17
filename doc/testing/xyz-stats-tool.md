@@ -168,8 +168,12 @@ luminance, not the exposure anchor.
 
 | Scene type | Timeout |
 |------------|---------|
-| Regular (7 scenes) | 60 s |
+| Regular (7 scenes) | 180 s |
 | `rp46`, `rp46_nof` | 90 s |
+
+The regular timeout is sized for the seeded (single-threaded) runs this tool
+makes: `multi_scatter` and `color` exceed the 60 s the unseeded runs used to
+need, so a tighter limit would truncate mid-convergence.
 
 The CLI materializes its export at ~1 s intervals while simulating, so on
 timeout the tool kills the subprocess and reads the last frame that reached
@@ -184,10 +188,16 @@ sky with no positive-Y samples) yields zero stats plus a stderr warning.
 Verified 2026-10-17 on macOS (Darwin 23.6.0, arm64), static release build of
 Lumice 4.7.3-dev, seed 7:
 
-- Single-scene smoke (`halo_22`): exit 0, schema as documented, percentiles
-  monotonic, `saturation_rate ∈ [0,1]`.
-- Full 9-scene sweep: see `summary.md` layout above; per-scene durations and
-  truncation flags as produced by that run.
+- All 9 scenes complete without truncation at the 180 s / 90 s tiers; per-scene
+  wall-clock ranges from ~8 s (`rp46`) to ~90 s (`color`, the slowest — which
+  is what the 180 s regular tier is sized against, see the timeout table).
+- Schema of every per-scene JSON matches this document; percentiles are
+  monotonic, `saturation_rate ∈ [0,1]`, `anchor_l99_sky > 0` on every scene
+  (including `ev_mode: absolute` ones — the anchor publishes unconditionally).
+- Truncation paths exercised by deliberately short timeouts: a kill after the
+  CLI's first ~1 s periodic save yields `"truncated": true` plus the last
+  frame's statistics; a kill before any save yields an error row and an empty
+  `renderers` array. Neither hangs or crashes the tool.
 
 Not covered by that verification: Windows/Linux runs, GPU-backend routes
 (the tool exercises whatever `--backend auto` selects), and multi-renderer
