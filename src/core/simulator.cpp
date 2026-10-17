@@ -665,8 +665,9 @@ std::vector<float> ComputeAdaptiveRayAllocationWeights(const std::vector<float>&
       continue;
     }
     const double share = raw[i] / total;
-    const double relative_floor = static_cast<double>(p[i]) / sum_p / kRayAllocationRelativeFloorRatio;
-    q[i] = static_cast<float>(std::max({ share, relative_floor, floor }));
+    // RED-STATE PROBE (reverted right after calibration): pure Neyman, the
+    // relative floor removed -- the starvation this file's e2e guard exists for.
+    q[i] = static_cast<float>(std::max({ share, floor }));
   }
   return q;
 }
