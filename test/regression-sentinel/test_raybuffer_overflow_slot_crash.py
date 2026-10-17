@@ -65,9 +65,11 @@ Runs fast (~1s per case) so it stays in the default `pytest -v` PR gate.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -77,6 +79,15 @@ from test.e2e.runner import find_lumice_binary, get_project_root
 # regime where the defect fired — plus one control above it.
 CRASHING_DISPATCH_SIZES = [8, 16, 24, 32]
 CONTROL_DISPATCH_SIZE = 48
+# The control arm runs a 10x smaller ray budget. Its proposition — a dispatch
+# above the clamp exits cleanly — is a property of the dispatch size, not of
+# the ray count (any non-zero ray count exercises the same 32-ray batch loop),
+# so the cut cannot weaken it; the crash sizes keep the calibrated 4e5 budget
+# their 8/8 detection-power measurement was taken at. The cut exists because
+# the control is measured dramatically more expensive than the crash sizes on
+# some runner tiers (~10x on a 2026-10-17 PR run) — a superlinearity the
+# crash sizes, which share the same scene and budget, do not show.
+CONTROL_RAY_NUM = 40_000
 
 
 def _run_with_dispatch_ray_num(dispatch_ray_num: int) -> subprocess.CompletedProcess:
@@ -89,8 +100,14 @@ def _run_with_dispatch_ray_num(dispatch_ray_num: int) -> subprocess.CompletedPro
     # file into whatever directory pytest was invoked from (the repo root, in
     # practice).
     with tempfile.TemporaryDirectory() as workdir:
+        config_path = cfg
+        if dispatch_ray_num == CONTROL_DISPATCH_SIZE:
+            config_path = Path(workdir) / "control_budget.json"
+            payload = json.loads(cfg.read_text(encoding="utf-8"))
+            payload["scene"]["ray_num"] = CONTROL_RAY_NUM
+            config_path.write_text(json.dumps(payload), encoding="utf-8")
         return subprocess.run(
-            [str(binary), "-f", str(cfg)],
+            [str(binary), "-f", str(config_path)],
             capture_output=True,
             text=True,
             timeout=300,
