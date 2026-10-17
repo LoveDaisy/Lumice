@@ -51,6 +51,8 @@ Two streams, on purpose: the product lines — `Saved:` / `Stats:` here, the `[B
 
 `-v` is roughly "show me the per-batch ray counts as they are produced"; `-d` adds extra diagnostics (RNG seeds, scattering layer dispatch). Use `-v` first; reach for `-d` only when chasing a bug.
 
+An explicit flag confirms itself at startup: right after the version banner, `-v` prints one INFO line (`Log level set to verbose`) and `-d` prints `Log level set to debug`. A default run prints neither, so the presence of the line is itself the observable difference a flag makes beyond its level's own messages.
+
 ## 4. All flags at a glance
 
 The CLI has four subcommands, `render`, `benchmark`, `analyze` and `raypath`. `render` is the default: `Lumice -f config.json` and `Lumice render -f config.json` are the same command, so every example above is a render. Each subcommand accepts only its own options; `Lumice <subcommand> -h` prints that subcommand's page.

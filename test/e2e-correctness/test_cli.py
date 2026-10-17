@@ -139,7 +139,7 @@ class TestCli(LumiceTestCase):
             self.assertNotIn("trace level logging", result.stdout, f"{args}: -v described as trace level")
 
     def test_v_and_d_flags_log_level_thresholds(self):
-        """The `-v`/`-d` log thresholds, observed black-box as far as stderr allows.
+        """The `-v`/`-d` log thresholds, observed black-box on stderr.
 
         Seam: CLI flag -> stderr log line. The log pattern's custom `%*` flag prints
         this repo's six-level short tag (T/D/V/I/W/E, src/util/spdlog_levels.hpp),
@@ -147,44 +147,66 @@ class TestCli(LumiceTestCase):
         one plain cheap render (`_cheap_halo_22_config`; level order
         trace(0) < debug(1) < verbose(2) < info(3), src/util/logger.hpp):
 
-          default  -- no `[D]`, no `[T]`: the INFO control arm;
-          `-v`     -- no `[D]`: a DEBUG or TRACE threshold would let the 350-odd
-                      `[D]` lines through, so the threshold sits strictly above
-                      DEBUG. That `-v` is VERBOSE and not merely INFO is NOT
-                      pinned, on purpose: the only `ILOG_VERBOSE` site in src/
-                      today (the dual-fisheye-orthographic overlap note,
-                      src/server/render.cpp) is dead on both production consume
-                      paths, so `-v` has no black-box witness that INFO would
-                      hide. When a live VERBOSE witness exists, add the `[V]`
-                      arm here;
-          `-d`     -- a `[D]` line appears AND no `[T]` line: threshold <= DEBUG
-                      and > TRACE, i.e. exactly DEBUG. The `[T]` half is not
+          default  -- no `[D]`, no `[T]`, and no level-confirmation line: the
+                      INFO control arm (the confirmation line fires only when
+                      a flag is given explicitly);
+          `-v`     -- no `[D]` (a DEBUG or TRACE threshold would let the
+                      350-odd `[D]` lines through) AND the parse-time line
+                      `[I] Log level set to verbose`: VERBOSE vs INFO is
+                      black-box distinguishable through the confirmation line.
+                      There is deliberately no `[V]`-tagged arm: the engine's
+                      only `ILOG_VERBOSE` site (the dual-fisheye-orthographic
+                      overlap note, src/server/render.cpp) became unreachable
+                      when both production consume paths grew early-return
+                      branches that pre-fill the projected data, and the
+                      adjudicated terminal state is zero engine-side VERBOSE
+                      sites -- the confirmation line is `-v`'s entire
+                      observable surface;
+          `-d`     -- a `[D]` line appears AND no `[T]` line (threshold <=
+                      DEBUG and > TRACE, i.e. exactly DEBUG) AND
+                      `[I] Log level set to debug`. The `[T]` half is not
                       vacuous -- the `ILOG_TRACE` sites (src/core/simulator.cpp
                       `SimulateOneWavelength` / `Run(backend)`) sit on the CPU
                       run path this render executes, as the `[D]` lines from the
                       same functions prove.
 
+        The confirmation lines are matched whole (timestamp, tag, wording), so
+        rewording one turns this red together with the doc sentences quoting
+        it (doc/user-manual/03-cli-quickstart.md §3).
+
         Together the `-v` and `-d` arms pin the pair as far as it is observable:
-        `-d` = DEBUG exactly, `-v` strictly above DEBUG. That ParseSharedOption
-        sets these levels is what the help text claims
-        (test_log_flag_help_rows_match_their_levels); this test is the behavior
-        half of that pair.
+        `-d` = DEBUG exactly, `-v` strictly above DEBUG plus its confirmation
+        line. That ParseSharedOption sets these levels is what the help text
+        claims (test_log_flag_help_rows_match_their_levels); this test is the
+        behavior half of that pair.
         """
         tag_line = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[([TD])\] ")
+        level_line = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[I\] Log level set to (\w+)$")
         cfg = _cheap_halo_22_config(self.output_dir)
         arms = {"default": [], "-v": ["-v"], "-d": ["-d"]}
         for label, flag in arms.items():
             result = self.run_lumice(["-f", str(cfg), "-o", self.output_dir] + flag)
             self.assertEqual(result.returncode, 0, f"{label}: rc={result.returncode}, stderr={result.stderr[:500]}")
             tags = {m.group(1) for line in result.stderr.splitlines() if (m := tag_line.match(line))}
+            levels = {m.group(1) for line in result.stderr.splitlines() if (m := level_line.match(line))}
             if label == "default":
                 self.assertNotIn("D", tags, f"default arm shows a [D] line -- the level is not INFO:\n{result.stderr[:500]}")
                 self.assertNotIn("T", tags, f"default arm shows a [T] line -- the level is not INFO:\n{result.stderr[:500]}")
+                self.assertEqual(
+                    levels,
+                    set(),
+                    f"default arm shows a level-confirmation line -- it must fire only on an explicit flag:\n{result.stderr[:500]}",
+                )
             elif label == "-v":
                 self.assertNotIn(
                     "D",
                     tags,
                     f"-v arm shows a [D] line -- -v set DEBUG (or TRACE), not VERBOSE:\n{result.stderr[:500]}",
+                )
+                self.assertEqual(
+                    levels,
+                    {"verbose"},
+                    f"-v arm must confirm exactly 'Log level set to verbose' -- without it VERBOSE vs INFO is indistinguishable:\n{result.stderr[:500]}",
                 )
             else:
                 self.assertIn("D", tags, f"-d arm shows no [D] line:\n{result.stderr[:500]}")
@@ -192,6 +214,11 @@ class TestCli(LumiceTestCase):
                     "T",
                     tags,
                     f"-d arm shows a [T] line -- -d set TRACE, not DEBUG:\n{result.stderr[:500]}",
+                )
+                self.assertEqual(
+                    levels,
+                    {"debug"},
+                    f"-d arm must confirm exactly 'Log level set to debug':\n{result.stderr[:500]}",
                 )
 
 
