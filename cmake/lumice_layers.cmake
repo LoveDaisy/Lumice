@@ -261,6 +261,7 @@ set(LUMICE_LAYER_engine_FILES
 set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
   raypath/path_feature_report.cpp
+  raypath/survey_report.hpp
   raypath/detail/diagnostic_sampler.cpp
   raypath/detail/diagnostic_sampler.hpp
   raypath/detail/feature_discovery.cpp
@@ -268,6 +269,10 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/input_assembly.cpp
   raypath/detail/input_assembly.hpp
   raypath/detail/json_values.hpp
+  raypath/detail/survey/evidence.hpp
+  raypath/detail/survey/survey_document.hpp
+  raypath/detail/survey/survey_json.cpp
+  raypath/detail/survey/survey_json.hpp
   raypath/detail/measure/declared_density.cpp
   raypath/detail/measure/declared_density.hpp
   raypath/detail/measure/fiber_quadrature.cpp

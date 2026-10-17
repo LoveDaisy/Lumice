@@ -324,7 +324,11 @@ add_executable(unit_correctness_test
   # schema3 report (666.3): the v3 serializer — the ledger-reconciled emission (top-level homes
   # both ways, the 34-field record checklist on a maximal record), the derived-bucket segments,
   # the outcome grammar and unconditional ruling, the non-finite spellings, the self-description.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_json_v3.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_json_v3.cpp"
+  # The path survey: the schema-4 document family — the evidence-state vocabulary (four-value
+  # closed enum + the default finite-with-coverage rule) and the six-kind object registry, on
+  # hand-built documents.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_json_v4.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE
