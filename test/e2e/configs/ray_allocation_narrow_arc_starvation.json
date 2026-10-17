@@ -100,7 +100,7 @@
       "spectrum": "D65"
     },
     "max_hits": 8,
-    "ray_num": 2000000,
+    "ray_num": 1000000,
     "ray_allocation": "adaptive",
     "scattering": [
       {
