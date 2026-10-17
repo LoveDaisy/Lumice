@@ -2038,7 +2038,10 @@ step:
 
 1. **On a timeout red, read that run's `--durations=20` output before doing anything else.** It
    ranks the slowest cases in the run that just failed, which is the only evidence that can turn
-   "the suite is too slow" into "these specific cases are why."
+   "the suite is too slow" into "these specific cases are why." The full per-test report survives
+   the kill itself: the plugin rewrites its JSON atomically after every finished test
+   (`scripts/duration_report_plugin.py`), so a run the step budget shot down still leaves the
+   ranked evidence behind.
 2. **Do not rerun as a first response.** A rerun that happens to go green does not tell you the
    budget has headroom — it tells you this run's noise didn't land on the wrong side of a margin
    that is already gone. Rerunning without reading the durations is the failure mode this section
@@ -2165,7 +2168,13 @@ when `BUILD_GUI=ON`. Their registered raw phases are `build` and `ctest`, with a
 aggregate. `e2e-test` registers the whole `e2e` phase. The three `e2e-slow` legs register the
 parallel correctness pool and, on legs that have it, the serial performance pool plus their sum.
 All raw JUnit/XML/JSON and `LastTest.log` files are uploaded with `if: always()` so a red remains
-diagnosable.
+diagnosable. `e2e-test` additionally runs a **shadow bench probe** (`scripts/run_bench_probe.py`)
+before the suite: a fixed 2M-ray single-pass `Lumice benchmark` — the same measurement the gh-pages
+benchmark history records — whose `probe.json` (uploaded `if: always()`) records which compute tier
+that run's suite is about to execute on. Shadow means it never fails the job — an unusable probe is
+a `::warning` — and nothing consumes `probe.json` to decide pass/fail; it exists so the step's
+budget can eventually be read as workload (seconds × tier) instead of raw wall clock across the
+hosted-runner pool's discrete CPU tiers, a change that will be its own reviewed decision.
 
 **Not covered:** the CI `gui_test` visual step (its selected groups run after the main CTest phase),
 `windows-shared-export`'s slow files, and the `policy` job's script unit tests. A new pytest or CTest

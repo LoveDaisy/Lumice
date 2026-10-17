@@ -327,9 +327,14 @@ deleting its line, and an entry whose edge is gone fails the check.
   cumulative growth when every case remains below 60 s; missing/unknown/duplicate phase reports and
   an over-limit sum are red. The build matrix emits CTest JUnit plus invocation-scoped XML for each
   `gtest-duration`-labelled binary (`collect_ctest_durations.py` reconciles metadata, JUnit and XML),
-  while pytest emits case/fixture reports through `duration_report_plugin.py`;
+  while pytest emits case/fixture reports through `duration_report_plugin.py`
+  (rewritten atomically after every finished test, so a budget-killed run still
+  leaves its partial report);
   `measure_ci_phase.py` records the real command's monotonic wall clock
-  and exit code. Raw reports are uploaded on every outcome. This runtime input does not exist at
+  and exit code. The `e2e-test` job also runs a shadow bench probe
+  (`scripts/run_bench_probe.py`: fixed 2M-ray single-pass benchmark) that
+  records the runner's compute tier per run — evidence for reading the step
+  budget as workload, not a gate. Raw reports are uploaded on every outcome. This runtime input does not exist at
   pre-commit time, so the gate is not part of `check_policies.py`. There is no per-test/env/inline
   exemption. The sole exception is the maintainer-authorized, one-run cold-build protocol for phase
   budgets containing `build`; it never excuses test runtime or correctness, and a PR whole-run/job
