@@ -276,6 +276,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/survey/survey_document.hpp
   raypath/detail/survey/survey_json.cpp
   raypath/detail/survey/survey_json.hpp
+  raypath/detail/survey/survey_t1.cpp
+  raypath/detail/survey/survey_t1.hpp
   raypath/detail/measure/declared_density.cpp
   raypath/detail/measure/declared_density.hpp
   raypath/detail/measure/fiber_quadrature.cpp
