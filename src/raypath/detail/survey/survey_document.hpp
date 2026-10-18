@@ -66,13 +66,18 @@ inline bool SurveyObjectKindFromName(std::string_view name, SurveyObjectKind* ou
   return false;
 }
 
-// The registry itself, registration order. The serializer's coverage row and the assembly's
-// unevaluated entries read this rather than keeping their own copies.
+// The registry itself, registration order — projected from the name table above, of which it is
+// not a second copy. The serializer's coverage row and the assembly's unevaluated entries read
+// this rather than keeping their own copies.
 inline const std::vector<SurveyObjectKind>& AllSurveyObjectKinds() {
-  static const std::vector<SurveyObjectKind> kKinds = {
-    SurveyObjectKind::kSourceImage, SurveyObjectKind::kFamilyCollapsePoint, SurveyObjectKind::kRegularImage,
-    SurveyObjectKind::kCausticEdge, SurveyObjectKind::kBrightDomain,        SurveyObjectKind::kSupportSet,
-  };
+  static const std::vector<SurveyObjectKind> kKinds = [] {
+    std::vector<SurveyObjectKind> kinds;
+    kinds.reserve(SurveyObjectKindTable().size());
+    for (const auto& entry : SurveyObjectKindTable()) {
+      kinds.push_back(entry.kind);
+    }
+    return kinds;
+  }();
   return kKinds;
 }
 
@@ -144,7 +149,8 @@ struct SurveyRequestEcho {
   unsigned symmetry_bits = 7;  // P|B|D; 0 = the literal path (the report request's encoding)
   bool wavelength_given = false;
   double wavelength_nm = 0.0;  // as given, 0 when unset
-  int budget_ms = 0;           // as resolved (default substituted), before the engine's clamp
+  int budget_ms = 0;           // as resolved (default substituted); out-of-range values are
+                               // rejected by the engine, never clamped
 };
 
 // The whole document, pre-serialization.

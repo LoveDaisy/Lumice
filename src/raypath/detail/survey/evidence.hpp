@@ -21,29 +21,27 @@ enum class EvidenceState {
   kUnevaluated,  // not computed; carries the reason
 };
 
+// The name table is the one authority: the writer and the parser below both read it, so a new
+// state is one new row — never a second switch arm to keep in step.
+inline constexpr std::array<std::pair<std::string_view, EvidenceState>, 4> kEvidenceStateNames{ {
+    { "certified", EvidenceState::kCertified },
+    { "finite", EvidenceState::kFinite },
+    { "refused", EvidenceState::kRefused },
+    { "unevaluated", EvidenceState::kUnevaluated },
+} };
+
 inline const char* EvidenceStateName(EvidenceState state) {
-  switch (state) {
-    case EvidenceState::kCertified:
-      return "certified";
-    case EvidenceState::kFinite:
-      return "finite";
-    case EvidenceState::kRefused:
-      return "refused";
-    case EvidenceState::kUnevaluated:
-      return "unevaluated";
+  for (const auto& entry : kEvidenceStateNames) {
+    if (entry.second == state) {
+      return entry.first.data();
+    }
   }
   return "finite";
 }
 
 // False for anything outside the closed vocabulary.
 inline bool EvidenceStateFromName(std::string_view name, EvidenceState* out) {
-  static constexpr std::array<std::pair<std::string_view, EvidenceState>, 4> kTable{ {
-      { "certified", EvidenceState::kCertified },
-      { "finite", EvidenceState::kFinite },
-      { "refused", EvidenceState::kRefused },
-      { "unevaluated", EvidenceState::kUnevaluated },
-  } };
-  for (const auto& entry : kTable) {
+  for (const auto& entry : kEvidenceStateNames) {
     if (entry.first == name) {
       *out = entry.second;
       return true;

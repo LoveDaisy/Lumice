@@ -35,8 +35,9 @@ SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, cons
   verdict.member = member;
   std::vector<int> slots;
   // A class member is a relabeling of the representative under the same crystal, so its slots
-  // resolve whenever the representative's do; a failure here is an internal inconsistency, not a
-  // member property, and surfaces as the resolve error.
+  // resolve whenever the representative's do. A failure here is therefore an internal
+  // inconsistency rather than a member property; the member is refused as such (mode
+  // "member_resolution") — never an empty or defaulted verdict.
   const Error slot_error = ResolveSingleLayerPath({ member }, table, &slots);
   if (!slot_error.Ok()) {
     verdict.rank_zero = false;

@@ -114,6 +114,22 @@ TEST(SurveyAssembly, NonRankZeroClassProducesTheUnevaluatedSkeleton) {
   EXPECT_EQ(document.evidence.coverage.members_evaluated, static_cast<int>(document.member_verdicts.size()));
 }
 
+TEST(SurveyAssembly, StandaloneCrystalNotInAnySceneLayerStillRoutes) {
+  ConfigManager config = PlateScene();
+  config.scene_.ms_.clear();  // the crystal is configured but allocated to no scattering layer
+  SurveyDocument document;
+  ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
+  // The standalone branch: no scene layer is named, and the identity says so.
+  EXPECT_FALSE(document.scene_layer.has_value());
+  EXPECT_EQ(document.scene_identity, std::string("standalone configured crystal (not a scene allocation)"));
+  // The routing itself is unchanged: the same plate class collapses and stops.
+  EXPECT_TRUE(document.early_stopped);
+  ASSERT_EQ(document.objects.size(), 1u);
+  EXPECT_EQ(document.objects.front().kind, SurveyObjectKind::kSourceImage);
+  EXPECT_EQ(document.objects.front().evidence.state, EvidenceState::kCertified);
+  EXPECT_TRUE(document.unevaluated.empty());
+}
+
 TEST(SurveyAssembly, RequestRefusalsKeepTheReportErrorSemantics) {
   const ConfigManager config = PlateScene();
   SurveyDocument document;

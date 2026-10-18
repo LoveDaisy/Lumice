@@ -13,7 +13,9 @@ nlohmann::json Serialized(const SurveyDocument& document) {
   return nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
 }
 
-// A minimal hand-built document: exactly what the C14 early-stop shape serializes from.
+// A minimal hand-built document in the early-stop shape. Its two members are deliberately NOT
+// the C14 real class (which is {1-2} alone — the plate ensemble is not mirror-symmetric): the
+// fixture covers the N-member serialization path, not that one corpus case.
 SurveyDocument SourceImageDocument() {
   SurveyDocument document;
   document.request.crystal_id = 1;
@@ -106,6 +108,22 @@ TEST(SurveyJsonV4, DefaultEvidenceIsFiniteWithCoverageDeclaration) {
   EXPECT_TRUE(chromatic.at("coverage").contains("geometry_basis"));
   EXPECT_TRUE(chromatic.at("coverage").contains("wavelength_nm"));
   EXPECT_TRUE(chromatic.at("coverage").contains("members_evaluated"));
+}
+
+TEST(SurveyJsonV4, RefusedBlockSerializesStateAndItsOpenMode) {
+  SurveyDocument skeleton;
+  skeleton.chromatic = SurveyEvidence{};
+  skeleton.chromatic.state = EvidenceState::kRefused;
+  skeleton.chromatic.mode = "walk_truncated";
+  const auto document = Serialized(skeleton);
+  const auto& chromatic = document.at("chromatic");
+  EXPECT_EQ(chromatic.at("state"), "refused");
+  EXPECT_TRUE(chromatic.contains("mode"));
+  EXPECT_EQ(chromatic.at("mode"), "walk_truncated");
+  // The other three states' accompaniments stay out of a refused block.
+  EXPECT_FALSE(chromatic.contains("reason"));
+  EXPECT_FALSE(chromatic.contains("coverage"));
+  EXPECT_FALSE(chromatic.contains("method"));
 }
 
 TEST(SurveyJsonV4, CertifiedBlocksCarryARegisteredMethod) {

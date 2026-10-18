@@ -713,7 +713,7 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `chromatic` | The chromatic layer's own evidence block; v1 writes `unevaluated` with `survey v1: chromatic layer not wired` |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
 | `budget` | `requested_ms`, `enforced` (false in v1) and the honesty note |
-| `timing` | `total_seconds` |
+| `timing` | `total_seconds` — the wall clock of the analysis **up to the end of assembly, excluding serialization**; each routing leg's cost rolls into this one figure |
 
 ### 9.2 Object kinds (the registry)
 
@@ -755,10 +755,11 @@ conclusion; an `unevaluated` block is a routing state, never an empty result.
 
 ### 9.4 Budget honesty
 
-`--budget` is parsed, clamped, echoed and **not enforced in v1**: the only computation the
-routing leg runs is the per-member classify (millisecond work for a rank-0 class; the full
-boundary walk per member otherwise), which is no budget consumer. `budget.enforced` is false
-and the note says so. Enforcement arrives with the quantification legs that actually spend.
+`--budget` is parsed, validated (an out-of-range value is rejected, not clamped), echoed and
+**not enforced in v1**: the only computation the routing leg runs is the per-member classify
+(millisecond work for a rank-0 class; the full boundary walk per member otherwise), which is no
+budget consumer. `budget.enforced` is false and the note says so. Enforcement arrives with the
+quantification legs that actually spend.
 
 ### 9.5 Version discipline
 

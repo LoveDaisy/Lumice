@@ -35,6 +35,8 @@ static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS == lumice::raypa
               "lumice_raypath.h and the feature-report module must agree on the total-work bound");
 static_assert(LUMICE_PATH_SURVEY_MAX_BUDGET_MS == lumice::raypath::kMaxSurveyBudgetMs,
               "lumice_raypath.h and the survey module must agree on the budget bound");
+static_assert(LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS == lumice::raypath::kDefaultSurveyBudgetMs,
+              "lumice_raypath.h and the survey module must agree on the default budget");
 
 struct LUMICE_SinglePathResult_ {
   std::string json;  // produced once in LUMICE_AnalyzeSinglePath, never changed afterwards
