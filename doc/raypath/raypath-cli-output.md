@@ -9,10 +9,11 @@ what you ask about one of them.
 It writes one JSON document. This page is that document's field reference, and the one place a
 reader (the Analyze-workspace prototype, a script, the GUI later) should learn it from.
 
-There are two deliberately separate documents. `--target` writes the original target-fiber
+There are three deliberately separate documents. `--target` writes the original target-fiber
 document (`schema_version: 1`, sections 1–6); its keys, ordering, and `--warm` behavior are
 unchanged. `--report` writes the target-free `lumice.path-feature-report` document in section 7.
-Neither mode silently substitutes for the other.
+`raypath survey` writes the census document (`lumice.path-survey`, schema_version 4) in section 9.
+Neither mode silently substitutes for another.
 
 ## 1. Where the document comes from
 
@@ -35,6 +36,9 @@ fields an interface will keep adding to. Typed readers can be appended to `lumic
 ```
 Lumice raypath -f <config> --crystal <id> --path <faces> --target <alt>,<az> [options]
 ```
+
+(`raypath survey` has its own option set — §9 — dispatched when the word after `raypath` is
+exactly `survey`; the options below are untouched.)
 
 | Option | Meaning |
 |---|---|
@@ -614,17 +618,20 @@ a document. The GUI workspace is not added by this interface.
 
 ## 8. Module boundary and surface
 
-The raypath module under `src/raypath/` exposes exactly three public headers to the engine:
+The raypath module under `src/raypath/` exposes exactly four public headers to the engine:
 
 - `src/raypath/path_feature_report.hpp` — the feature-report entry point, narrowed to
   `PathFeatureReportRequest` + its constants + `AnalyzePathFeatureReport(config, request,
   product_version, std::string* json_out)`: the module runs the analysis, assembles the report and
   serializes it internally, so the caller never compiles the report types.
+- `src/raypath/survey_report.hpp` — the survey entry point on the same shape:
+  `SurveyRequest` + its constants + `AnalyzePathSurvey(config, request, product_version,
+  std::string* json_out)` (v4.54; §9).
 - `src/raypath/single_path_analysis.hpp` — `AnalyzeSinglePath` over the analytic kernel.
 - `src/raypath/single_path_json.hpp` — `ToJson` / `ParseWarmSeeds` (`kSunGridSignificantDigits`
   included, as a published constant).
 
-The bridge (`src/server/c_api_raypath.cpp`) compiles exactly these three (plus its own
+The bridge (`src/server/c_api_raypath.cpp`) compiles exactly these four (plus its own
 server/config includes) — this minimal set *is* the module's surface to the engine, by
 construction rather than by convention. Everything else under `src/raypath/` is module-internal
 in one of two shapes: headers in `detail/` are internal by location and may be included only by
@@ -637,11 +644,12 @@ move in its own change. `detail/path_feature_report_json.{hpp,cpp}` is internal 
 grounds: the bridge takes a JSON string now, and the only other consumer of the report types ever
 was that same composition test.
 
-The boundary is cheap to re-verify mechanically — the include closure of the three public
+The boundary is cheap to re-verify mechanically — the include closure of the four public
 headers must contain no `raypath/detail` file and no `analytic/diagnostic_batch`:
 
 ```bash
 printf '#include "raypath/path_feature_report.hpp"
+#include "raypath/survey_report.hpp"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
 ' | g++ -H -fsyntax-only -x c++ - -std=c++17 -I src 2>&1 | grep -cE "analytic/diagnostic_batch|feature_discovery|raypath/detail"
@@ -650,3 +658,112 @@ printf '#include "raypath/path_feature_report.hpp"
 `0` is the expected answer. This is the probe that pinned the boundary when the bridge surface
 was narrowed (its baseline counted 6 hits — four internal headers plus the analytic kernel
 surface — before the narrowing landed).
+
+## 9. `Lumice raypath survey` output (schema 4)
+
+```bash
+Lumice raypath survey -f <config> --crystal <id> --path <faces> \
+  [--literal] [--lambda 550] [--budget 15s] [-o out.json]
+```
+
+The survey is the census face of the diagnostic pipeline (v4.54): **one single-layer raypath
+class of one crystal entry, routed at the algebra layer (T0)**. The request's path is expanded
+under its scope — the physical P|B|D class by default, the literal sequence with `--literal` —
+and every member of the class is classified by the analytic kernel
+(`LUMICE_ANALYTIC_ClassifyCriticalStructure`'s implementation, whose rank-0 arm is the identity
+certificate: the fold matrix M = I to 1e-12 per entry and the entry/exit wedge zero to 1e-9°).
+The routing has two outcomes and nothing else:
+
+- **Every member carries the certificate** → the class collapses to exactly one `source_image`
+  object at the sun (the sky-side object; the members are its preimage decomposition), and the
+  configurational analysis **stops there**: no delta axis, no fiber, no field work, no MC. The
+  chromatic layer does not follow an early stop physically (a source image can still tint), but
+  v1 does not wire it — the document says so explicitly instead of staying silent.
+- **Any other member verdict** (not rank-0, or the classification refused) → the document ships
+  the T0 facts per member and puts the deeper object kinds in `unevaluated` with the named
+  reason. An unevaluated block is a routing state, never an empty result.
+
+Member expansion is a statement about the **ensemble**, not about the sequence: the physical
+class of a plate's `1-2` is `{1-2}` alone, because the plate ensemble (c axis at the zenith,
+±wobble) is not invariant under the horizontal mirror that maps `1-2` to `2-1`. A
+zenith-symmetric family expands differently. `scope.members` records the expansion the routing
+actually ran on.
+
+Options: `--crystal`/`--path` as for the target mode (`--path` here refuses multi-layer chains
+through the same engine error); `--literal` narrows the scope to the literal sequence;
+`--lambda <nm>` ([350, 900]) selects the routing reference wavelength, defaulting like the
+target mode's `--wavelength` (the scene's single discrete wavelength, else 550; the choice is
+recorded in `scope.wavelength_source`) — it is named `--lambda` because it is a routing
+reference, not a spectral integral; `--budget <N>[s]` (integer seconds, the `s` optional,
+default 15, max 120) rides the document's budget block. Exit status and stderr progress follow
+the target mode's contract (`[raypath survey]` start/done lines; Ctrl-C ends the process and
+writes nothing; `-o` is atomic, and the analysis runs after the output directory is checked).
+
+### 9.1 Top-level keys
+
+| Key | Meaning |
+|---|---|
+| `schema`, `schema_version` | `lumice.path-survey`, 4 — a new document family; it shares no fields with the schema-1/3 documents, and a reader of one must reject the others |
+| `generator` | Lumice version and the analytic kernel's `analytic_api_version` |
+| `request` | The echo: `crystal_id`, `path_layers`, `symmetry_bits` (7 = physical P\|B\|D, 0 = literal), `wavelength_nm` (null when unset) and `budget_ms` as resolved |
+| `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg` |
+| `routing` | The T0 leg: `early_stopped`, and per-member `members[]` records (`member`, `rank_zero`, `mechanism` — the kernel's roll-up slug, null when not computable, with `mechanism_unavailable` naming why — and the member's own `evidence` block) |
+| `objects` | The object cards (§9.2); exactly one on an early stop, empty otherwise |
+| `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop |
+| `chromatic` | The chromatic layer's own evidence block; v1 writes `unevaluated` with `survey v1: chromatic layer not wired` |
+| `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
+| `budget` | `requested_ms`, `enforced` (false in v1) and the honesty note |
+| `timing` | `total_seconds` |
+
+### 9.2 Object kinds (the registry)
+
+Six kinds are registered, append-only (a new kind is a new name in the registry, never a
+re-spelling):
+
+| Kind | Routing origin |
+|---|---|
+| `source_image` | T0 identity certificate (M = I and zero wedge): the sun's preimage |
+| `family_collapse_point` | T1 rank 0 on the limit family |
+| `regular_image` | T1 rank 1: a one-dimensional regular image |
+| `caustic_edge` | T1 rank 2: the critical image of the relevant projection |
+| `bright_domain` | a two-dimensional bright domain (weight profiles) |
+| `support_set` | the support set: boundary curves with mechanism labels, holes |
+
+The negative assertion over an early stop is mechanical: `objects[].kind` must equal exactly
+`{"source_image"}`. A v1 `source_image` card carries `members` (the class), `position`
+(`altitude_deg` / `azimuth_deg` = the scene sun), its certified `evidence` block and a
+`certificate` declaring the kernel's own tolerances (`fold_tolerance` 1e-12,
+`wedge_tolerance_deg` 1e-9) — the certificate itself lives in the kernel; the card restates the
+ruler, it does not re-measure.
+
+### 9.3 Evidence states
+
+Every declaration block (each object card, each member verdict, the document level, the
+chromatic layer) carries a **required** `state` from the closed four-value vocabulary — a state
+is always serialized, so absence can never read as "settled":
+
+| State | Meaning | Accompanying field |
+|---|---|---|
+| `certified` | closed-form / algebraic / exhaustive proof | `method` — from the certified-method registry (v1: `point_mass`, the kernel's rank-0 slug) |
+| `finite` | a finite computation | `coverage` — `{members_evaluated, geometry_basis, wavelength_nm}` |
+| `refused` | a refusal | `mode` — an OPEN string (the analytic-api precedent: status closed / reason open), e.g. a boundary-walk status name |
+| `unevaluated` | not computed | `reason` — e.g. `survey v1: T1/T2 not wired` |
+
+The schema default is `finite` with its coverage declaration; the default rule is pinned by the
+in-repo unit tests. A `refused` state is data about the computation, never a physical
+conclusion; an `unevaluated` block is a routing state, never an empty result.
+
+### 9.4 Budget honesty
+
+`--budget` is parsed, clamped, echoed and **not enforced in v1**: the only computation the
+routing leg runs is the per-member classify (millisecond work for a rank-0 class; the full
+boundary walk per member otherwise), which is no budget consumer. `budget.enforced` is false
+and the note says so. Enforcement arrives with the quantification legs that actually spend.
+
+### 9.5 Version discipline
+
+Fields are only ever appended; `schema_version` changes meaning only when a field's meaning
+changes or is removed, and a reader written for one schema family (1, 3, 4) must reject the
+others. The C API surface is `LUMICE_AnalyzePathSurvey` / `LUMICE_PathSurveyToJson` /
+`LUMICE_PathSurveyDestroy` over an opaque immutable handle (v4.54, `lumice_raypath.h`); the CLI
+and the GUI read the same serialized document — there is no second serializer.

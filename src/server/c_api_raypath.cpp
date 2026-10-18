@@ -17,6 +17,7 @@
 #include "raypath/path_feature_report.hpp"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
+#include "raypath/survey_report.hpp"
 #include "server/c_api_engine_internal.hpp"  // lumice::capi::ToCApiErrorCode
 #include "server/c_api_scene_internal.hpp"   // SceneRoot
 #include "server/server.hpp"
@@ -32,6 +33,8 @@ static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT == lumice::raypath
               "lumice_raypath.h and the feature-report module must agree on the wavelength bound");
 static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS == lumice::raypath::kMaxFeatureReportSampleEvaluations,
               "lumice_raypath.h and the feature-report module must agree on the total-work bound");
+static_assert(LUMICE_PATH_SURVEY_MAX_BUDGET_MS == lumice::raypath::kMaxSurveyBudgetMs,
+              "lumice_raypath.h and the survey module must agree on the budget bound");
 
 struct LUMICE_SinglePathResult_ {
   std::string json;  // produced once in LUMICE_AnalyzeSinglePath, never changed afterwards
@@ -41,12 +44,17 @@ struct LUMICE_PathFeatureReport_ {
   std::string json;  // produced once in LUMICE_AnalyzePathFeatureReport, immutable afterwards
 };
 
+struct LUMICE_PathSurvey_ {
+  std::string json;  // produced once in LUMICE_AnalyzePathSurvey, immutable afterwards
+};
+
 namespace {
 
 // The v4.50 request, the smallest `struct_size` this build reads: through its last v4.50 field, so
 // that a field appended later does not raise it.
 constexpr size_t kRequestSizeV450 = offsetof(LUMICE_SinglePathRequest, warm_json_len) + sizeof(size_t);
 constexpr size_t kFeatureReportRequestSizeV1 = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
+constexpr size_t kSurveyRequestSizeV1 = offsetof(LUMICE_PathSurveyRequest, symmetry_bits_plus_one) + sizeof(int);
 
 void WriteError(char* err_buf, size_t err_size, const std::string& message) {
   if (err_buf == nullptr || err_size == 0) {
@@ -214,6 +222,61 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   return LUMICE_OK;
 }
 
+LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurveyRequest& request,
+                               LUMICE_PathSurvey** out, char* err_buf, size_t err_size) {
+  namespace rp = lumice::raypath;
+
+  rp::SurveyRequest req;
+  req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
+  if (request.crystal_id < 0 || request.crystal_id != static_cast<int>(req.crystal_id)) {
+    return Refuse(
+        { rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(request.crystal_id) }, err_buf,
+        err_size);
+  }
+  if (request.face_count < 0 || request.layer_count < 0) {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "negative face or layer count" }, err_buf, err_size);
+  }
+  int consumed = 0;
+  for (int i = 0; i < request.layer_count; i++) {
+    const int n = request.layer_face_counts[i];
+    if (n < 0 || n > request.face_count - consumed) {
+      return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf,
+                    err_size);
+    }
+    req.path_layers.emplace_back(request.faces + consumed, request.faces + consumed + n);
+    consumed += n;
+  }
+  if (consumed != request.face_count) {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf, err_size);
+  }
+  if (request.wavelength_nm > 0.0) {  // false for NaN too: unset
+    req.wavelength_nm = request.wavelength_nm;
+  }
+  if (request.budget_ms != 0) {
+    req.budget_ms = request.budget_ms;
+  }
+  if (request.symmetry_bits_plus_one < 0 || request.symmetry_bits_plus_one > 1) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument, "invalid physical symmetry bits" }, err_buf, err_size);
+  }
+  req.symmetry_bits = request.symmetry_bits_plus_one == 0 ? 7 : 0;
+
+  // The scene document LUMICE_CommitScene would hand the server, through the same parser.
+  lumice::ConfigManager config;
+  if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathSurvey",
+                                                           lumice::GetGlobalLogger(), nullptr, &config)) {
+    WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+    return lumice::capi::ToCApiErrorCode(err.code);
+  }
+  std::string survey_json;
+  if (const rp::Error e = rp::AnalyzePathSurvey(config, req, LUMICE_GetVersionString(), &survey_json); !e.Ok()) {
+    return Refuse(e, err_buf, err_size);
+  }
+  auto handle = std::make_unique<LUMICE_PathSurvey_>();
+  handle->json = std::move(survey_json);
+  *out = handle.release();
+  return LUMICE_OK;
+}
+
 }  // namespace
 
 LUMICE_ErrorCode LUMICE_AnalyzeSinglePath(const LUMICE_Scene* scene, const LUMICE_SinglePathRequest* request,
@@ -331,4 +394,60 @@ LUMICE_ErrorCode LUMICE_PathFeatureReportToJson(const LUMICE_PathFeatureReport* 
 
 void LUMICE_PathFeatureReportDestroy(LUMICE_PathFeatureReport* result) {
   std::unique_ptr<LUMICE_PathFeatureReport_> owned(result);
+}
+
+LUMICE_ErrorCode LUMICE_AnalyzePathSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurveyRequest* request,
+                                          LUMICE_PathSurvey** out, char* err_buf, size_t err_size) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (err_buf != nullptr && err_size > 0) {
+    err_buf[0] = '\0';
+  }
+  if (scene == nullptr || request == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: scene, request and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (request->struct_size < kSurveyRequestSizeV1) {
+    WriteError(err_buf, err_size,
+               "invalid_argument: struct_size " + std::to_string(request->struct_size) +
+                   " is smaller than this version's LUMICE_PathSurveyRequest (" + std::to_string(kSurveyRequestSizeV1) +
+                   "); set it to sizeof(LUMICE_PathSurveyRequest)");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if ((request->faces == nullptr && request->face_count > 0) ||
+      (request->layer_face_counts == nullptr && request->layer_count > 0)) {
+    WriteError(err_buf, err_size, "null_arg: faces / layer_face_counts must not be NULL with a non-zero count");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  try {
+    return AnalyzeSurvey(scene, *request, out, err_buf, err_size);
+  } catch (const std::exception& e) {
+    LOG_ERROR("LUMICE_AnalyzePathSurvey: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+  } catch (...) {
+    LOG_ERROR("LUMICE_AnalyzePathSurvey: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+  }
+  return LUMICE_ERR_UNKNOWN;
+}
+
+LUMICE_ErrorCode LUMICE_PathSurveyToJson(const LUMICE_PathSurvey* result, char* out_buf, size_t buf_size,
+                                         size_t* out_len) {
+  if (result == nullptr) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (out_len != nullptr) {
+    *out_len = result->json.size();
+  }
+  if (out_buf != nullptr && buf_size > 0) {
+    const size_t n = std::min(result->json.size(), buf_size - 1);
+    std::memcpy(out_buf, result->json.data(), n);
+    out_buf[n] = '\0';
+  }
+  return LUMICE_OK;
+}
+
+void LUMICE_PathSurveyDestroy(LUMICE_PathSurvey* result) {
+  std::unique_ptr<LUMICE_PathSurvey_> owned(result);
 }

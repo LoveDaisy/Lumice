@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 453        // ABI version, encoded major*100 + minor (v4.53)
+#define LUMICE_API_VERSION 454        // ABI version, encoded major*100 + minor (v4.54)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -65,6 +65,17 @@ It is bumped when the public symbol set grows and on every BREAKING struct-layou
 compile-cache entry of every TU in the includer's closure, so keeping the define out of
 `lumice_base.h`'s wide closure makes a bump recompile only the files that textually use the
 macro. Include `lumice_api_version.h` directly wherever you reference `LUMICE_API_VERSION`.
+
+**v4.54** is a pure append. Added the path survey — `LUMICE_PathSurveyRequest` (with a
+`struct_size` head), the opaque `LUMICE_PathSurvey`, `LUMICE_AnalyzePathSurvey`,
+`LUMICE_PathSurveyToJson` (the `LUMICE_SceneToJson` buffer contract) and
+`LUMICE_PathSurveyDestroy`, plus `LUMICE_PATH_SURVEY_MAX_BUDGET_MS`. The survey routes one
+single-layer raypath class at the algebra layer: a class whose every member carries the kernel's
+rank-0 identity certificate collapses to one `source_image` object at the sun and the
+configurational analysis stops; otherwise the T0 facts ship with the T1/T2 object kinds
+unevaluated. The JSON is a new schema family, `lumice.path-survey` schema_version 4
+(`raypath-cli-output.md` §9); it shares no fields with the schema-1/3 documents. No existing
+symbol or struct changed.
 
 **v4.53** changes the target-free `lumice.path-feature-report` document to schema 3: structural
 objects, support, features, unattributed structures, MC evidence, and coverage are now separate
