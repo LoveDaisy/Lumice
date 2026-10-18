@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792328618757,
+  "lastUpdate": 1792328622531,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4806,54 +4806,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "4d4b78fc4e2fdbd6c38693489ab74498e4d39df0",
-          "message": "Merge pull request #399 from LoveDaisy/feat/gui-desktop-conventions-part1\n\nfeat(gui): desktop conventions — deletable last filter row, list search, copyable text, column-major Tab, window sizing policy",
-          "timestamp": "2026-09-22T19:41:21+08:00",
-          "tree_id": "adccab168ff45ce7559ae9dfb6e96e62e09b4a78",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/4d4b78fc4e2fdbd6c38693489ab74498e4d39df0"
-        },
-        "date": 1790078006538,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1119913,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1017184.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 653151.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 700617.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "d69f9167201076266c84c99adb68dcf68ac437b1",
           "message": "Merge pull request #400 from LoveDaisy/feat/analysis-exclusion-view\n\nfeat(gui): the analysis list keeps excluded raypaths as greyed rows, with Include again",
           "timestamp": "2026-09-22T20:10:32+08:00",
@@ -9578,6 +9530,54 @@ window.BENCHMARK_DATA = {
             "value": 531639.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "be2288de2d204daa735f6abd653f3303a0dda03e",
+          "message": "Merge pull request #512 from LoveDaisy/feat/raypath-survey-c15-tint\n\nfeat(raypath): survey C15 slice — weight_tint chromatic leg (smoke trilogy finale)",
+          "timestamp": "2026-10-18T20:59:11+08:00",
+          "tree_id": "15694e43ea5a96e16d4ddd53b45ecd9d8fdb14d6",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/be2288de2d204daa735f6abd653f3303a0dda03e"
+        },
+        "date": 1792328621934,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 921335.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1009248.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1115990,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 685259,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
