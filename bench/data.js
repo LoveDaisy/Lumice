@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792310640043,
+  "lastUpdate": 1792310642576,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9596,50 +9596,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "64706c37cd5ad912eb76cde70881bb84e9efd681",
-          "message": "Merge pull request #398 from LoveDaisy/feat/ui-scale\n\nfeat(gui): ui_scale — DPI-aware layout and font, plus a user UI-scale preference",
-          "timestamp": "2026-09-22T17:25:47+08:00",
-          "tree_id": "282afffeb45deeca9dcf5eb0ea192084f3466648",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/64706c37cd5ad912eb76cde70881bb84e9efd681"
-        },
-        "date": 1790069885550,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 93.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "4d4b78fc4e2fdbd6c38693489ab74498e4d39df0",
           "message": "Merge pull request #399 from LoveDaisy/feat/gui-desktop-conventions-part1\n\nfeat(gui): desktop conventions — deletable last filter row, list search, copyable text, column-major Tab, window sizing policy",
           "timestamp": "2026-09-22T19:41:21+08:00",
@@ -13964,6 +13920,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Ubuntu x86_64",
             "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "872baa366d78c2065a37645eb3bd9ac33ef78cdb",
+          "message": "Merge pull request #511 from LoveDaisy/feat/raypath-survey-c01-delta\n\nfeat(raypath): survey C01 full-dimensional delta machine, radial probe and chromatic layer v1",
+          "timestamp": "2026-10-18T16:00:38+08:00",
+          "tree_id": "d06f27173c45451f8acbcd7f8ee8d892a299bbea",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/872baa366d78c2065a37645eb3bd9ac33ef78cdb"
+        },
+        "date": 1792310641906,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 83.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 100.5,
             "unit": "%"
           },
           {
