@@ -677,8 +677,13 @@ The routing has three outcomes and nothing else:
 - **Every member carries the certificate** → the class collapses to exactly one `source_image`
   object at the sun (the sky-side object; the members are its preimage decomposition), and the
   configurational analysis **stops there**: no delta axis, no fiber, no field work, no MC. The
-  chromatic layer does not follow an early stop physically (a source image can still tint), but
-  v1 does not wire it — the document says so explicitly instead of staying silent.
+  chromatic layer's weight leg runs anyway (a source image can still tint — two parallel
+  internal reflections square a Fresnel coefficient that grows toward TIR at blue, and the
+  corpus's C15 sun disk reads blue for exactly that reason): the document carries a real
+  `chromatic.weight_tint` (§9.6) — `finite` with the ratio when the axis maps to a pose
+  density, a `density_not_expressible` refusal when it does not (a fixed pose is an honest
+  capability boundary, not a physical impossibility). The position legs (`positional_dispersion`,
+  `diagnose`) stay absent: a rank-0 path has no positional chromatic structure to follow.
 - **A random-orientation class whose axis is expressible as a pose density** (the
   full-dimensional route: the T1 rank is taken on the family, and here the family is the whole
   rotation group) → the delta machine runs per member: the class-level `support_set`, the
@@ -717,10 +722,10 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `request` | The echo: `crystal_id`, `path_layers`, `symmetry_bits` (7 = physical P\|B\|D, 0 = literal), `wavelength_nm` (null when unset) and `budget_ms` as resolved |
 | `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg` |
 | `routing` | The T0 leg: `early_stopped`, and per-member `members[]` records (`member`, `rank_zero`, `mechanism` — the kernel's roll-up slug, null when not computable, with `mechanism_unavailable` naming why — and the member's own `evidence` block) |
-| `objects` | The object cards (§9.2); exactly one on an early stop, three on the full-dimensional route, one refused `support_set` when that route fails closed |
+| `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has a minimum-deviation onset — the position needs a fold to sit on), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed |
 | `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop and on the full-dimensional route |
 | `probes` | The canonical probes; present only on the full-dimensional route (§9.6) — an early-stop document carries no `probes` key at all |
-| `chromatic` | The chromatic layer's own evidence block; `unevaluated` with `survey v1: chromatic layer not wired` on an early stop, `finite` with the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`) on the full-dimensional route (§9.6) |
+| `chromatic` | The chromatic layer's own evidence block plus the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`, §9.6). Its state follows the legs its routing arm ran: `unevaluated` only when no chromatic leg exists for the input class, `finite` when its legs computed, `refused` (with the leg's mode) when its only leg refused — on the identity arm the tint IS the block's only leg, so the block and the sub-block never disagree |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
 | `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran) |
 | `timing` | `total_seconds` — the wall clock of the analysis **up to the end of assembly, excluding serialization**; each routing leg's cost rolls into this one figure |
@@ -800,10 +805,11 @@ conclusion; an `unevaluated` block is a routing state, never an empty result.
 
 `--budget` is parsed, validated (an out-of-range value is rejected, not clamped), echoed and
 **not enforced**: `budget.enforced` is false and the note says what the producing arm actually
-ran — the early-stop arm's routing leg is millisecond work (no budget consumer), the
-full-dimensional arm's legs are the per-member delta partition, the band-sum probe and the
-chromatic pair (seconds of work on a 12-member class), and the note names them. Enforcement
-arrives with the quantification legs that actually spend.
+ran — the full-dimensional arm's legs are the per-member delta partition, the band-sum probe
+and the chromatic pair (seconds of work on a 12-member class); the identity arm's are the
+millisecond routing verdict and the two-lambda band-sum tint (the note names the per-lambda
+sample count) — and the note names them. Enforcement arrives with the quantification legs that
+actually spend.
 
 ### 9.5 Version discipline
 
@@ -825,10 +831,12 @@ the schema (the serialized `spec` echoes every one), not tuning knobs:
 |---|---|---|
 | probe domain | [15°, 60°] deviation from the sun | the radial range the slice covers |
 | probe bin | 0.1° (450 samples) | one narrow azimuthal wedge per bin; under the uniform density the band-sum value is the full annulus's per-sr mean, so the wedge's azimuth carries no information |
+| probe wedge half-width | 1.0° (`spec.wedge_half_width_deg`) | the wedge's azimuthal extent — part of the probe's caliber, so a reader can reconstruct the sliced solid angle |
 | probe sample count | 2,000,000 | the band-sum lattice size (`n`); the sampler is the antipodal Fibonacci lattice — **deterministic, no seed** (the coverage declaration names lattice + count + determinism, never a nonexistent seed value) |
 | probe reference λ/n | the document's `scope.wavelength_nm` / `refractive_index` | the probe shares the routing's reference ruler, so its edge reading, the support's lower end and the certified edge position are directly comparable |
 | probe representative | the request's face sequence (`spec.representative`) standing for `spec.member_count` class members | the members are relabelings of one physical class; the class-level reading is the representative's ×N |
 | chromatic λ pair | 650 nm / 450 nm | the pool's red and blue ends through the engine's dispersion table; `n_red`/`n_blue` are echoed verbatim; the D65 full-spectrum spatial integral is a later slice's work |
+| tint sample count | 1,000,000 per lambda (`weight_tint.sample_count`) | the tint leg's band-sum lattice size, the same deterministic antipodal Fibonacci; a new key appears only in a tint block that ran |
 
 The probe's two readings stay two things: `edge` (first non-empty bin — geometrically no event
 lies below the minimum-deviation edge, so that bin contains it; a finite reading good to half a
@@ -837,7 +845,10 @@ position lives on the `caustic_edge` card; on the corpus's C01 shape the profile
 peak within one bin of the edge and falls monotonically outward (the brightness approaches a
 finite limit at the edge, then decays — the −const·√(δ−δ_min) near-edge term averaged inside
 the first bin makes the argmax land on its doorstep), so `separation_deg` is a doorstep
-quantity, not a displacement.
+quantity, not a displacement. **A probe with an empty profile serializes neither reading and no
+`separation_deg`**: a zero there would read as "the peak sits at the edge", a claim about a
+profile that has neither. `edge` / `peak` / `separation_deg` keys exist exactly when the
+readings they describe do.
 
 The chromatic block on this route is `finite` with up to three optional sub-blocks, and the
 two mechanisms never merge fields:
@@ -852,5 +863,42 @@ two mechanisms never merge fields:
   (`kind`/`source`/`color`/`visible`/`delta_red_deg`/`delta_blue_deg`/`shift_deg`) and its own
   `evidence`. A colour edge can be positional (dispersion) or weight-driven (a gate or kink);
   conflating them would read one mechanism off the other's ruler.
-- `weight_tint` — `unevaluated` with `class tint not wired (C15 slice)`: the whole-scene tint
-  is a later slice's work.
+- `weight_tint` — the transmission-weight ratio across the pair; the identity arm computes it
+  (see below), the full-dimensional route keeps it `unevaluated` with `T1-arm class tint not
+  wired (random-family two-lambda map ratio deferred; the identity arm computes this leg)` —
+  the class-level tint over a random family's two-lambda maps is its own deferred leg.
+
+**`weight_tint` (the identity arm's weight leg).** A rank-0 path has one sky position, so its
+chromatic question is not where but how bright per lambda: the leg runs the point-mass branch
+of the band sum twice — once per lambda of the fixed pair, through each lambda's refractive
+index — on the class representative (standing for `member_count` members, the probe's
+relabeled-equivalence discipline), with an empty pixel table (the ratio reads the masses, not
+a rendered map). The two calls share the lattice size, so the ratio's quadrature error cancels
+to first order; under a non-uniform pose density both masses come from the kernel's
+deterministic psi-average (`method: "psi_average"`), under the random family from lattice means
+(`"lattice_mean"`). Fields: `red_label`/`blue_label`, `n_red`/`n_blue` (the dispersion table's
+pair, echoed), `m_red`/`m_blue` with `m_red_error`/`m_blue_error` (the masses and their
+last-doubling quadrature changes — provenance, not a jitter bar to assert against),
+`method`, `sample_count`, `representative`, `member_count`, `ratio` (= m_blue/m_red),
+`direction`, `kept_count_red`/`kept_count_blue` (the existence witnesses), `caliber` (the
+ratio's protocol, spelled inside the document), `evidence`.
+
+**The ratio's caliber is not a colour ratio.** `ratio` compares transmission weights at two
+narrow bands and nothing else — no spectral power distribution, no colour-matching functions,
+no solar disk. It must never be read as, or compared against, a disk-integrated D65 B/R: the
+two agree only in sign and rough magnitude, because the D65 integral weights the whole spectrum
+while the pair isolates the Fresnel mechanism. The document carries the `caliber` string so a
+reader never has to know this from the outside.
+
+`direction` is the sign of the ratio itself, from a closed three-slug vocabulary: `blue_tinted`
+(ratio > 1), `red_tinted` (ratio < 1), `neutral` (the exact-1.0 degenerate). No neutral band
+lives in the model — how far from 1 counts as "really tinted" is an acceptance notion, and each
+consumer pins its own threshold.
+
+The leg refuses rather than approximates, with the refusal in both the sub-block and the
+chromatic block (the block mirrors its only leg on this arm): `density_not_expressible` (the
+axis maps to no pose density — a fixed pose is the degenerate case: its weight is exactly
+computable in principle, what is missing is a delta-distribution pose encoding, a kernel
+capability boundary, not a physical impossibility), `not_rank_zero` (the caller's certificate
+and the kernel's own rank check disagree — never read a map as a mass), `zero_band_weight` (a
+band's mass degenerated; a silent division by zero must not reach the document).

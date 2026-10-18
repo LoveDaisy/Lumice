@@ -7,11 +7,13 @@
 // assembly fills and the serializer reads; it carries no pointers, so a shell and a test can
 // both build one.
 
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "analytic/band_sum.hpp"   // PointMassMethodName's enum (the kernel's own)
 #include "analytic/path_rank.hpp"  // the certificate's tolerances are the kernel's own constants
 #include "raypath/detail/survey/evidence.hpp"
 
@@ -220,6 +222,7 @@ struct SurveyProbeSpec {
   double delta_min_deg = 15.0;
   double delta_max_deg = 60.0;
   double bin_deg = 0.1;
+  double wedge_half_width_deg = 0.0;
   double wavelength_nm = 0.0;
   double refractive_index = 0.0;
   long long sample_count = 0;
@@ -258,13 +261,35 @@ struct SurveyProbe {
   long long kept_count = 0;     // the sample's kept events (the T2 witness count)
 };
 
+// The chromatic layer's fixed wavelength pair — the single authority every chromatic-site
+// spelling derives from (both legs' labels and indices, the coverage wavelengths, the prose).
+// Both legs (the positional-dispersion table and the weight tint) consume this pair, so it
+// cannot drift between them; the serialized labels and n values echo exactly these constants.
+inline constexpr double kChromaticRedNm = 650.0;
+inline constexpr double kChromaticBlueNm = 450.0;
+inline constexpr const char* kChromaticRedLabel = "650nm";
+inline constexpr const char* kChromaticBlueLabel = "450nm";
+
+// The pair in prose, derived (never a site's own literal). Two orders are live in the document
+// and preserved byte-for-byte: the budget note spells the pair blue-first, the coverage basis
+// strings red-first (matching the labels vector's red-first order).
+inline std::string ChromaticPairProseBlueFirst() {
+  return std::to_string(static_cast<long long>(kChromaticBlueNm)) + "/" +
+         std::to_string(static_cast<long long>(kChromaticRedNm));
+}
+
+inline std::string ChromaticPairProseRedFirst() {
+  return std::to_string(static_cast<long long>(kChromaticRedNm)) + "/" +
+         std::to_string(static_cast<long long>(kChromaticBlueNm));
+}
+
 // The chromatic layer's positional-dispersion leg: the min-deviation edge followed across the
 // fixed index pair (labels as the kernel table carries them, indices as the engine's table
 // echoes them). `direction` is the stacking verdict; `red_inner_blue_outer` ⇔ value_red <
 // value_blue (red edge closer to the sun).
 struct SurveyPositionalDispersion {
-  std::string red_label = "650nm";
-  std::string blue_label = "450nm";
+  std::string red_label = kChromaticRedLabel;
+  std::string blue_label = kChromaticBlueLabel;
   double n_red = 0.0;
   double n_blue = 0.0;
   double value_red_deg = 0.0;
@@ -298,6 +323,80 @@ struct SurveyDiagnoseBlock {
   double n_red = 0.0;  // the snapshot's declared parameter pair
   double n_blue = 0.0;
   std::vector<SurveyDiagnoseFeature> features;
+  SurveyEvidence evidence;
+};
+
+// The chromatic layer's weight-tint leg: the direction the transmission WEIGHT tilts across
+// the fixed 650/450 index pair (the positional-dispersion leg's sibling: a different mechanism
+// — the same position's weight changes with lambda, driven by near-TIR Fresnel growth — and a
+// separate sub-block, never merged into the dispersion fields). The ratio is m(450nm)/m(650nm),
+// the point-mass band sum's masses at the sun direction, unweighted by SPD or CMF: the
+// lambda-pair transmission-weight caliber, which is a different quantity from a disk-integrated
+// D65 B/R and must not be compared against one.
+//
+// The direction vocabulary is the sign of the ratio itself (the issue's caliber: blue-tinted is
+// B/R > 1). No neutral band lives in the model — a band is an acceptance notion, and each
+// consumer pins its own separation threshold (the C15 bench requires ratio > 1.2 to separate
+// from the corpus's no-internal-reflection counterfactual at ~0.97; the C14 bench pins a
+// |ratio - 1| < 0.05 band with the same first-run provenance discipline). `kNeutral` is the
+// degenerate exact-1.0 point.
+enum class SurveyTintDirection { kBlueTinted, kRedTinted, kNeutral };
+
+inline constexpr std::array<std::pair<std::string_view, SurveyTintDirection>, 3> kSurveyTintDirectionNames{ {
+    { "blue_tinted", SurveyTintDirection::kBlueTinted },
+    { "red_tinted", SurveyTintDirection::kRedTinted },
+    { "neutral", SurveyTintDirection::kNeutral },
+} };
+
+inline const char* SurveyTintDirectionName(SurveyTintDirection direction) {
+  for (const auto& entry : kSurveyTintDirectionNames) {
+    if (entry.second == direction) {
+      return entry.first.data();
+    }
+  }
+  return "neutral";
+}
+
+// The point-mass method names (band_sum.hpp's PointMassMethod) as the document spells them —
+// the survey-side single authority over the slug, so a kernel-side spelling change is one edit.
+// The switch carries no default: a new kernel PointMassMethod value fails -Wswitch at the
+// switch itself; the trailing return only satisfies control-reaches-end for today's
+// fully-covered enum.
+inline const char* PointMassMethodName(analytic::PointMassMethod method) {
+  switch (method) {
+    case analytic::PointMassMethod::kPsiAverage:
+      return "psi_average";
+    case analytic::PointMassMethod::kLatticeMean:
+      return "lattice_mean";
+  }
+  return "lattice_mean";
+}
+
+// One weight-tint evaluation. `m_*` are the per-lambda masses and their last-doubling quadrature
+// changes (provenance, never asserted against); `ratio` is m_blue / m_red. The tint runs on the
+// class representative, with `member_count` declaring the class size it stands for (the probe's
+// relabeled-equivalence discipline).
+struct SurveyWeightTint {
+  std::string red_label = kChromaticRedLabel;
+  std::string blue_label = kChromaticBlueLabel;
+  double n_red = 0.0;
+  double n_blue = 0.0;
+  double m_red = 0.0;
+  double m_blue = 0.0;
+  double m_red_error = 0.0;
+  double m_blue_error = 0.0;
+  std::string method;  // PointMassMethodName: the mass's own computation path
+  long long sample_count = 0;
+  std::vector<int> representative;
+  int member_count = 0;
+  double ratio = 0.0;
+  SurveyTintDirection direction = SurveyTintDirection::kNeutral;
+  long long kept_count_red = 0;
+  long long kept_count_blue = 0;
+  std::string caliber = std::string("m(") + kChromaticBlueLabel + ")/m(" + kChromaticRedLabel +
+                        "): point-mass band-sum transmission weights at the sun direction; fixed " +
+                        ChromaticPairProseRedFirst() +
+                        " index pair, unweighted by SPD or CMF — not a disk-integrated D65 B/R";
   SurveyEvidence evidence;
 };
 
@@ -338,13 +437,16 @@ struct SurveyDocument {
   // that ran them; an early-stop document carries none.
   std::vector<SurveyProbe> probes;
 
-  // The chromatic layer: the block-level evidence (unevaluated on an early stop, exactly the
-  // v1 shape there) plus the optional legs. A leg absent from the document is one the routing
-  // arm did not run — the sub-block keys never appear without their content.
+  // The chromatic layer: the block-level evidence plus the optional legs. A leg absent from
+  // the document is one the routing arm did not run — the sub-block keys never appear without
+  // their content. Block-state rules by arm: the T1 arm's chromatic legs turn the block finite
+  // (or refused on a leg's hard failure); the identity arm's only leg is the tint, so the block
+  // mirrors the tint's own state — finite with coverage when it computed, refused with the tint's
+  // mode when it refused (the block-level state and the sub-block can never disagree).
   SurveyEvidence chromatic;
   std::optional<SurveyPositionalDispersion> positional_dispersion;
   std::optional<SurveyDiagnoseBlock> diagnose;
-  std::optional<SurveyEvidence> weight_tint;  // serialized as {state, reason} when present
+  std::optional<SurveyWeightTint> weight_tint;
 
   // The document-level evidence: the T0 routing verdict's own state.
   SurveyEvidence evidence;

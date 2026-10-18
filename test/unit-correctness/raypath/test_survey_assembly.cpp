@@ -8,64 +8,15 @@
 #include "core/optics.hpp"  // IceRefractiveIndex: the dispersion closed form's n pair
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_json.hpp"
+#include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-// The C14 shape in memory: a hexagonal plate prism — c axis at the zenith (config zenith 0, the
-// latitude slot's 90) with a 0.3-degree Gaussian wobble, azimuth and roll uniform over 360 — sun
-// at 20/0. The same numbers the corpus config carries, without the corpus file (which never
-// enters the tree). Note the axis lives in the config's latitude slot, where 90 IS zenith 0.
-ConfigManager PlateScene() {
-  PrismCrystalParam prism;
-  prism.h_ = { DistributionType::kNoRandom, 0.3f, 0 };
-  for (auto& distance : prism.d_) {
-    distance = { DistributionType::kNoRandom, 1, 0 };
-  }
-  CrystalConfig crystal{};
-  crystal.id_ = 1;
-  crystal.param_ = prism;
-  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 90, 0.3f };
-  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
-  ConfigManager config;
-  config.crystals_.emplace(1, crystal);
-  config.scene_.light_source_.param_ = { 20, 0, 0 };
-  config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
-  ScatteringSetting entry{};
-  entry.crystal_ = crystal;
-  entry.crystal_proportion_ = 1;
-  config.scene_.ms_.push_back({ 0, { entry } });
-  return config;
-}
-
-// The C01 shape in memory: a regular hexagonal column, every axis slot uniform over the full
-// sphere (random orientation), sun on the horizon. The corpus config's crystal and scene
-// without the corpus file.
-ConfigManager RandomPrismScene() {
-  PrismCrystalParam prism;
-  prism.h_ = { DistributionType::kNoRandom, 1.0f, 0 };
-  for (auto& distance : prism.d_) {
-    distance = { DistributionType::kNoRandom, 1, 0 };
-  }
-  CrystalConfig crystal{};
-  crystal.id_ = 1;
-  crystal.param_ = prism;
-  // Full-sphere uniform: the internal latitude's center is 90 (the config's zenith-0 slot
-  // spelling), and IsFullSphereUniform requires exactly that center with a full 360 range.
-  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90, 360 };
-  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
-  ConfigManager config;
-  config.crystals_.emplace(1, crystal);
-  config.scene_.light_source_.param_ = { 0, 0, 0 };
-  config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
-  ScatteringSetting entry{};
-  entry.crystal_ = crystal;
-  entry.crystal_proportion_ = 1;
-  config.scene_.ms_.push_back({ 0, { entry } });
-  return config;
-}
+// The scenes live in survey_test_fixtures.hpp (the corpus shapes without the corpus files:
+// PlateScene(height, wobble_std) is the C14/C15 plate, RandomPrismScene() the C01 column).
 
 SurveyRequest BaseRequest() {
   SurveyRequest request;
@@ -75,7 +26,7 @@ SurveyRequest BaseRequest() {
 }
 
 TEST(SurveyAssembly, RankZeroClassCollapsesToOneSourceImageCardAndStops) {
-  const ConfigManager config = PlateScene();
+  const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyDocument document;
   ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
   EXPECT_TRUE(document.early_stopped);
@@ -106,7 +57,7 @@ TEST(SurveyAssembly, RankZeroClassCollapsesToOneSourceImageCardAndStops) {
 }
 
 TEST(SurveyAssembly, LiteralScopeKeepsOnlyTheRequestedSequence) {
-  const ConfigManager config = PlateScene();
+  const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyRequest request = BaseRequest();
   request.symmetry_bits = 0;
   SurveyDocument document;
@@ -121,7 +72,7 @@ TEST(SurveyAssembly, LiteralScopeKeepsOnlyTheRequestedSequence) {
 }
 
 TEST(SurveyAssembly, NonRankZeroPlateClassStaysUnevaluatedWithTheFamilyRestrictedReason) {
-  const ConfigManager config = PlateScene();
+  const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };  // through two side faces: a deviating prism path
   SurveyDocument document;
@@ -231,14 +182,14 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   ASSERT_TRUE(document.diagnose.has_value());
   EXPECT_FALSE(document.diagnose->verdict_kind.empty());
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->state, EvidenceState::kUnevaluated);
+  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kUnevaluated);
   EXPECT_EQ(document.chromatic.state, EvidenceState::kFinite);
   // The document's own evidence stays finite: the routing refused nothing.
   EXPECT_EQ(document.evidence.state, EvidenceState::kFinite);
 }
 
 TEST(SurveyAssembly, StandaloneCrystalNotInAnySceneLayerStillRoutes) {
-  ConfigManager config = PlateScene();
+  ConfigManager config = PlateScene(0.3, 0.3);
   config.scene_.ms_.clear();  // the crystal is configured but allocated to no scattering layer
   SurveyDocument document;
   ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
@@ -254,7 +205,7 @@ TEST(SurveyAssembly, StandaloneCrystalNotInAnySceneLayerStillRoutes) {
 }
 
 TEST(SurveyAssembly, RequestRefusalsKeepTheReportErrorSemantics) {
-  const ConfigManager config = PlateScene();
+  const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyDocument document;
   SurveyRequest request = BaseRequest();
   request.crystal_id = 99;
@@ -286,7 +237,7 @@ TEST(SurveyAssembly, RequestRefusalsKeepTheReportErrorSemantics) {
 }
 
 TEST(SurveyAssembly, EndToEndJsonCarriesTheSchema4Contract) {
-  const ConfigManager config = PlateScene();
+  const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyDocument document;
   ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
   const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));

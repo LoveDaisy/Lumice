@@ -141,6 +141,7 @@ Json ProbeJson(const SurveyProbe& probe) {
   Json spec = { { "delta_min_deg", Num(probe.spec.delta_min_deg) },
                 { "delta_max_deg", Num(probe.spec.delta_max_deg) },
                 { "bin_deg", Num(probe.spec.bin_deg) },
+                { "wedge_half_width_deg", Num(probe.spec.wedge_half_width_deg) },
                 { "wavelength_nm", Num(probe.spec.wavelength_nm) },
                 { "refractive_index", Num(probe.spec.refractive_index) },
                 { "sample_count", probe.spec.sample_count },
@@ -165,7 +166,11 @@ Json ProbeJson(const SurveyProbe& probe) {
   if (probe.has_peak) {
     out["peak"] = { { "delta_deg", Num(probe.peak_delta_deg) }, { "value", Num(probe.peak_value) } };
   }
-  out["separation_deg"] = Num(probe.separation_deg);
+  // The separation needs both readings to exist; on an empty profile a serialized 0 would read
+  // as "the peak sits at the edge", which is a claim about a profile that has neither.
+  if (probe.has_edge && probe.has_peak) {
+    out["separation_deg"] = Num(probe.separation_deg);
+  }
   out["kept_count"] = probe.kept_count;
   return out;
 }
@@ -272,7 +277,32 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
     doc["chromatic"]["diagnose"] = DiagnoseJson(*document.diagnose);
   }
   if (document.weight_tint.has_value()) {
-    doc["chromatic"]["weight_tint"] = EvidenceJson(*document.weight_tint);
+    const SurveyWeightTint& tint = *document.weight_tint;
+    if (tint.evidence.state == EvidenceState::kUnevaluated || tint.evidence.state == EvidenceState::kRefused) {
+      // The not-computed shapes: exactly the evidence block ({state, reason} / {state, mode}),
+      // byte-compatible with the leg's pre-wiring marker.
+      doc["chromatic"]["weight_tint"] = EvidenceJson(tint.evidence);
+    } else {
+      Json tint_json = { { "red_label", tint.red_label },
+                         { "blue_label", tint.blue_label },
+                         { "n_red", Num(tint.n_red) },
+                         { "n_blue", Num(tint.n_blue) },
+                         { "m_red", Num(tint.m_red) },
+                         { "m_blue", Num(tint.m_blue) },
+                         { "m_red_error", Num(tint.m_red_error) },
+                         { "m_blue_error", Num(tint.m_blue_error) },
+                         { "method", tint.method },
+                         { "sample_count", tint.sample_count },
+                         { "representative", LayersJson({ tint.representative })[0] },
+                         { "member_count", tint.member_count },
+                         { "ratio", Num(tint.ratio) },
+                         { "direction", SurveyTintDirectionName(tint.direction) },
+                         { "kept_count_red", tint.kept_count_red },
+                         { "kept_count_blue", tint.kept_count_blue },
+                         { "caliber", tint.caliber },
+                         { "evidence", EvidenceJson(tint.evidence) } };
+      doc["chromatic"]["weight_tint"] = std::move(tint_json);
+    }
   }
   doc["evidence"] = EvidenceJson(document.evidence);
   doc["budget"] = { { "requested_ms", document.budget_ms }, { "enforced", false }, { "note", document.budget_note } };

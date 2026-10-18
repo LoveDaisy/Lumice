@@ -5,6 +5,7 @@
 
 #include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/detail/survey/survey_json.hpp"
+#include "raypath/detail/survey/survey_probe.hpp"  // kProbeWedgeHalfWidthDeg: the spec echo's source
 
 namespace lumice::raypath::survey {
 namespace {
@@ -249,6 +250,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   probe.spec.wavelength_nm = 550.0;
   probe.spec.refractive_index = 1.306;
   probe.spec.sample_count = 2000000;
+  probe.spec.wedge_half_width_deg = kProbeWedgeHalfWidthDeg;
   probe.spec.representative = { 3, 5 };
   probe.spec.member_count = 12;
   SurveyProbeSample sample;
@@ -278,9 +280,11 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   document.diagnose->color = "blue";
   document.diagnose->has_position = true;
   document.diagnose->position_deg = 22.3;
-  document.weight_tint = SurveyEvidence{};
-  document.weight_tint->state = EvidenceState::kUnevaluated;
-  document.weight_tint->reason = "class tint not wired (C15 slice)";
+  document.weight_tint = SurveyWeightTint{};
+  document.weight_tint->evidence.state = EvidenceState::kUnevaluated;
+  document.weight_tint->evidence.reason =
+      "T1-arm class tint not wired (random-family two-lambda map ratio deferred; the identity "
+      "arm computes this leg)";
   document.chromatic.state = EvidenceState::kFinite;
   document.chromatic.coverage.members_evaluated = 12;
   document.chromatic.coverage.wavelength_nm = 550.0;
@@ -325,6 +329,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   EXPECT_EQ(probe_json[0].at("spec").at("sample_count"), 2000000);
   EXPECT_EQ(probe_json[0].at("spec").at("lattice"), "antipodal_fibonacci");
   EXPECT_TRUE(probe_json[0].at("spec").at("deterministic").get<bool>());
+  EXPECT_DOUBLE_EQ(probe_json[0].at("spec").at("wedge_half_width_deg").get<double>(), kProbeWedgeHalfWidthDeg);
   EXPECT_EQ(probe_json[0].at("spec").at("representative"), std::vector<int>({ 3, 5 }));
   EXPECT_EQ(probe_json[0].at("spec").at("member_count"), 12);
   EXPECT_DOUBLE_EQ(probe_json[0].at("edge").at("delta_deg").get<double>(), 22.35);
@@ -343,7 +348,102 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   EXPECT_EQ(diagnose.at("verdict_kind"), "edge");
   EXPECT_DOUBLE_EQ(diagnose.at("position_deg").get<double>(), 22.3);
   EXPECT_EQ(chromatic.at("weight_tint").at("state"), "unevaluated");
-  EXPECT_EQ(chromatic.at("weight_tint").at("reason"), "class tint not wired (C15 slice)");
+  EXPECT_EQ(chromatic.at("weight_tint").at("reason"),
+            "T1-arm class tint not wired (random-family two-lambda map ratio deferred; the "
+            "identity arm computes this leg)");
+}
+
+// The tint leg's three serialized shapes. The unevaluated one rides the fixture above; the
+// refused and finite ones are pinned here.
+TEST(SurveyJsonV4, WeightTintRefusedSerializesStateAndModeOnly) {
+  SurveyDocument document;
+  document.weight_tint = SurveyWeightTint{};
+  document.weight_tint->evidence.state = EvidenceState::kRefused;
+  document.weight_tint->evidence.mode = "density_not_expressible";
+  const auto parsed = Serialized(document);
+  const auto& tint = parsed.at("chromatic").at("weight_tint");
+  EXPECT_EQ(tint.at("state"), "refused");
+  EXPECT_EQ(tint.at("mode"), "density_not_expressible");
+  EXPECT_EQ(tint.size(), 2u);  // the refusal is the whole shape — no fields, no evidence nesting
+}
+
+TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
+  SurveyDocument document;
+  document.weight_tint = SurveyWeightTint{};
+  SurveyWeightTint& tint = *document.weight_tint;
+  tint.n_red = 1.30803882;
+  tint.n_blue = 1.31569243;
+  tint.m_red = 0.001462474986811242;
+  tint.m_blue = 0.0024096673723776026;
+  tint.m_red_error = 1.2e-7;
+  tint.m_blue_error = 2.1e-7;
+  tint.method = "psi_average";
+  tint.sample_count = 1000000;
+  tint.representative = { 1, 3, 6, 2 };
+  tint.member_count = 6;
+  tint.ratio = 1.6476639902276924;
+  tint.direction = SurveyTintDirection::kBlueTinted;
+  tint.kept_count_red = 312000;
+  tint.kept_count_blue = 298000;
+  tint.evidence.state = EvidenceState::kFinite;
+  tint.evidence.coverage.members_evaluated = 1;
+  tint.evidence.coverage.wavelength_nm = 450.0;
+
+  const auto parsed = Serialized(document);
+  const auto& tint_json = parsed.at("chromatic").at("weight_tint");
+  EXPECT_EQ(tint_json.at("evidence").at("state"), "finite");  // the evidence rides nested
+  EXPECT_EQ(tint_json.at("red_label"), "650nm");
+  EXPECT_EQ(tint_json.at("blue_label"), "450nm");
+  EXPECT_DOUBLE_EQ(tint_json.at("n_red").get<double>(), 1.30803882);
+  EXPECT_DOUBLE_EQ(tint_json.at("n_blue").get<double>(), 1.31569243);
+  EXPECT_DOUBLE_EQ(tint_json.at("ratio").get<double>(), 1.6476639902276924);
+  EXPECT_EQ(tint_json.at("method"), "psi_average");
+  EXPECT_EQ(tint_json.at("sample_count"), 1000000);
+  EXPECT_EQ(tint_json.at("representative"), std::vector<int>({ 1, 3, 6, 2 }));
+  EXPECT_EQ(tint_json.at("member_count"), 6);
+  EXPECT_EQ(tint_json.at("direction"), "blue_tinted");
+  EXPECT_EQ(tint_json.at("kept_count_red"), 312000);
+  EXPECT_EQ(tint_json.at("kept_count_blue"), 298000);
+  // The caliber statement: a reader can tell the lambda-pair transmission-weight ratio from a
+  // disk-integrated D65 B/R without leaving the document.
+  EXPECT_NE(tint_json.at("caliber").get<std::string>().find("SPD"), std::string::npos);
+  EXPECT_TRUE(tint_json.at("evidence").at("coverage").contains("members_evaluated"));
+}
+
+// The identity arm's refusal shape (review Minor#1): the tint is the block's only leg there,
+// so the block mirrors the leg's refusal — the two never disagree, and the sibling legs stay
+// absent (a point-mass path has no positional dispersion and no diagnose).
+TEST(SurveyJsonV4, IdentityArmBlockMirrorsTheTintRefusal) {
+  SurveyDocument document;
+  document.chromatic.state = EvidenceState::kRefused;
+  document.chromatic.mode = "density_not_expressible";
+  document.weight_tint = SurveyWeightTint{};
+  document.weight_tint->evidence.state = EvidenceState::kRefused;
+  document.weight_tint->evidence.mode = "density_not_expressible";
+  const auto parsed = Serialized(document);
+  const auto& chromatic = parsed.at("chromatic");
+  EXPECT_EQ(chromatic.at("state"), "refused");
+  EXPECT_EQ(chromatic.at("mode"), "density_not_expressible");
+  EXPECT_EQ(chromatic.at("weight_tint").at("state"), "refused");
+  EXPECT_EQ(chromatic.at("weight_tint").at("mode"), "density_not_expressible");
+  EXPECT_FALSE(chromatic.contains("positional_dispersion"));
+  EXPECT_FALSE(chromatic.contains("diagnose"));
+}
+
+TEST(SurveyJsonV4, EmptyProbeProfileSerializesNoReadingKeys) {
+  SurveyDocument document;
+  SurveyProbe probe;  // no edge, no peak: the honest empty readings
+  probe.spec.wavelength_nm = 550.0;
+  probe.spec.representative = { 3, 5 };
+  probe.kept_count = 0;
+  document.probes.push_back(probe);
+  const auto parsed = Serialized(document);
+  const auto& probe_json = parsed.at("probes")[0];
+  EXPECT_FALSE(probe_json.contains("edge"));
+  EXPECT_FALSE(probe_json.contains("peak"));
+  // A serialized separation of 0 on an empty profile would read as "the peak sits at the
+  // edge" — a claim about a profile that has neither; the key stays absent instead.
+  EXPECT_FALSE(probe_json.contains("separation_deg"));
 }
 
 TEST(SurveyJsonV4, EarlyStopDocumentCarriesNoneOfTheT1Keys) {

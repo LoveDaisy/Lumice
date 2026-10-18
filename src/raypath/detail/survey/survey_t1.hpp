@@ -36,8 +36,9 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
 // The chromatic layer's v1 legs on the representative: the positional-dispersion table (the
 // kernel's wavelength-critical table at the fixed 650/450 pair) and the diagnose sub-block
 // (the kernel's Diagnose — a separate kernel path, its own sub-block, never merged into the
-// dispersion fields). The weight-tint leg stays unevaluated (the C15 slice). Refusals keep
-// their leg's own evidence; the block-level evidence turns finite once any leg ran.
+// dispersion fields). The weight-tint leg stays unevaluated on the random family (the identity
+// arm computes this leg). Refusals keep their leg's own evidence; the block-level evidence
+// turns finite once any leg ran.
 void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
                             int class_size, SurveyDocument* out);
