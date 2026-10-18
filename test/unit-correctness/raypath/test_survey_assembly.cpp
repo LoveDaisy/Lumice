@@ -5,6 +5,7 @@
 #include <set>
 #include <string>
 
+#include "core/optics.hpp"  // IceRefractiveIndex: the dispersion closed form's n pair
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_json.hpp"
 
@@ -215,6 +216,23 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   EXPECT_EQ(domain.bright_domain->probe_index, 0);
   ASSERT_EQ(document.probes.size(), 1u);
   EXPECT_EQ(document.probes.front().kind, "solar_radial");
+  // The chromatic layer's v1 legs: the dispersion direction is the corpus's red-inner-blue-
+  // outer, the displacement matches the closed-form pair, and the two mechanisms stay in
+  // separate sub-blocks with the tint leg's honest unevaluated.
+  ASSERT_TRUE(document.positional_dispersion.has_value());
+  EXPECT_EQ(document.positional_dispersion->direction, "red_inner_blue_outer");
+  EXPECT_LT(document.positional_dispersion->value_red_deg, document.positional_dispersion->value_blue_deg);
+  const double dispersion_closed_form =
+      std::fabs((2.0 * std::asin(IceRefractiveIndex::Get(450.0) * 0.5) - 1.0471975511965976) * 180.0 / kPi -
+                (2.0 * std::asin(IceRefractiveIndex::Get(650.0) * 0.5) - 1.0471975511965976) * 180.0 / kPi);
+  EXPECT_NEAR(document.positional_dispersion->displacement_deg, dispersion_closed_form, 1e-4);
+  EXPECT_DOUBLE_EQ(document.positional_dispersion->n_red, IceRefractiveIndex::Get(650.0));
+  EXPECT_DOUBLE_EQ(document.positional_dispersion->n_blue, IceRefractiveIndex::Get(450.0));
+  ASSERT_TRUE(document.diagnose.has_value());
+  EXPECT_FALSE(document.diagnose->verdict_kind.empty());
+  ASSERT_TRUE(document.weight_tint.has_value());
+  EXPECT_EQ(document.weight_tint->state, EvidenceState::kUnevaluated);
+  EXPECT_EQ(document.chromatic.state, EvidenceState::kFinite);
   // The document's own evidence stays finite: the routing refused nothing.
   EXPECT_EQ(document.evidence.state, EvidenceState::kFinite);
 }

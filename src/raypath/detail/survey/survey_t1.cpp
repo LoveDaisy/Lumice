@@ -5,9 +5,11 @@
 #include <limits>
 #include <string>
 
+#include "analytic/dp_chromatic.hpp"
 #include "analytic/dp_field.hpp"
 #include "analytic/dp_focus.hpp"
 #include "analytic/dp_partition.hpp"
+#include "core/optics.hpp"                                       // IceRefractiveIndex: the engine's dispersion table
 #include "raypath/detail/measure/measure_geometry_contract.hpp"  // PartitionContext
 #include "raypath/detail/schema3/geometry_source.hpp"
 #include "raypath/detail/schema3/support_block.hpp"
@@ -201,6 +203,98 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
   out->objects.push_back(std::move(domain));
 
   return { true, {} };
+}
+
+void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
+                            const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
+                            int class_size, SurveyDocument* out) {
+  std::vector<int> slots;
+  if (const Error slot_error = ResolveSingleLayerPath({ representative }, table, &slots); !slot_error.Ok()) {
+    // Unreachable past the T1 arm (it resolved the same sequence), but the refusal stays honest.
+    out->chromatic.state = EvidenceState::kRefused;
+    out->chromatic.mode = "member_resolution";
+    return;
+  }
+  // The fixed index pair (plan A2): the pool's red and blue ends through the engine's own
+  // dispersion table; the document echoes exactly these n values.
+  const std::vector<std::string> labels{ "650nm", "450nm" };
+  const std::vector<double> indices{ IceRefractiveIndex::Get(650.0), IceRefractiveIndex::Get(450.0) };
+
+  // Leg 1: the positional dispersion — the min-deviation edge followed across the pair.
+  const analytic::WavelengthCriticalTable critical = analytic::WavelengthCriticalTableOf(
+      table, polygons, slots.data(), static_cast<int>(slots.size()), density, labels, indices);
+  if (critical.escaped) {
+    out->chromatic.state = EvidenceState::kRefused;
+    out->chromatic.mode = "wavelength_critical_table";
+    return;
+  }
+  const analytic::WavelengthOnsetShift* min_row = nullptr;
+  for (const analytic::WavelengthOnsetShift& row : critical.onsets) {
+    if (row.source == analytic::OnsetSource::kInteriorMinimum && row.profile == analytic::OnsetProfile::kFiniteJump) {
+      min_row = &row;  // the table is value-ordered; the first is the minimum-deviation edge
+      break;
+    }
+  }
+  if (min_row == nullptr || min_row->values_deg.size() < 2) {
+    out->chromatic.state = EvidenceState::kRefused;
+    out->chromatic.mode = "min_deviation_row_not_found";
+    return;
+  }
+  out->positional_dispersion = SurveyPositionalDispersion{};
+  SurveyPositionalDispersion& dispersion = *out->positional_dispersion;
+  dispersion.red_label = labels[0];
+  dispersion.blue_label = labels[1];
+  dispersion.n_red = indices[0];
+  dispersion.n_blue = indices[1];
+  dispersion.value_red_deg = min_row->values_deg[0];
+  dispersion.value_blue_deg = min_row->values_deg[1];
+  dispersion.displacement_deg = min_row->displacement_deg;
+  dispersion.direction =
+      dispersion.value_red_deg < dispersion.value_blue_deg ? "red_inner_blue_outer" : "blue_inner_red_outer";
+  dispersion.evidence.state = EvidenceState::kFinite;
+  dispersion.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
+  dispersion.evidence.coverage.geometry_basis = "the kernel's wavelength-critical table at the 650/450 index pair";
+  dispersion.evidence.coverage.wavelength_nm = 450.0;
+
+  // Leg 2: the diagnose — the weight-kink and gate-edge features as their own sub-block (a
+  // different kernel path than the dispersion table; the two mechanisms never merge fields).
+  const analytic::ChromaticVerdict verdict =
+      analytic::Diagnose(table, polygons, slots.data(), static_cast<int>(slots.size()), indices[0], indices[1]);
+  SurveyDiagnoseBlock& block = out->diagnose.emplace();
+  block.verdict_kind = analytic::ChromaticVerdictKindName(verdict.kind);
+  block.color = analytic::ChromaticColorName(verdict.color);
+  block.visible = verdict.visible;
+  block.has_position = verdict.has_position;
+  block.position_deg = DegOf(verdict.position);
+  block.coverage_complete = verdict.coverage_complete;
+  block.notes = verdict.notes;
+  block.n_red = verdict.n_red;
+  block.n_blue = verdict.n_blue;
+  for (const analytic::ChromaticFeature& feature : verdict.features) {
+    SurveyDiagnoseFeature out_feature;
+    out_feature.kind = analytic::ChromaticFeatureKindName(feature.kind);
+    out_feature.source = feature.source;
+    out_feature.color = analytic::ChromaticColorName(feature.color);
+    out_feature.visible = feature.visible;
+    out_feature.delta_red_deg = DegOf(feature.delta_red);
+    out_feature.delta_blue_deg = DegOf(feature.delta_blue);
+    out_feature.shift_deg = DegOf(feature.shift);
+    block.features.push_back(std::move(out_feature));
+  }
+  block.evidence.state = EvidenceState::kFinite;
+  block.evidence.coverage.members_evaluated = 1;
+  block.evidence.coverage.geometry_basis = "the kernel's Diagnose at the 650/450 index pair";
+  block.evidence.coverage.wavelength_nm = 450.0;
+
+  // The weight-tint leg stays unwired (the C15 slice); the sub-block says so.
+  out->weight_tint = SurveyEvidence{};
+  out->weight_tint->state = EvidenceState::kUnevaluated;
+  out->weight_tint->reason = "class tint not wired (C15 slice)";
+
+  out->chromatic.state = EvidenceState::kFinite;
+  out->chromatic.coverage.members_evaluated = class_size;
+  out->chromatic.coverage.wavelength_nm = 450.0;
+  out->chromatic.coverage.geometry_basis = "the chromatic legs ran on the class representative at the 650/450 pair";
 }
 
 }  // namespace lumice::raypath::survey

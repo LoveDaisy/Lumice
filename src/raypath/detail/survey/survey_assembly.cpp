@@ -263,6 +263,11 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         SunIncidentDirection(config.scene_.light_source_.param_, probe_input.incident);
         probe_input.member_count = static_cast<int>(scope.members.size());
         RunSolarRadialProbe(probe_input, out);
+        // The chromatic layer's v1 legs on the representative (orthogonal to the position
+        // objects; the dispersion and diagnose legs are separate kernel paths, separate
+        // sub-blocks).
+        AssembleChromaticLayer(table, polygons, request.path_layers[0], density.spec,
+                               static_cast<int>(scope.members.size()), out);
       }
     } else {
       SurveyUnevaluated unevaluated;

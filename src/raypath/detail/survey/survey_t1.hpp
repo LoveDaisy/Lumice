@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
+#include "analytic/pose_density.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
 
 namespace lumice::raypath::survey {
@@ -31,6 +32,15 @@ struct T1Outcome {
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
                             double refractive_index, double wavelength_nm, SurveyDocument* out);
+
+// The chromatic layer's v1 legs on the representative: the positional-dispersion table (the
+// kernel's wavelength-critical table at the fixed 650/450 pair) and the diagnose sub-block
+// (the kernel's Diagnose — a separate kernel path, its own sub-block, never merged into the
+// dispersion fields). The weight-tint leg stays unevaluated (the C15 slice). Refusals keep
+// their leg's own evidence; the block-level evidence turns finite once any leg ran.
+void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
+                            const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
+                            int class_size, SurveyDocument* out);
 
 }  // namespace lumice::raypath::survey
 
