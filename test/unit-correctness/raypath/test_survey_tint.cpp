@@ -145,6 +145,24 @@ TEST(SurveyTint, FixedPoseAxisRefusesTheTintButNotTheCertificate) {
   EXPECT_DOUBLE_EQ(document.weight_tint->ratio, 0.0);
 }
 
+// The rank-disagreement refusal: a deviating sequence on the same plate ({3,5}: side face in,
+// side face out — a deflection, not an identity) fails the kernel's own rank check, and the leg
+// refuses rather than reading a map as a mass. Direct call, per the refusal being the leg's own.
+TEST(SurveyTint, DeviatingSequenceRefusesWithNotRankZero) {
+  const TintFixture fix = TintFixture::Make();
+  const std::vector<int> deviating{ 3, 5 };
+  TintInput input = fix.Input(100000);
+  input.representative = &deviating;
+  SurveyDocument document;
+  AssembleWeightTint(input, &document);
+  ASSERT_TRUE(document.weight_tint.has_value());
+  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
+  EXPECT_EQ(document.weight_tint->evidence.mode, "not_rank_zero");
+  EXPECT_EQ(document.chromatic.state, EvidenceState::kRefused);
+  EXPECT_EQ(document.chromatic.mode, "not_rank_zero");
+  EXPECT_DOUBLE_EQ(document.weight_tint->ratio, 0.0);
+}
+
 // The identity arm's serialized shape: the chromatic sub-blocks a point-mass path does not have
 // stay absent, and the early-stop document carries no probes key.
 TEST(SurveyTint, IdentityDocumentCarriesNoPositionalDispersionOrDiagnose) {

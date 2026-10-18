@@ -31,13 +31,17 @@ void AssembleWeightTint(const TintInput& input, SurveyDocument* out) {
   }
 
   std::vector<int> slots;
-  for (int face : *input.representative) {
-    slots.push_back(input.table->SlotOf(face));
+  if (const Error slot_error = ResolveSingleLayerPath({ *input.representative }, *input.table, &slots);
+      !slot_error.Ok()) {
+    // Unreachable past the assembly's request-level resolution (it resolved the same sequence),
+    // but the refusal stays honest — the same discipline as the sibling chromatic legs.
+    RefuseTint(out, "member_resolution");
+    return;
   }
 
   // Two calls, one lattice size, one empty pixel table: the masses are what the ratio reads.
-  const double n_red = IceRefractiveIndex::Get(kTintRedNm);
-  const double n_blue = IceRefractiveIndex::Get(kTintBlueNm);
+  const double n_red = IceRefractiveIndex::Get(kChromaticRedNm);
+  const double n_blue = IceRefractiveIndex::Get(kChromaticBlueNm);
   const analytic::PoseDensity density(input.density->spec);
   const analytic::PixelTable empty_table;
   const analytic::BandSumOutput red =
@@ -77,13 +81,14 @@ void AssembleWeightTint(const TintInput& input, SurveyDocument* out) {
   tint.evidence.state = EvidenceState::kFinite;
   tint.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
   tint.evidence.coverage.geometry_basis =
-      "the point-mass band sum on the class representative at the fixed 650/450 pair";
-  tint.evidence.coverage.wavelength_nm = kTintBlueNm;
+      "the point-mass band sum on the class representative at the fixed " + ChromaticPairProseRedFirst() + " pair";
+  tint.evidence.coverage.wavelength_nm = kChromaticBlueNm;
 
   out->chromatic.state = EvidenceState::kFinite;
   out->chromatic.coverage.members_evaluated = input.member_count;
-  out->chromatic.coverage.wavelength_nm = kTintBlueNm;
-  out->chromatic.coverage.geometry_basis = "the tint leg ran on the class representative at the fixed 650/450 pair";
+  out->chromatic.coverage.wavelength_nm = kChromaticBlueNm;
+  out->chromatic.coverage.geometry_basis =
+      "the tint leg ran on the class representative at the fixed " + ChromaticPairProseRedFirst() + " pair";
 
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] weight tint: method {}, ratio {:.6f} ({} samples per lambda)",
             tint.method, tint.ratio, input.sample_count);

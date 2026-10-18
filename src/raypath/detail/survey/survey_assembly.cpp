@@ -238,12 +238,11 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
     SunIncidentDirection(config.scene_.light_source_.param_, tint_input.incident);
     tint_input.member_count = static_cast<int>(scope.members.size());
     AssembleWeightTint(tint_input, out);
-    out->budget_note =
-        "the identity arm's legs are the T0 routing verdict (milliseconds) and the "
-        "450/650 band-sum tint pair (" +
-        std::to_string(kSurveyTintSampleCount) +
-        " samples per lambda); neither is budget-enforced yet; enforcement lands "
-        "with the quantification legs";
+    out->budget_note = "the identity arm's legs are the T0 routing verdict (milliseconds) and the " +
+                       ChromaticPairProseBlueFirst() + " band-sum tint pair (" +
+                       std::to_string(kSurveyTintSampleCount) +
+                       " samples per lambda); neither is budget-enforced yet; enforcement lands "
+                       "with the quantification legs";
   } else {
     // No early stop: the T0 facts stand (finite — a not-rank-0 verdict is as algebraic as a
     // rank-0 one, and an escaped walk refuses loudly). A random-family class with an

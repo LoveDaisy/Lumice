@@ -215,10 +215,12 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
     out->chromatic.mode = "member_resolution";
     return;
   }
-  // The fixed index pair (plan A2): the pool's red and blue ends through the engine's own
-  // dispersion table; the document echoes exactly these n values.
-  const std::vector<std::string> labels{ "650nm", "450nm" };
-  const std::vector<double> indices{ IceRefractiveIndex::Get(650.0), IceRefractiveIndex::Get(450.0) };
+  // The fixed index pair (plan A2) — the chromatic layer's single authority in
+  // survey_document.hpp: the pool's red and blue ends through the engine's own dispersion
+  // table; the document echoes exactly these n values.
+  const std::vector<std::string> labels{ kChromaticRedLabel, kChromaticBlueLabel };
+  const std::vector<double> indices{ IceRefractiveIndex::Get(kChromaticRedNm),
+                                     IceRefractiveIndex::Get(kChromaticBlueNm) };
 
   // Leg 1: the positional dispersion — the min-deviation edge followed across the pair.
   const analytic::WavelengthCriticalTable critical = analytic::WavelengthCriticalTableOf(
@@ -233,7 +235,8 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
   // order — the table's value ordering stays the kernel's fact, not this loop's premise.
   const analytic::WavelengthOnsetShift* min_row = nullptr;
   for (const analytic::WavelengthOnsetShift& row : critical.onsets) {
-    if (row.source != analytic::OnsetSource::kInteriorMinimum || row.profile != analytic::OnsetProfile::kFiniteJump) {
+    if (row.source != analytic::OnsetSource::kInteriorMinimum || row.profile != analytic::OnsetProfile::kFiniteJump ||
+        row.values_deg.size() < 2) {
       continue;
     }
     if (min_row == nullptr || row.values_deg[0] < min_row->values_deg[0]) {
@@ -258,8 +261,9 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
       dispersion.value_red_deg < dispersion.value_blue_deg ? "red_inner_blue_outer" : "blue_inner_red_outer";
   dispersion.evidence.state = EvidenceState::kFinite;
   dispersion.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
-  dispersion.evidence.coverage.geometry_basis = "the kernel's wavelength-critical table at the 650/450 index pair";
-  dispersion.evidence.coverage.wavelength_nm = 450.0;
+  dispersion.evidence.coverage.geometry_basis =
+      "the kernel's wavelength-critical table at the " + ChromaticPairProseRedFirst() + " index pair";
+  dispersion.evidence.coverage.wavelength_nm = kChromaticBlueNm;
 
   // Leg 2: the diagnose — the weight-kink and gate-edge features as their own sub-block (a
   // different kernel path than the dispersion table; the two mechanisms never merge fields).
@@ -288,8 +292,9 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
   }
   block.evidence.state = EvidenceState::kFinite;
   block.evidence.coverage.members_evaluated = 1;
-  block.evidence.coverage.geometry_basis = "the kernel's Diagnose at the 650/450 index pair";
-  block.evidence.coverage.wavelength_nm = 450.0;
+  block.evidence.coverage.geometry_basis =
+      "the kernel's Diagnose at the " + ChromaticPairProseRedFirst() + " index pair";
+  block.evidence.coverage.wavelength_nm = kChromaticBlueNm;
 
   // The weight-tint leg stays unwired on the random family (the identity arm computes this
   // leg); the sub-block says so.
@@ -301,8 +306,9 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
 
   out->chromatic.state = EvidenceState::kFinite;
   out->chromatic.coverage.members_evaluated = class_size;
-  out->chromatic.coverage.wavelength_nm = 450.0;
-  out->chromatic.coverage.geometry_basis = "the chromatic legs ran on the class representative at the 650/450 pair";
+  out->chromatic.coverage.wavelength_nm = kChromaticBlueNm;
+  out->chromatic.coverage.geometry_basis =
+      "the chromatic legs ran on the class representative at the " + ChromaticPairProseRedFirst() + " pair";
 }
 
 }  // namespace lumice::raypath::survey

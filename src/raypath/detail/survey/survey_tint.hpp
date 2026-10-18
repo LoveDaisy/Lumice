@@ -16,7 +16,9 @@
 // (density_not_expressible — the fixed-pose degenerate is an honest refusal, not a physical
 // impossibility), the kernel does not see the point mass (not_rank_zero — the caller's T0
 // verdict and the kernel's own rank check disagree), or a band's mass degenerates (the ratio
-// would be no number, and a silent inf/null must not reach the document).
+// would be no number, and a silent inf/null must not reach the document —
+// documented-unreachable: a kept-event mass is positive whenever the rank-0 quadrature ran,
+// so this guard exists for the degenerate-band shape, not for a reachable input).
 
 #include <vector>
 
@@ -26,11 +28,11 @@
 
 namespace lumice::raypath::survey {
 
-// The tint leg's caliber constants (schema, not tuning: the serialized block echoes them and
-// the assertion bench reads them back). The pair is the chromatic layer's fixed pair; the
-// sample count is the band-sum lattice size per lambda.
-inline constexpr double kTintBlueNm = 450.0;
-inline constexpr double kTintRedNm = 650.0;
+// The tint leg's caliber constant (schema, not tuning: the serialized block echoes it and
+// the assertion bench reads it back). The wavelength pair itself is NOT defined here — it is
+// the chromatic layer's single authority in survey_document.hpp (kChromaticRedNm /
+// kChromaticBlueNm), shared with the positional-dispersion leg; only the lattice size is
+// tint-local.
 inline constexpr int kSurveyTintSampleCount = 1000000;  // the band_sum lattice size (its `n`)
 
 struct TintInput {

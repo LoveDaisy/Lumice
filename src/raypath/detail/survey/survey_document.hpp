@@ -261,13 +261,35 @@ struct SurveyProbe {
   long long kept_count = 0;     // the sample's kept events (the T2 witness count)
 };
 
+// The chromatic layer's fixed wavelength pair — the single authority every chromatic-site
+// spelling derives from (both legs' labels and indices, the coverage wavelengths, the prose).
+// Both legs (the positional-dispersion table and the weight tint) consume this pair, so it
+// cannot drift between them; the serialized labels and n values echo exactly these constants.
+inline constexpr double kChromaticRedNm = 650.0;
+inline constexpr double kChromaticBlueNm = 450.0;
+inline constexpr const char* kChromaticRedLabel = "650nm";
+inline constexpr const char* kChromaticBlueLabel = "450nm";
+
+// The pair in prose, derived (never a site's own literal). Two orders are live in the document
+// and preserved byte-for-byte: the budget note spells the pair blue-first, the coverage basis
+// strings red-first (matching the labels vector's red-first order).
+inline std::string ChromaticPairProseBlueFirst() {
+  return std::to_string(static_cast<long long>(kChromaticBlueNm)) + "/" +
+         std::to_string(static_cast<long long>(kChromaticRedNm));
+}
+
+inline std::string ChromaticPairProseRedFirst() {
+  return std::to_string(static_cast<long long>(kChromaticRedNm)) + "/" +
+         std::to_string(static_cast<long long>(kChromaticBlueNm));
+}
+
 // The chromatic layer's positional-dispersion leg: the min-deviation edge followed across the
 // fixed index pair (labels as the kernel table carries them, indices as the engine's table
 // echoes them). `direction` is the stacking verdict; `red_inner_blue_outer` ⇔ value_red <
 // value_blue (red edge closer to the sun).
 struct SurveyPositionalDispersion {
-  std::string red_label = "650nm";
-  std::string blue_label = "450nm";
+  std::string red_label = kChromaticRedLabel;
+  std::string blue_label = kChromaticBlueLabel;
   double n_red = 0.0;
   double n_blue = 0.0;
   double value_red_deg = 0.0;
@@ -337,8 +359,17 @@ inline const char* SurveyTintDirectionName(SurveyTintDirection direction) {
 
 // The point-mass method names (band_sum.hpp's PointMassMethod) as the document spells them —
 // the survey-side single authority over the slug, so a kernel-side spelling change is one edit.
+// The switch carries no default: a new kernel PointMassMethod value fails -Wswitch at the
+// switch itself; the trailing return only satisfies control-reaches-end for today's
+// fully-covered enum.
 inline const char* PointMassMethodName(analytic::PointMassMethod method) {
-  return method == analytic::PointMassMethod::kPsiAverage ? "psi_average" : "lattice_mean";
+  switch (method) {
+    case analytic::PointMassMethod::kPsiAverage:
+      return "psi_average";
+    case analytic::PointMassMethod::kLatticeMean:
+      return "lattice_mean";
+  }
+  return "lattice_mean";
 }
 
 // One weight-tint evaluation. `m_*` are the per-lambda masses and their last-doubling quadrature
@@ -346,8 +377,8 @@ inline const char* PointMassMethodName(analytic::PointMassMethod method) {
 // class representative, with `member_count` declaring the class size it stands for (the probe's
 // relabeled-equivalence discipline).
 struct SurveyWeightTint {
-  std::string red_label = "650nm";
-  std::string blue_label = "450nm";
+  std::string red_label = kChromaticRedLabel;
+  std::string blue_label = kChromaticBlueLabel;
   double n_red = 0.0;
   double n_blue = 0.0;
   double m_red = 0.0;
@@ -362,9 +393,10 @@ struct SurveyWeightTint {
   SurveyTintDirection direction = SurveyTintDirection::kNeutral;
   long long kept_count_red = 0;
   long long kept_count_blue = 0;
-  std::string caliber =
-      "m(450nm)/m(650nm): point-mass band-sum transmission weights at the sun direction; fixed "
-      "650/450 index pair, unweighted by SPD or CMF — not a disk-integrated D65 B/R";
+  std::string caliber = std::string("m(") + kChromaticBlueLabel + ")/m(" + kChromaticRedLabel +
+                        "): point-mass band-sum transmission weights at the sun direction; fixed " +
+                        ChromaticPairProseRedFirst() +
+                        " index pair, unweighted by SPD or CMF — not a disk-integrated D65 B/R";
   SurveyEvidence evidence;
 };
 
