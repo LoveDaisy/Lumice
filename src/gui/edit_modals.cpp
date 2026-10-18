@@ -1664,8 +1664,7 @@ static void RenderAxisModal(GuiState& state) {
           if (entry.id != AxisPreset::kCustom) {
             definition = AxisTriple{ EffectiveAxisPresetZenith(entry), entry.azimuth, entry.roll };
           }
-          AxisPresetMemorySlots scratch;  // RED-STATE PROBE (do not keep): memory disabled
-          AxisPresetMemorySlots& slots = scratch;
+          AxisPresetMemorySlots& slots = g_axis_preset_memory[crystal_id];
           const AxisChipSwitch press = SwitchAxisChip(slots, active, leaving, entry.id, definition);
           if (press.loads) {
             g_axis_buf[0] = press.triple[0];
