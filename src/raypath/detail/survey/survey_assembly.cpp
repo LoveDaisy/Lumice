@@ -6,17 +6,25 @@
 #include "analytic/dp_boundary.hpp"
 #include "analytic/dp_focus.hpp"
 #include "analytic/path_rank.hpp"
+#include "analytic/pose_density.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
+#include "raypath/detail/survey/survey_probe.hpp"
+#include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath::survey {
 namespace {
 
-// The unevaluated skeleton's reason, word for word what the schema documents: the T1/T2 legs are
-// not wired in this slice, and the record says so instead of reading as an empty result.
+// The unevaluated skeleton's reasons, word for word what the schema documents: the legs named
+// are not wired for that input class, and the record says so instead of reading as an empty
+// result. The family-restricted one is the precise shape of gap 1 (routing.md: the T1 rank
+// must be taken on the limit family, and the measure-to-family mapping is not wired) — a
+// non-random class is not silently routed as if it were random.
 constexpr const char* kNotWiredReason = "survey v1: T1/T2 not wired";
+constexpr const char* kFamilyRestrictedReason =
+    "family-restricted T1 routing not wired (gap: measure-to-family mapping)";
 
 bool ValidPathLayers(const std::vector<std::vector<int>>& layers) {
   return !layers.empty() && std::all_of(layers.begin(), layers.end(), [](const auto& layer) {
@@ -35,8 +43,9 @@ SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, cons
   verdict.member = member;
   std::vector<int> slots;
   // A class member is a relabeling of the representative under the same crystal, so its slots
-  // resolve whenever the representative's do; a failure here is an internal inconsistency, not a
-  // member property, and surfaces as the resolve error.
+  // resolve whenever the representative's do. A failure here is therefore an internal
+  // inconsistency rather than a member property; the member is refused as such (mode
+  // "member_resolution") — never an empty or defaulted verdict.
   const Error slot_error = ResolveSingleLayerPath({ member }, table, &slots);
   if (!slot_error.Ok()) {
     verdict.rank_zero = false;
@@ -220,17 +229,61 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
     out->evidence.method = kCertifiedMethodPointMass;
   } else {
     // No early stop: the T0 facts stand (finite — a not-rank-0 verdict is as algebraic as a
-    // rank-0 one, and an escaped walk refuses loudly); the T1/T2 object kinds are unevaluated
-    // with the not-wired reason, never an empty result.
+    // rank-0 one, and an escaped walk refuses loudly). A random-family class with an
+    // expressible density routes into the T1 full-dimensional arm — the delta machine (the
+    // T1 rank must be taken on the family, and full-dimensional IS the family here). Anything
+    // else stays unevaluated with the reason naming exactly which leg is not wired.
     out->early_stopped = false;
-    SurveyUnevaluated unevaluated;
-    for (const SurveyObjectKind kind : AllSurveyObjectKinds()) {
-      if (kind != SurveyObjectKind::kSourceImage) {
-        unevaluated.kinds.push_back(kind);
+    const bool full_dimensional = density.Ok() && density.spec.family == analytic::PoseFamily::kRandom;
+    if (full_dimensional) {
+      const T1Outcome outcome = AssembleT1Objects(table, polygons, scope.members, request.path_layers[0],
+                                                  wavelength.refractive_index, wavelength.wavelength_nm, out);
+      if (!outcome.ok) {
+        // Fail closed downstream of the support: the cards after a refused support are not
+        // produced, and the document carries the refusal.
+        SurveyObject refused_support;
+        refused_support.kind = SurveyObjectKind::kSupportSet;
+        refused_support.members = scope.members;
+        refused_support.evidence.state = EvidenceState::kRefused;
+        refused_support.evidence.mode = outcome.refusal_mode;
+        out->objects.clear();
+        out->objects.push_back(std::move(refused_support));
+        any_escaped = true;
+        escape_mode = outcome.refusal_mode;
+      } else {
+        // The arm's own budget note: the T1 legs are the document's computation, and the note
+        // says what ran instead of repeating the early-stop arm's millisecond-only claim.
+        out->budget_note =
+            "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, the "
+            "chromatic pair) are not budget-enforced yet; enforcement lands with the quantification legs";
+        // The canonical probe: the class's radial profile at the document's reference
+        // wavelength (the same ruler the certified edge reads). Never refuses — an empty
+        // event set serializes as the honest zero profile.
+        ProbeInput probe_input;
+        probe_input.table = &table;
+        probe_input.polygons = &polygons;
+        probe_input.representative = &request.path_layers[0];
+        probe_input.refractive_index = wavelength.refractive_index;
+        probe_input.wavelength_nm = wavelength.wavelength_nm;
+        SunIncidentDirection(config.scene_.light_source_.param_, probe_input.incident);
+        probe_input.member_count = static_cast<int>(scope.members.size());
+        RunSolarRadialProbe(probe_input, out);
+        // The chromatic layer's v1 legs on the representative (orthogonal to the position
+        // objects; the dispersion and diagnose legs are separate kernel paths, separate
+        // sub-blocks).
+        AssembleChromaticLayer(table, polygons, request.path_layers[0], density.spec,
+                               static_cast<int>(scope.members.size()), out);
       }
+    } else {
+      SurveyUnevaluated unevaluated;
+      for (const SurveyObjectKind kind : AllSurveyObjectKinds()) {
+        if (kind != SurveyObjectKind::kSourceImage) {
+          unevaluated.kinds.push_back(kind);
+        }
+      }
+      unevaluated.reason = density.Ok() ? kFamilyRestrictedReason : kNotWiredReason;
+      out->unevaluated.push_back(std::move(unevaluated));
     }
-    unevaluated.reason = kNotWiredReason;
-    out->unevaluated.push_back(std::move(unevaluated));
     if (any_escaped) {
       out->evidence.state = EvidenceState::kRefused;
       out->evidence.mode = escape_mode;

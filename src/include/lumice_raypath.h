@@ -166,6 +166,10 @@ LUMICE_API void LUMICE_PathFeatureReportDestroy(LUMICE_PathFeatureReport* result
 // v1 leg does not consume it; the constant exists so a shell can validate before the engine does.
 #define LUMICE_PATH_SURVEY_MAX_BUDGET_MS 120000
 
+// The budget_ms a 0 budget_ms request resolves to, as a shell-facing constant (the engine's own
+// default, mirrored here for the same validate-early purpose).
+#define LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS 15000
+
 typedef struct LUMICE_PathSurveyRequest {
   size_t struct_size;
   int crystal_id;  // a crystal entry of the scene

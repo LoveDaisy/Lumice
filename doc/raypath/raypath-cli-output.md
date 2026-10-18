@@ -672,16 +672,25 @@ under its scope — the physical P|B|D class by default, the literal sequence wi
 and every member of the class is classified by the analytic kernel
 (`LUMICE_ANALYTIC_ClassifyCriticalStructure`'s implementation, whose rank-0 arm is the identity
 certificate: the fold matrix M = I to 1e-12 per entry and the entry/exit wedge zero to 1e-9°).
-The routing has two outcomes and nothing else:
+The routing has three outcomes and nothing else:
 
 - **Every member carries the certificate** → the class collapses to exactly one `source_image`
   object at the sun (the sky-side object; the members are its preimage decomposition), and the
   configurational analysis **stops there**: no delta axis, no fiber, no field work, no MC. The
   chromatic layer does not follow an early stop physically (a source image can still tint), but
   v1 does not wire it — the document says so explicitly instead of staying silent.
-- **Any other member verdict** (not rank-0, or the classification refused) → the document ships
-  the T0 facts per member and puts the deeper object kinds in `unevaluated` with the named
-  reason. An unevaluated block is a routing state, never an empty result.
+- **A random-orientation class whose axis is expressible as a pose density** (the
+  full-dimensional route: the T1 rank is taken on the family, and here the family is the whole
+  rotation group) → the delta machine runs per member: the class-level `support_set`, the
+  `caustic_edge` (the minimum-deviation fold), the `bright_domain` skeleton, the solar-radial
+  `probes[]` slice, and the chromatic layer's dispersion and diagnose legs (§9.6). The deeper
+  kinds `family_collapse_point` / `regular_image` are structurally absent on this route — they
+  are the rank-0/rank-1 family outcomes, not uncomputed work.
+- **Any other member verdict** (a family-restricted class, an inexpressible axis, or a refused
+  classification) → the document ships the T0 facts per member and puts the deeper object kinds
+  in `unevaluated` with the named reason: `family-restricted T1 routing not wired (gap:
+  measure-to-family mapping)` for a non-random family, `survey v1: T1/T2 not wired` for an axis
+  no pose density can carry. An unevaluated block is a routing state, never an empty result.
 
 Member expansion is a statement about the **ensemble**, not about the sequence: the physical
 class of a plate's `1-2` is `{1-2}` alone, because the plate ensemble (c axis at the zenith,
@@ -708,12 +717,13 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `request` | The echo: `crystal_id`, `path_layers`, `symmetry_bits` (7 = physical P\|B\|D, 0 = literal), `wavelength_nm` (null when unset) and `budget_ms` as resolved |
 | `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg` |
 | `routing` | The T0 leg: `early_stopped`, and per-member `members[]` records (`member`, `rank_zero`, `mechanism` — the kernel's roll-up slug, null when not computable, with `mechanism_unavailable` naming why — and the member's own `evidence` block) |
-| `objects` | The object cards (§9.2); exactly one on an early stop, empty otherwise |
-| `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop |
-| `chromatic` | The chromatic layer's own evidence block; v1 writes `unevaluated` with `survey v1: chromatic layer not wired` |
+| `objects` | The object cards (§9.2); exactly one on an early stop, three on the full-dimensional route, one refused `support_set` when that route fails closed |
+| `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop and on the full-dimensional route |
+| `probes` | The canonical probes; present only on the full-dimensional route (§9.6) — an early-stop document carries no `probes` key at all |
+| `chromatic` | The chromatic layer's own evidence block; `unevaluated` with `survey v1: chromatic layer not wired` on an early stop, `finite` with the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`) on the full-dimensional route (§9.6) |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
-| `budget` | `requested_ms`, `enforced` (false in v1) and the honesty note |
-| `timing` | `total_seconds` |
+| `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran) |
+| `timing` | `total_seconds` — the wall clock of the analysis **up to the end of assembly, excluding serialization**; each routing leg's cost rolls into this one figure |
 
 ### 9.2 Object kinds (the registry)
 
@@ -736,6 +746,39 @@ The negative assertion over an early stop is mechanical: `objects[].kind` must e
 `wedge_tolerance_deg` 1e-9) — the certificate itself lives in the kernel; the card restates the
 ruler, it does not re-measure.
 
+On the full-dimensional route each card carries its kind's payload (a payload key never appears
+on a card of another kind):
+
+**`support_set`** — the class's delta-axis support:
+
+| Field | Meaning |
+|---|---|
+| `intervals[]` | `{lower_deg, upper_deg, n_components, n_closed, n_open}` — the partition's intervals (the kernel's own counts: a closed interval carries a closed level set, an open one carries that many open arcs) |
+| `endpoints[]` | `{delta_deg, source, profile, multiplicity}` — the kernel onsets sitting at an interval endpoint, slugs passed through (`interior_minimum` / `boundary_extremum` / `corner` × `finite_jump` / ...) |
+| `symmetry_bits` | the scope the partition ran on (7 = physical P\|B\|D, 0 = literal) |
+| `member_count` | the class members the partition ran on |
+
+**`caustic_edge`** — the minimum-deviation fold (the sharp inner edge; the corpus's 22-degree
+inner edge on a random prism):
+
+| Field | Meaning |
+|---|---|
+| `position_deg` | the fold's deviation at the reference index |
+| `profile` | the kernel's onset-profile slug (`finite_jump` on the C01 shape) |
+| `measure_limit` | present when the kernel computed it (2π/√det H, the finite jump's level-set limit) |
+| `coincident_with_support` | the fold sits on the support boundary (within the partition's own merge constant) — the marker that predicts a sharp edge rather than a soft cutoff |
+| `certificate` | present when the position is certified: `formula` (`2*asin(n*sin(A/2)) - A`), `apex_angle_deg`, `cross_check_deg` (the kernel position vs the survey's restatement), `tolerance_deg` (1e-6 rad; a mismatch beyond it refuses as `closed_form_mismatch`, it never picks one reading silently) |
+
+**`bright_domain`** — the support's interior span and the profile readings:
+
+| Field | Meaning |
+|---|---|
+| `domain_lower_deg` / `domain_upper_deg` | the support's overall span |
+| `peak` | `{delta_deg, value}` — the probe profile's argmax; a **finite** reading (the sharp edge lives on the caustic card, certified; the brightness peak lives here, finite — different quantities, different states) |
+| `edge_reading_deg` | the probe's own edge reading (first non-empty bin, ± half a bin) |
+| `kept_count` | the sample's kept events — the T2 **existence witness**: > 0 says the class carries finite positive weight somewhere; it is an existence statement, never a distribution statistic |
+| `probe_index` | the `probes[]` entry the readings came from |
+
 ### 9.3 Evidence states
 
 Every declaration block (each object card, each member verdict, the document level, the
@@ -744,7 +787,7 @@ is always serialized, so absence can never read as "settled":
 
 | State | Meaning | Accompanying field |
 |---|---|---|
-| `certified` | closed-form / algebraic / exhaustive proof | `method` — from the certified-method registry (v1: `point_mass`, the kernel's rank-0 slug) |
+| `certified` | closed-form / algebraic / exhaustive proof | `method` — from the certified-method registry (`point_mass`, the kernel's rank-0 slug; `slab_min_deviation_closed_form`, the two-face-chain minimum-deviation edge) |
 | `finite` | a finite computation | `coverage` — `{members_evaluated, geometry_basis, wavelength_nm}` |
 | `refused` | a refusal | `mode` — an OPEN string (the analytic-api precedent: status closed / reason open), e.g. a boundary-walk status name |
 | `unevaluated` | not computed | `reason` — e.g. `survey v1: T1/T2 not wired` |
@@ -755,15 +798,59 @@ conclusion; an `unevaluated` block is a routing state, never an empty result.
 
 ### 9.4 Budget honesty
 
-`--budget` is parsed, clamped, echoed and **not enforced in v1**: the only computation the
-routing leg runs is the per-member classify (millisecond work for a rank-0 class; the full
-boundary walk per member otherwise), which is no budget consumer. `budget.enforced` is false
-and the note says so. Enforcement arrives with the quantification legs that actually spend.
+`--budget` is parsed, validated (an out-of-range value is rejected, not clamped), echoed and
+**not enforced**: `budget.enforced` is false and the note says what the producing arm actually
+ran — the early-stop arm's routing leg is millisecond work (no budget consumer), the
+full-dimensional arm's legs are the per-member delta partition, the band-sum probe and the
+chromatic pair (seconds of work on a 12-member class), and the note names them. Enforcement
+arrives with the quantification legs that actually spend.
 
 ### 9.5 Version discipline
 
 Fields are only ever appended; `schema_version` changes meaning only when a field's meaning
 changes or is removed, and a reader written for one schema family (1, 3, 4) must reject the
-others. The C API surface is `LUMICE_AnalyzePathSurvey` / `LUMICE_PathSurveyToJson` /
-`LUMICE_PathSurveyDestroy` over an opaque immutable handle (v4.54, `lumice_raypath.h`); the CLI
-and the GUI read the same serialized document — there is no second serializer.
+others. The append discipline has a byte-stable face: the early-stop documents of a pre-T1
+build and this build are identical apart from `timing` — a new key appears only when the leg
+that fills it ran. The C API surface is `LUMICE_AnalyzePathSurvey` /
+`LUMICE_PathSurveyToJson` / `LUMICE_PathSurveyDestroy` over an opaque immutable handle
+(v4.54, `lumice_raypath.h`); the CLI and the GUI read the same serialized document — there is
+no second serializer.
+
+### 9.6 The probe and the chromatic caliber
+
+The full-dimensional route's quantification layer runs at fixed constants — they are part of
+the schema (the serialized `spec` echoes every one), not tuning knobs:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| probe domain | [15°, 60°] deviation from the sun | the radial range the slice covers |
+| probe bin | 0.1° (450 samples) | one narrow azimuthal wedge per bin; under the uniform density the band-sum value is the full annulus's per-sr mean, so the wedge's azimuth carries no information |
+| probe sample count | 2,000,000 | the band-sum lattice size (`n`); the sampler is the antipodal Fibonacci lattice — **deterministic, no seed** (the coverage declaration names lattice + count + determinism, never a nonexistent seed value) |
+| probe reference λ/n | the document's `scope.wavelength_nm` / `refractive_index` | the probe shares the routing's reference ruler, so its edge reading, the support's lower end and the certified edge position are directly comparable |
+| probe representative | the request's face sequence (`spec.representative`) standing for `spec.member_count` class members | the members are relabelings of one physical class; the class-level reading is the representative's ×N |
+| chromatic λ pair | 650 nm / 450 nm | the pool's red and blue ends through the engine's dispersion table; `n_red`/`n_blue` are echoed verbatim; the D65 full-spectrum spatial integral is a later slice's work |
+
+The probe's two readings stay two things: `edge` (first non-empty bin — geometrically no event
+lies below the minimum-deviation edge, so that bin contains it; a finite reading good to half a
+bin) and `peak` (the value argmax — the profile's brightest sample). The certified edge
+position lives on the `caustic_edge` card; on the corpus's C01 shape the profile rises to its
+peak within one bin of the edge and falls monotonically outward (the brightness approaches a
+finite limit at the edge, then decays — the −const·√(δ−δ_min) near-edge term averaged inside
+the first bin makes the argmax land on its doorstep), so `separation_deg` is a doorstep
+quantity, not a displacement.
+
+The chromatic block on this route is `finite` with up to three optional sub-blocks, and the
+two mechanisms never merge fields:
+
+- `positional_dispersion` — the min-deviation edge followed across the pair:
+  `red_label`/`blue_label`, `n_red`/`n_blue`, `value_red_deg`/`value_blue_deg`,
+  `displacement_deg`, `direction` (`red_inner_blue_outer` ⇔ value_red < value_blue: the red
+  edge sits closer to the sun), and its own `evidence`.
+- `diagnose` — the kernel's weight-kink and gate-edge analysis as a **separate sub-block**
+  (a different kernel path than the dispersion table): `verdict_kind`, `color`, `visible`,
+  `position_deg`, `coverage_complete`, `notes`, the declared `n_red`/`n_blue`, `features[]`
+  (`kind`/`source`/`color`/`visible`/`delta_red_deg`/`delta_blue_deg`/`shift_deg`) and its own
+  `evidence`. A colour edge can be positional (dispersion) or weight-driven (a gate or kink);
+  conflating them would read one mechanism off the other's ruler.
+- `weight_tint` — `unevaluated` with `class tint not wired (C15 slice)`: the whole-scene tint
+  is a later slice's work.

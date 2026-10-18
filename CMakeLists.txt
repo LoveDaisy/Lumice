@@ -1087,6 +1087,8 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/detail/measure/weight_profile.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_assembly.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_json.cpp"
+  "${PROJ_SRC_DIR}/raypath/detail/survey/survey_probe.cpp"
+  "${PROJ_SRC_DIR}/raypath/detail/survey/survey_t1.cpp"
   "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
   "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"
   "${PROJ_SRC_DIR}/raypath/single_path_json.cpp"

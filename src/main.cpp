@@ -1292,8 +1292,8 @@ struct SurveyOptions {
   std::string path_text;                // as typed, for the progress line
   bool literal = false;                 // --literal: the literal sequence, not the physical class
   std::optional<double> wavelength_nm;  // --lambda; nullopt = the engine's reference choice
-  int budget_seconds = 15;              // --budget; the engine's ms constants clamp it
-  std::filesystem::path output_path;    // empty = stdout
+  int budget_seconds = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS / 1000;  // --budget; the engine's ms constants clamp it
+  std::filesystem::path output_path;                                 // empty = stdout
 };
 
 // Outcome of offering argv[i] to the option set every subcommand shares.
@@ -2772,8 +2772,9 @@ int ParseSurveyOptions(int argc, char** argv, int first, SurveyOptions& opts) {
         value.remove_suffix(1);
       }
       const auto seconds = ParseStrictUnsigned(value);
-      if (!seconds.has_value() || *seconds == 0 || *seconds > 120) {
-        std::cerr << "Error: --budget requires an integer number of seconds in [1, 120], got '" << value << "'\n\n";
+      if (!seconds.has_value() || *seconds == 0 || *seconds > LUMICE_PATH_SURVEY_MAX_BUDGET_MS / 1000) {
+        std::cerr << "Error: --budget requires an integer number of seconds in [1, "
+                  << LUMICE_PATH_SURVEY_MAX_BUDGET_MS / 1000 << "], got '" << value << "'\n\n";
         PrintSurveyUsage(argv[0], std::cerr);
         return 1;
       }
@@ -2874,7 +2875,10 @@ int RunSurvey(const SurveyOptions& opts) {
   const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
   size_t len = 0;
-  LUMICE_PathSurveyToJson(survey.get(), nullptr, 0, &len);
+  if (const LUMICE_ErrorCode err = LUMICE_PathSurveyToJson(survey.get(), nullptr, 0, &len); err != LUMICE_OK) {
+    std::cerr << "Error: path survey serialization failed (error code " << static_cast<int>(err) << ")\n";
+    return 1;
+  }
   std::string text(len + 1, '\0');
   LUMICE_PathSurveyToJson(survey.get(), text.data(), text.size(), &len);
   text.resize(len);
