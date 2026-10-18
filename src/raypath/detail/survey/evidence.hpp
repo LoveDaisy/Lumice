@@ -50,13 +50,26 @@ inline bool EvidenceStateFromName(std::string_view name, EvidenceState* out) {
   return false;
 }
 
-// The certified-method vocabulary, v1: the kernel's rank-0 mechanism slug — the same word the
-// analytic kernel rolls up for a point-mass path (FocusingClassification::Mechanism), reused
-// rather than re-spelled. The registry grows append-only as later legs certify by other means.
+// The certified-method vocabulary: the kernel's rank-0 mechanism slug (the same word the
+// analytic kernel rolls up for a point-mass path, FocusingClassification::Mechanism) and the
+// survey-side closed-form min-deviation edge (the two-face-chain slab branch's interior minimum,
+// which the kernel computes closed-form; the survey restates the formula and cross-checks). The
+// registry grows append-only as later legs certify by other means.
 constexpr const char* kCertifiedMethodPointMass = "point_mass";
+constexpr const char* kCertifiedMethodSlabMinDeviationClosedForm = "slab_min_deviation_closed_form";
+
+inline constexpr std::array<std::string_view, 2> kCertifiedMethods{
+  kCertifiedMethodPointMass,
+  kCertifiedMethodSlabMinDeviationClosedForm,
+};
 
 inline bool CertifiedMethodRegistered(std::string_view method) {
-  return method == kCertifiedMethodPointMass;
+  for (const std::string_view registered : kCertifiedMethods) {
+    if (registered == method) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace lumice::raypath::survey
