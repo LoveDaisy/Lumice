@@ -46,7 +46,7 @@
 #include "gui/file_io.hpp"          // DeserializeFromJson / BuildExportJsonOrWarn
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"  // FromLegacyRaypath — an OR row written the way the pool holds it
-#include "gui/user_defaults.hpp"     // EffectiveAxisPresetZenith — what Apply preset loads
+#include "gui/user_defaults.hpp"     // EffectiveAxisPresetZenith — what the chips and Reset load
 // imgui_internal.h is normally an anti-pattern. Three claims here have no public reading: window
 // z-order (ImGuiContext::Windows), whether the staged form is a real modal
 // (GetTopMostPopupModal), and whether a table column's text fits (ImGuiTableColumn's layout
@@ -1430,13 +1430,14 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // P94 / P95. APPLYING a preset must leave the MODAL preview's pose exactly where the user left
-  // it — apply is a parameter shortcut: it writes the three distribution buffers and nothing
-  // else, so the label buffer and the pose the user is looking at both survive (what it DOES
-  // write is the loads-its-definition case's subject). A Label chip press renames only and must
-  // leave the pose alone too (negative half, same frame).
+  // P94 / P95. SWITCHING a label and RESETTING the parameters must leave the MODAL preview's pose
+  // exactly where the user left it: a chip press writes the label buffer and the three
+  // distribution buffers, the Reset row rewrites the buffers, and neither touches
+  // g_crystal_rotation — crystal_preview.cpp's writer closure names the only writers. A drag
+  // precedes each assertion, so a pose-moving switch cannot pass on the pose merely never having
+  // been moved.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "applying_a_preset_leaves_the_modal_preview_pose_alone");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "switching_a_label_chip_leaves_the_modal_preview_pose_alone");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -1449,53 +1450,54 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       float at_open[16];
       std::memcpy(at_open, gui::g_crystal_rotation, sizeof at_open);
 
-      // Drag first, so a pose-moving apply is distinguishable from the pose merely surviving.
+      // Drag first, so a pose-moving switch is distinguishable from the pose merely surviving.
       gui::ApplyTrackballRotation(45.0f, 15.0f);
       ctx->Yield(1);
       float dragged[16];
       std::memcpy(dragged, gui::g_crystal_rotation, sizeof dragged);
       if (std::memcmp(dragged, at_open, sizeof dragged) == 0) {
-        IM_ERRORF("%s", "premise: the drag moved the pose, so the apply assertion below is not vacuous");
+        IM_ERRORF("%s", "premise: the drag moved the pose, so the switch assertion below is not vacuous");
       }
 
-      // Same computed-ID addressing as the loads-its-definition case: BeginCombo registers no
-      // item info, so no string ref reaches the combo.
-      const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Column##axis_label_chip");
-      IM_CHECK(chip_anchor.ID != 0);
-      const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
-      IM_CHECK(apply_combo != 0);
-      ctx->ItemClick(apply_combo);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Plate##apply");
+      ctx->ItemClick("**/Plate##axis_label_chip");
       ctx->Yield(3);
 
-      // Premise: the apply actually happened — the zenith buffer now holds Plate's effective
+      // Premise: the switch actually happened — the zenith buffer now holds Plate's effective
       // value (the default document label is Random, whose zenith is the full uniform span), so
-      // a silently skipped apply cannot pass the pose assertion below.
+      // a silently skipped press cannot pass the pose assertion below.
       const gui::EditModalBuffers after = gui::GetEditModalBuffers();
       const auto& plate = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
       if (!(after.axis[0] == gui::EffectiveAxisPresetZenith(plate))) {
-        IM_ERRORF("%s", "premise: Apply did not load Plate's zenith, so the pose assertion below is vacuous");
+        IM_ERRORF("%s", "premise: the chip press did not load Plate's zenith, so the pose assertion below is vacuous");
       }
 
       float observed[16];
       std::memcpy(observed, gui::g_crystal_rotation, sizeof observed);
       if (std::memcmp(observed, dragged, sizeof observed) != 0) {
-        IM_ERRORF("%s", "Apply moved the preview pose; it must leave it exactly where the drag left it");
+        IM_ERRORF("%s", "a label chip press moved the preview pose; it must leave it where the drag left it");
       }
 
-      // Negative half: a Label chip press renames only. The pose the drag left must survive it.
-      gui::ApplyTrackballRotation(30.0f, 0.0f);
-      ctx->Yield(1);
-      float after_drag[16];
-      std::memcpy(after_drag, gui::g_crystal_rotation, sizeof after_drag);
-      if (std::memcmp(after_drag, dragged, sizeof after_drag) == 0) {
-        IM_ERRORF("%s", "premise: the drag moved the pose, so the chip assertion below is not vacuous");
-      }
-      ctx->ItemClick("**/Parry##axis_label_chip");
+      // Same for the Reset row: drift a parameter off the definition first, so Reset demonstrably
+      // rewrites the buffers rather than re-writing what is already there, then assert the pose
+      // survived it.
+      ctx->ItemInputValue("**/Zenith/##Std_input", 5.0f);
       ctx->Yield(2);
-      if (std::memcmp(gui::g_crystal_rotation, after_drag, sizeof after_drag) != 0) {
-        IM_ERRORF("%s", "a Label chip press moved the preview pose");
+      {
+        const gui::EditModalBuffers drifted = gui::GetEditModalBuffers();
+        if (drifted.axis[0] == gui::EffectiveAxisPresetZenith(plate)) {
+          IM_ERRORF("%s", "premise: the drift did not move the zenith, so the Reset assertions below are vacuous");
+        }
+      }
+      ctx->ItemClick("**/Reload##axis_reset");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers after_reset = gui::GetEditModalBuffers();
+        if (!(after_reset.axis[0] == gui::EffectiveAxisPresetZenith(plate))) {
+          IM_ERRORF("%s", "Reset did not reload Plate's definition");
+        }
+      }
+      if (std::memcmp(gui::g_crystal_rotation, dragged, sizeof dragged) != 0) {
+        IM_ERRORF("%s", "the Reset button moved the preview pose");
       }
 
       ctx->ItemClick(kCancel);
@@ -1577,16 +1579,18 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
   }
 
   // ===================================================================================
-  // The label row and the Apply preset combo: the sticky axis label's two controls.
+  // The label row: the chips' switch gesture, the Reset row, and the summary-line badge.
   // ===================================================================================
 
-  // A Label chip press renames and NOTHING else. The parameters are the modal's single cache —
-  // the whole point of splitting the old "Presets:" row into Label + Apply is that A→B→A keeps
-  // the triple, so the case asserts the axis buffer value-for-value, not "changed somehow", and
-  // drifts the parameters off the default triple first so "left alone" cannot pass on a rewrite
-  // of the default back in.
+  // The chips' single gesture — switch: the press that leaves a label remembers the current
+  // parameters under it, then loads the target's memory (its definition when nothing is
+  // remembered yet) and sets the label. The case asserts the axis buffer value-for-value rather
+  // than "changed somehow", and seeds the parameters off the default triple first so "loaded the
+  // definition" cannot pass on a rewrite of the default back in (the default document label is
+  // Random, whose zenith is the full uniform span — visibly not Column's definition). The
+  // definition comes through EffectiveAxisPresetZenith, so a preset-library retune rides along.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_label_chip_press_renames_without_touching_parameters");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_label_chip_press_switches_label_and_loads_parameters");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -1611,14 +1615,17 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       {
         const gui::EditModalBuffers after = gui::GetEditModalBuffers();
         IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
-        for (int i = 0; i < 3; ++i) {
-          if (!(after.axis[i] == seeded[i])) {
-            IM_ERRORF("label press moved axis[%d]", i);
-          }
+        const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
+        if (!(after.axis[0] == gui::EffectiveAxisPresetZenith(column))) {
+          IM_ERRORF("%s", "the Column press did not load Column's effective zenith");
+        }
+        if (!(after.axis[1] == column.azimuth) || !(after.axis[2] == column.roll)) {
+          IM_ERRORF("%s", "the Column press did not load Column's azimuth/roll");
         }
       }
 
-      // A→B→A: back to the original label, parameters still exactly what was seeded.
+      // A->B->A: back to the original label, parameters byte-identical to what was seeded (the
+      // Random slot recorded them when the first press left).
       ctx->ItemClick("**/Random##axis_label_chip");
       ctx->Yield(2);
       {
@@ -1631,6 +1638,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         }
       }
 
+      // The chips are the row's only preset control: the load-only dropdown that used to sit below
+      // the parameter rows is gone, and its absence is pinned here so it cannot grow back.
+      IM_CHECK(!ctx->ItemExists("**/###apply_axis_preset"));
+
       ctx->ItemClick(kOk);
       ctx->Yield(2);
       IM_CHECK_EQ(static_cast<int>(EntryCrystal().axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
@@ -1641,74 +1652,382 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The Apply preset combo is a pure parameter shortcut: it loads the preset's definition
-  // (zenith through EffectiveAxisPresetZenith, so a preset-library retune comes through) into
-  // the three distribution buffers — and nothing else. The label buffer is NOT written: the
-  // Label row is its only writer, so applying a preset whose name differs from the label leaves
-  // the label in place (and the mismatch badge, addressed by the badge case below, reports the
-  // drift honestly). Custom is deliberately absent from its list — it has no definition to apply.
+  // Pressing the already-highlighted chip is a no-op: no leave is recorded, nothing loads, and
+  // the label buffer does not move. (Pulling the parameters back to the label's definition is the
+  // Reset row's whole job; the press must not half-do it.)
   {
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "edit_modal", "applying_a_preset_loads_its_definition_and_leaves_the_label_alone");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "pressing_the_highlighted_chip_is_a_no_op");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+      const gui::EditModalBuffers before = gui::GetEditModalBuffers();
+      IM_CHECK_EQ(static_cast<int>(before.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+
+      ctx->ItemClick("**/Random##axis_label_chip");
+      ctx->Yield(2);
+      const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+      IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(before.axis_preset));
+      for (int i = 0; i < 3; ++i) {
+        if (!(after.axis[i] == before.axis[i])) {
+          IM_ERRORF("the highlighted chip press moved axis[%d]", i);
+        }
+      }
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // Custom: the first press has neither definition nor memory, so it renames only; after the user
+  // tuned under Custom and left, the memory brings the tuning back; and the Reset row is inert
+  // there (Custom has no definition to reload) — asserted behaviorally, with this sequence's
+  // working Chip loads and the pose case's working Reset as the live controls.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "custom_chip_renames_first_then_restores_its_memory");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+      const gui::EditModalBuffers at_open = gui::GetEditModalBuffers();
+
+      // First Custom press: no memory yet, no definition — parameters byte-identical.
+      ctx->ItemClick("**/Custom##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kCustom));
+        for (int i = 0; i < 3; ++i) {
+          if (!(after.axis[i] == at_open.axis[i])) {
+            IM_ERRORF("the first Custom press moved axis[%d]", i);
+          }
+        }
+      }
+
+      // Tune under Custom, leave for Plate (which loads its definition), come back: the tuning is
+      // restored, not the factory Custom row.
+      ctx->ItemInputValue("**/Zenith/##Mean_input", 33.0f);
+      ctx->Yield(2);
+      gui::AxisDist tuned[3];
+      {
+        const gui::EditModalBuffers tuned_buffers = gui::GetEditModalBuffers();
+        tuned[0] = tuned_buffers.axis[0];
+        tuned[1] = tuned_buffers.axis[1];
+        tuned[2] = tuned_buffers.axis[2];
+      }
+      if (tuned[0] == at_open.axis[0]) {
+        IM_ERRORF("%s", "premise: the tune did not move the zenith, so the restore assertion below is not vacuous");
+      }
+      ctx->ItemClick("**/Plate##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers plate = gui::GetEditModalBuffers();
+        const auto& plate_entry = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
+        IM_CHECK_EQ(static_cast<int>(plate.axis_preset), static_cast<int>(gui::AxisPreset::kPlate));
+        if (!(plate.axis[0] == gui::EffectiveAxisPresetZenith(plate_entry))) {
+          IM_ERRORF("%s",
+                    "premise: leaving for Plate did not load Plate's definition, so the restore below is vacuous");
+        }
+      }
+      ctx->ItemClick("**/Custom##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers back = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(back.axis_preset), static_cast<int>(gui::AxisPreset::kCustom));
+        for (int i = 0; i < 3; ++i) {
+          if (!(back.axis[i] == tuned[i])) {
+            IM_ERRORF("the Custom memory did not restore axis[%d]", i);
+          }
+        }
+      }
+
+      // Reset is inert under Custom: nothing may move.
+      ctx->ItemClick("**/Reload##axis_reset");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers after_reset = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(after_reset.axis_preset), static_cast<int>(gui::AxisPreset::kCustom));
+        for (int i = 0; i < 3; ++i) {
+          if (!(after_reset.axis[i] == tuned[i])) {
+            IM_ERRORF("Reset moved axis[%d] under Custom — it must be inert there", i);
+          }
+        }
+      }
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // Reset reloads the CURRENT label's definition and nothing else — the label stays, the memory
+  // stays, the pose stays (pose asserted by the pose case above). The memory half is what makes
+  // this sequence informative: after Reset pulls Random back to its definition, pressing Column
+  // still restores Q (the remembered Column parameters), not the Column definition; and pressing
+  // Random then restores D_R — the definition the post-Reset leave wrote over the opening triple,
+  // which pins leave-always-write (a stale opening-slot world would hand back the seeded value).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "the_reset_row_reloads_the_definition_and_keeps_the_memory");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };  // P0, off D_R
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(2);
+      // Tune under Column: Q = Column's definition with the zenith mean moved.
+      ctx->ItemInputValue("**/Zenith/##Mean_input", 45.0f);
+      ctx->Yield(2);
+      gui::AxisDist q[3];
+      {
+        const gui::EditModalBuffers tuned = gui::GetEditModalBuffers();
+        q[0] = tuned.axis[0];
+        q[1] = tuned.axis[1];
+        q[2] = tuned.axis[2];
+      }
+      const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
+      if (q[0] == gui::EffectiveAxisPresetZenith(column)) {
+        IM_ERRORF("%s", "premise: the tune did not move the zenith off Column's definition");
+      }
+
+      // Back to Random: the seeded opening triple comes back off the Random slot.
+      ctx->ItemClick("**/Random##axis_label_chip");
+      ctx->Yield(2);
+      if (!(gui::GetEditModalBuffers().axis[0] == gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f })) {
+        IM_ERRORF("%s", "premise: A-B-A did not restore the seeded triple, so the Reset assertions below are vacuous");
+      }
+
+      // Drift (Random label, buffers off both the seed and D_R), then Reset.
+      ctx->ItemInputValue("**/Zenith/##Mean_input", 66.0f);
+      ctx->Yield(2);
+      const auto& random = gui::AxisPresetEntryFor(gui::AxisPreset::kRandom);
+      ctx->ItemClick("**/Reload##axis_reset");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers after_reset = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(after_reset.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+        if (!(after_reset.axis[0] == random.zenith) || !(after_reset.axis[1] == random.azimuth) ||
+            !(after_reset.axis[2] == random.roll)) {
+          IM_ERRORF("%s", "Reset did not reload the Random definition");
+        }
+      }
+
+      // Reset kept the memory: Column's press restores Q, not the Column definition.
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
+        for (int i = 0; i < 3; ++i) {
+          if (!(after.axis[i] == q[i])) {
+            IM_ERRORF("after Reset, the Column press did not restore the remembered Q at axis[%d]", i);
+          }
+        }
+      }
+
+      // Leaving Q behind recorded it, so Random's press now restores D_R — the definition the
+      // post-Reset leave wrote over the seeded opening triple, not the seed itself.
+      ctx->ItemClick("**/Random##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+        if (!(after.axis[0] == random.zenith) || !(after.axis[1] == random.azimuth) ||
+            !(after.axis[2] == random.roll)) {
+          IM_ERRORF("%s", "Random's press did not restore the post-Reset leave (leave-always-write broke)");
+        }
+      }
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // Per-crystal isolation: C1's remembered triples must not reach C2. C2's first press on Column
+  // loads the DEFINITION even though C1 left a non-definition Column memory behind, and C2's own
+  // A-B-A restores C2's own opening parameters — leave-always-write with no stale slot.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_chip_memory_does_not_cross_crystals");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      // C1: drift its opening triple off every definition so its memories are recognizable.
+      EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };
+      gui::CrystalConfig second;
+      second.zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 55.0f, 9.0f };  // C2's own off-definition seed
+      gui::EntryCard e_second;
+      e_second.crystal_id = static_cast<int>(gui::g_state.crystals.size());
+      gui::g_state.crystals.push_back(second);
+      gui::g_state.layers[0].entries.push_back(e_second);
+      ctx->Yield(2);
+
+      // C1: Random -> Column, tune (so C1's Column memory is NOT the definition), back to Random.
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(2);
+      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
+      ctx->Yield(2);
+      gui::AxisDist c1_column_memory[3];
+      {
+        const gui::EditModalBuffers tuned = gui::GetEditModalBuffers();
+        c1_column_memory[0] = tuned.axis[0];
+        c1_column_memory[1] = tuned.axis[1];
+        c1_column_memory[2] = tuned.axis[2];
+      }
+      const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
+      if (c1_column_memory[0] == gui::EffectiveAxisPresetZenith(column)) {
+        IM_ERRORF("%s", "premise: C1's Column memory must differ from the definition for the C2 asserts to bite");
+      }
+      if (c1_column_memory[0] == gui::AxisDist{ gui::AxisDistType::kGauss, 55.0f, 9.0f }) {
+        IM_ERRORF("%s", "premise: C1's Column memory must differ from C2's seed for the C2 asserts to bite");
+      }
+      ctx->ItemClick("**/Random##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers back = gui::GetEditModalBuffers();
+        if (!(back.axis[0] == gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f })) {
+          IM_ERRORF("%s", "premise: C1's own round trip failed, so the isolation asserts below are vacuous");
+        }
+      }
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+
+      // C2: the first Column press must load Column's DEFINITION — not C1's remembered triple.
+      OpenCardEditor(ctx, 1, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
+        if (!(after.axis[0] == gui::EffectiveAxisPresetZenith(column))) {
+          IM_ERRORF("%s", "C2's first Column press loaded something other than Column's definition");
+        }
+      }
+
+      // C2's own A-B-A restores C2's own opening triple — not C1's Random memory.
+      ctx->ItemClick("**/Random##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers back = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(back.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+        if (!(back.axis[0] == gui::AxisDist{ gui::AxisDistType::kGauss, 55.0f, 9.0f })) {
+          IM_ERRORF("%s", "C2's A-B-A did not restore C2's own opening parameters");
+        }
+      }
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // Cancel undoes the document write, not the exploration: a remembered triple survives it. The
+  // judge is B's FIRST press after reopening — B is not the reopening label, so no leave has
+  // overwritten its slot, and the remembered Q (not B's definition) must come back. (The wrong
+  // world where Cancel clears the memory loads B's definition here and reads byte-identical to
+  // the right one on every later A-B-A.) The trailing A-B-A then restores the reopening state
+  // itself, which is only distinguishable from "loaded the definition" because the seed is
+  // off-definition.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "cancel_keeps_the_chip_memory");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(3);
       ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
-
-      // BeginCombo registers no item info with the test engine (unlike InputFloat), so no string
-      // ref can find the combo; address it by its computed ID, the way AxisDistComboId does for
-      // the distribution combos. The seed is the label chip's parent scope — the PushID(layer) /
-      // PushID(entry) pair the tab bodies render under — the same id stack entry the combo itself
-      // hashed against; "###" only resets the crc to that seed, it does not void it.
-      const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Column##axis_label_chip");
-      IM_CHECK(chip_anchor.ID != 0);
-      const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
-      IM_CHECK(apply_combo != 0);
-      ctx->ItemClick(apply_combo);
+      ctx->ItemClick("**/Column##axis_label_chip");
       ctx->Yield(2);
-      IM_CHECK(ctx->ItemExists("**/Lowitz##apply"));
-      if (ctx->ItemExists("**/Custom##apply")) {
-        IM_ERRORF("%s", "Custom has no definition to apply, so it must not be listed");
+      ctx->ItemInputValue("**/Zenith/##Mean_input", 45.0f);
+      ctx->Yield(2);
+      gui::AxisDist q[3];
+      {
+        const gui::EditModalBuffers tuned = gui::GetEditModalBuffers();
+        q[0] = tuned.axis[0];
+        q[1] = tuned.axis[1];
+        q[2] = tuned.axis[2];
       }
-      const gui::AxisPreset label_before = gui::GetEditModalBuffers().axis_preset;
-      ctx->ItemClick("**/Lowitz##apply");
+      const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
+      if (q[0] == gui::EffectiveAxisPresetZenith(column)) {
+        IM_ERRORF("%s", "premise: Q equals Column's definition, so the Cancel assertions below are vacuous");
+      }
+      ctx->ItemClick("**/Random##axis_label_chip");
+      ctx->Yield(2);
+      if (!(gui::GetEditModalBuffers().axis[0] == gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f })) {
+        IM_ERRORF("%s", "premise: A-B-A did not restore the seed before Cancel");
+      }
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+
+      // Reopen (the pool still holds the seeded Random crystal) and press Column first thing:
+      // Q, not the definition.
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(3);
-
-      const gui::EditModalBuffers after = gui::GetEditModalBuffers();
-      const auto& lowitz = gui::AxisPresetEntryFor(gui::AxisPreset::kLowitz);
-      if (!(after.axis[0] == gui::EffectiveAxisPresetZenith(lowitz))) {
-        IM_ERRORF("%s", "Apply did not load Lowitz's effective zenith");
-      }
-      if (!(after.axis[1] == lowitz.azimuth)) {
-        IM_ERRORF("%s", "Apply did not load Lowitz's azimuth");
-      }
-      if (!(after.axis[2] == lowitz.roll)) {
-        IM_ERRORF("%s", "Apply did not load Lowitz's roll");
-      }
-      // The label is byte-identical across the apply: the default document label is Random, and
-      // it must stay Random even though the applied preset's name is Lowitz.
-      IM_CHECK_EQ(static_cast<int>(label_before), static_cast<int>(gui::AxisPreset::kRandom));
-      IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(label_before));
-
-      ctx->ItemClick(kOk);
+      ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
-      IM_CHECK_EQ(static_cast<int>(EntryCrystal().axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
-      IM_CHECK(EntryCrystal().zenith == gui::EffectiveAxisPresetZenith(lowitz));
+      IM_CHECK_EQ(static_cast<int>(gui::GetEditModalBuffers().axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers after = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(after.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
+        for (int i = 0; i < 3; ++i) {
+          if (!(after.axis[i] == q[i])) {
+            IM_ERRORF("after Cancel, the first Column press did not restore the remembered Q at axis[%d]", i);
+          }
+        }
+      }
+
+      // A-B-A restores THIS session's opening state (the seed).
+      ctx->ItemClick("**/Random##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers round = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(round.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+        if (!(round.axis[0] == gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f })) {
+          IM_ERRORF("%s", "the reopened session's A-B-A did not restore its own opening state");
+        }
+      }
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
     };
   }
 
-  // The badge reports the decoupling honestly: applying a preset whose distributions leave the
-  // label's domain lights the mismatch badge on the label chip — the label now names parameters
-  // the buffer no longer holds. Default document label is Random (three uniform-360 spans) and
-  // Lowitz's narrow Gaussians are outside that domain (predicate pinned in the axis-preset unit
-  // tests), so the badge must be absent before the apply and present after.
+  // The badge reports the decoupling honestly — it lives on the preview's summary line now, the
+  // one place in the modal that shows the label and the parameters together, between the label
+  // prefix and the body. Default document label is Random (three uniform-360 spans); narrowing
+  // the zenith's range leaves that domain (the predicate is pinned in the axis-preset unit
+  // tests), so the badge must be absent before the drift and present after. Both layouts assert
+  // the drifted summary still fits its two-line budget; Compact additionally asserts the badge
+  // rectangle lands inside the modal window (it used to sit at the chip row's end, which neither
+  // layout's width left visible).
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "applying_a_mismatched_preset_lights_the_label_badge");
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "drifting_the_parameters_off_the_label_lights_the_summary_badge");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -1720,16 +2039,33 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       IM_CHECK(!ctx->ItemExists("**/###axis_label_mismatch"));
 
-      const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Column##axis_label_chip");
-      IM_CHECK(chip_anchor.ID != 0);
-      const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
-      IM_CHECK(apply_combo != 0);
-      ctx->ItemClick(apply_combo);
+      ctx->ItemInputValue("**/Zenith/##Range_input", 40.0f);
       ctx->Yield(2);
-      ctx->ItemClick("**/Lowitz##apply");
-      ctx->Yield(3);
 
       IM_CHECK(ctx->ItemExists("**/###axis_label_mismatch"));
+
+      // Compact first (the layout the harness starts in): the badge is on screen and the summary
+      // line it sits on still fits the budget both layouts share.
+      IM_CHECK_LE(gui::TestGetSummaryMeasuredWrappedHeight(), gui::TestPreviewSummaryReservedHeight());
+      {
+        const ImGuiTestItemInfo badge = ctx->ItemInfo("**/###axis_label_mismatch");
+        IM_CHECK(badge.ID != 0);
+        ImGuiWindow* win = TopmostRootWindow();
+        IM_CHECK(win != nullptr);
+        const ImRect win_rect = win->Rect();
+        IM_CHECK_GE(badge.RectFull.Min.x, win_rect.Min.x);
+        IM_CHECK_GE(badge.RectFull.Min.y, win_rect.Min.y);
+        IM_CHECK_LE(badge.RectFull.Max.x, win_rect.Max.x);
+        IM_CHECK_LE(badge.RectFull.Max.y, win_rect.Max.y);
+      }
+
+      // Expanded: same budget assertion, drawn by the other layout formula.
+      gui::g_state.modal_layout_compact = false;
+      ctx->Yield(3);
+      IM_CHECK(ctx->ItemExists("**/###axis_label_mismatch"));
+      IM_CHECK_LE(gui::TestGetSummaryMeasuredWrappedHeight(), gui::TestPreviewSummaryReservedHeight());
+      gui::g_state.modal_layout_compact = true;
+      ctx->Yield(2);
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);

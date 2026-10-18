@@ -3083,15 +3083,15 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   // ===============================================================================================
 
   {
-    // Retune Column in the library, then APPLY Column in a crystal's axis modal and confirm the
-    // crystal got the tuned value AND is still classified as Column. This is the one case that
-    // crosses both surfaces — each half passing on its own would not prove the Apply combo reads
-    // what the panel wrote. (The Label chip is deliberately not the driver: renaming must not
-    // touch parameters, which the edit-modal suite pins.)
+    // Retune Column in the library, then press the Column chip in a crystal's axis modal with no
+    // memory in the way, and confirm the crystal got the tuned value. This is the one case that
+    // crosses both surfaces — each half passing on its own would not prove the chips read what
+    // the panel wrote. (A remembered triple would shadow the library — the chip loads the slot
+    // first — so the case's fresh crystal is part of the claim.)
     //
     // The explicit Save matters: without it the case would assert that an edit the user never saved
     // reached the axis modal, which is the opposite of what the copy model promises.
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_retuned_preset_reaches_the_axis_modal_apply");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_retuned_preset_reaches_the_axis_chips");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_library_to_modal");
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
@@ -3105,16 +3105,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       gui::EditRequest req{ gui::EditTarget::kAxis, /*layer_idx=*/0, /*entry_idx=*/0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);
-      // BeginCombo registers no item info with the test engine, so the combo is addressed by its
-      // computed ID, seeded with the label chip's parent scope (AxisDistComboId's mechanism): the
-      // "###" resets the crc to the seed but does not void it.
-      const ImGuiTestItemInfo chip_anchor = ctx->ItemInfo("**/Random##axis_label_chip");
-      IM_CHECK(chip_anchor.ID != 0);
-      const ImGuiID apply_combo = ImHashStr("###apply_axis_preset", 0, chip_anchor.ParentID);
-      IM_CHECK(apply_combo != 0);
-      ctx->ItemClick(apply_combo);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Column##apply");
+      ctx->ItemClick("**/Column##axis_label_chip");
       ctx->Yield(2);
       // Committed rather than read out of the modal's buffer: the buffer is TU-private by design
       // (OK/Cancel atomicity), and "the value reached the document" is the stronger claim anyway.
@@ -3125,12 +3116,9 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(edited.zenith.std, 0.3f);
       IM_CHECK_EQ(static_cast<int>(gui::ClassifyAxisPreset(edited.zenith, edited.azimuth, edited.roll)),
                   static_cast<int>(gui::AxisPreset::kColumn));
-      // The definition reached the document (the parameters classify as Column above), but the
-      // label is not apply's to write — the Label row is the only writer. The default document
-      // label Random survives, which is also the honest outcome for a retuned library: what was
-      // applied is the user's own variant of Column, and stamping the name on it is exactly the
-      // "control sets a label it mislabels" shape the apply decoupling removed.
-      IM_CHECK_EQ(static_cast<int>(edited.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
+      // The chip also sets the label — the switch is the whole gesture, so a crystal that just
+      // became Column reads as Column.
+      IM_CHECK_EQ(static_cast<int>(edited.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
     };
   }
 
@@ -3157,9 +3145,10 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);
 
-      // The same starting point the read case used: the Column label, then a std the user tuned.
-      // If any write-through survived, this is the edit it would carry into the library. The label
-      // press is rename-only and must not interfere either way.
+      // The same starting point the read case used: the Column label, then a std the user typed.
+      // If any write-through survived, this is the edit it would carry into the library. The chip
+      // press also loads the preset's definition; the std edit below overwrites it, so the value
+      // the library must not receive stays unambiguous.
       ctx->ItemClick("**/Column##axis_label_chip");
       ctx->Yield(2);
       ctx->ItemInputValue("**/Zenith/##Std_input", 0.3f);
