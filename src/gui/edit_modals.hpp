@@ -150,6 +150,14 @@ void CloseEditModalOnDocumentReset();
 // production must not touch.
 void ResetModalState();
 
+// Clears the axis modal's per-crystal preset memory (g_axis_preset_memory in edit_modals.cpp —
+// one triple per label, keyed by pool crystal id). Called by ResetModalState() (test teardown)
+// and unconditionally by ResetFrontendState() (production): the memory is keyed by pool crystal
+// id, and every reset reason replaces or restores the pool, so a stale entry would attach to
+// whichever crystal next lands on that id. Cancel / OK / closing the modal keep it — Cancel
+// undoes the document write, not the exploration.
+void ClearAxisPresetMemory();
+
 // Render the custom-spectrum editor modal (independent of the Crystal/Axis/Filter per-entry
 // modal above). The Sun panel's Spectrum combo calls OpenSpectrumModal() when the user picks
 // "Custom..."; this function must be called each frame (from the main loop, next to
@@ -281,6 +289,13 @@ bool IsBuiltInWedgeMillerIndex(int h, int k, int l);
 // kShapeScalarLabels, FormatShapeDistCell), so the live line and that page cannot spell one
 // distribution two ways.
 std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3], AxisPreset label);
+
+// The summary line WITHOUT its leading label prefix — " · zenith G 90(1) · Prism · Height 1.000".
+// Split out of FormatCrystalPreviewSummary because the live line is drawn in two parts with the
+// out-of-domain badge between them; this is the part after the badge. Same inputs and same
+// formatter discipline as above, and FormatCrystalPreviewSummary is defined as
+// AxisPresetLabel(label) + this, so the split cannot drift from the whole.
+std::string FormatCrystalPreviewSummaryBody(const CrystalConfig& crystal, const AxisDist axis[3]);
 
 
 // What the wedge dropdown's custom-input row should say about one Miller-index triple, in the form

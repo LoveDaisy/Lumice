@@ -245,6 +245,82 @@ TEST(AxisPresetTest, AxisDistTypeLabelIsAViewOverTheComboItemString) {
   EXPECT_STREQ(AxisDistTypeLabel(AxisDistType::kLaplacian), "Laplacian");
 }
 
+// The Label chips' switch gesture, as a pure function. Five rows: leaving always writes, the
+// target's memory wins over the definition, the definition is the fallback, a Custom target with
+// neither memory nor definition loads nothing (and still records the leaving triple), and a Custom
+// target WITH memory loads it.
+TEST(AxisPresetTest, SwitchAxisChipResolvesTheChipGesture) {
+  using lumice::gui::AxisChipSwitch;
+  using lumice::gui::AxisPresetMemorySlots;
+  using lumice::gui::AxisTriple;
+  using lumice::gui::SwitchAxisChip;
+
+  const AxisTriple p0 = { AxisDist{ AxisDistType::kUniform, 0.0f, 360.0f },
+                          AxisDist{ AxisDistType::kUniform, 0.0f, 360.0f },
+                          AxisDist{ AxisDistType::kUniform, 0.0f, 360.0f } };
+  const AxisTriple q = { AxisDist{ AxisDistType::kGauss, 33.0f, 7.0f },
+                         AxisDist{ AxisDistType::kUniform, 0.0f, 360.0f },
+                         AxisDist{ AxisDistType::kGauss, 0.0f, 1.0f } };
+  const AxisTriple column_def = { AxisDist{ AxisDistType::kGauss, 90.0f, 1.0f },
+                                  AxisDist{ AxisDistType::kUniform, 0.0f, 360.0f },
+                                  AxisDist{ AxisDistType::kUniform, 0.0f, 360.0f } };
+
+  // Leaving always writes: Random -> Column with no memory loads the definition AND stores the
+  // triple the modal held under Random.
+  {
+    AxisPresetMemorySlots slots;
+    const AxisChipSwitch press = SwitchAxisChip(slots, AxisPreset::kRandom, p0, AxisPreset::kColumn, column_def);
+    EXPECT_TRUE(press.loads);
+    EXPECT_EQ(press.triple, column_def);
+    ASSERT_TRUE(slots[static_cast<size_t>(AxisPreset::kRandom)].has_value());
+    EXPECT_EQ(*slots[static_cast<size_t>(AxisPreset::kRandom)], p0);
+  }
+
+  // The target's memory wins over the definition.
+  {
+    AxisPresetMemorySlots slots;
+    slots[static_cast<size_t>(AxisPreset::kColumn)] = q;
+    const AxisChipSwitch press = SwitchAxisChip(slots, AxisPreset::kRandom, p0, AxisPreset::kColumn, column_def);
+    EXPECT_TRUE(press.loads);
+    EXPECT_EQ(press.triple, q);
+  }
+
+  // No memory + a definition: the definition is loaded.
+  {
+    AxisPresetMemorySlots slots;
+    const AxisChipSwitch press = SwitchAxisChip(slots, AxisPreset::kPlate, q, AxisPreset::kParry, column_def);
+    EXPECT_TRUE(press.loads);
+    EXPECT_EQ(press.triple, column_def);
+    EXPECT_EQ(*slots[static_cast<size_t>(AxisPreset::kPlate)], q);
+  }
+
+  // A Custom target with neither memory nor definition: the press renames only, and the leaving
+  // triple is still recorded.
+  {
+    AxisPresetMemorySlots slots;
+    const AxisChipSwitch press = SwitchAxisChip(slots, AxisPreset::kRandom, p0, AxisPreset::kCustom, std::nullopt);
+    EXPECT_FALSE(press.loads);
+    EXPECT_TRUE(slots[static_cast<size_t>(AxisPreset::kRandom)].has_value());
+  }
+
+  // A definition passed for a Custom target is ignored even when present — Custom has no
+  // definition to load, and the helper owns that rule rather than trusting each caller.
+  {
+    AxisPresetMemorySlots slots;
+    const AxisChipSwitch press = SwitchAxisChip(slots, AxisPreset::kRandom, p0, AxisPreset::kCustom, column_def);
+    EXPECT_FALSE(press.loads);
+  }
+
+  // A Custom target with memory: the remembered triple comes back.
+  {
+    AxisPresetMemorySlots slots;
+    slots[static_cast<size_t>(AxisPreset::kCustom)] = q;
+    const AxisChipSwitch press = SwitchAxisChip(slots, AxisPreset::kRandom, p0, AxisPreset::kCustom, std::nullopt);
+    EXPECT_TRUE(press.loads);
+    EXPECT_EQ(press.triple, q);
+  }
+}
+
 // The accepted set is the classifier's own predicate, so it is pinned here as the exact type
 // list per preset rather than re-derived through IsGaussLike: a change to either side shows up
 // as a diff against these literals.

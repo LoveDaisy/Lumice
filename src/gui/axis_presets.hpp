@@ -1,6 +1,7 @@
 #ifndef LUMICE_GUI_AXIS_PRESETS_HPP
 #define LUMICE_GUI_AXIS_PRESETS_HPP
 
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -239,7 +240,11 @@ static_assert(axis_preset_detail::AxisPresetTableIsConsistent(),
               "kAxisPresets: has_adjustable_zenith_std must be true exactly for the entries that carry an "
               "override_json_name — the UI's editable set and the override file's key set are one population");
 
-static_assert(sizeof(kAxisPresets) / sizeof(kAxisPresets[0]) == static_cast<std::size_t>(AxisPreset::kCustom) + 1,
+// One row per AxisPreset enumerator — the size fact the memory-slot helpers below size their
+// per-label arrays by.
+inline constexpr std::size_t kAxisPresetCount = static_cast<std::size_t>(AxisPreset::kCustom) + 1;
+
+static_assert(sizeof(kAxisPresets) / sizeof(kAxisPresets[0]) == kAxisPresetCount,
               "kAxisPresets must carry one entry per AxisPreset enumerator");
 
 static_assert(axis_preset_detail::AxisPresetTableIsInEnumOrder(),
@@ -454,6 +459,48 @@ inline std::string FormatAxisLabelMismatchTooltip(AxisPreset label, const AxisDi
   out += ")\nCurrently reads as: ";
   out += (actual == AxisPreset::kCustom) ? "none of the built-in presets" : AxisPresetLabel(actual);
   return out;
+}
+
+// --------------------------------------------------------------------------------------------------
+// The Axis tab's per-crystal preset memory (the Label chips' switch gesture).
+//
+// The modal keeps, per crystal, one triple per label: the parameters that crystal last held when
+// the user left that label. A chip press stores the current triple into the LEAVING label's slot —
+// unconditionally, so a slot is always the last triple seen under its label and can never be
+// stale — then loads the TARGET label's slot when it has one, the preset's definition otherwise,
+// and nothing at all for a Custom target with no slot (the press renames only). These helpers are
+// the pure half of that gesture: no modal buffers, no user_defaults, no ImGui. Storage and clear
+// points live in edit_modals.cpp.
+// --------------------------------------------------------------------------------------------------
+
+using AxisTriple = std::array<AxisDist, 3>;
+
+// One crystal's memory: up to kAxisPresetCount remembered triples, indexed by AxisPreset. A
+// disengaged optional means "never left this label — nothing remembered".
+using AxisPresetMemorySlots = std::array<std::optional<AxisTriple>, kAxisPresetCount>;
+
+struct AxisChipSwitch {
+  bool loads;         // false exactly when the target is Custom and holds no memory
+  AxisTriple triple;  // what to write into the three distribution buffers; meaningful iff loads
+};
+
+// Resolve one chip press. `slots` is the crystal's own memory; `leaving` is the label switched
+// away from and `leaving_triple` is what the modal currently holds under it — written into the
+// slot unconditionally, including when it equals what the slot already holds. `definition` is the
+// target preset's definition, resolved by the caller (EffectiveAxisPresetZenith + the entry's
+// azimuth/roll at the call site, so this stays free of user_defaults); it is ignored for a Custom
+// target — Custom is "none of the above" and has no definition to load. The no-op press (target
+// equal to `leaving`) is the caller's guard, not this function's.
+inline AxisChipSwitch SwitchAxisChip(AxisPresetMemorySlots& slots, AxisPreset leaving, const AxisTriple& leaving_triple,
+                                     AxisPreset target, const std::optional<AxisTriple>& definition) {
+  slots[static_cast<std::size_t>(leaving)] = leaving_triple;
+  if (const std::optional<AxisTriple>& memory = slots[static_cast<std::size_t>(target)]; memory.has_value()) {
+    return { true, *memory };
+  }
+  if (target != AxisPreset::kCustom && definition.has_value()) {
+    return { true, *definition };
+  }
+  return { false, AxisTriple{} };
 }
 
 // Internal helper: only called by DefaultPreviewRotation. If reused elsewhere,

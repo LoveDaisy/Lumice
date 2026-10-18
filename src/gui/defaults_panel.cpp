@@ -949,12 +949,13 @@ void RenderPresetEntry(const AxisPresetEntry& entry) {
         "spread to tune. The values below are shown for reference.",
         entry.label);
   } else {
-    // Sticky semantics: this std is what Apply preset loads for the preset's zenith, and a value
+    // Sticky semantics: this std is what an axis-tab chip loads for the preset's zenith when the
+    // crystal holds no memory of it (and what the label's Reset button reloads), and a value
     // outside the preset's usual range is allowed — the crystal carrying it shows the axis
     // label's out-of-domain badge rather than being bent back here.
     ImGui::TextWrapped(
-        "This is what Apply preset loads for %s's zenith — a value outside the usual %s range is "
-        "allowed and shows a warning badge on the crystal.",
+        "This is what the %s chip loads when it has nothing remembered — a value outside the "
+        "usual %s range is allowed and shows a warning badge on the crystal.",
         entry.label, entry.label);
   }
 
