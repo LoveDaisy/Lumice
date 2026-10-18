@@ -277,7 +277,32 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
     doc["chromatic"]["diagnose"] = DiagnoseJson(*document.diagnose);
   }
   if (document.weight_tint.has_value()) {
-    doc["chromatic"]["weight_tint"] = EvidenceJson(*document.weight_tint);
+    const SurveyWeightTint& tint = *document.weight_tint;
+    if (tint.evidence.state == EvidenceState::kUnevaluated || tint.evidence.state == EvidenceState::kRefused) {
+      // The not-computed shapes: exactly the evidence block ({state, reason} / {state, mode}),
+      // byte-compatible with the leg's pre-wiring marker.
+      doc["chromatic"]["weight_tint"] = EvidenceJson(tint.evidence);
+    } else {
+      Json tint_json = { { "red_label", tint.red_label },
+                         { "blue_label", tint.blue_label },
+                         { "n_red", Num(tint.n_red) },
+                         { "n_blue", Num(tint.n_blue) },
+                         { "m_red", Num(tint.m_red) },
+                         { "m_blue", Num(tint.m_blue) },
+                         { "m_red_error", Num(tint.m_red_error) },
+                         { "m_blue_error", Num(tint.m_blue_error) },
+                         { "method", tint.method },
+                         { "sample_count", tint.sample_count },
+                         { "representative", LayersJson({ tint.representative })[0] },
+                         { "member_count", tint.member_count },
+                         { "ratio", Num(tint.ratio) },
+                         { "direction", SurveyTintDirectionName(tint.direction) },
+                         { "kept_count_red", tint.kept_count_red },
+                         { "kept_count_blue", tint.kept_count_blue },
+                         { "caliber", tint.caliber },
+                         { "evidence", EvidenceJson(tint.evidence) } };
+      doc["chromatic"]["weight_tint"] = std::move(tint_json);
+    }
   }
   doc["evidence"] = EvidenceJson(document.evidence);
   doc["budget"] = { { "requested_ms", document.budget_ms }, { "enforced", false }, { "note", document.budget_note } };

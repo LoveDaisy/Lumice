@@ -182,7 +182,7 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   ASSERT_TRUE(document.diagnose.has_value());
   EXPECT_FALSE(document.diagnose->verdict_kind.empty());
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->state, EvidenceState::kUnevaluated);
+  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kUnevaluated);
   EXPECT_EQ(document.chromatic.state, EvidenceState::kFinite);
   // The document's own evidence stays finite: the routing refused nothing.
   EXPECT_EQ(document.evidence.state, EvidenceState::kFinite);
