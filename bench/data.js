@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792296087670,
+  "lastUpdate": 1792299786991,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "64706c37cd5ad912eb76cde70881bb84e9efd681",
-          "message": "Merge pull request #398 from LoveDaisy/feat/ui-scale\n\nfeat(gui): ui_scale — DPI-aware layout and font, plus a user UI-scale preference",
-          "timestamp": "2026-09-22T17:25:47+08:00",
-          "tree_id": "282afffeb45deeca9dcf5eb0ea192084f3466648",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/64706c37cd5ad912eb76cde70881bb84e9efd681"
-        },
-        "date": 1790069877955,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 367617.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 509568.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 359837,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 482229.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4788,6 +4740,54 @@ window.BENCHMARK_DATA = {
             "value": 307613.7,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1ef8e6d0040a4eaf101f1b281d41bcf7cfc036a4",
+          "message": "Merge pull request #510 from LoveDaisy/chore/restore-bisection-registration\n\nchore(test): restore the endpoint-bisection registry entry dropped in #507",
+          "timestamp": "2026-10-18T13:00:24+08:00",
+          "tree_id": "124086edda2c319809900322ef073b4ba1c6808c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1ef8e6d0040a4eaf101f1b281d41bcf7cfc036a4"
+        },
+        "date": 1792299785007,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 405155.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 503743.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 363476.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 469705.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
