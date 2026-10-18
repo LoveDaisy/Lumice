@@ -164,7 +164,9 @@ static std::unordered_map<int, AxisPresetMemorySlots> g_axis_preset_memory;
 // The open modal's own crystal id, for keying g_axis_preset_memory. -1 when the modal's positional
 // binding points outside the pool; on the real path the Axis tab only renders after OpenEditModal
 // bound a valid (layer, entry), so the guard is defensive rather than a known gap (mirrors
-// IsCurrentModalDApplicable's).
+// IsCurrentModalDApplicable's). Deliberately a fresh derivation, not g_modal_view_crystal_id —
+// that one is the trackball's open-time cache for card-switch pose resets, while keying the
+// memory wants the binding read at each press.
 static int AxisMemoryCrystalId(const GuiState& state) {
   const int ly = g_modal_layer_idx;
   const int en = g_modal_entry_idx;
