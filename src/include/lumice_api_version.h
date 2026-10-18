@@ -6,7 +6,8 @@
 // version bump) invalidates the compile-cache entry of every TU in any includer's closure, so
 // keeping the define out of base.h's wide closure is what makes a bump recompile only the TUs
 // that textually use the macro. Include this header directly where you need the macro.
-// The version discipline lives in doc/interfaces/c_api.md.
+// The version discipline lives in doc/interfaces/c_api.md. A bump here also updates the version literal in the
+// Constants blocks of doc/interfaces/c_api.md and c_api_zh.md.
 
 // ABI version, encoded as major*100 + minor (v4.10 -> 410). Before this macro existed, the
 // v4.3~v4.9 BREAKING bumps lived only in prose comments, so a caller linking against a header

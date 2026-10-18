@@ -93,8 +93,8 @@ before downloading into it).
   (the engine surface; no umbrella header) plus `lumice_analytic{,_core}.h` (the analytic capability). The C
   bridges are `src/server/c_api_<capability>.cpp`, one per header. One non-capability leaf header also
   lives here: `lumice_api_version.h` solely owns `LUMICE_API_VERSION` and its change history, and
-  nothing includes it — a macro value change would invalidate the whole includer closure's compile
-  cache, so only files that textually use the macro include it.
+  no header includes it — a macro value change would invalidate the whole includer closure's compile
+  cache, so only the few TUs that textually use the macro include it.
 - `test/`: unit tests, GUI tests, and E2E tests
 
 Layers: `cmake/lumice_layers.cmake` assigns every file under `src/` (the shell — `gui/`,
