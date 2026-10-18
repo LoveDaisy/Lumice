@@ -11,6 +11,7 @@
 #include "raypath/detail/physical_member_scope.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/detail/survey/survey_t1.hpp"
+#include "raypath/detail/survey/survey_tint.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
 
@@ -227,6 +228,22 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
     out->objects.push_back(std::move(card));
     out->evidence.state = EvidenceState::kCertified;
     out->evidence.method = kCertifiedMethodPointMass;
+    // The identity arm's chromatic leg: the weight tint (the direction question a rank-0 path
+    // still has). The block-level chromatic state and the budget note are the leg's own.
+    TintInput tint_input;
+    tint_input.table = &table;
+    tint_input.polygons = &polygons;
+    tint_input.representative = &request.path_layers[0];
+    tint_input.density = &density;  // the same conversion the routing gate checked
+    SunIncidentDirection(config.scene_.light_source_.param_, tint_input.incident);
+    tint_input.member_count = static_cast<int>(scope.members.size());
+    AssembleWeightTint(tint_input, out);
+    out->budget_note =
+        "the identity arm's legs are the T0 routing verdict (milliseconds) and the "
+        "450/650 band-sum tint pair (" +
+        std::to_string(kSurveyTintSampleCount) +
+        " samples per lambda); neither is budget-enforced yet; enforcement lands "
+        "with the quantification legs";
   } else {
     // No early stop: the T0 facts stand (finite — a not-rank-0 verdict is as algebraic as a
     // rank-0 one, and an escaped walk refuses loudly). A random-family class with an

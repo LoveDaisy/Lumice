@@ -64,6 +64,32 @@ inline ConfigManager RandomPrismScene() {
   return config;
 }
 
+// The C15 fixed-pose control: the same plate with the zenith and roll pinned to scalars (the
+// corpus's "zenith 0, roll 0" variant). The axis maps to no pose density — the honest-refusal
+// arm's shape.
+inline ConfigManager FixedPosePlateScene(double height) {
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, static_cast<float>(height), 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1, 0 };
+  }
+  CrystalConfig crystal{};
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.latitude_dist = { DistributionType::kNoRandom, 90, 0 };
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0, 360 };
+  crystal.axis_.roll_dist = { DistributionType::kNoRandom, 0, 0 };
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = { 20, 0, 0 };
+  config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  config.scene_.ms_.push_back({ 0, { entry } });
+  return config;
+}
+
 }  // namespace lumice::raypath::survey
 
 #endif  // RAYPATH_SURVEY_TEST_FIXTURES_H_

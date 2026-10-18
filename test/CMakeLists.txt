@@ -337,6 +337,10 @@ add_executable(unit_correctness_test
   # reading stay two things), and the small-sample real assembly whose edge bin contains the
   # closed-form minimum deviation.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_probe.cpp"
+  # The survey's weight-tint leg: the kernel's point-mass-at-empty-pixel-table contract, the
+  # leg's blue-over-red mechanism pin, its determinism, the fixed-pose refusal, and the
+  # identity document's negative assertions (no positional dispersion, no diagnose, no probes).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_tint.cpp"
   # The survey's C bridge (v4.54): struct_size and null-arg contracts, the stable refusal names,
   # the happy path's schema-4 document with the request echo.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_c_api.cpp")
