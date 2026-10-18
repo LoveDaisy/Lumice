@@ -141,6 +141,7 @@ Json ProbeJson(const SurveyProbe& probe) {
   Json spec = { { "delta_min_deg", Num(probe.spec.delta_min_deg) },
                 { "delta_max_deg", Num(probe.spec.delta_max_deg) },
                 { "bin_deg", Num(probe.spec.bin_deg) },
+                { "wedge_half_width_deg", Num(probe.spec.wedge_half_width_deg) },
                 { "wavelength_nm", Num(probe.spec.wavelength_nm) },
                 { "refractive_index", Num(probe.spec.refractive_index) },
                 { "sample_count", probe.spec.sample_count },
@@ -165,7 +166,11 @@ Json ProbeJson(const SurveyProbe& probe) {
   if (probe.has_peak) {
     out["peak"] = { { "delta_deg", Num(probe.peak_delta_deg) }, { "value", Num(probe.peak_value) } };
   }
-  out["separation_deg"] = Num(probe.separation_deg);
+  // The separation needs both readings to exist; on an empty profile a serialized 0 would read
+  // as "the peak sits at the edge", which is a claim about a profile that has neither.
+  if (probe.has_edge && probe.has_peak) {
+    out["separation_deg"] = Num(probe.separation_deg);
+  }
   out["kept_count"] = probe.kept_count;
   return out;
 }

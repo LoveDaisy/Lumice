@@ -5,6 +5,7 @@
 
 #include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/detail/survey/survey_json.hpp"
+#include "raypath/detail/survey/survey_probe.hpp"  // kProbeWedgeHalfWidthDeg: the spec echo's source
 
 namespace lumice::raypath::survey {
 namespace {
@@ -249,6 +250,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   probe.spec.wavelength_nm = 550.0;
   probe.spec.refractive_index = 1.306;
   probe.spec.sample_count = 2000000;
+  probe.spec.wedge_half_width_deg = kProbeWedgeHalfWidthDeg;
   probe.spec.representative = { 3, 5 };
   probe.spec.member_count = 12;
   SurveyProbeSample sample;
@@ -325,6 +327,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   EXPECT_EQ(probe_json[0].at("spec").at("sample_count"), 2000000);
   EXPECT_EQ(probe_json[0].at("spec").at("lattice"), "antipodal_fibonacci");
   EXPECT_TRUE(probe_json[0].at("spec").at("deterministic").get<bool>());
+  EXPECT_DOUBLE_EQ(probe_json[0].at("spec").at("wedge_half_width_deg").get<double>(), kProbeWedgeHalfWidthDeg);
   EXPECT_EQ(probe_json[0].at("spec").at("representative"), std::vector<int>({ 3, 5 }));
   EXPECT_EQ(probe_json[0].at("spec").at("member_count"), 12);
   EXPECT_DOUBLE_EQ(probe_json[0].at("edge").at("delta_deg").get<double>(), 22.35);
@@ -344,6 +347,22 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   EXPECT_DOUBLE_EQ(diagnose.at("position_deg").get<double>(), 22.3);
   EXPECT_EQ(chromatic.at("weight_tint").at("state"), "unevaluated");
   EXPECT_EQ(chromatic.at("weight_tint").at("reason"), "class tint not wired (C15 slice)");
+}
+
+TEST(SurveyJsonV4, EmptyProbeProfileSerializesNoReadingKeys) {
+  SurveyDocument document;
+  SurveyProbe probe;  // no edge, no peak: the honest empty readings
+  probe.spec.wavelength_nm = 550.0;
+  probe.spec.representative = { 3, 5 };
+  probe.kept_count = 0;
+  document.probes.push_back(probe);
+  const auto parsed = Serialized(document);
+  const auto& probe_json = parsed.at("probes")[0];
+  EXPECT_FALSE(probe_json.contains("edge"));
+  EXPECT_FALSE(probe_json.contains("peak"));
+  // A serialized separation of 0 on an empty profile would read as "the peak sits at the
+  // edge" — a claim about a profile that has neither; the key stays absent instead.
+  EXPECT_FALSE(probe_json.contains("separation_deg"));
 }
 
 TEST(SurveyJsonV4, EarlyStopDocumentCarriesNoneOfTheT1Keys) {

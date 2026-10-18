@@ -220,6 +220,7 @@ struct SurveyProbeSpec {
   double delta_min_deg = 15.0;
   double delta_max_deg = 60.0;
   double bin_deg = 0.1;
+  double wedge_half_width_deg = 0.0;
   double wavelength_nm = 0.0;
   double refractive_index = 0.0;
   long long sample_count = 0;

@@ -19,6 +19,7 @@
 
 #include "analytic/band_sum.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/scene_to_analytic.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -34,6 +35,9 @@ struct ProbeInput {
   const analytic::FaceNormalTable* table = nullptr;
   const analytic::FacePolygonTable* polygons = nullptr;
   const std::vector<int>* representative = nullptr;  // the literal face sequence probed
+  const PoseDensityConversion* density = nullptr;    // the caller's gated conversion (the same
+                                                     // one the routing arm checked Ok(); the
+                                                     // probe never builds a spec of its own)
   double refractive_index = 0.0;
   double wavelength_nm = 0.0;
   double incident[3] = { 0.0, 0.0, -1.0 };  // the sun's propagation direction (SunIncidentDirection)

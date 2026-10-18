@@ -6,6 +6,7 @@
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {
 namespace {
@@ -64,33 +65,15 @@ TEST(SurveyProbe, EmptyProfileCarriesNoReadings) {
 // form minimum deviation (no event can lie below it), the peak reading is finite, and the
 // event counts are positive.
 TEST(SurveyProbe, SmallSampleRealAssemblyEdgeBinContainsTheClosedForm) {
-  const ConfigManager config = [] {
-    PrismCrystalParam prism;
-    prism.h_ = { DistributionType::kNoRandom, 1.0f, 0 };
-    for (auto& distance : prism.d_) {
-      distance = { DistributionType::kNoRandom, 1, 0 };
-    }
-    CrystalConfig crystal{};
-    crystal.id_ = 1;
-    crystal.param_ = prism;
-    crystal.axis_.latitude_dist = { DistributionType::kUniform, 90, 360 };
-    crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
-    ConfigManager manager;
-    manager.crystals_.emplace(1, crystal);
-    manager.scene_.light_source_.param_ = { 0, 0, 0 };
-    manager.scene_.light_source_.spectrum_ = IlluminantType::kD65;
-    ScatteringSetting entry{};
-    entry.crystal_ = crystal;
-    entry.crystal_proportion_ = 1;
-    manager.scene_.ms_.push_back({ 0, { entry } });
-    return manager;
-  }();
+  const ConfigManager config = RandomPrismScene();
 
   const auto configured = config.crystals_.find(1);
   const CrystalConversion crystal = ConvertCrystal(configured->second.param_);
   analytic::FaceNormalTable table;
   analytic::FacePolygonTable polygons;
   ASSERT_EQ(analytic::BuildFaceNormals(crystal.shape, &table, &polygons), analytic::Status::kOk);
+  const PoseDensityConversion density = ConvertAxisToPoseDensity(configured->second.axis_);
+  ASSERT_TRUE(density.Ok());  // the full-sphere uniform axis is the random family
 
   const double refractive_index = 1.306;  // 550 nm, the scene's default
   const double closed_form_deg = 2.0 * std::asin(refractive_index * 0.5) * 180.0 / kPi - 60.0;
@@ -100,6 +83,7 @@ TEST(SurveyProbe, SmallSampleRealAssemblyEdgeBinContainsTheClosedForm) {
   input.polygons = &polygons;
   static const std::vector<int> representative{ 3, 5 };
   input.representative = &representative;
+  input.density = &density;
   input.refractive_index = refractive_index;
   input.wavelength_nm = 550.0;
   input.incident[0] = 0.0;
@@ -125,6 +109,7 @@ TEST(SurveyProbe, SmallSampleRealAssemblyEdgeBinContainsTheClosedForm) {
   // The spec echo is the caliber.
   EXPECT_DOUBLE_EQ(probe.spec.delta_min_deg, kProbeDeltaMinDeg);
   EXPECT_DOUBLE_EQ(probe.spec.bin_deg, kProbeBinDeg);
+  EXPECT_DOUBLE_EQ(probe.spec.wedge_half_width_deg, kProbeWedgeHalfWidthDeg);
   EXPECT_EQ(probe.spec.sample_count, static_cast<long long>(input.sample_count));
   EXPECT_EQ(probe.spec.member_count, 12);
 }

@@ -114,7 +114,8 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
   table.corners = corner_dirs.data();
   table.solid_angle = solid_angles.data();
 
-  const analytic::PoseDensity density(analytic::PoseDensitySpec{});  // the default spec is the random family
+  const analytic::PoseDensity density(input.density->spec);  // the caller's gated conversion —
+                                                             // the probe builds no spec of its own
   const analytic::BandSumOutput band =
       analytic::BandSum(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()),
                         input.refractive_index, input.incident, input.sample_count, table, density);
@@ -123,6 +124,7 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
   probe.spec.delta_min_deg = kProbeDeltaMinDeg;
   probe.spec.delta_max_deg = kProbeDeltaMaxDeg;
   probe.spec.bin_deg = kProbeBinDeg;
+  probe.spec.wedge_half_width_deg = kProbeWedgeHalfWidthDeg;
   probe.spec.wavelength_nm = input.wavelength_nm;
   probe.spec.refractive_index = input.refractive_index;
   probe.spec.sample_count = input.sample_count;

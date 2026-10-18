@@ -228,11 +228,16 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
     out->chromatic.mode = "wavelength_critical_table";
     return;
   }
+  // The min-deviation row: the interior-minimum finite-jump onset with the smallest red value,
+  // picked explicitly (the same shape as the support's MinDeviationOnset) rather than by row
+  // order — the table's value ordering stays the kernel's fact, not this loop's premise.
   const analytic::WavelengthOnsetShift* min_row = nullptr;
   for (const analytic::WavelengthOnsetShift& row : critical.onsets) {
-    if (row.source == analytic::OnsetSource::kInteriorMinimum && row.profile == analytic::OnsetProfile::kFiniteJump) {
-      min_row = &row;  // the table is value-ordered; the first is the minimum-deviation edge
-      break;
+    if (row.source != analytic::OnsetSource::kInteriorMinimum || row.profile != analytic::OnsetProfile::kFiniteJump) {
+      continue;
+    }
+    if (min_row == nullptr || row.values_deg[0] < min_row->values_deg[0]) {
+      min_row = &row;
     }
   }
   if (min_row == nullptr || min_row->values_deg.size() < 2) {

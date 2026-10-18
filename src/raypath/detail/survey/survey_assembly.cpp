@@ -263,6 +263,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         probe_input.table = &table;
         probe_input.polygons = &polygons;
         probe_input.representative = &request.path_layers[0];
+        probe_input.density = &density;  // the same conversion the routing gate checked
         probe_input.refractive_index = wavelength.refractive_index;
         probe_input.wavelength_nm = wavelength.wavelength_nm;
         SunIncidentDirection(config.scene_.light_source_.param_, probe_input.incident);
