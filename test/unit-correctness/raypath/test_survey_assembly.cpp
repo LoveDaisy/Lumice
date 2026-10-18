@@ -201,15 +201,20 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   // The support's lower end is the same edge (the coincidence the corpus lesson turns on).
   EXPECT_NEAR(support.support_set->intervals[0].lower_deg, edge.caustic_edge->position_deg, 1e-4);
 
-  // The bright_domain skeleton card: the span, no probe readings yet (they arrive with the
-  // probe leg — the peak is a finite profile quantity, not the certified edge).
+  // The bright_domain card: the span plus the probe leg's readings (the peak is a finite
+  // profile quantity, not the certified edge; the readings reference the probes[] entry).
   const SurveyObject& domain = document.objects[2];
   EXPECT_EQ(domain.kind, SurveyObjectKind::kBrightDomain);
   ASSERT_TRUE(domain.bright_domain.has_value());
-  EXPECT_FALSE(domain.bright_domain->has_peak);
-  EXPECT_FALSE(domain.bright_domain->has_edge_reading);
-  EXPECT_NEAR(domain.bright_domain->domain_lower_deg, edge.caustic_edge->position_deg, 1e-4);
-  EXPECT_GT(domain.bright_domain->domain_upper_deg, domain.bright_domain->domain_lower_deg);
+  EXPECT_TRUE(domain.bright_domain->has_peak);
+  EXPECT_GT(domain.bright_domain->peak_value, 0.0);
+  EXPECT_TRUE(domain.bright_domain->has_edge_reading);
+  // The finite edge reading sits in the same bin as the certified position (half a bin).
+  EXPECT_NEAR(domain.bright_domain->edge_delta_deg, edge.caustic_edge->position_deg, 0.05);
+  EXPECT_GT(domain.bright_domain->kept_count, 0);
+  EXPECT_EQ(domain.bright_domain->probe_index, 0);
+  ASSERT_EQ(document.probes.size(), 1u);
+  EXPECT_EQ(document.probes.front().kind, "solar_radial");
   // The document's own evidence stays finite: the routing refused nothing.
   EXPECT_EQ(document.evidence.state, EvidenceState::kFinite);
 }

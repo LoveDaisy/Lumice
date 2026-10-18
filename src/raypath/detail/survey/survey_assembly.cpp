@@ -9,6 +9,7 @@
 #include "analytic/pose_density.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
+#include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
@@ -249,6 +250,19 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         out->objects.push_back(std::move(refused_support));
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
+      } else {
+        // The canonical probe: the class's radial profile at the document's reference
+        // wavelength (the same ruler the certified edge reads). Never refuses — an empty
+        // event set serializes as the honest zero profile.
+        ProbeInput probe_input;
+        probe_input.table = &table;
+        probe_input.polygons = &polygons;
+        probe_input.representative = &request.path_layers[0];
+        probe_input.refractive_index = wavelength.refractive_index;
+        probe_input.wavelength_nm = wavelength.wavelength_nm;
+        SunIncidentDirection(config.scene_.light_source_.param_, probe_input.incident);
+        probe_input.member_count = static_cast<int>(scope.members.size());
+        RunSolarRadialProbe(probe_input, out);
       }
     } else {
       SurveyUnevaluated unevaluated;
