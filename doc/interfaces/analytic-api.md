@@ -1433,7 +1433,8 @@ subsections keep that number.
   version bump.
 - **A single integer, and the only version.** It is bumped on every incompatible change (§8.2),
   with a one-line note at the top of the header saying what changed — the same style as the
-  `BREAKING` / `ADDED` / `BEHAVIOR` notes above `LUMICE_API_VERSION` in `lumice_base.h`. There is no
+  `BREAKING` / `ADDED` / `BEHAVIOR` notes above `LUMICE_API_VERSION` in
+  `lumice_api_version.h`. There is no
   second, three-part semver number beside it: the CMake package version is this integer (§8.4),
   read from the header by the build rather than written a second time, so the version a build
   accepts and the version `LUMICE_ANALYTIC_GetApiVersion()` reports cannot drift apart.

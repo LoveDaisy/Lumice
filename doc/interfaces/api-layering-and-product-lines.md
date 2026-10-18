@@ -249,7 +249,7 @@ includer 只包含自己用到的能力头。这个头集合不对外发布，�
 
 | 头 | 承载 | 对 §2 的回应 |
 |---|---|---|
-| `lumice_base.h` | 符号可见性宏、`LUMICE_API_VERSION` 及其变更史、不透明句柄、错误码、日志、产品版本 | 其余各头都包含它，它不包含任何一个 |
+| `lumice_base.h` | 符号可见性宏、不透明句柄、错误码、日志、产品版本 | 其余各头都包含它，它不包含任何一个（ABI 版本 `LUMICE_API_VERSION` 及其变更史在叶子头 `lumice_api_version.h`，刻意不被任何头包含，使用处显式包含） |
 | `lumice_scene.h` | 场景描述值类型与 `LUMICE_Scene` 的构建 / JSON API | L1 冰晕域模型 |
 | `lumice_render.h` | 渲染参数、标注、投影 | L1 中变动最快的一块（§8 的 11 天 13 次），现在单独成头 |
 | `lumice_editor.h` | 编辑器支撑：键名、合法性、mesh、`LUMICE_ValidateRaypathText` 等 | L2 与仿真执行分开 |

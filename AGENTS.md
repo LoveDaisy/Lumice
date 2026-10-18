@@ -91,7 +91,10 @@ before downloading into it).
   each shared library exports is declared once in `cmake/export_surfaces.cmake`.
 - `src/include/`: the C API, one header per capability — `lumice_{base,scene,render,editor,engine,raypath}.h`
   (the engine surface; no umbrella header) plus `lumice_analytic{,_core}.h` (the analytic capability). The C
-  bridges are `src/server/c_api_<capability>.cpp`, one per header.
+  bridges are `src/server/c_api_<capability>.cpp`, one per header. One non-capability leaf header also
+  lives here: `lumice_api_version.h` solely owns `LUMICE_API_VERSION` and its change history, and
+  nothing includes it — a macro value change would invalidate the whole includer closure's compile
+  cache, so only files that textually use the macro include it.
 - `test/`: unit tests, GUI tests, and E2E tests
 
 Layers: `cmake/lumice_layers.cmake` assigns every file under `src/` (the shell — `gui/`,
