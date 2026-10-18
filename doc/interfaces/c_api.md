@@ -15,7 +15,7 @@ declaring what you use. There is no umbrella header.
 
 | Header | Holds |
 |---|---|
-| `lumice_base.h` | Symbol visibility, `LUMICE_API_VERSION`, opaque handles, error codes, logging, product version. Every other header includes it |
+| `lumice_base.h` | Symbol visibility, opaque handles, error codes, logging, product version. Every other header includes it (the ABI version lives in a separate leaf header, `lumice_api_version.h` — include it explicitly, see Constants) |
 | `lumice_scene.h` | Scene description value types and the `LUMICE_Scene` build / JSON API |
 | `lumice_render.h` | Renderer parameters, annotation, projection |
 | `lumice_editor.h` | Editor support: key names, legality checks, crystal mesh, raypath text validation, Miller conversion |
@@ -44,7 +44,11 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
+// lumice_api_version.h — a leaf header; include it explicitly where the macro is used
+// (lumice_base.h deliberately does not include it, see below)
 #define LUMICE_API_VERSION 453        // ABI version, encoded major*100 + minor (v4.53)
+
+// lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -57,6 +61,10 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 ```
 
 It is bumped when the public symbol set grows and on every BREAKING struct-layout change.
+`lumice_base.h` does not include `lumice_api_version.h`: a macro VALUE change invalidates the
+compile-cache entry of every TU in the includer's closure, so keeping the define out of
+`lumice_base.h`'s wide closure makes a bump recompile only the files that textually use the
+macro. Include `lumice_api_version.h` directly wherever you reference `LUMICE_API_VERSION`.
 
 **v4.53** changes the target-free `lumice.path-feature-report` document to schema 3: structural
 objects, support, features, unattributed structures, MC evidence, and coverage are now separate

@@ -66,6 +66,7 @@ set(LUMICE_LAYER_foundation_FILES
   core/shared/projection_shared.h
   core/shared/ray_allocation_shared.hpp
   core/shared/traversal_shared.h
+  include/lumice_api_version.h
   include/lumice_base.h
   util/annotation_line_width.hpp
   util/benchmark_rate.hpp

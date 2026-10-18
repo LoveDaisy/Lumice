@@ -12,8 +12,9 @@
 # engine surface minus the analytic headers). The engine libraries host the analytic capability
 # (lumice_analytic_core.h) next to them; lumice_analytic.h's two library-management functions (its
 # version and log callback) stay with liblumice_analytic alone, because in the engine the logging
-# and the version are lumice_base.h's. The order of a list does not reach the export list, which
-# is sorted.
+# belongs to lumice_base.h and the ABI version to the leaf header lumice_api_version.h (outside
+# this surface on purpose: only its textual users include it). The order of a list does not reach
+# the export list, which is sorted.
 #
 # Restricted syntax, so that CMake and the Python parser (check_policies.parse_export_surfaces)
 # cannot read it differently: `#` comments, blank lines, `set(LUMICE_<LIBRARY>_SURFACE_HEADERS` on

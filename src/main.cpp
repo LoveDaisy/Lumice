@@ -29,6 +29,7 @@
 #endif
 // clang-format on
 
+#include "lumice_api_version.h"
 #include "lumice_base.h"
 #include "lumice_engine.h"
 #include "lumice_raypath.h"

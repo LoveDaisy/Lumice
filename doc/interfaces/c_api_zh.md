@@ -14,7 +14,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 
 | 头文件 | 内容 |
 |---|---|
-| `lumice_base.h` | 符号可见性、`LUMICE_API_VERSION`、不透明句柄、错误码、日志、产品版本；其余各头都包含它 |
+| `lumice_base.h` | 符号可见性、不透明句柄、错误码、日志、产品版本；其余各头都包含它（ABI 版本在单独的叶子头 `lumice_api_version.h` 中——需显式包含，见「常量」） |
 | `lumice_scene.h` | 场景描述值类型与 `LUMICE_Scene` 的构建 / JSON API |
 | `lumice_render.h` | 渲染参数、标注、投影 |
 | `lumice_editor.h` | 编辑器支撑：键名、合法性检查、晶体网格、光路文本校验、Miller 指数转换 |
@@ -43,7 +43,11 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ### 常量
 
 ```c
+// lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
+//（lumice_base.h 刻意不包含它，原因见下）
 #define LUMICE_API_VERSION 453        // ABI 版本，编码为 major*100 + minor（v4.53）
+
+// lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
 #define LUMICE_MAX_STATS_RESULTS 1    // 统计结果数组最大容量
 ```
@@ -54,7 +58,10 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integration");
 ```
 
-公开符号集增加或结构体布局发生 BREAKING 变更时都会 bump。
+公开符号集增加或结构体布局发生 BREAKING 变更时都会 bump。`lumice_base.h` 刻意不包含
+`lumice_api_version.h`：宏**值**变化会使其包含闭包内全部 TU 的编译缓存条目失效，把 define 挡在
+`lumice_base.h` 的宽闭包之外，bump 就只需重编文本上使用该宏的文件。凡引用 `LUMICE_API_VERSION`
+处请直接包含 `lumice_api_version.h`。
 
 **v4.53** 将无 target 的 `lumice.path-feature-report` 文档升级为 schema 3：结构对象、support、
 features、未归因结构、MC 证据与 coverage 分层表达；schema 2 读者必须拒读 schema 3。请求结构体以及

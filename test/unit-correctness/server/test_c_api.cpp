@@ -25,6 +25,7 @@
 #include "config/render_config.hpp"         // core RenderConfig, for the marker family's non-zero defaults
 #include "core/crystal.hpp"
 #include "core/def.hpp"
+#include "include/lumice_api_version.h"
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
 #include "include/lumice_engine.h"

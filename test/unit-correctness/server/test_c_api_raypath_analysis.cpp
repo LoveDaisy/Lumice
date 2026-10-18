@@ -27,6 +27,7 @@
 #include "core/annotation_overlay.hpp"  // annotation::ToRenderConfig
 #include "core/lens_proj_build.hpp"     // BuildProjParams
 #include "core/scatter_accum.hpp"       // MakeCameraRotation
+#include "include/lumice_api_version.h"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
 #include "include/lumice_render.h"

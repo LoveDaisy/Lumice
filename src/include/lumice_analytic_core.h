@@ -99,7 +99,8 @@ extern "C" {
 #endif
 
 // Interface version, a single integer (doc/interfaces/analytic-api.md section 8.2): bumped on every
-// incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
+// incompatible change, and in 0.x on every addition too. Independent of the engine ABI version
+// LUMICE_API_VERSION (lumice_api_version.h).
 #define LUMICE_ANALYTIC_API_VERSION 8
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
