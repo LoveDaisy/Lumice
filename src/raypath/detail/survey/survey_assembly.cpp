@@ -251,6 +251,11 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
       } else {
+        // The arm's own budget note: the T1 legs are the document's computation, and the note
+        // says what ran instead of repeating the early-stop arm's millisecond-only claim.
+        out->budget_note =
+            "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, the "
+            "chromatic pair) are not budget-enforced yet; enforcement lands with the quantification legs";
         // The canonical probe: the class's radial profile at the document's reference
         // wavelength (the same ruler the certified edge reads). Never refuses — an empty
         // event set serializes as the honest zero profile.

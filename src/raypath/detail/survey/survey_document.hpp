@@ -352,6 +352,11 @@ struct SurveyDocument {
   // Meta.
   int budget_ms = 0;  // as resolved
   double total_seconds = 0.0;
+  // The budget note text, owned by the arm that produced the document: the default is the v1
+  // early-stop wording (whose claim is true of that arm), and the T1 arm states its own legs.
+  std::string budget_note =
+      "the v1 survey's only computation is the millisecond T0 routing leg, which is no budget "
+      "consumer; budget enforcement lands with the band-sum/T3 quantification legs";
 };
 
 }  // namespace lumice::raypath::survey

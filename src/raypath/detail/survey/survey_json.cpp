@@ -275,11 +275,7 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
     doc["chromatic"]["weight_tint"] = EvidenceJson(*document.weight_tint);
   }
   doc["evidence"] = EvidenceJson(document.evidence);
-  doc["budget"] = { { "requested_ms", document.budget_ms },
-                    { "enforced", false },
-                    { "note",
-                      "the v1 survey's only computation is the millisecond T0 routing leg, which is no budget "
-                      "consumer; budget enforcement lands with the band-sum/T3 quantification legs" } };
+  doc["budget"] = { { "requested_ms", document.budget_ms }, { "enforced", false }, { "note", document.budget_note } };
   doc["timing"] = { { "total_seconds", Num(document.total_seconds) } };
   return doc.dump();
 }
