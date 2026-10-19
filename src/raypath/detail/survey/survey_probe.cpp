@@ -4,17 +4,10 @@
 #include <limits>
 
 #include "analytic/pose_density.hpp"
+#include "core/math.hpp"
 
 namespace lumice::raypath::survey {
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kRadToDeg = 180.0 / kPi;
-constexpr double kDegToRad = kPi / 180.0;
-
-double Clamp1(double x) {
-  return x < -1.0 ? -1.0 : (x > 1.0 ? 1.0 : x);
-}
 
 // Unit direction at deviation `delta` from `incident` and azimuth `az` about it, in the frame
 // (e1, e2) normal to the incident (the band-sum pixel convention: directions measured about
@@ -83,7 +76,7 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
 
   const int bins = static_cast<int>((kProbeDeltaMaxDeg - kProbeDeltaMinDeg) / kProbeBinDeg);
   const double azimuth = 0.0;  // the representative wedge's azimuth (the value is azimuth-free)
-  const double half_wedge = 0.5 * kProbeWedgeHalfWidthDeg * kDegToRad;
+  const double half_wedge = 0.5 * kProbeWedgeHalfWidthDeg * math::kDegreeToRadD;
 
   std::vector<double> centres(bins);
   std::vector<double> centre_dirs(3 * static_cast<size_t>(bins));
@@ -93,14 +86,16 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
     const double lo = kProbeDeltaMinDeg + static_cast<double>(k) * kProbeBinDeg;
     const double centre = lo + 0.5 * kProbeBinDeg;
     centres[k] = centre;
-    DirectionAbout(input.incident, e1, e2, centre * kDegToRad, azimuth,
+    DirectionAbout(input.incident, e1, e2, centre * math::kDegreeToRadD, azimuth,
                    centre_dirs.data() + 3 * static_cast<size_t>(k));
     double* corners = corner_dirs.data() + 12 * static_cast<size_t>(k);
-    DirectionAbout(input.incident, e1, e2, lo * kDegToRad, azimuth - half_wedge, corners);
-    DirectionAbout(input.incident, e1, e2, lo * kDegToRad, azimuth + half_wedge, corners + 3);
-    DirectionAbout(input.incident, e1, e2, (lo + kProbeBinDeg) * kDegToRad, azimuth + half_wedge, corners + 6);
-    DirectionAbout(input.incident, e1, e2, (lo + kProbeBinDeg) * kDegToRad, azimuth - half_wedge, corners + 9);
-    solid_angles[k] = kProbeBinDeg * kDegToRad * 2.0 * half_wedge * std::sin(centre * kDegToRad);
+    DirectionAbout(input.incident, e1, e2, lo * math::kDegreeToRadD, azimuth - half_wedge, corners);
+    DirectionAbout(input.incident, e1, e2, lo * math::kDegreeToRadD, azimuth + half_wedge, corners + 3);
+    DirectionAbout(input.incident, e1, e2, (lo + kProbeBinDeg) * math::kDegreeToRadD, azimuth + half_wedge,
+                   corners + 6);
+    DirectionAbout(input.incident, e1, e2, (lo + kProbeBinDeg) * math::kDegreeToRadD, azimuth - half_wedge,
+                   corners + 9);
+    solid_angles[k] = kProbeBinDeg * math::kDegreeToRadD * 2.0 * half_wedge * std::sin(centre * math::kDegreeToRadD);
   }
 
   std::vector<int> slots;

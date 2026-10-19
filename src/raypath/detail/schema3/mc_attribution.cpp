@@ -5,20 +5,17 @@
 #include <limits>
 
 #include "analytic/so3.hpp"
+#include "core/math.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
 
 namespace lumice::raypath::schema3 {
 namespace {
 
-constexpr double kInf = std::numeric_limits<double>::infinity();
-
-constexpr double kPi = 3.14159265358979323846;
-
 // The match distance on the deviation axis: the smallest gap between the record's sky-point
 // deviations and the object's image values. Both sides are delta-axis sets — the declared base
 // ruler (azimuth not discriminated; the limitation rides the ruler strings).
 double BaseDistance(const std::vector<double>& record_delta, const std::vector<double>& image_delta) {
-  double best = kInf;
+  double best = math::kInf;
   for (const double r : record_delta) {
     for (const double o : image_delta) {
       best = std::min(best, std::fabs(r - o));
@@ -27,30 +24,24 @@ double BaseDistance(const std::vector<double>& record_delta, const std::vector<d
   return best;
 }
 
-double AngleBetween(const double a[3], const double b[3]) {
-  double cross[3];
-  analytic::so3::Cross3(a, b, cross);
-  return std::atan2(analytic::so3::Norm3(cross), analytic::so3::Dot3(a, b));
-}
-
 // The enhanced orbit-image layer's distance: the smallest all-sky angle between the record's
 // sky points and the member stream's VALID outgoing directions (world frame; invalid points
 // carry a zeroed outgoing — the "no direction" spelling). Restricted objects of a member with
-// a non-empty stream only; kInf otherwise (the layer then adds nothing).
+// a non-empty stream only; math::kInf otherwise (the layer then adds nothing).
 double OrbitImageDistance(const StructureObjectRecord& object, const Schema3DiscoveryCore& core,
                           const std::vector<std::array<double, 3>>& sky_points, long long* orbit_index) {
   const long long member = MemberIndexOf(core, object.member);
   if (member < 0 || member >= static_cast<long long>(core.orbits.size())) {
-    return kInf;
+    return math::kInf;
   }
   const analytic::OrbitFiberStream& stream = core.orbits[member];
   if (object.kind != ObjectKind::kKind1Restricted || stream.samples.empty()) {
-    return kInf;
+    return math::kInf;
   }
   if (orbit_index != nullptr) {
     *orbit_index = member;
   }
-  double best = kInf;
+  double best = math::kInf;
   for (const analytic::OrbitFiberPoint& point : stream.samples) {
     if (point.outgoing[0] == 0.0 && point.outgoing[1] == 0.0 && point.outgoing[2] == 0.0) {
       continue;
@@ -59,7 +50,7 @@ double OrbitImageDistance(const StructureObjectRecord& object, const Schema3Disc
     // viewing directions (negative propagation) — the object's displayed point is -outgoing.
     const double displayed[3] = { -point.outgoing[0], -point.outgoing[1], -point.outgoing[2] };
     for (const std::array<double, 3>& sky : sky_points) {
-      best = std::min(best, AngleBetween(displayed, sky.data()));
+      best = std::min(best, analytic::so3::AngleBetween(displayed, sky.data()));
     }
   }
   return best;
@@ -88,7 +79,7 @@ std::vector<McRecordFacts> ActualRecordFacts(const McEvidenceBlock& mc, const Mc
     one.sky_points = record.sky_points;
     one.has_position = !record.sky_points.empty();
     for (const std::array<double, 3>& sky : record.sky_points) {
-      one.delta_rad.push_back(AngleBetween(geometry.sun_dir, sky.data()));
+      one.delta_rad.push_back(analytic::so3::AngleBetween(geometry.sun_dir, sky.data()));
     }
     facts.push_back(std::move(one));
   }
@@ -99,7 +90,7 @@ std::vector<McRecordFacts> ActualRecordFacts(const McEvidenceBlock& mc, const Mc
 // distance and (restricted, streamed members) the orbit-image distance. `orbit_used` reports
 // whether the enhanced layer actually fired (the ruler string's input).
 struct ObjectMatch {
-  double distance = kInf;
+  double distance = math::kInf;
   long long record_index = -1;
   double record_ess = std::nan("");
   bool orbit_used = false;
@@ -335,8 +326,8 @@ double PresenceEss(const std::vector<analytic::WeightedSkySample>& components,
       current_index = component.sample_index;
       first = false;
     }
-    const double delta = AngleBetween(sun_dir, component.direction.data());
-    double best = -kInf;
+    const double delta = analytic::so3::AngleBetween(sun_dir, component.direction.data());
+    double best = -math::kInf;
     for (const double image : image_delta_rad) {
       best = std::max(best, std::cos(delta - image));
     }
@@ -426,7 +417,7 @@ UnattributedOutcome DeriveUnattributed(const McAttributionInput& input) {
       outcome.skipped_below_ess++;
       continue;  // the AC2 gate: a starved MC has no witnessing qualification
     }
-    double min_margin = kInf;
+    double min_margin = math::kInf;
     std::array<double, 3> closest = record.sky_points.front();
     double closest_delta = record.delta_rad.front();
     bool orbit_used = false;
@@ -446,7 +437,7 @@ UnattributedOutcome DeriveUnattributed(const McAttributionInput& input) {
       if (margin < min_margin) {
         min_margin = margin;
         // The sky point of closest approach for the reporting position.
-        double best_point_distance = kInf;
+        double best_point_distance = math::kInf;
         for (size_t p = 0; p < record.sky_points.size(); p++) {
           const double point_delta = record.delta_rad[p];
           for (const double image_delta : image.delta_rad) {

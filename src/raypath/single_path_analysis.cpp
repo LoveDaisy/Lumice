@@ -132,9 +132,6 @@ const char* IncompleteCauseName(IncompleteCause cause) {
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kRad2Deg = 180.0 / kPi;
-constexpr double kDeg2Rad = kPi / 180.0;
 constexpr double kIdentity[9] = { 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 };
 
 // Below this sin(zenith) the azimuth and roll of a pose are not separately recoverable in double
@@ -147,16 +144,6 @@ constexpr int kRankProbeCount = 4096;
 double WrapDeg(double a) {
   a = std::remainder(a, 360.0);  // [-180, 180]
   return a <= -180.0 ? a + 360.0 : a;
-}
-
-double Clamp1(double x) {
-  return x < -1.0 ? -1.0 : (x > 1.0 ? 1.0 : x);
-}
-
-double AngleBetween(const double a[3], const double b[3]) {
-  double cross[3];
-  analytic::so3::Cross3(a, b, cross);
-  return std::atan2(analytic::so3::Norm3(cross), analytic::so3::Dot3(a, b));
 }
 
 // A rotation R with R u = s, for unit u and s. Which one does not matter to any caller: the path's
@@ -180,7 +167,7 @@ void RotationTaking(const double u[3], const double s[3], double r[9]) {
     analytic::so3::Cross3(u, ref, normal);
     const double n = analytic::so3::Norm3(normal);
     for (int i = 0; i < 3; i++) {
-      w[i] = normal[i] / n * kPi;
+      w[i] = normal[i] / n * math::kPiD;
     }
   }
   analytic::so3::Exp(w, r);
@@ -221,7 +208,7 @@ class PathContext {
       return false;
     }
     const double incident[3] = { -u[0], -u[1], -u[2] };
-    *deviation = std::acos(Clamp1(analytic::so3::Dot3(out, incident)));
+    *deviation = std::acos(math::Clamp1(analytic::so3::Dot3(out, incident)));
     return true;
   }
 
@@ -477,8 +464,9 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation) {
   // A coarse probe that sees nothing valid has no change to offer: nothing is excluded.
   // Half-order convergence bound (single_path_analysis.hpp, ReachSummary): shortfall <= c / (sqrt 2 - 1).
   constexpr double kHalfOrderBound = 2.41421356237309504880;  // 1 + sqrt 2
-  reach.tolerance_rad =
-      coarse.any ? kHalfOrderBound * std::max(std::fabs(fine.lo - coarse.lo), std::fabs(fine.hi - coarse.hi)) : kPi;
+  reach.tolerance_rad = coarse.any ?
+                            kHalfOrderBound * std::max(std::fabs(fine.lo - coarse.lo), std::fabs(fine.hi - coarse.hi)) :
+                            math::kPiD;
   reach.target_in_range = target_deviation >= reach.deviation_min_rad - reach.tolerance_rad &&
                           target_deviation <= reach.deviation_max_rad + reach.tolerance_rad;
   return reach;
@@ -492,24 +480,24 @@ PoseAngles PoseToAngles(const double r[9]) {
   //   third row    = ( sin zenith cos roll, -sin zenith sin roll, cos zenith)
   PoseAngles angles;
   const double sin_zenith = std::hypot(r[2], r[5]);
-  angles.zenith_deg = std::atan2(sin_zenith, r[8]) * kRad2Deg;
+  angles.zenith_deg = std::atan2(sin_zenith, r[8]) * math::kRadToDegreeD;
   double a = 0.0;
   if (sin_zenith > kPoleSine) {
     a = std::atan2(-r[5], -r[2]);
-    angles.roll_deg = WrapDeg(std::atan2(-r[7], r[6]) * kRad2Deg);
+    angles.roll_deg = WrapDeg(std::atan2(-r[7], r[6]) * math::kRadToDegreeD);
   } else {
     // zenith 0: R = Rz(a + roll); zenith 180: R = Rz(a) diag(-1, 1, -1) Rz(roll). Roll := 0.
     angles.degenerate = true;
     a = r[8] > 0.0 ? std::atan2(r[3], r[0]) : std::atan2(-r[3], -r[0]);
     angles.roll_deg = 0.0;
   }
-  angles.azimuth_deg = WrapDeg(a * kRad2Deg + 180.0);
+  angles.azimuth_deg = WrapDeg(a * math::kRadToDegreeD + 180.0);
   return angles;
 }
 
 void SunSphereGridCellCentre(const SunSphereGrid& grid, int lat_index, int lon_index, double u[3]) {
-  const double lat = (-90.0 + (lat_index + 0.5) * 180.0 / grid.lat_count) * kDeg2Rad;
-  const double lon = (-180.0 + (lon_index + 0.5) * 360.0 / grid.lon_count) * kDeg2Rad;
+  const double lat = (-90.0 + (lat_index + 0.5) * 180.0 / grid.lat_count) * math::kDegreeToRadD;
+  const double lon = (-180.0 + (lon_index + 0.5) * 360.0 / grid.lon_count) * math::kDegreeToRadD;
   u[0] = std::cos(lat) * std::cos(lon);
   u[1] = std::cos(lat) * std::sin(lon);
   u[2] = std::sin(lat);
@@ -591,7 +579,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   meta.target_azimuth_deg = request.target_azimuth_deg;
   AltAzToDir(request.target_altitude_deg, request.target_azimuth_deg, meta.target_direction);
   const double delta = analytic::TargetDeviation(meta.incident_direction, meta.target_direction);
-  meta.target_deviation_deg = delta * kRad2Deg;
+  meta.target_deviation_deg = delta * math::kRadToDegreeD;
   meta.wavelength_nm = wavelength.wavelength_nm;
   meta.wavelength_source = wavelength.source;
   meta.refractive_index = wavelength.refractive_index;
@@ -610,7 +598,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     return { ErrorCode::kPathInfeasible, "no pose realises this face sequence (none of " +
                                              std::to_string(kRankProbeCount) + " probed sun directions is valid)" };
   }
-  if (!rank.rank_zero && !(delta > 0.0 && delta < kPi)) {
+  if (!rank.rank_zero && !(delta > 0.0 && delta < math::kPiD)) {
     return { ErrorCode::kInvalidTarget,
              "the target coincides with the sun or its antipode; no fiber is defined there" };
   }
@@ -630,7 +618,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     }
     DirToAltAz(result.point_mass.direction, &result.point_mass.altitude_deg, &result.point_mass.azimuth_deg);
     result.point_mass.target_separation_deg =
-        AngleBetween(result.point_mass.direction, meta.target_direction) * kRad2Deg;
+        analytic::so3::AngleBetween(result.point_mass.direction, meta.target_direction) * math::kRadToDegreeD;
     *out = std::move(result);
     return {};
   }
