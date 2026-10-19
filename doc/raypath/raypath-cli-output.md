@@ -722,7 +722,7 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `request` | The echo: `crystal_id`, `path_layers`, `symmetry_bits` (7 = physical P\|B\|D, 0 = literal), `wavelength_nm` (null when unset) and `budget_ms` as resolved |
 | `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg` |
 | `routing` | The T0 leg: `early_stopped`, and per-member `members[]` records (`member`, `rank_zero`, `mechanism` — the kernel's roll-up slug, null when not computable, with `mechanism_unavailable` naming why — and the member's own `evidence` block) |
-| `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has a minimum-deviation onset — the position needs a fold to sit on), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed |
+| `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has an extremum fold — the position needs a fold to sit on; the minimum-deviation fold when the class has one, else the interior maximum at the support's upper edge), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed — and on that refused card, the declared-source `witness` sub-block (§9.2) |
 | `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop and on the full-dimensional route |
 | `probes` | The canonical probes; present only on the full-dimensional route (§9.6) — an early-stop document carries no `probes` key at all |
 | `chromatic` | The chromatic layer's own evidence block plus the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`, §9.6). Its state follows the legs its routing arm ran: `unevaluated` only when no chromatic leg exists for the input class, `finite` when its legs computed, `refused` (with the leg's mode) when its only leg refused — on the identity arm the tint IS the block's only leg, so the block and the sub-block never disagree |
@@ -763,16 +763,18 @@ on a card of another kind):
 | `symmetry_bits` | the scope the partition ran on (7 = physical P\|B\|D, 0 = literal) |
 | `member_count` | the class members the partition ran on |
 
-**`caustic_edge`** — the minimum-deviation fold (the sharp inner edge; the corpus's 22-degree
-inner edge on a random prism):
+**`caustic_edge`** — the support's extremum fold (the sharp inner edge; the corpus's 22-degree
+inner edge on a random prism): the minimum-deviation fold when the class has one, else the
+interior maximum where the support's upper edge ends (the corpus's C09 shape — a support that
+ends at a finite-jump edge and continues into nothing):
 
 | Field | Meaning |
 |---|---|
 | `position_deg` | the fold's deviation at the reference index |
-| `profile` | the kernel's onset-profile slug (`finite_jump` on the C01 shape) |
+| `profile` | the kernel's onset-profile slug (`finite_jump` on the C01 and C09 shapes) |
 | `measure_limit` | present when the kernel computed it (2π/√det H, the finite jump's level-set limit) |
-| `coincident_with_support` | the fold sits on the support boundary (within the partition's own merge constant) — the marker that predicts a sharp edge rather than a soft cutoff |
-| `certificate` | present when the position is certified: `formula` (`2*asin(n*sin(A/2)) - A`), `apex_angle_deg`, `cross_check_deg` (the kernel position vs the survey's restatement), `tolerance_deg` (1e-6 rad; a mismatch beyond it refuses as `closed_form_mismatch`, it never picks one reading silently) |
+| `coincident_with_support` | the fold sits on the support boundary — the end the fold actually occupies, lower for a minimum and upper for a maximum (within the partition's own merge constant); the marker that predicts a sharp edge rather than a soft cutoff |
+| `certificate` | present when the position is certified: `formula` (`2*asin(n*sin(A/2)) - A`), `apex_angle_deg`, `cross_check_deg` (the kernel position vs the survey's restatement), `tolerance_deg` (1e-6 rad; a mismatch beyond it refuses as `closed_form_mismatch`, it never picks one reading silently). Only the two-face-chain minimum certifies — a maximum fold (and any longer chain) lands `finite` with no certificate claimed |
 
 **`bright_domain`** — the support's interior span and the profile readings:
 
@@ -783,6 +785,28 @@ inner edge on a random prism):
 | `edge_reading_deg` | the probe's own edge reading (first non-empty bin, ± half a bin) |
 | `kept_count` | the sample's kept events — the T2 **existence witness**: > 0 says the class carries finite positive weight somewhere; it is an existence statement, never a distribution statistic |
 | `probe_index` | the `probes[]` entry the readings came from |
+
+**`witness`** — the refused-support card's positive leg (it never appears on a card the
+refused-support arm did not produce). A partition refusal says the support is unknown, not
+that the class carries no light: the corpus's 3157 refuses every member's partition
+(`slab_crease_touching`) while its declared-source events carry positive weight. The witness
+sub-block hangs that positive fact on the SAME refused card — the card's own `evidence` stays
+`refused`, the sub-block carries its own state, and the two coexist without either overriding
+the other:
+
+| Field | Meaning |
+|---|---|
+| `state` | `finite` (the witness ran and confirmed) or `refused` with `mode` `no_declared_source_witness` (the declared source offered no positive event, or the batch re-evaluation did not confirm the chain — fail closed, never a defaulted number) |
+| `coverage` | the finite state's declaration (the batch re-evaluation's basis and wavelength) |
+| `kept_count` / `sample_count` | kept events over the lattice size — an existence count, never a distribution statistic |
+| `lattice`, `deterministic` | the sampler's own self-description (the antipodal Fibonacci lattice; no RNG anywhere) |
+| `deviation_deg`, `weight` | the max-weight event's deviation (the discovery's own D convention) and its `w = A·T` |
+| `entry`, `interface_product` | the diagnostic batch's own re-evaluation at that pose — a second, independent read of the forward chain |
+| `source_note` | the declared source and the reading protocol, spelled inside the document |
+
+The witness is the lattice argmax event of the declared measure's own sampler (the antipodal
+Fibonacci lattice over SO(3)) — an **existence** statement. The corpus's target-specific
+numbers are a different protocol and live on a different ruler.
 
 ### 9.3 Evidence states
 
@@ -805,10 +829,12 @@ conclusion; an `unevaluated` block is a routing state, never an empty result.
 
 `--budget` is parsed, validated (an out-of-range value is rejected, not clamped), echoed and
 **not enforced**: `budget.enforced` is false and the note says what the producing arm actually
-ran — the full-dimensional arm's legs are the per-member delta partition, the band-sum probe
-and the chromatic pair (seconds of work on a 12-member class); the identity arm's are the
-millisecond routing verdict and the two-lambda band-sum tint (the note names the per-lambda
-sample count) — and the note names them. Enforcement arrives with the quantification legs that
+ran — the full-dimensional arm's legs are the per-member delta partition, the band-sum probe,
+the chromatic pair and the class tint's two-lambda power sum (seconds of work on a 12-member
+class); the identity arm's are the millisecond routing verdict and the two-lambda band-sum tint
+(the note names the per-lambda sample count); the refused-support arm's are the routing
+verdict, the per-member partition attempt (the note names the refusal) and the witness lattice.
+Every arm's note names its own legs. Enforcement arrives with the quantification legs that
 actually spend.
 
 ### 9.5 Version discipline
@@ -829,14 +855,14 @@ the schema (the serialized `spec` echoes every one), not tuning knobs:
 
 | Constant | Value | Meaning |
 |---|---|---|
-| probe domain | [15°, 60°] deviation from the sun | the radial range the slice covers |
-| probe bin | 0.1° (450 samples) | one narrow azimuthal wedge per bin; under the uniform density the band-sum value is the full annulus's per-sr mean, so the wedge's azimuth carries no information |
+| probe domain | [0°, 180°] deviation from the sun — the whole delta axis | the radial range the slice covers; the corpus's C06/C09 supports sit outside the original [15°, 60°] slice, and a support-derived window would make the bin layout a per-class branch — one ruler for every class |
+| probe bin | 0.1° (1800 samples) | one narrow azimuthal wedge per bin; under the uniform density the band-sum value is the full annulus's per-sr mean, so the wedge's azimuth carries no information |
 | probe wedge half-width | 1.0° (`spec.wedge_half_width_deg`) | the wedge's azimuthal extent — part of the probe's caliber, so a reader can reconstruct the sliced solid angle |
 | probe sample count | 2,000,000 | the band-sum lattice size (`n`); the sampler is the antipodal Fibonacci lattice — **deterministic, no seed** (the coverage declaration names lattice + count + determinism, never a nonexistent seed value) |
 | probe reference λ/n | the document's `scope.wavelength_nm` / `refractive_index` | the probe shares the routing's reference ruler, so its edge reading, the support's lower end and the certified edge position are directly comparable |
 | probe representative | the request's face sequence (`spec.representative`) standing for `spec.member_count` class members | the members are relabelings of one physical class; the class-level reading is the representative's ×N |
 | chromatic λ pair | 650 nm / 450 nm | the pool's red and blue ends through the engine's dispersion table; `n_red`/`n_blue` are echoed verbatim; the D65 full-spectrum spatial integral is a later slice's work |
-| tint sample count | 1,000,000 per lambda (`weight_tint.sample_count`) | the tint leg's band-sum lattice size, the same deterministic antipodal Fibonacci; a new key appears only in a tint block that ran |
+| tint sample count | 1,000,000 per lambda (`weight_tint.sample_count`, both arms) | the tint leg's lattice size, the same deterministic antipodal Fibonacci; the identity arm's point-mass branch and the T1 arm's class power-sum share the constant (each arm's own ladder pinned it at the same value); a new key appears only in a tint block that ran |
 
 The probe's two readings stay two things: `edge` (first non-empty bin — geometrically no event
 lies below the minimum-deviation edge, so that bin contains it; a finite reading good to half a
@@ -851,37 +877,63 @@ profile that has neither. `edge` / `peak` / `separation_deg` keys exist exactly 
 readings they describe do.
 
 The chromatic block on this route is `finite` with up to three optional sub-blocks, and the
-two mechanisms never merge fields:
+two mechanisms never merge fields. The block's state rule across all arms: **finite once any
+leg produced output** — a refused leg with other real output keeps its refusal in its own
+sub-block (the refused-support arm is the degenerate case: no leg runs, the block stays
+`unevaluated` and names the axis refusal that stopped them).
 
-- `positional_dispersion` — the min-deviation edge followed across the pair:
-  `red_label`/`blue_label`, `n_red`/`n_blue`, `value_red_deg`/`value_blue_deg`,
-  `displacement_deg`, `direction` (`red_inner_blue_outer` ⇔ value_red < value_blue: the red
-  edge sits closer to the sun), and its own `evidence`.
+- `positional_dispersion` — the critical onsets followed across the pair. `followed_onsets[]`
+  is every row the kernel's wavelength-critical table carried, in table order, each
+  `{source, profile, values_deg[2], displacement_deg, direction}` with the kernel's slugs
+  passed through and the row's own stacking verdict (`red_inner_blue_outer` ⇔ values_deg[0] <
+  values_deg[1]: the red edge sits closer to the sun). The min-deviation row's own scalars
+  (`value_red_deg`/`value_blue_deg`/`displacement_deg`/`direction`) serialize **only when that
+  row exists** — a corner-bounded support (C06) or one ending at an interior maximum (C09) has
+  no minimum, and the followed rows are the leg's data instead of a refusal: keys exist exactly
+  when the readings they describe do. Either way the block carries `red_label`/`blue_label`,
+  `n_red`/`n_blue` and its own `evidence`.
 - `diagnose` — the kernel's weight-kink and gate-edge analysis as a **separate sub-block**
   (a different kernel path than the dispersion table): `verdict_kind`, `color`, `visible`,
   `position_deg`, `coverage_complete`, `notes`, the declared `n_red`/`n_blue`, `features[]`
   (`kind`/`source`/`color`/`visible`/`delta_red_deg`/`delta_blue_deg`/`shift_deg`) and its own
   `evidence`. A colour edge can be positional (dispersion) or weight-driven (a gate or kink);
   conflating them would read one mechanism off the other's ruler.
-- `weight_tint` — the transmission-weight ratio across the pair; the identity arm computes it
-  (see below), the full-dimensional route keeps it `unevaluated` with `T1-arm class tint not
-  wired (random-family two-lambda map ratio deferred; the identity arm computes this leg)` —
-  the class-level tint over a random family's two-lambda maps is its own deferred leg.
+- `weight_tint` — the transmission-weight ratio across the pair. Both arms compute it, as two
+  different readings with two field families that never merge (see below): the identity arm's
+  point-mass masses, and the full-dimensional route's class power-sum over the declared
+  lattice.
 
-**`weight_tint` (the identity arm's weight leg).** A rank-0 path has one sky position, so its
-chromatic question is not where but how bright per lambda: the leg runs the point-mass branch
-of the band sum twice — once per lambda of the fixed pair, through each lambda's refractive
-index — on the class representative (standing for `member_count` members, the probe's
-relabeled-equivalence discipline), with an empty pixel table (the ratio reads the masses, not
-a rendered map). The two calls share the lattice size, so the ratio's quadrature error cancels
-to first order; under a non-uniform pose density both masses come from the kernel's
-deterministic psi-average (`method: "psi_average"`), under the random family from lattice means
-(`"lattice_mean"`). Fields: `red_label`/`blue_label`, `n_red`/`n_blue` (the dispersion table's
-pair, echoed), `m_red`/`m_blue` with `m_red_error`/`m_blue_error` (the masses and their
-last-doubling quadrature changes — provenance, not a jitter bar to assert against),
-`method`, `sample_count`, `representative`, `member_count`, `ratio` (= m_blue/m_red),
-`direction`, `kept_count_red`/`kept_count_blue` (the existence witnesses), `caliber` (the
-ratio's protocol, spelled inside the document), `evidence`.
+**`weight_tint` (both arms, two readings).** The question is the same — how the transmission
+weight tilts across the fixed pair — and the reading follows the arm's routing:
+
+- **The identity arm (a rank-0 path).** One sky position, so the chromatic question is how
+  bright per lambda: the leg runs the point-mass branch of the band sum twice — once per lambda
+  of the fixed pair, through each lambda's refractive index — on the class representative
+  (standing for `member_count` members, the probe's relabeled-equivalence discipline), with an
+  empty pixel table (the ratio reads the masses, not a rendered map). The two calls share the
+  lattice size, so the ratio's quadrature error cancels to first order; under a non-uniform
+  pose density both masses come from the kernel's deterministic psi-average
+  (`method: "psi_average"`), under the random family from lattice means (`"lattice_mean"`).
+  Fields: `red_label`/`blue_label`, `n_red`/`n_blue` (the dispersion table's pair, echoed),
+  `m_red`/`m_blue` with `m_red_error`/`m_blue_error` (the masses and their last-doubling
+  quadrature changes — provenance, not a jitter bar to assert against), `method`,
+  `sample_count`, `lattice`/`deterministic` (the sampler's own self-description),
+  `representative`, `member_count`, `ratio` (= m_blue/m_red), `direction`,
+  `kept_count_red`/`kept_count_blue` (the existence witnesses), `caliber` (the ratio's
+  protocol, spelled inside the document), `evidence`.
+- **The full-dimensional route (the class power-sum).** The class is a measure, not a point:
+  the leg samples the declared source itself — two `BuildEvents` passes over one shared
+  antipodal Fibonacci lattice, once per lambda through its refractive index — and the ratio is
+  the blue weight sum over the red one, carried by the per-sample average powers
+  (`energy_red`/`energy_blue`: the kept events' `w = A·T` summed over the lattice, divided by
+  the lattice size). `method: "lattice_power_sum"`; the `m_*` family stays absent (a mass is
+  not this reading's quantity), and the two readings' calibers must never be compared — a
+  point-mass mass ratio at the sun direction and a whole-class power sum over the declared
+  measure are different protocols that agree in neither magnitude nor threshold (the corpus's
+  C15 and C06 numbers differ by an order of magnitude under the two calibers). The shared
+  fields (`ratio`, `direction`, `kept_count_*`, `sample_count`, `lattice`/`deterministic`,
+  `representative`, `member_count`, `caliber`, `evidence`) mean the same thing on both shapes;
+  the `caliber` string names which reading a document carries.
 
 **The ratio's caliber is not a colour ratio.** `ratio` compares transmission weights at two
 narrow bands and nothing else — no spectral power distribution, no colour-matching functions,
@@ -895,10 +947,15 @@ reader never has to know this from the outside.
 lives in the model — how far from 1 counts as "really tinted" is an acceptance notion, and each
 consumer pins its own threshold.
 
-The leg refuses rather than approximates, with the refusal in both the sub-block and the
-chromatic block (the block mirrors its only leg on this arm): `density_not_expressible` (the
-axis maps to no pose density — a fixed pose is the degenerate case: its weight is exactly
-computable in principle, what is missing is a delta-distribution pose encoding, a kernel
-capability boundary, not a physical impossibility), `not_rank_zero` (the caller's certificate
-and the kernel's own rank check disagree — never read a map as a mass), `zero_band_weight` (a
-band's mass degenerated; a silent division by zero must not reach the document).
+The leg refuses rather than approximates. On the identity arm the tint is the block's only leg,
+so the refusal appears in both the sub-block and the chromatic block (they mirror);
+`density_not_expressible` (the axis maps to no pose density — a fixed pose is the degenerate
+case: its weight is exactly computable in principle, what is missing is a delta-distribution
+pose encoding, a kernel capability boundary, not a physical impossibility), `not_rank_zero`
+(the caller's certificate and the kernel's own rank check disagree — never read a map as a
+mass), `zero_band_weight` (a band's mass degenerated; a silent division by zero must not reach
+the document). `member_resolution` is the defensive mode both arms share (the representative's
+face sequence stopped resolving to slots — unreachable past the request-level resolution, and
+honest if it ever fires). On the full-dimensional route the block has other legs with real
+output, so a refused tint keeps its refusal in the sub-block alone: the block-state rule is
+finite once any leg produced output.
