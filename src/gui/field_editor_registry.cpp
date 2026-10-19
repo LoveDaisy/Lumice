@@ -570,8 +570,10 @@ FieldEditorEntry SpectrumField() {
   return entry;
 }
 
-// Aspect preset. Same item set and same "Match Background needs a background" rule as the main UI's
-// combo (app_panels.cpp).
+// Aspect preset. Same "Match Background needs a background" rule as the main UI's aspect combo
+// (app_panels.cpp). The item set here is preset-only and stays that way: the main UI's combined
+// combo folds the orientation into its entries, but this panel edits the stored default, where
+// the orientation is the separate aspect_portrait field below.
 //
 // What is deliberately NOT reproduced: the main UI also calls ApplyAspectRatio to resize the OS
 // window. There is no window handle to reach from here — and the asymmetry is pre-existing rather

@@ -26,7 +26,7 @@ The main window is split into six regions. The same numbering is used in the lab
 |---|--------|---------|
 | 1 | Top Bar | File operations (New / Open / Save), simulation Run / Stop / Continue / Revert, panel collapse toggles |
 | 2 | Left Panel — Crystal Parameters | Scattering layers and the crystal cards inside each layer (geometry / axis / filter / proportion) |
-| 3 | Right Panel — View Parameters | Scene (Sun + Simulation), View (Projection + Camera), Display (Resolution / EV / Aspect / Background), Overlay |
+| 3 | Right Panel — View Parameters | Scene (Sun + Simulation), View (Projection + Camera), Display (Resolution / EV / Background, incl. the aspect combo), Overlay |
 | 4 | Render Preview | The lens-projected halo image accumulated as rays land |
 | 5 | Status Bar | Simulation state badge, ray count, current resolution / lens / FOV, file name, log toggle |
 | 6 | Popup Editor | Modal editor opened from a crystal card; edits Crystal / Axis / Filter |
@@ -172,10 +172,9 @@ The lens choice changes the geometry of the projected image dramatically:
 
 ### Display
 
-- **Rendering**: `Resolution` (512 / 1024 / 2048 / 4096; highlighted in brown to flag that changing it re-runs the simulation), and `EV` (-6 to +6 stops of exposure offset).
+- **Rendering**: `Resolution` (512 / 1024 / 2048 / 4096; changing it re-runs the simulation — the control's tooltip says so), and `EV` (-6 to +6 stops of exposure offset).
 - **Adaptive Brightness**: always on — no toggle. Relative mode uses the scene's fixed all-sky P99 radiance (`anchor_l99_sky`), independent of lens / FOV / camera / visible range / output resolution; the applied offset is shown as `+N.NN EV auto` next to the manual EV slider. Filter switches do not jump the anchor. See [`doc/rendering/adaptive-brightness.md`](../rendering/adaptive-brightness.md) for the full algorithm and additivity invariant.
-- **Aspect Ratio**: a `Preset` combo (Free, 16:9, 3:2, 4:3, 1:1, 2:1, Match Background) plus a `Portrait` ↔ `Landscape` flip button. When the requested aspect cannot be honoured (window too small) a warning row reports the achieved versus requested ratio.
-- **Background**: `Load Bg...`, `Clear`, `Show` checkbox, and an `Alpha` slider for compositing the loaded background under the rendered halo.
+- **Background**: `Load Bg...`, `Clear`, the `Show` checkbox, and an `Alpha` slider for compositing the loaded background under the rendered halo. The section also hosts the `Aspect` combo, which lists every reachable preset-and-orientation pair in one menu — Free, 16:9, 16:9 Portrait, 3:2, 3:2 Portrait, 4:3, 4:3 Portrait, 1:1, 2:1, 2:1 Portrait, Match Background. `Match Background` greys until an image is loaded, which is why the combo lives here. When the requested aspect cannot be honoured (window too small) a warning row reports the achieved versus requested ratio.
 
 ### Overlay
 

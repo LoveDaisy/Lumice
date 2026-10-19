@@ -1113,7 +1113,7 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       // measured. Renaming a row whose alignment nothing asserts is how a label column drifts.
       display.push_back(MeasureComboRow(ctx, "Mode", "Mode##display_tone"));
       display.push_back(MeasureWidgetRow(ctx, "EV", "##EV##display_input", "##EV##display_label"));
-      display.push_back(MeasureComboRow(ctx, "Preset", "Preset##display_aspect"));
+      display.push_back(MeasureComboRow(ctx, "Aspect", "Aspect##display_aspect"));
       display.push_back(MeasureWidgetRow(ctx, "Alpha", "##Alpha##display_input", "##Alpha##display_label"));
       display.push_back(
           MeasureWidgetRow(ctx, "Offset X", "##Offset X##display_bg_input", "##Offset X##display_bg_label"));
