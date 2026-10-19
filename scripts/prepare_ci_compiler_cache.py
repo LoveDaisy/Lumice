@@ -62,7 +62,14 @@ def _parse_ccache_stats(raw: str) -> dict[str, int]:
     return stats
 
 
-def _parse_sccache_stats(raw: str) -> dict:
+def _load_sccache_stats(raw: str) -> dict:
+    """Decode the `--show-stats --stats-format=json` payload, shape-checked.
+
+    Shared shape contract of the seed-readiness audit below (which additionally
+    gates on zero cache write errors) and `collect_cache_stats.py` (which only
+    warns on them, because a failed cache write does not distort the miss
+    count).
+    """
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as error:
@@ -72,6 +79,12 @@ def _parse_sccache_stats(raw: str) -> dict:
     write_errors = payload["stats"].get("cache_write_errors")
     if isinstance(write_errors, bool) or not isinstance(write_errors, int):
         raise CacheReadinessError("sccache statistics do not contain an integer cache_write_errors")
+    return payload
+
+
+def _parse_sccache_stats(raw: str) -> dict:
+    payload = _load_sccache_stats(raw)
+    write_errors = payload["stats"]["cache_write_errors"]
     if write_errors != 0:
         raise CacheReadinessError(f"sccache reported {write_errors} cache write error(s)")
     return payload
