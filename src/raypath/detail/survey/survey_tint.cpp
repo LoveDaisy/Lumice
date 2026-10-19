@@ -70,6 +70,8 @@ void AssembleWeightTint(const TintInput& input, SurveyDocument* out) {
   tint.m_blue_error = blue.m_error;
   tint.method = PointMassMethodName(red.method);
   tint.sample_count = input.sample_count;
+  tint.lattice = "antipodal_fibonacci";  // band_sum's sampler kind, restated for the document
+  tint.deterministic = true;
   tint.representative = *input.representative;
   tint.member_count = input.member_count;
   tint.ratio = blue.m / red.m;

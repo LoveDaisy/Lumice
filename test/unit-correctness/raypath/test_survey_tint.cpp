@@ -163,6 +163,24 @@ TEST(SurveyTint, DeviatingSequenceRefusesWithNotRankZero) {
   EXPECT_DOUBLE_EQ(document.weight_tint->ratio, 0.0);
 }
 
+// The member-resolution negative control: a representative naming a face the crystal lacks
+// cannot resolve to slots, and the leg refuses with the same shape as every other refusal —
+// mode "member_resolution", no numeric field written, the chromatic block mirroring it.
+TEST(SurveyTint, UnresolvableRepresentativeRefusesWithMemberResolution) {
+  const TintFixture fix = TintFixture::Make();
+  const std::vector<int> unresolvable{ 99, 99 };
+  TintInput input = fix.Input(100000);
+  input.representative = &unresolvable;
+  SurveyDocument document;
+  AssembleWeightTint(input, &document);
+  ASSERT_TRUE(document.weight_tint.has_value());
+  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
+  EXPECT_EQ(document.weight_tint->evidence.mode, "member_resolution");
+  EXPECT_DOUBLE_EQ(document.weight_tint->ratio, 0.0);
+  EXPECT_EQ(document.chromatic.state, EvidenceState::kRefused);
+  EXPECT_EQ(document.chromatic.mode, "member_resolution");
+}
+
 // The identity arm's serialized shape: the chromatic sub-blocks a point-mass path does not have
 // stay absent, and the early-stop document carries no probes key.
 TEST(SurveyTint, IdentityDocumentCarriesNoPositionalDispersionOrDiagnose) {
@@ -181,6 +199,8 @@ TEST(SurveyTint, IdentityDocumentCarriesNoPositionalDispersionOrDiagnose) {
   EXPECT_EQ(chromatic.at("weight_tint").at("evidence").at("state"), "finite");
   EXPECT_EQ(chromatic.at("weight_tint").at("direction"), "blue_tinted");
   EXPECT_EQ(chromatic.at("weight_tint").at("method"), "psi_average");
+  EXPECT_EQ(chromatic.at("weight_tint").at("lattice"), "antipodal_fibonacci");
+  EXPECT_EQ(chromatic.at("weight_tint").at("deterministic"), true);
   EXPECT_EQ(chromatic.at("weight_tint").at("member_count"), static_cast<int>(parsed.at("scope").at("members").size()));
   EXPECT_FALSE(parsed.contains("probes"));  // an early stop produces no probes
 }

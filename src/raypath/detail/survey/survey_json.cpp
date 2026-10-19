@@ -293,6 +293,8 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
                          { "m_blue_error", Num(tint.m_blue_error) },
                          { "method", tint.method },
                          { "sample_count", tint.sample_count },
+                         { "lattice", tint.lattice },
+                         { "deterministic", tint.deterministic },
                          { "representative", LayersJson({ tint.representative })[0] },
                          { "member_count", tint.member_count },
                          { "ratio", Num(tint.ratio) },

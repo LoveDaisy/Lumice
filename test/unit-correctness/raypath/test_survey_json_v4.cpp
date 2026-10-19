@@ -399,6 +399,10 @@ TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
   EXPECT_DOUBLE_EQ(tint_json.at("ratio").get<double>(), 1.6476639902276924);
   EXPECT_EQ(tint_json.at("method"), "psi_average");
   EXPECT_EQ(tint_json.at("sample_count"), 1000000);
+  // The lattice self-description (S4): the sample's own sampler kind and determinism, the same
+  // two keys the probe spec carries.
+  EXPECT_EQ(tint_json.at("lattice"), "antipodal_fibonacci");
+  EXPECT_EQ(tint_json.at("deterministic"), true);
   EXPECT_EQ(tint_json.at("representative"), std::vector<int>({ 1, 3, 6, 2 }));
   EXPECT_EQ(tint_json.at("member_count"), 6);
   EXPECT_EQ(tint_json.at("direction"), "blue_tinted");

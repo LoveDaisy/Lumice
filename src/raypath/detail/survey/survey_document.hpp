@@ -7,7 +7,6 @@
 // assembly fills and the serializer reads; it carries no pointers, so a shell and a test can
 // both build one.
 
-#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -334,25 +333,24 @@ struct SurveyDiagnoseBlock {
 // lambda-pair transmission-weight caliber, which is a different quantity from a disk-integrated
 // D65 B/R and must not be compared against one.
 //
-// The direction vocabulary is the sign of the ratio itself (the issue's caliber: blue-tinted is
-// B/R > 1). No neutral band lives in the model — a band is an acceptance notion, and each
-// consumer pins its own separation threshold (the C15 bench requires ratio > 1.2 to separate
-// from the corpus's no-internal-reflection counterfactual at ~0.97; the C14 bench pins a
-// |ratio - 1| < 0.05 band with the same first-run provenance discipline). `kNeutral` is the
-// degenerate exact-1.0 point.
+// The direction vocabulary is the sign of the ratio itself: blue-tinted is B/R > 1, red-tinted
+// is B/R < 1. No neutral band lives in the model — a band is an acceptance notion, and each
+// consumer pins its own separation threshold with first-run provenance (the thresholds are the
+// consumers', not the schema's; the caliber rule is documented in doc/raypath/raypath-cli-output.md
+// section 9.6). `kNeutral` is the degenerate exact-1.0 point.
 enum class SurveyTintDirection { kBlueTinted, kRedTinted, kNeutral };
 
-inline constexpr std::array<std::pair<std::string_view, SurveyTintDirection>, 3> kSurveyTintDirectionNames{ {
-    { "blue_tinted", SurveyTintDirection::kBlueTinted },
-    { "red_tinted", SurveyTintDirection::kRedTinted },
-    { "neutral", SurveyTintDirection::kNeutral },
-} };
-
+// The same full-coverage-switch form as PointMassMethodName below: a new vocabulary value fails
+// -Wswitch at the switch itself; the trailing return only satisfies control-reaches-end for
+// today's fully-covered enum.
 inline const char* SurveyTintDirectionName(SurveyTintDirection direction) {
-  for (const auto& entry : kSurveyTintDirectionNames) {
-    if (entry.second == direction) {
-      return entry.first.data();
-    }
+  switch (direction) {
+    case SurveyTintDirection::kBlueTinted:
+      return "blue_tinted";
+    case SurveyTintDirection::kRedTinted:
+      return "red_tinted";
+    case SurveyTintDirection::kNeutral:
+      return "neutral";
   }
   return "neutral";
 }
@@ -387,6 +385,8 @@ struct SurveyWeightTint {
   double m_blue_error = 0.0;
   std::string method;  // PointMassMethodName: the mass's own computation path
   long long sample_count = 0;
+  std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (band_sum.hpp)
+  bool deterministic = true;                    // no RNG anywhere in the sample
   std::vector<int> representative;
   int member_count = 0;
   double ratio = 0.0;
