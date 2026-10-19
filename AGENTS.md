@@ -4,14 +4,7 @@
 
 Lumice is a C++17 ice halo ray-tracing simulator. It reproduces halo patterns by tracing light through ice crystals and supports CLI, GUI, unit tests, E2E tests, and performance-oriented workflows.
 
-Core conventions:
-
-- namespace: `lumice`
-- public API boundary: the engine's capability headers `src/include/lumice_{base,scene,render,editor,engine,raypath}.h`
-  (one per capability; there is no umbrella header)
-- source layout: `.hpp` headers and `.cpp` implementations
-- build system: CMake + Ninja
-- dependency management: CPM.cmake
+Core conventions: namespace `lumice`; source layout `.hpp`/`.cpp`; build CMake + Ninja; dependencies CPM.cmake; public API boundary = the engine's capability headers `src/include/lumice_{base,scene,render,editor,engine,raypath}.h` (one per capability, no umbrella header).
 
 ## Common Commands
 
@@ -26,8 +19,7 @@ Core conventions:
 ./build/cmake_install/static/Lumice -f examples/config_example.json
 ./build/cmake_install/static/Lumice -f config.json -v
 
-# Tests — scripts/test.sh is the recommended entry point; see the test-scope
-# table under "Testing and Platform Notes" for which one fits a given situation.
+# Tests — scripts/test.sh is the recommended entry; see the test-scope table under "Testing and Platform Notes".
 LUMICE_SKIP_GUI_TESTS=1 ./scripts/build.sh -gtj release   # headless: build gui_test, skip running it
 ./scripts/test.sh quick                   # after -gtj above: ctest + fast e2e + gui_test correctness pool
 ./scripts/test.sh full                    # quick + gui_test real-timing pool
@@ -40,8 +32,7 @@ pytest -v -m slow                         # slow e2e only (needs shared lib: ./s
 ./scripts/format.sh
 ./scripts/format.sh --check          # read-only: exit 1 if anything needs formatting (used by the pre-commit hook; CI runs the format-check job)
 
-# Engineering-policy gate (env-knob centralization/registration, GUI API boundary, using-namespace,
-# layer inversion)
+# Engineering-policy gate (env knobs, GUI API boundary, using-namespace, layer inversion)
 python3 scripts/check_policies.py    # whole-tree: what state is the repo in?
 python3 scripts/check_new_refs.py --staged        # diff-scoped: what did you just write?
 python3 scripts/check_new_refs.py --range A..B    # same, over a commit range (what CI runs)
@@ -51,72 +42,57 @@ python3 scripts/check_new_refs.py --range A..B    # same, over a commit range (w
 Build trees and install trees are per-flavor: `-s` (shared) and no `-s` (static) never share a
 directory, so both stay warm and switching between them does not force a rebuild. `-t`/`-g`/`-b`
 choose *what* to build (tests / GUI app / benchmarks) and compose with either flavor — only `-s`
-switches the flavor itself, and it defaults to static when omitted, so `-t`/`-g` alone never
-produce a shared library. Release artifacts are installed to `build/cmake_install/<flavor>/`; the
-CMake build tree is `build/cmake_build/<flavor>/` and compiler output lands in
-`build/<BUILD_TYPE>/<flavor>/{bin,lib}/`.
+switches the flavor itself, and it defaults to static when omitted, so `-t`/`-g` alone never produce
+a shared library. Release artifacts install to `build/cmake_install/<flavor>/`; the CMake build tree
+is `build/cmake_build/<flavor>/` and compiler output lands in `build/<BUILD_TYPE>/<flavor>/{bin,lib}/`.
 
 Dependency **sources**, by contrast, are cached per-*machine*, not per-source-tree: CPM downloads
 land in `$HOME/.cache/lumice-cpm` by default (`$USERPROFILE/.cache/lumice-cpm` on a Windows shell
-that sets no `HOME`; and if neither variable exists, the old repo-local `build/cpm_cache`, so a
-configure can never fail for want of a home directory). That is what makes a fresh clone or a new
-`git worktree` cheap — it reuses whatever this machine has already downloaded instead of re-fetching
-~300MB of the same 13 packages, which is the cost that was actually being paid: four trees on one
-machine each held their own ~300MB copy. `CPM_SOURCE_CACHE` still overrides it unconditionally —
-the default is only computed when neither the CMake variable nor the environment variable is set —
-which is how CI keeps its own per-workspace cache (`.github/workflows/{ci,release}.yml`) unaffected.
-Two consequences worth knowing. `rm -rf build/`, and `./scripts/build.sh -x` with it, no longer
-clears the dependency sources, because they are no longer under `build/`; delete the cache directory
-by hand when you genuinely want them re-downloaded, and note that doing so bills every other
-worktree on the machine for the re-download, not just yours. And the compiler-output and build trees
-above stay deliberately per-tree — only the immutable, content-addressed dependency sources are
-shared, which is why concurrent configures are safe (CPM takes a `file(LOCK)` per package directory
-before downloading into it).
+that sets no `HOME`; and if neither variable exists, the old repo-local `build/cpm_cache`).
+That is what makes a fresh clone or a new `git worktree` cheap — it reuses whatever this machine
+has already downloaded instead of re-fetching ~300MB of the same 13 packages. `CPM_SOURCE_CACHE`
+still overrides it unconditionally, which is how CI keeps its own per-workspace cache
+(`.github/workflows/{ci,release}.yml`) unaffected. Two consequences worth knowing: `rm -rf build/`,
+and `./scripts/build.sh -x` with it, no longer clears the dependency sources — delete the cache
+directory by hand when you genuinely want them re-downloaded, and note that doing so bills every
+other worktree on the machine; and the compiler-output and build trees above stay deliberately
+per-tree — only the immutable, content-addressed dependency sources are shared, which is why
+concurrent configures are safe (CPM takes a `file(LOCK)` per package directory before downloading
+into it).
 
 ## Code Structure
 
 - `src/config/`: configuration parsing and simulation config data
 - `src/core/`: math, optics, simulator, filters, buffers, ray paths
-- `src/raypath/`: the raypath analysis module. Its surface to the engine is the three public
-  headers `path_feature_report.hpp` / `single_path_analysis.hpp` / `single_path_json.hpp` (the
-  bridge `src/server/c_api_raypath.cpp` compiles exactly these); everything under
-  `src/raypath/detail/` is internal implementation, includable only by the module itself and
-  its own tests (`doc/raypath/raypath-cli-output.md` §8).
+- `src/raypath/`: the raypath analysis module — module surface rules live in `src/raypath/AGENTS.md`
 - `src/gui/`: GUI app, panels, preview, file IO, poller
 - `src/server/`: server-side render, consumer, stats, C API bridge
 - `src/util/`: logger, threading, queue, arguments, color data
-- `src/analytic/`: implementation of the published analytic library `liblumice_analytic`
-  (header `src/include/lumice_analytic.h` over `lumice_analytic_core.h`, prefix `LUMICE_ANALYTIC_`;
-  design in `doc/interfaces/analytic-api.md`). The engine libraries export the capability too: which headers
-  each shared library exports is declared once in `cmake/export_surfaces.cmake`.
+- `src/analytic/`: the published analytic library `liblumice_analytic` (design in
+  `doc/interfaces/analytic-api.md`); which headers each shared library exports is declared once
+  in `cmake/export_surfaces.cmake`.
 - `src/include/`: the C API, one header per capability — `lumice_{base,scene,render,editor,engine,raypath}.h`
-  (the engine surface; no umbrella header) plus `lumice_analytic{,_core}.h` (the analytic capability). The C
-  bridges are `src/server/c_api_<capability>.cpp`, one per header. One non-capability leaf header also
-  lives here: `lumice_api_version.h` solely owns `LUMICE_API_VERSION` and its change history, and
-  no header includes it — a macro value change would invalidate the whole includer closure's compile
-  cache, so only the few TUs that textually use the macro include it.
-- `test/`: unit tests, GUI tests, and E2E tests
+  (no umbrella header) plus `lumice_analytic{,_core}.h`, bridged by `src/server/c_api_<capability>.cpp`.
+  The one non-capability leaf, `lumice_api_version.h`, solely owns `LUMICE_API_VERSION` and is included
+  only by the few TUs that textually use the macro — a value change would invalidate the whole
+  includer closure's compile cache.
+- `test/`: unit tests, GUI tests, and E2E tests (operating rules: `test/AGENTS.md`)
 
-Layers: `cmake/lumice_layers.cmake` assigns every file under `src/` (the shell — `gui/`,
-`launcher/`, `main.cpp` — aside) to one of nine layers, lowest first: foundation, analytic, scene,
-view, sim, render, engine, raypath, capi. It is the single statement of the layering, read by both
-sides: CMake builds `lumice_foundation_obj` from its foundation list (`liblumice_analytic` links
-foundation and the analytic kernel only, `doc/interfaces/analytic-api.md` §2.1), and
-`scripts/check_policies.py`'s `layer-inversion` rule rejects any `#include` that points at a
-higher layer, any `src/` file the manifest does not own, and any manifest entry naming no file. A
-new source file therefore goes into the manifest in the same change. The existing inversions are
-listed in `cmake/lumice_layer_allowlist.txt`, which only shrinks — fixing an inversion means
-deleting its line, and an entry whose edge is gone fails the check.
+Layers: `cmake/lumice_layers.cmake` assigns every file under `src/` (the shell — `gui/`, `launcher/`,
+`main.cpp` — aside) to one of nine layers, lowest first: foundation, analytic, scene, view, sim,
+render, engine, raypath, capi. It is the single statement of the layering, read by both sides: CMake
+builds `lumice_foundation_obj` from its foundation list (`liblumice_analytic` links foundation and
+the analytic kernel only, `doc/interfaces/analytic-api.md` §2.1), and `scripts/check_policies.py`'s
+`layer-inversion` rule rejects any `#include` that points at a higher layer, any `src/` file the
+manifest does not own, and any manifest entry naming no file — so a new source file goes into the
+manifest in the same change. The existing inversions are listed in `cmake/lumice_layer_allowlist.txt`,
+which only shrinks — fixing an inversion means deleting its line, and an entry whose edge is gone
+fails the check.
 
 ## Style and Engineering Rules
 
 - Follow the repository `.clang-format` and `.clang-tidy` rules.
-- Naming:
-  - types: `CamelCase`
-  - functions: `CamelCase`
-  - variables: `lower_case`
-  - private members: `lower_case_`
-  - constants: `kCamelCase`
+- Naming: types and functions `CamelCase`; variables `lower_case`; private members `lower_case_`; constants `kCamelCase`.
 - Prefer `const`, `constexpr`, smart pointers, `nullptr`, and `override`.
 - Do not use raw `new` / `delete`.
 - Do not use `using namespace`.
@@ -125,29 +101,25 @@ deleting its line, and an entry whose edge is gone fails the check.
   or `GUI_LOG_*` (GUI, `src/gui/gui_logger.hpp`). A raw `printf` / `fprintf` / `std::cout` / `std::cerr`
   bypasses the unified sinks, the level filter and the format, so it is invisible exactly where a user
   looks: the GUI log panel, the file sink they enabled, and — on Windows, where the GUI calls
-  `FreeConsole()` unless a diagnostic flag was passed — anywhere at all. Two files under `src/` are
-  exempt, and both are exemptions with a name and an owner rather than a per-line escape hatch:
-  `src/main.cpp`, whose stdout **is** the CLI's product output (two of its lines are parsed contracts —
-  the `[BENCHMARK]` JSON and `ColorClassSignal:`, so a log prefix would break the e2e suite); and
-  `src/util/fatal.hpp`, the single owner of the pre-abort trap, where unbuffered stderr is the whole
-  point — a per-message-unflushed file sink can lose the line precisely when it matters. For an
-  unrecoverable invariant call `lumice::FatalAbort(...)` instead of hand-rolling print-then-`abort()`.
-  A third place sits outside the rule by construction rather than by name: `src/launcher/`, now
-  holding only `win_engine_loader.{c,h}` (the Windows release shell's CPUID probe and delay-load
-  wiring for its two internal engine DLLs; the Linux side needed no such file — the dynamic
-  linker's own glibc-hwcaps mechanism picks between the two engine `.so` files with zero
-  application code, so there is nothing here for it to own). It is compiled straight into the CLI
-  and GUI shell targets, not into `lumice_obj`, and runs *before* the engine DLL is even loaded, so
-  `ILOG_*` genuinely does not exist yet for it to bypass; its few error lines go to stderr because
-  there is no other sink at that point in the process's life. The checker never sees it — its scan
-  covers C++/CUDA/Metal suffixes, not `.c` — which is consistent with what the rule guards (the
-  engine's unified sinks), not a loophole to reuse: a `.c` file that *does* link the engine would
-  still be wrong. Enforced by the `no-bare-print` rule
-  in `scripts/check_policies.py`, which also scans `.cu` / `.metal` so a GPU backend cannot reopen
-  the side channel. `test/` is deliberately out of scope: test binaries
+  `FreeConsole()` unless a diagnostic flag was passed — anywhere at all. Two `src/` files are exempt —
+  named owners, not per-line escape hatches: `src/main.cpp`, whose stdout **is** the CLI's product
+  output (two of its lines are parsed contracts — the `[BENCHMARK]` JSON and `ColorClassSignal:`, so
+  a log prefix would break the e2e suite); and `src/util/fatal.hpp`, the single owner of the pre-abort
+  trap, where unbuffered stderr is the whole point (a per-message-unflushed file sink can lose the
+  line precisely when it matters). For an unrecoverable invariant call `lumice::FatalAbort(...)`
+  instead of hand-rolling print-then-`abort()`.
+  `src/launcher/` sits outside the rule by construction rather than by name: it holds only the Windows
+  release shell's CPUID probe and delay-load wiring (the Linux side needs no such file — glibc-hwcaps
+  picks between the two engine `.so` files), is compiled into the CLI/GUI shell targets rather than
+  `lumice_obj`, and runs before the engine DLL is even loaded — there is no logger yet to bypass; its
+  few error lines go to stderr for the same reason. The checker never sees it — its scan covers
+  C++/CUDA/Metal suffixes, not `.c` — consistent with what the rule guards; a `.c` file that *does*
+  link the engine would still be wrong.
+  Enforced by the `no-bare-print` rule in `scripts/check_policies.py`, which also scans `.cu`/`.metal`
+  so a GPU backend cannot reopen the side channel. `test/` is deliberately out of scope: test binaries
   are their own harness with no app logger to bypass, and some of their output is a parsed contract
   (the regen driver reads gui_test's `PSNR=` line). Device-side `printf` in a CUDA kernel stays a
-  legitimate debugging tool — the gate does not stop you adding one while working, only from landing it.
+  legitimate debugging tool — the gate stops it landing, not being added while working.
 - Public API boundary: `src/gui/` code must only access core/config functionality
   through the C API. Direct `#include` of `core/` or `config/` headers from `src/gui/` is
   prohibited, and of the public headers under `src/include/` it may include only the engine's
@@ -158,13 +130,12 @@ deleting its line, and an entry whose edge is gone fails the check.
   `src/util/` is deliberately outside that prohibition, and the exemption has a shape:
   what may live there and be included from both sides is a **pure, stateless helper that
   carries no simulation or configuration semantics** — `bit_utils.hpp`, `color_space.hpp`,
-  `label_viewport_clamp.hpp`, `annotation_line_width.hpp`. The gate exists so the GUI cannot reach into the engine's
-  data model and pin its layout by including it; a geometry function with no state does
-  not offer that reach, and forcing one through the C API would only mean the rule gets
-  written twice, once per side, which is the divergence the boundary is there to prevent.
-  So: a rule BOTH renderers must obey, expressible without a core or config type, belongs
-  in `src/util/`. Anything that needs to see a `RenderConfig`, a `SimData` or a crystal
-  does not, and still goes through the C API.
+  `label_viewport_clamp.hpp`, `annotation_line_width.hpp`. The gate exists so the GUI cannot reach
+  into the engine's data model and pin its layout by including it; forcing an exempt helper through
+  the C API would write the rule twice, once per side — the divergence the boundary is there to
+  prevent. So: a rule BOTH renderers must obey, expressible without a core or config type, belongs
+  in `src/util/`. Anything that needs to see a `RenderConfig`, a `SimData` or a crystal does not,
+  and still goes through the C API.
 - Environment variables: before adding any new `std::getenv`, apply the decision gate in
   `doc/env-var-policy.md`. User-facing behavior switches must go through CLI/config/API,
   not env vars (env causes silent per-machine drift). Env is fine for dev/experiment knobs
@@ -172,80 +143,69 @@ deleting its line, and an entry whose edge is gone fails the check.
   `src/util/env_knobs.cpp` and are enforced by `scripts/check_policies.py` (CI `policy` job +
   local pre-commit hook, installed via `./scripts/install-hooks.sh`).
   The **write** side has its own single owner, on the test side only: a test that has to set or
-  clear a variable calls `lumice::test::SetEnvVar` / `UnsetEnvVar` from `test/support/env_var.hpp`,
-  which is the one place in the tree holding the `_WIN32` branch (`_putenv_s` vs POSIX
-  `setenv`/`unsetenv` — MSVC declares neither of the latter two). This is not enforced by a
-  checker, deliberately: a bare `::setenv` is a *compile error* on MSVC, not a silent failure,
-  which is the line the other four gates are drawn on. What it is not, is a compile error you
-  will see — the two CUDA sources that first hit it sat behind `#if LUMICE_CUDA_ENABLED` and the
-  Metal ones behind `#if defined(__APPLE__)`, so the breakage was invisible for three weeks until
-  a Windows host built with both CUDA and `BUILD_TEST` on. `src/` never writes env vars at all.
+  clear a variable calls `lumice::test::SetEnvVar` / `UnsetEnvVar` from `test/support/env_var.hpp` —
+  the one place in the tree holding the `_WIN32` branch (`_putenv_s` vs POSIX `setenv`/`unsetenv`;
+  MSVC declares neither). This is not enforced by a
+  checker, deliberately: a bare `::setenv` is a *compile error* on MSVC, not a silent failure, which
+  is the line the other four gates are drawn on (the CI `cuda-compile` jobs back it up — the breaking
+  call sites hid behind platform `#if`s). `src/` never writes env vars at all.
 - Working-note references: prose in a tracked file must not cite `scratchpad/` artifacts —
   task ids (`task-<name>`, `explore-<name>`, `scrum-<name>`, `chore-<name>`), per-task note
   filenames (`plan.md`, `progress.md`, `SUMMARY.md`), `code-review-0N`, `round-N`, or
-  `scratchpad/` paths. That tree is git-ignored and archived per task, so the reference
-  dangles for anyone reading later; state the mechanism itself instead. Permanent anchors
-  are fine and should stay: PR numbers, commit hashes, `file:line`, code symbol names.
-  This applies to any long-lived prose read apart from the context it was written in —
-  production comments, test docstrings, CI config comments, and `doc/` alike.
-  Enforced by `scripts/check_new_refs.py`, a **second, diff-scoped entry point** next to
-  `check_policies.py` — not a check inside it. It reads only the lines a change *adds*
-  (CI `new-refs` job on PRs vs merge-base; pre-commit hook on the staged diff), so the
-  large body of pre-existing references never blocks a commit. Only natural-language
-  regions are read: comments, Python docstrings, and Markdown — never string literals.
-  There is no inline exemption, by design: if some prose genuinely needs such a reference,
-  the rule is wrong and the rule should change. Files exempt from it are limited by one
-  criterion — the file's *subject* is this working-notes system itself, i.e. it must name
-  the system to do its job (this file, `CLAUDE.md`, and the root `.gitignore`). Citing the
-  system is not grounds for exemption; that is the thing being checked.
-  **The checker is the rule, not an approximation of it.** If `check_new_refs.py` passes, the
-  change is compliant — full stop. Do not flag a reference in review that the checker accepts,
-  and do not appeal to the rule's "spirit" beyond what it matches: the checker deliberately
-  misses some citation forms (the trade-offs are argued at each pattern in the script), and
-  those misses are accepted, not oversights awaiting discovery. Rationale: this rule guards
-  against a harm measured to be *low* — 41% of tracked files carried such references for years
-  with no observed cost — so an unbounded review-time judgement about it is worth less than it
-  costs. Tightening is legitimate only by changing a pattern in the script (and accepting the
-  false positives that buys), never by case-by-case escalation in review.
+  `scratchpad/` paths. That tree is git-ignored and archived per task, so the reference dangles;
+  state the mechanism itself instead. Permanent anchors are fine and should stay: PR numbers, commit
+  hashes, `file:line`, code symbol names. Applies to any long-lived prose — production comments, test
+  docstrings, CI config comments, `doc/` alike. Enforced by `scripts/check_new_refs.py`, a **second,
+  diff-scoped entry point** next to `check_policies.py`: it reads only the lines a change *adds* (CI
+  `new-refs` job vs merge-base; pre-commit on the staged diff), and only natural-language regions —
+  comments, docstrings, Markdown, never string literals. No inline exemption, by design: if prose
+  genuinely needs such a reference, the rule is wrong and the rule should change. Exempt files are
+  limited by one criterion — the file's *subject* is this working-notes system itself (this file,
+  `CLAUDE.md`, the root `.gitignore`); citing the system is not grounds for exemption, it is the thing
+  being checked.
+  **The checker is the rule, not an approximation of it.** If `check_new_refs.py` passes, the change
+  is compliant — full stop. Do not flag a reference in review that the checker accepts, and do not
+  appeal to the rule's "spirit": the checker deliberately misses some citation forms (the trade-offs
+  are argued at each pattern in the script) and those misses are accepted. Rationale: the harm is measured
+  *low* — 41% of tracked files carried such references for years with no observed cost — so
+  an unbounded review-time judgement costs more than it buys. Tightening is legitimate only by changing
+  a pattern in the script, never by case-by-case escalation in review.
 
 ## Testing and Platform Notes
 
 - CLI, core, and unit-test flows should remain cross-platform.
-- Operating rules for the test tree live in **`test/AGENTS.md`**: the gui_test three-platform
-  matrix (built on three platforms, run only on the `Ubuntu x86_64` llvmpipe leg), the three-way
-  placement split for new `src/gui/` tests (`gui_test` / `composition_correctness_test` /
-  `gui_unit_test`), the gui_test isolation discipline (user-config / window basis /
-  ImGuiStorage), the shared libraries the pytest layers load, the E2E layout, and the full GUI
-  reference-regeneration workflow. Which groups may run under a software rasterizer is a
-  measured fact, not a preference — before widening the CI filter or dispositioning a
-  visual-regression failure, follow the checklist in `doc/testing/testing-architecture.md` §4.6.
-- Two more diff-scoped checkers beside `check_new_refs.py` (all in the pre-commit hook and the
-  CI `new-refs` job; same "checker is the rule" discipline): `scripts/check_new_gui_tests.py`
-  rejects a newly registered gui_test case that does not use its `ImGuiTestContext`, and
-  `scripts/check_loop_fatal_asserts.py` rejects a fatal assert (or non-fatal report) followed by
-  code that keeps driving the same test context in a repeatedly-executing scope of `test/`.
-  Full rule statements: the scripts' docstrings and testing-architecture.md §4.9.
-- **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.**
-  `test/duration_registry.json` v2 is the single authority for two quantities: per-test time
-  (over 60 s in a wired job ⇒ registered `id`, `job`, `ci_seconds` and a real reason; >2× its
-  registered time, a stale id, malformed data or `TODO` is red) and phase budgets
-  (missing/unknown/duplicate phase reports and an over-limit sum are red). The runtime input
-  does not exist at pre-commit time, so the gate is not part of `check_policies.py`. There is no
-  per-test/env/inline exemption. The sole exception is the maintainer-authorized, one-run
-  cold-build protocol for phase budgets containing `build`; it never excuses test runtime or correctness,
+- Operating rules for the test tree live in **`test/AGENTS.md`**: the gui_test platform matrix (built
+  on three platforms, run only on the llvmpipe leg), the three-way placement split for new `src/gui/`
+  tests, the gui_test isolation discipline, the shared libraries pytest loads, the E2E layout, and the
+  reference-regeneration workflow. Which groups tolerate a software rasterizer is measured — before
+  widening the CI filter or dispositioning a visual-regression failure, follow the checklist in
+  `doc/testing/testing-architecture.md` §4.6.
+- Two more diff-scoped checkers beside `check_new_refs.py` (all in the pre-commit hook and the CI
+  `new-refs` job; same "checker is the rule" discipline): `scripts/check_new_gui_tests.py` rejects a
+  newly registered gui_test case that does not use its `ImGuiTestContext`;
+  `scripts/check_loop_fatal_asserts.py` rejects a fatal assert (or non-fatal report) followed by code
+  that keeps driving the same test context in a repeatedly-executing scope of `test/`. Full rule
+  statements: the scripts' docstrings and testing-architecture.md §4.9.
+- **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** `test/duration_registry.json`
+  v2 is the single authority for two quantities: per-test time (over 60 s in a wired job ⇒ registered
+  `id`, `job`, `ci_seconds` and a real reason; >2×, a stale id, malformed data or `TODO` is red) and
+  phase budgets (missing/unknown/duplicate phase reports and an over-limit sum are red). The runtime
+  input does not exist at pre-commit time, so the gate is not part of `check_policies.py`; there is no
+  per-test/env/inline exemption. The sole exception is the maintainer-authorized, one-run cold-build
+  protocol for phase budgets containing `build`; it never excuses test runtime or correctness,
   and a PR whole-run/job
-  rerun cannot consume it again. Full registry rules, the 60 s / 2× calibration and phase
-  boundaries: `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
+  rerun cannot consume it again. Full rules, the 60 s / 2× calibration and phase boundaries:
+  `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
   single authority is §7.8.
 - E2E split essentials: `./scripts/test.sh <quick|full|pr>` is the recommended entry point for a
   local run (one call, a single per-layer summary ending in one `RESULT:` line). Bare `pytest
-  -v` runs the fast subset directly — pinned by `pyproject.toml`'s `addopts` (`-m "not slow"`),
-  so it is structurally true rather than a convention a caller has to remember, and it matches
-  CI's fast leg; `pytest -v -m ''` is the escape hatch back to the full set, and any marker CI
+  -v` runs the fast subset directly — pinned by `pyproject.toml`'s `addopts` (`-m "not slow"`), so
+  it is structurally true and matches CI's fast leg; `pytest -v -m ''` is the escape hatch back to
+  the full set, and any marker CI
   never uses must be passed explicitly. `@pytest.mark.slow` tests require the shared-lib build
-  (`./scripts/build.sh -sj release`) — run them locally before opening a PR that touches the
-  simulator core, query filter, or C API surface. That build produces **three** shared libraries
-  and pytest loads the second; the plumbing is described in `test/AGENTS.md`.
+  (`./scripts/build.sh -sj release`) — run them before opening a PR that touches the simulator
+  core, query filter, or C API surface. That build produces **three** shared libraries, pytest loads
+  the second, and the plumbing is in `test/AGENTS.md`.
 - **Test-scope table** — which command fits a given situation:
 
   | Situation | Run |
@@ -256,22 +216,14 @@ deleting its line, and an entry whose edge is gone fails the check.
   | Before opening a PR — reproduce the CI e2e-slow shape locally | `./scripts/test.sh pr` |
   | Confirm one specific gate/test actually fails on a deliberately-broken state (not a general sweep) | run that one check directly against the broken state, then again after the fix: `ctest -R <label>`, `pytest <file>::<test> -m ''`, or `gui_test --filter <name>` |
 
-  What each row **costs** in measured seconds, what each scope catches that the cheaper one is
-  structurally unable to report, the budget rule naming who has to answer for the spend, and
-  where each test runs beyond these commands (the PR layer, `main` only, the reference machines'
-  daily schedule, release, a developer machine; there is no nightly) are in
-  `doc/testing/testing-architecture.md` §7 — deliberately not duplicated here: two copies of a
-  measurement drift apart. Moving a test out of the PR layer means giving it one of those places
-  first.
+  What each row **costs** in measured seconds, what each scope catches that the cheaper one
+  structurally cannot, the budget rule naming who answers for the spend, and where each test runs
+  beyond these commands (PR layer, `main` only, the reference machines' daily schedule, release, a
+  developer machine; no nightly) are in `doc/testing/testing-architecture.md` §7 — deliberately not
+  duplicated here: two copies of a measurement drift apart. Moving a test out of the PR layer means
+  giving it one of those places first.
 
-- **Judgment discipline**: a command's exit code is the only thing that says pass/fail, and two
-  common habits obscure it in different ways. A pipe (`cmd | tail`) leaves `$?` reporting
-  `tail`'s exit code, not `cmd`'s, unless the shell has `set -o pipefail` — so a failing command
-  piped through one still reads as success. A redirect (`cmd > log 2>&1`) does not touch `$?` at
-  all, but it does move the PASS/FAIL text out of sight, so a finished run still needs a second
-  call (`grep`/`cat` on the log) just to learn the outcome it already produced. Read `$?`
-  straight off the foregrounded command, or use `./scripts/test.sh`, which already does this for
-  every layer.
+- **Judgment discipline**: a command's exit code is the only thing that says pass/fail, and two common habits obscure it in different ways. A pipe (`cmd | tail`) leaves `$?` reporting `tail`'s exit code, not `cmd`'s, unless the shell has `set -o pipefail` — so a failing command piped through one still reads as success. A redirect (`cmd > log 2>&1`) does not touch `$?` at all, but it does move the PASS/FAIL text out of sight, so a finished run still needs a second call (`grep`/`cat` on the log) just to learn the outcome it already produced. Read `$?` straight off the foregrounded command, or use `./scripts/test.sh`, which already does this for every layer.
 - Windows physical-desktop validation uses `scripts/win_remote_test.sh` together with `scripts/win_test_watcher.ps1`.
 - Performance diagnostics and workflows are documented in `doc/testing/performance-testing.md`.
 
@@ -368,10 +320,7 @@ deleting its line, and an entry whose edge is gone fails the check.
 
 ## Documentation Index (`doc/`)
 
-Valuable design/architecture docs live in `doc/` (tracked); most have a `_zh`/`.zh.md` Chinese
-sibling. Each entry below is the trigger map — the doc itself is the sole content authority, this
-index carries no summaries. Subsystem operating rules live next to the code: `test/AGENTS.md`
-(test tree) and `src/raypath/AGENTS.md` (raypath module surface).
+Valuable design/architecture docs live in `doc/` (tracked); most have a `_zh`/`.zh.md` Chinese sibling. Each entry below is the trigger map — the doc itself is the sole content authority, this index carries no summaries. Subsystem operating rules live next to the code: `test/AGENTS.md` (test tree) and `src/raypath/AGENTS.md` (raypath module surface).
 
 - **Overview / guides**: `README.md`, `architecture.md`, `developer-guide.md`, `gui-guide.md`, `configuration.md`
 - **Core / rendering architecture**: `accumulator-consumer-architecture.md`, `raypath-rayseg-architecture.md`, `coordinate-convention.md`, `crystal-orientation-sampling.md`, `ev-pipeline-architecture.md`, `adaptive-brightness.md`, `filter-architecture.md`
@@ -394,7 +343,7 @@ index carries no summaries. Subsystem operating rules live next to the code: `te
   - `cases/raypath-analysis-cases.md` — the census of canonical test scenes (append-only numbering). Take test scenes from here, not ad hoc.
   - `raypath-cli-output.md` — the `Lumice raypath` subcommand's JSON field reference (target schema1 / report schema3). Read before output fields / subcommand options / that C entry.
   - `raypath-schema3-layered-design.md` — the schema3 layered-design record. Read before schema3 report semantics / geometry-layer enums / MC evidence / `src/analytic/` module-C surface.
-- **print mode**: `print-mode-subtractive-ink.md` — the single design authority for the print display mode (subtractive ink). Read before print-mode field chain / operator / colour-channel exclusivity / headroom warnings.
+- **print mode**: `print-mode-subtractive-ink.md` — the single design authority for the print display mode. Read before print-mode field chain / operator / colour-channel exclusivity / headroom warnings.
 - **C API**: `c_api.md`; `capi-lifecycle-architecture.md` §9 — result lifetime and ownership invariants (read before result lifetime / `DoSnapshot` publishing / C API borrow contracts); `api-layering-and-product-lines.md` (read before shipping dynamic libraries / new product lines / adding or moving C API functions across headers / re-raising a repo split); `analytic-api.md` (read before new library targets / export lists / log takeover / packaging / the first parsing module).
 - **GPU / Metal route** (read these before touching the GPU path):
   - `seam-design.md` — the `TraceBackend` host/device seam blueprint; §5 = single-engine three-clock target architecture; §3.6 = why GPU must not mirror the CPU pipeline; the header carries the implementation discipline (reuse verified implementations, blueprint is the final judge).
@@ -413,62 +362,34 @@ index carries no summaries. Subsystem operating rules live next to the code: `te
 ## Knowledge Base & Working Discipline
 
 This project carries a deliberate accumulated memory. Its value depends on it being
-**retrieved**, not just stored (信息价值 = 内在价值 × 被检索到的概率). The recurring
-failure mode is starting each session like a newcomer and re-deriving decisions the
-owner already settled. Avoid it:
-(The other half of this discipline — every change to `src/` or `test/` has a task directory
-before the first edit, and is made in a linked worktree, not the main one — is a criterion, not
-a habit, and lives under "Collaboration Constraints" above.)
+**retrieved**, not just stored. The recurring failure mode is starting each session like a
+newcomer and re-deriving decisions the owner already settled. Avoid it:
+(The other half — every change to `src/` or `test/` has a task directory before the first edit,
+and is made in a linked worktree, not the main one — lives under "Collaboration Constraints".)
 
-- **Retrieve before re-deriving.** Before starting work on a continuing/recurring topic
-  (GPU/Metal perf, GUI perf, parity, batch/throughput, architecture decisions), FIRST:
-  1. `grep` `scratchpad/backlog.md` for the topic — it holds owner concerns, start
-     conditions, and dependencies (e.g. concern #2 commit↔batch decoupling).
-  2. Read the relevant prior `scratchpad/explore-*/{SUMMARY,insights}.md` and
-     `scratchpad/scrum-*/SUMMARY.md` — they hold verified conclusions and rejected
-     directions. Check the `doc/` index above.
-  3. **Explicitly continue prior threads** ("this refines concern #X") rather than
-     starting fresh. If new evidence conflicts with a prior conclusion, connect them.
-- **Don't re-measure what's already de-risked.** Before running ANY benchmark or
-  experiment on a recurring topic, `grep` the relevant prior `experiments.md` for that
-  exact measurement — if it's there, harvest the number, do NOT re-run it. Reading a
-  SUMMARY is not enough: it gives conclusions, but the failure mode is re-running the
-  experiment, so check `experiments.md` at row level. A *design* explore's job is to
-  de-risk the unresolved frontier (the blueprint's open §-items), not to re-confirm the
-  premise the blueprint already rests on. Self-check: if your "finding" restates a
-  sentence already in some prior insights/experiments, you are re-deriving — stop.
-- **The scratchpad system is the source of truth for in-flight reasoning.**
-  `scratchpad/tasks.md` (the task ledger), `scratchpad/backlog.md` (deferred work +
-  owner concerns), `scratchpad/explore-*/` & `scratchpad/scrum-*/` (per-effort
-  hypotheses/experiments/insights/SUMMARY), `scratchpad/learnings/` (extracted lessons).
-  These are git-ignored working memory — do not treat their absence from git as absence
-  of knowledge.
-- **Promote durable design docs out of `scratchpad/` into `doc/`.** scratchpad is
-  git-ignored, so design docs left there are undiscoverable and get lost (this is how
-  the `seam-design.md` blueprint sat unbuilt). When an explore/scrum produces a durable
-  design or decision record, copy it to `doc/` and add it to the index above.
-- **Think at the architecture level before decomposing into tasks.** The task/scrum
-  machinery rewards fast decomposition and immediate action; resist acting on the first
-  promising small direction before the architecture-level question is reasoned through.
-- **A completeness claim carries the same burden of proof as adding code.** "Covers all
-  20 panels with zero omissions", "orthogonal", "closed", "every proposition enumerated"
-  read as achievements and pass review unchallenged, while their opposites ("this class is
-  not worth covering", "50 cases is enough here") have to be argued for. That asymmetry is
-  the default state, not a choice anyone makes, so completeness wins every conflict without
-  a single person advocating for it — including conflicts against the task's own declared
-  budget. Measured instance, PR #261: the pre-committed target was −30% de-commented test
-  lines against a baseline of 21,336 pinned by two independent counters
-  (`scripts/count_gui_test_lines.py` and `cloc --by-file`, 52/52 files zero diff). It
-  landed at −8.7%, and the coverage backfill demanded by "20 panels, zero omissions"
-  accounts for 1,000–1,500 lines, roughly a third of the miss — the work shape was spending
-  against the metric the same task had committed to. Escape-defect density over those same
-  files had already been measured before the partition was drawn and spans 8× (47.2 vs 6.2
-  defects per kloc); the equal-weight-per-panel split discarded that measurement.
-  So: when a plan, a scope statement, or a review comment asserts coverage of an enumerated
-  surface, it must say why each member is worth covering. Where a per-member value measure
-  exists or is cheap to obtain (escape-defect density, call-site count, blast radius, user
-  reachability), an equal-weight partition needs a stated reason — "it is the whole set" is
-  not one. This puts the burden of proof on the side that adds and the side that persists,
-  which is where it belongs, and which completeness normally escapes. It is **not** a
-  mandate to cut: whether a leaner suite would have let more defects escape is a
-  counterfactual and untestable. What is required is the justification, not the reduction.
+- **Retrieve before re-deriving.** Before starting work on a continuing/recurring topic, FIRST grep
+  the scratchpad backlog and ledger for it, read the relevant prior explore/scrum summaries and the
+  `doc/` index above, then **explicitly continue prior threads** rather than starting fresh; connect
+  new evidence that conflicts with a prior conclusion.
+- **Don't re-measure what's already de-risked.** Before running ANY benchmark or experiment on a
+  recurring topic, grep the relevant prior experiment log for that exact measurement — harvest the
+  number, do NOT re-run it. Read at row level, not summary level: the rows are what stop a re-run.
+  A design explore's job is the unresolved frontier; if your "finding" restates a prior note, stop.
+- **The scratchpad system is the source of truth for in-flight reasoning** — the task ledger, the
+  backlog, per-effort notes, extracted lessons. Git-ignored working memory; its absence from git is
+  not absence of knowledge.
+- **Promote durable design docs out of `scratchpad/` into `doc/`**, adding them to the index above: left in git-ignored notes they get lost.
+- **Think at the architecture level before decomposing into tasks** — resist acting on the first promising small direction before that question is reasoned through.
+- **A completeness claim carries the same burden of proof as adding code.** "Covers all N with zero
+  omissions", "orthogonal", "closed" read as achievements and pass review unchallenged, while their
+  opposites have to be argued for — so completeness wins every conflict, including against the task's
+  own declared budget. A coverage assertion over an enumerated surface must say why each member is
+  worth covering; where a per-member value measure exists or is cheap (escape-defect density,
+  call-site count, blast radius, user reachability), an equal-weight partition needs a stated reason —
+  "it is the whole set" is not one. Measured instance (PR #261 has the full
+  narrative): a test-suite rebuild pre-committed to −30% de-commented test lines landed at
+  −8.7%, and the coverage backfill demanded by "zero omissions" accounted for roughly a third
+  of the miss — while escape-defect density over the same files, measured before the partition was
+  drawn, spanned 8×; the equal-weight split discarded that measurement. **Not** a mandate to cut —
+  whether a leaner suite would have let more defects escape is untestable; what is required is the
+  justification, not the reduction.
