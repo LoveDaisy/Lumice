@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "analytic/band_sum.hpp"
+#include "analytic/capi_zero_pad.hpp"
 #include "analytic/discovery.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
@@ -20,32 +21,7 @@
 #include "lumice_analytic_core.h"
 
 namespace {
-
-// Zero-fills a caller-allocated result struct after its leading struct_size field, within the bytes
-// the caller declared (doc/interfaces/analytic-api.md section 8.2) — so a caller older than the library keeps
-// the memory it did not size, and struct_size itself is never touched.
-template <typename T>
-void ZeroAfterStructSize(T* out) {
-  const size_t declared = out->struct_size;
-  const size_t known = sizeof(T);
-  const size_t end = declared < known ? declared : known;
-  constexpr size_t kBegin = offsetof(T, struct_size) + sizeof(out->struct_size);
-  if (end > kBegin) {
-    std::memset(reinterpret_cast<unsigned char*>(out) + kBegin, 0, end - kBegin);
-  }
-}
-
-LUMICE_ANALYTIC_ErrorCode ToErrorCode(lumice::analytic::Status status) {
-  switch (status) {
-    case lumice::analytic::Status::kOk:
-      return LUMICE_ANALYTIC_OK;
-    case lumice::analytic::Status::kInvalidValue:
-      return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
-    case lumice::analytic::Status::kInvalidConfig:
-      return LUMICE_ANALYTIC_ERR_INVALID_CONFIG;
-  }
-  return LUMICE_ANALYTIC_ERR_UNKNOWN;
-}
+namespace capi = lumice::analytic::capi;
 
 // The block behind PathEvaluation::storage: one allocation holding the segments, then the
 // transmittances.
@@ -292,7 +268,7 @@ LUMICE_ANALYTIC_FiberResult* ElementAt(LUMICE_ANALYTIC_FiberResult* base, size_t
 void ReleaseFiberStorage(LUMICE_ANALYTIC_FiberResult* result) {
   // Reclaims the block released to the caller by FillFiberResult; destroyed at scope exit.
   std::unique_ptr<FiberResultStorage> owned(static_cast<FiberResultStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 LUMICE_ANALYTIC_ErrorCode TraceFiberBatchImpl(const LUMICE_ANALYTIC_Crystal* crystal,
@@ -314,7 +290,7 @@ LUMICE_ANALYTIC_ErrorCode TraceFiberBatchImpl(const LUMICE_ANALYTIC_Crystal* cry
   }
   an::FaceNormalTable table;
   if (auto status = an::BuildFaceNormals(*crystal, &table); status != an::Status::kOk) {
-    return ToErrorCode(status);
+    return capi::ToErrorCode(status);
   }
   int slots[an::kMaxFaceCount];
   for (int i = 0; i < count; i++) {
@@ -403,7 +379,7 @@ LUMICE_ANALYTIC_ErrorCode DiscoverComponentsImpl(const LUMICE_ANALYTIC_Crystal* 
   an::FaceNormalTable table;
   an::FacePolygonTable polygons;
   if (auto status = an::BuildFaceNormals(*crystal, &table, &polygons); status != an::Status::kOk) {
-    return ToErrorCode(status);
+    return capi::ToErrorCode(status);
   }
   if (problem->face_count < 2 || problem->face_count > an::kMaxFaceCount || !std::isfinite(problem->refractive_index) ||
       problem->refractive_index <= 0.0 || !an::ValidateUnitVector(problem->incident_direction) ||
@@ -523,14 +499,14 @@ LUMICE_ANALYTIC_ErrorCode EvaluatePathImpl(const LUMICE_ANALYTIC_Crystal* crysta
 
   an::FaceNormalTable table;
   if (auto status = an::BuildFaceNormals(*crystal, &table); status != an::Status::kOk) {
-    return ToErrorCode(status);
+    return capi::ToErrorCode(status);
   }
   if (face_count < 2 || face_count > an::kMaxFaceCount) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   auto slots = std::make_unique<int[]>(static_cast<size_t>(face_count));
   if (auto status = an::ResolveFaceSequence(table, faces, face_count, slots.get()); status != an::Status::kOk) {
-    return ToErrorCode(status);
+    return capi::ToErrorCode(status);
   }
 
   const size_t segment_values = 3 * (static_cast<size_t>(face_count) + 1);
@@ -648,7 +624,7 @@ LUMICE_ANALYTIC_ErrorCode BandSumImpl(const LUMICE_ANALYTIC_Crystal* crystal,
   an::FaceNormalTable table;
   an::FacePolygonTable polygons;
   if (auto status = an::BuildFaceNormals(*crystal, &table, &polygons); status != an::Status::kOk) {
-    return ToErrorCode(status);
+    return capi::ToErrorCode(status);
   }
   if (problem->face_count < 2 || problem->face_count > an::kMaxFaceCount || !std::isfinite(problem->refractive_index) ||
       problem->refractive_index <= 0.0 || !an::ValidateUnitVector(problem->incident_direction) ||
@@ -710,18 +686,18 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluatePath(const LUMICE_ANALYTIC_Cry
   if (out == nullptr) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  ZeroAfterStructSize(out);
+  capi::ZeroAfterStructSize(out);
   // No exception crosses the C boundary: an allocation failure is ERR_UNKNOWN, with out zero-filled
   // (the storage it would have owned was never released to it).
   try {
     const LUMICE_ANALYTIC_ErrorCode code =
         EvaluatePathImpl(crystal, faces, face_count, refractive_index, incident_direction, pose, out);
     if (code != LUMICE_ANALYTIC_OK) {
-      ZeroAfterStructSize(out);
+      capi::ZeroAfterStructSize(out);
     }
     return code;
   } catch (...) {
-    ZeroAfterStructSize(out);
+    capi::ZeroAfterStructSize(out);
     return LUMICE_ANALYTIC_ERR_UNKNOWN;
   }
 }
@@ -732,7 +708,7 @@ void LUMICE_ANALYTIC_ReleasePathEvaluation(LUMICE_ANALYTIC_PathEvaluation* eval)
   }
   // Reclaims the block released to the caller by EvaluatePath; destroyed at scope exit.
   std::unique_ptr<PathEvaluationStorage> owned(static_cast<PathEvaluationStorage*>(eval->storage));
-  ZeroAfterStructSize(eval);
+  capi::ZeroAfterStructSize(eval);
 }
 
 LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(const LUMICE_ANALYTIC_Crystal* crystal,
@@ -752,14 +728,14 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(const LUMICE_ANALYTIC_
   // it cannot be walked: only element 0 is known to exist.
   const size_t stride = out_results[0].struct_size;
   if (stride < kFiberResultV4Size) {
-    ZeroAfterStructSize(&out_results[0]);
+    capi::ZeroAfterStructSize(&out_results[0]);
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   bool uniform = true;
   for (int i = 0; i < count; i++) {
     LUMICE_ANALYTIC_FiberResult* out = ElementAt(out_results, stride, i);
     uniform = uniform && out->struct_size == stride;
-    ZeroAfterStructSize(out);
+    capi::ZeroAfterStructSize(out);
   }
   if (!uniform) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
@@ -803,16 +779,16 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverComponents(const LUMICE_ANALYT
   if (out_result == nullptr) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  ZeroAfterStructSize(out_result);
+  capi::ZeroAfterStructSize(out_result);
   // No exception crosses the C boundary; the storage is released to out_result only on success.
   try {
     const LUMICE_ANALYTIC_ErrorCode code = DiscoverComponentsImpl(crystal, problem, options, continuation, out_result);
     if (code != LUMICE_ANALYTIC_OK) {
-      ZeroAfterStructSize(out_result);
+      capi::ZeroAfterStructSize(out_result);
     }
     return code;
   } catch (...) {
-    ZeroAfterStructSize(out_result);
+    capi::ZeroAfterStructSize(out_result);
     return LUMICE_ANALYTIC_ERR_UNKNOWN;
   }
 }
@@ -823,7 +799,7 @@ void LUMICE_ANALYTIC_ReleaseDiscoveryResult(LUMICE_ANALYTIC_DiscoveryResult* res
   }
   // Reclaims the block released to the caller by DiscoverComponents; destroyed at scope exit.
   std::unique_ptr<DiscoveryResultStorage> owned(static_cast<DiscoveryResultStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_BandSum(const LUMICE_ANALYTIC_Crystal* crystal,
@@ -832,16 +808,16 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_BandSum(const LUMICE_ANALYTIC_Crystal*
   if (out_result == nullptr) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  ZeroAfterStructSize(out_result);
+  capi::ZeroAfterStructSize(out_result);
   // No exception crosses the C boundary; the storage is released to out_result only on success.
   try {
     const LUMICE_ANALYTIC_ErrorCode code = BandSumImpl(crystal, problem, out_result);
     if (code != LUMICE_ANALYTIC_OK) {
-      ZeroAfterStructSize(out_result);
+      capi::ZeroAfterStructSize(out_result);
     }
     return code;
   } catch (...) {
-    ZeroAfterStructSize(out_result);
+    capi::ZeroAfterStructSize(out_result);
     return LUMICE_ANALYTIC_ERR_UNKNOWN;
   }
 }
@@ -851,7 +827,7 @@ void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_BandSumResult* result)
     return;
   }
   std::unique_ptr<BandSumResultStorage> owned(static_cast<BandSumResultStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 }  // extern "C"
