@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792448817718,
+  "lastUpdate": 1792448821486,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "a2d088f53ed6ac75eeac825ca6f5ec003084e6cd",
-          "message": "Merge pull request #410 from LoveDaisy/feat/channel-math-display-mode\n\nfeat: Channel B−R display mode (is this spot bluer or redder?)",
-          "timestamp": "2026-09-25T16:20:42+08:00",
-          "tree_id": "9492740c7c72869d21a8148f8567070eaca19d7b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/a2d088f53ed6ac75eeac825ca6f5ec003084e6cd"
-        },
-        "date": 1790325342783,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1186194.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1013804,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 718257.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 678197.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "49fe5e10fab9bfff09a5c101fbf651f8f283af5b",
           "message": "Merge pull request #411 from LoveDaisy/fix/globe-back-fade-fma-exact-eq\n\nfix(test): compare the globe back-fade weight within an absolute tolerance",
           "timestamp": "2026-09-25T16:38:58+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 590376.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6997a5a16a019e98c1819cb1b23b8a6c42f5fc33",
+          "message": "Merge pull request #523 from LoveDaisy/feat/raypath-survey-c17-c06-c09\n\nfeat(survey): C17/C06/C09 wiring — witness, dual-mechanism chroma, support set (task-714)",
+          "timestamp": "2026-10-20T06:23:22+08:00",
+          "tree_id": "aa3e3ba9cc15c5e4714f8d861ef924a19ad59994",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6997a5a16a019e98c1819cb1b23b8a6c42f5fc33"
+        },
+        "date": 1792448821129,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 943325.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1011068.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 721915.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 581489.9,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
