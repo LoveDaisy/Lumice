@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792404745825,
+  "lastUpdate": 1792404751594,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4806,54 +4806,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "108fdd825206a218a0262cfb6533db39965fb3e0",
-          "message": "Merge pull request #405 from LoveDaisy/feat/card-insert-and-reorder\n\nfeat(gui): duplicate lands below the source card; drag to reorder cards",
-          "timestamp": "2026-09-25T12:52:34+08:00",
-          "tree_id": "e30f40ec89cb02353708deba953b4ee18ee297fe",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/108fdd825206a218a0262cfb6533db39965fb3e0"
-        },
-        "date": 1790312914167,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1028163,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1017919.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 807198.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 580271.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "65514f1a79aafa4a7d5bf1c468123ac24550aa41",
           "message": "Merge pull request #406 from LoveDaisy/feat/sim-continue\n\nfeat: Continue adds rays to a finished render (LUMICE_ContinueRender)",
           "timestamp": "2026-09-25T13:25:12+08:00",
@@ -9576,6 +9528,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 586596.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3d1db8784fde656bdfd16735733b0763fef6523e",
+          "message": "Merge pull request #516 from LoveDaisy/refactor/math-constants-consolidation\n\nrefactor: single authority for the pi/vec3 families (census ledger item 2)",
+          "timestamp": "2026-10-19T18:09:03+08:00",
+          "tree_id": "a99a1ce01dce24594bbd4c6e47ccb2033cfae345",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/3d1db8784fde656bdfd16735733b0763fef6523e"
+        },
+        "date": 1792404750944,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 979607.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1014819.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 776755.3,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 583965.6,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
