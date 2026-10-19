@@ -999,9 +999,11 @@ registry 在 `0fc3ecf7` 冻结；此前两次完整诊断 run 只校准 Windows/
 12.8 分钟 CI 的慢测试就是在它生效期间进入 PR 层的。本节是它的机械那一半，**补强而不替代**
 §7.3：§7.3 仍负责在改动之前（而不是 CI 红了之后）把这个问题提出来。
 
-**规则。** registry v2 在一个权威里保存两类约束：`entries` 延续单例规则——在接线 job 中，本次
+**规则。** registry v3 在一个权威里保存两类约束：`entries` 延续单例规则——在接线 job 中，本次
 run 耗时超过 **T = 60 s** 的每条测试都须有带理由的登记；`phase_budgets` 登记真实墙钟阶段及其串行
-聚合，要求每个成员恰好有一份报告、未知 phase 判红、成员和不得超过 `max_seconds`。后者专门捕获
+聚合，要求每个成员恰好有一份报告、未知 phase 判红、成员和不得超过 `max_seconds`。单 phase 条目
+可另带 `per_miss` 块（`overhead_seconds`、`max_seconds_per_miss`——聚合条目不得携带），给 build
+相位加上下文所述的第二条件。后者专门捕获
 「每条都低于 60 s、总量却持续膨胀」的形状，不能用 worker-seconds 求和代替。
 
 `scripts/check_test_durations.py` 在 job 末尾比对同一张表。单例侧以下任一情况判红：
@@ -1055,6 +1057,40 @@ correctness、存在时的串行 performance 及两者之和。原始 JUnit/XML/
 `if: always()` 上传。未覆盖：另跑的 GUI visual step、`windows-shared-export` 的 slow 文件、policy
 脚本单测。未来新 job 在显式接线报告、checker 与 artifact 之前不受覆盖，当前没有门禁自动审计这一点。
 
+**build 相位的 per-miss 尺子。** 绝对秒数把三个因素压进一个数：改动碰了什么（编译闭包）、树有多大、
+runner 是哪一档。420 s 旧值标定自一次暖跑的纯脚本 PR（样本里没有任何源码重编类），落地首周每个此类
+PR 全部判红——五次红、零测试失败，421.1–602.7 s、121–208 miss（2.58–4.06 s/miss）。PR #513 记录了
+它们并做了带记录的过渡上调；现在生效的 per-miss 判据**替换**了过渡值——这是判据替换，不是同一把尺子
+的再次上调，上调计数由此重新起算；防棘轮条款继续约束新判据的全部常数：`overhead_seconds`、
+`max_seconds_per_miss` 或 Ubuntu x86_64 外层值（720/1080）在 2026-10-19 起 60 天内二次调整，同样
+触发强制结构任务。Ubuntu x86_64 `build` 条目现判两个条件，任一违反即红且错误消息命名主导项：
+
+- **自适应 per-miss 上限** `seconds ≤ overhead_seconds + max_seconds_per_miss × misses` 是权威尺子：
+  miss 数是改动唯一能控制的量——一个 miss 就是本次 run 不得不再编一个翻译单元，所以这条线只量「单位
+  改动的编译成本」。常数标定：`overhead_seconds = 30`（暖跑 0-miss 实测 15–21 s，×1.4）、
+  `max_seconds_per_miss = 5.0`（最差合法类 4.06 s/miss，PR #513 的 121-miss GUI 闭包，×1.15 runner
+  档，+7%）。五个时代的红在新判据下回放全绿，暖跑亦绿。
+- **绝对 `max_seconds`（720）只是灾备外层粗界**，钉在已观测最大合法类包络（602.7 s × 1.15 = 693，取
+  720）。s/miss 健康时的外层红读作 "broad closure"：PR 真的超出 owner 墙钟预算的诚实信号，走
+  §7.6/§7.8 处置，不得静默改表。`build+ctest` 聚合保持绝对（1080 = 693 s build 包络 + 本 job 登记
+  的 360 s ctest 预算；实测聚合 858.8/873.2 s 在其 ×1.15 之内）：聚合量的是 owner 墙钟而非编译成本，
+  永不携带 `per_miss`。
+
+**miss 数从哪来。** build 之后，四条用缓存的腿各自跑 `scripts/collect_cache_stats.py` 写
+`ci-duration/cache-stats.json`（`{phase, tool, misses}`，随既有 `ci-duration` artifact 上传），读
+ccache `--print-stats` / sccache `--show-stats --stats-format=json`——与种子审计（§7.8 末段）同一套
+统计形状，且是本次 run 的增量：ccache 在 Configure 前 `ccache -z` 起零，sccache server 每 job 新起。
+报告只被需要它的 registry 条目消费：只有判定腿给 checker 传 `--cache-report`；per-miss 条目的报告
+缺席即判红（fail closed）——读不到的 miss 数是红，绝不是静默跳过。无 per-miss 条目的腿照常收数，收数
+失败降级为 warning：不参与判定的统计不得把腿打红。sccache `cache_write_errors` 只告警不判红——缓存
+写失败不使 miss 计数失真（编译已实际发生并计入 miss）。
+
+**灵敏度（诚实边界）。** 单一 K 跨越每 miss 成本不同的类（实测 2.58–4.06 s/miss）。K = 5.0 对最差类
+可检出 ≥23% 的每 miss 退化（慢档边界上 ≥7%）——但更轻的类（raypath 闭包 2.90 s/miss）要 ≤72% 的
+退化才会触及自适应上限，这是 v1 已知已接受的单 K 跨类盲区，记录在此而非掩盖；每个 PR 的 cache-stats
+artifact 持续入库标定样本。收紧 K——或按 TU 加权（需对账 `.ninja_log`，耦合构建系统内部）——都是
+上述防棘轮条款约束下的需评审 registry 改动，绝不是静默的。
+
 **运行时检查，不是 diff 检查。** AGENTS.md 列出的四个 checker 读源码或 diff，所以也能在
 pre-commit 中运行；本闸读的是 CI job 刚量出来的耗时，这份输入别处不存在，所以不能在提交前运行，
 也不并入 `check_policies.py`。
@@ -1073,6 +1109,8 @@ budget** 的一次性冷构建授权；它不改变本段的单测试规则。�
 ## §7.8 单次冷构建例外
 
 完整协议以英文版 [`§7.8 The one-run cold-build exception`](testing-architecture.md#78-the-one-run-cold-build-exception)
-为唯一权威。这里仅保留两个执行时不可漏掉的否定项：**测试运行耗时、测试失败、编译/链接失败及坏报告
-一律没有豁免**；带 `ci:allow-cold-build` payload 的 PR run 也只在 `run_attempt == 1` 时获得一次授权，
-**不得用 whole-run 或单 job rerun 重复消费**。标签只用于创建新 run，观察到目标 run 后立即移除。
+为唯一权威。这里仅保留三个执行时不可漏掉的否定项：**测试运行耗时、测试失败、编译/链接失败及坏报告
+一律没有豁免**；授权只作用于**含 Build 的 phase budget 的两个条件**（per-miss 自适应上限与绝对外层
+界，§7.7）——per-miss 缓存报告缺席不在此列，照旧判红；带 `ci:allow-cold-build` payload 的 PR run
+也只在 `run_attempt == 1` 时获得一次授权，**不得用 whole-run 或单 job rerun 重复消费**。标签只用于
+创建新 run，观察到目标 run 后立即移除。

@@ -2072,14 +2072,25 @@ cannot stop anything: two slow tests that together cost about 12.8 minutes of CI
 while it was in force. This section is the mechanical half. It does not replace §7.3, which still
 decides when the question is asked (before the change, not after CI has turned red).
 
-**The rule.** Registry v2 has two sections in one authority. `entries` keeps the per-test rule: in
+**The rule.** Registry v3 has two sections in one authority. `entries` keeps the per-test rule: in
 every wired CI job, each test that took longer than **T = 60 s** in that run must have an entry with
 a reason. `phase_budgets` names measured wall-clock phases and aggregates of serial phases; every
 required member must be reported exactly once, an unregistered reported phase is an error, and the
-sum must not exceed `max_seconds`. This second rule catches a suite made of many individually
+sum must not exceed `max_seconds`. A single-phase budget may carry a `per_miss` block
+(`overhead_seconds`, `max_seconds_per_miss` — never on an aggregate), which gives the build phase a
+second condition, described below. This second rule catches a suite made of many individually
 sub-minute tests — the shape the per-test threshold is structurally unable to see.
 
-**Raising a phase budget.** A `max_seconds` raise is an owner decision recorded in the raised entry's `reason`: the dominant term of the measured overshoot (change-class compile closure, test-time growth, runner tier), the run ids that evidence it, and whether the value is transitional. The standing trigger: a second raise of the same entry within 60 days requires a structural task — shrinking the compile closure (header split, unity build) or the test's own work — rather than a third raise. The first exercise is the 2026-10-19 raise of both Ubuntu x86_64 entries (PR #513): 420/720 were calibrated from a warm scripts-only run (build step 15s) whose sample contained no source-heavy PR class, and the gate's first week went red on every such PR (421.1–602.7s, zero test failures, 121–208 cache misses at 2.90–4.06 s/miss) while warm main runs build in ~21s. An absolute-second ruler conflates change class, tree mass and runner tier; per-miss normalization is the designated successor measurement.
+**Raising a phase budget.** A `max_seconds` raise is an owner decision recorded in the raised entry's `reason`: the dominant term of the measured overshoot (change-class compile closure, test-time growth, runner tier), the run ids that evidence it, and whether the value is transitional. The standing trigger: a second raise of the same entry within 60 days requires a structural task — shrinking the compile closure (header split, unity build) or the test's own work — rather than a third raise. The first exercise is the 2026-10-19 raise of both Ubuntu x86_64 entries (PR #513): 420/720 were calibrated from a warm scripts-only run (build step 15s) whose sample contained no source-heavy PR class, and the gate's first week went red on every such PR (421.1–602.7s, zero test failures, 121–208 cache misses at 2.90–4.06 s/miss) while warm main runs build in ~21s. An absolute-second ruler conflates change class, tree mass and runner tier; per-miss normalization is the designated successor measurement. That successor is now in force (below) and has **replaced** the transitional values — a judgment replacement, not a second raise of the same ruler, so the raise count restarts here. The trigger now binds the successor's own constants: a second adjustment of `overhead_seconds`, `max_seconds_per_miss`, or the Ubuntu x86_64 outer bounds (720/1080) within 60 days of 2026-10-19 requires a structural task, not another adjustment.
+
+**The build phase's per-miss ruler.** An absolute `max_seconds` for a build phase puts three factors no single number can hold into one judgment: what the change touches (its compile closure), how much tree the closure recompiles, and which runner tier served the run. The five reds above were all that shape — zero test failures each — so the Ubuntu x86_64 `build` budget now judges two conditions, and either violation turns the job red with the dominant term named:
+
+- **The adaptive per-miss limit** `seconds ≤ overhead_seconds + max_seconds_per_miss × misses` is the authoritative ruler, because the miss count is the one factor the change controls: a miss is a translation unit this run had to compile, so the limit measures what one unit of change costs and nothing else. Calibration: `overhead_seconds = 30` (warm zero-miss builds measure 15–21 s, ×1.4) and `max_seconds_per_miss = 5.0` (worst observed legal class 4.06 s/miss on PR #513's 121-miss GUI closure, ×1.15 runner tier, +7%). All five era reds replay green under it, and so does a warm build.
+- **The absolute `max_seconds` (720)** is the disaster backstop, pinned at the worst observed legal class envelope (602.7 s × 1.15 = 693, rounded to 720). A red here with a healthy ratio reads "broad closure — full-tree signature is ~519 TU" in the error: an honest signal that the run exceeds the owner's wall-clock budget, disposed through §7.6/§7.8, never through a silent registry bump. The `build+ctest` aggregate stays absolute (1080 = that 693 s build envelope + the job's registered 360 s ctest budget; measured aggregates 858.8/873.2 s sit ×1.15 below it): an aggregate is the owner's wall clock, not compile cost, so it never carries `per_miss`.
+
+**Where the miss count comes from.** After the build, on every cache-using leg, `scripts/collect_cache_stats.py` writes `ci-duration/cache-stats.json` (`{phase, tool, misses}` — it rides to the artifacts in the existing `ci-duration` upload) from ccache `--print-stats` or sccache `--show-stats --stats-format=json`: the same statistics shapes the seed audit parses (§7.8's last paragraph), and the per-run increment — ccache is zeroed (`ccache -z`) before Configure, and the sccache server process starts fresh in every job. The report is consumed only where a registry entry needs it: only the judging leg passes `--cache-report` to the checker, and a per-miss budget whose report is absent fails closed — a miss count that cannot be read is a red, never a silent skip. The same collection runs on the legs without a per-miss entry, degraded to a warning on failure: statistics that judge nothing may not turn a leg red. sccache `cache_write_errors` warn without failing anywhere — a failed cache write does not distort the miss count, because the compilation happened and counted as a miss.
+
+**Sensitivity, honestly.** One K spans classes whose per-miss costs differ (2.58–4.06 s/miss observed). K = 5.0 detects a ≥23% per-miss regression on the worst class, ≥7% at its slow-runner-tier boundary — but a lighter class (the raypath closure at 2.90 s/miss) stays green through a ≤72% per-miss regression before its adaptive limit trips. That cross-class blind spot is accepted for v1 and recorded here rather than papered over; every PR's cache-stats artifact keeps adding calibration samples, and tightening K — or weighting misses per TU against `.ninja_log` timings, which couples the gate to build-system internals — is a reviewed registry change under the anti-ratchet trigger above, never a silent one.
 
 `scripts/check_test_durations.py` compares both kinds of report with the same registry near the end
 of the job. The per-test side turns the job red when, for that job:
@@ -2214,12 +2225,14 @@ the original budget was met. The log and job summary retain the measured seconds
 limit and the words `accepted with cold-build exception`.
 
 **What can be accepted.** `scripts/check_test_durations.py --allow-cold-build` changes only an
-over-limit `phase_budgets` row whose `members` contains `build`. Every non-build member of such an
-aggregate has its own direct budget, so a slow `ctest` remains red even when `build+ctest` is marked as
-a cold-build exception. Per-test registration, non-build phases and aggregates, missing/duplicate or
-unknown reports, malformed registry data, empty reasons, and every nonzero phase command exit remain
-red. Compilation, linking and test assertions run normally. In particular, the Ubuntu GUI visual step
-still has to execute and pass; the exception merely lets a valid cold build reach it.
+over-limit `phase_budgets` row whose `members` contains `build`, and it covers both of such a row's
+conditions — the adaptive per-miss limit and the absolute outer bound (§7.7). Every non-build member
+of such an aggregate has its own direct budget, so a slow `ctest` remains red even when `build+ctest`
+is marked as a cold-build exception. Per-test registration, non-build phases and aggregates,
+missing/duplicate or unknown reports, a missing per-miss cache report, malformed registry data, empty
+reasons, and every nonzero phase command exit remain red. Compilation, linking and test assertions run
+normally. In particular, the Ubuntu GUI visual step still has to execute and pass; the exception merely
+lets a valid cold build reach it.
 
 **How one PR run is authorized.** The label `ci:allow-cold-build` is a momentary input used to create
 one new `pull_request` `synchronize` run, not a permission that stays on the PR. The maintainer sequence
