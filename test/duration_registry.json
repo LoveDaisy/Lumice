@@ -162,8 +162,8 @@
     {
       "job": "Ubuntu x86_64",
       "phase": "build",
-      "max_seconds": 420,
-      "reason": "Caps compilation and linking on the required Ubuntu x86_64 leg; cache statistics distinguish a cold seed from source-driven rebuild cost."
+      "max_seconds": 540,
+      "reason": "Transitional value pending per-miss normalization: 420 was calibrated from a warm scripts-only run (38088767270, 15s build step) whose sample contained no source-heavy PR; the classes it governs measured 421.1-602.7s with zero test failures (runs 38124925035, 38254590460, 38320486746, 39061707245, 39158418638). Dominant term: change-class compile closure at 2.90-4.06 s/miss, not a tree regression."
     },
     {
       "job": "Ubuntu x86_64",
@@ -175,8 +175,8 @@
       "job": "Ubuntu x86_64",
       "phase": "build+ctest",
       "members": ["build", "ctest"],
-      "max_seconds": 720,
-      "reason": "Keeps the serial build-and-correctness segment within the owner's preferred twelve-minute PR budget."
+      "max_seconds": 900,
+      "reason": "Owner-approved transitional raise of the twelve-minute preference: 822.3s measured with ctest inside its own 360s cap (run 39158418638), so the growth is the build phase. A second raise of either Ubuntu x86_64 entry within 60 days of 2026-10-19 requires a structural task (header split or unity build), not another raise."
     },
     {
       "job": "Ubuntu ARM64",

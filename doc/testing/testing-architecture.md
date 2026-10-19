@@ -2079,6 +2079,8 @@ required member must be reported exactly once, an unregistered reported phase is
 sum must not exceed `max_seconds`. This second rule catches a suite made of many individually
 sub-minute tests — the shape the per-test threshold is structurally unable to see.
 
+**Raising a phase budget.** A `max_seconds` raise is an owner decision recorded in the raised entry's `reason`: the dominant term of the measured overshoot (change-class compile closure, test-time growth, runner tier), the run ids that evidence it, and whether the value is transitional. The standing trigger: a second raise of the same entry within 60 days requires a structural task — shrinking the compile closure (header split, unity build) or the test's own work — rather than a third raise. The first exercise is the 2026-10-19 raise of both Ubuntu x86_64 entries (PR #513): 420/720 were calibrated from a warm scripts-only run (build step 15s) whose sample contained no source-heavy PR class, and the gate's first week went red on every such PR (421.1–602.7s, zero test failures, 121–208 cache misses at 2.90–4.06 s/miss) while warm main runs build in ~21s. An absolute-second ruler conflates change class, tree mass and runner tier; per-miss normalization is the designated successor measurement.
+
 `scripts/check_test_durations.py` compares both kinds of report with the same registry near the end
 of the job. The per-test side turns the job red when, for that job:
 
