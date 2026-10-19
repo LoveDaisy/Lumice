@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "core/optics.hpp"  // IceRefractiveIndex: the dispersion closed form's n pair
 #include "raypath/detail/survey/survey_assembly.hpp"
@@ -255,6 +256,129 @@ TEST(SurveyAssembly, EndToEndJsonCarriesTheSchema4Contract) {
     kinds.insert(object.at("kind").get<std::string>());
   }
   EXPECT_EQ(kinds, std::set<std::string>({ "source_image" }));
+}
+
+// The dispersion table's followed rows (every onset the kernel's wavelength-critical table
+// carried): on the C01 shape the min-deviation row is among them with its own stacking verdict,
+// and every row's direction slug is consistent with its own value pair.
+TEST(SurveyAssembly, DispersionTableCarriesTheFollowedOnsetRows) {
+  const ConfigManager config = RandomPrismScene();
+  SurveyRequest request = BaseRequest();
+  request.path_layers = { { 3, 5 } };
+  request.symmetry_bits = 0;
+  SurveyDocument document;
+  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  ASSERT_TRUE(document.positional_dispersion.has_value());
+  const SurveyPositionalDispersion& dispersion = *document.positional_dispersion;
+  EXPECT_TRUE(dispersion.has_min_deviation_row);
+  ASSERT_FALSE(dispersion.followed_onsets.empty());
+  bool saw_min_row = false;
+  for (const SurveyFollowedOnset& row : dispersion.followed_onsets) {
+    // Non-fatal per row: one malformed row must not silently skip the rows after it.
+    if (row.values_deg.size() != 2u) {
+      ADD_FAILURE() << "followed row without exactly two values: " << row.source;
+      continue;
+    }
+    EXPECT_EQ(row.direction, row.values_deg[0] < row.values_deg[1] ? "red_inner_blue_outer" : "blue_inner_red_outer");
+    double lo = row.values_deg[0];
+    double hi = row.values_deg[1];
+    if (hi < lo) {
+      std::swap(lo, hi);
+    }
+    EXPECT_NEAR(row.displacement_deg, hi - lo, 1e-9);
+    if (row.source == "interior_minimum" && row.profile == "finite_jump") {
+      saw_min_row = true;
+      EXPECT_NEAR(row.values_deg[0], dispersion.value_red_deg, 1e-12);
+      EXPECT_NEAR(row.values_deg[1], dispersion.value_blue_deg, 1e-12);
+    }
+  }
+  EXPECT_TRUE(saw_min_row);
+  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto& dispersion_json = parsed.at("chromatic").at("positional_dispersion");
+  // The min-row scalars stay in place on a class that has them, and the rows ride as the new key.
+  EXPECT_DOUBLE_EQ(dispersion_json.at("value_red_deg").get<double>(), dispersion.value_red_deg);
+  ASSERT_TRUE(dispersion_json.contains("followed_onsets"));
+  EXPECT_EQ(dispersion_json.at("followed_onsets").size(), dispersion.followed_onsets.size());
+}
+
+// The C09 shape: a class whose support ends at an interior maximum (the corpus's 149.0849
+// degree finite-jump edge at 550 nm) and whose dispersion table has no min-deviation row —
+// the fold lands as a finite caustic_edge card (no two-face closed form, none claimed), and
+// the followed rows are the dispersion leg's data.
+TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion) {
+  const ConfigManager config = AsymmetricPyramidScene();
+  SurveyRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 13, 15, 26, 28 } };
+  request.symmetry_bits = 0;  // the literal chain, the corpus's filter spelling
+  SurveyDocument document;
+  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  EXPECT_FALSE(document.early_stopped);
+  EXPECT_TRUE(document.unevaluated.empty());
+  std::set<std::string> kinds;
+  for (const SurveyObject& card : document.objects) {
+    kinds.insert(SurveyObjectKindName(card.kind));
+  }
+  EXPECT_EQ(kinds, std::set<std::string>({ "support_set", "caustic_edge", "bright_domain" }));
+
+  // The fold: finite, upper-edge, no certificate.
+  const SurveyObject* edge = nullptr;
+  const SurveyObject* support = nullptr;
+  for (const SurveyObject& card : document.objects) {
+    if (card.kind == SurveyObjectKind::kCausticEdge) {
+      edge = &card;
+    }
+    if (card.kind == SurveyObjectKind::kSupportSet) {
+      support = &card;
+    }
+  }
+  ASSERT_NE(edge, nullptr);
+  ASSERT_NE(support, nullptr);
+  ASSERT_TRUE(edge->caustic_edge.has_value());
+  EXPECT_EQ(edge->evidence.state, EvidenceState::kFinite);  // no two-face closed form on a 4-face chain
+  EXPECT_FALSE(edge->caustic_edge->certificate.has_value());
+  EXPECT_EQ(edge->caustic_edge->profile, "finite_jump");
+  EXPECT_TRUE(edge->caustic_edge->has_measure_limit);
+  EXPECT_TRUE(edge->caustic_edge->coincident_with_support);
+  // The corpus anchor: 149.084904 degrees at n(550) = 1.3110129101 (LI cross-checked to 1.3e-6);
+  // the band leaves room for cross-version onset reordering far below any physical ambiguity.
+  EXPECT_NEAR(edge->caustic_edge->position_deg, 149.0849, 0.02);
+  ASSERT_FALSE(support->support_set->intervals.empty());
+  EXPECT_NEAR(support->support_set->intervals.back().upper_deg, edge->caustic_edge->position_deg, 0.02);
+
+  // The dispersion: no min row, the rows carry the leg.
+  ASSERT_TRUE(document.positional_dispersion.has_value());
+  const SurveyPositionalDispersion& dispersion = *document.positional_dispersion;
+  EXPECT_FALSE(dispersion.has_min_deviation_row);
+  EXPECT_DOUBLE_EQ(dispersion.value_red_deg, 0.0);
+  ASSERT_FALSE(dispersion.followed_onsets.empty());
+  bool saw_max_row = false;
+  for (const SurveyFollowedOnset& row : dispersion.followed_onsets) {
+    if (row.source == "interior_maximum") {
+      saw_max_row = true;
+      // Non-fatal per row (the loop must not skip the rows after a malformed one).
+      if (row.values_deg.size() != 2u) {
+        ADD_FAILURE() << "max row without exactly two values";
+        continue;
+      }
+      // The corpus spread (400/550/700 nm = 147.820/149.085/149.705): the pair brackets the
+      // 550 nm reference position, blue inner, red outer.
+      EXPECT_NEAR(row.values_deg[0], edge->caustic_edge->position_deg, 1.0);
+      EXPECT_NEAR(row.values_deg[1], edge->caustic_edge->position_deg, 1.0);
+      EXPECT_GT(row.values_deg[0], row.values_deg[1]);
+      EXPECT_EQ(row.direction, "blue_inner_red_outer");
+    }
+  }
+  EXPECT_TRUE(saw_max_row);
+  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto& dispersion_json = parsed.at("chromatic").at("positional_dispersion");
+  // The min-row scalars serialize only when the row exists: keys absent, rows present.
+  EXPECT_FALSE(dispersion_json.contains("value_red_deg"));
+  EXPECT_FALSE(dispersion_json.contains("direction"));
+  EXPECT_TRUE(dispersion_json.contains("followed_onsets"));
+  // The chromatic block is finite (a leg produced output) with the tint leg honest.
+  EXPECT_EQ(parsed.at("chromatic").at("state"), "finite");
+  EXPECT_EQ(parsed.at("chromatic").at("weight_tint").at("state"), "unevaluated");
 }
 
 }  // namespace

@@ -58,17 +58,27 @@ bool ClosedFormMinDeviation(const analytic::FaceNormalTable& table, const std::v
   return true;
 }
 
-const analytic::CriticalOnset* MinDeviationOnset(const std::vector<analytic::CriticalOnset>& onsets) {
-  const analytic::CriticalOnset* best = nullptr;
+// The support's extremum fold, the caustic_edge card's position: the interior-minimum onset
+// with the smallest value when the class has one (the minimum-deviation fold), else the
+// interior-maximum onset with the largest value (C09's finite-jump upper edge — a class whose
+// support ends at an interior fold and continues into nothing). Selection is explicit over the
+// rows rather than by row order — the table's value ordering stays the kernel's fact.
+const analytic::CriticalOnset* ExtremumFoldOnset(const std::vector<analytic::CriticalOnset>& onsets) {
+  const analytic::CriticalOnset* minimum = nullptr;
+  const analytic::CriticalOnset* maximum = nullptr;
   for (const analytic::CriticalOnset& onset : onsets) {
-    if (onset.source != analytic::OnsetSource::kInteriorMinimum) {
-      continue;
+    if (onset.source == analytic::OnsetSource::kInteriorMinimum) {
+      if (minimum == nullptr || onset.value < minimum->value) {
+        minimum = &onset;
+      }
     }
-    if (best == nullptr || onset.value < best->value) {
-      best = &onset;
+    if (onset.source == analytic::OnsetSource::kInteriorMaximum) {
+      if (maximum == nullptr || onset.value > maximum->value) {
+        maximum = &onset;
+      }
     }
   }
-  return best;
+  return minimum != nullptr ? minimum : maximum;
 }
 
 }  // namespace
@@ -144,18 +154,20 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
   support.support_set = std::move(support_payload);
   out->objects.push_back(std::move(support));
 
-  // The caustic_edge card: the class's minimum-deviation fold. On a two-face chain the
+  // The caustic_edge card: the support's extremum fold. On a two-face chain the MINIMUM's
   // position certifies closed-form (the kernel's slab interior minimum is the closed form; the
-  // survey restates it and cross-checks — a mismatch refuses, it never picks one silently).
-  const analytic::CriticalOnset* onset = MinDeviationOnset(assemblies.front().onsets);
+  // survey restates it and cross-checks — a mismatch refuses, it never picks one silently). A
+  // maximum fold (no two-face closed form, and none claimed) lands as a finite card.
+  const analytic::CriticalOnset* onset = ExtremumFoldOnset(assemblies.front().onsets);
   if (onset != nullptr) {
     SurveyObject edge;
     edge.kind = SurveyObjectKind::kCausticEdge;
     edge.members = members;
+    const bool is_minimum_fold = onset->source == analytic::OnsetSource::kInteriorMinimum;
     double apex_deg = 0.0;
     double closed_form_deg = 0.0;
     const bool closed_form =
-        ClosedFormMinDeviation(table, representative, refractive_index, &apex_deg, &closed_form_deg);
+        is_minimum_fold && ClosedFormMinDeviation(table, representative, refractive_index, &apex_deg, &closed_form_deg);
     if (closed_form && std::fabs(DegOf(onset->value) - closed_form_deg) > DegOf(kClosedFormToleranceRad)) {
       // The two readings of one quantity disagree beyond the restatement's own error: refuse.
       edge.evidence.state = EvidenceState::kRefused;
@@ -170,7 +182,8 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
       payload.has_measure_limit = onset->has_measure_limit;
       payload.measure_limit = onset->measure_limit;
       payload.coincident_with_support =
-          std::fabs(onset->value - class_support.front().lower) <= analytic::kExtremumAtol;
+          std::fabs(onset->value - class_support.front().lower) <= analytic::kExtremumAtol ||
+          std::fabs(onset->value - class_support.back().upper) <= analytic::kExtremumAtol;
       if (closed_form) {
         edge.evidence.state = EvidenceState::kCertified;
         edge.evidence.method = kCertifiedMethodSlabMinDeviationClosedForm;
@@ -229,9 +242,12 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
     out->chromatic.mode = "wavelength_critical_table";
     return;
   }
-  // The min-deviation row: the interior-minimum finite-jump onset with the smallest red value,
-  // picked explicitly (the same shape as the support's MinDeviationOnset) rather than by row
-  // order — the table's value ordering stays the kernel's fact, not this loop's premise.
+  // The min-deviation row (when the class has one): the interior-minimum finite-jump onset
+  // with the smallest red value, picked explicitly rather than by row order — the table's value
+  // ordering stays the kernel's fact, not this loop's premise. Its scalar fields serialize only
+  // when it exists; a corner-bounded support (C06) or an upper-edge one (C09) has no min row,
+  // and the followed rows below are that leg's data instead — the leg no longer refuses for
+  // the row's absence.
   const analytic::WavelengthOnsetShift* min_row = nullptr;
   for (const analytic::WavelengthOnsetShift& row : critical.onsets) {
     if (row.source != analytic::OnsetSource::kInteriorMinimum || row.profile != analytic::OnsetProfile::kFiniteJump ||
@@ -242,9 +258,11 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
       min_row = &row;
     }
   }
-  if (min_row == nullptr || min_row->values_deg.size() < 2) {
+  if (critical.onsets.empty()) {
+    // The table carried no onset at all: the leg has nothing to follow (defensive — the corpus
+    // classes all carry rows past the escape gate above).
     out->chromatic.state = EvidenceState::kRefused;
-    out->chromatic.mode = "min_deviation_row_not_found";
+    out->chromatic.mode = "no_critical_onset_rows";
     return;
   }
   out->positional_dispersion = SurveyPositionalDispersion{};
@@ -253,11 +271,28 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
   dispersion.blue_label = labels[1];
   dispersion.n_red = indices[0];
   dispersion.n_blue = indices[1];
-  dispersion.value_red_deg = min_row->values_deg[0];
-  dispersion.value_blue_deg = min_row->values_deg[1];
-  dispersion.displacement_deg = min_row->displacement_deg;
-  dispersion.direction =
-      dispersion.value_red_deg < dispersion.value_blue_deg ? "red_inner_blue_outer" : "blue_inner_red_outer";
+  if (min_row != nullptr) {
+    dispersion.has_min_deviation_row = true;
+    dispersion.value_red_deg = min_row->values_deg[0];
+    dispersion.value_blue_deg = min_row->values_deg[1];
+    dispersion.displacement_deg = min_row->displacement_deg;
+    dispersion.direction =
+        dispersion.value_red_deg < dispersion.value_blue_deg ? "red_inner_blue_outer" : "blue_inner_red_outer";
+  }
+  // Every onset the table carried, in table order — the mounted-point rows a class without a
+  // min-deviation fold reads instead (C06's TIR corner, C09's interior maximum).
+  for (const analytic::WavelengthOnsetShift& row : critical.onsets) {
+    if (row.values_deg.size() < 2) {
+      continue;
+    }
+    SurveyFollowedOnset out_row;
+    out_row.source = analytic::OnsetSourceName(row.source);
+    out_row.profile = analytic::OnsetProfileName(row.profile);
+    out_row.values_deg = row.values_deg;
+    out_row.displacement_deg = row.displacement_deg;
+    out_row.direction = row.values_deg[0] < row.values_deg[1] ? "red_inner_blue_outer" : "blue_inner_red_outer";
+    dispersion.followed_onsets.push_back(std::move(out_row));
+  }
   dispersion.evidence.state = EvidenceState::kFinite;
   dispersion.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
   dispersion.evidence.coverage.geometry_basis =

@@ -284,17 +284,36 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
   doc["chromatic"] = EvidenceJson(document.chromatic);
   if (document.positional_dispersion.has_value()) {
     const SurveyPositionalDispersion& dispersion = *document.positional_dispersion;
-    doc["chromatic"]["positional_dispersion"] = {
-      { "red_label", dispersion.red_label },
-      { "blue_label", dispersion.blue_label },
-      { "n_red", Num(dispersion.n_red) },
-      { "n_blue", Num(dispersion.n_blue) },
-      { "value_red_deg", Num(dispersion.value_red_deg) },
-      { "value_blue_deg", Num(dispersion.value_blue_deg) },
-      { "displacement_deg", Num(dispersion.displacement_deg) },
-      { "direction", dispersion.direction },
-      { "evidence", EvidenceJson(dispersion.evidence) },
-    };
+    // The min-row scalars exist exactly when the min-deviation row does (the probe reading's
+    // own discipline); the followed rows are the leg's data on every class. Both key groups
+    // are appends to the pre-existing shape.
+    Json dispersion_json = { { "red_label", dispersion.red_label },
+                             { "blue_label", dispersion.blue_label },
+                             { "n_red", Num(dispersion.n_red) },
+                             { "n_blue", Num(dispersion.n_blue) } };
+    if (dispersion.has_min_deviation_row) {
+      dispersion_json["value_red_deg"] = Num(dispersion.value_red_deg);
+      dispersion_json["value_blue_deg"] = Num(dispersion.value_blue_deg);
+      dispersion_json["displacement_deg"] = Num(dispersion.displacement_deg);
+      dispersion_json["direction"] = dispersion.direction;
+    }
+    dispersion_json["evidence"] = EvidenceJson(dispersion.evidence);
+    if (!dispersion.followed_onsets.empty()) {
+      Json rows = Json::array();
+      for (const SurveyFollowedOnset& row : dispersion.followed_onsets) {
+        Json values = Json::array();
+        for (double value : row.values_deg) {
+          values.push_back(Num(value));
+        }
+        rows.push_back({ { "source", row.source },
+                         { "profile", row.profile },
+                         { "values_deg", std::move(values) },
+                         { "displacement_deg", Num(row.displacement_deg) },
+                         { "direction", row.direction } });
+      }
+      dispersion_json["followed_onsets"] = std::move(rows);
+    }
+    doc["chromatic"]["positional_dispersion"] = std::move(dispersion_json);
   }
   if (document.diagnose.has_value()) {
     doc["chromatic"]["diagnose"] = DiagnoseJson(*document.diagnose);

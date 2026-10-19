@@ -270,6 +270,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   document.probes.push_back(std::move(probe));
 
   document.positional_dispersion = SurveyPositionalDispersion{};
+  document.positional_dispersion->has_min_deviation_row = true;  // the min-row scalars below
   document.positional_dispersion->n_red = 1.3053;
   document.positional_dispersion->n_blue = 1.3096;
   document.positional_dispersion->value_red_deg = 21.69;

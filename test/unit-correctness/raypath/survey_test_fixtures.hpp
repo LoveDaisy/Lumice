@@ -8,6 +8,7 @@
 
 #include "config/config_manager.hpp"
 #include "core/crystal_param.hpp"
+#include "core/miller_wedge.hpp"  // ConvertMillerIndexToWedgeAngle: the conversion the config loader runs
 #include "util/illuminant_data.hpp"
 
 namespace lumice::raypath::survey {
@@ -91,6 +92,41 @@ inline ConfigManager FixedPosePlateScene(double height) {
   ConfigManager config;
   config.crystals_.emplace(1, crystal);
   config.scene_.light_source_.param_ = { 20, 0, 0 };
+  config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  config.scene_.ms_.push_back({ 0, { entry } });
+  return config;
+}
+
+// The C09 shape: the corpus's asymmetric cone pyramid on a full-sphere uniform axis, sun at 15
+// degrees. The wedge angles are the corpus's Miller indices ([1,0,1] upper / [2,0,3] lower)
+// through the engine's own converter — the same conversion the config loader runs on the JSON
+// snapshot. Its literal 13-15-26-28 chain is the support-set (hole + upper-edge) case.
+inline ConfigManager AsymmetricPyramidScene() {
+  PyramidCrystalParam pyramid;
+  pyramid.h_prs_ = { DistributionType::kNoRandom, 0.5f, 0 };
+  pyramid.h_pyr_u_ = { DistributionType::kNoRandom, 0.25f, 0 };
+  pyramid.h_pyr_l_ = { DistributionType::kNoRandom, 0.6f, 0 };
+  const float distances[6] = { 1.0f, 1.1f, 0.9f, 1.0f, 1.2f, 0.95f };
+  for (int k = 0; k < 6; k++) {
+    pyramid.d_[k] = { DistributionType::kNoRandom, distances[k], 0 };
+  }
+  const MillerConversionResult upper_wedge = ConvertMillerIndexToWedgeAngle(1, 0, 1, 3);  // the corpus's [1,0,1]
+  const MillerConversionResult lower_wedge = ConvertMillerIndexToWedgeAngle(2, 0, 3, 3);  // the corpus's [2,0,3]
+  EXPECT_EQ(upper_wedge.state, MillerConversionState::kValid);
+  EXPECT_EQ(lower_wedge.state, MillerConversionState::kValid);
+  pyramid.wedge_angle_u_ = upper_wedge.wedge_angle_deg;
+  pyramid.wedge_angle_l_ = lower_wedge.wedge_angle_deg;
+  CrystalConfig crystal{};
+  crystal.id_ = 1;
+  crystal.param_ = pyramid;
+  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90, 360 };
+  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = { 15, 0, 0 };
   config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
   ScatteringSetting entry{};
   entry.crystal_ = crystal;

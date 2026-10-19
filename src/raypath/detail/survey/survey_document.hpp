@@ -307,19 +307,38 @@ inline std::string ChromaticPairProseRedFirst() {
          std::to_string(static_cast<long long>(kChromaticBlueNm));
 }
 
-// The chromatic layer's positional-dispersion leg: the min-deviation edge followed across the
+// One onset row of the positional-dispersion table, followed across the fixed index pair: the
+// kernel's (source, profile) slugs passed through, the pair's values in label order, the
+// max-min displacement and the row's own stacking verdict (the same direction vocabulary as
+// the min-deviation row's). A class without a min-deviation fold (a corner-bounded support) has
+// its mounted-point rows here and nowhere else — the row sequence is the leg's data, not a
+// derived view of the min-row fields.
+struct SurveyFollowedOnset {
+  std::string source;              // OnsetSourceName slug (e.g. "interior_maximum" / "corner")
+  std::string profile;             // OnsetProfileName slug (e.g. "finite_jump" / "boundary_onset")
+  std::vector<double> values_deg;  // parallel to the labels (red first)
+  double displacement_deg = 0.0;   // max - min across the pair, label-order independent
+  std::string direction;           // "red_inner_blue_outer" ⇔ values_deg[0] < values_deg[1]
+};
+
+// The chromatic layer's positional-dispersion leg: the critical onsets followed across the
 // fixed index pair (labels as the kernel table carries them, indices as the engine's table
-// echoes them). `direction` is the stacking verdict; `red_inner_blue_outer` ⇔ value_red <
-// value_blue (red edge closer to the sun).
+// echoes them). `has_min_deviation_row` says the min-deviation row exists — the scalar
+// min-row fields below it are that row's and serialize only when it does (keys exist exactly
+// when the readings they describe do, the probe's own discipline); `followed_onsets` is every
+// row the table carried, in table order. `direction` is the min row's stacking verdict;
+// `red_inner_blue_outer` ⇔ value_red < value_blue (red edge closer to the sun).
 struct SurveyPositionalDispersion {
   std::string red_label = kChromaticRedLabel;
   std::string blue_label = kChromaticBlueLabel;
   double n_red = 0.0;
   double n_blue = 0.0;
+  bool has_min_deviation_row = false;
   double value_red_deg = 0.0;
   double value_blue_deg = 0.0;
   double displacement_deg = 0.0;
   std::string direction = "red_inner_blue_outer";
+  std::vector<SurveyFollowedOnset> followed_onsets;
   SurveyEvidence evidence;
 };
 
