@@ -812,6 +812,11 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   // into whatever the new document has at the same position. Same shape: unconditional, no
   // reason-grouped block.
   CloseEditModalOnDocumentReset();
+  // And every reason drops the axis chips' per-crystal preset memory: it is keyed by pool crystal
+  // id, and each of these reasons replaces or restores the pool, so what a stale entry would
+  // remember belongs to a crystal that is no longer at that id. Unconditional on purpose — not
+  // folded into any reason-grouped block below, so it cannot inherit another state's rule.
+  ClearAxisPresetMemory();
   // The named camera target is session intent, not document state. Every successful document reset
   // drops both the target and the lock so a previous document cannot move the newly loaded camera
   // on the next preview frame. Revert also clears it: the view itself is preserved, but no old

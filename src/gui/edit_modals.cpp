@@ -148,6 +148,33 @@ static int g_modal_layer_idx = -1;
 static int g_modal_view_crystal_id = -1;
 static int g_modal_entry_idx = -1;
 
+// The Label chips' per-crystal preset memory (SwitchAxisChip in axis_presets.hpp): for each pool
+// crystal, one triple per label — the parameters the crystal last held when the user left that
+// label. Written at the chip press that leaves a label (edge-triggered, so the slot always equals
+// the last triple seen under it and can never be stale); read by the press that arrives at one.
+// Keyed by pool crystal id, not by (layer, entry) position: two entries linked to one pool slot
+// are one crystal with one editing history. Session-level interaction glue, deliberately NOT
+// document state — nothing here reaches the .lmc, the export JSON or user_defaults; "keep this
+// retune for good" is the preset library's retune channel, not this map. Cleared by
+// ClearAxisPresetMemory(): ResetModalState() (test teardown) and unconditionally by
+// ResetFrontendState() (every reason replaces or restores the pool the ids point into). Cancel /
+// OK / closing the modal keep it — Cancel undoes the document write, not the exploration.
+static std::unordered_map<int, AxisPresetMemorySlots> g_axis_preset_memory;
+
+// The open modal's own crystal id, for keying g_axis_preset_memory. -1 when the modal's positional
+// binding points outside the pool; on the real path the Axis tab only renders after OpenEditModal
+// bound a valid (layer, entry), so the guard is defensive rather than a known gap (mirrors
+// IsCurrentModalDApplicable's). Deliberately a fresh derivation, not g_modal_view_crystal_id —
+// that one is the trackball's open-time cache for card-switch pose resets, while keying the
+// memory wants the binding read at each press.
+static int AxisMemoryCrystalId(const GuiState& state) {
+  const int ly = g_modal_layer_idx;
+  const int en = g_modal_entry_idx;
+  const bool has_valid_entry = ly >= 0 && ly < static_cast<int>(state.layers.size()) && en >= 0 &&
+                               en < static_cast<int>(state.layers[ly].entries.size());
+  return has_valid_entry ? state.layers[ly].entries[en].crystal_id : -1;
+}
+
 // ---- Window height: semi-variable (doc/gui/gui-visual-language.md §9) ----
 // Width is pinned per layout; height follows the content (HeightFollowsContentState, shared with the
 // Summary window) until the user drags it, then it is theirs for the session. Dragging only helps if
@@ -1221,9 +1248,8 @@ static unsigned long long AdvancePreviewAnimSeed(bool has_random) {
 // spent. Compact passes UiPx(kModalPreviewImageSize); Expanded derives it (RenderModalTwoColumn).
 // `label` is the crystal's STORED axis label, passed by the caller (the modal shows what is being
 // edited); it is not re-derived from `axis`, whose values the user may have moved off it.
-std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3], AxisPreset label) {
-  std::string out = AxisPresetLabel(label);
-  out += " · zenith ";
+std::string FormatCrystalPreviewSummaryBody(const CrystalConfig& crystal, const AxisDist axis[3]) {
+  std::string out = " · zenith ";
   out += FormatAxisDistCell(axis[0]);
   out += " · ";
   out += CrystalTypeName(crystal.type);
@@ -1234,6 +1260,10 @@ std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const Axis
     out += FormatShapeDistCell(*field.dist, field.slot);
   }
   return out;
+}
+
+std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3], AxisPreset label) {
+  return std::string(AxisPresetLabel(label)) + FormatCrystalPreviewSummaryBody(crystal, axis);
 }
 
 static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
@@ -1305,11 +1335,72 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   // it follows every slider before OK. Wrapped to the pane, and always exactly
   // PreviewSummaryReservedHeight() tall: a one-line summary is padded to two lines' worth, because
   // the caller has already budgeted that much and the Expanded header alignment depends on it.
+  //
+  // Drawn in segments rather than one TextDisabled: the label prefix, then the out-of-domain badge
+  // between it and the body when the buffers have drifted from the label, then the body. The badge
+  // lives here — the one line in the modal that shows the label AND the parameters together, with
+  // a budgeted height in both layouts — rather than at the chip row's end, where neither layout's
+  // width left it visible. It reads the edit buffers too, so it lights while the user is still
+  // editing. A Selectable rather than plain text — text registers no item, so the badge could be
+  // neither explained on hover nor asserted by a test (defaults_panel's RenderNoteCell is the same
+  // move); the size is pinned to the glyph and the text colour is pushed explicitly, so the
+  // visible pixels are the warning-coloured glyph.
+  //
+  // The body's FIRST line is wrapped by hand. A Text item carries one wrap width for every line it
+  // renders, so a body item starting mid-line would wrap ALL of its lines at the first line's
+  // remainder — measured, the worst-case summary loses ~63 px that way and spills onto a clipped
+  // third line even though the pane's own wrap fits it in two. Splitting the body at the first
+  // line's break (the font's own word-wrap answer, the function RenderTextWrapped itself drives)
+  // keeps the pre-badge wrap semantics: a short first line, then full-width lines. The body opens
+  // with " · ", so the joined run reads exactly like the one string this used to be, and with the
+  // badge absent the line is pixel-identical to the old single TextDisabled draw.
   const float summary_top_y = ImGui::GetCursorPosY();
   ImGui::Spacing();
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-  ImGui::TextDisabled("%s", FormatCrystalPreviewSummary(g_crystal_buf, g_axis_buf, g_axis_label_buf).c_str());
-  ImGui::PopTextWrapPos();
+  ImGui::TextDisabled("%s", AxisPresetLabel(g_axis_label_buf));
+  if (AxisLabelOutOfDomain(g_axis_label_buf, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2])) {
+    // Zero-width joins rather than SameLine's ItemSpacing.x gap: this line is budgeted at two
+    // wrapped lines in both layouts, and the worst-case summary has no 16 px of margin to spend
+    // on two gaps (measured: the default gap wraps it onto a third line, which the pane clips).
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    const std::string badge_id = ICON_FA_TRIANGLE_EXCLAMATION "###axis_label_mismatch";
+    // Height pinned to the text line height as well: the icon font's own line is a couple of px
+    // taller than the text's, and the summary's two-line budget counts text lines (measured, the
+    // icon's natural height alone pushed the wrapped height 2 px past it).
+    ImGui::Selectable(badge_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups,
+                      ImVec2(ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x, ImGui::GetTextLineHeight()));
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", FormatAxisLabelMismatchTooltip(g_axis_label_buf, g_axis_buf[0], g_axis_buf[1],
+                                                             g_axis_buf[2], DescribeAxisPresetDomain(g_axis_label_buf))
+                                  .c_str());
+    }
+  }
+  const std::string body = FormatCrystalPreviewSummaryBody(g_crystal_buf, g_axis_buf);
+  ImGui::SameLine(0.0f, 0.0f);
+  const float line1_tail_w = ImGui::GetContentRegionAvail().x;
+  ImFont* font = ImGui::GetFont();
+  const char* body_begin = body.c_str();
+  const char* body_end = body_begin + body.size();
+  const char* break1 =
+      font->CalcWordWrapPositionA(ImGui::GetFontSize() / font->FontSize, body_begin, body_end, line1_tail_w);
+  if (break1 == body_end) {
+    ImGui::TextDisabled("%s", body_begin);
+    ImGui::PopTextWrapPos();
+  } else {
+    ImGui::TextDisabled("%.*s", static_cast<int>(break1 - body_begin), body_begin);
+    ImGui::PopTextWrapPos();
+    // The remainder flows from the new line's start, so its wrap width is the pane's full width.
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextDisabled("%s", break1);
+    ImGui::PopTextWrapPos();
+    // A wrapped line inside one Text item advances by the font size alone, but the item boundary
+    // this split introduced pays an ItemSpacing.y between the two halves. Give it back, so the
+    // line's height arithmetic stays the pre-badge one (measured, keeping it pushed the wrapped
+    // height 2 px past the two-line budget).
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y);
+  }
   // Real cursor advance at the real wrap width, before the pad-up-to-budget logic below can hide a
   // genuine overrun by forcing the cursor back down to summary_bottom_y.
   g_summary_measured_wrapped_height = ImGui::GetCursorPosY() - summary_top_y;
@@ -1532,22 +1623,27 @@ static void RenderAxisModal(GuiState& state) {
   // 6:1. Hovered / Active are filled with the same accent so pointing at the selected chip does
   // not flip it back to unselected.
   //
-  // A chip press writes ONLY the label buffer. Parameters never move here — renaming is a
-  // statement about what the current parameters are called, not a request to load a definition;
-  // that is the Apply preset combo's job, below the parameter rows. (This row used to be
-  // "Presets:", whose press loaded the preset's definition — the same pixels with different
-  // semantics, which is why the wording changed with the behavior.)
+  // A chip press is this row's single gesture — switch: the parameters currently in the buffers
+  // are remembered under the label being left, the target label's memory loads (its definition
+  // when nothing is remembered; a Custom target with neither renames only), and the label
+  // follows. One gesture, one writer: the sticky label never moves on its own, and pressing the
+  // already-highlighted chip does nothing. (This row has carried two earlier semantics — "load
+  // definition" and "rename only"; both were removed because a rename-only press read as "no
+  // reaction" in this modal, and a separate load-only control spelled the chips' own words with
+  // different behavior.)
   const AxisPreset active = g_axis_label_buf;
   const ImVec4 active_color = AccentColor();
   const ImVec4 active_text_color = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
 
   // One note, two hover homes: the caption and every chip below. The chips are the high-frequency
-  // path, and this row's pixels used to mean "apply definition" — the "renaming loads nothing"
-  // note belongs where the pointer actually lands, not only on the small print.
-  constexpr const char* kLabelOnlyNote = "Sets the label only — parameters are unchanged.";
+  // path, so the switch contract belongs where the pointer actually lands, not only on the small
+  // print.
+  constexpr const char* kChipSwitchNote =
+      "Switches to this label: remembers the current parameters under the one you leave, then "
+      "loads this label's memory — or its definition when nothing is remembered.";
   ImGui::Text("Label:");
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", kLabelOnlyNote);
+    ImGui::SetTooltip("%s", kChipSwitchNote);
   }
   for (const auto& entry : kAxisPresets) {
     ImGui::SameLine();
@@ -1558,37 +1654,34 @@ static void RenderAxisModal(GuiState& state) {
       ImGui::PushStyleColor(ImGuiCol_ButtonActive, active_color);
       ImGui::PushStyleColor(ImGuiCol_Text, active_text_color);
     }
-    // The ##axis_label_chip suffix: the Apply combo's items below the parameter rows spell the
-    // same words, so both a click and a test assertion need the two populations addressable apart.
-    // Visible label unchanged.
+    // The ##axis_label_chip suffix keeps this row's buttons one addressable population for tests
+    // and clicks; the visible label is the preset name alone.
     const std::string chip_id = std::string(entry.label) + "##axis_label_chip";
     if (ImGui::SmallButton(chip_id.c_str())) {
-      g_axis_label_buf = entry.id;
+      if (entry.id != active) {
+        const int crystal_id = AxisMemoryCrystalId(state);
+        if (crystal_id >= 0) {
+          const AxisTriple leaving = { g_axis_buf[0], g_axis_buf[1], g_axis_buf[2] };
+          std::optional<AxisTriple> definition;
+          if (entry.id != AxisPreset::kCustom) {
+            definition = AxisTriple{ EffectiveAxisPresetZenith(entry), entry.azimuth, entry.roll };
+          }
+          AxisPresetMemorySlots& slots = g_axis_preset_memory[crystal_id];
+          const AxisChipSwitch press = SwitchAxisChip(slots, active, leaving, entry.id, definition);
+          if (press.loads) {
+            g_axis_buf[0] = press.triple[0];
+            g_axis_buf[1] = press.triple[1];
+            g_axis_buf[2] = press.triple[2];
+          }
+          g_axis_label_buf = entry.id;
+        }
+      }
     }
     if (highlighted) {
       ImGui::PopStyleColor(4);
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", kLabelOnlyNote);
-    }
-  }
-  // Out-of-domain badge on the active chip: the live edit buffer has drifted from the label. The
-  // tooltip reads the buffer (what the user sees), not the pool. A Selectable rather than plain
-  // text — text registers no item, so the badge could be neither explained on hover nor asserted
-  // by a test (defaults_panel's RenderNoteCell is the same move); the size is pinned to the glyph
-  // and the text colour is pushed explicitly, so the visible pixels are the TextColored ones
-  // this used to draw.
-  if (AxisLabelOutOfDomain(active, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2])) {
-    ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    const std::string badge_id = ICON_FA_TRIANGLE_EXCLAMATION "###axis_label_mismatch";
-    ImGui::Selectable(badge_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups,
-                      ImVec2(ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x, 0.0f));
-    ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", FormatAxisLabelMismatchTooltip(active, g_axis_buf[0], g_axis_buf[1], g_axis_buf[2],
-                                                             DescribeAxisPresetDomain(active))
-                                  .c_str());
+      ImGui::SetTooltip("%s", kChipSwitchNote);
     }
   }
 
@@ -1615,40 +1708,42 @@ static void RenderAxisModal(GuiState& state) {
   SetNextComboPopupTopMost();
   RenderAxisDist("Roll", g_axis_buf[2], 0.0f, 360.0f, g_pull_adopted.axis[2]);
 
-  // Apply preset — a pure parameter shortcut: it loads the preset's definition (zenith through
-  // EffectiveAxisPresetZenith, i.e. the user's retuned value from the preset library when one is
-  // stored) into the three distribution rows above, and nothing else. The label is not touched —
-  // the Label row is its only writer — and neither is the preview pose: the modal preview is
-  // pixel-identical across an apply (CrystalParamHash does not hash the axis triple, the mesh is
-  // built in canonical orientation, and the rendered orientation lives only in
-  // g_crystal_rotation), so every visible effect already sits above: the three parameter rows,
-  // the preview's summary line, and the Label row's mismatch badge. The combo reads back as its
-  // placeholder until used again — it shows no state. Custom is absent: it has no definition to
-  // apply, it is the label for "none of the above". The block lives BELOW the parameter rows on
-  // purpose: the control sits where its effects land, and adjacency to the Label row would
-  // suggest a relationship (apply renames) that was removed deliberately.
-  ImGui::Text("Apply preset:");
+  // Reset — reloads the CURRENT label's definition into the three rows above, the zenith through
+  // EffectiveAxisPresetZenith (the user's retuned value from the preset library when one is
+  // stored). It is "pull this label's parameters back", nothing more: the label is not touched
+  // (the chips are its only writer), the memory is not cleared (a slot is rewritten by the next
+  // leave anyway), and neither is the preview pose (the modal preview is pixel-identical across
+  // it — CrystalParamHash does not hash the axis triple, the mesh is built in canonical
+  // orientation, and the rendered orientation lives only in g_crystal_rotation), so every visible
+  // effect sits above: the three parameter rows and the preview's summary line. Disabled under
+  // Custom: it has no definition to reload. Sits directly under the parameter rows on purpose:
+  // the control is where its effects land. (This row's predecessor loaded a preset's definition
+  // through a dropdown whose items repeated the chips' own words with a different behavior; the
+  // chips' switch gesture covers that path, so the dropdown is gone.)
+  ImGui::Text("Reset:");
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", "Loads the preset's definition — the label and the view are unchanged.");
+    ImGui::SetTooltip("%s",
+                      "Reloads the current label's definition — the label, the memory and the view are unchanged.");
   }
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(UiPx(200.0f));
-  SetNextComboPopupTopMost();
-  if (ImGui::BeginCombo("###apply_axis_preset", "Pick a preset to load…")) {
-    for (const auto& entry : kAxisPresets) {
-      if (entry.id == AxisPreset::kCustom) {
-        continue;
-      }
-      // The ##apply suffix: the Label row's chips share this window and spell the same words, so
-      // both a click and a test assertion need the two populations addressable apart.
-      const std::string item_id = std::string(entry.label) + "##apply";
-      if (ImGui::Selectable(item_id.c_str())) {
-        g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
-        g_axis_buf[1] = entry.azimuth;
-        g_axis_buf[2] = entry.roll;
-      }
-    }
-    ImGui::EndCombo();
+  const bool custom_label = active == AxisPreset::kCustom;
+  if (custom_label) {
+    ImGui::BeginDisabled();
+  }
+  if (ImGui::SmallButton("Reload##axis_reset")) {
+    const auto& entry = AxisPresetEntryFor(active);
+    g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
+    g_axis_buf[1] = entry.azimuth;
+    g_axis_buf[2] = entry.roll;
+  }
+  // AllowWhenDisabled so the Custom case can still say why its button is inert.
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", custom_label ?
+                                "Custom has no definition to reload." :
+                                "Reloads this label's definition (zenith as retuned in the preset library).");
+  }
+  if (custom_label) {
+    ImGui::EndDisabled();
   }
 
   // OK / Cancel handled at modal level (RenderEditModals).
@@ -2175,6 +2270,13 @@ void ResetModalState() {
   // of the "not drawn yet" sentinel (code-review round 1 Minor-1).
   g_modal_section_header_y = { -1.0f, -1.0f, -1.0f };
   g_summary_measured_wrapped_height = -1.0f;
+  // The axis chips' per-crystal memory would otherwise leak a case's exploration into the next
+  // one running in this process (see g_axis_preset_memory's comment for the production clear).
+  ClearAxisPresetMemory();
+}
+
+void ClearAxisPresetMemory() {
+  g_axis_preset_memory.clear();
 }
 
 EditModalBuffers GetEditModalBuffers() {
@@ -2545,7 +2647,7 @@ void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* a
 // calls them (same PushID(layer)/PushID(entry) scoping): those three functions know nothing about
 // which layout is drawing them.
 
-// Rows budgeted for the Axis section's label row + Apply preset row + its (up to) three AxisDist
+// Rows budgeted for the Axis section's label row + Reset row + its (up to) three AxisDist
 // controls (~11 rows) plus a small margin, so it gets a fixed short height and Filter (the content
 // that actually grows, up to kMaxSummandRows) gets the rest of the column.
 constexpr float kModalAxisSectionRows = 12.0f;

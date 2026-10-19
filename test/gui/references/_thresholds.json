@@ -88,7 +88,7 @@
       }
     },
     "modal_layout": {
-      "generated_at": "2026-10-16T21:51:51",
+      "generated_at": "2026-10-19T02:33:27",
       "n_ref_runs": 1,
       "n_calib_runs": 1,
       "scenes": {
@@ -135,7 +135,7 @@
       }
     },
     "defaults_panel_layout": {
-      "generated_at": "2026-10-15T16:44:53",
+      "generated_at": "2026-10-19T02:41:24",
       "n_ref_runs": 1,
       "n_calib_runs": 1,
       "scenes": {
