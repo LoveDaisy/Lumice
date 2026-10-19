@@ -156,6 +156,16 @@ jobs:
         if: matrix.run_gui_visual == 'ON'
         run: git lfs pull --include="test/gui/references/*"
 
+      # Unit-correctness tests parameterize over the li-parity fixtures on every matrix leg
+      # (ctest -L "unit-correctness"), so this pull is unconditional. ~7.3MB / 122 files.
+      # Without it the working tree holds LFS pointer text: the manifest parses as an empty
+      # JSON array, so the fixture-driven suites yield no cases and
+      # LiParityFixtures.ManifestMatchesDirectoryAndSource fails — a red that reads as a
+      # manifest mismatch, not a missing fetch. `**` mirrors the .gitattributes track
+      # pattern so future subdirectories are picked up without a CI edit.
+      - name: Fetch LFS li-parity fixtures
+        run: git lfs pull --include="test/fixtures/li-parity/**"
+
       # MSVC: set up Visual Studio environment before configure/build
       - name: Set up MSVC
         if: matrix.msvc
