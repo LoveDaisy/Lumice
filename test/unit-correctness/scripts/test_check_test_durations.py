@@ -319,7 +319,7 @@ def test_phase_report_and_budget_schema_reject_invalid_values(tmp_path):
 PER_MISS_BUDGET = {
     "job": JOB,
     "phase": "build",
-    "max_seconds": 720,
+    "max_seconds": 1800,
     "per_miss": {"overhead_seconds": 30, "max_seconds_per_miss": 5.0},
     "reason": "bounds the build phase per compile unit of change",
 }
@@ -353,11 +353,11 @@ def test_ac3_the_five_red_runs_replay_green_under_both_conditions():
         errors, notices, warnings = run_per_miss(seconds, misses)
         assert errors == [], (seconds, misses)
         assert warnings == []
-        assert any(f"{seconds:.1f}s / 720s, {misses} misses" in notice for notice in notices)
+        assert any(f"{seconds:.1f}s / 1800s, {misses} misses" in notice for notice in notices)
 
 
 def test_per_miss_regression_is_red_and_names_the_dominant_term():
-    # 700s over 121 misses = 5.79 s/miss, past K=5.0 while inside the 720s bound.
+    # 700s over 121 misses = 5.79 s/miss, past K=5.0 while inside the outer bound.
     errors, _, _ = run_per_miss(700.0, 121)
     assert len(errors) == 1
     assert "5.79 s/miss > 5" in errors[0]
@@ -365,12 +365,12 @@ def test_per_miss_regression_is_red_and_names_the_dominant_term():
 
 
 def test_broad_closure_violates_only_the_outer_bound_and_says_the_ratio_is_healthy():
-    # 1240s over 300 misses = 4.13 s/miss — per-miss healthy, absolute too big.
-    errors, _, _ = run_per_miss(1240.0, 300)
+    # 2000s over 500 misses = 4.00 s/miss — per-miss healthy, absolute too big.
+    errors, _, _ = run_per_miss(2000.0, 500)
     assert len(errors) == 1
-    assert "4.13 s/miss healthy" in errors[0]
+    assert "4.00 s/miss healthy" in errors[0]
     assert "broad closure" in errors[0]
-    assert "over its 720s outer bound" in errors[0]
+    assert "over its 1800s outer bound" in errors[0]
 
 
 def test_zero_miss_warm_build_is_green_but_a_slow_zero_miss_build_is_red():
@@ -383,11 +383,11 @@ def test_zero_miss_warm_build_is_green_but_a_slow_zero_miss_build_is_red():
 
 
 def test_both_conditions_violated_reported_once_with_both_facts():
-    # 1250s over 121 misses: 10.33 s/miss past K and past the 720s outer bound.
-    errors, _, _ = run_per_miss(1250.0, 121)
+    # 1900s over 121 misses: 15.70 s/miss past K and past the 1800s outer bound.
+    errors, _, _ = run_per_miss(1900.0, 121)
     assert len(errors) == 1
-    assert "10.33 s/miss > 5" in errors[0]
-    assert "and over its 720s outer bound" in errors[0]
+    assert "15.70 s/miss > 5" in errors[0]
+    assert "and over its 1800s outer bound" in errors[0]
 
 
 def test_missing_cache_report_fails_closed_even_when_within_every_limit():
@@ -401,20 +401,129 @@ def test_missing_cache_report_fails_closed_even_when_within_every_limit():
 
 
 def test_cold_build_exemption_covers_both_per_miss_conditions():
-    # A full-tree cold build: ~519 misses at healthy ratios but far over both
-    # conditions — one warning carrying both facts, zero errors.
+    # A full-tree cold build (500 misses, near the 524-request signature) at
+    # healthy ratios but far over both conditions — one warning carrying both
+    # facts, zero errors.
     errors, _, warnings = run_per_miss(3000.0, 500, allow_cold_build=True)
     assert errors == []
     assert len(warnings) == 1
     assert "6.00 s/miss > 5" in warnings[0]
-    assert "and over its 720s outer bound" in warnings[0]
+    assert "and over its 1800s outer bound" in warnings[0]
     assert "accepted with cold-build exception" in warnings[0]
 
-    # Outer bound only: 800s over 300 misses is 2.67 s/miss — per-miss healthy.
-    errors, _, warnings = run_per_miss(800.0, 300, allow_cold_build=True)
+    # Outer bound only: 2000s over 500 misses is 4.00 s/miss — per-miss healthy.
+    errors, _, warnings = run_per_miss(2000.0, 500, allow_cold_build=True)
     assert errors == []
     assert len(warnings) == 1
-    assert "2.67 s/miss healthy" in warnings[0]
+    assert "4.00 s/miss healthy" in warnings[0]
+
+
+# --- all four legs judge per-miss (registry values, real artifacts) ------------
+#
+# The per-leg budgets mirror test/duration_registry.json (each value's
+# derivation lives in that file's reasons). The broad-closure pairs are the
+# real build.json + cache-stats.json artifacts of run 39197233020 (PR #516) —
+# the run that red three legs under the legacy absolute bounds with 0 test
+# failures, and the reason the outer bounds were re-anchored.
+
+LEG_BUDGETS = {
+    "Ubuntu x86_64": {"overhead_seconds": 30, "max_seconds_per_miss": 5.0, "max_seconds": 1800},
+    "Ubuntu ARM64": {"overhead_seconds": 15, "max_seconds_per_miss": 5.0, "max_seconds": 1020},
+    "macOS ARM64": {"overhead_seconds": 20, "max_seconds_per_miss": 5.0, "max_seconds": 1200},
+    "Windows MSVC x86_64": {"overhead_seconds": 105, "max_seconds_per_miss": 5.0, "max_seconds": 2640},
+}
+
+BROAD_CLOSURE_RUN_39197233020 = [
+    ("Ubuntu x86_64", 722.509, 375, "ccache"),
+    ("Ubuntu ARM64", 386.112, 223, "ccache"),
+    ("macOS ARM64", 475.760, 382, "ccache"),
+    ("Windows MSVC x86_64", 1027.282, 376, "sccache"),
+]
+
+
+def leg_budget(job: str) -> dict:
+    constants = LEG_BUDGETS[job]
+    return {
+        "job": job,
+        "phase": "build",
+        "max_seconds": constants["max_seconds"],
+        "per_miss": {
+            "overhead_seconds": constants["overhead_seconds"],
+            "max_seconds_per_miss": constants["max_seconds_per_miss"],
+        },
+        "reason": "bounds the build phase per compile unit of change",
+    }
+
+
+def run_leg(job: str, seconds: float, misses: int | None, allow_cold_build=False):
+    reports = None if misses is None else {"build": {"tool": "ccache", "misses": misses}}
+    return ctd.check_phases(
+        job, {"build": seconds}, [leg_budget(job)],
+        allow_cold_build=allow_cold_build, cache_reports=reports,
+    )
+
+
+def test_ac4_broad_closure_run_replays_green_on_all_four_legs():
+    for job, seconds, misses, tool in BROAD_CLOSURE_RUN_39197233020:
+        reports = {"build": {"tool": tool, "misses": misses}}
+        errors, notices, warnings = ctd.check_phases(
+            job, {"build": seconds}, [leg_budget(job)], cache_reports=reports
+        )
+        assert errors == [] and warnings == [], (job, errors)
+        ratio = seconds / misses
+        expected = (
+            f"{seconds:.1f}s / {LEG_BUDGETS[job]['max_seconds']}s, "
+            f"{misses} misses ({ratio:.2f} s/miss)"
+        )
+        assert any(expected in notice for notice in notices), (job, notices)
+
+
+def test_new_leg_per_miss_regression_is_red_and_names_the_dominant_term():
+    # One red probe per new leg: past K while inside that leg's outer bound.
+    probes = [
+        ("Ubuntu ARM64", 700.0, 100),           # 7.00 s/miss, inside 1020
+        ("macOS ARM64", 700.0, 100),            # 7.00 s/miss, inside 1200
+        ("Windows MSVC x86_64", 2000.0, 300),   # 6.67 s/miss, inside 2640
+    ]
+    for job, seconds, misses in probes:
+        errors, _, _ = run_leg(job, seconds, misses)
+        assert len(errors) == 1, (job, errors)
+        assert "compile-cost regression" in errors[0], (job, errors[0])
+        assert f"{seconds / misses:.2f} s/miss > 5" in errors[0], (job, errors[0])
+
+
+def test_new_leg_missing_cache_report_fails_closed():
+    for job in ("Ubuntu ARM64", "macOS ARM64", "Windows MSVC x86_64"):
+        errors, _, _ = run_leg(job, 10.0, None)
+        assert len(errors) == 1 and "fails closed" in errors[0], (job, errors)
+
+
+def test_new_leg_cold_build_exemption_covers_both_conditions():
+    # A full-tree cold build on a new leg: one warning carrying both facts,
+    # zero errors — the §7.8 mechanism is leg-agnostic.
+    errors, _, warnings = run_leg("Windows MSVC x86_64", 3000.0, 500, allow_cold_build=True)
+    assert errors == []
+    assert len(warnings) == 1
+    assert "6.00 s/miss > 5" in warnings[0]
+    assert "and over its 2640s outer bound" in warnings[0]
+
+    errors, _, warnings = run_leg("Ubuntu ARM64", 1200.0, 200, allow_cold_build=True)
+    assert errors == []
+    assert len(warnings) == 1
+    assert "6.00 s/miss > 5" in warnings[0]
+    assert "and over its 1020s outer bound" in warnings[0]
+
+
+def test_windows_warm_zero_miss_build_is_judged_against_its_own_overhead():
+    # The Windows leg's sccache-warm builds cost ~7x the ccache legs'
+    # (73.8-74.8s on runs 39194647515/39187542721); the leg-local overhead is
+    # what keeps a 0-miss warm run green there while a genuinely slow build
+    # still trips.
+    errors, _, _ = run_leg("Windows MSVC x86_64", 90.0, 0)
+    assert errors == []
+    errors, _, _ = run_leg("Windows MSVC x86_64", 150.0, 0)
+    assert len(errors) == 1
+    assert "adaptive limit: 105s overhead + 0 misses = 105s" in errors[0]
 
 
 def test_red_probe_at_k3_turns_the_regressed_runs_red_and_holds_the_blind_spot():

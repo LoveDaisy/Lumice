@@ -33,10 +33,11 @@ PHASE_FIELDS = ("job", "phase", "max_seconds", "reason")
 PER_MISS_FIELDS = ("overhead_seconds", "max_seconds_per_miss")
 CACHE_TOOLS = ("ccache", "sccache")
 PLACEHOLDER_REASON = "TODO"
-# Hint in the outer-bound red message only: what the whole tree costs to compile
-# when every translation unit misses. A hint, not a judgment — update when the
-# tree's TU count moves by an amount that would mislead a triager.
-FULL_TREE_SIGNATURE_TUS = 519
+# Hint in the outer-bound red message only: the reference leg's full-tree
+# compile-request count. A hint, not a judgment — per-leg signatures live in
+# each build entry's registry reason; update the number when the reference
+# leg's build definition moves by an amount that would mislead a triager.
+FULL_TREE_SIGNATURE_TUS = 524
 
 
 class RegistryError(Exception):
@@ -325,7 +326,7 @@ def check_phases(
                 if misses:
                     detail += (
                         f" ({seconds / misses:.2f} s/miss healthy; broad closure — full-tree signature "
-                        f"is ~{FULL_TREE_SIGNATURE_TUS} TU)"
+                        f"is ~{FULL_TREE_SIGNATURE_TUS} compile requests on the x86_64 reference leg)"
                     )
                 messages.append(
                     f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s{detail} "

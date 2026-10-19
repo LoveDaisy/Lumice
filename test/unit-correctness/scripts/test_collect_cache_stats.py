@@ -32,14 +32,21 @@ import collect_cache_stats as ccs  # noqa: E402
 CCACHE_SAMPLE = "internal_error\t0\ncache_miss\t7\nlocal_storage_write\t13"
 CCACHE_INTERNAL_ERROR = "internal_error\t2\ncache_miss\t0\nlocal_storage_write\t0"
 
+# The shape sccache 0.17.0 actually emits (its `cache_misses` is a per-language
+# object whose total is `counts.values().sum()`, `PerLanguageCount::all` in its
+# server.rs — `adv_counts` keys the same events by compiler kind and must not be
+# summed in). The miss count echoes the real Windows artifact of run 39197233020
+# (collected report: 376 misses, C/C++ only); `adv_counts` deliberately holds a
+# different number so summing it in cannot pass unnoticed.
 SCCACHE_SAMPLE = json.dumps(
     {
         "stats": {
-            "compile_requests": 3,
-            "cache_hits": {"counts": {"C/C++": 0}, "adv_counts": {}},
-            "cache_misses": {"counts": {"C/C++": 2}, "adv_counts": {"C/C++": 5}},
+            "compile_requests": 520,
+            "compile_requests_executed": 520,
+            "cache_hits": {"counts": {"C/C++": 144}, "adv_counts": {"C/C++": 144}},
+            "cache_misses": {"counts": {"C/C++": 376}, "adv_counts": {"C/C++": 748}},
             "cache_write_errors": 0,
-            "cache_writes": 2,
+            "cache_writes": 374,
         },
         "version": "0.17.0",
     }
@@ -98,9 +105,9 @@ def test_sccache_counts_only_the_per_language_counts(tmp_path, monkeypatch):
         lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout=SCCACHE_SAMPLE, stderr=""),
     )
     assert run_collect(tmp_path, tool="sccache") == 0
-    # counts sums to 2; adv_counts keys the same events by compiler kind and is
-    # never part of the total.
-    assert read_report(tmp_path) == {"phase": "build", "tool": "sccache", "misses": 2}
+    # counts sums to 376; adv_counts keys the same events by compiler kind and is
+    # never part of the total (748 here, so summing it in cannot pass unnoticed).
+    assert read_report(tmp_path) == {"phase": "build", "tool": "sccache", "misses": 376}
 
 
 def test_sccache_write_errors_warn_but_do_not_fail(tmp_path, monkeypatch, capsys):
@@ -112,7 +119,7 @@ def test_sccache_write_errors_warn_but_do_not_fail(tmp_path, monkeypatch, capsys
     )
     assert run_collect(tmp_path, tool="sccache") == 0
     assert "3 cache write error" in capsys.readouterr().err
-    assert read_report(tmp_path)["misses"] == 2
+    assert read_report(tmp_path)["misses"] == 376
 
 
 def test_sccache_missing_or_malformed_miss_counts_are_fatal(tmp_path, monkeypatch):
@@ -122,14 +129,14 @@ def test_sccache_missing_or_malformed_miss_counts_are_fatal(tmp_path, monkeypatc
         subprocess, "run",
         lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout=json.dumps(payload), stderr=""),
     )
-    assert run_collect(tmp_path) == 1
+    assert run_collect(tmp_path, tool="sccache") == 1
 
     payload["stats"]["cache_misses"] = {"counts": {"C/C++": "many"}, "adv_counts": {}}
     monkeypatch.setattr(
         subprocess, "run",
         lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout=json.dumps(payload), stderr=""),
     )
-    assert run_collect(tmp_path) == 1
+    assert run_collect(tmp_path, tool="sccache") == 1
     assert not (tmp_path / "cache-stats.json").exists()
 
 
