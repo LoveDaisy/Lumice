@@ -20,8 +20,6 @@ namespace {
 constexpr int kCurveAzSteps = 360;
 constexpr int kCurveAltSteps = 180;
 
-constexpr float kRad2Deg = 180.0f / math::kPi;
-
 // Whether a sample survives the hemisphere / front policy this layer owns. The projection knows
 // nothing about it: `visible` is a DISPLAY clip and ProjectExitToPixel culls no ray for it (478.2
 // removed the one branch that did), so every layer that needs the rule states it for itself. This
@@ -210,19 +208,19 @@ void RingDirAt(const float dir[3], const float u[3], const float v[3], float cos
 }
 
 float AltitudeDegOfDir(float wz) {
-  return std::asin(std::clamp(-wz, -1.0f, 1.0f)) * kRad2Deg;
+  return std::asin(std::clamp(-wz, -1.0f, 1.0f)) * math::kRadToDegree;
 }
 
 // Azimuth in degrees, in (-180, 180]. The inverse of WalkAltitudeCurve's construction, so a
 // meridian level set and a meridian curve walk are talking about the same angle.
 float AzimuthDegOfDir(float wx, float wy) {
-  return std::atan2(-wy, -wx) * kRad2Deg;
+  return std::atan2(-wy, -wx) * math::kRadToDegree;
 }
 
 // Angular distance in degrees between a direction and a (unit) reference.
 float AngularDistDegOfDir(const float ref[3], float wx, float wy, float wz) {
   const float d = ref[0] * wx + ref[1] * wy + ref[2] * wz;
-  return std::acos(std::clamp(d, -1.0f, 1.0f)) * kRad2Deg;
+  return std::acos(std::clamp(d, -1.0f, 1.0f)) * math::kRadToDegree;
 }
 
 // Where one named direction lands. The SINGLE place a marker becomes a canvas point: both the
