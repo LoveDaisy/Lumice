@@ -44,6 +44,7 @@
 #include "gui/axis_presets.hpp"     // kAxisPresets rows / kAzFullUniform / kRollFreeUniform
 #include "gui/crystal_preview.hpp"  // BuildCrystalMeshData — core's own answer to "which member led"
 #include "gui/file_io.hpp"          // DeserializeFromJson / BuildExportJsonOrWarn
+#include "gui/gui_constants.hpp"    // kDefaultCrystalZoom — what a switch's re-seat packs back
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"  // FromLegacyRaypath — an OR row written the way the pool holds it
 #include "gui/user_defaults.hpp"     // EffectiveAxisPresetZenith — what the chips and Reset load
@@ -1430,14 +1431,20 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // P94 / P95. SWITCHING a label and RESETTING the parameters must leave the MODAL preview's pose
-  // exactly where the user left it: a chip press writes the label buffer and the three
-  // distribution buffers, the Reset row rewrites the buffers, and neither touches
-  // g_crystal_rotation — crystal_preview.cpp's writer closure names the only writers. A drag
-  // precedes each assertion, so a pose-moving switch cannot pass on the pose merely never having
-  // been moved.
+  // The chip switch and the Reset row carry opposite pose contracts, so they are two cases whose
+  // names each tell the truth — one name cannot state both directions. The switch re-seats the
+  // modal preview on the target label's typical view: the same DefaultPreviewRotation the card
+  // thumbnail re-renders from on every label change, which is exactly why the modal must follow —
+  // under Immediate (the factory default) the thumbnail flips on the press, and a modal that kept
+  // the dragged pose would be the divergence, not the rule. The re-seat is unconditional,
+  // including a first Custom press that renames only: the card has already flipped, so a modal
+  // that stayed would re-create the mismatch. The Reset row is the opposite contract: parameters
+  // only, pose untouched. A drag precedes each pose assertion, so a pose-moving event cannot pass
+  // on the pose merely never having been moved; where the event's target view is known in
+  // advance, the premise also requires the dragged pose to differ from it, so the two worlds are
+  // not byte-identical.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "switching_a_label_chip_leaves_the_modal_preview_pose_alone");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_label_chip_switch_reseats_the_modal_preview_pose");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -1447,16 +1454,31 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
 
+      // The Cancel baseline: the pose as of the open. A Staged Cancel must restore exactly this —
+      // the re-seat is buffer-side display state, never a commit.
       float at_open[16];
       std::memcpy(at_open, gui::g_crystal_rotation, sizeof at_open);
 
-      // Drag first, so a pose-moving switch is distinguishable from the pose merely surviving.
+      const auto& plate = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
+      const gui::AxisDist plate_definition[3] = { gui::EffectiveAxisPresetZenith(plate), plate.azimuth, plate.roll };
+      float plate_view[16];
+      gui::DefaultPreviewRotation(gui::AxisPreset::kPlate, plate_definition, plate_view);
+
+      // Drag first, so a pose-moving switch is distinguishable from the pose merely surviving —
+      // and the premise is the discriminating fact: the dragged pose must differ from the view
+      // the switch is about to produce, otherwise the two worlds are byte-identical and the
+      // assertion below has no power.
       gui::ApplyTrackballRotation(45.0f, 15.0f);
       ctx->Yield(1);
       float dragged[16];
       std::memcpy(dragged, gui::g_crystal_rotation, sizeof dragged);
       if (std::memcmp(dragged, at_open, sizeof dragged) == 0) {
-        IM_ERRORF("%s", "premise: the drag moved the pose, so the switch assertion below is not vacuous");
+        IM_ERRORF("%s", "premise: the drag did not move the pose, so the switch assertion below is vacuous");
+      }
+      if (std::memcmp(dragged, plate_view, sizeof dragged) == 0) {
+        IM_ERRORF("%s",
+                  "premise: the drag landed on Plate's typical view, so the switch assertion below cannot tell the two "
+                  "worlds apart");
       }
 
       ctx->ItemClick("**/Plate##axis_label_chip");
@@ -1466,20 +1488,79 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       // value (the default document label is Random, whose zenith is the full uniform span), so
       // a silently skipped press cannot pass the pose assertion below.
       const gui::EditModalBuffers after = gui::GetEditModalBuffers();
-      const auto& plate = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
       if (!(after.axis[0] == gui::EffectiveAxisPresetZenith(plate))) {
         IM_ERRORF("%s", "premise: the chip press did not load Plate's zenith, so the pose assertion below is vacuous");
       }
 
+      // The re-seat lands on the target label's typical view, and the packaged zoom comes back
+      // with it (ResetCrystalView owns both; a future split that drops the zoom half must fail
+      // here rather than drift silently).
       float observed[16];
       std::memcpy(observed, gui::g_crystal_rotation, sizeof observed);
-      if (std::memcmp(observed, dragged, sizeof observed) != 0) {
-        IM_ERRORF("%s", "a label chip press moved the preview pose; it must leave it where the drag left it");
+      if (std::memcmp(observed, plate_view, sizeof observed) != 0) {
+        IM_ERRORF("%s", "a label chip switch must re-seat the preview pose on the target label's typical view");
+      }
+      IM_CHECK_FLOAT_EQ_EPS(gui::g_crystal_zoom, gui::kDefaultCrystalZoom);
+
+      // A first Custom press has neither memory nor a definition — the parameters do not move —
+      // and the pose still re-derives, now onto Custom's chain view of the live parameters.
+      ctx->ItemClick("**/Custom##axis_label_chip");
+      ctx->Yield(3);
+      {
+        const gui::EditModalBuffers custom = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(custom.axis_preset), static_cast<int>(gui::AxisPreset::kCustom));
+        for (int i = 0; i < 3; ++i) {
+          if (!(custom.axis[i] == after.axis[i])) {
+            IM_ERRORF("premise: the first Custom press moved axis[%d], so the rename-only setup is void", i);
+          }
+        }
+        float custom_view[16];
+        gui::DefaultPreviewRotation(gui::AxisPreset::kCustom, custom.axis, custom_view);
+        if (std::memcmp(gui::g_crystal_rotation, custom_view, sizeof custom_view) != 0) {
+          IM_ERRORF("%s", "the Custom rename press must re-derive the pose from the live parameters");
+        }
       }
 
-      // Same for the Reset row: drift a parameter off the definition first, so Reset demonstrably
-      // rewrites the buffers rather than re-writing what is already there, then assert the pose
-      // survived it.
+      // Staged Cancel rolls the pose back to the open-time snapshot: the re-seat never became
+      // document state.
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+      if (std::memcmp(gui::g_crystal_rotation, at_open, sizeof at_open) != 0) {
+        IM_ERRORF("%s", "Cancel must restore the pose the modal was opened with");
+      }
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "the_reset_row_leaves_the_modal_preview_pose_alone");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+
+      const auto& plate = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
+
+      // Land on Plate first: it gives Reset a label with a definition to reload, and its re-seat
+      // (the chip case owns that assertion) is the premise baseline — the view we drag away from.
+      ctx->ItemClick("**/Plate##axis_label_chip");
+      ctx->Yield(3);
+      float seated[16];
+      std::memcpy(seated, gui::g_crystal_rotation, sizeof seated);
+
+      gui::ApplyTrackballRotation(45.0f, 15.0f);
+      ctx->Yield(1);
+      float dragged[16];
+      std::memcpy(dragged, gui::g_crystal_rotation, sizeof dragged);
+      if (std::memcmp(dragged, seated, sizeof dragged) == 0) {
+        IM_ERRORF("%s", "premise: the drag did not move the pose, so the Reset assertion below is vacuous");
+      }
+
+      // Drift a parameter off the definition first, so Reset demonstrably rewrites the buffers
+      // rather than re-writing what is already there, then assert the pose survived it.
       ctx->ItemInputValue("**/Zenith/##Std_input", 5.0f);
       ctx->Yield(2);
       {
@@ -1488,7 +1569,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           IM_ERRORF("%s", "premise: the drift did not move the zenith, so the Reset assertions below are vacuous");
         }
       }
-      ctx->ItemClick("**/Reload##axis_reset");
+      ctx->ItemClick("**/Reset All##axis_reset");
       ctx->Yield(2);
       {
         const gui::EditModalBuffers after_reset = gui::GetEditModalBuffers();
@@ -1653,8 +1734,11 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
   }
 
   // Pressing the already-highlighted chip is a no-op: no leave is recorded, nothing loads, and
-  // the label buffer does not move. (Pulling the parameters back to the label's definition is the
-  // Reset row's whole job; the press must not half-do it.)
+  // neither the label buffer nor — since the re-seat joined the switch's contract — the pose
+  // moves. (Pulling the parameters back to the label's definition is the Reset row's whole job;
+  // the press must not half-do it.) The `entry.id != active` guard in the chip branch makes this
+  // structurally impossible; the pose assertion pins it anyway, because a refactor that drops the
+  // guard must fail here and not quietly start re-seating while the user is looking.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "pressing_the_highlighted_chip_is_a_no_op");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -1666,6 +1750,18 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
+
+      // Drag first: the no-op claim covers the pose too, and a static pose cannot witness it.
+      float at_open[16];
+      std::memcpy(at_open, gui::g_crystal_rotation, sizeof at_open);
+      gui::ApplyTrackballRotation(30.0f, 10.0f);
+      ctx->Yield(1);
+      float dragged[16];
+      std::memcpy(dragged, gui::g_crystal_rotation, sizeof dragged);
+      if (std::memcmp(dragged, at_open, sizeof dragged) == 0) {
+        IM_ERRORF("%s", "premise: the drag did not move the pose, so the pose assertion below is vacuous");
+      }
+
       const gui::EditModalBuffers before = gui::GetEditModalBuffers();
       IM_CHECK_EQ(static_cast<int>(before.axis_preset), static_cast<int>(gui::AxisPreset::kRandom));
 
@@ -1677,6 +1773,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         if (!(after.axis[i] == before.axis[i])) {
           IM_ERRORF("the highlighted chip press moved axis[%d]", i);
         }
+      }
+      if (std::memcmp(gui::g_crystal_rotation, dragged, sizeof dragged) != 0) {
+        IM_ERRORF("%s", "the highlighted chip press moved the preview pose");
       }
 
       ctx->ItemClick(kCancel);
@@ -1751,7 +1850,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       }
 
       // Reset is inert under Custom: nothing may move.
-      ctx->ItemClick("**/Reload##axis_reset");
+      ctx->ItemClick("**/Reset All##axis_reset");
       ctx->Yield(2);
       {
         const gui::EditModalBuffers after_reset = gui::GetEditModalBuffers();
@@ -1814,7 +1913,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->ItemInputValue("**/Zenith/##Mean_input", 66.0f);
       ctx->Yield(2);
       const auto& random = gui::AxisPresetEntryFor(gui::AxisPreset::kRandom);
-      ctx->ItemClick("**/Reload##axis_reset");
+      ctx->ItemClick("**/Reset All##axis_reset");
       ctx->Yield(2);
       {
         const gui::EditModalBuffers after_reset = gui::GetEditModalBuffers();

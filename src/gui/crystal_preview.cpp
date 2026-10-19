@@ -164,11 +164,17 @@ void ResetCrystalView() {
 
 // Writer closure: `preset` must always BE a label — the crystal's stored axis label
 // (ResetCrystalViewToCrystal: modal open, app/test init) or the label being edited
-// (edit_modals' Reset View button reads g_axis_label_buf). The Label chips and the Axis tab's
-// Reset button deliberately do NOT call this: a chip press switches parameters and label without
-// touching the pose the user is looking at, and Reset reloads parameters only — driving the view
-// from either would jump the pose mid-edit. The functional test
-// switching_a_label_chip_leaves_the_modal_preview_pose_alone enforces that half.
+// (edit_modals' Reset View button and Axis label chips read g_axis_label_buf). Writers of
+// g_crystal_rotation: modal open (a different crystal), a chip switch, Reset View, and app/test
+// init. A chip switch re-seats the pose because the card thumbnail already does — under
+// Immediate its re-render flips on every label change, so a modal that kept the old view would
+// be the divergence; a label change re-derives the pose unconditionally (a first Custom press
+// renames only, and still re-derives). Reset (parameter reload) still does NOT write the pose,
+// nor do parameter edits: driving the view from either would jump it mid-edit.
+// a_label_chip_switch_reseats_the_modal_preview_pose enforces the chip half;
+// the_reset_row_leaves_the_modal_preview_pose_alone the Reset half. DefaultPreviewRotation's
+// other holder, the entry-card thumbnail, is a non-writer by design: it keeps its own rotation
+// and never touches g_crystal_rotation.
 void ResetCrystalView(AxisPreset preset, const AxisDist params[3]) {
   DefaultPreviewRotation(preset, params, g_crystal_rotation);
   g_crystal_zoom = kDefaultCrystalZoom;
