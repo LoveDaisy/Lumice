@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792434786009,
+  "lastUpdate": 1792434791759,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,48 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5c29ec370e9e6fcae68806e5d82c40e8df5359a2",
-          "message": "Merge pull request #409 from LoveDaisy/fix/continue-render-plane-total-flake\n\nfix(test): calibrate ContinueRender's plane-total band to per-batch wavelength noise",
-          "timestamp": "2026-09-25T15:58:37+08:00",
-          "tree_id": "616829b9a9cb568528885cd75ef28c022146191b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/5c29ec370e9e6fcae68806e5d82c40e8df5359a2"
-        },
-        "date": 1790324478064,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1012741,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 714562.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 569525.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "a2d088f53ed6ac75eeac825ca6f5ec003084e6cd",
           "message": "Merge pull request #410 from LoveDaisy/feat/channel-math-display-mode\n\nfeat: Channel B−R display mode (is this spot bluer or redder?)",
           "timestamp": "2026-09-25T16:20:42+08:00",
@@ -9582,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 589760.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4dfe2ac445b752957a1a13cbb722bb0f12a53d12",
+          "message": "Merge pull request #522 from LoveDaisy/feat/gui-visual-declutter\n\nfeat(gui): right-panel visual declutter — Continue dim, Resolution de-rust, aspect combo merge (task-713)",
+          "timestamp": "2026-10-20T02:27:18+08:00",
+          "tree_id": "ff8a85581ce9896080bb1822c5962ddbef7910ee",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/4dfe2ac445b752957a1a13cbb722bb0f12a53d12"
+        },
+        "date": 1792434791160,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 834574.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1010160,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 722442.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 590376.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
