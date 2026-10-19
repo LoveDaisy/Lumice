@@ -48,6 +48,10 @@ by the single function `DeriveSymmetryGating`); nothing infers it.
   reduction (`server/raypath_histogram_consumer.cpp`) and the chain ids it reads use this meaning.
   See `raypath-analysis-panel.md` §7.
 
+The baseline a filter's own behaviour is judged against is the v4.7.0 matching set
+(`test/e2e-correctness/test_filter_label_symmetry.py`): when changing the symmetry semantics or
+a reduction implementation, reconcile against that set.
+
 The two are why "Exclude this raypath" (analysis panel) sometimes writes a filter with no symmetry
 and one row per member: a list row is a physical class, and when the label class under the same
 bits is larger, the bits would remove paths the row does not hold.

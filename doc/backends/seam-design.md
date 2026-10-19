@@ -8,6 +8,12 @@
 > 当前代码仍兑现蓝图的核心：CPU/GPU 编排不镜像、几何构造留 host 单源后上传池、GPU 层间续传
 > device-resident、trace/filter/projection/累加融合、dispatch 与 readback 时钟分离。改变这些边界前，
 > 应先说明是在推进哪条不变量，而不是从历史中任选一版数据流照搬。
+>
+> 实现纪律与蓝图配套：**复用已验证的实现，不要重新发明**——几何遍历 / 出射 seam / per-ray 旋转
+> 上传 / 单引擎大 dispatch 各有已落地的参照（legacy `PropagateSlab`（`optics.cpp` 的 polygon-slab
+> 遍历）、当前 Metal 单引擎实现）；蓝图与既有实现冲突时以蓝图为准（历史反例：Metal 曾把投影焊进
+> trace，§4.1 纠正；CUDA 首版自创 Möller-Trumbore 遍历，复现了此前已修复的绝对-ε 漏面缺陷，
+> energy 0.735——经过与教训全文见 `gpu-route-history.md`）。
 
 ---
 

@@ -368,161 +368,46 @@ deleting its line, and an entry whose edge is gone fails the check.
 
 ## Documentation Index (`doc/`)
 
-Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant one
-**before** redesigning a subsystem — many decisions are already reasoned out here.
-(Most have a `_zh` Chinese sibling.)
+Valuable design/architecture docs live in `doc/` (tracked); most have a `_zh`/`.zh.md` Chinese
+sibling. Each entry below is the trigger map — the doc itself is the sole content authority, this
+index carries no summaries. Subsystem operating rules live next to the code: `test/AGENTS.md`
+(test tree) and `src/raypath/AGENTS.md` (raypath module surface).
 
 - **Overview / guides**: `README.md`, `architecture.md`, `developer-guide.md`, `gui-guide.md`, `configuration.md`
 - **Core / rendering architecture**: `accumulator-consumer-architecture.md`, `raypath-rayseg-architecture.md`, `coordinate-convention.md`, `crystal-orientation-sampling.md`, `ev-pipeline-architecture.md`, `adaptive-brightness.md`, `filter-architecture.md`
-  - `ev-pipeline-architecture.md` §2.4/§2.5/§2.6/§2.8/§7 + `adaptive-brightness.md`/`.zh.md` §2–§3 — **两种曝光锚点（`ev_mode`: relative 默认 / absolute）的机制与契约**：`relative` 锚到**场景的天空辐亮度**（`anchor_l99_sky`，固定全天等面积平面上的 P99，每球面度）——⚠️ 这是 482.3 换掉的东西，**旧文写的「自锚到当前帧自身 P99」已作废**；`absolute` 锚到光源发射能量（`SimData::emitted_energy_` → `LUMICE_RawXyzResult::emitted_energy`），使不同 config 在同一 EV 下直接可比。⭐**双侧共锚的形状（§2.8）**：CLI **除以**自己视图的 `Ω_axis`、GUI **乘以**源纹理的 `Ω_axis`，两条链收敛到同一个逐像素式 `L·m(pos)/L99_sky`（`m` = 相对照度）——**两侧公式长得不一样是设计**，别当遗漏；`Ω_axis` 由 `LUMICE_RawXyzResult::axis_solid_angle`（v4.23）发布，**在此之前 relative 分支是本 API 唯一无法被消费者复现的公式**。⛔ GUI 侧漏乘 `Ω_axis` 值 **15 stop**，且**不表现为黑屏**——`ComputeEvAuto` 的 ±6 clamp 会把它吸收成「看起来只暗几档的正常画面」（实测代价：export_parity 三行掉 5–8 dB，其余测试全绿）。⭐**§2.8 迁移律**：`new_scale/old_scale = p99_view/(Ω_axis(view)·L99_sky)`；**每一个 relative config 都会动**，实测 13 组合 × 2 场景跨 **−2.02…+2.55 stop（24×）**，⚠️ 符号不随视场宽窄单调（`linear 20°` 一场景 −2.02、另一场景 +0.26），量的其实是`L99(取景框内)/L99(全天)`，⛔ 不得外推。⭐**换来的两条有意行为变化**：① 换视角/镜头/朝向不再改亮度；② 改输出或 `sim_resolution` 不再改亮度（旧规则下 `linear 20°` 512²→1024² 实测 0.52–0.57 stop）——即相机语义。⭐**「config 不完整决定亮度」这条旧代价现在只付掉一半**：**视角**不再共同决定亮度（已消除），但 `ray_num` 仍然共同决定（锚点仍是对累积的 MC 统计量，这正是外观随 N 稳定的来源；要完全由 config 决定就用 `absolute`）。② 欠采样场景在任何固定 EV 下都会随累积变暗，这与选哪个分母无关（两种分母的 N 标度斜率相同），`relative` 靠 N 相关的锚增益把它抵消掉，`absolute` 没有抵消项而使其显形——是诚实的 MC 行为，不是「跑越久越坏」。⭐**`absolute` 的迁移律**（§7.2，与上面那条不是一回事）：`new_scale / old_scale ≡ landed_fraction`；实测位移全天球无 filter −0.038…−0.002 stop、窄视场无 filter −0.67…−1.25 stop、filter/高 `ms_prob` −0.97…−10.47 stop。⭐**诚实边界**：`absolute` 的可比性只覆盖同 lens/FOV/分辨率，跨 lens 差一个 `landed_fraction` 比值，故意不做逐像素 `Ω_p` 归一（会重新加权改变画面外观）。⚠️**别把这条读成「`Ω_p` 处处被否决了」**：它否的是**在 core 侧把 `Ω_p` 除掉**；GUI 预览侧的毛病方向相反（重采样等面积纹理 ⇒ 没有随位置变化的 `Ω_p`），已由 §7.5 补上**相对照度**（`Ω_p` 归一到轴上值，`src/gui/preview_jacobian.hpp` + shader `relIllum*`）——两条合起来说的是同一件事：两侧都该是相机语义。§7.5 记着为何归一化取**轴上值**而非 `Ω_texel_source`：双侧共锚之后这已是恒等式（两条链代数上收敛到同一式），用绝对比值会引入一个由画布角分辨率决定的全局增益，实测 0.331×/16×，把已绿的场景打红。⭐**§2.7 测光规则（`visible` 不参与测光）现在是结构性事实而非纪律**：锚点建在一块没有 `visible`/lens/view 字段的固定全天平面上，**已经没有地方可以把掩码应用到测光上**；测试也随之升格为更强的命题`RelativeExposureIsIndependentOfThisFramesOwnPixels`（scale 只由 anchor/Ω_axis/intensity_factor 决定），并把**已退役的按视图 P99 规则复述在测试内部当控制组**（否则不变性是空命题）。§2.7 里 `visible` 那次亮度迁移（单镜头族 + `visible != full` + `relative`，最坏 −1.68 stop）⚠️ 现为**历史记录**：其机制已不可能复发，当前这一步的迁移以 §2.8 为准。⛔ **合成路（`ParticipatingExposureScale`）不在本次范围内**：它锚「参与色类 lane 的 P99」，是另一个物理问题且从来单源（server 算一次、两侧读同一个 `composite_p99_y`）——但由此产生一条新事实：**mono relative 现在与视角无关、composite relative 仍与视角有关**。改曝光归一化 / `ev_mode` / `ExposureScale()` / `emitted_energy` / **测光是否看 `visible`** / **GUI 预览的投影亮度** / **`anchor_l99_sky` 或 `axis_solid_angle` 的消费**前先读。
-  - `raypath-symmetry.md`（+`.zh`）— **P/B/D 的两种含义（§1.1，2026-09-28 拆开）**：filter / 染色 ref 的 P/B/D 是**标号等价**（L1：P=标号 C6、B=标号 σh，不看形状与取向，D 按 roll mean），分析列表的是**物理等价**（L2：再与形状 `DeriveGeometricSymmetry` 及取向 `IsP/IsBApplicable` 相交，一行=一个物理类）。代码里每个约化入口用 `SymmetrySemantics::kLabel/kPhysical` 显式点名、门控只由 `DeriveSymmetryGating` 给出，⛔ 不得再让两者共用隐式推导（曾因此让既有 `.lmc` 的 filter 零匹配）。低对称晶体上 filter 的 P 合并物理不等价光路是**已接受的用户意图**（编辑器提示 + 逐行 OR 出路），不是缺陷；filter 行为的判定基准是 v4.7.0 的匹配集合（`test/e2e-correctness/test_filter_label_symmetry.py`）。改 filter 对称 / 分析列表分组 / 缺面告警 / Exclude 生成前先读。
-  - `overlay-label-placement.md` — GUI overlay 文字 label 的 **curve-centric 放置设计**（blueprint；explore-288.5 收敛）：现 boundary-centric 5-source 的 4 缺口审计（globe/rectangular 缺经度、dual_fisheye 零 label、边缘成簇）+ curve-centric 统一模型（每曲线 walk→裁剪可见区域→边界/内部两模式）。改 overlay label 放置前先读。
-  - `numerical-robustness.md` — geometric numerical-stability conventions (7 rules): avoid absolute-ε anti-pattern, prefer argmax / relative tolerances, double precision for geometry generation, single predicate owner; distilled from the extreme-wedge bug family (PR #132/#133/#135/#137). Read before adding or **modifying** any geometric predicate.
-  - `crystal-geometry-representation.md` — **晶体几何生成 + 内存表达的机制层诊断与重构**（**重构已大半 as-built，PR #214**；§1 是 pre-#214 管线=诊断，§4.a/b/c 是落地状态）：缺陷族根因 = 管线把先验已知信息逐步丢弃再用数值方法重建（平面→顶点→面归组→三角化→反推面归属→反推面号），每个重建一个容差、每个容差一个真缺陷（PR #132–#209 对照表）；结构性错配 = 把参数化的 ≤20 面封闭小族当任意凸多面体处理（通用求解器仅 3 个调用点，全是六方晶体工厂）+ 三角网格/多边形面主次倒置。目标表达 = 平面 + 面存在掩码 + 面号常数表 + 闭式轮廓，扁平 POD 三后端同构。⭐**拓扑复用的失效判据难题在该表达下不存在**（判据问题只在拓扑靠数值发现时才有）。含诚实边界（凹锥/求交 ε/与「校验输出不校验输入」判据的张力）+ 动手前必答三问（消费者清点 / **等价性 gt 不能用旧求解器** / 面存在谓词形态）。**重设计几何前先读这篇；只是改谓词读 `numerical-robustness.md`**。
-  - `near-pole-area-measure-sampling.md` — **近极朝向采样从"常数包络拒绝"换为"面积测度重要性采样"的设计蓝图**（explore-326 GO + scrum-328.1 收敛）：`θ=90−lat` 换元 + 严格上界 `sinθ≤θ` → 提案 `base_pdf(θ)·θ`（Gaussian=Rayleigh / Laplacian=Gamma(2,b) / uniform=常数）+ 接受 `sinθ/θ`（M=1）= **精确 + 99% 接受**（vs 当前 20-27%）。⭐AC 硬约束：parity 不可 match 旧采样器（proposed 有意更精确，修当前 Laplacian 尾部 clamp 偏差）→ 对解析目标验证。改近极采样 / Rayleigh 路 / `ComputeJacobianEnvelope` / GPU device gen sampler 前先读。
-  - `gui-preview-lifecycle-architecture.md` — **后台 worker × 前台实时显示的时钟解耦设计**（多数 as-built；GUI 侧对偶于 `seam-design.md`）：诊断"跑完但 GUI 仍 Simulating"卡死的机制层根因 = 仿真生命周期被复制 + 边沿触发 + 撕裂读；四时钟解耦（显示/快照物化/batch 生产/生命周期心跳）+ epoch 统一世代键 + 电平触发 reconcile + CQS + **7 条不变量 I1–I7**。**§10 落地状态表（2026-08-06 核对）**：I1/I2/I3/I5/I6 合规，I4 前半句合规、后半句（三个计数无廉价 C API 路径）明示已知已接受不修；**I7「完成蕴含排空」已由 owner 拍板升格（2026-08-06），§5 的 `Completed` 定义已同步指向它**，机制 = `LUMICE_GetDrainStatus`（消费线程发布，⛔不挂 `kIdle`）；⚠️ I7 后半句「销毁路径不得丢弃未消费批次」在 `Stop()` 路径上**尚未落实**（`Queue::Shutdown` 仍丢弃，明示决定不改）。（激进）后端 push 帧/退化 poll 时钟仍是未启动的 stretch 项。改 GUI 预览生命周期 / poller-server 交接 / 完成判定前先读。
-  - `gui-state-governance.md` — **GUI 状态治理设计蓝图**（explore-gui-state-governance 收敛，2026-07-11）：回答 owner 总纲"每个用户操作 → ①内部状态如何转换 ②所有相关显示如何更新"。诊断 = `GuiState` 数据集中但**状态转换散乱、无统一 owner**，且偏离几乎全部聚于 **display 通道 ↔ sim 通道的交界**（活 bug=display-time 操作借 EnsureRunning+PublishValidReset 污染 sim_state 闪 Simulating / commit↔display 字段割裂 / Revert 不重推 / 显示态与结构态挤同 struct）。目标模型三支柱 = field→tier 声明式分类器（拆 ColorClassConfig 结构态/显示态子结构）+ 每通道单一序列化器+重推纪律 + latch 派生态且 display-time 禁碰 re-sim 原语，外加单一 `ResetFrontendState(reason)` 文档重置 owner（= backlog #5）。含 5 条固化不变量 + T1–T6 scrum 拆解。**§8 用户默认值层**：把字段的 tier 档位复用为默认值资格判定的单一权威（四命名空间：单例文档默认 / 预设库 / app 偏好一期排除 / 集合区排除），含 I1–I5 五条不变量与 `ConfigSnapshot` 的边界（覆盖字段集不同，不可互相复用 struct）。**§9 两个 Scene 编码投影**：`BuildScene` 的 `kSimCommit`（core 该产什么**纹理**供 shader 重投影）与 `kJsonExport`（该告诉 CLI 什么才能画出屏幕上这张**成品图**）**必须分叉**，含权威分叉面清单（`test_scene_commit_chain.cpp` 的 `kDivergingKeys` 是机械权威）、四处具名例外（`ray_color` / `lens_shift` / `front` / `sun_azimuth`，其中 `front` ⛔ 绝不可编码成 `"visible": "front"`——枚举容错会把它静默映射成 `upper`；`sun_azimuth` 恒 0 是**主动固定**而非「等一个控件」的权宜，⛔ 不得据此加方位角控件，并载有 owner 通则**GUI 与 CLI 的能力不必逐项对齐**——同族先例是 GUI 永远只请求 dual equal-area 投影、自己在前端二次投影。⭐ 导入侧的对偶：三个「GUI 结构上无处可放 + 导入路径完全静默 + 非默认值能改画面」的 core 字段（`sun.azimuth` / `render.lens_shift` / `scene.geom_clock`）现由 `WarnUnsupportedByDesign` 告警，⛔ 判据不是「把 core 的键都补上告警」）、以及「补上注解层之后分叉面往哪边走」。⭐ 可迁移判据：**任何「两条路共用一个编码器、只在个别字段上分叉」的结构，都要问：不分叉的那些字段，对两条路是不是同一个意思？** **§10 面板派生态**（as-built）：Analysis 列表新鲜度 = `AnalysisSceneIdentity`（Analyze 时捕获，字段集 crystals/layers/filters/sun/sim/resim 投影，⛔ 显式排除 `raypath_color` 与 T-view）+ `ComputeAnalysisListFreshness`（`sim_state_rules.hpp`，纯派生每帧比活体 `g_state`，`DoRun`/`DoRevert` 零新增代码）+ 面板顶行 banner（stale **不清列表**）；含两面板 39 字段的档位归类表与两条可迁移判据（「副作用式检测 ≠ 为该场景设计的检测」/「节点覆盖 ≠ 数据覆盖」——`ResetFrontendState` 只管 session-tier）。**§11 视图侧副本与位置引用的重同步不变量**（as-built，2026-09-20）：可迁移判据 = **视图持有的任何模型副本必须有一条声明的重同步规则；只在打开时同步的副本隐含依赖一把锁，而这把锁必须显式且对所有写者（UI 与代码）生效**。普查 `src/gui/` 全部视图侧副本 / 位置引用（S1–S10 三档裁定表），主缺陷 = Edit Entry 弹窗的 crystal/axis/filter 缓冲区只在开窗时同步、Immediate 每帧无条件覆写 pool ⇒ 分析面板 Exclude 被抹成孤儿槽位 / 静默 no-op；改为 **pull → draw → push 字段级三方合并**（`base` = 最近一次同步值，取自 pool 而非缓冲区；SoP 行按文本多重集增删；一条规则覆盖 Immediate/Staged，外部写者不必知道弹窗存在）+ ImGui `ReloadUserBufAndSelectAll` 的 reload-if-active（⛔ 漏接一处 = 外部写入被**永久静默丢弃**，闸是 19 行表驱动测试而非覆盖率断言）；同族追加修复 `ResetFrontendState` 未关弹窗（S9）与 `pick_link_source` 删除无补偿（S10）；S2 的锁改写为结构性理由；AC5 裁定不加机械门禁（附重新评估条件）。改 GUI 状态转换 / 染色 display 通道 / 文档切换重置 / 仿真生命周期显示联动 / 用户个人默认值 / **导出 config 的字段填充** / **Analysis 列表生命周期或 `ResetFrontendState` per-reason 分支** / **任何视图侧模型副本、弹窗缓冲区、位置引用、pick 模式**前先读。
-  - `gui-visual-language.md` — **GUI 视觉语言蓝图**（排版 / 色彩 / 尺寸节奏 / 信息形态；已由可运行原型逐项验证，2026-08-13）：诊断 = 外观**从未被设计过**（`AddFontDefault()` 的 13px 像素字体 + 零定制 `StyleColorsDark()`），且 `src/gui/main.cpp` 与 `test/gui/test_gui_main.cpp` **各自重复**一遍 style/font 初始化 ⇒ 截图与真 app 只是碰巧一致。⭐核心结论 = **精致感 = 秩序 = 重复 + 对齐 + 量化，与留白无关**；密度不是精致的敌人，不一致才是（参照应用信息密度更高却更有条理）。⭐**色相与面积是两个独立旋钮**：实测现状本就是高饱和蓝主题（输入框 216°/59%、标题条 212°/65%、面板底色纯中性），两版「加蓝」实际把蓝减掉 2–3 倍 ⇒ **色彩判断必须采样测量，目视断言曾致一次完整错误往返**。含可直接采用的数值（间距/圆角全表、调色板定案列）、四条被证伪方向（均匀加大间距 / 统一右侧标签列牺牲邻近性 / 去色中性化）、以及与面板重排的**顺序约束**（视觉语言正交可先行；控件形态与信息形态撞层，分两次做等于改两遍）。**§4 定案已落地并留在 `main` 上**（PR #271：Roboto Medium 15 构建期嵌入 + 调色板/节奏 + 语义色，单一 owner `theme.{hpp,cpp}`）；与之并行的形态重排已被内测否决并回退（见 `gui-layout-architecture.md` §8）⇒ 今天 `main` 上是**老 shell + 新视觉语言**，本文凡提「docking 迁移」读作「将来任何一次重排」。⭐**配色已被内测直接接受**（更细粒度反馈，2026-08-26；上一版索引写的「粒度未知、不构成接受的证据」已作废）；⚠️ 但被问到的只有**配色**，§4 其余条目（字体/节奏/语义色）仍只是「没有被反对」。**§9 窗口尺寸策略四档表（as-built，2026-09-22）**：固定 / 自动贴合 / 半可变 / 自由 + 逐窗口归档；与 `gui-layout-architecture.md` §8（面板重排 / docking）正交——**可拉尺寸不是重排**。半可变的唯一表达是 `SetNextWindowSizeConstraints` 固定轴 min=max（⛔ 不发明自定义手柄），上限算式单一 owner `secondary_window_sizing.hpp`；内容不随文档变的用 `ImGuiCond_FirstUseEver`（⚠️ 不是 `Appearing`，那个每次重开都重置），随文档变的（Summary）不能用 `AlwaysAutoResize`（蕴含 `NoResize`），改为「贴合内容直到用户第一次拖动」的每帧请求；两者都要有 `ResetXxxTestState()` 复位口（Size 是「隔离单跑绿、全量跑红」家族的第四个字段变体）。改 GUI 外观 / 面板排版 / 控件形态 / **任何窗口的 resize 行为** 前先读。
-  - `gui-layout-architecture.md` — ⛔**方向已被内测否决，不是待办**（2026-08-26）：本文 §1–§4 的形态曾完整实施并合入 `main`（PR #272/#273），随后小范围内测中几乎全部用户选择回到老 shell ⇒ `main` 回退到 PR #271，形态层留在分支 `feat/new-gui-layout`（尖端 `7a66c523`；内测用的 `v4.4.2-new` 标签与 release 已删）。⭐**方法层教训（已改写）**：不是「缺一道测迁移成本的闸」——本地拿不到用户反馈是结构性事实，发版取证那个环本来就是通的；真正的偏差是**验收问错了量**：两道闸都在问「形态好不好用」，从没量过**常见任务的操作步数**与**一屏可见字段集合**，而这两个数本地就能机械得到，且正是用户点名的。⭐**反馈粒度已查明**（2026-08-26，原「粒度未知＋窄 A/B 取证」已作废）：**配色被接受，被拒的是形态**，理由具体＝不如老 plain 布局一眼看到所有信息、同时调冰晶与太阳高度要多点好几步（机制＝master–detail 一次只看得见一个对象）。⇒ ⭐**新增硬约束：将来任何一次重排，最常一起调的字段组必须保持同屏可见**（§0 骂的「分割轴任意」属实，但那条任意的轴恰好在从未被度量的「同屏可见性」这一维上是好的）。以下为原蓝图内容，仍作设计记录有效：**GUI 布局架构蓝图**（面板组织形态；已由可交互 HTML 原型验证并经 owner 上手定案，2026-08-14）：诊断 = 现状左右侧栏的**分割轴任意**（晶体在左、太阳在右却同属文档；执行与显示挤同一滚动列；最深编辑住阻塞 modal）⇒ 定案 = 按字段生命周期重排为**「文档 | 图像 | 运行」三区**（生命周期分档复用 `gui-state-governance.md` 的 field→tier 分类器——面板组织追随状态架构）：文档列 = 树 + 检视器**双面板同柱**（VS Code 形态：独立滚动/可拖分隔/节头折叠；master–detail 取代 crystal/axis/filter 编辑 modal，docking 同列双窗口原生即此行为）、执行簇进顶栏（含 dirty 芯片 + Rays ∞ 档位）、显示条挂视口下缘（Grade/Overlays/**Components 预留位**按未来住户验收）、空态天空坐标系。⭐**六条被推翻形态勿重提**（检视器放右缘=跨屏实测推翻 / 单列共享高度=压测推翻 / 树内联展开 / 锚定 popover / workspace 模式页 / 节点图）；**§6 落地自由度**明确细节不定死。⭐顺序约束 = 本文就是面板重排的设计输入，禁止「机械搬运再重组」改两遍；纯视觉语言正交先行（已由那一轮实施反向印证）。**§0 诊断与 §5 被推翻清单不随否决失效**：问题本身仍在老 shell 上为真，六条形态仍不得重提。⛔ 不得据本文重启面板重排；确要重排 / 新增面板级功能（光路成分分析 UI 等）前先读，尤其 §8。
-  - `gui-custom-spectrum-and-raypath-color.md` — GUI 功能扩展设计（功能 1 自定义离散光谱已由 task-323 落地并将 `ray_num` 语义统一为总数）。**功能 2 per-raypath 颜色标记（2026-07-05 深化蓝图，未立项）**：一个物理机制三层角色 = 物理门 filter（1:1 不动）+ 色桶 = filter 的 summand（Fork C，不放宽绑定）+ 跨层 rule（带层键 component 的布尔组合，接跨层轨迹染色）。⭐地基窄而稳 = 产 per-ray component 掩码（复用 §5.1）+ 跨层前向累积（加宽 `is_prior_filter_failed_`）+ 交付 consumer；三硬承诺 = 携带原始掩码/带层键/uint64。⭐隔离契约 = binning + re-sim 边界 + rule + UI 全属地基之上、换之不动 seam。改光谱/光路染色相关前先读。**§4.8 合成算法重设计（2026-07-15 定案）**：dominant 噪声敏感根因 = argmax 不连续；定案 = dominant 保持 hard argmax（诊断视图）/ painter 改为亮度即 alpha 的 over 合成（`alpha=f(ey)=min(ey,1)`、纯色相、修「暗点压亮点变黑」黑洞 + 顺带连续）/ painter 设默认 / EV 解耦（alpha 用 self-anchor、display EV 后置乘）/ composite+EV 在线性 RGB。改 `component_compositor.cpp` 前先读 §4.8。
-  - `raypath-analysis.md` — **光路分析功能总篇 / 路线图**（2026-09-25）：「光路分析」为什么拆成 (i) 识别 / (ii) 剥离、
-    (i) 已交付（PR #347）、(ii) 为什么搁置（⛔ owner 裁定，不是待办；§4 保存内存墙规模事实、五条路线、两条被否决方向、
-    重启条件与三条探针）、(i) 路线的中近期深化（真实光路轨迹 + 分段能量占比；panel §8 四个升级点）。
-    想新增任何光路分析相关功能、或重提「即时开关某条弧」前先读；机制细节在下一条。§5.1.8 = Analyze
-    工作区的产品形态与布局定稿（2026-09-28；两张单圆盘等面积全景分工、光路视图缩放 + 吸附、太阳
-    方向球上的水平集即 fiber、Analyze 下左 300 / 详情 400；可交互原型 `doc/prototypes/analyze-workspace.html`）。
-    §5.1.6「仓库定位」（2026-09-28 owner 裁定）：Lumice = 产品（用户能用到的全部计算，C++，每个语义
-    只有一份产品实现）、Lumice Integral（LI）= 研究与参照（新方法诞生地，同时是 Lumice 的独立校验
-    对象）；共享判据不是单纯「稳定就共享」，而是「稳定，且不是两边互相校验的对象」——原语与约定层
-    （晶体几何、面编号、对称约化、Snell / Fresnel）两边刻意各留一份，算法层（单光路反解与 fiber
-    行走等）成熟后收敛为 Lumice 的一份 C++ 实现，经 Lumice 共享库共享给 LI。
-  - `raypath-analysis-panel.md` — **光路分析面板设计记录（as-built，2026-09-11；PR #347 已合入 `main`）**：
-    (i) 已交付形态的机制记录。从「光路成分分析」(ii) 剥离需求的内存墙拆出第三种形态——**专用统计运行**（不渲染、只按完整光路聚合能量）
-    取代「一次运行既渲染又按像素存分解」，拆开 N×W×H 的两处耦合各消解一处：专用运行拆掉与渲染的耦合，
-    统计量而非图拆掉像素维度，内存降为 O(不同光路数)，是路线 E「不存、需要时算回来」的泛化。
-    四条 owner 裁决均已落地：v1 只走 CPU 路且显式（`SessionMode::kAnalysis` 强制
-    `ResolveGpuRoute`/`CreateBackend` 走 CPU，GUI 不禁用/不提示；⭐2026-09-13 起 GPU 偏好 server
-    也是**多 worker**——构造期常备一组 CPU 偏好的分析池 `analysis_pool_simulators_`，`Start()` 按
-    `SessionKind` 只唤醒对应组，`num_workers` 由此对 GPU 路第一次生效=决定池大小）/ 完整链（跨 MS 层）= per-ray 链 id
-    （`RayBuffer::chain_ids_`）interning（`ChainIdInterningTable`）前向携带，与 `components_` 同一套
-    六个传播点（已用红态探针逐点验证）/ ROI = 方向空间锥形 + 分环 + 角半径滑杆 display-time 生效（GUI
-    专测钉住）/ 总能量降序必有，密度排序（能量/立体角）v1 未做。顺带闭环：列表行 →「Exclude this
-    raypath」→ 生成 filter → 重跑（`WriteFilterToPool`），v1 只对单段链可用（五类可用性判据见 §5）。
-    chain id 约化对称来源的 A/B 之争已随 symmetry 搬到读取侧（C API v4.33）而结构性消失，见 §7 末尾。
-    ⭐**一条设计阶段的 assistant 推断被实现证伪**：`ProjectExitToPixel` 本身**不含**
-    `visible`/`front` 语义，「可见区域」ROI 需要额外组合 `VisibleByRange`/`FrontVisible`（§3.4）。
-    含逐条回写「已确认/已证伪/仍待办」的诚实边界（§6）与已落地后仍明确未做的四项升级点及各自触发条件
-    （§8：GPU kernel / 密度排序 / 列表→预览高亮联动 / 多段链排除）。改光路分析面板 / 链 id 携带 /
-    直方图 consumer / 分析运行 C API / 分析面板 GUI 前先读；用户可见行为见
-    `doc/user-manual/06-raypath-analysis.md`。
-  - `feature-diagnostic-discovery-research.md` — **通用特征发现的研究历史与§19产品落地**：实际加权天空与机制候选双向核对；条件机制≠joint图峰；平滑密度峰、零有限支持及采样峰漂移三类反例。§9新增支持感知重要性提案/厚度延续冷启动、连续二维谱界与三类端点、深接口实际来源证据；两次真失败（拼接Sobol的联合偏置、提案模态塌缩）。§10新增Gaussian-only联合薄域、物理density/CDF分离、产品LUT/相关shape/真实三谱与两层链；错入射总量近似但峰偏19–26°，正确链仍有独立局部位置失败（求根残差/重复差≠采样误差）。§11核验独立参考自身局部误差、否决归一但覆盖低效的盒提案；条件角域提案仍未达整体0.1°。真实两层/相关shape来源关联已接通，条件pair临界而full map仍rank2有实证；§12把现有产品measure/L2/XYZ与确定性装配分开；零柱高锥直接支持有LI证据、strict-pole参数数≠支持维数已修、固定pose原子与有限太阳有正反、真实三谱二维色度/同色负例及声明支持四角闭环已核验；保留局部积分、多活动事件到实际结构关联及正式API未解。§13固定outer的条件角求积将谱点inner细化差压至.004°内，但真实脊法向变化与outer尾贡献仍未解；均值接近≠参考自身准确，未收敛iterate不得当位置；完整CDF纬度分段仅有两真实上游切片正证。§14记录已落地的内部产品输入装配：host纯变换/shape realization单源，scene快照→因子化actual输入→逐成员条件链；不含scene allocation/continuation/filter积分政策、发现算法或新ABI。§15给出真实深接口/有限支持多活动边横截、源邻接与天空同像异原像反例、actual贡献到端点的数值消费；产品area≤eps与精确几何接触分开，不据此改容差。局部规则可转产品化，活动边lineage/正式ABI仍未交付，不宣称全域连接完备。§16完整末层CDF积分在128/512前缀有真实位置稳定性收益，但跨臂四端点仍.146–.969°、LI自身前缀差达1.224°，40倍末层求值不宜直接作通用默认；上游贡献集中与端点Jacobian给出误差分配判据，纬度细化不是总inner误差界。§17记录内部球面XYZ/xy观察核与独立jet夹具、真实色度四点独立位置证据；Haar单晶体direct cloud在约315万光学求值下仍破坏旋转不变性，正确jet不等于积分场可靠，条件spin积分只是候选，完整发现/预算/新ABI未完成。§18记录产品joint sampler的谱绑定回放/canonical latent owner、独立Gaussian峰与真实xy位置正证；目标自由试验发现并修复ridge残差在二维开区域恒零的伪曲线（移动特征向量横截性），但普通内缘与自动颜色定位仍未闭环：LI参考自己差约.00005°，改h却真实移动.24560°，不能把观察尺度位移当采样误差。§18的未交付结论现是历史边界；§19为产品落地记录（写定于schema2时代：真实P1/physical L2→共享数值→CLI，analytic API7正式安装消费；**当前产品事实是schema3报告**——几何层升一等证据、MC降级佐证，权威=`raypath-cli-output.md` §7与`raypath-schema3-layered-design.md`，§19表述保留为当时基线）；固定观察误差/尺度响应/物理内缘分离，同场xy条带、源clip/光学/声明边界不同谓词保留。8点色度窗口有独立位置证据，延长窗口不继承精度保证；实际CDF端不等于理想uniform端。15秒默认/显式两分钟、partial保留已证记录，未声明全域连接/任意弱特征完备。0.1°是局部研究目标不是全域产品硬尺。设计通用特征检出、归因及其共享接口前先读；研究历史不能代替当前API/独立验收，不外推全部输入或全域完备。
-  - `cases/raypath-analysis-cases.md` — **光路分析测验场景语料索引**（2026-10-06 建立；2026-10-14 人工讨论终态轮处置 C01–C16 并新增 C17/C18）：光路分析功能的
-    典型测验场景统一登记处（C01–C18：22°/46° 基线、双特征 3-1-5、120° 白/蓝色偏类、beta 内反射链支撑互补、
-    锥晶/纬线/秩 0 空态族、定向族交切与亮弧机制/Lowitz 三类、归属负对照、开弧族 3157/357 反日聚集与宽弥散），
-    每条带考察维度词表、已核验事实与 tracked 锚点；各条「终态补充/增补」段为该轮人工讨论结论，
-    人工讨论完成 ≠ 产品全 PASS；新发现典型光路在此汇总（编号只增）。任务取测验场景从这取，不各自临时凑；场景语料 ≠ 验收 fixture。
-  - `raypath-cli-output.md` — **`Lumice raypath` 子命令与其 JSON 输出（target schema1 / report schema3）的字段参考**：
-    单层光路 × 单晶体 × 单天空点的纤维分量、逐点详情、太阳方向球网格；计算与序列化都在引擎侧
-    （`src/raypath/`，`lumice_raypath.h` v4.50 `LUMICE_AnalyzeSinglePath` → 不透明结果 → JSON），CLI 与将来的
-    GUI 读同一份文档，⛔ 不另写序列化器。§3.8 `reach` + §3.9 空态三分 + §3.10 退化光路（纬线不变 / 圆弧纤维 / 片晶族重合）（`point_mass` / `discovered`+空+`target_in_range` false=几何不可达 / true=不排除但未找到，常见成因=有限晶体不放行）；⚠️ `reach` 与晶体尺寸无关，tol 取半阶收敛界 (1+√2)·Δ（sqrt 奇异边界下一阶界实测不保守）。字段只追加；`--warm` 回读契约；Ctrl-C / 进度与 `analyze`
-    不同的理由（核无取消点）。§7为独立的target-free report **schema3**（`schema_version=3`，v2 读者必须拒读 v3）：几何层结构对象（u-S² 三类临界线 + 四状态机 + 三桶派生）为一等证据、`support` δ 轴块（partition/onsets/常值曲线 n-continuation）、MC 降级为佐证（`mc_evidence` 携带旧记录、`unattributed_structures` 双向探测）、`no_related_feature` 双形态裁决；§7.7 有 v2→v3 迁移映射。旧target schema1/warm不变，⛔不得恢复固定path/参考shape公式detector。改输出字段 / 子命令选项 / 该 C 入口前先读。
-  - `raypath-schema3-layered-design.md` — **schema3 分层设计的持久设计记录（as-built）**：几何层 × 测度投影层的正交拆分（含修正 A 支撑流形归几何层 / 修正 B Haar 义务消失）、u-S² 归约与三类临界线 + 完备性证书、S1–S6+M1–M4 词表与 v1 范围（S4 只声明 / S6 机会式）、报告面映射表（`raypath-cli-output.md` §7 的机制层）、G1–G8 处置索引、双仓纪律（LI JAX 权威 / C++ 派生 / parity fixture / oracle=闭式锚+LI 互证、MC 不做 oracle 的三层理由）。改 schema3 报告语义、几何层枚举/证书、MC 佐证层或动 `src/analytic/` module-C 面前先读。
-  - `print-mode-subtractive-ink.md` — **print 显示模式（减色/密度墨）的单一设计权威**（2026-09-09 收敛为 blueprint，2026-09-10 已整体 as-built）：诊断 = 背景色是**加性**进管线的（`render.cpp:899` / `preview_renderer.cpp:709` / `component_compositor.cpp:325` 三处同形 `+=`），`out = clamp(L·c + bg)` 对辐亮度**单调不减** ⇒ 白底恒等于白，⛔**放开前景色是无效方案**（`ray_color_` 在该算子下取黑只得到「不发光」而非「黑点」）。⭐真实症状是**「线在、晕没了」**而非整片白——annotation 走 lerp（`render.cpp:922`）不受影响，看起来像软件坏了 ⇒ 告警不是可选项。⭐**第二条法则**：`D = γ·log10(1+e)`、`e = Y·ExposureScale()`、`out_j = paper_j·10^(-D)`，**`γ = 11` 是定案值**（数据驱动：非零 `e` 的 P95 → `D=0.5` 反解，4 场景几何均值，owner 眼判接受），⛔ 实现途中不得自行重标定或写成「待定」；⚠️ `e` 典型只有 1e-3~1e-1 量级，直觉区间 γ∈[0.3,2] **全场景产出纯白**的假阴性坑。⭐`10^(-D) ≤ 1` ⇒ 减色永不亮过纸色，与加性是**结构性非包含**（不是同一公式的两个参数区间）⇒ 模式枚举躲不掉，⛔ 不做「按背景色自动切」。⭐灰度是**主动放弃色相**（「墨吸收互补色」`κ=1-ĉ` 会让白光 `κ=0` ⇒ 幻日环/日柱等中性特征在白纸上消失；灰度把 `κ` 降为常量使陷阱消失），代价 = 印刷图里「哪条弧」只能靠位置形状读；CZA 近日点核心趋近实心黑是**已接受取舍**。⭐`background`(天空) 与 `paper`(纸) **拆两个字段**，让「print + 默认黑底 ⇒ 整页黑」这个退化态**结构上不存在**（三条补救路径都是隐式规则或补丁）。⭐**一条规则 + 四个实例**：print 下 ink 接管色彩通道 ⇒ 背景照片 overlay / raypath 染色 / `ray_color` 互斥+告警，annotation **改走密度**（因而不需要 per-mode 调色板）。⭐余量谓词**单一**：screen 余量 `1-background`、print 余量 `paper` 本身，同一个 `src/util/` 纯函数两侧共用。⛔ 三条硬边界：**不是印刷仿真**（不碰 CMYK/ICC/网点扩大/纸白点）、**不改染色 composite 路算子**（会反转 `gui-custom-spectrum-and-raypath-color.md` §4.8 已定案的 z-order 一等性）、**曝光链一行不改**（发现「必须动」即前提被证伪，上抛而非扩范围）。含 owner 裁决 D1–D6 与 AI 推断 A1–A5 两张归属表，**两张表均已回写 as-built（2026-09-10，五块下游全落地）**：D1–D6 每条带 `file:line` 落点；A1/A3/A4 成立，**A2 与 A5 部分证伪且原推断文字保留**（A2：实际没复用 `use_real_color==false` 那半段，直接取 `xyz[1]` 跳过 D65 矩阵，所以预判的「规模上升」反向成真；A5：`rgb[j]=0.0f` 特例**没消失**，只是被 `if (!print_mode)` 卫护，print 走另一条分支达到同样效果 ⇒ 效果成立、机制不同）。⭐**跨切验收闸两处**：`test/unit-correctness/server/test_print_mode_dynamic_range_gate.cpp`（四数量级动态范围在 8-bit 里 print 全分开 / screen 白底全塌成同一个白）与 `test/gui/parity/test_gui_cli_export_parity.cpp` 的 `full_sky_dual_fisheye_print`（GLSL 手抄实现的漂移只能靠 CLI↔GUI 互比兜住）；⚠️ 后者所属 `parity` tag **没有 CI job 在跑**，只在有 GL context 的开发机上经 `./scripts/test.sh` 求值。⚠️ 灰度标量 Y vs 等权的对照**只在暖色光源场景做过**，⛔ 不得读成「已验证 Y 不压制蓝弧」。改 print 模式的字段链 / 算子 / 色彩通道互斥 / 余量告警前先读。
-- **C API**: `c_api.md`, `capi-lifecycle-architecture.md`
-  - `capi-lifecycle-architecture.md` §9 — **结果生命周期与所有权不变量的定案记录**（scrum-capi-result-lifetime-ownership 收敛，2026-08-05）：
-    不变量 = 读者必须持有结果生命周期的一份真实份额，由 `LUMICE_ResultFrame` 句柄强制；
-    两次复发对照表（`34400c17` consumer buffer 在锁外被清空 / 本次 `cached_composite_results_`
-    被 `std::move` 覆写——ASan 坐实的 UAF）证明**换存储位置治不了**这类缺陷，真正的修法是换所有权模型
-    （可变缓存改为不可变发布帧）。⭐**AC6 三版演变**（运行时计数器→C++ RAII 门禁→照抄 API 既有
-    acquire/release 家规）是本 scrum 最贵的教训：四轮 plan-review 里 6/8 条独立意见全指向前两版，
-    因为评审拿 plan 对 issue 里的 AC 检验、AC 本身错时没人会质疑需求本体。诚实边界：UAF 自然发生率
-    从未测定，6 次自然交织复现全部低功效阴性，不构成"不会发生"的证据。改结果生命周期 / `DoSnapshot`
-    发布模型 / C API 借用契约前先读。
-  - `api-layering-and-product-lines.md` — **C API 层次混杂的诊断 + 产品线扩张方向的设计讨论**（讨论记录，非定稿；2026-08-01）：
-    起点"core/gui 是否拆仓"被判为问错层次（想要的解耦已成立：`src/gui/` 零 core include + 只链 C API + 有门禁），
-    真发现 = **今天的 C API 把三个高度压在一个平面**（L0 引擎无独立出口 / L1 冰晕域模型 / L2 编辑器支撑——
-    后者含四个**返回 JSON 键名**的函数）。⭐顺序约束 = **产品线决定 API 形状，正式发布则冻结 API**，
-    故"先发库再想产品线"是把顺序做反；拆仓同属提前冻结（会把 L1|L2 这道最不该固化的缝宣布为最终答案）。
-    含跨树改动实测（近 12 个月已合并代码 PR 中 37% 同时动两棵树，皆为功能纵切）、
-    那处「唯一未守住的边界」（`gui_test` 曾链 `lumice_obj` 而非 `lumice`）——**2026-08-06 已收口**：`gui_test` 现链 `lumice_gui_obj + lumice`（`test/gui/CMakeLists.txt:73`），即 core 侧只经 C API ⇒ 这是「GUI 能只靠 C API 活下来」的第一份正面证据；余下 `gui_unit_test` / `composition_correctness_test` 链 `lumice_obj` 是 CMake 注释里写明的**具名跨层 oracle 豁免**、
-    以及拆仓触发条件（真实外部消费者 / 不同授权策略 / 第二团队；且届时该拆的是 L0 而非 core|gui）。
-    **§8（2026-09-28 更新）**：光路分析升级为第二产品核心后，「第二条产品线立项」与「真实外部
-    消费者」两个触发信号同时响了（LI 经共享库消费单光路反解 / fiber 行走）；发布的是一个新窄
-    接口而非现在的引擎 C API（`src/include/lumice_*.h`），共享判据见 `raypath-analysis.md` §5.1.6。
-    **§9（2026-09-30，as-built）**：「三个高度一个平面」的结构性回应——两个正交维度（代码按层/能力切 vs
-    打包由外部约束决定）、`lumice.h` 已拆为六个能力头并删除、`c_api.cpp` 按头拆为六个桥、三个打包各自
-    导出什么（引擎 93 / testapi 95 / analytic 11）、库管理函数属打包不属能力、一进程一引擎；两条已定结论：
-    结果对外形态 = JSON + `schema_version`，`LUMICE_API_VERSION` 与 `LUMICE_ANALYTIC_API_VERSION` 不统一。
-    ⚠️ 尚未做：各层成独立 OBJECT 库（`lumice_obj` 仍一整块，层次靠清单 + `layer-inversion` 规则守，不靠链接器）。
-    考虑发布动态库、设计新产品线、新增/移动 C API 函数到哪个头、或再次提起拆仓前先读。
-  - `analytic-api.md` — **`liblumice_analytic` 设计（第一个对外发布的共享库；target / 导出列表 / 日志接管 / 打包与版本政策
-    已 as-built，只用 install 树的外部消费者冒烟测试（C `find_package` + Python ctypes，`test/e2e-correctness/test_external_consumer_smoke.py`）已落地；模块 A（单光路反解 + fiber 行走 + seed 搜索，API v2–v5）与模块 B（带求和 / 单光路全天图，API v6，§4.6）已 as-built；§4.7/API v7追加无Scene的diagnostic batch/源事件/weighted-field数值及正式安装消费；§4.8/API v8追加模块 C 的 u-S² 场层（= schema3 报告的几何层，消费者至今只有 ABI 测试、冒烟与 schema3 报告）；⭐计算交付 ≠ 消费交付：GUI 工作区接线不在任何波次内、LI 的 JAX→C++ 切换未发生（wave-2 hold 仍有效，2026-10-07 裁定只提前 Lumice 侧构建）、库尚不进下载包（§8.8 清单待做），2026-10-14 更新）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），⭐**§2.1/§2.2（2026-09-30 改）**：
-    不再链整个 `lumice_obj`，只链 `lumice_foundation_obj` + `lumice_analytic_kernel`（foundation 由
-    `cmake/lumice_layers.cmake` 定义、`layer-inversion` 门禁守住），闭包由不裁剪的可执行
-    `lumice_analytic_link_probe` 检查（库自身的 `-dead_strip` 实测会掩盖跨层引用），裁剪只剩体积用途；
-    其余规矩（只从无 CUDA 构建产出 / ISA 是**配置**的属性
-    ⇒ 从 `LUMICE_ISA_LEVEL=baseline` 的配置产出，⛔ 不从本地默认 `native`）+ 一进程只加载
-    `liblumice` / `liblumice_testapi` / `liblumice_analytic` 之一。⭐**§3 对称性语义**（owner 硬要求）：
-    接口只收具体面序列、不带对称参数、不提供约化——约化属原语层、两仓各留一份互校；调用方在接口外
-    约化须写明 L1/L2，parity fixture 须带 `symmetry_semantics` 字段；典型分叉 = 三重对称棱柱（LI 实测
-    L1 在 `D3h` `[3,5]` 过并 1.41×）。§4 首个模块（单光路反解 + fiber 行走）C 头文件草案：
-    `EvaluatePath` + `TraceFiber[Batch]`，种子由调用方给（v0 不含 seed search），库分配 + 显式释放，
-    `status` 封闭 / `reason` 开放。⚠️ §6：几何构造路径**有** `LOG_WARNING`（退化晶体 / 锥退化到顶点 /
-    丢面），默认静默会吞掉 ⇒ 回调须转发，且退化晶体同时以错误码返回。§7：三个共享库共用引擎的
-    对象（analytic 只取 foundation + kernel），导出集合**只**由按库导出列表决定（`scripts/gen_export_list.py` 从各库头文件生成，
-    as-built）；`WINDOWS_EXPORT_ALL_SYMBOLS` 与 visibility pragma 已移除。
-    ⭐**§8 版本与打包（as-built）**：`LUMICE_ANALYTIC_API_VERSION` 这一个整数就是唯一版本号，CMake
-    从头文件读出它当 package 版本（不写第二份）；`find_package(LumiceAnalytic <n>)` 用 `ExactVersion`，
-    版本不符在**配置期**被拒；链 `Lumice::lumice_analytic`，install 树只含 `lumice_analytic.h` 与它 include 的 `lumice_analytic_core.h`（⛔ 不装
-    引擎的 `lumice_*.h` 能力头），布局 `bin/`+`lib/`（有意不同于 `lumice` 的 DLL 放 prefix 根）。0.x 不承诺任何两版兼容，
-    但每次 bump 必须留说明；兼容/破坏判定表（§8.2）；两个调用方分配的结果 struct 打头 `struct_size`
-    （Win32 `cbSize` 模式，batch 以 `out_results[0].struct_size` 为步长）使追加字段不必 bump；废弃流程与
-    1.0 三条毕业条件（§8.5/§8.6）；非 CMake 消费者靠 install 树相对路径契约 + 建议变量名
-    `LUMICE_ANALYTIC_INSTALL_DIR`（只由消费者读，⛔ 不进 `src/`，§8.7）；进下载包的改动清单（§8.8，
-    首个真实模块的任务执行，动手前先重读 `release.yml`）。
-    §9 未决项表（seed search、`FiberResult` 是否补 LI §9.3 诊断字段两条待 owner 裁定）。
-    ⭐**§7（as-built，2026-09-30）**：analytic 是 Lumice 自有能力，引擎打包导出 `lumice_analytic_core.h`
-    的计算函数、壳可直接调用；只有 `liblumice_analytic` 额外导出库管理两函数（`GetApiVersion` / `SetLogCallback`），
-    引擎里日志与版本是 `lumice_base.h` 的；两个头互不包含、不共享类型；各库导出 = 其 surface 头文件，
-    由 `check_export_surface.py` 对账（test 与 release 共用）。
-    实现新库 target / 导出列表 / 日志接管 / 打包 / 首个解析模块前先读。
+  - `ev-pipeline-architecture.md` §2.4–2.8/§7 + `adaptive-brightness.md` §2–3 — the two exposure anchors (`ev_mode`: relative default / absolute), the §2.8 dual-side common-anchor law, both migration laws, photometry rules. Read before touching exposure normalization / `ev_mode` / `ExposureScale()` / `emitted_energy` / whether metering sees `visible` / GUI preview brightness / `anchor_l99_sky` or `axis_solid_angle` consumers.
+  - `raypath-symmetry.md` — filter/colour-ref P/B/D is label equivalence, the analysis list's is physical equivalence (`SymmetrySemantics`). Read before filter symmetry / analysis-list grouping / missing-face warnings / Exclude generation.
+  - `overlay-label-placement.md` — curve-centric overlay text-label placement. Read before label-placement work.
+  - `numerical-robustness.md` — geometric numerical-stability conventions (7 rules). Read before adding or **modifying** any geometric predicate.
+  - `crystal-geometry-representation.md` — crystal geometry generation + in-memory representation (closed-form planes + face-existence mask; as-built). Read before redesigning geometry (predicate-only changes: `numerical-robustness.md`).
+  - `near-pole-area-measure-sampling.md` — near-pole orientation sampling blueprint (area-measure importance sampling). Read before near-pole sampling / Rayleigh path / `ComputeJacobianEnvelope` / GPU device gen sampler changes.
+- **GUI**:
+  - `gui-preview-lifecycle-architecture.md` — worker × display clock decoupling, invariants I1–I7. Read before preview lifecycle / poller-server handoff / completion determination.
+  - `gui-state-governance.md` — GUI state governance (field→tier classifier, scene-encoding projections, user defaults, view-side copy resync). Read before GUI state transitions / colour display channel / document-switch resets / simulation-lifecycle display coupling / user defaults / export-config field filling / Analysis-list lifetime / any view-side copy, modal buffer, position reference or pick mode.
+  - `gui-visual-language.md` — visual language (typography / palette / rhythm) + the window-sizing four-tier table. Read before GUI appearance / panel typography / control shape / any window's resize behavior.
+  - `gui-layout-architecture.md` — panel re-organization blueprint whose **direction was rejected by beta users — not a todo**; the §0 diagnosis and §5 overturned-forms list survive the rejection. Read before any re-paneling or panel-level feature proposal.
+  - `gui-custom-spectrum-and-raypath-color.md` — custom discrete spectrum (landed) + per-raypath colour marking blueprint + §4.8 composite redesign. Read before spectrum / raypath-colour work / `component_compositor.cpp`.
+- **Raypath analysis**:
+  - `raypath-analysis.md` — the feature roadmap: recognition delivered, stripping shelved by owner decision (**not a todo**); workspace layout; repo positioning. Read before adding any raypath-analysis feature or re-raising "toggle an arc live".
+  - `raypath-analysis-panel.md` — the delivered panel's mechanism record (dedicated-stat-run form, chain-id plumbing, ROI, the Exclude loop). Read before panel work / chain ids / histogram consumer / the analysis C API.
+  - `feature-diagnostic-discovery-research.md` — generic feature-discovery research history + product-landing record. Read before designing feature discovery / attribution / their shared interfaces; research history is not the current API's acceptance.
+  - `cases/raypath-analysis-cases.md` — the census of canonical test scenes (append-only numbering). Take test scenes from here, not ad hoc.
+  - `raypath-cli-output.md` — the `Lumice raypath` subcommand's JSON field reference (target schema1 / report schema3). Read before output fields / subcommand options / that C entry.
+  - `raypath-schema3-layered-design.md` — the schema3 layered-design record. Read before schema3 report semantics / geometry-layer enums / MC evidence / `src/analytic/` module-C surface.
+- **print mode**: `print-mode-subtractive-ink.md` — the single design authority for the print display mode (subtractive ink). Read before print-mode field chain / operator / colour-channel exclusivity / headroom warnings.
+- **C API**: `c_api.md`; `capi-lifecycle-architecture.md` §9 — result lifetime and ownership invariants (read before result lifetime / `DoSnapshot` publishing / C API borrow contracts); `api-layering-and-product-lines.md` (read before shipping dynamic libraries / new product lines / adding or moving C API functions across headers / re-raising a repo split); `analytic-api.md` (read before new library targets / export lists / log takeover / packaging / the first parsing module).
 - **GPU / Metal route** (read these before touching the GPU path):
-  - **🔒 设计纪律（GPU 后端实现硬约束）**：按 `seam-design.md` 蓝图走，**不要自己重新发明**。几何遍历 / 出射 seam / per-ray 旋转上传 / 单引擎大 dispatch — **复用已验证的实现**：参考当前 Metal（`gpu-single-engine-implementation.md` as-built）+ legacy `PropagateSlab`（`optics.cpp` 的 polygon-slab 遍历）。**蓝图是最终判据**：Metal/legacy 与蓝图冲突处以蓝图为准（如历史 Metal 投影焊进 trace 已被 §4.1/scrum-258 纠正，别照搬旧形态）。教训：CUDA #295 自创 Möller-Trumbore 遍历复现了 task-275~278 已解决的绝对-ε 漏面 bug（energy 0.735）；详见 `scratchpad/backlog.md`「MVP 落地后的架构发现」。
-  - `seam-design.md` — **the `TraceBackend` host/device seam redesign blueprint**; §5 = single-engine, three-clock-decoupled GPU simulator (the target architecture); §3.6 "原始之罪" = why GPU must not mirror the CPU pipeline.
-  - `gpu-route-history.md` — systematic retrospective of the GPU migration (#250→268): decision evolution, accumulated data assets, leftover-item ledger; §9 = single-engine arc high-point (CLI 9.5×/GUI 2.07×).
-  - `trace-backend-frame-lifecycle.md` — Metal frame lifecycle (as-built, multi-MS transit via device `transit_root_kernel`, parity harness methodology, §8 DR-3 per-ray wavelength).
-  - `gpu-single-engine-implementation.md` — **§0 as-built 接手须知**（scrum-267+268 完成：CLI 9.5×/GUI 2.07×/dispatch 32768/concern #2 解/DR-3 波长/R1 occupancy 640 benign）+ §5 设计推理 + §8 DR-3 决策链 + §9 关键发现；接手 GPU 路线先读 §0。**§10 XYZ 设备平面 drain-window 精度（as-built）**：fp32 `atomicAdd` 平面每 `Simulator::kXyzFoldEveryBatches`(8) batch 设备侧折进 double 平面（候选 E），drain 的 finalize pass 是唯一尾折 owner；五候选 A/B/C/D/E 红绿矩阵 + 全场景吞吐代价 + drift 剂量-响应 + owner 终裁与复议触发条件（代价超表 +2 pp / 用户可感两账本偏差）。改 `AccumXyzToPixel` / `FoldDeviceXyzBatch` / fold 频率 / `LUMICE_XYZ_DRAIN_BATCHES` 语义前先读 §10。**§8.1 CPU 侧标准光源波长（as-built）**：legacy 仍每 physics batch 一个波长，但跨 batch 随机平移 Kronecker 分层（`WavelengthStratifier`）；逐光线/块内共享实测无方差收益（batch 相关噪声只在太阳光斑与帧总量上），`HitSurface` 两平台均未向量化。改 CPU 波长抽样前先读 §8.1。
+  - `seam-design.md` — the `TraceBackend` host/device seam blueprint; §5 = single-engine three-clock target architecture; §3.6 = why GPU must not mirror the CPU pipeline; the header carries the implementation discipline (reuse verified implementations, blueprint is the final judge).
+  - `gpu-route-history.md` — systematic retrospective of the GPU migration (#250→268) + leftover-item ledger; §9 = single-engine arc high-point.
+  - `trace-backend-frame-lifecycle.md` — Metal frame lifecycle, multi-MS transit, parity harness methodology.
+  - `gpu-single-engine-implementation.md` — §0 as-built handover notes (read first when taking over the GPU route); §10 XYZ device-plane drain-window precision (read before `AccumXyzToPixel` / `FoldDeviceXyzBatch` / fold cadence / `LUMICE_XYZ_DRAIN_BATCHES` semantics); §8.1 CPU-side standard-light wavelengths (read before CPU wavelength sampling).
 - **Perf / testing**: `performance-testing.md`, `windows-remote-testing.md`, `xyz-stats-tool.md`
-  - `geometry-randomization-value-and-measurement.md` — **几何随机化"值不值钱"的两轴框架 + 偏置轴度量方法论 + stage-1 发现**（新，explore 收敛 2026-07-23）：⭐**混轴是度量原罪**——方差/效率轴（K=D vs 64，收敛多快）vs 偏置/正确性轴（ON vs OFF，确定性收敛到物理错的过锐图）；**已有 moat 数字（28–40×/15×）是方差轴的**，卖点在没测过的偏置轴。偏置发现：主峰软化 −21% / 暗区填充 +50% / 对日弱峰抑制减半，**gauss≡uniform 同 σ ⇒ 干净多分散非退化背景**，效应集中 faint/away-from-peak（两轴同指向）；plate 幻日环更丰富 + 120° 反常变亮（未解）。含**变量定律 blueprint**（`Var(K)=(σ̄²_w+K·σ²_b)/N`，`K*=√((σ̄²_w/σ²_b)·(C/c))` + 三结构不变量 + 护栏红线）+ 度量方法论（散射角空间 / 天顶-rectangular / plate 幻日环 / uniform disentangle / 积分能量纪律 / C API no-filter 读 xyz_buffer）。设计几何随机化质量/吞吐 gate 前先读。
-  - `geometry-randomization-perf.md` — **几何随机化性能的成本模型 + 前沿图**（**顶部有 post-闭式更正段**）：真正指标 = equal-error throughput（变量轴，非 raw）；⚠️「随机比确定性慢 15.7×」是冷 vs 暖 CUDA context-init 假象；⭐**闭式落地（PR #214）后 C（拓扑复用）是错杠杆**（只碰 92ns compute=构造 5%，「B+C 不可分」作废），真杠杆 = 砍 MakeCrystal 对象构造（多晶体 ROI 最大）；⭐**K=64 惩罚场景相关 0.25–0.43、多晶体更差**（非普适 0.37×），K=D 跨场景免费。含「压到极限没有」核对清单 + 测量纪律。优化几何随机化路径前先读，配 `geometry-randomization-value-and-measurement.md` 一起。
-  - `machines.md` — **角色 → 主机绑定的单一真源**：哪台机器承担「CUDA 参照机（Linux/Windows）」
-    「GUI 物理桌面机」「Metal 参照机」，及其仓库路径、CUDA 版本、构建脚本。⭐**换机器只改这一份**——
-    其余 recipe 正文只写角色名，不写主机名（这个分层是上一代验证机整体失效时用代价换来的：
-    写死的别名与路径同时作废，把仍然有效的协议部分一起拖成可疑内容）。含三个一手实测的坑：
-    **CUDA 13 编译不了本仓（`compute_61` 已被移除，而仓库 arch floor 就是它）**、
-    WSL 上 GLFW 选中 Wayland 后段错误（须 `-DGLFW_BUILD_WAYLAND=OFF`）、
-    GitHub 慢/Docker Hub 不通（CPM 缓存走局域网 rsync）。⚠️ 另记着一条硬约束：
-    两个 CUDA 参照机角色目前由**同一台物理机**承担，一侧跑 bench 时另一侧必须闲置。
-  - `gpu-remote-cuda-build-testing.md` — CUDA build + parity/正确性验证的**协议与操作步骤**（headless）。
-    **任何触及 `cuda_trace_backend.*` / 三后端共享头 / SimData / simulator 的改动，先读这份**：
-    `LUMICE_HAS_CUDA` un-skip 闸（须与 `LUMICE_CUDA_ENABLED` **同设**，二者语义不同）、
-    parity battery 三文件、验收口径 10/10、「别信 subprocess 自报」纪律，以及 Linux/Windows 两个
-    参照机角色各自的 build / parity / 冒烟命令。主机绑定见 `machines.md`。
-    ⚠️ **CUDA + `BUILD_TEST=ON` 的编译缺口曾是全平台的，现已在 CI 上补掉（编译那一半）**——
-    旧状态：主矩阵四个 build job 开 `BUILD_TEST` 但没开 CUDA、两个 CUDA job 开 CUDA 但没开
-    `BUILD_TEST`，**两半都在、交集为空**，于是 `test/{unit-correctness,parity-cross-backend}/backend/`
-    下那 5 个包在 `#if defined(LUMICE_CUDA_ENABLED)` 里的 TU 在**每一个**平台的 CI 里都编成空文件
-    （⚠️ 这条以前被写成 Windows 特有，是错的：Windows 只是代价最先显形的那一侧）。
-    这个缺口一次攒下三处 MSVC 不兼容、三周无信号。现在 `cuda-compile` 与 `windows-cuda-compile`
-    都以 `BUILD_TEST=ON`（`BUILD_GUI=OFF`）配置，那 5 个 TU 真的被编译，
-    `scripts/ci_verify_cuda_test_tus.sh` 再断言它们至少选中一个 case（`gtest` 在 filter 匹配 0 个时
-    退出码是 0，所以裸跑 ctest 在「TU 仍为空」时照样绿——这条断言就是为堵这个假绿而存在）。
-    ⛔ **买到的只有编译覆盖**：CI runner 没有 GPU，那些 case 一律 SKIPPED；运行时 / parity 验证
-    仍然只在参照机上按本节协议手动跑 ⇒ 动 `test/` 或 `bench/` 后，语法与可移植性有自动信号了，
-    但别拿 CI 的绿推断 CUDA 运行时行为也验过。
-    与 `windows-remote-testing.md`（GUI VSync 物理桌面）场景正交。
-  - `testing-architecture.md` — **authoritative test-organization spec**: verification-purpose primary axis × subsystem tag, seven layers (unit-correctness / golden-analytic / parity-cross-backend / e2e-correctness / performance / gui / regression-sentinel), the "how to add a test" decision tree, cross-cutting rules (perf denominator = legacy CPU; parity metric-masks-bugs battery; reference ownership), and the layer×subsystem physical-layout blueprint. **§7 is the test-scope contract**: where each test runs (PR / `main` only / local schedule / release / developer machine; no nightly), the PR run's wall-clock budget, measured per-scope cost (local `quick`/`full`/`pr` and every CI job), what each scope catches that the cheaper one structurally cannot, the budget rule (who declares expected test spend, and when they reconcile it), and why independent re-verification is a fixed-cost multiplier that makes cutting base suite cost worth more than its face value. **§4.11 is the comparison-ruler master table**: category → ruler → threshold shape → red/green sample → margin for all four image-comparison categories in this tree (deterministic screenshots' `maxcc`, lines-only parity's membership-mask `maxcc`, `export_parity`'s simulation-scene block-mean PSNR, `lens_proj`'s unchanged whole-frame PSNR), plus the two footguns each ruler is for the others (block-mean reads a deterministic drift as more passing; whole-frame PSNR/SSIM sign-reverses on a darkened stochastic arm) and why `lens_proj` was measured and left alone. Read before adding or reorganizing any test — and before claiming any change shortens CI, or before picking a ruler for a new image comparison.
-- **Engineering policy**: `env-var-policy.md` — **环境变量使用策略**: user-facing behavior switches must NOT live only in env vars (they cause silent per-machine drift / undebuggable bugs); use CLI/config/API instead. A-class runtime knobs (`LUMICE_TRACE_BACKEND` + 6 perf knobs, with file:line) vs B-class test/build infra (leave alone); three disposition rules; and the **decision gate to answer before adding any new `getenv`**. Read before introducing a new env knob.
+  - `geometry-randomization-value-and-measurement.md` — the two-axis framework (variance vs bias) + bias-axis measurement methodology. Read before designing randomization quality/throughput gates.
+  - `geometry-randomization-perf.md` — the randomization cost model + frontier map. Read before optimizing the randomization path (pair with the value doc).
+  - `machines.md` — role → machine binding, the single source of truth; when machines change, change only this file.
+  - `gpu-remote-cuda-build-testing.md` — the CUDA build + parity/correctness protocol (headless). Read before touching `cuda_trace_backend.*` / the three-backend shared headers / SimData / simulator.
+  - `testing-architecture.md` — the authoritative test-organization spec; §7 = the test-scope contract, §4.11 = the comparison-ruler master table. Read before adding or reorganizing any test, claiming a change shortens CI, or picking a ruler for a new image comparison.
+- **Engineering policy**: `env-var-policy.md` — the env-var usage policy and the decision gate to answer before adding any new `getenv`.
 - Example config: `examples/config_example.json`
 
 ## Knowledge Base & Working Discipline
