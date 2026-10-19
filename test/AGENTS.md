@@ -49,6 +49,24 @@ keeps driving the same test context. Full rule statement and the four
 defect-shape generalizations: the script's docstring and
 testing-architecture.md §4.9.
 
+Fifth diff-scoped checker, same discipline: `scripts/check_new_test_tus.py`.
+An added test TU is a diff-added file under `test/` with suffix
+`.cpp`/`.cc`/`.mm`/`.cu`; beyond the free quota of five per PR the additions
+must be covered by entries the same diff appends to the append-only ledger
+`test/tu_cost_ledger.json` — the checker mechanically verifies
+append-only-vs-base and cross-checks the declared sum against the diff's
+actual added count (empty-set exempt, so steady-state small PRs keep the free
+quota), making `claimed` a verified assertion rather than a self-report.
+Entries never carry across PRs, and merged entries are immutable until an
+owner-decided amendment channel exists. The second half is notice-only: a
+touched header whose depfile closure reaches 150 TUs is named in a `::notice`
+on the `build` job's Ubuntu x86_64 judging leg (it needs `--deps`, so
+pre-commit carries the TU half only) — enforcement strength matched to event
+frequency (quota-exceeding PRs ~3%, hub touches ~25%). Calibration numbers
+and the ledger contract: the checker's constants and testing-architecture.md
+§7.9. A threshold change is a re-calibration (constant comment + §7.9
+together), never a silent bump.
+
 ## Platform matrix and the llvmpipe leg
 
 - CLI, core, and unit-test flows stay cross-platform.

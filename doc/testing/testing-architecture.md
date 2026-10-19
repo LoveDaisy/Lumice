@@ -1953,6 +1953,8 @@ was back-filled for them.
 
 The per-test part of this question is also asked mechanically: a PR-layer test over 60 s has to be
 registered, with a reason, or CI goes red. See §7.7; it reinforces this rule and does not replace it.
+The compile-mass half is asked mechanically too: a PR adding more than the free quota of test
+translation units must declare them, with a reason, in an append-only ledger. See §7.9.
 
 ### §7.4 Independent re-verification is a fixed-cost multiplier
 
@@ -2278,3 +2280,77 @@ Only then may that same main run be rerun as a warm-cache probe: unlike a PR aut
 rerun consumes no exception and exists to verify the exact new seed restores and every original phase
 budget passes. If the warm run remains red, diagnose it; the cold-build exception is spent and cannot
 be carried forward.
+
+### §7.9 The test-TU cost gate: declared compile mass, and hub touches made visible
+
+Where §7.7 prices what a PR's build *actually cost* after the fact (per-miss budget), this gate is
+the *before* half of the same question: how much test compile mass a PR declares it is adding. It
+exists because a census measured the cost first — test sources grew from 47 to 314 translation
+units in four months (6.7×) and are 69% of a serial build (660 s of 956 s on the measuring
+machine) — which clears the bar §7.7's own gate was held to: a proven real cost, mechanically
+measurable. The checker is `scripts/check_new_test_tus.py`, the fifth diff-scoped entry point
+(same shape as its siblings: `--staged` for the pre-commit hook, `--range BASE..HEAD` for the CI
+`new-refs` job, diff-scoped so it starts green with no baseline).
+
+**The rule.** A test TU is a file the diff *adds* under `test/` with suffix `.cpp`/`.cc`/`.mm`/
+`.cu` (renames don't count — a move relocates content its author never wrote; a copy counts,
+because whoever created the path put a TU there). The first 5 added test TUs of a PR are free.
+Beyond the quota, the additions must be covered by entries the *same diff* appends to
+`test/tu_cost_ledger.json`, each with a real reason. The ledger is an append-only audit record:
+never cleaned, never expired, and its entries never carry across PRs — an entry merged last week
+is inventory of this PR's base, not quota for this PR.
+
+**The ledger contract is two mechanical invariants, not conventions.** Both are assertions the
+checker evaluates from git on every run:
+
+1. *Append-only.* Every entry at the base ref must be present, unmodified, at the head ref.
+   Otherwise rewording one existing entry's reason would surface in the set difference as a "new
+   declaration" and mint quota for free. Editing or deleting an existing entry is red; the message
+   names the differing entries.
+2. *Cross-checked sum.* When the diff adds ledger entries at all, their `new_test_tus` values must
+   sum to exactly the number of test TUs the diff adds — under-claiming sneaks past the quota,
+   over-claiming mints audit mass. The count is computed by the checker from git, so the
+   comparison is assertion against assertion, never self-report against trust. The check applies
+   only when the diff adds entries: a bare `sum() == new_tus` over an empty set would turn the
+   free quota red for every PR after the first declaration, and that steady-state path (small PR,
+   existing ledger, zero new entries) is the highest-frequency path through the gate.
+
+Schema is validated whole-file on every run (version, exact field set, non-placeholder reason,
+`new_test_tus >= 1`, no duplicate entries) regardless of the PR's TU count — a malformed ledger
+is a broken audit record wherever it came from.
+
+**Calibration.** Both constants carry their numbers at their definitions. `FREE_NEW_TEST_TUS = 5`
+sits just above the routine mass: over the 130 most recent merged PRs (2026-09-16 through
+2026-10-19) the added-test-TU distribution is min 0 / median 0 / p90 2 / **p95 4** / max 11, and
+only 4 of 130 PRs exceeded 5 — all bulk feature PRs. `HUB_NOTICE_MIN_TUS = 150` matches the hub
+distribution on the same tree (522 TUs, 253 project headers, via `ninja -t deps` aggregation):
+15 headers reach closure ≥ 150, and 32/130 (25%) of merged PRs touched one (closure ≥ 100: 37
+headers, 34% of PRs). Changing a threshold is a re-calibration: new numbers in the constant's
+comment AND here — never a silent bump.
+
+**Enforcement strength is matched to event frequency** — the transferable judgment this gate
+adds to §7.3's family. Quota-exceeding TU additions are rare (~3% of merged PRs), so a
+declaration gate fits them; hub touches are routine (a quarter of PRs), and a per-PR forced
+declaration for a routine event decays into boilerplate that erodes whatever it declares. So the
+hub half is a `::notice`, not a gate: a PR touching a header whose depfile closure reaches 150
+TUs gets named — header path and closure count — in the PR checks output and the job summary.
+The notice prices nothing; the compile cost of a hub touch is already priced mechanically by the
+per-miss build budget (§7.7). A rare event gets a declaration gate; a routine event gets
+visibility.
+
+**Where the closures come from, and the honest boundary.** The hub half reads a `ninja -t deps`
+payload (`--deps`), the census's authority on include reachability — a regex include graph was
+measured to miss edges systematically and is not used. Closures are evaluated on the judging CI
+leg's toolchain view only (the `build` job's Ubuntu x86_64 leg, post-Build, `fetch-depth: 0`
+conditioned on that leg alone): headers only visible behind CUDA/Metal conditionals are invisible
+there and never trigger. Locally the half is skipped with an audible line (CI is the authority).
+A deps payload that aggregates to zero TUs fails loud with a `deps-parse-error` marker instead of
+passing: hub misses have no red state of their own to expose a silently dead checker, so a short
+red (e.g. after a ninja upgrade that moves the output format) beats an eternal green — an
+accepted cost, disposed through §7.6, never by widening the parser's tolerance in place.
+
+**Ledger corrections.** The append-only invariant makes a merged entry immutable through the
+normal path, deliberately blind to intent. A genuine correction needs an owner decision first;
+the expected shape is an explicit, loud `--amend-ledger` channel (requiring the old entry, the
+new entry, and the reason for the change) — decided when the first real correction arrives. Until
+then there is no in-place workaround to reach for, and that is the design.
