@@ -116,6 +116,14 @@ the owner's to create, on the merge commit.
    artifact section plus its `Added` / `Changed` / `Fixed` prefix, or `Breaking Changes`; the
    grouping rule is in `CHANGELOG.md`), or no entry plus one sentence of why. The table is
    the audit trail that the section is complete; it stays in the chore, not in the changelog.
+
+   Then run `python scripts/version.py growth` and record its output line plus a one-sentence
+   disposition in the chore's progress notes. The 20:1 insert:delete threshold is a *review*
+   trigger, not a gate: above it, the disposition must name where the growth went (capability,
+   tests, data assets) and whether a subtraction candidate exists. When a one-off reclassification
+   flattens or inflates the ratio (a Git LFS conversion rewriting tens of thousands of fixture
+   lines into pointers is the recorded case), the disposition must also state the ratio with that
+   change excluded — the next release must not read this window's raw number as its baseline.
 4. **Write the section and set the version**: add `## [X.Y.Z] - <UTC date>` at the top of the
    version list in `CHANGELOG.md`, with its entries under the file's headings, then
    `python scripts/version.py set X.Y.Z` — it bumps `CMakeLists.txt`, checks that the dated

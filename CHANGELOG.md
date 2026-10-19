@@ -147,6 +147,28 @@ it was thinking of and false of the C struct beside it.
 
 </details>
 
+## [4.7.4] - 2026-10-19
+
+### ⚠️ Breaking Changes
+
+- **`LUMICE_API_VERSION` now lives in a new leaf header `lumice_api_version.h`, not `lumice_base.h`** (#509). The macro moved out of the wide-inclusion base header — a value bump used to invalidate the compile cache of every TU in `lumice_base.h`'s includer closure, and now only the TUs that textually use the macro recompile — and its per-version change history moved with it. Code that read `LUMICE_API_VERSION` after including only `lumice_base.h` no longer compiles: add `#include "lumice_api_version.h"`. The macro's meaning is unchanged, and the 453 → 454 value bump is not part of this move — it is #508's surface addition below, recorded in the new header's history.
+
+### CLI
+
+- **Added: `Lumice raypath survey`** (#508, #511, #512). A target-free census face of the raypath analysis: given one crystal entry and one path (`--crystal 1 --path 1-2`), it routes the path's class at the algebra layer and emits one JSON document (schema `lumice.path-survey`, `schema_version` 4) — the configurational analysis of that class, without choosing a sky point, sampling, or warm state. A class whose every member carries the identity certificate collapses to a single source image at the sun and the analysis stops there; any other member verdict ships the structural facts with named reasons and leaves the deeper object kinds unevaluated. `--literal` analyses the requested face sequence as written instead of the physical P|B|D class; `--lambda` pins the wavelength; `--budget` bounds the request. Internal analysis deepening since the first cut (the full-dimensional delta machine, the chromatic tint leg) is part of the same output.
+- **Changed: `-v` and `-d` are now observable** (#502, #503, #506). The engine's only VERBOSE log site had become unreachable on both production consumption paths, so `-v` ran silently no matter what it was given; the dead site is gone and both flags now print a parse-time level line (`-v` arms VERBOSE, `-d` arms DEBUG), and `--help` describes `-v` as the verbose level instead of implying a deeper trace.
+
+### GUI
+
+- **Added: an entry bar in the Edit Entry modal** (#497). The crystal's participation toggle and Weight slider now sit at the top of the Edit Entry modal, buffered like the modal's other fields (nothing writes through until OK), so re-enabling a disabled crystal or retuning its weight no longer requires closing the modal to reach the card. The card keeps both controls.
+- **Changed: the Axis tab is a one-gesture editor** (#495, #496, #513). The preset name is a label the user chooses, never re-derived from the parameters: clicking one of the six label chips sets the label and loads that preset's parameters (remembered per crystal for the session); the old Apply-preset combo is gone — a chip click does that job, and a Reset row reloads the current label's definition without touching the label, the memory, or the view. Applying parameters no longer resets the preview view, and parameters drifting outside a preset's usual range light a mismatch badge, with an exact "currently reads as" tooltip, instead of silently renaming the axis.
+- **Fixed: the analysis list's crystal numbers now match the crystal cards** (#494). The list showed scene-insertion-order ids (`C0`, `C1`, …) where the cards show pool ids (`#0`, `#1`, …); the two diverged after dragging a card within its layer or deleting one, and the analysis list then described the wrong crystal. Both now speak the card numbering.
+- **Fixed: the lens border colour is gated under print mode** (#504). `tone=print` lays annotation ink by density and never reads hue, but the lens border — an annotation by construction — still took its colour from the screen setting and could print in colour. It now joins the same gate as the horizon, grid, sun circles, distance rings and markers, and stays editable under screen.
+
+### Engine C API
+
+- **Added: `LUMICE_API_VERSION` 453 → 454 — the path survey surface** (#508). `LUMICE_AnalyzePathSurvey`, `LUMICE_PathSurveyToJson` and `LUMICE_PathSurveyDestroy`, the `LUMICE_PathSurveyRequest` struct, the opaque `LUMICE_PathSurvey` handle and the two budget constants (`LUMICE_PATH_SURVEY_MAX_BUDGET_MS`, `LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS`) publish the same survey the CLI subcommand prints: one schema-4 document per request, serialized engine-side once. A pure append — nothing existing changed. The library is still not part of the download packages.
+
 ## [4.7.3] - 2026-10-12
 
 ### ⚠️ Breaking Changes
@@ -2898,6 +2920,7 @@ it was thinking of and false of the C struct beside it.
 - Basic ice crystal halo simulation
 - Support for common crystal types (hexagonal prism, plate, column)
 
+[4.7.4]: https://github.com/LoveDaisy/Lumice/compare/v4.7.3...v4.7.4
 [4.7.3]: https://github.com/LoveDaisy/Lumice/compare/v4.7.2...v4.7.3
 [4.7.2]: https://github.com/LoveDaisy/Lumice/compare/v4.7.1...v4.7.2
 [4.7.1]: https://github.com/LoveDaisy/Lumice/compare/v4.7.0...v4.7.1

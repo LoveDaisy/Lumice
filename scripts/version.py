@@ -6,6 +6,7 @@ Usage:
     python scripts/version.py check --tag v4.0.0 # Compare CMakeLists.txt version with specified tag (CI mode)
     python scripts/version.py set 4.1.0          # Bump CMakeLists.txt version; validate the CHANGELOG.md section
     python scripts/version.py extract-notes 4.1.0  # Print one CHANGELOG.md version section to stdout
+    python scripts/version.py growth [--base <ref>]  # insert:delete growth ratio since a baseline (advisory)
 
 ``set`` writes two files: it bumps the version in ``CMakeLists.txt`` *and* checks that
 ``CHANGELOG.md`` already carries a dated ``## [X.Y.Z] - YYYY-MM-DD`` section for the new
@@ -46,6 +47,18 @@ DATED_HEADING_RE = re.compile(r"^## \[(\d+\.\d+\.\d+)\] - \d{4}-\d{2}-\d{2}[ \t]
 # learns the previous version without a git tag lookup (the new tag does not exist yet).
 VERSION_LINK_RE = re.compile(
     r"^\[(\d+\.\d+\.\d+)\]: (https://\S+)/compare/v(\S+)\.\.\.v(\S+)$", re.MULTILINE
+)
+
+# The insert:delete ratio above which the release chore must name where the growth went
+# (capability / tests / data assets) and whether a subtraction candidate exists. Advisory
+# only — the census verdict was that this is a weak signal, too weak to gate a release.
+GROWTH_REVIEW_RATIO_THRESHOLD = 20
+# One ``git diff --shortstat`` line. The insertion and deletion clauses are each optional
+# (a diff can change only files, or only add, or only delete).
+SHORTSTAT_RE = re.compile(
+    r"^(?P<files>\d+) files? changed"
+    r"(?:, (?P<ins>\d+) insertions?\(\+\))?"
+    r"(?:, (?P<del>\d+) deletions?\(-\))?[ \t]*$"
 )
 
 
@@ -194,15 +207,15 @@ def validate_changelog(text: str, new_version: str, allow_empty: bool) -> str:
     return text[:offset] + new_line + text[offset:]
 
 
-def read_git_tag_version() -> str:
-    """Read version from the latest reachable git tag (strips 'v' prefix).
+def read_latest_tag() -> str:
+    """Read the latest reachable git tag, verbatim (with its 'v' prefix).
 
     Uses ``git describe --tags --abbrev=0``, which returns the most recent tag
     reachable from HEAD. This may differ from the chronologically newest tag
     if the current branch has diverged.
     """
     try:
-        tag = subprocess.check_output(
+        return subprocess.check_output(
             ["git", "describe", "--tags", "--abbrev=0"],
             stderr=subprocess.PIPE,
             text=True,
@@ -210,7 +223,57 @@ def read_git_tag_version() -> str:
     except subprocess.CalledProcessError:
         print("Error: no git tags found", file=sys.stderr)
         sys.exit(1)
-    return tag.removeprefix("v")
+
+
+def read_git_tag_version() -> str:
+    """Read version from the latest reachable git tag (strips 'v' prefix)."""
+    return strip_tag_prefix(read_latest_tag())
+
+
+def resolve_base_ref(explicit: str | None, latest_tag: str) -> str:
+    """Pick the diff baseline for ``growth``: an explicit ``--base``, else the latest tag.
+
+    An explicit ref is used verbatim — branch names and SHAs pass through — except that a
+    bare ``X.Y.Z`` version is accepted as shorthand for its ``v``-prefixed tag, since the
+    version number is the form the rest of this script and the changelog speak in.
+    """
+    if explicit is None:
+        return latest_tag
+    if SEMVER_RE.match(explicit):
+        return f"v{explicit}"
+    return explicit
+
+
+def parse_shortstat(text: str) -> tuple[int, int, int]:
+    """Parse ``git diff --shortstat`` output into ``(files, insertions, deletions)``.
+
+    Empty output (no differences) parses as ``(0, 0, 0)``; a clause git omits
+    (all-insertions, all-deletions, changed-files-only) reads as 0.
+    """
+    text = text.strip()
+    if not text:
+        return 0, 0, 0
+    m = SHORTSTAT_RE.match(text)
+    if not m:
+        raise ValueError(f"unrecognized --shortstat output: {text!r}")
+    return int(m.group("files")), int(m.group("ins") or 0), int(m.group("del") or 0)
+
+
+def growth_ratio(insertions: int, deletions: int) -> float | None:
+    """The insertions:deletions ratio; ``None`` when nothing was deleted (unbounded)."""
+    if deletions == 0:
+        return None
+    return insertions / deletions
+
+
+def above_growth_threshold(ratio: float | None) -> bool:
+    """Whether a ratio crosses the review threshold. An unbounded ratio (no deletions) does."""
+    return ratio is None or ratio > GROWTH_REVIEW_RATIO_THRESHOLD
+
+
+def format_ratio(ratio: float | None) -> str:
+    """One-decimal ratio text; ``∞`` for the no-deletions case."""
+    return "∞" if ratio is None else f"{ratio:.1f}"
 
 
 def strip_tag_prefix(tag: str) -> str:
@@ -282,6 +345,33 @@ def cmd_extract_notes(args: argparse.Namespace) -> None:
     print(body.strip())
 
 
+def cmd_growth(args: argparse.Namespace) -> None:
+    """Report the insert:delete growth ratio since a baseline ref. Advisory only, never blocks."""
+    base = resolve_base_ref(args.base, read_latest_tag())
+    proc = subprocess.run(
+        ["git", "diff", "--shortstat", f"{base}..HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        print(f"Error: git diff {base}..HEAD failed:\n{proc.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+    files, ins, dels = parse_shortstat(proc.stdout)
+    if files == 0 and ins == 0 and dels == 0:
+        print(f"Growth {base}..HEAD: no differences")
+        return
+    ratio = growth_ratio(ins, dels)
+    verdict = "ABOVE" if above_growth_threshold(ratio) else "within"
+    ratio_text = "∞ (no deletions)" if ratio is None else f"{format_ratio(ratio)}:1"
+    print(f"Growth {base}..HEAD: {files} files changed, {ins} insertions(+), {dels} deletions(-)")
+    print(f"Ratio: {ratio_text} — {verdict} the {GROWTH_REVIEW_RATIO_THRESHOLD}:1 review threshold")
+    if verdict == "ABOVE":
+        print(
+            "Advisory only (this does not block): name where the growth went — capability, "
+            "tests, or data assets — and whether a subtraction candidate exists."
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Lumice version management")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -302,6 +392,15 @@ def main() -> None:
     notes_parser = sub.add_parser("extract-notes", help="Print one CHANGELOG.md version section")
     notes_parser.add_argument("version", help="Version or tag to extract (X.Y.Z or vX.Y.Z)")
 
+    growth_parser = sub.add_parser(
+        "growth",
+        help="Insert:delete growth ratio since a baseline (advisory, never blocks)",
+    )
+    growth_parser.add_argument(
+        "--base",
+        help="Baseline ref (default: the latest tag); a bare X.Y.Z is shorthand for its v-tag",
+    )
+
     args = parser.parse_args()
     if args.command == "check":
         cmd_check(args)
@@ -309,6 +408,8 @@ def main() -> None:
         cmd_set(args)
     elif args.command == "extract-notes":
         cmd_extract_notes(args)
+    elif args.command == "growth":
+        cmd_growth(args)
 
 
 if __name__ == "__main__":
