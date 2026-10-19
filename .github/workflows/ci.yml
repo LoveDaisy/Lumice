@@ -121,7 +121,12 @@ jobs:
     name: ${{ matrix.name }}
 
     steps:
+      # The judging leg for the test-TU hub-closure notice computes a
+      # merge-base, which needs full history; the other legs never read git
+      # history and stay on the default shallow clone.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ matrix.name == 'Ubuntu x86_64' && '0' || '1' }}
 
       - name: Audit cold-build authorization
         shell: bash
@@ -348,6 +353,27 @@ jobs:
           mkdir -p ci-duration
           python scripts/measure_ci_phase.py --report ci-duration/build.json --phase build -- \
             cmake --build build --parallel
+
+      # The test-TU gate's hub half: which headers this PR touches carry a
+      # depfile closure of HUB_NOTICE_MIN_TUS translation units or more.
+      # Needs the build tree (ninja's deplog) and full history (merge-base),
+      # so it lives on this judging leg only. Notice only — it never turns
+      # the leg red over a touched header; the one red path is an unparsable
+      # deps payload (`deps-parse-error`), because a silently dead hub half
+      # has no red state of its own to announce itself. Closures are the
+      # judging leg's toolchain view: conditional CUDA/Metal headers are
+      # invisible here and never trigger (documented in
+      # doc/testing/testing-architecture.md §7.9).
+      - name: Test-TU hub-header closure notice (Ubuntu x86_64)
+        if: github.event_name == 'pull_request' && matrix.name == 'Ubuntu x86_64'
+        shell: bash
+        run: |
+          base=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
+          ninja -C build -t deps > build/test_tu_deps.txt
+          python3 scripts/check_new_test_tus.py \
+            --range "$base..HEAD" \
+            --deps build/test_tu_deps.txt \
+            --summary "$GITHUB_STEP_SUMMARY"
 
       # A successful compile can publish a main seed even if a later test or duration gate is red.
       # The helper signs only machine-readable zero-error statistics plus real stored entries;
@@ -2344,8 +2370,12 @@ jobs:
   #      unlike gui_test — runs here on every platform.
   #   3. A `for` loop added by this PR must not fatal-assert directly in its body
   #      (see check_loop_fatal_asserts.py's docstring for the defect shape).
+  #   4. Test TUs added by this PR beyond the free quota must be declared in
+  #      test/tu_cost_ledger.json (append-only; the checker verifies the
+  #      append-only invariant and cross-checks the declared sum against the
+  #      diff's actual added TU count — see check_new_test_tus.py).
   #
-  # None of the three reads pre-existing content, so the existing body of any
+  # None of the four reads pre-existing content, so the existing body of any
   # kind never blocks anyone.
   new-refs:
     if: github.event_name == 'pull_request'
@@ -2369,3 +2399,8 @@ jobs:
         run: |
           base=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
           python3 scripts/check_loop_fatal_asserts.py --range "$base..HEAD"
+
+      - name: New-test-TU declaration check (added TUs vs merge-base)
+        run: |
+          base=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
+          python3 scripts/check_new_test_tus.py --range "$base..HEAD"

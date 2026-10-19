@@ -180,12 +180,15 @@ fails the check.
   reference-regeneration workflow. Which groups tolerate a software rasterizer is measured — before
   widening the CI filter or dispositioning a visual-regression failure, follow the checklist in
   `doc/testing/testing-architecture.md` §4.6.
-- Two more diff-scoped checkers beside `check_new_refs.py` (all in the pre-commit hook and the CI
-  `new-refs` job; same "checker is the rule" discipline): `scripts/check_new_gui_tests.py` rejects a
-  newly registered gui_test case that does not use its `ImGuiTestContext`;
+- Three more diff-scoped checkers beside `check_new_refs.py` (same "checker is the rule" discipline;
+  pre-commit hook on the staged diff, CI `new-refs` job vs merge-base): `scripts/check_new_gui_tests.py`
+  rejects a newly registered gui_test case that does not use its `ImGuiTestContext`;
   `scripts/check_loop_fatal_asserts.py` rejects a fatal assert (or non-fatal report) followed by code
-  that keeps driving the same test context in a repeatedly-executing scope of `test/`. Full rule
-  statements: the scripts' docstrings and testing-architecture.md §4.9.
+  that keeps driving the same test context in a repeatedly-executing scope of `test/`;
+  `scripts/check_new_test_tus.py` rejects a PR adding more than five test TUs unless the same diff
+  appends declaration entries to the append-only ledger `test/tu_cost_ledger.json` (its hub-closure
+  half is notice-only, on the `build` job's judging leg). Full rule statements: the scripts'
+  docstrings, testing-architecture.md §4.9, and §7.9.
 - **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** `test/duration_registry.json`
   is the single authority for two kinds of quantity — per-test time and phase budgets — and its v3
   shape adds the build phase's adaptive per-miss ruler beside the absolute backstop. The runtime

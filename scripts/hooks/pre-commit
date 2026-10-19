@@ -36,10 +36,11 @@ else
   echo "pre-commit: scripts/hooks/worktree-guard.py not in this checkout; main-worktree guard skipped." >&2
 fi
 
-# 1) Deterministic policy checks (whole tree — fast) plus the two diff-scoped
+# 1) Deterministic policy checks (whole tree — fast) plus the four diff-scoped
 #    checks on what this commit adds. Separate entry points on purpose: the first
-#    asks what state the repo is in, the other two ask what you just wrote — one
-#    of the prose you added, one of the GUI test cases you registered.
+#    asks what state the repo is in, the others ask what you just wrote — the
+#    prose you added, the GUI test cases you registered, the fatal asserts you
+#    put in a loop body, the test TUs you added beyond the free quota.
 if command -v python3 >/dev/null 2>&1; then
   if ! python3 scripts/check_policies.py; then
     exit 1
@@ -51,6 +52,11 @@ if command -v python3 >/dev/null 2>&1; then
     exit 1
   fi
   if ! python3 scripts/check_loop_fatal_asserts.py --staged; then
+    exit 1
+  fi
+  # TU half only — the hub-closure half needs a build tree's ninja deps, so
+  # it is CI's judging leg's job (check_new_test_tus.py says so out loud).
+  if ! python3 scripts/check_new_test_tus.py --staged; then
     exit 1
   fi
 else
