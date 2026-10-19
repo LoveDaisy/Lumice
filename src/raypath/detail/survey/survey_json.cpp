@@ -325,26 +325,33 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
       // byte-compatible with the leg's pre-wiring marker.
       doc["chromatic"]["weight_tint"] = EvidenceJson(tint.evidence);
     } else {
+      // The reading's own field family: point-mass masses vs class power sums — one shape per
+      // document, never both (the caliber string names the reading either way).
       Json tint_json = { { "red_label", tint.red_label },
                          { "blue_label", tint.blue_label },
                          { "n_red", Num(tint.n_red) },
-                         { "n_blue", Num(tint.n_blue) },
-                         { "m_red", Num(tint.m_red) },
-                         { "m_blue", Num(tint.m_blue) },
-                         { "m_red_error", Num(tint.m_red_error) },
-                         { "m_blue_error", Num(tint.m_blue_error) },
-                         { "method", tint.method },
-                         { "sample_count", tint.sample_count },
-                         { "lattice", tint.lattice },
-                         { "deterministic", tint.deterministic },
-                         { "representative", LayersJson({ tint.representative })[0] },
-                         { "member_count", tint.member_count },
-                         { "ratio", Num(tint.ratio) },
-                         { "direction", SurveyTintDirectionName(tint.direction) },
-                         { "kept_count_red", tint.kept_count_red },
-                         { "kept_count_blue", tint.kept_count_blue },
-                         { "caliber", tint.caliber },
-                         { "evidence", EvidenceJson(tint.evidence) } };
+                         { "n_blue", Num(tint.n_blue) } };
+      if (tint.class_power_shape) {
+        tint_json["energy_red"] = Num(tint.energy_red);
+        tint_json["energy_blue"] = Num(tint.energy_blue);
+      } else {
+        tint_json["m_red"] = Num(tint.m_red);
+        tint_json["m_blue"] = Num(tint.m_blue);
+        tint_json["m_red_error"] = Num(tint.m_red_error);
+        tint_json["m_blue_error"] = Num(tint.m_blue_error);
+      }
+      tint_json["method"] = tint.method;
+      tint_json["sample_count"] = tint.sample_count;
+      tint_json["lattice"] = tint.lattice;
+      tint_json["deterministic"] = tint.deterministic;
+      tint_json["representative"] = LayersJson({ tint.representative })[0];
+      tint_json["member_count"] = tint.member_count;
+      tint_json["ratio"] = Num(tint.ratio);
+      tint_json["direction"] = SurveyTintDirectionName(tint.direction);
+      tint_json["kept_count_red"] = tint.kept_count_red;
+      tint_json["kept_count_blue"] = tint.kept_count_blue;
+      tint_json["caliber"] = tint.caliber;
+      tint_json["evidence"] = EvidenceJson(tint.evidence);
       doc["chromatic"]["weight_tint"] = std::move(tint_json);
     }
   }

@@ -298,8 +298,11 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         // The arm's own budget note: the T1 legs are the document's computation, and the note
         // says what ran instead of repeating the early-stop arm's millisecond-only claim.
         out->budget_note =
-            "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, the "
-            "chromatic pair) are not budget-enforced yet; enforcement lands with the quantification legs";
+            "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, "
+            "the chromatic pair, and the class tint's two-lambda power sum at " +
+            std::to_string(kSurveyClassTintSampleCount) +
+            " samples per lambda) are not budget-enforced yet; enforcement lands with the "
+            "quantification legs";
         // The canonical probe: the class's radial profile at the document's reference
         // wavelength (the same ruler the certified edge reads). Never refuses — an empty
         // event set serializes as the honest zero profile.
@@ -318,6 +321,16 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         // sub-blocks).
         AssembleChromaticLayer(table, polygons, request.path_layers[0], density.spec,
                                static_cast<int>(scope.members.size()), out);
+        // The arm's own tint leg: the class power-sum over the declared lattice (a different
+        // reading and field family from the identity arm's point-mass masses; its refusals
+        // stay in the sub-block — the block already carries legs with real output).
+        ClassTintInput class_tint_input;
+        class_tint_input.table = &table;
+        class_tint_input.polygons = &polygons;
+        class_tint_input.representative = &request.path_layers[0];
+        SunIncidentDirection(config.scene_.light_source_.param_, class_tint_input.incident);
+        class_tint_input.member_count = static_cast<int>(scope.members.size());
+        AssembleClassTint(class_tint_input, out);
       }
     } else {
       SurveyUnevaluated unevaluated;

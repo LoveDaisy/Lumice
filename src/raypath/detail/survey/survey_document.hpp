@@ -403,7 +403,8 @@ inline const char* SurveyTintDirectionName(SurveyTintDirection direction) {
 // the survey-side single authority over the slug, so a kernel-side spelling change is one edit.
 // The switch carries no default: a new kernel PointMassMethod value fails -Wswitch at the
 // switch itself; the trailing return only satisfies control-reaches-end for today's
-// fully-covered enum.
+// fully-covered enum. The class power-sum path is survey-side, not a kernel method: its slug
+// is the constant below, and the two families never share a field shape (see SurveyWeightTint).
 inline const char* PointMassMethodName(analytic::PointMassMethod method) {
   switch (method) {
     case analytic::PointMassMethod::kPsiAverage:
@@ -414,20 +415,33 @@ inline const char* PointMassMethodName(analytic::PointMassMethod method) {
   return "lattice_mean";
 }
 
-// One weight-tint evaluation. `m_*` are the per-lambda masses and their last-doubling quadrature
-// changes (provenance, never asserted against); `ratio` is m_blue / m_red. The tint runs on the
-// class representative, with `member_count` declaring the class size it stands for (the probe's
-// relabeled-equivalence discipline).
+constexpr const char* kClassTintMethodLatticePowerSum = "lattice_power_sum";
+
+// One weight-tint evaluation. The two shapes this struct carries share the ratio/question but
+// not the reading, and the field sets never merge:
+// - the point-mass shape (the identity arm; `class_power_shape` false): `m_*` are the
+//   per-lambda masses and their last-doubling quadrature changes (provenance, never asserted
+//   against); `method` names the kernel's PointMassMethod. `ratio` is m_blue / m_red.
+// - the class power-sum shape (the T1 arm; `class_power_shape` true): `energy_*` are the
+//   per-sample average powers of the declared lattice's kept events (sum of w = A*T over the
+//   lattice, divided by the lattice size); `method` is kClassTintMethodLatticePowerSum; the
+//   `m_*` family stays zero and does not serialize (a mass is not this shape's quantity).
+// Either way the tint runs on the class representative, with `member_count` declaring the
+// class size it stands for (the probe's relabeled-equivalence discipline), and `ratio` is the
+// blue reading over the red one.
 struct SurveyWeightTint {
   std::string red_label = kChromaticRedLabel;
   std::string blue_label = kChromaticBlueLabel;
+  bool class_power_shape = false;  // the reading's shape: point-mass masses vs lattice power sum
   double n_red = 0.0;
   double n_blue = 0.0;
   double m_red = 0.0;
   double m_blue = 0.0;
   double m_red_error = 0.0;
   double m_blue_error = 0.0;
-  std::string method;  // PointMassMethodName: the mass's own computation path
+  double energy_red = 0.0;   // class shape: the per-sample average power at the red index
+  double energy_blue = 0.0;  // class shape: the per-sample average power at the blue index
+  std::string method;        // PointMassMethodName or kClassTintMethodLatticePowerSum: the reading's own path
   long long sample_count = 0;
   std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (band_sum.hpp)
   bool deterministic = true;                    // no RNG anywhere in the sample

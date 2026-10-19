@@ -284,8 +284,8 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   document.weight_tint = SurveyWeightTint{};
   document.weight_tint->evidence.state = EvidenceState::kUnevaluated;
   document.weight_tint->evidence.reason =
-      "T1-arm class tint not wired (random-family two-lambda map ratio deferred; the identity "
-      "arm computes this leg)";
+      "chromatic legs not run: the delta axis refused (slab_crease_touching), and the "
+      "chromatic legs sit downstream of it";
   document.chromatic.state = EvidenceState::kFinite;
   document.chromatic.coverage.members_evaluated = 12;
   document.chromatic.coverage.wavelength_nm = 550.0;
@@ -350,8 +350,8 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   EXPECT_DOUBLE_EQ(diagnose.at("position_deg").get<double>(), 22.3);
   EXPECT_EQ(chromatic.at("weight_tint").at("state"), "unevaluated");
   EXPECT_EQ(chromatic.at("weight_tint").at("reason"),
-            "T1-arm class tint not wired (random-family two-lambda map ratio deferred; the "
-            "identity arm computes this leg)");
+            "chromatic legs not run: the delta axis refused (slab_crease_touching), and the "
+            "chromatic legs sit downstream of it");
 }
 
 // The tint leg's three serialized shapes. The unevaluated one rides the fixture above; the
@@ -413,6 +413,40 @@ TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
   // disk-integrated D65 B/R without leaving the document.
   EXPECT_NE(tint_json.at("caliber").get<std::string>().find("SPD"), std::string::npos);
   EXPECT_TRUE(tint_json.at("evidence").at("coverage").contains("members_evaluated"));
+}
+
+// The class power-sum shape (the T1 arm's reading): energy fields instead of masses, the
+// lattice_power_sum method, and the point-mass family's keys stay absent — one shape per
+// document, never both.
+TEST(SurveyJsonV4, WeightTintClassPowerSumCarriesTheEnergyFieldFamily) {
+  SurveyDocument document;
+  document.weight_tint = SurveyWeightTint{};
+  SurveyWeightTint& tint = *document.weight_tint;
+  tint.class_power_shape = true;
+  tint.n_red = 1.30803882;
+  tint.n_blue = 1.31569243;
+  tint.energy_red = 2.4e-5;
+  tint.energy_blue = 3.7e-5;
+  tint.method = kClassTintMethodLatticePowerSum;
+  tint.sample_count = 1000000;
+  tint.representative = { 4, 8, 1, 7, 5 };
+  tint.member_count = 8;
+  tint.ratio = 1.541;
+  tint.direction = SurveyTintDirection::kBlueTinted;
+  tint.kept_count_red = 312000;
+  tint.kept_count_blue = 298000;
+  tint.evidence.state = EvidenceState::kFinite;
+  tint.evidence.coverage.members_evaluated = 1;
+  tint.evidence.coverage.wavelength_nm = 450.0;
+
+  const auto parsed = Serialized(document);
+  const auto& tint_json = parsed.at("chromatic").at("weight_tint");
+  EXPECT_EQ(tint_json.at("method"), "lattice_power_sum");
+  EXPECT_DOUBLE_EQ(tint_json.at("energy_red").get<double>(), 2.4e-5);
+  EXPECT_DOUBLE_EQ(tint_json.at("energy_blue").get<double>(), 3.7e-5);
+  EXPECT_FALSE(tint_json.contains("m_red"));
+  EXPECT_FALSE(tint_json.contains("m_red_error"));
+  EXPECT_EQ(tint_json.at("direction"), "blue_tinted");
 }
 
 // The identity arm's refusal shape (review Minor#1): the tint is the block's only leg there,

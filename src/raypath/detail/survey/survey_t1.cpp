@@ -330,13 +330,8 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
       "the kernel's Diagnose at the " + ChromaticPairProseRedFirst() + " index pair";
   block.evidence.coverage.wavelength_nm = kChromaticBlueNm;
 
-  // The weight-tint leg stays unwired on the random family (the identity arm computes this
-  // leg); the sub-block says so.
-  out->weight_tint = SurveyWeightTint{};
-  out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
-  out->weight_tint->evidence.reason =
-      "T1-arm class tint not wired (random-family two-lambda map ratio deferred; the identity "
-      "arm computes this leg)";
+  // The weight-tint leg is the caller's (the T1 arm's class power-sum); this layer leaves it
+  // unwired so each arm assembles exactly its own legs.
 
   out->chromatic.state = EvidenceState::kFinite;
   out->chromatic.coverage.members_evaluated = class_size;

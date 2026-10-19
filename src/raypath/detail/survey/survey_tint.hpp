@@ -50,6 +50,34 @@ struct TintInput {
 // a refusal mode, never a defaulted ratio.
 void AssembleWeightTint(const TintInput& input, SurveyDocument* out);
 
+// The tint leg's caliber constant on the T1 arm (schema: the serialized block echoes it; the
+// ladder that pinned the value and its acceptance lines are in the task's progress record).
+inline constexpr int kSurveyClassTintSampleCount = 1000000;
+
+// The T1 arm's class tint: the direction the class's transmission WEIGHT tilts across the fixed
+// pair, read as a class power sum over the declared source. Two BuildEvents calls — once per
+// lambda through its refractive index, same lattice size, one shared lattice (the declared
+// Haar measure's own sampler) — and the ratio is the blue sum over the red sum: sum of the
+// kept events' w = A*T, divided by the lattice size on both sides, so the per-sample average
+// powers carry it. This is the C15/C06 near-TIR weight mechanism at class level, a different
+// reading (and a different field family) from the identity arm's point-mass masses; the two
+// calibers must not be compared. The caller is the T1 arm's full-dimensional branch (the
+// declared family is the random one); the leg refuses, never defaults: an unresolvable
+// representative (member_resolution), or a degenerate band (zero_band_weight — no silent
+// division by zero reaches the document). A refusal here does not flip the chromatic block:
+// on this arm the block has other legs with real output, and the sub-block carries its own
+// state (the block-state rule: finite once any leg produced output).
+struct ClassTintInput {
+  const analytic::FaceNormalTable* table = nullptr;
+  const analytic::FacePolygonTable* polygons = nullptr;
+  const std::vector<int>* representative = nullptr;  // the requested literal face sequence
+  double incident[3] = { 0.0, 0.0, -1.0 };           // the sun's propagation direction (SunIncidentDirection)
+  int member_count = 0;                              // the class size the representative stands for
+  int sample_count = kSurveyClassTintSampleCount;
+};
+
+void AssembleClassTint(const ClassTintInput& input, SurveyDocument* out);
+
 }  // namespace lumice::raypath::survey
 
 #endif  // RAYPATH_DETAIL_SURVEY_TINT_H_

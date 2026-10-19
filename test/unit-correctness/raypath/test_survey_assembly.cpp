@@ -182,8 +182,14 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   EXPECT_DOUBLE_EQ(document.positional_dispersion->n_blue, IceRefractiveIndex::Get(450.0));
   ASSERT_TRUE(document.diagnose.has_value());
   EXPECT_FALSE(document.diagnose->verdict_kind.empty());
+  // The arm's own tint leg: the class power-sum shape (the reading is the lattice's weight
+  // ratio, not the identity arm's point-mass masses).
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kUnevaluated);
+  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kFinite);
+  EXPECT_EQ(document.weight_tint->method, std::string(kClassTintMethodLatticePowerSum));
+  EXPECT_TRUE(document.weight_tint->class_power_shape);
+  EXPECT_GT(document.weight_tint->kept_count_red, 0);
+  EXPECT_GT(document.weight_tint->kept_count_blue, 0);
   EXPECT_EQ(document.chromatic.state, EvidenceState::kFinite);
   // The document's own evidence stays finite: the routing refused nothing.
   EXPECT_EQ(document.evidence.state, EvidenceState::kFinite);
@@ -376,9 +382,16 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
   EXPECT_FALSE(dispersion_json.contains("value_red_deg"));
   EXPECT_FALSE(dispersion_json.contains("direction"));
   EXPECT_TRUE(dispersion_json.contains("followed_onsets"));
-  // The chromatic block is finite (a leg produced output) with the tint leg honest.
+  // The chromatic block is finite (a leg produced output) with the class tint's own reading.
   EXPECT_EQ(parsed.at("chromatic").at("state"), "finite");
-  EXPECT_EQ(parsed.at("chromatic").at("weight_tint").at("state"), "unevaluated");
+  const auto& tint_json = parsed.at("chromatic").at("weight_tint");
+  EXPECT_EQ(tint_json.at("evidence").at("state"), "finite");
+  EXPECT_EQ(tint_json.at("method"), "lattice_power_sum");
+  EXPECT_GT(tint_json.at("ratio").get<double>(), 0.0);
+  // The caliber names the class power-sum reading, not the point-mass mass ratio.
+  EXPECT_NE(tint_json.at("caliber").get<std::string>().find("class power-sum"), std::string::npos);
+  EXPECT_FALSE(tint_json.contains("m_red"));  // the mass family is the point-mass shape's
+  EXPECT_TRUE(tint_json.contains("energy_red"));
 }
 
 }  // namespace
