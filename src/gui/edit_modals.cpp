@@ -224,10 +224,13 @@ static bool g_pending_tab_select = false;
 static CrystalConfig g_crystal_buf;
 static AxisDist g_axis_buf[3];  // zenith, azimuth, roll
 // The Axis tab's label buffer: the sticky label being edited. Like the axis triple, it is pulled
-// from the pool each frame and pushed on commit; pressing a Label chip writes ONLY this buffer —
-// the parameters (g_axis_buf) are never touched by the label row, which is what keeps one
-// parameter cache for the whole modal. g_crystal_buf's own axis_preset copy is dead while the
-// modal is open (CrystalTabFieldsEqual never compares it; the commit writes the buffer's value).
+// from the pool each frame and pushed on commit; pressing a Label chip is a full context switch —
+// it writes this buffer, writes the parameters (g_axis_buf) when the target's memory or
+// definition loads, and re-seats the preview pose on the target label's typical view. One
+// parameter cache still serves the whole modal: its writers are the sliders, the chip row's
+// loads, Reset All's definition reload, the modal-open refill, and the Unlink re-read.
+// g_crystal_buf's own axis_preset copy is dead while the modal is open (CrystalTabFieldsEqual
+// never compares it; the commit writes the buffer's value).
 static AxisPreset g_axis_label_buf = AxisPreset::kRandom;
 
 // The column-major Tab ring over the Crystal tab's two property tables (gui/table_focus_ring.hpp).
@@ -1625,12 +1628,16 @@ static void RenderAxisModal(GuiState& state) {
   //
   // A chip press is this row's single gesture — switch: the parameters currently in the buffers
   // are remembered under the label being left, the target label's memory loads (its definition
-  // when nothing is remembered; a Custom target with neither renames only), and the label
-  // follows. One gesture, one writer: the sticky label never moves on its own, and pressing the
-  // already-highlighted chip does nothing. (This row has carried two earlier semantics — "load
-  // definition" and "rename only"; both were removed because a rename-only press read as "no
-  // reaction" in this modal, and a separate load-only control spelled the chips' own words with
-  // different behavior.)
+  // when nothing is remembered; a Custom target with neither renames only), the label follows,
+  // and the preview re-seats on the target label's typical view (ResetCrystalView — the same
+  // authority the card thumbnail and Reset View use; under Immediate the thumbnail flips on this
+  // same press, so a modal that kept the old view would be the divergence. The old worry about
+  // the view jumping mid-edit predates the switch being a full context change: what must not
+  // move the pose is editing parameters, and that is still true). One gesture, one writer: the
+  // sticky label never moves on its own, and pressing the already-highlighted chip does nothing.
+  // (This row has carried two earlier semantics — "load definition" and "rename only"; both were
+  // removed because a rename-only press read as "no reaction" in this modal, and a separate
+  // load-only control spelled the chips' own words with different behavior.)
   const AxisPreset active = g_axis_label_buf;
   const ImVec4 active_color = AccentColor();
   const ImVec4 active_text_color = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
@@ -1640,7 +1647,8 @@ static void RenderAxisModal(GuiState& state) {
   // print.
   constexpr const char* kChipSwitchNote =
       "Switches to this label: remembers the current parameters under the one you leave, then "
-      "loads this label's memory — or its definition when nothing is remembered.";
+      "loads this label's memory — or its definition when nothing is remembered. The preview "
+      "pose follows, re-seating on this label's typical view.";
   ImGui::Text("Label:");
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("%s", kChipSwitchNote);
@@ -1674,6 +1682,7 @@ static void RenderAxisModal(GuiState& state) {
             g_axis_buf[2] = press.triple[2];
           }
           g_axis_label_buf = entry.id;
+          ResetCrystalView(g_axis_label_buf, g_axis_buf);
         }
       }
     }
@@ -1708,7 +1717,8 @@ static void RenderAxisModal(GuiState& state) {
   SetNextComboPopupTopMost();
   RenderAxisDist("Roll", g_axis_buf[2], 0.0f, 360.0f, g_pull_adopted.axis[2]);
 
-  // Reset — reloads the CURRENT label's definition into the three rows above, the zenith through
+  // -- Reset All (Axis tab) --
+  // Reloads the CURRENT label's definition into the three rows above, the zenith through
   // EffectiveAxisPresetZenith (the user's retuned value from the preset library when one is
   // stored). It is "pull this label's parameters back", nothing more: the label is not touched
   // (the chips are its only writer), the memory is not cleared (a slot is rewritten by the next
@@ -1716,21 +1726,19 @@ static void RenderAxisModal(GuiState& state) {
   // it — CrystalParamHash does not hash the axis triple, the mesh is built in canonical
   // orientation, and the rendered orientation lives only in g_crystal_rotation), so every visible
   // effect sits above: the three parameter rows and the preview's summary line. Disabled under
-  // Custom: it has no definition to reload. Sits directly under the parameter rows on purpose:
-  // the control is where its effects land. (This row's predecessor loaded a preset's definition
-  // through a dropdown whose items repeated the chips' own words with a different behavior; the
-  // chips' switch gesture covers that path, so the dropdown is gone.)
-  ImGui::Text("Reset:");
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s",
-                      "Reloads the current label's definition — the label, the memory and the view are unchanged.");
-  }
-  ImGui::SameLine();
+  // Custom: it has no definition to reset to. Same family as the Crystal tab's Reset All and the
+  // Filter tab's Remove Filter — one full-height, fixed-width tail-row action button that resets
+  // this tab's parameter group (the old "Reset:" caption + Reload small button spelled one action
+  // with two words, and was the axis tab's only style outlier). Sits directly under the parameter
+  // rows on purpose: the control is where its effects land. (The row's earlier predecessor loaded
+  // a preset's definition through a dropdown whose items repeated the chips' own words with a
+  // different behavior; the chips' switch gesture covers that path, so the dropdown is gone.)
+  ImGui::Spacing();
   const bool custom_label = active == AxisPreset::kCustom;
   if (custom_label) {
     ImGui::BeginDisabled();
   }
-  if (ImGui::SmallButton("Reload##axis_reset")) {
+  if (ImGui::Button("Reset All##axis_reset", ImVec2(UiPx(120.0f), 0.0f))) {
     const auto& entry = AxisPresetEntryFor(active);
     g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
     g_axis_buf[1] = entry.azimuth;
@@ -1738,9 +1746,9 @@ static void RenderAxisModal(GuiState& state) {
   }
   // AllowWhenDisabled so the Custom case can still say why its button is inert.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", custom_label ?
-                                "Custom has no definition to reload." :
-                                "Reloads this label's definition (zenith as retuned in the preset library).");
+    ImGui::SetTooltip("%s", custom_label ? "Custom has no definition to reset to." :
+                                           "Resets this label's parameters to its definition (zenith as retuned in the "
+                                           "preset library). The label, the memory and the view are unchanged.");
   }
   if (custom_label) {
     ImGui::EndDisabled();
