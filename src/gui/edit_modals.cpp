@@ -227,9 +227,10 @@ static AxisDist g_axis_buf[3];  // zenith, azimuth, roll
 // from the pool each frame and pushed on commit; pressing a Label chip is a full context switch —
 // it writes this buffer, writes the parameters (g_axis_buf) when the target's memory or
 // definition loads, and re-seats the preview pose on the target label's typical view. One
-// parameter cache still serves the whole modal: beside the sliders, the chip row is its only
-// writer. g_crystal_buf's own axis_preset copy is dead while the modal is open
-// (CrystalTabFieldsEqual never compares it; the commit writes the buffer's value).
+// parameter cache still serves the whole modal: its writers are the sliders, the chip row's
+// loads, Reset All's definition reload, the modal-open refill, and the Unlink re-read.
+// g_crystal_buf's own axis_preset copy is dead while the modal is open (CrystalTabFieldsEqual
+// never compares it; the commit writes the buffer's value).
 static AxisPreset g_axis_label_buf = AxisPreset::kRandom;
 
 // The column-major Tab ring over the Crystal tab's two property tables (gui/table_focus_ring.hpp).
@@ -1646,7 +1647,8 @@ static void RenderAxisModal(GuiState& state) {
   // print.
   constexpr const char* kChipSwitchNote =
       "Switches to this label: remembers the current parameters under the one you leave, then "
-      "loads this label's memory — or its definition when nothing is remembered.";
+      "loads this label's memory — or its definition when nothing is remembered. The preview "
+      "pose follows, re-seating on this label's typical view.";
   ImGui::Text("Label:");
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("%s", kChipSwitchNote);

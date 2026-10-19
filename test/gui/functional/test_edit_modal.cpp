@@ -1481,6 +1481,11 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
                   "worlds apart");
       }
 
+      // Perturb zoom off the default so the zoom half of the re-seat is discriminative here —
+      // at the default the reset and no-op worlds are identical (same reasoning as the premises
+      // above).
+      gui::g_crystal_zoom = 2.5f;
+
       ctx->ItemClick("**/Plate##axis_label_chip");
       ctx->Yield(3);
 
