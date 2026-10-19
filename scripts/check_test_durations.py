@@ -2,9 +2,14 @@
 """Runtime gate for slow individual tests and cumulative CI phase budgets.
 
 Per-test reports are `{id: seconds}`. Phase reports come from
-`measure_ci_phase.py`. Both are checked against the single tracked authority,
-`test/duration_registry.json`. A maintainer-authorized cold-build run may accept
-only over-limit phase budgets whose registered members include `build`.
+`measure_ci_phase.py`; cache reports (per-miss counts) come from
+`collect_cache_stats.py` and are consumed only by phase budgets carrying a
+`per_miss` block, which judge the build phase on
+`seconds <= overhead_seconds + max_seconds_per_miss * misses` with the
+absolute `max_seconds` kept as an outer bound. All are checked against the
+single tracked authority, `test/duration_registry.json`. A maintainer-
+authorized cold-build run may accept only over-limit phase budgets whose
+registered members include `build`.
 """
 from __future__ import annotations
 
@@ -22,10 +27,16 @@ THRESHOLD_S = 60.0
 SLOWDOWN_FACTOR = 2.0
 ROUND_TO_S = 5
 
-REGISTRY_VERSION = 2
+REGISTRY_VERSION = 3
 ENTRY_FIELDS = ("id", "job", "ci_seconds", "reason")
 PHASE_FIELDS = ("job", "phase", "max_seconds", "reason")
+PER_MISS_FIELDS = ("overhead_seconds", "max_seconds_per_miss")
+CACHE_TOOLS = ("ccache", "sccache")
 PLACEHOLDER_REASON = "TODO"
+# Hint in the outer-bound red message only: what the whole tree costs to compile
+# when every translation unit misses. A hint, not a judgment — update when the
+# tree's TU count moves by an amount that would mislead a triager.
+FULL_TREE_SIGNATURE_TUS = 519
 
 
 class RegistryError(Exception):
@@ -38,6 +49,15 @@ def _positive_number(value, where: str) -> float:
     number = float(value)
     if not math.isfinite(number) or number <= 0:
         raise RegistryError(f"{where} must be a positive finite number")
+    return number
+
+
+def _non_negative_number(value, where: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RegistryError(f"{where} must be a non-negative number")
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise RegistryError(f"{where} must be a non-negative finite number")
     return number
 
 
@@ -78,12 +98,22 @@ def load_registry(path: Path) -> tuple[list[dict], list[dict]]:
     for index, budget in enumerate(budgets):
         where = f"{path}: phase_budgets[{index}]"
         fields = set(budget) if isinstance(budget, dict) else set()
-        if fields not in (set(PHASE_FIELDS), set(PHASE_FIELDS) | {"members"}):
-            raise RegistryError(f"{where}: must have the phase fields and optional 'members'")
+        allowed = (set(PHASE_FIELDS), set(PHASE_FIELDS) | {"members"}, set(PHASE_FIELDS) | {"per_miss"})
+        if fields not in allowed:
+            raise RegistryError(f"{where}: must have the phase fields and optional 'members' or 'per_miss'")
         for field in ("job", "phase", "reason"):
             if not isinstance(budget[field], str) or (field != "reason" and not budget[field]):
                 raise RegistryError(f"{where}: '{field}' must be a non-empty string")
         _positive_number(budget["max_seconds"], f"{where}: 'max_seconds'")
+        per_miss = budget.get("per_miss")
+        if per_miss is not None:
+            # The allowed field sets above already exclude members+per_miss, so
+            # a budget here carries per_miss on a single phase, never an
+            # aggregate.
+            if not isinstance(per_miss, dict) or set(per_miss) != set(PER_MISS_FIELDS):
+                raise RegistryError(f"{where}: 'per_miss' must have exactly the fields {', '.join(PER_MISS_FIELDS)}")
+            _non_negative_number(per_miss["overhead_seconds"], f"{where}: 'per_miss.overhead_seconds'")
+            _positive_number(per_miss["max_seconds_per_miss"], f"{where}: 'per_miss.max_seconds_per_miss'")
         members = budget.get("members", [budget["phase"]])
         if not isinstance(members, list) or not members or any(not isinstance(v, str) or not v for v in members):
             raise RegistryError(f"{where}: 'members' must be a non-empty list of non-empty strings")
@@ -140,6 +170,28 @@ def load_phase_reports(paths: list[Path]) -> dict[str, float]:
             raise ValueError(f"{path}: duplicate phase report for {phase}")
         phases[phase] = float(seconds)
     return phases
+
+
+def load_cache_reports(paths: list[Path]) -> dict[str, dict]:
+    reports: dict[str, dict] = {}
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"{path}: cannot read cache report: {error}") from error
+        if not isinstance(data, dict) or set(data) != {"phase", "tool", "misses"}:
+            raise ValueError(f"{path}: cache report must contain exactly phase, tool and misses")
+        phase, tool, misses = data["phase"], data["tool"], data["misses"]
+        if not isinstance(phase, str) or not phase:
+            raise ValueError(f"{path}: phase must be a non-empty string")
+        if tool not in CACHE_TOOLS:
+            raise ValueError(f"{path}: tool must be one of {', '.join(CACHE_TOOLS)}")
+        if isinstance(misses, bool) or not isinstance(misses, int) or misses < 0:
+            raise ValueError(f"{path}: misses must be a non-negative integer")
+        if phase in reports:
+            raise ValueError(f"{path}: duplicate cache report for {phase}")
+        reports[phase] = {"tool": tool, "misses": misses}
+    return reports
 
 
 def round_up(seconds: float) -> int:
@@ -204,7 +256,11 @@ def check(job: str, durations: dict[str, float], entries: list[dict]) -> tuple[l
 
 
 def check_phases(
-    job: str, phases: dict[str, float], budgets: list[dict], allow_cold_build: bool = False
+    job: str,
+    phases: dict[str, float],
+    budgets: list[dict],
+    allow_cold_build: bool = False,
+    cache_reports: dict[str, dict] | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     errors: list[str] = []
     notices: list[str] = []
@@ -226,19 +282,74 @@ def check_phases(
             )
             continue
         seconds = sum(phases[member] for member in members)
-        if seconds > budget["max_seconds"]:
-            message = (
-                f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s "
-                f"({'+'.join(members)}), over its {budget['max_seconds']}s limit"
-            )
-            if allow_cold_build and "build" in members:
-                warnings.append(f"{message}; accepted with cold-build exception")
+        # A per_miss budget carries two independent conditions: the adaptive
+        # per-miss limit (the authoritative ruler — what one unit of change
+        # costs to compile) and the absolute max_seconds (the outer bound /
+        # disaster backstop). The report is consumed only where a per_miss
+        # entry needs it: no per_miss budget for the phase means the report is
+        # never read, so collecting one is harmless and missing one is silent.
+        per_miss = budget.get("per_miss")
+        report = (cache_reports or {}).get(budget["phase"]) if per_miss is not None else None
+        adaptive_violation = ""
+        if per_miss is not None:
+            if report is None:
+                errors.append(
+                    f"phase budget {budget['phase']!r} for job {job!r} has a per-miss limit but no cache report "
+                    "was passed (--cache-report); the per-miss check fails closed — pass the collector's report "
+                    "or drop the per_miss block"
+                )
             else:
-                errors.append(message)
+                misses = report["misses"]
+                limit = per_miss["overhead_seconds"] + per_miss["max_seconds_per_miss"] * misses
+                if seconds > limit:
+                    if misses:
+                        adaptive_violation = (
+                            f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s with {misses} "
+                            f"misses ({seconds / misses:.2f} s/miss > {per_miss['max_seconds_per_miss']:g}; "
+                            "compile-cost regression)"
+                        )
+                    else:
+                        adaptive_violation = (
+                            f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s with 0 misses "
+                            f"(adaptive limit: {per_miss['overhead_seconds']:g}s overhead + 0 misses = {limit:g}s)"
+                        )
+        messages: list[str] = []
+        if adaptive_violation:
+            if seconds > budget["max_seconds"]:
+                adaptive_violation += f" and over its {budget['max_seconds']}s outer bound"
+            messages.append(adaptive_violation)
+        elif seconds > budget["max_seconds"]:
+            if report is not None:
+                misses = report["misses"]
+                detail = f" with {misses} misses"
+                if misses:
+                    detail += (
+                        f" ({seconds / misses:.2f} s/miss healthy; broad closure — full-tree signature "
+                        f"is ~{FULL_TREE_SIGNATURE_TUS} TU)"
+                    )
+                messages.append(
+                    f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s{detail} "
+                    f"over its {budget['max_seconds']}s outer bound"
+                )
+            else:
+                messages.append(
+                    f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s "
+                    f"({'+'.join(members)}), over its {budget['max_seconds']}s limit"
+                )
+        if messages:
+            for message in messages:
+                if allow_cold_build and "build" in members:
+                    warnings.append(f"{message}; accepted with cold-build exception")
+                else:
+                    errors.append(message)
         else:
-            notices.append(
+            notice = (
                 f"phase budget {budget['phase']!r} for job {job!r}: {seconds:.1f}s / {budget['max_seconds']}s"
             )
+            if report is not None:
+                misses = report["misses"]
+                notice += f", {misses} misses" + (f" ({seconds / misses:.2f} s/miss)" if misses else "")
+            notices.append(notice)
     if not selected:
         notices.append(f"the registry has no phase budgets for job {job!r}")
     if allow_cold_build:
@@ -270,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--job", required=True)
     parser.add_argument("--report", type=Path, action="append", default=[])
     parser.add_argument("--phase-report", type=Path, action="append", default=[])
+    parser.add_argument("--cache-report", type=Path, action="append", default=[])
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--allow-cold-build", action="store_true")
     parser.add_argument("--summary", type=Path)
@@ -279,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         durations = load_reports(args.report)
         phases = load_phase_reports(args.phase_report)
+        cache_reports = load_cache_reports(args.cache_report)
         entries, budgets = load_registry(args.registry)
     except (RegistryError, ValueError) as error:
         message = str(error)
@@ -291,7 +404,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     errors, notices = check(args.job, durations, entries)
     phase_errors, phase_notices, warnings = check_phases(
-        args.job, phases, budgets, allow_cold_build=args.allow_cold_build
+        args.job,
+        phases,
+        budgets,
+        allow_cold_build=args.allow_cold_build,
+        cache_reports=cache_reports,
     )
     errors.extend(phase_errors)
     notices.extend(phase_notices)

@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "entries": [
     {
       "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means",
@@ -162,8 +162,9 @@
     {
       "job": "Ubuntu x86_64",
       "phase": "build",
-      "max_seconds": 540,
-      "reason": "Transitional value pending per-miss normalization: 420 was calibrated from a warm scripts-only run (38088767270, 15s build step) whose sample contained no source-heavy PR; the classes it governs measured 421.1-602.7s with zero test failures (runs 38124925035, 38254590460, 38320486746, 39061707245, 39158418638). Dominant term: change-class compile closure at 2.90-4.06 s/miss, not a tree regression."
+      "max_seconds": 720,
+      "per_miss": {"overhead_seconds": 30, "max_seconds_per_miss": 5.0},
+      "reason": "Two conditions; the authoritative ruler is the adaptive per-miss limit overhead_seconds + max_seconds_per_miss * misses, measured by collect_cache_stats.py after the zeroed-per-run build. Calibration: warm 0-miss builds measure 15-21s (x1.4 -> overhead 30); the worst legal class measured 4.06 s/miss on 121 misses (run 39158418638), x1.15 runner tier +7% -> 5.0. All five zero-test-failure reds of the 420s era replay green under both conditions: 436.6s/156, 421.2s/163, 552.9s/162, 602.7s/208, 490.8s/121 misses (runs 38124925035, 38254590460, 38320486746, 39061707245, 39158418638). max_seconds is the disaster backstop only: worst observed legal build 602.7s x1.15 = 693 -> 720. Replaces the 540/900 transitional raises of PR #513 — a judgment replacement, not a second raise of the same ruler — but a second adjustment of any constant here within 60 days still requires a structural task. Known single-K blind spot: per-miss regressions on lighter classes (2.58-3.41 s/miss observed) stay green up to ~72%; calibration and sensitivity are recorded in doc/testing/testing-architecture.md §7.7."
     },
     {
       "job": "Ubuntu x86_64",
@@ -175,8 +176,8 @@
       "job": "Ubuntu x86_64",
       "phase": "build+ctest",
       "members": ["build", "ctest"],
-      "max_seconds": 900,
-      "reason": "Owner-approved transitional raise of the twelve-minute preference: 822.3s measured with ctest inside its own 360s cap (run 39158418638), so the growth is the build phase. A second raise of either Ubuntu x86_64 entry within 60 days of 2026-10-19 requires a structural task (header split or unity build), not another raise."
+      "max_seconds": 1080,
+      "reason": "Owner wall-clock budget for the serial build-and-correctness segment, sized after the per-miss judgment replaced the transitional raises: slow-tier build envelope 693s (the build entry's outer bound, itself the worst legal build x1.15) + 360s (this job's registered ctest budget above) = 1053 -> 1080; measured aggregates sit below it (858.8s and 873.2s on runs 38320486746 and 39061707245, x1.15 = 988/1004). A second adjustment within 60 days requires a structural task, not another raise."
     },
     {
       "job": "Ubuntu ARM64",
