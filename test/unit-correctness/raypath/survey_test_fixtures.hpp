@@ -64,6 +64,15 @@ inline ConfigManager RandomPrismScene() {
   return config;
 }
 
+// The C17 shape: the same regular prism as RandomPrismScene (h 1, fd all 1, full-sphere
+// uniform) with the sun at `altitude` degrees (the corpus snapshot has 15). Its touching
+// four-face chains (3-1-5-7 family) are the refused-support arm's shape.
+inline ConfigManager RegularPrismSceneWithSun(double altitude) {
+  ConfigManager config = RandomPrismScene();
+  config.scene_.light_source_.param_ = { static_cast<float>(altitude), 0, 0 };
+  return config;
+}
+
 // The C15 fixed-pose control: the same plate with the zenith and roll pinned to scalars (the
 // corpus's "zenith 0, roll 0" variant). The axis maps to no pose density — the honest-refusal
 // arm's shape.

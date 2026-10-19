@@ -12,6 +12,7 @@
 #include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/detail/survey/survey_tint.hpp"
+#include "raypath/detail/survey/survey_witness.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
 
@@ -256,12 +257,39 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
                                                   wavelength.refractive_index, wavelength.wavelength_nm, out);
       if (!outcome.ok) {
         // Fail closed downstream of the support: the cards after a refused support are not
-        // produced, and the document carries the refusal.
+        // produced, and the document carries the refusal. The support refusal says the support
+        // is unknown, not that the class carries no light — the witness leg hangs the declared
+        // source's positive event on the SAME refused card (the refused+finite coexistence the
+        // evidence layering asks for); the chromatic legs sit downstream of the delta axis and
+        // honestly say so instead of the stale v1 reason.
         SurveyObject refused_support;
         refused_support.kind = SurveyObjectKind::kSupportSet;
         refused_support.members = scope.members;
         refused_support.evidence.state = EvidenceState::kRefused;
         refused_support.evidence.mode = outcome.refusal_mode;
+        WitnessInput witness_input;
+        witness_input.table = &table;
+        witness_input.polygons = &polygons;
+        witness_input.crystal = &crystal.shape;
+        witness_input.representative = &request.path_layers[0];
+        SunIncidentDirection(config.scene_.light_source_.param_, witness_input.incident);
+        witness_input.refractive_index = wavelength.refractive_index;
+        witness_input.wavelength_nm = wavelength.wavelength_nm;
+        witness_input.member_count = static_cast<int>(scope.members.size());
+        AssembleWitness(witness_input, &refused_support);
+        const std::string chromatic_reason = "chromatic legs not run: the delta axis refused (" + outcome.refusal_mode +
+                                             "), and the chromatic legs sit downstream of it";
+        out->chromatic.state = EvidenceState::kUnevaluated;
+        out->chromatic.reason = chromatic_reason;
+        out->weight_tint = SurveyWeightTint{};
+        out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
+        out->weight_tint->evidence.reason = chromatic_reason;
+        out->budget_note =
+            "the refused-support arm's legs are the T0 routing verdict, the "
+            "per-member partition attempt (refused: " +
+            outcome.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
+            "-sample witness lattice; none is budget-enforced yet; enforcement "
+            "lands with the quantification legs";
         out->objects.clear();
         out->objects.push_back(std::move(refused_support));
         any_escaped = true;

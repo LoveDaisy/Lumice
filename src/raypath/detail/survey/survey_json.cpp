@@ -115,6 +115,29 @@ Json ObjectJson(const SurveyObject& object) {
     }
     card["bright_domain"] = std::move(domain);
   }
+  if (object.witness.has_value()) {
+    const SurveyObject::WitnessPayload& witness = *object.witness;
+    Json block = { { "state", EvidenceStateName(witness.state) } };
+    if (witness.state == EvidenceState::kRefused) {
+      // The fail-closed shape: exactly the state and its mode, byte-compatible with the tint
+      // leg's refused shape — no defaulted number reaches the document.
+      block["mode"] = witness.mode;
+    } else {
+      block["coverage"] = { { "members_evaluated", witness.coverage.members_evaluated },
+                            { "geometry_basis", witness.coverage.geometry_basis },
+                            { "wavelength_nm", Num(witness.coverage.wavelength_nm) } };
+      block["kept_count"] = witness.kept_count;
+      block["sample_count"] = witness.sample_count;
+      block["lattice"] = witness.lattice;
+      block["deterministic"] = witness.deterministic;
+      block["deviation_deg"] = Num(witness.deviation_deg);
+      block["weight"] = Num(witness.weight);
+      block["entry"] = Num(witness.entry);
+      block["interface_product"] = Num(witness.interface_product);
+      block["source_note"] = witness.source_note;
+    }
+    card["witness"] = std::move(block);
+  }
   return card;
 }
 

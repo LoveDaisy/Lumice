@@ -191,6 +191,31 @@ struct SurveyObject {
   std::optional<SupportSetPayload> support_set;
   std::optional<CausticEdgePayload> caustic_edge;
   std::optional<BrightDomainPayload> bright_domain;
+
+  // --- the witness payload (the refused-support arm's positive leg) ----------------------
+  // A partition refusal says the support is unknown, not that the class carries no light; this
+  // payload hangs the positive witness on the SAME refused support card — the card's own
+  // evidence stays refused, and the witness sub-block carries its own finite+coverage (the two
+  // states coexist; neither overrides the other). The witness is the max-weight event of the
+  // declared-source lattice (the antipodal Fibonacci lattice over SO(3), the declared Haar
+  // measure's own sampler) re-evaluated by the diagnostic batch at its pose: an existence
+  // statement, never a distribution statistic. Absent from a card no leg produced.
+  struct WitnessPayload {
+    EvidenceState state = EvidenceState::kRefused;
+    std::string mode;         // refused
+    SurveyCoverage coverage;  // finite
+    long long kept_count = 0;
+    long long sample_count = 0;
+    std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (discovery.hpp)
+    bool deterministic = true;                    // no RNG anywhere in the sample
+    double deviation_deg = 0.0;                   // the event's own deviation (the discovery's D)
+    double weight = 0.0;                          // the event's w = A*T (the lattice's unit)
+    double entry = 0.0;                           // the batch row's entry measure (its own read of A)
+    double interface_product = 0.0;               // the batch row's interface product
+    std::string source_note;                      // the declared source, spelled inside the document
+  };
+
+  std::optional<WitnessPayload> witness;
 };
 
 // The T0 leg's per-member record: the routing fact the certificate (or its absence) states for
