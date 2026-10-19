@@ -1086,7 +1086,7 @@ ccache `--print-stats` / sccache `--show-stats --stats-format=json`——与种�
 写失败不使 miss 计数失真（编译已实际发生并计入 miss）。
 
 **灵敏度（诚实边界）。** 单一 K 跨越每 miss 成本不同的类（实测 2.58–4.06 s/miss）。K = 5.0 对最差类
-可检出 ≥23% 的每 miss 退化（慢档边界上 ≥7%）——但更轻的类（raypath 闭包 2.90 s/miss）要 ≤72% 的
+可检出 ≥23% 的每 miss 退化（慢档边界上 ≥7%）——但更轻的类（raypath 闭包 2.90 s/miss）要 ≥72% 的
 退化才会触及自适应上限，这是 v1 已知已接受的单 K 跨类盲区，记录在此而非掩盖；每个 PR 的 cache-stats
 artifact 持续入库标定样本。收紧 K——或按 TU 加权（需对账 `.ninja_log`，耦合构建系统内部）——都是
 上述防棘轮条款约束下的需评审 registry 改动，绝不是静默的。
