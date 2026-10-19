@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792397027985,
+  "lastUpdate": 1792397030833,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9596,50 +9596,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "b6ed96be5d6acdd7acc63a500e5c045647525ba5",
-          "message": "Merge pull request #403 from LoveDaisy/feat/edit-modal-height-and-expanded-polish\n\nfeat(gui): Edit Entry — a draggable height, aligned Expanded headers, standard headings",
-          "timestamp": "2026-09-23T09:50:00+08:00",
-          "tree_id": "4bd7771eb2b058baf5a35532f33a8b6313a2718b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/b6ed96be5d6acdd7acc63a500e5c045647525ba5"
-        },
-        "date": 1790128919804,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 89.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 97.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 89.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "2056f69990d8a0df13c199c795260b717c144f29",
           "message": "Merge pull request #404 from LoveDaisy/feat/crystal-projected-area-weighting\n\nfix(core): weight crystal entry by projected area on every backend",
           "timestamp": "2026-09-24T19:58:42+08:00",
@@ -13969,6 +13925,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5d28c6f252fce9b6b55e845b47eaf5cc77815f6e",
+          "message": "Merge pull request #517 from LoveDaisy/chore/li-parity-fixture-lfs\n\nchore(test): track li-parity fixtures in Git LFS",
+          "timestamp": "2026-10-19T16:00:23+08:00",
+          "tree_id": "457c05fb6b6b02b293a736c7b48a89a1eb9f6353",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5d28c6f252fce9b6b55e845b47eaf5cc77815f6e"
+        },
+        "date": 1792397030054,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 91.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.5,
             "unit": "%"
           }
         ]
