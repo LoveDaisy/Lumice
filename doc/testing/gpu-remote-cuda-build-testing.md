@@ -175,6 +175,8 @@
   现在 `cuda-compile` 与 `windows-cuda-compile` 两个 job 都以 `BUILD_TEST=ON` + `BUILD_GUI=OFF`
   配置，`test/{unit-correctness,parity-cross-backend}/backend/test_cuda_*.cpp` 那 5 个 TU 真的会被
   编译，同类语法 / 可移植性缺陷在 PR 上当场报错。
+  `scripts/ci_verify_cuda_test_tus.sh` 再断言这 5 个 TU 至少各选中一个 case——`gtest` 在 filter
+  匹配 0 个时退出码是 0，裸跑 ctest 在「TU 仍被编成空文件」时照样绿，这条断言就是为堵这个假绿而存在。
   ⛔ **但这只买到编译覆盖。** CI runner 没有 GPU，那些 case 一律走 `ShouldSkipCudaTests()` /
   `CudaDeviceAvailable()` 报 SKIPPED；`LUMICE_HAS_CUDA` 也没有任何 CI job 设过。
   ⇒ 动 `test/` 或 `bench/` 后可以先看 CI 的这两个 job 判断「编不编得过」，

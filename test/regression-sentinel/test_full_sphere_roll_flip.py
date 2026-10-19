@@ -24,7 +24,7 @@ derived from one another at load time, matching the existing convention of this 
 Both cases carry ``@pytest.mark.slow``, which in this repo means "needs the shared-library
 build" (``./scripts/build.sh -sj release``), not "takes a long time" -- these two together run
 in about 2.5 s. The marker is what keeps them out of CI's fast leg, where no shared library
-exists to load; see AGENTS.md under "E2E test split".
+exists to load; see test/AGENTS.md ("Shared libraries the pytest layers load").
 """
 
 from __future__ import annotations

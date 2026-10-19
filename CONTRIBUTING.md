@@ -43,8 +43,9 @@ pytest -v                                 # E2E tests, fast subset — pinned by
                                            # addopts, matches CI (requires Pillow)
 ```
 
-See `AGENTS.md`'s "Testing and Platform Notes" for the full test-scope picture
-(`scripts/test.sh`, the slow/full pytest marker, and which one to run when).
+See `AGENTS.md`'s "Testing and Platform Notes" for the test-scope table (which one to run
+when) and `test/AGENTS.md` for the test tree's operating rules (placement gates, isolation,
+shared libraries, reference regeneration).
 
 ## Branch Naming
 

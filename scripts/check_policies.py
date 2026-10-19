@@ -74,7 +74,7 @@ Checks:
      letting them drift silently recalibrates GUI visual-regression thresholds
      under a condition CI no longer actually asserts under — this exact class of
      drift (isolated `--filter <group>` vs. the full suite) previously made
-     committed references optimistic (see AGENTS.md's reference-regeneration
+     committed references optimistic (see test/AGENTS.md's reference-regeneration
      section).
   12. no-bare-print — no raw printf / fprintf / std::cout / std::cerr under
      src/; diagnostics go through the logger (ILOG_* or GUI_LOG_*). A bare

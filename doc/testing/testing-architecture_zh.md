@@ -168,7 +168,7 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
   `composition-correctness`，与任何其他非机械命题一样——见 §2 的同名警示与 §3。
 - **oracle**：imgui test engine 驱动 app；**视觉**对 tracked 参考图断言（PSNR，每场景阈值在
   `_thresholds.json`）；**响应**对绝对帧延迟预算断言；**功能**断言控件/状态结果。
-- **阈值约定**：视觉 = 每场景 PSNR（N 次随机渲染的 mean−4σ，见 AGENTS.md lens_proj 再生）；响应 =
+- **阈值约定**：视觉 = 每场景 PSNR（N 次随机渲染的 mean−4σ，见 `test/AGENTS.md` lens_proj 再生）；响应 =
   绝对延迟预算；功能 = 精确。
 - **节奏**：`PR`，外加 CI 每次 push 在 `xvfb-run` + llvmpipe 下跑的那两个参考图组（§4.6）。
   需要显示服务器，除非用 `LUMICE_SKIP_GUI_TESTS=1` 跳过。
@@ -385,7 +385,7 @@ sync_group 子表钉子。若把这些期望改写成调用 `ShapeScalarSyncKeyN
   `test/gui/references/*.jpg` + `_thresholds.json`。
 - 参考图在 `.gitignore` 中显式 un-ignore 并正常 tracked；config 与多数生成产物 git-ignored。移动
   参考图路径需同步更新 un-ignore 规则、读取它的测试、以及任何 CI 路径假设——三者一起。
-- 随机参考图的再生遵循文档化流程（GUI `lens_proj`：`scripts/regen_gui_test_refs.py`，见 AGENTS.md）。
+- 随机参考图的再生遵循文档化流程（GUI `lens_proj`：`scripts/regen_gui_test_refs.py`，见 `test/AGENTS.md`）。
   参考图永不手工编辑。
 
 ### §4.4 `performance` 与 `gui`-响应性的边界
@@ -421,8 +421,8 @@ sync_group 子表钉子。若把这些期望改写成调用 `ShapeScalarSyncKeyN
 `IM_UNUSED` 之后再不提及。两者都是**显式表态**（一个来自编译器，一个来自作者本人）；规则建立在表态而非
 "从函数体推断意图"之上，这正是它在本仓历史上假阳性为零的原因。
 
-完整判据、**刻意不拦什么**、以及"无行内豁免"原则写在 `AGENTS.md` 的 "Testing and Platform Notes"
-一节——单一权威，此处只引用不复述，以免两处漂移。有两条性质值得在本文档层面知道：
+完整判据、**刻意不拦什么**、以及"无行内豁免"原则写在 `scripts/check_new_gui_tests.py` 的
+docstring（测试树的操作语境在 `test/AGENTS.md`）——单一权威，此处只引用不复述，以免两处漂移。有两条性质值得在本文档层面知道：
 
 - **"是否新注册"是身份问题，不是行号问题。** 一个用例算新，当且仅当其 `category/name` 此前不存在于
   `test/gui/` 下。改读行 diff 会在**两个方向上同时失效**，且都是实测出来的：被拒的签名是模板化文本，
@@ -755,7 +755,7 @@ T1 原本 20 条候选不变量中：1 条（上述往返恒等式）因结构�
 ### §4.9 第四道门禁：致命断言不得直接坐在可重复执行的作用域里
 
 `scripts/check_loop_fatal_asserts.py` 是继 `check_policies.py`（全树）、`check_new_refs.py`
-（散文）、`check_new_gui_tests.py`（`AGENTS.md`"Testing and Platform Notes"）之后的**第四个**
+（散文）、`check_new_gui_tests.py`（`test/AGENTS.md`）之后的**第四个**
 diff-scoped 入口。与另外三个同一条纪律：**检查器就是规则，不是规则的近似**——0 命中是改动干净
 的证据，不是对手写评审清单的补充。它在 CI 的 `new-refs` job 里对 PR 相对 merge-base 运行，在
 pre-commit hook 里对暂存 diff 运行，扫描 `test/` 下新增的行（不限于 `test/gui/`——这个缺陷形状
