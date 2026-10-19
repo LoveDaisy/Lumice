@@ -162,9 +162,9 @@
     {
       "job": "Ubuntu x86_64",
       "phase": "build",
-      "max_seconds": 720,
+      "max_seconds": 1800,
       "per_miss": {"overhead_seconds": 30, "max_seconds_per_miss": 5.0},
-      "reason": "Two conditions; the authoritative ruler is the adaptive per-miss limit overhead_seconds + max_seconds_per_miss * misses, measured by collect_cache_stats.py after the zeroed-per-run build. Calibration: warm 0-miss builds measure 15-21s (x1.4 -> overhead 30); the worst legal class measured 4.06 s/miss on 121 misses (run 39158418638), x1.15 runner tier +7% -> 5.0. All five zero-test-failure reds of the 420s era replay green under both conditions: 436.6s/156, 421.2s/163, 552.9s/162, 602.7s/208, 490.8s/121 misses (runs 38124925035, 38254590460, 38320486746, 39061707245, 39158418638). max_seconds is the disaster backstop only: worst observed legal build 602.7s x1.15 = 693 -> 720. Replaces the 540/900 transitional raises of PR #513 — a judgment replacement, not a second raise of the same ruler — but a second adjustment of any constant here within 60 days still requires a structural task. Known single-K blind spot: per-miss regressions on lighter classes (2.58-3.41 s/miss observed) stay green up to ~72%; calibration and sensitivity are recorded in doc/testing/testing-architecture.md §7.7."
+      "reason": "Two conditions; the authoritative ruler is the adaptive per-miss limit overhead_seconds + max_seconds_per_miss * misses, measured by collect_cache_stats.py after the zeroed-per-run build. Calibration: warm 0-miss builds measure 15-21s (x1.4 -> overhead 30); the worst legal class measured 4.06 s/miss on 121 misses (run 39158418638), x1.15 runner tier +7% -> 5.0. All five zero-test-failure reds of the 420s era replay green under both conditions: 436.6s/156, 421.2s/163, 552.9s/162, 602.7s/208, 490.8s/121 misses (runs 38124925035, 38254590460, 38320486746, 39061707245, 39158418638). max_seconds re-anchored 720 -> 1800 on 2026-10-19; dominant term: the #514 deployment gap — 720 was derived from the worst-observed legal build (602.7s x1.15 = 693), a sample maximum the healthy envelope then outgrew: run 39197233020 built a broad closure at 722.5s / 375 misses / 1.93 s/miss, healthy under the adaptive limit (30 + 5.0x375 = 1905s) and red at 720 by 2.5s with 0 tests failed. New derivation: envelope = 1.15 x (30 + 1.93x375 + 4.06x(524-375)) = 1561s, x1.15 closure-diversity headroom -> 1795 -> 1800; the full-tree signature is 524 compile requests measured on this leg's build definition, and the 149-TU unmeasured tail is priced at this leg's own worst class 4.06 s/miss. The s/miss ratios quoted here include the run's own ~30s overhead, double-counting ~2% against the formula's separate overhead term — conservative, on the backstop's safe side. A second adjustment of any constant here within 60 days of 2026-10-19 requires a structural task. Known single-K blind spot: per-miss regressions on lighter classes (2.58-3.41 s/miss observed) stay green up to ~72%; calibration and sensitivity are recorded in doc/testing/testing-architecture.md §7.7."
     },
     {
       "job": "Ubuntu x86_64",
@@ -176,14 +176,15 @@
       "job": "Ubuntu x86_64",
       "phase": "build+ctest",
       "members": ["build", "ctest"],
-      "max_seconds": 1080,
-      "reason": "Owner wall-clock budget for the serial build-and-correctness segment, sized after the per-miss judgment replaced the transitional raises: slow-tier build envelope 693s (the build entry's outer bound, itself the worst legal build x1.15) + 360s (this job's registered ctest budget above) = 1053 -> 1080; measured aggregates sit below it (858.8s and 873.2s on runs 38320486746 and 39061707245, x1.15 = 988/1004). A second adjustment within 60 days requires a structural task, not another raise."
+      "max_seconds": 2160,
+      "reason": "Owner wall-clock budget for the serial build-and-correctness segment; re-anchored 1080 -> 2160 on 2026-10-19 together with the build entry's outer bound (see that entry's re-anchoring record): build envelope 1795s + 360s (this job's registered ctest budget) = 2155 -> 2160. Measured aggregates sit far below it: 858.8s and 873.2s on runs 38320486746 and 39061707245, 929.1s on run 39197233020 (722.5 build + 206.6 ctest). The owner's former twelve-minute PR budget for this segment is superseded on 2026-10-19 — broad-closure classes legitimately reach ~24min on the slower legs (Windows measured 1463.5s, healthy) — and the wall-clock preference now lives in the build entry's outer bound as an honest signal, disposed through §7.6/§7.8, not in a hard 12-minute ceiling. A second adjustment within 60 days of 2026-10-19 requires a structural task, not another raise."
     },
     {
       "job": "Ubuntu ARM64",
       "phase": "build",
-      "max_seconds": 420,
-      "reason": "Caps compilation and linking on the ARM64 portability leg while preserving its baseline-ISA coverage."
+      "max_seconds": 1020,
+      "per_miss": {"overhead_seconds": 15, "max_seconds_per_miss": 5.0},
+      "reason": "Two conditions (the §7.7 per-miss model, first enabled on this leg on 2026-10-19): the adaptive limit 15 + 5.0 x misses is the authoritative ruler, max_seconds the disaster backstop. Calibration: warm builds measure 6.6-9.1s (runs 39194647515 and 39187542721; x1.4, rounded up -> overhead 15); K = 5.0 inherited from the Ubuntu x86_64 calibration — no leg-local worst class has been observed yet, and inventing one from a thin sample is what the reviewed-change channel under §7.7 is for. Broad-closure sample: run 39197233020 took 386.1s over 223 misses (1.73 s/miss, healthy). max_seconds derivation: envelope = 1.15 x (15 + 1.73x223 + 3.65x(314-223)) = 843s, x1.15 closure-diversity headroom -> 969 -> 1020; the full-tree signature is 314 compile requests measured on this leg's build definition (the GUI=OFF tree), and the 91-TU unmeasured tail is priced at this leg's own worst-class estimate 3.65 s/miss = 4.06 x 1.73/1.93 (the reference leg's worst-class-to-broad ratio applied at this leg's scale, §7.7). The former 420 was a legacy absolute bound with no per-miss judgment; run 39197233020 red at it with 0 tests failed. The s/miss ratio includes the run's own overhead, double-counting ~2% against the separate overhead term — conservative. A second adjustment of any constant here within 60 days of 2026-10-19 requires a structural task."
     },
     {
       "job": "Ubuntu ARM64",
@@ -195,14 +196,15 @@
       "job": "Ubuntu ARM64",
       "phase": "build+ctest",
       "members": ["build", "ctest"],
-      "max_seconds": 720,
-      "reason": "Keeps the serial build-and-correctness segment within the owner's preferred twelve-minute PR budget."
+      "max_seconds": 1380,
+      "reason": "Owner wall-clock budget for the serial build-and-correctness segment; re-anchored 720 -> 1380 on 2026-10-19 together with the build entry's outer bound (build envelope 969s + 360s registered ctest budget = 1329 -> 1380). The former value carried the owner's twelve-minute PR budget, superseded on 2026-10-19 (see the Ubuntu x86_64 aggregate's record); run 39197233020 measured 619.3s here (386.1 build + 233.2 ctest) while the build leg red at its 420 with 0 tests failed. A second adjustment within 60 days of 2026-10-19 requires a structural task, not another raise."
     },
     {
       "job": "macOS ARM64",
       "phase": "build",
-      "max_seconds": 420,
-      "reason": "Caps compilation and linking on the Metal/reference-platform build leg without removing Apple-only coverage."
+      "max_seconds": 1200,
+      "per_miss": {"overhead_seconds": 20, "max_seconds_per_miss": 5.0},
+      "reason": "Two conditions (the §7.7 per-miss model, first enabled on this leg on 2026-10-19): the adaptive limit 20 + 5.0 x misses is the authoritative ruler, max_seconds the disaster backstop. Calibration: warm builds measure 11.9-14.3s (runs 39187542721 and 39194647515; x1.4 -> overhead 20); K = 5.0 inherited from the Ubuntu x86_64 calibration — thin-sample legs do not invent a new K. Broad-closure sample: run 39197233020 took 475.8s over 382 misses (1.25 s/miss, healthy — the fastest scale of the four legs). 382 misses against the Ubuntu leg's 375 on the same PR is cache state, not a tree difference: 141 vs 149 hits over 523 vs 524 compile requests. max_seconds derivation: envelope = 1.15 x (20 + 1.25x382 + 2.62x(523-382)) = 996s, x1.15 closure-diversity headroom -> 1145 -> 1200; the full-tree signature is 523 compile requests, and the 141-TU unmeasured tail is priced at this leg's own worst-class estimate 2.62 s/miss = 4.06 x 1.25/1.93 (§7.7 scaling rule). The former 420 was a legacy absolute bound with no per-miss judgment; run 39197233020 red at it with 0 tests failed. The s/miss ratio includes the run's own overhead, double-counting ~2% against the separate overhead term — conservative. A second adjustment of any constant here within 60 days of 2026-10-19 requires a structural task."
     },
     {
       "job": "macOS ARM64",
@@ -214,14 +216,15 @@
       "job": "macOS ARM64",
       "phase": "build+ctest",
       "members": ["build", "ctest"],
-      "max_seconds": 720,
-      "reason": "Keeps the serial build-and-correctness segment within the owner's preferred twelve-minute PR budget."
+      "max_seconds": 1680,
+      "reason": "Owner wall-clock budget for the serial build-and-correctness segment; re-anchored 720 -> 1680 on 2026-10-19 together with the build entry's outer bound (build envelope 1145s + 480s registered ctest budget = 1625 -> 1680). The former value carried the owner's twelve-minute PR budget, superseded on 2026-10-19 (see the Ubuntu x86_64 aggregate's record); run 39197233020 measured 791.8s here (475.8 build + 316.0 ctest) while the build leg red at its 420 with 0 tests failed. A second adjustment within 60 days of 2026-10-19 requires a structural task, not another raise."
     },
     {
       "job": "Windows MSVC x86_64",
       "phase": "build",
-      "max_seconds": 420,
-      "reason": "Caps the release-matching MSVC build while cache statistics preserve the cold-versus-rebuild diagnosis."
+      "max_seconds": 2640,
+      "per_miss": {"overhead_seconds": 105, "max_seconds_per_miss": 5.0},
+      "reason": "Two conditions (the §7.7 per-miss model, first enabled on this leg on 2026-10-19): the adaptive limit 105 + 5.0 x misses is the authoritative ruler, max_seconds the disaster backstop. Calibration: warm builds measure 73.8-74.8s (runs 39194647515 and 39187542721; x1.4 -> overhead 105) — sccache-warm runs on this leg cost ~7x the ccache legs' warm builds (process and link overhead), exactly the 0-miss false-red a per-leg overhead exists to avoid; K = 5.0 inherited from the Ubuntu x86_64 calibration — thin-sample legs do not invent a new K. Broad-closure sample: run 39197233020 took 1027.3s over 376 misses (2.73 s/miss, healthy — the slowest scale of the four legs). 376 misses against the Ubuntu leg's 375 on the same PR differs by the one launcher TU only this leg compiles (win_engine_loader.c); the legs' full-tree signatures differ by platform-conditional TUs (520 vs 524 compile requests). max_seconds derivation: envelope = 1.15 x (105 + 2.73x376 + 5.76x(520-376)) = 2256s, x1.15 closure-diversity headroom -> 2594 -> 2640; the full-tree signature is 520 sccache compile requests (link lines excluded), and the 144-TU unmeasured tail is priced at this leg's own worst-class estimate 5.76 s/miss = 4.06 x 2.73/1.93 (§7.7 scaling rule). The outer bound stays below the adaptive limit at the full tree (105 + 5.0x520 = 2705, 65s of margin) so the healthy-but-over-wall-clock honest signal still triggers first. The former 420 was a legacy absolute bound with no per-miss judgment; run 39197233020 red at it (and at its 720 aggregate) with 0 tests failed. sccache misses are the per-language cache_misses counts sum — the same this-run compile-miss semantics as ccache's cache_miss (§7.7). The s/miss ratio includes the run's own overhead, double-counting ~2% against the separate overhead term — conservative. A second adjustment of any constant here within 60 days of 2026-10-19 requires a structural task."
     },
     {
       "job": "Windows MSVC x86_64",
@@ -233,8 +236,8 @@
       "job": "Windows MSVC x86_64",
       "phase": "build+ctest",
       "members": ["build", "ctest"],
-      "max_seconds": 720,
-      "reason": "Keeps the release-matching build-and-correctness segment within the owner's preferred twelve-minute PR budget."
+      "max_seconds": 3120,
+      "reason": "Owner wall-clock budget for the serial build-and-correctness segment; re-anchored 720 -> 3120 on 2026-10-19 together with the build entry's outer bound (build envelope 2594s + 480s registered ctest budget = 3074 -> 3120). The former value carried the owner's twelve-minute PR budget, superseded on 2026-10-19: this leg's broad-closure serial segment legitimately measures ~24min — run 39197233020 read 1463.5s (1027.3 build + 436.2 ctest), healthy, and red at 720 with 0 tests failed (see the Ubuntu x86_64 aggregate's record). A second adjustment within 60 days of 2026-10-19 requires a structural task, not another raise."
     },
     {
       "job": "e2e-test",

@@ -377,17 +377,13 @@ jobs:
       # `check_test_durations.py --cache-report`. Runs after Build and before the
       # diagnostics below — on Windows before `sccache --stop-server` — so the
       # counters it reads are this run's increment (ccache was zeroed before
-      # Configure; the sccache server starts fresh per job). The collector itself
-      # is strict everywhere (a measurement tool does not lie); which failures
-      # turn a leg red is decided HERE: only the Ubuntu x86_64 leg's registry
-      # entry consumes the report, so only that leg collects strictly
-      # (continue-on-error evaluates false for it and true for every other leg —
-      # a broken collection there is a warning, never a red), and only that leg
-      # passes --cache-report to the checker below. Enabling per-miss judgment on
-      # another leg is a registry change plus relaxing that leg's two guards.
+      # Configure; the sccache server starts fresh per job). The collector is
+      # strict on all four legs and the checker consumes the report on all four:
+      # every leg's build entry carries a per_miss block, and a miss count that
+      # cannot be read is a red on the leg it would have judged — fail-closed,
+      # never a silent skip.
       - name: Collect compiler-cache statistics
         if: always() && (matrix.ccache || matrix.msvc)
-        continue-on-error: ${{ matrix.name != 'Ubuntu x86_64' }}
         shell: bash
         run: >
           python scripts/collect_cache_stats.py
@@ -452,14 +448,8 @@ jobs:
             --phase-report ci-duration/build.json
             --phase-report ci-duration/ctest.json
             --summary "$GITHUB_STEP_SUMMARY"
+            --cache-report ci-duration/cache-stats.json
           )
-          # The per-miss budget lives in the registry under one job name; only
-          # that leg's checker consumes the report (the other legs' jobs have no
-          # per_miss entry and would not read it, and their collection may have
-          # degraded to a warning above).
-          if [ "${{ matrix.name }}" = "Ubuntu x86_64" ]; then
-            duration_args+=(--cache-report ci-duration/cache-stats.json)
-          fi
           if [ "$LUMICE_ALLOW_COLD_BUILD" = "true" ]; then
             duration_args+=(--allow-cold-build)
           fi

@@ -118,14 +118,17 @@ def test_gui_visual_regression_contract_is_unchanged():
     assert "xvfb-run -a build/Release/static/bin/gui_test" in step["run"]
 
 
-def test_per_miss_collection_runs_on_every_cache_leg_strictly_only_on_the_judging_leg():
+def test_per_miss_collection_runs_on_every_cache_leg_strictly():
     workflow = load_workflow()
     build = workflow["jobs"]["build"]
     steps = build["steps"]
     names = [step.get("name") for step in steps]
     collect = named_steps(build)["Collect compiler-cache statistics"]
     assert collect["if"] == "always() && (matrix.ccache || matrix.msvc)"
-    assert collect["continue-on-error"] == "${{ matrix.name != 'Ubuntu x86_64' }}"
+    # Every leg judges per-miss now, so no leg may degrade collection to a
+    # warning: a miss count that cannot be read is a red on the leg it would
+    # have judged (fail-closed), never a silent skip.
+    assert "continue-on-error" not in collect
     run = collect["run"]
     assert "collect_cache_stats.py" in run
     assert "${{ matrix.ccache && 'ccache' || 'sccache' }}" in run
@@ -141,18 +144,24 @@ def test_per_miss_collection_runs_on_every_cache_leg_strictly_only_on_the_judgin
     )
 
 
-def test_only_the_judging_leg_passes_the_cache_report_to_the_checker():
+def test_every_judging_leg_passes_the_cache_report_to_the_checker():
     registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     per_miss_jobs = {budget["job"] for budget in registry["phase_budgets"] if "per_miss" in budget}
-    # The leg whose registry entry consumes the report is the leg that collects
-    # strictly; both sides of that sentence are pinned by this correspondence.
-    assert per_miss_jobs == {"Ubuntu x86_64"}
+    # All four build-matrix legs carry a per_miss build entry, so all four
+    # consume the report — and the report must be passed unconditionally, with
+    # no leg-name guard left to desynchronize the workflow from the registry.
+    assert per_miss_jobs == {
+        "Ubuntu x86_64",
+        "Ubuntu ARM64",
+        "macOS ARM64",
+        "Windows MSVC x86_64",
+    }
 
-    workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-    assert workflow_text.count("duration_args+=(--cache-report") == 1
     check = named_steps(load_workflow()["jobs"]["build"])["Collect and check CTest durations"]["run"]
-    assert 'if [ "${{ matrix.name }}" = "Ubuntu x86_64" ]; then' in check
-    assert "duration_args+=(--cache-report ci-duration/cache-stats.json)" in check
+    assert 'if [ "${{ matrix.name }}"' not in check
+    assert "--cache-report ci-duration/cache-stats.json" in check
+    workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert workflow_text.count("--cache-report ci-duration/cache-stats.json") == 1
     for job_name in ("e2e-test", "e2e-slow"):
         for step in workflow_text_jobs(job_name):
             assert "--cache-report" not in step.get("run", "")
@@ -165,21 +174,33 @@ def workflow_text_jobs(job_name):
 def test_registry_v3_per_miss_shape_and_terminal_values():
     registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     assert registry["version"] == 3
-    build = next(
-        budget for budget in registry["phase_budgets"]
-        if budget["job"] == "Ubuntu x86_64" and budget["phase"] == "build"
-    )
-    assert build["per_miss"] == {"overhead_seconds": 30, "max_seconds_per_miss": 5.0}
-    assert build["max_seconds"] == 720
-    aggregate = next(
-        budget for budget in registry["phase_budgets"]
-        if budget["job"] == "Ubuntu x86_64" and budget["phase"] == "build+ctest"
-    )
-    assert aggregate["max_seconds"] == 1080
-    assert "members" not in build
-    # No transitional value survives: the per-miss judgment replaced them.
-    assert "Transitional" not in build["reason"]
-    assert "Transitional" not in aggregate["reason"]
+
+    # The four build entries' two-condition shape and re-anchored outer bounds.
+    expected = {
+        "Ubuntu x86_64": ({"overhead_seconds": 30, "max_seconds_per_miss": 5.0}, 1800, 2160),
+        "Ubuntu ARM64": ({"overhead_seconds": 15, "max_seconds_per_miss": 5.0}, 1020, 1380),
+        "macOS ARM64": ({"overhead_seconds": 20, "max_seconds_per_miss": 5.0}, 1200, 1680),
+        "Windows MSVC x86_64": ({"overhead_seconds": 105, "max_seconds_per_miss": 5.0}, 2640, 3120),
+    }
+    for job, (per_miss, outer, agg_limit) in expected.items():
+        build = next(
+            budget for budget in registry["phase_budgets"]
+            if budget["job"] == job and budget["phase"] == "build"
+        )
+        assert build["per_miss"] == per_miss, job
+        assert build["max_seconds"] == outer, job
+        assert "members" not in build, job
+        aggregate = next(
+            budget for budget in registry["phase_budgets"]
+            if budget["job"] == job and budget["phase"] == "build+ctest"
+        )
+        assert aggregate["max_seconds"] == agg_limit, job
+        assert aggregate["members"] == ["build", "ctest"], job
+        # No transitional value survives: the per-miss judgment replaced them.
+        assert "Transitional" not in build["reason"], job
+        assert "Transitional" not in aggregate["reason"], job
+        # An aggregate is the owner's wall clock, not compile cost.
+        assert "per_miss" not in aggregate, job
     assert all("members" not in budget for budget in registry["phase_budgets"] if "per_miss" in budget)
 
 
