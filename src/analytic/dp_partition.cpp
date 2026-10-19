@@ -8,21 +8,11 @@
 #include <utility>
 
 #include "analytic/discovery.hpp"
+#include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-
-double Dot3(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-void Cross3(const double a[3], const double b[3], double out[3]) {
-  out[0] = a[1] * b[2] - a[2] * b[1];
-  out[1] = a[2] * b[0] - a[0] * b[2];
-  out[2] = a[0] * b[1] - a[1] * b[0];
-}
 
 // Union-find with path halving and union by size: the shared substrate of the k-NN graph and the
 // chart masks.
@@ -294,13 +284,13 @@ void ChartGrid(int grid, const double n_a[3], std::vector<double>& u, std::vecto
   }
   axis[k] = 1.0;
   double e1[3];
-  Cross3(n_a, axis, e1);
-  const double e1_norm = std::sqrt(Dot3(e1, e1));
+  so3::Cross3(n_a, axis, e1);
+  const double e1_norm = std::sqrt(so3::Dot3(e1, e1));
   for (int i = 0; i < 3; i++) {
     e1[i] /= e1_norm;
   }
   double e2[3];
-  Cross3(n_a, e1, e2);
+  so3::Cross3(n_a, e1, e2);
 
   u.assign(static_cast<size_t>(grid) * grid * 3, 0.0);
   off_chart.assign(static_cast<size_t>(grid) * grid, 0);
@@ -318,7 +308,7 @@ void ChartGrid(int grid, const double n_a[3], std::vector<double>& u, std::vecto
       for (int c = 0; c < 3; c++) {
         v[c] = x * scale * e1[c] + y * scale * e2[c] + height * n_a[c];
       }
-      const double norm = std::sqrt(Dot3(v, v));
+      const double norm = std::sqrt(so3::Dot3(v, v));
       const size_t node = static_cast<size_t>(i) * grid + j;
       for (int c = 0; c < 3; c++) {
         u[3 * node + c] = v[c] / norm;
@@ -492,7 +482,7 @@ DegenerateFoldSet BuildDegenerateFoldSet(const DeviationField& field, int circle
   std::vector<unsigned char> inside(circle_samples);
   double margins[kMaxFaceCount + 2];
   for (int k = 0; k < circle_samples; k++) {
-    const double t = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(circle_samples);
+    const double t = 2.0 * math::kPiD * static_cast<double>(k) / static_cast<double>(circle_samples);
     double u[3];
     for (int i = 0; i < 3; i++) {
       u[i] = std::cos(t) * basis[0][i] + std::sin(t) * basis[1][i];
@@ -525,7 +515,7 @@ DegenerateFoldSet BuildDegenerateFoldSet(const DeviationField& field, int circle
   for (int k = 0; k < circle_samples; k++) {
     touching[k] = std::fabs(binding[k]) <= kCreaseContactMargin ? 1 : 0;
   }
-  const double spacing = 2.0 * kPi / static_cast<double>(circle_samples);
+  const double spacing = 2.0 * math::kPiD / static_cast<double>(circle_samples);
   for (const auto& [start, length] : CircularRuns(touching.data(), circle_samples)) {
     if (static_cast<double>(length) * spacing >= kCreaseTouchingArcRad) {
       fold_set.crease_touching_arc = true;
@@ -671,7 +661,7 @@ std::vector<double> SideValues(const DeviationField& field, const double point[3
   std::vector<double> values;
   double margins[kMaxFaceCount + 2];
   for (int k = 0; k < kSideRingDirections; k++) {
-    const double t = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(kSideRingDirections);
+    const double t = 2.0 * math::kPiD * static_cast<double>(k) / static_cast<double>(kSideRingDirections);
     double u[3];
     for (int i = 0; i < 3; i++) {
       u[i] = std::cos(kSideRingRad) * point[i] +

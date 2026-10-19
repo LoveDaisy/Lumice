@@ -105,6 +105,7 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/analytic_lib.cpp
   analytic/band_sum.cpp
   analytic/band_sum.hpp
+  analytic/capi_zero_pad.hpp
   analytic/discovery.cpp
   analytic/discovery.hpp
   analytic/entry_measure.cpp

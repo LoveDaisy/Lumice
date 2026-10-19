@@ -9,6 +9,7 @@
 #include "analytic/dp_field.hpp"
 #include "analytic/dp_focus.hpp"
 #include "analytic/dp_partition.hpp"
+#include "core/math.hpp"                                         // math::kPiD family — single authority
 #include "core/optics.hpp"                                       // IceRefractiveIndex: the engine's dispersion table
 #include "raypath/detail/measure/measure_geometry_contract.hpp"  // PartitionContext
 #include "raypath/detail/schema3/geometry_source.hpp"
@@ -19,8 +20,6 @@
 namespace lumice::raypath::survey {
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kRadToDeg = 180.0 / kPi;
 // The closed-form cross-check's acceptance: the kernel's two-face interior minimum IS the
 // closed form, so the survey-side restatement (A from the face normals through acos) is the
 // only error source — its measured floor is the acos-at-1 ~1.5e-8 rad, and 1e-6 rad keeps
@@ -28,7 +27,7 @@ constexpr double kRadToDeg = 180.0 / kPi;
 constexpr double kClosedFormToleranceRad = 1e-6;
 
 double DegOf(double radians) {
-  return radians * kRadToDeg;
+  return radians * math::kRadToDegreeD;
 }
 
 // The two-face chain's closed-form minimum deviation at index n: 2*asin(n*sin(A/2)) - A, with A
@@ -49,7 +48,7 @@ bool ClosedFormMinDeviation(const analytic::FaceNormalTable& table, const std::v
     dot += table.normal[slot_a][k] * table.normal[slot_b][k];
   }
   dot = std::clamp(dot, -1.0, 1.0);
-  const double apex = kPi - std::acos(dot);  // the refracting angle between the two faces
+  const double apex = math::kPiD - std::acos(dot);  // the refracting angle between the two faces
   const double sine = refractive_index * std::sin(0.5 * apex);
   if (!(sine <= 1.0)) {
     return false;  // no refracted minimum exists (the entry face admits only TIR)

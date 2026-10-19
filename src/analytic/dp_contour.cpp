@@ -4,12 +4,12 @@
 #include <cmath>
 #include <limits>
 
+#include "analytic/so3.hpp"
+#include "core/math.hpp"
+
 namespace lumice::analytic {
 
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kTwoPi = 2.0 * kPi;
 
 // The orbit-collapse threshold, algebraically equal to the measure layer's declared form
 // (declared_density.hpp's kDegenerateSunGeometry: |s_z| > 1 - 1e-12): that inequality IS
@@ -17,12 +17,6 @@ constexpr double kTwoPi = 2.0 * kPi;
 // form's exact value so both layers call the same geometry collapsed. One side moving must
 // update the other; the paths in this comment are the retrieval anchor.
 constexpr double kSunPoleOneMinus = 2e-12;
-
-void Copy3(const double from[3], double to[3]) {
-  to[0] = from[0];
-  to[1] = from[1];
-  to[2] = from[2];
-}
 
 // The minimal rotation taking `axis` to +e3 (Rodrigues about normalize(axis x e3)); the identity
 // when the axis already IS +e3 (the plate family — Rz(theta) times the identity is then
@@ -102,7 +96,7 @@ double CircleStep(const std::vector<double>& params, size_t i, size_t next) {
   if (next != 0) {
     return params[next] - params[i];
   }
-  return params[0] + kTwoPi - params[params.size() - 1];
+  return params[0] + math::kTwoPi - params[params.size() - 1];
 }
 
 bool SunAtPole(const double sun_hat[3]) {
@@ -261,7 +255,7 @@ OrbitFiberStream MakeOrbitFiberStream(const FaceNormalTable& normals, const Face
   std::vector<double> transmittances(static_cast<size_t>(slot_count));
   out.samples.resize(static_cast<size_t>(grid));
   for (int i = 0; i < grid; i++) {
-    const double theta = kTwoPi * (i + 0.5) / grid;
+    const double theta = math::kTwoPi * (i + 0.5) / grid;
     double pose[9];
     SpinPose(theta, r0, pose);
     PathOutputs outputs;
@@ -282,8 +276,8 @@ OrbitFiberStream MakeOrbitFiberStream(const FaceNormalTable& normals, const Face
     point.valid = valid && point.area > 0.0 && point.transmission > 0.0;
     point.jet_degenerate = out.spin_degenerate;
     point.parameter = theta;
-    point.weight = kTwoPi / static_cast<double>(grid);
-    Copy3(outputs.outgoing_direction, point.outgoing);
+    point.weight = math::kTwoPi / static_cast<double>(grid);
+    so3::Copy3(outputs.outgoing_direction, point.outgoing);
   }
   return out;
 }
@@ -334,7 +328,7 @@ RestrictedFamilyCurve MakeRestrictedFamilyCurve(const FaceNormalTable& normals, 
   out.d_p.assign(static_cast<size_t>(grid), 0.0);
   out.support_param.assign(static_cast<size_t>(grid), 0.0);
   for (int i = 0; i < grid; i++) {
-    const double theta = kTwoPi * (i + 0.5) / grid;
+    const double theta = math::kTwoPi * (i + 0.5) / grid;
     const double ct = std::cos(theta);
     const double st = std::sin(theta);
     for (int j = 0; j < 3; j++) {

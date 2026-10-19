@@ -10,6 +10,9 @@
 // Internal to liblumice_analytic: nothing here is exported, and nothing here is a second authority
 // for a primitive the engine already has — the engine's own rotation code (core/math.hpp) is float
 // and lives in the simulator's hot loop; this is the double-precision continuation geometry only.
+// Landing spot note: generic double vec3 primitives (Dot3/Cross3/Norm3/Normalize3/Copy3/
+// AngleBetween) also live here — a new double[3] helper belongs in this header, not in a
+// file-local anonymous namespace.
 
 #include <cmath>
 
@@ -30,6 +33,30 @@ inline void Cross3(const double a[3], const double b[3], double out[3]) {
 
 inline double Norm3(const double a[3]) {
   return std::sqrt(Dot3(a, a));
+}
+
+// Scales v to unit length in place. No zero guard: callers hold nonzero directions, and a zero
+// input divides by zero exactly as the file-local forms this consolidates did.
+inline void Normalize3(double v[3]) {
+  const double n = Norm3(v);
+  for (int i = 0; i < 3; i++) {
+    v[i] /= n;
+  }
+}
+
+// out = a.
+inline void Copy3(const double a[3], double out[3]) {
+  out[0] = a[0];
+  out[1] = a[1];
+  out[2] = a[2];
+}
+
+// angle(a, b) = atan2(|a x b|, a . b) (LI boundary._angle form): accurate at 0 and pi, where
+// acos of the dot loses sqrt(eps) on whole boundary arcs.
+inline double AngleBetween(const double a[3], const double b[3]) {
+  double cross[3];
+  Cross3(a, b, cross);
+  return std::atan2(Norm3(cross), Dot3(a, b));
 }
 
 // out = A B (3x3, row-major); A and B may be of different scalar types.

@@ -37,7 +37,9 @@ namespace lumice {
 // Public on purpose, not tucked in a detail namespace: the CLI (`--radius <deg>` -> radians for
 // the request), the CSV formatter (radians -> degrees for the header echo) and the GUI all need
 // the same two factors, and a `_detail` name that three other files reach into is a promise the
-// name no longer keeps.
+// name no longer keeps. Deliberate constants, not drift risks: values are the frozen float π
+// family; the float authority lives in core/math.hpp (math::kPi / kDegreeToRad / kRadToDegree)
+// and this header stays self-contained so every consumer side reads it without pulling core in.
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kDeg2Rad = kPi / 180.0f;
 constexpr float kRad2Deg = 180.0f / kPi;

@@ -6,14 +6,10 @@
 #include <vector>
 
 #include "analytic/pose_density.hpp"
+#include "core/math.hpp"
 
 namespace lumice::raypath {
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kHalfPi = kPi * 0.5;
-constexpr double kTwoPi = 2.0 * kPi;
-constexpr double kDegToRad = kPi / 180.0;
 
 // The wrapped (torus) density of a slot law at x: sum over k of the law at x + 2 pi k. Compact
 // supports make this a finite sum; the unbounded ones decay superexponentially (gauss) or
@@ -27,13 +23,13 @@ double WrappedSlotDensity(const Distribution& slot, double x_rad, bool* dirac, d
   *dirac = false;
   // The k-window: |2 pi k| beyond 40 scales is e^{-800} for the narrowest gaussian and e^{-40}
   // for the widest laplacian anyone can write with a float spread; both are 0 in double. Premise:
-  // `spread` is a config-bounded degree value (a float), so `reach / kTwoPi` stays far inside
+  // `spread` is a config-bounded degree value (a float), so `reach / math::kTwoPi` stays far inside
   // int range — no overflow guard is taken here.
-  const double reach = 40.0 * std::fabs(static_cast<double>(slot.spread)) * kDegToRad + kTwoPi;
-  const int kmax = static_cast<int>(reach / kTwoPi) + 1;
+  const double reach = 40.0 * std::fabs(static_cast<double>(slot.spread)) * math::kDegreeToRadD + math::kTwoPi;
+  const int kmax = static_cast<int>(reach / math::kTwoPi) + 1;
   double sum = 0.0;
   for (int k = -kmax; k <= kmax; k++) {
-    sum += SlotDensityValue(slot, x_rad + kTwoPi * k);
+    sum += SlotDensityValue(slot, x_rad + math::kTwoPi * k);
   }
   return sum;
 }
@@ -64,30 +60,30 @@ double Clamp(double v, double lo, double hi) {
 // detail::NormalizeLatitude's branch split as pure functions of the latitude value: the folded
 // latitude and whether the fold flipped (src/core/math.cpp:341).
 void FoldLatitude(double lat_rad, double* folded, bool* flip) {
-  double theta = kHalfPi - lat_rad;
-  theta = std::fmod(theta, kTwoPi);
+  double theta = math::kHalfPi - lat_rad;
+  theta = std::fmod(theta, math::kTwoPi);
   if (theta < 0.0) {
-    theta += kTwoPi;
+    theta += math::kTwoPi;
   }
-  *flip = theta > kPi;
+  *flip = theta > math::kPiD;
   if (*flip) {
-    theta = kTwoPi - theta;
+    theta = math::kTwoPi - theta;
   }
-  *folded = kHalfPi - theta;
+  *folded = math::kHalfPi - theta;
 }
 
 // The two preimage families of a folded latitude (Table 2): branch A (no flip) L = phi + 2 pi k,
 // branch B (flip) L = pi - phi + 2 pi k.
 double FoldedProposalDensity(const Distribution& p, double phi_rad, bool branch_b) {
-  const double offset = branch_b ? kPi - phi_rad : phi_rad;
+  const double offset = branch_b ? math::kPiD - phi_rad : phi_rad;
   if (p.type == DistributionType::kNoRandom || p.spread == 0.0f) {
     return 0.0;  // a Dirac proposal has no density; the Dirac-of-Dirac path is handled by kind
   }
-  const double reach = 40.0 * std::fabs(static_cast<double>(p.spread)) * kDegToRad + kTwoPi;
-  const int kmax = static_cast<int>(reach / kTwoPi) + 1;
+  const double reach = 40.0 * std::fabs(static_cast<double>(p.spread)) * math::kDegreeToRadD + math::kTwoPi;
+  const int kmax = static_cast<int>(reach / math::kTwoPi) + 1;
   double sum = 0.0;
   for (int k = -kmax; k <= kmax; k++) {
-    sum += SlotDensityValue(p, offset + kTwoPi * k);
+    sum += SlotDensityValue(p, offset + math::kTwoPi * k);
   }
   return sum;
 }
@@ -116,10 +112,10 @@ double CompositeGaussLegendre(F&& f, double a, double b, int panels, int order) 
 // the amplitude/tilt arithmetic); its quadrature converges algebraically and the tests say so.
 std::vector<double> SlotDensityBreaks(const Distribution& slot) {
   std::vector<double> breaks;
-  const double c = static_cast<double>(slot.center) * kDegToRad;
+  const double c = static_cast<double>(slot.center) * math::kDegreeToRadD;
   switch (slot.type) {
     case DistributionType::kUniform: {
-      const double half = static_cast<double>(slot.spread) * 0.5 * kDegToRad;
+      const double half = static_cast<double>(slot.spread) * 0.5 * math::kDegreeToRadD;
       breaks.push_back(c - half);
       breaks.push_back(c + half);
       break;
@@ -139,8 +135,8 @@ std::vector<double> SlotDensityBreaks(const Distribution& slot) {
 std::vector<double> SupportEdges(const Distribution& slot, bool* spiky) {
   *spiky = false;
   std::vector<double> edges;
-  const double c = static_cast<double>(slot.center) * kDegToRad;
-  const double sp = static_cast<double>(slot.spread) * kDegToRad;
+  const double c = static_cast<double>(slot.center) * math::kDegreeToRadD;
+  const double sp = static_cast<double>(slot.spread) * math::kDegreeToRadD;
   switch (slot.type) {
     case DistributionType::kUniform:
       edges.push_back(c - sp * 0.5);
@@ -165,13 +161,13 @@ std::vector<double> SupportEdges(const Distribution& slot, bool* spiky) {
 // the k that the inequality admits, and the strict range filter drops the rest.
 std::vector<double> FoldImagesOf(double x) {
   std::vector<double> images;
-  const double bases[2] = { x, kPi - x };
+  const double bases[2] = { x, math::kPiD - x };
   for (double base : bases) {
-    const int k_lo = static_cast<int>(std::floor((-kHalfPi - base) / kTwoPi));
-    const int k_hi = static_cast<int>(std::ceil((kHalfPi - base) / kTwoPi));
+    const int k_lo = static_cast<int>(std::floor((-math::kHalfPi - base) / math::kTwoPi));
+    const int k_hi = static_cast<int>(std::ceil((math::kHalfPi - base) / math::kTwoPi));
     for (int k = k_lo; k <= k_hi; k++) {
-      const double phi = base + kTwoPi * k;
-      if (phi > -kHalfPi && phi < kHalfPi) {
+      const double phi = base + math::kTwoPi * k;
+      if (phi > -math::kHalfPi && phi < math::kHalfPi) {
         images.push_back(phi);
       }
     }
@@ -281,7 +277,7 @@ double IntegrateWithFoldImages(F&& f, const std::vector<double>& cuts, const std
 
 bool SlotIsDirac(const Distribution& slot, double* at_rad) {
   if (at_rad != nullptr) {
-    *at_rad = SlotDegenerateValue(slot) * kDegToRad;
+    *at_rad = SlotDegenerateValue(slot) * math::kDegreeToRadD;
   }
   return slot.type == DistributionType::kNoRandom || slot.spread == 0.0f;
 }
@@ -315,12 +311,12 @@ double ZigzagDensityValue(double amplitude_rad, double tilt_rad, double y_rad) {
     // Two solutions per period (t0 and pi - t0), coinciding at |s| = 1.
     sum += (cos_sq > 0.0 ? 2.0 : 1.0) * inv_cos;
   }
-  return sum / (kTwoPi * amplitude_rad);
+  return sum / (math::kTwoPi * amplitude_rad);
 }
 
 double SlotDensityValue(const Distribution& slot, double x_rad) {
-  const double c = static_cast<double>(slot.center) * kDegToRad;
-  const double s = static_cast<double>(slot.spread) * kDegToRad;
+  const double c = static_cast<double>(slot.center) * math::kDegreeToRadD;
+  const double s = static_cast<double>(slot.spread) * math::kDegreeToRadD;
   switch (slot.type) {
     case DistributionType::kNoRandom:
       return 0.0;
@@ -338,7 +334,7 @@ double SlotDensityValue(const Distribution& slot, double x_rad) {
         return 0.0;
       }
       const double d = (x_rad - c) / s;
-      return std::exp(-0.5 * d * d) / (s * std::sqrt(kTwoPi));
+      return std::exp(-0.5 * d * d) / (s * std::sqrt(math::kTwoPi));
     }
     case DistributionType::kLaplacian: {
       if (s <= 0.0) {
@@ -363,7 +359,7 @@ LatitudeDensity MakeLatitudeDensity(const Distribution& lat_slot) {
   if (lat_slot.type == DistributionType::kNoRandom) {
     // The kNoRandom branch takes the raw center UNFOLDED (src/core/random.cpp:172).
     law.kind_ = LatitudeLawKind::kDiracUnfolded;
-    law.point_ = static_cast<double>(lat_slot.center) * kDegToRad;
+    law.point_ = static_cast<double>(lat_slot.center) * math::kDegreeToRadD;
     return law;
   }
   if (lat_slot.spread == 0.0f) {
@@ -372,7 +368,7 @@ LatitudeDensity MakeLatitudeDensity(const Distribution& lat_slot) {
     // mean (src/core/lat_lut.cpp:130-136); the legacy path folds explicitly.
     double folded = 0.0;
     bool flip = false;
-    FoldLatitude(SlotDegenerateValue(lat_slot) * kDegToRad, &folded, &flip);
+    FoldLatitude(SlotDegenerateValue(lat_slot) * math::kDegreeToRadD, &folded, &flip);
     law.kind_ = LatitudeLawKind::kDiracFolded;
     law.point_ = folded;
     return law;
@@ -406,7 +402,7 @@ LatitudeDensity MakeLatitudeDensity(const Distribution& lat_slot) {
     std::sort(cuts.begin(), cuts.end());
     cuts.erase(std::unique(cuts.begin(), cuts.end(), [](double a, double b) { return std::fabs(a - b) < 1e-12; }),
                cuts.end());
-    law.norm_ = IntegrateWithFoldImages(integrand, cuts, FoldImageSpikes(lat_slot), -kHalfPi, kHalfPi);
+    law.norm_ = IntegrateWithFoldImages(integrand, cuts, FoldImageSpikes(lat_slot), -math::kHalfPi, math::kHalfPi);
   }
   if (!(law.norm_ > 0.0)) {
     // Unreachable for spread > 0 (the fold preserves mass and cos > 0 on the open interval);
@@ -414,7 +410,7 @@ LatitudeDensity MakeLatitudeDensity(const Distribution& lat_slot) {
     law.kind_ = LatitudeLawKind::kDiracFolded;
     double folded = 0.0;
     bool flip = false;
-    FoldLatitude(static_cast<double>(lat_slot.center) * kDegToRad, &folded, &flip);
+    FoldLatitude(static_cast<double>(lat_slot.center) * math::kDegreeToRadD, &folded, &flip);
     law.point_ = folded;
     law.norm_ = 1.0;
   }
@@ -431,9 +427,9 @@ LatitudeDensity MakeFullSphereLatitude() {
 double LatitudeDensity::Evaluate(double phi_rad) const {
   switch (kind_) {
     case LatitudeLawKind::kFullSphere:
-      return (phi_rad > -kHalfPi && phi_rad < kHalfPi) ? std::cos(phi_rad) * 0.5 : 0.0;
+      return (phi_rad > -math::kHalfPi && phi_rad < math::kHalfPi) ? std::cos(phi_rad) * 0.5 : 0.0;
     case LatitudeLawKind::kFoldedArea: {
-      if (phi_rad <= -kHalfPi || phi_rad >= kHalfPi) {
+      if (phi_rad <= -math::kHalfPi || phi_rad >= math::kHalfPi) {
         return 0.0;
       }
       const double p =
@@ -441,7 +437,7 @@ double LatitudeDensity::Evaluate(double phi_rad) const {
       return p * std::cos(phi_rad) / norm_;
     }
     case LatitudeLawKind::kFoldedNoArea: {
-      if (phi_rad <= -kHalfPi || phi_rad >= kHalfPi) {
+      if (phi_rad <= -math::kHalfPi || phi_rad >= math::kHalfPi) {
         return 0.0;
       }
       return FoldedProposalDensity(proposal_, phi_rad, false) + FoldedProposalDensity(proposal_, phi_rad, true);
@@ -461,7 +457,7 @@ double LatitudeDensity::FlipProbability(double phi_rad) const {
       return 0.0;
     case LatitudeLawKind::kFoldedArea:
     case LatitudeLawKind::kFoldedNoArea: {
-      if (phi_rad <= -kHalfPi || phi_rad >= kHalfPi) {
+      if (phi_rad <= -math::kHalfPi || phi_rad >= math::kHalfPi) {
         return 0.0;
       }
       const double pa = FoldedProposalDensity(proposal_, phi_rad, false);
@@ -490,7 +486,7 @@ double LatitudeDensity::TotalMass() const {
   cuts.erase(std::unique(cuts.begin(), cuts.end(), [](double a, double b) { return std::fabs(a - b) < 1e-12; }),
              cuts.end());
   return IntegrateWithFoldImages([this](double phi) { return Evaluate(phi); }, cuts, FoldImageSpikes(proposal_),
-                                 -kHalfPi, kHalfPi, 32, 16);
+                                 -math::kHalfPi, math::kHalfPi, 32, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -518,8 +514,8 @@ double DeclaredPoseDensity(const LatitudeDensity& lat, const AxisDistribution& a
   }
   const double f = lat.FlipProbability(phi_rad);
   const double rho_phi = lat.Evaluate(phi_rad);
-  const double shifted_az = WrappedSlotDensity(axis.azimuth_dist, lambda_out_rad - kPi, &az_dirac, &az_at);
-  const double shifted_roll = WrappedSlotDensity(axis.roll_dist, roll_out_rad - kPi, &roll_dirac, &roll_at);
+  const double shifted_az = WrappedSlotDensity(axis.azimuth_dist, lambda_out_rad - math::kPiD, &az_dirac, &az_at);
+  const double shifted_roll = WrappedSlotDensity(axis.roll_dist, roll_out_rad - math::kPiD, &roll_dirac, &roll_at);
   return rho_phi * ((1.0 - f) * az_d * roll_d + f * shifted_az * shifted_roll);
 }
 
@@ -545,7 +541,7 @@ double PoseTorusDensity(const LatitudeDensity& lat, const Distribution& az, doub
   }
   bool dirac = false;
   double at = 0.0;
-  const double az_d = WrappedSlotDensity(az, flip_branch ? lambda_out - kPi : lambda_out, &dirac, &at);
+  const double az_d = WrappedSlotDensity(az, flip_branch ? lambda_out - math::kPiD : lambda_out, &dirac, &at);
   if (dirac) {
     // A Dirac azimuth zeroes every preimage term: the general path never solves the
     // fixed-azimuth (phi, roll) preimage — the REGISTERED read-as-zero gap in the header's
@@ -572,15 +568,15 @@ double ZonalMarginalAt(const LatitudeDensity& lat, const Distribution& proposal,
     if (d_hi <= 0.0 || d_lo <= 0.0) {
       return 0.0;
     }
-    return 1.0 / (kPi * std::sqrt(d_lo * d_hi));
+    return 1.0 / (math::kPiD * std::sqrt(d_lo * d_hi));
   }
   const double gamma0 = std::acos(Clamp(c, -1.0, 1.0));  // arccos(c), in (0, pi)
   // phi in (sigma - gamma0, sigma + gamma0) [from c < cos(phi - sigma)] AND
   // phi in (-sigma - (pi - gamma0), -sigma + (pi - gamma0)) [from c > -cos(phi + sigma)].
-  double lo = std::max(sigma - gamma0, -sigma - kPi + gamma0);
-  double hi = std::min(sigma + gamma0, -sigma + kPi - gamma0);
-  lo = std::max(lo, -kHalfPi);
-  hi = std::min(hi, kHalfPi);
+  double lo = std::max(sigma - gamma0, -sigma - math::kPiD + gamma0);
+  double hi = std::min(sigma + gamma0, -sigma + math::kPiD - gamma0);
+  lo = std::max(lo, -math::kHalfPi);
+  hi = std::min(hi, math::kHalfPi);
   if (!(hi > lo)) {
     return 0.0;
   }
@@ -592,7 +588,7 @@ double ZonalMarginalAt(const LatitudeDensity& lat, const Distribution& proposal,
     if (d_hi <= 0.0 || d_lo <= 0.0) {
       return 0.0;
     }
-    return 1.0 / (kPi * std::sqrt(d_lo * d_hi));
+    return 1.0 / (math::kPiD * std::sqrt(d_lo * d_hi));
   };
   // Split at the slot's own breaks AND their fold images (branch-B kinks of kinked laws), plus
   // the fold-image SPIKES of spiky support edges (kZigzag's arcsine edges) — a spike must sit on
@@ -639,13 +635,13 @@ double ZonalMarginalAt(const LatitudeDensity& lat, const Distribution& proposal,
     const double mid = 0.5 * (a + b), half = 0.5 * (b - a);
     double sum = 0.0;
     for (int j = 0; j < n; j++) {
-      const double t = std::cos((j + 0.5) * kPi / n);
+      const double t = std::cos((j + 0.5) * math::kPiD / n);
       const double phi = mid + half * t;
       const double smooth_part = lat.Evaluate(phi) * kernel(phi) * std::sqrt((phi - a) * (b - phi));
       sum += smooth_part;
     }
     // int_a^b g(phi)/sqrt((phi-a)(b-phi)) dphi = pi * Chebyshev mean of g.
-    total += kPi * sum / n;
+    total += math::kPiD * sum / n;
   }
   return total;
 }
@@ -672,7 +668,7 @@ UMarginal MakeUMarginal(const AxisDistribution& axis, const double sun_dir[3]) {
   // The axis-at-pole corner: with the axis Dirac AT +-pi/2 the azimuth and the roll act about the
   // SAME body axis, so two spread slots have a one-dimensional image whose density is their
   // convolution — reported degenerate rather than answered with either law alone.
-  const bool lat_at_pole = lat_dirac && std::fabs(std::fabs(m.lat_.point()) - kHalfPi) < 1e-12;
+  const bool lat_at_pole = lat_dirac && std::fabs(std::fabs(m.lat_.point()) - math::kHalfPi) < 1e-12;
   const bool axis_corner = lat_at_pole && !az_dirac && !roll_dirac;
   if (axis_corner) {
     m.kind_ = USupportKind::kDegenerateAxisGeometry;
@@ -771,7 +767,7 @@ double UMarginal::DensitySolidAngle(const double u[3]) const {
   }
   if (fast_) {
     // Zonal: rho_u = m(u_z)/(2 pi), m the arcsine-mixed latitude law (Table 4 fast path).
-    return ZonalMarginalAt(lat_, axis_.latitude_dist, Clamp(u[2], -1.0, 1.0), sigma_) / kTwoPi;
+    return ZonalMarginalAt(lat_, axis_.latitude_dist, Clamp(u[2], -1.0, 1.0), sigma_) / math::kTwoPi;
   }
   return DensitySolidAngleGeneral(u);
 }
@@ -793,8 +789,8 @@ double UMarginal::DensitySolidAngleGeneral(const double u[3]) const {
   if (SlotIsDirac(axis_.roll_dist, &roll_at)) {
     // A Dirac roll lands on TWO composed slices: the raw value (no-flip branch) and the raw
     // value + pi (flip branch); each slice sees exactly one branch, the delta's unit mass.
-    const double r0 = roll_at * kDegToRad;
-    return PreimageSum(u, r0, false) + PreimageSum(u, r0 + kPi, true);
+    const double r0 = roll_at * math::kDegreeToRadD;
+    return PreimageSum(u, r0, false) + PreimageSum(u, r0 + math::kPiD, true);
   }
   // Spread roll: the slice sum as a function of r has sqrt-type singularities at the fold
   // onsets — where the preimage radicand cos^2(sigma) - wy(r)^2 crosses zero, wy(r) =
@@ -809,7 +805,7 @@ double UMarginal::DensitySolidAngleGeneral(const double u[3]) const {
     // The preimage radicand never crosses zero: no folds, plain midpoint over one period.
     const int panels = 512;
     double total = 0.0;
-    const double dt = kTwoPi / panels;
+    const double dt = math::kTwoPi / panels;
     for (int i = 0; i < panels; i++) {
       const double r = (i + 0.5) * dt;
       total += PreimageSum(u, r, false) + PreimageSum(u, r, true);
@@ -820,7 +816,7 @@ double UMarginal::DensitySolidAngleGeneral(const double u[3]) const {
   const double half = std::asin(Clamp(cos_sigma / amp, -1.0, 1.0));
   double total = 0.0;
   for (int k = 0; k < 2; k++) {
-    const double center = -delta + k * kPi;  // unwrapped on purpose: everything is 2 pi periodic
+    const double center = -delta + k * math::kPiD;  // unwrapped on purpose: everything is 2 pi periodic
     const double a = center - half;
     const double b = center + half;
     const double mid = 0.5 * (a + b);
@@ -847,8 +843,8 @@ void UMarginal::SpinOrbitPoint(double theta_rad, double u_out[3]) const {
   double phi0 = 0.0, roll0 = 0.0;
   DiracLatRoll(&phi0, &roll0);
   double v[3] = { sun_[0], sun_[1], sun_[2] };
-  RotateAboutZ(v, kPi - theta_rad);
-  RotateAboutY(v, kHalfPi - phi0);
+  RotateAboutZ(v, math::kPiD - theta_rad);
+  RotateAboutY(v, math::kHalfPi - phi0);
   RotateAboutZ(v, -roll0);
   u_out[0] = v[0];
   u_out[1] = v[1];
@@ -892,8 +888,8 @@ double UMarginal::OrbitDensity(double parameter_rad, double u_out[3]) const {
     v[0] = sun_[0];
     v[1] = sun_[1];
     v[2] = sun_[2];
-    RotateAboutZ(v, kPi - az0);
-    RotateAboutY(v, kHalfPi - phi0);
+    RotateAboutZ(v, math::kPiD - az0);
+    RotateAboutY(v, math::kHalfPi - phi0);
     RotateAboutZ(v, -parameter_rad);
     if (u_out != nullptr) {
       u_out[0] = v[0];
@@ -910,8 +906,8 @@ double UMarginal::OrbitDensity(double parameter_rad, double u_out[3]) const {
     v[0] = sun_[0];
     v[1] = sun_[1];
     v[2] = sun_[2];
-    RotateAboutZ(v, kPi - az0);
-    RotateAboutY(v, kHalfPi - parameter_rad);
+    RotateAboutZ(v, math::kPiD - az0);
+    RotateAboutY(v, math::kHalfPi - parameter_rad);
     RotateAboutZ(v, -roll0);
     if (u_out != nullptr) {
       u_out[0] = v[0];
@@ -939,8 +935,8 @@ void UMarginal::Point(double u_out[3]) const {
   DiracLatRoll(&phi0, &roll0);
   DiracAz(&az0);
   double v[3] = { sun_[0], sun_[1], sun_[2] };
-  RotateAboutZ(v, kPi - az0);
-  RotateAboutY(v, kHalfPi - phi0);
+  RotateAboutZ(v, math::kPiD - az0);
+  RotateAboutY(v, math::kHalfPi - phi0);
   RotateAboutZ(v, -roll0);
   u_out[0] = v[0];
   u_out[1] = v[1];
@@ -968,9 +964,9 @@ double UMarginal::SpinOrbitParameter(const double u[3]) const {
   DiracLatRoll(&phi0, &roll0);
   double v[3] = { u[0], u[1], u[2] };
   RotateAboutZ(v, roll0);
-  RotateAboutY(v, phi0 - kHalfPi);
+  RotateAboutY(v, phi0 - math::kHalfPi);
   const double psi = std::atan2(v[1], v[0]);
-  return lambda_s_ + kPi - psi;
+  return lambda_s_ + math::kPiD - psi;
 }
 
 double UMarginal::OrbitAnchor(double u_out[3]) const {
@@ -978,9 +974,9 @@ double UMarginal::OrbitAnchor(double u_out[3]) const {
   DiracLatRoll(&phi0, &roll0);
   DiracAz(&az0);
   double v[3] = { sun_[0], sun_[1], sun_[2] };
-  RotateAboutZ(v, kPi - az0);
+  RotateAboutZ(v, math::kPiD - az0);
   if (kind_ == USupportKind::kRollOrbit) {
-    RotateAboutY(v, kHalfPi - phi0);
+    RotateAboutY(v, math::kHalfPi - phi0);
     // (no roll rotation: the anchor is where r = 0)
   } else {
     RotateAboutZ(v, -roll0);  // latitude orbit anchor at phi = ... uses the roll only
@@ -1010,12 +1006,13 @@ double UMarginal::PreimageSum(const double u0[3], double roll_out, bool flip_bra
   double roll_at = 0.0;
   double roll_factor = 0.0;
   if (SlotIsDirac(axis_.roll_dist, &roll_at)) {
-    const double raw = flip_branch ? roll_out - kPi : roll_out;
-    roll_factor = std::fabs(raw - roll_at * kDegToRad) < 1e-9 ? 1.0 : 0.0;
+    const double raw = flip_branch ? roll_out - math::kPiD : roll_out;
+    roll_factor = std::fabs(raw - roll_at * math::kDegreeToRadD) < 1e-9 ? 1.0 : 0.0;
   } else {
     bool dirac_dummy = false;
     double at_dummy = 0.0;
-    roll_factor = WrappedSlotDensity(axis_.roll_dist, flip_branch ? roll_out - kPi : roll_out, &dirac_dummy, &at_dummy);
+    roll_factor =
+        WrappedSlotDensity(axis_.roll_dist, flip_branch ? roll_out - math::kPiD : roll_out, &dirac_dummy, &at_dummy);
   }
   if (!(roll_factor > 0.0)) {
     return 0.0;
@@ -1027,8 +1024,8 @@ double UMarginal::PreimageSum(const double u0[3], double roll_out, bool flip_bra
     }
     const double wx = sign == 0 ? wx_mag : -wx_mag;
     const double w[3] = { wx, wy, sin_sigma };
-    const double psi = std::atan2(w[1], w[0]);        // w's longitude
-    const double lambda_out = lambda_s_ + kPi - psi;  // Rz(pi - lambda) s_hat = w
+    const double psi = std::atan2(w[1], w[0]);               // w's longitude
+    const double lambda_out = lambda_s_ + math::kPiD - psi;  // Rz(pi - lambda) s_hat = w
     // phi from Ry(pi/2 - phi) w = x. The y-rotation acts in the (x, z) plane of w's and x's
     // coordinates: beta's cosine is w.x*x.x + w.z*x.z — the y-components are INVARIANT under the
     // rotation and must NOT enter (w . x as a whole is not the rotation angle's cosine unless
@@ -1036,8 +1033,8 @@ double UMarginal::PreimageSum(const double u0[3], double roll_out, bool flip_bra
     const double cos_beta = w[0] * x[0] + w[2] * x[2];
     const double sin_beta = w[2] * x[0] - w[0] * x[2];
     const double beta = std::atan2(sin_beta, cos_beta);
-    const double phi = kHalfPi - beta;
-    if (phi <= -kHalfPi || phi >= kHalfPi) {
+    const double phi = math::kHalfPi - beta;
+    if (phi <= -math::kHalfPi || phi >= math::kHalfPi) {
       continue;
     }
     // The Jacobian |cos(sigma) cos(psi)| (Table 4).

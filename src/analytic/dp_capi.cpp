@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "analytic/capi_zero_pad.hpp"
 #include "analytic/dp_boundary.hpp"
 #include "analytic/dp_chromatic.hpp"
 #include "analytic/dp_contour.hpp"
@@ -25,23 +26,13 @@
 
 namespace {
 namespace an = lumice::analytic;
+namespace capi = lumice::analytic::capi;
 
 // Upper bound of the caller-sized work parameters (DiagnoseClassTint's family sample,
 // TraceRestrictedFamilyCurve's grid, TraceWavelengthCriticalTable's count): each item is
 // evaluated in full and the calls cannot be cancelled (the band sum's own reasoning for its
 // bound, section 4.6).
 constexpr int kMaxCallerItems = 10000000;
-
-template <class T>
-void ZeroAfterStructSize(T* out) {
-  const size_t declared = out->struct_size;
-  const size_t known = sizeof(T);
-  const size_t end = declared < known ? declared : known;
-  constexpr size_t kBegin = offsetof(T, struct_size) + sizeof(out->struct_size);
-  if (end > kBegin) {
-    std::memset(reinterpret_cast<unsigned char*>(out) + kBegin, 0, end - kBegin);
-  }
-}
 
 // The result structs of version 8 are first-published whole: no optional group has ever existed,
 // so a struct_size below the library's own sizeof has no readable prefix and is refused (the
@@ -51,23 +42,11 @@ LUMICE_ANALYTIC_ErrorCode CheckOut(T* out) {
   if (out == nullptr) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  ZeroAfterStructSize(out);
+  capi::ZeroAfterStructSize(out);
   if (out->struct_size < sizeof(T)) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   return LUMICE_ANALYTIC_OK;
-}
-
-LUMICE_ANALYTIC_ErrorCode ToErrorCode(an::Status status) {
-  switch (status) {
-    case an::Status::kOk:
-      return LUMICE_ANALYTIC_OK;
-    case an::Status::kInvalidValue:
-      return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
-    case an::Status::kInvalidConfig:
-      return LUMICE_ANALYTIC_ERR_INVALID_CONFIG;
-  }
-  return LUMICE_ANALYTIC_ERR_UNKNOWN;
 }
 
 LUMICE_ANALYTIC_ErrorCode ValidateIndex(double refractive_index) {
@@ -92,7 +71,7 @@ LUMICE_ANALYTIC_ErrorCode SetupField(const LUMICE_ANALYTIC_Crystal* crystal, con
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   if (auto status = an::BuildFaceNormals(*crystal, table, polygons); status != an::Status::kOk) {
-    return ToErrorCode(status);
+    return capi::ToErrorCode(status);
   }
   slots->resize(static_cast<size_t>(face_count));
   if (an::ResolveFaceSequence(*table, faces, face_count, slots->data()) != an::Status::kOk) {
@@ -891,14 +870,14 @@ LUMICE_ANALYTIC_ErrorCode Invoke(Result* out, F&& call) {
   try {
     const int status = call(out);
     if (status != 0) {
-      ZeroAfterStructSize(out);
+      capi::ZeroAfterStructSize(out);
       return status == 3 ? LUMICE_ANALYTIC_ERR_NULL_ARG :
              status == 4 ? LUMICE_ANALYTIC_ERR_INVALID_CONFIG :
                            LUMICE_ANALYTIC_ERR_INVALID_VALUE;
     }
     return LUMICE_ANALYTIC_OK;
   } catch (...) {
-    ZeroAfterStructSize(out);
+    capi::ZeroAfterStructSize(out);
     return LUMICE_ANALYTIC_ERR_UNKNOWN;
   }
 }
@@ -975,7 +954,7 @@ void LUMICE_ANALYTIC_ReleaseBoundaryLoopResult(LUMICE_ANALYTIC_BoundaryLoopResul
     return;
   }
   std::unique_ptr<BoundaryStorage> storage(static_cast<BoundaryStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 void LUMICE_ANALYTIC_ReleaseWeightKinksResult(LUMICE_ANALYTIC_WeightKinksResult* result) {
@@ -983,7 +962,7 @@ void LUMICE_ANALYTIC_ReleaseWeightKinksResult(LUMICE_ANALYTIC_WeightKinksResult*
     return;
   }
   std::unique_ptr<KinksStorage> storage(static_cast<KinksStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 void LUMICE_ANALYTIC_ReleaseClassificationResult(LUMICE_ANALYTIC_ClassificationResult* result) {
@@ -991,7 +970,7 @@ void LUMICE_ANALYTIC_ReleaseClassificationResult(LUMICE_ANALYTIC_ClassificationR
     return;
   }
   std::unique_ptr<ClassificationStorage> storage(static_cast<ClassificationStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 void LUMICE_ANALYTIC_ReleasePartitionResult(LUMICE_ANALYTIC_PartitionResult* result) {
@@ -999,7 +978,7 @@ void LUMICE_ANALYTIC_ReleasePartitionResult(LUMICE_ANALYTIC_PartitionResult* res
     return;
   }
   std::unique_ptr<PartitionStorage> storage(static_cast<PartitionStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 void LUMICE_ANALYTIC_ReleaseWavelengthTableResult(LUMICE_ANALYTIC_WavelengthTableResult* result) {
@@ -1007,7 +986,7 @@ void LUMICE_ANALYTIC_ReleaseWavelengthTableResult(LUMICE_ANALYTIC_WavelengthTabl
     return;
   }
   std::unique_ptr<WavelengthStorage> storage(static_cast<WavelengthStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 void LUMICE_ANALYTIC_ReleaseRestrictedCurveResult(LUMICE_ANALYTIC_RestrictedCurveResult* result) {
@@ -1015,7 +994,7 @@ void LUMICE_ANALYTIC_ReleaseRestrictedCurveResult(LUMICE_ANALYTIC_RestrictedCurv
     return;
   }
   std::unique_ptr<CurveStorage> storage(static_cast<CurveStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }
 
 void LUMICE_ANALYTIC_ReleaseChromaticResult(LUMICE_ANALYTIC_ChromaticResult* result) {
@@ -1023,5 +1002,5 @@ void LUMICE_ANALYTIC_ReleaseChromaticResult(LUMICE_ANALYTIC_ChromaticResult* res
     return;
   }
   std::unique_ptr<ChromaticStorage> storage(static_cast<ChromaticStorage*>(result->storage));
-  ZeroAfterStructSize(result);
+  capi::ZeroAfterStructSize(result);
 }

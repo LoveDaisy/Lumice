@@ -5,19 +5,11 @@
 #include <utility>
 #include <vector>
 
+#include "analytic/so3.hpp"
+
 namespace lumice::analytic {
 
 namespace {
-
-double Dot3(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-void Cross3(const double a[3], const double b[3], double out[3]) {
-  out[0] = a[1] * b[2] - a[2] * b[1];
-  out[1] = a[2] * b[0] - a[0] * b[2];
-  out[2] = a[0] * b[1] - a[1] * b[0];
-}
 
 // An affine map x -> L x + t of the body frame, L row-major: where the unfolding has put the crystal.
 struct Placement {
@@ -40,7 +32,7 @@ struct Placement {
     for (int j = 0; j < 3; j++) {
       nl[j] = n[0] * l[0 * 3 + j] + n[1] * l[1 * 3 + j] + n[2] * l[2 * 3 + j];
     }
-    const double nt = Dot3(n, t);
+    const double nt = so3::Dot3(n, t);
     for (int i = 0; i < 3; i++) {
       for (int j = 0; j < 3; j++) {
         l[i * 3 + j] -= 2.0 * n[i] * nl[j];
@@ -142,7 +134,7 @@ Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polyg
     placement.Rotate(normals.normal[slot], n);
     double c = 0.0;  // the plane offset, averaged over the face's placed corners
     for (int v = begin; v < end; v++) {
-      c += Dot3(n, &points_[3 * static_cast<size_t>(v)]);
+      c += so3::Dot3(n, &points_[3 * static_cast<size_t>(v)]);
     }
     c /= (end - begin);
     placement.Reflect(n, c);
@@ -163,7 +155,7 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index,
     diagnostics->area_threshold = eps_;
   }
   // Entry gate: the incident side has no critical angle (LI entry_ok with cos_tc = 0, and cos_i > 0).
-  const double cos_i = -Dot3(entry_normal_, s_body);
+  const double cos_i = -so3::Dot3(entry_normal_, s_body);
   if (!(cos_i > 0.0)) {
     m.status = EntryMeasureStatus::kEntryBackface;
     return m;
@@ -176,36 +168,36 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index,
   for (int i = 0; i < 3; i++) {
     d_in[i] = eta * s_body[i] + k * entry_normal_[i];
   }
-  const double cos_t = -Dot3(entry_normal_, d_in);
+  const double cos_t = -so3::Dot3(entry_normal_, d_in);
   // Exit gate (LI exit_ok): d_in . n~_b >= cos(theta_c), with theta_c from the call's index, the one
   // the ray actually crosses (as in LI).
   const double cos_critical = std::sqrt(1.0 - 1.0 / (refractive_index * refractive_index));
-  if (!(Dot3(d_in, exit_normal_) >= cos_critical)) {
+  if (!(so3::Dot3(d_in, exit_normal_) >= cos_critical)) {
     m.status = EntryMeasureStatus::kExitCriticalAngle;
     return m;
   }
 
   // LI perp_bases of d_in: (u, w, d) right-handed, helper +z unless |d_z| >= 0.9, then +x.
-  const double d_norm = std::sqrt(Dot3(d_in, d_in));
+  const double d_norm = std::sqrt(so3::Dot3(d_in, d_in));
   const double d[3] = { d_in[0] / d_norm, d_in[1] / d_norm, d_in[2] / d_norm };
   const double helper_z[3] = { 0.0, 0.0, 1.0 };
   const double helper_x[3] = { 1.0, 0.0, 0.0 };
   double u[3];
-  Cross3(d, std::fabs(d[2]) >= 0.9 ? helper_x : helper_z, u);
-  const double u_norm = std::sqrt(Dot3(u, u));
+  so3::Cross3(d, std::fabs(d[2]) >= 0.9 ? helper_x : helper_z, u);
+  const double u_norm = std::sqrt(so3::Dot3(u, u));
   for (double& x : u) {
     x /= u_norm;
   }
   double w[3];
-  Cross3(d, u, w);
+  so3::Cross3(d, u, w);
 
   // LI corridor_intersection: project every polygon along d, then clip the first by each later one.
   auto project = [&](int poly, std::vector<double>* out, bool* reversed) {
     out->clear();
     for (int v = offsets_[poly]; v < offsets_[poly + 1]; v++) {
       const double* p = &points_[3 * static_cast<size_t>(v)];
-      out->push_back(Dot3(p, u));
-      out->push_back(Dot3(p, w));
+      out->push_back(so3::Dot3(p, u));
+      out->push_back(so3::Dot3(p, w));
     }
     const int count = offsets_[poly + 1] - offsets_[poly];
     *reversed = EnsureCcw(out, count);

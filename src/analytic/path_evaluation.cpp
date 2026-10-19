@@ -5,6 +5,7 @@
 #include <limits>
 
 #include "analytic/path_chain.hpp"
+#include "analytic/so3.hpp"
 #include "core/crystal.hpp"
 #include "core/def.hpp"
 
@@ -28,10 +29,6 @@ bool FitsFloat(double v) {
   return std::isfinite(v) && std::fabs(v) <= static_cast<double>(std::numeric_limits<float>::max());
 }
 
-double Dot3(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
 // How far, relative to the crystal's size, a float closed-form corner may sit from a plane it lies
 // on: the engine rounds each corner coordinate to float (about 6e-8 relative), and its own vertex
 // merge works at 5 float epsilons of scale (geo3d_closedform.cpp GapToleranceForScale).
@@ -53,7 +50,7 @@ void RefineCorner(const FaceNormalTable& table, const double* offsets, int slot,
   int on[kMaxFaceSlots];
   int on_count = 0;
   for (int t = 0; t < table.slot_cnt; t++) {
-    if (t != slot && table.present[t] && std::fabs(Dot3(table.normal[t], corner) - offsets[t]) <= tolerance) {
+    if (t != slot && table.present[t] && std::fabs(so3::Dot3(table.normal[t], corner) - offsets[t]) <= tolerance) {
       on[on_count++] = t;
     }
   }
@@ -233,7 +230,7 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
         const double* p = polygons->corner[s][k];
         const double* q = polygons->corner[s][(k + 1) % cnt];
         const double e[3] = { q[0] - p[0], q[1] - p[1], q[2] - p[2] };
-        min_edge = std::fmin(min_edge, std::sqrt(Dot3(e, e)));
+        min_edge = std::fmin(min_edge, std::sqrt(so3::Dot3(e, e)));
       }
     }
     polygons->min_edge_length = min_edge;
@@ -259,7 +256,7 @@ bool ValidateUnitVector(const double v[3]) {
   if (!AllFinite(v, 3)) {
     return false;
   }
-  return std::fabs(std::sqrt(Dot3(v, v)) - 1.0) <= kUnitTolerance;
+  return std::fabs(std::sqrt(so3::Dot3(v, v)) - 1.0) <= kUnitTolerance;
 }
 
 bool ValidateRotation(const double r[9]) {

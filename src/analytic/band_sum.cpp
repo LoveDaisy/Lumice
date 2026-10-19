@@ -6,27 +6,14 @@
 
 #include "analytic/path_rank.hpp"
 #include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
-
-double Clamp1(double x) {
-  return x < -1.0 ? -1.0 : (x > 1.0 ? 1.0 : x);
-}
-
 double Deviation(const double x[3], const double s[3]) {
-  return std::acos(Clamp1(so3::Dot3(x, s)));
-}
-
-void Normalize3(double v[3]) {
-  const double n = so3::Norm3(v);
-  for (int i = 0; i < 3; i++) {
-    v[i] /= n;
-  }
+  return std::acos(math::Clamp1(so3::Dot3(x, s)));
 }
 
 // The event half of the pose's third row (section 4.3): rows j of F_i = [u, f, u x f], f =
@@ -38,7 +25,7 @@ struct EventRows {
 EventRows RowsOf(const BandEvent& e) {
   const double cos_d = std::cos(e.deviation);
   double f[3] = { e.phi[0] + cos_d * e.u[0], e.phi[1] + cos_d * e.u[1], e.phi[2] + cos_d * e.u[2] };
-  Normalize3(f);
+  so3::Normalize3(f);
   double uf[3];
   so3::Cross3(e.u, f, uf);
   EventRows r;
@@ -54,7 +41,7 @@ EventRows RowsOf(const BandEvent& e) {
 void PixelRow(const double sun[3], const double centre[3], double w3[3]) {
   const double ds = so3::Dot3(centre, sun);
   double e[3] = { centre[0] - ds * sun[0], centre[1] - ds * sun[1], centre[2] - ds * sun[2] };
-  Normalize3(e);
+  so3::Normalize3(e);
   double se[3];
   so3::Cross3(sun, e, se);
   w3[0] = sun[2];
@@ -93,7 +80,7 @@ SunFrame MakeSunFrame(const double sun[3]) {
     e[1] = 0.0;
     e[2] = 0.0;
   }
-  Normalize3(e);
+  so3::Normalize3(e);
   double se[3];
   so3::Cross3(sun, e, se);
   return { sun[2], e[2], se[2] };
@@ -122,7 +109,7 @@ TwistRow MakeTwistRow(const double u[3], const SunFrame& sun) {
   for (int i = 0; i < 3; i++) {
     f[i] -= fu * u[i];
   }
-  Normalize3(f);
+  so3::Normalize3(f);
   double g[3];
   so3::Cross3(u, f, g);
   TwistRow t;
@@ -163,7 +150,7 @@ double PsiAverage(const TwistRow& t, const PoseDensity& density, const PanelRule
   density.ZenithWindow(&theta_lo, &theta_hi);
   const double amplitude = std::hypot(t.a[2], t.b[2]);
   if (amplitude < 1e-12) {
-    return Composite(rule, panels, -kPi, kPi, t, density) / (2.0 * kPi);
+    return Composite(rule, panels, -math::kPiD, math::kPiD, t, density) / (2.0 * math::kPiD);
   }
   const double phase = std::atan2(t.b[2], t.a[2]);
   const double high = std::fmin(1.0, (std::cos(theta_lo) - t.c[2]) / amplitude);
@@ -175,7 +162,7 @@ double PsiAverage(const TwistRow& t, const PoseDensity& density, const PanelRule
   const double t2 = std::acos(low);
   return (Composite(rule, panels, phase + t1, phase + t2, t, density) +
           Composite(rule, panels, phase - t2, phase - t1, t, density)) /
-         (2.0 * kPi);
+         (2.0 * math::kPiD);
 }
 
 }  // namespace
@@ -232,8 +219,8 @@ void BandSumOnEvents(const std::vector<SampleEvent>& events, int n, const double
     }
     if (PixelContains(corners, incident) || PixelContains(corners, sun)) {
       v.status = PixelStatus::kSingular;
-      v.value = kNaN;
-      v.k_eff = kNaN;
+      v.value = math::kNaN;
+      v.k_eff = math::kNaN;
       out->push_back(v);
       continue;
     }
@@ -264,7 +251,7 @@ void BandSumOnEvents(const std::vector<SampleEvent>& events, int n, const double
     v.k_rho_pos = positive;
     v.k_eff = sum_sq > 0.0 ? sum * sum / sum_sq : 0.0;
     const double band = v.delta_hi - v.delta_lo;
-    v.value = sum != 0.0 ? sum / (2.0 * kPi * static_cast<double>(n) * band * std::sin(v.delta)) : 0.0;
+    v.value = sum != 0.0 ? sum / (2.0 * math::kPiD * static_cast<double>(n) * band * std::sin(v.delta)) : 0.0;
     out->push_back(v);
   }
 }
@@ -315,10 +302,10 @@ void PlacePointMass(double m, const double incident[3], const PixelTable& pixels
   *point_mass_pixel = -1;
   for (int p = 0; p < pixels.count; p++) {
     PixelValue v;
-    v.delta = kNaN;
-    v.delta_lo = kNaN;
-    v.delta_hi = kNaN;
-    v.k_eff = kNaN;
+    v.delta = math::kNaN;
+    v.delta_lo = math::kNaN;
+    v.delta_hi = math::kNaN;
+    v.k_eff = math::kNaN;
     v.value = 0.0;
     if (*point_mass_pixel < 0 && PixelContains(pixels.corners + 12 * static_cast<size_t>(p), incident)) {
       *point_mass_pixel = p;

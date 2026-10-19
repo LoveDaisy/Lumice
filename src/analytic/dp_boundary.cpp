@@ -7,41 +7,11 @@
 #include <string>
 
 #include "analytic/discovery.hpp"
+#include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-
-double Dot3(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-void Cross3(const double a[3], const double b[3], double out[3]) {
-  out[0] = a[1] * b[2] - a[2] * b[1];
-  out[1] = a[2] * b[0] - a[0] * b[2];
-  out[2] = a[0] * b[1] - a[1] * b[0];
-}
-
-void Copy3(const double a[3], double out[3]) {
-  out[0] = a[0];
-  out[1] = a[1];
-  out[2] = a[2];
-}
-
-// angle(a, b) in atan2 form (LI boundary._angle).
-double AngleBetween(const double a[3], const double b[3]) {
-  double cross[3];
-  Cross3(a, b, cross);
-  return std::atan2(std::sqrt(Dot3(cross, cross)), Dot3(a, b));
-}
-
-void Unit(double v[3]) {
-  const double norm = std::sqrt(Dot3(v, v));
-  for (int i = 0; i < 3; i++) {
-    v[i] /= norm;
-  }
-}
 
 bool Contains(const std::vector<int>& values, int value) {
   return std::find(values.begin(), values.end(), value) != values.end();
@@ -96,7 +66,7 @@ std::string PathIdOf(const FaceNormalTable& table, const int* slots, int slot_co
 // ---- margin identities and great circles ----------------------------------------------------------------
 
 void IncidenceNormals(const FaceNormalTable& table, const int* slots, int slot_count, double out[kMaxFaceCount][3]) {
-  Copy3(table.normal[slots[0]], out[0]);
+  so3::Copy3(table.normal[slots[0]], out[0]);
   for (int k = 1; k < slot_count - 1; k++) {
     // R_{k-1}: the fold of the reflections before step k — FoldMatrixOf over the (k + 1)-prefix
     // (LI incidence_normals: fold_matrix(crystal, faces[:k + 1])).
@@ -180,17 +150,17 @@ std::vector<std::pair<int, std::array<double, 3>>> GreatCircleMargins(const Devi
   for (int slot = 0; slot < slot_count; slot++) {
     const int margin = 2 * slot;  // the incidence cosine of this slot
     // The entry margin's m IS n_a (never orthogonal); it is considered unconditionally.
-    if (slot != 0 && std::fabs(Dot3(incidence[slot], n_a)) > kGreatCircleAtol) {
+    if (slot != 0 && std::fabs(so3::Dot3(incidence[slot], n_a)) > kGreatCircleAtol) {
       continue;
     }
     double m[3];
-    Copy3(incidence[slot], m);
-    Unit(m);
+    so3::Copy3(incidence[slot], m);
+    so3::Normalize3(m);
     double basis[2][3];
     TangentBasis(m, basis);  // e1 = unit(m x least-aligned axis), e2 = m x e1 (LI's own recipe)
     double worst = 0.0;
     for (int s = 0; s < samples; s++) {
-      const double t = 2.0 * kPi * static_cast<double>(s) / static_cast<double>(samples);
+      const double t = 2.0 * math::kPiD * static_cast<double>(s) / static_cast<double>(samples);
       double u[3];
       for (int i = 0; i < 3; i++) {
         u[i] = std::cos(t) * basis[0][i] + std::sin(t) * basis[1][i];
@@ -257,7 +227,7 @@ BoundaryWalker::BoundaryWalker(const DeviationField& field) : field_(field) {
 }
 
 void BoundaryWalker::TangentOf(const double u[3], const MarginJet& jet, int margin, double out[3]) const {
-  const double radial = Dot3(jet.gradient[margin], u);
+  const double radial = so3::Dot3(jet.gradient[margin], u);
   for (int i = 0; i < 3; i++) {
     out[i] = jet.gradient[margin][i] - radial * u[i];
   }
@@ -294,11 +264,11 @@ double BoundaryWalker::DOnExitTir(const double u[3]) const {
 void BoundaryWalker::Correct(double u[3], int margin) const {
   if (HasCircle(margin)) {
     const double* normal = CircleNormal(margin);
-    const double dot = Dot3(u, normal);
+    const double dot = so3::Dot3(u, normal);
     for (int i = 0; i < 3; i++) {
       u[i] = u[i] - dot * normal[i];
     }
-    Unit(u);
+    so3::Normalize3(u);
     double margins[2 * kMaxFaceCount];
     Margins(u, margins);
     if (margins[margin] < 0.0) {
@@ -306,7 +276,7 @@ void BoundaryWalker::Correct(double u[3], int margin) const {
       for (int i = 0; i < 3; i++) {
         u[i] += 1e-16 * normal[i];
       }
-      Unit(u);
+      so3::Normalize3(u);
     }
     return;
   }
@@ -318,11 +288,11 @@ void BoundaryWalker::Correct(double u[3], int margin) const {
     if (std::fabs(jet.margins[margin]) <= 1e-15) {
       break;
     }
-    const double gg = Dot3(g, g);
+    const double gg = so3::Dot3(g, g);
     for (int i = 0; i < 3; i++) {
       u[i] -= (jet.margins[margin] / gg) * g[i];
     }
-    Unit(u);
+    so3::Normalize3(u);
   }
   for (int iteration = 0; iteration < 8; iteration++) {
     MarginsJacobian(u, &jet);
@@ -331,41 +301,41 @@ void BoundaryWalker::Correct(double u[3], int margin) const {
     }
     double g[3];
     TangentOf(u, jet, margin, g);
-    const double push = (-jet.margins[margin]) / Dot3(g, g) + 1e-16 / std::sqrt(Dot3(g, g));
+    const double push = (-jet.margins[margin]) / so3::Dot3(g, g) + 1e-16 / std::sqrt(so3::Dot3(g, g));
     for (int i = 0; i < 3; i++) {
       u[i] += push * g[i];
     }
-    Unit(u);
+    so3::Normalize3(u);
   }
 }
 
 void BoundaryWalker::Direction(const double u[3], int margin, double out[3]) const {
   if (HasCircle(margin)) {
-    Cross3(CircleNormal(margin), u, out);
+    so3::Cross3(CircleNormal(margin), u, out);
   } else {
     double g[3];
     TangentGradient(u, margin, g);
-    Cross3(g, u, out);
+    so3::Cross3(g, u, out);
   }
-  Unit(out);
+  so3::Normalize3(out);
 }
 
 void BoundaryWalker::Advance(const double u[3], int margin, const double tangent[3], double step, double out[3]) const {
   if (HasCircle(margin)) {
     double along[3];
-    Cross3(CircleNormal(margin), u, along);
-    Unit(along);
-    const double align = Dot3(along, tangent) >= 0.0 ? 1.0 : -1.0;
+    so3::Cross3(CircleNormal(margin), u, along);
+    so3::Normalize3(along);
+    const double align = so3::Dot3(along, tangent) >= 0.0 ? 1.0 : -1.0;
     for (int i = 0; i < 3; i++) {
       out[i] = std::cos(step) * u[i] + std::sin(step) * align * along[i];
     }
-    Unit(out);
+    so3::Normalize3(out);
     return;
   }
   for (int i = 0; i < 3; i++) {
     out[i] = u[i] + step * tangent[i];
   }
-  Unit(out);
+  so3::Normalize3(out);
   Correct(out, margin);
 }
 
@@ -376,7 +346,7 @@ void BoundaryWalker::RefineCorner(double u[3], int a, int b) const {
     return std::max(std::fabs(margins[a]), std::fabs(margins[b]));
   };
   double best[3];
-  Copy3(u, best);
+  so3::Copy3(u, best);
   double best_residual = residual(u);
   for (int iteration = 0; iteration < 30; iteration++) {
     MarginJet jet;
@@ -387,7 +357,8 @@ void BoundaryWalker::RefineCorner(double u[3], int a, int b) const {
     double gb[3];
     TangentOf(u, jet, a, ga);
     TangentOf(u, jet, b, gb);
-    const double jac[2][2] = { { Dot3(ga, basis[0]), Dot3(ga, basis[1]) }, { Dot3(gb, basis[0]), Dot3(gb, basis[1]) } };
+    const double jac[2][2] = { { so3::Dot3(ga, basis[0]), so3::Dot3(ga, basis[1]) },
+                               { so3::Dot3(gb, basis[0]), so3::Dot3(gb, basis[1]) } };
     const double det = jac[0][0] * jac[1][1] - jac[0][1] * jac[1][0];
     if (std::fabs(det) < 1e-14) {
       break;
@@ -401,17 +372,17 @@ void BoundaryWalker::RefineCorner(double u[3], int a, int b) const {
     for (int i = 0; i < 3; i++) {
       u[i] += step[0] * basis[0][i] + step[1] * basis[1][i];
     }
-    Unit(u);
+    so3::Normalize3(u);
     const double current = residual(u);
     if (current < best_residual) {
-      Copy3(u, best);
+      so3::Copy3(u, best);
       best_residual = current;
     }
     if (current <= 1e-16) {
       break;
     }
   }
-  Copy3(best, u);
+  so3::Copy3(best, u);
 }
 
 int BoundaryWalker::Violated(const double u[3], const int* excluded, int excluded_count,
@@ -443,7 +414,7 @@ int BoundaryWalker::MostViolated(const double u[3], const int* names, int count)
   double best_distance = 0.0;
   for (int k = 0; k < count; k++) {
     TangentOf(u, jet, names[k], g);
-    const double distance = jet.margins[names[k]] / std::sqrt(Dot3(g, g));
+    const double distance = jet.margins[names[k]] / std::sqrt(so3::Dot3(g, g));
     if (k == 0 || distance < best_distance) {
       best = names[k];
       best_distance = distance;
@@ -576,13 +547,13 @@ StartPoint FindStartPoint(const BoundaryWalker& walker, int lattice_n) {
   int bad[kMaxFaceCount + 2];
   for (int iteration = 0; iteration < 200; iteration++) {
     double mid[3] = { inside[0] + out[0], inside[1] + out[1], inside[2] + out[2] };
-    Unit(mid);
+    so3::Normalize3(mid);
     if (walker.Violated(mid, nullptr, 0, bad) == 0) {
-      Copy3(mid, inside);
+      so3::Copy3(mid, inside);
     } else {
-      Copy3(mid, out);
+      so3::Copy3(mid, out);
     }
-    if (AngleBetween(inside, out) < 1e-12) {
+    if (so3::AngleBetween(inside, out) < 1e-12) {
       break;
     }
   }
@@ -597,7 +568,7 @@ StartPoint FindStartPoint(const BoundaryWalker& walker, int lattice_n) {
   }
   start.margin = walker.MostViolated(out, bad, bad_count);
   walker.Correct(inside, start.margin);
-  Copy3(inside, start.u);
+  so3::Copy3(inside, start.u);
   return start;
 }
 
@@ -608,7 +579,7 @@ WalkStatus OutgoingMargin(const BoundaryWalker& walker, const double corner[3], 
   MarginJet jet;
   walker.MarginsJacobian(corner, &jet);
   double corner_mutable[3];
-  Copy3(corner, corner_mutable);
+  so3::Copy3(corner, corner_mutable);
   std::vector<int> zero;
   for (int margin : walker.active()) {
     if (std::fabs(jet.margins[margin]) <= kZeroMarginAtol) {
@@ -622,7 +593,7 @@ WalkStatus OutgoingMargin(const BoundaryWalker& walker, const double corner[3], 
     }
     double g[3];
     walker.TangentGradient(corner, margin, g);
-    if (std::sqrt(Dot3(g, g)) < kTouchingGradientAtol) {
+    if (std::sqrt(so3::Dot3(g, g)) < kTouchingGradientAtol) {
       continue;
     }
     double direction[3];
@@ -666,7 +637,7 @@ WalkStatus MakeCornerRecord(const BoundaryWalker& walker, const double u[3], int
   MarginJet jet;
   walker.MarginsJacobian(u, &jet);
   double u_mutable[3];
-  Copy3(u, u_mutable);
+  so3::Copy3(u, u_mutable);
   std::vector<int> zero;
   for (int margin : walker.active()) {
     if (std::fabs(jet.margins[margin]) <= kZeroMarginAtol || margin == incoming || margin == outgoing) {
@@ -677,7 +648,7 @@ WalkStatus MakeCornerRecord(const BoundaryWalker& walker, const double u[3], int
   double edge_gradients[2][3];
   for (int e = 0; e < 2; e++) {
     walker.TangentGradient(u, edges[e], edge_gradients[e]);
-    Unit(edge_gradients[e]);
+    so3::Normalize3(edge_gradients[e]);
   }
   for (int margin : zero) {
     if (margin == incoming || margin == outgoing || Contains(coincident, margin)) {
@@ -685,12 +656,12 @@ WalkStatus MakeCornerRecord(const BoundaryWalker& walker, const double u[3], int
     }
     double g[3];
     walker.TangentGradient(u, margin, g);
-    Unit(g);
+    so3::Normalize3(g);
     double sine_min = 0.0;
     for (int e = 0; e < 2; e++) {
       double cross[3];
-      Cross3(g, edge_gradients[e], cross);
-      const double sine = std::sqrt(Dot3(cross, cross));
+      so3::Cross3(g, edge_gradients[e], cross);
+      const double sine = std::sqrt(so3::Dot3(cross, cross));
       sine_min = e == 0 ? sine : std::min(sine_min, sine);
     }
     (sine_min < kTangentSineAtol ? corner->tangent : corner->transversal).push_back(margin);
@@ -704,7 +675,7 @@ WalkStatus MakeCornerRecord(const BoundaryWalker& walker, const double u[3], int
       corner->coincident.push_back(margin);
     }
   }
-  Copy3(u, corner->position);
+  so3::Copy3(u, corner->position);
   corner->incoming = incoming;
   corner->outgoing = outgoing;
   corner->margins = zero;
@@ -726,11 +697,11 @@ WalkStatus GoldenExtremum(const BoundaryWalker& walker, const BoundaryPiece& pie
   double b[3];
   if (i == 0) {
     // Only on a loop without corners, whose single piece ends where it starts.
-    Copy3(&piece.points[3 * (static_cast<int>(piece.points.size() / 3) - 2)], a);
+    so3::Copy3(&piece.points[3 * (static_cast<int>(piece.points.size() / 3) - 2)], a);
   } else {
-    Copy3(&piece.points[3 * (i - 1)], a);
+    so3::Copy3(&piece.points[3 * (i - 1)], a);
   }
-  Copy3(&piece.points[3 * (i + 1)], b);
+  so3::Copy3(&piece.points[3 * (i + 1)], b);
   const double sign = kind == CriticalKind::kMinimum ? 1.0 : -1.0;
   const bool exit_tir_piece = piece.margin == ExitSnellOf(walker.slot_count()) && !walker.field().fold().degenerate;
 
@@ -738,7 +709,7 @@ WalkStatus GoldenExtremum(const BoundaryWalker& walker, const BoundaryPiece& pie
     for (int c = 0; c < 3; c++) {
       out[c] = (1.0 - lambda) * a[c] + lambda * b[c];
     }
-    Unit(out);
+    so3::Normalize3(out);
     walker.Correct(out, piece.margin);
   };
   bool refused = false;
@@ -837,9 +808,9 @@ ZeroSetWalk WalkZeroSet(const BoundaryWalker& walker, const double start[3], int
   excluded.push_back(margin);
 
   walk.points.resize(3);
-  Copy3(start, &walk.points[0]);
+  so3::Copy3(start, &walk.points[0]);
   double u[3];
-  Copy3(start, u);
+  so3::Copy3(start, u);
   double arc = 0.0;
   for (int taken = 0; taken < options.max_walk_steps; taken++) {
     double tangent[3];
@@ -849,11 +820,11 @@ ZeroSetWalk WalkZeroSet(const BoundaryWalker& walker, const double start[3], int
     }
     // Closure on distance alone (module docstring): within one step of the seed after at least two
     // steps of arc — the arc bound rules out the departure transient a heading test would miss.
-    if (stop_at != nullptr && arc >= 2.0 * step && AngleBetween(u, stop_at) <= step) {
-      if (AngleBetween(u, stop_at) > 0.0) {
+    if (stop_at != nullptr && arc >= 2.0 * step && so3::AngleBetween(u, stop_at) <= step) {
+      if (so3::AngleBetween(u, stop_at) > 0.0) {
         const size_t at = walk.points.size();
         walk.points.resize(at + 3);
-        Copy3(stop_at, &walk.points[at]);
+        so3::Copy3(stop_at, &walk.points[at]);
       }
       return walk;  // met_corner false: back at the stop point
     }
@@ -862,25 +833,25 @@ ZeroSetWalk WalkZeroSet(const BoundaryWalker& walker, const double start[3], int
     int bad[kMaxFaceCount + 2];
     const int excluded_count = static_cast<int>(excluded.size());
     if (walker.Violated(nxt, excluded.data(), excluded_count, bad) == 0) {
-      arc += AngleBetween(u, nxt);
+      arc += so3::AngleBetween(u, nxt);
       const size_t at = walk.points.size();
       walk.points.resize(at + 3);
-      Copy3(nxt, &walk.points[at]);
-      Copy3(nxt, u);
+      so3::Copy3(nxt, &walk.points[at]);
+      so3::Copy3(nxt, u);
       continue;
     }
     // Bisect the crossing on the step length, then name the gate that turns negative there.
     double lo = 0.0;
     double hi = step;
     double hi_point[3];
-    Copy3(nxt, hi_point);
+    so3::Copy3(nxt, hi_point);
     for (int iteration = 0; iteration < 80; iteration++) {
       const double mid = 0.5 * (lo + hi);
       double p[3];
       walker.Advance(u, margin, tangent, mid, p);
       if (walker.Violated(p, excluded.data(), excluded_count, bad) > 0) {
         hi = mid;
-        Copy3(p, hi_point);
+        so3::Copy3(p, hi_point);
       } else {
         lo = mid;
       }
@@ -895,9 +866,9 @@ ZeroSetWalk WalkZeroSet(const BoundaryWalker& walker, const double start[3], int
     walker.RefineCorner(corner, margin, crossing);
     const size_t at = walk.points.size();
     walk.points.resize(at + 3);
-    Copy3(corner, &walk.points[at]);
+    so3::Copy3(corner, &walk.points[at]);
     walk.met_corner = true;
-    Copy3(corner, walk.corner);
+    so3::Copy3(corner, walk.corner);
     return walk;
   }
   walk.status = WalkStatus::kStepsExhausted;
@@ -905,7 +876,7 @@ ZeroSetWalk WalkZeroSet(const BoundaryWalker& walker, const double start[3], int
   std::ostringstream out;
   out << "boundary walk of " << PathId(walker) << " did not reach a corner in " << options.max_walk_steps
       << " steps (gate " << MarginName(walker.margin_count(), margin) << ", arc " << arc << " rad, end-to-seed angle "
-      << AngleBetween(u, reach) << " rad, seed " << PointList(reach) << ", end " << PointList(u) << ")";
+      << so3::AngleBetween(u, reach) << " rad, seed " << PointList(reach) << ", end " << PointList(u) << ")";
   walk.message = out.str();
   return walk;
 }
@@ -973,7 +944,7 @@ WalkStatus MakePiece(const BoundaryWalker& walker, int margin, const std::vector
   piece->margin = margin;
   piece->great_circle = walker.HasCircle(margin);
   if (piece->great_circle) {
-    Copy3(walker.CircleNormal(margin), piece->circle_normal);
+    so3::Copy3(walker.CircleNormal(margin), piece->circle_normal);
   }
   piece->points = points;
   piece->coincident.clear();
@@ -1018,7 +989,7 @@ WalkStatus LoopCriticalPoints(const BoundaryWalker& walker, const std::vector<Bo
     if (i == 0 && !corners.empty()) {
       // The sample at a piece's start IS the previous corner (Python's corners[-1] for piece 0).
       const WalkerCorner& corner = corners[p_index > 0 ? p_index - 1 : static_cast<int>(corners.size()) - 1];
-      Copy3(corner.position, point.position);
+      so3::Copy3(corner.position, point.position);
       point.value = corner.value;
       point.corner = true;
       critical->push_back(point);
@@ -1030,7 +1001,7 @@ WalkStatus LoopCriticalPoints(const BoundaryWalker& walker, const std::vector<Bo
     if (status != WalkStatus::kOk) {
       return status;
     }
-    Copy3(position, point.position);
+    so3::Copy3(position, point.position);
     point.value = value;
     point.corner = false;
     critical->push_back(point);
@@ -1070,11 +1041,11 @@ WalkResult WalkBoundary(const DeviationField& field, const BoundaryWalkOptions& 
     pieces.push_back(std::move(piece));
   } else {
     double first_corner[3];
-    Copy3(first.corner, first_corner);
+    so3::Copy3(first.corner, first_corner);
     int incoming = start.margin;
     std::vector<int> incoming_coincident = first.coincident;
     double u[3];
-    Copy3(first_corner, u);
+    so3::Copy3(first_corner, u);
     bool closed = false;
     for (int round = 0; round < 1000 && !closed; round++) {
       // 2. pick the outgoing margin, probe past the corner, walk the piece to the next corner.
@@ -1096,7 +1067,7 @@ WalkResult WalkBoundary(const DeviationField& field, const BoundaryWalkOptions& 
       }
       // The piece starts at the corner itself, then the walked points (LI's [u, *points]).
       std::vector<double> points(3);
-      Copy3(u, &points[0]);
+      so3::Copy3(u, &points[0]);
       points.insert(points.end(), piece_walk.points.begin(), piece_walk.points.end());
       BoundaryPiece piece;
       if (MakePiece(walker, outgoing, points, piece_walk.coincident, &piece, &message) != WalkStatus::kOk) {
@@ -1107,8 +1078,8 @@ WalkResult WalkBoundary(const DeviationField& field, const BoundaryWalkOptions& 
       pieces.push_back(std::move(piece));
       incoming = outgoing;
       incoming_coincident = piece_walk.coincident;
-      Copy3(piece_walk.corner, u);  // stop_at null: the walk ended at a corner or already failed
-      if (AngleBetween(piece_walk.corner, first_corner) <= kCornerCloseRad) {
+      so3::Copy3(piece_walk.corner, u);  // stop_at null: the walk ended at a corner or already failed
+      if (so3::AngleBetween(piece_walk.corner, first_corner) <= kCornerCloseRad) {
         closed = true;
       }
     }
@@ -1120,7 +1091,7 @@ WalkResult WalkBoundary(const DeviationField& field, const BoundaryWalkOptions& 
     // 3. the loop starts and ends at `first_corner`: pieces[i] runs from corner i - 1 to corner i.
     // Glue the last point to the first corner exactly and take its value (LI _replace_last_point).
     BoundaryPiece& last = pieces.back();
-    Copy3(first_corner, &last.points[last.points.size() - 3]);
+    so3::Copy3(first_corner, &last.points[last.points.size() - 3]);
     if (walker.D(first_corner, &last.values.back()) != RoutedDeviationStatus::kOk) {
       result.status = WalkStatus::kNotFinite;
       result.message = "D_P is not finite at " + PointList(first_corner) + " on " + PathId(walker);
@@ -1162,11 +1133,11 @@ WalkResult WalkBoundary(const DeviationField& field, const BoundaryWalkOptions& 
   result.loop.plateau_value = plateau_value;
   for (const WalkerCorner& corner : corners) {
     LoopCorner consumer;
-    Copy3(corner.position, consumer.position);
+    so3::Copy3(corner.position, consumer.position);
     consumer.value = corner.value;
     result.loop.corners.push_back(consumer);
   }
-  Copy3(&pieces[0].points[0], result.loop.first_point);
+  so3::Copy3(&pieces[0].points[0], result.loop.first_point);
   if (record != nullptr) {
     record->pieces = std::move(pieces);
     record->corners = std::move(corners);

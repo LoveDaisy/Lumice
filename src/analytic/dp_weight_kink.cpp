@@ -9,28 +9,11 @@
 #include <utility>
 
 #include "analytic/discovery.hpp"
+#include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-
-double Dot3(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-void Copy3(const double a[3], double out[3]) {
-  out[0] = a[0];
-  out[1] = a[1];
-  out[2] = a[2];
-}
-
-void Unit(double v[3]) {
-  const double norm = std::sqrt(Dot3(v, v));
-  for (int i = 0; i < 3; i++) {
-    v[i] /= norm;
-  }
-}
 
 // D_P on points of C_k through the exit-Snell closure convention (LI _arc_values): finite plain
 // values pass, non-finite ones on the closure read the limit, off the closure the arc fails (LI
@@ -115,10 +98,10 @@ KinkCurve CircleCurve(const BoundaryWalker& walker, int step, int margin, const 
   curve.index = index;
   curve.coverage = KinkCoverage::kClosedFormAuthority;
   double m[3];
-  Copy3(m_in, m);
-  Unit(m);
+  so3::Copy3(m_in, m);
+  so3::Normalize3(m);
   curve.has_normal = true;
-  Copy3(m, curve.normal);
+  so3::Copy3(m, curve.normal);
 
   if (index * index - 1.0 >= 1.0) {
     std::ostringstream out;
@@ -142,7 +125,7 @@ KinkCurve CircleCurve(const BoundaryWalker& walker, int step, int margin, const 
   double worst = 0.0;
   for (int s = 0; s < kCircleSamples; s += kCircleSamples / 16) {
     double u[3];
-    at(2.0 * kPi * static_cast<double>(s) / kCircleSamples, u);
+    at(2.0 * math::kPiD * static_cast<double>(s) / kCircleSamples, u);
     walker.Margins(u, margins);
     worst = std::max(worst, std::fabs(margins[margin]));
   }
@@ -155,7 +138,7 @@ KinkCurve CircleCurve(const BoundaryWalker& walker, int step, int margin, const 
   int inside_count = 0;
   for (int s = 0; s < kCircleSamples; s++) {
     double u[3];
-    at(2.0 * kPi * static_cast<double>(s) / kCircleSamples, u);
+    at(2.0 * math::kPiD * static_cast<double>(s) / kCircleSamples, u);
     inside[s] = InsideUp(walker.field(), u) ? 1 : 0;
     inside_count += inside[s];
   }
@@ -180,7 +163,8 @@ KinkCurve CircleCurve(const BoundaryWalker& walker, int step, int margin, const 
   if (inside_count == kCircleSamples) {
     std::vector<double> points(3 * (kCircleSamples + 1));
     for (int s = 0; s <= kCircleSamples; s++) {
-      at(s == kCircleSamples ? 2.0 * kPi : 2.0 * kPi * static_cast<double>(s) / kCircleSamples, &points[3 * s]);
+      at(s == kCircleSamples ? 2.0 * math::kPiD : 2.0 * math::kPiD * static_cast<double>(s) / kCircleSamples,
+         &points[3 * s]);
     }
     push_arc(std::move(points), true, -1, -1);
     return curve;
@@ -194,7 +178,7 @@ KinkCurve CircleCurve(const BoundaryWalker& walker, int step, int margin, const 
   while (inside[shift]) {
     shift++;
   }
-  const double step_t = 2.0 * kPi / kCircleSamples;
+  const double step_t = 2.0 * math::kPiD / kCircleSamples;
   int run_start = 0;
   while (run_start < kCircleSamples) {
     if (!inside[(shift + run_start) % kCircleSamples]) {
@@ -207,7 +191,7 @@ KinkCurve CircleCurve(const BoundaryWalker& walker, int step, int margin, const 
     }
     const int first = (shift + run_start) % kCircleSamples;
     const int length = run_end - run_start;
-    const double t0 = 2.0 * kPi * static_cast<double>(first) / kCircleSamples;
+    const double t0 = 2.0 * math::kPiD * static_cast<double>(first) / kCircleSamples;
     const double t1 = t0 + step_t * static_cast<double>(length - 1);
     const auto [start, start_gate] = BisectEnd(walker, at, t0, t0 - step_t);
     const auto [stop, stop_gate] = BisectEnd(walker, at, t1, t1 + step_t);
@@ -283,7 +267,7 @@ KinkCurve MarchedCurve(const BoundaryWalker& walker, int step, int margin, const
       continue;
     }
     double start[3];
-    Copy3(seed, start);
+    so3::Copy3(seed, start);
     walker.Correct(start, margin);
     walker.Margins(start, margins);
     int bad[kMaxFaceCount + 2];
@@ -395,7 +379,7 @@ std::vector<KinkCurve> WeightKinks(const DeviationField& field, const KinkOption
   for (int step = 1; step < slot_count - 1; step++) {
     const int margin = 2 * step + 1;  // internal_step_tir_discriminant
     const double* m = incidence[step];
-    if (std::fabs(Dot3(m, n_a)) <= kGreatCircleAtol) {
+    if (std::fabs(so3::Dot3(m, n_a)) <= kGreatCircleAtol) {
       bool ok = false;
       KinkCurve circle = CircleCurve(walker, step, margin, m, field.RefractiveIndex(), &ok);
       if (ok) {

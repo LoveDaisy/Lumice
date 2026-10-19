@@ -8,14 +8,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/math.hpp"
 #include "core/shared/pcg_shared.h"  // lm_pcg::normalize_latitude — single-source fold (device-matched)
 
 namespace lumice {
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kHalfPi = kPi / 2.0;
-constexpr double kDeg2Rad = kPi / 180.0;
 
 // Fine grids: histogram bins over colatitude [0, pi] and quadrature samples of the proposal.
 // Both are deterministic (no RNG). kQuad dominates build cost (~one-time per distribution).
@@ -31,7 +28,7 @@ double ProposalLatFromU(DistributionType type, double mean_rad, double scale_rad
     case DistributionType::kUniform:
       return (u - 0.5) * scale_rad + mean_rad;
     case DistributionType::kZigzag:
-      return std::abs(scale_rad * std::sin(u * 2.0 * kPi) + mean_rad);
+      return std::abs(scale_rad * std::sin(u * 2.0 * math::kPiD) + mean_rad);
     case DistributionType::kLaplacian: {
       const double sgn = (u < 0.5) ? -1.0 : 1.0;
       const double arg = std::max(1.0 - 2.0 * std::abs(u - 0.5), 1e-30);
@@ -45,7 +42,7 @@ double ProposalLatFromU(DistributionType type, double mean_rad, double scale_rad
 // Linear interpolation of a cumulative array (size kFine+1, indexed by fine colatitude bin)
 // at an arbitrary colatitude theta in [0, pi].
 double LerpCum(const std::vector<double>& cum, double theta) {
-  const double x = theta / (kPi / kFine);
+  const double x = theta / (math::kPiD / kFine);
   int i = static_cast<int>(x);
   if (i < 0) {
     return cum.front();
@@ -60,7 +57,7 @@ double LerpCum(const std::vector<double>& cum, double theta) {
 // A degenerate but valid LUT (all mass at a single colatitude) for the guard path.
 LatLut DegenerateLut(double colat) {
   LatLut lut;
-  const float c = static_cast<float>(std::min(std::max(colat, 0.0), kPi));
+  const float c = static_cast<float>(std::min(std::max(colat, 0.0), math::kPiD));
   for (uint32_t i = 0; i < LatLut::kNodes; ++i) {
     lut.theta[i] = c;
     lut.cdf[i] = static_cast<float>(i) / static_cast<float>(LatLut::kNodes - 1);
@@ -72,10 +69,10 @@ LatLut DegenerateLut(double colat) {
 }  // namespace
 
 LatLut BuildLatLut(const Distribution& lat_dist) {
-  const double mean_rad = static_cast<double>(lat_dist.center) * kDeg2Rad;
-  const double scale_rad = static_cast<double>(lat_dist.spread) * kDeg2Rad;
+  const double mean_rad = static_cast<double>(lat_dist.center) * math::kDegreeToRadD;
+  const double scale_rad = static_cast<double>(lat_dist.spread) * math::kDegreeToRadD;
   const DistributionType type = lat_dist.type;
-  const double dtheta = kPi / kFine;
+  const double dtheta = math::kPiD / kFine;
 
   // --- Deterministic quadrature: area-measure mass + flipped mass over colatitude bins. ---
   std::vector<double> mass(kFine, 0.0);
@@ -85,8 +82,8 @@ LatLut BuildLatLut(const Distribution& lat_dist) {
     float phi_out = 0.0f;
     bool flip = false;
     lm_pcg::normalize_latitude(static_cast<float>(lat_rad), phi_out, flip);
-    const double theta_z = kHalfPi - static_cast<double>(phi_out);  // colatitude-from-zenith [0, pi]
-    const double w = weight * std::sin(theta_z);                    // area Jacobian (= cos(latitude))
+    const double theta_z = math::kHalfPi - static_cast<double>(phi_out);  // colatitude-from-zenith [0, pi]
+    const double w = weight * std::sin(theta_z);                          // area Jacobian (= cos(latitude))
     if (w <= 0.0) {
       return;
     }
@@ -132,12 +129,12 @@ LatLut BuildLatLut(const Distribution& lat_dist) {
     float phi_out = 0.0f;
     bool flip = false;
     lm_pcg::normalize_latitude(static_cast<float>(mean_rad), phi_out, flip);
-    return DegenerateLut(kHalfPi - static_cast<double>(phi_out));
+    return DegenerateLut(math::kHalfPi - static_cast<double>(phi_out));
   }
 
   // --- Bracket the mass: [theta_lo, theta_hi] where the CDF crosses [1e-7, 1 - 1e-7]. ---
   double theta_lo = 0.0;
-  double theta_hi = kPi;
+  double theta_hi = math::kPiD;
   for (int i = 0; i <= kFine; ++i) {
     if (cum_mass[i] / total >= 1e-7) {
       theta_lo = i * dtheta;
