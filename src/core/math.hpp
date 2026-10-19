@@ -1,6 +1,7 @@
 #ifndef SRC_CORE_MYMATH_H_
 #define SRC_CORE_MYMATH_H_
 
+#include <limits>
 #include <memory>
 #include <set>
 #include <tuple>
@@ -24,6 +25,24 @@ constexpr float kSqrt3_4 = kSqrt3 / 4.0f;  // NOLINT(readability-identifier-nami
 constexpr float kFloatEps = 1e-5;
 constexpr float kDegreeToRad = kPi / 180.0f;
 constexpr float kRadToDegree = 180.0f / kPi;
+
+// Double-precision constants, the single authority for the double `kPi` / angle-conversion /
+// special-value family that used to be redefined file-locally across core/raypath/analytic.
+// The trailing `D` marks a double variant of a float twin above (the convention of
+// SolvePlanesD / IsInPolyhedron3D); constants with no float twin carry no D.
+constexpr double kPiD = 3.14159265358979323846;
+constexpr double kHalfPi = kPiD / 2.0;
+constexpr double kTwoPi = 2.0 * kPiD;
+constexpr double kDegreeToRadD = kPiD / 180.0;
+constexpr double kRadToDegreeD = 180.0 / kPiD;
+constexpr double kInf = std::numeric_limits<double>::infinity();
+constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+
+// Clamps to [-1, 1] — the domain precondition of std::acos, applied before every acos on a
+// computed dot product (rounding can push a legitimate result just outside the domain).
+constexpr double Clamp1(double x) {
+  return x < -1.0 ? -1.0 : (x > 1.0 ? 1.0 : x);
+}
 
 }  // namespace math
 
