@@ -220,7 +220,7 @@ naming convention / physical location**. Cadence names refer to the five actual 
   reference images (PSNR, per-scene thresholds in `_thresholds.json`); **responsiveness**
   asserts against absolute frame-latency budgets; **functional** asserts widget/state outcomes.
 - **Threshold convention**: visual = per-scene PSNR (mean−4σ over N stochastic renders, see
-  AGENTS.md lens_proj regen); responsiveness = absolute latency budgets; functional = exact.
+  `test/AGENTS.md` lens_proj regen); responsiveness = absolute latency budgets; functional = exact.
 - **Cadence**: `PR`, plus the two reference groups CI runs on every push under `xvfb-run` +
   llvmpipe (§4.6). Requires a display server unless skipped with `LUMICE_SKIP_GUI_TESTS=1`.
 - **Naming**: `test_<aspect>.cpp` (functional/visual) or `test_gui_<aspect>.cpp` where the
@@ -508,7 +508,7 @@ test must assert the literal wire format against something outside the code unde
   most generated artifacts are git-ignored. Moving a reference path requires updating the
   un-ignore rule, the test that reads it, and any CI path assumption — together.
 - Regeneration of stochastic references follows a documented procedure (GUI `lens_proj`:
-  `scripts/regen_gui_test_refs.py`, see AGENTS.md). A reference is never hand-edited.
+  `scripts/regen_gui_test_refs.py`, see `test/AGENTS.md`). A reference is never hand-edited.
 
 ### §4.4 `performance` vs `gui`-responsiveness boundary
 
@@ -554,8 +554,8 @@ rather than on inferring intent from a body, which is what keeps its false-posit
 zero over this repo's history.
 
 The full criterion, what it deliberately does not catch, and the no-inline-exemption rule live
-in `AGENTS.md` under "Testing and Platform Notes" — one authority, cited here rather than
-restated, so the two cannot drift apart. Two properties are worth knowing at this level:
+in `scripts/check_new_gui_tests.py`'s docstring, with the test-tree operating context in
+`test/AGENTS.md` — one authority, cited here rather than restated, so the two cannot drift apart. Two properties are worth knowing at this level:
 
 - **"Newly registered" is an identity question, not a line-number one.** A case is new when its
   `category/name` did not exist under `test/gui/` before. Reading the line diff instead fails in
@@ -1066,7 +1066,7 @@ this work — is recorded in §4.9.
 
 `scripts/check_loop_fatal_asserts.py` is a **fourth** diff-scoped entry point, alongside
 `check_policies.py` (whole-tree), `check_new_refs.py` (prose) and `check_new_gui_tests.py`
-(AGENTS.md, "Testing and Platform Notes"). Same discipline as the other three: **the checker is
+(`test/AGENTS.md`). Same discipline as the other three: **the checker is
 the rule, not an approximation of it** — 0 hits is the evidence a change is clean, not a
 supplement to a hand-written review checklist. It runs in the CI `new-refs` job on PRs against
 the merge-base and in the pre-commit hook against the staged diff, scanning added lines under
@@ -1914,7 +1914,8 @@ library it cannot prove is newer than its sources.
 **`pr` → CI: the platform matrix, and only that.** CI adds MSVC, x86_64 and ARM64 Linux, and a
 software rasterizer (Xvfb + Mesa llvmpipe) that renders GUI reference scenes without a GPU. None of
 these is reproducible from one developer machine, and the compiler dimension is where they earn
-their keep: `AGENTS.md` records three MSVC incompatibilities that a Clang-only local run could not
+their keep: `doc/testing/gpu-remote-cuda-build-testing.md` records three MSVC
+incompatibilities that a Clang-only local run could not
 have seen, and that sat undetected for weeks behind platform guards.
 
 **But the containment does not run the other way, and this is the trap.** CI is *not* a superset of

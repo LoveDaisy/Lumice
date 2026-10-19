@@ -407,7 +407,7 @@ def main() -> int:
             print(v.render(), file=sys.stderr)
         print(
             f"\n{len(violations)} newly registered gui_test case(s) do not use "
-            "their ImGuiTestContext. See the rule in AGENTS.md; pre-existing "
+            "their ImGuiTestContext. See the rule in test/AGENTS.md; pre-existing "
             "cases are out of scope.",
             file=sys.stderr,
         )

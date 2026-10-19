@@ -20,8 +20,8 @@ nested inside an `if`/`while`/`switch`/nested `for` block, all of which are tran
 one iteration's early rows disagree. For a loop walking an independent-row table (the shape this
 codebase's GUI test suite is full of: "for each of N unrelated fields/slots/cases, assert
 something"), that means the first row to fail hides every row after it — a genuine correctness gap
-in the test, not just a style complaint (see AGENTS.md's `check_new_gui_tests.py` docstring for the
-sibling case of a mechanically-enforced test-authoring rule in this codebase).
+in the test, not just a style complaint (see test/AGENTS.md and the `check_new_gui_tests.py` docstring
+for the sibling case of a mechanically-enforced test-authoring rule in this codebase).
 
 The one construct that DOES stop a `return` from propagating out of the loop is a lambda: a fatal
 assert called from inside a lambda body returns only that lambda, not the loop. This is why a
@@ -819,7 +819,8 @@ def check_diff(diff_args: list[str], content_ref: str) -> list[Violation]:
 # (test_gui_widget_rules.cpp:261, test_state_reconcile.cpp:127) as known positives, plus negative
 # controls proving the lambda-shield and non-loop cases are NOT flagged. `--selfcheck` fails loudly
 # if any expectation does not hold — a scanner with zero detection power passing silently is the
-# exact failure this repo has hit five times before (see AGENTS.md's geometry-randomization note),
+# exact failure this repo has hit five times before (see
+# doc/geometry/geometry-randomization-value-and-measurement.md's measurement discipline),
 # so proving detection power against real known-positive shapes, not just synthetic ones, is a
 # hardening this scanner commits to over just trusting a clean scan result.
 

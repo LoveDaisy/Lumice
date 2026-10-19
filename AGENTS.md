@@ -211,463 +211,69 @@ deleting its line, and an entry whose edge is gone fails the check.
 ## Testing and Platform Notes
 
 - CLI, core, and unit-test flows should remain cross-platform.
-- GUI tests require a display server unless explicitly skipped with `LUMICE_SKIP_GUI_TESTS=1`.
-  `gui_test` is therefore **built on three platforms and run on one**: the `Ubuntu x86_64` leg of
-  `.github/workflows/ci.yml` supplies a display with `xvfb-run` + Mesa's llvmpipe software
-  rasterizer and runs the `modal_layout` and `defaults_panel_layout` reference groups there; the
-  macOS and Windows legs still only compile it. Those two groups are the whole of it — the filter
-  is **positive**, so the binary's other 36 categories (every `functional/` case and the entire
-  `parity/` tag among them) are evaluated on a developer machine and nowhere else. Which groups
-  may run under a software rasterizer is a measured fact, not a preference — the per-scene
-  numbers, the reason `lens_proj` is excluded despite its pixels being portable, and **the
-  checklist a red in this layer obliges you to follow instead of calling it a known flake** are
-  all in `doc/testing/testing-architecture.md` §4.6
-  (whose numbers, as that section itself flags, were measured on an arm64 proxy for the amd64
-  runner this step actually runs on — read the caveat, not just the table).
-  Read that before widening the CI filter, and before dispositioning a visual-regression failure.
-  A `src/gui/` test that needs no live frame still should not live in `gui_test` — but "no live
-  frame" now splits two ways, not one. `test/unit-correctness/gui/` (targets
-  `unit_correctness_test` / `gui_unit_test`, see below) holds a proposition about **one**
-  `src/gui/` unit; `test/composition-correctness/gui/` (target `composition_correctness_test`)
-  holds a proposition that needs **two or more** units cooperating — a document round trip, a
-  cross-channel consistency check, a multi-step lifecycle — but still no rendered frame or
-  synthesized input event. Chain length (how many units the proposition needs) and mechanical
-  need (whether it needs a frame or an input event) are independent axes; conflating them is
-  what used to make GUI test suite entropy — see `doc/testing/testing-architecture.md` §1 for the full
-  argument. Rule of thumb for a new `src/gui/` test: needs a rendered frame or an
-  `ImGuiTestContext` → `gui_test`; needs ≥2 collaborating units but no mechanics →
-  `composition_correctness_test`; a single unit's pure logic → `gui_unit_test` (or
-  `unit_correctness_test` if it is header-only).
-  The `gui_unit_test` target (`test/CMakeLists.txt`, inside `if(BUILD_GUI)`) links
-  `lumice_gui_obj` with **no window, no GL context and no ImGui test engine**, so its cases
-  really do run in CI on every platform that builds the GUI. Its sources sit in
-  `test/unit-correctness/gui/` next to `unit_correctness_test`'s and carry the same
-  `unit-correctness` CTest LABEL — the two targets are split on a *link* boundary (does the case
-  call into `file_io.cpp` / `user_defaults.cpp`?), not a layer boundary, so `ctest -L` and
-  `./scripts/test.sh` need no per-target knowledge. `composition_correctness_test` links the same
-  way (`lumice_gui_obj` + `lumice_obj`, no window) but is **not** split across two targets the
-  way `unit-correctness`'s `gui` subsystem is — every case there already needs `lumice_gui_obj`,
-  so there is no header-only half to separate out, and it carries its own CTest LABEL
-  (`composition-correctness`), not `unit-correctness`.
-  Design reasoning and the target-naming rule: `doc/testing/testing-architecture.md` §2 and §5.
-  That boundary is a **gate, not a rule of thumb**, for cases you add:
-  `scripts/check_new_gui_tests.py` is a third, diff-scoped entry point alongside
-  `check_policies.py` and `check_new_refs.py` (CI `new-refs` job on PRs vs merge-base;
-  pre-commit hook on the staged diff). It rejects a `TestFunc = [](ImGuiTestContext* …)`
-  lambda under `test/gui/**.cpp` belonging to a case the change **brought into existence**
-  — its `category/name` did not exist anywhere under `test/gui/` before, or its signature
-  line was rewritten in the file it already lived in — when either:
-  (1) the parameter is anonymous, `[](ImGuiTestContext*)`, including the equivalent
-  `[](ImGuiTestContext* /*ctx*/)` with the name commented out; or
-  (2) the parameter is named and the body calls `IM_UNUSED(<name>)` while containing no
-  other mention of `<name>` anywhere — a bare `<name>` passed to a helper counts as a use,
-  so `Helper(ctx, …)` is fine and the narrower `<name>->` reading is deliberately not used.
-  Both are an explicit statement — by the compiler, or by the author's own hand — that the
-  case does not drive the GUI, which is why the rule rests on them and not on inference.
-  **What it does not reject**, all accepted deliberately: `TestFunc = SomeNamedFunction`
-  (no signature to read); a named parameter never referenced and never marked `IM_UNUSED`
-  (the build is `-Wall -Wextra` without `-Werror`, so it only warns — catching it needs an
-  inference no one stands behind); pre-existing cases of any shape, including ones a change
-  relocates between `test/gui/` files or shifts within one; and renaming an existing
-  rejected-shape case, which does read as a new registration.
-  There is **no inline exemption, by design**, and the same "checker is the rule" discipline
-  applies as for `check_new_refs.py`: if it passes, the change is compliant — do not flag in
-  review what the checker accepts. If a new case genuinely needs a frame but happens not to
-  touch `ctx`, make it drive `ctx` (`ctx->Yield()` is the frame pump); that states the
-  dependency and satisfies the gate. If some case truly cannot be written that way, the rule
-  is wrong and the rule changes — in the script, never per case.
-- `test/gui/parity/` is a fourth `gui_test` tag beside `functional/`, `visual/` and
-  `responsiveness/`, and the one whose oracle is neither a committed image nor a widget outcome:
-  **the same document rendered twice by two production paths and compared to each other**. Two
-  members today. `test_gui_cli_export_parity.cpp` renders through the GUI's own per-frame
-  `PreviewParams` assembly and — in a child process, the first time this tree starts one of its
-  own binaries from a test — through the `Lumice` CLI fed by `BuildExportJsonOrWarn`'s output, so
-  "what the GUI shows is what the exported config renders" can go red.
-  `test_gui_preview_export_parity.cpp` compares the two arms one step earlier and inside one
-  process: the on-screen blit (`RenderPreviewFrameAndBlit`) read back off the default framebuffer,
-  against `RenderExportToRgba` fed the same frame's published `params` / `curve_labels`, so "the
-  Screenshot writes the pixels the screen is showing" can go red. Three consequences worth
-  knowing before adding to it: a member owns no reference asset and must never enter
-  `scripts/regen_gui_test_refs.py`'s `GROUPS`; its threshold is placed against **the smallest
-  break the scene must catch** (measured by breaking each field on purpose) rather than against
-  `visual/`'s cross-machine 1.0 dB floor, which does not apply when both images are made in the
-  same run — and where the two paths share a process and one snapshot of inputs, that smallest
-  break puts the bar at **byte-exact** rather than at any dB figure at all (skipping the export's
-  label layer, the shape of a real past defect, measures 44.75 dB — far above this tag's own
-  25.5 / 26.0 dB thresholds, and above the 40 dB floor `visual/` used to be judged on before its
-  532.3 switch to the pixel ruler (§4.11 row ①); that floor is not a dB figure at all today, so
-  the comparison is now historical rather than a live "every threshold" claim);
-  and a parity comparison inherits every divergence between the two paths, so its scene
-  design is constrained by measured facts (only equal-area projections are comparable across the
-  CLI seam, since the CLI bakes the projection's solid-angle Jacobian and the GUI's resampling of
-  an equal-area texture does not; and a scene built on the 8-bit `UploadTexture` path is blind to
-  exposure, sky and vignetting divergence, because that texture mode's shader branch reads none of
-  them) rather than by preference. `doc/testing/testing-architecture.md` §4.10 has the full statement,
-  including the CMake shape a second child-process test would need. A fourth thing, easiest of all
-  to get wrong because it is invisible from a green pipeline: **no CI job runs this tag today**.
-  The one leg that executes `gui_test` names a positive filter of two reference groups that does
-  not include it, and the `E2E Slow` legs build with `-DBUILD_GUI=OFF` and have no such binary, so
-  `./scripts/test.sh {quick,full,pr}` on a machine with a GL context is the only place either
-  fixture is ever evaluated. `doc/testing/testing-architecture.md` §7.5 has the mechanism, the measured cost of
-  enabling it, and why the llvmpipe leg is not currently the right home for it.
-- `scripts/check_loop_fatal_asserts.py` is a **fourth** diff-scoped entry point, alongside
-  `check_policies.py`, `check_new_refs.py`, and `check_new_gui_tests.py` above (same "checker is
-  the rule" discipline; CI `new-refs` job on PRs vs merge-base, pre-commit hook on the staged
-  diff). Scope is `test/` broadly, not just `test/gui/`. The rule: in a scope that executes
-  repeatedly, a non-terminating error report (gtest `ASSERT_*` / this repo's fatal `IM_CHECK*`,
-  or the non-fatal `IM_ERRORF`) must not be followed by code that keeps driving the same test
-  context — a fatal assert directly inside a `for` loop body silently hides every row after the
-  first failure, and a non-fatal report followed by continued driving cascades false reds off an
-  already-invalid state. See `doc/testing/testing-architecture.md` §4.9 for the full rule statement and
-  the four defect-shape generalizations (syntax → fatality → loop order → parameter binding) that
-  motivated it — a checker for only the first of those reads a clean scan as "does not occur
-  here" on exactly the inputs it was meant to catch.
+- Operating rules for the test tree live in **`test/AGENTS.md`**: the gui_test three-platform
+  matrix (built on three platforms, run only on the `Ubuntu x86_64` llvmpipe leg), the three-way
+  placement split for new `src/gui/` tests (`gui_test` / `composition_correctness_test` /
+  `gui_unit_test`), the gui_test isolation discipline (user-config / window basis /
+  ImGuiStorage), the shared libraries the pytest layers load, the E2E layout, and the full GUI
+  reference-regeneration workflow. Which groups may run under a software rasterizer is a
+  measured fact, not a preference — before widening the CI filter or dispositioning a
+  visual-regression failure, follow the checklist in `doc/testing/testing-architecture.md` §4.6.
+- Two more diff-scoped checkers beside `check_new_refs.py` (all in the pre-commit hook and the
+  CI `new-refs` job; same "checker is the rule" discipline): `scripts/check_new_gui_tests.py`
+  rejects a newly registered gui_test case that does not use its `ImGuiTestContext`, and
+  `scripts/check_loop_fatal_asserts.py` rejects a fatal assert (or non-fatal report) followed by
+  code that keeps driving the same test context in a repeatedly-executing scope of `test/`.
+  Full rule statements: the scripts' docstrings and testing-architecture.md §4.9.
 - **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.**
-  `test/duration_registry.json` v2 is the single authority for two different quantities. `entries`
-  keeps the per-test rule: in every wired job, a test over **60 s** must be registered with its
-  `id`, `job`, `ci_seconds` and a real reason; >2× its registered time, a stale id, malformed data or
-  `TODO` is red. `phase_budgets` limits measured wall-clock phases and serial aggregates, catching
-  cumulative growth when every case remains below 60 s; missing/unknown/duplicate phase reports and
-  an over-limit sum are red. The build matrix emits CTest JUnit plus invocation-scoped XML for each
-  `gtest-duration`-labelled binary (`collect_ctest_durations.py` reconciles metadata, JUnit and XML),
-  while pytest emits case/fixture reports through `duration_report_plugin.py`
-  (rewritten atomically after every finished test, so a budget-killed run still
-  leaves its partial report);
-  `measure_ci_phase.py` records the real command's monotonic wall clock
-  and exit code. The `e2e-test` job also runs a shadow bench probe
-  (`scripts/run_bench_probe.py`: fixed 2M-ray single-pass benchmark) that
-  records the runner's compute tier per run — evidence for reading the step
-  budget as workload, not a gate. Raw reports are uploaded on every outcome. This runtime input does not exist at
-  pre-commit time, so the gate is not part of `check_policies.py`. There is no per-test/env/inline
-  exemption. The sole exception is the maintainer-authorized, one-run cold-build protocol for phase
-  budgets containing `build`; it never excuses test runtime or correctness, and a PR whole-run/job
-  rerun cannot consume it again. A new test job is not covered until it wires reports, checker and
-  artifacts, and nothing audits that automatically. Full registry rules, the 60 s / 2× calibration,
-  phase boundaries and uncovered jobs: `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
+  `test/duration_registry.json` v2 is the single authority for two quantities: per-test time
+  (over 60 s in a wired job ⇒ registered `id`, `job`, `ci_seconds` and a real reason; >2× its
+  registered time, a stale id, malformed data or `TODO` is red) and phase budgets
+  (missing/unknown/duplicate phase reports and an over-limit sum are red). The runtime input
+  does not exist at pre-commit time, so the gate is not part of `check_policies.py`. There is no
+  per-test/env/inline exemption. The sole exception is the maintainer-authorized, one-run
+  cold-build protocol for phase budgets containing `build`; it never excuses test runtime or correctness,
+  and a PR whole-run/job
+  rerun cannot consume it again. Full registry rules, the 60 s / 2× calibration and phase
+  boundaries: `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
   single authority is §7.8.
-- E2E test layout (purpose-primary; see `doc/testing/testing-architecture.md` §6):
-  - `test/e2e-correctness/` — full-stack correctness via CLI/PSNR (smoke, CLI behavior, raypath equivalence) + `references/*.jpg`
-  - `test/parity-cross-backend/backend/` — backend-equivalence oracles (Metal exit-seam parity, device-gen default path, cpu_backend route, Metal batch invariance) + C++ siblings from 270.3
-  - `test/performance/` — throughput gates (Metal throughput)
-  - `test/gui/` — GUI acceptance (Metal GUI north-star) alongside the C++ GUI tests (`functional/`, `visual/`, `responsiveness/` subdirs; target `gui_test`)
-  - `test/regression-sentinel/` — bug-resurfacing guards (errors, capi sentinel overflow, MS filter leak)
-  - Shared fixtures stay under `test/e2e/` (`base.py`, `runner.py`, `capi_runner.py`, `image_utils.py`, `_parity_metrics.py`, `_projection_battery.py`, `configs/`).
-- E2E test split:
-  - `./scripts/test.sh <quick|full|pr>` is the recommended entry point for a local run — see the
-    test-scope table below for which one fits a given situation. It runs ctest, the fast e2e
-    subset, `gui_test`, and (for `pr`) the shared-lib slow e2e leg as one call and prints a single
-    per-layer summary ending in one `RESULT: PASS`/`FAIL` line, so one invocation is enough to
-    read the outcome — see the judgment-discipline note below for why that matters.
-  - Bare `pytest -v` runs the fast subset directly. This is pinned by `pyproject.toml`'s
-    `addopts` (`-m "not slow"`), so it is structurally true rather than a convention a caller has
-    to remember, and it matches CI's fast leg. `pytest -v -m ''` is the escape hatch back to the
-    full set; because a command-line `-m` overrides `addopts`'s `-m` value rather than combining
-    with it (any other `addopts` flags stay in effect), any invocation that needs the full set
-    (or a marker CI never uses) must pass `-m` explicitly.
-    See `doc/testing/testing-architecture.md` §5 for the `addopts` rationale and the incident it fixed.
-  - `@pytest.mark.slow` tests require the shared-lib build (`./scripts/build.sh -sj release` —
-    `-g`/`-t` alone never produce it, see "Build trees..." above) and are excluded from CI's fast
-    leg. Run them locally with `pytest -v -m slow` before opening a PR that touches the simulator
-    core, query filter, or C API surface.
-    That build produces **three** shared libraries, and pytest loads the second one. `liblumice` is
-    the product export surface: the capability headers `src/include/lumice_*.h`, `LUMICE_*` only, and nothing that exists
-    for a test's sake. `liblumice_testapi` (root `CMakeLists.txt`, target `lumice_testapi`; header
-    `test/support/lumice_test_api.h`) is built from the **same `lumice_obj` objects** — so every
-    product call behaves identically in it — and additionally exports the `LUMICE_TEST_*` hooks
-    a pytest fixture needs and the product headers must never carry (today: the lens imaging-domain mask).
-    It is a superset stand-in, not a companion library: `-fvisibility=hidden` leaves a side library
-    nothing to link against, so the hooks ship with their own copy of the engine, and a test
-    process loads exactly one of the two. `test/e2e/capi_runner.py::lib_candidates` is the single
-    authority on which file that is; `scripts/check_policies.py`'s `no-test-symbol-in-src` rule
-    keeps the `LUMICE_TEST_` prefix out of `src/` so the two surfaces cannot grow back together.
-    The third, `liblumice_analytic`, is the published analytic library (`doc/interfaces/analytic-api.md`),
-    built from the engine's foundation objects and the analytic kernel only (not `lumice_obj`),
-    exporting only `LUMICE_ANALYTIC_*`; it is not produced by a CUDA
-    configure. What each of the three exports is its own export list, generated from its headers
-    by `scripts/gen_export_list.py` — declarations carry `LUMICE_API` / `LUMICE_TEST_API` /
-    `LUMICE_ANALYTIC_API` and the generator refuses one without — and
-    `test/e2e-correctness/test_export_symbol_scope.py` reads the built binaries' export tables
-    against those headers (Linux/macOS in `e2e-slow`, Windows cl.exe + clang-cl in
-    `windows-shared-export`), through `scripts/check_export_surface.py` — the same script
-    `release.yml` runs on each packaged engine file, both ISA builds included. The prefix boundary itself is `check_policies.py`'s
-    `analytic-symbol-scope` rule.
-    Existing pytest calls to product symbols are deliberately **not** migrated to the test header:
-    their subject is the product C API contract itself, and wrapping them would test the wrapper.
-    - `test/regression-sentinel/test_capi_sentinel_overflow.py` — sentinel-overflow regression: 3-config × 12 rounds = 36 server lifecycles via `LUMICE_AcquireResultFrame` + `LUMICE_FrameGetRawXyz(max_count=1)`; guards against reintroduction of the C API's off-by-one sentinel write (fix: 5287efe)
-    - `test/regression-sentinel/test_ms_filter_leak.py` — Design A filter-fail termination regression: confirms filter-fail rays do not propagate across MS layers
-  - **Test-scope table** — which command fits a given situation:
+- E2E split essentials: `./scripts/test.sh <quick|full|pr>` is the recommended entry point for a
+  local run (one call, a single per-layer summary ending in one `RESULT:` line). Bare `pytest
+  -v` runs the fast subset directly — pinned by `pyproject.toml`'s `addopts` (`-m "not slow"`),
+  so it is structurally true rather than a convention a caller has to remember, and it matches
+  CI's fast leg; `pytest -v -m ''` is the escape hatch back to the full set, and any marker CI
+  never uses must be passed explicitly. `@pytest.mark.slow` tests require the shared-lib build
+  (`./scripts/build.sh -sj release`) — run them locally before opening a PR that touches the
+  simulator core, query filter, or C API surface. That build produces **three** shared libraries
+  and pytest loads the second; the plumbing is described in `test/AGENTS.md`.
+- **Test-scope table** — which command fits a given situation:
 
-    | Situation | Run |
-    |---|---|
-    | Verify the change you just made | `./scripts/test.sh quick` |
-    | Right after a static rebuild, before moving on | `./scripts/test.sh quick` |
-    | Broader regression sweep — unsure how far a change reaches | `./scripts/test.sh full` |
-    | Before opening a PR — reproduce the CI e2e-slow shape locally | `./scripts/test.sh pr` |
-    | Confirm one specific gate/test actually fails on a deliberately-broken state (not a general sweep) | run that one check directly against the broken state, then again after the fix: `ctest -R <label>`, `pytest <file>::<test> -m ''`, or `gui_test --filter <name>` |
+  | Situation | Run |
+  |---|---|
+  | Verify the change you just made | `./scripts/test.sh quick` |
+  | Right after a static rebuild, before moving on | `./scripts/test.sh quick` |
+  | Broader regression sweep — unsure how far a change reaches | `./scripts/test.sh full` |
+  | Before opening a PR — reproduce the CI e2e-slow shape locally | `./scripts/test.sh pr` |
+  | Confirm one specific gate/test actually fails on a deliberately-broken state (not a general sweep) | run that one check directly against the broken state, then again after the fix: `ctest -R <label>`, `pytest <file>::<test> -m ''`, or `gui_test --filter <name>` |
 
-    What each row **costs** in measured seconds, what each scope catches that the cheaper one is
-    structurally unable to report, and the budget rule naming who has to answer for the spend and
-    when, are in `doc/testing/testing-architecture.md` §7. They are deliberately not duplicated here: two
-    copies of a measurement drift apart, and the copy in this table would be the stale one.
-    The same section says where each test runs beyond these commands — the PR layer, `main` only,
-    the reference machines' daily schedule, release, a developer machine; there is no nightly —
-    and states the PR run's owner-set wall-clock budget with the runs that measure it (§7.0, §7.1).
-    Moving a test out of the PR layer means giving it one of those places first.
+  What each row **costs** in measured seconds, what each scope catches that the cheaper one is
+  structurally unable to report, the budget rule naming who has to answer for the spend, and
+  where each test runs beyond these commands (the PR layer, `main` only, the reference machines'
+  daily schedule, release, a developer machine; there is no nightly) are in
+  `doc/testing/testing-architecture.md` §7 — deliberately not duplicated here: two copies of a
+  measurement drift apart. Moving a test out of the PR layer means giving it one of those places
+  first.
 
-  - **Judgment discipline**: a command's exit code is the only thing that says pass/fail, and two
-    common habits obscure it in different ways. A pipe (`cmd | tail`) leaves `$?` reporting
-    `tail`'s exit code, not `cmd`'s, unless the shell has `set -o pipefail` — so a failing command
-    piped through one still reads as success. A redirect (`cmd > log 2>&1`) does not touch `$?` at
-    all, but it does move the PASS/FAIL text out of sight, so a finished run still needs a second
-    call (`grep`/`cat` on the log) just to learn the outcome it already produced. Read `$?`
-    straight off the foregrounded command, or use `./scripts/test.sh`, which already does this for
-    every layer.
-- GUI screenshot references live under `test/gui/references/`.
-- GUI tests (the C++ `gui_test` binary and the `test/gui/` e2e layer that drives it) are isolated
-  from personal defaults by default: `gui_test`'s own `--user-config`/
-  `--no-user-config` no-flag default is `kDisabled` (the interactive app defaults to auto-detect
-  instead), so a visual-regression reference never depends on whichever `user_defaults.json`
-  happens to exist on the machine that captured it. Before adding a new reference image, confirm
-  this isolation is actually in effect for the scene under test (an explicit, freshly emptied
-  `--user-config` directory installed **before** `ResetTestState()`, not after — installed after,
-  the capture is built from whatever personal defaults the running machine has saved).
-  `gui_unit_test` gets the same baseline, but from a different place: it shares `test_main.cpp`
-  with the non-GUI targets, which cannot call into `lumice_gui_obj`, so the install lives in a
-  gtest global environment only that target compiles
-  (`test/unit-correctness/gui/gui_unit_test_env.cpp`). Without it the process-wide source stays at
-  `kAutoDetect` — the unset value, `src/gui/user_defaults.cpp` — which resolves to the developer's
-  real OS config directory, so any case reaching the no-arg `MakeNewDocumentState()` reads
-  whatever that machine has saved. A green run is not evidence the isolation holds; point `HOME`
-  at a directory containing a `user_defaults.json` and re-run to check.
-  Isolation extends to the shared GLFW window's geometry: `ResetTestState()` restores it to the
-  1600x980 `kInit` basis at every case entry, and a test that moves the window declares a
-  `ScopedWindowBasis` guard rather than hand-writing a tail restore; a case entry that finds the
-  window elsewhere prints a `[window-basis-leak]` line naming the last geometry mutator and fails
-  the whole run's exit code (a leak is a run-level red, and it also stops a regen driver's
-  full-suite run on purpose — fix the leak, then reshoot).
+- **Judgment discipline**: a command's exit code is the only thing that says pass/fail, and two
+  common habits obscure it in different ways. A pipe (`cmd | tail`) leaves `$?` reporting
+  `tail`'s exit code, not `cmd`'s, unless the shell has `set -o pipefail` — so a failing command
+  piped through one still reads as success. A redirect (`cmd > log 2>&1`) does not touch `$?` at
+  all, but it does move the PASS/FAIL text out of sight, so a finished run still needs a second
+  call (`grep`/`cat` on the log) just to learn the outcome it already produced. Read `$?`
+  straight off the foregrounded command, or use `./scripts/test.sh`, which already does this for
+  every layer.
 - Windows physical-desktop validation uses `scripts/win_remote_test.sh` together with `scripts/win_test_watcher.ps1`.
 - Performance diagnostics and workflows are documented in `doc/testing/performance-testing.md`.
-
-### GUI Test Reference Regeneration (reference groups)
-
-Reference images for a group whose scenes render a simulated (i.e. stochastic) frame are
-pixel-averaged means of N=10 renders, which suppresses per-run noise; per-scene PSNR thresholds
-are then `mean − max(4σ, 1.0 dB)`, floored to 0.5 dB precision. Which of the two terms binds is
-worth knowing before reading a threshold: every scene shipping today calibrates at 4σ well under
-1 dB, so in practice all of them are `mean − 1.0 dB` and the sigma margin is dormant (see
-`MIN_MARGIN_DB` in the driver for why the floor exists at all). Both phases sample
-**full-suite** runs under `scripts/build.sh`'s correctness-pool invocation, never a single group
-in isolation: isolated runs measured 0.34–0.62 dB optimistic, which is how the since-retired
-`auto_ev` references once ended up flaking. The driver has no switch for this. `lens_proj` is
-currently the only stochastic group; the other four are deterministic and are held to the
-pixel ruler described further down, not to a PSNR floor.
-N is **per group**, and the driver's defaults encode that: a group registered
-`deterministic=True` runs the suite **once** per phase (Phase A takes that single capture as the
-reference — the mean of one frame is that frame; Phase B still writes `identical_runs` /
-`maxcc_tau` / `maxcc_local_max` from that one run and records `n_calib_runs: 1`), a stochastic
-group runs it `STOCHASTIC_RUNS` (10) times. The hard rule behind the default: **a reshoot of a
-deterministic group triggered by a UI change is never repeated** — the second run of a frame
-with no simulation and no RNG in it is the same bytes again, and at ~88 s per full-suite run
-the old 10/10 default turned one two-group reshoot into 64 minutes of zero information. Two
-more cost rules the driver enforces rather than describes: several groups in one invocation
-share the same runs (each full-suite run already exports every group's captures and prints
-every group's PSNR lines, so the cost is `max(n)` over the selected groups, not `sum(n)`), and
-Phase A refuses to shoot a reference `origin/main` has already reshot since the merge base —
-that image would be discarded at rebase time in favour of main's copy, so rebase first, then
-shoot (`--allow-stale-base` overrides; no `origin/main` at all skips the check with a note).
-
-The `lens_proj` references cover the preview fragment shader's projection math
-(`src/gui/preview_renderer.cpp`: `linearInverse` / `fisheyeInverse` / `dualFisheyeInverse` /
-`rectangularInverse`) via an off-screen FBO export, independent of window size or layout — see the
-docking-coupling note below. Nine scenes. Five are one per projection branch (`linear`,
-`fisheye_equal_area_120`, `fisheye_orthographic_180`, `dual_fisheye_equal_area_full`,
-`rectangular`). The other four each REUSE an already-covered projection branch in order to cover a
-different shader stage on top of it, which is why they are exceptions to the one-scene-per-branch
-rule rather than additions to it:
-`overlay_ea` (equal-area at elevation 45° with the zenith/nadir markers and coordinate grid on) is
-this repo's only committed pixel coverage of the `overlayAuxLines()` stage, and the one scene kept
-when the `auto_ev` group was retired; `fisheye_equal_area_120_border` and
-`dual_fisheye_equal_area_full_border` cover `overlayLensBorder()`, one per shader branch that can
-draw a border (the single-lens radius formula and the dual-fisheye clip circle);
-`sky_colour_ea_180` covers the background fill and the gate it sits behind — equal-area at fov 180
-on a deliberately non-square 256×192 canvas with `visible: upper` and the camera on the horizon, so
-one frame carries all three regions (sky, the half-sky `visible` discards, and outside the image
-circle). It is the only scene in the group whose background is not black, and that is the point:
-with the black default, "painted where it should not have" and "left black" are the same pixels.
-Regen trigger: any change to that projection math, to the overlay drawing, to the background fill
-or its gate, or to `export_fbo_renderer.cpp`'s render path. Command:
-`python scripts/regen_gui_test_refs.py --group lens_proj`. Threshold backfill: the
-`psnr_threshold` field of each `kScenes[]` row in `test/gui/visual/test_gui_lens_projection.cpp`.
-
-The `modal_layout` references cover the edit-modal's internal control layout
-(`src/gui/edit_modals.cpp`) via an on-screen capture of the live "Edit Entry" window rectangle — see
-the docking-coupling note below. All four scenes are deterministic (no simulation, no RNG) and
-compare pixel-identical on the reference machine, so their judge is the pixel ruler
-(`test/support/pixel_diff_metrics.hpp`: differing pixels at τ, largest 8-connected blob ≤ K), not
-a PSNR statistic — the 40 dB floor they used to sit at let a 127-px text row through at 42.6 dB.
-This group's `kRuler` is τ=16, K=70, set by the CI llvmpipe leg's residue (a 35-px anti-aliased
-segment of the crystal preview) against the smallest real drift on record (95 px); the
-measurements and margins are in `doc/testing/testing-architecture.md` §4.6. Regen trigger: any layout
-change to the edit modal (slider/input widths, property-table columns, control ordering,
-auto-resize behavior), or a harness window size / font atlas / ImGui style change. Command:
-`python scripts/regen_gui_test_refs.py --group modal_layout` — a single run per phase by default;
-pass `--n` / `--n-calib` to this group only when you are proving something (e.g. that a scene
-is still deterministic), never as routine. There is no threshold to copy back:
-K is a cross-machine number Phase B cannot measure, so it lives in the source; Phase B writes
-`maxcc_tau` / `maxcc_local_max` as an audit that the reference machine still reads 0.
-
-The `defaults_panel_layout` references cover the `Settings` modal
-(`src/gui/defaults_panel.cpp`) through the same on-screen sub-region capture as `modal_layout`, and
-inherit the same docking coupling. Seven deterministic scenes under the same pixel ruler as
-`modal_layout` — τ=16 again (τ describes the llvmpipe-vs-Metal noise, not the scene) but K=40,
-because with no crystal preview in the frame nothing survives τ=16 on the CI leg (largest blob
-0 px) while this group's smallest real drift on record, the 90-px scrollbar thumb the 40 dB floor
-passed at 53.45 dB, reads 86 px: four over the merged
-settings list (`pending_changes` / `other_expanded` / `filtered` / `no_changes` — the two-section
-diff/adopt split these names once referred to was merged into one list with an inline-edited "Current
-value" column; see `doc/gui/gui-state-governance.md` §8.5), two over the preset library
-(`presets_expanded` / `presets_warning`, one preset unfolded to show the nine typed cells, the live
-std input and the warning column beside it) and one over the wedge-shortcut region under it
-(`wedge_presets`, scrolled to the bottom of the same child). Every scene installs an explicit, freshly
-emptied user-config directory **before** `ResetTestState()` — installed after, the capture is built
-from whatever personal defaults the running machine has saved, which is worth 20.7 dB on a scene that
-looks isolated. The other inheritance a scene here is exposed to is ImGui's own per-window state —
-every window's `ImGuiStorage` (TreeNode fold flags, and what production code parks there through
-`GetStateStorage()`, such as the triple typed into the wedge add row) and its scroll offset — which
-outlives the window being submitted, so a sibling case that unfolds a node, types into a
-storage-backed box or scrolls a list hands that state to the next case drawing the same window.
-`ResetTestState()` (`test/gui/test_gui_main.cpp`) clears both for **every** window, not for an
-enumerated few: the writes happen inside production code a case only reaches by typing, so the
-harness cannot know which windows a case touched, and the last per-scene enumeration pinned one of
-the three preset scenes and missed the other two. Those two had been shot with a functional case's
-rejected triple sitting under their fold, invisible in the capture yet counted in the child's
-content height — their references measured `inf` under the full pool and 53.45 dB under
-`--filter`, 90 scrollbar-thumb pixels apart and never red. The diagnostic that survives the fix: a
-reference that only agrees with itself under one test order is the symptom to look for, and for
-every deterministic group `--filter <group>` in isolation must read `inf` exactly as the full pool
-does — measured so for `capture_harness`, `modal_layout` and this group after the reset took over,
-with the leaking functional case run first as the positive control. Regen trigger: any layout change to the panel's section headers, the settings
-table's columns, the preset table's columns, or the pinned action row. Command:
-`python scripts/regen_gui_test_refs.py --group defaults_panel_layout` — single run per phase by
-default, same rule as `modal_layout` for `--n` / `--n-calib`. No threshold to copy back
-(same reason as `modal_layout`); `kRuler` in `test/gui/visual/test_gui_defaults_panel.cpp` holds K.
-
-The `config_summary_layout` references cover the read-only `Summary` window
-(`src/gui/config_summary_window.cpp`, content from `src/gui/config_summary.cpp`) through the same
-on-screen sub-region capture as `modal_layout`, and inherit the same docking coupling. Two
-deterministic scenes (`default_document`, `two_layers`: a pyramid, a named raypath filter, a
-randomized face, an excluded entry), judged by the pixel ruler at τ=16, K=40 — K inherited from
-`defaults_panel_layout` as the nearest group in kind (tables of text, no crystal preview), **not**
-measured against a llvmpipe residue: this group is not in the CI filter today, so measure K
-(`doc/testing/testing-architecture.md` §4.6) before adding it. What the page PRINTS is asserted without a
-frame — `test/unit-correctness/gui/test_config_summary_rows.cpp` (which serialized root keys reach
-the settings section, decided by `gui_state_tiers.hpp`'s tier table) and
-`test/composition-correctness/gui/test_config_summary_export_parity_chain.cpp` (every leaf of
-`BuildExportJsonOrWarn`'s JSON is either found on the page or named in that test's exclusion table
-with a reason) — so this group only owns the layout pixels. Regen trigger: any change to the
-window's tables, indent, heading style or fixed width, or to the page's labels or value spelling.
-Command: `python scripts/regen_gui_test_refs.py --group config_summary_layout` — single run per
-phase, same rule as `modal_layout`; `kRuler` in `test/gui/visual/test_gui_config_summary.cpp`
-holds K.
-
-**`--keep-export-png` / `--export-dir` flags** — `--keep-export-png` makes
-`CheckAgainstReference` skip its `std::remove`, so the per-run export PNGs survive for the driver
-to collect. `--export-dir <path>` says where every scratch file this suite writes goes — capture
-PNGs, round-tripped `.lmc`, exported JSON. The driver passes both, and collects
-`<group tmp_prefix><scene>.png` from the directory it just named.
-
-Without `--export-dir`, `gui_test` writes to a **per-process** subdirectory of the platform temp
-directory (`GuiTestTempPath`, `test/gui/test_gui_shared.hpp`). Two consequences worth knowing:
-the suite has no hardcoded `/tmp`, so its scratch paths are valid on Windows; and two `gui_test`
-processes cannot collide on a fixed filename, which is what a sharded correctness pool would
-otherwise do to itself. The group's `tmp_prefix` is now a **filename** prefix only — the
-directory is not part of that contract.
-
-**Reference groups** — the registry is `GROUPS` at the top of
-`scripts/regen_gui_test_refs.py`, currently holding `capture_harness`, `lens_proj`,
-`modal_layout`, `defaults_panel_layout` and `config_summary_layout`. A
-group names the `gui_test` category it tags its output with (also the `[<tag>]` its comparisons
-print and its key in `_thresholds.json`), its scenes/modes, and the export and reference filename
-prefixes. Adding a visual-regression suite means adding a `GROUPS` entry — Phase A/B themselves
-are group-agnostic.
-Three constraints when registering one: the key must be unique across groups (PSNR samples are
-attributed by an exact match on the `[<tag>]` prefix in a shared full-suite stderr); the
-test must compare via `lumice::test::CheckAgainstReference` so Phase B can parse its PSNR line;
-and the entry must declare `deterministic` (`True` only when every scene's frame carries no
-simulation and no RNG) — the field has no default on purpose, because it sets the run-count
-default and the alternative, inferring it from `_thresholds.json`'s `identical_runs` after the
-fact, has nothing to read for a group that has no entry yet.
-
-Not every `CheckAgainstReference` caller is in `GROUPS`. The `visual` category
-(`test/gui/visual/test_preview_pixels.cpp`: `crystal_preview_prism/pyramid/wireframe/shaded`,
-`left_panel`) compares under the pixel ruler at τ=0, K=0 — byte-identity, which is why its five
-references are PNG and must stay PNG — not a Phase-B-calibrated statistic, and its reference
-filenames do not follow the `<ref_prefix><scene>` convention
-every `ReferenceGroup` above assumes — see the comment above `STAGING_DIR` in
-`scripts/regen_gui_test_refs.py` for why registering it buys nothing and how to reshoot it by
-hand. A theme/layout change that reaches the left panel or the crystal-preview FBO needs that
-manual step in addition to the three `--group` commands above; running only the registered
-groups leaves `visual`'s references stale with no automated signal pointing at it.
-
-A scene whose frame is deterministic (no simulation, no RNG) compares pixel-identical, i.e.
-`PSNR=inf`, which leaves `mean − 4σ` no finite sample. Phase B records `identical_runs` for such
-scenes and still writes the historical 40 dB `threshold`, but that number is no longer a bound:
-the deterministic groups are judged by the pixel ruler, whose cross-machine K is measured from CI
-llvmpipe captures (`doc/testing/testing-architecture.md` §4.6) and lives in the test source. What Phase B
-adds for them is `maxcc_tau` / `maxcc_local_max`, the audit that the reference machine still
-matches its own references byte-for-byte.
-
-**Regeneration workflow:**
-```bash
-# Full regen of EVERY registered group (Phase A: mean-ref + Phase B: thresholds). Cost is set by
-# the stochastic group: 10 + 10 full-suite runs at ~88 s each ≈ 30 min, and the three
-# deterministic groups ride along on the first run of each phase at no extra cost.
-python scripts/regen_gui_test_refs.py
-
-# One deterministic group: 1 + 1 full-suite runs ≈ 3 min. Do NOT add --n / --n-calib here.
-python scripts/regen_gui_test_refs.py --group modal_layout
-
-# One group only (recommended — regen what you changed, leave other groups' refs alone):
-python scripts/regen_gui_test_refs.py --group lens_proj
-
-# Phase A only (generate mean-ref images, then manually update thresholds):
-python scripts/regen_gui_test_refs.py --group lens_proj --phase-a-only
-
-# Phase B only (recalibrate thresholds against existing mean-refs):
-python scripts/regen_gui_test_refs.py --group lens_proj --phase-b-only
-
-# Single scene (--scene requires --group; scene names are only unique within a group):
-python scripts/regen_gui_test_refs.py --group lens_proj --scene overlay_ea
-
-# Quick smoke test of the stochastic path (2 runs each phase; the flags apply to every selected group):
-python scripts/regen_gui_test_refs.py --group lens_proj --n 2 --n-calib 2
-
-# Shoot even though origin/main has already reshot one of these references (default: refuse):
-python scripts/regen_gui_test_refs.py --group modal_layout --allow-stale-base
-```
-
-Phase B merges per group and per scene: groups and scenes not covered by the run keep their
-existing entries, including their own `generated_at`. Thresholds live under
-`groups.<key>.scenes` in `test/gui/references/_thresholds.json`.
-
-After Phase B, copy the `threshold` values into the group's test source — for `lens_proj` that is
-`kScenes[]` in `test/gui/visual/test_gui_lens_projection.cpp` (one threshold per scene); the
-script prints the path for whichever group it ran.
-
-**Docking coupling boundary** — relevant to a planned migration of the GUI's fixed-layout panels
-(and the edit modal, from `BeginPopupModal` to a dockable window) onto ImGui's docking branch:
-- The regen harness itself (readback, comparison, threshold, trigger mode) is layout-agnostic —
-  Phase A/B do not know or care whether panels are docked.
-- `lens_proj` renders through its own off-screen FBO (`export_fbo_renderer.cpp`'s
-  `RenderExportToRgba`, allocated at the caller-supplied size), never reading the on-screen preview
-  viewport. It is **fully docking-decoupled**, in both pixel content and output size — the migration
-  needs no action on this group.
-- `modal_layout` reads the DEFAULT framebuffer through `g_fullframe_capture`'s sub-region protocol,
-  using the live on-screen rectangle of the "Edit Entry" window. Once the edit modal becomes
-  dockable, its on-screen position/size source changes and these references will need a **re-shoot**:
-  re-run `python scripts/regen_gui_test_refs.py --group modal_layout` (Phase A + B). No harness code
-  change is required — the comparison mechanism (`CheckAgainstReference` + `g_fullframe_capture`)
-  stays the same; only the captured pixels change.
 
 ## Logging and Troubleshooting
 

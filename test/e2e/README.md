@@ -3,8 +3,9 @@
 This directory holds shared fixtures for the pytest-based E2E layers; it contains no test files of
 its own. The tests that consume these fixtures now live under `test/e2e-correctness/`,
 `test/parity-cross-backend/`, `test/performance/`, `test/gui/`, and `test/regression-sentinel/` —
-see `doc/testing/testing-architecture.md` §1 for what each layer covers, or the "Testing and Platform
-Notes" section of `AGENTS.md` for how to run them.
+see `doc/testing/testing-architecture.md` §1 for what each layer covers, the "Testing and Platform
+Notes" section of `AGENTS.md` for the test-scope table, and `test/AGENTS.md` for how to run
+and regenerate them.
 
 ## Contents
 

@@ -32,7 +32,7 @@ Phase A is also gated on origin/main: if main has already reshot a reference thi
 would write, the run refuses (that reference would be discarded at rebase time) unless
 --allow-stale-base is passed. See check_reference_base.
 
-See AGENTS.md "GUI Test Reference Regeneration" for usage.
+See test/AGENTS.md "GUI Test Reference Regeneration" for usage.
 """
 
 import argparse
