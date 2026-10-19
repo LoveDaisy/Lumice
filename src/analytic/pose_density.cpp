@@ -3,16 +3,11 @@
 #include <cmath>
 #include <vector>
 
+#include "core/math.hpp"
+
 namespace lumice::analytic {
 
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kDegToRad = kPi / 180.0;
-
-double Clamp1(double x) {
-  return x < -1.0 ? -1.0 : (x > 1.0 ? 1.0 : x);
-}
 
 bool PositiveWidth(double v) {
   return std::isfinite(v) && v > 0.0;
@@ -85,7 +80,7 @@ void GaussLegendre(int nodes, double* x, double* w) {
   const int n = nodes;
   for (int i = 0; i < (n + 1) / 2; i++) {
     // Tricomi's initial guess, then Newton on P_n.
-    double z = std::cos(kPi * (i + 0.75) / (n + 0.5));
+    double z = std::cos(math::kPiD * (i + 0.75) / (n + 0.5));
     double dp = 0.0;
     for (int iteration = 0; iteration < 100; iteration++) {
       double p0 = 1.0;
@@ -124,8 +119,8 @@ PoseDensity::PoseDensity(const PoseDensitySpec& spec) : family_(spec.family) {
   if (family_ == PoseFamily::kRandom) {
     return;
   }
-  zenith_mean_ = spec.zenith_mean_deg * kDegToRad;
-  zenith_std_ = spec.zenith_std_deg * kDegToRad;
+  zenith_mean_ = spec.zenith_mean_deg * math::kDegreeToRadD;
+  zenith_std_ = spec.zenith_std_deg * math::kDegreeToRadD;
   double lower = 0.0;
   double upper = 0.0;
   ZenithWindow(&lower, &upper);
@@ -136,18 +131,18 @@ PoseDensity::PoseDensity(const PoseDensitySpec& spec) : family_(spec.family) {
   if (!ReadsRoll()) {
     return;
   }
-  roll_mean_ = spec.roll_mean_deg * kDegToRad;
-  roll_std_ = spec.roll_std_deg * kDegToRad;
-  const double r_lower = std::fmax(roll_mean_ - kPi, roll_mean_ - kPoseDensityWindowSigmas * roll_std_);
-  const double r_upper = std::fmin(roll_mean_ + kPi, roll_mean_ + kPoseDensityWindowSigmas * roll_std_);
+  roll_mean_ = spec.roll_mean_deg * math::kDegreeToRadD;
+  roll_std_ = spec.roll_std_deg * math::kDegreeToRadD;
+  const double r_lower = std::fmax(roll_mean_ - math::kPiD, roll_mean_ - kPoseDensityWindowSigmas * roll_std_);
+  const double r_upper = std::fmin(roll_mean_ + math::kPiD, roll_mean_ + kPoseDensityWindowSigmas * roll_std_);
   // h over the window; every node lies in the one period about the mean, so the fold is the identity
   // there, and RollFactor's fold is applied anyway to keep one expression for h.
   roll_integral_ = Integrate(r_lower, r_upper, [this](double psi) {
-    double offset = std::fmod(psi - roll_mean_ + kPi, 2.0 * kPi);
+    double offset = std::fmod(psi - roll_mean_ + math::kPiD, 2.0 * math::kPiD);
     if (offset < 0.0) {
-      offset += 2.0 * kPi;
+      offset += 2.0 * math::kPiD;
     }
-    offset -= kPi;
+    offset -= math::kPiD;
     return std::exp(-(offset * offset) / (2.0 * roll_std_ * roll_std_));
   });
 }
@@ -155,11 +150,11 @@ PoseDensity::PoseDensity(const PoseDensitySpec& spec) : family_(spec.family) {
 void PoseDensity::ZenithWindow(double* lower, double* upper) const {
   if (family_ == PoseFamily::kRandom) {
     *lower = 0.0;
-    *upper = kPi;
+    *upper = math::kPiD;
     return;
   }
   *lower = std::fmax(0.0, zenith_mean_ - kPoseDensityWindowSigmas * zenith_std_);
-  *upper = std::fmin(kPi, zenith_mean_ + kPoseDensityWindowSigmas * zenith_std_);
+  *upper = std::fmin(math::kPiD, zenith_mean_ + kPoseDensityWindowSigmas * zenith_std_);
 }
 
 double PoseDensity::ZenithFactor(double theta) const {
@@ -169,19 +164,19 @@ double PoseDensity::ZenithFactor(double theta) const {
 
 double PoseDensity::RollFactor(double psi) const {
   // Floored modulo into [0, 2 pi), as numpy's %.
-  double offset = std::fmod(psi - roll_mean_ + kPi, 2.0 * kPi);
+  double offset = std::fmod(psi - roll_mean_ + math::kPiD, 2.0 * math::kPiD);
   if (offset < 0.0) {
-    offset += 2.0 * kPi;
+    offset += 2.0 * math::kPiD;
   }
-  offset -= kPi;
-  return 2.0 * kPi * std::exp(-(offset * offset) / (2.0 * roll_std_ * roll_std_)) / roll_integral_;
+  offset -= math::kPiD;
+  return 2.0 * math::kPiD * std::exp(-(offset * offset) / (2.0 * roll_std_ * roll_std_)) / roll_integral_;
 }
 
 double PoseDensity::Evaluate(double e1, double e2, double e3) const {
   if (family_ == PoseFamily::kRandom) {
     return 1.0;
   }
-  const double zenith = ZenithFactor(std::acos(Clamp1(e3)));
+  const double zenith = ZenithFactor(std::acos(math::Clamp1(e3)));
   if (!ReadsRoll()) {
     return zenith;
   }

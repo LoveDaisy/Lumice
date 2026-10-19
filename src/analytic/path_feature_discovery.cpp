@@ -6,11 +6,10 @@
 
 #include "analytic/path_evaluation.hpp"
 #include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
 
 SphericalJet DivideJet(const SphericalJet& a, const SphericalJet& b) {
   SphericalJet r;
@@ -65,7 +64,7 @@ std::array<double, 3> ScaledBessel(double x) {
           break;
         }
       }
-      values[n] = sum / std::sqrt(2 * kPi * x);
+      values[n] = sum / std::sqrt(2 * math::kPiD * x);
     }
   }
   return values;
@@ -175,7 +174,7 @@ bool EvaluateSphericalField(const std::vector<WeightedSkySample>& samples, const
   if (std::abs(so3::Dot3(query.basis[0].data(), query.basis[1].data())) > kUnitTolerance) {
     return false;
   }
-  const double normalization = kappa / (2 * kPi * -std::expm1(-2 * kappa));
+  const double normalization = kappa / (2 * math::kPiD * -std::expm1(-2 * kappa));
   SphericalFieldValue result;
   EffectiveCount effective;
   uint64_t current_index = 0;
@@ -309,7 +308,7 @@ FieldStationaryPoint CorrectSphericalField(const std::vector<WeightedSkySample>&
   FieldStationaryPoint result;
   if (!ValidateUnitVector(seed.data()) || !(options.bandwidth_rad > 0) || !std::isfinite(options.bandwidth_rad) ||
       !(options.tolerance_rad > 0) || !std::isfinite(options.tolerance_rad) || !(options.max_step_rad > 0) ||
-      !std::isfinite(options.max_step_rad) || options.max_step_rad >= kPi || options.max_iterations <= 0 ||
+      !std::isfinite(options.max_step_rad) || options.max_step_rad >= math::kPiD || options.max_iterations <= 0 ||
       !std::isfinite(options.level)) {
     return result;
   }
@@ -414,7 +413,7 @@ FieldStationaryPoint CorrectSphericalField(const std::vector<WeightedSkySample>&
 FieldCurve TraceSphericalField(const std::vector<WeightedSkySample>& samples, const std::array<double, 3>& seed,
                                const FieldWalkOptions& options, bool reverse, FieldWorkBudget* budget) {
   FieldCurve result;
-  if (!(options.step_rad > 0) || !std::isfinite(options.step_rad) || options.step_rad >= kPi ||
+  if (!(options.step_rad > 0) || !std::isfinite(options.step_rad) || options.step_rad >= math::kPiD ||
       !(options.minimum_y >= 0) || !std::isfinite(options.minimum_y) || options.max_points <= 0 ||
       options.corrector.equation == FieldEquation::kLogYPeak) {
     return result;

@@ -3,19 +3,10 @@
 #include <cmath>
 
 #include "analytic/jet2.hpp"
+#include "analytic/so3.hpp"
 
 namespace lumice::analytic {
 namespace {
-
-double Dot3(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-void Cross3(const double a[3], const double b[3], double out[3]) {
-  out[0] = a[1] * b[2] - a[2] * b[1];
-  out[1] = a[2] * b[0] - a[0] * b[2];
-  out[2] = a[0] * b[1] - a[1] * b[0];
-}
 
 void MatVec(const double m[9], const double v[3], double out[3]) {
   for (int i = 0; i < 3; i++) {
@@ -23,18 +14,10 @@ void MatVec(const double m[9], const double v[3], double out[3]) {
   }
 }
 
-// angle(a, b) in atan2 form — the deviation measure of dp_field (arccos of the dot loses
-// sqrt(eps) next to 0 and pi, which slab paths reach on whole boundary arcs).
-double AngleBetween(const double a[3], const double b[3]) {
-  double cross[3];
-  Cross3(a, b, cross);
-  return std::atan2(std::sqrt(Dot3(cross, cross)), Dot3(a, b));
-}
-
 // D_P's form: angle(Phi_P(-u), -u).
 double Deviation(const double phi[3], const double u[3]) {
   double minus_u[3] = { -u[0], -u[1], -u[2] };
-  return AngleBetween(phi, minus_u);
+  return so3::AngleBetween(phi, minus_u);
 }
 
 double Determinant(const double m[9]) {
@@ -88,7 +71,7 @@ FoldScreen BuildFoldScreen(const FaceNormalTable& table, const int* slots, int s
   const double* n_b = table.normal[slots[slot_count - 1]];
   double n_b_tilde[3];
   MatVec(m_t, n_b, n_b_tilde);
-  screen.dot = Dot3(table.normal[slots[0]], n_b_tilde);
+  screen.dot = so3::Dot3(table.normal[slots[0]], n_b_tilde);
   screen.degenerate = std::fabs(std::fabs(screen.dot) - 1.0) <= kFoldDotAtol;
 
   // The fixed axis: none for M = I (LI fold_axis's own test, 1e-12 entrywise).
@@ -109,7 +92,7 @@ FoldScreen BuildFoldScreen(const FaceNormalTable& table, const int* slots, int s
   }
   // +1 axis of the rotation r: the antisymmetric part is 2 sin(theta) [axis].
   double w[3] = { r[2 * 3 + 1] - r[1 * 3 + 2], r[0 * 3 + 2] - r[2 * 3 + 0], r[1 * 3 + 0] - r[0 * 3 + 1] };
-  const double w_norm = std::sqrt(Dot3(w, w));
+  const double w_norm = std::sqrt(so3::Dot3(w, w));
   if (w_norm > 1e-12) {
     for (int i = 0; i < 3; i++) {
       screen.axis[i] = w[i] / w_norm;
@@ -131,7 +114,7 @@ FoldScreen BuildFoldScreen(const FaceNormalTable& table, const int* slots, int s
       screen.axis[j] = a_k > 0.0 ? 0.5 * r[k * 3 + j] / a_k : 0.0;
     }
   }
-  const double norm = std::sqrt(Dot3(screen.axis, screen.axis));
+  const double norm = std::sqrt(so3::Dot3(screen.axis, screen.axis));
   for (int i = 0; i < 3; i++) {
     screen.axis[i] /= norm;
   }
@@ -169,12 +152,12 @@ void TangentBasis(const double u[3], double basis[2][3]) {
   double axis[3] = { 0.0, 0.0, 0.0 };
   axis[k] = 1.0;
   double e1[3];
-  Cross3(u, axis, e1);
-  const double norm = std::sqrt(Dot3(e1, e1));
+  so3::Cross3(u, axis, e1);
+  const double norm = std::sqrt(so3::Dot3(e1, e1));
   for (int i = 0; i < 3; i++) {
     basis[0][i] = e1[i] / norm;
   }
-  Cross3(u, basis[0], basis[1]);
+  so3::Cross3(u, basis[0], basis[1]);
 }
 
 int ValidityMargins(const double* domain_margins, int margin_count, double out[kMaxFaceCount + 2]) {
@@ -239,7 +222,7 @@ DeviationField::DeviationField(const FaceNormalTable& normals, const FacePolygon
 double DeviationField::DSlab(const double u[3]) const {
   double mu[3];
   MatVec(fold_.fold_matrix, u, mu);
-  return AngleBetween(mu, u);
+  return so3::AngleBetween(mu, u);
 }
 
 int DeviationField::ValidityMarginsAt(const double u[3], double out[kMaxFaceCount + 2]) const {
@@ -385,7 +368,7 @@ FieldJet DeviationField::Differentiate(const double u[3]) const {
       hessian[i][j] = value.h[i][j];
     }
   }
-  const double radial = Dot3(gradient, u);
+  const double radial = so3::Dot3(gradient, u);
   for (int i = 0; i < 3; i++) {
     jet.tangent_gradient[i] = gradient[i] - radial * u[i];
   }

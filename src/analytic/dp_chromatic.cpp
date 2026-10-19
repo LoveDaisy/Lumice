@@ -13,34 +13,19 @@
 #include "analytic/discovery.hpp"
 #include "analytic/path_chain.hpp"
 #include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
-constexpr double kInf = std::numeric_limits<double>::infinity();
 // The probe sun of the random-orientation weights: A T of a body direction u is taken at a pose
 // with R u = this sun (A is twist invariant; LI _PROBE_SUN).
 constexpr double kProbeSun[3] = { 0.0, 0.0, 1.0 };
 
-double Dot3(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-double Norm3(const double v[3]) {
-  return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-}
-
-double AngleBetween(const double a[3], const double b[3]) {
-  const double cross[3] = { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
-  return std::atan2(Norm3(cross), Dot3(a, b));
-}
-
 // Median of a sample (LI np.median: the average of the two middle entries on an even count).
 double Median(std::vector<double> values) {
   if (values.empty()) {
-    return kNaN;
+    return math::kNaN;
   }
   const size_t mid = values.size() / 2;
   std::nth_element(values.begin(), values.begin() + static_cast<long>(mid), values.end());
@@ -108,9 +93,9 @@ double ShiftOf(const std::vector<double>& red_points, const std::vector<double>&
   differences.reserve(blue_values.size());
   for (size_t b = 0; b + 2 < blue_points.size(); b += 3) {
     size_t nearest = 0;
-    double best_dot = -kInf;
+    double best_dot = -math::kInf;
     for (size_t r = 0; r < red_count; r++) {
-      const double dot = Dot3(&blue_points[b], &red_points[3 * r]);
+      const double dot = so3::Dot3(&blue_points[b], &red_points[3 * r]);
       if (dot > best_dot) {
         best_dot = dot;
         nearest = r;
@@ -397,7 +382,7 @@ ChromaticVerdict TintVerdictOf(std::vector<int> faces, const TintMetrics& tint, 
   }
   if (tint.direction_dispersion >= kEdgeMinShiftRad) {
     std::ostringstream note;
-    note << std::fixed << std::setprecision(2) << "red and blue land " << tint.direction_dispersion * 180.0 / kPi
+    note << std::fixed << std::setprecision(2) << "red and blue land " << tint.direction_dispersion * 180.0 / math::kPiD
          << " deg apart: the ordinary dispersion of the direction map spreads the colours, the spot has "
             "no single tint (outside this criterion)";
     verdict.notes.push_back(note.str());
@@ -540,8 +525,8 @@ namespace {
 // implementation's own — the header's seed note).
 std::vector<double> SamplePlatePoses(const PlateFamilySpec& family) {
   std::mt19937_64 rng(static_cast<unsigned long long>(family.seed));
-  std::uniform_real_distribution<double> azimuth(0.0, 2.0 * kPi);
-  std::normal_distribution<double> normal(0.0, family.zenith_std_deg * kPi / 180.0);
+  std::uniform_real_distribution<double> azimuth(0.0, 2.0 * math::kPiD);
+  std::normal_distribution<double> normal(0.0, family.zenith_std_deg * math::kPiD / 180.0);
   std::vector<double> poses(static_cast<size_t>(family.samples) * 9);
   for (int i = 0; i < family.samples; i++) {
     const double spin = azimuth(rng);
@@ -570,8 +555,8 @@ std::vector<double> SamplePlatePoses(const PlateFamilySpec& family) {
 
 // s_hat toward the sun at (altitude, azimuth 180) — LI camera.sun_direction.
 void SunDirection(double altitude_deg, double sun[3]) {
-  const double altitude = altitude_deg * kPi / 180.0;
-  const double azimuth = 180.0 * kPi / 180.0;
+  const double altitude = altitude_deg * math::kPiD / 180.0;
+  const double azimuth = 180.0 * math::kPiD / 180.0;
   sun[0] = std::cos(altitude) * std::cos(azimuth);
   sun[1] = std::cos(altitude) * std::sin(azimuth);
   sun[2] = std::sin(altitude);
@@ -703,7 +688,7 @@ ClassVerdict DiagnoseClass(const FaceNormalTable& normals, const FacePolygonTabl
           continue;
         }
         const double weight = entry.red[static_cast<size_t>(i)];
-        spread_sum += weight * AngleBetween(outgoing_red, outgoing_blue);
+        spread_sum += weight * so3::AngleBetween(outgoing_red, outgoing_blue);
         spread_weight += weight;
       }
     }
@@ -715,9 +700,9 @@ ClassVerdict DiagnoseClass(const FaceNormalTable& normals, const FacePolygonTabl
   out.verdict.has_tint = true;
   out.verdict.tint.energy_red = energy_red;
   out.verdict.tint.energy_blue = energy_blue;
-  out.verdict.tint.ratio = energy_red > 0.0 ? energy_blue / energy_red : kNaN;
-  out.verdict.tint.tir_fraction_red = tir_red_total > 0.0 ? tir_red / tir_red_total : kNaN;
-  out.verdict.tint.tir_fraction_blue = tir_blue_total > 0.0 ? tir_blue / tir_blue_total : kNaN;
+  out.verdict.tint.ratio = energy_red > 0.0 ? energy_blue / energy_red : math::kNaN;
+  out.verdict.tint.tir_fraction_red = tir_red_total > 0.0 ? tir_red / tir_red_total : math::kNaN;
+  out.verdict.tint.tir_fraction_blue = tir_blue_total > 0.0 ? tir_blue / tir_blue_total : math::kNaN;
   out.verdict.tint.direction_dispersion = spread_weight > 0.0 ? spread_sum / spread_weight : 0.0;
 
   const ChromaticVerdict tint_verdict = TintVerdictOf(out.representative, out.verdict.tint, n_red, n_blue);

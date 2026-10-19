@@ -6,25 +6,10 @@
 #include <limits>
 
 #include "analytic/path_chain.hpp"
+#include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
-
-namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-
-double Clamp1(double x) {
-  return x < -1.0 ? -1.0 : (x > 1.0 ? 1.0 : x);
-}
-
-void Normalize3(double v[3]) {
-  const double n = so3::Norm3(v);
-  for (int i = 0; i < 3; i++) {
-    v[i] /= n;
-  }
-}
-
-}  // namespace
 
 bool IsArcEvent(FiberReason reason) {
   switch (reason) {
@@ -94,7 +79,7 @@ void LatticePoint(int n, int i, double u[3]) {
   // LI fibonacci_sphere: i + 0.5; z = 1 - 2 i / n; phi = pi (1 + sqrt 5) i; r = sqrt(max(0, 1 - z^2)).
   const double k = static_cast<double>(i) + 0.5;
   const double z = 1.0 - 2.0 * k / static_cast<double>(n);
-  const double phi = kPi * (1.0 + std::sqrt(5.0)) * k;
+  const double phi = math::kPiD * (1.0 + std::sqrt(5.0)) * k;
   const double r = std::sqrt(std::fmax(0.0, 1.0 - z * z));
   u[0] = -(r * std::cos(phi));
   u[1] = -(r * std::sin(phi));
@@ -102,7 +87,7 @@ void LatticePoint(int n, int i, double u[3]) {
 }
 
 double TargetDeviation(const double incident_direction[3], const double target_direction[3]) {
-  return std::acos(Clamp1(so3::Dot3(target_direction, incident_direction)));
+  return std::acos(math::Clamp1(so3::Dot3(target_direction, incident_direction)));
 }
 
 void CandidatePose(const double incident_direction[3], const double target_direction[3], const BandEvent& event,
@@ -111,13 +96,13 @@ void CandidatePose(const double incident_direction[3], const double target_direc
   const double ds = so3::Dot3(target_direction, sun);
   double e[3] = { target_direction[0] - ds * sun[0], target_direction[1] - ds * sun[1],
                   target_direction[2] - ds * sun[2] };
-  Normalize3(e);
+  so3::Normalize3(e);
   double se[3];
   so3::Cross3(sun, e, se);
   const double cos_d = std::cos(event.deviation);
   double f[3] = { event.phi[0] + cos_d * event.u[0], event.phi[1] + cos_d * event.u[1],
                   event.phi[2] + cos_d * event.u[2] };
-  Normalize3(f);
+  so3::Normalize3(f);
   double uf[3];
   so3::Cross3(event.u, f, uf);
   const double* w_cols[3] = { sun, e, se };
@@ -167,7 +152,7 @@ bool IceDiscovery::EvaluateLatticePoint(int sample_count, int i, BandEvent* even
                               &detail, nullptr)) {
     return false;
   }
-  event->deviation = std::acos(Clamp1(so3::Dot3(event->phi, incident)));
+  event->deviation = std::acos(math::Clamp1(so3::Dot3(event->phi, incident)));
   *transmission = detail.fresnel_transmission;
   return true;
 }

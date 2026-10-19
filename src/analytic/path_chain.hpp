@@ -17,6 +17,7 @@
 
 #include "analytic/jet.hpp"
 #include "analytic/path_evaluation.hpp"
+#include "analytic/so3.hpp"
 #include "core/shared/optics_shared.h"
 
 namespace lumice::analytic {
@@ -80,11 +81,6 @@ struct ChainInterfaceDiagnostics {
 };
 
 namespace chain_detail {
-
-template <class S, class T>
-S Dot3(const S a[3], const T b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
 
 // v_W = R v_B with R row-major.
 template <class S, class T>
@@ -163,7 +159,6 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
                     const S incident_direction[3], const S pose[9], S outgoing[3], PathOutputs* detail,
                     ChainDomain* domain, ChainInterfaceDiagnostics<S>* diagnostics = nullptr) {
   using chain_detail::BodyToWorld;
-  using chain_detail::Dot3;
   using chain_detail::GateStops;
   using chain_detail::Record;
   constexpr bool kDetail = std::is_same_v<S, double>;
@@ -182,7 +177,7 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   S normal[3];
   BodyToWorld(pose, table.normal[slots[0]], normal);
   const S entry_rr = 1.0 / n;
-  const S entry_cos = -Dot3(normal, incident_direction);
+  const S entry_cos = -so3::Dot3(normal, incident_direction);
   const S entry_disc = 1.0 - entry_rr * entry_rr * (1.0 - entry_cos * entry_cos);
   if (diagnostics) {
     diagnostics->reached = 1;
@@ -223,7 +218,7 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   // Internal reflections: the ray must reach each face from inside; TIR or not, it reflects.
   for (int k = 1; k < last; k++) {
     BodyToWorld(pose, table.normal[slots[k]], normal);
-    const S cos_i = Dot3(normal, dir);
+    const S cos_i = so3::Dot3(normal, dir);
     // = -(LI's internal TIR discriminant); a diagnostic, not a gate, but a non-finite one fails.
     const S disc_jet = 1.0 - n * n * (1.0 - cos_i * cos_i);
     const double disc = ValueOf(disc_jet);
@@ -254,7 +249,7 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
 
   // Exit: refraction out of the crystal, normal toward the incident (inner) medium is -outward.
   BodyToWorld(pose, table.normal[slots[last]], normal);
-  const S exit_cos = Dot3(normal, dir);
+  const S exit_cos = so3::Dot3(normal, dir);
   const S exit_disc = 1.0 - n * n * (1.0 - exit_cos * exit_cos);
   if (diagnostics) {
     diagnostics->reached = slot_count;

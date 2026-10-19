@@ -8,30 +8,14 @@
 
 #include "analytic/discovery.hpp"
 #include "analytic/reflection_group.hpp"
+#include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
-constexpr double kInf = std::numeric_limits<double>::infinity();
-
 double Deg(double rad) {
-  return rad * 180.0 / kPi;
-}
-
-double Norm3(const double v[3]) {
-  return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-}
-
-double Dot3(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-// angle(a, b) = atan2(|a x b|, a . b), the layer's own form (accurate at 0 and pi).
-double AngleBetween(const double a[3], const double b[3]) {
-  const double cross[3] = { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
-  return std::atan2(Norm3(cross), Dot3(a, b));
+  return rad * 180.0 / math::kPiD;
 }
 
 // The wedge of a face sequence in degrees, atan2 form: the angle of n_a against -M^T n_b with M
@@ -47,7 +31,7 @@ double WedgeAngleDeg(const FaceNormalTable& table, const int* slots, int slot_co
   for (int i = 0; i < 3; i++) {
     unfolded[i] = -(m[0 * 3 + i] * nb[0] + m[1 * 3 + i] * nb[1] + m[2 * 3 + i] * nb[2]);
   }
-  return Deg(AngleBetween(na, unfolded));
+  return Deg(so3::AngleBetween(na, unfolded));
 }
 
 // The smallest validity margin of u, NaN included as "smallest" wherever it sits (a non-finite
@@ -77,7 +61,7 @@ ConfinedDimensions ConfinedDimensionsOf(const PoseDensitySpec& spec) {
   // the default mean, which this library takes as a field) — PoseFamily's kColumn/kPlate pair
   // mirrors that, and so does the dispatch below.
   ConfinedDimensions out;
-  const double deg2rad = kPi / 180.0;
+  const double deg2rad = math::kPiD / 180.0;
   if (spec.family == PoseFamily::kColumn || spec.family == PoseFamily::kPlate) {
     out.dimensions = 1;
     out.widths_rad.push_back(spec.zenith_std_deg * deg2rad);
@@ -90,7 +74,7 @@ ConfinedDimensions ConfinedDimensionsOf(const PoseDensitySpec& spec) {
 }
 
 bool FamilyAxis(const PoseDensitySpec& spec, double axis[3]) {
-  const double deg2rad = kPi / 180.0;
+  const double deg2rad = math::kPiD / 180.0;
   if (spec.family == PoseFamily::kColumn || spec.family == PoseFamily::kPlate) {
     // A zenith Gaussian at a pole leaves only the spin about c: e3. Off a pole (a column away
     // from vertical) the c-axis azimuth is free too: no single circle, no label. LI tests the
@@ -161,18 +145,18 @@ std::vector<InteriorCriticalPoint> InteriorCriticalPointsOf(const DeviationField
     double u[3] = { seeds[3 * s], seeds[3 * s + 1], seeds[3 * s + 2] };
     for (int it = 0; it < options.iterations; it++) {
       const FieldJet jet = field.Differentiate(u);
-      const double g[2] = { Dot3(jet.tangent_basis[0], jet.tangent_gradient),
-                            Dot3(jet.tangent_basis[1], jet.tangent_gradient) };
+      const double g[2] = { so3::Dot3(jet.tangent_basis[0], jet.tangent_gradient),
+                            so3::Dot3(jet.tangent_basis[1], jet.tangent_gradient) };
       const double det = jet.hessian[0][0] * jet.hessian[1][1] - jet.hessian[0][1] * jet.hessian[1][0];
       if (!(det != 0.0) || !std::isfinite(det)) {
-        u[0] = kNaN;
+        u[0] = math::kNaN;
         break;
       }
       double delta[2] = { (-g[0] * jet.hessian[1][1] + g[1] * jet.hessian[0][1]) / det,
                           (-g[1] * jet.hessian[0][0] + g[0] * jet.hessian[1][0]) / det };
       const double norm = std::sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
       if (!std::isfinite(norm)) {
-        u[0] = kNaN;
+        u[0] = math::kNaN;
         break;
       }
       const double scale = std::min(1.0, options.max_step_rad / std::max(norm, 1e-300));
@@ -182,9 +166,9 @@ std::vector<InteriorCriticalPoint> InteriorCriticalPointsOf(const DeviationField
       for (int c = 0; c < 3; c++) {
         moved[c] = u[c] + delta[0] * jet.tangent_basis[0][c] + delta[1] * jet.tangent_basis[1][c];
       }
-      const double length = Norm3(moved);
+      const double length = so3::Norm3(moved);
       if (!std::isfinite(length) || length == 0.0) {
-        u[0] = kNaN;
+        u[0] = math::kNaN;
         break;
       }
       for (int c = 0; c < 3; c++) {
@@ -213,7 +197,7 @@ std::vector<InteriorCriticalPoint> InteriorCriticalPointsOf(const DeviationField
       continue;  // covers "not inside" and "on dU_P" in one comparison, NaN included
     }
     const FieldJet jet = field.Differentiate(u);
-    const double norm = Norm3(jet.tangent_gradient);
+    const double norm = so3::Norm3(jet.tangent_gradient);
     if (std::isfinite(norm) && norm < kCriticalGradientTol) {
       converged.push_back({ { u[0], u[1], u[2] }, norm });
     }
@@ -224,7 +208,7 @@ std::vector<InteriorCriticalPoint> InteriorCriticalPointsOf(const DeviationField
   for (const Candidate& candidate : converged) {
     bool seen = false;
     for (const Candidate& kept : unique) {
-      if (AngleBetween(candidate.position, kept.position) <= kCriticalPointMergeRad) {
+      if (so3::AngleBetween(candidate.position, kept.position) <= kCriticalPointMergeRad) {
         seen = true;
         break;
       }
@@ -343,7 +327,7 @@ CriticalOnset InteriorOnset(const InteriorCriticalPoint& point) {
       onset.profile = OnsetProfile::kFiniteJump;
       onset.has_measure_limit = true;
       onset.measure_limit =
-          2.0 * kPi / std::sqrt(std::fabs(point.hessian_eigenvalues[0] * point.hessian_eigenvalues[1]));
+          2.0 * math::kPiD / std::sqrt(std::fabs(point.hessian_eigenvalues[0] * point.hessian_eigenvalues[1]));
       break;
     case CriticalKind::kSaddle:
       onset.source = OnsetSource::kInteriorSaddle;
@@ -367,7 +351,7 @@ double ConeSlope(const DeviationField& field, const double axis[3]) {
     probe[c] = std::cos(kConeProbeRad) * axis[c] + std::sin(kConeProbeRad) * basis[0][c];
   }
   const FieldJet jet = field.Differentiate(probe);
-  return Norm3(jet.tangent_gradient);
+  return so3::Norm3(jet.tangent_gradient);
 }
 
 // Where the slab circle u . n_M = 0 lies relative to U_P (LI _circle_location): the best (largest)
@@ -375,9 +359,9 @@ double ConeSlope(const DeviationField& field, const double axis[3]) {
 DomainLocation CircleLocation(const DeviationField& field, const double axis[3], int samples) {
   double basis[2][3];
   TangentBasis(axis, basis);
-  double best = -kInf;
+  double best = -math::kInf;
   for (int i = 0; i < samples; i++) {
-    const double t = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(samples);
+    const double t = 2.0 * math::kPiD * static_cast<double>(i) / static_cast<double>(samples);
     double u[3];
     for (int c = 0; c < 3; c++) {
       u[c] = std::cos(t) * basis[0][c] + std::sin(t) * basis[1][c];
@@ -502,22 +486,22 @@ std::vector<CriticalOnset> FieldOnsets(const DeviationField& field, const Degene
   }
   for (const BoundaryDatum& datum : boundary) {
     const FieldJet jet = field.Differentiate(datum.position);
-    const double norm = Norm3(jet.tangent_gradient);
+    const double norm = so3::Norm3(jet.tangent_gradient);
     const bool finite = std::isfinite(norm);
     CriticalOnset onset;
     onset.value = datum.value;
     onset.location = OnsetLocation::kBoundary;
     onset.source = datum.source;
     onset.profile = finite && norm <= kBoundaryGradientAtol ? OnsetProfile::kDegenerate : OnsetProfile::kBoundaryOnset;
-    onset.gradient_norm = finite ? norm : kInf;
+    onset.gradient_norm = finite ? norm : math::kInf;
     onsets.push_back(onset);
   }
   return MergeOnsets(std::move(onsets));
 }
 
 bool GradientNormRange(const DeviationField& field, int lattice_n, double out[2]) {
-  double smallest = kInf;
-  double largest = -kInf;
+  double smallest = math::kInf;
+  double largest = -math::kInf;
   for (int i = 0; i < lattice_n; i++) {
     double u[3];
     FibonacciAntipodePoint(lattice_n, i, u);
@@ -525,7 +509,7 @@ bool GradientNormRange(const DeviationField& field, int lattice_n, double out[2]
       continue;
     }
     const FieldJet jet = field.Differentiate(u);
-    const double norm = Norm3(jet.tangent_gradient);
+    const double norm = so3::Norm3(jet.tangent_gradient);
     if (!std::isfinite(norm)) {
       continue;
     }
@@ -673,8 +657,8 @@ WavelengthCriticalTable WavelengthCriticalTableOf(const FaceNormalTable& normals
     row.source = first.source;
     row.profile = first.profile;
     row.jacobian_focusing = first.JacobianFocusing();
-    double smallest = kInf;
-    double largest = -kInf;
+    double smallest = math::kInf;
+    double largest = -math::kInf;
     for (const FocusingClassification& classification : classifications) {
       const double value_deg = Deg(classification.onsets[rank].value);
       row.values_deg.push_back(value_deg);
