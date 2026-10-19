@@ -335,6 +335,94 @@ TEST(AspectRatioRules, OrientationIgnoresStalePortraitForDisabledPresets) {
   EXPECT_FLOAT_EQ(ApplyAspectOrientation(AspectPreset::kMatchBg, true, 2650.0f / 1580.0f), 2650.0f / 1580.0f);
 }
 
+TEST(AspectRatioRules, CombinedComboEntriesCoverEveryReachableState) {
+  const std::vector<AspectComboEntry> entries = AspectComboEntries();
+
+  // Hard-pinned total first: a preset added later must not silently grow the list the combo
+  // renders. The combo derives its rows from this same function, so 11 here and 11 there is one
+  // fact — but the literal still catches the silent case, where the derived shape below would
+  // keep agreeing with a function that had itself changed.
+  ASSERT_EQ(entries.size(), 11u);
+  // Second, derived shape: one base entry per preset plus one orientation entry per preset that
+  // offers two orientations. Counting this way is what keeps 11 a property of the rules rather
+  // than of the test.
+  size_t derived = 0;
+  for (int i = 0; i < kAspectPresetCount; ++i) {
+    derived += 1 + (AspectFlipDisabled(static_cast<AspectPreset>(i)) ? 0u : 1u);
+  }
+  EXPECT_EQ(entries.size(), derived);
+
+  // Enum order, each Portrait variant immediately after its base.
+  size_t at = 0;
+  for (int i = 0; i < kAspectPresetCount; ++i) {
+    const auto preset = static_cast<AspectPreset>(i);
+    // Non-fatal exhaustion guards rather than fatal asserts: one short list must still report
+    // every later preset it fails on, not just the first.
+    if (at >= entries.size()) {
+      ADD_FAILURE() << "entry list exhausted before preset " << kAspectPresetNames[i];
+      break;
+    }
+    EXPECT_EQ(entries[at].preset, preset) << kAspectPresetNames[i];
+    EXPECT_FALSE(entries[at].portrait) << kAspectPresetNames[i];
+    ++at;
+    if (!AspectFlipDisabled(preset)) {
+      if (at >= entries.size()) {
+        ADD_FAILURE() << "entry list exhausted before the Portrait entry of " << kAspectPresetNames[i];
+        break;
+      }
+      EXPECT_EQ(entries[at].preset, preset) << kAspectPresetNames[i];
+      EXPECT_TRUE(entries[at].portrait) << kAspectPresetNames[i];
+      ++at;
+    }
+  }
+  EXPECT_EQ(at, entries.size());
+
+  // Orientation entries exist only where the flip button used to reach: a Portrait entry for
+  // Free / 1:1 / Match Background would offer a state ApplyAspectRatio ignores.
+  for (const AspectComboEntry& entry : entries) {
+    if (entry.portrait) {
+      EXPECT_FALSE(AspectFlipDisabled(entry.preset)) << AspectEntryLabel(entry.preset, entry.portrait);
+    }
+  }
+
+  // Match Background with no image: still listed, just greyed — discoverability over
+  // reachability, the same stance the old combo took.
+  const AspectComboEntry& match_base = entries.back();
+  EXPECT_EQ(match_base.preset, AspectPreset::kMatchBg);
+  EXPECT_TRUE(AspectPresetOptionDisabled(match_base.preset, /*has_background=*/false));
+  EXPECT_FALSE(AspectPresetOptionDisabled(match_base.preset, /*has_background=*/true));
+}
+
+TEST(AspectRatioRules, LabelsAndHighlightIgnoreStalePortraitBits) {
+  // The stale bit a pre-merge document can carry (aspect_portrait=true on a flip-disabled preset)
+  // must light neither a Portrait label nor a Portrait entry: the UI-side twin of
+  // ApplyAspectOrientation's render-side guard. One predicate feeds both the labels and the
+  // highlight match, so these pins cover the single judgment point, not a copy of it.
+  EXPECT_EQ(AspectEntryLabel(AspectPreset::kMatchBg, true), "Match Background");
+  EXPECT_EQ(AspectEntryLabel(AspectPreset::kFree, true), "Free");
+  EXPECT_EQ(AspectEntryLabel(AspectPreset::k1x1, true), "1:1");
+  EXPECT_EQ(AspectEntryLabel(AspectPreset::k16x9, false), "16:9");
+  EXPECT_EQ(AspectEntryLabel(AspectPreset::k16x9, true), "16:9 Portrait");
+  EXPECT_EQ(AspectEntryLabel(AspectPreset::k2x1, true), "2:1 Portrait");
+
+  EXPECT_FALSE(AspectOrientationEffective(AspectPreset::kMatchBg, true));
+  EXPECT_FALSE(AspectOrientationEffective(AspectPreset::kFree, true));
+  EXPECT_TRUE(AspectOrientationEffective(AspectPreset::k16x9, true));
+  EXPECT_FALSE(AspectOrientationEffective(AspectPreset::k16x9, false));
+
+  // Highlight match, walked over the whole list: a stale bit on Match Background lights exactly
+  // one entry, and it is the base one.
+  const bool stale_on_match = AspectOrientationEffective(AspectPreset::kMatchBg, true);
+  size_t highlighted = 0;
+  for (const AspectComboEntry& entry : AspectComboEntries()) {
+    if (entry.preset == AspectPreset::kMatchBg && entry.portrait == stale_on_match) {
+      ++highlighted;
+      EXPECT_FALSE(entry.portrait);
+    }
+  }
+  EXPECT_EQ(highlighted, 1u);
+}
+
 // ---- Sun-circle (angular distance) overlay rules ----
 
 TEST(AngularDistRules, DuplicateTestUsesTheHundredthDegreeBand) {

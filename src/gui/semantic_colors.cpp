@@ -12,7 +12,10 @@ namespace {
 constexpr ImVec4 kGoodText{ 0.40f, 0.80f, 0.40f, 1.0f };   // was: Ready status text
 constexpr ImVec4 kGoodFill{ 0.06f, 0.24f, 0.06f, 1.0f };   // was: VALID validation cell
 constexpr ImVec4 kWarnText{ 1.00f, 0.75f, 0.20f, 1.0f };   // was: 3 call sites, verbatim
-constexpr ImVec4 kWarnFill{ 0.45f, 0.28f, 0.12f, 1.0f };   // was: Resolution input FrameBg
+constexpr ImVec4 kWarnFill{ 0.45f, 0.28f, 0.12f, 1.0f };   // was: the Resolution input FrameBg, un-tinted
+                                                           // 2026-10-19 (tooltip carries the re-run
+                                                           // warning); value kept for the remaining
+                                                           // Fill consumers
 constexpr ImVec4 kDestrText{ 0.90f, 0.30f, 0.30f, 1.0f };  // was: invalid predicate border
 constexpr ImVec4 kDestrFill{ 0.27f, 0.06f, 0.06f, 1.0f };  // was: INVALID validation cell
 
@@ -26,9 +29,12 @@ constexpr ImVec4 kGoodBtnActive{ 0.10f, 0.35f, 0.10f, 1.0f };
 // from three screenshotted candidates by hue distance from the four colours it shares the bar
 // with — Run's green, Stop's red, the palette's blue button, and the accent-tinted Colors button;
 // candidates and the reasons for this one are in doc/gui/gui-visual-language.md §4.8.
-constexpr ImVec4 kContinueBtnNormal{ 0.38f, 0.24f, 0.58f, 1.0f };
-constexpr ImVec4 kContinueBtnHovered{ 0.46f, 0.31f, 0.68f, 1.0f };
-constexpr ImVec4 kContinueBtnActive{ 0.30f, 0.18f, 0.48f, 1.0f };
+// 2026-10-19 retune: same hue, lower value — the original peak channel (0.58) out-shone every
+// other button on the bar (Run's peak is 0.45); the retuned triple stays inside the 0.3-distance
+// floor with its nearest neighbour (the blue button, 0.333). Rationale and distances: §4.8.
+constexpr ImVec4 kContinueBtnNormal{ 0.34f, 0.22f, 0.52f, 1.0f };
+constexpr ImVec4 kContinueBtnHovered{ 0.42f, 0.29f, 0.62f, 1.0f };
+constexpr ImVec4 kContinueBtnActive{ 0.27f, 0.17f, 0.43f, 1.0f };
 
 ImVec4 WithAlpha(const ImVec4& c, float alpha) {
   return ImVec4(c.x, c.y, c.z, alpha);

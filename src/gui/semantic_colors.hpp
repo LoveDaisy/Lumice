@@ -25,7 +25,7 @@
 //   - *TextColor()  — bright, for text / icons / borders.
 //   - *FillColor(a) — muted, for FrameBg / CellBg tinting; alpha is the
 //     caller's, since existing call sites deliberately differ (0.5 for a
-//     validation cell, 0.6 for the Resolution input).
+//     validation cell).
 //
 // Button triples are only provided where a consumer exists: good (the Run
 // button) below, destructive in gui/destructive_style.hpp. There is no warning

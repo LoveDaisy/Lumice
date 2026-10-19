@@ -26,7 +26,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 |---|------|------|
 | 1 | Top Bar（顶栏） | 文件操作（New / Open / Save）、模拟控制（Run / Stop / Continue / Revert）、面板折叠按钮 |
 | 2 | Left Panel — Crystal Parameters（左侧面板，晶体参数） | 散射层及每层中的晶体卡片（几何 / 取向 / 过滤器 / 占比） |
-| 3 | Right Panel — View Parameters（右侧面板，视觉参数） | Scene（光源 + 模拟）、View（投影 + 相机）、Display（分辨率 / EV / 长宽比 / 背景）、Overlay（辅助线） |
+| 3 | Right Panel — View Parameters（右侧面板，视觉参数） | Scene（光源 + 模拟）、View（投影 + 相机）、Display（分辨率 / EV / 背景，含长宽比组合框）、Overlay（辅助线） |
 | 4 | Render Preview（渲染预览） | 光线累计形成的、按 lens 投影的冰晕图像 |
 | 5 | Status Bar（状态栏） | 模拟状态徽标、光线总数、当前分辨率 / lens / FOV、文件名、Log 切换 |
 | 6 | Popup Editor（编辑弹窗） | 从晶体卡片打开的模态编辑器；编辑 Crystal / Axis / Filter |
@@ -159,10 +159,9 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 ### Display（显示）
 
-- **Rendering**：`Resolution`（512 / 1024 / 2048 / 4096；以棕色高亮提示更改会触发重新模拟）；`EV`（曝光偏移，-6 ~ +6 stops）。
+- **Rendering**：`Resolution`（512 / 1024 / 2048 / 4096；更改会触发重新模拟，控件悬停提示会说明）；`EV`（曝光偏移，-6 ~ +6 stops）。
 - **Adaptive Brightness（自适应亮度）**：始终启用，无开关。Relative 模式使用场景固定全天平面的 P99 天空辐亮度 `anchor_l99_sky`，不受 lens / FOV / 相机 / visible 范围 / 输出分辨率影响；偏移量以 `+N.NN EV auto` 显示在手动 EV 滑条旁。切换 filter 不会改变锚点。完整算法与可加性不变量见 [`doc/rendering/adaptive-brightness.zh.md`](../rendering/adaptive-brightness.zh.md)。
-- **Aspect Ratio**：`Preset` 下拉框（Free、16:9、3:2、4:3、1:1、2:1、Match Background）+ `Portrait` ↔ `Landscape` 切换按钮。请求的长宽比无法满足（窗口太小）时会出现提示行，显示实际可用比与请求比。
-- **Background**：`Load Bg...`、`Clear`、`Show` 复选框、以及 `Alpha` 滑块（控制背景在渲染图下的合成透明度）。
+- **Background（背景）**：`Load Bg...`、`Clear`、`Show` 复选框、以及 `Alpha` 滑块（控制背景在渲染图下的合成透明度）。该段还承载 `Aspect` 组合框：一个菜单列出全部可达的「预设 × 方向」条目——Free、16:9、16:9 Portrait、3:2、3:2 Portrait、4:3、4:3 Portrait、1:1、2:1、2:1 Portrait、Match Background。未加载图片时 `Match Background` 一项置灰，这也是该组合框放在本段的原因。请求的长宽比无法满足（窗口太小）时会出现提示行，显示实际可用比与请求比。
 
 ### Overlay（叠加）
 

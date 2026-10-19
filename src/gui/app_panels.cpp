@@ -1818,19 +1818,15 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
   if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
     PushLabelColumnItemWidth();
     ImGui::SeparatorText("Rendering");
-    // Rust-tinted input: changing Resolution re-runs the simulation and discards accumulated rays.
-    // The warning is the point — see doc/gui/gui-visual-language.md §7.
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, WarningFillColor(0.6f));
     ImGui::Combo(PanelLabel("renderer.sim_resolution", "display").c_str(), &r.sim_resolution_index,
                  kSimResolutionLabels, kSimResolutionCount);
-    ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("Re-runs simulation; accumulated rays reset");
     }
     // The exposure anchor. Display-time only: it changes which anchor the client-side conversion in
     // mono_exposure_scale.hpp divides by, so the picture re-lights on the next frame with no
-    // commit and no re-run. Not rust-tinted like Resolution above for exactly that reason —
-    // nothing is discarded.
+    // commit and no re-run — nothing is discarded, which is why the resolution combo above carries
+    // the re-run tooltip and this one does not.
     //
     // Labelled "EV Anchor" rather than "Mode": this section now carries two combos that both
     // select a mode, and a bare "Mode" on either would leave the other's meaning to be inferred
@@ -2061,32 +2057,72 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // The display mode (Normal / Channel B-R) is not edited here: its one entry point is the
     // segmented control in the preview's top-right corner, RenderDisplayModeControl.
 
-    ImGui::SeparatorText("Aspect Ratio");
-    int preset_idx = static_cast<int>(g_state.aspect_preset);
-    const char* preview_label = kAspectPresetNames[preset_idx];
-    if (ImGui::BeginCombo("Preset##display_aspect", preview_label)) {
-      for (int i = 0; i < kAspectPresetCount; i++) {
-        bool disabled = AspectPresetOptionDisabled(static_cast<AspectPreset>(i), g_preview.HasBackground());
-        ImGui::BeginDisabled(disabled);
-        bool selected = (i == preset_idx);
-        if (ImGui::Selectable(kAspectPresetNames[i], selected)) {
-          g_state.aspect_preset = static_cast<AspectPreset>(i);
-          ApplyAspectRatio(window, g_state.aspect_preset, g_state.aspect_portrait);
-        }
-        if (selected) {
-          ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndDisabled();
-      }
-      ImGui::EndCombo();
+    ImGui::SeparatorText("Background");
+    if (ImGui::Button("Load Bg##display")) {
+      DoLoadBackground(window);
     }
-    ImGui::BeginDisabled(AspectFlipDisabled(g_state.aspect_preset));
-    const char* flip_label = g_state.aspect_portrait ? "Portrait" : "Landscape";
-    if (ImGui::Button(flip_label)) {
-      g_state.aspect_portrait = !g_state.aspect_portrait;
-      ApplyAspectRatio(window, g_state.aspect_preset, g_state.aspect_portrait);
+    ImGui::SameLine();
+    bool no_bg = !g_preview.HasBackground();
+    // This disabled state covers the row and Show below — with no image there is nothing to show.
+    // It ends after Show; a second scope reopens it for Alpha onwards, because the combined aspect
+    // combo standing between the two must stay reachable with no image: its Match Background entry
+    // is the one that greys (rather than the whole control), and the greying IS the "load an image
+    // first" message.
+    ImGui::BeginDisabled(no_bg);
+    if (ImGui::Button("Clear##display_bg")) {
+      DoClearBackground();
+    }
+    ImGui::SameLine();
+    // Show's own gate, nested inside it and read through ConstraintFor rather than from the local
+    // `no_bg`, so this control and the defaults panel's row for the same field answer with ONE
+    // predicate. They used to be two — `no_bg` here, WhenBackgroundLoaded there — which agreed for
+    // as long as "is an image loaded" was the only reason to disable, and stopped agreeing the
+    // moment Print became a second one. A doubly-pushed disabled state is idempotent, so the nesting
+    // costs nothing; what it buys is the tooltip, which the outer scope cannot carry because the
+    // row's controls each have their own reason.
+    const FieldEditorConstraint bg_show_c = ConstraintFor("bg_show", g_state);
+    ImGui::BeginDisabled(!bg_show_c.enabled);
+    Checkbox("Show##display_bg", &g_state.bg_show);
+    ImGui::EndDisabled();
+    if (bg_show_c.disabled_reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("%s", bg_show_c.disabled_reason);
     }
     ImGui::EndDisabled();
+
+    // The combined aspect combo — the retired "Aspect Ratio" section folded into one control: one
+    // entry per reachable (preset, orientation) pair, so the flip button it replaces has no second
+    // way to say what an entry already names. It lives in this section because Match Background
+    // reads the image Load Bg puts behind the render; greying that one entry with no image reads
+    // as cause and effect directly under the Load button. Entries, labels and highlight all
+    // derive from aspect_ratio_rules.hpp — this loop owns no second table, and the same functions
+    // are what the unit tests enumerate.
+    {
+      const std::vector<AspectComboEntry> entries = AspectComboEntries();
+      const std::string preview = AspectEntryLabel(g_state.aspect_preset, g_state.aspect_portrait);
+      if (ImGui::BeginCombo("Aspect##display_aspect", preview.c_str())) {
+        for (const AspectComboEntry& entry : entries) {
+          ImGui::BeginDisabled(AspectPresetOptionDisabled(entry.preset, g_preview.HasBackground()));
+          const bool selected =
+              entry.preset == g_state.aspect_preset &&
+              entry.portrait == AspectOrientationEffective(g_state.aspect_preset, g_state.aspect_portrait);
+          const std::string label = AspectEntryLabel(entry.preset, entry.portrait);
+          if (ImGui::Selectable(label.c_str(), selected)) {
+            // An entry IS the full state: both fields, then the apply path the two old controls
+            // shared. Picking a base entry of a flippable preset therefore resets the stored
+            // portrait bit — the combo no longer offers a way to leave it half-set, which is the
+            // point of the merge.
+            g_state.aspect_preset = entry.preset;
+            g_state.aspect_portrait = entry.portrait;
+            ApplyAspectRatio(window, g_state.aspect_preset, g_state.aspect_portrait);
+          }
+          if (selected) {
+            ImGui::SetItemDefaultFocus();
+          }
+          ImGui::EndDisabled();
+        }
+        ImGui::EndCombo();
+      }
+    }
 
     // Screen-too-small warning: rendered only when the requested aspect could
     // not be honored AND the user is still on a non-Free preset (the
@@ -2110,39 +2146,12 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       ImGui::PopStyleColor();
     }
 
-    ImGui::SeparatorText("Background");
-    if (ImGui::Button("Load Bg##display")) {
-      DoLoadBackground(window);
-    }
-    ImGui::SameLine();
-    bool no_bg = !g_preview.HasBackground();
+    // The disabled state the rest of the section shares — Alpha, the three transform sliders and
+    // the pan/zoom hint below.
     ImGui::BeginDisabled(no_bg);
-    if (ImGui::Button("Clear##display_bg")) {
-      DoClearBackground();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    // The outer scope this opens runs to the EndDisabled after the pan/zoom hint below, covering
-    // Show, Alpha and the three transform sliders.
-    ImGui::BeginDisabled(no_bg);
-    // Show's own gate, nested inside it and read through ConstraintFor rather than from the local
-    // `no_bg`, so this control and the defaults panel's row for the same field answer with ONE
-    // predicate. They used to be two — `no_bg` here, WhenBackgroundLoaded there — which agreed for
-    // as long as "is an image loaded" was the only reason to disable, and stopped agreeing the
-    // moment Print became a second one. A doubly-pushed disabled state is idempotent, so the nesting
-    // costs nothing; what it buys is the tooltip, which the outer scope cannot carry because it
-    // spans five controls with five different reasons.
-    const FieldEditorConstraint bg_show_c = ConstraintFor("bg_show", g_state);
-    ImGui::BeginDisabled(!bg_show_c.enabled);
-    Checkbox("Show##display_bg", &g_state.bg_show);
-    ImGui::EndDisabled();
-    if (bg_show_c.disabled_reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("%s", bg_show_c.disabled_reason);
-    }
     // bg_alpha's own gate (WhenBackgroundShown) already covers BOTH "no image loaded" and "image
-    // hidden", so it subsumes the outer BeginDisabled(no_bg) this sits inside. The outer one stays
-    // because it also wraps the Show checkbox, which is not this field's control; a doubly-pushed
-    // disabled state is idempotent.
+    // hidden", so it subsumes the reopened disabled scope this sits inside; the scope itself is
+    // what keeps the pan/zoom hint honest when none is loaded.
     const FieldEditorConstraint bg_alpha_c = ConstraintFor("bg_alpha", g_state);
     ImGui::BeginDisabled(!bg_alpha_c.enabled);
     SliderWithInput("Alpha##display", &g_state.bg_alpha, static_cast<float>(bg_alpha_c.min_value),

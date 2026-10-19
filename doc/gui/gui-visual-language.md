@@ -158,11 +158,18 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 
 | 候选 | Normal RGB | 色相 | 与最近邻的色相差 | 与最近邻的 RGB 距离 | 裁定 |
 |---|---|---|---|---|---|
-| **A 紫罗兰** | (0.38, 0.24, 0.58) | 265° | 47°（默认蓝） | 0.41（默认蓝） | ✅ 采用 |
+| **A′ 紫罗兰·降明度** | (0.34, 0.22, 0.52) | 264° | 47°（默认蓝） | 0.333（默认蓝） | ✅ 现行（2026-10-19 重调） |
+| A 紫罗兰 | (0.38, 0.24, 0.58) | 265° | 47°（默认蓝） | 0.41（默认蓝） | 2026-09-26 采用；2026-10-19 降明度重调（峰值 0.58 是执行组最亮一颗，Run 绿峰值 0.45） |
 | B 青 | (0.10, 0.42, 0.46) | 187° | 25°（accent） | 0.31（默认蓝） | ❌ 与蓝色按钮族同族，读作「又一个普通按钮」 |
 | C 梅红 | (0.52, 0.20, 0.42) | 319° | 41°（Stop 红） | **0.27**（Stop 红） | ❌ 低于 0.3 下限，且与 Stop 同栏同槽相邻 |
 
-禁用态不另设颜色：`BeginDisabled` 的 `DisabledAlpha` 对它与其它按钮一视同仁地压暗（实拍像素 (97,61,148) → (65,43,97)）。
+2026-10-19 重调（同色相降明度，用户反馈打的是明度不是身份）：深化方向上四邻中唯一收紧的是默认按钮蓝——
+Run 绿 / Stop 红 / accent 在 265° 的深化方向上都在变远。色相 265° + 0.3 距离下限联合给出可行带：**峰值通道
+0.58 → 0.50~0.52，不可能压到 Run 绿以下**（峰值 ≤0.48 时与蓝的距离必破 0.3；若要更暗，那是 0.3 规则本身的
+事，不是选色的事）。A′ 取带内余量最大的一档；实测四邻距离 0.333（蓝）/ 0.475（Run）/ 0.469（Stop）/ 0.566（accent）。
+
+禁用态不另设颜色：`BeginDisabled` 的 `DisabledAlpha` 对它与其它按钮一视同仁地压暗（实拍像素 (87,56,133) → (59,40,88)，
+2026-10-19 重调后实测）。
 「与同栏四色的 RGB 距离 ≥ 0.3」由 `gui_unit_test` 的 `ContinueButtonColour.IsFarFromEveryButtonColourItSharesTheBarWith`
 机械钉住（0.3 复用 `theme.cpp` 对照色盘的既有下限，非新阈值）。它与 Run 的绿一样是写死的具名常量、不随色盘走——
 值是**相对**那几个同样写死的语义色选出来的，只让它随色盘漂移反而会破坏这组相对关系；换肤时应与 Run/Stop 一并重新决定。
@@ -189,10 +196,10 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 ## 7. 已知遗留
 
 - ~~**正文字体未定案**~~ —— **已定案并落地**：Roboto Medium 15px。分发按当时判断比照 FontAwesome，走构建期嵌入（`scripts/embed_binary.py` 生成 `roboto_medium_embed.cpp`，声明头 `src/gui/roboto_medium_embed.h`），运行期不读文件；字体与 style 的初始化收敛到单一 owner `src/gui/theme.{hpp,cpp}`（此前 `src/gui/main.cpp` 与 `test/gui/test_gui_main.cpp` 各写一遍，截图与真 app 只是碰巧一致——见 §1）。
-- ~~**颜色存在第二个 owner**~~ —— **已收口**：good / warning / destructive 三档语义色现由 `src/gui/semantic_colors.hpp` 单一定义，21 处调用点（绿色 Run 按钮、锈色 Resolution 输入框、Stop 按钮、日志级别色、filter 编辑器的三态校验底色等）改为引用具名函数。每档提供两种消费形态——`*TextColor()` 亮色用于文本/图标/边框，`*FillColor(alpha)` 哑光用于 FrameBg/CellBg 背景染色，alpha 由调用点给（各调用点的强调程度本就有意不同）。按钮三态只在存在消费者的档位提供：good 在同一头文件，destructive 仍是 `src/gui/destructive_style.hpp` 的 `PushDestructiveStyle`/`PopDestructiveStyle`（12 处配对调用的既有实现，一档一形态只留一个 owner），warning 无按钮消费者故不预先实现。
+- ~~**颜色存在第二个 owner**~~ —— **已收口**：good / warning / destructive 三档语义色现由 `src/gui/semantic_colors.hpp` 单一定义，21 处调用点（绿色 Run 按钮、Stop 按钮、日志级别色、filter 编辑器的三态校验底色等）改为引用具名函数。每档提供两种消费形态——`*TextColor()` 亮色用于文本/图标/边框，`*FillColor(alpha)` 哑光用于 FrameBg/CellBg 背景染色，alpha 由调用点给（各调用点的强调程度本就有意不同）。按钮三态只在存在消费者的档位提供：good 在同一头文件，destructive 仍是 `src/gui/destructive_style.hpp` 的 `PushDestructiveStyle`/`PopDestructiveStyle`（12 处配对调用的既有实现，一档一形态只留一个 owner），warning 无按钮消费者故不预先实现。（2026-10-19 起一枚调用点退出：Resolution 输入框的 FrameBg 染色已删——见下条「档位语义」的存量消费者列举；此处保留收编当时的历史计数。）
   - 每个 canonical 取值都锚定收编前**已存在**的字面量（复用次数最多的那个），不是新拍的折中色——于是 5 处近重复琥珀、3 处近重复红折叠后只有几个百分点的通道位移，而参考图覆盖到的场景**逐像素不变**。
   - 三类颜色**不**在此收编，判据是"颜色是否表达产品对内容的判断"：**强调色**（hover/active/选中高亮）表达交互状态，与语义色取值必须分开，否则"正在被操作"会读成"有风险"；**数据色**（用户在 Overlay 面板配的线色、由组号派生的 sync-group 色板）由用户或索引决定；**画布内容色**（画在预览图 / 3D 渲染之上的标注、以及渲染自身的底色）不携带判断。
-  - 状态栏的 `Simulating...` / `Stopping...` / `Done` 也不并入：它们是进度/信息指示。把"任何非稳态"塞进 warning 会把该档从"内容需要你处理"稀释掉，反而淹没 Resolution 这种真正会触发重跑的提示。它们的归宿是下面那条"中性刻度"。
+  - 状态栏的 `Simulating...` / `Stopping...` / `Done` 也不并入：它们是进度/信息指示。把"任何非稳态"塞进 warning 会把该档从"内容需要你处理"稀释掉，反而淹没 Modified 状态徽标、filter 校验这类真正需要处理的内容提示。它们的归宿是下面那条"中性刻度"。（Resolution 输入框曾是该档的 FrameBg 消费者，2026-10-19 起退出——「改了什么需重跑」已由 Modified 徽标 + 控件 tooltip 系统覆盖，单控件染色成了全 GUI 唯一的例外；warning 档的存量消费者以 Modified 状态、filter 校验、日志级别色为典型。）
 - **调用点颜色是否跟着色盘走：判据与豁免清单** —— 上一条解决的是"同一语义的颜色有几个 owner"；这一条解决的是另一个正交问题：一个调用点自己挑的颜色，**换一套色盘时跟不跟着变**。跟不着变的即为泄漏，必须改为读色槽（`ImGui::GetStyleColorVec4` / `ImGui::GetColorU32`）或读 `lumice::gui::AccentColor()`。
 
   判据本身可机械检验，不必靠人工点检：`src/gui/theme_test_hooks.hpp` 暴露一个 test-only 的对照色盘（`ApplyContrastPaletteForTest`，取值与生产色盘每个字段的欧氏距离 ≥ 0.54），`gui_test --theme-palette contrast` 用它重跑 `theme_scan` 类别的场景，`scripts/scan_theme_leaks.py` 逐像素比较两套色盘下的同一批截图并高亮**两次色值相同**的像素。它产出的是**候选**不是判决——豁免类颜色本来就应当不变——但"哪些像素没跟着色盘动"这个问题从此有机械答案。
