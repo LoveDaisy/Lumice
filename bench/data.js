@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792375121861,
+  "lastUpdate": 1792375124381,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9596,50 +9596,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "c49ef3f32f9385ae0700b887e5f73faaedd7bea4",
-          "message": "Merge pull request #401 from LoveDaisy/feat/gui-desktop-conventions\n\nrefactor(gui): the edit modal's two shapes — Compact and Expanded",
-          "timestamp": "2026-09-22T22:24:18+08:00",
-          "tree_id": "f1e06a712c5d8c584284204571457aa629c4d097",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/c49ef3f32f9385ae0700b887e5f73faaedd7bea4"
-        },
-        "date": 1790088029954,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 92.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "c3d3aa1d21c41277d8cf6bc76016d7067cc2448b",
           "message": "Merge pull request #402 from LoveDaisy/feat/summary-reference-version-independence\n\ntest(gui): pin the Summary page's version under gui_test so a release stops reddening its references",
           "timestamp": "2026-09-23T00:07:08+08:00",
@@ -13969,6 +13925,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a0bce739786ae19df76253a07e518ea470b5f422",
+          "message": "Merge pull request #514 from LoveDaisy/chore/ci-build-budget-per-miss\n\nci: per-miss build budget — adaptive limit + absolute backstop (registry v3)",
+          "timestamp": "2026-10-19T09:55:27+08:00",
+          "tree_id": "44c0290ab73f18304b5552f748f3c0a49390d2dd",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a0bce739786ae19df76253a07e518ea470b5f422"
+        },
+        "date": 1792375123690,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 93.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.5,
             "unit": "%"
           }
         ]
