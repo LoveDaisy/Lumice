@@ -74,16 +74,21 @@ testing-architecture.md §4.9.
 
 ## Test-duration registry (runtime gate)
 
-`test/duration_registry.json` v2 gates two quantities: per-test time (over
-60 s in a wired job ⇒ registered `id` / `job` / `ci_seconds` + a real reason;
-over 2× the registered time, a stale id, malformed data or a `TODO` is red)
-and phase budgets (missing/unknown/duplicate phase reports and over-limit
-serial sums are red). The input does not exist at pre-commit time, so this
-gate is not part of `check_policies.py`, and there is no per-test/env/inline
-exemption. A new test job is not covered until it wires reports, checker and
-artifacts — nothing audits that automatically. Registry rules and the 60 s / 2×
-calibration: testing-architecture.md §7.7. The sole exception — the
-maintainer-authorized, one-run cold-build protocol for phase budgets
+`test/duration_registry.json` v3 gates two kinds of quantity. `entries` keeps
+the per-test rule: over 60 s in a wired job ⇒ registered `id` / `job` /
+`ci_seconds` + a real reason; over 2× the registered time, a stale id, malformed
+data or a `TODO` is red. `phase_budgets` limits measured wall-clock phases and
+serial aggregates: missing/unknown/duplicate phase reports and over-limit sums
+are red. A single-phase budget may carry a `per_miss` block — the build phase
+judges `seconds ≤ overhead_seconds + max_seconds_per_miss × misses` as the
+authoritative ruler (the miss count is the one factor the change controls),
+with the absolute `max_seconds` kept as the disaster backstop; aggregates never
+carry `per_miss`. The input does not exist at pre-commit time, so this gate is
+not part of `check_policies.py`, and there is no per-test/env/inline exemption.
+A new test job is not covered until it wires reports, checker and artifacts —
+nothing audits that automatically. Registry rules, the 60 s / 2× calibration
+and the per-miss constants: testing-architecture.md §7.7. The sole exception —
+the maintainer-authorized, one-run cold-build protocol for phase budgets
 containing `build` — never excuses test runtime or correctness, and a PR
 whole-run/job rerun cannot consume it again; its single authority is
 testing-architecture.md §7.8.

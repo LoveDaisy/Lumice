@@ -187,15 +187,14 @@ fails the check.
   that keeps driving the same test context in a repeatedly-executing scope of `test/`. Full rule
   statements: the scripts' docstrings and testing-architecture.md §4.9.
 - **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** `test/duration_registry.json`
-  v2 is the single authority for two quantities: per-test time (over 60 s in a wired job ⇒ registered
-  `id`, `job`, `ci_seconds` and a real reason; >2×, a stale id, malformed data or `TODO` is red) and
-  phase budgets (missing/unknown/duplicate phase reports and an over-limit sum are red). The runtime
+  is the single authority for two kinds of quantity — per-test time and phase budgets — and its v3
+  shape adds the build phase's adaptive per-miss ruler beside the absolute backstop. The runtime
   input does not exist at pre-commit time, so the gate is not part of `check_policies.py`; there is no
   per-test/env/inline exemption. The sole exception is the maintainer-authorized, one-run cold-build
   protocol for phase budgets containing `build`; it never excuses test runtime or correctness,
   and a PR whole-run/job
-  rerun cannot consume it again. Full rules, the 60 s / 2× calibration and phase boundaries:
-  `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
+  rerun cannot consume it again. Operating rules: `test/AGENTS.md`; full rules, the 60 s / 2×
+  calibration and the per-miss constants: `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
   single authority is §7.8.
 - E2E split essentials: `./scripts/test.sh <quick|full|pr>` is the recommended entry point for a
   local run (one call, a single per-layer summary ending in one `RESULT:` line). Bare `pytest
@@ -224,7 +223,6 @@ fails the check.
   giving it one of those places first.
 
 - **Judgment discipline**: a command's exit code is the only thing that says pass/fail, and two common habits obscure it in different ways. A pipe (`cmd | tail`) leaves `$?` reporting `tail`'s exit code, not `cmd`'s, unless the shell has `set -o pipefail` — so a failing command piped through one still reads as success. A redirect (`cmd > log 2>&1`) does not touch `$?` at all, but it does move the PASS/FAIL text out of sight, so a finished run still needs a second call (`grep`/`cat` on the log) just to learn the outcome it already produced. Read `$?` straight off the foregrounded command, or use `./scripts/test.sh`, which already does this for every layer.
-- Windows physical-desktop validation uses `scripts/win_remote_test.sh` together with `scripts/win_test_watcher.ps1`.
 - Performance diagnostics and workflows are documented in `doc/testing/performance-testing.md`.
 
 ## Logging and Troubleshooting
@@ -386,10 +384,13 @@ and is made in a linked worktree, not the main one — lives under "Collaboratio
   own declared budget. A coverage assertion over an enumerated surface must say why each member is
   worth covering; where a per-member value measure exists or is cheap (escape-defect density,
   call-site count, blast radius, user reachability), an equal-weight partition needs a stated reason —
-  "it is the whole set" is not one. Measured instance (PR #261 has the full
-  narrative): a test-suite rebuild pre-committed to −30% de-commented test lines landed at
-  −8.7%, and the coverage backfill demanded by "zero omissions" accounted for roughly a third
-  of the miss — while escape-defect density over the same files, measured before the partition was
-  drawn, spanned 8×; the equal-weight split discarded that measurement. **Not** a mandate to cut —
+  "it is the whole set" is not one. Measured instance (PR #261; the four
+  supporting measurements are inlined here because the PR description does not carry them):
+  a test-suite rebuild pre-committed to −30% de-commented test lines against a 21,336-line
+  baseline pinned by two independent counters (52/52 files, zero diff) landed at −8.7%,
+  and the coverage backfill demanded by "zero omissions" accounted for 1,000–1,500 lines,
+  roughly a third of the miss — while escape-defect density over the same files, measured
+  before the partition was drawn, spanned 8× (47.2 vs 6.2 defects per kloc); the equal-weight
+  split discarded that measurement. **Not** a mandate to cut —
   whether a leaner suite would have let more defects escape is untestable; what is required is the
   justification, not the reduction.
