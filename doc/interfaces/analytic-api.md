@@ -1691,6 +1691,12 @@ red → fix the C++.
 `manifest.json`, and a `SOURCE` file naming the full LI commit, the export command, the date, the
 `--verify` result and whether a second export was byte-identical. The format, fields, recipes and
 tolerance basis are LI `docs/analytic-parity-fixtures.md`; this section does not restate them.
+The directory is Git LFS-tracked (`.gitattributes`: `test/fixtures/li-parity/** filter=lfs … -text`)
+as a data-asset attribution decision, not a size one — LFS stores these JSON files about as
+compactly as git does; what the move buys is that diff and line-count metrics over `test/` measure
+code, not data. Files appear at unchanged paths with unchanged bytes (`-text` also keeps Windows
+from normalizing line endings), so no reader contains LFS-specific code; where a checkout does not
+smudge (the `build` job's matrix legs), the `Fetch LFS li-parity fixtures` step materializes them.
 `test/unit-correctness/analytic/test_li_parity.cpp` replays every fixture, one gtest case each
 (`LiParityEvaluatePath` / `LiParityTraceFiber` / `LiParitySeedSearch` / `LiParityBandSum`, plus
 `LiParitySkipped` for content not compared yet, below), inside
@@ -1807,7 +1813,8 @@ component: it is a negative case, and a search that invents a component there is
    itself something to report to LI.
 2. Replace the whole of `test/fixtures/li-parity/` with the output and rewrite `SOURCE` for the new
    rev. Unchanged fixtures are byte-identical (sorted keys, shortest round-trip floats), so the diff
-   shows only what LI changed.
+   shows only what LI changed. The directory is LFS-tracked, so `git add` runs the clean filter and
+   records pointers — no manual LFS step, and pointer files are never hand-edited.
 3. Run the cases. A red is then read with three questions:
    - Did LI change? Compare the red fixture with its previous version in git. A changed `expected`
      or `tolerance` at a new `li_rev` means LI moved, and the C++ follows.
