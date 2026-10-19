@@ -106,8 +106,14 @@ TEST(SurveyProbe, SmallSampleRealAssemblyEdgeBinContainsTheClosedForm) {
   EXPECT_LE(probe.edge_delta_deg - half_bin, closed_form_deg + 1e-9);
   // The profile rows carry positive effective counts where events landed.
   EXPECT_GT(probe.samples[static_cast<size_t>(probe.edge_bin)].k_eff, 0.0);
-  // The spec echo is the caliber.
-  EXPECT_DOUBLE_EQ(probe.spec.delta_min_deg, kProbeDeltaMinDeg);
+  // The spec echo is the caliber. The window is the whole delta axis (the C06/C09 supports sit
+  // outside the original [15, 60] slice; one ruler for every class), so the row count follows:
+  // 1800 bins at 0.1 degrees, the per-bin lattice size unchanged.
+  EXPECT_DOUBLE_EQ(probe.spec.delta_min_deg, 0.0);
+  EXPECT_DOUBLE_EQ(probe.spec.delta_max_deg, 180.0);
+  EXPECT_EQ(probe.samples.size(), 1800u);
+  EXPECT_DOUBLE_EQ(probe.samples.front().delta_deg, 0.05);
+  EXPECT_DOUBLE_EQ(probe.samples.back().delta_deg, 179.95);
   EXPECT_DOUBLE_EQ(probe.spec.bin_deg, kProbeBinDeg);
   EXPECT_DOUBLE_EQ(probe.spec.wedge_half_width_deg, kProbeWedgeHalfWidthDeg);
   EXPECT_EQ(probe.spec.sample_count, static_cast<long long>(input.sample_count));

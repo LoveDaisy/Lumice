@@ -283,6 +283,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/survey/survey_t1.hpp
   raypath/detail/survey/survey_tint.cpp
   raypath/detail/survey/survey_tint.hpp
+  raypath/detail/survey/survey_witness.cpp
+  raypath/detail/survey/survey_witness.hpp
   raypath/detail/measure/declared_density.cpp
   raypath/detail/measure/declared_density.hpp
   raypath/detail/measure/fiber_quadrature.cpp

@@ -7,7 +7,6 @@
 // assembly fills and the serializer reads; it carries no pointers, so a shell and a test can
 // both build one.
 
-#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -192,6 +191,31 @@ struct SurveyObject {
   std::optional<SupportSetPayload> support_set;
   std::optional<CausticEdgePayload> caustic_edge;
   std::optional<BrightDomainPayload> bright_domain;
+
+  // --- the witness payload (the refused-support arm's positive leg) ----------------------
+  // A partition refusal says the support is unknown, not that the class carries no light; this
+  // payload hangs the positive witness on the SAME refused support card — the card's own
+  // evidence stays refused, and the witness sub-block carries its own finite+coverage (the two
+  // states coexist; neither overrides the other). The witness is the max-weight event of the
+  // declared-source lattice (the antipodal Fibonacci lattice over SO(3), the declared Haar
+  // measure's own sampler) re-evaluated by the diagnostic batch at its pose: an existence
+  // statement, never a distribution statistic. Absent from a card no leg produced.
+  struct WitnessPayload {
+    EvidenceState state = EvidenceState::kRefused;
+    std::string mode;         // refused
+    SurveyCoverage coverage;  // finite
+    long long kept_count = 0;
+    long long sample_count = 0;
+    std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (discovery.hpp)
+    bool deterministic = true;                    // no RNG anywhere in the sample
+    double deviation_deg = 0.0;                   // the event's own deviation (the discovery's D)
+    double weight = 0.0;                          // the event's w = A*T (the lattice's unit)
+    double entry = 0.0;                           // the batch row's entry measure (its own read of A)
+    double interface_product = 0.0;               // the batch row's interface product
+    std::string source_note;                      // the declared source, spelled inside the document
+  };
+
+  std::optional<WitnessPayload> witness;
 };
 
 // The T0 leg's per-member record: the routing fact the certificate (or its absence) states for
@@ -283,19 +307,38 @@ inline std::string ChromaticPairProseRedFirst() {
          std::to_string(static_cast<long long>(kChromaticBlueNm));
 }
 
-// The chromatic layer's positional-dispersion leg: the min-deviation edge followed across the
+// One onset row of the positional-dispersion table, followed across the fixed index pair: the
+// kernel's (source, profile) slugs passed through, the pair's values in label order, the
+// max-min displacement and the row's own stacking verdict (the same direction vocabulary as
+// the min-deviation row's). A class without a min-deviation fold (a corner-bounded support) has
+// its mounted-point rows here and nowhere else — the row sequence is the leg's data, not a
+// derived view of the min-row fields.
+struct SurveyFollowedOnset {
+  std::string source;              // OnsetSourceName slug (e.g. "interior_maximum" / "corner")
+  std::string profile;             // OnsetProfileName slug (e.g. "finite_jump" / "boundary_onset")
+  std::vector<double> values_deg;  // parallel to the labels (red first)
+  double displacement_deg = 0.0;   // max - min across the pair, label-order independent
+  std::string direction;           // "red_inner_blue_outer" ⇔ values_deg[0] < values_deg[1]
+};
+
+// The chromatic layer's positional-dispersion leg: the critical onsets followed across the
 // fixed index pair (labels as the kernel table carries them, indices as the engine's table
-// echoes them). `direction` is the stacking verdict; `red_inner_blue_outer` ⇔ value_red <
-// value_blue (red edge closer to the sun).
+// echoes them). `has_min_deviation_row` says the min-deviation row exists — the scalar
+// min-row fields below it are that row's and serialize only when it does (keys exist exactly
+// when the readings they describe do, the probe's own discipline); `followed_onsets` is every
+// row the table carried, in table order. `direction` is the min row's stacking verdict;
+// `red_inner_blue_outer` ⇔ value_red < value_blue (red edge closer to the sun).
 struct SurveyPositionalDispersion {
   std::string red_label = kChromaticRedLabel;
   std::string blue_label = kChromaticBlueLabel;
   double n_red = 0.0;
   double n_blue = 0.0;
+  bool has_min_deviation_row = false;
   double value_red_deg = 0.0;
   double value_blue_deg = 0.0;
   double displacement_deg = 0.0;
   std::string direction = "red_inner_blue_outer";
+  std::vector<SurveyFollowedOnset> followed_onsets;
   SurveyEvidence evidence;
 };
 
@@ -334,25 +377,24 @@ struct SurveyDiagnoseBlock {
 // lambda-pair transmission-weight caliber, which is a different quantity from a disk-integrated
 // D65 B/R and must not be compared against one.
 //
-// The direction vocabulary is the sign of the ratio itself (the issue's caliber: blue-tinted is
-// B/R > 1). No neutral band lives in the model — a band is an acceptance notion, and each
-// consumer pins its own separation threshold (the C15 bench requires ratio > 1.2 to separate
-// from the corpus's no-internal-reflection counterfactual at ~0.97; the C14 bench pins a
-// |ratio - 1| < 0.05 band with the same first-run provenance discipline). `kNeutral` is the
-// degenerate exact-1.0 point.
+// The direction vocabulary is the sign of the ratio itself: blue-tinted is B/R > 1, red-tinted
+// is B/R < 1. No neutral band lives in the model — a band is an acceptance notion, and each
+// consumer pins its own separation threshold with first-run provenance (the thresholds are the
+// consumers', not the schema's; the caliber rule is documented in doc/raypath/raypath-cli-output.md
+// section 9.6). `kNeutral` is the degenerate exact-1.0 point.
 enum class SurveyTintDirection { kBlueTinted, kRedTinted, kNeutral };
 
-inline constexpr std::array<std::pair<std::string_view, SurveyTintDirection>, 3> kSurveyTintDirectionNames{ {
-    { "blue_tinted", SurveyTintDirection::kBlueTinted },
-    { "red_tinted", SurveyTintDirection::kRedTinted },
-    { "neutral", SurveyTintDirection::kNeutral },
-} };
-
+// The same full-coverage-switch form as PointMassMethodName below: a new vocabulary value fails
+// -Wswitch at the switch itself; the trailing return only satisfies control-reaches-end for
+// today's fully-covered enum.
 inline const char* SurveyTintDirectionName(SurveyTintDirection direction) {
-  for (const auto& entry : kSurveyTintDirectionNames) {
-    if (entry.second == direction) {
-      return entry.first.data();
-    }
+  switch (direction) {
+    case SurveyTintDirection::kBlueTinted:
+      return "blue_tinted";
+    case SurveyTintDirection::kRedTinted:
+      return "red_tinted";
+    case SurveyTintDirection::kNeutral:
+      return "neutral";
   }
   return "neutral";
 }
@@ -361,7 +403,8 @@ inline const char* SurveyTintDirectionName(SurveyTintDirection direction) {
 // the survey-side single authority over the slug, so a kernel-side spelling change is one edit.
 // The switch carries no default: a new kernel PointMassMethod value fails -Wswitch at the
 // switch itself; the trailing return only satisfies control-reaches-end for today's
-// fully-covered enum.
+// fully-covered enum. The class power-sum path is survey-side, not a kernel method: its slug
+// is the constant below, and the two families never share a field shape (see SurveyWeightTint).
 inline const char* PointMassMethodName(analytic::PointMassMethod method) {
   switch (method) {
     case analytic::PointMassMethod::kPsiAverage:
@@ -372,21 +415,36 @@ inline const char* PointMassMethodName(analytic::PointMassMethod method) {
   return "lattice_mean";
 }
 
-// One weight-tint evaluation. `m_*` are the per-lambda masses and their last-doubling quadrature
-// changes (provenance, never asserted against); `ratio` is m_blue / m_red. The tint runs on the
-// class representative, with `member_count` declaring the class size it stands for (the probe's
-// relabeled-equivalence discipline).
+constexpr const char* kClassTintMethodLatticePowerSum = "lattice_power_sum";
+
+// One weight-tint evaluation. The two shapes this struct carries share the ratio/question but
+// not the reading, and the field sets never merge:
+// - the point-mass shape (the identity arm; `class_power_shape` false): `m_*` are the
+//   per-lambda masses and their last-doubling quadrature changes (provenance, never asserted
+//   against); `method` names the kernel's PointMassMethod. `ratio` is m_blue / m_red.
+// - the class power-sum shape (the T1 arm; `class_power_shape` true): `energy_*` are the
+//   per-sample average powers of the declared lattice's kept events (sum of w = A*T over the
+//   lattice, divided by the lattice size); `method` is kClassTintMethodLatticePowerSum; the
+//   `m_*` family stays zero and does not serialize (a mass is not this shape's quantity).
+// Either way the tint runs on the class representative, with `member_count` declaring the
+// class size it stands for (the probe's relabeled-equivalence discipline), and `ratio` is the
+// blue reading over the red one.
 struct SurveyWeightTint {
   std::string red_label = kChromaticRedLabel;
   std::string blue_label = kChromaticBlueLabel;
+  bool class_power_shape = false;  // the reading's shape: point-mass masses vs lattice power sum
   double n_red = 0.0;
   double n_blue = 0.0;
   double m_red = 0.0;
   double m_blue = 0.0;
   double m_red_error = 0.0;
   double m_blue_error = 0.0;
-  std::string method;  // PointMassMethodName: the mass's own computation path
+  double energy_red = 0.0;   // class shape: the per-sample average power at the red index
+  double energy_blue = 0.0;  // class shape: the per-sample average power at the blue index
+  std::string method;        // PointMassMethodName or kClassTintMethodLatticePowerSum: the reading's own path
   long long sample_count = 0;
+  std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (band_sum.hpp)
+  bool deterministic = true;                    // no RNG anywhere in the sample
   std::vector<int> representative;
   int member_count = 0;
   double ratio = 0.0;

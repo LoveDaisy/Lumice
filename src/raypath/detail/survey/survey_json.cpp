@@ -115,6 +115,29 @@ Json ObjectJson(const SurveyObject& object) {
     }
     card["bright_domain"] = std::move(domain);
   }
+  if (object.witness.has_value()) {
+    const SurveyObject::WitnessPayload& witness = *object.witness;
+    Json block = { { "state", EvidenceStateName(witness.state) } };
+    if (witness.state == EvidenceState::kRefused) {
+      // The fail-closed shape: exactly the state and its mode, byte-compatible with the tint
+      // leg's refused shape — no defaulted number reaches the document.
+      block["mode"] = witness.mode;
+    } else {
+      block["coverage"] = { { "members_evaluated", witness.coverage.members_evaluated },
+                            { "geometry_basis", witness.coverage.geometry_basis },
+                            { "wavelength_nm", Num(witness.coverage.wavelength_nm) } };
+      block["kept_count"] = witness.kept_count;
+      block["sample_count"] = witness.sample_count;
+      block["lattice"] = witness.lattice;
+      block["deterministic"] = witness.deterministic;
+      block["deviation_deg"] = Num(witness.deviation_deg);
+      block["weight"] = Num(witness.weight);
+      block["entry"] = Num(witness.entry);
+      block["interface_product"] = Num(witness.interface_product);
+      block["source_note"] = witness.source_note;
+    }
+    card["witness"] = std::move(block);
+  }
   return card;
 }
 
@@ -261,17 +284,36 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
   doc["chromatic"] = EvidenceJson(document.chromatic);
   if (document.positional_dispersion.has_value()) {
     const SurveyPositionalDispersion& dispersion = *document.positional_dispersion;
-    doc["chromatic"]["positional_dispersion"] = {
-      { "red_label", dispersion.red_label },
-      { "blue_label", dispersion.blue_label },
-      { "n_red", Num(dispersion.n_red) },
-      { "n_blue", Num(dispersion.n_blue) },
-      { "value_red_deg", Num(dispersion.value_red_deg) },
-      { "value_blue_deg", Num(dispersion.value_blue_deg) },
-      { "displacement_deg", Num(dispersion.displacement_deg) },
-      { "direction", dispersion.direction },
-      { "evidence", EvidenceJson(dispersion.evidence) },
-    };
+    // The min-row scalars exist exactly when the min-deviation row does (the probe reading's
+    // own discipline); the followed rows are the leg's data on every class. Both key groups
+    // are appends to the pre-existing shape.
+    Json dispersion_json = { { "red_label", dispersion.red_label },
+                             { "blue_label", dispersion.blue_label },
+                             { "n_red", Num(dispersion.n_red) },
+                             { "n_blue", Num(dispersion.n_blue) } };
+    if (dispersion.has_min_deviation_row) {
+      dispersion_json["value_red_deg"] = Num(dispersion.value_red_deg);
+      dispersion_json["value_blue_deg"] = Num(dispersion.value_blue_deg);
+      dispersion_json["displacement_deg"] = Num(dispersion.displacement_deg);
+      dispersion_json["direction"] = dispersion.direction;
+    }
+    dispersion_json["evidence"] = EvidenceJson(dispersion.evidence);
+    if (!dispersion.followed_onsets.empty()) {
+      Json rows = Json::array();
+      for (const SurveyFollowedOnset& row : dispersion.followed_onsets) {
+        Json values = Json::array();
+        for (double value : row.values_deg) {
+          values.push_back(Num(value));
+        }
+        rows.push_back({ { "source", row.source },
+                         { "profile", row.profile },
+                         { "values_deg", std::move(values) },
+                         { "displacement_deg", Num(row.displacement_deg) },
+                         { "direction", row.direction } });
+      }
+      dispersion_json["followed_onsets"] = std::move(rows);
+    }
+    doc["chromatic"]["positional_dispersion"] = std::move(dispersion_json);
   }
   if (document.diagnose.has_value()) {
     doc["chromatic"]["diagnose"] = DiagnoseJson(*document.diagnose);
@@ -283,24 +325,33 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
       // byte-compatible with the leg's pre-wiring marker.
       doc["chromatic"]["weight_tint"] = EvidenceJson(tint.evidence);
     } else {
+      // The reading's own field family: point-mass masses vs class power sums — one shape per
+      // document, never both (the caliber string names the reading either way).
       Json tint_json = { { "red_label", tint.red_label },
                          { "blue_label", tint.blue_label },
                          { "n_red", Num(tint.n_red) },
-                         { "n_blue", Num(tint.n_blue) },
-                         { "m_red", Num(tint.m_red) },
-                         { "m_blue", Num(tint.m_blue) },
-                         { "m_red_error", Num(tint.m_red_error) },
-                         { "m_blue_error", Num(tint.m_blue_error) },
-                         { "method", tint.method },
-                         { "sample_count", tint.sample_count },
-                         { "representative", LayersJson({ tint.representative })[0] },
-                         { "member_count", tint.member_count },
-                         { "ratio", Num(tint.ratio) },
-                         { "direction", SurveyTintDirectionName(tint.direction) },
-                         { "kept_count_red", tint.kept_count_red },
-                         { "kept_count_blue", tint.kept_count_blue },
-                         { "caliber", tint.caliber },
-                         { "evidence", EvidenceJson(tint.evidence) } };
+                         { "n_blue", Num(tint.n_blue) } };
+      if (tint.class_power_shape) {
+        tint_json["energy_red"] = Num(tint.energy_red);
+        tint_json["energy_blue"] = Num(tint.energy_blue);
+      } else {
+        tint_json["m_red"] = Num(tint.m_red);
+        tint_json["m_blue"] = Num(tint.m_blue);
+        tint_json["m_red_error"] = Num(tint.m_red_error);
+        tint_json["m_blue_error"] = Num(tint.m_blue_error);
+      }
+      tint_json["method"] = tint.method;
+      tint_json["sample_count"] = tint.sample_count;
+      tint_json["lattice"] = tint.lattice;
+      tint_json["deterministic"] = tint.deterministic;
+      tint_json["representative"] = LayersJson({ tint.representative })[0];
+      tint_json["member_count"] = tint.member_count;
+      tint_json["ratio"] = Num(tint.ratio);
+      tint_json["direction"] = SurveyTintDirectionName(tint.direction);
+      tint_json["kept_count_red"] = tint.kept_count_red;
+      tint_json["kept_count_blue"] = tint.kept_count_blue;
+      tint_json["caliber"] = tint.caliber;
+      tint_json["evidence"] = EvidenceJson(tint.evidence);
       doc["chromatic"]["weight_tint"] = std::move(tint_json);
     }
   }
