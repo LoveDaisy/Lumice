@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792432773053,
+  "lastUpdate": 1792432778754,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "df90ad63b51304ed6867f9285e263e304d346c39",
-          "message": "Merge pull request #408 from LoveDaisy/fix/analysis-manual-stop-flake\n\nfix(test): wait for a cone-sized sample before the manual-stop analysis assertion",
-          "timestamp": "2026-09-25T15:19:07+08:00",
-          "tree_id": "72655d66e9061682075555c399d83140dc3216f5",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/df90ad63b51304ed6867f9285e263e304d346c39"
-        },
-        "date": 1790321719093,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 921574,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1017841.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 714671.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 568688.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "5c29ec370e9e6fcae68806e5d82c40e8df5359a2",
           "message": "Merge pull request #409 from LoveDaisy/fix/continue-render-plane-total-flake\n\nfix(test): calibrate ContinueRender's plane-total band to per-batch wavelength noise",
           "timestamp": "2026-09-25T15:58:37+08:00",
@@ -9582,6 +9534,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 580703.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6a0a317eb4b27627a837076e4d21dc1dc17e3ab0",
+          "message": "Merge pull request #521 from LoveDaisy/feat/axis-chip-pose-and-reset-row\n\nfeat(gui): chip switch re-seats preview pose; Reset All row (task-712)",
+          "timestamp": "2026-10-20T01:55:48+08:00",
+          "tree_id": "2b54e7d0492fe7227f1448ac86528fb92d531110",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6a0a317eb4b27627a837076e4d21dc1dc17e3ab0"
+        },
+        "date": 1792432778069,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 813288.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1010571.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 799045,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 589760.1,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
