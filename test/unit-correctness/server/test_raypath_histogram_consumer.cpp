@@ -695,13 +695,26 @@ TEST(RaypathHistogramConsumer, FullSkyEnergyEqualsRenderConsumerImageY) {
     image_sum += raw.xyz_buffer_[i * 3 + 1];
   }
   ASSERT_GT(image_sum, 0.0) << "positive control: the frame must have imaged the rays";
-  // Tolerance: RenderConsumer's CPU path does per-pixel float `+=` with no
-  // compensation. Pixel p receives n_p additions, each losing at most
-  // FLT_EPSILON of a running partial sum bounded by that pixel's total S_p,
-  // so the image is within Σ_p n_p·FLT_EPSILON·S_p ≤ max_p(n_p)·FLT_EPSILON·Σ|y|
-  // of the exact sum; the histogram side is double and negligible beside
-  // that. max_p(n_p) is counted with the same projection the render used.
-  // Bit equality is not claimed.
+  // The tolerance shape is the mechanism floor of the ONE rounding the image
+  // path performs per pixel: RenderConsumer accumulates internal_xyz_ in
+  // double (src/server/render.hpp) and narrows to float once in
+  // PrepareSnapshot (src/server/render.cpp), and every added term is the
+  // same fl32(kCmfY[wl]·w) product this test's Y() returns — bit-equal on a
+  // non-contracting compiler, ≤ ½ ulp apart per term under contraction. A
+  // pixel's float value therefore differs from its exact sum by at most
+  // ½ ulp (narrowing) + n_p·½ ulp (contraction) ≤ 2·FLT_EPSILON·Σ_p|y|, and
+  // the whole-frame bound max_p(n_p)·FLT_EPSILON·Σ|y| carries 43× headroom
+  // at this fixture's max_p(n_p) = 87 — a near-axis pixel, where the
+  // θ-uniform ray set concentrates against the equal-area map's
+  // solid-angle-uniform pixels — with max_p(n_p) counted through the same
+  // projection the render used (the 180° equal-area frame images every ray
+  // within the 80° cone exactly once — no rim cull, no overlap ring; the
+  // fixture asserts the landings below). The measured residual sits far
+  // under the floor: 1.39e-6 absolute here against 2·FLT_EPSILON·Σ|y| ≈
+  // 3.9e-4. Bit equality is not claimed. Do not tighten this bound from a
+  // local green run: the floor is set by the narrowing mechanism
+  // (2·FLT_EPSILON·Σ|y|), not by one machine's weather. The histogram side
+  // is double accumulation of the same terms and negligible beside that.
   std::map<int, size_t> per_pixel;
   {
     const Rotation rot = MakeCameraRotation(cfg);
