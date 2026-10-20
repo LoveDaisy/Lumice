@@ -860,6 +860,64 @@ three image-comparison categories in this tree and names the two footguns (block
 backwards; whole-frame PSNR's sign reversal on a darkened arm) that make each one the wrong tool
 for the others' layer.
 
+#### §4.6.1 A local-red/CI-green flake with no randomness in it: ISA flags pick the COMDAT copy
+
+The checklist's step 4 names the discipline: a red that is not a regression still has a
+mechanism, and nearly always a locatable one. This subsection is the catalog entry for the
+mechanism most likely to be misfiled as "environmental" — it genuinely is triggered by the
+environment, and it is still structural, deterministic, and unfixable by a re-run. Recorded
+from the white-box diagnosis of an exact-comparison flake in `test_globe_back_fade.cpp`
+(PR #607); the instance itself is a `unit-correctness` comparison, not a GUI
+visual-regression red, and it sits in this section because this is where a red gets
+diagnosed, not because the layer matches.
+
+**The symptom.** A floating-point comparison against a production inline function is red on
+a developer machine or a release-flavor build and green on every CI leg, on the same commit,
+with no seed and no timing anywhere in the failure. Re-running does nothing; neither does
+regenerating anything. It reads exactly like "works on my machine", which is why it is worth
+a written mechanism rather than a shrug.
+
+**The mechanism.** `lumice_apply_isa_march()` (`CMakeLists.txt:946`) adds the configured
+`-march=` tier to the TUs of `lumice_obj` — six of them at measurement time
+(`render.cpp.o`, `worker_projection.cpp.o`, …) — while `test/` targets compile without it.
+A header-inline function used from both sides (`lm_proj::ProjectExitToPixel`,
+`GlobeBackFadeWeight`) is emitted as a COMDAT weak symbol (`W`) once per including TU, and
+the linker keeps exactly one copy — in the measured case the `-march=native` copy, whose
+body `objdump -d` showed carrying 49 `vf*` FMA instructions the uncontracted copy lacks.
+Every call site in the final binary — direct calls from the test TU included — binds to
+that one retained body. ODR is satisfied (the definitions are token-identical); the machine
+code is not the same, because the same source compiled under different ISA flags is not the
+same function. (First-hand measurement: home WSL, GNU 13.3.0, `LUMICE_ISA_LEVEL=native`,
+2026-09-25.)
+
+**Why the only correct ruler is an absolute tolerance.** Exhausting every `float` the
+compared function can receive (`mu ∈ [-1, 1/D]`, 2.11e9 values × 6 range settings): the
+maximum **absolute** difference between the two copies is constant at 5.96e-8 =
+0.5·FLT_EPSILON, while the **relative** difference is unbounded — 8.5e8 ULP, at the
+endpoint where one copy rounds to exactly 0 and the other to a tiny non-zero. Any
+ULP-relative tolerance (`EXPECT_FLOAT_EQ` included) is therefore not "slightly unsafe" but
+wrong in principle for a quantity whose denominator can be zero; the fix in #607 was to the
+ruler — absolute tolerance, `EXPECT_NEAR` at 4·FLT_EPSILON, eight times the proven bound —
+not to the code under test.
+
+**The diagnosis path, for reuse.** (1) Read the signature: a same-commit red/green split
+that tracks *where* it runs, not *when*; a failing comparison with no seed and no
+scheduling in it. (2) Diff the compile flags between the red side's target and the green
+side's target — look for a `-march` / ISA-tier difference between the target owning the
+production code and the target owning the test. (3) `nm` the linked binary for the inline
+function's `W` symbol and `objdump -d` the retained copy; count the FMA-form instructions
+against the copy you expected to be kept. (4) Re-derive the bound by exhaustion or
+sampling, in absolute terms, and set the tolerance from that bound.
+
+**Why CI never sees it, and the edge of that shelter.** Every CI leg configures
+`-DLUMICE_ISA_LEVEL=baseline` (`.github/workflows/ci.yml`), so the mismatch the mechanism
+needs — two TUs of one link unit under different ISA flags — cannot arise there. The
+boundary is the flip side of the same fact: what matters is the *difference* between
+sides, so a local `native` build or a release flavor at x86-64-v3/v4 exposes it, and CI
+green is no evidence of absence for exactly the configurations this repository ships.
+Whether CI should gain a `native`/v3 test leg is a separate question, deliberately left
+open.
+
 ### §4.7 Why `auto_ev` was retired, and `lens_proj` was not
 
 Both were once a set of reference images from stochastic renders, but they varied opposite axes.
