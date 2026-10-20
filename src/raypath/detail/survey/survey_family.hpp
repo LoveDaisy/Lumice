@@ -41,14 +41,16 @@ namespace lumice::raypath::survey {
 // sub-second, so 128^2 per member per level is bounded well under a second; the spacing the
 // block reports is the resolution declaration).
 inline constexpr int kFamilyLadderGrid = 128;
-// The survival scale floor for a collapse point (a point object has no extent of its own to
-// compare its blur against, so the filter declares one): 1.0 deg, calibrated by the corpus —
-// C10's zenith 0.3 deg passes with margin (blur ~0.6 deg), C16's level-2 zenith 40 deg
-// (blur ~tens of deg) must die.
+// The survival scale floor for a curve-like object (the design ruling's cross-section
+// reading: a point object has no extent of its own to compare its blur against, and a curve —
+// a fold arc, a one-dimensional image track — is that point's continuous extension, its
+// zero-thickness limit, so its scale is the cross-section floor, never its overall length):
+// 1.0 deg, calibrated by the corpus — C10's zenith 0.3 deg passes with margin (blur ~0.6 deg),
+// C16's level-2 zenith 40 deg dies with room (blur ~10.4 deg against the floor).
 inline constexpr double kSurvivalSpotFloorDeg = 1.0;
-// The extent probe budget for the extended candidates (a one-dimensional family's image arc
-// and a two-dimensional family's domain): at most 16 EvaluateFamilyPoint calls, a determinism
-// and cost bound in one.
+// The probe budget for the extended candidates' anchors (the blur evaluation points of a
+// one-dimensional family's image track and the extent basis of a two-dimensional family's
+// domain): at most 16 EvaluateFamilyPoint calls, a determinism and cost bound in one.
 inline constexpr int kFamilyExtentProbeCount = 16;
 // The refusal mode prefix of the v1 domain gate (the mode is an open string; the named shape
 // follows the colon).

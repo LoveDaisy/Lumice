@@ -835,7 +835,7 @@ as on the full-dimensional route).
 |---|---|
 | `band.level` | the ladder level the card survived at (0 = the actual support's level: the measure's own fixed dimensions, or the 0D arm's single pose) |
 | `band.frozen[]` | `{dim, verdict}` per frozen dimension — `narrow`/`wide` is a property of the (dimension, object) pair, never of the dimension alone |
-| `band.blur_deg` / `band.scale_deg` | the survival filter's own two numbers: the frozen widths' image blur (the anchor images re-evaluated at ±width/2, clamped one-sided at a pole with `clamped: true`) against the object's declared scale (a collapse point declares the 1.0° spot floor; a fold arc carries its crossings' extent; a regular image or bright domain declares its ≤16-point probe set's extent) |
+| `band.blur_deg` / `band.scale_deg` | the survival filter's own two numbers: the frozen widths' image blur (the anchor images re-evaluated at ±width/2, clamped one-sided at a pole with `clamped: true`) against the object's declared scale (every curve-like object — a collapse point, a fold arc, a one-dimensional image track — declares the 1.0° structural cross-section floor, never its overall extent; only the two-dimensional bright domain declares its ≤16-point probe set's extent) |
 | `band.survival` | `"pass"` — a killed candidate never carries a card; it lives in `family_routing.ladder[].killed` with the same numbers |
 
 ### 9.3 Evidence states

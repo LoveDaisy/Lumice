@@ -300,32 +300,28 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   EXPECT_EQ(fold->band->frozen[0].dim, "roll");
   EXPECT_EQ(fold->band->frozen[0].verdict, "narrow");
   EXPECT_LT(fold->band->blur_deg, fold->band->scale_deg);
+  EXPECT_DOUBLE_EQ(fold->band->scale_deg, kSurvivalSpotFloorDeg);  // the cross-section reading
   ASSERT_TRUE(fold->family_origin.has_value());
   EXPECT_GT(fold->family_origin->crossing_count, 0);
   ASSERT_NE(domain, nullptr) << "the two-dimensional family's bright domain carries the band";
+  EXPECT_GT(domain->band->scale_deg, kSurvivalSpotFloorDeg);  // the domain keeps the extent reading
 
-  // Level 2 under the plan's v1 default scale estimator, MEASURED (the numbers this suite
-  // pins until the design ruling lands — see below): the wide zenith's blur 10.42 deg against
-  // the one-dimensional image's own extent 10.62 deg — the candidate SURVIVES by 0.2 deg.
-  // The plan's calibration sentence ("the level-2 freeze is killed, blur >> scale") and AC5's
-  // example ("roll 0.3 is wide for the all-sky delta structure") are NOT reproduced by the v1
-  // estimator family (roll's blur is 0.07-0.30 deg against every estimated scale): that
-  // contradiction is the plan's declared decision point 1, reported up with the measured
-  // evidence rather than re-judged here.
-  EXPECT_TRUE(block.ladder[2].killed.empty());
-  const SurveyObject* level2_card = nullptr;
-  for (const SurveyObject& card : document.objects) {
-    if (card.band.has_value() && card.band->level == 2) {
-      level2_card = &card;
+  // Level 2 under the scale ruling (the design authority's decision on decision point 1: a
+  // curve-like object's scale is its structural cross-section floor, never its overall extent
+  // — the arc's length tolerating a transverse blur was the length-vs-thickness mismatch the
+  // ruling closed): the wide zenith's blur 10.42 deg kills against the 1.0-deg floor, the
+  // record lands in the ladder level that proposed it, and no level-2 card is produced.
+  ASSERT_FALSE(block.ladder[2].killed.empty());
+  const FamilyKilledCandidate* killed = nullptr;
+  for (const FamilyKilledCandidate& candidate : block.ladder[2].killed) {
+    if (candidate.reason == "survival_filter") {
+      killed = &candidate;
     }
   }
-  ASSERT_NE(level2_card, nullptr);
-  EXPECT_EQ(level2_card->kind, SurveyObjectKind::kRegularImage);
-  EXPECT_NEAR(level2_card->band->blur_deg, 10.42, 0.30);
-  EXPECT_NEAR(level2_card->band->scale_deg, 10.62, 0.30);
-  EXPECT_TRUE(level2_card->band->clamped);  // the zenith center 0 minus 20 clamps one-sided
-  for (const FamilyBandVerdict& verdict : level2_card->band->frozen) {
-    EXPECT_EQ(verdict.verdict, "narrow") << verdict.dim;
+  ASSERT_NE(killed, nullptr);
+  EXPECT_EQ(killed->kind, "regular_image");
+  for (const SurveyObject& card : document.objects) {
+    EXPECT_FALSE(card.band.has_value() && card.band->level == 2);
   }
   // The support carries the density tail row (the width went into the ladder; the support's
   // own tail bound is a row).
@@ -343,13 +339,13 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   EXPECT_GT(support->support_set->density_tails[0].upper_deg, 100.0);  // the 12-sigma window
 }
 
-// The calibration ruler the design note spells for this shape, kept verbatim and SKIPPED
-// pending the decision-point-1 ruling: under the plan's v1 default scale estimators the
-// level-2 candidate survives (blur 10.42 <= scale 10.62) and no object reads roll as wide,
-// contradicting the calibration sentence and AC5's example. When the ruling changes the
-// estimator (the measured evidence supports the cross-section reading for curve-like
-// objects: the same blur 10.42 against the 1.0-deg spot floor kills with room), un-skip.
-TEST(FamilyRouting, DISABLED_C16CalibrationKillAwaitingTheScaleEstimatorRuling) {
+// The calibration ruler the design note spells for this shape, restored by the scale ruling
+// (the former DISABLED_... ruler the pre-ruling estimator could not satisfy): the curve-like
+// object's scale is the structural cross-section floor, and the wide zenith's blur 10.42 deg
+// kills with room — the design row's "far past its own scale" made operational. The roll on
+// the same record stays narrow: the two frozen dimensions of one object read differently
+// (the narrow half of AC5's dimension-times-object property).
+TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
   const ConfigManager config = LowitzMeasureScene(40.0, 0.3);
   SurveyDocument document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
@@ -363,14 +359,22 @@ TEST(FamilyRouting, DISABLED_C16CalibrationKillAwaitingTheScaleEstimatorRuling) 
   }
   ASSERT_NE(killed, nullptr);
   EXPECT_EQ(killed->kind, "regular_image");
-  EXPECT_GT(killed->blur_deg, killed->scale_deg);
+  EXPECT_NEAR(killed->blur_deg, 10.42, 0.30);
+  EXPECT_DOUBLE_EQ(killed->scale_deg, kSurvivalSpotFloorDeg);
+  EXPECT_GT(killed->blur_deg, 5.0 * kSurvivalSpotFloorDeg);  // the kill has room, not margin
+  EXPECT_TRUE(killed->clamped);                              // the zenith center 0 minus 20 clamps one-sided
   bool zenith_wide = false;
+  bool roll_narrow = false;
   for (const FamilyBandVerdict& verdict : killed->verdicts) {
     if (verdict.dim == "zenith") {
       zenith_wide = verdict.verdict == "wide";
     }
+    if (verdict.dim == "roll") {
+      roll_narrow = verdict.verdict == "narrow";
+    }
   }
   EXPECT_TRUE(zenith_wide);
+  EXPECT_TRUE(roll_narrow);
   for (const SurveyObject& card : document.objects) {
     EXPECT_FALSE(card.band.has_value() && card.band->level == 2);
   }
@@ -593,10 +597,13 @@ TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
   EXPECT_EQ(level1.at("frozen_dims").at(0).at("dim"), "roll");
   EXPECT_GT(level1.at("objects_proposed"), 0);
   const auto& level2 = family.at("ladder").at(2);
-  // The measured v1 shape on this input: the level-2 candidate survives (see the decision
-  // point 1 record), so no killed key here — the killed record's serialization is pinned by
-  // the hand-built fixture in test_survey_json_v4.cpp.
-  EXPECT_FALSE(level2.contains("killed"));
+  // The wide zenith's level-2 kill serializes with its numbers in the ladder level that
+  // proposed it (the hand-built fixture in test_survey_json_v4.cpp pins the full shape).
+  ASSERT_TRUE(level2.contains("killed"));
+  ASSERT_EQ(level2.at("killed").size(), 1u);
+  EXPECT_EQ(level2.at("killed").at(0).at("kind"), "regular_image");
+  EXPECT_NEAR(level2.at("killed").at(0).at("blur_deg").get<double>(), 10.42, 0.30);
+  EXPECT_DOUBLE_EQ(level2.at("killed").at(0).at("scale_deg").get<double>(), kSurvivalSpotFloorDeg);
   EXPECT_EQ(level2.at("objects_proposed"), 1);
   EXPECT_EQ(family.at("evidence").at("state"), "finite");
   // The band lives on the surviving cards; the killed candidate's numbers live in the ladder.

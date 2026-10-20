@@ -319,8 +319,10 @@ std::vector<BlurAnchor> ExtentAnchors(const analytic::FaceNormalTable& table, co
   return anchors;
 }
 
-// The object's own angular scale: the maximum pairwise sky distance over the anchor images
-// (a collapse point has no extent — its scale is the declared floor instead).
+// The object's own angular scale for the two-dimensional domain: the maximum pairwise sky
+// distance over the anchor images. A curve-like object (a collapse point, a fold arc, a
+// one-dimensional image track) never takes this reading — its overall length is the wrong
+// dimension against a transverse blur — it declares the cross-section floor instead.
 double ExtentDeg(const std::vector<BlurAnchor>& anchors) {
   double extent = 0.0;
   for (size_t i = 0; i < anchors.size(); i++) {
@@ -408,9 +410,11 @@ BlurReading MeasureBlur(const analytic::FaceNormalTable& table, const int* slots
 // ---- the candidate assembly --------------------------------------------------------------------------
 
 // One proposed object: what the rank scan found, where it sits, and the anchors the filter
-// probes from. V1's declared per-category scale estimators: a collapse point declares the spot
-// floor, a fold arc carries its own crossings' extent, a regular image or a bright domain
-// declares its probe set's extent.
+// probes from. The declared per-category scale readings (the design ruling on the plan's
+// decision point 1): every curve-like object — a collapse point, a fold arc, a
+// one-dimensional image track — declares the structural cross-section floor (the point is the
+// zero-thickness limit of the curve, so one floor serves the family); only the
+// two-dimensional bright domain declares its probe set's extent.
 struct FamilyCandidate {
   SurveyObjectKind kind = SurveyObjectKind::kFamilyCollapsePoint;
   bool viable = true;
@@ -457,14 +461,7 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
       candidate.position_alt_deg = representative.image_alt_deg;
       candidate.position_az_deg = representative.image_az_deg;
       candidate.crossing_count = component.crossing_count;
-      std::vector<BlurAnchor> crossings;  // the extent basis: the component's own image points
-      for (int i = 0; i < component.crossing_count; i++) {
-        const analytic::FoldPointRecord& crossing = rank.crossings[static_cast<size_t>(component.first_crossing + i)];
-        BlurAnchor anchor;
-        AnchorOfOutgoing(crossing.params_deg, crossing.outgoing, &anchor);
-        crossings.push_back(anchor);
-      }
-      candidate.scale_deg = ExtentDeg(crossings);
+      candidate.scale_deg = kSurvivalSpotFloorDeg;  // the cross-section floor, never the arc's length
       BlurAnchor anchor;
       AnchorOfOutgoing(representative.params_deg, representative.outgoing, &anchor);
       candidate.anchors.push_back(anchor);
@@ -482,7 +479,9 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
     } else {
       candidate.has_position = true;
       ImageAltAzDeg(candidate.anchors.front().image_dir, &candidate.position_alt_deg, &candidate.position_az_deg);
-      candidate.scale_deg = ExtentDeg(candidate.anchors);
+      // The one-dimensional track is curve-like: the floor, not its arc's extent — only the
+      // two-dimensional domain's anchors measure an extent.
+      candidate.scale_deg = rank.generic_rank == 1 ? kSurvivalSpotFloorDeg : ExtentDeg(candidate.anchors);
     }
     out.push_back(std::move(candidate));
   }
