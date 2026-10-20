@@ -295,8 +295,9 @@ option(LUMICE_IPO "Enable inter-procedural optimization (LTO) on Release builds"
 include(CheckIPOSupported)
 check_ipo_supported(RESULT result OUTPUT output)
 
-# IPO is on for every static Release build and, of the shared ones, for clang-cl and for GCC
-# on Linux — the two toolchains that build a release's shared engine. The shared flavor
+# IPO is on for every static Release build and for every shared Release build a release
+# ships: real cl.exe and clang-cl on Windows (CMake reports MSVC=TRUE for both — see the
+# clang-cl block above), and GCC on Linux. The shared flavor
 # originally went without IPO everywhere because GCC's LTO once emitted R_X86_64_TPOFF32
 # relocations for spdlog's thread_local variables, which a shared object cannot carry. Both
 # releases now ship the shared flavor, and going without costs the same thing on each:
@@ -314,13 +315,14 @@ check_ipo_supported(RESULT result OUTPUT output)
 # CI shared leg that keeps IPO on (E2E Slow's Ubuntu x86_64 entry; shared-gui-test-build passes
 # LUMICE_IPO=OFF) builds with the same GCC and would surface a return of it as a link error.
 # clang-cl's LTO objects worked with WINDOWS_EXPORT_ALL_SYMBOLS (its .def generator read
-# them), so that tree gets IPO too. Real cl.exe did NOT: its /GL objects hold no symbol
-# table CMake's __create_def can read, and the DLL linked "successfully" with an EMPTY export
-# table — a baseline engine with zero exports, measured, not a hypothesis — so the cl.exe
-# baseline tree was left without IPO until the export surface was explicit rather than
-# harvested. It now is (lumice_apply_export_list below: a .def generated from the surface
-# headers, no symbol harvesting), so that reason no longer holds; turning IPO on for the cl.exe shared
-# tree is still a separate, measured change and is not made here. Apple Clang shared builds
+# them), so that tree always had IPO. Real cl.exe shared builds were excluded for the
+# opposite reason: their /GL objects hold no symbol table CMake's __create_def can read,
+# and the DLL linked "successfully" with an EMPTY export table — a baseline engine with
+# zero exports, measured, not a hypothesis. Exports are explicit now (lumice_apply_export_list
+# below: a .def generated from the surface headers, no symbol harvesting), so nothing reads
+# /GL objects for exports and that exclusion is lifted; what going without IPO cost the
+# cl.exe baseline DLL, and what turning it on measures, is recorded in
+# doc/testing/performance-testing.md. Apple Clang shared builds
 # stay excluded: no release ships them, and they have not been measured either way.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set(_lumice_gcc_linux TRUE)
@@ -328,7 +330,7 @@ else()
   set(_lumice_gcc_linux FALSE)
 endif()
 if(LUMICE_IPO AND result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release"
-   AND (NOT BUILD_SHARED_LIBS OR LUMICE_CLANG_CL OR _lumice_gcc_linux))
+   AND (NOT BUILD_SHARED_LIBS OR MSVC OR _lumice_gcc_linux))
   message(STATUS "IPO supported. Enable inter-procedural optimization.")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()

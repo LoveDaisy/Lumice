@@ -1902,8 +1902,9 @@ jobs:
       # tables of the DLLs it builds, and the clang-cl engine DLL the release ships is an LTO
       # build; an LTO build is exactly where an export table once came out empty while the
       # link "succeeded" (the cl.exe /GL history on the IPO block of CMakeLists.txt). Checking
-      # a non-LTO DLL would check a binary nobody ships. (The MSVC entry builds without IPO
-      # either way: cl.exe shared trees are excluded there.)
+      # a non-LTO DLL would check a binary nobody ships. (Both matrix entries build with IPO:
+      # the cl.exe shared tree is no longer excluded from it — see the IPO block of
+      # CMakeLists.txt.)
       - name: Configure (shared library, no CUDA)
         run: >
           cmake -S . -B build -G Ninja

@@ -300,11 +300,18 @@ re-run): at 16 workers, the `benchmark` `multi` pass's count, the v3 engine is *
 baseline engine keeps gaining from SMT up to 32 threads (1.75×–2.12× over its own 10-worker
 figure), the v3 engine only 1.11×–1.56×. Quote the pair with its W; a bare "multi" ratio for this
 box is underspecified. A second, DLL-specific cost
-showed up alongside it: the baseline engine DLL is **10–14% slower** than the old fully-static
+showed up alongside it: the baseline engine DLL was **10–14% slower** than the old fully-static
 baseline exe (single 86.1%, multi 93.4%) — `WINDOWS_EXPORT_ALL_SYMBOLS`'s generated `.def` export
-table is incompatible with cl.exe's `/GL` whole-program optimization, so the cl.exe-built baseline
-DLL loses the link-time optimization the old fully-static baseline exe had; the clang-cl-built v3
-DLL is unaffected and keeps its thin-LTO.
+table was incompatible with cl.exe's `/GL` whole-program optimization, so the cl.exe-built baseline
+DLL lost the link-time optimization the old fully-static baseline exe had, while the clang-cl-built
+v3 DLL kept its thin-LTO. **That cost is gone**: exports are explicit now (a `.def` generated from
+the surface headers, no symbol harvesting), which lifted the reason the cl.exe shared tree was
+excluded from IPO, and with `/GL` + `/LTCG` restored, the same three-arm measurement on current
+code (static exe vs no-IPO DLL vs IPO DLL, same session, Windows reference box, 2026-10-20) reads
+the no-IPO gap at single 87.7% / multi 88.0% (the automatic 16-worker count) — independently
+reproducing it — and the IPO DLL at **single 99.2% / multi 98.8%** of the static exe, noise-level;
+the DLL-only LTO effect is single 1.131x / multi 1.122x, matching the clang-cl and GCC precedents
+above.
 
 **What the Linux release does with it.** The `linux-x64` tarball ships one shell per entry point
 (`Lumice`, `LumiceGUI`; compiled once, baseline) plus two internal engine shared libraries under

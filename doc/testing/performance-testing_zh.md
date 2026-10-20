@@ -130,10 +130,16 @@ multi 1.562×**（不一致——上面那条旧锚从未在 1–4 worker 之外
 **1.141× / 1.296× / 1.510×**。比值随 W 收窄，是因为快的那条臂先触顶：基线引擎靠 SMT 一路涨到 32
 线程（相对自己 10 worker 的数字 1.75×–2.12×），v3 引擎只涨 1.11×–1.56×。引用时必须带上 W；
 对这台机器，一个不带 W 的「multi 比值」是没定义清楚的数字。
-同一次复测还发现了另一项与 DLL 本身有关的代价：baseline 引擎 DLL 比旧的纯静态 baseline exe
+同一次复测还发现了另一项与 DLL 本身有关的代价：baseline 引擎 DLL 当时比旧的纯静态 baseline exe
 **慢 10–14%**（single 86.1%、multi 93.4%）——`WINDOWS_EXPORT_ALL_SYMBOLS` 生成的 `.def` 导出表
 与 cl.exe 的 `/GL` 全程序优化不兼容，所以 cl.exe 编的 baseline DLL 丢掉了旧的纯静态 baseline exe
-曾有的链接期优化；clang-cl 编的 v3 DLL 不受影响，仍保有它的 thin-LTO。
+曾有的链接期优化；clang-cl 编的 v3 DLL 不受影响，仍保有它的 thin-LTO。**这份代价已消除**：导出面
+改为显式生成（`.def` 从表面头生成，不再 harvest 符号）后，cl.exe shared 树被排除在 IPO 之外的
+理由不复存在；开回 `/GL + /LTCG` 后在今天的代码上做了同口径三臂复测（静态 exe vs 无 IPO DLL vs
+IPO DLL，同 session，Windows 参照机，2026-10-20）：无 IPO 的差距为 single 87.7% / multi 88.0%
+（multi 的自动 16 worker 档）——独立复现了旧结论；IPO DLL 为静态 exe 的 **single 99.2% / multi
+98.8%**，噪声级；DLL 单变量的 LTO 效果为 single 1.131× / multi 1.122×，与上文 clang-cl、GCC
+先例一致。
 
 **Linux release 拿它做什么。** `linux-x64` 的 tarball 每个入口只装一份外壳（`Lumice`、
 `LumiceGUI`；只编一次，基线），外加 `lib/` 下两份内部引擎共享库：`lib/liblumice.so`（baseline）
