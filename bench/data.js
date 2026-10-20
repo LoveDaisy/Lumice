@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792512394449,
+  "lastUpdate": 1792512396706,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "c6d32d110ca90680080935d49bda6d00274d6ac7",
-          "message": "Merge pull request #418 from LoveDaisy/feat/axis-preset-highlight-summary\n\nfeat(gui): highlight the active axis preset and summarize the crystal under the edit-modal preview",
-          "timestamp": "2026-09-26T03:24:31+08:00",
-          "tree_id": "0c4591c98e7a93246c6b7ac5869eb931880bb594",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/c6d32d110ca90680080935d49bda6d00274d6ac7"
-        },
-        "date": 1790365022412,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 88.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 95,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "3493b66dd3bb005b0ece61229caadab5c3c3fd09",
           "message": "Merge pull request #419 from LoveDaisy/feat/display-mode-viewport-control\n\nfeat(gui): display mode becomes a segmented control in the preview's corner",
           "timestamp": "2026-09-26T03:55:16+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "725018d33ad9a3d08ded65180c4f2d3272581cd7",
+          "message": "Merge pull request #531 from LoveDaisy/feat/free-dims-enum-cleanup\n\nrefactor(raypath): free_dims carries the dim enum",
+          "timestamp": "2026-10-21T00:02:56+08:00",
+          "tree_id": "280b8049e2f76e79f05bd54c0b9bc03c21e48818",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/725018d33ad9a3d08ded65180c4f2d3272581cd7"
+        },
+        "date": 1792512396188,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 82.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.4,
             "unit": "%"
           }
         ]
