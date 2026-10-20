@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792464317880,
+  "lastUpdate": 1792464324333,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "69d8136c8f926571410a99548a5e7374bf7f0ab2",
-          "message": "Merge pull request #412 from LoveDaisy/perf/cpu-worker-batch-sync-cliff\n\nperf(server): decouple the CPU queue handoff from the 128-ray physics batch",
-          "timestamp": "2026-09-25T20:57:22+08:00",
-          "tree_id": "09c4693994679e1f4660fbb9b8892f3e4bb629e4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/69d8136c8f926571410a99548a5e7374bf7f0ab2"
-        },
-        "date": 1790341824493,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 805160.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1024643.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 731445.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 705311.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38",
           "message": "Merge pull request #413 from LoveDaisy/docs/raypath-analysis-overview\n\ndocs(raypath-analysis): feature overview and roadmap",
           "timestamp": "2026-09-25T22:51:44+08:00",
@@ -9590,6 +9542,54 @@ window.BENCHMARK_DATA = {
             "value": 585625.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "471ce7726c6d62522bd87ff000726cbcd454d649",
+          "message": "Merge pull request #525 from LoveDaisy/chore/comdat-flake-doc-note\n\ndocs(testing): record the COMDAT x -march local-red/CI-green flake mechanism (§4.6.1)",
+          "timestamp": "2026-10-20T10:42:04+08:00",
+          "tree_id": "3331d03171eadc032df781091ed4a7668619d608",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/471ce7726c6d62522bd87ff000726cbcd454d649"
+        },
+        "date": 1792464323219,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1190251.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1014133.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 724364.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 608281,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
           }
         ]
       }
