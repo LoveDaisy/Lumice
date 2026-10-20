@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792472444730,
+  "lastUpdate": 1792472449476,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38",
-          "message": "Merge pull request #413 from LoveDaisy/docs/raypath-analysis-overview\n\ndocs(raypath-analysis): feature overview and roadmap",
-          "timestamp": "2026-09-25T22:51:44+08:00",
-          "tree_id": "c79b7399ed96b48eaf32a502f0cc41512296376e",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38"
-        },
-        "date": 1790348570955,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1099502.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1021807.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 797192.2,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 586912.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6a148bbcba23d5e330a528600062b88fbe62aae5",
           "message": "Merge pull request #414 from LoveDaisy/perf/cpu-per-ray-wavelength\n\nperf(core): stratify the CPU illuminant wavelength across physics batches",
           "timestamp": "2026-09-25T23:31:46+08:00",
@@ -9590,6 +9542,54 @@ window.BENCHMARK_DATA = {
             "value": 608281,
             "unit": "rays/sec",
             "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c10466366a3f9d19d42a890a092389cebaade1b0",
+          "message": "Merge pull request #526 from LoveDaisy/feat/cl-exe-shared-ipo\n\nfeat(cmake): enable IPO for cl.exe shared Release trees",
+          "timestamp": "2026-10-20T12:57:03+08:00",
+          "tree_id": "38f1949b834ef1d5cd955ecb0db8f7a0c5e04fb2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c10466366a3f9d19d42a890a092389cebaade1b0"
+        },
+        "date": 1792472448964,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 807103.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1011119.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1100212,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 576412.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
