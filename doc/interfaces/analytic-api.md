@@ -1189,6 +1189,17 @@ mappings (660.5) stay in-process: their consumers are the measure layer (B1), wi
 consumer — publishing a surface nobody consumes is §9 item 15's rejected shape. See §9 item 16
 for the reopen condition.
 
+**Also in-process, Lumice-born: the restricted-family rank primitive** (`src/analytic/
+family_rank.hpp`, §9 item 17). Unlike every module above it is not an LI port — the specification
+authority is `doc/raypath/gap1-family-routing.md` — and the birth-place discipline is four points:
+(a) when LI's articles need this primitive, a temporary parallel JAX version may run as a mutual
+cross-check; (b) any parity fixtures of that pair are named by their calibre (two reasonable but
+different implementations compared as one thing is the recorded false-red/false-green failure);
+(c) the LI side derives from the Lumice specification and cross-checks, never independently
+re-derives; (d) end-state convergence follows the shared criteria — LI consumes
+`liblumice_analytic` through a binding and the JAX version retires. The wave-2 hold ledger counts
+this entry (+1) and stays as it is; the 2026-10-07 ruling is not reopened by it.
+
 ## 5. Conventions, errors, threading **(design)**
 
 
@@ -1648,6 +1659,7 @@ functions. The first real module's work opens this list. **The state described h
 | 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. **Not built in v0**: `FiberResult` returns the point list only (§4.3); a caller that needs per-point segments calls `EvaluatePath` per pose. Still open. | Wave 2, with the diagnostics extension |
 | 15 | Reuse of one band-sum sample across calls on the same crystal, path and sun (LI `band-sum-contract.md` §3, a SHOULD): a handle-style API that builds the sorted kept events once and sums several pixel tables or densities against them. **Not built in version 6** (§4.6): every `BandSum` call rebuilds its sample, which costs about 9× for an L2 row summed member by member (the contract's 1.8 s vs 0.2 s at `N = 1e6`). A handle is an API shape that freezes once published, so it waits for its consumer. | The Analyze all-sky map wiring, on its measured need |
 | 16 | ~~Are the contour layer's products (660.5: `SampleCurveWeights` / `ChordLineIntegral` / `OrbitFiberStream` / `ChainFrom*`) part of the C ABI?~~ **Answered — no, and v8 does not carry them** (scrum 660.6): their consumers are in-process (the measure layer B1), so publishing them would be the §9 item 15 shape — a frozen surface with no consumer. The result structs of version 8 are first-published whole, and the same rule would apply. **Reopen when** a cross-ABI consumer appears: the B-line adapter moving through a shared library, or an LI second-batch fixture needing the M1 orbit stream through the ABI — then it is a 0.x additive bump. | The field-layer surface (API 8, 2026-10-08) |
+| 17 | The restricted-family rank primitive (`src/analytic/family_rank.hpp`): the rank and critical structure of a face sequence on a caller-restricted pose family — the measure-to-family routing's one kernel-side new computation. **Lumice-born, in-process**: it is not an LI port (no LI entry exists for a two-dimensional restricted family — LI's rank vocabulary is the full-SO3 `halo_map_rank` and the one-dimensional latitude-circle entries), so the specification authority is Lumice's own `doc/raypath/gap1-family-routing.md`; the same no-consumer rule as item 16 applies, and the result structs are kept POD-flat with escape-as-data statuses so a future exposure is a 0.x additive bump. The birth-place discipline is registered in §4.8's in-process list. **Reopen when** a cross-ABI consumer appears, mirroring item 16's condition: LI's end-state consuming this primitive through a binding, or a parity fixture needing it through the ABI. | Owner ruling 2026-10-19 (the routing design note §7); built in the gap-1 routing task, 2026-10-20 |
 
 ---
 
