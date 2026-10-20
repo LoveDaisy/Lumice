@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792482788023,
+  "lastUpdate": 1792482790001,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6a148bbcba23d5e330a528600062b88fbe62aae5",
-          "message": "Merge pull request #414 from LoveDaisy/perf/cpu-per-ray-wavelength\n\nperf(core): stratify the CPU illuminant wavelength across physics batches",
-          "timestamp": "2026-09-25T23:31:46+08:00",
-          "tree_id": "b0ecff07f1973fc2a59863cf12726b470566f04c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/6a148bbcba23d5e330a528600062b88fbe62aae5"
-        },
-        "date": 1790351103080,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 85,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.8,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "48679991416540658f3039cdbde51520d6375e79",
           "message": "Merge pull request #415 from LoveDaisy/feat/gui-front-effective-value\n\nfix(gui): read the effective front clip under lenses it does not apply to",
           "timestamp": "2026-09-26T01:08:03+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0133b0e9825ce175d55d5cfcb43ed65fd904b519",
+          "message": "Merge pull request #527 from LoveDaisy/feat/core-json-grid-import-notice\n\nfeat(gui): notice render[].grid refusal on core JSON import",
+          "timestamp": "2026-10-20T15:49:47+08:00",
+          "tree_id": "d94d4836689f7f76be563603c87a73e502fbd55c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/0133b0e9825ce175d55d5cfcb43ed65fd904b519"
+        },
+        "date": 1792482789467,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 86.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.9,
             "unit": "%"
           }
         ]
