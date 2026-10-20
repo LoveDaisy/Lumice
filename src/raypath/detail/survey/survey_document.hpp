@@ -156,7 +156,8 @@ struct FamilyRoutingMeasure {
 };
 
 // The dimension names in canonical (zenith, azimuth, roll) order — the kernel enum's own order;
-// the frozen_dims rows' wire vocabulary, spelled once (the struct carries the enum itself).
+// the family block's dim vocabulary on the wire (frozen_dims rows and free_dims entries),
+// spelled once — the structs carry the enum themselves.
 inline const char* DimName(analytic::FamilyDimension dim) {
   switch (dim) {
     case analytic::FamilyDimension::kZenith:
@@ -209,7 +210,7 @@ struct FamilyKilledCandidate {
 struct FamilyLadderLevel {
   int level = 0;
   std::vector<FamilyFrozenDim> frozen_dims;
-  std::vector<std::string> free_dims;
+  std::vector<analytic::FamilyDimension> free_dims;  // the enum; the name is the wire's
   bool rank_asked = false;
   int generic_rank = -1;  // the first member's whose rank run returned ok; relabelings share it
                           // (the support's own relabeling logic, one physical class)

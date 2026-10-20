@@ -525,7 +525,7 @@ TEST(FamilyRouting, FixedZenithAndRollAskTheRankAtLevelZeroWithoutTheDensityLegs
   EXPECT_TRUE(block.ladder[0].rank_asked);
   ASSERT_EQ(block.ladder[0].frozen_dims.size(), 2u);
   ASSERT_EQ(block.ladder[0].free_dims.size(), 1u);
-  EXPECT_EQ(block.ladder[0].free_dims[0], "azimuth");
+  EXPECT_EQ(block.ladder[0].free_dims[0], analytic::FamilyDimension::kAzimuth);
 
   bool saw_regular = false;
   for (const SurveyObject& card : document.objects) {

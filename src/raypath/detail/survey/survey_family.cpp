@@ -830,13 +830,13 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     level.frozen_dims = FrozenReport(input.measure, candidates, k);
     const analytic::RestrictedFamilySpec spec = LevelSpec(input.measure, candidates, k);
     if (spec.zenith.mode == analytic::FamilyDimensionMode::kFree) {
-      level.free_dims.push_back("zenith");
+      level.free_dims.push_back(analytic::FamilyDimension::kZenith);
     }
     if (spec.azimuth.mode == analytic::FamilyDimensionMode::kFree) {
-      level.free_dims.push_back("azimuth");
+      level.free_dims.push_back(analytic::FamilyDimension::kAzimuth);
     }
     if (spec.roll.mode == analytic::FamilyDimensionMode::kFree) {
-      level.free_dims.push_back("roll");
+      level.free_dims.push_back(analytic::FamilyDimension::kRoll);
     }
     level.rank_asked = static_cast<int>(level.free_dims.size()) <= 2;
     if (level.rank_asked) {

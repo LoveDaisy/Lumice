@@ -538,14 +538,15 @@ TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
 
   FamilyLadderLevel level0;
   level0.level = 0;
-  level0.free_dims = { "zenith", "azimuth", "roll" };
+  level0.free_dims = { analytic::FamilyDimension::kZenith, analytic::FamilyDimension::kAzimuth,
+                       analytic::FamilyDimension::kRoll };
   level0.rank_asked = false;  // three free dimensions: the support alone, no rank key
   block.ladder.push_back(level0);
 
   FamilyLadderLevel level1;
   level1.level = 1;
   level1.frozen_dims = { { analytic::FamilyDimension::kRoll, 0.0, 0.3 } };
-  level1.free_dims = { "zenith", "azimuth" };
+  level1.free_dims = { analytic::FamilyDimension::kZenith, analytic::FamilyDimension::kAzimuth };
   level1.rank_asked = true;
   level1.generic_rank = 2;
   level1.grid = kFamilyLadderGrid;
@@ -598,8 +599,10 @@ TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
   EXPECT_EQ(family.at("measure").at("azimuth").at("kind"), "uniform");
   const auto& ladder = family.at("ladder");
   ASSERT_EQ(ladder.size(), 2u);
+  EXPECT_EQ(ladder.at(0).at("free_dims"), nlohmann::json::array({ "zenith", "azimuth", "roll" }));
   EXPECT_FALSE(ladder.at(0).contains("rank"));
   const auto& rank_level = ladder.at(1);
+  EXPECT_EQ(rank_level.at("free_dims"), nlohmann::json::array({ "zenith", "azimuth" }));
   EXPECT_EQ(rank_level.at("rank").at("generic_rank"), 2);
   EXPECT_EQ(rank_level.at("rank").at("grid"), kFamilyLadderGrid);
   ASSERT_EQ(rank_level.at("rank").at("grid_spacing_deg").size(), 2u);
