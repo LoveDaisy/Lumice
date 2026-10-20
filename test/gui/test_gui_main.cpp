@@ -236,6 +236,17 @@ void ResetTestState() {
   // its modal on top of whatever the next case is driving. Several suites import configurations
   // that queue one as a side effect, which is why this is a reset rather than each case's job.
   gui::ClearLoadNotice();
+  // The queued half is only half the notice's cross-case surface: the app opens the popup on the
+  // frame that draws it, and frames run between one case's last line and this one — so a modal
+  // materialized in that gap is past ClearLoadNotice() above, sitting on ImGui's OpenPopupStack,
+  // and blocks every hover the next case makes (a whole group went red this way behind three
+  // cases that imported a grid-bearing config and never studied the modal). Any popup open at a
+  // case entry is by definition a leftover — this case has not acted yet — so hand the whole
+  // stack back, the same exit ScopedPopups takes at a case tail.
+  ImGuiContext& g_notice_stack = *ImGui::GetCurrentContext();
+  if (g_notice_stack.OpenPopupStack.Size > 0) {
+    ImGui::ClosePopupToLevel(0, /*restore_focus_to_window_under_popup=*/false);
+  }
   // Same shape again, for the export-overwrite prompt: a pending export left unanswered by one
   // case would raise its modal over the next one, and — worse than a stray warning — the next
   // case's stray click on "Overwrite" would write a file.

@@ -642,8 +642,10 @@ inline void CheckLabelColumn(const char* group, const std::vector<LabelColumnRow
 // owns. Clearing the drawing side's statics stops the popup being submitted, but the entry
 // OpenPopup pushed onto ImGuiContext::OpenPopupStack when it opened stays there, keyed to a window
 // nobody draws any more — so IsPopupOpen, GetTopMostPopupModal and FindBlockingModal all keep
-// answering for it in every case that runs afterwards. That entry has no other owner: the next
-// case's ResetTestState() rebuilds GuiState and the modal statics and never touches ImGui's stack.
+// answering for it in every case that runs afterwards. ResetTestState() now hands that stack back
+// too, at the NEXT case's entry; this guard still closes it at THIS case's tail, which keeps the
+// frames between the two from answering to a modal, and resets the modal statics and view
+// preferences no entry-time reset can reach.
 //
 // Applies to all three popups this suite opens, not only the biggest one: the Edit Entry modal and
 // the custom-spectrum editor are BeginPopupModal (so a leaked one also blocks input), and the sun-
