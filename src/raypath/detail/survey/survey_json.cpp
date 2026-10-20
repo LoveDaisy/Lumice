@@ -205,8 +205,8 @@ Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
           { { "dim", DimName(dim.dim) }, { "center_deg", Num(dim.center_deg) }, { "width_deg", Num(dim.width_deg) } });
     }
     Json free = Json::array();
-    for (const std::string& dim : level.free_dims) {
-      free.push_back(dim);
+    for (const analytic::FamilyDimension dim : level.free_dims) {
+      free.push_back(DimName(dim));
     }
     Json entry = { { "level", level.level }, { "frozen_dims", std::move(frozen) }, { "free_dims", std::move(free) } };
     // The rank coverage exists exactly when the rank question was asked (a level-0 with three
