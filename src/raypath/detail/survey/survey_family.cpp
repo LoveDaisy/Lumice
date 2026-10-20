@@ -243,6 +243,7 @@ std::vector<FamilyFrozenDim> FrozenReport(const FamilyRoutingMeasure& measure,
 struct BlurAnchor {
   double params_deg[2] = { 0.0, 0.0 };
   double image_dir[3] = { 0.0, 0.0, 0.0 };  // -outgoing at the anchor
+  double outgoing[3] = { 0.0, 0.0, 0.0 };   // the raw propagation direction the image came from
 };
 
 void AnchorOfOutgoing(const double params_deg[2], const double outgoing[3], BlurAnchor* anchor) {
@@ -250,6 +251,7 @@ void AnchorOfOutgoing(const double params_deg[2], const double outgoing[3], Blur
   anchor->params_deg[1] = params_deg[1];
   for (int c = 0; c < 3; c++) {
     anchor->image_dir[c] = -outgoing[c];
+    anchor->outgoing[c] = outgoing[c];
   }
 }
 
@@ -359,8 +361,6 @@ BlurReading MeasureBlur(const analytic::FaceNormalTable& table, const int* slots
       continue;
     }
     const analytic::FamilyDimension name = DimFromName(dim.dim);
-    analytic::FamilyDimensionSpec* const spec_slots[3] = { nullptr, nullptr, nullptr };
-    (void)spec_slots;
     double blur = 0.0;
     for (int sign : { 1, -1 }) {
       const double wanted = dim.center_deg + sign * 0.5 * dim.width_deg;
@@ -478,7 +478,8 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
       candidate.kill_reason = "no_valid_image";
     } else {
       candidate.has_position = true;
-      ImageAltAzDeg(candidate.anchors.front().image_dir, &candidate.position_alt_deg, &candidate.position_az_deg);
+      ImageAltAzDeg(candidate.anchors.front().outgoing, &candidate.position_alt_deg,
+                    &candidate.position_az_deg);  // the function negates: pass the raw outgoing
       // The one-dimensional track is curve-like: the floor, not its arc's extent — only the
       // two-dimensional domain's anchors measure an extent.
       candidate.scale_deg = rank.generic_rank == 1 ? kSurvivalSpotFloorDeg : ExtentDeg(candidate.anchors);
@@ -900,10 +901,11 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
                           candidate.anchors, sun_hat, input.refractive_index, candidate.scale_deg);
           if (blur.blur_deg <= candidate.scale_deg) {
             SurveyObject card = SurvivingCard(member, candidate, blur, k, input.wavelength_nm);
-            if (card.kind == SurveyObjectKind::kBrightDomain) {
+            if (card.kind == SurveyObjectKind::kBrightDomain && !support.intervals.empty()) {
               // The bright_domain skeleton (the probe leg fills the profile readings): the
               // domain span is the class support's own — the same delta axis the level-0 card
-              // declared.
+              // declared. A degenerate empty support carries no span; the card survives
+              // without one.
               SurveyObject::BrightDomainPayload domain;
               domain.domain_lower_deg = support.intervals.front().lower * kRadToDeg;
               domain.domain_upper_deg = support.intervals.back().upper * kRadToDeg;

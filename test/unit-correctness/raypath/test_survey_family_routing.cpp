@@ -36,19 +36,6 @@ SurveyRequest LiteralRequest(std::vector<int> faces) {
   return request;
 }
 
-double AngleOnSkyDeg(double alt_a, double az_a, double alt_b, double az_b) {
-  const auto dir = [](double alt_deg, double az_deg) {
-    const double alt = alt_deg * kPi / 180.0;
-    const double az = az_deg * kPi / 180.0;
-    return std::pair<double, double>(std::cos(alt), az);
-  };
-  const auto [cos_a, az_rad_a] = dir(alt_a, az_a);
-  const auto [cos_b, az_rad_b] = dir(alt_b, az_b);
-  const double dot =
-      std::sin(alt_a * kPi / 180.0) * std::sin(alt_b * kPi / 180.0) + cos_a * cos_b * std::cos(az_rad_a - az_rad_b);
-  return std::acos(std::clamp(dot, -1.0, 1.0)) * 180.0 / kPi;
-}
-
 AxisDistribution AxisOf(Distribution latitude, Distribution azimuth, Distribution roll) {
   AxisDistribution axis;
   axis.latitude_dist = latitude;
@@ -397,6 +384,11 @@ TEST(FamilyRouting, ParryShapeCarriesTheOneDimensionalImageAtLevelTwo) {
     }
   }
   ASSERT_NE(regular, nullptr) << "the Parry circle is a surviving regular image at level 2";
+  // The first sampled image of the Parry measure sits on the upper Parry arc, above the
+  // horizon (sun at +20). The regression this pins: a second negation on the way into the
+  // sky read (ImageAltAzDeg negates its outgoing input) flips the altitude to the antipode
+  // (-38.6). The value is this scene's first-anchor reading, not a universal constant.
+  EXPECT_NEAR(regular->position_altitude_deg, 38.596, 0.5);
   EXPECT_LT(regular->band->blur_deg, regular->band->scale_deg);
   for (const FamilyBandVerdict& verdict : regular->band->frozen) {
     EXPECT_EQ(verdict.verdict, "narrow") << verdict.dim;

@@ -1003,7 +1003,7 @@ routing coordinates (zenith = 90 − latitude):
 | Field | Meaning |
 |---|---|
 | `measure.<dim>.kind` | `"fixed"` \| `"gauss"` \| `"uniform"` per dimension (`zenith` / `azimuth` / `roll`) |
-| `measure.<dim>.center_deg` / `width_deg` | the fixed value / gauss mean and sigma; a uniform echoes the loader's own midpoint and full range (display only — a uniform is never a freeze candidate) |
+| `measure.<dim>.center_deg` / `width_deg` | the fixed value / gauss mean and sigma; a uniform echoes the loader's own midpoint and full range (display only — a uniform is never a freeze candidate). Centers are echoed raw, without the clamp/fold the frozen widths carry in `frozen_dims[]` |
 
 The ladder, one record per level (level 0 = the actual support; levels 1..K freeze the k
 tightest gauss candidates tightest-first, ties zenith before roll; azimuth and uniforms never
@@ -1013,11 +1013,12 @@ freeze — the rank entry's own refusal domain):
 |---|---|
 | `ladder[].level` / `frozen_dims[]` | the level number; `{dim, center_deg, width_deg}` per frozen dimension — the freeze value and the frozen width reported together (the measure's fixed dimensions carry width 0) |
 | `ladder[].free_dims[]` | the family's free dimensions at this level |
-| `ladder[].rank` | present exactly when the rank question was asked (a level-0 with three free dimensions owns the support alone): `{generic_rank, grid, grid_spacing_deg[], samples, valid_samples}` — the representative member's coverage; relabelings share the rank structure |
+| `ladder[].rank` | present exactly when the rank question was asked (a level-0 with three free dimensions owns the support alone): `{generic_rank, grid, grid_spacing_deg[], samples, valid_samples}` — the first member's coverage whose rank run returned ok; relabelings share the rank structure |
 | `ladder[].objects_proposed` / `objects_killed` | the level's candidate counts — every level reports, not just the deepest |
-| `ladder[].killed[]` | the killed candidates: `{member, kind, position?, blur_deg, scale_deg, clamped, reason, verdicts[]}` — the same numbers the surviving card's band would carry; `reason` is `survival_filter` (the blur exceeded the scale) or `no_valid_image` (the probe set found no valid image) |
+| `ladder[].killed[]` | the killed candidates: `{member, kind, position?, blur_deg?, scale_deg?, clamped?, reason, verdicts[]}` — the same numbers the surviving card's band would carry; the blur/scale/clamped group is present exactly when one of them was measured, and a `no_valid_image` kill leaves the pair unmeasured and omits it; `reason` is `survival_filter` (the blur exceeded the scale) or `no_valid_image` (the probe set found no valid image) |
 
 The block's own `evidence` is finite with its coverage declaration; a refused class support
 inside the family arm turns it refused with the support's mode (the fail-closed mirror of the
 full-dimensional arm's refused-support shape: one refused `support_set` card with the witness
-sub-block, no ladder cards).
+sub-block, no ladder cards). The block is write-only: survey documents are serialized one way,
+and no in-tree reader deserializes them back into `SurveyDocument`.

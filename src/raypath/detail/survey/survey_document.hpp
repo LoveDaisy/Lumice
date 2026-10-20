@@ -138,16 +138,6 @@ inline const char* FamilyDimKindName(FamilyDimKind kind) {
   return "uniform";
 }
 
-inline bool FamilyDimKindFromName(std::string_view name, FamilyDimKind* out) {
-  for (const FamilyDimKind kind : { FamilyDimKind::kFixed, FamilyDimKind::kGauss, FamilyDimKind::kUniformFull }) {
-    if (name == FamilyDimKindName(kind)) {
-      *out = kind;
-      return true;
-    }
-  }
-  return false;
-}
-
 struct FamilyDimMeasure {
   FamilyDimKind kind = FamilyDimKind::kUniformFull;
   double center_deg = 0.0;  // the fixed value / gauss mean / the uniform's own midpoint echo
