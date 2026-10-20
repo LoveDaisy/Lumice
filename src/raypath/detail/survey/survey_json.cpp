@@ -78,10 +78,19 @@ Json ObjectJson(const SurveyObject& object) {
                             { "profile", endpoint.profile },
                             { "multiplicity", endpoint.multiplicity } });
     }
-    card["support_set"] = { { "intervals", std::move(intervals) },
-                            { "endpoints", std::move(endpoints) },
-                            { "symmetry_bits", object.support_set->symmetry_bits },
-                            { "member_count", object.support_set->member_count } };
+    Json support = { { "intervals", std::move(intervals) },
+                     { "endpoints", std::move(endpoints) },
+                     { "symmetry_bits", object.support_set->symmetry_bits },
+                     { "member_count", object.support_set->member_count } };
+    if (!object.support_set->density_tails.empty()) {
+      Json tails = Json::array();
+      for (const FamilySupportTail& tail : object.support_set->density_tails) {
+        tails.push_back(
+            { { "dim", tail.dim }, { "lower_deg", Num(tail.lower_deg) }, { "upper_deg", Num(tail.upper_deg) } });
+      }
+      support["density_tails"] = std::move(tails);
+    }
+    card["support_set"] = std::move(support);
   }
   if (object.caustic_edge.has_value()) {
     Json edge = { { "position_deg", Num(object.caustic_edge->position_deg) },
@@ -138,6 +147,22 @@ Json ObjectJson(const SurveyObject& object) {
     }
     card["witness"] = std::move(block);
   }
+  if (object.band.has_value()) {
+    Json frozen = Json::array();
+    for (const FamilyBandVerdict& verdict : object.band->frozen) {
+      frozen.push_back({ { "dim", verdict.dim }, { "verdict", verdict.verdict } });
+    }
+    card["band"] = { { "level", object.band->level },
+                     { "frozen", std::move(frozen) },
+                     { "blur_deg", Num(object.band->blur_deg) },
+                     { "scale_deg", Num(object.band->scale_deg) },
+                     { "survival", "pass" },
+                     { "clamped", object.band->clamped } };
+  }
+  if (object.family_origin.has_value()) {
+    card["family_origin"] = { { "sample_count", object.family_origin->sample_count },
+                              { "crossing_count", object.family_origin->crossing_count } };
+  }
   return card;
 }
 
@@ -158,6 +183,78 @@ Json UnevaluatedJson(const SurveyUnevaluated& entry) {
     kinds.push_back(SurveyObjectKindName(kind));
   }
   return { { "kinds", std::move(kinds) }, { "reason", entry.reason } };
+}
+
+// The family routing block's own helpers. The dim vocabulary is closed (the kind registry's
+// own switch discipline); the verdicts and killed reasons are open strings.
+Json FamilyDimMeasureJson(const FamilyDimMeasure& dim) {
+  return { { "kind", FamilyDimKindName(dim.kind) },
+           { "center_deg", Num(dim.center_deg) },
+           { "width_deg", Num(dim.width_deg) } };
+}
+
+Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
+  Json measure = { { "zenith", FamilyDimMeasureJson(block.measure.zenith) },
+                   { "azimuth", FamilyDimMeasureJson(block.measure.azimuth) },
+                   { "roll", FamilyDimMeasureJson(block.measure.roll) } };
+  Json ladder = Json::array();
+  for (const FamilyLadderLevel& level : block.ladder) {
+    Json frozen = Json::array();
+    for (const FamilyFrozenDim& dim : level.frozen_dims) {
+      frozen.push_back(
+          { { "dim", DimName(dim.dim) }, { "center_deg", Num(dim.center_deg) }, { "width_deg", Num(dim.width_deg) } });
+    }
+    Json free = Json::array();
+    for (const std::string& dim : level.free_dims) {
+      free.push_back(dim);
+    }
+    Json entry = { { "level", level.level }, { "frozen_dims", std::move(frozen) }, { "free_dims", std::move(free) } };
+    // The rank coverage exists exactly when the rank question was asked (a level-0 with three
+    // free dimensions owns the support alone — keys exist exactly when the readings do).
+    if (level.rank_asked) {
+      Json spacing = Json::array();
+      for (int i = 0; i < 2; i++) {
+        spacing.push_back(Num(level.grid_spacing_deg[static_cast<size_t>(i)]));
+      }
+      entry["rank"] = { { "generic_rank", level.generic_rank },
+                        { "grid", level.grid },
+                        { "grid_spacing_deg", std::move(spacing) },
+                        { "samples", level.samples },
+                        { "valid_samples", level.valid_samples } };
+      if (level.rank_refused_members > 0) {
+        entry["rank"]["refused_members"] = level.rank_refused_members;
+      }
+    }
+    entry["objects_proposed"] = level.objects_proposed;
+    entry["objects_killed"] = level.objects_killed;
+    if (!level.killed.empty()) {
+      Json killed = Json::array();
+      for (const FamilyKilledCandidate& candidate : level.killed) {
+        Json record = { { "member", LayersJson({ candidate.member })[0] }, { "kind", candidate.kind } };
+        if (candidate.has_position) {
+          record["position"] = { { "altitude_deg", Num(candidate.position_altitude_deg) },
+                                 { "azimuth_deg", Num(candidate.position_azimuth_deg) } };
+        }
+        if (candidate.blur_measured) {
+          record["blur_deg"] = Num(candidate.blur_deg);
+          record["scale_deg"] = Num(candidate.scale_deg);
+          record["clamped"] = candidate.clamped;
+        }
+        record["reason"] = candidate.reason;
+        Json verdicts = Json::array();
+        for (const FamilyBandVerdict& verdict : candidate.verdicts) {
+          verdicts.push_back({ { "dim", verdict.dim }, { "verdict", verdict.verdict } });
+        }
+        record["verdicts"] = std::move(verdicts);
+        killed.push_back(std::move(record));
+      }
+      entry["killed"] = std::move(killed);
+    }
+    ladder.push_back(std::move(entry));
+  }
+  return { { "measure", std::move(measure) },
+           { "ladder", std::move(ladder) },
+           { "evidence", EvidenceJson(block.evidence) } };
 }
 
 Json ProbeJson(const SurveyProbe& probe) {
@@ -270,6 +367,13 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
     unevaluated.push_back(UnevaluatedJson(entry));
   }
   doc["unevaluated"] = std::move(unevaluated);
+
+  // family_routing is the family arm's own record: an early-stop, a full-dimensional and an
+  // outside-domain-refused document carry no family_routing key at all (the probes key's own
+  // conditional-presence discipline).
+  if (document.family_routing.has_value()) {
+    doc["family_routing"] = FamilyRoutingJson(*document.family_routing);
+  }
 
   // Probes are a T1-leg product: an early-stop document carries no probes key at all (the
   // schema-4 append discipline keeps the v1 documents byte-stable).

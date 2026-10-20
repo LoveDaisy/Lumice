@@ -110,6 +110,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/discovery.hpp
   analytic/entry_measure.cpp
   analytic/entry_measure.hpp
+  analytic/family_rank.cpp
+  analytic/family_rank.hpp
   analytic/fiber_continuation.cpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp
@@ -275,6 +277,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/survey/survey_assembly.cpp
   raypath/detail/survey/survey_assembly.hpp
   raypath/detail/survey/survey_document.hpp
+  raypath/detail/survey/survey_family.cpp
+  raypath/detail/survey/survey_family.hpp
   raypath/detail/survey/survey_json.cpp
   raypath/detail/survey/survey_json.hpp
   raypath/detail/survey/survey_probe.cpp

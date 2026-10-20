@@ -72,29 +72,44 @@ TEST(SurveyAssembly, LiteralScopeKeepsOnlyTheRequestedSequence) {
   EXPECT_EQ(document.request.symmetry_bits, 0u);
 }
 
-TEST(SurveyAssembly, NonRankZeroPlateClassStaysUnevaluatedWithTheFamilyRestrictedReason) {
+// The family-restricted plate class (the v1 not-wired skeleton's own shape) now routes into
+// the family arm: the measure is read, the ladder runs (level 0's support, level 1's zenith
+// freeze on the {azimuth, roll} pole spin chart — the wedge member's one-dimensional image,
+// the pole degeneracy being data), and no unevaluated skeleton remains.
+TEST(SurveyAssembly, FamilyRestrictedPlateRoutesIntoTheLadderArm) {
   const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };  // through two side faces: a deviating prism path
+  request.symmetry_bits = 0;           // the literal member: the arm's per-member shape, not the 12-member sweep
   SurveyDocument document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
-  EXPECT_TRUE(document.objects.empty());
-  ASSERT_EQ(document.unevaluated.size(), 1u);
-  // A plate is a family-restricted class: the T1 rank must be taken on the limit family, and
-  // that routing is not wired — the reason names exactly that, not a generic not-wired.
-  EXPECT_EQ(document.unevaluated.front().reason,
-            "family-restricted T1 routing not wired (gap: measure-to-family mapping)");
-  ASSERT_EQ(document.unevaluated.front().kinds.size(), 5u);
-  for (const SurveyObjectKind kind : document.unevaluated.front().kinds) {
-    EXPECT_NE(kind, SurveyObjectKind::kSourceImage);
+  EXPECT_TRUE(document.unevaluated.empty());
+  ASSERT_TRUE(document.family_routing.has_value());
+  EXPECT_EQ(document.family_routing->measure.zenith.kind, FamilyDimKind::kGauss);
+  EXPECT_NEAR(document.family_routing->measure.zenith.width_deg, 0.3, 1e-6);
+  ASSERT_EQ(document.family_routing->ladder.size(), 2u);
+  EXPECT_FALSE(document.family_routing->ladder[0].rank_asked);
+  ASSERT_TRUE(document.family_routing->ladder[1].rank_asked);
+  EXPECT_EQ(document.family_routing->ladder[1].frozen_dims.at(0).dim, analytic::FamilyDimension::kZenith);
+  // The pole spin chart's wedge member: a one-dimensional image (the chart degeneracy is
+  // data, not an error — the restricted-family rank test's own anchor).
+  EXPECT_EQ(document.family_routing->ladder[1].generic_rank, 1);
+  // The cards: the level-0 support plus the level-1 survivors, each carrying its band.
+  std::set<std::string> kinds;
+  for (const SurveyObject& card : document.objects) {
+    kinds.insert(SurveyObjectKindName(card.kind));
+    if (card.kind == SurveyObjectKind::kSupportSet) {
+      continue;
+    }
+    EXPECT_TRUE(card.band.has_value());
   }
+  EXPECT_NE(kinds.find("support_set"), kinds.end());
+  EXPECT_NE(kinds.find("regular_image"), kinds.end());
   EXPECT_FALSE(document.member_verdicts.empty());
   for (const SurveyMemberVerdict& verdict : document.member_verdicts) {
     EXPECT_FALSE(verdict.rank_zero);
   }
-  // The T0 facts stand on their own finite footing; the routing verdict is not a refusal unless
-  // a classification actually refused.
   EXPECT_EQ(document.evidence.state, EvidenceState::kFinite);
   EXPECT_EQ(document.evidence.coverage.members_evaluated, static_cast<int>(document.member_verdicts.size()));
 }
@@ -117,6 +132,10 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
     kinds.insert(SurveyObjectKindName(card.kind));
   }
   EXPECT_EQ(kinds, std::set<std::string>({ "support_set", "caustic_edge", "bright_domain" }));
+  // The wide-measure no-change assertion: a full-dimensional document carries no
+  // family_routing key (the ladder never runs on the random family — the full-dimensional
+  // machine IS the family here).
+  EXPECT_FALSE(document.family_routing.has_value());
 
   // The support_set card: the corpus 450nm partition shape (three intervals, the first closed,
   // the rest open components) with the endpoint mechanism vocabulary.

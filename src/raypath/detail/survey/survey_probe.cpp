@@ -157,6 +157,9 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
     if (card.kind != SurveyObjectKind::kBrightDomain || !card.bright_domain.has_value()) {
       continue;
     }
+    if (input.fill_member != nullptr && (card.members.size() != 1u || card.members.front() != *input.fill_member)) {
+      continue;
+    }
     card.bright_domain->has_peak = readings.has_peak;
     card.bright_domain->peak_delta_deg = readings.peak_delta_deg;
     card.bright_domain->peak_value = readings.peak_value;

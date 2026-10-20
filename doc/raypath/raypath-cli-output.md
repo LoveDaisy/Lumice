@@ -691,11 +691,24 @@ The routing has three outcomes and nothing else:
   `probes[]` slice, and the chromatic layer's dispersion and diagnose legs (§9.6). The deeper
   kinds `family_collapse_point` / `regular_image` are structurally absent on this route — they
   are the rank-0/rank-1 family outcomes, not uncomputed work.
-- **Any other member verdict** (a family-restricted class, an inexpressible axis, or a refused
-  classification) → the document ships the T0 facts per member and puts the deeper object kinds
-  in `unevaluated` with the named reason: `family-restricted T1 routing not wired (gap:
-  measure-to-family mapping)` for a non-random family, `survey v1: T1/T2 not wired` for an axis
-  no pose density can carry. An unevaluated block is a routing state, never an empty result.
+- **A family-restricted measure** (a non-random, non-degenerate axis) → the measure-to-family
+  routing (`family_routing`, §9.7): the measure is read in the concentration language
+  (each dimension `{fixed | gauss | uniform}` × (center, width), the two default semantics
+  being the loader's own), and the freezing ladder runs — level 0 is the actual support
+  (`support_set`, always), levels 1..K freeze the k tightest gauss candidates and ask the
+  restricted-family rank there (a collapse point, a fold arc, a regular image or a bright
+  domain per member, each carrying a `band` label), and the per-object survival filter decides
+  whether a frozen width's image blur stays inside the object's own angular scale (survivors
+  become cards; the killed are reported inside the ladder level that proposed them). The
+  all-fixed axis is the 0D arm: the image is evaluated at the one pose directly and the weight
+  read the same way (never a band sum).
+- **A measure shape outside the routing v1 domain** (a concentrated azimuth, a uniform zenith,
+  a bounded uniform's hard support, a distribution type the vocabulary does not read) → one
+  refused `support_set` card with the open mode `measure_shape_outside_routing_domain:
+  <named shape>` and the witness sub-block's positive fact. The domain is widened by design
+  decision, never by approximation (a bounded uniform is not silently swapped for a
+  matching-width gauss). The retired v1 skeleton — the deeper kinds parked in `unevaluated`
+  with a not-wired reason — is gone: a non-random axis is routed or refused, never parked.
 
 Member expansion is a statement about the **ensemble**, not about the sequence: the physical
 class of a plate's `1-2` is `{1-2}` alone, because the plate ensemble (c axis at the zenith,
@@ -722,9 +735,10 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `request` | The echo: `crystal_id`, `path_layers`, `symmetry_bits` (7 = physical P\|B\|D, 0 = literal), `wavelength_nm` (null when unset) and `budget_ms` as resolved |
 | `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg` |
 | `routing` | The T0 leg: `early_stopped`, and per-member `members[]` records (`member`, `rank_zero`, `mechanism` — the kernel's roll-up slug, null when not computable, with `mechanism_unavailable` naming why — and the member's own `evidence` block) |
-| `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has an extremum fold — the position needs a fold to sit on; the minimum-deviation fold when the class has one, else the interior maximum at the support's upper edge), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed — and on that refused card, the declared-source `witness` sub-block (§9.2) |
-| `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop and on the full-dimensional route |
-| `probes` | The canonical probes; present only on the full-dimensional route (§9.6) — an early-stop document carries no `probes` key at all |
+| `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has an extremum fold — the position needs a fold to sit on; the minimum-deviation fold when the class has one, else the interior maximum at the support's upper edge), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed — and on that refused card, the declared-source `witness` sub-block (§9.2); the family route's own cards (the band-labelled survivors and the level-0 `support_set`, §9.2's family-form paragraph) |
+| `family_routing` | present only on the family arm's documents (§9.7): the measure echo, the freezing ladder with every level's rank coverage and killed candidates, and the block's own evidence. An early stop, a full-dimensional route and an outside-domain refusal carry no `family_routing` key at all |
+| `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop, on the full-dimensional route and on the family routes (the v1 not-wired skeleton is retired — a non-random axis is routed or refused, never parked) |
+| `probes` | The canonical probes; present only on a route that ran one (the full-dimensional route, and the family route when the density conversion carries the measure — §9.6) — an early-stop, an outside-domain-refused and a density-less family document carry no `probes` key at all |
 | `chromatic` | The chromatic layer's own evidence block plus the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`, §9.6). Its state follows the legs its routing arm ran: `unevaluated` only when no chromatic leg exists for the input class, `finite` when its legs computed, `refused` (with the leg's mode) when its only leg refused — on the identity arm the tint IS the block's only leg, so the block and the sub-block never disagree |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
 | `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran) |
@@ -762,6 +776,7 @@ on a card of another kind):
 | `endpoints[]` | `{delta_deg, source, profile, multiplicity}` — the kernel onsets sitting at an interval endpoint, slugs passed through (`interior_minimum` / `boundary_extremum` / `corner` × `finite_jump` / ...) |
 | `symmetry_bits` | the scope the partition ran on (7 = physical P\|B\|D, 0 = literal) |
 | `member_count` | the class members the partition ran on |
+| `density_tails` | present only when the density leg ran and the zenith measure is a gauss — the zenith window (the band sum's ±12σ floor) as `{dim, lower_deg, upper_deg}`; the width went into the ladder, and the support's own tail bound is a row here |
 
 **`caustic_edge`** — the support's extremum fold (the sharp inner edge; the corpus's 22-degree
 inner edge on a random prism): the minimum-deviation fold when the class has one, else the
@@ -808,6 +823,27 @@ The witness is the lattice argmax event of the declared measure's own sampler (t
 Fibonacci lattice over SO(3)) — an **existence** statement. The corpus's target-specific
 numbers are a different protocol and live on a different ruler.
 
+**The family-form cards (the `family_routing` arm)** carry the same registry kinds with their
+own payload shape. A family card carries `position` (the representative's sky position), its
+`evidence`, the `band` label (below) and `family_origin` (`sample_count` / `crossing_count` —
+per-kind coverage counts: a `family_collapse_point` carries its collapse component's sample
+count, a family `caustic_edge` its fold component's crossing count; a `regular_image` /
+`bright_domain` card's count comes from the consumed-side extent probe (the assembly's own
+`EvaluateFamilyPoint` probes), not the rank primitive's output). The one key that crosses forms
+is `bright_domain`: a family bright_domain card carries the class support's span
+(`domain_lower_deg` / `domain_upper_deg`), and its profile readings — when the density carried
+the measure — come from the probe leg exactly as on the full-dimensional route, on the
+representative member's card only (`members` exactly the requested literal sequence; sibling
+member cards carry the span alone); a family caustic_edge card carries no `caustic_edge`
+payload (the fold arc's position is its representative crossing's sky position).
+
+| Field | Meaning |
+|---|---|
+| `band.level` | the ladder level the card survived at (0 = the actual support's level: the measure's own fixed dimensions, or the 0D arm's single pose) |
+| `band.frozen[]` | `{dim, verdict}` per frozen dimension — `narrow`/`wide` is a property of the (dimension, object) pair, never of the dimension alone |
+| `band.blur_deg` / `band.scale_deg` | the survival filter's own two numbers: the frozen widths' image blur (the anchor images re-evaluated at ±width/2, clamped one-sided at a pole with `clamped: true`) against the object's declared scale (every curve-like object — a collapse point, a fold arc, a one-dimensional image track — declares the 1.0° structural cross-section floor, never its overall extent; only the two-dimensional bright domain declares its ≤16-point probe set's extent); shifted probes that find no valid image are skipped as data, and a dimension whose shifted probes all come back empty reads narrow (v1: no image carries no blur evidence) |
+| `band.survival` | `"pass"` — a killed candidate never carries a card; it lives in `family_routing.ladder[].killed` with the same numbers |
+
 ### 9.3 Evidence states
 
 Every declaration block (each object card, each member verdict, the document level, the
@@ -819,7 +855,7 @@ is always serialized, so absence can never read as "settled":
 | `certified` | closed-form / algebraic / exhaustive proof | `method` — from the certified-method registry (`point_mass`, the kernel's rank-0 slug; `slab_min_deviation_closed_form`, the two-face-chain minimum-deviation edge) |
 | `finite` | a finite computation | `coverage` — `{members_evaluated, geometry_basis, wavelength_nm}` |
 | `refused` | a refusal | `mode` — an OPEN string (the analytic-api precedent: status closed / reason open), e.g. a boundary-walk status name |
-| `unevaluated` | not computed | `reason` — e.g. `survey v1: T1/T2 not wired` |
+| `unevaluated` | not computed | `reason` — an open string naming what did not run and why |
 
 The schema default is `finite` with its coverage declaration; the default rule is pinned by the
 in-repo unit tests. A `refused` state is data about the computation, never a physical
@@ -833,7 +869,11 @@ ran — the full-dimensional arm's legs are the per-member delta partition, the 
 the chromatic pair and the class tint's two-lambda power sum (seconds of work on a 12-member
 class); the identity arm's are the millisecond routing verdict and the two-lambda band-sum tint
 (the note names the per-lambda sample count); the refused-support arm's are the routing
-verdict, the per-member partition attempt (the note names the refusal) and the witness lattice.
+verdict, the per-member partition attempt (the note names the refusal) and the witness lattice;
+the family arm's are the routing verdict, the per-member delta partition, the ladder's
+per-member per-level rank scans (the note names the grid) and — when the density conversion
+carries the measure — the band-sum probe, the chromatic pair and the class tint (the 0D arm's
+are the partition, the single-pose image evaluation and the single-pose weight).
 Every arm's note names its own legs. Enforcement arrives with the quantification legs that
 actually spend.
 
@@ -850,7 +890,7 @@ no second serializer.
 
 ### 9.6 The probe and the chromatic caliber
 
-The full-dimensional route's quantification layer runs at fixed constants — they are part of
+The full-dimensional route's quantification layer (the family route runs the same legs when its measure's density conversion carries it — the probe's radial profile reads the family density, the readings landing on the representative member's own `bright_domain` card) runs at fixed constants — they are part of
 the schema (the serialized `spec` echoes every one), not tuning knobs:
 
 | Constant | Value | Meaning |
@@ -959,3 +999,32 @@ face sequence stopped resolving to slots — unreachable past the request-level 
 honest if it ever fires). On the full-dimensional route the block has other legs with real
 output, so a refused tint keeps its refusal in the sub-block alone: the block-state rule is
 finite once any leg produced output.
+
+### 9.7 The family routing block (`family_routing`)
+
+Present only on the family arm's documents. The measure echo is what the router read off each
+orientation dimension — the concentration language, never the distribution-type language, in
+routing coordinates (zenith = 90 − latitude):
+
+| Field | Meaning |
+|---|---|
+| `measure.<dim>.kind` | `"fixed"` \| `"gauss"` \| `"uniform"` per dimension (`zenith` / `azimuth` / `roll`) |
+| `measure.<dim>.center_deg` / `width_deg` | the fixed value / gauss mean and sigma; a uniform echoes the loader's own midpoint and full range (display only — a uniform is never a freeze candidate). Centers are echoed raw, without the clamp/fold the frozen widths carry in `frozen_dims[]` |
+
+The ladder, one record per level (level 0 = the actual support; levels 1..K freeze the k
+tightest gauss candidates tightest-first, ties zenith before roll; azimuth and uniforms never
+freeze — the rank entry's own refusal domain):
+
+| Field | Meaning |
+|---|---|
+| `ladder[].level` / `frozen_dims[]` | the level number; `{dim, center_deg, width_deg}` per frozen dimension — the freeze value and the frozen width reported together (the measure's fixed dimensions carry width 0) |
+| `ladder[].free_dims[]` | the family's free dimensions at this level |
+| `ladder[].rank` | present exactly when the rank question was asked (a level-0 with three free dimensions owns the support alone): `{generic_rank, grid, grid_spacing_deg[], samples, valid_samples, refused_members?}` — the first member's coverage whose rank run returned ok; relabelings share the rank structure; `refused_members` is present only when non-zero and counts the members the rank entry refused on their weight leg (data, not a verdict) |
+| `ladder[].objects_proposed` / `objects_killed` | the level's candidate counts — every level reports, not just the deepest |
+| `ladder[].killed[]` | the killed candidates: `{member, kind, position?, blur_deg?, scale_deg?, clamped?, reason, verdicts[]}` — the same numbers the surviving card's band would carry; the blur/scale/clamped group is present exactly when one of them was measured, and a `no_valid_image` kill leaves the pair unmeasured and omits it; `reason` is `survival_filter` (the blur exceeded the scale) or `no_valid_image` (the probe set found no valid image) |
+
+The block's own `evidence` is finite with its coverage declaration; a refused class support
+inside the family arm turns it refused with the support's mode (the fail-closed mirror of the
+full-dimensional arm's refused-support shape: one refused `support_set` card with the witness
+sub-block, no ladder cards). The block is write-only: survey documents are serialized one way,
+and no in-tree reader deserializes them back into `SurveyDocument`.

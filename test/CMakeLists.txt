@@ -264,6 +264,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_focus.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_chromatic.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_contour.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_family_rank.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_reflection_group.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_discovery.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_rank.cpp"
@@ -333,6 +334,7 @@ add_executable(unit_correctness_test
   # C14 shape in memory), the literal scope keeps one member, a deviating class ships the
   # unevaluated skeleton, and the refusals reuse the report error semantics.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_assembly.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_family_routing.cpp"
   # The survey's canonical probe: the profile reader on synthetic shapes (edge bin vs peak
   # reading stay two things), and the small-sample real assembly whose edge bin contains the
   # closed-form minimum deviation.

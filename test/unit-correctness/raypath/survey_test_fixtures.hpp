@@ -135,6 +135,84 @@ inline ConfigManager AsymmetricPyramidScene() {
   return config;
 }
 
+
+// The C16 Lowitz measure: a regular prism whose c-axis sits near the vertical with a WIDE
+// zenith gauss (the corpus's zenith0/std40) and a NARROW roll gauss (0.3) — the routing's
+// calibration pair (the roll freezes first, the wide zenith must not survive its own freeze).
+inline ConfigManager LowitzMeasureScene(double zenith_std, double roll_std) {
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.0f, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1, 0 };
+  }
+  CrystalConfig crystal{};
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  // The latitude slot holds latitude; zenith 0 (the c-axis vertical) is latitude 90.
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 90, static_cast<float>(zenith_std) };
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0, 360 };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0, static_cast<float>(roll_std) };
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = { 20, 0, 0 };
+  config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  config.scene_.ms_.push_back({ 0, { entry } });
+  return config;
+}
+
+// The Parry measure: the c-axis near HORIZONTAL (zenith 90 = latitude 0) with a narrow zenith
+// gauss and a narrow roll gauss — the ladder freezes roll then zenith, and level 2's
+// {azimuth} family is the Parry circle itself (a one-dimensional regular image).
+inline ConfigManager ParryMeasureScene(double zenith_std, double roll_std) {
+  ConfigManager config = LowitzMeasureScene(zenith_std, roll_std);
+  auto crystal = config.crystals_.find(1);
+  crystal->second.axis_.latitude_dist = { DistributionType::kGaussian, 0, static_cast<float>(zenith_std) };
+  // The scene entry carries its own copy of the crystal; keep the two in step.
+  for (auto& setting : config.scene_.ms_.front().setting_) {
+    setting.crystal_.axis_.latitude_dist = crystal->second.axis_.latitude_dist;
+  }
+  return config;
+}
+
+// The all-fixed axis: the single pose (the axis-default semantics — an axis block left out
+// entirely produces exactly this distribution). The 0D arm's shape.
+inline ConfigManager SinglePoseScene() {
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.0f, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1, 0 };
+  }
+  CrystalConfig crystal{};
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.latitude_dist = { DistributionType::kNoRandom, 90, 0 };
+  crystal.axis_.azimuth_dist = { DistributionType::kNoRandom, 0, 0 };
+  crystal.axis_.roll_dist = { DistributionType::kNoRandom, 0, 0 };
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = { 20, 0, 0 };
+  config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  config.scene_.ms_.push_back({ 0, { entry } });
+  return config;
+}
+
+// An outside-domain shape: a zigzag roll (a distribution type the routing vocabulary does not
+// read) — the refused-measure arm's shape.
+inline ConfigManager ZigzagRollScene() {
+  ConfigManager config = LowitzMeasureScene(0.3, 0.3);
+  config.crystals_.find(1)->second.axis_.roll_dist = { DistributionType::kZigzag, 0, 1.0f };
+  for (auto& setting : config.scene_.ms_.front().setting_) {
+    setting.crystal_.axis_.roll_dist = { DistributionType::kZigzag, 0, 1.0f };
+  }
+  return config;
+}
+
 }  // namespace lumice::raypath::survey
 
 #endif  // RAYPATH_SURVEY_TEST_FIXTURES_H_
