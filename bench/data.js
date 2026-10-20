@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792506650943,
+  "lastUpdate": 1792512389918,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3493b66dd3bb005b0ece61229caadab5c3c3fd09",
-          "message": "Merge pull request #419 from LoveDaisy/feat/display-mode-viewport-control\n\nfeat(gui): display mode becomes a segmented control in the preview's corner",
-          "timestamp": "2026-09-26T03:55:16+08:00",
-          "tree_id": "97ddaa25b9147c1d43eec4ed3cd226d46d8195bb",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/3493b66dd3bb005b0ece61229caadab5c3c3fd09"
-        },
-        "date": 1790366933216,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 363052.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 511419.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 368560.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 328497.4,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4794,6 +4746,54 @@ window.BENCHMARK_DATA = {
             "value": 313831.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "725018d33ad9a3d08ded65180c4f2d3272581cd7",
+          "message": "Merge pull request #531 from LoveDaisy/feat/free-dims-enum-cleanup\n\nrefactor(raypath): free_dims carries the dim enum",
+          "timestamp": "2026-10-21T00:02:56+08:00",
+          "tree_id": "280b8049e2f76e79f05bd54c0b9bc03c21e48818",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/725018d33ad9a3d08ded65180c4f2d3272581cd7"
+        },
+        "date": 1792512388112,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 352190.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 506043.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 366963.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 284690.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
