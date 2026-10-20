@@ -3278,6 +3278,27 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
       }
     }
 
+    // `grid` sits next to lens_shift — a render-layer field the import arm refuses whole — but
+    // only half-shaped: lens_shift has no control anywhere, while half of grid has a home (the
+    // overlay's line/label/colour switches, which the export arm writes this very subtree from)
+    // and half does not (the per-family angle lists have no editor form). That half-shape is why
+    // this is a plain notice rather than WarnUnsupportedByDesign: that helper's subject is a value
+    // the GUI has NOWHERE TO PUT, and two of its fixed sentences would be untrue here — "no
+    // control for" (the overlay controls exist) and "use the original config with the CLI" (the
+    // remedies are the overlay itself and a .lmc round-trip of the GUI state).
+    //
+    // The predicate is the whole key, never its subkeys: a document that never mentioned the field
+    // asked for nothing (the ray_color rule below, mirrored), and a stated-but-empty grid object
+    // is still a stated one.
+    if (jr.contains("grid")) {
+      const std::string msg =
+          "render[0].grid is not read on import: the coordinate grid — its per-family angle lists "
+          "in particular — has no editor equivalent, and the overlay keeps its current settings. "
+          "Set the intended grid overlay in the GUI, or round-trip the GUI state through a .lmc file.";
+      GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
+      AppendLoadNotice(msg);
+    }
+
     if (jr.contains("view")) {
       r.elevation = jr["view"].value("elevation", RenderConfig{}.elevation);
       r.azimuth = jr["view"].value("azimuth", RenderConfig{}.azimuth);

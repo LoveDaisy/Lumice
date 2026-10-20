@@ -122,8 +122,16 @@ TEST(FilterReconstructChain, ExpressibleCompositionsComeBackAsEditableRows) {
       ADD_FAILURE() << c.name << ": nothing was emitted at all";
       continue;  // no document to read back for this row; the rest still get checked
     }
+    // The GUI's own emission carries the grid subtree — the export arm writes the user's overlay
+    // out — and the import arm refuses that key with a notice of its own. This chain is about the
+    // FILTER's round trip, so the grid key comes back out before re-importing; the emptiness
+    // assertion below stays entirely about filter warnings.
+    nlohmann::json emitted_doc = nlohmann::json::parse(emitted);
+    if (emitted_doc.contains("render") && !emitted_doc["render"].empty()) {
+      emitted_doc["render"][0].erase("grid");
+    }
     GuiState loaded = InitDefaultState();
-    if (!DeserializeFromJson(emitted, loaded)) {
+    if (!DeserializeFromJson(emitted_doc.dump(), loaded)) {
       ADD_FAILURE() << c.name << ": the GUI's own emission failed to re-parse";
       continue;
     }
