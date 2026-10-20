@@ -110,6 +110,130 @@ struct SurveyCertificate {
   double wedge_tolerance_deg = analytic::kRankZeroWedgeToleranceDeg;
 };
 
+// ---- the family routing block (the measure-to-family arm's own record) ----------------
+//
+// gap1-family-routing.md sections 2-3: the router reads each orientation dimension in the
+// concentration language ({fixed | gauss | uniform_full} x (center, width)), never the
+// distribution-type language; the ladder freezes the concentrated (gauss) zenith/roll
+// dimensions tightest-first, asks the restricted-family rank at each level, and the survival
+// filter (structure proposes, weight disposes) decides per object whether a frozen width's
+// image blur stays inside the object's own angular scale. These structs are the schema-4
+// APPEND that carries it; the block appears on exactly the documents the family arm produced
+// (the probes key's own conditional-presence discipline — an early stop, a full-dimensional
+// route and an outside-domain refusal carry none).
+
+// The routing vocabulary of one orientation dimension. A width NEVER enters a rank question —
+// it feeds only the freeze order and the survival filter.
+enum class FamilyDimKind { kFixed, kGauss, kUniformFull };
+
+inline const char* FamilyDimKindName(FamilyDimKind kind) {
+  switch (kind) {
+    case FamilyDimKind::kFixed:
+      return "fixed";
+    case FamilyDimKind::kGauss:
+      return "gauss";
+    case FamilyDimKind::kUniformFull:
+      return "uniform";
+  }
+  return "uniform";
+}
+
+inline bool FamilyDimKindFromName(std::string_view name, FamilyDimKind* out) {
+  for (const FamilyDimKind kind : { FamilyDimKind::kFixed, FamilyDimKind::kGauss, FamilyDimKind::kUniformFull }) {
+    if (name == FamilyDimKindName(kind)) {
+      *out = kind;
+      return true;
+    }
+  }
+  return false;
+}
+
+struct FamilyDimMeasure {
+  FamilyDimKind kind = FamilyDimKind::kUniformFull;
+  double center_deg = 0.0;  // the fixed value / gauss mean / the uniform's own midpoint echo
+  double width_deg = 0.0;   // the gauss sigma (the freeze candidate's width); 0 for fixed; the
+                            // uniform's full range as a raw echo — a uniform is never a freeze
+                            // candidate, so its width is display only
+};
+
+// The measure the router read, in ROUTING coordinates (zenith = 90 - latitude, the density
+// conversion's own formula), so the echo and the kernel's family dimensions speak one name.
+struct FamilyRoutingMeasure {
+  FamilyDimMeasure zenith;
+  FamilyDimMeasure azimuth;
+  FamilyDimMeasure roll;
+};
+
+// One frozen dimension of a ladder level: the freeze value and the width that was frozen (the
+// measure's own sigma — reported, never consumed by the rank question).
+struct FamilyFrozenDim {
+  std::string dim;  // "zenith" | "azimuth" | "roll"
+  double center_deg = 0.0;
+  double width_deg = 0.0;  // 0 for the measure's own fixed dimensions
+};
+
+// One narrow/wide verdict of one frozen dimension against one object (AC5: narrow/wide is a
+// property of the (dimension, object) pair, never of the dimension alone).
+struct FamilyBandVerdict {
+  std::string dim;
+  std::string verdict;  // "narrow" | "wide"
+};
+
+// A candidate the survival filter killed, recorded in the ladder level it was proposed at:
+// every level reports its proposals — the survivors as object cards, the killed here.
+struct FamilyKilledCandidate {
+  std::vector<int> member;
+  std::string kind;  // SurveyObjectKindName of the proposed card
+  bool has_position = false;
+  double position_altitude_deg = 0.0;
+  double position_azimuth_deg = 0.0;
+  double blur_deg = 0.0;
+  double scale_deg = 0.0;
+  bool clamped = false;  // a blur probe clamped into its dimension's legal range (one-sided)
+  std::string reason;    // "survival_filter" | "no_valid_image" | "member_resolution"
+  std::vector<FamilyBandVerdict> verdicts;
+};
+
+// One ladder level. Level 0 is the actual support (the measure's fixed dimensions already
+// frozen): it owns the support_set card, and asks the rank question only when the fixed
+// dimensions already leave at most two free. Levels 1..K freeze the k tightest gauss
+// candidates. `rank_asked` false means the level's family has three free dimensions (a level 0
+// with no fixed dimension — the rank entry's own refusal domain), so the level owns the support
+// alone and the rank fields below stay unset.
+struct FamilyLadderLevel {
+  int level = 0;
+  std::vector<FamilyFrozenDim> frozen_dims;
+  std::vector<std::string> free_dims;
+  bool rank_asked = false;
+  int generic_rank = -1;  // the representative member's; relabelings share it (the support's
+                          // own relabeling logic, one physical class)
+  int grid = 0;
+  double grid_spacing_deg[2] = { 0.0, 0.0 };
+  int samples = 0;
+  int valid_samples = 0;
+  int rank_refused_members = 0;  // a member the rank entry refused (data, not a verdict)
+  int objects_proposed = 0;
+  int objects_killed = 0;
+  std::vector<FamilyKilledCandidate> killed;
+};
+
+// The density-support tail rows on the family arm's support_set card (AC5's boundedness-role
+// separation): the width entered the ladder, the support's own tail bounds are reported here.
+// The v1 domain has no bounded uniform, so the only rows are a gauss zenith's PoseDensity
+// window (the +-12 sigma floor of the band sum's own normalization integral).
+struct FamilySupportTail {
+  std::string dim;
+  double lower_deg = 0.0;
+  double upper_deg = 0.0;
+};
+
+// The whole block; carried by exactly the family arm's documents.
+struct FamilyRoutingBlock {
+  FamilyRoutingMeasure measure;
+  std::vector<FamilyLadderLevel> ladder;
+  SurveyEvidence evidence;
+};
+
 // One object card. For the v1 source_image: `members` are the class members the card collapses
 // (the card is the sky-side object; the members are its preimage decomposition), `position` is
 // the sun's altitude/azimuth, `evidence` is certified with the method named, and `certificate`
@@ -149,6 +273,8 @@ struct SurveyObject {
     // name its caliber — literal members / L1 / L2 / filter union is the family of axes).
     unsigned symmetry_bits = 0;
     int member_count = 0;  // class members the partition ran on
+    // The density-support tail rows (the family arm's append; empty on the T1 arm's cards).
+    std::vector<FamilySupportTail> density_tails;
   };
 
   // --- kCausticEdge payload --------------------------------------------------------------
@@ -191,6 +317,28 @@ struct SurveyObject {
   std::optional<SupportSetPayload> support_set;
   std::optional<CausticEdgePayload> caustic_edge;
   std::optional<BrightDomainPayload> bright_domain;
+
+  // --- the family routing's payloads (only the family arm's cards carry them) ------------
+  // The band label: the ladder level the card survived at, the frozen dimensions with their
+  // narrow/wide verdicts, and the survival filter's own two numbers. A killed candidate never
+  // carries a band — it lives in family_routing.ladder[].killed instead.
+  struct BandPayload {
+    int level = 0;
+    std::vector<FamilyBandVerdict> frozen;
+    double blur_deg = 0.0;
+    double scale_deg = 0.0;
+    bool clamped = false;
+  };
+  // The rank primitive's own coverage counts, passed through: a family_collapse_point carries
+  // its collapse component's sample count, a family caustic_edge its fold component's crossing
+  // count (0 for the kinds that have neither).
+  struct FamilyOriginPayload {
+    int sample_count = 0;
+    int crossing_count = 0;
+  };
+
+  std::optional<BandPayload> band;
+  std::optional<FamilyOriginPayload> family_origin;
 
   // --- the witness payload (the refused-support arm's positive leg) ----------------------
   // A partition refusal says the support is unknown, not that the class carries no light; this
@@ -494,6 +642,11 @@ struct SurveyDocument {
   // The canonical probes (the survey's quantification layer): filled only by a routing arm
   // that ran them; an early-stop document carries none.
   std::vector<SurveyProbe> probes;
+
+  // The family routing block (the measure-to-family arm's own record): present only on a
+  // document that arm produced — an early stop, a full-dimensional route and an
+  // outside-domain refusal carry no family_routing key at all.
+  std::optional<FamilyRoutingBlock> family_routing;
 
   // The chromatic layer: the block-level evidence plus the optional legs. A leg absent from
   // the document is one the routing arm did not run — the sub-block keys never appear without

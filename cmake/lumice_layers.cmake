@@ -277,6 +277,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/survey/survey_assembly.cpp
   raypath/detail/survey/survey_assembly.hpp
   raypath/detail/survey/survey_document.hpp
+  raypath/detail/survey/survey_family.cpp
+  raypath/detail/survey/survey_family.hpp
   raypath/detail/survey/survey_json.cpp
   raypath/detail/survey/survey_json.hpp
   raypath/detail/survey/survey_probe.cpp

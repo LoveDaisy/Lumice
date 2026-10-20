@@ -83,76 +83,92 @@ const analytic::CriticalOnset* ExtremumFoldOnset(const std::vector<analytic::Cri
 
 }  // namespace
 
-T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-                            const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
-                            double refractive_index, double wavelength_nm, SurveyDocument* out) {
+ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
+                                  const std::vector<std::vector<int>>& members, double refractive_index,
+                                  double wavelength_nm, SurveyDocument* out) {
   // One axis assembly per member; the support row is the schema3 machine's own (the same
   // assembly feeds the objects and the row — no second partition anywhere).
-  std::vector<schema3::AxisAssembly> assemblies;
-  std::vector<schema3::MemberSupport> rows;
-  assemblies.reserve(members.size());
-  rows.reserve(members.size());
+  ClassSupport support;
+  support.assemblies.reserve(members.size());
+  support.rows.reserve(members.size());
   for (const std::vector<int>& member : members) {
     std::vector<int> slots;
     if (const Error slot_error = ResolveSingleLayerPath({ member }, table, &slots); !slot_error.Ok()) {
-      return { false, "member_resolution" };
+      support.refusal_mode = "member_resolution";
+      return support;
     }
     const analytic::DeviationField field(table, polygons, slots.data(), static_cast<int>(slots.size()),
                                          refractive_index);
-    assemblies.emplace_back(schema3::AssembleAxis(field));
-    rows.push_back(schema3::SupportRowOf(assemblies.back(), table, polygons, slots.data(),
-                                         static_cast<int>(slots.size()), refractive_index, member, {}, {}));
+    support.assemblies.emplace_back(schema3::AssembleAxis(field));
+    support.rows.push_back(schema3::SupportRowOf(support.assemblies.back(), table, polygons, slots.data(),
+                                                 static_cast<int>(slots.size()), refractive_index, member, {}, {}));
   }
   // Fail closed: a walk refusal or a partition escape leaves the class support unknown.
-  for (const schema3::MemberSupport& row : rows) {
+  for (const schema3::MemberSupport& row : support.rows) {
     if (row.axis.walk_closed && row.axis.context.coverage == PartitionContext::Coverage::kComplete) {
       continue;
     }
     const char* mode =
         row.axis.walk_closed ? row.axis.regime_slug.c_str() : analytic::WalkStatusName(row.axis.walk_status);
-    return { false, mode == nullptr ? "walk_truncated" : mode };
+    support.refusal_mode = mode == nullptr ? "walk_truncated" : mode;
+    return support;
   }
   // The class-level support: the members are relabelings of one physical class, so their
   // partitions must sit on the same delta axis (SameSupport — the one ruler; a disagreement is
   // not a union to fabricate but a refusal).
-  const std::vector<analytic::DeviationInterval>& class_support = rows.front().axis.intervals;
-  for (const schema3::MemberSupport& row : rows) {
-    if (!schema3::SameSupport(class_support, row.axis.intervals)) {
-      return { false, "member_supports_disagree" };
+  support.intervals = support.rows.front().axis.intervals;
+  for (const schema3::MemberSupport& row : support.rows) {
+    if (!schema3::SameSupport(support.intervals, row.axis.intervals)) {
+      support.refusal_mode = "member_supports_disagree";
+      return support;
     }
   }
 
   // The support_set card: the class's delta-axis support with the endpoint mechanism labels
   // (the first member's onsets at an interval endpoint — the members share the axis) and the
   // caliber the partition ran on.
-  SurveyObject support;
-  support.kind = SurveyObjectKind::kSupportSet;
-  support.members = members;
-  support.evidence.state = EvidenceState::kFinite;
-  support.evidence.coverage.members_evaluated = static_cast<int>(members.size());
-  support.evidence.coverage.wavelength_nm = wavelength_nm;
-  SurveyObject::SupportSetPayload support_payload;
-  support_payload.symmetry_bits = out->request.symmetry_bits;
-  support_payload.member_count = static_cast<int>(members.size());
-  for (const analytic::DeviationInterval& interval : class_support) {
+  SurveyObject card;
+  card.kind = SurveyObjectKind::kSupportSet;
+  card.members = members;
+  card.evidence.state = EvidenceState::kFinite;
+  card.evidence.coverage.members_evaluated = static_cast<int>(members.size());
+  card.evidence.coverage.wavelength_nm = wavelength_nm;
+  SurveyObject::SupportSetPayload payload;
+  payload.symmetry_bits = out->request.symmetry_bits;
+  payload.member_count = static_cast<int>(members.size());
+  for (const analytic::DeviationInterval& interval : support.intervals) {
     SurveyObject::Interval out_interval;
     out_interval.lower_deg = DegOf(interval.lower);
     out_interval.upper_deg = DegOf(interval.upper);
     out_interval.n_components = interval.n_components;
     out_interval.n_closed = interval.n_closed;
     out_interval.n_open = interval.n_open;
-    support_payload.intervals.push_back(out_interval);
+    payload.intervals.push_back(out_interval);
   }
-  for (const analytic::CriticalOnset& onset : rows.front().endpoint_onsets) {
+  for (const analytic::CriticalOnset& onset : support.rows.front().endpoint_onsets) {
     SurveyObject::EndpointLabel label;
     label.delta_deg = DegOf(onset.value);
     label.source = analytic::OnsetSourceName(onset.source);
     label.profile = analytic::OnsetProfileName(onset.profile);
     label.multiplicity = onset.multiplicity;
-    support_payload.endpoints.push_back(std::move(label));
+    payload.endpoints.push_back(std::move(label));
   }
-  support.support_set = std::move(support_payload);
-  out->objects.push_back(std::move(support));
+  card.support_set = std::move(payload);
+  out->objects.push_back(std::move(card));
+  support.ok = true;
+  return support;
+}
+
+T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
+                            const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
+                            double refractive_index, double wavelength_nm, SurveyDocument* out) {
+  const ClassSupport support = AssembleClassSupport(table, polygons, members, refractive_index, wavelength_nm, out);
+  if (!support.ok) {
+    return { false, support.refusal_mode };
+  }
+  const std::vector<schema3::AxisAssembly>& assemblies = support.assemblies;
+  const std::vector<schema3::MemberSupport>& rows = support.rows;
+  const std::vector<analytic::DeviationInterval>& class_support = support.intervals;
 
   // The caustic_edge card: the support's extremum fold. On a two-face chain the MINIMUM's
   // position certifies closed-form (the kernel's slab interior minimum is the closed form; the

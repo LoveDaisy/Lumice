@@ -9,6 +9,7 @@
 #include "analytic/pose_density.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
+#include "raypath/detail/survey/survey_family.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/detail/survey/survey_tint.hpp"
@@ -18,15 +19,6 @@
 
 namespace lumice::raypath::survey {
 namespace {
-
-// The unevaluated skeleton's reasons, word for word what the schema documents: the legs named
-// are not wired for that input class, and the record says so instead of reading as an empty
-// result. The family-restricted one is the precise shape of gap 1 (routing.md: the T1 rank
-// must be taken on the limit family, and the measure-to-family mapping is not wired) — a
-// non-random class is not silently routed as if it were random.
-constexpr const char* kNotWiredReason = "survey v1: T1/T2 not wired";
-constexpr const char* kFamilyRestrictedReason =
-    "family-restricted T1 routing not wired (gap: measure-to-family mapping)";
 
 bool ValidPathLayers(const std::vector<std::vector<int>>& layers) {
   return !layers.empty() && std::all_of(layers.begin(), layers.end(), [](const auto& layer) {
@@ -333,14 +325,64 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         AssembleClassTint(class_tint_input, out);
       }
     } else {
-      SurveyUnevaluated unevaluated;
-      for (const SurveyObjectKind kind : AllSurveyObjectKinds()) {
-        if (kind != SurveyObjectKind::kSourceImage) {
-          unevaluated.kinds.push_back(kind);
+      // The family-restricted route (gap 1's own): the measure is read in the concentration
+      // language and gated at the v1 routing domain — an outside-domain shape is refused with
+      // its named mode on a support card (plus the witness's positive fact), an in-domain
+      // measure walks the freezing ladder (survey_family.hpp). The retired v1 skeleton — every
+      // deeper kind parked in unevaluated with a not-wired reason — is gone: a non-random axis
+      // is routed or refused, never parked.
+      const FamilyMeasureReading measure = ReadFamilyMeasure(configured->second.axis_);
+      if (!measure.ok) {
+        SurveyObject refused;
+        refused.kind = SurveyObjectKind::kSupportSet;
+        refused.members = scope.members;
+        refused.evidence.state = EvidenceState::kRefused;
+        refused.evidence.mode = measure.refusal_mode;
+        WitnessInput witness_input;
+        witness_input.table = &table;
+        witness_input.polygons = &polygons;
+        witness_input.crystal = &crystal.shape;
+        witness_input.representative = &request.path_layers[0];
+        SunIncidentDirection(config.scene_.light_source_.param_, witness_input.incident);
+        witness_input.refractive_index = wavelength.refractive_index;
+        witness_input.wavelength_nm = wavelength.wavelength_nm;
+        witness_input.member_count = static_cast<int>(scope.members.size());
+        AssembleWitness(witness_input, &refused);
+        out->objects.push_back(std::move(refused));
+        const std::string chromatic_reason =
+            "chromatic legs not run: the measure shape is outside the routing v1 domain, and "
+            "the legs sit downstream of the routing";
+        out->chromatic.state = EvidenceState::kUnevaluated;
+        out->chromatic.reason = chromatic_reason;
+        out->weight_tint = SurveyWeightTint{};
+        out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
+        out->weight_tint->evidence.reason = chromatic_reason;
+        out->budget_note = "the refused-measure arm's legs are the T0 routing verdict and the " +
+                           std::to_string(kSurveyWitnessSampleCount) +
+                           "-sample witness lattice; the routing v1 domain names the shapes it refuses "
+                           "(measure_shape_outside_routing_domain), never approximates them; none is "
+                           "budget-enforced yet; enforcement lands with the quantification legs";
+        any_escaped = true;
+        escape_mode = measure.refusal_mode;
+      } else {
+        FamilyArmInput family_input;
+        family_input.table = &table;
+        family_input.polygons = &polygons;
+        family_input.crystal = &crystal.shape;
+        family_input.members = &scope.members;
+        family_input.representative = &request.path_layers[0];
+        family_input.measure = measure.measure;
+        family_input.single_pose = measure.single_pose;
+        family_input.density = &density;
+        SunIncidentDirection(config.scene_.light_source_.param_, family_input.incident);
+        family_input.refractive_index = wavelength.refractive_index;
+        family_input.wavelength_nm = wavelength.wavelength_nm;
+        const FamilyArmOutcome family_outcome = AssembleFamilyRouting(family_input, out);
+        if (!family_outcome.support_ok) {
+          any_escaped = true;
+          escape_mode = family_outcome.refusal_mode;
         }
       }
-      unevaluated.reason = density.Ok() ? kFamilyRestrictedReason : kNotWiredReason;
-      out->unevaluated.push_back(std::move(unevaluated));
     }
     if (any_escaped) {
       out->evidence.state = EvidenceState::kRefused;

@@ -4,6 +4,7 @@
 #include <string>
 
 #include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/detail/survey/survey_family.hpp"  // the declared constants the echo asserts
 #include "raypath/detail/survey/survey_json.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"  // kProbeWedgeHalfWidthDeg: the spec echo's source
 
@@ -520,6 +521,110 @@ TEST(SurveyJsonV4, UnevaluatedEntriesNameKindsAndReason) {
   EXPECT_EQ(unevaluated[0].at("kinds")[0], "family_collapse_point");
   EXPECT_EQ(unevaluated[0].at("kinds")[1], "regular_image");
   EXPECT_EQ(unevaluated[0].at("reason"), "survey v1: T1/T2 not wired");
+}
+
+
+// The family routing block's serialized shape on a hand-built document (the schema-4 append's
+// own discipline): the measure echo, the ladder's rank coverage exactly when the rank question
+// was asked, the killed records with their numbers, the band and family_origin on the cards,
+// and the conditional presence of the whole key.
+TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
+  SurveyDocument document;
+  document.family_routing = FamilyRoutingBlock{};
+  FamilyRoutingBlock& block = *document.family_routing;
+  block.measure.zenith = { FamilyDimKind::kGauss, 0.0, 40.0 };
+  block.measure.azimuth = { FamilyDimKind::kUniformFull, 0.0, 360.0 };
+  block.measure.roll = { FamilyDimKind::kGauss, 0.0, 0.3 };
+
+  FamilyLadderLevel level0;
+  level0.level = 0;
+  level0.free_dims = { "zenith", "azimuth", "roll" };
+  level0.rank_asked = false;  // three free dimensions: the support alone, no rank key
+  block.ladder.push_back(level0);
+
+  FamilyLadderLevel level1;
+  level1.level = 1;
+  level1.frozen_dims = { { "roll", 0.0, 0.3 } };
+  level1.free_dims = { "zenith", "azimuth" };
+  level1.rank_asked = true;
+  level1.generic_rank = 2;
+  level1.grid = kFamilyLadderGrid;
+  level1.grid_spacing_deg[0] = 1.4173;
+  level1.grid_spacing_deg[1] = 2.8125;
+  level1.samples = 16384;
+  level1.valid_samples = 14000;
+  level1.objects_proposed = 4;
+  level1.objects_killed = 1;
+  FamilyKilledCandidate killed;
+  killed.member = { 3, 5 };
+  killed.kind = "regular_image";
+  killed.has_position = true;
+  killed.position_altitude_deg = 12.5;
+  killed.position_azimuth_deg = 40.0;
+  killed.blur_deg = 41.2;
+  killed.scale_deg = 22.7;
+  killed.clamped = true;
+  killed.reason = "survival_filter";
+  killed.verdicts = { { "roll", "narrow" }, { "zenith", "wide" } };
+  level1.killed.push_back(killed);
+  block.ladder.push_back(level1);
+  block.evidence.state = EvidenceState::kFinite;
+  block.evidence.coverage.members_evaluated = 1;
+
+  SurveyObject card;
+  card.kind = SurveyObjectKind::kCausticEdge;
+  card.members = { { 3, 5 } };
+  card.has_position = true;
+  card.position_altitude_deg = 36.0;
+  card.position_azimuth_deg = 20.6;
+  card.evidence.state = EvidenceState::kFinite;
+  SurveyObject::BandPayload band;
+  band.level = 1;
+  band.frozen = { { "roll", "narrow" } };
+  band.blur_deg = 0.21;
+  band.scale_deg = 3.2;
+  card.band = band;
+  SurveyObject::FamilyOriginPayload origin;
+  origin.crossing_count = 5;
+  card.family_origin = origin;
+  document.objects.push_back(card);
+
+  const auto parsed = Serialized(document);
+  ASSERT_TRUE(parsed.contains("family_routing"));
+  const auto& family = parsed.at("family_routing");
+  EXPECT_EQ(family.at("measure").at("zenith").at("kind"), "gauss");
+  EXPECT_DOUBLE_EQ(family.at("measure").at("zenith").at("width_deg"), 40.0);
+  EXPECT_EQ(family.at("measure").at("azimuth").at("kind"), "uniform");
+  const auto& ladder = family.at("ladder");
+  ASSERT_EQ(ladder.size(), 2u);
+  EXPECT_FALSE(ladder.at(0).contains("rank"));
+  const auto& rank_level = ladder.at(1);
+  EXPECT_EQ(rank_level.at("rank").at("generic_rank"), 2);
+  EXPECT_EQ(rank_level.at("rank").at("grid"), kFamilyLadderGrid);
+  ASSERT_EQ(rank_level.at("rank").at("grid_spacing_deg").size(), 2u);
+  EXPECT_EQ(rank_level.at("objects_proposed"), 4);
+  ASSERT_EQ(rank_level.at("killed").size(), 1u);
+  const auto& killed_json = rank_level.at("killed").at(0);
+  EXPECT_EQ(killed_json.at("kind"), "regular_image");
+  EXPECT_EQ(killed_json.at("reason"), "survival_filter");
+  EXPECT_EQ(killed_json.at("clamped"), true);
+  ASSERT_EQ(killed_json.at("verdicts").size(), 2u);
+  EXPECT_EQ(killed_json.at("verdicts").at(1).at("verdict"), "wide");
+  const auto& card_json = parsed.at("objects").at(0);
+  EXPECT_EQ(card_json.at("band").at("level"), 1);
+  EXPECT_EQ(card_json.at("band").at("survival"), "pass");
+  EXPECT_DOUBLE_EQ(card_json.at("band").at("blur_deg"), 0.21);
+  EXPECT_EQ(card_json.at("family_origin").at("crossing_count"), 5);
+  // No caustic_edge payload key: the family-form card carries band and family_origin, not the
+  // full-dimensional arm's delta-axis payload (a payload key never crosses forms).
+  EXPECT_FALSE(card_json.contains("caustic_edge"));
+}
+
+// The absence semantics: a document no family arm produced serializes no family_routing key at
+// all — the block's presence IS the statement that the arm ran.
+TEST(SurveyJsonV4, FamilyRoutingKeyIsAbsentWithoutTheArm) {
+  const auto parsed = Serialized(SourceImageDocument());
+  EXPECT_FALSE(parsed.contains("family_routing"));
 }
 
 }  // namespace

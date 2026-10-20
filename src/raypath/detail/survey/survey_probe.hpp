@@ -46,6 +46,11 @@ struct ProbeInput {
   double incident[3] = { 0.0, 0.0, -1.0 };  // the sun's propagation direction (SunIncidentDirection)
   int member_count = 0;                     // the class size the representative stands for
   int sample_count = kSurveyProbeSampleCount;
+  // When set, only the bright_domain card whose members are exactly this one member receives
+  // the readings (the family arm produces one bright_domain card per class member; the probe
+  // ran on the representative, and a relabeled sibling's card must not carry its numbers).
+  // Null = the T1 arm's shape: every bright_domain card (one) reads the profile.
+  const std::vector<int>* fill_member = nullptr;
 };
 
 // The profile reader, factored out for the synthetic-profile tests: `values_deg[k]` is bin k's
