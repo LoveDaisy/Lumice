@@ -235,7 +235,7 @@ Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
           record["position"] = { { "altitude_deg", Num(candidate.position_altitude_deg) },
                                  { "azimuth_deg", Num(candidate.position_azimuth_deg) } };
         }
-        if (candidate.blur_deg > 0.0 || candidate.scale_deg > 0.0) {
+        if (candidate.blur_measured) {
           record["blur_deg"] = Num(candidate.blur_deg);
           record["scale_deg"] = Num(candidate.scale_deg);
           record["clamped"] = candidate.clamped;

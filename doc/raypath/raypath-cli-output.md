@@ -776,6 +776,7 @@ on a card of another kind):
 | `endpoints[]` | `{delta_deg, source, profile, multiplicity}` — the kernel onsets sitting at an interval endpoint, slugs passed through (`interior_minimum` / `boundary_extremum` / `corner` × `finite_jump` / ...) |
 | `symmetry_bits` | the scope the partition ran on (7 = physical P\|B\|D, 0 = literal) |
 | `member_count` | the class members the partition ran on |
+| `density_tails` | present only when the density leg ran and the zenith measure is a gauss — the zenith window (the band sum's ±12σ floor) as `{dim, lower_deg, upper_deg}`; the width went into the ladder, and the support's own tail bound is a row here |
 
 **`caustic_edge`** — the support's extremum fold (the sharp inner edge; the corpus's 22-degree
 inner edge on a random prism): the minimum-deviation fold when the class has one, else the
@@ -823,19 +824,20 @@ Fibonacci lattice over SO(3)) — an **existence** statement. The corpus's targe
 numbers are a different protocol and live on a different ruler.
 
 **The family-form cards (the `family_routing` arm)** carry the same registry kinds with their
-own payload shape — a payload key never crosses forms. A family card carries `position`
-(the representative's sky position), its `evidence`, the `band` label (below) and
-`family_origin` (`sample_count` / `crossing_count` — the rank primitive's own coverage counts,
-passed through); it does not carry the full-dimensional arm's `caustic_edge` or `bright_domain`
-payload (the fold arc's position is its representative crossing's sky position; the domain
-card's profile readings, when the density carried the measure, come from the probe leg exactly
-as on the full-dimensional route).
+own payload shape. A family card carries `position` (the representative's sky position), its
+`evidence`, the `band` label (below) and `family_origin` (`sample_count` / `crossing_count` —
+the rank primitive's own coverage counts, passed through). The one key that crosses forms is
+`bright_domain`: a family bright_domain card carries the class support's span
+(`domain_lower_deg` / `domain_upper_deg`), and its profile readings — when the density carried
+the measure — come from the probe leg exactly as on the full-dimensional route; a family
+caustic_edge card carries no `caustic_edge` payload (the fold arc's position is its
+representative crossing's sky position).
 
 | Field | Meaning |
 |---|---|
 | `band.level` | the ladder level the card survived at (0 = the actual support's level: the measure's own fixed dimensions, or the 0D arm's single pose) |
 | `band.frozen[]` | `{dim, verdict}` per frozen dimension — `narrow`/`wide` is a property of the (dimension, object) pair, never of the dimension alone |
-| `band.blur_deg` / `band.scale_deg` | the survival filter's own two numbers: the frozen widths' image blur (the anchor images re-evaluated at ±width/2, clamped one-sided at a pole with `clamped: true`) against the object's declared scale (every curve-like object — a collapse point, a fold arc, a one-dimensional image track — declares the 1.0° structural cross-section floor, never its overall extent; only the two-dimensional bright domain declares its ≤16-point probe set's extent) |
+| `band.blur_deg` / `band.scale_deg` | the survival filter's own two numbers: the frozen widths' image blur (the anchor images re-evaluated at ±width/2, clamped one-sided at a pole with `clamped: true`) against the object's declared scale (every curve-like object — a collapse point, a fold arc, a one-dimensional image track — declares the 1.0° structural cross-section floor, never its overall extent; only the two-dimensional bright domain declares its ≤16-point probe set's extent); shifted probes that find no valid image are skipped as data, and a dimension whose shifted probes all come back empty reads narrow (v1: no image carries no blur evidence) |
 | `band.survival` | `"pass"` — a killed candidate never carries a card; it lives in `family_routing.ladder[].killed` with the same numbers |
 
 ### 9.3 Evidence states
@@ -1013,7 +1015,7 @@ freeze — the rank entry's own refusal domain):
 |---|---|
 | `ladder[].level` / `frozen_dims[]` | the level number; `{dim, center_deg, width_deg}` per frozen dimension — the freeze value and the frozen width reported together (the measure's fixed dimensions carry width 0) |
 | `ladder[].free_dims[]` | the family's free dimensions at this level |
-| `ladder[].rank` | present exactly when the rank question was asked (a level-0 with three free dimensions owns the support alone): `{generic_rank, grid, grid_spacing_deg[], samples, valid_samples}` — the first member's coverage whose rank run returned ok; relabelings share the rank structure |
+| `ladder[].rank` | present exactly when the rank question was asked (a level-0 with three free dimensions owns the support alone): `{generic_rank, grid, grid_spacing_deg[], samples, valid_samples, refused_members?}` — the first member's coverage whose rank run returned ok; relabelings share the rank structure; `refused_members` is present only when non-zero and counts the members the rank entry refused on their weight leg (data, not a verdict) |
 | `ladder[].objects_proposed` / `objects_killed` | the level's candidate counts — every level reports, not just the deepest |
 | `ladder[].killed[]` | the killed candidates: `{member, kind, position?, blur_deg?, scale_deg?, clamped?, reason, verdicts[]}` — the same numbers the surviving card's band would carry; the blur/scale/clamped group is present exactly when one of them was measured, and a `no_valid_image` kill leaves the pair unmeasured and omits it; `reason` is `survival_filter` (the blur exceeded the scale) or `no_valid_image` (the probe set found no valid image) |
 

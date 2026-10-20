@@ -497,9 +497,10 @@ FamilyKilledCandidate KilledRecord(const std::vector<int>& member, const FamilyC
   killed.has_position = candidate.has_position;
   killed.position_altitude_deg = candidate.position_alt_deg;
   killed.position_azimuth_deg = candidate.position_az_deg;
-  killed.scale_deg = candidate.scale_deg;
   if (blur != nullptr) {
+    killed.blur_measured = true;  // the fact the serializer reports: a no_valid_image kill has no numbers
     killed.blur_deg = blur->blur_deg;
+    killed.scale_deg = candidate.scale_deg;
     killed.clamped = blur->clamped;
     killed.verdicts = blur->verdicts;
   }

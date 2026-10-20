@@ -26,8 +26,6 @@
 namespace lumice::raypath::survey {
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-
 SurveyRequest LiteralRequest(std::vector<int> faces) {
   SurveyRequest request;
   request.crystal_id = 1;
@@ -494,6 +492,22 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   EXPECT_GT(wedge_document.weight_tint->m_blue, 0.0);
   EXPECT_GT(wedge_document.weight_tint->ratio, 0.0);
   EXPECT_EQ(wedge_document.chromatic.state, EvidenceState::kFinite);
+
+  // The edge-on 3-5 chain kills with no numbers at all: a no_valid_image kill carries no
+  // blur/scale/clamped "measurement" — the group is absent from the serialized record, not
+  // zeroed (the 0D arm sets its scale floor before the pose evaluates; it must not leak).
+  SurveyDocument edge_document;
+  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &edge_document).Ok());
+  ASSERT_TRUE(edge_document.family_routing.has_value());
+  ASSERT_EQ(edge_document.family_routing->ladder.size(), 1u);
+  ASSERT_EQ(edge_document.family_routing->ladder[0].killed.size(), 1u);
+  EXPECT_EQ(edge_document.family_routing->ladder[0].killed.front().reason, "no_valid_image");
+  EXPECT_FALSE(edge_document.family_routing->ladder[0].killed.front().blur_measured);
+  const auto edge_parsed = nlohmann::json::parse(SurveyDocumentToJson(edge_document, "test"));
+  const auto& edge_killed = edge_parsed.at("family_routing").at("ladder").at(0).at("killed").at(0);
+  EXPECT_FALSE(edge_killed.contains("blur_deg"));
+  EXPECT_FALSE(edge_killed.contains("scale_deg"));
+  EXPECT_FALSE(edge_killed.contains("clamped"));
 }
 
 // The fixed-pose plate (zenith and roll pinned, azimuth free): the fixed dimensions leave one

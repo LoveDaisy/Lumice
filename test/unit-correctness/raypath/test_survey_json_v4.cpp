@@ -561,6 +561,7 @@ TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
   killed.has_position = true;
   killed.position_altitude_deg = 12.5;
   killed.position_azimuth_deg = 40.0;
+  killed.blur_measured = true;  // a survival_filter kill carries its numbers by definition
   killed.blur_deg = 41.2;
   killed.scale_deg = 22.7;
   killed.clamped = true;

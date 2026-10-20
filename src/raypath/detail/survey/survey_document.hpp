@@ -177,10 +177,11 @@ struct FamilyKilledCandidate {
   bool has_position = false;
   double position_altitude_deg = 0.0;
   double position_azimuth_deg = 0.0;
+  bool blur_measured = false;  // the survival filter ran; a no_valid_image kill carries no numbers
   double blur_deg = 0.0;
   double scale_deg = 0.0;
   bool clamped = false;  // a blur probe clamped into its dimension's legal range (one-sided)
-  std::string reason;    // "survival_filter" | "no_valid_image" | "member_resolution"
+  std::string reason;    // "survival_filter" | "no_valid_image"
   std::vector<FamilyBandVerdict> verdicts;
 };
 
@@ -195,8 +196,8 @@ struct FamilyLadderLevel {
   std::vector<FamilyFrozenDim> frozen_dims;
   std::vector<std::string> free_dims;
   bool rank_asked = false;
-  int generic_rank = -1;  // the representative member's; relabelings share it (the support's
-                          // own relabeling logic, one physical class)
+  int generic_rank = -1;  // the first member's whose rank run returned ok; relabelings share it
+                          // (the support's own relabeling logic, one physical class)
   int grid = 0;
   double grid_spacing_deg[2] = { 0.0, 0.0 };
   int samples = 0;
