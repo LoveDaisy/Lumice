@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792462882319,
+  "lastUpdate": 1792462887687,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "49fe5e10fab9bfff09a5c101fbf651f8f283af5b",
-          "message": "Merge pull request #411 from LoveDaisy/fix/globe-back-fade-fma-exact-eq\n\nfix(test): compare the globe back-fade weight within an absolute tolerance",
-          "timestamp": "2026-09-25T16:38:58+08:00",
-          "tree_id": "1ad240095c7e9a80ab3a0f9f3c9ec1c87f9c4465",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/49fe5e10fab9bfff09a5c101fbf651f8f283af5b"
-        },
-        "date": 1790326331566,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 754361,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1013580,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 832554.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 681198.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "69d8136c8f926571410a99548a5e7374bf7f0ab2",
           "message": "Merge pull request #412 from LoveDaisy/perf/cpu-worker-batch-sync-cliff\n\nperf(server): decouple the CPU queue handoff from the 128-ray physics batch",
           "timestamp": "2026-09-25T20:57:22+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 581489.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d36f13688d6b3d03758b35e63d5a5936f8558fac",
+          "message": "Merge pull request #524 from LoveDaisy/chore/fullsky-bound-comment\n\nchore(test): rewrite the full-sky identity pin's tolerance comment to the real mechanism",
+          "timestamp": "2026-10-20T10:17:44+08:00",
+          "tree_id": "2a6d01b61c4d30d7ae2cb4e9ef9897254515605b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/d36f13688d6b3d03758b35e63d5a5936f8558fac"
+        },
+        "date": 1792462887115,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 924942.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1012277.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 728069,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 585625.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
