@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792500270885,
+  "lastUpdate": 1792500273454,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "890b32d27ca52132e0f8567199aa38f079614db9",
-          "message": "Merge pull request #416 from LoveDaisy/feat/globe-back-fade-expfog-and-grid\n\nfeat: globe back-side fade becomes exponential fog, and far-side lines fade with it",
-          "timestamp": "2026-09-26T01:37:37+08:00",
-          "tree_id": "f71d2148439000301d8f261d490aa085c8114a70",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/890b32d27ca52132e0f8567199aa38f079614db9"
-        },
-        "date": 1790358581273,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 103.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "b5a1a477c67196240aa5db0dd933b77760fa2182",
           "message": "Merge pull request #417 from LoveDaisy/feat/toolbar-button-sizing-continue-color\n\nfeat(gui): group the top bar and give Continue its own colour",
           "timestamp": "2026-09-26T02:20:15+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d1b929b7a581fc70342002de9711cfb3760b2e62",
+          "message": "Merge pull request #529 from LoveDaisy/feat/lens-proj-recalibration\n\ntest(gui): recalibrate the lens_proj reference group (drift +1.2~+2.5 dB)",
+          "timestamp": "2026-10-20T20:41:06+08:00",
+          "tree_id": "8ec07448bbb5d138099669297f4ba99267172564",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/d1b929b7a581fc70342002de9711cfb3760b2e62"
+        },
+        "date": 1792500272639,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 83,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.3,
             "unit": "%"
           }
         ]
