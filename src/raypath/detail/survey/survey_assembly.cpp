@@ -254,11 +254,6 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         // source's positive event on the SAME refused card (the refused+finite coexistence the
         // evidence layering asks for); the chromatic legs sit downstream of the delta axis and
         // honestly say so instead of the stale v1 reason.
-        SurveyObject refused_support;
-        refused_support.kind = SurveyObjectKind::kSupportSet;
-        refused_support.members = scope.members;
-        refused_support.evidence.state = EvidenceState::kRefused;
-        refused_support.evidence.mode = outcome.refusal_mode;
         WitnessInput witness_input;
         witness_input.table = &table;
         witness_input.polygons = &polygons;
@@ -268,22 +263,15 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         witness_input.refractive_index = wavelength.refractive_index;
         witness_input.wavelength_nm = wavelength.wavelength_nm;
         witness_input.member_count = static_cast<int>(scope.members.size());
-        AssembleWitness(witness_input, &refused_support);
-        const std::string chromatic_reason = "chromatic legs not run: the delta axis refused (" + outcome.refusal_mode +
-                                             "), and the chromatic legs sit downstream of it";
-        out->chromatic.state = EvidenceState::kUnevaluated;
-        out->chromatic.reason = chromatic_reason;
-        out->weight_tint = SurveyWeightTint{};
-        out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
-        out->weight_tint->evidence.reason = chromatic_reason;
-        out->budget_note =
-            "the refused-support arm's legs are the T0 routing verdict, the "
-            "per-member partition attempt (refused: " +
-            outcome.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
-            "-sample witness lattice; none is budget-enforced yet; enforcement "
-            "lands with the quantification legs";
-        out->objects.clear();
-        out->objects.push_back(std::move(refused_support));
+        AssembleRefusedSupport(witness_input, scope.members, outcome.refusal_mode,
+                               "chromatic legs not run: the delta axis refused (" + outcome.refusal_mode +
+                                   "), and the chromatic legs sit downstream of it",
+                               "the refused-support arm's legs are the T0 routing verdict, the "
+                               "per-member partition attempt (refused: " +
+                                   outcome.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
+                                   "-sample witness lattice; none is budget-enforced yet; enforcement "
+                                   "lands with the quantification legs",
+                               true, out);
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
       } else {
@@ -333,11 +321,6 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
       // is routed or refused, never parked.
       const FamilyMeasureReading measure = ReadFamilyMeasure(configured->second.axis_);
       if (!measure.ok) {
-        SurveyObject refused;
-        refused.kind = SurveyObjectKind::kSupportSet;
-        refused.members = scope.members;
-        refused.evidence.state = EvidenceState::kRefused;
-        refused.evidence.mode = measure.refusal_mode;
         WitnessInput witness_input;
         witness_input.table = &table;
         witness_input.polygons = &polygons;
@@ -347,21 +330,15 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         witness_input.refractive_index = wavelength.refractive_index;
         witness_input.wavelength_nm = wavelength.wavelength_nm;
         witness_input.member_count = static_cast<int>(scope.members.size());
-        AssembleWitness(witness_input, &refused);
-        out->objects.push_back(std::move(refused));
-        const std::string chromatic_reason =
-            "chromatic legs not run: the measure shape is outside the routing v1 domain, and "
-            "the legs sit downstream of the routing";
-        out->chromatic.state = EvidenceState::kUnevaluated;
-        out->chromatic.reason = chromatic_reason;
-        out->weight_tint = SurveyWeightTint{};
-        out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
-        out->weight_tint->evidence.reason = chromatic_reason;
-        out->budget_note = "the refused-measure arm's legs are the T0 routing verdict and the " +
-                           std::to_string(kSurveyWitnessSampleCount) +
-                           "-sample witness lattice; the routing v1 domain names the shapes it refuses "
-                           "(measure_shape_outside_routing_domain), never approximates them; none is "
-                           "budget-enforced yet; enforcement lands with the quantification legs";
+        AssembleRefusedSupport(witness_input, scope.members, measure.refusal_mode,
+                               "chromatic legs not run: the measure shape is outside the routing v1 domain, and "
+                               "the legs sit downstream of the routing",
+                               "the refused-measure arm's legs are the T0 routing verdict and the " +
+                                   std::to_string(kSurveyWitnessSampleCount) +
+                                   "-sample witness lattice; the routing v1 domain names the shapes it refuses "
+                                   "(measure_shape_outside_routing_domain), never approximates them; none is "
+                                   "budget-enforced yet; enforcement lands with the quantification legs",
+                               false, out);
         any_escaped = true;
         escape_mode = measure.refusal_mode;
       } else {

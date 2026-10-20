@@ -587,12 +587,6 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
   if (!support.ok) {
     // The fail-closed mirror of the T1 arm: one refused card, the witness leg's positive fact
     // on it, no ladder cards — the support is unknown, not zero, and never a fabricated union.
-    out->objects.clear();
-    SurveyObject refused;
-    refused.kind = SurveyObjectKind::kSupportSet;
-    refused.members = *input.members;
-    refused.evidence.state = EvidenceState::kRefused;
-    refused.evidence.mode = support.refusal_mode;
     WitnessInput witness_input;
     witness_input.table = input.table;
     witness_input.polygons = input.polygons;
@@ -604,23 +598,17 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     witness_input.refractive_index = input.refractive_index;
     witness_input.wavelength_nm = input.wavelength_nm;
     witness_input.member_count = member_count;
-    AssembleWitness(witness_input, &refused);
-    out->objects.push_back(std::move(refused));
-    const std::string chromatic_reason = "chromatic legs not run: the delta axis refused (" + support.refusal_mode +
-                                         "), and the legs sit downstream of it";
-    out->chromatic.state = EvidenceState::kUnevaluated;
-    out->chromatic.reason = chromatic_reason;
-    out->weight_tint = SurveyWeightTint{};
-    out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
-    out->weight_tint->evidence.reason = chromatic_reason;
+    AssembleRefusedSupport(witness_input, *input.members, support.refusal_mode,
+                           "chromatic legs not run: the delta axis refused (" + support.refusal_mode +
+                               "), and the legs sit downstream of it",
+                           "the refused-support family arm's legs are the T0 routing verdict, the per-member "
+                           "partition attempt (refused: " +
+                               support.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
+                               "-sample witness lattice; none is budget-enforced yet; enforcement lands with the "
+                               "quantification legs",
+                           true, out);
     block.evidence.state = EvidenceState::kRefused;
     block.evidence.mode = support.refusal_mode;
-    out->budget_note =
-        "the refused-support family arm's legs are the T0 routing verdict, the per-member "
-        "partition attempt (refused: " +
-        support.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
-        "-sample witness lattice; none is budget-enforced yet; enforcement lands with the "
-        "quantification legs";
     return { false, support.refusal_mode };
   }
   if (input.density->Ok() && input.measure.zenith.kind == FamilyDimKind::kGauss) {

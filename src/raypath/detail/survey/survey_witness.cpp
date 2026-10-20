@@ -98,4 +98,25 @@ void AssembleWitness(const WitnessInput& input, SurveyObject* card) {
             events.size(), input.sample_count, best.weight, values[0].entry.value);
 }
 
+void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
+                            const std::string& refusal_mode, const std::string& chromatic_reason,
+                            const std::string& budget_note, bool clear_objects, SurveyDocument* out) {
+  SurveyObject card;
+  card.kind = SurveyObjectKind::kSupportSet;
+  card.members = members;
+  card.evidence.state = EvidenceState::kRefused;
+  card.evidence.mode = refusal_mode;
+  AssembleWitness(witness_input, &card);
+  if (clear_objects) {
+    out->objects.clear();
+  }
+  out->objects.push_back(std::move(card));
+  out->chromatic.state = EvidenceState::kUnevaluated;
+  out->chromatic.reason = chromatic_reason;
+  out->weight_tint = SurveyWeightTint{};
+  out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
+  out->weight_tint->evidence.reason = chromatic_reason;
+  out->budget_note = budget_note;
+}
+
 }  // namespace lumice::raypath::survey
