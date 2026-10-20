@@ -78,9 +78,13 @@
 // section 9. Dependency direction: family_rank -> path_evaluation (the table and chain),
 // so3, jet, path_rank (the tolerance vocabulary's neighbour, read-only).
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
+#include "analytic/so3.hpp"
+#include "core/math.hpp"
 
 namespace lumice::analytic {
 
@@ -98,6 +102,51 @@ constexpr int kFamilyMaxGridPerDimension = 1024;
 // (fiber_continuation.hpp kClosureCrossingBisectionSteps): 52 halvings take the bracket far
 // below double resolution for every legal spacing.
 constexpr int kFoldBisectionSteps = 52;
+
+// ---- the pose chart and the sky read --------------------------------------------------------------
+//
+// The single authority for the two formulas the routing layer reads on both sides of the kernel
+// boundary (survey_assembly's local mirrors were consolidated here — one expression per formula,
+// the kernel's own; do not re-derive them in a caller).
+
+// R(a, t, r) = Rz(a - pi) Ry(-t) Rz(r), the production Euler convention (the module doc): the
+// declared densities' zenith/roll extraction inverts exactly this form, and the corpus fold
+// witnesses decompose onto it to rounding. `S` is double or Jet<2>.
+template <class S>
+void EulerPose(const S& azimuth, const S& zenith, const S& roll, S pose[9]) {
+  S rz_az[9];
+  {
+    const S w[3] = { S(0.0), S(0.0), azimuth - math::kPiD };
+    so3::Exp(w, rz_az);
+  }
+  S ry_t[9];
+  {
+    const S w[3] = { S(0.0), -zenith, S(0.0) };
+    so3::Exp(w, ry_t);
+  }
+  S rz_r[9];
+  {
+    const S w[3] = { S(0.0), S(0.0), roll };
+    so3::Exp(w, rz_r);
+  }
+  S tmp[9];
+  so3::MatMul(rz_az, ry_t, tmp);
+  so3::MatMul(tmp, rz_r, pose);
+}
+
+// The degree-taking entry of the same chart (survey-side poses arrive in degrees, PoseDensity's
+// unit): a thin unit conversion onto EulerPose, the kernel expression untouched.
+inline void EulerPoseDeg(double azimuth_deg, double zenith_deg, double roll_deg, double pose[9]) {
+  EulerPose(azimuth_deg * math::kDegreeToRadD, zenith_deg * math::kDegreeToRadD, roll_deg * math::kDegreeToRadD, pose);
+}
+
+// The sky position of the image direction -outgoing: altitude above the world equator,
+// azimuth atan2(y, x) — the corpus anchors' target fields are exactly these two.
+inline void ImageAltAzDeg(const double outgoing[3], double* alt_deg, double* az_deg) {
+  const double z = std::max(-1.0, std::min(1.0, -outgoing[2]));
+  *alt_deg = std::asin(z) / math::kDegreeToRadD;
+  *az_deg = std::atan2(-outgoing[1], -outgoing[0]) / math::kDegreeToRadD;
+}
 
 // One orientation dimension of the family.
 enum class FamilyDimensionMode {

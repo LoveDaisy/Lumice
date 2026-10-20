@@ -104,14 +104,9 @@ double NormalizeCenter(analytic::FamilyDimension dim, double center_deg) {
 }
 
 // ---- the geometry helpers (the chart and the sky read) -----------------------------------------------
-
-// The sky position of the image direction -outgoing, the kernel records' own formula
-// (family_rank.cpp ImageAltAzDeg): altitude above the world equator, azimuth atan2(y, x).
-void ImageAltAzDeg(const double outgoing[3], double* alt_deg, double* az_deg) {
-  const double z = std::max(-1.0, std::min(1.0, -outgoing[2]));
-  *alt_deg = std::asin(z) * kRadToDeg;
-  *az_deg = std::atan2(-outgoing[1], -outgoing[0]) * kRadToDeg;
-}
+//
+// The chart (analytic::EulerPoseDeg) and the sky read (analytic::ImageAltAzDeg) are the kernel
+// header's own formulas (family_rank.hpp) — consumed, not re-derived here.
 
 // The unit direction of an altitude/azimuth pair on the world sphere.
 void DirectionOf(double alt_deg, double az_deg, double out[3]) {
@@ -128,27 +123,6 @@ double AngleBetweenDeg(const double a[3], const double b[3]) {
   const double norm = std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
   const double dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   return std::atan2(norm, dot) * kRadToDeg;
-}
-
-// The production Euler chart R(a, t, r) = Rz(a - pi) Ry(-t) Rz(r) in double — the chart
-// family_rank.hpp seeds its Jet variables on (the module doc's authority). The 0D arm evaluates
-// the one pose of an all-fixed axis through it, so the direct image and the family ranks speak
-// one chart. Plain trigonometry, no Jet machinery.
-void EulerPoseDeg(double azimuth_deg, double zenith_deg, double roll_deg, double pose[9]) {
-  const double a = (azimuth_deg - 180.0) * kDegToRad;
-  const double t = -zenith_deg * kDegToRad;
-  const double r = roll_deg * kDegToRad;
-  const double ca = std::cos(a), sa = std::sin(a);
-  const double ct = std::cos(t), st = std::sin(t);
-  const double cr = std::cos(r), sr = std::sin(r);
-  // Rz(a) Ry(t) Rz(r), row-major body -> world.
-  const double rz_ry[9] = { ca * ct, -sa, ca * st, sa * ct, ca, sa * st, -st, 0.0, ct };
-  for (int i = 0; i < 3; i++) {
-    const double row0 = rz_ry[3 * i + 0], row1 = rz_ry[3 * i + 1], row2 = rz_ry[3 * i + 2];
-    pose[3 * i + 0] = row0 * cr + row1 * sr;   // Rz(r)'s first column is (cr, sr, 0)
-    pose[3 * i + 1] = -row0 * sr + row1 * cr;  // ...and its second is (-sr, cr, 0)
-    pose[3 * i + 2] = row2;
-  }
 }
 
 // ---- the ladder --------------------------------------------------------------------------------------
@@ -455,8 +429,8 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
       candidate.viable = false;
     } else {
       candidate.has_position = true;
-      ImageAltAzDeg(candidate.anchors.front().outgoing, &candidate.position_alt_deg,
-                    &candidate.position_az_deg);  // the function negates: pass the raw outgoing
+      analytic::ImageAltAzDeg(candidate.anchors.front().outgoing, &candidate.position_alt_deg,
+                              &candidate.position_az_deg);  // the function negates: pass the raw outgoing
       // The one-dimensional track is curve-like: the floor, not its arc's extent — only the
       // two-dimensional domain's anchors measure an extent.
       candidate.scale_deg = rank.generic_rank == 1 ? kSurvivalSpotFloorDeg : ExtentDeg(candidate.anchors);
@@ -684,9 +658,9 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     level.level = 0;
     level.frozen_dims = FrozenReport(input.measure, {}, 0);
     double pose[9];
-    EulerPoseDeg(NormalizeCenter(analytic::FamilyDimension::kAzimuth, input.measure.azimuth.center_deg),
-                 NormalizeCenter(analytic::FamilyDimension::kZenith, input.measure.zenith.center_deg),
-                 NormalizeCenter(analytic::FamilyDimension::kRoll, input.measure.roll.center_deg), pose);
+    analytic::EulerPoseDeg(NormalizeCenter(analytic::FamilyDimension::kAzimuth, input.measure.azimuth.center_deg),
+                           NormalizeCenter(analytic::FamilyDimension::kZenith, input.measure.zenith.center_deg),
+                           NormalizeCenter(analytic::FamilyDimension::kRoll, input.measure.roll.center_deg), pose);
     size_t member_index = 0;
     for (const std::vector<int>& member : *input.members) {
       const std::vector<int>& slots = member_slots[member_index++];
@@ -708,8 +682,8 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
         continue;
       }
       candidate.has_position = true;
-      ImageAltAzDeg(outputs.outgoing_direction, &candidate.position_alt_deg,
-                    &candidate.position_az_deg);  // the function negates: the image is -outgoing
+      analytic::ImageAltAzDeg(outputs.outgoing_direction, &candidate.position_alt_deg,
+                              &candidate.position_az_deg);  // the function negates: the image is -outgoing
       BlurAnchor anchor;
       DirectionOf(candidate.position_alt_deg, candidate.position_az_deg, anchor.image_dir);
       candidate.anchors.push_back(anchor);
