@@ -611,6 +611,10 @@ so this needs no new branch-protection context: those ten scenes now block a mer
 | `screenshot`/`visual` crystal scenes (3) | 34.78–35.94 dB vs. a 40 dB floor | no — not portable |
 | `capture_harness` `fullframe` | 21.92 dB vs. a 40 dB floor | no — not portable |
 
+> 2026-10-20: the `lens_proj` row is a measurement record against the 2026-09-24 calibration; that
+> group's references and thresholds were re-shot on 2026-10-20 (PSNRs had drifted +1.2–2.5 dB above
+> their 2026-09-24 calibrated means), so its margin column reads against the pre-2026-10-20 gate.
+
 **The amd64 confirmation, and what it changed.** The two in-CI rows above now carry numbers from
 the real `ubuntu-24.04` runner (the CI step's own log, 12/12 scenes passed). The comparison against
 the arm64 figures they replaced is worth keeping, because it is the only measurement of how far
@@ -1338,7 +1342,7 @@ category that was measured and deliberately left alone.
 | ① Deterministic screenshots (`modal_layout` / `defaults_panel_layout` / `capture_harness` / `visual`) | `n_diff` at τ + largest 8-connected blob (`maxcc`) | `maxcc ≤ K`; τ=16 shared across the two CI-run groups, K per group (§4.6 has the sweep); `capture_harness`/`visual` run only on the reference machine at τ=0, K=0 | `wedge_presets@0a191bea` 127 px (42.6 dB — passed the old 40 dB floor); `presets_expanded`/`presets_warning@dcfa5f9e` 90 px (53.45 dB) | honest same-machine captures, maxcc=0; CI llvmpipe residue 35 px (`modal_layout`) / 0 px (`defaults_panel_layout`) | `modal_layout` 2.0× (K/blob) / 1.36× (drift/K); `defaults_panel_layout` ∞ / 2.15× (§4.6's table has the rest) |
 | ② Lines-only parity (`export_parity`'s `_lines` twins) | membership-mask XOR ("not the canvas" per pixel) + largest-blob `maxcc` — same primitive as row ①, applied to a mask instead of a raw Δ | `maxcc ≤ K=4`, τ=0 (a mask is binary already); markers OFF (§4.10 point 4b) | dropped last meridian 135–339 px; dropped last parallel 8–73 px; only one of two `angular_dist` lines drawn 360–640 px; horizon dropped 196–305 px; every circle shifted 1° 653–1295 px; a marker the scene switched OFF drawn anyway on one arm, 48–130 px (0.02 dB on whole-frame PSNR — invisible to it) | honest N=6 identical runs, 0–2 px of lens-domain rim antialiasing, `maxcc ≤ 1` | K=4 is 4× the honest blob; the tightest real break (`full_sky_dual_fisheye`'s dropped parallel, 8 px) is still 2× over K |
 | ③ `export_parity` simulation scenes (`single_lens_angled` / `full_sky_dual_fisheye` / `single_lens_rectilinear` / print) | 4×4 block-mean PSNR | `mean − max(10σ, 1.0 dB)`, N=12 — bm4 thresholds 35.4 / 38.3 / 39.3 / 42.1 dB | a ±0.25-stop exposure break on the CLI arm reads −1.19…−2.55 dB under the honest mean on bm4; the same break reads as an *improvement* under whole-frame PSNR (§4.10 point 4 — the sign reverses) | honest N=12 runs, σ = 0.016–0.105 dB per scene | 0.2–6.8 dB of headroom under the honest mean, depending on which term of `max(10σ, 1.0 dB)` binds (the print scene's σ=0.105 is the one row where 10σ exceeds the 1.0 dB floor) |
-| ③′ `lens_proj` / e2e references | whole-frame PSNR — unchanged | `mean − max(4σ, 1.0 dB)` — unchanged | none on record — see below | current calibrated thresholds, 17.5–27.0 dB | not applicable |
+| ③′ `lens_proj` / e2e references | whole-frame PSNR — unchanged | `mean − max(4σ, 1.0 dB)` — unchanged | none on record — see below | current calibrated thresholds, 19.0–29.5 dB | not applicable |
 
 **Two footguns, one per layer, each the wrong lesson for the other.** Neither of the following is
 a hedge on the numbers above — both were measured, not guessed at:
