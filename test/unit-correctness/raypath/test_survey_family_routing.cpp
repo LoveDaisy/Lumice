@@ -640,7 +640,7 @@ TEST(FamilyRouting, LadderKillsTheUnprobeableImageWithNoMeasurementGroup) {
   ASSERT_FALSE(level.killed.empty());
   const FamilyKilledCandidate* killed = nullptr;
   for (const FamilyKilledCandidate& candidate : level.killed) {
-    if (candidate.reason == "red_probe_deliberately_wrong") {
+    if (candidate.reason == "no_valid_image") {
       killed = &candidate;
     }
   }
