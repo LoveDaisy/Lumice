@@ -129,6 +129,20 @@ size_t ClampUniformToIndex(float u, size_t n);
 
 }  // namespace detail
 
+//! @brief The CPU random engine: a std::mt19937 core behind two standard-library distribution
+//!   adapters.
+//! @details Reproducibility contract. The mt19937 core stream is fully specified by the standard,
+//!   but the adapters wrapped over it — gauss_dist_ (std::normal_distribution<float>) and
+//!   uniform_dist_ (std::uniform_real_distribution<float>), consumed by GetGaussian() /
+//!   GetUniform() — specify only the output *law*, not the algorithm, and each standard library
+//!   fills that freedom with its own transform: the same core stream draws different float
+//!   sequences under libc++, libstdc++ and MSVC STL. GPU backends run their own device-side
+//!   generators, and the ISA level can change float rounding along the trace path. Bit-exact
+//!   replay of a seeded run therefore holds only within one platform + one standard library +
+//!   one ISA level + one trace backend; across any of those axes the same seed yields
+//!   statistically equivalent results (the Monte Carlo semantics), never a bit-identical image.
+//!   The user-facing statement of this contract lives in doc/configuration.md,
+//!   "Seed (`--seed`) and Reproducibility".
 class RandomNumberGenerator {
  public:
   explicit RandomNumberGenerator(uint32_t seed);

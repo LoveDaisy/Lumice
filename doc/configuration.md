@@ -1697,7 +1697,7 @@ the CLI itself with no library, and its header is the one-line dict `numpy` docu
 | `anchor_l99_sky` | The scene's relative-mode exposure anchor (P99 sky radiance, Y per steradian); identical for every renderer of a run |
 | `ev_mode` | This renderer's `"absolute"` / `"relative"` — decides which scale the baked image used |
 | `sim_ray_num` | Rays simulated at the moment the snapshot was taken, from the same frame as the pixels |
-| `seed` | The `--seed` value, or `null` when the run was randomly seeded |
+| `seed` | The `--seed` value, or `null` when the run was randomly seeded (see "Seed (`--seed`) and Reproducibility" below) |
 | `lumice_api_version` | `LUMICE_API_VERSION` of the binary that wrote the file |
 
 ### What a pixel value is
@@ -1793,6 +1793,27 @@ exists, black, from the commit; the `.npy` / `.json` pair is written only once t
 produced data, so an early tick of a long run may leave the directory with a composite and no
 `.npy` yet. The final write after completion always produces every file, and it is that final
 set a consumer should read.
+
+## Seed (`--seed`) and Reproducibility
+
+`--seed <N>` is accepted by the `render` and `analyze` subcommands (rejected by `benchmark`) and
+fixes the run's random seed instead of drawing one from the clock. The value used is echoed on the
+`Stats:` line and recorded in the `--format npy` sidecar's `seed` field (`null` when the run was
+randomly seeded). A seeded run is single-threaded by contract — the worker pool is sized to one —
+so the draw order is fixed and two runs of one seed on one machine trace the same rays.
+
+What the seed buys, precisely: **bit-exact replay — the same seed producing a byte-identical
+image — holds only within one platform + one C++ standard library + one ISA level + one trace
+backend.** The `std::mt19937` core stream is fully specified by the standard, but the distribution
+adapters wrapped over it (`std::normal_distribution`, `std::uniform_real_distribution`) specify
+only the output *law*, not the algorithm, and every standard library fills that freedom
+differently — libc++, libstdc++ and MSVC draw different sequences from the same core. The GPU
+backends run their own device-side generators, unrelated to the CPU route, and the ISA level can
+change floating-point rounding along the trace path. Across any of those axes, the same seed
+yields **statistically equivalent** results — images agreeing to within Monte Carlo noise and
+converging to the same halos — which is the semantics a Monte Carlo renderer promises. It does
+not promise a cross-platform bit-identical image. To identify a run after the fact, capture its
+`Stats:` line (or the npy sidecar).
 
 ## Related Documentation
 
