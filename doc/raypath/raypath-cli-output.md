@@ -735,10 +735,10 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `request` | The echo: `crystal_id`, `path_layers`, `symmetry_bits` (7 = physical P\|B\|D, 0 = literal), `wavelength_nm` (null when unset) and `budget_ms` as resolved |
 | `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg` |
 | `routing` | The T0 leg: `early_stopped`, and per-member `members[]` records (`member`, `rank_zero`, `mechanism` — the kernel's roll-up slug, null when not computable, with `mechanism_unavailable` naming why — and the member's own `evidence` block) |
-| `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has an extremum fold — the position needs a fold to sit on; the minimum-deviation fold when the class has one, else the interior maximum at the support's upper edge), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed — and on that refused card, the declared-source `witness` sub-block (§9.2) |
+| `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has an extremum fold — the position needs a fold to sit on; the minimum-deviation fold when the class has one, else the interior maximum at the support's upper edge), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed — and on that refused card, the declared-source `witness` sub-block (§9.2); the family route's own cards (the band-labelled survivors and the level-0 `support_set`, §9.2's family-form paragraph) |
 | `family_routing` | present only on the family arm's documents (§9.7): the measure echo, the freezing ladder with every level's rank coverage and killed candidates, and the block's own evidence. An early stop, a full-dimensional route and an outside-domain refusal carry no `family_routing` key at all |
 | `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop, on the full-dimensional route and on the family routes (the v1 not-wired skeleton is retired — a non-random axis is routed or refused, never parked) |
-| `probes` | The canonical probes; present only on the full-dimensional route (§9.6) — an early-stop document carries no `probes` key at all |
+| `probes` | The canonical probes; present only on a route that ran one (the full-dimensional route, and the family route when the density conversion carries the measure — §9.6) — an early-stop, an outside-domain-refused and a density-less family document carry no `probes` key at all |
 | `chromatic` | The chromatic layer's own evidence block plus the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`, §9.6). Its state follows the legs its routing arm ran: `unevaluated` only when no chromatic leg exists for the input class, `finite` when its legs computed, `refused` (with the leg's mode) when its only leg refused — on the identity arm the tint IS the block's only leg, so the block and the sub-block never disagree |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
 | `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran) |
@@ -884,7 +884,7 @@ no second serializer.
 
 ### 9.6 The probe and the chromatic caliber
 
-The full-dimensional route's quantification layer runs at fixed constants — they are part of
+The full-dimensional route's quantification layer (the family route runs the same legs when its measure's density conversion carries it — the probe's radial profile reads the family density, the readings landing on the representative member's own `bright_domain` card) runs at fixed constants — they are part of
 the schema (the serialized `spec` echoes every one), not tuning knobs:
 
 | Constant | Value | Meaning |
