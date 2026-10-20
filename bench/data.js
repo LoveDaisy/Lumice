@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792472449476,
+  "lastUpdate": 1792472451749,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38",
-          "message": "Merge pull request #413 from LoveDaisy/docs/raypath-analysis-overview\n\ndocs(raypath-analysis): feature overview and roadmap",
-          "timestamp": "2026-09-25T22:51:44+08:00",
-          "tree_id": "c79b7399ed96b48eaf32a502f0cc41512296376e",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38"
-        },
-        "date": 1790348573464,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 95.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6a148bbcba23d5e330a528600062b88fbe62aae5",
           "message": "Merge pull request #414 from LoveDaisy/perf/cpu-per-ray-wavelength\n\nperf(core): stratify the CPU illuminant wavelength across physics batches",
           "timestamp": "2026-09-25T23:31:46+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c10466366a3f9d19d42a890a092389cebaade1b0",
+          "message": "Merge pull request #526 from LoveDaisy/feat/cl-exe-shared-ipo\n\nfeat(cmake): enable IPO for cl.exe shared Release trees",
+          "timestamp": "2026-10-20T12:57:03+08:00",
+          "tree_id": "38f1949b834ef1d5cd955ecb0db8f7a0c5e04fb2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c10466366a3f9d19d42a890a092389cebaade1b0"
+        },
+        "date": 1792472451084,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 102.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.8,
             "unit": "%"
           }
         ]
