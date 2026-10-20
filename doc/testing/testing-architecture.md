@@ -613,7 +613,7 @@ so this needs no new branch-protection context: those ten scenes now block a mer
 
 > 2026-10-20: the `lens_proj` row is a measurement record against the 2026-09-24 calibration; that
 > group's references and thresholds were re-shot on 2026-10-20 (PSNRs had drifted +1.2–2.5 dB above
-> the 2026-09-24 thresholds), so its margin column reads against the pre-2026-10-20 gate.
+> their 2026-09-24 calibrated means), so its margin column reads against the pre-2026-10-20 gate.
 
 **The amd64 confirmation, and what it changed.** The two in-CI rows above now carry numbers from
 the real `ubuntu-24.04` runner (the CI step's own log, 12/12 scenes passed). The comparison against
