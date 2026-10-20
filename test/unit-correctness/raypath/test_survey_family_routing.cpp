@@ -399,6 +399,35 @@ TEST(FamilyRouting, ParryShapeCarriesTheOneDimensionalImageAtLevelTwo) {
   }
 }
 
+// The filter's kill side, the C10 shape's own mirror: the same pinned mirror chain on a plate
+// with a WIDE zenith wobble (5 degrees) freezes the same level-1 spin family into the same
+// collapse point, but the frozen width's blur (2 x the half-width, the mirror doubling) dwarfs
+// the spot floor — the candidate is killed with its numbers in the ladder and no card is
+// produced (the reachability stays on the support card; the object claim dies).
+TEST(FamilyRouting, WideWobbleKillsTheCollapseCandidateItProposed) {
+  const ConfigManager config = PlateScene(1.0, 5.0);
+  SurveyDocument document;
+  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
+  ASSERT_TRUE(document.family_routing.has_value());
+  const FamilyRoutingBlock& block = *document.family_routing;
+  ASSERT_EQ(block.ladder.size(), 2u);
+  const FamilyLadderLevel& level = block.ladder[1];
+  EXPECT_EQ(level.objects_proposed, 1);
+  ASSERT_EQ(level.killed.size(), 1u);
+  const FamilyKilledCandidate& killed = level.killed.front();
+  EXPECT_EQ(killed.kind, "family_collapse_point");
+  EXPECT_EQ(killed.reason, "survival_filter");
+  EXPECT_NEAR(killed.blur_deg, 5.0, 0.5);  // the mirror doubles the 2.5-degree half-width
+  EXPECT_DOUBLE_EQ(killed.scale_deg, kSurvivalSpotFloorDeg);
+  EXPECT_TRUE(killed.clamped);
+  ASSERT_EQ(killed.verdicts.size(), 1u);
+  EXPECT_EQ(killed.verdicts[0].dim, "zenith");
+  EXPECT_EQ(killed.verdicts[0].verdict, "wide");
+  for (const SurveyObject& card : document.objects) {
+    EXPECT_NE(card.kind, SurveyObjectKind::kFamilyCollapsePoint);
+  }
+}
+
 // The 0D arm: the all-fixed axis (the axis-default's own distribution) evaluates the one pose
 // through the production chart — a collapse point per member with the band at level 0, the
 // single-pose weight read directly (never a band sum), and the positional chromatic legs

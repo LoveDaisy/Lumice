@@ -143,7 +143,7 @@ TEST(SurveyJsonV4, CertifiedBlocksCarryARegisteredMethod) {
   refused.mode = "budget";
   SurveyEvidence unevaluated;
   unevaluated.state = EvidenceState::kUnevaluated;
-  unevaluated.reason = "survey v1: T1/T2 not wired";
+  unevaluated.reason = "fixture: a routing leg not wired";
   SurveyDocument skeleton;
   skeleton.chromatic = refused;
   EvidenceState ignored = EvidenceState::kFinite;
@@ -513,14 +513,14 @@ TEST(SurveyJsonV4, UnevaluatedEntriesNameKindsAndReason) {
   skeleton.early_stopped = false;
   SurveyUnevaluated entry;
   entry.kinds = { SurveyObjectKind::kFamilyCollapsePoint, SurveyObjectKind::kRegularImage };
-  entry.reason = "survey v1: T1/T2 not wired";
+  entry.reason = "fixture: a routing leg not wired";
   skeleton.unevaluated.push_back(entry);
   const auto document = Serialized(skeleton);
   const auto& unevaluated = document.at("unevaluated");
   ASSERT_EQ(unevaluated.size(), 1u);
   EXPECT_EQ(unevaluated[0].at("kinds")[0], "family_collapse_point");
   EXPECT_EQ(unevaluated[0].at("kinds")[1], "regular_image");
-  EXPECT_EQ(unevaluated[0].at("reason"), "survey v1: T1/T2 not wired");
+  EXPECT_EQ(unevaluated[0].at("reason"), "fixture: a routing leg not wired");
 }
 
 
