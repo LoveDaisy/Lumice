@@ -21,6 +21,7 @@
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_family.hpp"
 #include "raypath/detail/survey/survey_json.hpp"
+#include "raypath/detail/survey/survey_tint.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "analytic/band_sum.hpp"
+#include "analytic/path_evaluation.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
@@ -34,6 +35,10 @@ namespace lumice::raypath::survey {
 // kChromaticBlueNm), shared with the positional-dispersion leg; only the lattice size is
 // tint-local.
 inline constexpr int kSurveyTintSampleCount = 1000000;  // the band_sum lattice size (its `n`)
+
+// The tint method slug of the 0D arm's single-pose direct read (the method registry's third
+// spelling, beside the kernel's point-mass names and the class power-sum).
+inline constexpr const char* kTintMethodSinglePoseDirect = "single_pose_direct";
 
 struct TintInput {
   const analytic::FaceNormalTable* table = nullptr;
@@ -77,6 +82,23 @@ struct ClassTintInput {
 };
 
 void AssembleClassTint(const ClassTintInput& input, SurveyDocument* out);
+
+// The 0D arm's weight tint: the single-pose direct read (w = A*T at each lambda of the fixed
+// pair, the diagnostic batch's own re-evaluation — the witness's reading discipline), never a
+// band sum (the design's own sentence). The caller is the family arm's 0D branch (the all-fixed
+// axis, one pose from the production Euler chart).
+struct SinglePoseTintInput {
+  const analytic::CrystalShape* crystal = nullptr;   // the batch evaluation's own shape param
+  const std::vector<int>* representative = nullptr;  // the requested literal face sequence
+  double pose[9] = {};                               // the axis's single pose
+  double incident[3] = { 0.0, 0.0, -1.0 };           // the sun's propagation direction
+  int member_count = 0;                              // the class size the card stands for
+};
+
+// Fills out->weight_tint and mirrors the chromatic block's own state (the tint is the 0D arm's
+// only chromatic leg). Refusals keep the document honest — single_pose_weight_unavailable, the
+// weight is unavailable, never defaulted.
+void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyDocument* out);
 
 }  // namespace lumice::raypath::survey
 
