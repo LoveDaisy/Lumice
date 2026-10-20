@@ -110,6 +110,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/discovery.hpp
   analytic/entry_measure.cpp
   analytic/entry_measure.hpp
+  analytic/family_rank.cpp
+  analytic/family_rank.hpp
   analytic/fiber_continuation.cpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp
