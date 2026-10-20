@@ -91,7 +91,7 @@ TEST(SurveyAssembly, FamilyRestrictedPlateRoutesIntoTheLadderArm) {
   ASSERT_EQ(document.family_routing->ladder.size(), 2u);
   EXPECT_FALSE(document.family_routing->ladder[0].rank_asked);
   ASSERT_TRUE(document.family_routing->ladder[1].rank_asked);
-  EXPECT_EQ(document.family_routing->ladder[1].frozen_dims.at(0).dim, "zenith");
+  EXPECT_EQ(document.family_routing->ladder[1].frozen_dims.at(0).dim, analytic::FamilyDimension::kZenith);
   // The pole spin chart's wedge member: a one-dimensional image (the chart degeneracy is
   // data, not an error — the restricted-family rank test's own anchor).
   EXPECT_EQ(document.family_routing->ladder[1].generic_rank, 1);

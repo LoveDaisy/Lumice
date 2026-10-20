@@ -22,20 +22,6 @@ namespace {
 constexpr double kDegToRad = math::kDegreeToRadD;
 constexpr double kRadToDeg = math::kRadToDegreeD;
 
-// The dimension names in canonical (zenith, azimuth, roll) order — the kernel enum's own order,
-// spelled once for the document's dim strings.
-const char* DimName(analytic::FamilyDimension dim) {
-  switch (dim) {
-    case analytic::FamilyDimension::kZenith:
-      return "zenith";
-    case analytic::FamilyDimension::kAzimuth:
-      return "azimuth";
-    case analytic::FamilyDimension::kRoll:
-      return "roll";
-  }
-  return "roll";
-}
-
 // The out-of-vocabulary distribution types' own names (the refusal modes name them).
 const char* DistributionTypeSlug(DistributionType type) {
   switch (type) {
@@ -115,13 +101,6 @@ double NormalizeCenter(analytic::FamilyDimension dim, double center_deg) {
     folded += 360.0;
   }
   return folded;
-}
-
-analytic::FamilyDimension DimFromName(const std::string& name) {
-  if (name == "zenith") {
-    return analytic::FamilyDimension::kZenith;
-  }
-  return name == "roll" ? analytic::FamilyDimension::kRoll : analytic::FamilyDimension::kAzimuth;
 }
 
 // ---- the geometry helpers (the chart and the sky read) -----------------------------------------------
@@ -221,7 +200,7 @@ std::vector<FamilyFrozenDim> FrozenReport(const FamilyRoutingMeasure& measure,
       continue;
     }
     FamilyFrozenDim row;
-    row.dim = DimName(names[i]);
+    row.dim = names[i];
     row.center_deg = NormalizeCenter(names[i], dims[i]->center_deg);
     row.width_deg = 0.0;
     out.push_back(std::move(row));
@@ -229,7 +208,7 @@ std::vector<FamilyFrozenDim> FrozenReport(const FamilyRoutingMeasure& measure,
   for (int j = 0; j < k && j < static_cast<int>(candidates.size()); j++) {
     const FamilyFreezeCandidate& candidate = candidates[static_cast<size_t>(j)];
     FamilyFrozenDim row;
-    row.dim = DimName(candidate.dim);
+    row.dim = candidate.dim;
     row.center_deg = candidate.center_deg;
     row.width_deg = candidate.width_deg;
     out.push_back(std::move(row));
@@ -354,13 +333,13 @@ BlurReading MeasureBlur(const analytic::FaceNormalTable& table, const int* slots
   BlurReading out;
   for (const FamilyFrozenDim& dim : frozen) {
     FamilyBandVerdict verdict;
-    verdict.dim = dim.dim;
+    verdict.dim = DimName(dim.dim);
     if (dim.width_deg <= 0.0) {
       verdict.verdict = "narrow";
       out.verdicts.push_back(std::move(verdict));
       continue;
     }
-    const analytic::FamilyDimension name = DimFromName(dim.dim);
+    const analytic::FamilyDimension name = dim.dim;
     double blur = 0.0;
     for (int sign : { 1, -1 }) {
       const double wanted = dim.center_deg + sign * 0.5 * dim.width_deg;
@@ -399,7 +378,7 @@ BlurReading MeasureBlur(const analytic::FaceNormalTable& table, const int* slots
       }
     }
     out.blur_deg = std::max(out.blur_deg, blur);
-    ILOG_VERBOSE(GetGlobalLogger(), "[raypath survey] survival dim {} blur {:.4f} scale {:.4f}", dim.dim, blur,
+    ILOG_VERBOSE(GetGlobalLogger(), "[raypath survey] survival dim {} blur {:.4f} scale {:.4f}", DimName(dim.dim), blur,
                  scale_deg);
     verdict.verdict = blur <= scale_deg ? "narrow" : "wide";
     out.verdicts.push_back(std::move(verdict));
@@ -418,7 +397,6 @@ BlurReading MeasureBlur(const analytic::FaceNormalTable& table, const int* slots
 struct FamilyCandidate {
   SurveyObjectKind kind = SurveyObjectKind::kFamilyCollapsePoint;
   bool viable = true;
-  std::string kill_reason;  // set when !viable before the filter (the probe set had no image)
   bool has_position = false;
   double position_alt_deg = 0.0;
   double position_az_deg = 0.0;
@@ -475,7 +453,6 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
     candidate.sample_count = static_cast<int>(candidate.anchors.size());
     if (candidate.anchors.size() < 2) {
       candidate.viable = false;
-      candidate.kill_reason = "no_valid_image";
     } else {
       candidate.has_position = true;
       ImageAltAzDeg(candidate.anchors.front().outgoing, &candidate.position_alt_deg,
@@ -739,7 +716,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
       SurveyObject card = SurvivingCard(member, candidate, BlurReading{}, 0, input.wavelength_nm);
       card.band->frozen.clear();
       for (const FamilyFrozenDim& dim : level.frozen_dims) {
-        card.band->frozen.push_back({ dim.dim, "narrow" });
+        card.band->frozen.push_back({ DimName(dim.dim), "narrow" });
       }
       out->objects.push_back(std::move(card));
     }

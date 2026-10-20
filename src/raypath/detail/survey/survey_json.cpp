@@ -202,7 +202,7 @@ Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
     Json frozen = Json::array();
     for (const FamilyFrozenDim& dim : level.frozen_dims) {
       frozen.push_back(
-          { { "dim", dim.dim }, { "center_deg", Num(dim.center_deg) }, { "width_deg", Num(dim.width_deg) } });
+          { { "dim", DimName(dim.dim) }, { "center_deg", Num(dim.center_deg) }, { "width_deg", Num(dim.width_deg) } });
     }
     Json free = Json::array();
     for (const std::string& dim : level.free_dims) {

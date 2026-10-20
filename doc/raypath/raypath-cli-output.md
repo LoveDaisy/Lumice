@@ -826,12 +826,16 @@ numbers are a different protocol and live on a different ruler.
 **The family-form cards (the `family_routing` arm)** carry the same registry kinds with their
 own payload shape. A family card carries `position` (the representative's sky position), its
 `evidence`, the `band` label (below) and `family_origin` (`sample_count` / `crossing_count` —
-the rank primitive's own coverage counts, passed through). The one key that crosses forms is
-`bright_domain`: a family bright_domain card carries the class support's span
+per-kind coverage counts: a `family_collapse_point` carries its collapse component's sample
+count, a family `caustic_edge` its fold component's crossing count; a `regular_image` /
+`bright_domain` card's count comes from the consumed-side extent probe (the assembly's own
+`EvaluateFamilyPoint` probes), not the rank primitive's output). The one key that crosses forms
+is `bright_domain`: a family bright_domain card carries the class support's span
 (`domain_lower_deg` / `domain_upper_deg`), and its profile readings — when the density carried
-the measure — come from the probe leg exactly as on the full-dimensional route; a family
-caustic_edge card carries no `caustic_edge` payload (the fold arc's position is its
-representative crossing's sky position).
+the measure — come from the probe leg exactly as on the full-dimensional route, on the
+representative member's card only (`members` exactly the requested literal sequence; sibling
+member cards carry the span alone); a family caustic_edge card carries no `caustic_edge`
+payload (the fold arc's position is its representative crossing's sky position).
 
 | Field | Meaning |
 |---|---|

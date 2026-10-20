@@ -544,7 +544,7 @@ TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
 
   FamilyLadderLevel level1;
   level1.level = 1;
-  level1.frozen_dims = { { "roll", 0.0, 0.3 } };
+  level1.frozen_dims = { { analytic::FamilyDimension::kRoll, 0.0, 0.3 } };
   level1.free_dims = { "zenith", "azimuth" };
   level1.rank_asked = true;
   level1.generic_rank = 2;

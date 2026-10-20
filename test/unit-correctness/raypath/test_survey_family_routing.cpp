@@ -207,7 +207,7 @@ TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
   EXPECT_EQ(block.ladder[1].level, 1);
   ASSERT_TRUE(block.ladder[1].rank_asked);
   ASSERT_EQ(block.ladder[1].frozen_dims.size(), 1u);
-  EXPECT_EQ(block.ladder[1].frozen_dims[0].dim, "zenith");
+  EXPECT_EQ(block.ladder[1].frozen_dims[0].dim, analytic::FamilyDimension::kZenith);
   EXPECT_NEAR(block.ladder[1].frozen_dims[0].width_deg, 0.3, 1e-6);
   EXPECT_EQ(block.ladder[1].generic_rank, 0);
   EXPECT_EQ(block.ladder[1].grid, kFamilyLadderGrid);
@@ -260,12 +260,12 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   EXPECT_FALSE(block.ladder[0].rank_asked);  // three free dimensions: the support alone
   ASSERT_TRUE(block.ladder[1].rank_asked);
   EXPECT_EQ(block.ladder[1].frozen_dims.size(), 1u);
-  EXPECT_EQ(block.ladder[1].frozen_dims[0].dim, "roll");
+  EXPECT_EQ(block.ladder[1].frozen_dims[0].dim, analytic::FamilyDimension::kRoll);
   EXPECT_EQ(block.ladder[1].generic_rank, 2);  // the regular image with the fold locus
   ASSERT_TRUE(block.ladder[2].rank_asked);
   ASSERT_EQ(block.ladder[2].frozen_dims.size(), 2u);
-  EXPECT_EQ(block.ladder[2].frozen_dims[0].dim, "roll");
-  EXPECT_EQ(block.ladder[2].frozen_dims[1].dim, "zenith");
+  EXPECT_EQ(block.ladder[2].frozen_dims[0].dim, analytic::FamilyDimension::kRoll);
+  EXPECT_EQ(block.ladder[2].frozen_dims[1].dim, analytic::FamilyDimension::kZenith);
   EXPECT_EQ(block.ladder[2].generic_rank, 1);  // the one-dimensional circle
 
   // Level 1's survivors: the fold arcs (the family-form caustic cards), the roll narrow.

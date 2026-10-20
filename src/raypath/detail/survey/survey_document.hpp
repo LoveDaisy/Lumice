@@ -12,8 +12,9 @@
 #include <string_view>
 #include <vector>
 
-#include "analytic/band_sum.hpp"   // PointMassMethodName's enum (the kernel's own)
-#include "analytic/path_rank.hpp"  // the certificate's tolerances are the kernel's own constants
+#include "analytic/band_sum.hpp"     // PointMassMethodName's enum (the kernel's own)
+#include "analytic/family_rank.hpp"  // FamilyDimension: the frozen_dims rows' own enum
+#include "analytic/path_rank.hpp"    // the certificate's tolerances are the kernel's own constants
 #include "raypath/detail/survey/evidence.hpp"
 
 namespace lumice::raypath::survey {
@@ -154,10 +155,24 @@ struct FamilyRoutingMeasure {
   FamilyDimMeasure roll;
 };
 
+// The dimension names in canonical (zenith, azimuth, roll) order — the kernel enum's own order;
+// the frozen_dims rows' wire vocabulary, spelled once (the struct carries the enum itself).
+inline const char* DimName(analytic::FamilyDimension dim) {
+  switch (dim) {
+    case analytic::FamilyDimension::kZenith:
+      return "zenith";
+    case analytic::FamilyDimension::kAzimuth:
+      return "azimuth";
+    case analytic::FamilyDimension::kRoll:
+      return "roll";
+  }
+  return "roll";
+}
+
 // One frozen dimension of a ladder level: the freeze value and the width that was frozen (the
 // measure's own sigma — reported, never consumed by the rank question).
 struct FamilyFrozenDim {
-  std::string dim;  // "zenith" | "azimuth" | "roll"
+  analytic::FamilyDimension dim = analytic::FamilyDimension::kRoll;  // the enum; the name is the wire's
   double center_deg = 0.0;
   double width_deg = 0.0;  // 0 for the measure's own fixed dimensions
 };
@@ -320,9 +335,11 @@ struct SurveyObject {
     double scale_deg = 0.0;
     bool clamped = false;
   };
-  // The rank primitive's own coverage counts, passed through: a family_collapse_point carries
-  // its collapse component's sample count, a family caustic_edge its fold component's crossing
-  // count (0 for the kinds that have neither).
+  // Per-kind coverage counts: a family_collapse_point carries its collapse component's sample
+  // count, a family caustic_edge its fold component's crossing count; a regular_image /
+  // bright_domain card's sample_count is the consumed-side extent probe's anchor count (the
+  // EvaluateFamilyPoint probes the assembly ran, not the rank primitive's own output), and its
+  // crossing_count stays 0.
   struct FamilyOriginPayload {
     int sample_count = 0;
     int crossing_count = 0;
