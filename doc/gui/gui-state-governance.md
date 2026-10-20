@@ -294,6 +294,13 @@
 而那个用例的 fixture 恰好把 GUI 线开关都置为开 ⇒ 不把它们加进清单，比较照样通过。清单在这里
 不是「让红转绿」的补丁，而是唯一记录了「这四个键允许分叉」的地方。
 
+⚠️ **导入方向（`DeserializeFromJson`）有意不读 `render[].grid.*` 整块，一条 load notice 即全部答复。**
+GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在 `GuiState` 里没有可落的形状——文档带了
+`grid` 键就明说，没提就什么都不说（同 `ray_color` 的「never-mentioned」规则）。走普通 notice 而非
+§9.3 那个 `WarnUnsupportedByDesign`：线/标注/颜色子键在 GUI 里**有**家（overlay 控件，export 臂写的
+正是这棵子树），缺的是这条导入路径的接线，「no control for」不成立（owner 裁定，2026-10-20：只做
+告知；完全对称导入 / 无损子集导入未立项）。
+
 ### 9.3 四处具名例外（有意不分叉，且都不是遗漏）
 
 - **`ray_color`**：两条臂都写 core 的「用真实光谱色」哨兵 `{-1,-1,-1}`。GUI 侧没有 tint 概念

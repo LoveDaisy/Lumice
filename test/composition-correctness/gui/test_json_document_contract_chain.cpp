@@ -1022,6 +1022,46 @@ TEST(JsonImportContractChain, AJsonGeomClockOfZeroIsNotWorthMentioning) {
   ClearLoadNotice();
 }
 
+// B-4: `render[].grid` — the document's coordinate grid — is refused whole on import, and this one
+// travels as a plain notice rather than WarnUnsupportedByDesign: half of the subtree has a home
+// (the overlay's line/label/colour switches, which the export arm writes this very subtree from),
+// so "no control for" would be untrue; what has no editor form is the per-family angle lists, the
+// grid's actual content. The fixture's table shape is the one core documents write (the
+// per-row {value, ...} lists under "elevation"/"longitude").
+TEST(JsonImportContractChain, AJsonRenderGridIsRefusedOutLoudNotDroppedInSilence) {
+  const std::string doc =
+      DocWithParts(kWellFormedLightSource,
+                   R"([{"id": 1, "lens": {"type": "linear", "fov": 60}, "resolution": [64, 64], )"
+                   R"("grid": {"horizon": true, "elevation": [{"value": 30, "opacity": 0.3}], )"
+                   R"("longitude": [{"value": 0, "opacity": 0.3}, {"value": 90, "opacity": 0.3}]}}])",
+                   "");
+
+  ClearLoadNotice();
+  GuiState scratch;
+  ASSERT_TRUE(DeserializeFromJson(doc, scratch));
+
+  EXPECT_FLOAT_EQ(scratch.renderer.fov, 60.0f) << "premise: the render object was read at all";
+
+  const std::string warning = PeekLoadNotice();
+  EXPECT_FALSE(warning.empty()) << "the document's grid was set aside and the user was told nothing";
+  EXPECT_NE(warning.find("grid"), std::string::npos) << "must name the field, got: " << warning;
+  ClearLoadNotice();
+}
+
+// The absent-key control arm, same reason as the azimuth twin: kWellFormedRender states no grid,
+// so the document asked for nothing, and a notice there would train the user to dismiss this
+// channel without reading it.
+TEST(JsonImportContractChain, AJsonRenderGridAbsentIsNotWorthMentioning) {
+  const std::string doc = DocWithParts(kWellFormedLightSource, kWellFormedRender, "");
+
+  ClearLoadNotice();
+  GuiState scratch;
+  ASSERT_TRUE(DeserializeFromJson(doc, scratch));
+
+  EXPECT_TRUE(PeekLoadNotice().empty()) << "nothing was lost, so there is nothing to report: " << PeekLoadNotice();
+  ClearLoadNotice();
+}
+
 // ---------------------------------------------------------------------------------------------
 // The export half of the same contract: what the GUI is allowed to write over.
 //
