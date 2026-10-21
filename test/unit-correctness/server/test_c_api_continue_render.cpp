@@ -311,6 +311,93 @@ TEST(ContinueRender, ContinuationIsANewStreamUnderARandomSeedMetal) {
   ExpectNewStream(/*seed=*/0, LUMICE_BACKEND_METAL);
 }
 
+// ---- CUDA legs: the CPU legs' propositions and rulers, verbatim, on the CUDA route — the
+// first non-CPU route to carry all four (Metal carries only the new-stream pair). CI has no
+// GPU, so every leg self-skips there and the job's contribution is compile coverage; runtime
+// validation runs on the Linux CUDA reference box (doc/testing/machines.md).
+
+TEST(ContinueRender, ContinueAccumulatesCountEnergyAndPlanesCuda) {
+  if (LUMICE_IsBackendAvailable(LUMICE_BACKEND_CUDA) == 0) {
+    GTEST_SKIP() << "no CUDA device";
+  }
+  LUMICE_Server* server = MakeServer(/*seed=*/0, LUMICE_BACKEND_CUDA);
+  ASSERT_NE(server, nullptr);
+  Accumulation first;
+  Accumulation both;
+  RunThenContinue(server, &first, &both);
+  Destroy(server);
+  if (::testing::Test::HasFatalFailure()) {
+    return;
+  }
+
+  EXPECT_EQ(first.sim_ray_num, kHalf);
+  EXPECT_EQ(both.sim_ray_num, 2 * kHalf) << "the ray count restarted instead of continuing";
+  EXPECT_NEAR(both.emitted_energy / first.emitted_energy, 2.0, 1e-3) << "emitted energy did not continue";
+  ASSERT_EQ(both.xyz.size(), first.xyz.size());
+  size_t lost = 0;
+  for (size_t i = 0; i < first.xyz.size(); ++i) {
+    if (both.xyz[i] + 1e-6 * std::abs(first.xyz[i]) < first.xyz[i]) {
+      ++lost;
+    }
+  }
+  EXPECT_EQ(lost, 0u) << "accumulated plane values went down across the continuation";
+  ASSERT_GT(first.anchor_l99_sky, 0.0f);
+  const double plane_ratio = Sum(both.xyz) / Sum(first.xyz);
+  EXPECT_GT(plane_ratio, 1.7) << "the plane total did not roughly double";
+  EXPECT_LT(plane_ratio, 2.3) << "the plane total more than doubled";
+  const double anchor_ratio = both.anchor_l99_sky / first.anchor_l99_sky;
+  EXPECT_GT(anchor_ratio, 1.6) << "the exposure anchor did not take the first half's rays into account";
+  EXPECT_LT(anchor_ratio, 2.4);
+}
+
+TEST(ContinueRender, ContinuedRunMatchesOneRunOfTheSameTotalCuda) {
+  if (LUMICE_IsBackendAvailable(LUMICE_BACKEND_CUDA) == 0) {
+    GTEST_SKIP() << "no CUDA device";
+  }
+  auto one_run = [](unsigned int seed) {
+    LUMICE_Server* server = MakeServer(seed, LUMICE_BACKEND_CUDA);
+    EXPECT_NE(server, nullptr);
+    EXPECT_EQ(CommitJson(server, MakeConfig(std::to_string(2 * kHalf))), LUMICE_OK);
+    EXPECT_TRUE(WaitForDrain(server));
+    Accumulation acc = Read(server);
+    Destroy(server);
+    return acc;
+  };
+  const Accumulation refs[3] = { one_run(11), one_run(12), one_run(14) };
+  const double noise =
+      (RelL1(refs[1].xyz, refs[0].xyz) + RelL1(refs[2].xyz, refs[0].xyz) + RelL1(refs[2].xyz, refs[1].xyz)) / 3.0;
+
+  LUMICE_Server* server = MakeServer(13, LUMICE_BACKEND_CUDA);
+  ASSERT_NE(server, nullptr);
+  Accumulation first;
+  Accumulation b;
+  RunThenContinue(server, &first, &b);
+  Destroy(server);
+  if (::testing::Test::HasFatalFailure()) {
+    return;
+  }
+
+  EXPECT_EQ(b.sim_ray_num, refs[0].sim_ray_num);
+  EXPECT_NEAR(b.emitted_energy / refs[0].emitted_energy, 1.0, 1e-3);
+  const double dist = (RelL1(b.xyz, refs[0].xyz) + RelL1(b.xyz, refs[1].xyz) + RelL1(b.xyz, refs[2].xyz)) / 3.0;
+  EXPECT_LT(dist, 1.5 * noise) << "N+N sits further from the 2N runs than they sit from each other (noise " << noise
+                               << ", distance " << dist << ")";
+}
+
+TEST(ContinueRender, ContinuationIsANewStreamUnderAFixedSeedCuda) {
+  if (LUMICE_IsBackendAvailable(LUMICE_BACKEND_CUDA) == 0) {
+    GTEST_SKIP() << "no CUDA device";
+  }
+  ExpectNewStream(/*seed=*/7, LUMICE_BACKEND_CUDA);
+}
+
+TEST(ContinueRender, ContinuationIsANewStreamUnderARandomSeedCuda) {
+  if (LUMICE_IsBackendAvailable(LUMICE_BACKEND_CUDA) == 0) {
+    GTEST_SKIP() << "no CUDA device";
+  }
+  ExpectNewStream(/*seed=*/0, LUMICE_BACKEND_CUDA);
+}
+
 // Two continuations must not share a stream either: each gets an index of its own.
 TEST(ContinueRender, SecondContinuationIsANewStreamToo) {
   LUMICE_Server* server = MakeServer(/*seed=*/7, LUMICE_BACKEND_CPU);
