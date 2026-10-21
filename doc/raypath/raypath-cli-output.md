@@ -1022,9 +1022,23 @@ freeze — the rank entry's own refusal domain):
 | `ladder[].rank` | present exactly when the rank question was asked (a level-0 with three free dimensions owns the support alone): `{generic_rank, grid, grid_spacing_deg[], samples, valid_samples, refused_members?}` — the first member's coverage whose rank run returned ok; relabelings share the rank structure; `refused_members` is present only when non-zero and counts the members the rank entry refused on their weight leg (data, not a verdict) |
 | `ladder[].objects_proposed` / `objects_killed` | the level's candidate counts — every level reports, not just the deepest |
 | `ladder[].killed[]` | the killed candidates: `{member, kind, position?, blur_deg?, scale_deg?, clamped?, reason, verdicts[]}` — the same numbers the surviving card's band would carry; the blur/scale/clamped group is present exactly when one of them was measured, and a `no_valid_image` kill leaves the pair unmeasured and omits it; `reason` is `survival_filter` (the blur exceeded the scale) or `no_valid_image` (the probe set found no valid image) |
+| `level0_refusal_mode` | present only when the level-0 delta partition refused: the refusal mode the refused support card carries in its `evidence.mode`, echoed so a block-level reader need not walk `objects[]` |
 
-The block's own `evidence` is finite with its coverage declaration; a refused class support
-inside the family arm turns it refused with the support's mode (the fail-closed mirror of the
-full-dimensional arm's refused-support shape: one refused `support_set` card with the witness
-sub-block, no ladder cards). The block is write-only: survey documents are serialized one way,
-and no in-tree reader deserializes them back into `SurveyDocument`.
+The block's own `evidence` is finite once any of its legs produced output (the same rule the
+chromatic block states). A level-0 delta partition that refuses scopes to its own card — one
+refused `support_set` card carrying the witness sub-block — while the ladder enumerates
+regardless: the partition is a geometry fact about the support, the ladder a measure fact, and
+the only deep-level partition read is `bright_domain`'s domain bounds (present only when the
+partition succeeded, never fabricated from a refused one). The refusal is echoed at block
+level as `level0_refusal_mode` (the same string the refused card carries in `evidence.mode`).
+
+Block state and document state are two independent levels: the block's `evidence` speaks for
+its legs (the ladder's scans, the chromatic legs), the document's `evidence` for the class
+verdict. The document refuses only when no finite structural object exists — a refused
+partition with a finite collapse card on record stays a finite document; conversely a finite
+block does not imply a finite document (the refused card is a refusal record, not a structural
+object, and the witness is a payload with its own state that never counts). The one
+block-level non-finite state on this route: a refused level-0 partition AND a density the
+conversion cannot carry — every leg silent, and the block says `unevaluated` with the reason
+instead of claiming a reading nothing produced. The block is write-only: survey documents are
+serialized one way, and no in-tree reader deserializes them back into `SurveyDocument`.

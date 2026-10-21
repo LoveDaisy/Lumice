@@ -631,5 +631,19 @@ TEST(SurveyJsonV4, FamilyRoutingKeyIsAbsentWithoutTheArm) {
   EXPECT_FALSE(parsed.contains("family_routing"));
 }
 
+// The block-level echo of the level-0 partition's refusal: the key exists exactly when the
+// partition refused, carrying the same mode string the refused card does.
+TEST(SurveyJsonV4, Level0RefusalModeKeyExistsExactlyWhenSet) {
+  SurveyDocument document;
+  document.family_routing = FamilyRoutingBlock{};
+  const auto absent = Serialized(document);
+  ASSERT_TRUE(absent.contains("family_routing"));
+  EXPECT_FALSE(absent.at("family_routing").contains("level0_refusal_mode"));
+
+  document.family_routing->level0_refusal_mode = "slab_crease_touching";
+  const auto present = Serialized(document);
+  EXPECT_EQ(present.at("family_routing").at("level0_refusal_mode"), "slab_crease_touching");
+}
+
 }  // namespace
 }  // namespace lumice::raypath::survey
