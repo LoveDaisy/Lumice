@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792584804989,
+  "lastUpdate": 1792584809966,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "3493b66dd3bb005b0ece61229caadab5c3c3fd09",
-          "message": "Merge pull request #419 from LoveDaisy/feat/display-mode-viewport-control\n\nfeat(gui): display mode becomes a segmented control in the preview's corner",
-          "timestamp": "2026-09-26T03:55:16+08:00",
-          "tree_id": "97ddaa25b9147c1d43eec4ed3cd226d46d8195bb",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/3493b66dd3bb005b0ece61229caadab5c3c3fd09"
-        },
-        "date": 1790366938227,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1029633.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1025248.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 730291.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 610478.7,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "208ad64e99c9a72de9042b4c4b28db4829cca387",
           "message": "Merge pull request #420 from LoveDaisy/feat/toolbar-revert-slot-gap\n\nfeat(gui): move the top bar's hidden Revert slot to the trailing end",
           "timestamp": "2026-09-26T05:03:32+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 537662.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a7f8b4eaab29ae7dd4fb9f70c7b10040a958550d",
+          "message": "Merge pull request #533 from LoveDaisy/feat/ci-ctest-budget-rebalance\n\ntest(ci): zero-sum ctest budget rebalance + the four survey structure cleanups",
+          "timestamp": "2026-10-21T20:09:47+08:00",
+          "tree_id": "d1414e4f2c68d617f42b63835e7c89df495db972",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a7f8b4eaab29ae7dd4fb9f70c7b10040a958550d"
+        },
+        "date": 1792584809404,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 838687.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1007720.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 808698.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 682289.3,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
