@@ -49,6 +49,32 @@ ScenePtr MakeScene() {
   return ScenePtr(scene);
 }
 
+// The wobbled plate: zenith and azimuth-roll read off the measure vocabulary, sun at 20. Its
+// {1,2} basal chain holds a single P|B|D member — the light shape the ABI-contract cases that
+// must run a full analysis (the prefix-defaults case) resolve onto.
+ScenePtr MakePlateScene() {
+  static const char* kPlateJson = R"({
+  "crystal": [{
+    "id": 1, "type": "prism", "shape": {"height": 0.3},
+    "axis": {
+      "zenith": {"type": "gauss", "mean": 90, "std": 0.3},
+      "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+      "roll": {"type": "uniform", "mean": 0, "std": 360}
+    }
+  }],
+  "filter": [],
+  "scene": {
+    "light_source": {"type": "sun", "altitude": 20, "azimuth": 0, "spectrum": "D65"},
+    "ray_num": 1000, "max_hits": 7,
+    "scattering": [{"prob": 0, "entries": [{"crystal": 1, "proportion": 1}]}]
+  },
+  "render": []
+})";
+  LUMICE_Scene* scene = nullptr;
+  EXPECT_EQ(LUMICE_SceneFromJson(kPlateJson, &scene), LUMICE_OK);
+  return ScenePtr(scene);
+}
+
 struct Request {
   int faces[3] = { 3, 5, 0 };
   int layers[1] = { 2 };
@@ -225,8 +251,15 @@ TEST(PathFeatureReportCApi, StopsExpandedWorkAtTheExplicitBudget) {
 }
 
 TEST(PathFeatureReportCApi, OldRequestPrefixUsesNewDefaultsWithoutReadingTheSuffix) {
-  const ScenePtr scene = MakeScene();
+  // A plate whose {1,2} basal chain holds a single P|B|D member: a prefix struct_size means
+  // the appended bits field is not read, so the class resolves to the P|B|D default and the
+  // assembly's cost scales with its member count — the light chain keeps this ABI-contract
+  // case off the seconds scale. The subject is the prefix/defaults contract, not the crystal.
+  const ScenePtr scene = MakePlateScene();
   Request request;
+  static const int kBasalFaces[] = { 1, 2 };
+  request.c.faces = kBasalFaces;
+  request.c.face_count = 2;
   request.c.struct_size = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
   request.c.budget_ms = -1;
   request.c.max_optical_evaluations = 1;
