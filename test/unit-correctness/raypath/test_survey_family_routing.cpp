@@ -47,6 +47,22 @@ const Distribution kFixed90{ DistributionType::kNoRandom, 90.0f, 0 };
 const Distribution kFixed0{ DistributionType::kNoRandom, 0.0f, 0 };
 const Distribution kUniformFull{ DistributionType::kUniform, 0.0f, 360.0f };
 
+// One assembly shared by the three Lowitz-document tests below (identical scene+request): the
+// assembly is deterministic (diagnostic-batch lattice evaluation, no RNG), so the document's
+// three read-side faces — the ladder shape, the kill numbers, the JSON serialization — read the
+// same trace once instead of paying it three times.
+const SurveyDocument& SharedLowitzDocument() {
+  static const SurveyDocument document = [] {
+    SurveyDocument doc;
+    const ConfigManager config = LowitzMeasureScene(40.0, 0.3);
+    if (!AssembleSurvey(config, LiteralRequest({ 3, 5 }), &doc).Ok()) {
+      ADD_FAILURE() << "the shared Lowitz assembly failed";
+    }
+    return doc;
+  }();
+  return document;
+}
+
 // ---- the measure extraction and the v1 domain gate (pure) ------------------------------------------
 
 TEST(FamilyRouting, DefaultAxisIsTheSinglePoseAndReadsFixedEverywhere) {
@@ -251,9 +267,7 @@ TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
 // candidate is killed and reported in the ladder level that proposed it (never a card), with
 // the wide verdict and the clamped one-sided probe on record.
 TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
-  const ConfigManager config = LowitzMeasureScene(40.0, 0.3);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
+  const SurveyDocument& document = SharedLowitzDocument();
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
 
@@ -332,9 +346,7 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
 // the same record stays narrow: the two frozen dimensions of one object read differently
 // (the narrow half of AC5's dimension-times-object property).
 TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
-  const ConfigManager config = LowitzMeasureScene(40.0, 0.3);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
+  const SurveyDocument& document = SharedLowitzDocument();
   const FamilyRoutingBlock& block = *document.family_routing;
   ASSERT_FALSE(block.ladder[2].killed.empty());
   const FamilyKilledCandidate* killed = nullptr;
@@ -570,9 +582,7 @@ TEST(FamilyRouting, OutsideDomainShapeRefusesWithTheNamedModeAndAWitness) {
 // The serialized family document's shape: the measure echo, the ladder with its rank coverage
 // and killed records, the band on the cards, and the conditional keys.
 TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
-  const ConfigManager config = LowitzMeasureScene(40.0, 0.3);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
+  const SurveyDocument& document = SharedLowitzDocument();
   const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
   ASSERT_TRUE(parsed.contains("family_routing"));
   const auto& family = parsed.at("family_routing");
