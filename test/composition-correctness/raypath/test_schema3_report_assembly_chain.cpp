@@ -121,6 +121,7 @@ TEST(Schema3ReportAssemblyChain, ExplicitEventsProduceObservedKind1) {
   EXPECT_FALSE(assembled.mc.spectral_verification.available) << "an explicit single wavelength has nothing to verify";
 
   bool kind1_observed = false;
+  long long observed_match = -1;
   for (size_t i = 0; i < assembled.core.objects.size(); i++) {
     if (assembled.core.objects[i].kind != ObjectKind::kKind1) {
       continue;
@@ -131,9 +132,16 @@ TEST(Schema3ReportAssemblyChain, ExplicitEventsProduceObservedKind1) {
       EXPECT_LT(assembled.annotations[i].matched_record,
                 static_cast<long long>(assembled.mc.discovery.features.size()));
       EXPECT_FALSE(assembled.annotations[i].ruler.empty());
+      observed_match = assembled.annotations[i].matched_record;
     }
   }
   EXPECT_TRUE(kind1_observed) << "the kind-1 critical delta must be observed at explicit-event standing";
+  // The attribution core's exclusivity, read off the production assembly's own output: the
+  // record the kind-1 observed must not also be carried as unattributed.
+  for (const schema3::UnattributedStructure& structure : assembled.unattributed.structures) {
+    EXPECT_NE(static_cast<long long>(structure.record_index), observed_match)
+        << "the record the kind-1 observed must not also be unattributed";
+  }
 
   // The rule-B arm the observed object breaks: the certificate cannot issue.
   ASSERT_FALSE(assembled.ruling.issued);
@@ -176,6 +184,11 @@ TEST(Schema3ReportAssemblyChain, AutoStarveStaysSilentAndCarries33RowContinuatio
     if (assembled.core.objects[i].kind == ObjectKind::kKind1 &&
         assembled.annotations[i].state == CorroborationState::kConsistent) {
       consistent_kind1 = true;
+      // The unproven arm reads consistent only on SUFFICIENT recorded presence — the
+      // starvation premise does not mean an empty record.
+      EXPECT_GE(assembled.annotations[i].presence_ess, 32.0) << assembled.annotations[i].reason;
+      EXPECT_NE(assembled.annotations[i].reason.find("nothing the MC could contradict"), std::string::npos)
+          << assembled.annotations[i].reason;
     }
   }
   EXPECT_TRUE(consistent_kind1) << "unproven kind-1 on sufficient presence reads consistent";

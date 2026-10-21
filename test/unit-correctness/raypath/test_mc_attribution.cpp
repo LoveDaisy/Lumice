@@ -597,36 +597,6 @@ TEST(McAttribution, RestrictedObjectIntegratesEndToEndOnRealProducers) {
 
 namespace {
 
-// The Haar prism scene (the v2 report tests' shape): crystal 1 (h = 1, all face distances 1),
-// sun 20 deg, full-sphere Haar axis. The spectrum request shape is the CALLER's: A runs the
-// explicit single-wavelength form (cheap rows, the peak clears the ESS floor); B runs the
-// continuous illuminant with the auto budget — the budget allocator spreads the auto count
-// over member x spectral-row expansion, so a full-band quadrature measure gets only a few
-// hundred outer draws: the weighted field starves (Y-ESS ~0, actual = 0) deterministically.
-// That premise is B's subject; if the budget allocator changes, re-measure it first.
-ConfigManager HaarPrismScene(bool continuous_spectrum) {
-  PrismCrystalParam prism;
-  prism.h_ = { DistributionType::kNoRandom, 1, 0 };
-  for (auto& distance : prism.d_) {
-    distance = { DistributionType::kNoRandom, 1, 0 };
-  }
-  CrystalConfig crystal{};
-  crystal.id_ = 1;
-  crystal.param_ = prism;
-  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90, 360 };
-  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
-  ConfigManager config;
-  config.crystals_.emplace(1, crystal);
-  config.scene_.light_source_.param_ = { 20, 0, 0 };
-  config.scene_.light_source_.spectrum_ =
-      continuous_spectrum ? SpectrumConfig(IlluminantType::kD65) : SpectrumConfig(std::vector<WlParam>{ { 550, 1 } });
-  ScatteringSetting entry{};
-  entry.crystal_ = crystal;
-  entry.crystal_proportion_ = 1;
-  config.scene_.ms_.push_back({ 0, { entry } });
-  return config;
-}
-
 // The plate scene (the C12 crystal's shape: h = 1, fd = [1.5, 1, 1, 1.5, 1, 1]), plate axis,
 // sun 9 deg — the C-arm's configuration.
 ConfigManager PlateScene() {
@@ -703,101 +673,6 @@ LivingRun RunLiving(const ConfigManager& config, const PathFeatureReportRequest&
 }
 
 }  // namespace
-
-TEST(McAttribution, LivingExplicitEventsAttributeTheRealPeak) {
-  // A (the two-way living pair, forward and backward): Haar prism, 550 nm, 16384 explicit
-  // events. The MC finds the minimum-deviation peak (kActual), the forward pass attributes it
-  // to the kind-1 critical delta, and the same object derives `observed`. The explicit events
-  // are the premise: at the auto budget this measure starves (see the B arm below).
-  ConfigManager config = HaarPrismScene(false);
-  PathFeatureReportRequest request;
-  request.crystal_id = 1;
-  request.path_layers = { { 3, 5 } };
-  request.sample_count = 16384;
-  request.wavelengths_nm = { 550 };
-  // The pipeline is replayable (fixed seed) but bounded by wall-clock; the max budget keeps
-  // the deadline from ever biting, so the living case stays byte-reproducible across machines.
-  request.budget_ms = 120000;
-  LivingRun run = RunLiving(config, request, { { 3, 5 } }, nullptr, nullptr, 0);
-  ASSERT_FALSE(run.report.discovery.features.empty());
-  size_t actuals = 0;
-  for (const DiagnosticFeatureRecord& record : run.report.discovery.features) {
-    actuals += record.evidence == DiagnosticEvidence::kActual ? 1 : 0;
-  }
-  // The premise (the explicit-events rescue of the starved auto budget): the peak clears the
-  // significance bar.
-  ASSERT_GT(actuals, 0u) << "explicit events must surface at least one kActual on the 3-5 control cell";
-  schema3::McEvidenceBlock* mc =
-      new schema3::McEvidenceBlock(schema3::McEvidenceOf(std::move(run.report.discovery), run.report.options));
-  run.input.mc = mc;
-  const CorroborationOutcome outcome = DeriveCorroboration(run.input);
-  EXPECT_TRUE(outcome.error.empty()) << outcome.error;
-  const UnattributedOutcome forward = DeriveUnattributed(run.input);
-  EXPECT_TRUE(forward.error.empty()) << forward.error;
-  // The kind-1 object of 3-5: the MC peak sits at its minimum-deviation endpoint -> observed,
-  // and that record is not in the unattributed list.
-  size_t kind1_index = kNoIndex;
-  for (size_t i = 0; i < run.core.objects.size(); i++) {
-    if (run.core.objects[i].kind == ObjectKind::kKind1) {
-      kind1_index = i;
-    }
-  }
-  ASSERT_NE(kind1_index, kNoIndex);
-  EXPECT_EQ(outcome.annotations[kind1_index].state, CorroborationState::kObserved)
-      << outcome.annotations[kind1_index].reason;
-  const long long matched = outcome.annotations[kind1_index].matched_record;
-  ASSERT_GE(matched, 0);
-  for (const UnattributedStructure& structure : forward.structures) {
-    EXPECT_NE(static_cast<long long>(structure.record_index), matched)
-        << "the record the kind-1 observed must not also be unattributed";
-  }
-  delete mc;
-}
-
-TEST(McAttribution, LivingStarvedAutoBudgetStaysSilent) {
-  // B (the AC2 real shape): the SAME scene, continuous illuminant, auto budget. The auto
-  // budget's starvation is deterministic (a few hundred outer draws over the full-band
-  // quadrature, Y-ESS ~0, actual = 0) — and the hunger is in the WEIGHTED field, not in the
-  // sampling: the record still carries plenty of light-bearing rows in the object's delta
-  // window (measured 15.5k row-level before the draw grouping). So the AC2 content lands on
-  // the forward side — no kActual, no
-  // unattributed output at all — while the kind-1 (unproven: no measure side on this core)
-  // follows the judgment table's unproven arm: nothing to contradict at sufficient recorded
-  // presence -> consistent. (The plan's B narrative expected not_observed_insufficient_ess;
-  // the measured premise refines which arm the table yields — the table stands, the case is
-  // written to what the producers actually do.)
-  ConfigManager config = HaarPrismScene(true);
-  PathFeatureReportRequest request;
-  request.crystal_id = 1;
-  request.path_layers = { { 3, 5 } };
-  request.sample_count = 0;    // auto
-  request.budget_ms = 120000;  // the evaluations cap, not the clock, must end this run
-  LivingRun run = RunLiving(config, request, { { 3, 5 } }, nullptr, nullptr, 0);
-  size_t actuals = 0;
-  for (const DiagnosticFeatureRecord& record : run.report.discovery.features) {
-    actuals += record.evidence == DiagnosticEvidence::kActual ? 1 : 0;
-  }
-  ASSERT_EQ(actuals, 0u) << "the auto x quadrature starvation must hold: it is this case's measured premise";
-  schema3::McEvidenceBlock* mc =
-      new schema3::McEvidenceBlock(schema3::McEvidenceOf(std::move(run.report.discovery), run.report.options));
-  run.input.mc = mc;
-  const UnattributedOutcome forward = DeriveUnattributed(run.input);
-  EXPECT_TRUE(forward.error.empty());
-  EXPECT_TRUE(forward.structures.empty());
-  EXPECT_EQ(forward.skipped_below_ess, 0);  // nothing reached the gate at all
-  const CorroborationOutcome outcome = DeriveCorroboration(run.input);
-  EXPECT_TRUE(outcome.error.empty());
-  for (size_t i = 0; i < run.core.objects.size(); i++) {
-    if (run.core.objects[i].kind != ObjectKind::kKind1) {
-      continue;
-    }
-    EXPECT_EQ(run.core.objects[i].visibility.state, VisibilityState::kUnproven);
-    EXPECT_EQ(outcome.annotations[i].state, CorroborationState::kConsistent) << outcome.annotations[i].reason;
-    EXPECT_GE(outcome.annotations[i].presence_ess, 32.0);
-    EXPECT_NE(outcome.annotations[i].reason.find("nothing the MC could contradict"), std::string::npos);
-  }
-  delete mc;
-}
 
 TEST(McAttribution, LivingUnlitRestrictedReadsInsufficientOnZeroRecordedPresence) {
   // C: the C12 plate's fully-dark restricted member (the C09 shape), real MC at standing.
