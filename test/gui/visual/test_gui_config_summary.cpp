@@ -48,8 +48,6 @@ struct SummaryLayoutScene {
 // CI llvmpipe leg today, so K has not been measured against that residue for these scenes and
 // should be when the group is added to the filter (doc/testing/testing-architecture.md §4.6).
 constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/16, /*max_cc_threshold=*/40 };
-// The PSNR floor the old ruler applied; printed on the diagnostic line, not enforced.
-static constexpr double kDeterministicThresholdDb = 40.0;
 
 // clang-format off
 static const SummaryLayoutScene kScenes[] = {
@@ -198,7 +196,7 @@ void RegisterConfigSummaryLayoutTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
 
       IM_CHECK(lumice::test::CheckAgainstReference("config_summary_layout", scene.name, tmp_path, ref_path,
-                                                   kDeterministicThresholdDb, g_keep_export_png, &kRuler));
+                                                   g_keep_export_png, &kRuler));
     };
   }
 }

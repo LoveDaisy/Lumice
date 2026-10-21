@@ -26,8 +26,6 @@
 // scripts/regen_gui_test_refs.py Phase B audit trail (test/gui/references/_thresholds.json)
 // records both — but it no longer decides pass/fail; see support/pixel_diff_metrics.hpp.
 constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/0, /*max_cc_threshold=*/0 };
-// The PSNR floor the old ruler applied, kept for the diagnostic line only.
-static constexpr double kPsnrThreshold = 40.0;
 
 void RegisterCaptureHarnessTests(ImGuiTestEngine* engine) {
   ImGuiTest* t = IM_REGISTER_TEST(engine, "capture_harness", "fullframe");
@@ -90,7 +88,7 @@ void RegisterCaptureHarnessTests(ImGuiTestEngine* engine) {
     IM_CHECK(
         lumice::test::SavePng(tmp_path.c_str(), rgb.data(), g_fullframe_capture.width, g_fullframe_capture.height, 3));
 
-    IM_CHECK(lumice::test::CheckAgainstReference("capture_harness", "fullframe", tmp_path, ref_path, kPsnrThreshold,
-                                                 g_keep_export_png, &kRuler));
+    IM_CHECK(lumice::test::CheckAgainstReference("capture_harness", "fullframe", tmp_path, ref_path, g_keep_export_png,
+                                                 &kRuler));
   };
 }

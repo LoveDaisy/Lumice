@@ -71,8 +71,6 @@ struct ModalLayoutScene {
 // K = 70 gives 70/35 = 2.0x and 95/70 = 1.36x. Measurements, provenance and the jitter check:
 // doc/testing/testing-architecture.md §4.6.
 constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/16, /*max_cc_threshold=*/70 };
-// The PSNR floor the old ruler applied; printed on the diagnostic line, not enforced.
-static constexpr double kDeterministicThresholdDb = 40.0;
 
 // clang-format off
 // Two shapes, and each covers one crystal scene and one filter scene, so neither is pinned only
@@ -271,8 +269,8 @@ void RegisterModalLayoutTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
       ctx->Yield(2);
 
-      IM_CHECK(lumice::test::CheckAgainstReference("modal_layout", scene.name, tmp_path, ref_path,
-                                                   kDeterministicThresholdDb, g_keep_export_png, &kRuler));
+      IM_CHECK(lumice::test::CheckAgainstReference("modal_layout", scene.name, tmp_path, ref_path, g_keep_export_png,
+                                                   &kRuler));
     };
   }
 }

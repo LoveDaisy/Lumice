@@ -40,13 +40,16 @@ std::vector<unsigned char> StripAlpha(const unsigned char* rgba, int width, int 
 //
 // Two rulers, chosen explicitly by the caller:
 //   ruler == nullptr  — PSNR >= threshold. For frames with a stochastic component (lens_proj),
-//                       where the threshold is a calibrated mean - 4 sigma.
+//                       where the threshold is a calibrated mean - 4 sigma. The threshold itself
+//                       is read at run time from LUMICE_TEST_REF_DIR "/_thresholds.json" under the
+//                       (group, tag) key — the same key this call prints as its "[<group>] <tag>:"
+//                       prefix; the json is the threshold's only copy in the tree (regen Phase B
+//                       writes it), and a missing file, malformed JSON or absent key fails the
+//                       comparison loudly instead of falling back to a default.
 //   ruler != nullptr  — ComputePixelDiff(...).max_cc <= ruler->max_cc_threshold at ruler->tau.
 //                       For DETERMINISTIC frames, where any coherent block of differing pixels
-//                       is a semantic change; `threshold` is then not consulted at all (pass the
-//                       group's documented PSNR floor so the call still reads as one). Rationale
-//                       and the values in use: support/pixel_diff_metrics.hpp and
-//                       doc/testing/testing-architecture.md §4.6.
+//                       is a semantic change. Rationale and the values in use:
+//                       support/pixel_diff_metrics.hpp and doc/testing/testing-architecture.md §4.6.
 // PSNR is computed and printed under both rulers: scripts/regen_gui_test_refs.py's Phase B
 // parses the "PSNR=" line, and under the pixel ruler it also parses the "n_diff=... maxcc=..."
 // line printed next to it.
@@ -56,7 +59,7 @@ std::vector<unsigned char> StripAlpha(const unsigned char* rgba, int width, int 
 // keep_capture_png=false deletes tmp_path on success (pass the binary's --keep-export-png
 // flag through so the regen driver can collect per-run PNGs).
 bool CheckAgainstReference(const char* group, const char* tag, const std::string& tmp_path, const std::string& ref_path,
-                           double threshold, bool keep_capture_png, const MaxCcRuler* ruler = nullptr);
+                           bool keep_capture_png, const MaxCcRuler* ruler = nullptr);
 
 }  // namespace lumice::test
 
