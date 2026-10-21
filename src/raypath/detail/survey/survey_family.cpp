@@ -482,6 +482,18 @@ SurveyObject SurvivingCard(const std::vector<int>& member, const FamilyCandidate
   return card;
 }
 
+// The document-level escape rule's authority: the arm's document carries a finite structural
+// reading iff some card says so itself. The witness is a payload on its card with its own
+// state — a refused card carrying a finite witness is still not a finite structural object.
+bool AnyFiniteObject(const SurveyDocument& document) {
+  for (const SurveyObject& card : document.objects) {
+    if (card.evidence.state == EvidenceState::kFinite) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 // ---- the public entries -------------------------------------------------------------------------------
@@ -582,9 +594,15 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
   // density-support tail rows the measure's gauss zenith contributes.
   const ClassSupport support = AssembleClassSupport(*input.table, *input.polygons, *input.members,
                                                     input.refractive_index, input.wavelength_nm, out);
+  // The partition refusal's scope is the level-0 card itself: the delta partition is a geometry
+  // fact about the support, the orientation ladder below a measure fact that runs regardless
+  // (its only partition read is bright_domain's domain bounds, gated at the card). The refused
+  // card keeps the witness leg's positive fact — the support is unknown, not zero, and never a
+  // fabricated union.
+  std::string level0_refusal_mode;
   if (!support.ok) {
-    // The fail-closed mirror of the T1 arm: one refused card, the witness leg's positive fact
-    // on it, no ladder cards — the support is unknown, not zero, and never a fabricated union.
+    level0_refusal_mode = support.refusal_mode;
+    block.level0_refusal_mode = support.refusal_mode;
     WitnessInput witness_input;
     witness_input.table = input.table;
     witness_input.polygons = input.polygons;
@@ -596,20 +614,21 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     witness_input.refractive_index = input.refractive_index;
     witness_input.wavelength_nm = input.wavelength_nm;
     witness_input.member_count = member_count;
+    // Slice A's single refused-card entry, carrying the gate-order ruling's own scope: the
+    // card joins the ladder's cards (clear_objects=false), the chromatic/tint stamp below is
+    // overwritten whenever the density-expressible legs run, and it survives only in the
+    // refused x density-invalid corner, where its reason names the density cause.
     AssembleRefusedSupport(witness_input, *input.members, support.refusal_mode,
-                           "chromatic legs not run: the delta axis refused (" + support.refusal_mode +
-                               "), and the legs sit downstream of it",
-                           "the refused-support family arm's legs are the T0 routing verdict, the per-member "
-                           "partition attempt (refused: " +
-                               support.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
-                               "-sample witness lattice; none is budget-enforced yet; enforcement lands with the "
-                               "quantification legs",
-                           true, out);
-    block.evidence.state = EvidenceState::kRefused;
-    block.evidence.mode = support.refusal_mode;
-    return { false, support.refusal_mode };
+                           "chromatic legs not run: the axis maps to no pose density (" +
+                               input.density->unsupported + "); the legs follow objects, not the partition",
+                           "the family arm's legs are the T0 routing verdict, the per-member delta ",
+                               "partition attempt (refused: " + support.refusal_mode + "), the ladder's ",
+                               "per-level rank scans and the " + std::to_string(kSurveyWitnessSampleCount) +
+                               "-sample witness lattice on the refused level-0 card; none is ",
+                               "budget-enforced yet; enforcement lands with the quantification legs",
+                           false, out);
   }
-  if (input.density->Ok() && input.measure.zenith.kind == FamilyDimKind::kGauss) {
+  if (support.ok && input.density->Ok() && input.measure.zenith.kind == FamilyDimKind::kGauss) {
     // AC5's boundedness-role separation: the width went into the ladder; the support's own tail
     // bound (the band sum's +-12 sigma window floor) is a row on the support card.
     const analytic::PoseDensity density(input.density->spec);
@@ -706,14 +725,29 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     out->diagnose->evidence.reason = positional_reason;
     block.evidence.state = EvidenceState::kFinite;
     block.evidence.coverage.members_evaluated = member_count;
-    block.evidence.coverage.geometry_basis = "the single pose's direct image evaluation and the delta partition";
+    block.evidence.coverage.geometry_basis =
+        level0_refusal_mode.empty() ?
+            std::string("the single pose's direct image evaluation and the delta partition") :
+            "the single pose's direct image evaluation (the level-0 delta partition refused: " + level0_refusal_mode +
+                ")";
     block.evidence.coverage.wavelength_nm = input.wavelength_nm;
-    out->budget_note =
-        "the 0D family arm's legs are the T0 routing verdict, the per-member delta partition, "
-        "the single-pose image evaluation and the single-pose weight at the " +
-        ChromaticPairProseRedFirst() +
-        " pair; none is budget-enforced yet; enforcement lands with the quantification legs";
-    return { true, {} };
+    if (level0_refusal_mode.empty()) {
+      out->budget_note =
+          "the 0D family arm's legs are the T0 routing verdict, the per-member delta partition, "
+          "the single-pose image evaluation and the single-pose weight at the " +
+          ChromaticPairProseRedFirst() +
+          " pair; none is budget-enforced yet; enforcement lands with the quantification legs";
+    } else {
+      out->budget_note =
+          "the 0D family arm's legs are the T0 routing verdict, the per-member delta partition "
+          "attempt (refused: " +
+          level0_refusal_mode + "), the " + std::to_string(kSurveyWitnessSampleCount) +
+          "-sample witness lattice on the refused level-0 card, the single-pose image evaluation "
+          "and the single-pose weight at the " +
+          ChromaticPairProseRedFirst() +
+          " pair; none is budget-enforced yet; enforcement lands with the quantification legs";
+    }
+    return { AnyFiniteObject(*out), level0_refusal_mode };
   }
 
   // The ladder proper. Level 0 is the actual support (already assembled above); it asks the
@@ -722,6 +756,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
   // survivors as band-labelled cards, the killed in the level's own record.
   const std::vector<FamilyFreezeCandidate> candidates = FreezeCandidates(input.measure);
   const int level_count = static_cast<int>(candidates.size()) + 1;
+  bool rank_ran = false;  // any level's rank question answered on any member (the note's honesty)
   for (int k = 0; k < level_count; k++) {
     FamilyLadderLevel level;
     level.level = k;
@@ -757,6 +792,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
         if (!coverage_recorded) {
           // The rank coverage echoes the first member (relabelings share the rank structure —
           // the same physical-class fact the support's SameSupport rests on).
+          rank_ran = true;
           level.generic_rank = rank.generic_rank;
           level.samples = rank.samples;
           level.valid_samples = rank.valid_samples;
@@ -777,10 +813,12 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
                           candidate.anchors, sun_hat, input.refractive_index, candidate.scale_deg);
           if (blur.blur_deg <= candidate.scale_deg) {
             SurveyObject card = SurvivingCard(member, candidate, blur, k, input.wavelength_nm);
-            if (card.kind == SurveyObjectKind::kBrightDomain && !support.intervals.empty()) {
+            if (card.kind == SurveyObjectKind::kBrightDomain && support.ok && !support.intervals.empty()) {
               // The bright_domain skeleton (the probe leg fills the profile readings): the
               // domain span is the class support's own — the same delta axis the level-0 card
-              // declared. A degenerate empty support carries no span; the card survives
+              // declared. support.ok is the trust gate, not emptiness: the
+              // member_supports_disagree refusal fills intervals (the front member's own)
+              // before refusing. A degenerate empty support carries no span; the card survives
               // without one.
               SurveyObject::BrightDomainPayload domain;
               domain.domain_lower_deg = support.intervals.front().lower * kRadToDeg;
@@ -804,13 +842,27 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
   // every leg's named refusal — a fixed zenith or roll is legal structure with no density, and
   // the legs say so instead of silently skipping.
   if (input.density->Ok()) {
-    out->budget_note =
-        "the family arm's legs are the T0 routing verdict, the per-member delta partition, the "
-        "ladder's per-member per-level rank scans (" +
-        std::to_string(kFamilyLadderGrid) + " samples per free dimension), the band-sum probe, the " +
-        "chromatic pair and the class tint's two-lambda power sum (" + std::to_string(kSurveyClassTintSampleCount) +
-        " samples per lambda); none is budget-enforced yet; enforcement lands with the "
-        "quantification legs";
+    if (level0_refusal_mode.empty()) {
+      out->budget_note =
+          "the family arm's legs are the T0 routing verdict, the per-member delta partition, the "
+          "ladder's per-member per-level rank scans (" +
+          std::to_string(kFamilyLadderGrid) + " samples per free dimension), the band-sum probe, the " +
+          "chromatic pair and the class tint's two-lambda power sum (" + std::to_string(kSurveyClassTintSampleCount) +
+          " samples per lambda); none is budget-enforced yet; enforcement lands with the "
+          "quantification legs";
+    } else {
+      out->budget_note =
+          "the family arm's legs are the T0 routing verdict, the per-member delta partition "
+          "attempt (refused: " +
+          level0_refusal_mode + "), the ladder's per-member per-level rank scans (" +
+          std::to_string(kFamilyLadderGrid) + " samples per free dimension), the " +
+          std::to_string(kSurveyWitnessSampleCount) +
+          "-sample witness lattice on the refused level-0 card, the band-sum probe, the chromatic "
+          "pair and the class tint's two-lambda power sum (" +
+          std::to_string(kSurveyClassTintSampleCount) +
+          " samples per lambda); none is budget-enforced yet; enforcement lands with the "
+          "quantification legs";
+    }
     ProbeInput probe_input;
     probe_input.table = input.table;
     probe_input.polygons = input.polygons;
@@ -844,22 +896,51 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     out->weight_tint = SurveyWeightTint{};
     out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
     out->weight_tint->evidence.reason = density_reason;
-    out->budget_note =
-        "the family arm's legs are the T0 routing verdict, the per-member delta partition and "
-        "the ladder's per-member per-level rank scans (" +
-        std::to_string(kFamilyLadderGrid) +
-        " samples per free dimension); no quantification leg ran (the axis maps to no pose "
-        "density); none is budget-enforced yet; enforcement lands with the quantification legs";
+    if (level0_refusal_mode.empty()) {
+      out->budget_note =
+          "the family arm's legs are the T0 routing verdict, the per-member delta partition and "
+          "the ladder's per-member per-level rank scans (" +
+          std::to_string(kFamilyLadderGrid) +
+          " samples per free dimension); no quantification leg ran (the axis maps to no pose "
+          "density); none is budget-enforced yet; enforcement lands with the quantification legs";
+    } else {
+      out->budget_note = std::string(
+                             "the family arm's legs are the T0 routing verdict, the per-member delta "
+                             "partition attempt (refused: ") +
+                         level0_refusal_mode + "), " +
+                         (rank_ran ? "the ladder's per-member per-level rank scans (" +
+                                         std::to_string(kFamilyLadderGrid) + " samples per free dimension)" :
+                                     "the ladder's level enumeration (no level asked the rank question)") +
+                         ", and the " + std::to_string(kSurveyWitnessSampleCount) +
+                         "-sample witness lattice on the refused level-0 card; no quantification leg ran (the "
+                         "axis maps to no pose density); none is budget-enforced yet; enforcement lands with "
+                         "the quantification legs";
+    }
   }
-  block.evidence.state = EvidenceState::kFinite;
-  block.evidence.coverage.members_evaluated = member_count;
-  block.evidence.coverage.geometry_basis = "the per-member restricted-family rank scans at " +
-                                           std::to_string(kFamilyLadderGrid) +
-                                           " samples per free dimension on the nominal crystal shape";
-  block.evidence.coverage.wavelength_nm = input.wavelength_nm;
+  // The block's state reads the legs' own outputs: finite once any leg produced one. The one
+  // non-finite corner (the gate-order ruling's own definition): a refused level-0 partition AND
+  // a density the conversion cannot carry — every leg silent, and the block says so instead of
+  // claiming a reading nothing produced.
+  const bool legs_all_silent = out->chromatic.state == EvidenceState::kUnevaluated &&
+                               out->weight_tint->evidence.state == EvidenceState::kUnevaluated;
+  if (!level0_refusal_mode.empty() && legs_all_silent) {
+    block.evidence.state = EvidenceState::kUnevaluated;
+    block.evidence.reason = "the level-0 delta partition refused (" + level0_refusal_mode +
+                            ") and the axis maps to no pose density (" + input.density->unsupported +
+                            "): no family-routing leg produced a reading";
+  } else {
+    block.evidence.state = EvidenceState::kFinite;
+    block.evidence.coverage.members_evaluated = member_count;
+    block.evidence.coverage.geometry_basis =
+        (!level0_refusal_mode.empty() && !rank_ran) ?
+            "the ladder's level enumeration on the nominal crystal shape (no level asked the rank question)" :
+            "the per-member restricted-family rank scans at " + std::to_string(kFamilyLadderGrid) +
+                " samples per free dimension on the nominal crystal shape";
+    block.evidence.coverage.wavelength_nm = input.wavelength_nm;
+  }
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] family routing: {} ladder level(s), {} object card(s)",
             block.ladder.size(), out->objects.size());
-  return { true, {} };
+  return { AnyFiniteObject(*out), level0_refusal_mode };
 }
 
 }  // namespace lumice::raypath::survey

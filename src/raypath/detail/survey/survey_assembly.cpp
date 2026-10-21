@@ -355,7 +355,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         family_input.refractive_index = wavelength.refractive_index;
         family_input.wavelength_nm = wavelength.wavelength_nm;
         const FamilyArmOutcome family_outcome = AssembleFamilyRouting(family_input, out);
-        if (!family_outcome.support_ok) {
+        if (!family_outcome.structural_output) {
           any_escaped = true;
           escape_mode = family_outcome.refusal_mode;
         }

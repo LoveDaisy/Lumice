@@ -80,8 +80,10 @@ std::vector<FamilyFreezeCandidate> FreezeCandidates(const FamilyRoutingMeasure& 
 // The family arm's assembly: fills out->family_routing, the level-0 support card (with the
 // density tail rows), the ladder's surviving object cards and the arm's own legs (probe /
 // chromatic / class tint when the density conversion carries the measure, the named refusals
-// when it does not). Fail-closed mirror of the T1 arm: a refused or disagreeing support
-// leaves one refused support_set card with the witness sub-block and no ladder cards.
+// when it does not). A refused level-0 delta partition scopes to its own support_set card
+// (the refused+finite-witness coexistence) while the ladder enumerates regardless — the
+// partition is a geometry fact, the ladder a measure fact, and the only deep-level partition
+// read is bright_domain's domain bounds.
 struct FamilyArmInput {
   const analytic::FaceNormalTable* table = nullptr;
   const analytic::FacePolygonTable* polygons = nullptr;
@@ -96,9 +98,16 @@ struct FamilyArmInput {
   double wavelength_nm = 0.0;
 };
 
+// The arm's outcome. The document-level escape rule: the document refuses only when the arm
+// produced no finite structural object — the level-0 partition and the ladder are independent
+// legs, so a partition refusal scopes to its card and does not by itself refuse the document.
+// `structural_output` reads the produced document (any card with evidence.state == kFinite);
+// the witness is a card payload with its own state and never counts. `refusal_mode` is the
+// arm-level refusal (the level-0 partition's mode, or member_resolution), named even when the
+// document stays finite.
 struct FamilyArmOutcome {
-  bool support_ok = false;   // false = the fail-closed shape below
-  std::string refusal_mode;  // the support's refusal mode when !support_ok
+  bool structural_output = false;
+  std::string refusal_mode;
 };
 
 FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocument* out);

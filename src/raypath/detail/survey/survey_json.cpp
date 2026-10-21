@@ -252,9 +252,15 @@ Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
     }
     ladder.push_back(std::move(entry));
   }
-  return { { "measure", std::move(measure) },
-           { "ladder", std::move(ladder) },
-           { "evidence", EvidenceJson(block.evidence) } };
+  // Keys exist exactly when the readings they describe do: the block-level echo of the level-0
+  // partition's refusal appears only when the partition refused.
+  Json out = { { "measure", std::move(measure) },
+               { "ladder", std::move(ladder) },
+               { "evidence", EvidenceJson(block.evidence) } };
+  if (block.level0_refusal_mode.has_value()) {
+    out["level0_refusal_mode"] = *block.level0_refusal_mode;
+  }
+  return out;
 }
 
 Json ProbeJson(const SurveyProbe& probe) {

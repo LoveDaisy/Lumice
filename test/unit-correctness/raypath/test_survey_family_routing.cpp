@@ -580,6 +580,77 @@ TEST(FamilyRouting, OutsideDomainShapeRefusesWithTheNamedModeAndAWitness) {
   EXPECT_EQ(parsed.at("objects")[0].at("evidence").at("mode"), "measure_shape_outside_routing_domain: roll_zigzag");
 }
 
+// The gate-order ruling at the assembly level: the 3-1-5-7 touching chain's partition refuses
+// (the witness tests' pinned fact, orientation-independent), and the zenith wobble is a freeze
+// candidate — the ladder enumerates anyway, because the partition scopes to its level-0 card.
+// On this chain the rank scans return no valid samples, so no finite structural object exists
+// and the document refuses by the escape law — while the block stays finite (the chromatic
+// legs follow the density conversion, not the partition): the block level and the document
+// level are two independent statements.
+TEST(FamilyRouting, RefusedPartitionScopesToTheLevelZeroCardAndTheLadderStillRuns) {
+  ConfigManager config = RegularPrismSceneWithSun(15.0);
+  CrystalConfig& crystal = config.crystals_.find(1)->second;
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 90, 0.3f };
+  // The scene entry carries its own copy of the crystal; keep the two in step.
+  for (auto& setting : config.scene_.ms_.front().setting_) {
+    setting.crystal_.axis_.latitude_dist = crystal.axis_.latitude_dist;
+  }
+  SurveyDocument document;
+  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 1, 5, 7 }), &document).Ok());
+  EXPECT_FALSE(document.early_stopped);
+
+  // The level-0 card: refused with the corpus's touching slug, the finite witness on it (the
+  // coexistence the evidence layering asks for), and no fabricated support payload.
+  ASSERT_EQ(document.objects.size(), 1u);
+  const SurveyObject& card = document.objects.front();
+  EXPECT_EQ(card.kind, SurveyObjectKind::kSupportSet);
+  EXPECT_EQ(card.evidence.state, EvidenceState::kRefused);
+  EXPECT_EQ(card.evidence.mode, "slab_crease_touching");
+  EXPECT_FALSE(card.support_set.has_value());
+  ASSERT_TRUE(card.witness.has_value());
+  EXPECT_EQ(card.witness->state, EvidenceState::kFinite);
+  EXPECT_GT(card.witness->kept_count, 0);
+
+  // The block: the refusal echoed at block level, the ladder enumerated (level 1 asked the
+  // rank and honestly recorded its empty outcome — no proposals, no kills, no valid samples),
+  // and the block itself finite (the chromatic legs ran on the density).
+  ASSERT_TRUE(document.family_routing.has_value());
+  const FamilyRoutingBlock& block = *document.family_routing;
+  ASSERT_TRUE(block.level0_refusal_mode.has_value());
+  EXPECT_EQ(*block.level0_refusal_mode, "slab_crease_touching");
+  ASSERT_EQ(block.ladder.size(), 2u);
+  EXPECT_FALSE(block.ladder[0].rank_asked);
+  ASSERT_TRUE(block.ladder[1].rank_asked);
+  EXPECT_EQ(block.ladder[1].generic_rank, -1);
+  EXPECT_EQ(block.ladder[1].valid_samples, 0);
+  EXPECT_EQ(block.ladder[1].objects_proposed, 0);
+  EXPECT_EQ(block.ladder[1].objects_killed, 0);
+  EXPECT_EQ(block.evidence.state, EvidenceState::kFinite);
+
+  // The chromatic legs follow the density, not the partition: finite, with the probe on
+  // record — never the retired "delta axis refused" unevaluated.
+  EXPECT_EQ(document.chromatic.state, EvidenceState::kFinite);
+  EXPECT_EQ(document.probes.size(), 1u);
+
+  // The document refuses: no finite structural object exists (the escape law reads the
+  // produced cards), and the arm-level refusal names the partition mode.
+  EXPECT_EQ(document.evidence.state, EvidenceState::kRefused);
+  EXPECT_EQ(document.evidence.mode, "slab_crease_touching");
+}
+
+// The conditional-presence negative (AC7's mechanical form): the full-dimensional and the
+// early-stop documents carry no family_routing key at all.
+TEST(FamilyRouting, RandomAndEarlyStopDocumentsCarryNoFamilyRoutingKey) {
+  SurveyDocument random_document;
+  ASSERT_TRUE(AssembleSurvey(RandomPrismScene(), LiteralRequest({ 3, 5 }), &random_document).Ok());
+  EXPECT_FALSE(random_document.family_routing.has_value());
+  SurveyRequest early = LiteralRequest({ 1, 2 });
+  SurveyDocument early_document;
+  ASSERT_TRUE(AssembleSurvey(PlateScene(0.3, 0.3), early, &early_document).Ok());
+  EXPECT_TRUE(early_document.early_stopped);
+  EXPECT_FALSE(early_document.family_routing.has_value());
+}
+
 // The serialized family document's shape: the measure echo, the ladder with its rank coverage
 // and killed records, the band on the cards, and the conditional keys.
 TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {

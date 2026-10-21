@@ -239,6 +239,11 @@ struct FamilyRoutingBlock {
   FamilyRoutingMeasure measure;
   std::vector<FamilyLadderLevel> ladder;
   SurveyEvidence evidence;
+  // The level-0 delta partition's refusal mode, echoed at block level when the partition
+  // refused (the same string the refused support card carries in evidence.mode — one producer,
+  // two readers). Absent when the partition succeeded; a block-level reader need not walk
+  // objects to learn it.
+  std::optional<std::string> level0_refusal_mode;
 };
 
 // One object card. For the v1 source_image: `members` are the class members the card collapses
