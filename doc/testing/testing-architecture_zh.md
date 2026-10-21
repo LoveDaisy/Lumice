@@ -834,6 +834,13 @@ ImGuiTestEngine 的 `IM_CHECK*`），会在第一行失败时就中止**整个�
 | ③ `export_parity` 仿真场景（`single_lens_angled` / `full_sky_dual_fisheye` / `single_lens_rectilinear` / print） | 4×4 块均值 PSNR | `mean − max(10σ, 1.0 dB)`，N=12——bm4 阈值 35.4 / 38.3 / 39.3 / 42.1 dB | CLI 臂 ±0.25 stop 曝光破坏在 bm4 下读 −1.19…−2.55 dB（低于诚实均值）；同一破坏在整帧 PSNR 下读作*改善*（英文版 §4.10 point 4——符号反转） | 诚实 N=12 次，各场景 σ = 0.016–0.105 dB | 低于诚实均值 0.2–6.8 dB，取决于 `max(10σ, 1.0 dB)` 哪一项起作用（print 场景 σ=0.105，是唯一 10σ 超过 1.0 dB 地板的一行） |
 | ③′ `lens_proj` / e2e 参考图 | 整帧 PSNR——未换 | `mean − max(4σ, 1.0 dB)`——未换 | 无在册样本——见下 | 现行标定阈值，17.5–27.0 dB | 不适用 |
 
+**③′ 行的阈值是 tracked 数据，不是代码。** 它在树里的唯一一份拷贝是
+`test/gui/references/_thresholds.json`；`CheckAgainstReference` 在运行时按比较自身打印的
+`(group, tag)` 键解析（`test/support/reference_thresholds.hpp`），所以 json 的 diff 就是闸值变化，
+任何源码字面量都不可能再与它漂移。json 缺失 / 坏格式 / 键不存在 ⇒ 比较大声红而非静默落回默认值
+——闸源坏了让整个二进制的 PSNR 比较全红是设计而非事故。①行的 `threshold` 字段自此只承担
+provenance：Phase B 照写，代码无消费者。
+
 **两个陷阱，各属一层，互为误用。** 以下两条都是实测出来的，不是猜的：
 
 1. **块均值 PSNR 会把确定性层的一次漂移读得更"通过"，而不是更严。** ③行的 4×4 均值是为了压低

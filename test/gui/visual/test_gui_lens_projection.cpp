@@ -53,7 +53,6 @@ struct LensProjScene {
   const char* config_path;
   int render_w;
   int render_h;
-  double psnr_threshold;
   // Ray budget for this scene's run, in millions. Higher = less Monte-Carlo noise in the
   // capture, which is what limits how small a geometric error the PSNR comparison can
   // resolve; see the note above kScenes[].
@@ -150,10 +149,11 @@ struct LensProjScene {
 // which is what lets ExpectedSimRayNum() assert the resulting ray count exactly — see its note
 // in test_gui_shared.hpp before changing any of them.
 //
-// References are pixel-averaged means of N=10 runs; thresholds come from
+// References are pixel-averaged means of N=10 runs; thresholds are calibrated by
 // scripts/regen_gui_test_refs.py --group lens_proj (Phase B over 30 full-suite runs, except the
-// three noted below), with the sampled mean/σ recorded per scene in
-// test/gui/references/_thresholds.json and repeated inline below. The driver's rule is mean − max(4σ, 1.0 dB) floored to 0.5 dB, and on every scene here
+// three noted below) and live in test/gui/references/_thresholds.json — their only copy in the
+// tree, resolved at run time by CheckAgainstReference from the scene's own name. The driver's
+// rule is mean − max(4σ, 1.0 dB) floored to 0.5 dB, and on every scene here
 // the 1.0 dB floor is what binds: the largest σ measured is ~0.11 dB, so 4σ never reaches it and
 // each threshold sits 10σ or more below its mean. Read a red result accordingly — at that
 // distance it is not run-to-run noise.
@@ -332,25 +332,19 @@ struct LensProjScene {
 // nine scenes measured 3.3 s in total before).
 // ============================================================================================
 static const LensProjScene kScenes[] = {
-  // mean 21.68 σ0.0756 (N=10)
-  {"fisheye_equal_area_120",       LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 20.5,  0.8f,
+  {"fisheye_equal_area_120",       LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeEqualArea,   120.0f, 20.0f},
-  // mean 20.48 σ0.0911 (N=10)
-  {"fisheye_orthographic_180",     LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 19.0,  0.8f,
+  {"fisheye_orthographic_180",     LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeOrthographic, 180.0f, 20.0f},
-  // mean 23.69 σ0.1014 (N=10)
   // fov=90 matches the Linear entry in kSingleLens[] (test_render_handedness_guard.cpp), so a
   // suspected linearInverse regression can be cross-read against that deterministic sign pin
   // at the same focal length.
-  {"linear",                       LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 22.5,  0.8f,
+  {"linear",                       LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeLinear,              90.0f, 20.0f},
-  // mean 30.07 σ0.1028 (N=10)
-  {"dual_fisheye_equal_area_full", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 29.0,  10.0f,
+  {"dual_fisheye_equal_area_full", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 10.0f,
    LensSetup::kDualFisheyeExport},
-  // mean 30.96 σ0.1740 (N=10)
-  {"rectangular",                  LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 29.5,  10.0f,
+  {"rectangular",                  LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 10.0f,
    LensSetup::kEquirectExport},
-  // mean 22.27 σ0.0569 (N=10)
   // Overlay scene: same equal-area branch as the first row, tilted to elevation=45 with the
   // zenith/nadir markers and the coordinate grid enabled. It is the only committed pixel
   // coverage of overlayAuxLines(); it moved here from the retired auto_ev group, which had
@@ -362,7 +356,7 @@ static const LensProjScene kScenes[] = {
   // shader's half-width comes from the hardware fwidth() of the fields, core's from a CPU forward
   // difference, and near the rim of an equal-area frame those two disagree. Sigma is unchanged, so
   // the scene is no noisier than it was; only its operating point moved.
-  {"overlay_ea",                   LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 21.0,  0.75f,
+  {"overlay_ea",                   LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 0.75f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeEqualArea,   180.0f, 45.0f,
    /*enable_overlay=*/true, /*overlay_zenith_nadir=*/true, /*overlay_grid=*/true},
   // Lens-border scenes. Each reuses the setup of the scene named in its own name and changes ONE
@@ -374,14 +368,13 @@ static const LensProjScene kScenes[] = {
   // Ray budgets are inherited from the reused scenes for the reason those budgets exist: the border
   // is a thin bright curve, so its contribution to PSNR is small, and lowering the budget here would
   // raise the Monte-Carlo floor the border has to stand out from.
-  // mean 21.68 σ0.0749 (N=10)
-  {"fisheye_equal_area_120_border", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 20.5,  0.8f,
+  {"fisheye_equal_area_120_border", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeEqualArea,   120.0f, 20.0f,
    /*enable_overlay=*/false, /*overlay_zenith_nadir=*/false, /*overlay_grid=*/false,
    /*enable_lens_border=*/true},
-  // mean 28.98 σ0.0233 (N=10) — 1.1 dB under its borderless twin, which is the border's own contribution
-  // to the frame: the two circles are a thin bright curve over an otherwise identical capture.
-  {"dual_fisheye_equal_area_full_border", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 27.5, 10.0f,
+  // Its mean sits 1.1 dB under its borderless twin, which is the border's own contribution to the
+  // frame: the two circles are a thin bright curve over an otherwise identical capture.
+  {"dual_fisheye_equal_area_full_border", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 10.0f,
    LensSetup::kDualFisheyeExport,
    /*lens_type=*/0, /*fov=*/0.f, /*elevation=*/0.f,
    /*enable_overlay=*/false, /*overlay_zenith_nadir=*/false, /*overlay_grid=*/false,
@@ -406,8 +399,7 @@ static const LensProjScene kScenes[] = {
   //
   // The colour is the one the rest of this scrum probes with, so a byte read off this reference is
   // directly comparable with the numbers those suites assert.
-  // mean 30.31 σ0.1350 (N=10)
-  {"sky_colour_ea_180",            LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 192, 29.0,  0.8f,
+  {"sky_colour_ea_180",            LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 192, 0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeEqualArea,   180.0f, 0.0f,
    /*enable_overlay=*/false, /*overlay_zenith_nadir=*/false, /*overlay_grid=*/false,
    /*enable_lens_border=*/false,
@@ -654,8 +646,7 @@ void RegisterLensProjectionTests(ImGuiTestEngine* engine) {
       const std::string ref_path = std::string(LUMICE_TEST_REF_DIR) + "/lens_proj_" + scene.name + ".jpg";
       IM_CHECK(RequestAndWaitPreviewExport(ctx, vp, tmp_path));
 
-      IM_CHECK(lumice::test::CheckAgainstReference("lens_proj", scene.name, tmp_path, ref_path, scene.psnr_threshold,
-                                                   g_keep_export_png));
+      IM_CHECK(lumice::test::CheckAgainstReference("lens_proj", scene.name, tmp_path, ref_path, g_keep_export_png));
     };
   }
 }

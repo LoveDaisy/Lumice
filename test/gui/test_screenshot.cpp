@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "gui/gl_common.h"
+#include "support/reference_thresholds.hpp"
 
 // Only include stb headers for declarations — implementations are provided by lumice_gui_obj (stb_impl.cpp).
 #include <stb_image.h>
@@ -104,7 +105,7 @@ std::vector<unsigned char> StripAlpha(const unsigned char* rgba, int width, int 
 }
 
 bool CheckAgainstReference(const char* group, const char* tag, const std::string& tmp_path, const std::string& ref_path,
-                           double threshold, bool keep_capture_png, const MaxCcRuler* ruler) {
+                           bool keep_capture_png, const MaxCcRuler* ruler) {
   std::vector<unsigned char> ref_data;
   int ref_w = 0;
   int ref_h = 0;
@@ -166,8 +167,17 @@ bool CheckAgainstReference(const char* group, const char* tag, const std::string
               group, tag, diff.max_cc, ruler->max_cc_threshold / 2);
     }
   } else {
-    fprintf(stderr, "[%s] %s: PSNR=%.2f dB (threshold=%.1f dB)\n", group, tag, psnr, threshold);
-    if (psnr < threshold) {
+    // The threshold's single copy lives in the regen-written json; resolving it here (rather than
+    // taking it as a parameter) is what keeps the call sites literal-free. Grep for "threshold
+    // resolution failed" to tell a broken threshold source apart from a real regression — it
+    // reddens every PSNR comparison in this binary at once, which is the design, not an outage.
+    const ThresholdResolution resolved = ResolveReferenceThreshold(LUMICE_TEST_REF_DIR "/_thresholds.json", group, tag);
+    if (!resolved.ok) {
+      fprintf(stderr, "[%s] %s: threshold resolution failed: %s\n", group, tag, resolved.error.c_str());
+      return false;
+    }
+    fprintf(stderr, "[%s] %s: PSNR=%.2f dB (threshold=%.1f dB)\n", group, tag, psnr, resolved.threshold);
+    if (psnr < resolved.threshold) {
       fprintf(stderr, "[%s] %s: PSNR below threshold — possible regression\n", group, tag);
       return false;
     }

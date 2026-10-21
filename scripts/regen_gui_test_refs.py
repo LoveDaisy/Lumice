@@ -69,7 +69,7 @@ class ReferenceGroup:
                 part of this contract: the driver passes gui_test --export-dir and collects
                 from there, so only the filename is shared with the test source.
     ref_prefix  the reference lives at <refs_dir>/<ref_prefix><key>.jpg.
-    source      the group's test source, quoted in the "copy thresholds back" hint.
+    source      the group's test source, named in Phase A's "update ref path" hint.
     deterministic
                 True when every scene's frame carries no simulation and no RNG, so one run
                 is the whole population: the reference is that single capture, Phase B's
@@ -770,7 +770,11 @@ def _phase_b_write_group(
         print(f"[Phase B][{group.key}] Every scene compares under the pixel ruler; its K lives in "
               f"{group.source} and is not derived here — nothing to copy back.")
     else:
-        print(f"[Phase B][{group.key}] Copy 'threshold' values into {group.source}")
+        # The json is the final state, not a staging area: since the gate TUs stopped carrying
+        # threshold literals, the tests resolve these values from this file by (group, scene) at
+        # run time, so writing it above IS the whole update.
+        print(f"[Phase B][{group.key}] Thresholds are final in {json_path} — the tests resolve them "
+              f"from there at run time; nothing to copy back into {group.source}.")
 
 
 def phase_b(args: argparse.Namespace) -> None:

@@ -33,12 +33,11 @@ namespace {
 
 // The ruler these scenes are held to: byte-identity (tau = 0, K = 0). They render pixel-identical
 // run to run and are evaluated only on the reference machine — the CI llvmpipe leg's filter does
-// not name the visual category — so there is no cross-machine noise to leave room for. The 40 dB
-// PSNR floor they used to compare at is kept only for the diagnostic line; it let a 90-px
-// scrollbar-thumb drift through at 53 dB elsewhere in this suite, which is why it no longer
-// decides anything here (support/pixel_diff_metrics.hpp).
+// not name the visual category — so there is no cross-machine noise to leave room for. PSNR is
+// printed beside the ruler's verdict as a diagnostic only; the 40 dB floor this suite once
+// compared at let a 90-px scrollbar-thumb drift through at 53 dB elsewhere in this suite, which is
+// why it no longer decides anything here (support/pixel_diff_metrics.hpp).
 constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/0, /*max_cc_threshold=*/0 };
-constexpr double kDeterministicThresholdDb = 40.0;
 
 // Rebuild the crystal mesh (if changed) and render it into g_crystal_renderer's FBO so the capture
 // below has something to read. Test-only: the left panel stopped driving this FBO every frame when
@@ -155,8 +154,8 @@ void RegisterPreviewPixelTests(ImGuiTestEngine* engine) {
       const std::string ref_path = std::string(LUMICE_TEST_REF_DIR "/") + scene.ref_file;
       auto rgb = lumice::test::StripAlpha(g_capture.pixels.data(), g_capture.width, g_capture.height);
       IM_CHECK(lumice::test::SavePng(tmp_path.c_str(), rgb.data(), g_capture.width, g_capture.height, 3));
-      IM_CHECK(lumice::test::CheckAgainstReference("visual", scene.name, tmp_path, ref_path, kDeterministicThresholdDb,
-                                                   g_keep_export_png, &kRuler));
+      IM_CHECK(
+          lumice::test::CheckAgainstReference("visual", scene.name, tmp_path, ref_path, g_keep_export_png, &kRuler));
     };
   }
 
@@ -190,8 +189,8 @@ void RegisterPreviewPixelTests(ImGuiTestEngine* engine) {
                                           g_left_panel_capture.height);
       IM_CHECK(lumice::test::SavePng(tmp_path.c_str(), rgb.data(), g_left_panel_capture.width,
                                      g_left_panel_capture.height, 3));
-      IM_CHECK(lumice::test::CheckAgainstReference("visual", "left_panel", tmp_path, ref_path,
-                                                   kDeterministicThresholdDb, g_keep_export_png, &kRuler));
+      IM_CHECK(
+          lumice::test::CheckAgainstReference("visual", "left_panel", tmp_path, ref_path, g_keep_export_png, &kRuler));
     };
   }
 

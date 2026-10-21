@@ -75,8 +75,6 @@ struct DefaultsPanelScene {
 // differs because the AA blob size does. Measurements and provenance:
 // doc/testing/testing-architecture.md §4.6.
 constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/16, /*max_cc_threshold=*/40 };
-// The PSNR floor the old ruler applied; printed on the diagnostic line, not enforced.
-constexpr double kDeterministicThresholdDb = 40.0;
 
 // clang-format off
 const DefaultsPanelScene kScenes[] = {
@@ -299,7 +297,7 @@ void RegisterDefaultsPanelLayoutTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
 
       IM_CHECK(lumice::test::CheckAgainstReference("defaults_panel_layout", scene.name, tmp_path, ref_path,
-                                                   kDeterministicThresholdDb, g_keep_export_png, &kRuler));
+                                                   g_keep_export_png, &kRuler));
     };
   }
 }

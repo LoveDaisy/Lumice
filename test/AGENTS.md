@@ -263,14 +263,14 @@ flow:
   `origin/main` at all skips the check with a note.
 - Phase B merges per group and per scene (groups/scenes not covered keep
   their entries and `generated_at`); thresholds land under
-  `groups.<key>.scenes` in `test/gui/references/_thresholds.json`. After
-  Phase B, copy the `threshold` values into the group's test source — for
-  `lens_proj` the `psnr_threshold` field of each `kScenes[]` row in
-  `test/gui/visual/test_gui_lens_projection.cpp` (the script prints the path
-  for whichever group it ran). Deterministic groups have no threshold to copy
-  back: K is a cross-machine number Phase B cannot measure, so `kRuler` lives
-  in the test source, and Phase B's `maxcc_tau` / `maxcc_local_max` are only
-  the audit that the reference machine still reads 0.
+  `groups.<key>.scenes` in `test/gui/references/_thresholds.json` — and that
+  is the final state, not a staging step: the gate TUs carry no threshold
+  literals, `CheckAgainstReference` resolves each value from this json under
+  the `(group, scene)` key at run time, so a Phase B write IS the threshold
+  update and there is nothing to copy back. K is a cross-machine number
+  Phase B cannot measure, so `kRuler` lives in the test source, and Phase
+  B's `maxcc_tau` / `maxcc_local_max` are only the audit that the reference
+  machine still reads 0.
 
 ```bash
 # Full regen of EVERY registered group (Phase A + Phase B). Cost is set by the
