@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792594576781,
+  "lastUpdate": 1792594581128,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "e12c699d7262aa07039ba1d5aa5715e65f78bf5c",
-          "message": "Merge pull request #421 from LoveDaisy/feat/angular-dist-picker\n\nfeat(gui): pick an angular-distance ring on the preview",
-          "timestamp": "2026-09-26T05:43:54+08:00",
-          "tree_id": "2bc14239d813e7ec2ceecf67e4adb4be66e5ba9f",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/e12c699d7262aa07039ba1d5aa5715e65f78bf5c"
-        },
-        "date": 1790373466375,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 77.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 97.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.6,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "b0b090813c2e811b472eb839916a357272554a9c",
           "message": "Merge pull request #422 from LoveDaisy/feat/screenshot-export-options\n\nfeat(gui): screenshot export options popup, subtract-only per family",
           "timestamp": "2026-09-26T06:04:43+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1792d962467839be845bd5577eabc039164cf440",
+          "message": "Merge pull request #536 from LoveDaisy/feat/cuda-continue-legs\n\ntest(server): land the four CUDA continuation legs from the reference-box probe",
+          "timestamp": "2026-10-21T22:52:57+08:00",
+          "tree_id": "d08f791614a40b3b1163ff40f6dea1e31ff11104",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1792d962467839be845bd5577eabc039164cf440"
+        },
+        "date": 1792594579291,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.4,
             "unit": "%"
           }
         ]
