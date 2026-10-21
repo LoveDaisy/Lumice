@@ -607,7 +607,11 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_angular_dist_picker.cpp"
     # AxisDistTypeToWire is the single table FillAxisDist and IsDApplicableGuiAxis share; nothing
     # else in the tree pins it against the literal LUMICE_DIST_* wire constants (backlog §2.H).
-    "${PROJ_TEST_DIR}/unit-correctness/gui/test_axis_dist_type_to_wire.cpp")
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_axis_dist_type_to_wire.cpp"
+    # The visual-regression threshold resolver: json edits move the threshold, every malformed
+    # shape fails loudly, and the tracked _thresholds.json resolves — the mechanical proof that
+    # the harness's run-time lookup reads the file instead of a source literal.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_reference_thresholds.cpp")
   target_include_directories(gui_unit_test
     PRIVATE ${PROJ_TEST_DIR})
   # Source-scan gates read app.cpp off disk to prove a helper is REACHED from every document-entry
@@ -633,7 +637,11 @@ if(BUILD_GUI)
     # test_config_summary_labels.cpp for widget labels that should be read from the registry.
     LUMICE_GUI_PANELS_CPP_PATH="${CMAKE_SOURCE_DIR}/src/gui/panels.cpp"
     LUMICE_E2E_CONFIG_DIR="${CMAKE_SOURCE_DIR}/test/e2e/configs"
-    LUMICE_TEST_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/test/fixtures")
+    LUMICE_TEST_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/test/fixtures"
+    # Same value as gui_test's definition (test/gui/CMakeLists.txt): the threshold resolver's
+    # tracked-json case reads the visual references through it. gui_test gets the directory's own
+    # CMakeLists-relative spelling; this file sits one level up.
+    LUMICE_TEST_REF_DIR="${CMAKE_SOURCE_DIR}/test/gui/references")
   # `lumice_obj` (objects), not `lumice` — a NAMED exemption, not an unexamined default.
   # Measured 2026-08-06 by switching this line to `lumice` and building the shared Release
   # flavor (the only configuration where it bites: -fvisibility=hidden is set for
