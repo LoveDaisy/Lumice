@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792591358804,
+  "lastUpdate": 1792591365905,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "208ad64e99c9a72de9042b4c4b28db4829cca387",
-          "message": "Merge pull request #420 from LoveDaisy/feat/toolbar-revert-slot-gap\n\nfeat(gui): move the top bar's hidden Revert slot to the trailing end",
-          "timestamp": "2026-09-26T05:03:32+08:00",
-          "tree_id": "cad7a53a552485d156dcaa7b57ac91e01b2e2f7d",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/208ad64e99c9a72de9042b4c4b28db4829cca387"
-        },
-        "date": 1790370994862,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 956603.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1024193.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 664401.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 598520.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e12c699d7262aa07039ba1d5aa5715e65f78bf5c",
           "message": "Merge pull request #421 from LoveDaisy/feat/angular-dist-picker\n\nfeat(gui): pick an angular-distance ring on the preview",
           "timestamp": "2026-09-26T05:43:54+08:00",
@@ -9590,6 +9542,54 @@ window.BENCHMARK_DATA = {
             "value": 682289.3,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e3acdfcb46e5115e09897dc2a33218a679a73714",
+          "message": "Merge pull request #534 from LoveDaisy/feat/c10-ladder-gate-order\n\nfix(raypath): the level-0 partition refusal scopes to its own card",
+          "timestamp": "2026-10-21T21:59:06+08:00",
+          "tree_id": "0dd10a9ed7c0e3fba17f416a6d2095a87d6673a6",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/e3acdfcb46e5115e09897dc2a33218a679a73714"
+        },
+        "date": 1792591365186,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 772325,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1008661,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 723334.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 574320.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
