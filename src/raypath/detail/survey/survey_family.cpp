@@ -6,10 +6,8 @@
 #include <utility>
 #include <vector>
 
-#include "analytic/diagnostic_batch.hpp"
 #include "analytic/pose_density.hpp"
-#include "core/math.hpp"    // math::kDegreeToRadD — the unit conversions' single authority
-#include "core/optics.hpp"  // IceRefractiveIndex: the tint pair's dispersion table
+#include "core/math.hpp"  // math::kDegreeToRadD — the unit conversions' single authority
 #include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/detail/survey/survey_tint.hpp"
@@ -104,14 +102,9 @@ double NormalizeCenter(analytic::FamilyDimension dim, double center_deg) {
 }
 
 // ---- the geometry helpers (the chart and the sky read) -----------------------------------------------
-
-// The sky position of the image direction -outgoing, the kernel records' own formula
-// (family_rank.cpp ImageAltAzDeg): altitude above the world equator, azimuth atan2(y, x).
-void ImageAltAzDeg(const double outgoing[3], double* alt_deg, double* az_deg) {
-  const double z = std::max(-1.0, std::min(1.0, -outgoing[2]));
-  *alt_deg = std::asin(z) * kRadToDeg;
-  *az_deg = std::atan2(-outgoing[1], -outgoing[0]) * kRadToDeg;
-}
+//
+// The chart (analytic::EulerPoseDeg) and the sky read (analytic::ImageAltAzDeg) are the kernel
+// header's own formulas (family_rank.hpp) — consumed, not re-derived here.
 
 // The unit direction of an altitude/azimuth pair on the world sphere.
 void DirectionOf(double alt_deg, double az_deg, double out[3]) {
@@ -128,27 +121,6 @@ double AngleBetweenDeg(const double a[3], const double b[3]) {
   const double norm = std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
   const double dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   return std::atan2(norm, dot) * kRadToDeg;
-}
-
-// The production Euler chart R(a, t, r) = Rz(a - pi) Ry(-t) Rz(r) in double — the chart
-// family_rank.hpp seeds its Jet variables on (the module doc's authority). The 0D arm evaluates
-// the one pose of an all-fixed axis through it, so the direct image and the family ranks speak
-// one chart. Plain trigonometry, no Jet machinery.
-void EulerPoseDeg(double azimuth_deg, double zenith_deg, double roll_deg, double pose[9]) {
-  const double a = (azimuth_deg - 180.0) * kDegToRad;
-  const double t = -zenith_deg * kDegToRad;
-  const double r = roll_deg * kDegToRad;
-  const double ca = std::cos(a), sa = std::sin(a);
-  const double ct = std::cos(t), st = std::sin(t);
-  const double cr = std::cos(r), sr = std::sin(r);
-  // Rz(a) Ry(t) Rz(r), row-major body -> world.
-  const double rz_ry[9] = { ca * ct, -sa, ca * st, sa * ct, ca, sa * st, -st, 0.0, ct };
-  for (int i = 0; i < 3; i++) {
-    const double row0 = rz_ry[3 * i + 0], row1 = rz_ry[3 * i + 1], row2 = rz_ry[3 * i + 2];
-    pose[3 * i + 0] = row0 * cr + row1 * sr;   // Rz(r)'s first column is (cr, sr, 0)
-    pose[3 * i + 1] = -row0 * sr + row1 * cr;  // ...and its second is (-sr, cr, 0)
-    pose[3 * i + 2] = row2;
-  }
 }
 
 // ---- the ladder --------------------------------------------------------------------------------------
@@ -455,8 +427,8 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
       candidate.viable = false;
     } else {
       candidate.has_position = true;
-      ImageAltAzDeg(candidate.anchors.front().outgoing, &candidate.position_alt_deg,
-                    &candidate.position_az_deg);  // the function negates: pass the raw outgoing
+      analytic::ImageAltAzDeg(candidate.anchors.front().outgoing, &candidate.position_alt_deg,
+                              &candidate.position_az_deg);  // the function negates: pass the raw outgoing
       // The one-dimensional track is curve-like: the floor, not its arc's extent — only the
       // two-dimensional domain's anchors measure an extent.
       candidate.scale_deg = rank.generic_rank == 1 ? kSurvivalSpotFloorDeg : ExtentDeg(candidate.anchors);
@@ -613,12 +585,6 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
   if (!support.ok) {
     // The fail-closed mirror of the T1 arm: one refused card, the witness leg's positive fact
     // on it, no ladder cards — the support is unknown, not zero, and never a fabricated union.
-    out->objects.clear();
-    SurveyObject refused;
-    refused.kind = SurveyObjectKind::kSupportSet;
-    refused.members = *input.members;
-    refused.evidence.state = EvidenceState::kRefused;
-    refused.evidence.mode = support.refusal_mode;
     WitnessInput witness_input;
     witness_input.table = input.table;
     witness_input.polygons = input.polygons;
@@ -630,23 +596,17 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     witness_input.refractive_index = input.refractive_index;
     witness_input.wavelength_nm = input.wavelength_nm;
     witness_input.member_count = member_count;
-    AssembleWitness(witness_input, &refused);
-    out->objects.push_back(std::move(refused));
-    const std::string chromatic_reason = "chromatic legs not run: the delta axis refused (" + support.refusal_mode +
-                                         "), and the legs sit downstream of it";
-    out->chromatic.state = EvidenceState::kUnevaluated;
-    out->chromatic.reason = chromatic_reason;
-    out->weight_tint = SurveyWeightTint{};
-    out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
-    out->weight_tint->evidence.reason = chromatic_reason;
+    AssembleRefusedSupport(witness_input, *input.members, support.refusal_mode,
+                           "chromatic legs not run: the delta axis refused (" + support.refusal_mode +
+                               "), and the legs sit downstream of it",
+                           "the refused-support family arm's legs are the T0 routing verdict, the per-member "
+                           "partition attempt (refused: " +
+                               support.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
+                               "-sample witness lattice; none is budget-enforced yet; enforcement lands with the "
+                               "quantification legs",
+                           true, out);
     block.evidence.state = EvidenceState::kRefused;
     block.evidence.mode = support.refusal_mode;
-    out->budget_note =
-        "the refused-support family arm's legs are the T0 routing verdict, the per-member "
-        "partition attempt (refused: " +
-        support.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
-        "-sample witness lattice; none is budget-enforced yet; enforcement lands with the "
-        "quantification legs";
     return { false, support.refusal_mode };
   }
   if (input.density->Ok() && input.measure.zenith.kind == FamilyDimKind::kGauss) {
@@ -684,9 +644,9 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     level.level = 0;
     level.frozen_dims = FrozenReport(input.measure, {}, 0);
     double pose[9];
-    EulerPoseDeg(NormalizeCenter(analytic::FamilyDimension::kAzimuth, input.measure.azimuth.center_deg),
-                 NormalizeCenter(analytic::FamilyDimension::kZenith, input.measure.zenith.center_deg),
-                 NormalizeCenter(analytic::FamilyDimension::kRoll, input.measure.roll.center_deg), pose);
+    analytic::EulerPoseDeg(NormalizeCenter(analytic::FamilyDimension::kAzimuth, input.measure.azimuth.center_deg),
+                           NormalizeCenter(analytic::FamilyDimension::kZenith, input.measure.zenith.center_deg),
+                           NormalizeCenter(analytic::FamilyDimension::kRoll, input.measure.roll.center_deg), pose);
     size_t member_index = 0;
     for (const std::vector<int>& member : *input.members) {
       const std::vector<int>& slots = member_slots[member_index++];
@@ -708,8 +668,8 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
         continue;
       }
       candidate.has_position = true;
-      ImageAltAzDeg(outputs.outgoing_direction, &candidate.position_alt_deg,
-                    &candidate.position_az_deg);  // the function negates: the image is -outgoing
+      analytic::ImageAltAzDeg(outputs.outgoing_direction, &candidate.position_alt_deg,
+                              &candidate.position_az_deg);  // the function negates: the image is -outgoing
       BlurAnchor anchor;
       DirectionOf(candidate.position_alt_deg, candidate.position_az_deg, anchor.image_dir);
       candidate.anchors.push_back(anchor);
@@ -722,82 +682,20 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     }
     block.ladder.push_back(std::move(level));
 
-    // The 0D weight tint: the single-pose direct read (w = A*T at each lambda of the fixed
-    // pair, the diagnostic batch's own re-evaluation — the witness's reading discipline), never
-    // a band sum (the design's own sentence). The positional chromatic legs say they have no
+    // The 0D weight tint: the single-pose direct read, never a band sum (the design's own
+    // sentence) — the tint module's own entry. The positional chromatic legs say they have no
     // structure to follow.
-    const double n_red = IceRefractiveIndex::Get(kChromaticRedNm);
-    const double n_blue = IceRefractiveIndex::Get(kChromaticBlueNm);
-    double m_red = 0.0;
-    double m_blue = 0.0;
-    bool tint_ok = true;
-    for (int lambda = 0; lambda < 2 && tint_ok; lambda++) {
-      const bool red = lambda == 0;
-      std::vector<analytic::DiagnosticInputRow> rows(1);
-      analytic::DiagnosticInputRow& row = rows.front();
-      row.crystal = *input.crystal;
-      for (int c = 0; c < 9; c++) {
-        row.pose[static_cast<size_t>(c)] = pose[c];
-      }
-      for (int c = 0; c < 3; c++) {
-        row.incident[static_cast<size_t>(c)] = input.incident[c];
-      }
-      row.refractive_index = red ? n_red : n_blue;
-      row.source_token = 0;
-      std::vector<analytic::DiagnosticOutputRow> values;
-      if (!analytic::EvaluateDiagnosticBatch(*input.representative, rows, {}, &values) || values.size() != 1 ||
-          !values[0].path_valid || !values[0].entry_available || !(values[0].entry.value > 0.0)) {
-        // The corridor's honest data (an empty corridor for a doubled-back chain, an edge-on
-        // entry): the weight is unavailable, never defaulted.
-        ILOG_VERBOSE(GetGlobalLogger(), "[raypath survey] single-pose weight refused: path_valid={} entry status {}",
-                     values.size() == 1 && values[0].path_valid,
-                     values.size() == 1 ? static_cast<int>(values[0].entry.status) : -1);
-        tint_ok = false;
-        break;
-      }
-      (red ? m_red : m_blue) = values[0].entry.value * values[0].interface_product;
+    SinglePoseTintInput tint_input;
+    tint_input.crystal = input.crystal;
+    tint_input.representative = input.representative;
+    for (int c = 0; c < 9; c++) {
+      tint_input.pose[c] = pose[c];
     }
-    out->weight_tint = SurveyWeightTint{};
-    SurveyWeightTint& tint = *out->weight_tint;
-    if (tint_ok && m_red > 0.0 && m_blue > 0.0) {
-      tint.n_red = n_red;
-      tint.n_blue = n_blue;
-      tint.m_red = m_red;
-      tint.m_blue = m_blue;
-      tint.method = kTintMethodSinglePoseDirect;
-      tint.sample_count = 1;
-      tint.lattice = "single_pose";
-      tint.deterministic = true;
-      tint.representative = *input.representative;
-      tint.member_count = member_count;
-      tint.ratio = m_blue / m_red;
-      tint.direction = tint.ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
-                       tint.ratio < 1.0 ? SurveyTintDirection::kRedTinted :
-                                          SurveyTintDirection::kNeutral;
-      tint.kept_count_red = 1;
-      tint.kept_count_blue = 1;
-      tint.caliber = std::string("w(") + kChromaticBlueLabel + ")/w(" + kChromaticRedLabel +
-                     "): single-pose w = A*T at the fixed pose, the diagnostic batch's own "
-                     "re-evaluation; fixed " +
-                     ChromaticPairProseRedFirst() +
-                     " index pair, unweighted by SPD or CMF — not a band sum and not the "
-                     "point-mass mass ratio";
-      tint.evidence.state = EvidenceState::kFinite;
-      tint.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
-      tint.evidence.coverage.geometry_basis =
-          "the diagnostic batch at the axis's single pose at the " + ChromaticPairProseRedFirst() + " pair";
-      tint.evidence.coverage.wavelength_nm = kChromaticBlueNm;
-      out->chromatic.state = EvidenceState::kFinite;
-      out->chromatic.coverage.members_evaluated = member_count;
-      out->chromatic.coverage.wavelength_nm = kChromaticBlueNm;
-      out->chromatic.coverage.geometry_basis =
-          "the 0D arm's only chromatic leg is the single-pose weight at the " + ChromaticPairProseRedFirst() + " pair";
-    } else {
-      tint.evidence.state = EvidenceState::kRefused;
-      tint.evidence.mode = "single_pose_weight_unavailable";
-      out->chromatic.state = EvidenceState::kRefused;
-      out->chromatic.mode = "single_pose_weight_unavailable";
+    for (int c = 0; c < 3; c++) {
+      tint_input.incident[c] = input.incident[c];
     }
+    tint_input.member_count = member_count;
+    AssembleSinglePoseTint(tint_input, out);
     const std::string positional_reason =
         "positional chromatic legs not run: a single pose has no positional structure to follow";
     out->positional_dispersion = SurveyPositionalDispersion{};

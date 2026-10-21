@@ -64,6 +64,9 @@ TEST(SurveyAssembly, LiteralScopeKeepsOnlyTheRequestedSequence) {
   SurveyDocument document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   EXPECT_TRUE(document.early_stopped);
+  // The early-stop document carries no family_routing key at all (the conditional-presence
+  // negative): the rank-0 certificate's own card is the whole story.
+  EXPECT_FALSE(document.family_routing.has_value());
   ASSERT_EQ(document.objects.size(), 1u);
   EXPECT_EQ(document.objects.front().members.size(), 1u);
   EXPECT_EQ(document.objects.front().members.front(), std::vector<int>({ 1, 2 }));

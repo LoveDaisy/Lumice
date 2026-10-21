@@ -55,9 +55,6 @@ inline constexpr int kFamilyExtentProbeCount = 16;
 // The refusal mode prefix of the v1 domain gate (the mode is an open string; the named shape
 // follows the colon).
 inline constexpr const char* kMeasureOutsideDomainPrefix = "measure_shape_outside_routing_domain: ";
-// The tint method slug of the 0D arm's single-pose direct read (the method registry's third
-// spelling, beside the kernel's point-mass names and the class power-sum).
-inline constexpr const char* kTintMethodSinglePoseDirect = "single_pose_direct";
 
 // One freeze candidate: a gauss zenith/roll dimension with the width that ranks it.
 struct FamilyFreezeCandidate {

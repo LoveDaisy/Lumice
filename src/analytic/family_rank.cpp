@@ -15,40 +15,8 @@ namespace {
 
 constexpr double kDegToRad = math::kDegreeToRadD;
 
-// ---- the pose chart ---------------------------------------------------------------------------
-
-// R(a, t, r) = Rz(a - pi) Ry(-t) Rz(r), the production Euler convention (the module doc): the
-// declared densities' zenith/roll extraction inverts exactly this form, and the corpus fold
-// witnesses decompose onto it to rounding. `S` is double or Jet<2>.
-template <class S>
-void EulerPose(const S& azimuth, const S& zenith, const S& roll, S pose[9]) {
-  S rz_az[9];
-  {
-    const S w[3] = { S(0.0), S(0.0), azimuth - math::kPiD };
-    so3::Exp(w, rz_az);
-  }
-  S ry_t[9];
-  {
-    const S w[3] = { S(0.0), -zenith, S(0.0) };
-    so3::Exp(w, ry_t);
-  }
-  S rz_r[9];
-  {
-    const S w[3] = { S(0.0), S(0.0), roll };
-    so3::Exp(w, rz_r);
-  }
-  S tmp[9];
-  so3::MatMul(rz_az, ry_t, tmp);
-  so3::MatMul(tmp, rz_r, pose);
-}
-
-// The sky position of the image direction -outgoing: altitude above the world equator,
-// azimuth atan2(y, x) — the corpus anchors' target fields are exactly these two.
-void ImageAltAzDeg(const double outgoing[3], double* alt_deg, double* az_deg) {
-  const double z = std::max(-1.0, std::min(1.0, -outgoing[2]));
-  *alt_deg = std::asin(z) / kDegToRad;
-  *az_deg = std::atan2(-outgoing[1], -outgoing[0]) / kDegToRad;
-}
+// The pose chart (EulerPose) and the sky read (ImageAltAzDeg) live in the module header — the
+// single authority both this kernel and the survey assembly consume.
 
 // ---- the grid -----------------------------------------------------------------------------------
 

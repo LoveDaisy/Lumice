@@ -20,6 +20,7 @@
 // interface product > 0) — one mode, no_declared_source_witness, for the last two: the leg
 // asked the declared source for one positive witness and did not get one.
 
+#include <string>
 #include <vector>
 
 #include "analytic/discovery.hpp"
@@ -49,6 +50,18 @@ struct WitnessInput {
 // finite with the readings, or the refused shape with the mode. Never throws, never writes a
 // partial numeric shape.
 void AssembleWitness(const WitnessInput& input, SurveyObject* card);
+
+// The refused-support card's shared assembly — the one constructor of the "support refused, the
+// witness's positive fact on the SAME card, the downstream chromatic legs unevaluated" shape the
+// arm-level refusal paths build (the T1 arm's refused support, the family arm's refused support,
+// the measure's out-of-domain refusal). Caller-owned differences arrive explicitly: the texts
+// are spelled by the caller (the three refusals' wording differs deliberately — never unified
+// here), and `clear_objects` carries each arm's own objects discipline (true = the refusing arm
+// clears the cards produced before its refusal, false = the card joins them). The caller keeps
+// everything above the document level (block evidence, escape bookkeeping, the return verdict).
+void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
+                            const std::string& refusal_mode, const std::string& chromatic_reason,
+                            const std::string& budget_note, bool clear_objects, SurveyDocument* out);
 
 }  // namespace lumice::raypath::survey
 

@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include "analytic/diagnostic_batch.hpp"
 #include "analytic/discovery.hpp"
 #include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table
 #include "util/logger.hpp"
@@ -178,6 +179,81 @@ void AssembleClassTint(const ClassTintInput& input, SurveyDocument* out) {
 
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] class tint: method {}, ratio {:.6f} ({} samples per lambda)",
             tint.method, tint.ratio, input.sample_count);
+}
+
+void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyDocument* out) {
+  const double n_red = IceRefractiveIndex::Get(kChromaticRedNm);
+  const double n_blue = IceRefractiveIndex::Get(kChromaticBlueNm);
+  double m_red = 0.0;
+  double m_blue = 0.0;
+  bool tint_ok = true;
+  for (int lambda = 0; lambda < 2 && tint_ok; lambda++) {
+    const bool red = lambda == 0;
+    std::vector<analytic::DiagnosticInputRow> rows(1);
+    analytic::DiagnosticInputRow& row = rows.front();
+    row.crystal = *input.crystal;
+    for (int c = 0; c < 9; c++) {
+      row.pose[static_cast<size_t>(c)] = input.pose[c];
+    }
+    for (int c = 0; c < 3; c++) {
+      row.incident[static_cast<size_t>(c)] = input.incident[c];
+    }
+    row.refractive_index = red ? n_red : n_blue;
+    row.source_token = 0;
+    std::vector<analytic::DiagnosticOutputRow> values;
+    if (!analytic::EvaluateDiagnosticBatch(*input.representative, rows, {}, &values) || values.size() != 1 ||
+        !values[0].path_valid || !values[0].entry_available || !(values[0].entry.value > 0.0)) {
+      // The corridor's honest data (an empty corridor for a doubled-back chain, an edge-on
+      // entry): the weight is unavailable, never defaulted.
+      ILOG_VERBOSE(GetGlobalLogger(), "[raypath survey] single-pose weight refused: path_valid={} entry status {}",
+                   values.size() == 1 && values[0].path_valid,
+                   values.size() == 1 ? static_cast<int>(values[0].entry.status) : -1);
+      tint_ok = false;
+      break;
+    }
+    (red ? m_red : m_blue) = values[0].entry.value * values[0].interface_product;
+  }
+  out->weight_tint = SurveyWeightTint{};
+  SurveyWeightTint& tint = *out->weight_tint;
+  if (tint_ok && m_red > 0.0 && m_blue > 0.0) {
+    tint.n_red = n_red;
+    tint.n_blue = n_blue;
+    tint.m_red = m_red;
+    tint.m_blue = m_blue;
+    tint.method = kTintMethodSinglePoseDirect;
+    tint.sample_count = 1;
+    tint.lattice = "single_pose";
+    tint.deterministic = true;
+    tint.representative = *input.representative;
+    tint.member_count = input.member_count;
+    tint.ratio = m_blue / m_red;
+    tint.direction = tint.ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
+                     tint.ratio < 1.0 ? SurveyTintDirection::kRedTinted :
+                                        SurveyTintDirection::kNeutral;
+    tint.kept_count_red = 1;
+    tint.kept_count_blue = 1;
+    tint.caliber = std::string("w(") + kChromaticBlueLabel + ")/w(" + kChromaticRedLabel +
+                   "): single-pose w = A*T at the fixed pose, the diagnostic batch's own "
+                   "re-evaluation; fixed " +
+                   ChromaticPairProseRedFirst() +
+                   " index pair, unweighted by SPD or CMF — not a band sum and not the "
+                   "point-mass mass ratio";
+    tint.evidence.state = EvidenceState::kFinite;
+    tint.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
+    tint.evidence.coverage.geometry_basis =
+        "the diagnostic batch at the axis's single pose at the " + ChromaticPairProseRedFirst() + " pair";
+    tint.evidence.coverage.wavelength_nm = kChromaticBlueNm;
+    out->chromatic.state = EvidenceState::kFinite;
+    out->chromatic.coverage.members_evaluated = input.member_count;
+    out->chromatic.coverage.wavelength_nm = kChromaticBlueNm;
+    out->chromatic.coverage.geometry_basis =
+        "the 0D arm's only chromatic leg is the single-pose weight at the " + ChromaticPairProseRedFirst() + " pair";
+  } else {
+    tint.evidence.state = EvidenceState::kRefused;
+    tint.evidence.mode = "single_pose_weight_unavailable";
+    out->chromatic.state = EvidenceState::kRefused;
+    out->chromatic.mode = "single_pose_weight_unavailable";
+  }
 }
 
 }  // namespace lumice::raypath::survey
