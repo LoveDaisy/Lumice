@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792591368542,
+  "lastUpdate": 1792594570141,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b0b090813c2e811b472eb839916a357272554a9c",
-          "message": "Merge pull request #422 from LoveDaisy/feat/screenshot-export-options\n\nfeat(gui): screenshot export options popup, subtract-only per family",
-          "timestamp": "2026-09-26T06:04:43+08:00",
-          "tree_id": "387bf188ef1a8b8098005bded4fd012477ff7205",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/b0b090813c2e811b472eb839916a357272554a9c"
-        },
-        "date": 1790374706772,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 467555.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 512696,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 368744.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 288007.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4794,6 +4746,54 @@ window.BENCHMARK_DATA = {
             "value": 307347.7,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1792d962467839be845bd5577eabc039164cf440",
+          "message": "Merge pull request #536 from LoveDaisy/feat/cuda-continue-legs\n\ntest(server): land the four CUDA continuation legs from the reference-box probe",
+          "timestamp": "2026-10-21T22:52:57+08:00",
+          "tree_id": "d08f791614a40b3b1163ff40f6dea1e31ff11104",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1792d962467839be845bd5577eabc039164cf440"
+        },
+        "date": 1792594567852,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 397252.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 505032.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 396024,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 470265.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
