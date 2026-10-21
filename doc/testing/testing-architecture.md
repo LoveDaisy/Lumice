@@ -1344,6 +1344,15 @@ category that was measured and deliberately left alone.
 | ③ `export_parity` simulation scenes (`single_lens_angled` / `full_sky_dual_fisheye` / `single_lens_rectilinear` / print) | 4×4 block-mean PSNR | `mean − max(10σ, 1.0 dB)`, N=12 — bm4 thresholds 35.4 / 38.3 / 39.3 / 42.1 dB | a ±0.25-stop exposure break on the CLI arm reads −1.19…−2.55 dB under the honest mean on bm4; the same break reads as an *improvement* under whole-frame PSNR (§4.10 point 4 — the sign reverses) | honest N=12 runs, σ = 0.016–0.105 dB per scene | 0.2–6.8 dB of headroom under the honest mean, depending on which term of `max(10σ, 1.0 dB)` binds (the print scene's σ=0.105 is the one row where 10σ exceeds the 1.0 dB floor) |
 | ③′ `lens_proj` / e2e references | whole-frame PSNR — unchanged | `mean − max(4σ, 1.0 dB)` — unchanged | none on record — see below | current calibrated thresholds, 19.0–29.5 dB | not applicable |
 
+**Row ③′'s threshold is tracked data, not code.** Its only copy is
+`test/gui/references/_thresholds.json`; `CheckAgainstReference` resolves it at run time under the
+`(group, tag)` key the comparison itself prints (`test/support/reference_thresholds.hpp`), so a
+json diff IS the threshold change and no source literal can drift away from it. A missing file,
+malformed JSON or an absent key fails the comparison loudly instead of falling back to a default —
+a broken threshold source reddens every PSNR comparison in the binary at once, which is the design,
+not an outage. Row ①'s `threshold` field keeps its provenance role: Phase B still writes it, and
+nothing in code consumes it.
+
 **Two footguns, one per layer, each the wrong lesson for the other.** Neither of the following is
 a hedge on the numbers above — both were measured, not guessed at:
 
@@ -1403,6 +1412,10 @@ this table summarizes):
   `test/support/block_mean_psnr.hpp:34` (`ComputeBlockMeanPsnr`). Unit tests:
   `test/unit-correctness/gui/test_pixel_diff_ruler.cpp`, `test_block_mean_psnr.cpp`.
 - `CheckAgainstReference`'s `MaxCcRuler*` parameter: `test/gui/test_screenshot.hpp:58`.
+- Row ③′ threshold resolution: `test/support/reference_thresholds.hpp` (`ResolveReferenceThreshold`),
+  consumed by the PSNR branch of `CheckAgainstReference` (`test/gui/test_screenshot.cpp`); the
+  tracked values live in `test/gui/references/_thresholds.json`, and the read-through and
+  failure-shape unit case is `test/unit-correctness/gui/test_reference_thresholds.cpp`.
 - Row ① K values: `test/gui/visual/test_gui_modal_layout.cpp:72` (τ=16, K=70),
   `test_gui_defaults_panel.cpp:78` (τ=16, K=40), `test_gui_capture_smoke.cpp:28` and
   `test_preview_pixels.cpp:44` (τ=0, K=0).
