@@ -618,15 +618,20 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
     // card joins the ladder's cards (clear_objects=false), the chromatic/tint stamp below is
     // overwritten whenever the density-expressible legs run, and it survives only in the
     // refused x density-invalid corner, where its reason names the density cause.
-    AssembleRefusedSupport(witness_input, *input.members, support.refusal_mode,
-                           "chromatic legs not run: the axis maps to no pose density (" +
-                               input.density->unsupported + "); the legs follow objects, not the partition",
-                           "the family arm's legs are the T0 routing verdict, the per-member delta ",
-                               "partition attempt (refused: " + support.refusal_mode + "), the ladder's ",
-                               "per-level rank scans and the " + std::to_string(kSurveyWitnessSampleCount) +
-                               "-sample witness lattice on the refused level-0 card; none is ",
-                               "budget-enforced yet; enforcement lands with the quantification legs",
-                           false, out);
+    const std::string corner_chromatic_reason = "chromatic legs not run: the axis maps to no pose density (" +
+                                                input.density->unsupported +
+                                                "); the legs follow objects, not the partition";
+    const std::string corner_budget_note =
+        "the family arm's legs are the T0 routing verdict, the per-member delta partition "
+        "attempt (refused: " +
+        support.refusal_mode +
+        "), the ladder's per-level rank scans "
+        "and the " +
+        std::to_string(kSurveyWitnessSampleCount) +
+        "-sample witness lattice on the refused level-0 card; none is budget-enforced yet; "
+        "enforcement lands with the quantification legs";
+    AssembleRefusedSupport(witness_input, *input.members, support.refusal_mode, corner_chromatic_reason,
+                           corner_budget_note, false, out);
   }
   if (support.ok && input.density->Ok() && input.measure.zenith.kind == FamilyDimKind::kGauss) {
     // AC5's boundedness-role separation: the width went into the ladder; the support's own tail

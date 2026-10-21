@@ -48,6 +48,16 @@
 4. 逐对象存活筛（structure proposes, weight disposes）：冻结宽度 × 映射局部敏感度 → 像方模糊
    vs 对象自身角尺度；通过者进 survey（带级标签），band-sum 地图为升级复核。
 
+**腿独立 / 拒答作用域（owner 裁定 2026-10-21，survey 侧 as-built）**：δ 轴 partition 与取向阶梯是
+两条相互独立的腿——partition 是**几何事实**（对取向分布无关），阶梯是**测度事实**（对 partition
+无关）。partition 拒答的作用域 = 它自己的 level-0 支撑卡（refused 与 witness 共存在卡上），阶梯
+照常枚举；深层级对 partition 的唯一真实下游依赖 = `bright_domain` 卡的 domain bounds 读支撑区间
+（拒答时该 payload 条件在场，不捏造、不开 refused 子块）。chromatic/tint 腿跟随对象（由 density
+转换决定），不跟随 partition。文档级回滚定律：有任何 finite 结构对象 ⇒ 文档 finite；全部结构腿
+无 finite 输出才 refused（拒答卡是拒绝记录、其上 witness 是自有状态的 payload，都不计入该判定）。
+块级 `family_routing.evidence`（各腿的输出）与文档级终态是两个独立层次：块 finite 不蕴含文档
+finite。
+
 语料标定（场景定义与终态 = `doc/cases/raypath-analysis-cases.md`）：
 
 | case | 测度 | 生效级 | 结果 |
@@ -98,3 +108,12 @@ R(a,θ,r)=Rz(a−π)Ry(−θ)Rz(r) 与 1D 语义同层互证；不暴露 C ABI�
   规格推导/对照，不独立重推。终态收敛按共享判据：LI 经 binding 消费 `liblumice_analytic`、JAX 版
   退役。发布前两仓并行本就是 de facto 状态；wave-2 hold 悬账随 analytic v9 +1，维持不动
   （2026-10-07 裁定不因新条目重开）。
+- **owner 裁定（2026-10-21）——门序 = 拒答作用域，不是重排**。δ 轴 partition 与取向阶梯两条
+  相互独立的腿；早前实现把 partition 拒答的作用域从 level-0 支撑卡错误扩大到整臂（fail-closed
+  镜像复制的抽象搬错了对象：T1 臂没有别的结构腿可失去，family 臂有）。五条语义：① 拒答作用域
+  = level-0 支撑卡本身（refused+witness 照旧）；② 阶梯照常枚举（深层级不以 partition 成功为
+  前置）；③ `bright_domain` 的 domain bounds 条件在场；④ chromatic/tint 腿跟随对象（density
+  决定）不跟随 partition；⑤ 文档级回滚 = 有 finite 结构对象 ⇒ finite，全部结构腿无 finite 输出
+  才 kRefused。被否替代：全量重排（ladder-first，δ 机只作满维分支）——输出与本案逐条等价、
+  diff 更大、无语义增益。爆炸半径控制：随机臂（T1）member 级 mixed refusal 语义不动，不在该
+  裁定内顺手统一。
