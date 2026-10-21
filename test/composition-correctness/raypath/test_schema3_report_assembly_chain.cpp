@@ -181,8 +181,13 @@ TEST(Schema3ReportAssemblyChain, AutoStarveStaysSilentAndCarries33RowContinuatio
   EXPECT_EQ(assembled.mc.spectral_verification.available, true) << "a continuous quadrature is the in-scope signal";
   bool consistent_kind1 = false;
   for (size_t i = 0; i < assembled.core.objects.size(); i++) {
-    if (assembled.core.objects[i].kind == ObjectKind::kKind1 &&
-        assembled.annotations[i].state == CorroborationState::kConsistent) {
+    if (assembled.core.objects[i].kind != ObjectKind::kKind1) {
+      continue;
+    }
+    // The unit-side B-arm's guard, carried over 1:1: every kind-1 sits unproven at this
+    // budget's measure — the starvation is in the weighted field, not in the sampling.
+    EXPECT_EQ(assembled.core.objects[i].visibility.state, VisibilityState::kUnproven);
+    if (assembled.annotations[i].state == CorroborationState::kConsistent) {
       consistent_kind1 = true;
       // The unproven arm reads consistent only on SUFFICIENT recorded presence — the
       // starvation premise does not mean an empty record.

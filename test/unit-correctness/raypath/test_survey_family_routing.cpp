@@ -347,6 +347,7 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
 // (the narrow half of AC5's dimension-times-object property).
 TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
   const SurveyDocument& document = SharedLowitzDocument();
+  ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
   ASSERT_FALSE(block.ladder[2].killed.empty());
   const FamilyKilledCandidate* killed = nullptr;
