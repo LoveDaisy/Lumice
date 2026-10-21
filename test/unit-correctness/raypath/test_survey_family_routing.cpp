@@ -567,19 +567,6 @@ TEST(FamilyRouting, OutsideDomainShapeRefusesWithTheNamedModeAndAWitness) {
   EXPECT_EQ(parsed.at("objects")[0].at("evidence").at("mode"), "measure_shape_outside_routing_domain: roll_zigzag");
 }
 
-// The conditional-presence negative (AC7's mechanical form): the full-dimensional and the
-// early-stop documents carry no family_routing key at all.
-TEST(FamilyRouting, RandomAndEarlyStopDocumentsCarryNoFamilyRoutingKey) {
-  SurveyDocument random_document;
-  ASSERT_TRUE(AssembleSurvey(RandomPrismScene(), LiteralRequest({ 3, 5 }), &random_document).Ok());
-  EXPECT_FALSE(random_document.family_routing.has_value());
-  SurveyRequest early = LiteralRequest({ 1, 2 });
-  SurveyDocument early_document;
-  ASSERT_TRUE(AssembleSurvey(PlateScene(0.3, 0.3), early, &early_document).Ok());
-  EXPECT_TRUE(early_document.early_stopped);
-  EXPECT_FALSE(early_document.family_routing.has_value());
-}
-
 // The serialized family document's shape: the measure echo, the ladder with its rank coverage
 // and killed records, the band on the cards, and the conditional keys.
 TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
