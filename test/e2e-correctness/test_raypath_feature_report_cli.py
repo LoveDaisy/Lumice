@@ -1,4 +1,4 @@
-"""Target-free ``Lumice raypath --report`` through the real static CLI.
+"""Target-free ``Lumice raypath report`` through the real static CLI.
 
 The schema-three route consumes physical input and reports bounded numerical evidence: the
 geometry layer's structural objects and delta-axis support block are the primary record
@@ -36,7 +36,7 @@ def _binary():
 @lru_cache(maxsize=None)
 def _cached_report(config: Path, path: str, args: tuple[str, ...]) -> tuple[int, str, str]:
     result = run_lumice(
-        ["raypath", "-f", str(config), "--crystal", "1", "--path", path, "--report", *args]
+        ["raypath", "report", "-f", str(config), "--crystal", "1", "--path", path, *args]
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -55,7 +55,7 @@ def _report(config: Path, path: str, *args: str):
         # Each call writes a fresh output file from a fresh solve — the file
         # contract is the proposition, so there is nothing to dedup.
         return run_lumice(
-            ["raypath", "-f", str(config), "--crystal", "1", "--path", path, "--report", *args]
+            ["raypath", "report", "-f", str(config), "--crystal", "1", "--path", path, *args]
         )
     returncode, stdout, stderr = _cached_report(config, path, args)
     return _ReportResult(returncode, stdout, stderr)
@@ -239,14 +239,14 @@ def test_report_rejects_target_only_options(extra, named):
 @pytest.mark.parametrize(
     "args, named",
     [
-        (["--report", "--path", "3-5"], "--crystal"),
-        (["--report", "--crystal", "1"], "--path"),
-        (["--report", "--crystal", "not-an-id", "--path", "3-5"], "--crystal"),
-        (["--crystal", "1", "--path", "3-5", "--events", "63", "--report"], "--events"),
+        (["--path", "3-5"], "--crystal"),
+        (["--crystal", "1"], "--path"),
+        (["--crystal", "not-an-id", "--path", "3-5"], "--crystal"),
+        (["--crystal", "1", "--path", "3-5", "--events", "63"], "--events"),
     ],
 )
 def test_report_parse_errors_write_usage_only_to_stderr_regardless_of_option_order(args, named):
-    result = run_lumice(["raypath", "-f", str(_RANDOM), *args])
+    result = run_lumice(["raypath", "report", "-f", str(_RANDOM), *args])
     assert result.returncode == 1
     assert named in result.stderr
     assert "Usage:" in result.stderr

@@ -1,4 +1,4 @@
-"""The `raypath` subcommand, end to end through the static CLI (`Lumice raypath`).
+"""The ``raypath point`` subcommand, end to end through the static CLI.
 
 The scene is ``test/e2e/configs/raypath_analysis_halo_22.json`` (a prism of height 1.2, sun at
 altitude 20°, D65), the scene `analyze`'s e2e reads. The analysis is deterministic, so every run
@@ -7,8 +7,10 @@ finds the one closed component the 22° halo has at the target used here.
 
 What is pinned — the subcommand's own contract; the analysis's physics is the unit layer's
 (test/unit-correctness/raypath/):
-  * the option surface — `-h`; each missing or malformed request option exits 1 naming it; the
-    three options this subcommand does not take are unknown options, not accepted and ignored;
+  * the command family — bare ``raypath`` is a usage error; ``raypath -h`` lists the four
+    command words, ``raypath point -h`` names the request options;
+  * the option surface — each missing or malformed request option exits 1 naming it; the
+    options this subcommand does not take are unknown options, not accepted and ignored;
   * the output contract — stdout is exactly one JSON document and nothing else, with ``-o`` it is
     empty and the file holds the document; progress is stderr's;
   * the document's two outcomes as the CLI delivers them — ``3-5`` is discovered with a closed
@@ -41,7 +43,7 @@ _REQUEST = ["--crystal", "1", "--path", "3-5", "--target", "20,25", "--events", 
 
 
 def _raypath(*args: str):
-    return run_lumice(["raypath", "-f", str(_CONFIG), *args])
+    return run_lumice(["raypath", "point", "-f", str(_CONFIG), *args])
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -61,13 +63,12 @@ def halo():
 
 
 def test_help_names_the_request_options():
-    result = run_lumice(["raypath", "-h"])
+    result = run_lumice(["raypath", "point", "-h"])
     assert result.returncode == 0
     for option in (
         "--crystal",
         "--path",
         "--target",
-        "--report",
         "--wavelength",
         "--events",
         "--grid",
@@ -75,8 +76,22 @@ def test_help_names_the_request_options():
         "-o",
     ):
         assert option in result.stdout, option
-    # The top-level page lists the subcommand.
+    # The family page lists the command words; the top-level page lists the subcommand.
+    family = run_lumice(["raypath", "-h"])
+    assert family.returncode == 0
+    for word in ("survey", "point", "report"):
+        assert word in family.stdout, word
     assert "raypath" in run_lumice(["-h"]).stdout
+
+
+def test_bare_raypath_is_a_usage_error():
+    result = run_lumice(["raypath", "-f", str(_CONFIG), "--crystal", "1", "--path", "3-5", "--target", "20,25"])
+    assert result.returncode == 1, result.stderr
+    assert "survey" in result.stderr and "point" in result.stderr, result.stderr
+    assert "{" not in result.stdout, "no JSON on a refused request"
+    empty = run_lumice(["raypath"])
+    assert empty.returncode == 1
+    assert "report" in empty.stderr, empty.stderr
 
 
 @pytest.mark.parametrize(
@@ -125,7 +140,7 @@ def test_halo_path_is_discovered_with_a_closed_component_and_the_grid(halo):
         assert len(grid[key]) == _GRID_ROWS * 2 * _GRID_ROWS, key
     assert any(grid["valid"]), "a 3-5 path is valid somewhere on the sun sphere"
     assert doc["reach"]["target_in_range"] is True
-    assert "[raypath]" in halo.stderr
+    assert "[raypath point]" in halo.stderr
 
 
 def test_a_target_beyond_the_paths_deviation_range_is_out_of_reach():
