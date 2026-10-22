@@ -144,9 +144,10 @@ TEST_F(SurveyCApi, LiteralSymmetryAndNullArgContracts) {
 }
 
 // The appended mc_ess_draws reads only when the caller's struct carries it: a v4.54-shaped
-// request (struct_size stops at symmetry_bits_plus_one) with garbage in its tail is the
-// caller's default — the leg does not run, the analysis succeeds. A full-size request is
-// validated: past the cap is invalid_argument, and a valid count on an identity-arm path
+// request (struct_size stops at symmetry_bits_plus_one) with an out-of-range count in its
+// tail must succeed — the gate ignores the tail, so the poison never reaches the engine's
+// validation (a gate that read it would turn the call invalid_argument). A full-size request
+// is validated: past the cap is invalid_argument, and a valid count on an identity-arm path
 // succeeds with no mc_region_ess key (the arm does not run the leg).
 TEST_F(SurveyCApi, McEssDrawsReadThroughTheStructSizeGate) {
   static int faces[] = { 1, 2 };
@@ -161,6 +162,7 @@ TEST_F(SurveyCApi, McEssDrawsReadThroughTheStructSizeGate) {
   const size_t kV454Size = offsetof(LUMICE_PathSurveyRequest, symmetry_bits_plus_one) + sizeof(int);
   request.struct_size = kV454Size;
   request.symmetry_bits_plus_one = 0;
+  request.mc_ess_draws = LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS + 1;  // the discriminating poison
   LUMICE_PathSurvey* raw = nullptr;
   char err[512] = {};
   ASSERT_EQ(LUMICE_AnalyzePathSurvey(scene_.get(), &request, &raw, err, sizeof(err)), LUMICE_OK);

@@ -30,7 +30,6 @@
 #include <string>
 #include <vector>
 
-#include "raypath/detail/diagnostic_sampler.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
 

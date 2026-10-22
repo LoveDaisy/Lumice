@@ -7,6 +7,7 @@
 // fixture fix lands in one test file and not the other.
 
 #include "config/config_manager.hpp"
+#include "config/light_config.hpp"  // WlParam — the discrete spectrum's slot spelling
 #include "core/crystal_param.hpp"
 #include "core/miller_wedge.hpp"  // ConvertMillerIndexToWedgeAngle: the conversion the config loader runs
 #include "util/illuminant_data.hpp"
@@ -62,6 +63,14 @@ inline ConfigManager RandomPrismScene() {
   entry.crystal_ = crystal;
   entry.crystal_proportion_ = 1;
   config.scene_.ms_.push_back({ 0, { entry } });
+  return config;
+}
+
+// The C01 shape with a two-slot discrete spectrum: the ESS leg's slot-matching branch (a
+// discrete light must own a slot AT the leg's reference lambda) reads exactly this shape.
+inline ConfigManager DiscreteSlotScene() {
+  ConfigManager config = RandomPrismScene();
+  config.scene_.light_source_.spectrum_ = std::vector<WlParam>{ { 550.0f, 1.0f }, { 650.0f, 1.0f } };
   return config;
 }
 

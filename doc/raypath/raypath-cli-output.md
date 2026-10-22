@@ -1090,7 +1090,9 @@ the two calibers must not be compared, and neither may be read as a colour ratio
 one-internal-interface path (3-5-7) the aggregate IS the interface row, exactly. Kept events
 whose candidate-pose chart degenerates at exactly-zero deviation (the pose's azimuthal freedom
 is unconstrained there, so no TIR classification exists) sit outside the estimator's declared
-support, excluded from both numerator and denominator; the caliber spells this. Refusals:
+support, excluded from both numerator and denominator; the caliber spells this. `kept_count_*`
+stays the lattice's kept-event total — the excluded chart-degenerate subset is not subtracted
+from it. Refusals:
 `no_internal_interfaces` (a two-face chain — entry and exit only — leaves the leg no question
 to ask), `member_resolution`, `zero_band_weight`, `batch_read_unavailable` (a validated pose
 the batch still cannot trace: the two readers disagree, which is a defect to investigate, not

@@ -133,8 +133,9 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
                         "survey budget is its deadline guardrail) — the enumeration's unenforced legs "
                         "are the others.";
   } else {
-    out->budget_note += " The requested MC region ESS leg ran no draws: " + std::to_string(request.mc_ess_draws) +
-                        " were requested and refused (" + ess.evidence.mode + ").";
+    out->budget_note += " The requested MC region ESS leg was refused (" + ess.evidence.mode +
+                        "): " + std::to_string(request.mc_ess_draws) +
+                        " draws were requested and no bands were published.";
   }
 }
 

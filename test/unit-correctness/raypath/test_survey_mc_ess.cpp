@@ -22,13 +22,10 @@ struct McEssFixture {
   double sun_dir[3]{};
   int member_count = 0;
 
-  static McEssFixture Make() {
-    const ConfigManager config = RandomPrismScene();
+  static McEssFixture MakeFrom(const ConfigManager& config, double lambda_nm) {
     const auto configured = config.crystals_.find(1);
     McEssFixture fix;
-    WavelengthChoice wavelength;
-    EXPECT_TRUE(ResolveWavelength(config.scene_.light_source_, std::nullopt, &wavelength).Ok());
-    fix.wavelength_nm = wavelength.wavelength_nm;
+    fix.wavelength_nm = lambda_nm;
     std::vector<int> faces{ 3, 5, 7 };
     const std::vector<LayerSelection> selection{ { 0, 1, faces, 7 } };
     EXPECT_TRUE(CaptureInput(config.scene_, "test snapshot", selection, &fix.snapshot).Ok());
@@ -39,6 +36,13 @@ struct McEssFixture {
     }
     fix.member_count = 12;  // the corpus class's size (the bench pins the enumeration itself)
     return fix;
+  }
+
+  static McEssFixture Make() {
+    const ConfigManager config = RandomPrismScene();
+    WavelengthChoice wavelength;
+    EXPECT_TRUE(ResolveWavelength(config.scene_.light_source_, std::nullopt, &wavelength).Ok());
+    return MakeFrom(config, wavelength.wavelength_nm);
   }
 
   McRegionEssInput Input(long long draws) const {
@@ -159,6 +163,28 @@ TEST(SurveyMcRegionEss, RefusedLegNoteNamesTheRefusalNotARun) {
   EXPECT_NE(document.budget_note.find("MC region ESS"), std::string::npos);
   EXPECT_NE(document.budget_note.find("refused"), std::string::npos);
   EXPECT_EQ(document.budget_note.find("seeded draws"), std::string::npos);
+}
+
+// The discrete-light slot match (the sampler needs a slot AT the reference lambda): a lambda
+// equal to a slot's — float-exact, the matcher compares floats — builds and runs finite; one
+// between slots refuses as sampler_unavailable, the documented contract, not a defaulted
+// sample.
+TEST(SurveyMcRegionEss, DiscreteLightSlotHitRunsFinite) {
+  const McEssFixture fix = McEssFixture::MakeFrom(DiscreteSlotScene(), 550.0);
+  SurveyDocument document;
+  AssembleMcRegionEss(fix.Input(500), &document);
+  ASSERT_TRUE(document.mc_region_ess.has_value());
+  EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kFinite);
+  EXPECT_EQ(document.mc_region_ess->draws, 500);
+}
+
+TEST(SurveyMcRegionEss, DiscreteLightSlotMissRefusesSamplerUnavailable) {
+  const McEssFixture fix = McEssFixture::MakeFrom(DiscreteSlotScene(), 600.0);
+  SurveyDocument document;
+  AssembleMcRegionEss(fix.Input(500), &document);
+  ASSERT_TRUE(document.mc_region_ess.has_value());
+  EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kRefused);
+  EXPECT_EQ(document.mc_region_ess->evidence.mode, "sampler_unavailable");
 }
 
 // The serialized shape on a real document: the key list matches the planned schema-4 append

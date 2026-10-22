@@ -7,6 +7,7 @@
 
 #include "analytic/so3.hpp"
 #include "core/math.hpp"  // math::kRadToDegreeD — the deviation's unit conversion
+#include "raypath/detail/diagnostic_sampler.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath::survey {
@@ -80,12 +81,18 @@ void AssembleMcRegionEss(const McRegionEssInput& input, SurveyDocument* out) {
     SurveyMcRegionEss& ess = out->mc_region_ess.emplace();
     ess.evidence.state = EvidenceState::kRefused;
     ess.evidence.mode = "sampler_unavailable";
+    ILOG_INFO(GetGlobalLogger(), "[raypath survey] mc region ess refused: sampler_unavailable ({} draws requested)",
+              input.draws);
     return;
   }
   if (measure.budget_exhausted || measure.completed_samples == 0) {
     SurveyMcRegionEss& ess = out->mc_region_ess.emplace();
     ess.evidence.state = EvidenceState::kRefused;
     ess.evidence.mode = "budget_exhausted";
+    // The refused leg's only record outside the {state, mode} block: a partial measure spent
+    // real compute before the deadline, and the audit reader sees it nowhere else.
+    ILOG_INFO(GetGlobalLogger(), "[raypath survey] mc region ess refused: budget_exhausted ({} of {} draws completed)",
+              measure.completed_samples, input.draws);
     return;
   }
 
