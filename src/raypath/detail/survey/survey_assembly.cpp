@@ -10,6 +10,7 @@
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
 #include "raypath/detail/survey/survey_family.hpp"
+#include "raypath/detail/survey/survey_mc_ess.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/detail/survey/survey_tint.hpp"
@@ -90,6 +91,32 @@ SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, cons
 
 }  // namespace
 
+// The opt-in MC region ESS leg's shared assembly (both T1 arms run it when the request asked):
+// the survey's own scene snapshot at its resolved reference lambda, with the at-sun direction
+// the delta bands read. Appends the leg's note to the budget note the caller already wrote.
+void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSnapshot& snapshot,
+                                      const SurveyRequest& request, int member_count, double wavelength_nm,
+                                      SurveyDocument* out) {
+  if (request.mc_ess_draws <= 0) {
+    return;
+  }
+  double sun_hat[3];
+  SunIncidentDirection(config.scene_.light_source_.param_, sun_hat);
+  McRegionEssInput ess_input;
+  ess_input.snapshot = &snapshot;
+  ess_input.wavelength_nm = wavelength_nm;
+  for (int k = 0; k < 3; k++) {
+    ess_input.sun_dir[static_cast<size_t>(k)] = -sun_hat[k];
+  }
+  ess_input.member_count = member_count;
+  ess_input.draws = request.mc_ess_draws;
+  ess_input.budget_ms = request.budget_ms;
+  AssembleMcRegionEss(ess_input, out);
+  out->budget_note += " The requested MC region ESS leg ran " + std::to_string(request.mc_ess_draws) +
+                      " seeded draws at the reference lambda; its deadline is the survey budget's "
+                      "guardrail.";
+}
+
 Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out) {
   if (out == nullptr) {
     return { ErrorCode::kInvalidArgument, "null document output" };
@@ -102,6 +129,9 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   }
   if (request.symmetry_bits > 7 || request.budget_ms <= 0 || request.budget_ms > kMaxSurveyBudgetMs) {
     return { ErrorCode::kInvalidArgument, "invalid survey symmetry bits or budget request" };
+  }
+  if (request.mc_ess_draws < 0 || request.mc_ess_draws > kSurveyMcEssMaxDraws) {
+    return { ErrorCode::kInvalidArgument, "invalid survey mc ess draws request" };
   }
 
   const auto configured = config.crystals_.find(request.crystal_id);
@@ -287,6 +317,8 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         SunIncidentDirection(config.scene_.light_source_.param_, tir_input.incident);
         tir_input.member_count = static_cast<int>(scope.members.size());
         AssembleTirShare(tir_input, out);
+        AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
+                                         wavelength.wavelength_nm, out);
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
       } else {
@@ -340,6 +372,8 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         SunIncidentDirection(config.scene_.light_source_.param_, tir_input.incident);
         tir_input.member_count = static_cast<int>(scope.members.size());
         AssembleTirShare(tir_input, out);
+        AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
+                                         wavelength.wavelength_nm, out);
       }
     } else {
       // The family-restricted route (gap 1's own): the measure is read in the concentration

@@ -29,6 +29,9 @@ struct SurveyRequest {
   std::optional<double> wavelength_nm;
   int budget_ms = kDefaultSurveyBudgetMs;
   uint8_t symmetry_bits = 7;  // physical P|B|D; zero means the concrete requested path
+  // 0 (the default) = the opt-in MC region ESS leg does not run; positive = its requested
+  // draw count, at most survey::kSurveyMcEssMaxDraws (enforced in AssembleSurvey).
+  int mc_ess_draws = 0;
 };
 
 // Runs the routing and serializes the document: `json_out` receives the schema-4 document.

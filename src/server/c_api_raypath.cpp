@@ -224,7 +224,7 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   return LUMICE_OK;
 }
 
-LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurveyRequest& request,
+LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurveyRequest& request, int mc_ess_draws,
                                LUMICE_PathSurvey** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
 
@@ -261,6 +261,9 @@ LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurve
     return Refuse({ rp::ErrorCode::kInvalidArgument, "invalid physical symmetry bits" }, err_buf, err_size);
   }
   req.symmetry_bits = request.symmetry_bits_plus_one == 0 ? 7 : 0;
+  // The v4.54-and-below callers' structs stop at symmetry_bits_plus_one; the field was
+  // extracted by the struct_size gate in the public entry.
+  req.mc_ess_draws = mc_ess_draws;
 
   // The scene document LUMICE_CommitScene would hand the server, through the same parser.
   lumice::ConfigManager config;
@@ -423,7 +426,11 @@ LUMICE_ErrorCode LUMICE_AnalyzePathSurvey(const LUMICE_Scene* scene, const LUMIC
     return LUMICE_ERR_NULL_ARG;
   }
   try {
-    return AnalyzeSurvey(scene, *request, out, err_buf, err_size);
+    // The appended mc_ess_draws reads only when the caller's struct actually carries it — a
+    // v4.54-or-older struct_size means the field does not exist there, and the zero default
+    // (the leg does not run) is the caller's intent.
+    const int mc_ess_draws = request->struct_size >= sizeof(LUMICE_PathSurveyRequest) ? request->mc_ess_draws : 0;
+    return AnalyzeSurvey(scene, *request, mc_ess_draws, out, err_buf, err_size);
   } catch (const std::exception& e) {
     LOG_ERROR("LUMICE_AnalyzePathSurvey: {}", e.what());
     WriteError(err_buf, err_size, std::string("internal: ") + e.what());
