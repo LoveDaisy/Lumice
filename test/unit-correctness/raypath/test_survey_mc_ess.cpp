@@ -141,6 +141,26 @@ TEST(SurveyMcRegionEss, DrawsPastTheCapRefuseAtTheAssembly) {
   EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
 }
 
+// The honesty note on the refused path: a leg that refused names the refusal — it never claims
+// the draws it did not run (the note and the refused block must tell the same story).
+TEST(SurveyMcRegionEss, RefusedLegNoteNamesTheRefusalNotARun) {
+  const ConfigManager config = RandomPrismScene();
+  SurveyRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 5 } };
+  request.symmetry_bits = 0;
+  request.mc_ess_draws = kSurveyMcEssMaxDraws;
+  request.budget_ms = 1;  // the deadline hits long before the requested draws can complete
+  SurveyDocument document;
+  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  ASSERT_TRUE(document.mc_region_ess.has_value());
+  EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kRefused);
+  EXPECT_EQ(document.mc_region_ess->evidence.mode, "budget_exhausted");
+  EXPECT_NE(document.budget_note.find("MC region ESS"), std::string::npos);
+  EXPECT_NE(document.budget_note.find("refused"), std::string::npos);
+  EXPECT_EQ(document.budget_note.find("seeded draws"), std::string::npos);
+}
+
 // The serialized shape on a real document: the key list matches the planned schema-4 append
 // exactly, and the block sits at the document's top level.
 TEST(SurveyMcRegionEss, SerializedKeySetMatchesThePlannedAppend) {

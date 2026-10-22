@@ -503,6 +503,13 @@
 // source_image object at the sun and stops; otherwise the T0 facts ship and the T1/T2 kinds
 // ride unevaluated. New JSON schema "lumice.path-survey", schema_version 4
 // (doc/raypath/raypath-cli-output.md §9). No existing symbol or struct changed.
-#define LUMICE_API_VERSION 454
+// ADDED (v4.55): the survey's opt-in MC region ESS leg, a pure append —
+// LUMICE_PathSurveyRequest gains the struct_size-gated trailing mc_ess_draws (0 = the leg does
+// not run; positive at most LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS), and
+// LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS joins the survey's shell-facing bounds. The schema-4
+// survey document gains optional document-level leg blocks (tir_share, mc_region_ess);
+// documents that do not run them are byte-identical to v4.54's. No existing symbol or struct
+// layout changed for old callers.
+#define LUMICE_API_VERSION 455
 
 #endif  // LUMICE_API_VERSION_H_

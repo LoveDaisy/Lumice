@@ -9,8 +9,10 @@
 // assembly's input snapshot feeds a DiagnosticSampler (fixed seed, prefix-replay reproducible)
 // and BuildDiagnosticMeasure fills the measure; the leg then buckets the measure's Y-channel
 // weights into 5-degree delta bands and computes each band's Kish effective sample size over
-// outer-draw groups — the PresenceEss grouping discipline (one draw is one sampling act even
-// when it contributed several member rows), not a second implementation of the ratio.
+// outer-draw groups — the grouping discipline shared with PresenceEss (one draw is one sampling
+// act even when it contributed several member rows); the ratio itself is re-implemented here
+// because PresenceEss is kernel-bound (it reads the attribution counts' kernel weights and
+// returns one scalar for the whole measure).
 //
 // A sampling-quality measurement, never a corroboration verdict: the block carries no
 // agrees/silent/conflicts word (the MC annotation vocabulary stays on the schema-3 side), and

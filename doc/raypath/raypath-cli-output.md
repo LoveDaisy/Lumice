@@ -1068,7 +1068,7 @@ mechanism read as a class-level estimate (a larger refractive index lowers the T
 and widens the window, so the share grows toward blue; the corpus's C15 anchor — 51.1% at
 450 nm / 38.6% at 650 nm of the positive-A sample energy from twice-TIR poses — is the
 actual-distribution caliber, a DIFFERENT protocol from this leg's declared-lattice × class
-representative caliber: direction参照 only, never a magnitude assertion, and the `caliber`
+representative caliber: a direction reference only, never a magnitude assertion, and the `caliber`
 string inside the block says so). Scope: the full-dimensional route and the refused-support
 route (the partition's refusal says nothing about the internal-reflection weight split, which
 the declared lattice still answers); the identity early-stop and the family routes do not run

@@ -195,7 +195,7 @@ typedef struct LUMICE_PathSurveyRequest {
   // 0 = the physical P|B|D class (the default); 1 = the literal requested sequence — the report
   // request's symmetry_bits_plus_one encoding.
   int symmetry_bits_plus_one;
-  // Appended post-v4.54, read only when struct_size covers it: 0 (the default) = the opt-in
+  // Appended v4.55, read only when struct_size covers it: 0 (the default) = the opt-in
   // MC region ESS leg does not run; positive = its requested draw count, at most
   // LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS (refused as invalid_argument beyond, or when negative).
   // The leg appears in the document only where its arms run it (the full-dimensional and

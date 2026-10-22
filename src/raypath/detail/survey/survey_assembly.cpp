@@ -89,11 +89,25 @@ SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, cons
   return verdict;
 }
 
-}  // namespace
+// The two TIR-share call sites below build the same input (the leg's own defaults carry the
+// rest), so the wiring stays one line per arm like the ESS leg's shared wrapper.
+TirShareInput TirShareInputOf(const ConfigManager& config, const analytic::FaceNormalTable& table,
+                              const analytic::FacePolygonTable& polygons, const analytic::CrystalShape& crystal,
+                              const std::vector<int>& representative, int member_count) {
+  TirShareInput input;
+  input.table = &table;
+  input.polygons = &polygons;
+  input.crystal = &crystal;
+  input.representative = &representative;
+  SunIncidentDirection(config.scene_.light_source_.param_, input.incident);
+  input.member_count = member_count;
+  return input;
+}
 
 // The opt-in MC region ESS leg's shared assembly (both T1 arms run it when the request asked):
 // the survey's own scene snapshot at its resolved reference lambda, with the at-sun direction
-// the delta bands read. Appends the leg's note to the budget note the caller already wrote.
+// the delta bands read. Appends the leg's note to the budget note the caller already wrote —
+// the note names what actually ran: a refused leg never claims the draws it did not run.
 void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSnapshot& snapshot,
                                       const SurveyRequest& request, int member_count, double wavelength_nm,
                                       SurveyDocument* out) {
@@ -112,10 +126,19 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
   ess_input.draws = request.mc_ess_draws;
   ess_input.budget_ms = request.budget_ms;
   AssembleMcRegionEss(ess_input, out);
-  out->budget_note += " The requested MC region ESS leg ran " + std::to_string(request.mc_ess_draws) +
-                      " seeded draws at the reference lambda; its deadline is the survey budget's "
-                      "guardrail.";
+  const SurveyMcRegionEss& ess = *out->mc_region_ess;
+  if (ess.evidence.state == EvidenceState::kFinite) {
+    out->budget_note += " The requested MC region ESS leg ran " + std::to_string(request.mc_ess_draws) +
+                        " seeded draws at the reference lambda; it is the one budget-bounded leg (the "
+                        "survey budget is its deadline guardrail) — the enumeration's unenforced legs "
+                        "are the others.";
+  } else {
+    out->budget_note += " The requested MC region ESS leg ran no draws: " + std::to_string(request.mc_ess_draws) +
+                        " were requested and refused (" + ess.evidence.mode + ").";
+  }
 }
+
+}  // namespace
 
 Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out) {
   if (out == nullptr) {
@@ -309,14 +332,9 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         // The exception evidence leg on the same refused path: the partition's refusal says
         // nothing about the internal-reflection weight split, which the declared lattice still
         // answers (the witness's independence principle, one block down).
-        TirShareInput tir_input;
-        tir_input.table = &table;
-        tir_input.polygons = &polygons;
-        tir_input.crystal = &crystal.shape;
-        tir_input.representative = &request.path_layers[0];
-        SunIncidentDirection(config.scene_.light_source_.param_, tir_input.incident);
-        tir_input.member_count = static_cast<int>(scope.members.size());
-        AssembleTirShare(tir_input, out);
+        AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
+                                         static_cast<int>(scope.members.size())),
+                         out);
         AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
                                          wavelength.wavelength_nm, out);
         any_escaped = true;
@@ -364,14 +382,9 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         // The exception evidence leg: the TIR share over the same declared lattice (a
         // document-level block of its own, beside family_routing; its refusals never touch the
         // chromatic block).
-        TirShareInput tir_input;
-        tir_input.table = &table;
-        tir_input.polygons = &polygons;
-        tir_input.crystal = &crystal.shape;
-        tir_input.representative = &request.path_layers[0];
-        SunIncidentDirection(config.scene_.light_source_.param_, tir_input.incident);
-        tir_input.member_count = static_cast<int>(scope.members.size());
-        AssembleTirShare(tir_input, out);
+        AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
+                                         static_cast<int>(scope.members.size())),
+                         out);
         AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
                                          wavelength.wavelength_nm, out);
       }

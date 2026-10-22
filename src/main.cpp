@@ -2789,9 +2789,12 @@ int ParseSurveyOptions(int argc, char** argv, int first, SurveyOptions& opts) {
       const std::string_view value = argv[++i];
       const auto draws = ParseStrictUnsigned(value);
       // Zero means "the leg does not run", which is the no-flag default — asking for it
-      // explicitly is a typo, not a request. The upper bound is the engine's to decide.
-      if (!draws.has_value() || *draws == 0) {
-        std::cerr << "Error: --mc-ess requires a positive integer draw count, got '" << value << "'\n\n";
+      // explicitly is a typo, not a request. The mirrored bound is rejected here too: the
+      // request field is an int, and a silent truncation would wrap a typo into a small
+      // legal value instead of the refused one the engine would have given.
+      if (!draws.has_value() || *draws == 0 || *draws > LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS) {
+        std::cerr << "Error: --mc-ess requires an integer draw count in [1, " << LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS
+                  << "], got '" << value << "'\n\n";
         PrintSurveyUsage(argv[0], std::cerr);
         return 1;
       }

@@ -1,6 +1,7 @@
 #include "raypath/detail/survey/survey_mc_ess.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 
@@ -19,22 +20,23 @@ struct BandAccumulator {
   uint64_t current_draw = 0;
   bool group_open = false;
   double group = 0.0;
-  double sum = 0.0;
-  double sum_squared = 0.0;
   double sum_weight = 0.0;
+  double sum_squared = 0.0;
   long long draw_count = 0;
 
   void CloseGroup() {
     if (group_open && group > 0.0) {
-      sum += group;
-      sum_squared += group * group;
       sum_weight += group;
+      sum_squared += group * group;
       draw_count++;
     }
     group_open = false;
     group = 0.0;
   }
   void Add(uint64_t draw, double y) {
+    // Rows arrive in the measure builder's emission order; a decreasing draw id would mean the
+    // grouping below silently splits a draw's weight across two groups and undercounts the ESS.
+    assert(!group_open || draw >= current_draw);
     if (!group_open || draw != current_draw) {
       CloseGroup();
       current_draw = draw;
@@ -42,7 +44,7 @@ struct BandAccumulator {
     }
     group += y;
   }
-  double Ess() const { return sum_squared > 0.0 ? sum * sum / sum_squared : 0.0; }
+  double Ess() const { return sum_squared > 0.0 ? sum_weight * sum_weight / sum_squared : 0.0; }
 };
 
 }  // namespace
