@@ -504,6 +504,11 @@ void PrintSurveyUsage(const char* prog_name, std::ostream& output = std::cout) {
          << "  --budget <N>[s]    Integer seconds, the 's' optional (default 15; max 120). Recorded\n"
          << "                     in the document's budget block; the v1 routing leg is millisecond\n"
          << "                     work and does not consume it yet.\n"
+         << "  --mc-ess <draws>   Also run the opt-in MC region ESS leg: the MC corroboration\n"
+         << "                     sampling's Kish effective sample size per 5-degree delta band\n"
+         << "                     (seeded, reproducible for the fixed seed; deadline-bound by\n"
+         << "                     --budget). Requires a positive integer (max 200000); the leg\n"
+         << "                     runs on the full-dimensional and refused-support routes.\n"
          << "  -o <path>          Write the JSON to this file instead of stdout.\n"
          << kHelpLogAndHelpOptions << "\n"
          << "Examples:\n"
@@ -1293,7 +1298,8 @@ struct SurveyOptions {
   bool literal = false;                 // --literal: the literal sequence, not the physical class
   std::optional<double> wavelength_nm;  // --lambda; nullopt = the engine's reference choice
   int budget_seconds = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS / 1000;  // --budget; the engine's ms constants clamp it
-  std::filesystem::path output_path;                                 // empty = stdout
+  long long mc_ess_draws = 0;         // --mc-ess; 0 = the opt-in MC region ESS leg does not run
+  std::filesystem::path output_path;  // empty = stdout
 };
 
 // Outcome of offering argv[i] to the option set every subcommand shares.
@@ -2726,8 +2732,8 @@ int ParseSurveyOptions(int argc, char** argv, int first, SurveyOptions& opts) {
       case SharedStep::kNotShared:
         break;
     }
-    const bool takes_value =
-        arg == "--crystal" || arg == "--path" || arg == "--lambda" || arg == "--budget" || arg == "-o";
+    const bool takes_value = arg == "--crystal" || arg == "--path" || arg == "--lambda" || arg == "--budget" ||
+                             arg == "--mc-ess" || arg == "-o";
     if (takes_value && i + 1 >= argc) {
       std::cerr << "Error: " << arg << " requires an argument\n\n";
       PrintSurveyUsage(argv[0], std::cerr);
@@ -2779,6 +2785,20 @@ int ParseSurveyOptions(int argc, char** argv, int first, SurveyOptions& opts) {
         return 1;
       }
       opts.budget_seconds = static_cast<int>(*seconds);
+    } else if (arg == "--mc-ess") {
+      const std::string_view value = argv[++i];
+      const auto draws = ParseStrictUnsigned(value);
+      // Zero means "the leg does not run", which is the no-flag default — asking for it
+      // explicitly is a typo, not a request. The mirrored bound is rejected here too: the
+      // request field is an int, and a silent truncation would wrap a typo into a small
+      // legal value instead of the refused one the engine would have given.
+      if (!draws.has_value() || *draws == 0 || *draws > LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS) {
+        std::cerr << "Error: --mc-ess requires an integer draw count in [1, " << LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS
+                  << "], got '" << value << "'\n\n";
+        PrintSurveyUsage(argv[0], std::cerr);
+        return 1;
+      }
+      opts.mc_ess_draws = static_cast<long long>(*draws);
     } else if (arg == "-o") {
       opts.output_path = argv[++i];
       if (opts.output_path.empty()) {
@@ -2854,11 +2874,13 @@ int RunSurvey(const SurveyOptions& opts) {
   request.wavelength_nm = opts.wavelength_nm.value_or(0.0);
   request.budget_ms = opts.budget_seconds * 1000;
   request.symmetry_bits_plus_one = opts.literal ? 1 : 0;
+  request.mc_ess_draws = static_cast<int>(opts.mc_ess_draws);
 
   std::cerr << "[raypath survey] crystal " << *opts.crystal_id << ", path " << opts.path_text << " ("
             << (opts.literal ? "literal" : "physical PBD class") << "), reference lambda "
             << (opts.wavelength_nm.has_value() ? std::to_string(*opts.wavelength_nm) : "scene default") << ", budget "
-            << opts.budget_seconds << "s\n";
+            << opts.budget_seconds << "s"
+            << (opts.mc_ess_draws > 0 ? ", mc-ess " + std::to_string(opts.mc_ess_draws) + " draws" : "") << "\n";
   const auto start = std::chrono::steady_clock::now();
   LUMICE_PathSurvey* raw_survey = nullptr;
   char err_buf[1024] = {};

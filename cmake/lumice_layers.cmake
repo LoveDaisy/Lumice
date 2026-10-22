@@ -276,6 +276,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/survey/evidence.hpp
   raypath/detail/survey/survey_assembly.cpp
   raypath/detail/survey/survey_assembly.hpp
+  raypath/detail/survey/survey_mc_ess.cpp
+  raypath/detail/survey/survey_mc_ess.hpp
   raypath/detail/survey/survey_document.hpp
   raypath/detail/survey/survey_family.cpp
   raypath/detail/survey/survey_family.hpp
@@ -285,6 +287,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/survey/survey_probe.hpp
   raypath/detail/survey/survey_t1.cpp
   raypath/detail/survey/survey_t1.hpp
+  raypath/detail/survey/survey_tir_share.cpp
+  raypath/detail/survey/survey_tir_share.hpp
   raypath/detail/survey/survey_tint.cpp
   raypath/detail/survey/survey_tint.hpp
   raypath/detail/survey/survey_witness.cpp

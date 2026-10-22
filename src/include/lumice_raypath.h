@@ -158,13 +158,19 @@ LUMICE_API void LUMICE_PathFeatureReportDestroy(LUMICE_PathFeatureReport* result
 // analysis stops there; any other member verdict ships the T0 facts and leaves the T1/T2 object
 // kinds unevaluated with the named reason. The result is the schema-4 document
 // ("lumice.path-survey", doc/raypath/raypath-cli-output.md), serialized engine-side once — the
-// CLI and the GUI read the same bytes. Synchronous, deterministic, and independent of any
-// LUMICE_Server; it runs on the calling thread and cannot be cancelled (the v1 routing leg is
-// millisecond work, so no budget is enforced yet — see the document's budget block).
+// CLI and the GUI read the same bytes. Synchronous and independent of any LUMICE_Server; it
+// runs on the calling thread and cannot be cancelled. The routing/probe/chromatic legs are
+// deterministic and enforce no budget yet (the v1 routing leg is millisecond work); one
+// document-level leg is the exception: the opt-in MC region ESS leg (see mc_ess_draws below)
+// is seeded random, reproducible for a given seed, and bounded by budget_ms's deadline.
 
 // The largest budget_ms a survey request may carry, mirroring the report request's bound. The
 // v1 leg does not consume it; the constant exists so a shell can validate before the engine does.
 #define LUMICE_PATH_SURVEY_MAX_BUDGET_MS 120000
+
+// The largest mc_ess_draws a survey request may carry (the engine refuses more). The opt-in MC
+// region ESS leg consumes the budget_ms deadline, not a per-draw budget.
+#define LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS 200000
 
 // The budget_ms a 0 budget_ms request resolves to, as a shell-facing constant (the engine's own
 // default, mirrored here for the same validate-early purpose).
@@ -189,6 +195,12 @@ typedef struct LUMICE_PathSurveyRequest {
   // 0 = the physical P|B|D class (the default); 1 = the literal requested sequence — the report
   // request's symmetry_bits_plus_one encoding.
   int symmetry_bits_plus_one;
+  // Appended v4.55, read only when struct_size covers it: 0 (the default) = the opt-in
+  // MC region ESS leg does not run; positive = its requested draw count, at most
+  // LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS (refused as invalid_argument beyond, or when negative).
+  // The leg appears in the document only where its arms run it (the full-dimensional and
+  // refused-support routes).
+  int mc_ess_draws;
 } LUMICE_PathSurveyRequest;
 
 typedef struct LUMICE_PathSurvey_ LUMICE_PathSurvey;

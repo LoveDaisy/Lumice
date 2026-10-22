@@ -143,5 +143,46 @@ TEST_F(SurveyCApi, LiteralSymmetryAndNullArgContracts) {
   EXPECT_EQ(LUMICE_AnalyzePathSurvey(nullptr, &request, &raw, err, sizeof(err)), LUMICE_ERR_NULL_ARG);
 }
 
+// The appended mc_ess_draws reads only when the caller's struct carries it: a v4.54-shaped
+// request (struct_size stops at symmetry_bits_plus_one) with an out-of-range count in its
+// tail must succeed — the gate ignores the tail, so the poison never reaches the engine's
+// validation (a gate that read it would turn the call invalid_argument). A full-size request
+// is validated: past the cap is invalid_argument, and a valid count on an identity-arm path
+// succeeds with no mc_region_ess key (the arm does not run the leg).
+TEST_F(SurveyCApi, McEssDrawsReadThroughTheStructSizeGate) {
+  static int faces[] = { 1, 2 };
+  static int counts[] = { 2 };
+  LUMICE_PathSurveyRequest request{};
+  request.crystal_id = 1;
+  request.faces = faces;
+  request.face_count = 2;
+  request.layer_face_counts = counts;
+  request.layer_count = 1;
+
+  const size_t kV454Size = offsetof(LUMICE_PathSurveyRequest, symmetry_bits_plus_one) + sizeof(int);
+  request.struct_size = kV454Size;
+  request.symmetry_bits_plus_one = 0;
+  request.mc_ess_draws = LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS + 1;  // the discriminating poison
+  LUMICE_PathSurvey* raw = nullptr;
+  char err[512] = {};
+  ASSERT_EQ(LUMICE_AnalyzePathSurvey(scene_.get(), &request, &raw, err, sizeof(err)), LUMICE_OK);
+  LUMICE_PathSurveyDestroy(raw);
+
+  request.struct_size = sizeof(request);
+  request.mc_ess_draws = LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS + 1;
+  EXPECT_EQ(LUMICE_AnalyzePathSurvey(scene_.get(), &request, &raw, err, sizeof(err)), LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(raw, nullptr);
+
+  request.mc_ess_draws = 200;  // valid, but the plate early-stops before the leg's arms
+  ASSERT_EQ(LUMICE_AnalyzePathSurvey(scene_.get(), &request, &raw, err, sizeof(err)), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathSurvey, void (*)(LUMICE_PathSurvey*)> result(raw, LUMICE_PathSurveyDestroy);
+  size_t len = 0;
+  ASSERT_EQ(LUMICE_PathSurveyToJson(result.get(), nullptr, 0, &len), LUMICE_OK);
+  std::string text(len + 1, '\0');
+  ASSERT_EQ(LUMICE_PathSurveyToJson(result.get(), text.data(), text.size(), &len), LUMICE_OK);
+  const auto document = nlohmann::json::parse(text);
+  EXPECT_FALSE(document.contains("mc_region_ess"));
+}
+
 }  // namespace
 }  // namespace lumice::raypath::survey

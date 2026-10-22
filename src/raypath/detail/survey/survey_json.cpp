@@ -392,6 +392,58 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
   }
 
   doc["chromatic"] = EvidenceJson(document.chromatic);
+  // The exception evidence legs: keys exist exactly when the leg ran (the schema-4 append's
+  // conditional-presence discipline — an arm that does not carry a leg serializes no key). A
+  // refusal serializes exactly its evidence block ({state, mode}), byte-compatible with the
+  // tint leg's refused shape — no defaulted number reaches the document.
+  if (document.tir_share.has_value()) {
+    const SurveyTirShare& tir = *document.tir_share;
+    if (tir.evidence.state == EvidenceState::kRefused) {
+      doc["tir_share"] = EvidenceJson(tir.evidence);
+    } else {
+      Json interfaces = Json::array();
+      for (const SurveyTirShareInterface& row : tir.interfaces) {
+        interfaces.push_back(
+            { { "face", row.face }, { "share_red", Num(row.share_red) }, { "share_blue", Num(row.share_blue) } });
+      }
+      doc["tir_share"] = { { "n_red", Num(tir.n_red) },
+                           { "n_blue", Num(tir.n_blue) },
+                           { "interfaces", std::move(interfaces) },
+                           { "share_all_tir_red", Num(tir.share_all_tir_red) },
+                           { "share_all_tir_blue", Num(tir.share_all_tir_blue) },
+                           { "sample_count", tir.sample_count },
+                           { "lattice", tir.lattice },
+                           { "deterministic", tir.deterministic },
+                           { "representative", LayersJson({ tir.representative })[0] },
+                           { "member_count", tir.member_count },
+                           { "kept_count_red", tir.kept_count_red },
+                           { "kept_count_blue", tir.kept_count_blue },
+                           { "caliber", tir.caliber },
+                           { "evidence", EvidenceJson(tir.evidence) } };
+    }
+  }
+  if (document.mc_region_ess.has_value()) {
+    const SurveyMcRegionEss& ess = *document.mc_region_ess;
+    if (ess.evidence.state == EvidenceState::kRefused) {
+      doc["mc_region_ess"] = EvidenceJson(ess.evidence);
+    } else {
+      Json bands = Json::array();
+      for (const SurveyMcRegionEssBand& band : ess.bands) {
+        bands.push_back({ { "delta_min_deg", Num(band.delta_min_deg) },
+                          { "delta_max_deg", Num(band.delta_max_deg) },
+                          { "ess", Num(band.ess) },
+                          { "draw_count", band.draw_count },
+                          { "sum_weight", Num(band.sum_weight) } });
+      }
+      doc["mc_region_ess"] = { { "seed", ess.seed },
+                               { "draws", ess.draws },
+                               { "lambda_nm", Num(ess.lambda_nm) },
+                               { "band_deg", Num(ess.band_deg) },
+                               { "bands", std::move(bands) },
+                               { "deterministic", ess.deterministic },
+                               { "evidence", EvidenceJson(ess.evidence) } };
+    }
+  }
   if (document.positional_dispersion.has_value()) {
     const SurveyPositionalDispersion& dispersion = *document.positional_dispersion;
     // The min-row scalars exist exactly when the min-deviation row does (the probe reading's

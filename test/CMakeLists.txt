@@ -347,6 +347,13 @@ add_executable(unit_correctness_test
   # support card (the refused+finite coexistence), the ladder's existence stability, the
   # fail-closed shapes and the negative controls.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_witness.cpp"
+  # The survey's TIR share leg: the kept-event weight share on all-internal-TIR poses per
+  # lambda (the k=1 aggregate/row identity, the no-internal-interface refusal, the member
+  # negative control, the determinism, and the arm-scope wiring).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_tir_share.cpp"
+  # The survey's opt-in MC region ESS leg: the seeded sampler's band ESS (the Kish bounds, the
+  # bitwise reproducibility, the opt-in key discipline and the request cap).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_mc_ess.cpp"
   # The survey's C bridge (v4.54): struct_size and null-arg contracts, the stable refusal names,
   # the happy path's schema-4 document with the request echo.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_c_api.cpp")

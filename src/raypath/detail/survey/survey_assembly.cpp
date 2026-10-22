@@ -10,9 +10,11 @@
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
 #include "raypath/detail/survey/survey_family.hpp"
+#include "raypath/detail/survey/survey_mc_ess.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/detail/survey/survey_tint.hpp"
+#include "raypath/detail/survey/survey_tir_share.hpp"
 #include "raypath/detail/survey/survey_witness.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
@@ -87,6 +89,56 @@ SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, cons
   return verdict;
 }
 
+// The two TIR-share call sites below build the same input (the leg's own defaults carry the
+// rest), so the wiring stays one line per arm like the ESS leg's shared wrapper.
+TirShareInput TirShareInputOf(const ConfigManager& config, const analytic::FaceNormalTable& table,
+                              const analytic::FacePolygonTable& polygons, const analytic::CrystalShape& crystal,
+                              const std::vector<int>& representative, int member_count) {
+  TirShareInput input;
+  input.table = &table;
+  input.polygons = &polygons;
+  input.crystal = &crystal;
+  input.representative = &representative;
+  SunIncidentDirection(config.scene_.light_source_.param_, input.incident);
+  input.member_count = member_count;
+  return input;
+}
+
+// The opt-in MC region ESS leg's shared assembly (both T1 arms run it when the request asked):
+// the survey's own scene snapshot at its resolved reference lambda, with the at-sun direction
+// the delta bands read. Appends the leg's note to the budget note the caller already wrote —
+// the note names what actually ran: a refused leg never claims the draws it did not run.
+void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSnapshot& snapshot,
+                                      const SurveyRequest& request, int member_count, double wavelength_nm,
+                                      SurveyDocument* out) {
+  if (request.mc_ess_draws <= 0) {
+    return;
+  }
+  double sun_hat[3];
+  SunIncidentDirection(config.scene_.light_source_.param_, sun_hat);
+  McRegionEssInput ess_input;
+  ess_input.snapshot = &snapshot;
+  ess_input.wavelength_nm = wavelength_nm;
+  for (int k = 0; k < 3; k++) {
+    ess_input.sun_dir[static_cast<size_t>(k)] = -sun_hat[k];
+  }
+  ess_input.member_count = member_count;
+  ess_input.draws = request.mc_ess_draws;
+  ess_input.budget_ms = request.budget_ms;
+  AssembleMcRegionEss(ess_input, out);
+  const SurveyMcRegionEss& ess = *out->mc_region_ess;
+  if (ess.evidence.state == EvidenceState::kFinite) {
+    out->budget_note += " The requested MC region ESS leg ran " + std::to_string(request.mc_ess_draws) +
+                        " seeded draws at the reference lambda; it is the one budget-bounded leg (the "
+                        "survey budget is its deadline guardrail) — the enumeration's unenforced legs "
+                        "are the others.";
+  } else {
+    out->budget_note += " The requested MC region ESS leg was refused (" + ess.evidence.mode +
+                        "): " + std::to_string(request.mc_ess_draws) +
+                        " draws were requested and no bands were published.";
+  }
+}
+
 }  // namespace
 
 Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out) {
@@ -101,6 +153,9 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   }
   if (request.symmetry_bits > 7 || request.budget_ms <= 0 || request.budget_ms > kMaxSurveyBudgetMs) {
     return { ErrorCode::kInvalidArgument, "invalid survey symmetry bits or budget request" };
+  }
+  if (request.mc_ess_draws < 0 || request.mc_ess_draws > kSurveyMcEssMaxDraws) {
+    return { ErrorCode::kInvalidArgument, "invalid survey mc ess draws request" };
   }
 
   const auto configured = config.crystals_.find(request.crystal_id);
@@ -268,10 +323,21 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
                                    "), and the chromatic legs sit downstream of it",
                                "the refused-support arm's legs are the T0 routing verdict, the "
                                "per-member partition attempt (refused: " +
-                                   outcome.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
-                                   "-sample witness lattice; none is budget-enforced yet; enforcement "
+                                   outcome.refusal_mode + "), the " + std::to_string(kSurveyWitnessSampleCount) +
+                                   "-sample witness lattice, and the TIR share leg's re-classification "
+                                   "of the declared lattice at " +
+                                   std::to_string(kSurveyTirShareSampleCount) +
+                                   " samples per lambda; none is budget-enforced yet; enforcement "
                                    "lands with the quantification legs",
                                true, out);
+        // The exception evidence leg on the same refused path: the partition's refusal says
+        // nothing about the internal-reflection weight split, which the declared lattice still
+        // answers (the witness's independence principle, one block down).
+        AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
+                                         static_cast<int>(scope.members.size())),
+                         out);
+        AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
+                                         wavelength.wavelength_nm, out);
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
       } else {
@@ -279,8 +345,11 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         // says what ran instead of repeating the early-stop arm's millisecond-only claim.
         out->budget_note =
             "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, "
-            "the chromatic pair, and the class tint's two-lambda power sum at " +
+            "the chromatic pair, the class tint's two-lambda power sum at " +
             std::to_string(kSurveyClassTintSampleCount) +
+            " samples per lambda, and the TIR share "
+            "leg's re-classification of the same declared lattice at " +
+            std::to_string(kSurveyTirShareSampleCount) +
             " samples per lambda) are not budget-enforced yet; enforcement lands with the "
             "quantification legs";
         // The canonical probe: the class's radial profile at the document's reference
@@ -311,6 +380,14 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         SunIncidentDirection(config.scene_.light_source_.param_, class_tint_input.incident);
         class_tint_input.member_count = static_cast<int>(scope.members.size());
         AssembleClassTint(class_tint_input, out);
+        // The exception evidence leg: the TIR share over the same declared lattice (a
+        // document-level block of its own, beside family_routing; its refusals never touch the
+        // chromatic block).
+        AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
+                                         static_cast<int>(scope.members.size())),
+                         out);
+        AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
+                                         wavelength.wavelength_nm, out);
       }
     } else {
       // The family-restricted route (gap 1's own): the measure is read in the concentration
