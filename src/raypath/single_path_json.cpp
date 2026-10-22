@@ -210,12 +210,7 @@ nlohmann::ordered_json MeasureRegistrationJson(const MeasureRegistration& m) {
 // readings, and the quadrature integral — or the honest unavailable state, exactly one of the two
 // shapes, never a defaulted number.
 nlohmann::ordered_json OrbitFactorsJson(const OrbitFactors& o) {
-  nlohmann::ordered_json j = { { "available", o.available },
-                               { "measure_support", o.measure_support },
-                               { "rho_registered", o.rho_registered } };
-  if (!o.rho_registered) {
-    j["rho_note"] = o.rho_note;
-  }
+  nlohmann::ordered_json j = { { "available", o.available }, { "measure_support", o.measure_support } };
   if (!o.available) {
     j["reason"] = o.reason;
     return j;
@@ -461,9 +456,10 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
   if (!is_survey) {
     // The schema-1 arm, spelled exactly as ParseWarmSeeds's: a target-fiber output is a seed
     // sheet, not a survey index — the survey context stays unset and the query computes it
-    // inline.
+    // inline (from_survey_document stays false: the bridge hands the query nothing here).
     return ParseWarmSeeds(json_text, seeds);
   }
+  survey->from_survey_document = true;
   const auto refuse = [](const std::string& why) { return Error{ ErrorCode::kInvalidArgument, "warm index: " + why }; };
   // Gate 1-2: the crystal and the path, against the request echo.
   if (!doc.contains("request") || !doc["request"].is_object()) {

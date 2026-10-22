@@ -217,6 +217,27 @@ TEST(SinglePathCApi, WarmJsonFromAnEarlierResultIsAccepted) {
   EXPECT_EQ(b["meta"]["discovery_settings"]["warm_seed_count"], a["components"].size() + a["incomplete"].size());
 }
 
+// The schema-1 seed sheet through --warm keeps the context honestly inline: "not a survey
+// document" is a different absence from "a survey document without its warm_index block", and
+// must never be declared as the warm_index_absent degradation.
+TEST(SinglePathCApi, Schema1WarmSheetKeepsTheContextInline) {
+  const ScenePtr scene = MakeScene();
+  const Outcome first = Analyse(scene.get(), Req({ 3, 5 }, { 2 }));
+  ASSERT_EQ(first.code, LUMICE_OK) << first.error;
+  Req again({ 3, 5 }, { 2 });
+  again.warm = Json(first.result.get());
+  again.Bind();
+  const Outcome second = Analyse(scene.get(), again);
+  ASSERT_EQ(second.code, LUMICE_OK) << second.error;
+  const nlohmann::json doc = nlohmann::json::parse(Json(second.result.get()));
+  EXPECT_GT(doc["meta"]["discovery_settings"]["warm_seed_count"], 0);  // the seeds were consumed
+  const nlohmann::json& context = doc["survey_context"];
+  EXPECT_EQ(context["source"], "inline");
+  EXPECT_EQ(context["warm_index_absent"], false);
+  EXPECT_EQ(context["band_sum"]["state"], "unevaluated");
+  EXPECT_EQ(context["band_sum"]["reason"], "inline_context_runs_no_probe");
+}
+
 // ---- the --warm survey contract (schema 4) ---------------------------------------------------------
 
 // A survey C API scene whose full-random axis routes the T1 full-dimensional arm (the support,

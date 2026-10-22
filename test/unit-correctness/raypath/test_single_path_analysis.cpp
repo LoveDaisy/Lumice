@@ -798,6 +798,9 @@ TEST(SinglePathFactors, RhoIsTheDeclaredDensityDeclared) {
   EXPECT_LT(rho_min, std::numeric_limits<double>::infinity());
   EXPECT_EQ(r.measure_registration.support_kind, "area");
   EXPECT_TRUE(r.measure_registration.fast_path);
+  // The all-spread area axis is not a gap: both dirac predicates fall through, so the registration
+  // stays silent (the green arm of the fixed-azimuth red test below).
+  EXPECT_FALSE(r.measure_registration.registered_gap);
 }
 
 // The rank-0 orbit integral reproduces the measure layer's own kFiberParameter quadrature on the
@@ -907,6 +910,15 @@ TEST(SinglePathFingerprint, Sha256MatchesTheKnownAnswers) {
   using lumice::raypath::survey::Sha256Hex;
   EXPECT_EQ(Sha256Hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
   EXPECT_EQ(Sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  // The NIST vectors cover both compression paths the production fingerprints take: the 56-byte
+  // input straddling the padding boundary, and the 112-byte input exercising the cross-block
+  // state carry — the projection dumps are always multi-block.
+  EXPECT_EQ(Sha256Hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+  EXPECT_EQ(
+      Sha256Hex("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnop"
+                "qrstnopqrstu"),
+      "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
 }
 
 }  // namespace

@@ -52,7 +52,7 @@ Lumice raypath report -f <config> --crystal <id> --path <faces> [--events N] ...
 | `--target <alt>,<az>` | The sky point, degrees; azimuth measured as the sun's (the `analyze --center` convention). Required for `point`. |
 | `--wavelength <nm>` | In [350, 900]. Default: the config's, when its spectrum is exactly one wavelength; else 550. The choice is recorded in `meta.wavelength.source`. (`report` without it uses the actual scene spectrum.) |
 | `--events <N>` | Seed events of the component search — poses sampled to locate the fiber, **not** traced rays. K/M suffix; at most 100M (`LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`). Default 1M. (`report`: even outer samples, its own range.) |
-| `--budget-ms <N>` | `point` and `report`: the numerical deadline in milliseconds (default 15000; max 120000). Checked at the computation's loop boundaries: a stopped run serializes what it has and reports `meta.interrupted` — an honest early exit, exit code 0. |
+| `--budget-ms <N>` | `point` and `report`: the numerical deadline in milliseconds (default 15000; max 120000). Checked at the computation's loop boundaries: a stopped run serializes what it has and reports `meta.interrupted` — an honest early exit, exit code 0. Two legs are deliberately outside the polling: the inline context-only survey assembly (T0–T2, cheap and bounded by design) and the fiber continuation's inner steps (bounded by the `--max-evaluations` family instead) — a heavy case can overshoot the declared value by their cost |
 | `--grid <rows>` | Latitude rows of the sun-direction grid; longitude is twice that. [0, 720]; 0 leaves `sun_grid` out. Default 90. |
 | `--warm <file>` | What a previous output is worth (§5): a schema-1 `point` document's seeds start the search; a schema-4 `survey` document is the index the query consumes (§5, the `survey_context` block). |
 | `-o <path>` | Write the document here instead of stdout (never both). |
@@ -173,7 +173,7 @@ the rank-0 branch's factor decomposition:
 | Key | Meaning |
 |---|---|
 | `available` | False: the block is the honest unavailable state — `measure_support` names what the declared measure's support actually is and `reason` the named cause (e.g. `measure_support_not_spin_orbit`); no integral fields appear. True: the fields below |
-| `measure_support`, `rho_registered`, `rho_note` | The support kind the block integrates along; the orbit density's own registration |
+| `measure_support` | The support kind the block integrates along |
 | `sample_count` | Midpoint samples over [0, 2π) of the declared measure's spin orbit (1024 — the declared caliber) |
 | `integral` | Σ ρ_θ · A/a² · T · Δθ over kept samples (A·T > 0 and valid — the measure layer's positive-part convention). For a uniform-azimuth orbit this is the LI #51 tint kernel's integral form, and the quotient of two runs at the wavelength-pool ends is that spot's tint |
 | `integral_rule`, `kept_count` | The summation rule; the kept count (so "all dark" stays distinguishable from "no samples") |

@@ -175,7 +175,12 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
         return mismatch();
       }
     }
-    req.warm_survey = std::move(survey_source);
+    // Only a schema-4 survey document's harvest becomes the query's warm survey; a schema-1
+    // seed sheet feeds the seeds alone and the context stays inline (the two absences — not a
+    // survey document vs a survey document without its warm_index — must not merge).
+    if (survey_source.from_survey_document) {
+      req.warm_survey = std::move(survey_source);
+    }
   }
 
   rp::SinglePathResult result;

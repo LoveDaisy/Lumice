@@ -88,6 +88,11 @@ const char* ErrorCodeName(ErrorCode code);
 // consistency gates; a document that carried no (complete) warm_index leaves index_present false
 // — the warm_index_absent degradation, declared downstream, never an error here.
 struct SurveyWarmSource {
+  // True only when the input was a schema-4 survey document (the family discriminator): the
+  // bridge hands the query only such a harvest, so "not a survey document" (schema-1, inline
+  // context) and "a schema-4 document without its warm_index block" (the warm_index_absent
+  // degradation) stay two different absences.
+  bool from_survey_document = false;
   bool index_present = false;
   bool early_stopped = false;  // the identity arm: no delta-axis structure exists to reuse
   // The scope receipt (the band-sum consumption gate's comparison side). has_scope false = the
@@ -301,9 +306,6 @@ struct OrbitFactors {
   bool available = false;
   std::string reason;           // named cause when unavailable (e.g. "measure_support_not_spin_orbit")
   std::string measure_support;  // the u-marginal support kind, spelled either way
-  bool rho_registered = true;   // the orbit density's own registration (MeasureRegistration's face
-                                // for the parameter read)
-  std::string rho_note;         // the registration note when the density layer did not answer
   int sample_count = 0;         // midpoint samples over [0, 2 pi)
   // The quadrature: sum of rho_theta * entry_measure_a2 * total_transmission * dtheta over kept
   // samples (A*T > 0 and valid — fiber_quadrature's positive-part convention, which this branch

@@ -402,8 +402,7 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
         seed.push_back(Num(v));
       }
       seeds.push_back(std::move(seed));
-      sources.push_back(i < document.warm_index.seed_sources.size() ? document.warm_index.seed_sources[i] :
-                                                                      std::string(""));
+      sources.push_back(document.warm_index.seed_sources[i]);
     }
     doc["warm_index"] = { { "seeds", std::move(seeds) },
                           { "seed_sources", std::move(sources) },
