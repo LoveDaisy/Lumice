@@ -723,6 +723,32 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   return out;
 }
 
+bool NearestStructureAnchor(const SurveyWarmSource& warm, double deviation_deg, double* position_deg,
+                            const char** basis) {
+  bool has = false;
+  double best = 0.0;
+  const char* best_basis = "";
+  for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
+    for (const double end : { interval.lower_deg, interval.upper_deg }) {
+      if (!has || std::fabs(deviation_deg - end) < std::fabs(deviation_deg - best)) {
+        best = end;
+        best_basis = "support_interval_endpoint";
+        has = true;
+      }
+    }
+  }
+  if (warm.has_edge && (!has || std::fabs(deviation_deg - warm.edge_deg) < std::fabs(deviation_deg - best))) {
+    best = warm.edge_deg;
+    best_basis = "caustic_edge_position";
+    has = true;
+  }
+  if (has) {
+    *position_deg = best;
+    *basis = best_basis;
+  }
+  return has;
+}
+
 // The context's answers, read off a harvest (warm document or inline assembly — the same shape).
 void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
                        double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
@@ -759,30 +785,13 @@ void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg
     out->object_kind = "support_set";
     out->object_members = hit.members;
     out->object_distance_deg = containing != nullptr ? 0.0 : closest_distance;
-    double edge_distance = std::numeric_limits<double>::infinity();
-    const char* basis = "";
-    for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
-      const double lo = std::fabs(delta - interval.lower_deg);
-      const double hi = std::fabs(delta - interval.upper_deg);
-      if (lo < edge_distance) {
-        edge_distance = lo;
-        basis = "support_interval_endpoint";
-      }
-      if (hi < edge_distance) {
-        edge_distance = hi;
-        basis = "support_interval_endpoint";
-      }
-    }
-    if (warm.has_edge) {
-      const double d = std::fabs(delta - warm.edge_deg);
-      if (d < edge_distance) {
-        edge_distance = d;
-        basis = "caustic_edge_position";
-      }
-    }
+    // A certified support carries endpoints, so the shared walk always names an anchor here.
+    double edge_position = 0.0;
+    const char* edge_basis = "";
+    NearestStructureAnchor(warm, delta, &edge_position, &edge_basis);
     out->edge.state = "finite";
-    out->edge_distance_deg = edge_distance;
-    out->edge_basis = basis;
+    out->edge_distance_deg = std::fabs(delta - edge_position);
+    out->edge_basis = edge_basis;
   }
 
   // The band-sum reading: warm documents only, under the scope gate's exact-equality comparison

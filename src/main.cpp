@@ -1428,6 +1428,7 @@ struct ProbeOptions {
   std::vector<int> path_crystals;  // the ids of layers written C<id>(...)
   std::string path_text;           // as typed, for the progress line
   int along = LUMICE_PATH_PROBE_ALONG_RADIAL;
+  bool along_given = false;  // --along is required (the usage page's word); the enum default is not an answer
   std::optional<double> at_alt_deg;
   std::optional<double> at_az_deg;
   std::vector<double> wavelengths_nm;  // empty = the engine's single resolution
@@ -2399,6 +2400,7 @@ int ParseProbeOptions(int argc, char** argv, int first, ProbeOptions& opts) {
         return 1;
       }
       opts.along = form;
+      opts.along_given = true;
     } else if (arg == "--at") {
       const std::string_view value = argv[++i];
       const auto comma = value.find(',');
@@ -2491,6 +2493,7 @@ int ParseProbeOptions(int argc, char** argv, int first, ProbeOptions& opts) {
   const char* missing = !opts.crystal_id.has_value()   ? "--crystal <id>" :
                         opts.layer_face_counts.empty() ? "--path <faces>" :
                         !opts.at_alt_deg.has_value()   ? "--at <alt>,<az>" :
+                        !opts.along_given              ? "--along <form>" :
                                                          nullptr;
   if (missing != nullptr && !opts.shared.config_filename.empty()) {
     std::cerr << "Error: " << missing << " is required\n\n";
@@ -3570,7 +3573,7 @@ int RunProbe(const ProbeOptions& opts) {
   }
   std::cerr << "[raypath probe] crystal " << *opts.crystal_id << ", path " << opts.path_text << ", along " << along_name
             << ", at " << *opts.at_alt_deg << "," << *opts.at_az_deg << ", lambda " << lambda_text << ", lattice "
-            << (opts.events > 0 ? opts.events : 2000000) << ", budget "
+            << (opts.events > 0 ? std::to_string(opts.events) : std::string("lattice default")) << ", budget "
             << (opts.budget_ms > 0 ? opts.budget_ms : LUMICE_PATH_PROBE_DEFAULT_BUDGET_MS) << " ms"
             << (warm_text.empty() ? "" : ", warm start") << "\n";
   const auto start = std::chrono::steady_clock::now();

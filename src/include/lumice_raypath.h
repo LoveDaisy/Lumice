@@ -330,8 +330,10 @@ typedef struct LUMICE_PathProbe_ LUMICE_PathProbe;
 // (along, sample count, wavelength count or budget out of range), crystal_rejected,
 // path_infeasible (no pose realises the path), plus null_arg and internal with the same
 // meanings. Refusals the DOCUMENT carries rather than the error: no_edge_in_context,
-// degenerate_arc_at_pole, measure_not_expressible (the profile's evidence state reads refused
-// with the mode). Return codes match LUMICE_AnalyzeSinglePath's.
+// degenerate_arc_at_pole, measure_not_expressible, and inline_survey_refused (an edge-normal form
+// whose inline context assembly refused — the context blocks carry the same named reason); the
+// profile's evidence state reads refused with the mode. Return codes match
+// LUMICE_AnalyzeSinglePath's.
 LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeRequest* request,
                                                     LUMICE_PathProbe** out, char* err_buf, size_t err_size);
 

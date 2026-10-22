@@ -129,28 +129,31 @@ std::vector<ProbeLineProfile> EvaluateProbeLine(
   return profiles;
 }
 
-void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
-  const ProbeFrame frame = MakeProbeFrame(input.incident);
-
-  const int bins = static_cast<int>((kProbeDeltaMaxDeg - kProbeDeltaMinDeg) / kProbeBinDeg);
-  const double azimuth = input.azimuth_deg;  // the representative wedge's azimuth (the value is azimuth-free)
+ProbeLineLayout AxisLineLayout(double delta_min_deg, double delta_max_deg, double azimuth_deg) {
+  ProbeLineLayout layout;
+  const int bins = static_cast<int>(std::lround((delta_max_deg - delta_min_deg) / kProbeBinDeg));
   const double half_wedge = 0.5 * kProbeWedgeHalfWidthDeg * math::kDegreeToRadD;
   const double half_wedge_deg = 0.5 * kProbeWedgeHalfWidthDeg;
-
-  ProbeLineLayout layout;
   layout.bins.resize(static_cast<size_t>(bins));
   layout.delta_width_rad = kProbeBinDeg * math::kDegreeToRadD;
   layout.az_width_rad = 2.0 * half_wedge;
   for (int k = 0; k < bins; k++) {
-    const double lo = kProbeDeltaMinDeg + static_cast<double>(k) * kProbeBinDeg;
+    const double lo = delta_min_deg + static_cast<double>(k) * kProbeBinDeg;
     ProbeLineBin& bin = layout.bins[static_cast<size_t>(k)];
     bin.delta_centre_deg = lo + 0.5 * kProbeBinDeg;
     bin.delta_lo_deg = lo;
     bin.delta_hi_deg = lo + kProbeBinDeg;
-    bin.az_centre_deg = azimuth;
-    bin.az_lo_deg = azimuth - half_wedge_deg;
-    bin.az_hi_deg = azimuth + half_wedge_deg;
+    bin.az_centre_deg = azimuth_deg;
+    bin.az_lo_deg = azimuth_deg - half_wedge_deg;
+    bin.az_hi_deg = azimuth_deg + half_wedge_deg;
   }
+  return layout;
+}
+
+void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
+  const ProbeFrame frame = MakeProbeFrame(input.incident);
+
+  const ProbeLineLayout layout = AxisLineLayout(kProbeDeltaMinDeg, kProbeDeltaMaxDeg, input.azimuth_deg);
 
   const std::vector<ProbeLineProfile> profiles =
       EvaluateProbeLine(*input.table, *input.polygons, *input.representative, *input.density, frame, layout,

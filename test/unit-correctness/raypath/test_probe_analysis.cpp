@@ -1,9 +1,15 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstddef>
+#include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "include/lumice_base.h"
+#include "include/lumice_raypath.h"
+#include "include/lumice_scene.h"
 #include "raypath/probe_analysis.hpp"
 #include "survey_test_fixtures.hpp"
 
@@ -273,6 +279,85 @@ TEST(ProbeAnalysis, MultiLambdaGridLivesOnTheLineAndYieldsTheRedEdgeWidth) {
   EXPECT_TRUE(result.has_red_edge_width);
   EXPECT_DOUBLE_EQ(result.red_edge_width_deg,
                    result.profiles[1].readings.edge_deg - result.profiles[0].readings.edge_deg);
+}
+
+// ---- the C API gate (the bridge's own additions: null args, the struct_size gate, named
+// refusals — the point entry's same trio, on the probe's public face) ------------------------------
+
+constexpr const char* kProbeCApiScene = R"({
+  "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 } } ],
+  "filter": [],
+  "scene": {
+    "light_source": { "type": "sun", "altitude": 20.0, "spectrum": "D65" },
+    "ray_num": 1000,
+    "max_hits": 7,
+    "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+  },
+  "render": []
+})";
+
+struct ProbeSceneDeleter {
+  void operator()(LUMICE_Scene* s) const { LUMICE_SceneDestroy(s); }
+};
+using ProbeScenePtr = std::unique_ptr<LUMICE_Scene, ProbeSceneDeleter>;
+
+ProbeScenePtr MakeProbeCApiScene() {
+  LUMICE_Scene* s = nullptr;
+  EXPECT_EQ(LUMICE_SceneFromJson(kProbeCApiScene, &s), LUMICE_OK);
+  return ProbeScenePtr(s);
+}
+
+struct ProbeReq {
+  std::vector<int> faces{ 3, 5 };
+  std::vector<int> layers{ 2 };
+  LUMICE_PathProbeRequest c{};
+  ProbeReq() {
+    c.struct_size = sizeof(LUMICE_PathProbeRequest);
+    c.crystal_id = 1;
+    c.along = LUMICE_PATH_PROBE_ALONG_RADIAL;
+    c.at_altitude_deg = -30.0;
+    c.at_azimuth_deg = 0.0;
+    c.faces = faces.data();
+    c.face_count = static_cast<int>(faces.size());
+    c.layer_face_counts = layers.data();
+    c.layer_count = static_cast<int>(layers.size());
+  }
+};
+
+TEST(ProbeCApi, NullArgumentsAreRejected) {
+  const ProbeScenePtr scene = MakeProbeCApiScene();
+  ProbeReq req;
+  LUMICE_PathProbe* out = nullptr;
+  EXPECT_EQ(LUMICE_AnalyzePathProbe(nullptr, &req.c, &out, nullptr, 0), LUMICE_ERR_NULL_ARG);
+  EXPECT_EQ(LUMICE_AnalyzePathProbe(scene.get(), nullptr, &out, nullptr, 0), LUMICE_ERR_NULL_ARG);
+  EXPECT_EQ(LUMICE_AnalyzePathProbe(scene.get(), &req.c, nullptr, nullptr, 0), LUMICE_ERR_NULL_ARG);
+  LUMICE_PathProbeDestroy(nullptr);  // a no-op
+}
+
+TEST(ProbeCApi, StructSizeSmallerThanThisVersionIsRejected) {
+  const ProbeScenePtr scene = MakeProbeCApiScene();
+  ProbeReq req;
+  // One byte below the smallest size this build reads — the reader gate's own anchor, not a
+  // fixed offset from sizeof (appended fields grow sizeof, they never lower the floor).
+  req.c.struct_size = offsetof(LUMICE_PathProbeRequest, interrupted) - 1;
+  LUMICE_PathProbe* out = nullptr;
+  char err[512];
+  std::memset(err, 'x', sizeof(err));
+  EXPECT_EQ(LUMICE_AnalyzePathProbe(scene.get(), &req.c, &out, err, sizeof(err)), LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(out, nullptr);
+  EXPECT_NE(std::string(err).find("struct_size"), std::string::npos) << err;
+}
+
+TEST(ProbeCApi, UnknownAlongFormIsRefusedByName) {
+  const ProbeScenePtr scene = MakeProbeCApiScene();
+  ProbeReq req;
+  req.c.along = 99;
+  LUMICE_PathProbe* out = nullptr;
+  char err[512];
+  std::memset(err, 'x', sizeof(err));
+  EXPECT_NE(LUMICE_AnalyzePathProbe(scene.get(), &req.c, &out, err, sizeof(err)), LUMICE_OK);
+  EXPECT_EQ(out, nullptr);
+  EXPECT_NE(std::string(err).find("along"), std::string::npos) << err;
 }
 
 }  // namespace

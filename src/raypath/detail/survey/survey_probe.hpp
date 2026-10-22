@@ -135,6 +135,12 @@ struct ProbeLineLayout {
   double az_width_rad = 0.0;
 };
 
+// The axis forms' layout constructor, the one statement of the delta-axis bin layout: the ruler
+// over [delta_min_deg, delta_max_deg] at the line's azimuth. The built-in radial line and the
+// query's radial / edge-normal forms all read this one constructor, so a warm document's grid and
+// the asked grid match bit for bit by construction, not by a runtime check.
+ProbeLineLayout AxisLineLayout(double delta_min_deg, double delta_max_deg, double azimuth_deg);
+
 // The shared core: resolves the representative's slots, materializes each bin's PixelTable cell
 // in the frame, and evaluates analytic::BandSum once per wavelength/index pair (the chromatic
 // lambda grid lives on the line only, never a multi-wavelength map). Never refuses: a path with

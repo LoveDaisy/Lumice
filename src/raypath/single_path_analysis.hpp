@@ -538,6 +538,14 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
 // query, whose inline arm assembles the same context and reads it through the same harvest.
 SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc);
 
+// The context's nearest structural anchor, the one walk both consumers read: the closest of the
+// support intervals' endpoints and the certified edge position to the deviation — an endpoint
+// wins a tie against the certified edge, the first interval's endpoint against the next's
+// (strict-lesser in sweep order). The point context's edge block and the probe's edge-normal
+// anchor name the same winner, so they cannot silently disagree.
+bool NearestStructureAnchor(const SurveyWarmSource& warm, double deviation_deg, double* position_deg,
+                            const char** basis);
+
 // The context's answers, read off a harvest (a warm document's facts or the inline assembly's —
 // the same shape either way): the query point's containment and edge distances in the delta-axis
 // support, and the band-sum reading under the scope gate's exact-equality comparison of the

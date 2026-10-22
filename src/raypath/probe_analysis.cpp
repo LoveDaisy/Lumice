@@ -9,8 +9,6 @@
 
 #include "analytic/pose_density.hpp"
 #include "core/math.hpp"
-#include "raypath/detail/input_assembly.hpp"
-#include "raypath/detail/physical_member_scope.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
@@ -76,37 +74,12 @@ double FrameAzimuthOf(const survey::ProbeFrame& frame, const double direction[3]
   return std::atan2(e2, e1) * math::kRadToDegreeD;
 }
 
-// The axis forms' layout: the survey probe's ruler over [delta_min, delta_max] at the line's
-// azimuth (the built-in's own bin expressions, so a warm document's grid matches bit for bit).
-survey::ProbeLineLayout AxisLayout(double delta_min_deg, double delta_max_deg, double azimuth_deg, int* bin_count) {
-  survey::ProbeLineLayout layout;
-  const int bins = static_cast<int>((delta_max_deg - delta_min_deg) / survey::kProbeBinDeg);
-  *bin_count = bins;
-  const double half_wedge = 0.5 * survey::kProbeWedgeHalfWidthDeg * math::kDegreeToRadD;
-  const double half_wedge_deg = 0.5 * survey::kProbeWedgeHalfWidthDeg;
-  layout.bins.resize(static_cast<size_t>(bins));
-  layout.delta_width_rad = survey::kProbeBinDeg * math::kDegreeToRadD;
-  layout.az_width_rad = 2.0 * half_wedge;
-  for (int k = 0; k < bins; k++) {
-    const double lo = delta_min_deg + static_cast<double>(k) * survey::kProbeBinDeg;
-    survey::ProbeLineBin& bin = layout.bins[static_cast<size_t>(k)];
-    bin.delta_centre_deg = lo + 0.5 * survey::kProbeBinDeg;
-    bin.delta_lo_deg = lo;
-    bin.delta_hi_deg = lo + survey::kProbeBinDeg;
-    bin.az_centre_deg = azimuth_deg;
-    bin.az_lo_deg = azimuth_deg - half_wedge_deg;
-    bin.az_hi_deg = azimuth_deg + half_wedge_deg;
-  }
-  return layout;
-}
-
 // The arc forms' layout: the fixed-delta arc swept over azimuth about the sun, the wedge reading
 // the same constant as a delta extent (the same ruler, roles swapped).
-survey::ProbeLineLayout ArcLayout(double delta_deg, double azimuth_centre_deg, int* bin_count) {
+survey::ProbeLineLayout ArcLayout(double delta_deg, double azimuth_centre_deg) {
   survey::ProbeLineLayout layout;
   const double lo = azimuth_centre_deg - kProbeWindowHalfWidthDeg;
-  const int bins = static_cast<int>((2.0 * kProbeWindowHalfWidthDeg) / survey::kProbeBinDeg);
-  *bin_count = bins;
+  const int bins = static_cast<int>(std::lround((2.0 * kProbeWindowHalfWidthDeg) / survey::kProbeBinDeg));
   const double half_wedge = 0.5 * survey::kProbeWedgeHalfWidthDeg * math::kDegreeToRadD;
   const double half_wedge_deg = 0.5 * survey::kProbeWedgeHalfWidthDeg;
   layout.bins.resize(static_cast<size_t>(bins));
@@ -143,35 +116,10 @@ void FillProfileSpec(ProbeProfile* profile, const ProbeRequest& request, const P
                                                                   TangentialSemantics();
 }
 
-// The edge-normal anchor: the closest of the support intervals' endpoints and the certified edge
-// position to the user's deviation — recomputed from the harvest (the context block carries the
-// distance to the edge; the line needs the position and its basis). The strict-lesser walk is the
-// context's own: an endpoint wins a tie against the certified edge, the first interval's against
-// the next.
-bool EdgeAnchor(const SurveyWarmSource& warm, double deviation_deg, double* anchor, const char** basis) {
-  bool has = false;
-  double best = 0.0;
-  const char* best_basis = "";
-  for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
-    for (const double end : { interval.lower_deg, interval.upper_deg }) {
-      if (!has || std::fabs(deviation_deg - end) < std::fabs(deviation_deg - best)) {
-        best = end;
-        best_basis = "support_interval_endpoint";
-        has = true;
-      }
-    }
-  }
-  if (warm.has_edge && (!has || std::fabs(deviation_deg - warm.edge_deg) < std::fabs(deviation_deg - best))) {
-    best = warm.edge_deg;
-    best_basis = "caustic_edge_position";
-    has = true;
-  }
-  if (has) {
-    *anchor = best;
-    *basis = best_basis;
-  }
-  return has;
-}
+// The arc form's degenerate band: an arc through the sun or its antipode is not a circle there
+// (the named refusal's threshold, spelled once).
+constexpr double kArcDegenerateNearDeg = 0.05;
+constexpr double kArcDegenerateFarDeg = 179.95;
 
 // The dark-region decomposition: consecutive bin runs classified against the context's support.
 // Inside the support, the weak tail (k = 0) stays its own finite-zero class — never clamped into
@@ -351,6 +299,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   SurveyContextBlock& context = result.context;
   const SurveyWarmSource* warm = nullptr;
   SurveyWarmSource inline_harvest;
+  bool inline_refused = false;
   if (request.warm_survey.has_value() && request.warm_survey->index_present) {
     context.source = "warm";
     warm = &*request.warm_survey;
@@ -365,6 +314,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     survey::SurveyDocument doc;
     const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
     if (!e.Ok()) {
+      inline_refused = true;
       context.object.state = "unevaluated";
       context.object.reason = "inline_survey_refused";
       context.edge.state = "unevaluated";
@@ -381,37 +331,15 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
                       &context);
   }
 
-  // ---- the class scope and the density conversion (the survey assembly's own authorities) ----
-  SceneConfig scene = config.scene_;
-  size_t layer_index = scene.ms_.size();
-  for (size_t i = 0; i < scene.ms_.size(); ++i) {
-    if (std::any_of(scene.ms_[i].setting_.begin(), scene.ms_[i].setting_.end(),
-                    [&](const auto& setting) { return setting.crystal_.id_ == request.crystal_id; })) {
-      layer_index = i;
-      break;
-    }
-  }
-  if (layer_index == scene.ms_.size()) {
-    ScatteringSetting setting{};
-    setting.crystal_ = crystal_it->second;
-    setting.crystal_proportion_ = 1;
-    scene.ms_.push_back({ 0, { setting } });
-  }
-  const std::string identity = layer_index >= config.scene_.ms_.size() ?
-                                   "standalone configured crystal (not a scene allocation)" :
-                                   "selected scene entry snapshot";
-  const std::vector<LayerSelection> selection{ { layer_index, request.crystal_id, request.path_layers[0],
-                                                 survey::kDefaultSymmetryBits } };
-  InputSnapshot snapshot;
-  if (Error e = CaptureInput(scene, identity, selection, &snapshot); !e.Ok()) {
+  // ---- the class scope and the density conversion (the survey assembly's own authority) ----
+  survey::CrystalSceneScope class_scope;
+  if (Error e = survey::ResolveCrystalSceneScope(config, request.crystal_id, request.path_layers,
+                                                 survey::kDefaultSymmetryBits, &class_scope);
+      !e.Ok()) {
     return e;
   }
-  PhysicalMemberScope scope;
-  if (Error e = ResolvePhysicalMemberScope(snapshot.layers.front(), &scope); !e.Ok()) {
-    return e;
-  }
-  const int member_count = static_cast<int>(scope.members.size());
-  const PoseDensityConversion density = ConvertAxisToPoseDensity(crystal_it->second.axis_);
+  const int member_count = static_cast<int>(class_scope.members.size());
+  const PoseDensityConversion& density = class_scope.density;
   const bool density_ok = density.Ok();
 
   // ---- the line ----
@@ -424,30 +352,27 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   const bool arc_form = request.along == ProbeAlong::kArc || request.along == ProbeAlong::kTangential;
 
   // The edge-normal anchor: the closest of the support endpoints and the certified edge position
-  // to the user's deviation — recomputed from the harvest (the same walk the context's edge block
-  // ran); a context with neither is the named refusal.
+  // to the user's deviation — the context's own shared walk (the same winner the context's edge
+  // block names); a context with neither is the named refusal.
   bool has_anchor = false;
   double anchor = 0.0;
   const char* anchor_basis = "";
   if (warm != nullptr) {
-    has_anchor = EdgeAnchor(*warm, meta.at_deviation_deg, &anchor, &anchor_basis);
+    has_anchor = NearestStructureAnchor(*warm, meta.at_deviation_deg, &anchor, &anchor_basis);
   }
 
   survey::ProbeLineLayout layout;
-  int bins = 0;
   if (arc_form) {
-    const bool degenerate = meta.at_deviation_deg <= 0.05 || meta.at_deviation_deg >= 179.95;
-    layout = ArcLayout(meta.at_deviation_deg, meta.at_azimuth_about_sun_deg, &bins);
+    layout = ArcLayout(meta.at_deviation_deg, meta.at_azimuth_about_sun_deg);
   } else if (windowed) {
-    if (!has_anchor) {
-      // handled per-profile below
-    } else {
+    if (has_anchor) {
       const double lo = std::max(0.0, anchor - kProbeWindowHalfWidthDeg);
       const double hi = std::min(180.0, anchor + kProbeWindowHalfWidthDeg);
-      layout = AxisLayout(lo, hi, meta.at_azimuth_about_sun_deg, &bins);
+      layout = survey::AxisLineLayout(lo, hi, meta.at_azimuth_about_sun_deg);
     }
   } else {
-    layout = AxisLayout(survey::kProbeDeltaMinDeg, survey::kProbeDeltaMaxDeg, meta.at_azimuth_about_sun_deg, &bins);
+    layout =
+        survey::AxisLineLayout(survey::kProbeDeltaMinDeg, survey::kProbeDeltaMaxDeg, meta.at_azimuth_about_sun_deg);
   }
 
   for (size_t w = 0; w < meta.wavelengths.size(); w++) {
@@ -469,10 +394,13 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     }
 
     const bool edge_refused = windowed && !has_anchor;
-    const bool arc_refused = arc_form && (meta.at_deviation_deg <= 0.05 || meta.at_deviation_deg >= 179.95);
+    const bool arc_refused =
+        arc_form && (meta.at_deviation_deg <= kArcDegenerateNearDeg || meta.at_deviation_deg >= kArcDegenerateFarDeg);
     if (edge_refused) {
       profile.evidence_state = "refused";
-      profile.refused_mode = "no_edge_in_context";
+      // The refusal's cause: a context that names no edge is the form's own refusal; an inline
+      // assembly that never produced a context is the infrastructure's, named for what failed.
+      profile.refused_mode = inline_refused ? "inline_survey_refused" : "no_edge_in_context";
       profile.dark_regions = DecomposeDark(layout, context, warm, {}, arc_form);
       result.profiles.push_back(std::move(profile));
       continue;
