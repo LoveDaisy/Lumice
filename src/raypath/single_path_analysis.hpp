@@ -35,6 +35,16 @@ namespace lumice::raypath {
 // written against version N reads every later version's fields it knows about unchanged.
 constexpr int kSchemaVersion = 1;
 
+// The factor decomposition's declared epsilon: K = 1/(J_perp + epsilon) never divides by an exact
+// zero at a caustic pose. The value is data in the document (each factor block echoes it), never
+// a hidden knob.
+constexpr double kFactorsEpsilon = 1e-12;
+
+// The orbit factor integral's grid (midpoint samples over the measure's spin orbit, the
+// fiber_quadrature kFiberParameter convention). Part of the document's declared caliber: the
+// block echoes the count.
+constexpr int kOrbitFactorSampleCount = 1024;
+
 constexpr double kDefaultWavelengthNm = 550.0;
 // The kernel's reference default (LI section 9.5.9) and its hard upper bound; the call cannot be
 // cancelled, so a larger request is refused.
@@ -152,6 +162,49 @@ struct PoseAngles {
 
 PoseAngles PoseToAngles(const double pose[9]);
 
+// The declared measure's registration, as a per-pose rho read needs it declared: the u-marginal
+// support kind plus the registered read-as-zero gaps (declared_density.hpp's v1 gap list). A
+// factor consumer must see this before reading a rho of 0 as "dark" — a registered gap means the
+// density layer did not answer, not that the measure is empty there.
+struct MeasureRegistration {
+  std::string support_kind;  // USupportKind's name (point / spin_orbit / roll_orbit / latitude_orbit /
+                             // area / degenerate_sun_geometry / degenerate_axis_geometry)
+  bool fast_path = false;    // the zonal fast path was in force (declared_density.hpp Table 4)
+  bool registered_gap = false;
+  std::string note;  // empty when registered_gap is false; names the gap family otherwise
+};
+
+// One pose of the orbit factor integral: the factors along the declared measure's spin orbit (the
+// rank-0 branch's fiber substitute — every pose lands on the same sky point, so the point's total
+// is the measure-weighted orbit integral, and the tint quotient of two such integrals at the
+// wavelength-pool ends is that spot's tint).
+struct OrbitFactorPoint {
+  double theta_rad = 0.0;  // the spin orbit's parameter (the az slot's draw)
+  double rho_theta = 0.0;  // the declared density along the orbit w.r.t. dtheta
+  double entry_measure_a2 = 0.0;
+  double total_transmission = 0.0;
+  bool valid = false;
+};
+
+struct OrbitFactors {
+  // False: the block carries the honest unavailable state — the measure's support is not a v1
+  // spin orbit — with `measure_support` naming what it is and `reason` the named cause. No
+  // defaulted numbers reach the document.
+  bool available = false;
+  std::string reason;           // named cause when unavailable (e.g. "measure_support_not_spin_orbit")
+  std::string measure_support;  // the u-marginal support kind, spelled either way
+  bool rho_registered = true;   // the orbit density's own registration (MeasureRegistration's face
+                                // for the parameter read)
+  std::string rho_note;         // the registration note when the density layer did not answer
+  int sample_count = 0;         // midpoint samples over [0, 2 pi)
+  // The quadrature: sum of rho_theta * entry_measure_a2 * total_transmission * dtheta over kept
+  // samples (A*T > 0 and valid — fiber_quadrature's positive-part convention, which this branch
+  // reuses; the kept count rides along so "all dark" stays distinguishable from "no samples").
+  double integral = 0.0;
+  int kept_count = 0;
+  std::vector<OrbitFactorPoint> points;
+};
+
 struct PointDetail {
   double pose[9]{};  // row-major body -> world
   PoseAngles angles;
@@ -168,6 +221,22 @@ struct PointDetail {
   // exact face sequence through the finite crystal, in the crystal's length unit squared. Discovery
   // only seeds where it is positive.
   double entry_measure = 0.0;
+
+  // The named-factor decomposition at this pose (the L2 query's per-pose diagnostics).
+  // Multiplicative factors in their real units — never additive percentages (the corpus
+  // discipline the point output inherits):
+  double rho = 0.0;               // the declared joint pose density, w.r.t. dlambda dphi droll (angle Lebesgue,
+                                  // radians) at the pose's composed angles
+  double entry_measure_a2 = 0.0;  // A/a^2: entry_measure over the crystal length unit squared (a = 1 in this
+                                  // repo's configs — a declared identity, not a normalization)
+  // The normal Jacobian at the pose's own direction (kernel NormalJacobian; NaN-honest: the
+  // numbers are NaN, never a plausible 0 or 1, when the Jacobian cannot be formed).
+  bool jacobian_available = false;
+  double jacobian = 0.0;        // J_perp = sigma1 * sigma2
+  double singular_values[2]{};  // NaN when unavailable
+  double k_carea = 0.0;         // 1 / (jacobian + kFactorsEpsilon); NaN when the Jacobian is unavailable
+  double factor_product = 0.0;  // rho * entry_measure_a2 * total_transmission * k_carea; NaN when the
+                                // Jacobian is unavailable or the pose is not valid
 };
 
 // ---- components -------------------------------------------------------------------------------
@@ -190,6 +259,17 @@ struct TraceEnd {
   int pose_count = 0;
 };
 
+// The factor decomposition's component-level bookkeeping (the per-pose factor arrays' integral).
+struct ComponentFactors {
+  // Sum of factor_product * arclength over consecutive point pairs whose first point carries a
+  // usable product (valid pose, Jacobian available). NaN-free honest shape: available false when
+  // no segment contributed, and the document writes null then.
+  bool integral_available = false;
+  double fiber_integral = 0.0;
+  int available_points = 0;  // points whose factor_product is usable
+  int total_points = 0;
+};
+
 struct FiberComponent {
   ComponentKind kind = ComponentKind::kClosed;
   double seed[9]{};
@@ -204,6 +284,7 @@ struct FiberComponent {
   int seed_index = 0;
   // The continuation's arclength (rad on SO(3)) between consecutive points: points.size() - 1 entries.
   std::vector<double> arclength_increments;
+  ComponentFactors factors;
 };
 
 struct IncompleteComponent {
@@ -240,6 +321,9 @@ struct PointMass {
   double altitude_deg = 0.0;  // the sky point it lands on
   double azimuth_deg = 0.0;
   double target_separation_deg = 0.0;  // angle between that sky point and the requested target
+  OrbitFactors orbit_factors;          // the measure-orbit factor integral (the rank-0 branch's
+                                       // factor decomposition; honest unavailable state when the
+                                       // measure's support is not a v1 spin orbit)
 };
 
 // ---- the sun-direction sphere -----------------------------------------------------------------
@@ -313,6 +397,9 @@ struct SinglePathResult {
   DiscoverySummary discovery;
   ReachSummary reach;  // kDiscovered only
   SunSphereGrid sun_grid;
+  // The declared measure's registration (kDiscovered only; the point-mass branch carries its own
+  // face inside OrbitFactors). A rho consumer reads this before treating a rho of 0 as dark.
+  MeasureRegistration measure_registration;
 };
 
 // The whole analysis. On error `out` is left default-constructed.

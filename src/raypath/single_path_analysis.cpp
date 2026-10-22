@@ -11,6 +11,8 @@
 #include "analytic/path_chain.hpp"
 #include "analytic/path_rank.hpp"
 #include "analytic/so3.hpp"
+#include "raypath/detail/measure/declared_density.hpp"
+#include "raypath/detail/measure/fiber_quadrature.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/sky_direction.hpp"
 
@@ -141,6 +143,62 @@ constexpr double kPoleSine = 1e-12;
 // Sun directions probed for rank 0 (the antipodal Fibonacci lattice discovery samples on).
 constexpr int kRankProbeCount = 4096;
 
+// The declared measure's support kinds, spelled for the registration block (the v1 gap list's own
+// vocabulary; declared_density.hpp carries no name table, so this is the one wire spelling).
+const char* USupportKindName(USupportKind kind) {
+  switch (kind) {
+    case USupportKind::kPoint:
+      return "point";
+    case USupportKind::kSpinOrbit:
+      return "spin_orbit";
+    case USupportKind::kRollOrbit:
+      return "roll_orbit";
+    case USupportKind::kLatitudeOrbit:
+      return "latitude_orbit";
+    case USupportKind::kArea:
+      return "area";
+    case USupportKind::kDegenerateSunGeometry:
+      return "degenerate_sun_geometry";
+    case USupportKind::kDegenerateAxisGeometry:
+      return "degenerate_axis_geometry";
+  }
+  return "unknown";
+}
+
+// The declared measure's registration for the per-pose rho read: the u-marginal's support kind and
+// the registered read-as-zero gaps (declared_density.hpp's v1 gap list) a consumer must know about
+// before treating a rho of 0 as dark. The joint pose density itself is closed-form at every pose;
+// the gaps live one reduction up, at the u-marginal a solid-angle consumer would read.
+MeasureRegistration RegisterMeasure(const UMarginal& marginal, const AxisDistribution& axis) {
+  MeasureRegistration out;
+  out.support_kind = USupportKindName(marginal.kind());
+  out.fast_path = marginal.fast_path();
+  double at = 0.0;
+  const bool az_dirac = SlotIsDirac(axis.azimuth_dist, &at);
+  const bool lat_dirac = SlotIsDirac(axis.latitude_dist, &at);
+  if (marginal.kind() == USupportKind::kDegenerateSunGeometry) {
+    out.registered_gap = true;
+    out.note = "sun at a body pole: the declared measure answers nothing here (kDegenerateSunGeometry)";
+  } else if (marginal.kind() == USupportKind::kDegenerateAxisGeometry) {
+    out.registered_gap = true;
+    out.note =
+        "axis Dirac at a pole with azimuth and roll both spread: not answered before v2 "
+        "(kDegenerateAxisGeometry)";
+  } else if (marginal.kind() == USupportKind::kArea && az_dirac) {
+    out.registered_gap = true;
+    out.note =
+        "registered read-as-zero gap: a fixed azimuth with zenith and roll both spread reads "
+        "rho_u = 0 everywhere at the u-marginal (declared_density.hpp v1 gap list)";
+  } else if (marginal.kind() == USupportKind::kArea && lat_dirac) {
+    out.registered_gap = true;
+    out.note =
+        "registered read-as-zero gap: a fixed zenith with non-uniform azimuth and spread roll reads "
+        "rho_u = 0 everywhere at the u-marginal (declared_density.hpp v1 gap list)";
+  }
+  return out;
+}
+
+
 double WrapDeg(double a) {
   a = std::remainder(a, 360.0);  // [-180, 180]
   return a <= -180.0 ? a + 360.0 : a;
@@ -180,16 +238,28 @@ void SunInCrystal(const double pose[9], const double incident[3], double u[3]) {
   }
 }
 
-// Everything that is fixed for one call: the crystal, the resolved path, the index, the sun.
+// Everything that is fixed for one call: the crystal, the resolved path, the index, the sun, and
+// the orientation measure the declared pose density reads.
 class PathContext {
  public:
   PathContext(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-              std::vector<int> slots, double refractive_index, const double incident[3])
+              std::vector<int> slots, double refractive_index, const double incident[3], const AxisDistribution& axis)
       : table_(table), slots_(std::move(slots)), n_(refractive_index),
-        incident_{ incident[0], incident[1], incident[2] }, corridor_(table_, polygons, slots_.data(), SlotCount()),
-        segments_(3 * (slots_.size() + 1)), transmittances_(slots_.size()) {}
+        incident_{ incident[0], incident[1], incident[2] }, axis_(axis),
+        lat_(axis.IsFullSphereUniform() ? MakeFullSphereLatitude() : MakeLatitudeDensity(axis.latitude_dist)),
+        corridor_(table_, polygons, slots_.data(), SlotCount()), segments_(3 * (slots_.size() + 1)),
+        transmittances_(slots_.size()) {}
 
   int SlotCount() const { return static_cast<int>(slots_.size()); }
+
+  // The declared joint pose density (w.r.t. dlambda dphi droll, radians) at the pose's composed
+  // angles: the config's own orientation angles are the composed ones (azimuth = lambda_out,
+  // zenith = pi/2 - phi_out, roll = roll_out — the same chart both specs spell).
+  double PoseDensity(const double pose[9]) const {
+    const PoseAngles angles = PoseToAngles(pose);
+    return DeclaredPoseDensity(lat_, axis_, angles.azimuth_deg * math::kDegreeToRadD,
+                               (90.0 - angles.zenith_deg) * math::kDegreeToRadD, angles.roll_deg * math::kDegreeToRadD);
+  }
 
   // Body-frame evaluation with the sun at u (pose = identity, incident = -u): what discovery's band
   // evaluates (discovery.cpp BuildBand). Returns validity; `out` the outgoing direction.
@@ -215,6 +285,13 @@ class PathContext {
   double EntryMeasure(const double incident_body[3]) { return corridor_.Evaluate(incident_body, n_).value; }
 
   PointDetail Detail(const double pose[9], double residual_norm) {
+    return Detail(pose, residual_norm, false, 0.0, nullptr);
+  }
+
+  // The factor-decomposition overload: the continuation's own per-pose Jacobian read (NaN-honest
+  // — unavailable poses carry NaN, never a plausible 0), then k_carea and the factor product.
+  PointDetail Detail(const double pose[9], double residual_norm, bool jacobian_available, double jacobian,
+                     const double* singular_values) {
     PointDetail d;
     for (int i = 0; i < 9; i++) {
       d.pose[i] = pose[i];
@@ -222,6 +299,22 @@ class PathContext {
     d.angles = PoseToAngles(pose);
     SunInCrystal(pose, incident_, d.sun_in_crystal);
     d.residual_norm = residual_norm;
+    d.rho = PoseDensity(pose);
+    d.jacobian_available = jacobian_available;
+    if (jacobian_available) {
+      d.jacobian = jacobian;
+      if (singular_values != nullptr) {
+        d.singular_values[0] = singular_values[0];
+        d.singular_values[1] = singular_values[1];
+      }
+      d.k_carea = 1.0 / (jacobian + kFactorsEpsilon);
+    } else {
+      constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+      d.jacobian = nan;
+      d.singular_values[0] = nan;
+      d.singular_values[1] = nan;
+      d.k_carea = nan;
+    }
     analytic::PathOutputs outputs{};
     outputs.segment_directions = segments_.data();
     outputs.interface_transmittances = transmittances_.data();
@@ -236,6 +329,12 @@ class PathContext {
       const double incident_body[3] = { -d.sun_in_crystal[0], -d.sun_in_crystal[1], -d.sun_in_crystal[2] };
       d.entry_measure = EntryMeasure(incident_body);
     }
+    d.entry_measure_a2 = d.entry_measure;  // a = the crystal length unit = 1 in this repo's configs
+    if (d.valid && d.jacobian_available) {
+      d.factor_product = d.rho * d.entry_measure_a2 * d.total_transmission * d.k_carea;
+    } else {
+      d.factor_product = std::numeric_limits<double>::quiet_NaN();
+    }
     return d;
   }
 
@@ -249,6 +348,8 @@ class PathContext {
   std::vector<int> slots_;
   double n_;
   double incident_[3];
+  AxisDistribution axis_;
+  LatitudeDensity lat_;
   analytic::Corridor corridor_;
   std::vector<double> segments_;
   std::vector<double> transmittances_;
@@ -300,7 +401,10 @@ FiberComponent ToComponent(const analytic::DiscoveredComponent& c, PathContext* 
   out.forward = EndOf(c.forward);
   const int nf = c.forward.PoseCount();
   auto append = [&](const analytic::TraceResult& t, int k) {
-    out.points.push_back(ctx->Detail(t.poses.data() + 9 * static_cast<size_t>(k), t.residual_norms[k]));
+    out.points.push_back(ctx->Detail(t.poses.data() + 9 * static_cast<size_t>(k), t.residual_norms[k],
+                                     t.jacobian_available[static_cast<size_t>(k)] != 0,
+                                     t.normal_jacobian[static_cast<size_t>(k)],
+                                     t.singular_values.data() + 2 * static_cast<size_t>(k)));
   };
   if (c.kind == ComponentKind::kArc) {
     out.backward = EndOf(c.backward);
@@ -319,6 +423,24 @@ FiberComponent ToComponent(const analytic::DiscoveredComponent& c, PathContext* 
   }
   out.arclength_increments.insert(out.arclength_increments.end(), c.forward.arclength_increments.begin(),
                                   c.forward.arclength_increments.end());
+  // The component's factor integral: left-endpoint rectangular sum of factor_product * arclength
+  // over consecutive point pairs whose first point carries a usable product (finite — NaN marks
+  // an unusable read). Available points counted for the completeness declaration.
+  out.factors.total_points = static_cast<int>(out.points.size());
+  for (const PointDetail& p : out.points) {
+    if (std::isfinite(p.factor_product)) {
+      out.factors.available_points++;
+    }
+  }
+  const size_t segments = out.arclength_increments.size();
+  for (size_t i = 0; i < segments; i++) {
+    const double product = out.points[i].factor_product;
+    if (!std::isfinite(product)) {
+      continue;
+    }
+    out.factors.fiber_integral += product * out.arclength_increments[i];
+    out.factors.integral_available = true;
+  }
   return out;
 }
 
@@ -377,6 +499,56 @@ struct DeviationRange {
     any = true;
   }
 };
+
+// The rank-0 branch's factor decomposition: the declared measure's spin orbit, evaluated at
+// midpoint samples, integrated by the measure layer's own quadrature (the kFiberParameter
+// binding's v1 semantics — the LI #51 tint kernel's integral form). A measure whose support is
+// not a spin orbit gets the honest unavailable state, never a defaulted integral.
+OrbitFactors BuildOrbitFactors(const UMarginal& marginal, PathContext& ctx, const double sun_hat[3]) {
+  OrbitFactors orbit;
+  orbit.measure_support = USupportKindName(marginal.kind());
+  if (marginal.kind() != USupportKind::kSpinOrbit) {
+    orbit.available = false;
+    orbit.reason = "measure_support_not_spin_orbit";
+    return orbit;
+  }
+  orbit.available = true;
+  orbit.sample_count = kOrbitFactorSampleCount;
+  FiberSampleStream stream;
+  stream.binding = MeasureBinding::kFiberParameter;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  stream.source_name = "raypath point orbit factors";
+  stream.samples.resize(static_cast<size_t>(orbit.sample_count));
+  const double dtheta = 2.0 * math::kPiD / orbit.sample_count;
+  for (int i = 0; i < orbit.sample_count; i++) {
+    const double theta = 2.0 * math::kPiD * (i + 0.5) / orbit.sample_count;
+    double u[3];
+    marginal.SpinOrbitPoint(theta, u);
+    double pose[9];
+    RotationTaking(u, sun_hat, pose);
+    const PointDetail d = ctx.Detail(pose, 0.0);
+    OrbitFactorPoint point;
+    point.theta_rad = theta;
+    point.rho_theta = marginal.SpinOrbitThetaDensity(theta);
+    point.entry_measure_a2 = d.entry_measure_a2;
+    point.total_transmission = d.total_transmission;
+    point.valid = d.valid;
+    orbit.points.push_back(point);
+    FiberSample& sample = stream.samples[static_cast<size_t>(i)];
+    for (int c = 0; c < 3; c++) {
+      sample.u[c] = u[c];
+    }
+    sample.area = d.entry_measure;
+    sample.transmission = d.total_transmission;
+    sample.valid = d.valid;
+    sample.parameter = theta;
+    sample.weight = dtheta;
+  }
+  const FiberQuadratureResult q = QuadratureIntensity(marginal, stream, /*angular_tol_rad=*/0.0);
+  orbit.integral = q.intensity;
+  orbit.kept_count = q.kept;
+  return orbit;
+}
 
 // The last valid point on the segment from a valid u_valid towards an invalid u_invalid (normalised
 // chords; both are one grid cell apart). Adds D there.
@@ -590,7 +762,13 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   meta.distance_threshold_rad = params.closure_distance;
   meta.warm_seed_count = warm_count;
 
-  PathContext ctx(table, polygons, slots, wavelength.refractive_index, meta.incident_direction);
+  PathContext ctx(table, polygons, slots, wavelength.refractive_index, meta.incident_direction,
+                  crystal_it->second.axis_);
+
+  // The declared measure: one u-marginal for the registration and (rank 0) the orbit integral.
+  const double sun_hat[3] = { -meta.incident_direction[0], -meta.incident_direction[1], -meta.incident_direction[2] };
+  const UMarginal marginal = MakeUMarginal(crystal_it->second.axis_, sun_hat);
+  result.measure_registration = RegisterMeasure(marginal, crystal_it->second.axis_);
 
   // ---- rank 0, and whether the path is realisable at all ----
   const RankProbe rank = ProbeRank(ctx);
@@ -609,7 +787,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
 
   if (rank.rank_zero) {
     result.outcome = Outcome::kPointMass;
-    const double sun[3] = { -meta.incident_direction[0], -meta.incident_direction[1], -meta.incident_direction[2] };
+    const double sun[3] = { sun_hat[0], sun_hat[1], sun_hat[2] };
     double pose[9];
     RotationTaking(rank.first_valid_u, sun, pose);
     const PointDetail probe = ctx.Detail(pose, 0.0);
@@ -619,6 +797,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     DirToAltAz(result.point_mass.direction, &result.point_mass.altitude_deg, &result.point_mass.azimuth_deg);
     result.point_mass.target_separation_deg =
         analytic::so3::AngleBetween(result.point_mass.direction, meta.target_direction) * math::kRadToDegreeD;
+    result.point_mass.orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat);
     *out = std::move(result);
     return {};
   }

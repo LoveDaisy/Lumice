@@ -61,6 +61,16 @@ nlohmann::ordered_json Conventions() {
       "keys ending in _deg are degrees, _rad radians, _nm nanometres; entry_measure is an area in the crystal's "
       "length unit squared; arclength_increments are radians on SO(3)" },
     { "null", "a number that is not defined (NaN) is written as null" },
+    { "factors",
+      "the per-pose factor decomposition is multiplicative, in real units, never additive "
+      "percentages: rho is the declared joint pose density w.r.t. dlambda dphi droll (radians, "
+      "angle Lebesgue, declared measure); entry_measure_a2 is the entry area over the crystal "
+      "length unit squared (a = 1 in this repo's configs — a declared identity, not a "
+      "normalization); total_transmission is the interface product; k_carea = 1/(J_perp + "
+      "factors.epsilon), J_perp the pose's normal Jacobian, null where it cannot be formed; "
+      "factor_product = rho * entry_measure_a2 * total_transmission * k_carea, null where any "
+      "factor is unavailable. measure_registration declares the support kind and any registered "
+      "read-as-zero gap of the declared measure — a rho of 0 there is 'unanswered', not 'dark'" },
     { "sun_grid",
       "cell centres, row-major [i][j]: lat_i = -90 + (i + 0.5) * 180 / lat_count, lon_j = -180 + (j + 0.5) * 360 / "
       "lon_count, u = (cos lat cos lon, cos lat sin lon, sin lat) in the body frame; the longitude seam is periodic; "
@@ -141,7 +151,81 @@ nlohmann::ordered_json PointJson(const PointDetail& p) {
     { "interface_transmittances", Array(p.interface_transmittances) },
     { "total_transmission", Num(p.total_transmission) },
     { "entry_measure", Num(p.entry_measure) },
+    { "rho", Num(p.rho) },
+    { "entry_measure_a2", Num(p.entry_measure_a2) },
+    { "jacobian",
+      { { "value", Num(p.jacobian) },
+        { "singular_values", Array(p.singular_values, 2) },
+        { "available", p.jacobian_available } } },
+    { "k_carea", Num(p.k_carea) },
+    { "factor_product", Num(p.factor_product) },
   };
+}
+
+// The component-level factor bookkeeping: the declared epsilon, the arclength integral of the
+// factor product, and the completeness declaration (procedural, the discovery note's own
+// discipline — a usable-product count, never a promise every pose was readable).
+nlohmann::ordered_json FactorsJson(const ComponentFactors& f) {
+  return {
+    { "epsilon", kFactorsEpsilon },
+    { "fiber_integral",
+      f.integral_available ? nlohmann::ordered_json(Num(f.fiber_integral)) : nlohmann::ordered_json(nullptr) },
+    { "fiber_integral_rule",
+      "left-endpoint sum of factor_product * arclength over consecutive points; segments whose "
+      "first point carries no usable product (invalid pose or Jacobian unavailable) are skipped "
+      "and counted in completeness" },
+    { "completeness",
+      { { "available_points", f.available_points },
+        { "total_points", f.total_points },
+        { "note",
+          "available_points counts the points whose factor_product is usable; the integral covers "
+          "the arclength those points open, not the component's full length" } } },
+  };
+}
+
+// The declared measure's registration (the discovered branch's document-level block): the support
+// kind and any registered read-as-zero gap, so a rho of 0 is never read as dark by default.
+nlohmann::ordered_json MeasureRegistrationJson(const MeasureRegistration& m) {
+  nlohmann::ordered_json j = { { "support_kind", m.support_kind },
+                               { "fast_path", m.fast_path },
+                               { "registered_gap", m.registered_gap } };
+  if (m.registered_gap) {
+    j["note"] = m.note;
+  }
+  return j;
+}
+
+// The rank-0 branch's orbit factor block: the declared measure's spin orbit, its per-theta factor
+// readings, and the quadrature integral — or the honest unavailable state, exactly one of the two
+// shapes, never a defaulted number.
+nlohmann::ordered_json OrbitFactorsJson(const OrbitFactors& o) {
+  nlohmann::ordered_json j = { { "available", o.available },
+                               { "measure_support", o.measure_support },
+                               { "rho_registered", o.rho_registered } };
+  if (!o.rho_registered) {
+    j["rho_note"] = o.rho_note;
+  }
+  if (!o.available) {
+    j["reason"] = o.reason;
+    return j;
+  }
+  nlohmann::ordered_json points = nlohmann::ordered_json::array();
+  for (const OrbitFactorPoint& p : o.points) {
+    points.push_back({ { "theta_rad", Num(p.theta_rad) },
+                       { "rho_theta", Num(p.rho_theta) },
+                       { "entry_measure_a2", Num(p.entry_measure_a2) },
+                       { "total_transmission", Num(p.total_transmission) },
+                       { "valid", p.valid } });
+  }
+  j["sample_count"] = o.sample_count;
+  j["integral"] = Num(o.integral);
+  j["integral_rule"] =
+      "fiber_quadrature kFiberParameter quadrature: sum of rho_theta * "
+      "entry_measure_a2 * total_transmission * dtheta over kept samples "
+      "(A*T > 0 and valid), midpoint grid over [0, 2 pi)";
+  j["kept_count"] = o.kept_count;
+  j["points"] = std::move(points);
+  return j;
 }
 
 nlohmann::ordered_json ComponentJson(const FiberComponent& c) {
@@ -156,6 +240,7 @@ nlohmann::ordered_json ComponentJson(const FiberComponent& c) {
   }
   j["seed_index"] = c.seed_index;
   j["arclength_increments"] = Array(c.arclength_increments);
+  j["factors"] = FactorsJson(c.factors);
   nlohmann::ordered_json points = nlohmann::ordered_json::array();
   for (const auto& p : c.points) {
     points.push_back(PointJson(p));
@@ -233,12 +318,15 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
     // Rank 0: no fiber is traced, so there are no components and no discovery.
     doc["outcome"] = "point_mass";
     const PointMass& pm = result.point_mass;
-    doc["point_mass"] = { { "direction", Array(pm.direction, 3) },
-                          { "altitude_deg", Num(pm.altitude_deg) },
-                          { "azimuth_deg", Num(pm.azimuth_deg) },
-                          { "target_separation_deg", Num(pm.target_separation_deg) } };
+    nlohmann::ordered_json pm_json = { { "direction", Array(pm.direction, 3) },
+                                       { "altitude_deg", Num(pm.altitude_deg) },
+                                       { "azimuth_deg", Num(pm.azimuth_deg) },
+                                       { "target_separation_deg", Num(pm.target_separation_deg) } };
+    pm_json["orbit_factors"] = OrbitFactorsJson(pm.orbit_factors);
+    doc["point_mass"] = std::move(pm_json);
   } else {
     doc["outcome"] = "discovered";
+    doc["measure_registration"] = MeasureRegistrationJson(result.measure_registration);
     nlohmann::ordered_json components = nlohmann::ordered_json::array();
     for (const auto& c : result.components) {
       components.push_back(ComponentJson(c));

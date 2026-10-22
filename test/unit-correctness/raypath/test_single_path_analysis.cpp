@@ -14,12 +14,16 @@
 #include <utility>
 #include <vector>
 
+#include "analytic/entry_measure.hpp"
+#include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
+#include "analytic/path_fiber.hpp"
 #include "analytic/so3.hpp"
 #include "config/config_manager.hpp"
 #include "core/crystal.hpp"
 #include "core/optics.hpp"
 #include "core/simulator.hpp"
+#include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
 
@@ -679,6 +683,198 @@ TEST(AxisToPoseDensity, InexpressibleAxesAreRefusedByName) {
     EXPECT_FALSE(got.Ok());
     EXPECT_NE(got.unsupported.find(c.expected_fragment), std::string::npos) << got.unsupported;
   }
+}
+
+// ---- the L2 factor decomposition ------------------------------------------------------------------
+
+// The per-pose K factor is the kernel's own Jacobian read at the same pose (a fresh
+// NormalJacobianAt evaluation, the definition the trace's arrays record), k_carea is
+// 1/(J + epsilon) with the declared epsilon, the factor product is the four named factors
+// multiplied, and the component integral is the left-endpoint arclength sum the serializer's
+// rule sentence states.
+TEST(SinglePathFactors, KCareaMatchesTheKernelJacobianAndTheIntegralFollowsItsRule) {
+  SinglePathResult r;
+  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
+  ASSERT_EQ(r.outcome, Outcome::kDiscovered);
+  ASSERT_FALSE(r.components.empty());
+
+  // The kernel map, built independently through the same conversions the module spells.
+  const CrystalConversion c = ConvertCrystal(Prism(1.0f));
+  analytic::FaceNormalTable table;
+  analytic::FacePolygonTable polygons;
+  ASSERT_EQ(analytic::BuildFaceNormals(c.shape, &table, &polygons), analytic::Status::kOk);
+  std::vector<int> slots;
+  ASSERT_TRUE(ResolveSingleLayerPath({ { 3, 5 } }, table, &slots).Ok());
+  SunParam sun{ 20.0f, 0.0f, 0.5f };
+  double incident[3];
+  SunIncidentDirection(sun, incident);
+  // The analysis's own index (the echo is the authority — a nearby-but-unequal n flips
+  // availability at the near-TIR poses the fiber reaches).
+  const analytic::IcePathMap map(table, slots.data(), static_cast<int>(slots.size()), r.meta.refractive_index,
+                                 incident);
+
+  int checked = 0;
+  for (const FiberComponent& component : r.components) {
+    for (const PointDetail& p : component.points) {
+      const analytic::NormalJacobian j = analytic::fiber_detail::NormalJacobianAt(map, p.pose);
+      if (p.jacobian_available != j.available) {
+        ADD_FAILURE() << "jacobian availability disagrees with a fresh kernel read at the same pose";
+        continue;
+      }
+      if (!j.available) {
+        EXPECT_TRUE(std::isnan(p.k_carea));
+        EXPECT_TRUE(std::isnan(p.factor_product));
+        continue;
+      }
+      EXPECT_NEAR(p.jacobian, j.value, 1e-12 * std::fabs(j.value) + 1e-15);
+      EXPECT_NEAR(p.k_carea, 1.0 / (j.value + kFactorsEpsilon), 1e-12 * std::fabs(p.k_carea) + 1e-15);
+      EXPECT_NEAR(p.singular_values[0] * p.singular_values[1], j.value, 1e-9 * std::fabs(j.value) + 1e-15);
+      const double product = p.rho * p.entry_measure_a2 * p.total_transmission * p.k_carea;
+      EXPECT_NEAR(p.factor_product, product, 1e-12 * std::fabs(product) + 1e-18);
+      checked++;
+    }
+    // The integral recompute over the component's own arrays: segments whose first point
+    // carries a usable product, left endpoints.
+    double integral = 0.0;
+    int used = 0;
+    for (size_t i = 0; i + 1 < component.points.size(); i++) {
+      if (!std::isfinite(component.points[i].factor_product)) {
+        continue;
+      }
+      integral += component.points[i].factor_product * component.arclength_increments[i];
+      used++;
+    }
+    if (used > 0) {
+      EXPECT_TRUE(component.factors.integral_available);
+      EXPECT_NEAR(component.factors.fiber_integral, integral, 1e-12 * std::fabs(integral) + 1e-18);
+    }
+    EXPECT_EQ(component.factors.total_points, static_cast<int>(component.points.size()));
+    EXPECT_EQ(component.factors.available_points, checked);
+  }
+  EXPECT_GT(checked, 0);
+}
+
+// rho is the declared joint pose density at the pose's composed angles: on a fixed axis the
+// angle-Lebesgue density is 0 a.e. (a point mass), and on a full-random axis it reduces to the
+// latitude law over 1/(2 pi)^2 and is constant in azimuth at a fixed zenith.
+TEST(SinglePathFactors, RhoIsTheDeclaredDensityDeclared) {
+  // Fixed axis: the joint density is 0 everywhere off the Dirac slice, which is every traced pose.
+  SinglePathResult fixed;
+  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), &fixed).Ok());
+  ASSERT_FALSE(fixed.components.empty());
+  for (const FiberComponent& component : fixed.components) {
+    for (const PointDetail& p : component.points) {
+      EXPECT_EQ(p.rho, 0.0);
+    }
+  }
+  EXPECT_FALSE(fixed.measure_registration.registered_gap);
+  EXPECT_EQ(fixed.measure_registration.support_kind, "point");
+
+  // Full-random axis: rho(phi) = rho_lat(phi) / (2 pi)^2, an oracle rebuilt here from the axis
+  // the config carries (the module's own conversion is not reused).
+  ConfigManager scene = Scene(Prism(1.0f));
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  const Distribution kFullTurn{ DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.azimuth_dist = kFullTurn;
+  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90.0f, 180.0f };
+  crystal.axis_.roll_dist = kFullTurn;
+  SinglePathResult r;
+  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
+  ASSERT_FALSE(r.components.empty());
+  const LatitudeDensity lat = MakeLatitudeDensity(crystal.axis_.latitude_dist);
+  double rho_min = std::numeric_limits<double>::infinity();
+  double rho_max = 0.0;
+  for (const FiberComponent& component : r.components) {
+    for (const PointDetail& p : component.points) {
+      const double phi = (90.0 - p.angles.zenith_deg) * kDeg;
+      const double expected = lat.Evaluate(phi) / (2.0 * kPi * 2.0 * kPi);
+      EXPECT_NEAR(p.rho, expected, 1e-12 * expected + 1e-18);
+      rho_min = std::min(rho_min, p.rho);
+      rho_max = std::max(rho_max, p.rho);
+    }
+  }
+  EXPECT_GE(rho_max, 0.0);
+  EXPECT_LT(rho_min, std::numeric_limits<double>::infinity());
+  EXPECT_EQ(r.measure_registration.support_kind, "area");
+  EXPECT_TRUE(r.measure_registration.fast_path);
+}
+
+// The rank-0 orbit integral reproduces the measure layer's own kFiberParameter quadrature on the
+// LI #51 fixture construction (the rhombic plate, sun at 9/180, the wavelength-pool ends
+// 1.307/1.317 — the literals test_fiber_quadrature.cpp freezes), summed here independently over
+// the same midpoint grid: the hand sum reads A off the corridor and T off the chain at the
+// identity pose with the sun at u (both depend on the pose only through u — the reduction the
+// kernel's own body-frame evaluator states). The per-pose A/T kernels are already pinned against
+// the LI snapshots by that file; this pins the point branch's wiring to the same machinery.
+TEST(SinglePathFactors, OrbitIntegralReproducesTheQuadratureOnTheLI51Construction) {
+  PrismCrystalParam plate;
+  plate.h_ = Fixed(1.0f);
+  const double face_distance[6] = { 1.5, 1.0, 1.0, 1.5, 1.0, 1.0 };
+  for (int i = 0; i < 6; i++) {
+    plate.d_[i] = Fixed(static_cast<float>(face_distance[i]));
+  }
+  ConfigManager scene = Scene(plate, 9.0f, { { 650.0f, 1.0f } });
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.roll_dist = Fixed(0.0f);
+
+  SinglePathRequest q;
+  q.crystal_id = 1;
+  q.path_layers = { { 1, 2 } };
+  q.target_altitude_deg = 30.0;
+  q.target_azimuth_deg = 90.0;
+  q.sun_grid_lat_count = 0;
+  SinglePathResult r;
+  ASSERT_TRUE(AnalyzeSinglePath(scene, q, &r).Ok());
+  ASSERT_EQ(r.outcome, Outcome::kPointMass);
+  const OrbitFactors& orbit = r.point_mass.orbit_factors;
+  ASSERT_TRUE(orbit.available);
+  ASSERT_EQ(orbit.measure_support, "spin_orbit");
+  ASSERT_GT(orbit.kept_count, 0);
+
+  // The independent hand sum over the same midpoint grid, at the analysis's own index (the echo
+  // is the authority for n, the same rule the benches state).
+  const CrystalConversion c = ConvertCrystal(plate);
+  analytic::FaceNormalTable table;
+  analytic::FacePolygonTable polygons;
+  ASSERT_EQ(analytic::BuildFaceNormals(c.shape, &table, &polygons), analytic::Status::kOk);
+  std::vector<int> slots;
+  ASSERT_TRUE(ResolveSingleLayerPath({ { 1, 2 } }, table, &slots).Ok());
+  const double n = r.meta.refractive_index;
+  double sun_hat[3];
+  // The sun points AT the sun: the negation of the propagation direction.
+  sun_hat[0] = -r.meta.incident_direction[0];
+  sun_hat[1] = -r.meta.incident_direction[1];
+  sun_hat[2] = -r.meta.incident_direction[2];
+  const UMarginal orbit_measure = MakeUMarginal(crystal.axis_, sun_hat);
+  analytic::Corridor corridor(table, polygons, slots.data(), static_cast<int>(slots.size()));
+  std::vector<double> segments(3 * (slots.size() + 1));
+  std::vector<double> transmittances(slots.size());
+  // Body-frame evaluation at the identity pose: the chain's A and T depend on the pose only
+  // through u (PathContext::EvaluateAtSun's own reduction).
+  const double kIdentity[9] = { 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 };
+  double hand = 0.0;
+  int kept = 0;
+  const double dtheta = 2.0 * kPi / kOrbitFactorSampleCount;
+  for (int i = 0; i < kOrbitFactorSampleCount; i++) {
+    const double theta = 2.0 * kPi * (i + 0.5) / kOrbitFactorSampleCount;
+    double u[3];
+    orbit_measure.SpinOrbitPoint(theta, u);
+    const double incident_body[3] = { -u[0], -u[1], -u[2] };
+    const double area = corridor.Evaluate(incident_body, n).value;
+    analytic::PathOutputs out;
+    out.segment_directions = segments.data();
+    out.interface_transmittances = transmittances.data();
+    const bool valid =
+        analytic::EvaluatePath(table, slots.data(), static_cast<int>(slots.size()), n, incident_body, kIdentity, &out);
+    if (!(area * out.fresnel_transmission > 0.0) || !valid) {
+      continue;
+    }
+    hand += orbit_measure.SpinOrbitThetaDensity(theta) * area * out.fresnel_transmission * dtheta;
+    kept++;
+  }
+  EXPECT_EQ(kept, orbit.kept_count);
+  EXPECT_NEAR(orbit.integral, hand, 1e-12 * std::fabs(hand) + 1e-18);
 }
 
 }  // namespace
