@@ -13,6 +13,7 @@
 #include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/detail/survey/survey_tint.hpp"
+#include "raypath/detail/survey/survey_tir_share.hpp"
 #include "raypath/detail/survey/survey_witness.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
@@ -268,10 +269,24 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
                                    "), and the chromatic legs sit downstream of it",
                                "the refused-support arm's legs are the T0 routing verdict, the "
                                "per-member partition attempt (refused: " +
-                                   outcome.refusal_mode + "), and the " + std::to_string(kSurveyWitnessSampleCount) +
-                                   "-sample witness lattice; none is budget-enforced yet; enforcement "
+                                   outcome.refusal_mode + "), the " + std::to_string(kSurveyWitnessSampleCount) +
+                                   "-sample witness lattice, and the TIR share leg's re-classification "
+                                   "of the declared lattice at " +
+                                   std::to_string(kSurveyTirShareSampleCount) +
+                                   " samples per lambda; none is budget-enforced yet; enforcement "
                                    "lands with the quantification legs",
                                true, out);
+        // The exception evidence leg on the same refused path: the partition's refusal says
+        // nothing about the internal-reflection weight split, which the declared lattice still
+        // answers (the witness's independence principle, one block down).
+        TirShareInput tir_input;
+        tir_input.table = &table;
+        tir_input.polygons = &polygons;
+        tir_input.crystal = &crystal.shape;
+        tir_input.representative = &request.path_layers[0];
+        SunIncidentDirection(config.scene_.light_source_.param_, tir_input.incident);
+        tir_input.member_count = static_cast<int>(scope.members.size());
+        AssembleTirShare(tir_input, out);
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
       } else {
@@ -279,8 +294,11 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         // says what ran instead of repeating the early-stop arm's millisecond-only claim.
         out->budget_note =
             "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, "
-            "the chromatic pair, and the class tint's two-lambda power sum at " +
+            "the chromatic pair, the class tint's two-lambda power sum at " +
             std::to_string(kSurveyClassTintSampleCount) +
+            " samples per lambda, and the TIR share "
+            "leg's re-classification of the same declared lattice at " +
+            std::to_string(kSurveyTirShareSampleCount) +
             " samples per lambda) are not budget-enforced yet; enforcement lands with the "
             "quantification legs";
         // The canonical probe: the class's radial profile at the document's reference
@@ -311,6 +329,17 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         SunIncidentDirection(config.scene_.light_source_.param_, class_tint_input.incident);
         class_tint_input.member_count = static_cast<int>(scope.members.size());
         AssembleClassTint(class_tint_input, out);
+        // The exception evidence leg: the TIR share over the same declared lattice (a
+        // document-level block of its own, beside family_routing; its refusals never touch the
+        // chromatic block).
+        TirShareInput tir_input;
+        tir_input.table = &table;
+        tir_input.polygons = &polygons;
+        tir_input.crystal = &crystal.shape;
+        tir_input.representative = &request.path_layers[0];
+        SunIncidentDirection(config.scene_.light_source_.param_, tir_input.incident);
+        tir_input.member_count = static_cast<int>(scope.members.size());
+        AssembleTirShare(tir_input, out);
       }
     } else {
       // The family-restricted route (gap 1's own): the measure is read in the concentration

@@ -1093,6 +1093,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_json.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_probe.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_t1.cpp"
+  "${PROJ_SRC_DIR}/raypath/detail/survey/survey_tir_share.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_tint.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_witness.cpp"
   "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"

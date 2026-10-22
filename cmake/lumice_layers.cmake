@@ -285,6 +285,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/survey/survey_probe.hpp
   raypath/detail/survey/survey_t1.cpp
   raypath/detail/survey/survey_t1.hpp
+  raypath/detail/survey/survey_tir_share.cpp
+  raypath/detail/survey/survey_tir_share.hpp
   raypath/detail/survey/survey_tint.cpp
   raypath/detail/survey/survey_tint.hpp
   raypath/detail/survey/survey_witness.cpp
