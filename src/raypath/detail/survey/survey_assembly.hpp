@@ -7,7 +7,9 @@
 // IsRankZeroPath's M = I and zero-wedge check); nothing here re-derives a geometry verdict.
 
 #include "config/config_manager.hpp"
+#include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_report.hpp"
 
 namespace lumice::raypath::survey {
@@ -26,6 +28,24 @@ struct SurveyAssemblyOptions {
 
 Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out,
                      const SurveyAssemblyOptions& options = {});
+
+// The class scope both consumers read (the survey document's assembly and the probe query's
+// inline arm), resolved in one place so the scope rule has one statement: physical P|B|D by
+// default, the literal sequence at bits 0; a configured but unused crystal stays a valid
+// standalone diagnostic object (the report's layer rule).
+struct CrystalSceneScope {
+  std::vector<std::vector<int>> members;  // the physical P|B|D members the crystal resolves to
+  PoseDensityConversion density;          // the axis's conversion (the caller gates Ok() itself)
+  std::string identity;                   // the snapshot identity (scene allocation or standalone)
+  bool in_scene = false;                  // false: the crystal is no scene allocation (standalone)
+  size_t layer_index = 0;                 // the allocated scene layer, meaningful when in_scene
+};
+
+// `snapshot_out` (optional) receives the resolved scene snapshot — the MC-ESS leg reads it; the
+// probe's inline arm has no leg for it and passes null.
+Error ResolveCrystalSceneScope(const ConfigManager& config, IdType crystal_id,
+                               const std::vector<std::vector<int>>& path_layers, uint8_t symmetry_bits,
+                               CrystalSceneScope* out, InputSnapshot* snapshot_out = nullptr);
 
 }  // namespace lumice::raypath::survey
 

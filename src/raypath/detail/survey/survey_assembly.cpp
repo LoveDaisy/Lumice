@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
 
 #include "analytic/dp_boundary.hpp"
 #include "analytic/dp_focus.hpp"
@@ -142,6 +143,51 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
 
 }  // namespace
 
+Error ResolveCrystalSceneScope(const ConfigManager& config, IdType crystal_id,
+                               const std::vector<std::vector<int>>& path_layers, uint8_t symmetry_bits,
+                               CrystalSceneScope* out, InputSnapshot* snapshot_out) {
+  const auto configured = config.crystals_.find(crystal_id);
+  if (configured == config.crystals_.end()) {
+    return { ErrorCode::kUnknownCrystalId, "unknown crystal id" };
+  }
+  // The class: physical P|B|D by default, the literal sequence at bits 0. A configured but
+  // unused crystal stays a valid standalone diagnostic object (the report's layer rule).
+  SceneConfig scene = config.scene_;
+  size_t layer_index = scene.ms_.size();
+  for (size_t i = 0; i < scene.ms_.size(); ++i) {
+    if (std::any_of(scene.ms_[i].setting_.begin(), scene.ms_[i].setting_.end(),
+                    [&](const auto& setting) { return setting.crystal_.id_ == crystal_id; })) {
+      layer_index = i;
+      break;
+    }
+  }
+  if (layer_index == scene.ms_.size()) {
+    ScatteringSetting setting{};
+    setting.crystal_ = configured->second;
+    setting.crystal_proportion_ = 1;
+    scene.ms_.push_back({ 0, { setting } });
+  }
+  out->in_scene = layer_index < config.scene_.ms_.size();
+  out->layer_index = layer_index;
+  out->identity =
+      out->in_scene ? "selected scene entry snapshot" : "standalone configured crystal (not a scene allocation)";
+  const std::vector<LayerSelection> selection{ { layer_index, crystal_id, path_layers[0], symmetry_bits } };
+  InputSnapshot snapshot;
+  if (Error error = CaptureInput(scene, out->identity, selection, &snapshot); !error.Ok()) {
+    return error;
+  }
+  PhysicalMemberScope scope;
+  if (Error error = ResolvePhysicalMemberScope(snapshot.layers.front(), &scope); !error.Ok()) {
+    return error;
+  }
+  out->members = scope.members;
+  out->density = ConvertAxisToPoseDensity(configured->second.axis_);
+  if (snapshot_out != nullptr) {
+    *snapshot_out = std::move(snapshot);
+  }
+  return {};
+}
+
 Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out,
                      const SurveyAssemblyOptions& options) {
   if (out == nullptr) {
@@ -194,35 +240,16 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
 
   // The class: physical P|B|D by default, the literal sequence at bits 0. A configured but
   // unused crystal stays a valid standalone diagnostic object (the report's layer rule).
-  SceneConfig scene = config.scene_;
-  size_t layer_index = scene.ms_.size();
-  for (size_t i = 0; i < scene.ms_.size(); ++i) {
-    if (std::any_of(scene.ms_[i].setting_.begin(), scene.ms_[i].setting_.end(),
-                    [&](const auto& setting) { return setting.crystal_.id_ == request.crystal_id; })) {
-      layer_index = i;
-      break;
-    }
-  }
-  if (layer_index == scene.ms_.size()) {
-    ScatteringSetting setting{};
-    setting.crystal_ = configured->second;
-    setting.crystal_proportion_ = 1;
-    scene.ms_.push_back({ 0, { setting } });
-  }
-  const std::string identity = layer_index >= config.scene_.ms_.size() ?
-                                   "standalone configured crystal (not a scene allocation)" :
-                                   "selected scene entry snapshot";
-  const std::vector<LayerSelection> selection{ { layer_index, request.crystal_id, request.path_layers[0],
-                                                 request.symmetry_bits } };
+  CrystalSceneScope class_scope;
   InputSnapshot snapshot;
-  if (Error error = CaptureInput(scene, identity, selection, &snapshot); !error.Ok()) {
+  if (Error error = ResolveCrystalSceneScope(config, request.crystal_id, request.path_layers, request.symmetry_bits,
+                                             &class_scope, &snapshot);
+      !error.Ok()) {
     return error;
   }
-  PhysicalMemberScope scope;
-  if (Error error = ResolvePhysicalMemberScope(snapshot.layers.front(), &scope); !error.Ok()) {
-    return error;
-  }
-  const PoseDensityConversion density = ConvertAxisToPoseDensity(configured->second.axis_);
+  const std::string& identity = class_scope.identity;
+  const std::vector<std::vector<int>>& scope_members = class_scope.members;
+  const PoseDensityConversion& density = class_scope.density;
 
   // Scope and echo.
   out->schema_version = kSurveySchemaVersion;
@@ -233,10 +260,10 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   out->request.wavelength_nm = request.wavelength_nm.value_or(0.0);
   out->request.budget_ms = request.budget_ms;
   out->scene_identity = identity;
-  if (layer_index < config.scene_.ms_.size()) {
-    out->scene_layer = static_cast<long long>(layer_index);
+  if (class_scope.in_scene) {
+    out->scene_layer = static_cast<long long>(class_scope.layer_index);
   }
-  out->members = scope.members;
+  out->members = scope_members;
   out->wavelength_nm = wavelength.wavelength_nm;
   out->wavelength_source = WavelengthSourceName(wavelength.source);
   out->refractive_index = wavelength.refractive_index;
@@ -250,7 +277,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   bool all_rank_zero = true;
   bool any_escaped = false;
   std::string escape_mode;
-  for (const auto& member : scope.members) {
+  for (const auto& member : scope_members) {
     SurveyMemberVerdict verdict =
         MemberVerdictOf(table, polygons, member, density, wavelength.refractive_index, &any_escaped, &escape_mode);
     all_rank_zero = all_rank_zero && verdict.rank_zero;
@@ -268,7 +295,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
     out->early_stopped = true;
     SurveyObject card;
     card.kind = SurveyObjectKind::kSourceImage;
-    card.members = scope.members;
+    card.members = scope_members;
     card.has_position = true;
     card.position_altitude_deg = out->sun_altitude_deg;
     card.position_azimuth_deg = out->sun_azimuth_deg;
@@ -293,7 +320,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
       tint_input.representative = &request.path_layers[0];
       tint_input.density = &density;  // the same conversion the routing gate checked
       SunIncidentDirection(config.scene_.light_source_.param_, tint_input.incident);
-      tint_input.member_count = static_cast<int>(scope.members.size());
+      tint_input.member_count = static_cast<int>(scope_members.size());
       AssembleWeightTint(tint_input, out);
       out->budget_note = "the identity arm's legs are the T0 routing verdict (milliseconds) and the " +
                          ChromaticPairProseBlueFirst() + " band-sum tint pair (" +
@@ -310,7 +337,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
     out->early_stopped = false;
     const bool full_dimensional = density.Ok() && density.spec.family == analytic::PoseFamily::kRandom;
     if (full_dimensional) {
-      const T1Outcome outcome = AssembleT1Objects(table, polygons, scope.members, request.path_layers[0],
+      const T1Outcome outcome = AssembleT1Objects(table, polygons, scope_members, request.path_layers[0],
                                                   wavelength.refractive_index, wavelength.wavelength_nm, out);
       if (!outcome.ok) {
         // Fail closed downstream of the support: the cards after a refused support are not
@@ -327,9 +354,9 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         SunIncidentDirection(config.scene_.light_source_.param_, witness_input.incident);
         witness_input.refractive_index = wavelength.refractive_index;
         witness_input.wavelength_nm = wavelength.wavelength_nm;
-        witness_input.member_count = static_cast<int>(scope.members.size());
+        witness_input.member_count = static_cast<int>(scope_members.size());
         witness_input.context_only = options.context_only;
-        AssembleRefusedSupport(witness_input, scope.members, outcome.refusal_mode,
+        AssembleRefusedSupport(witness_input, scope_members, outcome.refusal_mode,
                                "chromatic legs not run: the delta axis refused (" + outcome.refusal_mode +
                                    "), and the chromatic legs sit downstream of it",
                                "the refused-support arm's legs are the T0 routing verdict, the "
@@ -345,9 +372,9 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         // nothing about the internal-reflection weight split, which the declared lattice still
         // answers (the witness's independence principle, one block down).
         AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
-                                         static_cast<int>(scope.members.size())),
+                                         static_cast<int>(scope_members.size())),
                          out);
-        AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
+        AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope_members.size()),
                                          wavelength.wavelength_nm, out);
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
@@ -387,13 +414,13 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
           probe_input.refractive_index = wavelength.refractive_index;
           probe_input.wavelength_nm = wavelength.wavelength_nm;
           SunIncidentDirection(config.scene_.light_source_.param_, probe_input.incident);
-          probe_input.member_count = static_cast<int>(scope.members.size());
+          probe_input.member_count = static_cast<int>(scope_members.size());
           RunSolarRadialProbe(probe_input, out);
           // The chromatic layer's v1 legs on the representative (orthogonal to the position
           // objects; the dispersion and diagnose legs are separate kernel paths, separate
           // sub-blocks).
           AssembleChromaticLayer(table, polygons, request.path_layers[0], density.spec,
-                                 static_cast<int>(scope.members.size()), out);
+                                 static_cast<int>(scope_members.size()), out);
           // The arm's own tint leg: the class power-sum over the declared lattice (a different
           // reading and field family from the identity arm's point-mass masses; its refusals
           // stay in the sub-block — the block already carries legs with real output).
@@ -402,15 +429,15 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
           class_tint_input.polygons = &polygons;
           class_tint_input.representative = &request.path_layers[0];
           SunIncidentDirection(config.scene_.light_source_.param_, class_tint_input.incident);
-          class_tint_input.member_count = static_cast<int>(scope.members.size());
+          class_tint_input.member_count = static_cast<int>(scope_members.size());
           AssembleClassTint(class_tint_input, out);
           // The exception evidence leg: the TIR share over the same declared lattice (a
           // document-level block of its own, beside family_routing; its refusals never touch the
           // chromatic block).
           AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
-                                           static_cast<int>(scope.members.size())),
+                                           static_cast<int>(scope_members.size())),
                            out);
-          AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
+          AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope_members.size()),
                                            wavelength.wavelength_nm, out);
         }
       }
@@ -431,9 +458,9 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         SunIncidentDirection(config.scene_.light_source_.param_, witness_input.incident);
         witness_input.refractive_index = wavelength.refractive_index;
         witness_input.wavelength_nm = wavelength.wavelength_nm;
-        witness_input.member_count = static_cast<int>(scope.members.size());
+        witness_input.member_count = static_cast<int>(scope_members.size());
         witness_input.context_only = options.context_only;
-        AssembleRefusedSupport(witness_input, scope.members, measure.refusal_mode,
+        AssembleRefusedSupport(witness_input, scope_members, measure.refusal_mode,
                                "chromatic legs not run: the measure shape is outside the routing v1 domain, and "
                                "the legs sit downstream of the routing",
                                "the refused-measure arm's legs are the T0 routing verdict and the " +
@@ -449,7 +476,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         family_input.table = &table;
         family_input.polygons = &polygons;
         family_input.crystal = &crystal.shape;
-        family_input.members = &scope.members;
+        family_input.members = &scope_members;
         family_input.representative = &request.path_layers[0];
         family_input.measure = measure.measure;
         family_input.single_pose = measure.single_pose;
@@ -470,7 +497,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
       out->evidence.mode = escape_mode;
     } else {
       out->evidence.state = EvidenceState::kFinite;
-      out->evidence.coverage.members_evaluated = static_cast<int>(scope.members.size());
+      out->evidence.coverage.members_evaluated = static_cast<int>(scope_members.size());
       out->evidence.coverage.wavelength_nm = wavelength.wavelength_nm;
     }
   }
@@ -489,7 +516,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   out->budget_ms = request.budget_ms;
   out->total_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] crystal {}, path class routed: {} member(s), early stop {}",
-            request.crystal_id, scope.members.size(), out->early_stopped ? "taken" : "not taken");
+            request.crystal_id, scope_members.size(), out->early_stopped ? "taken" : "not taken");
   return {};
 }
 

@@ -517,6 +517,16 @@
 // The CLI surface migrates to the four-command family (raypath point / raypath report), the
 // schema-1 document gains append-only factor fields, and the schema-4 survey document gains the
 // warm_index block; no existing symbol or struct layout changed for old callers.
-#define LUMICE_API_VERSION 456
+// ADDED (v4.57): the path probe, a pure append — LUMICE_PathProbeRequest,
+// LUMICE_PathProbe (opaque), LUMICE_AnalyzePathProbe, LUMICE_PathProbeToJson and
+// LUMICE_PathProbeDestroy, plus the LUMICE_PATH_PROBE_{DEFAULT,MAX}_BUDGET_MS and
+// LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT and LUMICE_PATH_PROBE_ALONG_* constants. The probe is
+// the L2 draw-a-line query: the canonical probe library's profile at a user-chosen location, in
+// one of four along forms, sharing the survey's built-in radial probe's implementation (one
+// implementation, two triggers). The radial form consumes the point query's --warm contract
+// (the same gates; a matching scope reuses the warm document's radial samples). New JSON schema
+// "lumice.path-probe", schema_version 5 (doc/raypath/raypath-cli-output.md §10). No existing
+// symbol or struct layout changed.
+#define LUMICE_API_VERSION 457
 
 #endif  // LUMICE_API_VERSION_H_

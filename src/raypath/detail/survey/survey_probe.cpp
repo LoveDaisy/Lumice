@@ -7,21 +7,45 @@
 #include "core/math.hpp"
 
 namespace lumice::raypath::survey {
-namespace {
 
-// Unit direction at deviation `delta` from `incident` and azimuth `az` about it, in the frame
-// (e1, e2) normal to the incident (the band-sum pixel convention: directions measured about
-// the incident propagation vector).
-void DirectionAbout(const double incident[3], const double e1[3], const double e2[3], double delta_rad, double az_rad,
-                    double out[3]) {
+ProbeFrame MakeProbeFrame(const double incident[3]) {
+  ProbeFrame frame;
+  for (int k = 0; k < 3; k++) {
+    frame.incident[k] = incident[k];
+  }
+  // e1/e2 orthonormal, both normal to the incident.
+  double dot = 0.0;
+  for (int k = 0; k < 3; k++) {
+    dot += frame.e1[k] * incident[k];
+  }
+  if (std::fabs(dot) > 0.9) {  // the incident nearly parallel the fallback axis: pick another
+    frame.e1[0] = 1.0;
+    frame.e1[1] = 0.0;
+    frame.e1[2] = 0.0;
+    dot = incident[0];
+  }
+  double norm = 0.0;
+  for (int k = 0; k < 3; k++) {
+    frame.e1[k] -= dot * incident[k];
+    norm += frame.e1[k] * frame.e1[k];
+  }
+  norm = std::sqrt(norm);
+  for (int k = 0; k < 3; k++) {
+    frame.e1[k] /= norm;
+  }
+  frame.e2[0] = incident[1] * frame.e1[2] - incident[2] * frame.e1[1];
+  frame.e2[1] = incident[2] * frame.e1[0] - incident[0] * frame.e1[2];
+  frame.e2[2] = incident[0] * frame.e1[1] - incident[1] * frame.e1[0];
+  return frame;
+}
+
+void ProbeDirection(const ProbeFrame& frame, double delta_rad, double az_rad, double out[3]) {
   const double sin_d = std::sin(delta_rad);
   const double cos_d = std::cos(delta_rad);
   for (int k = 0; k < 3; k++) {
-    out[k] = cos_d * incident[k] + sin_d * (std::cos(az_rad) * e1[k] + std::sin(az_rad) * e2[k]);
+    out[k] = cos_d * frame.incident[k] + sin_d * (std::cos(az_rad) * frame.e1[k] + std::sin(az_rad) * frame.e2[k]);
   }
 }
-
-}  // namespace
 
 ProbeReadings ReadProbeProfile(const std::vector<double>& values_deg, const std::vector<double>& values,
                                const std::vector<int>& counts) {
@@ -47,73 +71,91 @@ ProbeReadings ReadProbeProfile(const std::vector<double>& values_deg, const std:
   return readings;
 }
 
-void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
-  // The probe's frame: e1/e2 orthonormal, both normal to the incident.
-  double e1[3] = { 0.0, 0.0, 1.0 };
-  double dot = 0.0;
-  for (int k = 0; k < 3; k++) {
-    dot += e1[k] * input.incident[k];
-  }
-  if (std::fabs(dot) > 0.9) {  // the incident nearly parallel the fallback axis: pick another
-    e1[0] = 1.0;
-    e1[1] = 0.0;
-    e1[2] = 0.0;
-    dot = input.incident[0];
-  }
-  double norm = 0.0;
-  for (int k = 0; k < 3; k++) {
-    e1[k] -= dot * input.incident[k];
-    norm += e1[k] * e1[k];
-  }
-  norm = std::sqrt(norm);
-  for (int k = 0; k < 3; k++) {
-    e1[k] /= norm;
-  }
-  double e2[3];
-  e2[0] = input.incident[1] * e1[2] - input.incident[2] * e1[1];
-  e2[1] = input.incident[2] * e1[0] - input.incident[0] * e1[2];
-  e2[2] = input.incident[0] * e1[1] - input.incident[1] * e1[0];
-
-  const int bins = static_cast<int>((kProbeDeltaMaxDeg - kProbeDeltaMinDeg) / kProbeBinDeg);
-  const double azimuth = 0.0;  // the representative wedge's azimuth (the value is azimuth-free)
-  const double half_wedge = 0.5 * kProbeWedgeHalfWidthDeg * math::kDegreeToRadD;
-
-  std::vector<double> centres(bins);
-  std::vector<double> centre_dirs(3 * static_cast<size_t>(bins));
-  std::vector<double> corner_dirs(12 * static_cast<size_t>(bins));
-  std::vector<double> solid_angles(static_cast<size_t>(bins));
-  for (int k = 0; k < bins; k++) {
-    const double lo = kProbeDeltaMinDeg + static_cast<double>(k) * kProbeBinDeg;
-    const double centre = lo + 0.5 * kProbeBinDeg;
-    centres[k] = centre;
-    DirectionAbout(input.incident, e1, e2, centre * math::kDegreeToRadD, azimuth,
-                   centre_dirs.data() + 3 * static_cast<size_t>(k));
-    double* corners = corner_dirs.data() + 12 * static_cast<size_t>(k);
-    DirectionAbout(input.incident, e1, e2, lo * math::kDegreeToRadD, azimuth - half_wedge, corners);
-    DirectionAbout(input.incident, e1, e2, lo * math::kDegreeToRadD, azimuth + half_wedge, corners + 3);
-    DirectionAbout(input.incident, e1, e2, (lo + kProbeBinDeg) * math::kDegreeToRadD, azimuth + half_wedge,
-                   corners + 6);
-    DirectionAbout(input.incident, e1, e2, (lo + kProbeBinDeg) * math::kDegreeToRadD, azimuth - half_wedge,
-                   corners + 9);
-    solid_angles[k] = kProbeBinDeg * math::kDegreeToRadD * 2.0 * half_wedge * std::sin(centre * math::kDegreeToRadD);
+ProbeLineProfile EvaluateProbeLine(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
+                                   const std::vector<int>& representative, const PoseDensityConversion& density,
+                                   const ProbeFrame& frame, const ProbeLineLayout& layout, double wavelength_nm,
+                                   double refractive_index, const double incident[3], int sample_count) {
+  const size_t bins = layout.bins.size();
+  std::vector<double> centre_dirs(3 * bins);
+  std::vector<double> corner_dirs(12 * bins);
+  std::vector<double> solid_angles(bins);
+  for (size_t k = 0; k < bins; k++) {
+    const ProbeLineBin& bin = layout.bins[k];
+    ProbeDirection(frame, bin.delta_centre_deg * math::kDegreeToRadD, bin.az_centre_deg * math::kDegreeToRadD,
+                   centre_dirs.data() + 3 * k);
+    double* corners = corner_dirs.data() + 12 * k;
+    ProbeDirection(frame, bin.delta_lo_deg * math::kDegreeToRadD, bin.az_lo_deg * math::kDegreeToRadD, corners);
+    ProbeDirection(frame, bin.delta_lo_deg * math::kDegreeToRadD, bin.az_hi_deg * math::kDegreeToRadD, corners + 3);
+    ProbeDirection(frame, bin.delta_hi_deg * math::kDegreeToRadD, bin.az_hi_deg * math::kDegreeToRadD, corners + 6);
+    ProbeDirection(frame, bin.delta_hi_deg * math::kDegreeToRadD, bin.az_lo_deg * math::kDegreeToRadD, corners + 9);
+    solid_angles[k] =
+        layout.delta_width_rad * layout.az_width_rad * std::sin(bin.delta_centre_deg * math::kDegreeToRadD);
   }
 
   std::vector<int> slots;
   // The representative's slots resolve whenever the assembly's did (the T1 arm already ran it).
-  for (size_t i = 0; i < input.representative->size(); i++) {
-    slots.push_back(input.table->SlotOf((*input.representative)[i]));
+  slots.reserve(representative.size());
+  for (size_t i = 0; i < representative.size(); i++) {
+    slots.push_back(table.SlotOf(representative[i]));
   }
-  analytic::PixelTable table;
-  table.count = bins;
-  table.centre = centre_dirs.data();
-  table.corners = corner_dirs.data();
-  table.solid_angle = solid_angles.data();
+  analytic::PixelTable pixels;
+  pixels.count = static_cast<int>(bins);
+  pixels.centre = centre_dirs.data();
+  pixels.corners = corner_dirs.data();
+  pixels.solid_angle = solid_angles.data();
 
-  const analytic::PoseDensity density(input.density->spec);  // the caller's gated conversion —
-                                                             // the probe builds no spec of its own
+  const analytic::PoseDensity pose_density(density.spec);  // the caller's gated conversion —
+                                                           // the probe builds no spec of its own
+  ProbeLineProfile profile;
+  profile.wavelength_nm = wavelength_nm;
+  profile.refractive_index = refractive_index;
   const analytic::BandSumOutput band =
-      analytic::BandSum(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()),
-                        input.refractive_index, input.incident, input.sample_count, table, density);
+      analytic::BandSum(table, polygons, slots.data(), static_cast<int>(slots.size()), refractive_index, incident,
+                        sample_count, pixels, pose_density);
+  {
+    profile.kept_count = band.kept_count;
+    profile.samples.resize(bins);
+    for (size_t k = 0; k < bins; k++) {
+      ProbeLineSample& sample = profile.samples[k];
+      sample.delta_deg = layout.bins[k].delta_centre_deg;
+      sample.azimuth_deg = layout.bins[k].az_centre_deg;
+      sample.value = band.pixels[k].value;
+      sample.k = band.pixels[k].k;
+      sample.k_eff = band.pixels[k].k_eff;
+    }
+  }
+  return profile;
+}
+
+ProbeLineLayout AxisLineLayout(double delta_min_deg, double delta_max_deg, double azimuth_deg) {
+  ProbeLineLayout layout;
+  const int bins = static_cast<int>(std::lround((delta_max_deg - delta_min_deg) / kProbeBinDeg));
+  const double half_wedge = 0.5 * kProbeWedgeHalfWidthDeg * math::kDegreeToRadD;
+  const double half_wedge_deg = 0.5 * kProbeWedgeHalfWidthDeg;
+  layout.bins.resize(static_cast<size_t>(bins));
+  layout.delta_width_rad = kProbeBinDeg * math::kDegreeToRadD;
+  layout.az_width_rad = 2.0 * half_wedge;
+  for (int k = 0; k < bins; k++) {
+    const double lo = delta_min_deg + static_cast<double>(k) * kProbeBinDeg;
+    ProbeLineBin& bin = layout.bins[static_cast<size_t>(k)];
+    bin.delta_centre_deg = lo + 0.5 * kProbeBinDeg;
+    bin.delta_lo_deg = lo;
+    bin.delta_hi_deg = lo + kProbeBinDeg;
+    bin.az_centre_deg = azimuth_deg;
+    bin.az_lo_deg = azimuth_deg - half_wedge_deg;
+    bin.az_hi_deg = azimuth_deg + half_wedge_deg;
+  }
+  return layout;
+}
+
+void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
+  const ProbeFrame frame = MakeProbeFrame(input.incident);
+
+  const ProbeLineLayout layout = AxisLineLayout(kProbeDeltaMinDeg, kProbeDeltaMaxDeg, input.azimuth_deg);
+
+  const ProbeLineProfile line =
+      EvaluateProbeLine(*input.table, *input.polygons, *input.representative, *input.density, frame, layout,
+                        input.wavelength_nm, input.refractive_index, input.incident, input.sample_count);
 
   SurveyProbe probe;
   probe.spec.delta_min_deg = kProbeDeltaMinDeg;
@@ -130,19 +172,23 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
   probe.evidence.state = EvidenceState::kFinite;
   probe.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
   probe.evidence.coverage.wavelength_nm = input.wavelength_nm;
-  probe.samples.resize(static_cast<size_t>(bins));
-  std::vector<double> sample_values(static_cast<size_t>(bins), 0.0);
-  std::vector<int> sample_counts(static_cast<size_t>(bins), 0);
-  for (int k = 0; k < bins; k++) {
-    SurveyProbeSample& sample = probe.samples[static_cast<size_t>(k)];
-    sample.delta_deg = centres[k];
-    sample.value = band.pixels[static_cast<size_t>(k)].value;
-    sample.k = band.pixels[static_cast<size_t>(k)].k;
-    sample.k_eff = band.pixels[static_cast<size_t>(k)].k_eff;
-    sample_values[static_cast<size_t>(k)] = sample.value;
-    sample_counts[static_cast<size_t>(k)] = sample.k;
+  probe.samples.resize(line.samples.size());
+  std::vector<double> sample_values(line.samples.size(), 0.0);
+  std::vector<int> sample_counts(line.samples.size(), 0);
+  for (size_t k = 0; k < line.samples.size(); k++) {
+    SurveyProbeSample& sample = probe.samples[k];
+    sample.delta_deg = line.samples[k].delta_deg;
+    sample.value = line.samples[k].value;
+    sample.k = line.samples[k].k;
+    sample.k_eff = line.samples[k].k_eff;
+    sample_values[k] = sample.value;
+    sample_counts[k] = sample.k;
   }
-  probe.kept_count = band.kept_count;
+  probe.kept_count = line.kept_count;
+  std::vector<double> centres(probe.samples.size());
+  for (size_t k = 0; k < probe.samples.size(); k++) {
+    centres[k] = probe.samples[k].delta_deg;
+  }
   const ProbeReadings readings = ReadProbeProfile(centres, sample_values, sample_counts);
   probe.has_edge = readings.has_edge;
   probe.edge_bin = readings.edge_bin;
@@ -165,7 +211,7 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
     card.bright_domain->peak_value = readings.peak_value;
     card.bright_domain->has_edge_reading = readings.has_edge;
     card.bright_domain->edge_delta_deg = readings.edge_delta_deg;
-    card.bright_domain->kept_count = band.kept_count;
+    card.bright_domain->kept_count = line.kept_count;
     card.bright_domain->probe_index = static_cast<int>(out->probes.size()) - 1;
   }
 }

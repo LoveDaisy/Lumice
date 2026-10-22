@@ -669,8 +669,6 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation, const a
 
 // ---- the survey context ---------------------------------------------------------------------------
 
-namespace {
-
 // The schema-4 value model's harvest: the facts the context reads, read once off the assembled
 // document (the warm reader's JSON arm mirrors this — the two must read the same blocks, the
 // dual-arm oracle test pins them field-for-field). Members are the card's first layer: the
@@ -706,8 +704,9 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
     const survey::SurveyProbe& probe = doc.probes.front();
     out.has_probe = true;
     out.probe_bin_deg = probe.spec.bin_deg;
+    out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
     for (const survey::SurveyProbeSample& sample : probe.samples) {
-      out.probe_samples.push_back({ sample.delta_deg, sample.value });
+      out.probe_samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
     }
   }
   out.has_measure_echo = doc.family_routing.has_value();
@@ -724,9 +723,36 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   return out;
 }
 
+bool NearestStructureAnchor(const SurveyWarmSource& warm, double deviation_deg, double* position_deg,
+                            const char** basis) {
+  bool has = false;
+  double best = 0.0;
+  const char* best_basis = "";
+  for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
+    for (const double end : { interval.lower_deg, interval.upper_deg }) {
+      if (!has || std::fabs(deviation_deg - end) < std::fabs(deviation_deg - best)) {
+        best = end;
+        best_basis = "support_interval_endpoint";
+        has = true;
+      }
+    }
+  }
+  if (warm.has_edge && (!has || std::fabs(deviation_deg - warm.edge_deg) < std::fabs(deviation_deg - best))) {
+    best = warm.edge_deg;
+    best_basis = "caustic_edge_position";
+    has = true;
+  }
+  if (has) {
+    *position_deg = best;
+    *basis = best_basis;
+  }
+  return has;
+}
+
 // The context's answers, read off a harvest (warm document or inline assembly — the same shape).
-void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadata& meta, SurveyContextBlock* out) {
-  const double delta = meta.target_deviation_deg;
+void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
+                       double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
+  const double delta = target_deviation_deg;
   const SurveyWarmSource::SupportInterval* containing = nullptr;
   const SurveyWarmSource::SupportInterval* closest = nullptr;
   double closest_distance = std::numeric_limits<double>::infinity();
@@ -759,30 +785,13 @@ void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadat
     out->object_kind = "support_set";
     out->object_members = hit.members;
     out->object_distance_deg = containing != nullptr ? 0.0 : closest_distance;
-    double edge_distance = std::numeric_limits<double>::infinity();
-    const char* basis = "";
-    for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
-      const double lo = std::fabs(delta - interval.lower_deg);
-      const double hi = std::fabs(delta - interval.upper_deg);
-      if (lo < edge_distance) {
-        edge_distance = lo;
-        basis = "support_interval_endpoint";
-      }
-      if (hi < edge_distance) {
-        edge_distance = hi;
-        basis = "support_interval_endpoint";
-      }
-    }
-    if (warm.has_edge) {
-      const double d = std::fabs(delta - warm.edge_deg);
-      if (d < edge_distance) {
-        edge_distance = d;
-        basis = "caustic_edge_position";
-      }
-    }
+    // A certified support carries endpoints, so the shared walk always names an anchor here.
+    double edge_position = 0.0;
+    const char* edge_basis = "";
+    NearestStructureAnchor(warm, delta, &edge_position, &edge_basis);
     out->edge.state = "finite";
-    out->edge_distance_deg = edge_distance;
-    out->edge_basis = basis;
+    out->edge_distance_deg = std::fabs(delta - edge_position);
+    out->edge_basis = edge_basis;
   }
 
   // The band-sum reading: warm documents only, under the scope gate's exact-equality comparison
@@ -799,14 +808,17 @@ void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadat
   } else if (!warm.has_scope) {
     out->band_sum.state = "unevaluated";
     out->band_sum.reason = "scope_field_missing";
-  } else if (meta.wavelength_nm != warm.wavelength_nm || meta.sun_altitude_deg != warm.sun_altitude_deg ||
-             meta.sun_azimuth_deg != warm.sun_azimuth_deg) {
+  } else if (wavelength_nm != warm.wavelength_nm || sun_altitude_deg != warm.sun_altitude_deg ||
+             sun_azimuth_deg != warm.sun_azimuth_deg) {
     out->band_sum.state = "unevaluated";
     out->band_sum.reason = "scope_value_mismatch";
   } else {
     const SurveyWarmSource::ProbeSample* best = nullptr;
     double best_distance = std::numeric_limits<double>::infinity();
     for (const SurveyWarmSource::ProbeSample& sample : warm.probe_samples) {
+      if (std::isnan(sample.value)) {
+        continue;  // an undefined reading is no reading: the pick spans the defined ones
+      }
       const double d = std::fabs(delta - sample.delta_deg);
       if (d < best_distance) {
         best_distance = d;
@@ -828,6 +840,8 @@ void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadat
     }
   }
 }
+
+namespace {
 
 // The survey context for this query: warm harvest when a schema-4 document passed the gates, the
 // context-only T0-T2 assembly otherwise (and also under the warm_index_absent degradation, which
@@ -863,7 +877,8 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
     inline_harvest = HarvestSurveyDocument(doc);
     warm = &inline_harvest;
   }
-  FillContextFromSource(*warm, meta, out);
+  FillSurveyContext(*warm, meta.target_deviation_deg, meta.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg,
+                    out);
 }
 
 }  // namespace

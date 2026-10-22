@@ -264,6 +264,10 @@ set(LUMICE_LAYER_engine_FILES
 set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
   raypath/path_feature_report.cpp
+  raypath/probe_analysis.cpp
+  raypath/probe_analysis.hpp
+  raypath/probe_json.cpp
+  raypath/probe_json.hpp
   raypath/survey_report.cpp
   raypath/survey_report.hpp
   raypath/detail/diagnostic_sampler.cpp

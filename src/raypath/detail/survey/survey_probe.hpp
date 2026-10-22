@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "analytic/band_sum.hpp"
+#include "analytic/pose_density.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
@@ -44,7 +45,12 @@ struct ProbeInput {
   double refractive_index = 0.0;
   double wavelength_nm = 0.0;
   double incident[3] = { 0.0, 0.0, -1.0 };  // the sun's propagation direction (SunIncidentDirection)
-  int member_count = 0;                     // the class size the representative stands for
+  // The representative wedge's azimuth, degrees, in the probe frame (MakeProbeFrame). The band-sum
+  // value formula makes the profile azimuth-free under the uniform density, so the built-in's 0 is
+  // a representative choice, spelled here so the query face's user-chosen azimuth reads as the
+  // same layout with another value (not a parallel implementation).
+  double azimuth_deg = 0.0;
+  int member_count = 0;  // the class size the representative stands for
   int sample_count = kSurveyProbeSampleCount;
   // When set, only the bright_domain card whose members are exactly this one member receives
   // the readings (the family arm produces one bright_domain card per class member; the probe
@@ -68,6 +74,81 @@ struct ProbeReadings {
 
 ProbeReadings ReadProbeProfile(const std::vector<double>& values_deg, const std::vector<double>& values,
                                const std::vector<int>& counts);
+
+// ---- the shared line-probe core (the query face consumes the same implementation) --------------
+//
+// routing.md: the probe is a shared library — one implementation, two triggers (the survey runs the
+// object's own radial line automatically, the query face lets the user place a line). The core is
+// "line geometry + analytic::BandSum + the readings"; a layout is a per-bin rectangle list in the
+// (deviation, azimuth-about-sun) plane. RunSolarRadialProbe below is the fixed-layout wrapper.
+
+// The probe's frame: (e1, e2) orthonormal, both normal to the incident (the band-sum pixel
+// convention: directions measured about the incident propagation vector), with the fallback axis
+// and cross-product order fixed here so every probe line reads in one frame.
+struct ProbeFrame {
+  double incident[3] = { 0.0, 0.0, -1.0 };
+  double e1[3] = { 0.0, 0.0, 1.0 };
+  double e2[3] = { 0.0, 0.0, 0.0 };
+};
+
+ProbeFrame MakeProbeFrame(const double incident[3]);
+
+// Unit direction at deviation `delta_rad` from the frame's incident and azimuth `az_rad` about it.
+void ProbeDirection(const ProbeFrame& frame, double delta_rad, double az_rad, double out[3]);
+
+// One evaluated bin of a probe line, both coordinates spelled (the profile document's row).
+struct ProbeLineSample {
+  double delta_deg = 0.0;    // the bin centre's deviation from the sun
+  double azimuth_deg = 0.0;  // the bin centre's azimuth about the sun, in the probe frame
+  double value = 0.0;        // per sr (the band-sum value convention)
+  int k = 0;
+  double k_eff = 0.0;
+};
+
+// One wavelength's evaluated profile.
+struct ProbeLineProfile {
+  double wavelength_nm = 0.0;
+  double refractive_index = 0.0;
+  long long kept_count = 0;
+  std::vector<ProbeLineSample> samples;
+};
+
+// One bin's rectangle in the (deviation, azimuth) plane, degrees. The corners are read lo-to-hi
+// in the fixed order (delta_lo, az_lo) -> (delta_lo, az_hi) -> (delta_hi, az_hi) -> (delta_hi,
+// az_lo), the winding the built-in layout has always written.
+struct ProbeLineBin {
+  double delta_centre_deg = 0.0;
+  double delta_lo_deg = 0.0;
+  double delta_hi_deg = 0.0;
+  double az_centre_deg = 0.0;
+  double az_lo_deg = 0.0;
+  double az_hi_deg = 0.0;
+};
+
+// A line's layout: the bins plus the two uniform widths in radians, precomputed by the layout
+// constructor with its own expression (the solid angle is delta_width_rad * az_width_rad *
+// sin(centre deviation) — the band-sum pixel convention; the widths are per-line constants, so
+// the radians conversion happens once, with the same grouping the built-in layout has always used).
+struct ProbeLineLayout {
+  std::vector<ProbeLineBin> bins;
+  double delta_width_rad = 0.0;
+  double az_width_rad = 0.0;
+};
+
+// The axis forms' layout constructor, the one statement of the delta-axis bin layout: the ruler
+// over [delta_min_deg, delta_max_deg] at the line's azimuth. The built-in radial line and the
+// query's radial / edge-normal forms all read this one constructor, so a warm document's grid and
+// the asked grid match bit for bit by construction, not by a runtime check.
+ProbeLineLayout AxisLineLayout(double delta_min_deg, double delta_max_deg, double azimuth_deg);
+
+// The shared core: resolves the representative's slots, materializes each bin's PixelTable cell
+// in the frame, and evaluates analytic::BandSum once for the one wavelength/index pair (the
+// chromatic lambda grid lives on the caller's loop, never a multi-wavelength map). Never
+// refuses: a path with no kept event yields the honest all-zero profile.
+ProbeLineProfile EvaluateProbeLine(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
+                                   const std::vector<int>& representative, const PoseDensityConversion& density,
+                                   const ProbeFrame& frame, const ProbeLineLayout& layout, double wavelength_nm,
+                                   double refractive_index, const double incident[3], int sample_count);
 
 // Runs the band-sum probe and appends it to out->probes; fills the profile fields of the
 // bright_domain card when the document carries one. Never refuses: a path with no kept event

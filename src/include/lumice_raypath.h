@@ -238,6 +238,113 @@ LUMICE_API LUMICE_ErrorCode LUMICE_PathSurveyToJson(const LUMICE_PathSurvey* res
 // Release a survey result. NULL is a no-op.
 LUMICE_API void LUMICE_PathSurveyDestroy(LUMICE_PathSurvey* result);
 
+// =============== Path Probe (the L2 draw-a-line query) ===============
+// A separate contract for the probe face of the diagnostic pipeline: the canonical probe library's
+// profile at a user-chosen location, in one of four `along` forms (routing.md's probe subdivision).
+// The canonical probe IS a slice of the L1 synchronous reference-lambda band-sum map — the same
+// implementation the survey's built-in radial probe runs (one implementation, two triggers), never
+// a second evaluation path. The chromatic lambda grid lives on the line only: each requested
+// wavelength is one band-sum on the same layout, never a multi-wavelength map.
+//
+// The four forms are two line geometries:
+//   radial / edge-normal — a delta-axis line at the at point's azimuth about the sun (radial spans
+//     the whole axis; edge-normal windows the same geometry at the context's nearest edge — the
+//     closest of the support intervals' endpoints and the certified edge position to the at point's
+//     deviation; a context with neither is the named refusal no_edge_in_context);
+//   arc / tangential — a constant-delta arc through the at point, swept over azimuth (the context
+//     carries only delta-axis facts, so the arc form declares its constant-delta reading in its
+//     spec; the tangential form is the same geometry spelled as the transverse crossing).
+//
+// Synchronous and deterministic (the band-sum is lattice-deterministic; a probe consumes no fiber
+// seeds); it runs on the calling thread and cannot be cancelled except at the per-lambda
+// boundaries: a stopped call serializes the profiles it has and reports interrupted in the
+// document's meta — an honest early exit, not a failure. The --warm contract of the point query
+// applies unchanged: a schema-4 survey document passes the same consistency gates (crystal id,
+// path layers, config fingerprint, the family measure echo), and the radial form at a matching
+// lambda/sun scope reuses the document's radial samples bit for bit (zero band-sum calls; the
+// profile names its provenance warm_reused / recomputed). Other forms always recompute.
+
+// The budget_ms a 0 budget_ms request resolves to, and the largest one it may carry, as a
+// shell-facing constant (the engine's own defaults, mirrored like the survey's pair).
+#define LUMICE_PATH_PROBE_DEFAULT_BUDGET_MS 15000
+#define LUMICE_PATH_PROBE_MAX_BUDGET_MS 120000
+// The largest wavelength count a request may carry (the online lambda grid on one line).
+#define LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT 32
+
+// The along forms. radial: the full delta axis at the at point's azimuth (the value is
+// azimuth-free under the uniform density — declared in the document, and the warm reuse
+// criterion does not compare the azimuth).
+#define LUMICE_PATH_PROBE_ALONG_RADIAL 0
+#define LUMICE_PATH_PROBE_ALONG_EDGE_NORMAL 1
+#define LUMICE_PATH_PROBE_ALONG_ARC 2
+#define LUMICE_PATH_PROBE_ALONG_TANGENTIAL 3
+
+// Request. `struct_size` MUST be set to sizeof(LUMICE_PathProbeRequest) of the header the caller
+// compiled against: fields are only ever appended, and a size smaller than this version's is
+// rejected (LUMICE_ERR_INVALID_VALUE). A new struct: the budget fields are first-class from the
+// first version (no legacy size baggage).
+typedef struct LUMICE_PathProbeRequest {
+  size_t struct_size;
+  int crystal_id;  // a crystal entry of the scene
+  // The raypath in Lumice face numbers, with the same layer encoding as
+  // LUMICE_SinglePathRequest. Exactly one layer is probed; more than one is refused as
+  // multi_layer_unsupported.
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  int along;  // a LUMICE_PATH_PROBE_ALONG_* value
+  // The user's sky point (altitude in [-90, 90], azimuth measured as the sun's — the
+  // `analyze --center` convention). The axis forms read its azimuth about the sun; the arc forms
+  // read its deviation. Required for every form.
+  double at_altitude_deg;
+  double at_azimuth_deg;
+  // The online lambda grid: NULL or wavelength_count 0 selects the scene's wavelength if its
+  // spectrum is exactly one discrete wavelength, else 550 nm — one profile. Non-empty: one
+  // profile per entry, in order, each with its own refractive index; every entry must lie in
+  // [350, 900]; at most LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT.
+  const double* wavelengths_nm;
+  int wavelength_count;
+  // The band-sum lattice n (the same ruler the survey's probe reads). 0 = the survey probe's
+  // 2000000; otherwise [1, LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT].
+  int sample_count;
+  // The warm document's text, as LUMICE_AnalyzeSinglePath spells it (a schema-1 seed sheet or a
+  // schema-4 survey document). NULL or length 0 for none. A probe consumes no seeds from it.
+  const char* warm_json;
+  size_t warm_json_len;
+  // 0 = LUMICE_PATH_PROBE_DEFAULT_BUDGET_MS; at most LUMICE_PATH_PROBE_MAX_BUDGET_MS. Checked at
+  // the per-lambda boundaries: a stopped call serializes the profiles it has and reports
+  // interrupted in the document's meta.
+  int budget_ms;
+  const volatile int* interrupted;  // the caller's one-way stop flag (the engine only reads it,
+                                    // never writes). NULL = no flag.
+} LUMICE_PathProbeRequest;
+
+typedef struct LUMICE_PathProbe_ LUMICE_PathProbe;
+
+// Analyse and serialize. On LUMICE_OK *out is a new handle the caller owns (release with
+// LUMICE_PathProbeDestroy) whose JSON is produced once and never changes. On failure *out is
+// NULL and err_buf holds "<reason>: <detail>" as LUMICE_AnalyzeSinglePath spells it; the request
+// refusals are the point query's: unknown_crystal_id, invalid_path, multi_layer_unsupported,
+// face_not_in_crystal, wavelength_out_of_range, invalid_target (the at point), invalid_argument
+// (along, sample count, wavelength count or budget out of range), crystal_rejected,
+// path_infeasible (no pose realises the path), plus null_arg and internal with the same
+// meanings. Refusals the DOCUMENT carries rather than the error: no_edge_in_context,
+// degenerate_arc_at_pole, measure_not_expressible, and inline_survey_refused (an edge-normal form
+// whose inline context assembly refused — the context blocks carry the same named reason); the
+// profile's evidence state reads refused with the mode. Return codes match
+// LUMICE_AnalyzeSinglePath's.
+LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeRequest* request,
+                                                    LUMICE_PathProbe** out, char* err_buf, size_t err_size);
+
+// The result's JSON document (UTF-8, schema "lumice.path-probe", schema_version 5), with the
+// snprintf-style buffer contract of LUMICE_SinglePathResultToJson.
+LUMICE_API LUMICE_ErrorCode LUMICE_PathProbeToJson(const LUMICE_PathProbe* result, char* out_buf, size_t buf_size,
+                                                   size_t* out_len);
+
+// Release a probe result. NULL is a no-op.
+LUMICE_API void LUMICE_PathProbeDestroy(LUMICE_PathProbe* result);
+
 #ifdef __cplusplus
 }
 #endif

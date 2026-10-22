@@ -12,6 +12,7 @@
 // to 9 significant digits, which bounds their size (a 720-row grid is a million cells per array) at
 // a precision far below the kernel's own tolerances. NaN is written as null.
 
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,16 @@ struct WarmGateContext {
 
 Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, std::vector<double>* seeds,
                      SurveyWarmSource* survey);
+
+// The survey context block's one JSON spelling — the point document's `survey_context` and the
+// probe document's `context` are the same shape, and this is its one writer. Exported so the two
+// documents cannot drift; the value fields appear exactly when their state says something was read.
+nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& context);
+
+// The config's own spelling of a distribution ("fixed" / "uniform" / "gauss" / "zigzag" /
+// "laplacian" / "gauss_legacy"); a plain number in the config is "fixed". Shared by the point and
+// probe meta blocks.
+const char* DistributionName(DistributionType type);
 
 }  // namespace lumice::raypath
 

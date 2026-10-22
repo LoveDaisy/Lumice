@@ -45,7 +45,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ```c
 // lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
 //（lumice_base.h 刻意不包含它，原因见下）
-#define LUMICE_API_VERSION 454        // ABI 版本，编码为 major*100 + minor（v4.54）
+#define LUMICE_API_VERSION 457        // ABI 版本，编码为 major*100 + minor（v4.57）
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量

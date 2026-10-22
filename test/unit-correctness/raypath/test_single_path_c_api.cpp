@@ -19,9 +19,15 @@
 #include <string>
 #include <vector>
 
+#include "config/config_manager.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
+#include "raypath/detail/survey/config_fingerprint.hpp"
+#include "raypath/single_path_json.hpp"
+#include "server/c_api_scene_internal.hpp"  // SceneRoot (test-only exposure)
+#include "server/server.hpp"                // ParseConfigManager
+#include "util/logger.hpp"
 
 namespace {
 
@@ -183,9 +189,11 @@ TEST(SinglePathCApi, RefusalsNameTheirReasonInErrBuf) {
   Req unknown({ 3, 5 }, { 2 });
   unknown.c.crystal_id = 7;
   rows.push_back({ "unknown crystal", unknown, "unknown_crystal_id: " });
-  Req far({ 3, 5 }, { 2 });
-  far.c.wavelength_nm = 1000.0;
-  rows.push_back({ "wavelength", far, "wavelength_out_of_range: " });
+  Req far_wavelength({ 3, 5 }, { 2 });  // not "far": windows.h (pulled by the server headers
+  // this TU includes for the warm-harvest pin) still defines the 16-bit-era far/near macros on
+  // MSVC, and the bare identifier expands to nothing there.
+  far_wavelength.c.wavelength_nm = 1000.0;
+  rows.push_back({ "wavelength", far_wavelength, "wavelength_out_of_range: " });
   Req warm_not_json({ 3, 5 }, { 2 });
   warm_not_json.warm = "not json";
   rows.push_back({ "warm not json", warm_not_json, "invalid_argument: warm seeds" });
@@ -624,6 +632,39 @@ TEST_F(WarmContract, WitnessArgmaxSeedTravelsBackAsAWarmSeed) {
   ASSERT_EQ(o.code, LUMICE_OK) << o.error;
   EXPECT_EQ(nlohmann::json::parse(Json(o.result.get()))["meta"]["discovery_settings"]["warm_seed_count"],
             doc["warm_index"]["seeds"].size());
+}
+
+// The warm harvest's JSON arm, pinned on a real document: ParseWarmStart reads the probe
+// samples' k / k_eff and the lattice count off the asset — the probe tests' crafted in-memory
+// sources never exercise this reader path.
+TEST_F(WarmContract, WarmHarvestCarriesTheKappaFields) {
+  const ScenePtr scene = MakeScene(RandomScene().c_str());
+  lumice::ConfigManager config;
+  ASSERT_FALSE(static_cast<bool>(lumice::ParseConfigManager(SceneRoot(scene.get()),
+                                                            "WarmContract.WarmHarvestCarriesTheKappaFields",
+                                                            lumice::GetGlobalLogger(), nullptr, &config)));
+  namespace rp = lumice::raypath;
+  rp::WarmGateContext gate;
+  gate.crystal_id = 1;
+  gate.path_layers = { { 3, 5 } };
+  gate.config_fingerprint =
+      rp::survey::RoutingConfigFingerprint(config, 1, gate.path_layers, rp::survey::kDefaultSymmetryBits);
+  std::vector<double> seeds;
+  rp::SurveyWarmSource harvest;
+  const rp::Error e = rp::ParseWarmStart(RandomSurvey(), gate, &seeds, &harvest);
+  ASSERT_TRUE(e.Ok()) << e.message;
+  EXPECT_TRUE(harvest.index_present);
+  EXPECT_TRUE(harvest.has_probe);
+  EXPECT_EQ(harvest.probe_sample_count, 2000000);
+  ASSERT_FALSE(harvest.probe_samples.empty());
+  long long total_k = 0;
+  double max_k_eff = 0.0;
+  for (const auto& sample : harvest.probe_samples) {
+    total_k += sample.k;
+    max_k_eff = std::max(max_k_eff, sample.k_eff);
+  }
+  EXPECT_GT(total_k, 0);
+  EXPECT_GT(max_k_eff, 0.0);
 }
 
 // The warm path's first gate: an id that is not in the config used to reach the fingerprint's
