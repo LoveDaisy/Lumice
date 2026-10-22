@@ -274,6 +274,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/input_assembly.hpp
   raypath/detail/json_values.hpp
   raypath/detail/survey/evidence.hpp
+  raypath/detail/survey/config_fingerprint.cpp
+  raypath/detail/survey/config_fingerprint.hpp
   raypath/detail/survey/survey_assembly.cpp
   raypath/detail/survey/survey_assembly.hpp
   raypath/detail/survey/survey_mc_ess.cpp

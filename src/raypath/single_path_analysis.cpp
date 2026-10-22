@@ -13,6 +13,8 @@
 #include "analytic/so3.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/fiber_quadrature.hpp"
+#include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/sky_direction.hpp"
 
@@ -646,6 +648,202 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation) {
 
 }  // namespace
 
+// ---- the survey context ---------------------------------------------------------------------------
+
+namespace {
+
+// The schema-4 value model's harvest: the facts the context reads, read once off the assembled
+// document (the warm reader's JSON arm mirrors this — the two must read the same blocks).
+SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
+  SurveyWarmSource out;
+  out.early_stopped = doc.early_stopped;
+  out.has_scope = true;
+  out.wavelength_nm = doc.wavelength_nm;
+  out.wavelength_source = doc.wavelength_source;
+  out.sun_altitude_deg = doc.sun_altitude_deg;
+  out.sun_azimuth_deg = doc.sun_azimuth_deg;
+  for (const survey::SurveyObject& card : doc.objects) {
+    if (card.support_set.has_value()) {
+      out.has_support = true;
+      for (const survey::SurveyObject::Interval& interval : card.support_set->intervals) {
+        SurveyWarmSource::SupportInterval out_interval;
+        out_interval.lower_deg = interval.lower_deg;
+        out_interval.upper_deg = interval.upper_deg;
+        out_interval.members = card.members.empty() ? std::vector<int>{} : card.members.front();
+        out.intervals.push_back(std::move(out_interval));
+      }
+    }
+    if (card.caustic_edge.has_value()) {
+      out.has_edge = true;
+      out.edge_deg = card.caustic_edge->position_deg;
+    }
+  }
+  if (!doc.probes.empty()) {
+    const survey::SurveyProbe& probe = doc.probes.front();
+    out.has_probe = true;
+    out.probe_bin_deg = probe.spec.bin_deg;
+    for (const survey::SurveyProbeSample& sample : probe.samples) {
+      out.probe_samples.push_back({ sample.delta_deg, sample.value });
+    }
+  }
+  out.has_measure_echo = doc.family_routing.has_value();
+  if (out.has_measure_echo) {
+    const auto read_dim = [](const survey::FamilyDimMeasure& dim, SurveyWarmSource::MeasureDimEcho* e) {
+      e->kind = survey::FamilyDimKindName(dim.kind);
+      e->center_deg = dim.center_deg;
+      e->width_deg = dim.width_deg;
+    };
+    read_dim(doc.family_routing->measure.zenith, &out.measure_zenith);
+    read_dim(doc.family_routing->measure.azimuth, &out.measure_azimuth);
+    read_dim(doc.family_routing->measure.roll, &out.measure_roll);
+  }
+  return out;
+}
+
+// The context's answers, read off a harvest (warm document or inline assembly — the same shape).
+void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadata& meta, SurveyContextBlock* out) {
+  const double delta = meta.target_deviation_deg;
+  const SurveyWarmSource::SupportInterval* containing = nullptr;
+  const SurveyWarmSource::SupportInterval* closest = nullptr;
+  double closest_distance = std::numeric_limits<double>::infinity();
+  for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
+    if (delta >= interval.lower_deg && delta <= interval.upper_deg) {
+      containing = &interval;
+      break;
+    }
+    const double d = delta < interval.lower_deg ? interval.lower_deg - delta : delta - interval.upper_deg;
+    if (d < closest_distance) {
+      closest_distance = d;
+      closest = &interval;
+    }
+  }
+  if (warm.early_stopped) {
+    out->object.state = "unevaluated";
+    out->object.reason = "survey_early_stopped_no_delta_axis";
+    out->edge.state = "unevaluated";
+    out->edge.reason = "survey_early_stopped_no_delta_axis";
+  } else if (!warm.has_support) {
+    out->object.state = "unevaluated";
+    out->object.reason = "survey_carries_no_support";
+    out->edge.state = "unevaluated";
+    out->edge.reason = "survey_carries_no_support";
+  } else {
+    // The partition containment is a certified structural fact; the nearest reading inherits it.
+    const SurveyWarmSource::SupportInterval& hit = containing != nullptr ? *containing : *closest;
+    out->object.state = "certified";
+    out->target_inside_support = containing != nullptr;
+    out->object_kind = "support_set";
+    out->object_members = hit.members;
+    out->object_distance_deg = containing != nullptr ? 0.0 : closest_distance;
+    double edge_distance = std::numeric_limits<double>::infinity();
+    const char* basis = "";
+    for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
+      const double lo = std::fabs(delta - interval.lower_deg);
+      const double hi = std::fabs(delta - interval.upper_deg);
+      if (lo < edge_distance) {
+        edge_distance = lo;
+        basis = "support_interval_endpoint";
+      }
+      if (hi < edge_distance) {
+        edge_distance = hi;
+        basis = "support_interval_endpoint";
+      }
+    }
+    if (warm.has_edge) {
+      const double d = std::fabs(delta - warm.edge_deg);
+      if (d < edge_distance) {
+        edge_distance = d;
+        basis = "caustic_edge_position";
+      }
+    }
+    out->edge.state = "finite";
+    out->edge_distance_deg = edge_distance;
+    out->edge_basis = basis;
+  }
+
+  // The band-sum reading: warm documents only, under the scope gate's exact-equality comparison
+  // (both sides resolved the same way, so equal configs give bit-equal doubles here).
+  if (out->source == "inline") {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "inline_context_runs_no_probe";
+  } else if (out->warm_index_absent) {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "warm_index_absent";
+  } else if (!warm.has_probe) {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "warm_document_has_no_probe";
+  } else if (!warm.has_scope) {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "scope_field_missing";
+  } else if (meta.wavelength_nm != warm.wavelength_nm || meta.sun_altitude_deg != warm.sun_altitude_deg ||
+             meta.sun_azimuth_deg != warm.sun_azimuth_deg) {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "scope_value_mismatch";
+  } else {
+    const SurveyWarmSource::ProbeSample* best = nullptr;
+    double best_distance = std::numeric_limits<double>::infinity();
+    for (const SurveyWarmSource::ProbeSample& sample : warm.probe_samples) {
+      const double d = std::fabs(delta - sample.delta_deg);
+      if (d < best_distance) {
+        best_distance = d;
+        best = &sample;
+      }
+    }
+    if (best == nullptr) {
+      out->band_sum.state = "unevaluated";
+      out->band_sum.reason = "warm_document_has_no_probe";
+    } else {
+      out->band_sum.state = "finite";
+      out->band_sum_value = best->value;
+      out->band_sum_delta_deg = best->delta_deg;
+      out->band_sum_bin_deg = warm.probe_bin_deg;
+      out->band_sum_caliber = "the warm document's solar-radial band-sum profile at wavelength " +
+                              std::to_string(warm.wavelength_nm) + " nm (" + warm.wavelength_source + "), sun at " +
+                              std::to_string(warm.sun_altitude_deg) + "/" + std::to_string(warm.sun_azimuth_deg) +
+                              " — identity-verified against this query";
+    }
+  }
+}
+
+// The survey context for this query: warm harvest when a schema-4 document passed the gates, the
+// context-only T0-T2 assembly otherwise (and also under the warm_index_absent degradation, which
+// still declares itself in the block).
+void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& request, const SinglePathMetadata& meta,
+                        SurveyContextBlock* out) {
+  if (request.warm_survey.has_value()) {
+    out->source = "warm";
+    out->warm_index_absent = !request.warm_survey->index_present;
+  } else {
+    out->source = "inline";
+  }
+  const SurveyWarmSource* warm =
+      request.warm_survey.has_value() && request.warm_survey->index_present ? &*request.warm_survey : nullptr;
+  SurveyWarmSource inline_harvest;
+  if (warm == nullptr) {
+    SurveyRequest survey_request;
+    survey_request.crystal_id = request.crystal_id;
+    survey_request.path_layers = request.path_layers;
+    survey_request.symmetry_bits = 7;
+    survey_request.wavelength_nm = meta.wavelength_nm;
+    survey::SurveyDocument doc;
+    const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
+    if (!e.Ok()) {
+      out->object.state = "unevaluated";
+      out->object.reason = "inline_survey_refused";
+      out->edge.state = "unevaluated";
+      out->edge.reason = "inline_survey_refused";
+      out->band_sum.state = "unevaluated";
+      out->band_sum.reason = "inline_survey_refused";
+      return;
+    }
+    inline_harvest = HarvestSurveyDocument(doc);
+    warm = &inline_harvest;
+  }
+  FillContextFromSource(*warm, meta, out);
+}
+
+}  // namespace
+
 PoseAngles PoseToAngles(const double r[9]) {
   // R = Rz(a) Ry(-zenith) Rz(roll), a = azimuth - 180:
   //   third column = (-sin zenith cos a, -sin zenith sin a, cos zenith)
@@ -784,6 +982,10 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   if (request.sun_grid_lat_count > 0) {
     BuildSunGrid(request.sun_grid_lat_count, &ctx, &result.sun_grid);
   }
+
+  // The survey context: where the target sits in the survey's structure (warm harvest, or this
+  // request's own context-only T0-T2 assembly). Independent of the outcome branch.
+  BuildSurveyContext(config, request, meta, &result.survey_context);
 
   if (rank.rank_zero) {
     result.outcome = Outcome::kPointMass;

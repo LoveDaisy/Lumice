@@ -9,6 +9,7 @@
 #include "analytic/pose_density.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
+#include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_family.hpp"
 #include "raypath/detail/survey/survey_mc_ess.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
@@ -141,7 +142,8 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
 
 }  // namespace
 
-Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out) {
+Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out,
+                     const SurveyAssemblyOptions& options) {
   if (out == nullptr) {
     return { ErrorCode::kInvalidArgument, "null document output" };
   }
@@ -278,19 +280,27 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
     out->evidence.method = kCertifiedMethodPointMass;
     // The identity arm's chromatic leg: the weight tint (the direction question a rank-0 path
     // still has). The block-level chromatic state and the budget note are the leg's own.
-    TintInput tint_input;
-    tint_input.table = &table;
-    tint_input.polygons = &polygons;
-    tint_input.representative = &request.path_layers[0];
-    tint_input.density = &density;  // the same conversion the routing gate checked
-    SunIncidentDirection(config.scene_.light_source_.param_, tint_input.incident);
-    tint_input.member_count = static_cast<int>(scope.members.size());
-    AssembleWeightTint(tint_input, out);
-    out->budget_note = "the identity arm's legs are the T0 routing verdict (milliseconds) and the " +
-                       ChromaticPairProseBlueFirst() + " band-sum tint pair (" +
-                       std::to_string(kSurveyTintSampleCount) +
-                       " samples per lambda); neither is budget-enforced yet; enforcement lands "
-                       "with the quantification legs";
+    if (options.context_only) {
+      out->chromatic.state = EvidenceState::kUnevaluated;
+      out->chromatic.reason = "context-only assembly: the tint leg (T3 quantification) is skipped";
+      out->budget_note =
+          "the context-only assembly's legs are the T0 routing verdict alone; the "
+          "T3 quantification legs (the tint) are skipped";
+    } else {
+      TintInput tint_input;
+      tint_input.table = &table;
+      tint_input.polygons = &polygons;
+      tint_input.representative = &request.path_layers[0];
+      tint_input.density = &density;  // the same conversion the routing gate checked
+      SunIncidentDirection(config.scene_.light_source_.param_, tint_input.incident);
+      tint_input.member_count = static_cast<int>(scope.members.size());
+      AssembleWeightTint(tint_input, out);
+      out->budget_note = "the identity arm's legs are the T0 routing verdict (milliseconds) and the " +
+                         ChromaticPairProseBlueFirst() + " band-sum tint pair (" +
+                         std::to_string(kSurveyTintSampleCount) +
+                         " samples per lambda); neither is budget-enforced yet; enforcement lands "
+                         "with the quantification legs";
+    }
   } else {
     // No early stop: the T0 facts stand (finite — a not-rank-0 verdict is as algebraic as a
     // rank-0 one, and an escaped walk refuses loudly). A random-family class with an
@@ -318,6 +328,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         witness_input.refractive_index = wavelength.refractive_index;
         witness_input.wavelength_nm = wavelength.wavelength_nm;
         witness_input.member_count = static_cast<int>(scope.members.size());
+        witness_input.context_only = options.context_only;
         AssembleRefusedSupport(witness_input, scope.members, outcome.refusal_mode,
                                "chromatic legs not run: the delta axis refused (" + outcome.refusal_mode +
                                    "), and the chromatic legs sit downstream of it",
@@ -343,51 +354,65 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
       } else {
         // The arm's own budget note: the T1 legs are the document's computation, and the note
         // says what ran instead of repeating the early-stop arm's millisecond-only claim.
-        out->budget_note =
-            "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, "
-            "the chromatic pair, the class tint's two-lambda power sum at " +
-            std::to_string(kSurveyClassTintSampleCount) +
-            " samples per lambda, and the TIR share "
-            "leg's re-classification of the same declared lattice at " +
-            std::to_string(kSurveyTirShareSampleCount) +
-            " samples per lambda) are not budget-enforced yet; enforcement lands with the "
-            "quantification legs";
-        // The canonical probe: the class's radial profile at the document's reference
-        // wavelength (the same ruler the certified edge reads). Never refuses — an empty
-        // event set serializes as the honest zero profile.
-        ProbeInput probe_input;
-        probe_input.table = &table;
-        probe_input.polygons = &polygons;
-        probe_input.representative = &request.path_layers[0];
-        probe_input.density = &density;  // the same conversion the routing gate checked
-        probe_input.refractive_index = wavelength.refractive_index;
-        probe_input.wavelength_nm = wavelength.wavelength_nm;
-        SunIncidentDirection(config.scene_.light_source_.param_, probe_input.incident);
-        probe_input.member_count = static_cast<int>(scope.members.size());
-        RunSolarRadialProbe(probe_input, out);
-        // The chromatic layer's v1 legs on the representative (orthogonal to the position
-        // objects; the dispersion and diagnose legs are separate kernel paths, separate
-        // sub-blocks).
-        AssembleChromaticLayer(table, polygons, request.path_layers[0], density.spec,
-                               static_cast<int>(scope.members.size()), out);
-        // The arm's own tint leg: the class power-sum over the declared lattice (a different
-        // reading and field family from the identity arm's point-mass masses; its refusals
-        // stay in the sub-block — the block already carries legs with real output).
-        ClassTintInput class_tint_input;
-        class_tint_input.table = &table;
-        class_tint_input.polygons = &polygons;
-        class_tint_input.representative = &request.path_layers[0];
-        SunIncidentDirection(config.scene_.light_source_.param_, class_tint_input.incident);
-        class_tint_input.member_count = static_cast<int>(scope.members.size());
-        AssembleClassTint(class_tint_input, out);
-        // The exception evidence leg: the TIR share over the same declared lattice (a
-        // document-level block of its own, beside family_routing; its refusals never touch the
-        // chromatic block).
-        AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
-                                         static_cast<int>(scope.members.size())),
-                         out);
-        AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
-                                         wavelength.wavelength_nm, out);
+        // Context-only (the query face's no-warm mode) keeps the structure alone.
+        if (options.context_only) {
+          out->budget_note =
+              "the context-only assembly's legs are the T0 routing verdict and the T0-T2 structure "
+              "legs (the delta partition and the support); the T3 quantification legs (the probe, "
+              "the chromatic pair, the tint, the TIR share, and the ESS legs) are skipped";
+        } else {
+          out->budget_note =
+              "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, "
+              "the chromatic pair, the class tint's two-lambda power sum at " +
+              std::to_string(kSurveyClassTintSampleCount) +
+              " samples per lambda, and the TIR share "
+              "leg's re-classification of the same declared lattice at " +
+              std::to_string(kSurveyTirShareSampleCount) +
+              " samples per lambda) are not budget-enforced yet; enforcement lands with the "
+              "quantification legs";
+        }
+        if (options.context_only) {
+          // Structure only: the support/caustic/domain cards stand; no profile, no chromatic
+          // layer, no class tint, no TIR share or ESS legs — the point context reads none of
+          // them, and the cheap mode keeps its cost bounded.
+        } else {
+          // The canonical probe: the class's radial profile at the document's reference
+          // wavelength (the same ruler the certified edge reads). Never refuses — an empty
+          // event set serializes as the honest zero profile.
+          ProbeInput probe_input;
+          probe_input.table = &table;
+          probe_input.polygons = &polygons;
+          probe_input.representative = &request.path_layers[0];
+          probe_input.density = &density;  // the same conversion the routing gate checked
+          probe_input.refractive_index = wavelength.refractive_index;
+          probe_input.wavelength_nm = wavelength.wavelength_nm;
+          SunIncidentDirection(config.scene_.light_source_.param_, probe_input.incident);
+          probe_input.member_count = static_cast<int>(scope.members.size());
+          RunSolarRadialProbe(probe_input, out);
+          // The chromatic layer's v1 legs on the representative (orthogonal to the position
+          // objects; the dispersion and diagnose legs are separate kernel paths, separate
+          // sub-blocks).
+          AssembleChromaticLayer(table, polygons, request.path_layers[0], density.spec,
+                                 static_cast<int>(scope.members.size()), out);
+          // The arm's own tint leg: the class power-sum over the declared lattice (a different
+          // reading and field family from the identity arm's point-mass masses; its refusals
+          // stay in the sub-block — the block already carries legs with real output).
+          ClassTintInput class_tint_input;
+          class_tint_input.table = &table;
+          class_tint_input.polygons = &polygons;
+          class_tint_input.representative = &request.path_layers[0];
+          SunIncidentDirection(config.scene_.light_source_.param_, class_tint_input.incident);
+          class_tint_input.member_count = static_cast<int>(scope.members.size());
+          AssembleClassTint(class_tint_input, out);
+          // The exception evidence leg: the TIR share over the same declared lattice (a
+          // document-level block of its own, beside family_routing; its refusals never touch the
+          // chromatic block).
+          AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
+                                           static_cast<int>(scope.members.size())),
+                           out);
+          AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope.members.size()),
+                                           wavelength.wavelength_nm, out);
+        }
       }
     } else {
       // The family-restricted route (gap 1's own): the measure is read in the concentration
@@ -407,6 +432,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         witness_input.refractive_index = wavelength.refractive_index;
         witness_input.wavelength_nm = wavelength.wavelength_nm;
         witness_input.member_count = static_cast<int>(scope.members.size());
+        witness_input.context_only = options.context_only;
         AssembleRefusedSupport(witness_input, scope.members, measure.refusal_mode,
                                "chromatic legs not run: the measure shape is outside the routing v1 domain, and "
                                "the legs sit downstream of the routing",
@@ -431,6 +457,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
         SunIncidentDirection(config.scene_.light_source_.param_, family_input.incident);
         family_input.refractive_index = wavelength.refractive_index;
         family_input.wavelength_nm = wavelength.wavelength_nm;
+        family_input.context_only = options.context_only;
         const FamilyArmOutcome family_outcome = AssembleFamilyRouting(family_input, out);
         if (!family_outcome.structural_output) {
           any_escaped = true;
@@ -447,6 +474,17 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
       out->evidence.coverage.wavelength_nm = wavelength.wavelength_nm;
     }
   }
+
+  // The warm_index receipt (the --warm contract's survey side, always filled): the seeds the
+  // arms collected, the reuse scope, the producer receipt and the config fingerprint (the
+  // routing-axis projection's single implementation).
+  out->warm_index.reuse_scope =
+      "structural facts (the routing verdict, the object cards, the support) reuse across sun and "
+      "wavelength changes (the routing cache ruling); probe band-sum readings are valid only at "
+      "the producing document's wavelength and sun (compare the scope receipt per query)";
+  out->warm_index.produced_for = "lumice.path-survey schema 4, analytic api v" + std::to_string(analytic::kApiVersion);
+  out->warm_index.config_fingerprint =
+      RoutingConfigFingerprint(config, request.crystal_id, request.path_layers, request.symmetry_bits);
 
   out->budget_ms = request.budget_ms;
   out->total_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();

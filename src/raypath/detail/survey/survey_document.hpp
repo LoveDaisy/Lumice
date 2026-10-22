@@ -7,6 +7,7 @@
 // assembly fills and the serializer reads; it carries no pointers, so a shell and a test can
 // both build one.
 
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -375,6 +376,11 @@ struct SurveyObject {
     double entry = 0.0;                           // the batch row's entry measure (its own read of A)
     double interface_product = 0.0;               // the batch row's interface product
     std::string source_note;                      // the declared source, spelled inside the document
+    // The argmax event's candidate pose, retained for the document's warm_index (the seed the
+    // query faces reuse). Not serialized on the card itself — it travels in the warm_index block
+    // under the leg name "witness_argmax".
+    bool has_pose = false;
+    double pose[9] = {};
   };
 
   std::optional<WitnessPayload> witness;
@@ -692,6 +698,19 @@ struct SurveyRequestEcho {
                                // rejected by the engine, never clamped
 };
 
+// The warm index block (the --warm contract's survey side): the poses the assembly actually held,
+// each named by the leg that held it, plus the reuse-scope declaration, the producer receipt and
+// the config fingerprint (the routing-axis projection's SHA256, config_fingerprint.hpp's single
+// implementation). A pure append on the schema-4 document — a pre-warm reader sees no key change,
+// and a survey whose arms held no pose carries `seeds: []` with the same declaration fields.
+struct WarmIndexBlock {
+  std::vector<std::array<double, 9>> seeds;
+  std::vector<std::string> seed_sources;  // parallel to seeds: the leg that held the pose
+  std::string reuse_scope;
+  std::string produced_for;
+  std::string config_fingerprint;
+};
+
 // The whole document, pre-serialization.
 struct SurveyDocument {
   int schema_version = 4;
@@ -730,6 +749,12 @@ struct SurveyDocument {
   // document that arm produced — an early stop, a full-dimensional route and an
   // outside-domain refusal carry no family_routing key at all.
   std::optional<FamilyRoutingBlock> family_routing;
+
+  // The warm index (the --warm contract's survey side): always filled by the assembly — the
+  // seeds the arms held (empty when none), the scope/producer receipts and the config
+  // fingerprint. A reader treats a missing or incomplete key on the wire as the documented
+  // warm_index_absent degradation, never as refusal material.
+  WarmIndexBlock warm_index;
 
   // The chromatic layer: the block-level evidence plus the optional legs. A leg absent from
   // the document is one the routing arm did not run — the sub-block keys never appear without

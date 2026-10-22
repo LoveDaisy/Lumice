@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -211,6 +212,269 @@ TEST(SinglePathCApi, WarmJsonFromAnEarlierResultIsAccepted) {
   const nlohmann::json a = nlohmann::json::parse(again.warm);
   const nlohmann::json b = nlohmann::json::parse(Json(second.result.get()));
   EXPECT_EQ(b["meta"]["discovery_settings"]["warm_seed_count"], a["components"].size() + a["incomplete"].size());
+}
+
+// ---- the --warm survey contract (schema 4) ---------------------------------------------------------
+
+// A survey C API scene whose full-random axis routes the T1 full-dimensional arm (the support,
+// the probe and the warm_index with no held pose — `seeds: []`). One production, many probes.
+class WarmContract : public ::testing::Test {
+ protected:
+  static constexpr const char* kRandomScene = R"({
+    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
+                   "axis": { "zenith": { "type": "uniform", "mean": 0, "std": 360 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                             "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+    "filter": [],
+    "scene": {
+      "light_source": { "type": "sun", "altitude": 20.0, "spectrum": "D65" },
+      "ray_num": 1000,
+      "max_hits": 7,
+      "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+    },
+    "render": []
+  })";
+
+  // One production per scene text, cached: the T1 arms' 2M-event probes are the schema's own
+  // cost, and the five probes below consume the same two documents.
+  static const std::string& CachedSurvey(const char* scene_json) {
+    static std::map<std::string, std::string> cache;
+    auto it = cache.find(scene_json);
+    if (it == cache.end()) {
+      std::string text;
+      SurveyInto(&text, scene_json);
+      it = cache.emplace(scene_json, std::move(text)).first;
+    }
+    return it->second;
+  }
+
+  static void SurveyInto(std::string* text, const char* scene_json = kRandomScene) {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(scene_json, &raw), LUMICE_OK);
+    const ScenePtr scene(raw);
+    LUMICE_PathSurveyRequest s{};
+    s.struct_size = sizeof(s);
+    s.crystal_id = 1;
+    static const int faces[] = { 3, 5 };
+    s.faces = faces;
+    s.face_count = 2;
+    static const int layers[] = { 2 };
+    s.layer_face_counts = layers;
+    s.layer_count = 1;
+    s.budget_ms = 15000;
+    LUMICE_PathSurvey* doc = nullptr;
+    ASSERT_EQ(LUMICE_AnalyzePathSurvey(scene.get(), &s, &doc, nullptr, 0), LUMICE_OK);
+    const std::unique_ptr<LUMICE_PathSurvey, void (*)(LUMICE_PathSurvey*)> owned(doc, LUMICE_PathSurveyDestroy);
+    size_t len = 0;
+    LUMICE_PathSurveyToJson(doc, nullptr, 0, &len);
+    std::string out(len + 1, '\0');
+    LUMICE_PathSurveyToJson(doc, out.data(), out.size(), &len);
+    out.resize(len);
+    *text = std::move(out);
+  }
+};
+
+// The closed loop: the survey's warm_index travels back through the point query — seeds consumed
+// (zero held on this arm: an honest `seeds: []`), the gates all pass, and the context reads the
+// document's structure: the target inside the support, the edge distance, and the band-sum reading
+// consumed under the passing scope gate.
+TEST_F(WarmContract, ClosedLoopConsumesTheIndexAndAnswersTheContext) {
+  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const nlohmann::json doc = nlohmann::json::parse(survey_text);
+  ASSERT_TRUE(doc.contains("warm_index"));
+  EXPECT_EQ(doc["warm_index"]["seeds"], nlohmann::json::array());
+  EXPECT_FALSE(doc["warm_index"]["config_fingerprint"].get<std::string>().empty());
+  EXPECT_FALSE(doc["warm_index"]["reuse_scope"].get<std::string>().empty());
+  EXPECT_FALSE(doc["warm_index"]["produced_for"].get<std::string>().empty());
+
+  const ScenePtr scene = MakeScene(kRandomScene);
+  Req q({ 3, 5 }, { 2 });
+  q.warm = survey_text;
+  q.Bind();
+  const Outcome o = Analyse(scene.get(), q);
+  ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+  EXPECT_EQ(nlohmann::json::parse(Json(o.result.get()))["meta"]["discovery_settings"]["warm_seed_count"], 0);
+  const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+  EXPECT_EQ(context["source"], "warm");
+  EXPECT_EQ(context["warm_index_absent"], false);
+  EXPECT_EQ(context["object"]["state"], "certified");
+  EXPECT_TRUE(context["object"]["members"].size() > 0);
+  EXPECT_EQ(context["band_sum"]["state"], "finite");
+  EXPECT_GT(context["band_sum"]["value"].get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(context["band_sum"]["bin_deg"].get<double>(), 0.1);
+  // The nearest sample sits within half a bin of the query's own deviation (the same ruler).
+  const double delta_deg = nlohmann::json::parse(Json(o.result.get()))["meta"]["target"]["deviation_deg"].get<double>();
+  EXPECT_LT(std::fabs(context["band_sum"]["delta_deg"].get<double>() - delta_deg), 0.05 + 1e-9);
+}
+
+// The structure gates go red on a config field inside the routing projection: the crystal
+// geometry, the measure (whose echo is absent on this arm — only the fingerprint can catch it),
+// and the scope the expansion ran under. Each probe changes exactly one axis and expects the
+// refusal to name the warm index.
+TEST_F(WarmContract, RoutingAxisMutationsAreRefusedByTheGates) {
+  const std::string& survey_text = CachedSurvey(kRandomScene);
+
+  // Crystal geometry: height 1.0 -> 1.1.
+  const char* taller = R"({
+    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.1 },
+                   "axis": { "zenith": { "type": "uniform", "mean": 0, "std": 360 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                             "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+    "filter": [],
+    "scene": {
+      "light_source": { "type": "sun", "altitude": 20.0, "spectrum": "D65" },
+      "ray_num": 1000, "max_hits": 7,
+      "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+    },
+    "render": []
+  })";
+  {
+    const ScenePtr scene = MakeScene(taller);
+    Req q({ 3, 5 }, { 2 });
+    q.warm = survey_text;
+    q.Bind();
+    const Outcome o = Analyse(scene.get(), q);
+    EXPECT_EQ(o.code, LUMICE_ERR_INVALID_VALUE) << o.error;
+    EXPECT_NE(o.error.find("warm index"), std::string::npos) << o.error;
+  }
+  // Measure: roll 360 -> 90 (no family_routing echo on this arm; the fingerprint is the one gate
+  // that can see it).
+  const char* narrow_roll = R"({
+    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
+                   "axis": { "zenith": { "type": "uniform", "mean": 0, "std": 360 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                             "roll": { "type": "uniform", "mean": 0, "std": 90 } } } ],
+    "filter": [],
+    "scene": {
+      "light_source": { "type": "sun", "altitude": 20.0, "spectrum": "D65" },
+      "ray_num": 1000, "max_hits": 7,
+      "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+    },
+    "render": []
+  })";
+  {
+    const ScenePtr scene = MakeScene(narrow_roll);
+    Req q({ 3, 5 }, { 2 });
+    q.warm = survey_text;
+    q.Bind();
+    const Outcome o = Analyse(scene.get(), q);
+    EXPECT_EQ(o.code, LUMICE_ERR_INVALID_VALUE) << o.error;
+    EXPECT_NE(o.error.find("warm index"), std::string::npos) << o.error;
+  }
+  // The path (the request echo's own gate).
+  {
+    const ScenePtr scene = MakeScene(kRandomScene);
+    Req q({ 3, 6 }, { 2 });
+    q.warm = survey_text;
+    q.Bind();
+    const Outcome o = Analyse(scene.get(), q);
+    EXPECT_EQ(o.code, LUMICE_ERR_INVALID_VALUE) << o.error;
+    EXPECT_NE(o.error.find("warm index"), std::string::npos) << o.error;
+  }
+}
+
+// The reuse domain's positive face: the same warm document with ONLY the sun moved still passes
+// every structure gate (sun is not a routing axis), and the band-sum reading falls to the named
+// scope mismatch instead of being consumed.
+TEST_F(WarmContract, MovedSunPassesTheStructureGatesAndNamesTheScopeMismatch) {
+  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const char* moved_sun = R"({
+    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
+                   "axis": { "zenith": { "type": "uniform", "mean": 0, "std": 360 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                             "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+    "filter": [],
+    "scene": {
+      "light_source": { "type": "sun", "altitude": 45.0, "spectrum": "D65" },
+      "ray_num": 1000, "max_hits": 7,
+      "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+    },
+    "render": []
+  })";
+  const ScenePtr scene = MakeScene(moved_sun);
+  Req q({ 3, 5 }, { 2 });
+  q.warm = survey_text;
+  q.Bind();
+  const Outcome o = Analyse(scene.get(), q);
+  ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+  const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+  EXPECT_EQ(context["source"], "warm");
+  EXPECT_EQ(context["object"]["state"], "certified");  // the structure reused across the sun move
+  EXPECT_EQ(context["band_sum"]["state"], "unevaluated");
+  EXPECT_EQ(context["band_sum"]["reason"], "scope_value_mismatch");
+}
+
+// The degradation probes, on mutated documents: a truncated scope receipt names the missing
+// field, and a stripped warm_index block degrades to the inline context (visible, not a refusal,
+// not silent).
+TEST_F(WarmContract, FieldMissingAndBlockAbsentDegradeWithNamedDeclarations) {
+  const std::string& survey_text = CachedSurvey(kRandomScene);
+  {
+    nlohmann::json doc = nlohmann::json::parse(survey_text);
+    doc["scope"].erase("sun_azimuth_deg");
+    const ScenePtr scene = MakeScene(kRandomScene);
+    Req q({ 3, 5 }, { 2 });
+    q.warm = doc.dump();
+    q.Bind();
+    const Outcome o = Analyse(scene.get(), q);
+    ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+    const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+    EXPECT_EQ(context["band_sum"]["state"], "unevaluated");
+    EXPECT_EQ(context["band_sum"]["reason"], "scope_field_missing");
+  }
+  {
+    nlohmann::json doc = nlohmann::json::parse(survey_text);
+    doc.erase("warm_index");
+    const ScenePtr scene = MakeScene(kRandomScene);
+    Req q({ 3, 5 }, { 2 });
+    q.warm = doc.dump();
+    q.Bind();
+    const Outcome o = Analyse(scene.get(), q);
+    ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+    const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+    EXPECT_EQ(context["source"], "warm");
+    EXPECT_EQ(context["warm_index_absent"], true);
+    // The degradation still runs the inline context: the structure answers, the reading does not.
+    EXPECT_EQ(context["object"]["state"], "certified");
+    EXPECT_EQ(context["band_sum"]["reason"], "warm_index_absent");
+    EXPECT_EQ(nlohmann::json::parse(Json(o.result.get()))["meta"]["discovery_settings"]["warm_seed_count"], 0);
+  }
+}
+
+// The seed retention's positive arm: a scene whose T0 routing refuses the delta partition hangs
+// the witness argmax pose on the refused card, the warm_index carries it, and a point query
+// consumes it as a discovery seed.
+TEST_F(WarmContract, WitnessArgmaxSeedTravelsBackAsAWarmSeed) {
+  // The tall fixed-axis prism routes the refused-support arm (the witness argmax's own arm).
+  static constexpr const char* kWitnessScene = R"({
+    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.2 },
+                   "axis": { "zenith": { "type": "uniform", "mean": 90, "std": 360 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+    "filter": [],
+    "scene": {
+      "light_source": { "type": "sun", "altitude": 20.0, "spectrum": "D65" },
+      "ray_num": 1000, "max_hits": 7,
+      "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+    },
+    "render": []
+  })";
+  const std::string& survey_text = CachedSurvey(kWitnessScene);
+  const nlohmann::json doc = nlohmann::json::parse(survey_text);
+  ASSERT_EQ(doc["warm_index"]["seeds"].size(), doc["warm_index"]["seed_sources"].size());
+  if (!doc["warm_index"]["seeds"].is_array() || doc["warm_index"]["seeds"].empty()) {
+    GTEST_SKIP() << "this scene's routing held no pose (the retention's negative arm)";
+  }
+  for (const auto& source : doc["warm_index"]["seed_sources"]) {
+    EXPECT_FALSE(source.get<std::string>().empty());
+  }
+  const ScenePtr scene = MakeScene(kWitnessScene);
+  Req q({ 3, 5 }, { 2 });
+  q.warm = survey_text;
+  q.Bind();
+  const Outcome o = Analyse(scene.get(), q);
+  ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+  EXPECT_EQ(nlohmann::json::parse(Json(o.result.get()))["meta"]["discovery_settings"]["warm_seed_count"],
+            doc["warm_index"]["seeds"].size());
 }
 
 }  // namespace

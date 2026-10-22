@@ -75,6 +75,92 @@ struct Error {
 // Stable lower-case name of an error code (for a shell's output).
 const char* ErrorCodeName(ErrorCode code);
 
+// ---- the survey context (--warm consumption) ---------------------------------------------------
+
+// A schema-4 warm document's harvest: the seeds ride the request's warm_seeds; the facts the
+// survey context reads ride this. Filled by ParseWarmStart (single_path_json.hpp) after the
+// consistency gates; a document that carried no (complete) warm_index leaves index_present false
+// — the warm_index_absent degradation, declared downstream, never an error here.
+struct SurveyWarmSource {
+  bool index_present = false;
+  bool early_stopped = false;  // the identity arm: no delta-axis structure exists to reuse
+  // The scope receipt (the band-sum consumption gate's comparison side). has_scope false = the
+  // receipt (or a field of it) was missing — that gate answers scope_field_missing.
+  bool has_scope = false;
+  double wavelength_nm = 0.0;
+  std::string wavelength_source;  // carried for the reading's caliber declaration, never compared
+  double sun_altitude_deg = 0.0;
+  double sun_azimuth_deg = 0.0;
+  // The support: every support card's delta-axis intervals, with the card's members (the
+  // object-hit answer's member face).
+  struct SupportInterval {
+    double lower_deg = 0.0;
+    double upper_deg = 0.0;
+    std::vector<int> members;
+  };
+  bool has_support = false;
+  std::vector<SupportInterval> intervals;
+  // The caustic edge's certified position (an edge-distance candidate).
+  bool has_edge = false;
+  double edge_deg = 0.0;
+  // The canonical probe's radial profile (the band-sum readings).
+  struct ProbeSample {
+    double delta_deg = 0.0;
+    double value = 0.0;
+  };
+  bool has_probe = false;
+  double probe_bin_deg = 0.0;
+  std::vector<ProbeSample> probe_samples;
+  // The family arm's measure echo, read as the concentration language's numbers (the measure
+  // gate's fourth comparison: the caller re-derives its own reading from the query config and
+  // compares per dimension; a document without family_routing skips the gate with a declaration).
+  struct MeasureDimEcho {
+    std::string kind;  // "fixed" | "gauss" | "uniform"
+    double center_deg = 0.0;
+    double width_deg = 0.0;
+  };
+  bool has_measure_echo = false;
+  MeasureDimEcho measure_zenith;
+  MeasureDimEcho measure_azimuth;
+  MeasureDimEcho measure_roll;
+};
+
+// One field of the survey context, in the four-state vocabulary (the evidence layer's; schema1
+// spells the states as strings). `state` is always serialized; the value fields exist exactly
+// when the state says something was read.
+struct SurveyContextField {
+  std::string state;   // "certified" | "finite" | "unevaluated"
+  std::string reason;  // the unevaluated cause, named (never empty when unevaluated)
+};
+
+// The survey context block (schema1's top-level append): where the target sits in the survey's
+// structure. "Survey is the query's index" made concrete — with warm, the producing document's
+// facts; without, the same facts from a context-only (T0–T2) assembly run here. Every field
+// carries its own state; a band-sum reading only ever appears under the scope gate's pass.
+struct SurveyContextBlock {
+  std::string source;  // "warm" | "inline"
+  // True: a --warm schema-4 document was given but carried no (complete) warm_index — the
+  // documented degradation (no structural reuse, no seed consumption, inline context).
+  bool warm_index_absent = false;
+  // The target's deviation vs the delta-axis support: inside an interval, or the nearest card.
+  SurveyContextField object;
+  bool target_inside_support = false;
+  std::string object_kind;           // the owning/nearest card's kind (e.g. "support_set")
+  std::vector<int> object_members;   // the card's members (empty when the document carried none)
+  double object_distance_deg = 0.0;  // 0 when inside
+  // The angular distance to the nearest edge (a support endpoint or the certified edge position).
+  SurveyContextField edge;
+  double edge_distance_deg = 0.0;
+  std::string edge_basis;  // "support_interval_endpoint" | "caustic_edge_position"
+  // The band-sum reading at the nearest probe sample (warm documents only; the scope gate's
+  // exact-equality comparison on lambda and sun decides, with the two named failure causes).
+  SurveyContextField band_sum;
+  double band_sum_value = 0.0;
+  double band_sum_delta_deg = 0.0;  // the nearest sample's own deviation
+  double band_sum_bin_deg = 0.0;
+  std::string band_sum_caliber;  // both sides' lambda/sun identity, for the reading's declaration
+};
+
 struct SinglePathRequest {
   IdType crystal_id = 0;
   // One face sequence per scattering layer, in Lumice face numbers (entry, internal reflections,
@@ -93,6 +179,10 @@ struct SinglePathRequest {
   // pose). Densifying is not monotone (LI section 9.5.7); feeding back seeds is the only way to keep
   // what a sparser call found.
   std::vector<double> warm_seeds;
+  // A schema-4 warm document's harvest (the survey facts the context reads), when --warm named a
+  // survey document that passed the consistency gates. Unset: the context is computed inline
+  // (a context-only T0-T2 assembly on this request's own config).
+  std::optional<SurveyWarmSource> warm_survey;
 };
 
 // ---- metadata: every conversion, as applied ------------------------------------------------------
@@ -400,6 +490,9 @@ struct SinglePathResult {
   // The declared measure's registration (kDiscovered only; the point-mass branch carries its own
   // face inside OrbitFactors). A rho consumer reads this before treating a rho of 0 as dark.
   MeasureRegistration measure_registration;
+  // Where the target sits in the survey's structure (always computed: from the warm document's
+  // facts, or from a context-only T0-T2 assembly on this request's config).
+  SurveyContextBlock survey_context;
 };
 
 // The whole analysis. On error `out` is left default-constructed.

@@ -93,6 +93,12 @@ void AssembleWitness(const WitnessInput& input, SurveyObject* card) {
   witness.entry = values[0].entry.value;
   witness.interface_product = values[0].interface_product;
   witness.source_note = kWitnessSourceNote;
+  // The argmax pose is the one the assembly actually held: retain it for the document's
+  // warm_index (the leg name is "witness_argmax"; the collector reads it from here).
+  witness.has_pose = true;
+  for (int k = 0; k < 9; k++) {
+    witness.pose[k] = pose[k];
+  }
 
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] witness: {} kept of {} lattice events, max w {:.6e}, entry {:.6e}",
             events.size(), input.sample_count, best.weight, values[0].entry.value);
@@ -106,7 +112,19 @@ void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector
   card.members = members;
   card.evidence.state = EvidenceState::kRefused;
   card.evidence.mode = refusal_mode;
-  AssembleWitness(witness_input, &card);
+  if (!witness_input.context_only) {
+    AssembleWitness(witness_input, &card);
+  }
+  // The argmax pose is a held pose: it joins the document's warm_index under its leg name (the
+  // --warm contract's seed retention; a refused witness holds no pose and contributes none).
+  if (card.witness.has_value() && card.witness->state == EvidenceState::kFinite && card.witness->has_pose) {
+    std::array<double, 9> seed{};
+    for (int k = 0; k < 9; k++) {
+      seed[static_cast<size_t>(k)] = card.witness->pose[k];
+    }
+    out->warm_index.seeds.push_back(std::move(seed));
+    out->warm_index.seed_sources.emplace_back("witness_argmax");
+  }
   if (clear_objects) {
     out->objects.clear();
   }

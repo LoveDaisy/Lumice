@@ -96,6 +96,9 @@ struct FamilyArmInput {
   double incident[3] = { 0.0, 0.0, -1.0 };         // the sun's propagation direction
   double refractive_index = 0.0;
   double wavelength_nm = 0.0;
+  // The query-face context mode: T0-T2 structure only — the weight legs (probe / chromatic /
+  // tint) and the witness lattice are skipped when set.
+  bool context_only = false;
 };
 
 // The arm's outcome. The document-level escape rule: the document refuses only when the arm

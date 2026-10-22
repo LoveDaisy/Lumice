@@ -376,6 +376,12 @@ struct FamilyCandidate {
   int sample_count = 0;
   int crossing_count = 0;
   std::vector<BlurAnchor> anchors;
+  // The pose the rank record actually held (collapse components and fold representatives carry
+  // one): retained for the document's warm_index under the candidate's leg name. Killed
+  // candidates never contribute.
+  bool has_pose = false;
+  double pose[9] = {};
+  const char* pose_source = "";
 };
 
 std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table, const int* slots, int slot_count,
@@ -394,6 +400,11 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
     BlurAnchor anchor;
     AnchorOfOutgoing(collapse.params_deg, collapse.outgoing, &anchor);
     candidate.anchors.push_back(anchor);
+    candidate.has_pose = true;
+    for (int k = 0; k < 9; k++) {
+      candidate.pose[k] = collapse.pose[k];
+    }
+    candidate.pose_source = "family_collapse_anchor";
     out.push_back(std::move(candidate));
   }
   if (rank.free_count == 2 && rank.generic_rank == 2) {
@@ -415,6 +426,11 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
       BlurAnchor anchor;
       AnchorOfOutgoing(representative.params_deg, representative.outgoing, &anchor);
       candidate.anchors.push_back(anchor);
+      candidate.has_pose = true;
+      for (int k = 0; k < 9; k++) {
+        candidate.pose[k] = representative.pose[k];
+      }
+      candidate.pose_source = "family_fold_anchor";
       out.push_back(std::move(candidate));
     }
   }
@@ -492,6 +508,20 @@ bool AnyFiniteObject(const SurveyDocument& document) {
     }
   }
   return false;
+}
+
+// A surviving candidate's held pose joins the document's warm_index under its leg name (killed
+// candidates never contribute — the seed retention records what the assembly kept).
+void CollectWarmSeed(SurveyDocument* out, const FamilyCandidate& candidate) {
+  if (!candidate.has_pose) {
+    return;
+  }
+  std::array<double, 9> seed{};
+  for (int k = 0; k < 9; k++) {
+    seed[static_cast<size_t>(k)] = candidate.pose[k];
+  }
+  out->warm_index.seeds.push_back(std::move(seed));
+  out->warm_index.seed_sources.emplace_back(candidate.pose_source);
 }
 
 }  // namespace
@@ -697,11 +727,17 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
       BlurAnchor anchor;
       DirectionOf(candidate.position_alt_deg, candidate.position_az_deg, anchor.image_dir);
       candidate.anchors.push_back(anchor);
+      candidate.has_pose = true;  // the 0D arm's one held pose (the production Euler chart's)
+      for (int k = 0; k < 9; k++) {
+        candidate.pose[k] = pose[k];
+      }
+      candidate.pose_source = "single_pose_nominal";
       SurveyObject card = SurvivingCard(member, candidate, BlurReading{}, 0, input.wavelength_nm);
       card.band->frozen.clear();
       for (const FamilyFrozenDim& dim : level.frozen_dims) {
         card.band->frozen.push_back({ DimName(dim.dim), "narrow" });
       }
+      CollectWarmSeed(out, candidate);
       out->objects.push_back(std::move(card));
     }
     block.ladder.push_back(std::move(level));
@@ -830,6 +866,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
               domain.domain_upper_deg = support.intervals.back().upper * kRadToDeg;
               card.bright_domain = std::move(domain);
             }
+            CollectWarmSeed(out, candidate);
             out->objects.push_back(std::move(card));
           } else {
             level.objects_killed += 1;
@@ -845,8 +882,14 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
   // chromatic pair and the class tint (the probe on the representative, its readings landing on
   // the representative's own bright_domain card); an axis the conversion cannot carry keeps
   // every leg's named refusal — a fixed zenith or roll is legal structure with no density, and
-  // the legs say so instead of silently skipping.
-  if (input.density->Ok()) {
+  // the legs say so instead of silently skipping. Context-only (the query face's no-warm mode)
+  // keeps the structure alone: every T3 leg is skipped, the budget note says so.
+  if (input.context_only) {
+    out->budget_note =
+        "the context-only assembly's legs are the T0 routing verdict and the T0-T2 structure legs "
+        "(the delta partition and the freezing ladder); the T3 quantification legs (the probe, "
+        "the chromatic pair, the tint, the witness lattice) are skipped";
+  } else if (input.density->Ok()) {
     if (level0_refusal_mode.empty()) {
       out->budget_note =
           "the family arm's legs are the T0 routing verdict, the per-member delta partition, the "

@@ -14,6 +14,8 @@
 
 #include "config/config_manager.hpp"
 #include "include/lumice_raypath.h"
+#include "raypath/detail/survey/config_fingerprint.hpp"
+#include "raypath/detail/survey/survey_family.hpp"
 #include "raypath/detail/survey/survey_mc_ess.hpp"
 #include "raypath/path_feature_report.hpp"
 #include "raypath/single_path_analysis.hpp"
@@ -109,19 +111,55 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   }
   req.sample_count = request.sample_count == 0 ? rp::kDefaultSampleCount : request.sample_count;
   req.sun_grid_lat_count = request.sun_grid_lat_count;
-  if (request.warm_json != nullptr && request.warm_json_len > 0) {
-    if (const rp::Error e = rp::ParseWarmSeeds(std::string(request.warm_json, request.warm_json_len), &req.warm_seeds);
-        !e.Ok()) {
-      return Refuse(e, err_buf, err_size);
-    }
-  }
 
-  // The scene document LUMICE_CommitScene would hand the server, through the same parser.
+  // The scene document LUMICE_CommitScene would hand the server, through the same parser. Parsed
+  // before the warm text so the schema-4 gates can compare it.
   lumice::ConfigManager config;
   if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzeSinglePath",
                                                            lumice::GetGlobalLogger(), nullptr, &config)) {
     WriteError(err_buf, err_size, "invalid_scene: " + err.message);
     return lumice::capi::ToCApiErrorCode(err.code);
+  }
+
+  if (request.warm_json != nullptr && request.warm_json_len > 0) {
+    // The warm gates' comparison context: the routing-axis config fingerprint (the projection's
+    // single implementation), the crystal and the path, and — for the fourth gate — this query's
+    // own family-measure reading.
+    rp::WarmGateContext gate;
+    gate.crystal_id = static_cast<long long>(req.crystal_id);
+    gate.path_layers = req.path_layers;
+    gate.config_fingerprint = rp::survey::RoutingConfigFingerprint(config, req.crystal_id, req.path_layers, 7);
+    const auto configured = config.crystals_.find(req.crystal_id);
+    rp::SurveyWarmSource survey_source;
+    if (const rp::Error e = rp::ParseWarmStart(std::string(request.warm_json, request.warm_json_len), gate,
+                                               &req.warm_seeds, &survey_source);
+        !e.Ok()) {
+      return Refuse(e, err_buf, err_size);
+    }
+    // Gate 4 (the measure echo), where the config lives: only family-arm documents carry the
+    // echo — its absence skips the gate with the declaration the harvest recorded.
+    if (survey_source.has_measure_echo && configured != config.crystals_.end()) {
+      const rp::survey::FamilyMeasureReading mine = rp::survey::ReadFamilyMeasure(configured->second.axis_);
+      const auto mismatch = [&]() {
+        return Refuse({ rp::ErrorCode::kInvalidArgument,
+                        "warm index: measure gate: the document's family measure echo does not match this "
+                        "query's config axis" },
+                      err_buf, err_size);
+      };
+      if (!mine.ok) {
+        return mismatch();
+      }
+      const auto same = [](const rp::SurveyWarmSource::MeasureDimEcho& echo, const rp::survey::FamilyDimMeasure& dim) {
+        return echo.kind == rp::survey::FamilyDimKindName(dim.kind) && echo.center_deg == dim.center_deg &&
+               echo.width_deg == dim.width_deg;
+      };
+      if (!same(survey_source.measure_zenith, mine.measure.zenith) ||
+          !same(survey_source.measure_azimuth, mine.measure.azimuth) ||
+          !same(survey_source.measure_roll, mine.measure.roll)) {
+        return mismatch();
+      }
+    }
+    req.warm_survey = std::move(survey_source);
   }
 
   rp::SinglePathResult result;
