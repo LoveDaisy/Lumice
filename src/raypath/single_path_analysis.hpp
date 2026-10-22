@@ -40,6 +40,12 @@ constexpr int kSchemaVersion = 1;
 // a hidden knob.
 constexpr double kFactorsEpsilon = 1e-12;
 
+// The budget's default and bound: a 0 budget_ms request resolves to the default, an out-of-range
+// one is refused. Enforcement is boundary-checked (loop boundaries only), and a stopped run
+// serializes its partial document with meta.interrupted — an honest early exit, not a failure.
+constexpr int kDefaultPointBudgetMs = 15000;
+constexpr int kMaxPointBudgetMs = 120000;
+
 // The orbit factor integral's grid (midpoint samples over the measure's spin orbit, the
 // fiber_quadrature kFiberParameter convention). Part of the document's declared caliber: the
 // block echoes the count.
@@ -183,6 +189,11 @@ struct SinglePathRequest {
   // survey document that passed the consistency gates. Unset: the context is computed inline
   // (a context-only T0-T2 assembly on this request's own config).
   std::optional<SurveyWarmSource> warm_survey;
+  // The budget and the caller's one-way stop flag (see lumice_raypath.h): the deadline resolves
+  // once at entry (0 = none for an internal caller; the bridge resolves the documented default),
+  // the flag is polled at loop boundaries only. A stopped run reports meta.interrupted.
+  int budget_ms = 0;
+  const volatile int* interrupted = nullptr;
 };
 
 // ---- metadata: every conversion, as applied ------------------------------------------------------
@@ -236,6 +247,11 @@ struct SinglePathMetadata {
   double cluster_radius_rad = 0.0;
   double distance_threshold_rad = 0.0;
   int warm_seed_count = 0;
+
+  // The budget receipt: the ms the deadline was in force for (0 = unbounded), and whether the run
+  // stopped early — a partial document, honestly marked.
+  int budget_ms = 0;
+  bool interrupted = false;
 };
 
 // ---- per-pose detail --------------------------------------------------------------------------

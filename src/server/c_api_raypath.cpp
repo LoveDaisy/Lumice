@@ -30,6 +30,10 @@ static_assert(LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT == lumice::raypath::kMaxSample
               "lumice_raypath.h's sample-count bound is the module's");
 static_assert(LUMICE_SINGLE_PATH_MAX_SUN_GRID_LAT_COUNT == lumice::raypath::kMaxSunGridLatCount,
               "lumice_raypath.h and the single-path module must agree on the sun-grid bound");
+static_assert(LUMICE_SINGLE_PATH_DEFAULT_BUDGET_MS == lumice::raypath::kDefaultPointBudgetMs,
+              "lumice_raypath.h and the single-path module must agree on the default budget");
+static_assert(LUMICE_SINGLE_PATH_MAX_BUDGET_MS == lumice::raypath::kMaxPointBudgetMs,
+              "lumice_raypath.h and the single-path module must agree on the budget bound");
 static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT == lumice::raypath::kMaxFeatureReportSampleCount,
               "lumice_raypath.h and the feature-report module must agree on the sample bound");
 static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT == lumice::raypath::kMaxFeatureReportWavelengthCount,
@@ -58,8 +62,10 @@ struct LUMICE_PathSurvey_ {
 namespace {
 
 // The v4.50 request, the smallest `struct_size` this build reads: through its last v4.50 field, so
-// that a field appended later does not raise it.
+// that a field appended later does not raise it. The v4.52 append adds the budget/stop group,
+// read only when the whole group fits.
 constexpr size_t kRequestSizeV450 = offsetof(LUMICE_SinglePathRequest, warm_json_len) + sizeof(size_t);
+constexpr size_t kRequestSizeV452 = offsetof(LUMICE_SinglePathRequest, interrupted) + sizeof(void*);
 constexpr size_t kFeatureReportRequestSizeV1 = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
 constexpr size_t kSurveyRequestSizeV1 = offsetof(LUMICE_PathSurveyRequest, symmetry_bits_plus_one) + sizeof(int);
 
@@ -111,6 +117,15 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   }
   req.sample_count = request.sample_count == 0 ? rp::kDefaultSampleCount : request.sample_count;
   req.sun_grid_lat_count = request.sun_grid_lat_count;
+  if (request.struct_size >= kRequestSizeV452) {
+    req.budget_ms = request.deadline_ms > 0 ? request.deadline_ms : rp::kDefaultPointBudgetMs;
+    if (req.budget_ms > rp::kMaxPointBudgetMs) {
+      return Refuse({ rp::ErrorCode::kInvalidArgument,
+                      "deadline_ms must be 0 (the default) or at most " + std::to_string(rp::kMaxPointBudgetMs) },
+                    err_buf, err_size);
+    }
+    req.interrupted = request.interrupted;
+  }
 
   // The scene document LUMICE_CommitScene would hand the server, through the same parser. Parsed
   // before the warm text so the schema-4 gates can compare it.

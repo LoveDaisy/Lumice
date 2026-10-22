@@ -443,6 +443,10 @@ void PrintPointUsage(const char* prog_name, std::ostream& output = std::cout) {
          << "                     wavelength or 550.\n"
          << "  --events <N>       SO(3) seed events (default 1M; max 100M). An optional K/M suffix\n"
          << "                     is accepted.\n"
+         << "  --budget-ms <N>    Numerical deadline in milliseconds (default 15000; max 120000).\n"
+         << "                     Checked at the computation's loop boundaries: a stopped run\n"
+         << "                     serializes what it has and reports interrupted in the document -\n"
+         << "                     an honest early exit, not a failure (exit 0).\n"
          << "  --grid <rows>      Latitude rows of the sun-direction grid (longitude twice that),\n"
          << "                     in [0, " << kRaypathMaxGridRows << "]; 0 leaves the grid out. Default: 90.\n"
          << "  --warm <file>      An earlier output of this subcommand: its component seeds start\n"
@@ -1328,6 +1332,7 @@ struct PointOptions {
   std::optional<double> target_az_deg;
   std::optional<double> wavelength_nm;  // nullopt = the engine's choice (recorded in the output)
   int events = 0;                       // 0 = the engine's default
+  int budget_ms = 0;                    // 0 = the engine's documented default
   int grid_rows = 90;
   bool grid_given = false;
   std::filesystem::path warm_path;    // empty = no warm start
@@ -2126,8 +2131,8 @@ int ParsePointOptions(int argc, char** argv, int first, PointOptions& opts) {
       case SharedStep::kNotShared:
         break;
     }
-    const bool takes_value = arg == "--target" || arg == "--wavelength" || arg == "--events" || arg == "--grid" ||
-                             arg == "--warm" || arg == "-o";
+    const bool takes_value = arg == "--target" || arg == "--wavelength" || arg == "--events" || arg == "--budget-ms" ||
+                             arg == "--grid" || arg == "--warm" || arg == "-o";
     if (takes_value && i + 1 >= argc) {
       std::cerr << "Error: " << arg << " requires an argument\n\n";
       print_error_usage();
@@ -2170,6 +2175,17 @@ int ParsePointOptions(int argc, char** argv, int first, PointOptions& opts) {
         return 1;
       }
       opts.events = static_cast<int>(*events);
+    } else if (arg == "--budget-ms") {
+      const std::string_view value = argv[++i];
+      const auto budget = ParseStrictUnsigned(value);
+      if (!budget.has_value() || *budget == 0 ||
+          *budget > static_cast<unsigned long long>(LUMICE_SINGLE_PATH_MAX_BUDGET_MS)) {
+        std::cerr << "Error: --budget-ms must be an integer in [1, " << LUMICE_SINGLE_PATH_MAX_BUDGET_MS << "], got '"
+                  << value << "'\n\n";
+        print_error_usage();
+        return 1;
+      }
+      opts.budget_ms = static_cast<int>(*budget);
     } else if (arg == "--grid") {
       const std::string_view value = argv[++i];
       const auto rows = ParseStrictUnsigned(value);
@@ -2547,6 +2563,16 @@ static_assert(std::atomic<bool>::is_always_lock_free, "the SIGINT flag must be a
 
 void HandleAnalyzeSigint(int /*signal*/) {
   g_analyze_stop_requested.store(true, std::memory_order_relaxed);
+}
+
+// The `raypath point` stop flag: a volatile sig_atomic_t (not the analyze atomic) because its
+// ADDRESS is the engine's `interrupted` input — the signal handler and the engine's loop-boundary
+// polls share the one variable. Set by the handler, read by the engine, never cleared mid-run.
+volatile std::sig_atomic_t g_point_interrupted = 0;
+static_assert(std::is_same<std::sig_atomic_t, int>::value, "the flag's address crosses the C ABI as volatile int*");
+
+void HandlePointSigint(int /*signal*/) {
+  g_point_interrupted = 1;
 }
 
 // The LUMICE_AnnotationView of a `--roi frame` request, from the SCENE's own renderer: the
@@ -3082,7 +3108,10 @@ int RunSurvey(const SurveyOptions& opts) {
   return 0;
 }
 
-// Raypath point: one synchronous call into the engine (LUMICE_AnalyzeSinglePath), no server.
+// Raypath point: one synchronous call into the engine (LUMICE_AnalyzeSinglePath), no server. The
+// budget bounds the engine's loop-boundary polls and the SIGINT handler flips the flag the engine
+// reads — a stopped run serializes its partial document and exits 0 (an honest early exit, not a
+// failure).
 int RunPoint(const PointOptions& opts) {
   const SharedOptions& shared = opts.shared;
   LUMICE_SetLogLevel(nullptr, shared.log_level);
@@ -3137,16 +3166,21 @@ int RunPoint(const PointOptions& opts) {
   request.sun_grid_lat_count = opts.grid_rows;
   request.warm_json = warm_text.empty() ? nullptr : warm_text.data();
   request.warm_json_len = warm_text.size();
+  request.deadline_ms = opts.budget_ms;  // 0 = the engine's documented default
+  request.interrupted = &g_point_interrupted;
 
   std::cerr << "[raypath point] crystal " << *opts.crystal_id << ", path " << opts.path_text << ", target "
             << *opts.target_alt_deg << "," << *opts.target_az_deg << ": " << (opts.events > 0 ? opts.events : 1000000)
-            << " seed events, grid " << opts.grid_rows << "x" << 2 * opts.grid_rows
+            << " seed events, grid " << opts.grid_rows << "x" << 2 * opts.grid_rows << ", budget "
+            << (opts.budget_ms > 0 ? opts.budget_ms : LUMICE_SINGLE_PATH_DEFAULT_BUDGET_MS) << " ms"
             << (warm_text.empty() ? "" : ", warm start") << "\n";
   const auto start = std::chrono::steady_clock::now();
+  std::signal(SIGINT, HandlePointSigint);
   LUMICE_SinglePathResult* raw_result = nullptr;
   char err_buf[1024] = {};
   if (auto err = LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw_result, err_buf, sizeof(err_buf));
       err != LUMICE_OK) {
+    std::signal(SIGINT, SIG_DFL);
     if (err_buf[0] != '\0') {
       std::cerr << "Error: " << err_buf << "\n";
     } else {
@@ -3156,6 +3190,7 @@ int RunPoint(const PointOptions& opts) {
   }
   const std::unique_ptr<LUMICE_SinglePathResult, void (*)(LUMICE_SinglePathResult*)> result(
       raw_result, LUMICE_SinglePathResultDestroy);
+  std::signal(SIGINT, SIG_DFL);
   const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
   size_t len = 0;

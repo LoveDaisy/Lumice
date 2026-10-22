@@ -1,6 +1,11 @@
 #ifndef LUMICE_ANALYTIC_DISCOVERY_HPP_
 #define LUMICE_ANALYTIC_DISCOVERY_HPP_
 
+#include <array>
+#include <chrono>
+#include <cstddef>
+#include <vector>
+
 // Component discovery for one fixed path and one target direction: the seeds of the fiber
 // X_(P,d) = { R : F_P(R) = d }, each distinct component traced once and classified (LI
 // docs/phase1-math-contract.md section 9.5, strategy reference-discovery-v1; LI discovery.py
@@ -320,6 +325,21 @@ double TargetDeviation(const double incident_direction[3], const double target_d
 void CandidatePose(const double incident_direction[3], const double target_direction[3], const BandEvent& event,
                    double r[9]);
 
+// Optional cooperative stop for the sampling loops, polled at the loop boundary only (never
+// inside the numerics): a steady-clock deadline, a one-way interrupted flag (0 -> 1, owned by the
+// caller — a signal handler's sig_atomic_t; this code only reads it), or both. A stop is data,
+// not an error: the loop returns what it found so far and the caller says so.
+struct DiscoveryStop {
+  std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
+  const volatile int* interrupted = nullptr;
+  bool Stopped() const {
+    if (interrupted != nullptr && *interrupted != 0) {
+      return true;
+    }
+    return std::chrono::steady_clock::now() >= deadline;
+  }
+};
+
 // One crystal and one concrete path, lit from one direction: the fixed context of a discovery call.
 // Holds the path map (path_fiber.hpp) and the corridor (entry_measure.hpp), so it is neither
 // copyable nor movable. Not thread-safe (the corridor keeps clipping scratch); one per call.
@@ -336,7 +356,8 @@ class IceDiscovery {
   // [delta - half_width, delta + half_width], in increasing (D, index). One streaming pass: only band
   // events are kept, and the entry measure is evaluated only for them (A does not change D, so the
   // band of the kept events is the kept events of the band, in the same order).
-  std::vector<BandEvent> BuildBand(int sample_count, double delta, double half_width);
+  std::vector<BandEvent> BuildBand(int sample_count, double delta, double half_width,
+                                   const DiscoveryStop* stop = nullptr);
 
   // LI docs/band-sum-contract.md section 3: every kept event (w = A T > 0) of the n-point lattice, in
   // increasing (D, index), with w in the native entry-measure unit (the engine reference scale,
@@ -364,7 +385,7 @@ class IceDiscovery {
   // BuildBand for the target's deviation, then DiscoverOnBand: one discovery call.
   DiscoveryOutput Discover(const double target_direction[3], int sample_count, double band_half_width,
                            const double* extra_seeds, int extra_count, double cluster_radius, double distance_threshold,
-                           const ContinuationParams& params);
+                           const ContinuationParams& params, const DiscoveryStop* stop = nullptr);
 
   const IcePathMap& Map() const { return map_; }
 

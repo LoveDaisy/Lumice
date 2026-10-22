@@ -1,6 +1,7 @@
 #include "raypath/single_path_analysis.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -463,7 +464,7 @@ IncompleteComponent ToIncomplete(const analytic::IncompleteCandidate& c) {
   return out;
 }
 
-void BuildSunGrid(int lat_count, PathContext* ctx, SunSphereGrid* grid) {
+void BuildSunGrid(int lat_count, PathContext* ctx, SunSphereGrid* grid, const analytic::DiscoveryStop* stop) {
   grid->lat_count = lat_count;
   grid->lon_count = 2 * lat_count;
   const size_t cells = static_cast<size_t>(grid->lat_count) * static_cast<size_t>(grid->lon_count);
@@ -471,6 +472,9 @@ void BuildSunGrid(int lat_count, PathContext* ctx, SunSphereGrid* grid) {
   grid->valid.assign(cells, 0);
   grid->entry_measure.assign(cells, 0.0);
   for (int i = 0; i < grid->lat_count; i++) {
+    if (stop != nullptr && stop->Stopped()) {
+      break;  // the stop is the document's meta.interrupted; the unwritten cells stay NaN/invalid
+    }
     for (int j = 0; j < grid->lon_count; j++) {
       double u[3];
       SunSphereGridCellCentre(*grid, i, j, u);
@@ -506,7 +510,8 @@ struct DeviationRange {
 // midpoint samples, integrated by the measure layer's own quadrature (the kFiberParameter
 // binding's v1 semantics — the LI #51 tint kernel's integral form). A measure whose support is
 // not a spin orbit gets the honest unavailable state, never a defaulted integral.
-OrbitFactors BuildOrbitFactors(const UMarginal& marginal, PathContext& ctx, const double sun_hat[3]) {
+OrbitFactors BuildOrbitFactors(const UMarginal& marginal, PathContext& ctx, const double sun_hat[3],
+                               const analytic::DiscoveryStop* stop) {
   OrbitFactors orbit;
   orbit.measure_support = USupportKindName(marginal.kind());
   if (marginal.kind() != USupportKind::kSpinOrbit) {
@@ -523,6 +528,16 @@ OrbitFactors BuildOrbitFactors(const UMarginal& marginal, PathContext& ctx, cons
   stream.samples.resize(static_cast<size_t>(orbit.sample_count));
   const double dtheta = 2.0 * math::kPiD / orbit.sample_count;
   for (int i = 0; i < orbit.sample_count; i++) {
+    if (stop != nullptr && stop->Stopped()) {
+      // A partial grid's integral would claim a coverage it does not have: the honest shape is
+      // the unavailable state naming the stop.
+      orbit.available = false;
+      orbit.reason = "interrupted";
+      orbit.points.clear();
+      orbit.integral = 0.0;
+      orbit.kept_count = 0;
+      return orbit;
+    }
     const double theta = 2.0 * math::kPiD * (i + 0.5) / orbit.sample_count;
     double u[3];
     marginal.SpinOrbitPoint(theta, u);
@@ -580,7 +595,7 @@ void AddBoundaryDeviation(const PathContext& ctx, const double u_valid[3], const
 // Range of D on the reach probe at `lat_count` rows: valid cell centres plus the bisected validity
 // boundary on every valid/invalid neighbour edge (latitude neighbours, and longitude neighbours
 // across the periodic seam).
-DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count) {
+DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count, const analytic::DiscoveryStop* stop) {
   SunSphereGrid layout;
   layout.lat_count = lat_count;
   layout.lon_count = 2 * lat_count;
@@ -590,6 +605,9 @@ DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count) {
   std::vector<uint8_t> valid(cells, 0);
   DeviationRange range;
   for (int i = 0; i < lat_count; i++) {
+    if (stop != nullptr && stop->Stopped()) {
+      break;
+    }
     for (int j = 0; j < lon_count; j++) {
       const size_t cell = static_cast<size_t>(i) * static_cast<size_t>(lon_count) + static_cast<size_t>(j);
       double* u = centre.data() + 3 * cell;
@@ -620,12 +638,12 @@ DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count) {
   return range;
 }
 
-ReachSummary ProbeReach(const PathContext& ctx, double target_deviation) {
+ReachSummary ProbeReach(const PathContext& ctx, double target_deviation, const analytic::DiscoveryStop* stop) {
   ReachSummary reach;
   reach.probe_lat_count = kReachProbeLatCount;
   reach.target_deviation_rad = target_deviation;
-  const DeviationRange fine = ProbeDeviationRange(ctx, kReachProbeLatCount);
-  const DeviationRange coarse = ProbeDeviationRange(ctx, kReachProbeLatCount / 2);
+  const DeviationRange fine = ProbeDeviationRange(ctx, kReachProbeLatCount, stop);
+  const DeviationRange coarse = ProbeDeviationRange(ctx, kReachProbeLatCount / 2, stop);
   if (!fine.any) {
     reach.deviation_min_rad = std::numeric_limits<double>::quiet_NaN();
     reach.deviation_max_rad = std::numeric_limits<double>::quiet_NaN();
@@ -954,6 +972,14 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   meta.wavelength_source = wavelength.source;
   meta.refractive_index = wavelength.refractive_index;
   const analytic::ContinuationParams params;
+  // The budget, resolved once at entry; polled at loop boundaries only. A stopped run serializes
+  // its partial document with meta.interrupted — an honest early exit, not a failure.
+  const analytic::DiscoveryStop stop{ request.budget_ms > 0 ? std::chrono::steady_clock::now() +
+                                                                  std::chrono::milliseconds(request.budget_ms) :
+                                                              std::chrono::steady_clock::time_point::max(),
+                                      request.interrupted };
+  const auto stopped = [&stop]() { return stop.Stopped(); };
+  meta.budget_ms = request.budget_ms > 0 ? request.budget_ms : 0;
   meta.sample_count = request.sample_count;
   meta.band_half_width_rad = analytic::kDefaultBandHalfWidth;
   meta.cluster_radius_rad = analytic::kDefaultClusterRadius;
@@ -980,7 +1006,10 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   }
 
   if (request.sun_grid_lat_count > 0) {
-    BuildSunGrid(request.sun_grid_lat_count, &ctx, &result.sun_grid);
+    BuildSunGrid(request.sun_grid_lat_count, &ctx, &result.sun_grid, &stop);
+    if (stopped()) {
+      meta.interrupted = true;
+    }
   }
 
   // The survey context: where the target sits in the survey's structure (warm harvest, or this
@@ -999,20 +1028,33 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     DirToAltAz(result.point_mass.direction, &result.point_mass.altitude_deg, &result.point_mass.azimuth_deg);
     result.point_mass.target_separation_deg =
         analytic::so3::AngleBetween(result.point_mass.direction, meta.target_direction) * math::kRadToDegreeD;
-    result.point_mass.orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat);
+    result.point_mass.orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat, &stop);
+    if (stopped()) {
+      meta.interrupted = true;
+    }
     *out = std::move(result);
     return {};
   }
 
   // ---- discovery and the fibers ----
   result.outcome = Outcome::kDiscovered;
-  result.reach = ProbeReach(ctx, delta);
+  result.reach = ProbeReach(ctx, delta, &stop);
+  if (stopped()) {
+    meta.interrupted = true;
+  }
   analytic::IceDiscovery discovery(table, polygons, ctx.Slots().data(), ctx.SlotCount(), ctx.Index(), ctx.Incident());
   const analytic::DiscoveryOutput found =
       discovery.Discover(meta.target_direction, request.sample_count, meta.band_half_width_rad,
                          request.warm_seeds.empty() ? nullptr : request.warm_seeds.data(), warm_count,
-                         meta.cluster_radius_rad, meta.distance_threshold_rad, params);
+                         meta.cluster_radius_rad, meta.distance_threshold_rad, params, &stop);
+  if (stopped()) {
+    meta.interrupted = true;  // a partial band: the components found so far, discovery.complete false
+  }
   for (const analytic::DiscoveredComponent& c : found.components) {
+    if (stopped()) {
+      meta.interrupted = true;
+      break;  // the unconverted components stay unconverted: the document is partial, marked so
+    }
     result.components.push_back(ToComponent(c, &ctx));
   }
   for (const analytic::IncompleteCandidate& c : found.incomplete) {

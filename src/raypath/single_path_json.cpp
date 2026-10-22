@@ -134,6 +134,8 @@ nlohmann::ordered_json MetaJson(const SinglePathMetadata& m) {
         { "cluster_radius_rad", Num(m.cluster_radius_rad) },
         { "distance_threshold_rad", Num(m.distance_threshold_rad) },
         { "warm_seed_count", m.warm_seed_count } } },
+    { "budget_ms", m.budget_ms },
+    { "interrupted", m.interrupted },
   };
 }
 
