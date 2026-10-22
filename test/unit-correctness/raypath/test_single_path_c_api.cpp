@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -242,22 +243,57 @@ TEST(SinglePathCApi, Schema1WarmSheetKeepsTheContextInline) {
 
 // A survey C API scene whose full-random axis routes the T1 full-dimensional arm (the support,
 // the probe and the warm_index with no held pose — `seeds: []`). One production, many probes.
+#ifndef LUMICE_WARM_FIXTURE_DIR
+#error "LUMICE_WARM_FIXTURE_DIR must name test/fixtures/raypath-warm (test/CMakeLists.txt)"
+#endif
+
+// Byte-exact warm fixtures under test/fixtures/raypath-warm — historical writer output, never
+// hand-edited; see that directory's PROVENANCE.md for the regeneration commands.
+static std::string LoadWarmAsset(const char* name) {
+  std::ifstream in(std::string(LUMICE_WARM_FIXTURE_DIR) + "/" + name);
+  if (!in) {
+    ADD_FAILURE() << "missing warm fixture: " << name;
+    return "{}";
+  }
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
 class WarmContract : public ::testing::Test {
  protected:
-  static constexpr const char* kRandomScene = R"({
-    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
-                   "axis": { "zenith": { "type": "uniform", "mean": 0, "std": 360 },
-                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
-                             "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+  static constexpr const char* kWitnessScene = R"({
+    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.2 },
+                   "axis": { "zenith": { "type": "uniform", "mean": 90, "std": 360 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 } } } ],
     "filter": [],
     "scene": {
       "light_source": { "type": "sun", "altitude": 20.0, "spectrum": "D65" },
-      "ray_num": 1000,
-      "max_hits": 7,
+      "ray_num": 1000, "max_hits": 7,
       "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
     },
     "render": []
   })";
+
+  // The full-dimensional warm fixtures are byte-exact CLI products of the two scene configs
+  // beside them (regenerate with the commands in the fixtures' PROVENANCE.md): producing that
+  // survey runs the delta partition — seconds of CPU the unit layer must not pay every run.
+  // The writer-integration side stays live-covered by the cheap refused arm above (kWitnessScene,
+  // produced in-process in ~40 ms) and the schema-1 sheet test.
+  static const std::string& RandomScene() {
+    static const std::string s = LoadWarmAsset("warm_random_scene.json");
+    return s;
+  }
+  static const std::string& RandomSurvey() {
+    static const std::string s = LoadWarmAsset("warm_random_survey.json");
+    return s;
+  }
+  static const std::string& Sun33Scene() {
+    static const std::string s = LoadWarmAsset("warm_sun33_scene.json");
+    return s;
+  }
+  static const std::string& Sun33Survey() {
+    static const std::string s = LoadWarmAsset("warm_sun33_survey.json");
+    return s;
+  }
 
   // One production per scene text, cached: the T1 arms' 2M-event probes are the schema's own
   // cost, and the five probes below consume the same two documents.
@@ -272,7 +308,7 @@ class WarmContract : public ::testing::Test {
     return it->second;
   }
 
-  static void SurveyInto(std::string* text, const char* scene_json = kRandomScene) {
+  static void SurveyInto(std::string* text, const char* scene_json = kWitnessScene) {
     LUMICE_Scene* raw = nullptr;
     ASSERT_EQ(LUMICE_SceneFromJson(scene_json, &raw), LUMICE_OK);
     const ScenePtr scene(raw);
@@ -303,7 +339,7 @@ class WarmContract : public ::testing::Test {
 // document's structure: the target inside the support, the edge distance, and the band-sum reading
 // consumed under the passing scope gate.
 TEST_F(WarmContract, ClosedLoopConsumesTheIndexAndAnswersTheContext) {
-  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const std::string& survey_text = RandomSurvey();
   const nlohmann::json doc = nlohmann::json::parse(survey_text);
   ASSERT_TRUE(doc.contains("warm_index"));
   EXPECT_EQ(doc["warm_index"]["seeds"], nlohmann::json::array());
@@ -311,7 +347,7 @@ TEST_F(WarmContract, ClosedLoopConsumesTheIndexAndAnswersTheContext) {
   EXPECT_FALSE(doc["warm_index"]["reuse_scope"].get<std::string>().empty());
   EXPECT_FALSE(doc["warm_index"]["produced_for"].get<std::string>().empty());
 
-  const ScenePtr scene = MakeScene(kRandomScene);
+  const ScenePtr scene = MakeScene(RandomScene().c_str());
   Req q({ 3, 5 }, { 2 });
   q.warm = survey_text;
   q.Bind();
@@ -336,7 +372,7 @@ TEST_F(WarmContract, ClosedLoopConsumesTheIndexAndAnswersTheContext) {
 // and the scope the expansion ran under. Each probe changes exactly one axis and expects the
 // refusal to name the warm index.
 TEST_F(WarmContract, RoutingAxisMutationsAreRefusedByTheGates) {
-  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const std::string& survey_text = RandomSurvey();
 
   // Crystal geometry: height 1.0 -> 1.1.
   const char* taller = R"({
@@ -387,7 +423,7 @@ TEST_F(WarmContract, RoutingAxisMutationsAreRefusedByTheGates) {
   }
   // The path (the request echo's own gate).
   {
-    const ScenePtr scene = MakeScene(kRandomScene);
+    const ScenePtr scene = MakeScene(RandomScene().c_str());
     Req q({ 3, 6 }, { 2 });
     q.warm = survey_text;
     q.Bind();
@@ -401,7 +437,7 @@ TEST_F(WarmContract, RoutingAxisMutationsAreRefusedByTheGates) {
 // every structure gate (sun is not a routing axis), and the band-sum reading falls to the named
 // scope mismatch instead of being consumed.
 TEST_F(WarmContract, MovedSunPassesTheStructureGatesAndNamesTheScopeMismatch) {
-  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const std::string& survey_text = RandomSurvey();
   const char* moved_sun = R"({
     "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
                    "axis": { "zenith": { "type": "uniform", "mean": 0, "std": 360 },
@@ -432,11 +468,11 @@ TEST_F(WarmContract, MovedSunPassesTheStructureGatesAndNamesTheScopeMismatch) {
 // field, and a stripped warm_index block degrades to the inline context (visible, not a refusal,
 // not silent).
 TEST_F(WarmContract, FieldMissingAndBlockAbsentDegradeWithNamedDeclarations) {
-  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const std::string& survey_text = RandomSurvey();
   {
     nlohmann::json doc = nlohmann::json::parse(survey_text);
     doc["scope"].erase("sun_azimuth_deg");
-    const ScenePtr scene = MakeScene(kRandomScene);
+    const ScenePtr scene = MakeScene(RandomScene().c_str());
     Req q({ 3, 5 }, { 2 });
     q.warm = doc.dump();
     q.Bind();
@@ -447,9 +483,14 @@ TEST_F(WarmContract, FieldMissingAndBlockAbsentDegradeWithNamedDeclarations) {
     EXPECT_EQ(context["band_sum"]["reason"], "scope_field_missing");
   }
   {
-    nlohmann::json doc = nlohmann::json::parse(survey_text);
+    // The block-absent degradation on the cheap refused arm (the full-dimensional inline context
+    // runs on the dev-machine bench layer, not here): the stripped block degrades visibly to the
+    // inline context, whose structure answers honestly — this arm's support is refused, so the
+    // membership stays unevaluated with the named reason, never a silent zero.
+    const std::string& witness_text = CachedSurvey(kWitnessScene);
+    nlohmann::json doc = nlohmann::json::parse(witness_text);
     doc.erase("warm_index");
-    const ScenePtr scene = MakeScene(kRandomScene);
+    const ScenePtr scene = MakeScene(kWitnessScene);
     Req q({ 3, 5 }, { 2 });
     q.warm = doc.dump();
     q.Bind();
@@ -458,8 +499,8 @@ TEST_F(WarmContract, FieldMissingAndBlockAbsentDegradeWithNamedDeclarations) {
     const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
     EXPECT_EQ(context["source"], "warm");
     EXPECT_EQ(context["warm_index_absent"], true);
-    // The degradation still runs the inline context: the structure answers, the reading does not.
-    EXPECT_EQ(context["object"]["state"], "certified");
+    EXPECT_EQ(context["object"]["state"], "unevaluated");
+    EXPECT_EQ(context["object"]["reason"], "survey_carries_no_support");
     EXPECT_EQ(context["band_sum"]["reason"], "warm_index_absent");
     EXPECT_EQ(nlohmann::json::parse(Json(o.result.get()))["meta"]["discovery_settings"]["warm_seed_count"], 0);
   }
@@ -470,11 +511,11 @@ TEST_F(WarmContract, FieldMissingAndBlockAbsentDegradeWithNamedDeclarations) {
 // null dereference. Now it reads as no support: the query answers, naming the cause, and never
 // dereferences an interval that is not there.
 TEST_F(WarmContract, EmptyIntervalListDegradesLikeNoSupport) {
-  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const std::string& survey_text = RandomSurvey();
   nlohmann::json doc = nlohmann::json::parse(survey_text);
   ASSERT_TRUE(doc.contains("objects") && !doc["objects"].empty());
   doc["objects"][0]["support_set"]["intervals"] = nlohmann::json::array();
-  const ScenePtr scene = MakeScene(kRandomScene);
+  const ScenePtr scene = MakeScene(RandomScene().c_str());
   Req q({ 3, 5 }, { 2 });
   q.warm = doc.dump();
   q.Bind();
@@ -496,8 +537,13 @@ TEST_F(WarmContract, EmptyIntervalListDegradesLikeNoSupport) {
 // field-for-field identical. Only band_sum differs by design (the warm reading exists, the
 // inline one names why it does not).
 TEST_F(WarmContract, BothHarvestArmsReadTheSameBlocks) {
-  const std::string& survey_text = CachedSurvey(kRandomScene);
-  const ScenePtr scene = MakeScene(kRandomScene);
+  // On the cheap refused arm (the full-dimensional pair costs a delta partition per side and
+  // runs on the dev-machine bench layer): the JSON-arm harvest (through ParseWarmStart inside
+  // the bridge) and the in-memory harvest (inside the analysis's inline assembly) must read the
+  // same blocks of the same document — here the same config runs both arms, and the structural
+  // answers must come out field-for-field identical.
+  const std::string& survey_text = CachedSurvey(kWitnessScene);
+  const ScenePtr scene = MakeScene(kWitnessScene);
   Req warm({ 3, 5 }, { 2 });
   warm.warm = survey_text;
   warm.Bind();
@@ -519,26 +565,13 @@ TEST_F(WarmContract, BothHarvestArmsReadTheSameBlocks) {
 // and the reading is consumed. A parse path that broke that identity would fail this as a
 // scope_value_mismatch on a same-config query.
 TEST_F(WarmContract, NonExactlyRepresentableSunStillConsumesTheReading) {
-  static constexpr const char* kSun33_3 = R"({
-    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
-                   "axis": { "zenith": { "type": "uniform", "mean": 0, "std": 360 },
-                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
-                             "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
-    "filter": [],
-    "scene": {
-      "light_source": { "type": "sun", "altitude": 33.3, "spectrum": "D65" },
-      "ray_num": 1000, "max_hits": 7,
-      "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
-    },
-    "render": []
-  })";
-  const std::string& survey_text = CachedSurvey(kSun33_3);
+  const std::string& survey_text = Sun33Survey();
   const nlohmann::json doc = nlohmann::json::parse(survey_text);
   // The config stores the sun as float: both sides promote the same 33.3f, which is exactly the
   // bit-level same-source identity the scope gate compares (a double 33.3 literal would differ
   // in the last bits and rightly fail the gate).
   ASSERT_DOUBLE_EQ(doc["scope"]["sun_altitude_deg"].get<double>(), static_cast<double>(33.3f));
-  const ScenePtr scene = MakeScene(kSun33_3);
+  const ScenePtr scene = MakeScene(Sun33Scene().c_str());
   Req q({ 3, 5 }, { 2 });
   q.warm = survey_text;
   q.Bind();
@@ -553,8 +586,8 @@ TEST_F(WarmContract, NonExactlyRepresentableSunStillConsumesTheReading) {
 // The lambda side of the scope gate (MovedSunPasses... probes the sun only): a changed lambda is
 // also a scope_value_mismatch, and it must not touch the structural gates.
 TEST_F(WarmContract, ChangedLambdaNamesTheScopeMismatch) {
-  const std::string& survey_text = CachedSurvey(kRandomScene);
-  const ScenePtr scene = MakeScene(kRandomScene);
+  const std::string& survey_text = RandomSurvey();
+  const ScenePtr scene = MakeScene(RandomScene().c_str());
   Req q({ 3, 5 }, { 2 });
   q.c.wavelength_nm = 480.0;  // the document's D65 default resolved to 550
   q.warm = survey_text;
@@ -572,19 +605,6 @@ TEST_F(WarmContract, ChangedLambdaNamesTheScopeMismatch) {
 // the witness argmax pose on the refused card, the warm_index carries it, and a point query
 // consumes it as a discovery seed.
 TEST_F(WarmContract, WitnessArgmaxSeedTravelsBackAsAWarmSeed) {
-  // The tall fixed-axis prism routes the refused-support arm (the witness argmax's own arm).
-  static constexpr const char* kWitnessScene = R"({
-    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.2 },
-                   "axis": { "zenith": { "type": "uniform", "mean": 90, "std": 360 },
-                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 } } } ],
-    "filter": [],
-    "scene": {
-      "light_source": { "type": "sun", "altitude": 20.0, "spectrum": "D65" },
-      "ray_num": 1000, "max_hits": 7,
-      "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
-    },
-    "render": []
-  })";
   const std::string& survey_text = CachedSurvey(kWitnessScene);
   const nlohmann::json doc = nlohmann::json::parse(survey_text);
   ASSERT_EQ(doc["warm_index"]["seeds"].size(), doc["warm_index"]["seed_sources"].size());
