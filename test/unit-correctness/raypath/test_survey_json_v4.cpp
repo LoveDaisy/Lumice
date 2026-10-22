@@ -523,6 +523,113 @@ TEST(SurveyJsonV4, UnevaluatedEntriesNameKindsAndReason) {
   EXPECT_EQ(unevaluated[0].at("reason"), "fixture: a routing leg not wired");
 }
 
+// The exception evidence legs' conditional presence at the model layer: a document whose arms
+// ran neither leg serializes neither key — the C14 byte baseline's structural guarantee (the
+// pre-append documents are byte-stable because the keys cannot appear unfilled).
+TEST(SurveyJsonV4, DefaultDocumentCarriesNeitherExceptionLegKey) {
+  SurveyDocument document;
+  const auto parsed = Serialized(document);
+  EXPECT_FALSE(parsed.contains("tir_share"));
+  EXPECT_FALSE(parsed.contains("mc_region_ess"));
+}
+
+// The appends' full field sets on a hand-built document: every planned key round-trips with
+// its value (the schema-4 field list, pinned key by key).
+TEST(SurveyJsonV4, ExceptionLegsSerializeTheirAppendShape) {
+  SurveyDocument document;
+
+  document.tir_share = SurveyTirShare{};
+  SurveyTirShare& tir = *document.tir_share;
+  tir.n_red = 1.31;
+  tir.n_blue = 1.34;
+  tir.interfaces.push_back({ 5, 0.25, 0.4 });
+  tir.interfaces.push_back({ 7, 0.1, 0.2 });
+  tir.share_all_tir_red = 0.05;
+  tir.share_all_tir_blue = 0.12;
+  tir.sample_count = 250000;
+  tir.representative = { 3, 5, 7 };
+  tir.member_count = 12;
+  tir.kept_count_red = 240000;
+  tir.kept_count_blue = 241000;
+  tir.caliber = "fixture caliber";
+  tir.evidence.state = EvidenceState::kFinite;
+  tir.evidence.coverage.members_evaluated = 1;
+  tir.evidence.coverage.wavelength_nm = 550.0;
+
+  document.mc_region_ess = SurveyMcRegionEss{};
+  SurveyMcRegionEss& ess = *document.mc_region_ess;
+  ess.seed = 20261022;
+  ess.draws = 20000;
+  ess.lambda_nm = 550.0;
+  ess.band_deg = 5.0;
+  ess.bands.push_back({ 20.0, 25.0, 512.0, 800, 0.5 });
+  ess.bands.push_back({ 25.0, 30.0, 0.0, 0, 0.0 });
+  ess.evidence.state = EvidenceState::kFinite;
+  ess.evidence.coverage.members_evaluated = 12;
+  ess.evidence.coverage.wavelength_nm = 550.0;
+
+  const auto parsed = Serialized(document);
+  ASSERT_TRUE(parsed.contains("tir_share"));
+  const auto& tir_json = parsed.at("tir_share");
+  EXPECT_EQ(tir_json.at("n_red"), tir.n_red);
+  EXPECT_EQ(tir_json.at("n_blue"), tir.n_blue);
+  ASSERT_EQ(tir_json.at("interfaces").size(), 2u);
+  EXPECT_EQ(tir_json.at("interfaces")[0].at("face"), 5);
+  EXPECT_EQ(tir_json.at("interfaces")[0].at("share_red"), tir.interfaces[0].share_red);
+  EXPECT_EQ(tir_json.at("interfaces")[0].at("share_blue"), tir.interfaces[0].share_blue);
+  EXPECT_EQ(tir_json.at("share_all_tir_red"), tir.share_all_tir_red);
+  EXPECT_EQ(tir_json.at("share_all_tir_blue"), tir.share_all_tir_blue);
+  EXPECT_EQ(tir_json.at("sample_count"), tir.sample_count);
+  EXPECT_EQ(tir_json.at("lattice"), "antipodal_fibonacci");
+  EXPECT_EQ(tir_json.at("deterministic"), true);
+  const std::vector<int> expected_representative{ 3, 5, 7 };
+  EXPECT_EQ(tir_json.at("representative"), expected_representative);
+  EXPECT_EQ(tir_json.at("member_count"), 12);
+  EXPECT_EQ(tir_json.at("kept_count_red"), tir.kept_count_red);
+  EXPECT_EQ(tir_json.at("kept_count_blue"), tir.kept_count_blue);
+  EXPECT_EQ(tir_json.at("caliber"), "fixture caliber");
+  EXPECT_EQ(tir_json.at("evidence").at("state"), "finite");
+
+  ASSERT_TRUE(parsed.contains("mc_region_ess"));
+  const auto& ess_json = parsed.at("mc_region_ess");
+  EXPECT_EQ(ess_json.at("seed"), 20261022);
+  EXPECT_EQ(ess_json.at("draws"), 20000);
+  EXPECT_EQ(ess_json.at("lambda_nm"), 550.0);
+  EXPECT_EQ(ess_json.at("band_deg"), 5.0);
+  ASSERT_EQ(ess_json.at("bands").size(), 2u);
+  EXPECT_EQ(ess_json.at("bands")[0].at("delta_min_deg"), 20.0);
+  EXPECT_EQ(ess_json.at("bands")[0].at("delta_max_deg"), 25.0);
+  EXPECT_EQ(ess_json.at("bands")[0].at("ess"), 512.0);
+  EXPECT_EQ(ess_json.at("bands")[0].at("draw_count"), 800);
+  EXPECT_EQ(ess_json.at("bands")[0].at("sum_weight"), 0.5);
+  EXPECT_EQ(ess_json.at("bands")[1].at("ess"), 0.0);  // an empty band serializes its honest zero
+  EXPECT_EQ(ess_json.at("deterministic"), false);
+  EXPECT_EQ(ess_json.at("evidence").at("state"), "finite");
+}
+
+// The refused shapes: exactly the evidence block ({state, mode}) — no defaulted number, the
+// tint leg's refused shape at the new top-level keys.
+TEST(SurveyJsonV4, ExceptionLegRefusalsSerializeStateAndModeOnly) {
+  SurveyDocument document;
+  document.tir_share = SurveyTirShare{};
+  document.tir_share->evidence.state = EvidenceState::kRefused;
+  document.tir_share->evidence.mode = "no_internal_interfaces";
+  document.mc_region_ess = SurveyMcRegionEss{};
+  document.mc_region_ess->seed = 20261022;  // filled before the refusal: still must not serialize
+  document.mc_region_ess->evidence.state = EvidenceState::kRefused;
+  document.mc_region_ess->evidence.mode = "budget_exhausted";
+
+  const auto parsed = Serialized(document);
+  ASSERT_TRUE(parsed.contains("tir_share"));
+  EXPECT_EQ(parsed.at("tir_share").at("state"), "refused");
+  EXPECT_EQ(parsed.at("tir_share").at("mode"), "no_internal_interfaces");
+  EXPECT_EQ(parsed.at("tir_share").size(), 2u);  // state + mode, nothing else
+  ASSERT_TRUE(parsed.contains("mc_region_ess"));
+  EXPECT_EQ(parsed.at("mc_region_ess").at("state"), "refused");
+  EXPECT_EQ(parsed.at("mc_region_ess").at("mode"), "budget_exhausted");
+  EXPECT_EQ(parsed.at("mc_region_ess").size(), 2u);
+}
+
 
 // The family routing block's serialized shape on a hand-built document (the schema-4 append's
 // own discipline): the measure echo, the ladder's rank coverage exactly when the rank question

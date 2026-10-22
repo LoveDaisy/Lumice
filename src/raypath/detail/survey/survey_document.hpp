@@ -620,6 +620,67 @@ struct SurveyWeightTint {
   SurveyEvidence evidence;
 };
 
+// One internal interface's row of the TIR share leg: the face's literal number (the
+// representative's own, since slots resolve 1:1) and the per-lambda TIR weight shares.
+struct SurveyTirShareInterface {
+  int face = 0;
+  double share_red = 0.0;
+  double share_blue = 0.0;
+};
+
+// The TIR share leg (the schema-4 append; the exception evidence leg that decomposes the class
+// tint's per-sample average power by internal-reflection mechanism): per lambda, the kept
+// events' weight share spent on all-internal-interfaces-TIR poses, plus the per-interface
+// decomposition. Declared antipodal Fibonacci lattice, class representative, the fixed
+// 450/650 pair — the same caliber the class tint reads, a different quantity (a [0,1] share,
+// never a cross-lambda ratio). Present only on a document whose arm ran the leg (the T1 arm
+// and the refused-support arm); a path with no internal interface refuses the leg
+// (no_internal_interfaces — the question is meaningless for that path shape), never zero.
+struct SurveyTirShare {
+  double n_red = 0.0;
+  double n_blue = 0.0;
+  std::vector<SurveyTirShareInterface> interfaces;
+  double share_all_tir_red = 0.0;
+  double share_all_tir_blue = 0.0;
+  long long sample_count = 0;
+  std::string lattice = "antipodal_fibonacci";
+  bool deterministic = true;  // no RNG anywhere in the sample
+  std::vector<int> representative;
+  int member_count = 0;
+  long long kept_count_red = 0;
+  long long kept_count_blue = 0;
+  std::string caliber;
+  SurveyEvidence evidence;
+};
+
+// One delta band's row of the MC region ESS leg: the Kish effective sample size of the band's
+// Y-channel draw weights (rows grouped by outer draw — one draw is one sampling act even when
+// it contributed several member rows), the contributing draw count and the weight sum.
+struct SurveyMcRegionEssBand {
+  double delta_min_deg = 0.0;
+  double delta_max_deg = 0.0;
+  double ess = 0.0;
+  long long draw_count = 0;
+  double sum_weight = 0.0;
+};
+
+// The opt-in MC region ESS leg (the schema-4 append): the MC corroboration sampling's effective
+// sample size per solar-radial delta band for THIS raypath class — a sampling-quality
+// measurement, never a corroboration verdict (no agrees/silent/conflicts word may appear here;
+// the MC annotation vocabulary stays on the schema-3 side). Seeded and prefix-replay
+// reproducible, so `deterministic` is false by construction: the field exists to state the
+// leg's own shape against the deterministic legs' true — a deterministic quadrature carries no
+// ESS semantics and never appears on one. Present only when the caller requested the leg.
+struct SurveyMcRegionEss {
+  long long seed = 0;
+  long long draws = 0;
+  double lambda_nm = 0.0;
+  double band_deg = 0.0;
+  std::vector<SurveyMcRegionEssBand> bands;
+  bool deterministic = false;  // seeded random; a given seed reproduces the sample
+  SurveyEvidence evidence;
+};
+
 // The request as the document answered it (the echo).
 struct SurveyRequestEcho {
   long long crystal_id = 0;
@@ -656,6 +717,14 @@ struct SurveyDocument {
   // The canonical probes (the survey's quantification layer): filled only by a routing arm
   // that ran them; an early-stop document carries none.
   std::vector<SurveyProbe> probes;
+
+  // The exception evidence legs (the schema-4 appends): document-level optional blocks beside
+  // family_routing, each carrying its own SurveyEvidence. A key exists exactly when its leg
+  // ran (the T1 arm and the refused-support arm run the TIR share; the MC region ESS runs
+  // only when requested) — an arm that did not run a leg leaves no key at all, which reads as
+  // "this arm does not carry the leg", never as a refusal.
+  std::optional<SurveyTirShare> tir_share;
+  std::optional<SurveyMcRegionEss> mc_region_ess;
 
   // The family routing block (the measure-to-family arm's own record): present only on a
   // document that arm produced — an early stop, a full-dimensional route and an
