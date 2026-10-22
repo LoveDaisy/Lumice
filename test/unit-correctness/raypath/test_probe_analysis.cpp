@@ -232,6 +232,10 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   // The degenerate pole: an arc through the sun itself is not a circle there.
   ProbeRequest degenerate = RadialRequest(config, 0.0, 0.0);
   degenerate.along = ProbeAlong::kArc;
+  // The crafted context, like the first request: without it the inline arm runs the delta
+  // partition (~13 s locally, worse on CI) and the default budget interrupts it mid-shell —
+  // the refusal is deviation-based and needs no inline assembly.
+  degenerate.warm_survey = CraftedWarm(550.0, 20000);
   ProbeResult degenerate_result;
   e = AnalyzePathProbe(config, degenerate, &degenerate_result);
   ASSERT_TRUE(e.Ok()) << e.message;

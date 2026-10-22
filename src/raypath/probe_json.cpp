@@ -44,7 +44,9 @@ nlohmann::ordered_json Conventions() {
       "coordinate: deviation for the axis forms, azimuth for the arc forms" },
     { "source",
       "warm_reused: the values are the warm document's own radial samples, checked bin-centre "
-      "bit-equal against the asked grid — zero BandSum calls. recomputed: BandSum ran here "
+      "against the asked grid by the schema constants (bin, count, extent; centre tolerance far "
+      "below the bin — a one-ulp platform wobble is representation noise, not another grid) — zero "
+      "BandSum calls. recomputed: BandSum ran here "
       "(lattice-deterministic, no seed dependence — a probe consumes no fiber seeds). The reuse "
       "criterion's premise is the ruler constants being schema: bin, wedge and lattice count are "
       "schema, so the asked grid matching the warm grid is the whole check; the azimuth is absent "

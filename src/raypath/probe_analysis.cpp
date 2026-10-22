@@ -435,8 +435,13 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
         meta.sun_azimuth_deg == warm->sun_azimuth_deg && warm->probe_bin_deg == survey::kProbeBinDeg &&
         warm->probe_sample_count == profile.sample_count && warm->probe_samples.size() == layout.bins.size()) {
       reused = true;
+      // The grid identity is the schema constants (bin width, count, extent — all checked
+      // above), not bit-equal doubles: the document's echoed centres and this layout's centres
+      // are one expression spelled in two TUs on two platforms, and FP contraction may sit a
+      // single ulp between them — orders of magnitude below the bin, never a different grid.
+      constexpr double kGridTolDeg = 1e-9;  // the bin is 0.1 deg; a wrong grid is off by O(bin)
       for (size_t k = 0; k < layout.bins.size(); k++) {
-        if (warm->probe_samples[k].delta_deg != layout.bins[k].delta_centre_deg) {
+        if (std::fabs(warm->probe_samples[k].delta_deg - layout.bins[k].delta_centre_deg) > kGridTolDeg) {
           reused = false;
           break;
         }
