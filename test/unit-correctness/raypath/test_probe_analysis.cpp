@@ -185,6 +185,9 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   const ConfigManager config = survey::RandomPrismScene();
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);  // the sun sits at (0, 0): delta = 30
   request.along = ProbeAlong::kArc;
+  // A crafted warm context: the arc form never reuses the warm map, but the context comes from
+  // the document, so the test pays no inline delta partition (the CI budget's unit).
+  request.warm_survey = CraftedWarm(550.0, 20000);
 
   ProbeResult result;
   Error e = AnalyzePathProbe(config, request, &result);

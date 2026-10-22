@@ -1,5 +1,6 @@
 #include "raypath/single_path_json.hpp"
 
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -638,14 +639,18 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
         probe["spec"]["sample_count"].is_number_integer()) {
       survey->probe_sample_count = static_cast<int>(probe["spec"]["sample_count"].get<long long>());
     }
+    // Every row with a delta_deg lands in the harvest, the grid's shape preserved: a value the
+    // writer spelled null (an undefined number) parses as NaN — the row exists in the document,
+    // and a reader that dropped it would hand the next query a silently shorter grid. (The
+    // in-memory harvest arm reads the same rows verbatim; this is the two arms agreeing.)
     for (const auto& sample : probe["samples"]) {
-      if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number() ||
-          !sample.contains("value") || !sample["value"].is_number()) {
+      if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number()) {
         continue;
       }
       SurveyWarmSource::ProbeSample out;
       out.delta_deg = sample["delta_deg"].get<double>();
-      out.value = sample["value"].get<double>();
+      constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+      out.value = sample.contains("value") && sample["value"].is_number() ? sample["value"].get<double>() : nan;
       if (sample.contains("k") && sample["k"].is_number_integer()) {
         out.k = sample["k"].get<int>();
       }

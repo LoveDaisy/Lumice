@@ -807,6 +807,9 @@ void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg
     const SurveyWarmSource::ProbeSample* best = nullptr;
     double best_distance = std::numeric_limits<double>::infinity();
     for (const SurveyWarmSource::ProbeSample& sample : warm.probe_samples) {
+      if (std::isnan(sample.value)) {
+        continue;  // an undefined reading is no reading: the pick spans the defined ones
+      }
       const double d = std::fabs(delta - sample.delta_deg);
       if (d < best_distance) {
         best_distance = d;
