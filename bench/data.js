@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792682636014,
+  "lastUpdate": 1792682638724,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "f185f3da689e6f99f72572f6b6198659524a0cfa",
-          "message": "Merge pull request #424 from LoveDaisy/fix/globe-far-side-own-visibility\n\nfix: clip each side of the globe by its own direction's visibility",
-          "timestamp": "2026-09-26T11:01:44+08:00",
-          "tree_id": "1d3bdfa97e8e41f70adb6f2c18d2203221bfa8e4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/f185f3da689e6f99f72572f6b6198659524a0cfa"
-        },
-        "date": 1790392431725,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 95.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e4adc5bd4c991f32ec7d292e06eaeb6773249573",
           "message": "Merge pull request #425 from LoveDaisy/chore/release-4.7.0\n\nchore(release): cut 4.7.0",
           "timestamp": "2026-09-26T11:42:17+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b7910bd93417b149f483132e534f1f50f44153c2",
+          "message": "Merge pull request #538 from LoveDaisy/feat/raypath-point-l2-warm\n\nfeat(raypath): the L2 point command — factor decomposition + the --warm index contract",
+          "timestamp": "2026-10-22T23:20:21+08:00",
+          "tree_id": "4041bf027823738c4e184bac29559cb4397a5908",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/b7910bd93417b149f483132e534f1f50f44153c2"
+        },
+        "date": 1792682637895,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 90.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.8,
             "unit": "%"
           }
         ]
