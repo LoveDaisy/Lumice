@@ -143,7 +143,8 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
     rp::WarmGateContext gate;
     gate.crystal_id = static_cast<long long>(req.crystal_id);
     gate.path_layers = req.path_layers;
-    gate.config_fingerprint = rp::survey::RoutingConfigFingerprint(config, req.crystal_id, req.path_layers, 7);
+    gate.config_fingerprint =
+        rp::survey::RoutingConfigFingerprint(config, req.crystal_id, req.path_layers, rp::survey::kDefaultSymmetryBits);
     const auto configured = config.crystals_.find(req.crystal_id);
     rp::SurveyWarmSource survey_source;
     if (const rp::Error e = rp::ParseWarmStart(std::string(request.warm_json, request.warm_json_len), gate,

@@ -2308,7 +2308,7 @@ int ParseReportOptions(int argc, char** argv, int first, ReportOptions& opts) {
     } else if (arg == "--budget-ms" || arg == "--max-evaluations" || arg == "--max-field-evaluations") {
       const std::string_view value = argv[++i];
       const auto budget = ParseStrictUnsigned(value);
-      const uint64_t maximum = arg == "--budget-ms"       ? 120000 :
+      const uint64_t maximum = arg == "--budget-ms"       ? LUMICE_SINGLE_PATH_MAX_BUDGET_MS :
                                arg == "--max-evaluations" ? LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS :
                                                             1000000000;
       if (!budget || *budget == 0 || *budget > maximum) {

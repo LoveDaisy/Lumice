@@ -265,8 +265,8 @@ computed reading), `unevaluated` with a named reason — so absence can never re
 |---|---|
 | `source` | `"warm"` (the given schema-4 document's facts) or `"inline"` (the context-only assembly) |
 | `warm_index_absent` | True: a `--warm` schema-4 document was given but carried no (complete) `warm_index` block — the documented degradation (§5); the context still answers, inline |
-| `object.state` (+ `reason`, `target_inside_support`, `kind`, `members`, `distance_deg`) | The target's deviation against the delta-axis support: inside an interval (certified, distance 0) or the nearest card's distance |
-| `edge.state` (+ `distance_deg`, `basis`) | The angular distance to the nearest edge — `support_interval_endpoint` or `caustic_edge_position` |
+| `object.state` (+ `reason`) | The target's deviation against the delta-axis support: `certified` (inside an interval, distance 0, or the nearest card's distance) or `unevaluated`. The value fields `target_inside_support`, `kind`, `members`, `distance_deg` exist exactly when the state is `certified` — an unevaluated object carries no distance, so absence can never be misread as the certified 0 that means "inside the support" |
+| `edge.state` (+ `reason`) | The angular distance to the nearest edge. The value fields `distance_deg`, `basis` (`support_interval_endpoint` or `caustic_edge_position`) exist exactly when the state is `finite` |
 | `band_sum.state` (+ `value`, `delta_deg`, `bin_deg`, `caliber`, or `reason`) | The warm document's solar-radial band-sum reading at the nearest probe sample. Consumed only when the scope gate passes: the query's resolved wavelength and sun must EQUAL the document's scope receipt exactly (identity, not approximation); the two named failures are `scope_field_missing` (a receipt field absent) and `scope_value_mismatch` (a value differs — a moved sun or a changed lambda). Inline contexts and degraded warm files name why they have no reading (`inline_context_runs_no_probe`, `warm_index_absent`, `warm_document_has_no_probe`) |
 
 ### 3.9 Empty results

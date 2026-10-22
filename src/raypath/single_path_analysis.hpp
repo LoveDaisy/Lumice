@@ -97,8 +97,10 @@ struct SurveyWarmSource {
   std::string wavelength_source;  // carried for the reading's caliber declaration, never compared
   double sun_altitude_deg = 0.0;
   double sun_azimuth_deg = 0.0;
-  // The support: every support card's delta-axis intervals, with the card's members (the
-  // object-hit answer's member face).
+  // The support: every support card's delta-axis intervals, with the card's members (the first
+  // layer's faces — both harvest arms read that same layer). has_support true exactly when at
+  // least one interval was harvested: a support_set with an empty interval list reads as no
+  // support (the context answers survey_carries_no_support, never a dereference of nothing).
   struct SupportInterval {
     double lower_deg = 0.0;
     double upper_deg = 0.0;

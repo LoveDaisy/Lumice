@@ -90,6 +90,12 @@ void Sha256(const std::string& message, std::string* hex_out) {
 
 }  // namespace
 
+std::string Sha256Hex(const std::string& message) {
+  std::string hex;
+  Sha256(message, &hex);
+  return hex;
+}
+
 std::string RoutingConfigFingerprint(const ConfigManager& config, uint64_t crystal_id,
                                      const std::vector<std::vector<int>>& path_layers, uint8_t symmetry_bits) {
   // nlohmann::json (not ordered_json): object keys sort, so the same data always dumps to the

@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -120,7 +121,9 @@ TEST(SinglePathCApi, NullArgumentsAreRejected) {
 TEST(SinglePathCApi, StructSizeSmallerThanThisVersionIsRejected) {
   const ScenePtr scene = MakeScene();
   Req req({ 3, 5 }, { 2 });
-  req.c.struct_size = sizeof(LUMICE_SinglePathRequest) - sizeof(size_t);
+  // One byte below the smallest size this build reads — the reader gate's own anchor, not a
+  // fixed offset from sizeof (appended fields grow sizeof, they never lower the floor).
+  req.c.struct_size = offsetof(LUMICE_SinglePathRequest, warm_json_len) + sizeof(size_t) - 1;
   const Outcome o = Analyse(scene.get(), req);
   EXPECT_EQ(o.code, LUMICE_ERR_INVALID_VALUE);
   EXPECT_EQ(o.result, nullptr);
@@ -439,6 +442,109 @@ TEST_F(WarmContract, FieldMissingAndBlockAbsentDegradeWithNamedDeclarations) {
     EXPECT_EQ(context["band_sum"]["reason"], "warm_index_absent");
     EXPECT_EQ(nlohmann::json::parse(Json(o.result.get()))["meta"]["discovery_settings"]["warm_seed_count"], 0);
   }
+}
+
+// The empty-support red arm: a hand-edited (or truncated) document whose support_set carries an
+// empty interval list used to pass the shape checks, set has_support, and crash the context on a
+// null dereference. Now it reads as no support: the query answers, naming the cause, and never
+// dereferences an interval that is not there.
+TEST_F(WarmContract, EmptyIntervalListDegradesLikeNoSupport) {
+  const std::string& survey_text = CachedSurvey(kRandomScene);
+  nlohmann::json doc = nlohmann::json::parse(survey_text);
+  ASSERT_TRUE(doc.contains("objects") && !doc["objects"].empty());
+  doc["objects"][0]["support_set"]["intervals"] = nlohmann::json::array();
+  const ScenePtr scene = MakeScene(kRandomScene);
+  Req q({ 3, 5 }, { 2 });
+  q.warm = doc.dump();
+  q.Bind();
+  const Outcome o = Analyse(scene.get(), q);
+  ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+  const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+  EXPECT_EQ(context["object"]["state"], "unevaluated");
+  EXPECT_EQ(context["object"]["reason"], "survey_carries_no_support");
+  EXPECT_EQ(context["edge"]["state"], "unevaluated");
+  EXPECT_EQ(context["edge"]["reason"], "survey_carries_no_support");
+  // The unevaluated blocks carry no value fields (see §3.12): nothing reads as a certified 0.
+  EXPECT_FALSE(context["object"].contains("distance_deg"));
+  EXPECT_FALSE(context["edge"].contains("distance_deg"));
+}
+
+// The dual-arm oracle: the JSON-arm harvest (through ParseWarmStart inside the bridge) and the
+// in-memory harvest (inside the analysis's inline assembly) must read the same blocks of the
+// same document — here the same config runs both arms, and the structural answers must come out
+// field-for-field identical. Only band_sum differs by design (the warm reading exists, the
+// inline one names why it does not).
+TEST_F(WarmContract, BothHarvestArmsReadTheSameBlocks) {
+  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const ScenePtr scene = MakeScene(kRandomScene);
+  Req warm({ 3, 5 }, { 2 });
+  warm.warm = survey_text;
+  warm.Bind();
+  const Outcome warm_out = Analyse(scene.get(), warm);
+  ASSERT_EQ(warm_out.code, LUMICE_OK) << warm_out.error;
+  Req inline_req({ 3, 5 }, { 2 });
+  const Outcome inline_out = Analyse(scene.get(), inline_req);
+  ASSERT_EQ(inline_out.code, LUMICE_OK) << inline_out.error;
+  const nlohmann::json warm_doc = nlohmann::json::parse(Json(warm_out.result.get()))["survey_context"];
+  const nlohmann::json inline_doc = nlohmann::json::parse(Json(inline_out.result.get()))["survey_context"];
+  EXPECT_EQ(warm_doc["source"], "warm");
+  EXPECT_EQ(inline_doc["source"], "inline");
+  EXPECT_EQ(warm_doc["object"], inline_doc["object"]) << warm_doc.dump(1) << " vs " << inline_doc.dump(1);
+  EXPECT_EQ(warm_doc["edge"], inline_doc["edge"]);
+}
+
+// The scope gate's bit-equality premise, on a value no double spells exactly: the document's sun
+// and the query's sun travel the same parse path, so 33.3 arrives bit-identical on both sides
+// and the reading is consumed. A parse path that broke that identity would fail this as a
+// scope_value_mismatch on a same-config query.
+TEST_F(WarmContract, NonExactlyRepresentableSunStillConsumesTheReading) {
+  static constexpr const char* kSun33_3 = R"({
+    "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
+                   "axis": { "zenith": { "type": "uniform", "mean": 0, "std": 360 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                             "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+    "filter": [],
+    "scene": {
+      "light_source": { "type": "sun", "altitude": 33.3, "spectrum": "D65" },
+      "ray_num": 1000, "max_hits": 7,
+      "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+    },
+    "render": []
+  })";
+  const std::string& survey_text = CachedSurvey(kSun33_3);
+  const nlohmann::json doc = nlohmann::json::parse(survey_text);
+  // The config stores the sun as float: both sides promote the same 33.3f, which is exactly the
+  // bit-level same-source identity the scope gate compares (a double 33.3 literal would differ
+  // in the last bits and rightly fail the gate).
+  ASSERT_DOUBLE_EQ(doc["scope"]["sun_altitude_deg"].get<double>(), static_cast<double>(33.3f));
+  const ScenePtr scene = MakeScene(kSun33_3);
+  Req q({ 3, 5 }, { 2 });
+  q.warm = survey_text;
+  q.Bind();
+  const Outcome o = Analyse(scene.get(), q);
+  ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+  const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+  EXPECT_EQ(context["object"]["state"], "certified");  // the structure gates pass on the same config
+  EXPECT_EQ(context["band_sum"]["state"], "finite");
+  EXPECT_GT(context["band_sum"]["value"].get<double>(), 0.0);
+}
+
+// The lambda side of the scope gate (MovedSunPasses... probes the sun only): a changed lambda is
+// also a scope_value_mismatch, and it must not touch the structural gates.
+TEST_F(WarmContract, ChangedLambdaNamesTheScopeMismatch) {
+  const std::string& survey_text = CachedSurvey(kRandomScene);
+  const ScenePtr scene = MakeScene(kRandomScene);
+  Req q({ 3, 5 }, { 2 });
+  q.c.wavelength_nm = 480.0;  // the document's D65 default resolved to 550
+  q.warm = survey_text;
+  q.Bind();
+  const Outcome o = Analyse(scene.get(), q);
+  ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+  const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+  EXPECT_EQ(context["source"], "warm");
+  EXPECT_EQ(context["object"]["state"], "certified");  // the structure gates do not see lambda
+  EXPECT_EQ(context["band_sum"]["state"], "unevaluated");
+  EXPECT_EQ(context["band_sum"]["reason"], "scope_value_mismatch");
 }
 
 // The seed retention's positive arm: a scene whose T0 routing refuses the delta partition hangs

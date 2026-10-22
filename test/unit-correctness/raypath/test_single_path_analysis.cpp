@@ -24,6 +24,7 @@
 #include "core/optics.hpp"
 #include "core/simulator.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
+#include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
 
@@ -875,6 +876,37 @@ TEST(SinglePathFactors, OrbitIntegralReproducesTheQuadratureOnTheLI51Constructio
   }
   EXPECT_EQ(kept, orbit.kept_count);
   EXPECT_NEAR(orbit.integral, hand, 1e-12 * std::fabs(hand) + 1e-18);
+}
+
+// The registered-gap red arm: an area axis with a fixed azimuth is the declared-density layer's
+// v1 read-as-zero gap (rho_u = 0 everywhere at the u-marginal), and the registration block must
+// name it — the whole "a rho of 0 is unanswered, not dark" honesty contract rides on this
+// declaration appearing exactly when the gap is in force (the point-support documents above
+// carry the green arm: registered_gap false).
+TEST(SinglePathFactors, AFixedAzimuthAreaAxisDeclaresItsRegisteredGap) {
+  ConfigManager scene = Scene(Prism(1.0f));
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  const Distribution kFullTurn{ DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90.0f, 180.0f };
+  crystal.axis_.azimuth_dist = Fixed(0.0f);  // the fixed azimuth is the gap's own trigger
+  crystal.axis_.roll_dist = kFullTurn;
+  SinglePathResult r;
+  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
+  ASSERT_EQ(r.outcome, Outcome::kDiscovered);
+  EXPECT_EQ(r.measure_registration.support_kind, "area");
+  EXPECT_TRUE(r.measure_registration.registered_gap);
+  ASSERT_FALSE(r.measure_registration.note.empty());
+  EXPECT_NE(r.measure_registration.note.find("fixed azimuth"), std::string::npos) << r.measure_registration.note;
+  EXPECT_NE(r.measure_registration.note.find("read-as-zero"), std::string::npos) << r.measure_registration.note;
+}
+
+// The fingerprint's hash is the contract's promise ("hex SHA256" in
+// doc/raypath/raypath-cli-output.md §5); these known answers pin the hand-rolled implementation
+// to the algorithm, which the differential gate tests alone cannot.
+TEST(SinglePathFingerprint, Sha256MatchesTheKnownAnswers) {
+  using lumice::raypath::survey::Sha256Hex;
+  EXPECT_EQ(Sha256Hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  EXPECT_EQ(Sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
 }  // namespace

@@ -33,9 +33,20 @@
 
 namespace lumice::raypath::survey {
 
+// The physical symmetry bits the scope runs under unless a caller names another: the survey
+// command's default, the point query's inline-assembly scope, and the same query's fingerprint
+// input are one semantic — this constant is its one spelling (three bare 7s would drift the day
+// the default moves).
+constexpr uint8_t kDefaultSymmetryBits = 7;
+
 // `path_layers` is the request's own layer encoding (the survey request's, already validated).
 std::string RoutingConfigFingerprint(const ConfigManager& config, uint64_t crystal_id,
                                      const std::vector<std::vector<int>>& path_layers, uint8_t symmetry_bits);
+
+// The fingerprint's own SHA-256 (FIPS 180-4, hex, lower case), exported so a known-answer test
+// can pin the implementation to the algorithm the doc/raypath/raypath-cli-output.md contract
+// promises ("hex SHA256") — the gate tests only prove differential behaviour, not correctness.
+std::string Sha256Hex(const std::string& message);
 
 }  // namespace lumice::raypath::survey
 

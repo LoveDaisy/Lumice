@@ -14,6 +14,7 @@
 #include "analytic/so3.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/fiber_quadrature.hpp"
+#include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
@@ -671,7 +672,12 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation, const a
 namespace {
 
 // The schema-4 value model's harvest: the facts the context reads, read once off the assembled
-// document (the warm reader's JSON arm mirrors this — the two must read the same blocks).
+// document (the warm reader's JSON arm mirrors this — the two must read the same blocks, the
+// dual-arm oracle test pins them field-for-field). Members are the card's first layer: the
+// support partition ran on the entry faces, and both arms read that same layer, so a future
+// multi-layer document changes the answer on both sides together or not at all. A support_set
+// with zero intervals harvests nothing — has_support stays false and the context answers
+// survey_carries_no_support, the same shape as a document without support at all.
 SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   SurveyWarmSource out;
   out.early_stopped = doc.early_stopped;
@@ -682,7 +688,6 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   out.sun_azimuth_deg = doc.sun_azimuth_deg;
   for (const survey::SurveyObject& card : doc.objects) {
     if (card.support_set.has_value()) {
-      out.has_support = true;
       for (const survey::SurveyObject::Interval& interval : card.support_set->intervals) {
         SurveyWarmSource::SupportInterval out_interval;
         out_interval.lower_deg = interval.lower_deg;
@@ -696,6 +701,7 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
       out.edge_deg = card.caustic_edge->position_deg;
     }
   }
+  out.has_support = !out.intervals.empty();
   if (!doc.probes.empty()) {
     const survey::SurveyProbe& probe = doc.probes.front();
     out.has_probe = true;
@@ -841,7 +847,7 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
     SurveyRequest survey_request;
     survey_request.crystal_id = request.crystal_id;
     survey_request.path_layers = request.path_layers;
-    survey_request.symmetry_bits = 7;
+    survey_request.symmetry_bits = survey::kDefaultSymmetryBits;
     survey_request.wavelength_nm = meta.wavelength_nm;
     survey::SurveyDocument doc;
     const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
@@ -1013,7 +1019,10 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   }
 
   // The survey context: where the target sits in the survey's structure (warm harvest, or this
-  // request's own context-only T0-T2 assembly). Independent of the outcome branch.
+  // request's own context-only T0-T2 assembly). Independent of the outcome branch. The inline
+  // assembly runs before the discovery loop and outside the deadline by design: T0-T2 is cheap
+  // and bounded (the document's own budget accounting rides the discovery legs below), so the
+  // stop is deliberately not polled here.
   BuildSurveyContext(config, request, meta, &result.survey_context);
 
   if (rank.rank_zero) {
@@ -1048,7 +1057,10 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
                          request.warm_seeds.empty() ? nullptr : request.warm_seeds.data(), warm_count,
                          meta.cluster_radius_rad, meta.distance_threshold_rad, params, &stop);
   if (stopped()) {
-    meta.interrupted = true;  // a partial band: the components found so far, discovery.complete false
+    // The honest stop marker is meta.interrupted; discovery.complete below keeps its procedural
+    // candidate-conversion semantics — a band stopped mid-way may still read complete, because
+    // the lattice points it never explored never became candidates.
+    meta.interrupted = true;
   }
   for (const analytic::DiscoveredComponent& c : found.components) {
     if (stopped()) {

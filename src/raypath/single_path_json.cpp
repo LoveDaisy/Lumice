@@ -80,7 +80,8 @@ nlohmann::ordered_json Conventions() {
       "where the target sky point sits in the survey's structure (doc/raypath/raypath-cli-output.md, the "
       "--warm contract): source warm (the given schema-4 document's facts) or inline (a context-only T0-T2 "
       "assembly on this request's config); every field carries its own state — certified (the support "
-      "partition's containment fact), finite (a computed reading), unevaluated with a named reason. The "
+      "partition's containment fact), finite (a computed reading), unevaluated with a named reason — and the "
+      "value fields exist exactly when the state says something was read. The "
       "band-sum reading exists only when a warm document's probe was consumed under the scope gate's "
       "exact-equality comparison of wavelength and sun (scope_field_missing / scope_value_mismatch name the "
       "two failures); warm_index_absent declares the documented degradation to the inline context" },
@@ -305,24 +306,30 @@ nlohmann::ordered_json SunGridJson(const SunSphereGrid& g) {
 }
 
 // The survey context block: every field's state always serialized, the value fields exactly when
-// their state says something was read.
+// their state says something was read — object's only under "certified", edge's and band_sum's
+// only under "finite" (so an unevaluated distance can never be misread as the certified 0 that
+// means "inside the support").
 nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& c) {
   nlohmann::ordered_json j = { { "source", c.source }, { "warm_index_absent", c.warm_index_absent } };
   nlohmann::ordered_json object = { { "state", c.object.state } };
   if (!c.object.reason.empty()) {
     object["reason"] = c.object.reason;
   }
-  object["target_inside_support"] = c.target_inside_support;
-  object["kind"] = c.object_kind;
-  object["members"] = c.object_members;
-  object["distance_deg"] = Num(c.object_distance_deg);
+  if (c.object.state == "certified") {
+    object["target_inside_support"] = c.target_inside_support;
+    object["kind"] = c.object_kind;
+    object["members"] = c.object_members;
+    object["distance_deg"] = Num(c.object_distance_deg);
+  }
   j["object"] = std::move(object);
   nlohmann::ordered_json edge = { { "state", c.edge.state } };
   if (!c.edge.reason.empty()) {
     edge["reason"] = c.edge.reason;
   }
-  edge["distance_deg"] = Num(c.edge_distance_deg);
-  edge["basis"] = c.edge_basis;
+  if (c.edge.state == "finite") {
+    edge["distance_deg"] = Num(c.edge_distance_deg);
+    edge["basis"] = c.edge_basis;
+  }
   j["edge"] = std::move(edge);
   nlohmann::ordered_json band = { { "state", c.band_sum.state } };
   if (!c.band_sum.reason.empty()) {
@@ -567,7 +574,11 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
     survey->sun_altitude_deg = doc["scope"]["sun_altitude_deg"].get<double>();
     survey->sun_azimuth_deg = doc["scope"]["sun_azimuth_deg"].get<double>();
   }
-  // ...the support (every support card's intervals) and the certified edge...
+  // ...the support (every support card's intervals) and the certified edge. Members are the
+  // card's first layer, the entry faces the partition ran on — the same reading the in-memory
+  // harvest arm spells, so the two arms answer identically on any document (the dual-arm oracle
+  // test pins it). A support_set whose interval list harvests nothing reads as no support: the
+  // flag is set once after the loop, from what actually landed.
   if (doc.contains("objects") && doc["objects"].is_array()) {
     for (const auto& card : doc["objects"]) {
       if (!card.is_object()) {
@@ -575,17 +586,12 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
       }
       if (card.contains("support_set") && card["support_set"].is_object() &&
           card["support_set"].contains("intervals") && card["support_set"]["intervals"].is_array()) {
-        survey->has_support = true;
         std::vector<int> members;
-        if (card.contains("members") && card["members"].is_array()) {
-          for (const auto& layer : card["members"]) {
-            if (!layer.is_array()) {
-              continue;
-            }
-            for (const auto& face : layer) {
-              if (face.is_number_integer()) {
-                members.push_back(face.get<int>());
-              }
+        if (card.contains("members") && card["members"].is_array() && !card["members"].empty() &&
+            card["members"][0].is_array()) {
+          for (const auto& face : card["members"][0]) {
+            if (face.is_number_integer()) {
+              members.push_back(face.get<int>());
             }
           }
         }
@@ -607,6 +613,7 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
         survey->edge_deg = card["caustic_edge"]["position_deg"].get<double>();
       }
     }
+    survey->has_support = !survey->intervals.empty();
   }
   // ...the probe's radial profile.
   if (doc.contains("probes") && doc["probes"].is_array() && !doc["probes"].empty() && doc["probes"][0].is_object() &&
