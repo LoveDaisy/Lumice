@@ -903,6 +903,27 @@ TEST(SinglePathFactors, AFixedAzimuthAreaAxisDeclaresItsRegisteredGap) {
   EXPECT_NE(r.measure_registration.note.find("read-as-zero"), std::string::npos) << r.measure_registration.note;
 }
 
+// The registered-gap red arm's other dirac slot: a fixed zenith (latitude) with a spread,
+// non-uniform azimuth and spread roll is the v1 gap list's second area gap — RegisterMeasure's
+// transcription must name both slots, so each carries its own red arm.
+TEST(SinglePathFactors, AFixedZenithAreaAxisDeclaresItsRegisteredGap) {
+  ConfigManager scene = Scene(Prism(1.0f));
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  const Distribution kFullTurn{ DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = Fixed(
+      45.0f);  // a fixed zenith away from the poles (Fixed(90) is the pole: the degenerate branch claims it first)
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 30.0f, 60.0f };  // spread, non-uniform
+  crystal.axis_.roll_dist = kFullTurn;
+  SinglePathResult r;
+  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
+  ASSERT_EQ(r.outcome, Outcome::kDiscovered);
+  EXPECT_EQ(r.measure_registration.support_kind, "area");
+  EXPECT_TRUE(r.measure_registration.registered_gap);
+  ASSERT_FALSE(r.measure_registration.note.empty());
+  EXPECT_NE(r.measure_registration.note.find("fixed zenith"), std::string::npos) << r.measure_registration.note;
+  EXPECT_NE(r.measure_registration.note.find("read-as-zero"), std::string::npos) << r.measure_registration.note;
+}
+
 // The fingerprint's hash is the contract's promise ("hex SHA256" in
 // doc/raypath/raypath-cli-output.md §5); these known answers pin the hand-rolled implementation
 // to the algorithm, which the differential gate tests alone cannot.

@@ -491,7 +491,7 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
   // family_routing; its absence is data (the arm did not run), so the gate skips with the
   // declaration carried in the survey source — the caller compares the echo when it is present.
   if (doc.contains("family_routing") && doc["family_routing"].is_object() &&
-      doc["family_routing"].contains("measure") && doc["family_routing"]["measure"].is_object()) {
+      doc["family_routing"].contains("measure")) {
     const auto read_dim = [](const nlohmann::json& dim, SurveyWarmSource::MeasureDimEcho* out) {
       if (!dim.is_object() || !dim.contains("kind") || !dim["kind"].is_string() || !dim.contains("center_deg") ||
           !dim["center_deg"].is_number() || !dim.contains("width_deg") || !dim["width_deg"].is_number()) {
@@ -503,11 +503,15 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
       return true;
     };
     const auto& measure = doc["family_routing"]["measure"];
-    if (measure.contains("zenith") && measure.contains("azimuth") && measure.contains("roll") &&
-        read_dim(measure["zenith"], &survey->measure_zenith) &&
-        read_dim(measure["azimuth"], &survey->measure_azimuth) && read_dim(measure["roll"], &survey->measure_roll)) {
-      survey->has_measure_echo = true;
+    // Present-but-malformed is corrupt data, not absence: the document claims the family arm
+    // ran and echoes its measure, but the echo does not read back. Refusing keeps that distinct
+    // from "the arm did not run" (the key absent, a declared skip).
+    if (!measure.is_object() || !measure.contains("zenith") || !measure.contains("azimuth") ||
+        !measure.contains("roll") || !read_dim(measure["zenith"], &survey->measure_zenith) ||
+        !read_dim(measure["azimuth"], &survey->measure_azimuth) || !read_dim(measure["roll"], &survey->measure_roll)) {
+      return refuse("corrupt warm document: family_routing.measure is present but malformed");
     }
+    survey->has_measure_echo = true;
   }
   // Gate 3: the config fingerprint — the one comparison input with no pre-existing echo.
   const bool index_block =

@@ -588,9 +588,11 @@ TEST_F(WarmContract, WitnessArgmaxSeedTravelsBackAsAWarmSeed) {
   const std::string& survey_text = CachedSurvey(kWitnessScene);
   const nlohmann::json doc = nlohmann::json::parse(survey_text);
   ASSERT_EQ(doc["warm_index"]["seeds"].size(), doc["warm_index"]["seed_sources"].size());
-  if (!doc["warm_index"]["seeds"].is_array() || doc["warm_index"]["seeds"].empty()) {
-    GTEST_SKIP() << "this scene's routing held no pose (the retention's negative arm)";
-  }
+  // kWitnessScene is deterministic and deliberately routes the refused-support arm whose routing
+  // holds a pose: an empty seeds block can only mean an upstream change dropped the retention —
+  // the regression this test exists to catch — so assert, never skip.
+  ASSERT_TRUE(doc["warm_index"]["seeds"].is_array());
+  ASSERT_FALSE(doc["warm_index"]["seeds"].empty());
   for (const auto& source : doc["warm_index"]["seed_sources"]) {
     EXPECT_FALSE(source.get<std::string>().empty());
   }
@@ -602,6 +604,20 @@ TEST_F(WarmContract, WitnessArgmaxSeedTravelsBackAsAWarmSeed) {
   ASSERT_EQ(o.code, LUMICE_OK) << o.error;
   EXPECT_EQ(nlohmann::json::parse(Json(o.result.get()))["meta"]["discovery_settings"]["warm_seed_count"],
             doc["warm_index"]["seeds"].size());
+}
+
+// The warm path's first gate: an id that is not in the config used to reach the fingerprint's
+// FatalAbort before any existence check (the warm gates compare the document's echo, never the
+// id against the config) — the refusal must keep the engine's unknown-crystal semantics.
+TEST(SinglePathCapi, UnknownCrystalIdWithAWarmTextIsRefusedNotAborted) {
+  const ScenePtr scene = MakeScene();
+  Req q({ 3, 5 }, { 2 });
+  q.c.crystal_id = 999;
+  q.warm = "{}";  // any warm text: the existence gate fires before the text is parsed
+  q.Bind();
+  const Outcome o = Analyse(scene.get(), q);
+  EXPECT_NE(o.code, LUMICE_OK);
+  ASSERT_NE(o.error.find("no crystal entry with id 999"), std::string::npos) << o.error;
 }
 
 }  // namespace

@@ -118,6 +118,12 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   req.sample_count = request.sample_count == 0 ? rp::kDefaultSampleCount : request.sample_count;
   req.sun_grid_lat_count = request.sun_grid_lat_count;
   if (request.struct_size >= kRequestSizeV452) {
+    if (request.deadline_ms < 0) {  // a negative is not the default: refuse as the contract is
+      // written, not silently remap it (the CLI never sends one; a direct caller might)
+      return Refuse({ rp::ErrorCode::kInvalidArgument,
+                      "deadline_ms must be 0 (the default) or at most " + std::to_string(rp::kMaxPointBudgetMs) },
+                    err_buf, err_size);
+    }
     req.budget_ms = request.deadline_ms > 0 ? request.deadline_ms : rp::kDefaultPointBudgetMs;
     if (req.budget_ms > rp::kMaxPointBudgetMs) {
       return Refuse({ rp::ErrorCode::kInvalidArgument,
@@ -137,6 +143,13 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   }
 
   if (request.warm_json != nullptr && request.warm_json_len > 0) {
+    // The gates below (and the fingerprint's FatalAbort) presuppose the id exists in this config:
+    // the warm gates compare the document's echo against the request, never the id against the
+    // config — so gate existence first, with the engine's own unknown-crystal refusal semantics.
+    if (config.crystals_.find(req.crystal_id) == config.crystals_.end()) {
+      return Refuse({ rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(req.crystal_id) },
+                    err_buf, err_size);
+    }
     // The warm gates' comparison context: the routing-axis config fingerprint (the projection's
     // single implementation), the crystal and the path, and — for the fourth gate — this query's
     // own family-measure reading.
@@ -154,7 +167,7 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
     }
     // Gate 4 (the measure echo), where the config lives: only family-arm documents carry the
     // echo — its absence skips the gate with the declaration the harvest recorded.
-    if (survey_source.has_measure_echo && configured != config.crystals_.end()) {
+    if (survey_source.has_measure_echo) {
       const rp::survey::FamilyMeasureReading mine = rp::survey::ReadFamilyMeasure(configured->second.axis_);
       const auto mismatch = [&]() {
         return Refuse({ rp::ErrorCode::kInvalidArgument,

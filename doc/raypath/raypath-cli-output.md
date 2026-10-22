@@ -395,6 +395,12 @@ and never partially consumed: the query degrades visibly to the inline context (
 reuse, no seed consumption), and the document's `survey_context` declares it
 (`warm_index_absent: true`, the band-sum reading `unevaluated` with that reason).
 
+**Versions.** The schema-4 arm does not compare `schema_version` (the schema-1 arm above does):
+the family name is the discriminator, `warm_index.produced_for` records what produced the
+document, and append-only growth freezes the semantics of the keys this reader consumes. A
+future change to a consumed key's meaning is the one thing that must gate on `schema_version`
+here — that is this contract's version discipline.
+
 A warm seed is a starting point, not a certificate. The engine's builds for different CPU tiers
 (the release's baseline and x86-64-v3 engines) are compiled with different floating-point
 contraction, so outputs of two tiers need not agree to the last bit.

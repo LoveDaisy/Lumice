@@ -106,9 +106,9 @@ std::string RoutingConfigFingerprint(const ConfigManager& config, uint64_t cryst
   nlohmann::json projection;
   projection["axis_set"] = kAxisSetTag;
   const auto entry = config.crystals_.find(static_cast<IdType>(crystal_id));
-  // The caller has gated the crystal id (the survey request validated it, the point bridge's
-  // gates compare it): a miss here is a caller bug, and hashing a projection that silently
-  // omits the crystal would be worse than refusing to answer.
+  // The caller has gated the crystal id (the survey request validated it; the point bridge
+  // refuses an unknown id before computing the fingerprint): a miss here is a caller bug, and hashing a projection that
+  // silently omits the crystal would be worse than refusing to answer.
   if (entry == config.crystals_.end()) {
     FatalAbort("RoutingConfigFingerprint: crystal %llu is not in the config (caller bug: the id was not gated)",
                static_cast<unsigned long long>(crystal_id));
