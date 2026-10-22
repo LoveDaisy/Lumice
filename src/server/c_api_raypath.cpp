@@ -18,6 +18,8 @@
 #include "raypath/detail/survey/survey_family.hpp"
 #include "raypath/detail/survey/survey_mc_ess.hpp"
 #include "raypath/path_feature_report.hpp"
+#include "raypath/probe_analysis.hpp"
+#include "raypath/probe_json.hpp"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
 #include "raypath/survey_report.hpp"
@@ -46,6 +48,12 @@ static_assert(LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS == lumice::raypath::kDefaultS
               "lumice_raypath.h and the survey module must agree on the default budget");
 static_assert(LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS == lumice::raypath::survey::kSurveyMcEssMaxDraws,
               "lumice_raypath.h and the survey module must agree on the mc-ess draw bound");
+static_assert(LUMICE_PATH_PROBE_DEFAULT_BUDGET_MS == lumice::raypath::kDefaultProbeBudgetMs,
+              "lumice_raypath.h and the probe module must agree on the default budget");
+static_assert(LUMICE_PATH_PROBE_MAX_BUDGET_MS == lumice::raypath::kMaxProbeBudgetMs,
+              "lumice_raypath.h and the probe module must agree on the budget bound");
+static_assert(LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT == lumice::raypath::kMaxProbeWavelengthCount,
+              "lumice_raypath.h and the probe module must agree on the wavelength bound");
 
 struct LUMICE_SinglePathResult_ {
   std::string json;  // produced once in LUMICE_AnalyzeSinglePath, never changed afterwards
@@ -57,6 +65,10 @@ struct LUMICE_PathFeatureReport_ {
 
 struct LUMICE_PathSurvey_ {
   std::string json;  // produced once in LUMICE_AnalyzePathSurvey, immutable afterwards
+};
+
+struct LUMICE_PathProbe_ {
+  std::string json;  // produced once in LUMICE_AnalyzePathProbe, immutable afterwards
 };
 
 namespace {
@@ -81,6 +93,63 @@ void WriteError(char* err_buf, size_t err_size, const std::string& message) {
 LUMICE_ErrorCode Refuse(const lumice::raypath::Error& e, char* err_buf, size_t err_size) {
   WriteError(err_buf, err_size, std::string(lumice::raypath::ErrorCodeName(e.code)) + ": " + e.message);
   return LUMICE_ERR_INVALID_VALUE;
+}
+
+// The warm gates, one home for both query faces (the point and the probe): the crystal-existence
+// precondition the gates presuppose, the three comparison gates the reader runs (crystal id, path
+// layers, config fingerprint) and the fourth (the family measure echo, compared here where the
+// config lives). The seeds land in *seeds (the probe discards them: the band-sum consumes none);
+// only a schema-4 survey document's harvest lands in *warm_survey — a schema-1 seed sheet feeds
+// the seeds alone and the context stays inline.
+LUMICE_ErrorCode GateWarm(const lumice::ConfigManager& config, const std::string& warm_text, lumice::IdType crystal_id,
+                          const std::vector<std::vector<int>>& path_layers, std::vector<double>* seeds,
+                          std::optional<lumice::raypath::SurveyWarmSource>* warm_survey, char* err_buf,
+                          size_t err_size) {
+  namespace rp = lumice::raypath;
+  if (config.crystals_.find(crystal_id) == config.crystals_.end()) {
+    return Refuse({ rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(crystal_id) },
+                  err_buf, err_size);
+  }
+  // The warm gates' comparison context: the routing-axis config fingerprint (the projection's
+  // single implementation), the crystal and the path, and — for the fourth gate — this query's
+  // own family-measure reading.
+  rp::WarmGateContext gate;
+  gate.crystal_id = static_cast<long long>(crystal_id);
+  gate.path_layers = path_layers;
+  gate.config_fingerprint =
+      rp::survey::RoutingConfigFingerprint(config, crystal_id, path_layers, rp::survey::kDefaultSymmetryBits);
+  const auto configured = config.crystals_.find(crystal_id);
+  rp::SurveyWarmSource survey_source;
+  if (const rp::Error e = rp::ParseWarmStart(warm_text, gate, seeds, &survey_source); !e.Ok()) {
+    return Refuse(e, err_buf, err_size);
+  }
+  // Gate 4 (the measure echo): only family-arm documents carry the echo — its absence skips the
+  // gate with the declaration the harvest recorded.
+  if (survey_source.has_measure_echo) {
+    const rp::survey::FamilyMeasureReading mine = rp::survey::ReadFamilyMeasure(configured->second.axis_);
+    const auto mismatch = [&]() {
+      return Refuse({ rp::ErrorCode::kInvalidArgument,
+                      "warm index: measure gate: the document's family measure echo does not match this "
+                      "query's config axis" },
+                    err_buf, err_size);
+    };
+    if (!mine.ok) {
+      return mismatch();
+    }
+    const auto same = [](const rp::SurveyWarmSource::MeasureDimEcho& echo, const rp::survey::FamilyDimMeasure& dim) {
+      return echo.kind == rp::survey::FamilyDimKindName(dim.kind) && echo.center_deg == dim.center_deg &&
+             echo.width_deg == dim.width_deg;
+    };
+    if (!same(survey_source.measure_zenith, mine.measure.zenith) ||
+        !same(survey_source.measure_azimuth, mine.measure.azimuth) ||
+        !same(survey_source.measure_roll, mine.measure.roll)) {
+      return mismatch();
+    }
+  }
+  if (survey_source.from_survey_document) {
+    *warm_survey = std::move(survey_source);
+  }
+  return LUMICE_OK;
 }
 
 LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathRequest& request,
@@ -143,56 +212,14 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   }
 
   if (request.warm_json != nullptr && request.warm_json_len > 0) {
-    // The gates below (and the fingerprint's FatalAbort) presuppose the id exists in this config:
-    // the warm gates compare the document's echo against the request, never the id against the
-    // config — so gate existence first, with the engine's own unknown-crystal refusal semantics.
-    if (config.crystals_.find(req.crystal_id) == config.crystals_.end()) {
-      return Refuse({ rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(req.crystal_id) },
-                    err_buf, err_size);
-    }
-    // The warm gates' comparison context: the routing-axis config fingerprint (the projection's
-    // single implementation), the crystal and the path, and — for the fourth gate — this query's
-    // own family-measure reading.
-    rp::WarmGateContext gate;
-    gate.crystal_id = static_cast<long long>(req.crystal_id);
-    gate.path_layers = req.path_layers;
-    gate.config_fingerprint =
-        rp::survey::RoutingConfigFingerprint(config, req.crystal_id, req.path_layers, rp::survey::kDefaultSymmetryBits);
-    const auto configured = config.crystals_.find(req.crystal_id);
-    rp::SurveyWarmSource survey_source;
-    if (const rp::Error e = rp::ParseWarmStart(std::string(request.warm_json, request.warm_json_len), gate,
-                                               &req.warm_seeds, &survey_source);
-        !e.Ok()) {
-      return Refuse(e, err_buf, err_size);
-    }
-    // Gate 4 (the measure echo), where the config lives: only family-arm documents carry the
-    // echo — its absence skips the gate with the declaration the harvest recorded.
-    if (survey_source.has_measure_echo) {
-      const rp::survey::FamilyMeasureReading mine = rp::survey::ReadFamilyMeasure(configured->second.axis_);
-      const auto mismatch = [&]() {
-        return Refuse({ rp::ErrorCode::kInvalidArgument,
-                        "warm index: measure gate: the document's family measure echo does not match this "
-                        "query's config axis" },
-                      err_buf, err_size);
-      };
-      if (!mine.ok) {
-        return mismatch();
-      }
-      const auto same = [](const rp::SurveyWarmSource::MeasureDimEcho& echo, const rp::survey::FamilyDimMeasure& dim) {
-        return echo.kind == rp::survey::FamilyDimKindName(dim.kind) && echo.center_deg == dim.center_deg &&
-               echo.width_deg == dim.width_deg;
-      };
-      if (!same(survey_source.measure_zenith, mine.measure.zenith) ||
-          !same(survey_source.measure_azimuth, mine.measure.azimuth) ||
-          !same(survey_source.measure_roll, mine.measure.roll)) {
-        return mismatch();
-      }
-    }
-    // Only a schema-4 survey document's harvest becomes the query's warm survey; a schema-1
+    // GateWarm writes the harvest only when the text was a schema-4 survey document: a schema-1
     // seed sheet feeds the seeds alone and the context stays inline (the two absences — not a
     // survey document vs a survey document without its warm_index — must not merge).
-    if (survey_source.from_survey_document) {
-      req.warm_survey = std::move(survey_source);
+    if (const LUMICE_ErrorCode err =
+            GateWarm(config, std::string(request.warm_json, request.warm_json_len), req.crystal_id, req.path_layers,
+                     &req.warm_seeds, &req.warm_survey, err_buf, err_size);
+        err != LUMICE_OK) {
+      return err;
     }
   }
 
@@ -356,6 +383,101 @@ LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurve
   }
   auto handle = std::make_unique<LUMICE_PathSurvey_>();
   handle->json = std::move(survey_json);
+  *out = handle.release();
+  return LUMICE_OK;
+}
+
+LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeRequest& request, LUMICE_PathProbe** out,
+                              char* err_buf, size_t err_size) {
+  namespace rp = lumice::raypath;
+
+  rp::ProbeRequest req;
+  req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
+  if (request.crystal_id < 0 || request.crystal_id != static_cast<int>(req.crystal_id)) {
+    return Refuse(
+        { rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(request.crystal_id) }, err_buf,
+        err_size);
+  }
+  if (request.face_count < 0 || request.layer_count < 0) {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "negative face or layer count" }, err_buf, err_size);
+  }
+  int consumed = 0;
+  for (int i = 0; i < request.layer_count; i++) {
+    const int n = request.layer_face_counts[i];
+    if (n < 0 || n > request.face_count - consumed) {
+      return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf,
+                    err_size);
+    }
+    req.path_layers.emplace_back(request.faces + consumed, request.faces + consumed + n);
+    consumed += n;
+  }
+  if (consumed != request.face_count) {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf, err_size);
+  }
+  switch (request.along) {
+    case LUMICE_PATH_PROBE_ALONG_RADIAL:
+      req.along = rp::ProbeAlong::kRadial;
+      break;
+    case LUMICE_PATH_PROBE_ALONG_EDGE_NORMAL:
+      req.along = rp::ProbeAlong::kEdgeNormal;
+      break;
+    case LUMICE_PATH_PROBE_ALONG_ARC:
+      req.along = rp::ProbeAlong::kArc;
+      break;
+    case LUMICE_PATH_PROBE_ALONG_TANGENTIAL:
+      req.along = rp::ProbeAlong::kTangential;
+      break;
+    default:
+      return Refuse({ rp::ErrorCode::kInvalidArgument, "unknown along form" }, err_buf, err_size);
+  }
+  req.at_altitude_deg = request.at_altitude_deg;
+  req.at_azimuth_deg = request.at_azimuth_deg;
+  if (request.wavelength_count < 0) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument, "negative wavelength count" }, err_buf, err_size);
+  }
+  if (request.wavelength_count > 0) {
+    req.wavelengths_nm.assign(request.wavelengths_nm, request.wavelengths_nm + request.wavelength_count);
+  }
+  req.sample_count = request.sample_count;
+  if (request.budget_ms < 0) {  // a negative is not the default: refuse as the contract is written
+    return Refuse({ rp::ErrorCode::kInvalidArgument,
+                    "budget_ms must be 0 (the default) or at most " + std::to_string(rp::kMaxProbeBudgetMs) },
+                  err_buf, err_size);
+  }
+  req.budget_ms = request.budget_ms > 0 ? request.budget_ms : rp::kDefaultProbeBudgetMs;
+  if (req.budget_ms > rp::kMaxProbeBudgetMs) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument,
+                    "budget_ms must be 0 (the default) or at most " + std::to_string(rp::kMaxProbeBudgetMs) },
+                  err_buf, err_size);
+  }
+  req.interrupted = request.interrupted;
+
+  // The scene document LUMICE_CommitScene would hand the server, through the same parser.
+  lumice::ConfigManager config;
+  if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathProbe",
+                                                           lumice::GetGlobalLogger(), nullptr, &config)) {
+    WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+    return lumice::capi::ToCApiErrorCode(err.code);
+  }
+
+  if (request.warm_json != nullptr && request.warm_json_len > 0) {
+    // GateWarm writes the harvest only when the text was a schema-4 survey document: a probe
+    // consumes no seeds (the band-sum uses none), and a schema-1 sheet leaves the context inline.
+    std::vector<double> discarded_seeds;
+    if (const LUMICE_ErrorCode err =
+            GateWarm(config, std::string(request.warm_json, request.warm_json_len), req.crystal_id, req.path_layers,
+                     &discarded_seeds, &req.warm_survey, err_buf, err_size);
+        err != LUMICE_OK) {
+      return err;
+    }
+  }
+
+  rp::ProbeResult result;
+  if (const rp::Error e = rp::AnalyzePathProbe(config, req, &result); !e.Ok()) {
+    return Refuse(e, err_buf, err_size);
+  }
+  auto handle = std::make_unique<LUMICE_PathProbe_>();
+  handle->json = rp::ProbeToJson(result, LUMICE_GetVersionString());
   *out = handle.release();
   return LUMICE_OK;
 }
@@ -537,4 +659,62 @@ LUMICE_ErrorCode LUMICE_PathSurveyToJson(const LUMICE_PathSurvey* result, char* 
 
 void LUMICE_PathSurveyDestroy(LUMICE_PathSurvey* result) {
   std::unique_ptr<LUMICE_PathSurvey_> owned(result);
+}
+
+LUMICE_ErrorCode LUMICE_AnalyzePathProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeRequest* request,
+                                         LUMICE_PathProbe** out, char* err_buf, size_t err_size) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (err_buf != nullptr && err_size > 0) {
+    err_buf[0] = '\0';
+  }
+  if (scene == nullptr || request == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: scene, request and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (request->struct_size < sizeof(LUMICE_PathProbeRequest)) {
+    WriteError(err_buf, err_size,
+               "invalid_argument: struct_size " + std::to_string(request->struct_size) +
+                   " is smaller than this version's LUMICE_PathProbeRequest (" +
+                   std::to_string(sizeof(LUMICE_PathProbeRequest)) + "); set it to sizeof(LUMICE_PathProbeRequest)");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if ((request->faces == nullptr && request->face_count > 0) ||
+      (request->layer_face_counts == nullptr && request->layer_count > 0) ||
+      (request->wavelengths_nm == nullptr && request->wavelength_count > 0)) {
+    WriteError(err_buf, err_size,
+               "null_arg: faces, layer_face_counts and wavelengths_nm must not be NULL with a non-zero count");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  try {
+    return AnalyzeProbe(scene, *request, out, err_buf, err_size);
+  } catch (const std::exception& e) {
+    LOG_ERROR("LUMICE_AnalyzePathProbe: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+  } catch (...) {
+    LOG_ERROR("LUMICE_AnalyzePathProbe: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+  }
+  return LUMICE_ERR_UNKNOWN;
+}
+
+LUMICE_ErrorCode LUMICE_PathProbeToJson(const LUMICE_PathProbe* result, char* out_buf, size_t buf_size,
+                                        size_t* out_len) {
+  if (result == nullptr) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (out_len != nullptr) {
+    *out_len = result->json.size();
+  }
+  if (out_buf != nullptr && buf_size > 0) {
+    const size_t n = std::min(result->json.size(), buf_size - 1);
+    std::memcpy(out_buf, result->json.data(), n);
+    out_buf[n] = '\0';
+  }
+  return LUMICE_OK;
+}
+
+void LUMICE_PathProbeDestroy(LUMICE_PathProbe* result) {
+  std::unique_ptr<LUMICE_PathProbe_> owned(result);
 }

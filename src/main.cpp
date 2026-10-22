@@ -470,6 +470,83 @@ void PrintPointUsage(const char* prog_name, std::ostream& output = std::cout) {
          << "target-free path feature report (schema 3).\n";
 }
 
+// `raypath probe`'s own usage page: the L2 draw-a-line face — the canonical probe library's
+// profile at a user-chosen location.
+void PrintProbeUsage(const char* prog_name, std::ostream& output = std::cout) {
+  output << "Usage: " << prog_name
+         << " raypath probe -f <config_file> --crystal <id> --path <faces> --along <form> --at <alt>,<az>\n"
+         << "                          [options]\n"
+         << "\n"
+         << "Profile the canonical probe library at a sky point you choose: one line through the\n"
+         << "band-sum reference map, with the peak and the edge read separately, the dark regions\n"
+         << "decomposed against the survey's support, and an evidence state on every profile.\n"
+         << "The canonical probe is a slice of the L1 reference-lambda band-sum map — the same\n"
+         << "implementation `raypath survey`'s built-in radial probe runs, never a second one.\n"
+         << "\n"
+         << "The --along forms (two line geometries):\n"
+         << "  radial        The full deviation axis (0..180 deg) at the at point's azimuth about\n"
+         << "                the sun. Under the uniform density the value is azimuth-free — the\n"
+         << "                document declares it, and the --at azimuth is carried but not compared\n"
+         << "                by the warm reuse.\n"
+         << "  edge-normal   The same geometry, windowed at the survey context's nearest edge (the\n"
+         << "                closest of the support endpoints and the certified edge position to\n"
+         << "                the at point's deviation), window +/- 10 deg. A context with no edge is\n"
+         << "                the named refusal no_edge_in_context.\n"
+         << "  arc           The constant-deviation arc through the at point, swept over azimuth\n"
+         << "                +/- 10 deg. The current context carries only delta-axis facts, so the\n"
+         << "                document declares this constant-delta reading; a true curve-following\n"
+         << "                profile is not claimed.\n"
+         << "  tangential    The arc geometry read as the transverse crossing.\n"
+         << "\n"
+         << "Output: one JSON document (schema lumice.path-probe, schema_version 5;\n"
+         << "doc/raypath/raypath-cli-output.md) to stdout, or to -o <path> instead. Progress goes\n"
+         << "to stderr. Ctrl-C ends the line at a wavelength boundary and writes the profiles it\n"
+         << "has (interrupted in the document; exit 0). With -o the file is written to <path>.tmp\n"
+         << "and renamed over <path>, so <path> is never half a file.\n"
+         << "\n"
+         << "Options:\n"
+         << kHelpConfigOption
+         << "  --crystal <id>     The crystal entry (its config id) the path runs through (required).\n"
+         << "  --path <faces>     The raypath as `analyze` prints it, e.g. 3-5 (face numbers joined\n"
+         << "                     by '-'; a C<id>(...) prefix must name --crystal). Required.\n"
+         << "                     Multi-layer chains are refused.\n"
+         << "  --along <form>     radial | edge-normal | arc | tangential (required).\n"
+         << "  --at <alt>,<az>    The sky point the line passes through (required for every form),\n"
+         << "                     as altitude and azimuth in degrees — azimuth measured as the\n"
+         << "                     sun's, the same convention as `analyze --center`.\n"
+         << "  --lambda <nm>[,<nm>...]\n"
+         << "                     One or more wavelengths in [350, 900]: the chromatic lambda grid\n"
+         << "                     lives on the line — one profile per wavelength, each with its own\n"
+         << "                     refractive index. Repeatable; defaults to the config's single\n"
+         << "                     wavelength or 550.\n"
+         << "  --events <N>       The band-sum lattice size (default 2000000, the survey probe's\n"
+         << "                     ruler; max 100M). An optional K/M suffix is accepted.\n"
+         << "  --budget-ms <N>    Numerical deadline in milliseconds (default 15000; max 120000).\n"
+         << "                     Checked at the per-wavelength boundaries: a stopped run\n"
+         << "                     serializes the profiles it has and reports interrupted in the\n"
+         << "                     document — an honest early exit, not a failure (exit 0).\n"
+         << "  --warm <file>      A `raypath survey` schema-4 document (the --warm contract): its\n"
+         << "                     facts answer where the at point sits, and the radial form at a\n"
+         << "                     matching wavelength/sun reuses the document's own radial samples\n"
+         << "                     (zero recompute; the profile names its provenance). Other forms\n"
+         << "                     recompute (the band-sum is lattice-deterministic; a probe\n"
+         << "                     consumes no seeds). A schema-1 document gives a probe nothing\n"
+         << "                     its own run does not have: the context stays inline.\n"
+         << "  -o <path>          Write the JSON to this file instead of stdout.\n"
+         << kHelpLogAndHelpOptions << "\n"
+         << "Examples:\n"
+         << "  " << prog_name << " raypath probe -f config.json --crystal 1 --path 3-5 --along radial --at 0,22.5\n"
+         << "  " << prog_name
+         << " raypath probe -f config.json --crystal 1 --path 3-5 --along edge-normal --at 0,22.5 --warm s.json\n"
+         << "  " << prog_name
+         << " raypath probe -f config.json --crystal 1 --path 3-5 --along arc --at 0,22.5 --lambda 550,650\n"
+         << "\n"
+         << "The other faces of the same spine: `" << prog_name << " raypath survey` routes one path\n"
+         << "class at the algebra layer (schema 4); `" << prog_name << " raypath point` decomposes the\n"
+         << "fiber at one sky point (schema 1); `" << prog_name << " raypath report` produces the\n"
+         << "target-free path feature report (schema 3).\n";
+}
+
 // `raypath report`'s own usage page: the target-free structural report (schema 3).
 void PrintReportUsage(const char* prog_name, std::ostream& output = std::cout) {
   output << "Usage: " << prog_name << " raypath report -f <config_file> --crystal <id> --path <faces> [options]\n"
@@ -516,9 +593,9 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
          << "      Route one path class at the algebra layer: object cards + evidence states\n"
          << "      (schema 4). The census face.\n"
          << "  " << prog_name << " raypath point -f cfg --crystal 1 --path 3-5 --target 20,25 [--warm s.json]\n"
-         << "      Decompose the fiber at one sky point into named factors (schema 1). The L2\n"
-         << "      query face.\n"
-         << "  " << prog_name << " raypath probe    (not in this build yet)\n"
+         << "      Decompose the fiber at one sky point into named factors (schema 1).\n"
+         << "  " << prog_name << " raypath probe -f cfg --crystal 1 --path 3-5 --along <form> --at 0,22.5\n"
+         << "      Profile the probe library on a line you draw (schema 5). The L2 query face.\n"
          << "  " << prog_name << " raypath report -f cfg --crystal 1 --path 3-1-5 [--events 8192]\n"
          << "      Target-free bounded structural report under the actual measure (schema 3).\n"
          << "\n"
@@ -596,7 +673,8 @@ void PrintTopLevelUsage(const char* prog_name) {
             << "                     (`" << prog_name << " analyze -h` for its options)\n"
             << "  raypath            Ask about one raypath: `survey` routes its class at the algebra\n"
             << "                     layer (schema 4), `point` decomposes the fiber at one sky point\n"
-            << "                     (schema 1), `report` produces the target-free structural report\n"
+            << "                     (schema 1), `probe` profiles the probe library on a line you draw\n"
+            << "                     (schema 5), `report` produces the target-free structural report\n"
             << "                     (schema 3) (`" << prog_name << " raypath -h` lists the four commands)\n"
             << "\n"
             << "Options for render (the default subcommand):\n";
@@ -1337,6 +1415,26 @@ struct PointOptions {
   bool grid_given = false;
   std::filesystem::path warm_path;    // empty = no warm start
   std::filesystem::path output_path;  // empty = stdout
+};
+
+// `raypath probe`: the L2 draw-a-line request — the canonical probe library's profile at a
+// user-chosen location. Shares the scene/path spine with PointOptions; the warm state is the
+// same flag's semantics (a schema-4 survey document's facts), consumed without the seeds.
+struct ProbeOptions {
+  SharedOptions shared;
+  std::optional<int> crystal_id;
+  std::vector<int> faces;
+  std::vector<int> layer_face_counts;
+  std::vector<int> path_crystals;  // the ids of layers written C<id>(...)
+  std::string path_text;           // as typed, for the progress line
+  int along = LUMICE_PATH_PROBE_ALONG_RADIAL;
+  std::optional<double> at_alt_deg;
+  std::optional<double> at_az_deg;
+  std::vector<double> wavelengths_nm;  // empty = the engine's single resolution
+  int events = 0;                      // the band-sum lattice n; 0 = the engine's default
+  int budget_ms = 0;                   // 0 = the engine's documented default
+  std::filesystem::path warm_path;     // empty = no warm start
+  std::filesystem::path output_path;   // empty = stdout
 };
 
 // `raypath report`: the target-free structural report request. Shares the scene/path spine with
@@ -2250,6 +2348,179 @@ int ParsePointOptions(int argc, char** argv, int first, PointOptions& opts) {
   return -1;
 }
 
+// Parses argv[first..) as the `raypath probe` option set: -f, -v, -d, -h, --crystal, --path,
+// --along, --at, --lambda, --events, --budget-ms, --warm, -o. --backend, --workers and --seed are
+// not options here (one route, one thread, no RNG), so they are unknown options rather than
+// accepted and ignored. Returns the process exit code, or -1 to proceed to RunProbe.
+int ParseProbeOptions(int argc, char** argv, int first, ProbeOptions& opts) {
+  const auto print_error_usage = [&] { PrintProbeUsage(argv[0], std::cerr); };
+  for (int i = first; i < argc; i++) {
+    std::string_view arg = argv[i];
+    if (arg != "--backend") {
+      switch (ParseSharedOption(argc, argv, i, opts.shared)) {
+        case SharedStep::kConsumed:
+          continue;
+        case SharedStep::kHelp:
+          PrintProbeUsage(argv[0]);
+          return 0;
+        case SharedStep::kError:
+          print_error_usage();
+          return 1;
+        case SharedStep::kNotShared:
+          break;
+      }
+    }
+    switch (ParseCrystalPathOption(argc, argv, i, &opts.crystal_id, &opts.faces, &opts.layer_face_counts,
+                                   &opts.path_crystals, &opts.path_text, PrintProbeUsage)) {
+      case SharedStep::kConsumed:
+        continue;
+      case SharedStep::kError:
+        return 1;
+      case SharedStep::kNotShared:
+        break;
+    }
+    const bool takes_value = arg == "--along" || arg == "--at" || arg == "--lambda" || arg == "--events" ||
+                             arg == "--budget-ms" || arg == "--warm" || arg == "-o";
+    if (takes_value && i + 1 >= argc) {
+      std::cerr << "Error: " << arg << " requires an argument\n\n";
+      print_error_usage();
+      return 1;
+    }
+    if (arg == "--along") {
+      const std::string_view value = argv[++i];
+      const auto form = value == "radial"      ? LUMICE_PATH_PROBE_ALONG_RADIAL :
+                        value == "edge-normal" ? LUMICE_PATH_PROBE_ALONG_EDGE_NORMAL :
+                        value == "arc"         ? LUMICE_PATH_PROBE_ALONG_ARC :
+                        value == "tangential"  ? LUMICE_PATH_PROBE_ALONG_TANGENTIAL :
+                                                 -1;
+      if (form < 0) {
+        std::cerr << "Error: --along must be radial, edge-normal, arc or tangential, got '" << value << "'\n\n";
+        print_error_usage();
+        return 1;
+      }
+      opts.along = form;
+    } else if (arg == "--at") {
+      const std::string_view value = argv[++i];
+      const auto comma = value.find(',');
+      const auto alt = comma == std::string_view::npos ? std::nullopt : ParseStrictDouble(value.substr(0, comma));
+      const auto az = comma == std::string_view::npos ? std::nullopt : ParseStrictDouble(value.substr(comma + 1));
+      if (!alt.has_value() || !az.has_value()) {
+        std::cerr << "Error: --at must be '<altitude_deg>,<azimuth_deg>' (two numbers), got '" << value << "'\n\n";
+        print_error_usage();
+        return 1;
+      }
+      if (*alt < -90.0 || *alt > 90.0) {
+        std::cerr << "Error: --at altitude must be between -90 and 90 degrees, got " << *alt << "\n\n";
+        print_error_usage();
+        return 1;
+      }
+      opts.at_alt_deg = alt;
+      opts.at_az_deg = az;
+    } else if (arg == "--lambda") {
+      // One or more wavelengths: comma-separated in one flag, or the flag repeated — the online
+      // lambda grid, one profile per entry.
+      const std::string_view value = argv[++i];
+      size_t begin = 0;
+      while (begin <= value.size()) {
+        const size_t comma = value.find(',', begin);
+        const std::string_view item =
+            value.substr(begin, comma == std::string_view::npos ? std::string_view::npos : comma - begin);
+        if (item.empty()) {
+          std::cerr << "Error: --lambda must be wavelength(s) in nanometres (comma-separated), got '" << value
+                    << "'\n\n";
+          print_error_usage();
+          return 1;
+        }
+        const auto nm = ParseStrictDouble(item);
+        // The range itself is the engine's to decide (it owns the refractive-index table).
+        if (!nm.has_value() || !(*nm > 0.0)) {
+          std::cerr << "Error: --lambda must be wavelength(s) in nanometres (comma-separated), got '" << value
+                    << "'\n\n";
+          print_error_usage();
+          return 1;
+        }
+        opts.wavelengths_nm.push_back(*nm);
+        if (comma == std::string_view::npos) {
+          break;
+        }
+        begin = comma + 1;
+      }
+    } else if (arg == "--events") {
+      const std::string_view value = argv[++i];
+      const auto events = ParseRayBudget(value);
+      if (!events.has_value() || *events > static_cast<LUMICE_RayCount>(LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT)) {
+        std::cerr << "Error: --events must be a positive integer with an optional K/M suffix, at most "
+                  << LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT / 1000000 << "M, got '" << value << "'\n\n";
+        print_error_usage();
+        return 1;
+      }
+      opts.events = static_cast<int>(*events);
+    } else if (arg == "--budget-ms") {
+      const std::string_view value = argv[++i];
+      const auto budget = ParseStrictUnsigned(value);
+      if (!budget.has_value() || *budget == 0 ||
+          *budget > static_cast<unsigned long long>(LUMICE_PATH_PROBE_MAX_BUDGET_MS)) {
+        std::cerr << "Error: --budget-ms must be an integer in [1, " << LUMICE_PATH_PROBE_MAX_BUDGET_MS << "], got '"
+                  << value << "'\n\n";
+        print_error_usage();
+        return 1;
+      }
+      opts.budget_ms = static_cast<int>(*budget);
+    } else if (arg == "--warm") {
+      opts.warm_path = argv[++i];
+      if (opts.warm_path.empty()) {
+        std::cerr << "Error: --warm requires a file path\n\n";
+        print_error_usage();
+        return 1;
+      }
+    } else if (arg == "-o") {
+      opts.output_path = argv[++i];
+      if (opts.output_path.empty()) {
+        std::cerr << "Error: -o requires a file path\n\n";
+        print_error_usage();
+        return 1;
+      }
+    } else {
+      std::cerr << "Error: unknown option: " << arg << "\n\n";
+      print_error_usage();
+      return 1;
+    }
+  }
+
+  // The request's required parts, each named when missing.
+  const char* missing = !opts.crystal_id.has_value()   ? "--crystal <id>" :
+                        opts.layer_face_counts.empty() ? "--path <faces>" :
+                        !opts.at_alt_deg.has_value()   ? "--at <alt>,<az>" :
+                                                         nullptr;
+  if (missing != nullptr && !opts.shared.config_filename.empty()) {
+    std::cerr << "Error: " << missing << " is required\n\n";
+    print_error_usage();
+    return 1;
+  }
+  for (const int id : opts.path_crystals) {
+    if (opts.layer_face_counts.size() == 1 && opts.crystal_id.has_value() && id != *opts.crystal_id) {
+      std::cerr << "Error: --path names crystal C" << id << " but --crystal is " << *opts.crystal_id << "\n\n";
+      print_error_usage();
+      return 1;
+    }
+  }
+  if (static_cast<int>(opts.wavelengths_nm.size()) > LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT) {
+    std::cerr << "Error: at most " << LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT << " wavelengths may be requested\n\n";
+    print_error_usage();
+    return 1;
+  }
+
+#ifdef _WIN32
+  ReparseWidePathArgs(opts.shared.config_filename, &opts.output_path, /*csv_path=*/nullptr, &opts.warm_path);
+#endif
+
+  if (!FinishSharedOptions(opts.shared)) {
+    print_error_usage();
+    return 1;
+  }
+  return -1;
+}
+
 // Parses argv[first..) as the `raypath report` option set. Returns the process exit code, or -1
 // to proceed to RunReport.
 int ParseReportOptions(int argc, char** argv, int first, ReportOptions& opts) {
@@ -2569,10 +2840,15 @@ void HandleAnalyzeSigint(int /*signal*/) {
 // ADDRESS is the engine's `interrupted` input — the signal handler and the engine's loop-boundary
 // polls share the one variable. Set by the handler, read by the engine, never cleared mid-run.
 volatile std::sig_atomic_t g_point_interrupted = 0;
+volatile std::sig_atomic_t g_probe_interrupted = 0;
 static_assert(std::is_same<std::sig_atomic_t, int>::value, "the flag's address crosses the C ABI as volatile int*");
 
 void HandlePointSigint(int /*signal*/) {
   g_point_interrupted = 1;
+}
+
+void HandleProbeSigint(int /*signal*/) {
+  g_probe_interrupted = 1;
 }
 
 // The LUMICE_AnnotationView of a `--roi frame` request, from the SCENE's own renderer: the
@@ -3218,6 +3494,128 @@ int RunPoint(const PointOptions& opts) {
   return 0;
 }
 
+// Raypath probe: one synchronous call into the engine (LUMICE_AnalyzePathProbe), no server. The
+// budget bounds the engine's per-wavelength polls and the SIGINT handler flips the flag the
+// engine reads — a stopped run serializes the profiles it has and exits 0 (an honest early exit,
+// not a failure).
+int RunProbe(const ProbeOptions& opts) {
+  const SharedOptions& shared = opts.shared;
+  LUMICE_SetLogLevel(nullptr, shared.log_level);
+
+  LUMICE_Scene* raw_scene = nullptr;
+  if (auto err = LUMICE_SceneFromJsonFile(shared.config_filename.u8string().c_str(), &raw_scene); err != LUMICE_OK) {
+    std::cerr << "Error: failed to load configuration from file '" << shared.config_filename.u8string()
+              << "' (error code " << static_cast<int>(err) << ")\n";
+    return 1;
+  }
+  ScenePtr scene(raw_scene);
+
+  // The warm file is read as text and handed over whole: what it must contain is the engine's to
+  // check, where the writer of that format lives.
+  std::string warm_text;
+  if (!opts.warm_path.empty()) {
+    std::ifstream warm_file(opts.warm_path, std::ios::binary);
+    if (!warm_file.is_open()) {
+      std::cerr << "Error: cannot open --warm file: " << opts.warm_path.u8string() << "\n";
+      return 1;
+    }
+    std::ostringstream buffer;
+    buffer << warm_file.rdbuf();
+    warm_text = buffer.str();
+    // An empty file is most often a failed earlier `> s.json`: refuse it rather than quietly run
+    // cold (the plan's "fail loudly, never ignore" for --warm).
+    if (warm_text.empty()) {
+      std::cerr << "Error: --warm file is empty: " << opts.warm_path.u8string() << "\n";
+      return 1;
+    }
+  }
+  // An -o target that cannot be written is found out before the analysis, not after it.
+  if (!opts.output_path.empty()) {
+    const auto parent = opts.output_path.parent_path();
+    if (!parent.empty() && !std::filesystem::is_directory(parent)) {
+      std::cerr << "Error: -o directory does not exist: " << parent.u8string() << "\n";
+      return 1;
+    }
+  }
+
+  LUMICE_PathProbeRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = *opts.crystal_id;
+  request.faces = opts.faces.data();
+  request.face_count = static_cast<int>(opts.faces.size());
+  request.layer_face_counts = opts.layer_face_counts.data();
+  request.layer_count = static_cast<int>(opts.layer_face_counts.size());
+  request.along = opts.along;
+  request.at_altitude_deg = *opts.at_alt_deg;
+  request.at_azimuth_deg = *opts.at_az_deg;
+  request.wavelengths_nm = opts.wavelengths_nm.empty() ? nullptr : opts.wavelengths_nm.data();
+  request.wavelength_count = static_cast<int>(opts.wavelengths_nm.size());
+  request.sample_count = opts.events;
+  request.warm_json = warm_text.empty() ? nullptr : warm_text.data();
+  request.warm_json_len = warm_text.size();
+  request.budget_ms = opts.budget_ms;  // 0 = the engine's documented default
+  request.interrupted = &g_probe_interrupted;
+
+  const char* along_name = opts.along == LUMICE_PATH_PROBE_ALONG_RADIAL      ? "radial" :
+                           opts.along == LUMICE_PATH_PROBE_ALONG_EDGE_NORMAL ? "edge-normal" :
+                           opts.along == LUMICE_PATH_PROBE_ALONG_ARC         ? "arc" :
+                                                                               "tangential";
+  std::string lambda_text;
+  if (opts.wavelengths_nm.empty()) {
+    lambda_text = "scene default";
+  } else {
+    for (size_t k = 0; k < opts.wavelengths_nm.size(); k++) {
+      lambda_text += (k == 0 ? "" : ",") + std::to_string(opts.wavelengths_nm[k]);
+    }
+  }
+  std::cerr << "[raypath probe] crystal " << *opts.crystal_id << ", path " << opts.path_text << ", along " << along_name
+            << ", at " << *opts.at_alt_deg << "," << *opts.at_az_deg << ", lambda " << lambda_text << ", lattice "
+            << (opts.events > 0 ? opts.events : 2000000) << ", budget "
+            << (opts.budget_ms > 0 ? opts.budget_ms : LUMICE_PATH_PROBE_DEFAULT_BUDGET_MS) << " ms"
+            << (warm_text.empty() ? "" : ", warm start") << "\n";
+  const auto start = std::chrono::steady_clock::now();
+  std::signal(SIGINT, HandleProbeSigint);
+  LUMICE_PathProbe* raw_probe = nullptr;
+  char err_buf[1024] = {};
+  if (auto err = LUMICE_AnalyzePathProbe(scene.get(), &request, &raw_probe, err_buf, sizeof(err_buf));
+      err != LUMICE_OK) {
+    std::signal(SIGINT, SIG_DFL);
+    if (err_buf[0] != '\0') {
+      std::cerr << "Error: " << err_buf << "\n";
+    } else {
+      std::cerr << "Error: path probe failed (error code " << static_cast<int>(err) << ")\n";
+    }
+    return 1;
+  }
+  const std::unique_ptr<LUMICE_PathProbe, void (*)(LUMICE_PathProbe*)> probe(raw_probe, LUMICE_PathProbeDestroy);
+  std::signal(SIGINT, SIG_DFL);
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+  size_t len = 0;
+  LUMICE_PathProbeToJson(probe.get(), nullptr, 0, &len);
+  std::string text(len + 1, '\0');
+  LUMICE_PathProbeToJson(probe.get(), text.data(), text.size(), &len);
+  text.resize(len);
+  text += '\n';
+
+  // The closing line reports time and size only: the document's schema is the engine's alone
+  // (probe_json), so the shell does not read fields back out of it.
+  std::cerr << "[raypath probe] done in " << std::fixed << std::setprecision(2) << seconds << " s, " << text.size()
+            << " bytes" << std::defaultfloat << "\n";
+
+  if (opts.output_path.empty()) {
+    std::cout << text;
+    std::cout.flush();
+    return std::cout.good() ? 0 : 1;
+  }
+  std::string error;
+  if (!WriteFileAtomically(opts.output_path, text, &error)) {
+    std::cerr << "Error: " << error << "\n";
+    return 1;
+  }
+  return 0;
+}
+
 // Raypath report: the target-free structural report, one synchronous engine call.
 int RunReport(const ReportOptions& opts) {
   const SharedOptions& shared = opts.shared;
@@ -3359,6 +3757,13 @@ int main(int argc, char** argv) {
       }
       return RunPoint(opts);
     }
+    if (word == "probe") {
+      ProbeOptions opts;
+      if (int rc = ParseProbeOptions(argc, argv, /*first=*/3, opts); rc >= 0) {
+        return rc;
+      }
+      return RunProbe(opts);
+    }
     if (word == "report") {
       ReportOptions opts;
       if (int rc = ParseReportOptions(argc, argv, /*first=*/3, opts); rc >= 0) {
@@ -3370,7 +3775,7 @@ int main(int argc, char** argv) {
       PrintRaypathUsage(argv[0]);
       return 0;
     }
-    std::cerr << "Error: `raypath` takes a command word: survey, point or report (probe is not in this build).\n\n";
+    std::cerr << "Error: `raypath` takes a command word: survey, point, probe or report.\n\n";
     PrintRaypathUsage(argv[0], std::cerr);
     return 1;
   }
