@@ -669,8 +669,6 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation, const a
 
 // ---- the survey context ---------------------------------------------------------------------------
 
-namespace {
-
 // The schema-4 value model's harvest: the facts the context reads, read once off the assembled
 // document (the warm reader's JSON arm mirrors this — the two must read the same blocks, the
 // dual-arm oracle test pins them field-for-field). Members are the card's first layer: the
@@ -706,8 +704,9 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
     const survey::SurveyProbe& probe = doc.probes.front();
     out.has_probe = true;
     out.probe_bin_deg = probe.spec.bin_deg;
+    out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
     for (const survey::SurveyProbeSample& sample : probe.samples) {
-      out.probe_samples.push_back({ sample.delta_deg, sample.value });
+      out.probe_samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
     }
   }
   out.has_measure_echo = doc.family_routing.has_value();
@@ -725,8 +724,9 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
 }
 
 // The context's answers, read off a harvest (warm document or inline assembly — the same shape).
-void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadata& meta, SurveyContextBlock* out) {
-  const double delta = meta.target_deviation_deg;
+void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
+                       double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
+  const double delta = target_deviation_deg;
   const SurveyWarmSource::SupportInterval* containing = nullptr;
   const SurveyWarmSource::SupportInterval* closest = nullptr;
   double closest_distance = std::numeric_limits<double>::infinity();
@@ -799,8 +799,8 @@ void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadat
   } else if (!warm.has_scope) {
     out->band_sum.state = "unevaluated";
     out->band_sum.reason = "scope_field_missing";
-  } else if (meta.wavelength_nm != warm.wavelength_nm || meta.sun_altitude_deg != warm.sun_altitude_deg ||
-             meta.sun_azimuth_deg != warm.sun_azimuth_deg) {
+  } else if (wavelength_nm != warm.wavelength_nm || sun_altitude_deg != warm.sun_altitude_deg ||
+             sun_azimuth_deg != warm.sun_azimuth_deg) {
     out->band_sum.state = "unevaluated";
     out->band_sum.reason = "scope_value_mismatch";
   } else {
@@ -828,6 +828,8 @@ void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadat
     }
   }
 }
+
+namespace {
 
 // The survey context for this query: warm harvest when a schema-4 document passed the gates, the
 // context-only T0-T2 assembly otherwise (and also under the warm_index_absent degradation, which
@@ -863,7 +865,8 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
     inline_harvest = HarvestSurveyDocument(doc);
     warm = &inline_harvest;
   }
-  FillContextFromSource(*warm, meta, out);
+  FillSurveyContext(*warm, meta.target_deviation_deg, meta.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg,
+                    out);
 }
 
 }  // namespace

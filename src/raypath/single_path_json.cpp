@@ -21,6 +21,8 @@ using detail::Array;
 using detail::GridNum;
 using detail::Num;
 
+}  // namespace
+
 // The config's own spelling of a distribution; a plain number in the config is "fixed".
 const char* DistributionName(DistributionType type) {
   switch (type) {
@@ -39,6 +41,8 @@ const char* DistributionName(DistributionType type) {
   }
   return "unknown";
 }
+
+namespace {
 
 nlohmann::ordered_json Conventions() {
   return {
@@ -300,6 +304,8 @@ nlohmann::ordered_json SunGridJson(const SunSphereGrid& g) {
            { "entry_measure", std::move(entry) } };
 }
 
+}  // namespace
+
 // The survey context block: every field's state always serialized, the value fields exactly when
 // their state says something was read — object's only under "certified", edge's and band_sum's
 // only under "finite" (so an unevaluated distance can never be misread as the certified 0 that
@@ -339,6 +345,8 @@ nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& c) {
   j["band_sum"] = std::move(band);
   return j;
 }
+
+namespace {
 
 nlohmann::ordered_json ReachJson(const ReachSummary& r) {
   return {
@@ -626,12 +634,25 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
         probe["spec"]["bin_deg"].is_number()) {
       survey->probe_bin_deg = probe["spec"]["bin_deg"].get<double>();
     }
+    if (probe.contains("spec") && probe["spec"].is_object() && probe["spec"].contains("sample_count") &&
+        probe["spec"]["sample_count"].is_number_integer()) {
+      survey->probe_sample_count = static_cast<int>(probe["spec"]["sample_count"].get<long long>());
+    }
     for (const auto& sample : probe["samples"]) {
       if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number() ||
           !sample.contains("value") || !sample["value"].is_number()) {
         continue;
       }
-      survey->probe_samples.push_back({ sample["delta_deg"].get<double>(), sample["value"].get<double>() });
+      SurveyWarmSource::ProbeSample out;
+      out.delta_deg = sample["delta_deg"].get<double>();
+      out.value = sample["value"].get<double>();
+      if (sample.contains("k") && sample["k"].is_number_integer()) {
+        out.k = sample["k"].get<int>();
+      }
+      if (sample.contains("k_eff") && sample["k_eff"].is_number()) {
+        out.k_eff = sample["k_eff"].get<double>();
+      }
+      survey->probe_samples.push_back(std::move(out));
     }
   }
   return {};

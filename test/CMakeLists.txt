@@ -339,6 +339,11 @@ add_executable(unit_correctness_test
   # reading stay two things), and the small-sample real assembly whose edge bin contains the
   # closed-form minimum deviation.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_probe.cpp"
+  # The probe query (the L2 draw-a-line face): the reuse arm copies the warm grid verbatim, the
+  # scope mismatch recomputes and names its cause, the edge-normal anchor and the no-edge
+  # refusal, the arc's azimuth sweep and its degenerate pole, the named refusal shapes, and the
+  # online lambda grid with the red-edge width.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_probe_analysis.cpp"
   # The survey's weight-tint leg: the kernel's point-mass-at-empty-pixel-table contract, the
   # leg's blue-over-red mechanism pin, its determinism, the fixed-pose refusal, and the
   # identity document's negative assertions (no positional dispersion, no diagnose, no probes).

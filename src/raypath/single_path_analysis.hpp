@@ -29,6 +29,7 @@
 #include "config/config_manager.hpp"
 #include "core/def.hpp"
 #include "core/math.hpp"
+#include "raypath/detail/survey/survey_document.hpp"
 
 namespace lumice::raypath {
 
@@ -121,9 +122,15 @@ struct SurveyWarmSource {
   struct ProbeSample {
     double delta_deg = 0.0;
     double value = 0.0;
+    int k = 0;           // the sample's event count — the dark-region decomposition's classifier
+    double k_eff = 0.0;  // the sample's effective count, so a reused profile's rows carry the
+                         // warm document's numbers and not a manufactured zero
   };
   bool has_probe = false;
   double probe_bin_deg = 0.0;
+  int probe_sample_count = 0;  // the warm probe's lattice n — the reuse criterion compares it
+                               // (the profile's asked count must be the count the warm values
+                               // were computed at, or the values are recomputed)
   std::vector<ProbeSample> probe_samples;
   // The family arm's measure echo, read as the concentration language's numbers (the measure
   // gate's fourth comparison: the caller re-derives its own reading from the query config and
@@ -524,6 +531,20 @@ struct SinglePathResult {
 
 // The whole analysis. On error `out` is left default-constructed.
 Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& request, SinglePathResult* out);
+
+// The schema-4 value model's harvest, read once off an assembled document (the inline arm's
+// producer). The warm reader's JSON arm (ParseWarmStart, single_path_json.hpp) mirrors this
+// field-for-field — the dual-arm oracle test pins the two arms together. Shared with the probe
+// query, whose inline arm assembles the same context and reads it through the same harvest.
+SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc);
+
+// The context's answers, read off a harvest (a warm document's facts or the inline assembly's —
+// the same shape either way): the query point's containment and edge distances in the delta-axis
+// support, and the band-sum reading under the scope gate's exact-equality comparison of the
+// wavelength and the sun. The one context computation both the point query and the probe query
+// read; the point's caller passes its meta's values.
+void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
+                       double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out);
 
 // The survey context on demand: the stored block when already computed, else built from the
 // retained deferral inputs. NOT a cheap accessor — on a deferred result this runs the
