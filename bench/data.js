@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792682638724,
+  "lastUpdate": 1792710175018,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7b107c5623d51c5578890e40cfa4b2a1e2545b02",
-          "message": "Merge pull request #426 from LoveDaisy/chore/raypath-analysis-lumice-integral-plan\n\ndocs(raypath-analysis): expand §5.1 into the post-selection three-feature plan",
-          "timestamp": "2026-09-27T12:04:30+08:00",
-          "tree_id": "22a4d5cac931dca24cc45e2267cdd77444575d99",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/7b107c5623d51c5578890e40cfa4b2a1e2545b02"
-        },
-        "date": 1790482578432,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 281784.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 511349.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 371006.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 309880,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4794,6 +4746,54 @@ window.BENCHMARK_DATA = {
             "value": 473175.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "272c3e0749d0ff9744a8ebc02f71b4ce04dbf205",
+          "message": "Merge pull request #539 from LoveDaisy/feat/raypath-probe-profiles\n\nfeat(raypath): the L2 probe command — four --along forms on the shared line core",
+          "timestamp": "2026-10-23T06:59:16+08:00",
+          "tree_id": "2dcbad7a3a36b56e1c3c0d192a8839bba8dd9b45",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/272c3e0749d0ff9744a8ebc02f71b4ce04dbf205"
+        },
+        "date": 1792710173304,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 421126.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 506316.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 367468.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 306509.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
