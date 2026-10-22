@@ -189,9 +189,11 @@ TEST(SinglePathCApi, RefusalsNameTheirReasonInErrBuf) {
   Req unknown({ 3, 5 }, { 2 });
   unknown.c.crystal_id = 7;
   rows.push_back({ "unknown crystal", unknown, "unknown_crystal_id: " });
-  Req far({ 3, 5 }, { 2 });
-  far.c.wavelength_nm = 1000.0;
-  rows.push_back({ "wavelength", far, "wavelength_out_of_range: " });
+  Req far_wavelength({ 3, 5 }, { 2 });  // not "far": windows.h (pulled by the server headers
+  // this TU includes for the warm-harvest pin) still defines the 16-bit-era far/near macros on
+  // MSVC, and the bare identifier expands to nothing there.
+  far_wavelength.c.wavelength_nm = 1000.0;
+  rows.push_back({ "wavelength", far_wavelength, "wavelength_out_of_range: " });
   Req warm_not_json({ 3, 5 }, { 2 });
   warm_not_json.warm = "not json";
   rows.push_back({ "warm not json", warm_not_json, "invalid_argument: warm seeds" });
