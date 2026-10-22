@@ -392,6 +392,8 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
   }
   // The survey context: where the target sits in the survey's structure (always written; every
   // field carries its own state, so absence can never read as answered).
+  // Cost contract: on a deferred result SurveyContextOf runs the context-only T0-T2 assembly
+  // (seconds); callers that serialize more than once materialize first via EnsureSurveyContext.
   doc["survey_context"] = SurveyContextJson(SurveyContextOf(result));
   return doc.dump();
 }

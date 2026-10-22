@@ -526,8 +526,11 @@ struct SinglePathResult {
 Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& request, SinglePathResult* out);
 
 // The survey context on demand: the stored block when already computed, else built from the
-// retained deferral inputs (a warm document's facts directly; otherwise the context-only T0-T2
-// assembly). Pure — the result is not modified.
+// retained deferral inputs. NOT a cheap accessor — on a deferred result this runs the
+// context-only T0-T2 assembly (the delta partition: seconds, ~13 s on the random full-dim
+// scene) unless a warm document's facts fill the context directly. Pure — the result is not
+// modified, so a second call on an unmaterialized result pays again; EnsureSurveyContext is
+// the materialize-once entry the C API bridge runs before its one-shot serialization.
 SurveyContextBlock SurveyContextOf(const SinglePathResult& result);
 
 // Computes the context once and stores it (idempotent; drops the retained inputs). The C API

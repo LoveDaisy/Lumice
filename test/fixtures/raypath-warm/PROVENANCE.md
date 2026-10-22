@@ -22,3 +22,11 @@ both with the same commands whenever a change touches the warm contract's writer
 config-fingerprint gate fails loudly when the projection changes and the assets do not. The
 unit layer's writer-integration coverage does not depend on these files: the refused arm's
 witness scene is produced live in-process (~40 ms), and the schema-1 sheet test is live too.
+
+Known coverage gap, on the record: no in-repo test asserts the full-dimensional inline shapes
+any more (the memory-arm harvest of certified structure facts, or a stripped warm_index
+degrading to an inline context that answers `certified` on a full-dimensional config) — the
+dual-arm oracle and the block-absent probe run on the refused arm here, and both are honestly
+unevaluated there. That half moved out of CI to keep the delta partition out of the unit
+suite; nothing in this tree asserts it today (the point bench produces surveys but does not
+run the inline point arm). It belongs with the next consumer of this contract.
