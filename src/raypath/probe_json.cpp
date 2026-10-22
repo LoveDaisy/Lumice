@@ -49,7 +49,8 @@ nlohmann::ordered_json Conventions() {
       "criterion's premise is the ruler constants being schema: bin, wedge and lattice count are "
       "schema, so the asked grid matching the warm grid is the whole check; the azimuth is absent "
       "from the comparison on purpose (the radial form's azimuth-free value — a uniform-density "
-      "property, as the value convention above states it)" },
+      "property, as the value convention above states it). The key is finite-only: a refused "
+      "profile omits it — nothing was reused or computed" },
     { "null", "a number that is not defined (NaN) is written as null" },
   };
 }
@@ -118,11 +119,14 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
     spec["anchor_basis"] = p.anchor_basis;
     spec["anchor_deg"] = Num(p.anchor_deg);
   }
-  nlohmann::ordered_json j = { { "along", p.along }, { "spec", std::move(spec) }, { "source", p.source } };
+  nlohmann::ordered_json j = { { "along", p.along }, { "spec", std::move(spec) } };
   if (p.evidence_state == "refused") {
+    // No source key on a refusal: nothing was reused or computed, and the empty string the
+    // default member would serialize is a third value the vocabulary never named.
     j["evidence"] = { { "state", "refused" }, { "mode", p.refused_mode } };
     return j;
   }
+  j["source"] = p.source;
   j["evidence"] = {
     { "state", "finite" },
     { "coverage",

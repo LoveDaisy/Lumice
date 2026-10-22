@@ -458,6 +458,25 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   EXPECT_EQ(refused_profile["evidence"]["state"], "refused");
   EXPECT_EQ(refused_profile["evidence"]["mode"], "no_edge_in_context");
   EXPECT_FALSE(refused_profile.contains("samples"));
+  // The refusal shell carries no source (nothing was reused or computed — the empty string is
+  // a value the vocabulary never named) and its undetermined extent is null, not a written 0.
+  EXPECT_FALSE(refused_profile.contains("source"));
+  EXPECT_TRUE(refused_profile.at("spec").at("delta_min_deg").is_null());
+  EXPECT_TRUE(refused_profile.at("spec").at("delta_max_deg").is_null());
+
+  // The arc form's spec echoes its azimuth sweep's half width — "0 = the full axis" belongs to
+  // the axis forms alone, and a spec that cannot reconstruct its own sweep is not a caliber.
+  ProbeRequest arc_request = RadialRequest(config, -30.0, 0.0);
+  arc_request.along = ProbeAlong::kArc;
+  arc_request.wavelengths_nm = { 550.0 };
+  arc_request.sample_count = 20000;
+  arc_request.warm_survey = CraftedWarm(550.0, 20000);
+  ProbeResult arc_result;
+  ASSERT_TRUE(AnalyzePathProbe(config, arc_request, &arc_result).Ok());
+  const nlohmann::ordered_json arc_doc = nlohmann::ordered_json::parse(ProbeToJson(arc_result, "test"));
+  EXPECT_DOUBLE_EQ(arc_doc.at("profiles").at(0).at("spec").at("window_half_width_deg").get<double>(),
+                   kProbeWindowHalfWidthDeg);
+  EXPECT_EQ(arc_doc.at("profiles").at(0).at("evidence").at("state"), "finite");
 }
 
 }  // namespace

@@ -383,9 +383,15 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     }
     ProbeProfile profile;
     FillProfileSpec(&profile, request, meta, request.path_layers[0], member_count);
-    profile.delta_min_deg = layout.bins.empty() ? 0.0 : layout.bins.front().delta_lo_deg;
-    profile.delta_max_deg = layout.bins.empty() ? 0.0 : layout.bins.back().delta_hi_deg;
-    profile.window_half_width_deg = windowed ? kProbeWindowHalfWidthDeg : 0.0;
+    // An undetermined extent (the edge-normal refusal with no window to lay out) is NaN — the
+    // serializer's null convention spells it; a written 0.0 would read as a degenerate line.
+    profile.delta_min_deg =
+        layout.bins.empty() ? std::numeric_limits<double>::quiet_NaN() : layout.bins.front().delta_lo_deg;
+    profile.delta_max_deg =
+        layout.bins.empty() ? std::numeric_limits<double>::quiet_NaN() : layout.bins.back().delta_hi_deg;
+    // The arc forms sweep an azimuth window of the same half width (ArcLayout's own constant),
+    // so they echo it too; "0 = the full axis" stays the axis forms' reading alone.
+    profile.window_half_width_deg = (windowed || arc_form) ? kProbeWindowHalfWidthDeg : 0.0;
     profile.wavelength_nm = meta.wavelengths[w].nm;
     profile.refractive_index = meta.wavelengths[w].refractive_index;
     profile.sample_count = request.sample_count > 0 ? request.sample_count : survey::kSurveyProbeSampleCount;
@@ -451,12 +457,12 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
       }
     } else {
       profile.source = "recomputed";
-      std::vector<survey::ProbeLineProfile> profiles = survey::EvaluateProbeLine(
-          table, polygons, request.path_layers[0], density, frame, layout, { meta.wavelengths[w].nm },
-          { meta.wavelengths[w].refractive_index }, meta.incident_direction, profile.sample_count);
+      survey::ProbeLineProfile line = survey::EvaluateProbeLine(
+          table, polygons, request.path_layers[0], density, frame, layout, meta.wavelengths[w].nm,
+          meta.wavelengths[w].refractive_index, meta.incident_direction, profile.sample_count);
       profile.evidence_state = "finite";
       profile.members_evaluated = 1;
-      profile.samples = std::move(profiles.front().samples);
+      profile.samples = std::move(line.samples);
     }
 
     // The readings: the edge (first non-empty bin) and the peak (the argmax), two things, on the

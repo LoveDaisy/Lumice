@@ -3573,7 +3573,7 @@ int RunProbe(const ProbeOptions& opts) {
   }
   std::cerr << "[raypath probe] crystal " << *opts.crystal_id << ", path " << opts.path_text << ", along " << along_name
             << ", at " << *opts.at_alt_deg << "," << *opts.at_az_deg << ", lambda " << lambda_text << ", lattice "
-            << (opts.events > 0 ? std::to_string(opts.events) : std::string("lattice default")) << ", budget "
+            << (opts.events > 0 ? std::to_string(opts.events) : std::string("default")) << ", budget "
             << (opts.budget_ms > 0 ? opts.budget_ms : LUMICE_PATH_PROBE_DEFAULT_BUDGET_MS) << " ms"
             << (warm_text.empty() ? "" : ", warm start") << "\n";
   const auto start = std::chrono::steady_clock::now();

@@ -142,15 +142,13 @@ struct ProbeLineLayout {
 ProbeLineLayout AxisLineLayout(double delta_min_deg, double delta_max_deg, double azimuth_deg);
 
 // The shared core: resolves the representative's slots, materializes each bin's PixelTable cell
-// in the frame, and evaluates analytic::BandSum once per wavelength/index pair (the chromatic
-// lambda grid lives on the line only, never a multi-wavelength map). Never refuses: a path with
-// no kept event yields the honest all-zero profile. `wavelengths_nm[i]` pairs with
-// `refractive_indices[i]` (same size).
-std::vector<ProbeLineProfile> EvaluateProbeLine(
-    const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-    const std::vector<int>& representative, const PoseDensityConversion& density, const ProbeFrame& frame,
-    const ProbeLineLayout& layout, const std::vector<double>& wavelengths_nm,
-    const std::vector<double>& refractive_indices, const double incident[3], int sample_count);
+// in the frame, and evaluates analytic::BandSum once for the one wavelength/index pair (the
+// chromatic lambda grid lives on the caller's loop, never a multi-wavelength map). Never
+// refuses: a path with no kept event yields the honest all-zero profile.
+ProbeLineProfile EvaluateProbeLine(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
+                                   const std::vector<int>& representative, const PoseDensityConversion& density,
+                                   const ProbeFrame& frame, const ProbeLineLayout& layout, double wavelength_nm,
+                                   double refractive_index, const double incident[3], int sample_count);
 
 // Runs the band-sum probe and appends it to out->probes; fills the profile fields of the
 // bright_domain card when the document carries one. Never refuses: a path with no kept event

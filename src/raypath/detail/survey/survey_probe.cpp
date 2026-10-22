@@ -71,11 +71,10 @@ ProbeReadings ReadProbeProfile(const std::vector<double>& values_deg, const std:
   return readings;
 }
 
-std::vector<ProbeLineProfile> EvaluateProbeLine(
-    const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-    const std::vector<int>& representative, const PoseDensityConversion& density, const ProbeFrame& frame,
-    const ProbeLineLayout& layout, const std::vector<double>& wavelengths_nm,
-    const std::vector<double>& refractive_indices, const double incident[3], int sample_count) {
+ProbeLineProfile EvaluateProbeLine(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
+                                   const std::vector<int>& representative, const PoseDensityConversion& density,
+                                   const ProbeFrame& frame, const ProbeLineLayout& layout, double wavelength_nm,
+                                   double refractive_index, const double incident[3], int sample_count) {
   const size_t bins = layout.bins.size();
   std::vector<double> centre_dirs(3 * bins);
   std::vector<double> corner_dirs(12 * bins);
@@ -107,14 +106,13 @@ std::vector<ProbeLineProfile> EvaluateProbeLine(
 
   const analytic::PoseDensity pose_density(density.spec);  // the caller's gated conversion —
                                                            // the probe builds no spec of its own
-  std::vector<ProbeLineProfile> profiles(wavelengths_nm.size());
-  for (size_t w = 0; w < wavelengths_nm.size(); w++) {
-    ProbeLineProfile& profile = profiles[w];
-    profile.wavelength_nm = wavelengths_nm[w];
-    profile.refractive_index = refractive_indices[w];
-    const analytic::BandSumOutput band =
-        analytic::BandSum(table, polygons, slots.data(), static_cast<int>(slots.size()), refractive_indices[w],
-                          incident, sample_count, pixels, pose_density);
+  ProbeLineProfile profile;
+  profile.wavelength_nm = wavelength_nm;
+  profile.refractive_index = refractive_index;
+  const analytic::BandSumOutput band =
+      analytic::BandSum(table, polygons, slots.data(), static_cast<int>(slots.size()), refractive_index, incident,
+                        sample_count, pixels, pose_density);
+  {
     profile.kept_count = band.kept_count;
     profile.samples.resize(bins);
     for (size_t k = 0; k < bins; k++) {
@@ -126,7 +124,7 @@ std::vector<ProbeLineProfile> EvaluateProbeLine(
       sample.k_eff = band.pixels[k].k_eff;
     }
   }
-  return profiles;
+  return profile;
 }
 
 ProbeLineLayout AxisLineLayout(double delta_min_deg, double delta_max_deg, double azimuth_deg) {
@@ -155,9 +153,9 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
 
   const ProbeLineLayout layout = AxisLineLayout(kProbeDeltaMinDeg, kProbeDeltaMaxDeg, input.azimuth_deg);
 
-  const std::vector<ProbeLineProfile> profiles =
+  const ProbeLineProfile line =
       EvaluateProbeLine(*input.table, *input.polygons, *input.representative, *input.density, frame, layout,
-                        { input.wavelength_nm }, { input.refractive_index }, input.incident, input.sample_count);
+                        input.wavelength_nm, input.refractive_index, input.incident, input.sample_count);
 
   SurveyProbe probe;
   probe.spec.delta_min_deg = kProbeDeltaMinDeg;
@@ -174,19 +172,19 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
   probe.evidence.state = EvidenceState::kFinite;
   probe.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
   probe.evidence.coverage.wavelength_nm = input.wavelength_nm;
-  probe.samples.resize(profiles.front().samples.size());
-  std::vector<double> sample_values(profiles.front().samples.size(), 0.0);
-  std::vector<int> sample_counts(profiles.front().samples.size(), 0);
-  for (size_t k = 0; k < profiles.front().samples.size(); k++) {
+  probe.samples.resize(line.samples.size());
+  std::vector<double> sample_values(line.samples.size(), 0.0);
+  std::vector<int> sample_counts(line.samples.size(), 0);
+  for (size_t k = 0; k < line.samples.size(); k++) {
     SurveyProbeSample& sample = probe.samples[k];
-    sample.delta_deg = profiles.front().samples[k].delta_deg;
-    sample.value = profiles.front().samples[k].value;
-    sample.k = profiles.front().samples[k].k;
-    sample.k_eff = profiles.front().samples[k].k_eff;
+    sample.delta_deg = line.samples[k].delta_deg;
+    sample.value = line.samples[k].value;
+    sample.k = line.samples[k].k;
+    sample.k_eff = line.samples[k].k_eff;
     sample_values[k] = sample.value;
     sample_counts[k] = sample.k;
   }
-  probe.kept_count = profiles.front().kept_count;
+  probe.kept_count = line.kept_count;
   std::vector<double> centres(probe.samples.size());
   for (size_t k = 0; k < probe.samples.size(); k++) {
     centres[k] = probe.samples[k].delta_deg;
@@ -213,7 +211,7 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
     card.bright_domain->peak_value = readings.peak_value;
     card.bright_domain->has_edge_reading = readings.has_edge;
     card.bright_domain->edge_delta_deg = readings.edge_delta_deg;
-    card.bright_domain->kept_count = profiles.front().kept_count;
+    card.bright_domain->kept_count = line.kept_count;
     card.bright_domain->probe_index = static_cast<int>(out->probes.size()) - 1;
   }
 }
