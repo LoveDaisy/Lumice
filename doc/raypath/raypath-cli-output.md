@@ -663,7 +663,7 @@ surface — before the narrowing landed).
 
 ```bash
 Lumice raypath survey -f <config> --crystal <id> --path <faces> \
-  [--literal] [--lambda 550] [--budget 15s] [-o out.json]
+  [--literal] [--lambda 550] [--budget 15s] [--mc-ess draws] [-o out.json]
 ```
 
 The survey is the census face of the diagnostic pipeline (v4.54): **one single-layer raypath
@@ -722,7 +722,8 @@ through the same engine error); `--literal` narrows the scope to the literal seq
 target mode's `--wavelength` (the scene's single discrete wavelength, else 550; the choice is
 recorded in `scope.wavelength_source`) — it is named `--lambda` because it is a routing
 reference, not a spectral integral; `--budget <N>[s]` (integer seconds, the `s` optional,
-default 15, max 120) rides the document's budget block. Exit status and stderr progress follow
+default 15, max 120) rides the document's budget block; `--mc-ess <draws>` (positive integer,
+max 200000) requests the opt-in MC region ESS leg (§9.8). Exit status and stderr progress follow
 the target mode's contract (`[raypath survey]` start/done lines; Ctrl-C ends the process and
 writes nothing; `-o` is atomic, and the analysis runs after the output directory is checked).
 
@@ -739,6 +740,8 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `family_routing` | present only on the family arm's documents (§9.7): the measure echo, the freezing ladder with every level's rank coverage and killed candidates, and the block's own evidence. An early stop, a full-dimensional route and an outside-domain refusal carry no `family_routing` key at all |
 | `unevaluated` | `{kinds, reason}` entries naming what the routing did not compute and why; empty on an early stop, on the full-dimensional route and on the family routes (the v1 not-wired skeleton is retired — a non-random axis is routed or refused, never parked) |
 | `probes` | The canonical probes; present only on a route that ran one (the full-dimensional route, and the family route when the density conversion carries the measure — §9.6) — an early-stop, an outside-domain-refused and a density-less family document carry no `probes` key at all |
+| `tir_share` | The TIR share leg (§9.8): present only on a route that ran it (the full-dimensional route and the refused-support route) — an early-stop and a family-route document carry no key at all; a path with no internal interface carries the key with the `no_internal_interfaces` refusal (the leg ran, its question is meaningless for that shape) |
+| `mc_region_ess` | The opt-in MC region ESS leg (§9.8): present only when the caller requested it AND the route is one that runs it (the full-dimensional and refused-support routes) — the flag on any other route produces no key |
 | `chromatic` | The chromatic layer's own evidence block plus the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`, §9.6). Its state follows the legs its routing arm ran: `unevaluated` only when no chromatic leg exists for the input class, `finite` when its legs computed, `refused` (with the leg's mode) when its only leg refused — on the identity arm the tint IS the block's only leg, so the block and the sub-block never disagree |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
 | `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran) |
@@ -885,8 +888,10 @@ others. The append discipline has a byte-stable face: the early-stop documents o
 build and this build are identical apart from `timing` — a new key appears only when the leg
 that fills it ran. The C API surface is `LUMICE_AnalyzePathSurvey` /
 `LUMICE_PathSurveyToJson` / `LUMICE_PathSurveyDestroy` over an opaque immutable handle
-(v4.54, `lumice_raypath.h`); the CLI and the GUI read the same serialized document — there is
-no second serializer.
+(v4.54, `lumice_raypath.h`); the request struct grew one tail field after v4.54 —
+`mc_ess_draws`, read only when the caller's `struct_size` covers it, so a v4.54-shaped caller
+(the GUI) compiles and behaves unchanged — and the CLI and the GUI read the same serialized
+document — there is no second serializer.
 
 ### 9.6 The probe and the chromatic caliber
 
@@ -1042,3 +1047,82 @@ block-level non-finite state on this route: a refused level-0 partition AND a de
 conversion cannot carry — every leg silent, and the block says `unevaluated` with the reason
 instead of claiming a reading nothing produced. The block is write-only: survey documents are
 serialized one way, and no in-tree reader deserializes them back into `SurveyDocument`.
+
+### 9.8 The exception evidence legs (`tir_share` / `mc_region_ess`)
+
+Two document-level optional blocks sit beside `family_routing`, each carrying its own evidence
+state under the design's rule for exception legs: a probe is a **named finite evidence leg with
+a coverage declaration** (N / resolution / seed / caliber), never a value of the main
+four-state vocabulary and never a word of the MC annotation vocabulary
+(`agrees`/`silent`/`conflicts`/`not-run` — those compare the MC evidence to the structure;
+these legs measure the sampling itself). A key exists exactly when its leg ran; an arm that
+does not carry a leg serializes no key at all, which reads as "this arm does not run the leg",
+never as a refusal. A refusal serializes exactly `{state, mode}` — no defaulted number reaches
+the document.
+
+**`tir_share`** — the class tint's per-sample average power decomposed by internal-reflection
+mechanism. The question: of the kept events' transmission weight (`w = A·T` over the declared
+antipodal Fibonacci lattice, the class power-sum's own unit), what share sits on poses where
+**every** internal interface of the chain is total-internal — the C15 near-TIR weight
+mechanism read as a class-level estimate (a larger refractive index lowers the TIR threshold
+and widens the window, so the share grows toward blue; the corpus's C15 anchor — 51.1% at
+450 nm / 38.6% at 650 nm of the positive-A sample energy from twice-TIR poses — is the
+actual-distribution caliber, a DIFFERENT protocol from this leg's declared-lattice × class
+representative caliber: direction参照 only, never a magnitude assertion, and the `caliber`
+string inside the block says so). Scope: the full-dimensional route and the refused-support
+route (the partition's refusal says nothing about the internal-reflection weight split, which
+the declared lattice still answers); the identity early-stop and the family routes do not run
+the leg. Per lambda the leg runs one lattice pass at the class tint's own size (1,000,000 —
+the two power-sum legs read one shared lattice), re-poses every kept event and re-derives the
+chain through the diagnostic batch in one call, then classifies by the per-interface
+discriminant sign. The shares read the discovery-side weights on BOTH sides (numerator and
+denominator the same reader); the batch is only the classifier, and its entry /
+interface_product readings never enter a share (the witness leg reports those under its own
+semantics — a share is an estimator, not a witness).
+
+Fields: `n_red`/`n_blue`, `interfaces[]` (`{face, share_red, share_blue}` per internal
+interface — the face numbers of the representative's own chain), `share_all_tir_red` /
+`share_all_tir_blue`, `sample_count`, `lattice`, `deterministic: true`,
+`representative`, `member_count`, `kept_count_red`/`kept_count_blue`, `caliber`, `evidence`.
+The output is a [0,1] share per lambda plus the per-interface decomposition — **never a
+cross-lambda ratio** (the tint's `ratio` is a different quantity on a different field family;
+the two calibers must not be compared, and neither may be read as a colour ratio). On a
+one-internal-interface path (3-5-7) the aggregate IS the interface row, exactly. Kept events
+whose candidate-pose chart degenerates at exactly-zero deviation (the pose's azimuthal freedom
+is unconstrained there, so no TIR classification exists) sit outside the estimator's declared
+support, excluded from both numerator and denominator; the caliber spells this. Refusals:
+`no_internal_interfaces` (a two-face chain — entry and exit only — leaves the leg no question
+to ask), `member_resolution`, `zero_band_weight`, `batch_read_unavailable` (a validated pose
+the batch still cannot trace: the two readers disagree, which is a defect to investigate, not
+a row to drop).
+
+**`mc_region_ess`** — the opt-in MC corroboration sampling's effective sample size per
+solar-radial delta band, for THIS class. Requested with `--mc-ess <draws>` (or the C API's
+`mc_ess_draws`); without the flag the key never appears. The mechanical chain is entirely the
+schema-3 side's as-built machinery under the survey's own scope: the survey's input snapshot
+feeds a `DiagnosticSampler` at a **fixed seed** (20261022, echoed — prefix-replay
+reproducible: the same seed and request produce identical bands) and
+`BuildDiagnosticMeasure` fills the measure under the budget deadline; the leg then buckets the
+Y-channel weights by deviation from the sun into the fixed 5°×36 grid over [0°, 180°] and
+reports each band's Kish effective sample size over outer-draw groups (one draw is one
+sampling act even when it contributed several member rows — the schema-3 `PresenceEss`
+grouping discipline, not a second ratio). Fields: `seed`, `draws`, `lambda_nm` (the survey's
+reference lambda — the leg is single-lambda), `band_deg`, `bands[]` (`{delta_min_deg,
+delta_max_deg, ess, draw_count, sum_weight}` — an empty band serializes its honest zero),
+`deterministic: false` (seeded random; the field exists to state the leg's own shape against
+the deterministic legs' true — a deterministic quadrature carries no ESS semantics, and the
+witness lattice and the power-sum legs never carry an ESS field), `evidence`. The leg is a
+**sampling-quality measurement, not a corroboration verdict**: no agrees/silent/conflicts
+word applies, and the MC annotation vocabulary stays on the schema-3 side — the two live
+side-by-side in the product but never in each other's fields. Refusals:
+`sampler_unavailable` (the single-lambda spectrum cannot be assembled from the scene's light —
+a reference lambda outside the continuous band, or a discrete light with no slot at the
+reference wavelength), `budget_exhausted` (the deadline hit before the requested draw count
+completed; a partial measure's band coverage would vary with machine speed, breaking the
+seeded reproducibility the coverage declares).
+
+The schema-4 field list for both legs is append-only like everything else: the 357 corpus
+assertion bench pins their first corpus appearance — the 357 shape's
+`slab_crease_not_carried` refusal with the finite witness, the finite `tir_share` with the
+k=1 identity and the direction `share(450) > share(650)`, and the flagged run's finite
+`mc_region_ess` with the Kish hard bounds (`0 < ess <= draws`).
