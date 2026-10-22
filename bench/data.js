@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792652516017,
+  "lastUpdate": 1792652518128,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "169a01b75ac4932ed78b13aefb385e4e6087b765",
-          "message": "Merge pull request #423 from LoveDaisy/fix/adaptive-alloc-c1-bias-probe\n\ntest(e2e): confirm an adaptive-vs-proportional mean red on 60 more sessions per arm",
-          "timestamp": "2026-09-26T08:31:46+08:00",
-          "tree_id": "42c5899e6e3d28b93caca02621779566a7678c6a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/169a01b75ac4932ed78b13aefb385e4e6087b765"
-        },
-        "date": 1790383356774,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 95.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "f185f3da689e6f99f72572f6b6198659524a0cfa",
           "message": "Merge pull request #424 from LoveDaisy/fix/globe-far-side-own-visibility\n\nfix: clip each side of the globe by its own direction's visibility",
           "timestamp": "2026-09-26T11:01:44+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 96,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49620f6e2374ecef84e0cec7c546028623c60493",
+          "message": "Merge pull request #537 from LoveDaisy/feat/gap3-tir-ess-probes-c18\n\nfeat(raypath): TIR share + opt-in MC region ESS evidence legs (gap ③)",
+          "timestamp": "2026-10-22T14:58:23+08:00",
+          "tree_id": "62674616b336864170d87cd4568ecea21be722b6",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/49620f6e2374ecef84e0cec7c546028623c60493"
+        },
+        "date": 1792652517622,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 98,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 96.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.5,
             "unit": "%"
           }
         ]
