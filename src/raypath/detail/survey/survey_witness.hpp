@@ -44,6 +44,9 @@ struct WitnessInput {
   double wavelength_nm = 0.0;  // the coverage declaration's wavelength
   int member_count = 0;        // the class size the card stands for
   int sample_count = kSurveyWitnessSampleCount;
+  // The query-face context mode: the lattice leg is T3 quantification, skipped (no witness
+  // sub-block at all) when the assembly runs context-only.
+  bool context_only = false;
 };
 
 // Runs the lattice, the candidate pose and the batch re-evaluation, and fills card->witness —

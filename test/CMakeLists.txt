@@ -360,7 +360,8 @@ add_executable(unit_correctness_test
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE
-  LUMICE_DIAGNOSTIC_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-diagnostics")
+  LUMICE_DIAGNOSTIC_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-diagnostics"
+  LUMICE_WARM_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-warm")
 target_link_libraries(unit_correctness_test
   PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
 # The configure-time tier, for test_c_api_engine_isa_level.cpp to hold the engine's run-time

@@ -129,6 +129,22 @@ const char* const kDiscoveredKeys[] = {
   "/components/0/points/0/interface_transmittances",
   "/components/0/points/0/total_transmission",
   "/components/0/points/0/entry_measure",
+  "/components/0/points/0/rho",
+  "/components/0/points/0/entry_measure_a2",
+  "/components/0/points/0/jacobian/value",
+  "/components/0/points/0/jacobian/singular_values",
+  "/components/0/points/0/jacobian/available",
+  "/components/0/points/0/k_carea",
+  "/components/0/points/0/factor_product",
+  "/components/0/factors/epsilon",
+  "/components/0/factors/fiber_integral",
+  "/components/0/factors/fiber_integral_rule",
+  "/components/0/factors/completeness/available_points",
+  "/components/0/factors/completeness/total_points",
+  "/components/0/factors/completeness/note",
+  "/measure_registration/support_kind",
+  "/measure_registration/fast_path",
+  "/measure_registration/registered_gap",
   "/incomplete",
   "/discovery/complete",
   "/discovery/pool_count",
@@ -147,6 +163,11 @@ const char* const kDiscoveredKeys[] = {
   "/reach/deviation_max_rad",
   "/reach/tolerance_rad",
   "/reach/probe_lat_count",
+  "/survey_context/source",
+  "/survey_context/warm_index_absent",
+  "/survey_context/object/state",
+  "/survey_context/edge/state",
+  "/survey_context/band_sum/state",
   "/sun_grid/lat_count",
   "/sun_grid/lon_count",
   "/sun_grid/deviation_rad",
@@ -261,17 +282,69 @@ TEST(SinglePathJson, RankZeroWritesThePointMassAndNoDiscovery) {
   const nlohmann::json doc = Doc(r);
   EXPECT_EQ(doc["outcome"], "point_mass");
   for (const char* key : { "/point_mass/direction", "/point_mass/altitude_deg", "/point_mass/azimuth_deg",
-                           "/point_mass/target_separation_deg", "/meta/faces", "/sun_grid/valid" }) {
+                           "/point_mass/target_separation_deg", "/point_mass/orbit_factors/available",
+                           "/point_mass/orbit_factors/measure_support", "/meta/faces", "/sun_grid/valid" }) {
     EXPECT_TRUE(doc.contains(nlohmann::json::json_pointer(key))) << key;
   }
   EXPECT_EQ(doc["point_mass"]["direction"].size(), 3u);
-  for (const char* key : { "components", "incomplete", "discovery", "reach" }) {
+  for (const char* key : { "components", "incomplete", "discovery", "reach", "measure_registration" }) {
     EXPECT_FALSE(doc.contains(key)) << key;
   }
   // A point-mass output is still a valid warm-seed source: it simply holds none.
   std::vector<double> seeds;
   EXPECT_TRUE(ParseWarmSeeds(ToJson(r, "v"), &seeds).Ok());
   EXPECT_TRUE(seeds.empty());
+}
+
+// A fixed-axis scene's declared measure is a point mass: the orbit factor block carries the
+// honest unavailable state (named reason, the support spelled) and no integral — never a
+// defaulted number. Exactly one of the two block shapes is written.
+TEST(SinglePathJson, OrbitFactorsSpellTheUnavailableStateWhenTheSupportIsNotASpinOrbit) {
+  const SinglePathResult r = Analyse({ 1, 2 }, 30.0, 90.0);
+  ASSERT_EQ(r.outcome, Outcome::kPointMass);
+  ASSERT_FALSE(r.point_mass.orbit_factors.available);
+  const nlohmann::json doc = Doc(r);
+  const auto& orbit = doc["point_mass"]["orbit_factors"];
+  EXPECT_EQ(orbit["available"], false);
+  EXPECT_EQ(orbit["measure_support"], "point");
+  EXPECT_EQ(orbit["reason"], "measure_support_not_spin_orbit");
+  EXPECT_FALSE(orbit.contains("integral"));
+  EXPECT_FALSE(orbit.contains("points"));
+}
+
+// The spin-orbit block's field set: the per-theta factor readings, the quadrature integral with
+// its rule, and the kept count. The density of a uniform-azimuth spin orbit is 1/(2 pi) at every
+// parameter — the spec's own constant.
+TEST(SinglePathJson, OrbitFactorsOnASpinOrbitCarryTheGridAndTheIntegral) {
+  ConfigManager scene = PrismScene();
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  SinglePathRequest q;
+  q.crystal_id = 1;
+  q.path_layers = { { 1, 2 } };
+  q.target_altitude_deg = 30.0;
+  q.target_azimuth_deg = 90.0;
+  q.sun_grid_lat_count = 0;
+  SinglePathResult r;
+  ASSERT_TRUE(AnalyzeSinglePath(scene, q, &r).Ok());
+  ASSERT_EQ(r.outcome, Outcome::kPointMass);
+  ASSERT_TRUE(r.point_mass.orbit_factors.available);
+  const nlohmann::json doc = Doc(r);
+  const auto& orbit = doc["point_mass"]["orbit_factors"];
+  EXPECT_EQ(orbit["available"], true);
+  EXPECT_EQ(orbit["measure_support"], "spin_orbit");
+  EXPECT_EQ(orbit["sample_count"], kOrbitFactorSampleCount);
+  EXPECT_EQ(orbit["points"].size(), kOrbitFactorSampleCount);
+  EXPECT_TRUE(orbit.contains("integral"));
+  EXPECT_TRUE(orbit.contains("integral_rule"));
+  EXPECT_TRUE(orbit.contains("kept_count"));
+  EXPECT_FALSE(orbit.contains("reason"));
+  for (const auto& p : orbit["points"]) {
+    EXPECT_NEAR(p["rho_theta"].get<double>(), 1.0 / (2.0 * 3.14159265358979323846), 1e-15);
+    EXPECT_TRUE(p.contains("entry_measure_a2"));
+    EXPECT_TRUE(p.contains("total_transmission"));
+    EXPECT_TRUE(p.contains("valid"));
+  }
 }
 
 TEST(SinglePathJson, SeedsRoundTripBitExactly) {

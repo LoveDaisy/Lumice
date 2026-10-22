@@ -51,7 +51,7 @@ def _binary():
 @lru_cache(maxsize=None)
 def _document(config: Path, path: str, args: tuple[str, ...]) -> dict:
     result = run_lumice(
-        ["raypath", "-f", str(config), "--crystal", "1", "--path", path, "--report", *args]
+        ["raypath", "report", "-f", str(config), "--crystal", "1", "--path", path, *args]
     )
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)

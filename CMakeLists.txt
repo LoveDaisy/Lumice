@@ -1088,6 +1088,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/detail/measure/measure_geometry_contract.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/measure/visibility_certificate.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/measure/weight_profile.cpp"
+  "${PROJ_SRC_DIR}/raypath/detail/survey/config_fingerprint.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_assembly.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_family.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_mc_ess.cpp"

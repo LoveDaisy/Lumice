@@ -9,11 +9,12 @@ what you ask about one of them.
 It writes one JSON document. This page is that document's field reference, and the one place a
 reader (the Analyze-workspace prototype, a script, the GUI later) should learn it from.
 
-There are three deliberately separate documents. `--target` writes the original target-fiber
+There are three deliberately separate documents. `raypath point` writes the target-fiber
 document (`schema_version: 1`, sections 1–6); its keys, ordering, and `--warm` behavior are
-unchanged. `--report` writes the target-free `lumice.path-feature-report` document in section 7.
-`raypath survey` writes the census document (`lumice.path-survey`, schema_version 4) in section 9.
-Neither mode silently substitutes for another.
+supersets of the original `--target` form — fields are only ever appended. `raypath report`
+writes the target-free `lumice.path-feature-report` document in section 7. `raypath survey`
+writes the census document (`lumice.path-survey`, schema_version 4) in section 9. Neither mode
+silently substitutes for another.
 
 ## 1. Where the document comes from
 
@@ -24,7 +25,7 @@ The CLI is a thin shell. The computation and the serialization both live in the 
 | The analysis | `lumice::raypath::AnalyzeSinglePath` (`src/raypath/single_path_analysis.hpp`) over the analytic kernel (`src/analytic/`) |
 | The JSON form and the `--warm` reader | `lumice::raypath::ToJson` / `ParseWarmSeeds` (`src/raypath/single_path_json.hpp`) — one file, shared key names |
 | The public entry point | `LUMICE_AnalyzeSinglePath` → opaque `LUMICE_SinglePathResult` → `LUMICE_SinglePathResultToJson` (`lumice_raypath.h`, v4.50) |
-| The subcommand | `src/main.cpp` (`ParseRaypathOptions` / `RunRaypath`) |
+| The subcommand | `src/main.cpp` (`ParsePointOptions` / `RunPoint`; family dispatch in `main`) |
 
 So the GUI, when it grows an Analyze workspace, reads **the same document** through the same
 `lumice_raypath.h` call; there is no second serializer to drift from this one. The result is exposed as
@@ -33,24 +34,29 @@ fields an interface will keep adding to. Typed readers can be appended to `lumic
 
 ## 2. Command line
 
+The `raypath` family asks one path four ways — the word after `raypath` names the question, and
+bare `raypath` is a usage error:
+
 ```
-Lumice raypath -f <config> --crystal <id> --path <faces> --target <alt>,<az> [options]
+Lumice raypath survey -f <config> --crystal <id> --path <faces> [--literal] [--lambda 550]   # schema 4 (§9)
+Lumice raypath point  -f <config> --crystal <id> --path <faces> --target <alt>,<az> [--warm s.json]  # schema 1 (§3)
+Lumice raypath report -f <config> --crystal <id> --path <faces> [--events N] ...              # schema 3 (§7)
 ```
 
-(`raypath survey` has its own option set — §9 — dispatched when the word after `raypath` is
-exactly `survey`; the options below are untouched.)
+(`raypath probe` is named in the design but not in this build yet.)
 
 | Option | Meaning |
 |---|---|
 | `--crystal <id>` | The crystal entry (config id). Required. |
 | `--path <faces>` | The raypath as `analyze` prints it: `3-5`, `3-6-4-8`; `C1(3-5)` if the layer names its crystal (must equal `--crystal`). Multi-layer chains (`(3-5) -> (1-3)`) are handed to the engine, which refuses them as `multi_layer_unsupported`. Required. |
-| `--target <alt>,<az>` | The sky point, degrees; azimuth measured as the sun's (the `analyze --center` convention). Required. |
-| `--wavelength <nm>` | In [350, 900]. Default: the config's, when its spectrum is exactly one wavelength; else 550. The choice is recorded in `meta.wavelength.source`. |
-| `--events <N>` | Seed events of the component search — poses sampled to locate the fiber, **not** traced rays. K/M suffix; at most 100M (`LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`). Default 1M. |
+| `--target <alt>,<az>` | The sky point, degrees; azimuth measured as the sun's (the `analyze --center` convention). Required for `point`. |
+| `--wavelength <nm>` | In [350, 900]. Default: the config's, when its spectrum is exactly one wavelength; else 550. The choice is recorded in `meta.wavelength.source`. (`report` without it uses the actual scene spectrum.) |
+| `--events <N>` | Seed events of the component search — poses sampled to locate the fiber, **not** traced rays. K/M suffix; at most 100M (`LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`). Default 1M. (`report`: even outer samples, its own range.) |
+| `--budget-ms <N>` | `point` and `report`: the numerical deadline in milliseconds (default 15000; max 120000). Checked at the computation's loop boundaries: a stopped run serializes what it has and reports `meta.interrupted` — an honest early exit, exit code 0. Two legs are deliberately outside the polling: the inline context-only survey assembly (T0–T2, cheap and bounded by design) and the fiber continuation's inner steps (bounded by the `--max-evaluations` family instead) — a heavy case can overshoot the declared value by their cost |
 | `--grid <rows>` | Latitude rows of the sun-direction grid; longitude is twice that. [0, 720]; 0 leaves `sun_grid` out. Default 90. |
-| `--warm <file>` | An earlier output; its seeds start the search (§5). |
+| `--warm <file>` | What a previous output is worth (§5): a schema-1 `point` document's seeds start the search; a schema-4 `survey` document is the index the query consumes (§5, the `survey_context` block). |
 | `-o <path>` | Write the document here instead of stdout (never both). |
-| `-v` / `-d` / `-h` | As for every subcommand. `--backend`, `--workers`, `--seed` are not options here: the analysis has one route, runs on the calling thread and draws no random numbers. |
+| `-v` / `-d` / `-h` | As for every subcommand. `-h` after a command word prints that command's own page; bare `raypath -h` lists the four commands. `--backend`, `--workers`, `--seed` are not options here: the analysis has one route, runs on the calling thread and draws no random numbers. |
 
 Exit status: 0 on success; 1 for a bad option (usage printed), a config that does not load, or a
 request the engine refuses — then stderr carries `Error: <reason>: <detail>`, where `<reason>` is
@@ -78,7 +84,7 @@ not know. `schema_version` is bumped only when a field changes meaning or is rem
 | `schema_version` | int | always | 1 |
 | `generator.lumice` | string | always | The Lumice version that wrote it |
 | `generator.analytic_api_version` | int | always | The analytic kernel's API version |
-| `conventions` | object of strings | always | This page's §4 in words, so a document explains itself: `frames`, `directions`, `target_azimuth`, `pose`, `angles`, `sun_in_crystal`, `units`, `null`, `sun_grid`, `completeness`, `reach` |
+| `conventions` | object of strings | always | This page's §4 in words, so a document explains itself: `frames`, `directions`, `target_azimuth`, `pose`, `angles`, `sun_in_crystal`, `units`, `null`, `factors`, `survey_context`, `sun_grid`, `completeness`, `reach` |
 | `meta` | object | always | Every conversion from the scene to the kernel, as applied (§3.2) |
 | `outcome` | `"discovered"` \| `"point_mass"` | always | Which of the two branches below is present |
 | `point_mass` | object | `outcome == "point_mass"` | §3.5 |
@@ -86,7 +92,9 @@ not know. `schema_version` is bumped only when a field changes meaning or is rem
 | `incomplete` | array | `outcome == "discovered"` | §3.4; may be empty |
 | `discovery` | object | `outcome == "discovered"` | §3.6 |
 | `reach` | object | `outcome == "discovered"` | §3.8; written whether or not `components` is empty |
+| `measure_registration` | object | `outcome == "discovered"` | The declared measure's support kind and any registered read-as-zero gap (§3.11) |
 | `sun_grid` | object | `--grid` > 0 (either outcome) | §3.7 |
+| `survey_context` | object | always | Where the target sits in the survey's structure (§3.12; the `--warm` contract's query face) |
 
 ### 3.2 `meta`
 
@@ -102,6 +110,7 @@ not know. `schema_version` is bumped only when a field changes meaning or is rem
 | `target.altitude_deg`, `target.azimuth_deg`, `target.direction`, `target.deviation_deg` | The sky point; `direction` is the light-travel direction arriving from it (§4); `deviation_deg` is the sun–target angle |
 | `wavelength.nm`, `wavelength.source` (`user` / `config` / `default`), `wavelength.refractive_index` | |
 | `discovery_settings.sample_count`, `band_half_width_rad`, `cluster_radius_rad`, `distance_threshold_rad`, `warm_seed_count` | The search as run |
+| `budget_ms`, `interrupted` | The budget receipt: the ms the deadline was in force for (0 = unbounded), and whether the run stopped early — a partial document, honestly marked (§2, `--budget-ms`) |
 
 ### 3.3 `components[]` — the fiber
 
@@ -129,6 +138,24 @@ Each point:
 | `interface_transmittances` | One per face: T at entry and exit, R at internal faces |
 | `total_transmission` | Their product. Not a relative intensity on its own |
 | `entry_measure` | The entry cross-section (perpendicular to the incident direction) whose rays follow exactly this face sequence through the finite crystal, in the crystal's length unit squared |
+| `rho` | The declared joint pose density w.r.t. dλ dφ droll (radians, angle Lebesgue) at the pose's composed angles — the measure factor of the decomposition (§3.11) |
+| `entry_measure_a2` | A/a²: `entry_measure` over the crystal length unit squared (a = 1 in this repo's configs — a declared identity, not a normalization) |
+| `jacobian.value`, `jacobian.singular_values`, `jacobian.available` | The pose's normal Jacobian J_perp = σ1σ2 (the kernel's own read at the pose's own direction); `null` where it cannot be formed — NaN-honest, never a plausible 0 or 1 |
+| `k_carea` | 1/(J_perp + `factors.epsilon`); `null` when the Jacobian is unavailable |
+| `factor_product` | ρ · A/a² · T · K; `null` when any factor is unavailable or the pose is not valid |
+
+The factors are the L2 query's per-pose decomposition: **multiplicative, in real units, never
+additive percentages** (the corpus discipline the point output inherits). The document-level
+`measure_registration` (§3.11) must be read before treating a `rho` of 0 as dark.
+
+Each component carries one `factors` block:
+
+| Key | Meaning |
+|---|---|
+| `epsilon` | The declared ε of k_carea (1e-12; data, never a hidden knob) |
+| `fiber_integral` | Σ `factor_product` · arclength over consecutive points — the component's factor-weighted integral; `null` when no segment contributed |
+| `fiber_integral_rule` | The summation rule, spelled in the document |
+| `completeness.available_points`, `.total_points`, `.note` | How many points carried a usable product — procedural, the discovery note's own discipline; the integral covers the arclength those points open, not the component's full length |
 
 ### 3.4 `incomplete[]`
 
@@ -140,7 +167,17 @@ Candidates the search found but could not turn into a component: `cause` (`arc_b
 
 Rank 0: the outgoing direction does not depend on the pose (e.g. `1-2`, a flat plate's two basal
 faces). No fiber exists to trace. `direction` (world), `altitude_deg` / `azimuth_deg` (the sky
-point it lands on), `target_separation_deg` (from the requested target).
+point it lands on), `target_separation_deg` (from the requested target), and `orbit_factors` —
+the rank-0 branch's factor decomposition:
+
+| Key | Meaning |
+|---|---|
+| `available` | False: the block is the honest unavailable state — `measure_support` names what the declared measure's support actually is and `reason` the named cause (e.g. `measure_support_not_spin_orbit`); no integral fields appear. True: the fields below |
+| `measure_support` | The support kind the block integrates along |
+| `sample_count` | Midpoint samples over [0, 2π) of the declared measure's spin orbit (1024 — the declared caliber) |
+| `integral` | Σ ρ_θ · A/a² · T · Δθ over kept samples (A·T > 0 and valid — the measure layer's positive-part convention). For a uniform-azimuth orbit this is the LI #51 tint kernel's integral form, and the quotient of two runs at the wavelength-pool ends is that spot's tint |
+| `integral_rule`, `kept_count` | The summation rule; the kept count (so "all dark" stays distinguishable from "no samples") |
+| `points[]` | Per θ: `theta_rad`, `rho_theta`, `entry_measure_a2`, `total_transmission`, `valid` |
 
 ### 3.6 `discovery`
 
@@ -205,6 +242,32 @@ What each answer means:
 `reach` is direction-level: validity depends on the face normals and the refractive index, not
 on the crystal's size. Two prisms of different height give the same `reach`; the effect of the
 finite crystal is read from `entry_measure`, not from here.
+
+### 3.11 `measure_registration` (the declared measure's registration)
+
+Written on the discovered branch. The declared measure's u-marginal support kind
+(`point` / `spin_orbit` / `roll_orbit` / `latitude_orbit` / `area` /
+`degenerate_sun_geometry` / `degenerate_axis_geometry`), whether the zonal fast path was in
+force, and — when the measure is one of the density layer's registered read-as-zero families —
+`registered_gap: true` with the named gap in `note`. A `rho` of 0 in a registered-gap family
+means "the density layer did not answer", never "dark". The joint pose density itself is
+closed-form at every pose; the gaps live one reduction up, at the u-marginal a solid-angle
+consumer would read.
+
+### 3.12 `survey_context` (where the target sits in the survey's structure)
+
+The `--warm` contract's query face (§5): with a warm survey document, its facts; without one, the
+same facts from a context-only (T0–T2) assembly run on this request's own config. Every field
+carries its own state — `certified` (the support partition's containment fact), `finite` (a
+computed reading), `unevaluated` with a named reason — so absence can never read as answered.
+
+| Key | Meaning |
+|---|---|
+| `source` | `"warm"` (the given schema-4 document's facts) or `"inline"` (the context-only assembly) |
+| `warm_index_absent` | True: a `--warm` schema-4 document was given but carried no (complete) `warm_index` block — the documented degradation (§5); the context still answers, inline |
+| `object.state` (+ `reason`) | The target's deviation against the delta-axis support: `certified` (inside an interval, distance 0, or the nearest card's distance) or `unevaluated`. The value fields `target_inside_support`, `kind`, `members`, `distance_deg` exist exactly when the state is `certified` — an unevaluated object carries no distance, so absence can never be misread as the certified 0 that means "inside the support" |
+| `edge.state` (+ `reason`) | The angular distance to the nearest edge. The value fields `distance_deg`, `basis` (`support_interval_endpoint` or `caustic_edge_position`) exist exactly when the state is `finite` |
+| `band_sum.state` (+ `value`, `delta_deg`, `bin_deg`, `caliber`, or `reason`) | The warm document's solar-radial band-sum reading at the nearest probe sample. Consumed only when the scope gate passes: the query's resolved wavelength and sun must EQUAL the document's scope receipt exactly (identity, not approximation); the two named failures are `scope_field_missing` (a receipt field absent) and `scope_value_mismatch` (a value differs — a moved sun or a changed lambda). Inline contexts and degraded warm files name why they have no reading (`inline_context_runs_no_probe`, `warm_index_absent`, `warm_document_has_no_probe`) |
 
 ### 3.9 Empty results
 
@@ -281,14 +344,62 @@ owner: `src/raypath/detail/json_values.hpp` (`Num` / `GridNum` / `Array`), inclu
 serializers — the single-path document and the section-7 report. Neither schema may hand-roll its
 own copy of the non-finite-to-`null` mapping or the sun-grid rounding again.
 
-## 5. `--warm`
+## 5. `--warm`: two document families, one flag
 
-`--warm <file>` reads `components[*].seed` and then `incomplete[*].seed` from an earlier output
-and passes them to the search as extra starting poses. Densifying the search is not monotone — a
-denser sample can lose a component a sparser one found — so feeding back seeds is how a
-component, once found, is kept. The file must carry the same `schema_version`, and every seed
-must be 9 numbers; otherwise the run fails with `invalid_argument: warm seeds: …`. A point-mass
-output is accepted and holds no seeds.
+`--warm <file>` reads what a previous document is worth. The document's family decides:
+
+**A schema-1 `point` output** — the seed sheet. Its `components[*].seed` and then
+`incomplete[*].seed` (9 row-major doubles each) start the search as extra starting poses.
+Densifying the search is not monotone — a denser sample can lose a component a sparser one found —
+so feeding back seeds is how a component, once found, is kept. The file must carry the same
+`schema_version`, and every seed must be 9 numbers; otherwise the run fails with
+`invalid_argument: warm seeds: …`. A point-mass output is accepted and holds no seeds.
+
+**A schema-4 `survey` document** — the index. "Survey is the query's index" made concrete: the
+query consumes the census's routing instead of re-deriving it. Consumption has three parts.
+
+*Consistency gates (refusals).* The query refuses with `invalid_argument: warm index: <gate>: …`
+when any of these fails:
+
+1. **Crystal** — the document's `request.crystal_id` must equal the query's.
+2. **Path** — the document's `request.path_layers` must equal the query's.
+3. **Config fingerprint** — the document's `warm_index.config_fingerprint` must equal the query
+   config's. The fingerprint is the hex SHA256 of the config's **routing-axis projection**,
+   canonical JSON with the axis-set tag `lumice.routing-fingerprint-v1`: the selected crystal
+   entry whole (shape param and axis distribution, the config's own serializers), the literal path
+   layers, and the symmetry bits. Excluded on purpose (the routing ruling: sun and spectrum do not
+   route): the sun position, the wavelength/spectrum; also the crystal's scene-layer allocation
+   and every other scene/renderer field. One implementation computes it for both sides (the
+   survey's writer and the query's reader); a config field that starts to affect routing must be
+   added to the projection and to this axis list in the same change.
+4. **Measure echo** — only family-arm documents carry `family_routing`; when present, its
+   `measure` echo (kind/center/width per dimension) must equal the query config's own reading.
+   Its absence is data (that arm did not run) and skips the gate with a declaration. (The
+   fingerprint already carries the axis; this gate is the echo's independent chain.)
+
+*The seed harvest.* The document's `warm_index.seeds` (each 9 numbers, with `seed_sources`
+naming the leg that held the pose — `witness_argmax`, `family_collapse_anchor`,
+`family_fold_anchor`, `single_pose_nominal`; arms that hold no pose leave `seeds: []`) join the
+search as warm seeds.
+
+*The survey context.* The document's structure answers where the target sits: the owning support
+interval, the edge distance, and — when the document ran the solar-radial probe — the band-sum
+reading at the nearest sample (§3.12). Without a `--warm` file the query computes the same
+answers from a context-only (T0–T2) assembly on its own config: cheap by construction, and the
+band-sum reading is then honestly absent (`inline_context_runs_no_probe`) — the probe is T3
+quantification the context-only mode does not run.
+
+**Degradation, not refusal.** A schema-4 document whose `warm_index` block is absent — every
+survey document written before the block existed — or missing any of its fields is not refused
+and never partially consumed: the query degrades visibly to the inline context (no structural
+reuse, no seed consumption), and the document's `survey_context` declares it
+(`warm_index_absent: true`, the band-sum reading `unevaluated` with that reason).
+
+**Versions.** The schema-4 arm does not compare `schema_version` (the schema-1 arm above does):
+the family name is the discriminator, `warm_index.produced_for` records what produced the
+document, and append-only growth freezes the semantics of the keys this reader consumes. A
+future change to a consumed key's meaning is the one thing that must gate on `schema_version`
+here — that is this contract's version discipline.
 
 A warm seed is a starting point, not a certificate. The engine's builds for different CPU tiers
 (the release's baseline and x86-64-v3 engines) are compiled with different floating-point
@@ -744,6 +855,7 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `mc_region_ess` | The opt-in MC region ESS leg (§9.8): present only when the caller requested it AND the route is one that runs it (the full-dimensional and refused-support routes) — the flag on any other route produces no key |
 | `chromatic` | The chromatic layer's own evidence block plus the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`, §9.6). Its state follows the legs its routing arm ran: `unevaluated` only when no chromatic leg exists for the input class, `finite` when its legs computed, `refused` (with the leg's mode) when its only leg refused — on the identity arm the tint IS the block's only leg, so the block and the sub-block never disagree |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
+| `warm_index` | The `--warm` contract's survey side (always written; §9.9) |
 | `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran) |
 | `timing` | `total_seconds` — the wall clock of the analysis **up to the end of assembly, excluding serialization**; each routing leg's cost rolls into this one figure |
 
@@ -1128,3 +1240,26 @@ assertion bench pins their first corpus appearance — the 357 shape's
 `slab_crease_not_carried` refusal with the finite witness, the finite `tir_share` with the
 k=1 identity and the direction `share(450) > share(650)`, and the flagged run's finite
 `mc_region_ess` with the Kish hard bounds (`0 < ess <= draws`).
+
+### 9.9 The `warm_index` block (the `--warm` contract's survey side)
+
+Always written — every document declares its seeds (possibly empty), its receipts and its
+fingerprint. A reader treats a missing or incomplete block on the wire as the documented
+`warm_index_absent` degradation (§5), never as refusal material.
+
+| Field | Meaning |
+|---|---|
+| `seeds[]` | The poses the assembly actually held, 9 row-major doubles each; `[]` when no arm held one (the identity and full-dimensional arms hold none today) |
+| `seed_sources[]` | Parallel to `seeds`: the leg that held the pose — `witness_argmax` (the refused-support card's lattice argmax), `family_collapse_anchor`, `family_fold_anchor`, `single_pose_nominal` (the 0D arm's production Euler pose). Killed candidates never contribute |
+| `reuse_scope` | The declared reuse domain: structural facts (routing, object cards, support) reuse across sun and wavelength changes; probe band-sum readings are valid only at the producing document's wavelength and sun — the consuming query compares the `scope` receipt per read |
+| `produced_for` | The producer receipt: schema family + the analytic kernel's API version |
+| `config_fingerprint` | The routing-axis projection's SHA256 (§5, gate 3): the axis set is the crystal entry whole (shape + axis), the literal path layers, and the symmetry bits — sun, wavelength/spectrum and scene allocation excluded; one implementation serves the writer and the query's reader, and a config field that starts to affect routing extends the projection and this list in the same change |
+
+**The in-tree reader's footprint, named block by block.** The schema-4 document has exactly one
+in-tree consumer, the point query's warm reader — and it does NOT deserialize the document: it
+reads `warm_index` (all five fields), the `scope` receipt's wavelength/sun/source (the band-sum
+gate's comparison side), the `objects[]` ownership facts (each support card's intervals + members,
+each caustic edge's position), the `probes[]` band-sum samples and bin, and the family arm's
+`measure` echo (the fourth gate's comparison side). Nothing else — no reconstruction of
+`SurveyDocument`, no second deserializer. The partial-reader boundary is the contract: §5's gates
+name exactly these blocks, and a consumer needing more joins them here.

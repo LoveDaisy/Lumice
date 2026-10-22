@@ -35,6 +35,10 @@ extern "C" {
 // The largest sun_grid_lat_count a request may ask for (longitude is twice that): bounds the
 // grid's memory for any caller, not only the CLI (which caps --grid lower still).
 #define LUMICE_SINGLE_PATH_MAX_SUN_GRID_LAT_COUNT 1800
+// The budget_ms a 0 deadline_ms request resolves to, and the largest one it may carry (a shell's
+// validate-early mirror of the engine's own constants, like the survey's pair).
+#define LUMICE_SINGLE_PATH_DEFAULT_BUDGET_MS 15000
+#define LUMICE_SINGLE_PATH_MAX_BUDGET_MS 120000
 
 // Request. `struct_size` MUST be set to sizeof(LUMICE_SinglePathRequest) of the header the caller
 // compiled against: fields are only ever appended, and a size smaller than this version's is
@@ -60,9 +64,20 @@ typedef struct LUMICE_SinglePathRequest {
   int sun_grid_lat_count;  // latitude rows of the sun-direction grid (longitude twice that), [0,
                            // LUMICE_SINGLE_PATH_MAX_SUN_GRID_LAT_COUNT]; 0 = no grid
   // Warm starts: the text of an earlier LUMICE_SinglePathResultToJson output (its component seeds
-  // are read back); NULL or length 0 for none. The same JSON schema version is required.
+  // are read back), or of a `Lumice raypath survey` schema-4 document (the --warm index contract).
+  // NULL or length 0 for none. The same JSON schema version is required.
   const char* warm_json;
   size_t warm_json_len;
+  // Appended group, read only when the whole group fits struct_size (older requests keep their
+  // exact previous behaviour: no budget, no interruption). A 0 deadline_ms selects the documented
+  // default; the check runs at the computation's loop boundaries, so it bounds, never interrupts
+  // mid-number. The stopped call serializes what it has and reports interrupted in the document's
+  // meta — an honest early exit, not a failure.
+  int deadline_ms;                  // 0 = LUMICE_SINGLE_PATH_DEFAULT_BUDGET_MS; at most
+                                    // LUMICE_SINGLE_PATH_MAX_BUDGET_MS
+  const volatile int* interrupted;  // the caller's one-way stop flag: 0 runs, non-zero stops at the
+                                    // next loop boundary (a signal handler's sig_atomic_t; the
+                                    // engine only reads it, never writes). NULL = no flag.
 } LUMICE_SinglePathRequest;
 
 typedef struct LUMICE_SinglePathResult_ LUMICE_SinglePathResult;

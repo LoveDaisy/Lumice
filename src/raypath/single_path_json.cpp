@@ -61,11 +61,30 @@ nlohmann::ordered_json Conventions() {
       "keys ending in _deg are degrees, _rad radians, _nm nanometres; entry_measure is an area in the crystal's "
       "length unit squared; arclength_increments are radians on SO(3)" },
     { "null", "a number that is not defined (NaN) is written as null" },
+    { "factors",
+      "the per-pose factor decomposition is multiplicative, in real units, never additive "
+      "percentages: rho is the declared joint pose density w.r.t. dlambda dphi droll (radians, "
+      "angle Lebesgue, declared measure); entry_measure_a2 is the entry area over the crystal "
+      "length unit squared (a = 1 in this repo's configs — a declared identity, not a "
+      "normalization); total_transmission is the interface product; k_carea = 1/(J_perp + "
+      "factors.epsilon), J_perp the pose's normal Jacobian, null where it cannot be formed; "
+      "factor_product = rho * entry_measure_a2 * total_transmission * k_carea, null where any "
+      "factor is unavailable. measure_registration declares the support kind and any registered "
+      "read-as-zero gap of the declared measure — a rho of 0 there is 'unanswered', not 'dark'" },
     { "sun_grid",
       "cell centres, row-major [i][j]: lat_i = -90 + (i + 0.5) * 180 / lat_count, lon_j = -180 + (j + 0.5) * 360 / "
       "lon_count, u = (cos lat cos lon, cos lat sin lon, sin lat) in the body frame; the longitude seam is periodic; "
       "arrays rounded to 9 significant digits" },
     { "completeness", kCompletenessNote },
+    { "survey_context",
+      "where the target sky point sits in the survey's structure (doc/raypath/raypath-cli-output.md, the "
+      "--warm contract): source warm (the given schema-4 document's facts) or inline (a context-only T0-T2 "
+      "assembly on this request's config); every field carries its own state — certified (the support "
+      "partition's containment fact), finite (a computed reading), unevaluated with a named reason — and the "
+      "value fields exist exactly when the state says something was read. The "
+      "band-sum reading exists only when a warm document's probe was consumed under the scope gate's "
+      "exact-equality comparison of wavelength and sun (scope_field_missing / scope_value_mismatch name the "
+      "two failures); warm_index_absent declares the documented degradation to the inline context" },
     { "reach",
       "whether delta (target deviation) lies in the range of D over every valid sun direction, probed on its own "
       "grid (independent of sun_grid) with the validity boundary bisected; false: delta is outside "
@@ -116,6 +135,8 @@ nlohmann::ordered_json MetaJson(const SinglePathMetadata& m) {
         { "cluster_radius_rad", Num(m.cluster_radius_rad) },
         { "distance_threshold_rad", Num(m.distance_threshold_rad) },
         { "warm_seed_count", m.warm_seed_count } } },
+    { "budget_ms", m.budget_ms },
+    { "interrupted", m.interrupted },
   };
 }
 
@@ -141,7 +162,76 @@ nlohmann::ordered_json PointJson(const PointDetail& p) {
     { "interface_transmittances", Array(p.interface_transmittances) },
     { "total_transmission", Num(p.total_transmission) },
     { "entry_measure", Num(p.entry_measure) },
+    { "rho", Num(p.rho) },
+    { "entry_measure_a2", Num(p.entry_measure_a2) },
+    { "jacobian",
+      { { "value", Num(p.jacobian) },
+        { "singular_values", Array(p.singular_values, 2) },
+        { "available", p.jacobian_available } } },
+    { "k_carea", Num(p.k_carea) },
+    { "factor_product", Num(p.factor_product) },
   };
+}
+
+// The component-level factor bookkeeping: the declared epsilon, the arclength integral of the
+// factor product, and the completeness declaration (procedural, the discovery note's own
+// discipline — a usable-product count, never a promise every pose was readable).
+nlohmann::ordered_json FactorsJson(const ComponentFactors& f) {
+  return {
+    { "epsilon", kFactorsEpsilon },
+    { "fiber_integral",
+      f.integral_available ? nlohmann::ordered_json(Num(f.fiber_integral)) : nlohmann::ordered_json(nullptr) },
+    { "fiber_integral_rule",
+      "left-endpoint sum of factor_product * arclength over consecutive points; segments whose "
+      "first point carries no usable product (invalid pose or Jacobian unavailable) are skipped "
+      "and counted in completeness" },
+    { "completeness",
+      { { "available_points", f.available_points },
+        { "total_points", f.total_points },
+        { "note",
+          "available_points counts the points whose factor_product is usable; the integral covers "
+          "the arclength those points open, not the component's full length" } } },
+  };
+}
+
+// The declared measure's registration (the discovered branch's document-level block): the support
+// kind and any registered read-as-zero gap, so a rho of 0 is never read as dark by default.
+nlohmann::ordered_json MeasureRegistrationJson(const MeasureRegistration& m) {
+  nlohmann::ordered_json j = { { "support_kind", m.support_kind },
+                               { "fast_path", m.fast_path },
+                               { "registered_gap", m.registered_gap } };
+  if (m.registered_gap) {
+    j["note"] = m.note;
+  }
+  return j;
+}
+
+// The rank-0 branch's orbit factor block: the declared measure's spin orbit, its per-theta factor
+// readings, and the quadrature integral — or the honest unavailable state, exactly one of the two
+// shapes, never a defaulted number.
+nlohmann::ordered_json OrbitFactorsJson(const OrbitFactors& o) {
+  nlohmann::ordered_json j = { { "available", o.available }, { "measure_support", o.measure_support } };
+  if (!o.available) {
+    j["reason"] = o.reason;
+    return j;
+  }
+  nlohmann::ordered_json points = nlohmann::ordered_json::array();
+  for (const OrbitFactorPoint& p : o.points) {
+    points.push_back({ { "theta_rad", Num(p.theta_rad) },
+                       { "rho_theta", Num(p.rho_theta) },
+                       { "entry_measure_a2", Num(p.entry_measure_a2) },
+                       { "total_transmission", Num(p.total_transmission) },
+                       { "valid", p.valid } });
+  }
+  j["sample_count"] = o.sample_count;
+  j["integral"] = Num(o.integral);
+  j["integral_rule"] =
+      "fiber_quadrature kFiberParameter quadrature: sum of rho_theta * "
+      "entry_measure_a2 * total_transmission * dtheta over kept samples "
+      "(A*T > 0 and valid), midpoint grid over [0, 2 pi)";
+  j["kept_count"] = o.kept_count;
+  j["points"] = std::move(points);
+  return j;
 }
 
 nlohmann::ordered_json ComponentJson(const FiberComponent& c) {
@@ -156,6 +246,7 @@ nlohmann::ordered_json ComponentJson(const FiberComponent& c) {
   }
   j["seed_index"] = c.seed_index;
   j["arclength_increments"] = Array(c.arclength_increments);
+  j["factors"] = FactorsJson(c.factors);
   nlohmann::ordered_json points = nlohmann::ordered_json::array();
   for (const auto& p : c.points) {
     points.push_back(PointJson(p));
@@ -209,6 +300,46 @@ nlohmann::ordered_json SunGridJson(const SunSphereGrid& g) {
            { "entry_measure", std::move(entry) } };
 }
 
+// The survey context block: every field's state always serialized, the value fields exactly when
+// their state says something was read — object's only under "certified", edge's and band_sum's
+// only under "finite" (so an unevaluated distance can never be misread as the certified 0 that
+// means "inside the support").
+nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& c) {
+  nlohmann::ordered_json j = { { "source", c.source }, { "warm_index_absent", c.warm_index_absent } };
+  nlohmann::ordered_json object = { { "state", c.object.state } };
+  if (!c.object.reason.empty()) {
+    object["reason"] = c.object.reason;
+  }
+  if (c.object.state == "certified") {
+    object["target_inside_support"] = c.target_inside_support;
+    object["kind"] = c.object_kind;
+    object["members"] = c.object_members;
+    object["distance_deg"] = Num(c.object_distance_deg);
+  }
+  j["object"] = std::move(object);
+  nlohmann::ordered_json edge = { { "state", c.edge.state } };
+  if (!c.edge.reason.empty()) {
+    edge["reason"] = c.edge.reason;
+  }
+  if (c.edge.state == "finite") {
+    edge["distance_deg"] = Num(c.edge_distance_deg);
+    edge["basis"] = c.edge_basis;
+  }
+  j["edge"] = std::move(edge);
+  nlohmann::ordered_json band = { { "state", c.band_sum.state } };
+  if (!c.band_sum.reason.empty()) {
+    band["reason"] = c.band_sum.reason;
+  }
+  if (c.band_sum.state == "finite") {
+    band["value"] = Num(c.band_sum_value);
+    band["delta_deg"] = Num(c.band_sum_delta_deg);
+    band["bin_deg"] = Num(c.band_sum_bin_deg);
+    band["caliber"] = c.band_sum_caliber;
+  }
+  j["band_sum"] = std::move(band);
+  return j;
+}
+
 nlohmann::ordered_json ReachJson(const ReachSummary& r) {
   return {
     { "target_in_range", r.target_in_range },          { "target_deviation_rad", Num(r.target_deviation_rad) },
@@ -233,12 +364,15 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
     // Rank 0: no fiber is traced, so there are no components and no discovery.
     doc["outcome"] = "point_mass";
     const PointMass& pm = result.point_mass;
-    doc["point_mass"] = { { "direction", Array(pm.direction, 3) },
-                          { "altitude_deg", Num(pm.altitude_deg) },
-                          { "azimuth_deg", Num(pm.azimuth_deg) },
-                          { "target_separation_deg", Num(pm.target_separation_deg) } };
+    nlohmann::ordered_json pm_json = { { "direction", Array(pm.direction, 3) },
+                                       { "altitude_deg", Num(pm.altitude_deg) },
+                                       { "azimuth_deg", Num(pm.azimuth_deg) },
+                                       { "target_separation_deg", Num(pm.target_separation_deg) } };
+    pm_json["orbit_factors"] = OrbitFactorsJson(pm.orbit_factors);
+    doc["point_mass"] = std::move(pm_json);
   } else {
     doc["outcome"] = "discovered";
+    doc["measure_registration"] = MeasureRegistrationJson(result.measure_registration);
     nlohmann::ordered_json components = nlohmann::ordered_json::array();
     for (const auto& c : result.components) {
       components.push_back(ComponentJson(c));
@@ -256,6 +390,11 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
   if (result.sun_grid.lat_count > 0) {
     doc["sun_grid"] = SunGridJson(result.sun_grid);
   }
+  // The survey context: where the target sits in the survey's structure (always written; every
+  // field carries its own state, so absence can never read as answered).
+  // Cost contract: on a deferred result SurveyContextOf runs the context-only T0-T2 assembly
+  // (seconds); callers that serialize more than once materialize first via EnsureSurveyContext.
+  doc["survey_context"] = SurveyContextJson(SurveyContextOf(result));
   return doc.dump();
 }
 
@@ -299,6 +438,202 @@ Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
     }
   }
   seeds->insert(seeds->end(), found.begin(), found.end());
+  return {};
+}
+
+Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, std::vector<double>* seeds,
+                     SurveyWarmSource* survey) {
+  nlohmann::json doc = nlohmann::json::parse(json_text, nullptr, /*allow_exceptions=*/false);
+  if (doc.is_discarded()) {
+    return Invalid("not a JSON document");
+  }
+  if (!doc.is_object()) {
+    return Invalid("not a warm document (not an object)");
+  }
+  // The schema-4 arm first (a survey document also carries an integer schema_version — the
+  // family name is the discriminator): a schema-4 document through the consistency gates, then
+  // the harvest.
+  const bool is_survey =
+      doc.contains("schema") && doc["schema"].is_string() && doc["schema"].get<std::string>() == "lumice.path-survey";
+  if (!is_survey) {
+    // The schema-1 arm, spelled exactly as ParseWarmSeeds's: a target-fiber output is a seed
+    // sheet, not a survey index — the survey context stays unset and the query computes it
+    // inline (from_survey_document stays false: the bridge hands the query nothing here).
+    return ParseWarmSeeds(json_text, seeds);
+  }
+  survey->from_survey_document = true;
+  const auto refuse = [](const std::string& why) { return Error{ ErrorCode::kInvalidArgument, "warm index: " + why }; };
+  // Gate 1-2: the crystal and the path, against the request echo.
+  if (!doc.contains("request") || !doc["request"].is_object()) {
+    return refuse("the document carries no request echo");
+  }
+  const auto& request = doc["request"];
+  if (!request.contains("crystal_id") || !request["crystal_id"].is_number_integer() ||
+      request["crystal_id"].get<long long>() != gate.crystal_id) {
+    return refuse("crystal gate: the document's request.crystal_id does not match this query");
+  }
+  if (!request.contains("path_layers") || !request["path_layers"].is_array()) {
+    return refuse("path gate: the document's request carries no path_layers");
+  }
+  if (request["path_layers"].size() != gate.path_layers.size()) {
+    return refuse("path gate: the document's request.path_layers does not match this query");
+  }
+  for (size_t i = 0; i < gate.path_layers.size(); i++) {
+    const auto& layer = request["path_layers"][i];
+    if (!layer.is_array() || layer.size() != gate.path_layers[i].size()) {
+      return refuse("path gate: the document's request.path_layers does not match this query");
+    }
+    for (size_t j = 0; j < gate.path_layers[i].size(); j++) {
+      if (!layer[j].is_number_integer() || layer[j].get<int>() != gate.path_layers[i][j]) {
+        return refuse("path gate: the document's request.path_layers does not match this query");
+      }
+    }
+  }
+  // Gate 4 (declared-skip): the family arm's measure echo. Only the family-arm documents carry
+  // family_routing; its absence is data (the arm did not run), so the gate skips with the
+  // declaration carried in the survey source — the caller compares the echo when it is present.
+  if (doc.contains("family_routing") && doc["family_routing"].is_object() &&
+      doc["family_routing"].contains("measure")) {
+    const auto read_dim = [](const nlohmann::json& dim, SurveyWarmSource::MeasureDimEcho* out) {
+      if (!dim.is_object() || !dim.contains("kind") || !dim["kind"].is_string() || !dim.contains("center_deg") ||
+          !dim["center_deg"].is_number() || !dim.contains("width_deg") || !dim["width_deg"].is_number()) {
+        return false;
+      }
+      out->kind = dim["kind"].get<std::string>();
+      out->center_deg = dim["center_deg"].get<double>();
+      out->width_deg = dim["width_deg"].get<double>();
+      return true;
+    };
+    const auto& measure = doc["family_routing"]["measure"];
+    // Present-but-malformed is corrupt data, not absence: the document claims the family arm
+    // ran and echoes its measure, but the echo does not read back. Refusing keeps that distinct
+    // from "the arm did not run" (the key absent, a declared skip).
+    if (!measure.is_object() || !measure.contains("zenith") || !measure.contains("azimuth") ||
+        !measure.contains("roll") || !read_dim(measure["zenith"], &survey->measure_zenith) ||
+        !read_dim(measure["azimuth"], &survey->measure_azimuth) || !read_dim(measure["roll"], &survey->measure_roll)) {
+      return refuse("corrupt warm document: family_routing.measure is present but malformed");
+    }
+    survey->has_measure_echo = true;
+  }
+  // Gate 3: the config fingerprint — the one comparison input with no pre-existing echo.
+  const bool index_block =
+      doc.contains("warm_index") && doc["warm_index"].is_object() && doc["warm_index"].contains("seeds") &&
+      doc["warm_index"]["seeds"].is_array() && doc["warm_index"].contains("seed_sources") &&
+      doc["warm_index"]["seed_sources"].is_array() && doc["warm_index"].contains("reuse_scope") &&
+      doc["warm_index"]["reuse_scope"].is_string() && doc["warm_index"].contains("produced_for") &&
+      doc["warm_index"]["produced_for"].is_string() && doc["warm_index"].contains("config_fingerprint") &&
+      doc["warm_index"]["config_fingerprint"].is_string();
+  if (!index_block) {
+    // The D2 degradation: a pre-warm document (every schema-4 document written before this build)
+    // or a truncated one. Not a refusal — the query degrades, visibly, to its own inline context.
+    survey->index_present = false;
+    return {};
+  }
+  if (doc["warm_index"]["config_fingerprint"].get<std::string>() != gate.config_fingerprint) {
+    return refuse(
+        "config fingerprint gate: the document's warm_index.config_fingerprint does not "
+        "match this query's config (a config field in the routing projection changed)");
+  }
+  survey->index_present = true;
+
+  // The harvest: the seeds...
+  const auto& doc_seeds = doc["warm_index"]["seeds"];
+  const auto& doc_sources = doc["warm_index"]["seed_sources"];
+  if (doc_seeds.size() != doc_sources.size()) {
+    return refuse("the document's warm_index seeds and seed_sources disagree in length");
+  }
+  for (size_t i = 0; i < doc_seeds.size(); i++) {
+    const auto& seed = doc_seeds[i];
+    const std::string where = "warm_index.seeds[" + std::to_string(i) + "]";
+    if (!seed.is_array() || seed.size() != static_cast<size_t>(kSeedLength)) {
+      return refuse(where + " is not " + std::to_string(kSeedLength) + " numbers");
+    }
+    for (const auto& x : seed) {
+      if (!x.is_number()) {
+        return refuse(where + " holds a value that is not a number");
+      }
+    }
+    for (const auto& x : seed) {
+      seeds->push_back(x.get<double>());
+    }
+  }
+  // ...the routing verdict...
+  if (doc.contains("routing") && doc["routing"].is_object() && doc["routing"].contains("early_stopped") &&
+      doc["routing"]["early_stopped"].is_boolean()) {
+    survey->early_stopped = doc["routing"]["early_stopped"].get<bool>();
+  }
+  // ...the scope receipt (the band-sum gate's comparison side)...
+  if (doc.contains("scope") && doc["scope"].is_object() && doc["scope"].contains("wavelength_nm") &&
+      doc["scope"]["wavelength_nm"].is_number() && doc["scope"].contains("sun_altitude_deg") &&
+      doc["scope"]["sun_altitude_deg"].is_number() && doc["scope"].contains("sun_azimuth_deg") &&
+      doc["scope"]["sun_azimuth_deg"].is_number()) {
+    survey->has_scope = true;
+    survey->wavelength_nm = doc["scope"]["wavelength_nm"].get<double>();
+    survey->wavelength_source =
+        doc["scope"].contains("wavelength_source") && doc["scope"]["wavelength_source"].is_string() ?
+            doc["scope"]["wavelength_source"].get<std::string>() :
+            "";
+    survey->sun_altitude_deg = doc["scope"]["sun_altitude_deg"].get<double>();
+    survey->sun_azimuth_deg = doc["scope"]["sun_azimuth_deg"].get<double>();
+  }
+  // ...the support (every support card's intervals) and the certified edge. Members are the
+  // card's first layer, the entry faces the partition ran on — the same reading the in-memory
+  // harvest arm spells, so the two arms answer identically on any document (the dual-arm oracle
+  // test pins it). A support_set whose interval list harvests nothing reads as no support: the
+  // flag is set once after the loop, from what actually landed.
+  if (doc.contains("objects") && doc["objects"].is_array()) {
+    for (const auto& card : doc["objects"]) {
+      if (!card.is_object()) {
+        continue;
+      }
+      if (card.contains("support_set") && card["support_set"].is_object() &&
+          card["support_set"].contains("intervals") && card["support_set"]["intervals"].is_array()) {
+        std::vector<int> members;
+        if (card.contains("members") && card["members"].is_array() && !card["members"].empty() &&
+            card["members"][0].is_array()) {
+          for (const auto& face : card["members"][0]) {
+            if (face.is_number_integer()) {
+              members.push_back(face.get<int>());
+            }
+          }
+        }
+        for (const auto& interval : card["support_set"]["intervals"]) {
+          if (!interval.is_object() || !interval.contains("lower_deg") || !interval["lower_deg"].is_number() ||
+              !interval.contains("upper_deg") || !interval["upper_deg"].is_number()) {
+            continue;
+          }
+          SurveyWarmSource::SupportInterval out;
+          out.lower_deg = interval["lower_deg"].get<double>();
+          out.upper_deg = interval["upper_deg"].get<double>();
+          out.members = members;
+          survey->intervals.push_back(std::move(out));
+        }
+      }
+      if (card.contains("caustic_edge") && card["caustic_edge"].is_object() &&
+          card["caustic_edge"].contains("position_deg") && card["caustic_edge"]["position_deg"].is_number()) {
+        survey->has_edge = true;
+        survey->edge_deg = card["caustic_edge"]["position_deg"].get<double>();
+      }
+    }
+    survey->has_support = !survey->intervals.empty();
+  }
+  // ...the probe's radial profile.
+  if (doc.contains("probes") && doc["probes"].is_array() && !doc["probes"].empty() && doc["probes"][0].is_object() &&
+      doc["probes"][0].contains("samples") && doc["probes"][0]["samples"].is_array()) {
+    const auto& probe = doc["probes"][0];
+    survey->has_probe = true;
+    if (probe.contains("spec") && probe["spec"].is_object() && probe["spec"].contains("bin_deg") &&
+        probe["spec"]["bin_deg"].is_number()) {
+      survey->probe_bin_deg = probe["spec"]["bin_deg"].get<double>();
+    }
+    for (const auto& sample : probe["samples"]) {
+      if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number() ||
+          !sample.contains("value") || !sample["value"].is_number()) {
+        continue;
+      }
+      survey->probe_samples.push_back({ sample["delta_deg"].get<double>(), sample["value"].get<double>() });
+    }
+  }
   return {};
 }
 

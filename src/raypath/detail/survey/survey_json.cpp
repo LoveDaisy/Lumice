@@ -391,6 +391,26 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
     doc["probes"] = std::move(probes);
   }
 
+  // The warm_index block (the --warm contract's survey side): always written — every document
+  // declares its seeds (possibly empty), reuse scope, producer receipt and config fingerprint.
+  {
+    Json seeds = Json::array();
+    Json sources = Json::array();
+    for (size_t i = 0; i < document.warm_index.seeds.size(); i++) {
+      Json seed = Json::array();
+      for (double v : document.warm_index.seeds[i]) {
+        seed.push_back(Num(v));
+      }
+      seeds.push_back(std::move(seed));
+      sources.push_back(document.warm_index.seed_sources[i]);
+    }
+    doc["warm_index"] = { { "seeds", std::move(seeds) },
+                          { "seed_sources", std::move(sources) },
+                          { "reuse_scope", document.warm_index.reuse_scope },
+                          { "produced_for", document.warm_index.produced_for },
+                          { "config_fingerprint", document.warm_index.config_fingerprint } };
+  }
+
   doc["chromatic"] = EvidenceJson(document.chromatic);
   // The exception evidence legs: keys exist exactly when the leg ran (the schema-4 append's
   // conditional-presence discipline — an arm that does not carry a leg serializes no key). A

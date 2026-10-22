@@ -168,11 +168,17 @@ bool ByDeviationThenIndex(const BandEvent& a, const BandEvent& b) {
 }
 }  // namespace
 
-std::vector<BandEvent> IceDiscovery::BuildBand(int sample_count, double delta, double half_width) {
+std::vector<BandEvent> IceDiscovery::BuildBand(int sample_count, double delta, double half_width,
+                                               const DiscoveryStop* stop) {
   std::vector<BandEvent> band;
   const double lo = delta - half_width;
   const double hi = delta + half_width;
+  // The stop probe is polled at the loop boundary only (every 1024th sample, the diagnostic
+  // batch's own cadence) — never inside a sample's numerics.
   for (int i = 0; i < sample_count; i++) {
+    if (stop != nullptr && (i % 1024) == 1023 && stop->Stopped()) {
+      break;
+    }
     BandEvent event;
     double transmission = 0.0;
     if (!EvaluateLatticePoint(sample_count, i, &event, &transmission)) {
@@ -254,9 +260,10 @@ DiscoveryOutput IceDiscovery::DiscoverOnBand(const double target_direction[3], c
 
 DiscoveryOutput IceDiscovery::Discover(const double target_direction[3], int sample_count, double band_half_width,
                                        const double* extra_seeds, int extra_count, double cluster_radius,
-                                       double distance_threshold, const ContinuationParams& params) {
+                                       double distance_threshold, const ContinuationParams& params,
+                                       const DiscoveryStop* stop) {
   const std::vector<BandEvent> band =
-      BuildBand(sample_count, TargetDeviation(incident_, target_direction), band_half_width);
+      BuildBand(sample_count, TargetDeviation(incident_, target_direction), band_half_width, stop);
   return DiscoverOnBand(target_direction, band, extra_seeds, extra_count, cluster_radius, distance_threshold, params);
 }
 

@@ -1,6 +1,7 @@
 #include "raypath/single_path_analysis.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -11,6 +12,11 @@
 #include "analytic/path_chain.hpp"
 #include "analytic/path_rank.hpp"
 #include "analytic/so3.hpp"
+#include "raypath/detail/measure/declared_density.hpp"
+#include "raypath/detail/measure/fiber_quadrature.hpp"
+#include "raypath/detail/survey/config_fingerprint.hpp"
+#include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/sky_direction.hpp"
 
@@ -141,6 +147,62 @@ constexpr double kPoleSine = 1e-12;
 // Sun directions probed for rank 0 (the antipodal Fibonacci lattice discovery samples on).
 constexpr int kRankProbeCount = 4096;
 
+// The declared measure's support kinds, spelled for the registration block (the v1 gap list's own
+// vocabulary; declared_density.hpp carries no name table, so this is the one wire spelling).
+const char* USupportKindName(USupportKind kind) {
+  switch (kind) {
+    case USupportKind::kPoint:
+      return "point";
+    case USupportKind::kSpinOrbit:
+      return "spin_orbit";
+    case USupportKind::kRollOrbit:
+      return "roll_orbit";
+    case USupportKind::kLatitudeOrbit:
+      return "latitude_orbit";
+    case USupportKind::kArea:
+      return "area";
+    case USupportKind::kDegenerateSunGeometry:
+      return "degenerate_sun_geometry";
+    case USupportKind::kDegenerateAxisGeometry:
+      return "degenerate_axis_geometry";
+  }
+  return "unknown";
+}
+
+// The declared measure's registration for the per-pose rho read: the u-marginal's support kind and
+// the registered read-as-zero gaps (declared_density.hpp's v1 gap list) a consumer must know about
+// before treating a rho of 0 as dark. The joint pose density itself is closed-form at every pose;
+// the gaps live one reduction up, at the u-marginal a solid-angle consumer would read.
+MeasureRegistration RegisterMeasure(const UMarginal& marginal, const AxisDistribution& axis) {
+  MeasureRegistration out;
+  out.support_kind = USupportKindName(marginal.kind());
+  out.fast_path = marginal.fast_path();
+  double at = 0.0;
+  const bool az_dirac = SlotIsDirac(axis.azimuth_dist, &at);
+  const bool lat_dirac = SlotIsDirac(axis.latitude_dist, &at);
+  if (marginal.kind() == USupportKind::kDegenerateSunGeometry) {
+    out.registered_gap = true;
+    out.note = "sun at a body pole: the declared measure answers nothing here (kDegenerateSunGeometry)";
+  } else if (marginal.kind() == USupportKind::kDegenerateAxisGeometry) {
+    out.registered_gap = true;
+    out.note =
+        "axis Dirac at a pole with azimuth and roll both spread: not answered before v2 "
+        "(kDegenerateAxisGeometry)";
+  } else if (marginal.kind() == USupportKind::kArea && az_dirac) {
+    out.registered_gap = true;
+    out.note =
+        "registered read-as-zero gap: a fixed azimuth with zenith and roll both spread reads "
+        "rho_u = 0 everywhere at the u-marginal (declared_density.hpp v1 gap list)";
+  } else if (marginal.kind() == USupportKind::kArea && lat_dirac) {
+    out.registered_gap = true;
+    out.note =
+        "registered read-as-zero gap: a fixed zenith with non-uniform azimuth and spread roll reads "
+        "rho_u = 0 everywhere at the u-marginal (declared_density.hpp v1 gap list)";
+  }
+  return out;
+}
+
+
 double WrapDeg(double a) {
   a = std::remainder(a, 360.0);  // [-180, 180]
   return a <= -180.0 ? a + 360.0 : a;
@@ -180,16 +242,28 @@ void SunInCrystal(const double pose[9], const double incident[3], double u[3]) {
   }
 }
 
-// Everything that is fixed for one call: the crystal, the resolved path, the index, the sun.
+// Everything that is fixed for one call: the crystal, the resolved path, the index, the sun, and
+// the orientation measure the declared pose density reads.
 class PathContext {
  public:
   PathContext(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-              std::vector<int> slots, double refractive_index, const double incident[3])
+              std::vector<int> slots, double refractive_index, const double incident[3], const AxisDistribution& axis)
       : table_(table), slots_(std::move(slots)), n_(refractive_index),
-        incident_{ incident[0], incident[1], incident[2] }, corridor_(table_, polygons, slots_.data(), SlotCount()),
-        segments_(3 * (slots_.size() + 1)), transmittances_(slots_.size()) {}
+        incident_{ incident[0], incident[1], incident[2] }, axis_(axis),
+        lat_(axis.IsFullSphereUniform() ? MakeFullSphereLatitude() : MakeLatitudeDensity(axis.latitude_dist)),
+        corridor_(table_, polygons, slots_.data(), SlotCount()), segments_(3 * (slots_.size() + 1)),
+        transmittances_(slots_.size()) {}
 
   int SlotCount() const { return static_cast<int>(slots_.size()); }
+
+  // The declared joint pose density (w.r.t. dlambda dphi droll, radians) at the pose's composed
+  // angles: the config's own orientation angles are the composed ones (azimuth = lambda_out,
+  // zenith = pi/2 - phi_out, roll = roll_out — the same chart both specs spell).
+  double PoseDensity(const double pose[9]) const {
+    const PoseAngles angles = PoseToAngles(pose);
+    return DeclaredPoseDensity(lat_, axis_, angles.azimuth_deg * math::kDegreeToRadD,
+                               (90.0 - angles.zenith_deg) * math::kDegreeToRadD, angles.roll_deg * math::kDegreeToRadD);
+  }
 
   // Body-frame evaluation with the sun at u (pose = identity, incident = -u): what discovery's band
   // evaluates (discovery.cpp BuildBand). Returns validity; `out` the outgoing direction.
@@ -215,6 +289,13 @@ class PathContext {
   double EntryMeasure(const double incident_body[3]) { return corridor_.Evaluate(incident_body, n_).value; }
 
   PointDetail Detail(const double pose[9], double residual_norm) {
+    return Detail(pose, residual_norm, false, 0.0, nullptr);
+  }
+
+  // The factor-decomposition overload: the continuation's own per-pose Jacobian read (NaN-honest
+  // — unavailable poses carry NaN, never a plausible 0), then k_carea and the factor product.
+  PointDetail Detail(const double pose[9], double residual_norm, bool jacobian_available, double jacobian,
+                     const double* singular_values) {
     PointDetail d;
     for (int i = 0; i < 9; i++) {
       d.pose[i] = pose[i];
@@ -222,6 +303,22 @@ class PathContext {
     d.angles = PoseToAngles(pose);
     SunInCrystal(pose, incident_, d.sun_in_crystal);
     d.residual_norm = residual_norm;
+    d.rho = PoseDensity(pose);
+    d.jacobian_available = jacobian_available;
+    if (jacobian_available) {
+      d.jacobian = jacobian;
+      if (singular_values != nullptr) {
+        d.singular_values[0] = singular_values[0];
+        d.singular_values[1] = singular_values[1];
+      }
+      d.k_carea = 1.0 / (jacobian + kFactorsEpsilon);
+    } else {
+      constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+      d.jacobian = nan;
+      d.singular_values[0] = nan;
+      d.singular_values[1] = nan;
+      d.k_carea = nan;
+    }
     analytic::PathOutputs outputs{};
     outputs.segment_directions = segments_.data();
     outputs.interface_transmittances = transmittances_.data();
@@ -236,6 +333,12 @@ class PathContext {
       const double incident_body[3] = { -d.sun_in_crystal[0], -d.sun_in_crystal[1], -d.sun_in_crystal[2] };
       d.entry_measure = EntryMeasure(incident_body);
     }
+    d.entry_measure_a2 = d.entry_measure;  // a = the crystal length unit = 1 in this repo's configs
+    if (d.valid && d.jacobian_available) {
+      d.factor_product = d.rho * d.entry_measure_a2 * d.total_transmission * d.k_carea;
+    } else {
+      d.factor_product = std::numeric_limits<double>::quiet_NaN();
+    }
     return d;
   }
 
@@ -249,6 +352,8 @@ class PathContext {
   std::vector<int> slots_;
   double n_;
   double incident_[3];
+  AxisDistribution axis_;
+  LatitudeDensity lat_;
   analytic::Corridor corridor_;
   std::vector<double> segments_;
   std::vector<double> transmittances_;
@@ -300,7 +405,10 @@ FiberComponent ToComponent(const analytic::DiscoveredComponent& c, PathContext* 
   out.forward = EndOf(c.forward);
   const int nf = c.forward.PoseCount();
   auto append = [&](const analytic::TraceResult& t, int k) {
-    out.points.push_back(ctx->Detail(t.poses.data() + 9 * static_cast<size_t>(k), t.residual_norms[k]));
+    out.points.push_back(ctx->Detail(t.poses.data() + 9 * static_cast<size_t>(k), t.residual_norms[k],
+                                     t.jacobian_available[static_cast<size_t>(k)] != 0,
+                                     t.normal_jacobian[static_cast<size_t>(k)],
+                                     t.singular_values.data() + 2 * static_cast<size_t>(k)));
   };
   if (c.kind == ComponentKind::kArc) {
     out.backward = EndOf(c.backward);
@@ -319,6 +427,24 @@ FiberComponent ToComponent(const analytic::DiscoveredComponent& c, PathContext* 
   }
   out.arclength_increments.insert(out.arclength_increments.end(), c.forward.arclength_increments.begin(),
                                   c.forward.arclength_increments.end());
+  // The component's factor integral: left-endpoint rectangular sum of factor_product * arclength
+  // over consecutive point pairs whose first point carries a usable product (finite — NaN marks
+  // an unusable read). Available points counted for the completeness declaration.
+  out.factors.total_points = static_cast<int>(out.points.size());
+  for (const PointDetail& p : out.points) {
+    if (std::isfinite(p.factor_product)) {
+      out.factors.available_points++;
+    }
+  }
+  const size_t segments = out.arclength_increments.size();
+  for (size_t i = 0; i < segments; i++) {
+    const double product = out.points[i].factor_product;
+    if (!std::isfinite(product)) {
+      continue;
+    }
+    out.factors.fiber_integral += product * out.arclength_increments[i];
+    out.factors.integral_available = true;
+  }
   return out;
 }
 
@@ -339,7 +465,7 @@ IncompleteComponent ToIncomplete(const analytic::IncompleteCandidate& c) {
   return out;
 }
 
-void BuildSunGrid(int lat_count, PathContext* ctx, SunSphereGrid* grid) {
+void BuildSunGrid(int lat_count, PathContext* ctx, SunSphereGrid* grid, const analytic::DiscoveryStop* stop) {
   grid->lat_count = lat_count;
   grid->lon_count = 2 * lat_count;
   const size_t cells = static_cast<size_t>(grid->lat_count) * static_cast<size_t>(grid->lon_count);
@@ -347,6 +473,9 @@ void BuildSunGrid(int lat_count, PathContext* ctx, SunSphereGrid* grid) {
   grid->valid.assign(cells, 0);
   grid->entry_measure.assign(cells, 0.0);
   for (int i = 0; i < grid->lat_count; i++) {
+    if (stop != nullptr && stop->Stopped()) {
+      break;  // the stop is the document's meta.interrupted; the unwritten cells stay NaN/invalid
+    }
     for (int j = 0; j < grid->lon_count; j++) {
       double u[3];
       SunSphereGridCellCentre(*grid, i, j, u);
@@ -378,6 +507,67 @@ struct DeviationRange {
   }
 };
 
+// The rank-0 branch's factor decomposition: the declared measure's spin orbit, evaluated at
+// midpoint samples, integrated by the measure layer's own quadrature (the kFiberParameter
+// binding's v1 semantics — the LI #51 tint kernel's integral form). A measure whose support is
+// not a spin orbit gets the honest unavailable state, never a defaulted integral.
+OrbitFactors BuildOrbitFactors(const UMarginal& marginal, PathContext& ctx, const double sun_hat[3],
+                               const analytic::DiscoveryStop* stop) {
+  OrbitFactors orbit;
+  orbit.measure_support = USupportKindName(marginal.kind());
+  if (marginal.kind() != USupportKind::kSpinOrbit) {
+    orbit.available = false;
+    orbit.reason = "measure_support_not_spin_orbit";
+    return orbit;
+  }
+  orbit.available = true;
+  orbit.sample_count = kOrbitFactorSampleCount;
+  FiberSampleStream stream;
+  stream.binding = MeasureBinding::kFiberParameter;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  stream.source_name = "raypath point orbit factors";
+  stream.samples.resize(static_cast<size_t>(orbit.sample_count));
+  const double dtheta = 2.0 * math::kPiD / orbit.sample_count;
+  for (int i = 0; i < orbit.sample_count; i++) {
+    if (stop != nullptr && stop->Stopped()) {
+      // A partial grid's integral would claim a coverage it does not have: the honest shape is
+      // the unavailable state naming the stop.
+      orbit.available = false;
+      orbit.reason = "interrupted";
+      orbit.points.clear();
+      orbit.integral = 0.0;
+      orbit.kept_count = 0;
+      return orbit;
+    }
+    const double theta = 2.0 * math::kPiD * (i + 0.5) / orbit.sample_count;
+    double u[3];
+    marginal.SpinOrbitPoint(theta, u);
+    double pose[9];
+    RotationTaking(u, sun_hat, pose);
+    const PointDetail d = ctx.Detail(pose, 0.0);
+    OrbitFactorPoint point;
+    point.theta_rad = theta;
+    point.rho_theta = marginal.SpinOrbitThetaDensity(theta);
+    point.entry_measure_a2 = d.entry_measure_a2;
+    point.total_transmission = d.total_transmission;
+    point.valid = d.valid;
+    orbit.points.push_back(point);
+    FiberSample& sample = stream.samples[static_cast<size_t>(i)];
+    for (int c = 0; c < 3; c++) {
+      sample.u[c] = u[c];
+    }
+    sample.area = d.entry_measure;
+    sample.transmission = d.total_transmission;
+    sample.valid = d.valid;
+    sample.parameter = theta;
+    sample.weight = dtheta;
+  }
+  const FiberQuadratureResult q = QuadratureIntensity(marginal, stream, /*angular_tol_rad=*/0.0);
+  orbit.integral = q.intensity;
+  orbit.kept_count = q.kept;
+  return orbit;
+}
+
 // The last valid point on the segment from a valid u_valid towards an invalid u_invalid (normalised
 // chords; both are one grid cell apart). Adds D there.
 void AddBoundaryDeviation(const PathContext& ctx, const double u_valid[3], const double u_invalid[3],
@@ -406,7 +596,7 @@ void AddBoundaryDeviation(const PathContext& ctx, const double u_valid[3], const
 // Range of D on the reach probe at `lat_count` rows: valid cell centres plus the bisected validity
 // boundary on every valid/invalid neighbour edge (latitude neighbours, and longitude neighbours
 // across the periodic seam).
-DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count) {
+DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count, const analytic::DiscoveryStop* stop) {
   SunSphereGrid layout;
   layout.lat_count = lat_count;
   layout.lon_count = 2 * lat_count;
@@ -416,6 +606,9 @@ DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count) {
   std::vector<uint8_t> valid(cells, 0);
   DeviationRange range;
   for (int i = 0; i < lat_count; i++) {
+    if (stop != nullptr && stop->Stopped()) {
+      break;
+    }
     for (int j = 0; j < lon_count; j++) {
       const size_t cell = static_cast<size_t>(i) * static_cast<size_t>(lon_count) + static_cast<size_t>(j);
       double* u = centre.data() + 3 * cell;
@@ -446,12 +639,12 @@ DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count) {
   return range;
 }
 
-ReachSummary ProbeReach(const PathContext& ctx, double target_deviation) {
+ReachSummary ProbeReach(const PathContext& ctx, double target_deviation, const analytic::DiscoveryStop* stop) {
   ReachSummary reach;
   reach.probe_lat_count = kReachProbeLatCount;
   reach.target_deviation_rad = target_deviation;
-  const DeviationRange fine = ProbeDeviationRange(ctx, kReachProbeLatCount);
-  const DeviationRange coarse = ProbeDeviationRange(ctx, kReachProbeLatCount / 2);
+  const DeviationRange fine = ProbeDeviationRange(ctx, kReachProbeLatCount, stop);
+  const DeviationRange coarse = ProbeDeviationRange(ctx, kReachProbeLatCount / 2, stop);
   if (!fine.any) {
     reach.deviation_min_rad = std::numeric_limits<double>::quiet_NaN();
     reach.deviation_max_rad = std::numeric_limits<double>::quiet_NaN();
@@ -470,6 +663,207 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation) {
   reach.target_in_range = target_deviation >= reach.deviation_min_rad - reach.tolerance_rad &&
                           target_deviation <= reach.deviation_max_rad + reach.tolerance_rad;
   return reach;
+}
+
+}  // namespace
+
+// ---- the survey context ---------------------------------------------------------------------------
+
+namespace {
+
+// The schema-4 value model's harvest: the facts the context reads, read once off the assembled
+// document (the warm reader's JSON arm mirrors this — the two must read the same blocks, the
+// dual-arm oracle test pins them field-for-field). Members are the card's first layer: the
+// support partition ran on the entry faces, and both arms read that same layer, so a future
+// multi-layer document changes the answer on both sides together or not at all. A support_set
+// with zero intervals harvests nothing — has_support stays false and the context answers
+// survey_carries_no_support, the same shape as a document without support at all.
+SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
+  SurveyWarmSource out;
+  out.early_stopped = doc.early_stopped;
+  out.has_scope = true;
+  out.wavelength_nm = doc.wavelength_nm;
+  out.wavelength_source = doc.wavelength_source;
+  out.sun_altitude_deg = doc.sun_altitude_deg;
+  out.sun_azimuth_deg = doc.sun_azimuth_deg;
+  for (const survey::SurveyObject& card : doc.objects) {
+    if (card.support_set.has_value()) {
+      for (const survey::SurveyObject::Interval& interval : card.support_set->intervals) {
+        SurveyWarmSource::SupportInterval out_interval;
+        out_interval.lower_deg = interval.lower_deg;
+        out_interval.upper_deg = interval.upper_deg;
+        out_interval.members = card.members.empty() ? std::vector<int>{} : card.members.front();
+        out.intervals.push_back(std::move(out_interval));
+      }
+    }
+    if (card.caustic_edge.has_value()) {
+      out.has_edge = true;
+      out.edge_deg = card.caustic_edge->position_deg;
+    }
+  }
+  out.has_support = !out.intervals.empty();
+  if (!doc.probes.empty()) {
+    const survey::SurveyProbe& probe = doc.probes.front();
+    out.has_probe = true;
+    out.probe_bin_deg = probe.spec.bin_deg;
+    for (const survey::SurveyProbeSample& sample : probe.samples) {
+      out.probe_samples.push_back({ sample.delta_deg, sample.value });
+    }
+  }
+  out.has_measure_echo = doc.family_routing.has_value();
+  if (out.has_measure_echo) {
+    const auto read_dim = [](const survey::FamilyDimMeasure& dim, SurveyWarmSource::MeasureDimEcho* e) {
+      e->kind = survey::FamilyDimKindName(dim.kind);
+      e->center_deg = dim.center_deg;
+      e->width_deg = dim.width_deg;
+    };
+    read_dim(doc.family_routing->measure.zenith, &out.measure_zenith);
+    read_dim(doc.family_routing->measure.azimuth, &out.measure_azimuth);
+    read_dim(doc.family_routing->measure.roll, &out.measure_roll);
+  }
+  return out;
+}
+
+// The context's answers, read off a harvest (warm document or inline assembly — the same shape).
+void FillContextFromSource(const SurveyWarmSource& warm, const SinglePathMetadata& meta, SurveyContextBlock* out) {
+  const double delta = meta.target_deviation_deg;
+  const SurveyWarmSource::SupportInterval* containing = nullptr;
+  const SurveyWarmSource::SupportInterval* closest = nullptr;
+  double closest_distance = std::numeric_limits<double>::infinity();
+  for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
+    if (delta >= interval.lower_deg && delta <= interval.upper_deg) {
+      containing = &interval;
+      break;
+    }
+    const double d = delta < interval.lower_deg ? interval.lower_deg - delta : delta - interval.upper_deg;
+    if (d < closest_distance) {
+      closest_distance = d;
+      closest = &interval;
+    }
+  }
+  if (warm.early_stopped) {
+    out->object.state = "unevaluated";
+    out->object.reason = "survey_early_stopped_no_delta_axis";
+    out->edge.state = "unevaluated";
+    out->edge.reason = "survey_early_stopped_no_delta_axis";
+  } else if (!warm.has_support) {
+    out->object.state = "unevaluated";
+    out->object.reason = "survey_carries_no_support";
+    out->edge.state = "unevaluated";
+    out->edge.reason = "survey_carries_no_support";
+  } else {
+    // The partition containment is a certified structural fact; the nearest reading inherits it.
+    const SurveyWarmSource::SupportInterval& hit = containing != nullptr ? *containing : *closest;
+    out->object.state = "certified";
+    out->target_inside_support = containing != nullptr;
+    out->object_kind = "support_set";
+    out->object_members = hit.members;
+    out->object_distance_deg = containing != nullptr ? 0.0 : closest_distance;
+    double edge_distance = std::numeric_limits<double>::infinity();
+    const char* basis = "";
+    for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
+      const double lo = std::fabs(delta - interval.lower_deg);
+      const double hi = std::fabs(delta - interval.upper_deg);
+      if (lo < edge_distance) {
+        edge_distance = lo;
+        basis = "support_interval_endpoint";
+      }
+      if (hi < edge_distance) {
+        edge_distance = hi;
+        basis = "support_interval_endpoint";
+      }
+    }
+    if (warm.has_edge) {
+      const double d = std::fabs(delta - warm.edge_deg);
+      if (d < edge_distance) {
+        edge_distance = d;
+        basis = "caustic_edge_position";
+      }
+    }
+    out->edge.state = "finite";
+    out->edge_distance_deg = edge_distance;
+    out->edge_basis = basis;
+  }
+
+  // The band-sum reading: warm documents only, under the scope gate's exact-equality comparison
+  // (both sides resolved the same way, so equal configs give bit-equal doubles here).
+  if (out->source == "inline") {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "inline_context_runs_no_probe";
+  } else if (out->warm_index_absent) {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "warm_index_absent";
+  } else if (!warm.has_probe) {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "warm_document_has_no_probe";
+  } else if (!warm.has_scope) {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "scope_field_missing";
+  } else if (meta.wavelength_nm != warm.wavelength_nm || meta.sun_altitude_deg != warm.sun_altitude_deg ||
+             meta.sun_azimuth_deg != warm.sun_azimuth_deg) {
+    out->band_sum.state = "unevaluated";
+    out->band_sum.reason = "scope_value_mismatch";
+  } else {
+    const SurveyWarmSource::ProbeSample* best = nullptr;
+    double best_distance = std::numeric_limits<double>::infinity();
+    for (const SurveyWarmSource::ProbeSample& sample : warm.probe_samples) {
+      const double d = std::fabs(delta - sample.delta_deg);
+      if (d < best_distance) {
+        best_distance = d;
+        best = &sample;
+      }
+    }
+    if (best == nullptr) {
+      out->band_sum.state = "unevaluated";
+      out->band_sum.reason = "warm_document_has_no_probe";
+    } else {
+      out->band_sum.state = "finite";
+      out->band_sum_value = best->value;
+      out->band_sum_delta_deg = best->delta_deg;
+      out->band_sum_bin_deg = warm.probe_bin_deg;
+      out->band_sum_caliber = "the warm document's solar-radial band-sum profile at wavelength " +
+                              std::to_string(warm.wavelength_nm) + " nm (" + warm.wavelength_source + "), sun at " +
+                              std::to_string(warm.sun_altitude_deg) + "/" + std::to_string(warm.sun_azimuth_deg) +
+                              " — identity-verified against this query";
+    }
+  }
+}
+
+// The survey context for this query: warm harvest when a schema-4 document passed the gates, the
+// context-only T0-T2 assembly otherwise (and also under the warm_index_absent degradation, which
+// still declares itself in the block).
+void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& request, const SinglePathMetadata& meta,
+                        SurveyContextBlock* out) {
+  if (request.warm_survey.has_value()) {
+    out->source = "warm";
+    out->warm_index_absent = !request.warm_survey->index_present;
+  } else {
+    out->source = "inline";
+  }
+  const SurveyWarmSource* warm =
+      request.warm_survey.has_value() && request.warm_survey->index_present ? &*request.warm_survey : nullptr;
+  SurveyWarmSource inline_harvest;
+  if (warm == nullptr) {
+    SurveyRequest survey_request;
+    survey_request.crystal_id = request.crystal_id;
+    survey_request.path_layers = request.path_layers;
+    survey_request.symmetry_bits = survey::kDefaultSymmetryBits;
+    survey_request.wavelength_nm = meta.wavelength_nm;
+    survey::SurveyDocument doc;
+    const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
+    if (!e.Ok()) {
+      out->object.state = "unevaluated";
+      out->object.reason = "inline_survey_refused";
+      out->edge.state = "unevaluated";
+      out->edge.reason = "inline_survey_refused";
+      out->band_sum.state = "unevaluated";
+      out->band_sum.reason = "inline_survey_refused";
+      return;
+    }
+    inline_harvest = HarvestSurveyDocument(doc);
+    warm = &inline_harvest;
+  }
+  FillContextFromSource(*warm, meta, out);
 }
 
 }  // namespace
@@ -584,13 +978,27 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   meta.wavelength_source = wavelength.source;
   meta.refractive_index = wavelength.refractive_index;
   const analytic::ContinuationParams params;
+  // The budget, resolved once at entry; polled at loop boundaries only. A stopped run serializes
+  // its partial document with meta.interrupted — an honest early exit, not a failure.
+  const analytic::DiscoveryStop stop{ request.budget_ms > 0 ? std::chrono::steady_clock::now() +
+                                                                  std::chrono::milliseconds(request.budget_ms) :
+                                                              std::chrono::steady_clock::time_point::max(),
+                                      request.interrupted };
+  const auto stopped = [&stop]() { return stop.Stopped(); };
+  meta.budget_ms = request.budget_ms > 0 ? request.budget_ms : 0;
   meta.sample_count = request.sample_count;
   meta.band_half_width_rad = analytic::kDefaultBandHalfWidth;
   meta.cluster_radius_rad = analytic::kDefaultClusterRadius;
   meta.distance_threshold_rad = params.closure_distance;
   meta.warm_seed_count = warm_count;
 
-  PathContext ctx(table, polygons, slots, wavelength.refractive_index, meta.incident_direction);
+  PathContext ctx(table, polygons, slots, wavelength.refractive_index, meta.incident_direction,
+                  crystal_it->second.axis_);
+
+  // The declared measure: one u-marginal for the registration and (rank 0) the orbit integral.
+  const double sun_hat[3] = { -meta.incident_direction[0], -meta.incident_direction[1], -meta.incident_direction[2] };
+  const UMarginal marginal = MakeUMarginal(crystal_it->second.axis_, sun_hat);
+  result.measure_registration = RegisterMeasure(marginal, crystal_it->second.axis_);
 
   // ---- rank 0, and whether the path is realisable at all ----
   const RankProbe rank = ProbeRank(ctx);
@@ -604,12 +1012,22 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   }
 
   if (request.sun_grid_lat_count > 0) {
-    BuildSunGrid(request.sun_grid_lat_count, &ctx, &result.sun_grid);
+    BuildSunGrid(request.sun_grid_lat_count, &ctx, &result.sun_grid, &stop);
+    if (stopped()) {
+      meta.interrupted = true;
+    }
   }
+
+  // The survey context defers (SurveyContextOf / EnsureSurveyContext): the inline branch's
+  // context-only T0-T2 assembly IS the delta partition — measured as the analysis's dominant
+  // cost — so it must not tax consumers that never read the context. The bridge's one-shot
+  // serialization computes and caches it; the deadline gate stays on the discovery legs only.
+  result.context_config = std::make_shared<const ConfigManager>(config);
+  result.context_request = request;
 
   if (rank.rank_zero) {
     result.outcome = Outcome::kPointMass;
-    const double sun[3] = { -meta.incident_direction[0], -meta.incident_direction[1], -meta.incident_direction[2] };
+    const double sun[3] = { sun_hat[0], sun_hat[1], sun_hat[2] };
     double pose[9];
     RotationTaking(rank.first_valid_u, sun, pose);
     const PointDetail probe = ctx.Detail(pose, 0.0);
@@ -619,19 +1037,36 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     DirToAltAz(result.point_mass.direction, &result.point_mass.altitude_deg, &result.point_mass.azimuth_deg);
     result.point_mass.target_separation_deg =
         analytic::so3::AngleBetween(result.point_mass.direction, meta.target_direction) * math::kRadToDegreeD;
+    result.point_mass.orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat, &stop);
+    if (stopped()) {
+      meta.interrupted = true;
+    }
     *out = std::move(result);
     return {};
   }
 
   // ---- discovery and the fibers ----
   result.outcome = Outcome::kDiscovered;
-  result.reach = ProbeReach(ctx, delta);
+  result.reach = ProbeReach(ctx, delta, &stop);
+  if (stopped()) {
+    meta.interrupted = true;
+  }
   analytic::IceDiscovery discovery(table, polygons, ctx.Slots().data(), ctx.SlotCount(), ctx.Index(), ctx.Incident());
   const analytic::DiscoveryOutput found =
       discovery.Discover(meta.target_direction, request.sample_count, meta.band_half_width_rad,
                          request.warm_seeds.empty() ? nullptr : request.warm_seeds.data(), warm_count,
-                         meta.cluster_radius_rad, meta.distance_threshold_rad, params);
+                         meta.cluster_radius_rad, meta.distance_threshold_rad, params, &stop);
+  if (stopped()) {
+    // The honest stop marker is meta.interrupted; discovery.complete below keeps its procedural
+    // candidate-conversion semantics — a band stopped mid-way may still read complete, because
+    // the lattice points it never explored never became candidates.
+    meta.interrupted = true;
+  }
   for (const analytic::DiscoveredComponent& c : found.components) {
+    if (stopped()) {
+      meta.interrupted = true;
+      break;  // the unconverted components stay unconverted: the document is partial, marked so
+    }
     result.components.push_back(ToComponent(c, &ctx));
   }
   for (const analytic::IncompleteCandidate& c : found.incomplete) {
@@ -651,6 +1086,28 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   s.incomplete_not_converged = found.incomplete_not_converged;
   *out = std::move(result);
   return {};
+}
+
+
+SurveyContextBlock SurveyContextOf(const SinglePathResult& result) {
+  if (result.survey_context_ready) {
+    return result.survey_context;
+  }
+  SurveyContextBlock out;
+  if (result.context_config != nullptr) {
+    BuildSurveyContext(*result.context_config, result.context_request, result.meta, &out);
+  }
+  return out;
+}
+
+void EnsureSurveyContext(SinglePathResult* result) {
+  if (result->survey_context_ready) {
+    return;
+  }
+  result->survey_context = SurveyContextOf(*result);
+  result->survey_context_ready = true;
+  result->context_config.reset();
+  result->context_request = SinglePathRequest{};
 }
 
 }  // namespace lumice::raypath
