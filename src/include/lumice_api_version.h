@@ -510,6 +510,13 @@
 // survey document gains optional document-level leg blocks (tir_share, mc_region_ess);
 // documents that do not run them are byte-identical to v4.54's. No existing symbol or struct
 // layout changed for old callers.
-#define LUMICE_API_VERSION 455
+// ADDED (v4.56): the point query's budget and interruption suffix, a pure append —
+// LUMICE_SinglePathRequest gains the struct_size-gated trailing deadline_ms (0 = the documented
+// default; at most LUMICE_SINGLE_PATH_MAX_BUDGET_MS) and const volatile int* interrupted (the
+// caller's one-way stop flag), plus the LUMICE_SINGLE_PATH_{DEFAULT,MAX}_BUDGET_MS macro pair.
+// The CLI surface migrates to the four-command family (raypath point / raypath report), the
+// schema-1 document gains append-only factor fields, and the schema-4 survey document gains the
+// warm_index block; no existing symbol or struct layout changed for old callers.
+#define LUMICE_API_VERSION 456
 
 #endif  // LUMICE_API_VERSION_H_
