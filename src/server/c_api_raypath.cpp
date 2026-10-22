@@ -201,6 +201,9 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
     return Refuse(e, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_SinglePathResult_>();
+  // The one-shot serialization computes the deferred survey context exactly once and caches it
+  // in the result (results that never serialize never pay the context-only T0-T2 assembly).
+  rp::EnsureSurveyContext(&result);
   handle->json = rp::ToJson(result, LUMICE_GetVersionString());
   *out = handle.release();
   return LUMICE_OK;

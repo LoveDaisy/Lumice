@@ -1018,12 +1018,12 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     }
   }
 
-  // The survey context: where the target sits in the survey's structure (warm harvest, or this
-  // request's own context-only T0-T2 assembly). Independent of the outcome branch. The inline
-  // assembly runs before the discovery loop and outside the deadline by design: T0-T2 is cheap
-  // and bounded (the document's own budget accounting rides the discovery legs below), so the
-  // stop is deliberately not polled here.
-  BuildSurveyContext(config, request, meta, &result.survey_context);
+  // The survey context defers (SurveyContextOf / EnsureSurveyContext): the inline branch's
+  // context-only T0-T2 assembly IS the delta partition — measured as the analysis's dominant
+  // cost — so it must not tax consumers that never read the context. The bridge's one-shot
+  // serialization computes and caches it; the deadline gate stays on the discovery legs only.
+  result.context_config = std::make_shared<const ConfigManager>(config);
+  result.context_request = request;
 
   if (rank.rank_zero) {
     result.outcome = Outcome::kPointMass;
@@ -1086,6 +1086,28 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   s.incomplete_not_converged = found.incomplete_not_converged;
   *out = std::move(result);
   return {};
+}
+
+
+SurveyContextBlock SurveyContextOf(const SinglePathResult& result) {
+  if (result.survey_context_ready) {
+    return result.survey_context;
+  }
+  SurveyContextBlock out;
+  if (result.context_config != nullptr) {
+    BuildSurveyContext(*result.context_config, result.context_request, result.meta, &out);
+  }
+  return out;
+}
+
+void EnsureSurveyContext(SinglePathResult* result) {
+  if (result->survey_context_ready) {
+    return;
+  }
+  result->survey_context = SurveyContextOf(*result);
+  result->survey_context_ready = true;
+  result->context_config.reset();
+  result->context_request = SinglePathRequest{};
 }
 
 }  // namespace lumice::raypath

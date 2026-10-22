@@ -20,6 +20,7 @@
 // (sky_direction.hpp: the sky point a direction comes from sits at altitude asin(-z)).
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -510,13 +511,28 @@ struct SinglePathResult {
   // The declared measure's registration (kDiscovered only; the point-mass branch carries its own
   // face inside OrbitFactors). A rho consumer reads this before treating a rho of 0 as dark.
   MeasureRegistration measure_registration;
-  // Where the target sits in the survey's structure (always computed: from the warm document's
-  // facts, or from a context-only T0-T2 assembly on this request's config).
+  // Where the target sits in the survey's structure: from the warm document's facts, or from a
+  // context-only T0-T2 assembly on this request's config. Computed on demand (SurveyContextOf):
+  // the inline branch runs the delta partition — the analysis's dominant cost — and consumers
+  // that never read the context (the report chain, discovery internals) must not pay it.
   SurveyContextBlock survey_context;
+  // The deferral inputs, retained until the context is first computed; dropped afterwards.
+  bool survey_context_ready = false;
+  std::shared_ptr<const ConfigManager> context_config;
+  SinglePathRequest context_request;
 };
 
 // The whole analysis. On error `out` is left default-constructed.
 Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& request, SinglePathResult* out);
+
+// The survey context on demand: the stored block when already computed, else built from the
+// retained deferral inputs (a warm document's facts directly; otherwise the context-only T0-T2
+// assembly). Pure — the result is not modified.
+SurveyContextBlock SurveyContextOf(const SinglePathResult& result);
+
+// Computes the context once and stores it (idempotent; drops the retained inputs). The C API
+// bridge calls this before its one-shot serialization so a result's json computes it exactly once.
+void EnsureSurveyContext(SinglePathResult* result);
 
 }  // namespace lumice::raypath
 
