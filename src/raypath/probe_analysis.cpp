@@ -284,14 +284,15 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   const survey::ProbeFrame frame = survey::MakeProbeFrame(meta.incident_direction);
   meta.at_azimuth_about_sun_deg = FrameAzimuthOf(frame, meta.at_direction);
 
-  meta.budget_ms = request.budget_ms > 0 ? request.budget_ms : 0;
+  // The budget: 0 = the documented default at this layer too (the bridge resolves the same
+  // constant before the call; a direct caller passes 0 and gets the identical semantics), and
+  // meta echoes the value that applies.
+  meta.budget_ms = request.budget_ms > 0 ? request.budget_ms : kDefaultProbeBudgetMs;
 
   // The deadline (the point query's shape): resolved once at entry, polled at the per-lambda
   // BandSum boundaries; a stopped run serializes the profiles it has — meta.interrupted, an
   // honest early exit, never a failure.
-  const analytic::DiscoveryStop stop{ request.budget_ms > 0 ? std::chrono::steady_clock::now() +
-                                                                  std::chrono::milliseconds(request.budget_ms) :
-                                                              std::chrono::steady_clock::time_point::max(),
+  const analytic::DiscoveryStop stop{ std::chrono::steady_clock::now() + std::chrono::milliseconds(meta.budget_ms),
                                       request.interrupted };
   const auto stopped = [&stop]() { return stop.Stopped(); };
 
@@ -458,12 +459,15 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
       profile.samples = std::move(profiles.front().samples);
     }
 
-    // The readings: the edge (first non-empty bin) and the peak (the argmax), two things.
+    // The readings: the edge (first non-empty bin) and the peak (the argmax), two things, on the
+    // line's sweep coordinate — the deviation for the axis forms, the azimuth for the arc forms
+    // (the rule the dark decomposition's bounds already follow; on a constant-delta arc a delta
+    // reading would be a constant echo, a position of nothing).
     std::vector<double> centres(profile.samples.size());
     std::vector<double> values(profile.samples.size());
     std::vector<int> counts(profile.samples.size());
     for (size_t k = 0; k < profile.samples.size(); k++) {
-      centres[k] = profile.samples[k].delta_deg;
+      centres[k] = arc_form ? profile.samples[k].azimuth_deg : profile.samples[k].delta_deg;
       values[k] = profile.samples[k].value;
       counts[k] = profile.samples[k].k;
     }
@@ -483,9 +487,11 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   }
 
   // The red-edge width: the 650 nm profile's edge minus the reference (first) profile's edge,
-  // when both exist and differ as profiles.
+  // when both exist and differ as profiles. An axis-form quantity — the edges it subtracts sit
+  // on the deviation axis (the C09 anchor's delta-axis quantity), and an arc form's edges would
+  // be azimuth positions with no width meaning.
   const double kRedNm = survey::kChromaticRedNm;
-  if (result.profiles.size() >= 2) {
+  if (result.profiles.size() >= 2 && !arc_form) {
     const ProbeProfile* red = nullptr;
     for (const ProbeProfile& p : result.profiles) {
       if (p.evidence_state == "finite" && p.wavelength_nm == kRedNm) {

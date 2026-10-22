@@ -48,7 +48,8 @@ nlohmann::ordered_json Conventions() {
       "(lattice-deterministic, no seed dependence — a probe consumes no fiber seeds). The reuse "
       "criterion's premise is the ruler constants being schema: bin, wedge and lattice count are "
       "schema, so the asked grid matching the warm grid is the whole check; the azimuth is absent "
-      "from the comparison on purpose (the radial form's declared azimuth-free value)" },
+      "from the comparison on purpose (the radial form's azimuth-free value — a uniform-density "
+      "property, as the value convention above states it)" },
     { "null", "a number that is not defined (NaN) is written as null" },
   };
 }

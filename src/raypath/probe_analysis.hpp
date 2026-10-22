@@ -140,9 +140,10 @@ struct ProbeProfile {
   std::string along;  // ProbeAlongName's spelling, echoed
   // The line's spec — every number a reader needs to reproduce the line (the caliber discipline:
   // schema, echoed, never a knob). The extent is the bins' actual span: the axis forms' window
-  // ends at the last bin's hi edge, and the arc forms carry the wedge-clamped extent (the constant
-  // delta ± the wedge half width) — the constant deviation itself lives in each sample's delta_deg.
-  double delta_min_deg = 0.0;          // the line's delta extent; the arc forms carry the wedge-clamped
+  // ends at the last bin's hi edge, and the arc forms carry an extent of wedge_half_width_deg
+  // total width, centred on the constant delta (delta ± half of it) — the constant deviation
+  // itself lives in each sample's delta_deg.
+  double delta_min_deg = 0.0;          // the line's delta extent; the arc forms carry the wedge-wide
   double delta_max_deg = 0.0;          // extent, not the bare constant (see above)
   double azimuth_deg = 0.0;            // the line's azimuth (axis forms) or centre azimuth (arc forms)
   double window_half_width_deg = 0.0;  // 0 = the full axis

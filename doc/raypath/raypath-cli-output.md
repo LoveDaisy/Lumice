@@ -406,13 +406,17 @@ document's, the document carries a probe at the same 0.1-degree bin, and the req
 lattice equals the count the warm values were computed at. The profile then names its provenance
 `warm_reused` (the values are the document's own, checked bin-centre bit-equal; zero band-sum
 calls) and every other profile names itself `recomputed`. The azimuth is deliberately absent from
-the comparison: the radial profile's value is azimuth-free, the form's declared semantics.
+the comparison: the radial profile's value is azimuth-free — a uniform-density property, the
+condition `conventions.value` states — the form's declared semantics.
 
 *The reuse criterion's premise.* That check is the whole check because the ruler constants are
 schema: the 0.1-degree bin, the survey wedge, and the lattice n are constants of the probe's
 caliber, echoed in every profile's spec, so the asked grid matching the warm grid is guaranteed by
 the constants being equal. If any of them ever becomes a knob, the reuse criterion must grow the
-comparison — a knobbed ruler silently reuses values computed on a different ruler otherwise.
+comparison — a knobbed ruler silently reuses values computed on a different ruler otherwise. The
+azimuth exemption rides its own stated condition: the radial value is azimuth-free under the
+uniform density (`conventions.value`), and a measure outside that condition has no azimuth-free
+line to exempt.
 
 **Versions.** The schema-4 arm does not compare `schema_version` (the schema-1 arm above does):
 the family name is the discriminator, `warm_index.produced_for` records what produced the
@@ -1302,18 +1306,18 @@ request already fixes and a named mode — never silence.
 | `meta` | The request as applied: `crystal` (id, kind, shape scalars, `shape_is_nominal`, pyramid wedges), `faces`, `sun`, `at` (altitude/azimuth/direction/`deviation_deg`/`azimuth_about_sun_deg`), `wavelengths` (one entry per profile: `nm`, `source`, `refractive_index`), `budget_ms`, `interrupted`. |
 | `context` | Where the at point sits in the survey's structure — the point document's `survey_context` shape (§3.12), read at the at point: `source` (`warm` \| `inline`), `warm_index_absent`, and the `object` / `edge` / `band_sum` fields with their own states. |
 | `profiles` | One per requested wavelength, in order (§10.2). |
-| `derived` | Present when a 650 nm profile and the reference (the first requested) profile both carry edge readings: `red_edge_width_deg` (the red edge minus the reference edge — the C09 anchor's quantity) and `rule` spelling how it was formed. |
+| `derived` | Present when the request is an axis form and a 650 nm profile and the reference (the first requested) profile both carry edge readings: `red_edge_width_deg` (the red edge minus the reference edge — the C09 anchor's deviation-axis quantity) and `rule` spelling how it was formed. An arc form's edges are azimuth positions, and no width is derived from them. |
 
 ### 10.2 `profiles[]`
 
 | Key | Meaning |
 |---|---|
 | `along` | The form, echoed: `radial` \| `edge-normal` \| `arc` \| `tangential`. |
-| `spec` | The line's caliber, echoed: `delta_min_deg` / `delta_max_deg` (the line's delta extent — the bins' actual span; the arc forms carry the wedge-clamped extent, delta ± `wedge_half_width`, while the constant deviation itself lives in each sample's `delta_deg`), `azimuth_deg` (the axis forms' line azimuth, the arc forms' centre azimuth), `window_half_width_deg` (0 = the full axis), `bin_deg`, `wedge_half_width_deg`, `semantics` (what the form claims — the radial form's azimuth-free value, the arc form's constant-delta reading, the edge-normal's anchor rule), `wavelength_nm`, `refractive_index`, `sample_count`, `lattice` (`antipodal_fibonacci`), `deterministic` (a probe consumes no seeds), `representative`, `member_count`. The edge-normal form adds `anchor_basis` (`support_interval_endpoint` \| `caustic_edge_position`) and `anchor_deg`. |
+| `spec` | The line's caliber, echoed: `delta_min_deg` / `delta_max_deg` (the line's delta extent — the bins' actual span; the arc forms carry an extent of `wedge_half_width_deg` total width, the constant delta ± half of it, while the constant deviation itself lives in each sample's `delta_deg`), `azimuth_deg` (the axis forms' line azimuth, the arc forms' centre azimuth), `window_half_width_deg` (0 = the full axis), `bin_deg`, `wedge_half_width_deg`, `semantics` (what the form claims — the radial form's azimuth-free value, the arc form's constant-delta reading, the edge-normal's anchor rule), `wavelength_nm`, `refractive_index`, `sample_count`, `lattice` (`antipodal_fibonacci`), `deterministic` (a probe consumes no seeds), `representative`, `member_count`. The edge-normal form adds `anchor_basis` (`support_interval_endpoint` \| `caustic_edge_position`) and `anchor_deg`. |
 | `source` | The reading's provenance: `warm_reused` (the values are the warm document's own radial samples, checked bin-centre bit-equal against the asked grid — zero band-sum calls) or `recomputed` (band-sum ran here; lattice-deterministic, no seed dependence). The premise — the ruler constants are schema — is stated in `conventions.source` and §5. |
 | `evidence` | `state: "finite"` with a `coverage` block (the spec's caliber restated: members evaluated, geometry basis, wavelength, lattice n, bin, delta domain, determinism, representative, member count), or `state: "refused"` with `mode`: `no_edge_in_context` (an edge-normal form with neither a support endpoint nor a certified edge in the context), `degenerate_arc_at_pole` (an arc through the sun or its antipode is not a circle there), `measure_not_expressible` (the config's axis maps to no pose density — the band-sum has no measure to read), `inline_survey_refused` (an edge-normal form whose inline context assembly refused — the context blocks carry the same named reason). |
 | `samples[]` | Finite only. One row per bin: `delta_deg` and `azimuth_deg` (the bin centre's two coordinates in the line's plane), `value` (per sr, the band-sum convention), `k` (the bin's event count), `k_eff`. |
-| `readings` | Finite only. `has_edge` / `edge_deg` (the first non-empty bin's centre — where events start, finite to half a bin) and `has_peak` / `peak_deg` / `peak_value` / `separation_deg` (the value argmax — where the profile is brightest; a different thing from the edge, and the two stay two fields). |
+| `readings` | Finite only. `has_edge` / `edge_deg` (the first non-empty bin's centre — where events start, finite to half a bin) and `has_peak` / `peak_deg` / `peak_value` / `separation_deg` (the value argmax — where the profile is brightest; a different thing from the edge, and the two stay two fields). The positions sit on the line's sweep coordinate: the deviation for the axis forms, the azimuth for the arc forms (the same rule the `dark_regions` bounds follow). |
 | `dark_regions` | Finite only. `segments[]`: consecutive bin runs classified against the context's support — `inside_support_positive` (bins with events), `inside_support_zero` (bins without events inside the support: a weak tail, never clamped into a written zero), `outside_support` (geometrically dark), `unknown` (the context did not certify a support; the run carries its named cause). Each run: `kind`, `lo_deg` / `hi_deg` (along the line's sweep coordinate: deviation for the axis forms, azimuth for the arc forms), `bin_count`, and `reason` when unknown. |
 
 ### 10.3 The forms' two line geometries

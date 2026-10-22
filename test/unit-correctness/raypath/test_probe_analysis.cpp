@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstring>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
 #include "raypath/probe_analysis.hpp"
+#include "raypath/probe_json.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath {
@@ -139,6 +141,15 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   EXPECT_EQ(result.profiles.front().source, "recomputed");
   EXPECT_EQ(result.context.band_sum.state, "unevaluated");
   EXPECT_EQ(result.context.band_sum.reason, "scope_value_mismatch");
+
+  // The lattice is part of the same gate: a warm document computed at another n recomputes too.
+  ProbeRequest other_lattice = RadialRequest(config, -30.0, 0.0);
+  other_lattice.sample_count = 10000;
+  other_lattice.warm_survey = CraftedWarm(550.0, 20000);
+  ProbeResult lattice_result;
+  ASSERT_TRUE(AnalyzePathProbe(config, other_lattice, &lattice_result).Ok());
+  ASSERT_EQ(lattice_result.profiles.size(), 1u);
+  EXPECT_EQ(lattice_result.profiles.front().source, "recomputed");
 }
 
 // The edge-normal form: the window anchors at the nearest of the support endpoints and the
@@ -208,6 +219,15 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   }
   EXPECT_NEAR(profile.samples.front().azimuth_deg, -9.95, 1e-9);
   EXPECT_NEAR(profile.samples.back().azimuth_deg, 9.95, 1e-9);
+
+  // The readings sit on the sweep coordinate (the azimuth here): a position on the arc, never
+  // the constant-delta echo — the same rule the dark decomposition's bounds follow.
+  ASSERT_TRUE(profile.readings.has_edge);
+  ASSERT_TRUE(profile.readings.has_peak);
+  EXPECT_GE(profile.readings.edge_deg, -10.0);
+  EXPECT_LE(profile.readings.edge_deg, 10.0);
+  EXPECT_GE(profile.readings.peak_deg, -10.0);
+  EXPECT_LE(profile.readings.peak_deg, 10.0);
 
   // The degenerate pole: an arc through the sun itself is not a circle there.
   ProbeRequest degenerate = RadialRequest(config, 0.0, 0.0);
@@ -358,6 +378,86 @@ TEST(ProbeCApi, UnknownAlongFormIsRefusedByName) {
   EXPECT_NE(LUMICE_AnalyzePathProbe(scene.get(), &req.c, &out, err, sizeof(err)), LUMICE_OK);
   EXPECT_EQ(out, nullptr);
   EXPECT_NE(std::string(err).find("along"), std::string::npos) << err;
+}
+
+// The schema-5 wire shape, pinned at v1 (append-only from here): the top-level key order, the
+// spec's key set and extent echo, the two evidence shapes, and the dark-region keys — plus the
+// produced-once contract (a second ToJson call is byte-identical).
+TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
+  const ConfigManager config = survey::RandomPrismScene();
+
+  ProbeRequest finite_request = RadialRequest(config, -30.0, 0.0);
+  finite_request.wavelengths_nm = { 550.0 };
+  finite_request.sample_count = 20000;
+  finite_request.warm_survey = CraftedWarm(550.0, 20000);
+  ProbeResult finite_result;
+  ASSERT_TRUE(AnalyzePathProbe(config, finite_request, &finite_result).Ok());
+
+  ProbeRequest refused_request = RadialRequest(config, -30.0, 0.0);
+  refused_request.along = ProbeAlong::kEdgeNormal;
+  // A warm document that certifies neither a support nor an edge: the form's named refusal,
+  // without paying the inline arm's delta partition (the CI budget's unit).
+  SurveyWarmSource empty_warm = CraftedWarm(550.0, 20000);
+  empty_warm.intervals.clear();
+  empty_warm.has_support = false;
+  empty_warm.has_edge = false;
+  refused_request.warm_survey = empty_warm;
+  ProbeResult refused_result;
+  ASSERT_TRUE(AnalyzePathProbe(config, refused_request, &refused_result).Ok());
+
+  const std::string finite_json = ProbeToJson(finite_result, "test");
+  EXPECT_EQ(finite_json, ProbeToJson(finite_result, "test"));  // produced once, byte-identical
+
+  const nlohmann::ordered_json doc = nlohmann::ordered_json::parse(finite_json);
+  EXPECT_EQ(doc["schema"], "lumice.path-probe");
+  EXPECT_EQ(doc["schema_version"], 5);
+  static const char* kTopKeys[] = { "schema", "schema_version", "generator", "conventions",
+                                    "meta",   "context",        "profiles" };
+  size_t k = 0;
+  for (const auto& item : doc.items()) {
+    if (k >= std::size(kTopKeys)) {
+      ADD_FAILURE() << "more top-level keys than the pinned v1 set: " << item.key();
+      break;
+    }
+    EXPECT_EQ(item.key(), kTopKeys[k++]);
+  }
+  EXPECT_EQ(k, std::size(kTopKeys));  // no derived on this request: one wavelength
+
+  const nlohmann::ordered_json profile = doc.at("profiles").at(0);
+  EXPECT_EQ(profile["along"], "radial");
+  EXPECT_EQ(profile["source"], "warm_reused");
+  static const char* kSpecKeys[] = { "delta_min_deg",    "delta_max_deg",        "azimuth_deg", "window_half_width_deg",
+                                     "bin_deg",          "wedge_half_width_deg", "semantics",   "wavelength_nm",
+                                     "refractive_index", "sample_count",         "lattice",     "deterministic",
+                                     "representative",   "member_count" };
+  size_t s = 0;
+  for (const auto& item : profile["spec"].items()) {
+    if (s >= std::size(kSpecKeys)) {
+      ADD_FAILURE() << "more spec keys than the pinned v1 set: " << item.key();
+      break;
+    }
+    EXPECT_EQ(item.key(), kSpecKeys[s++]);
+  }
+  EXPECT_EQ(s, std::size(kSpecKeys));
+  EXPECT_DOUBLE_EQ(profile["spec"]["delta_min_deg"].get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(profile["spec"]["delta_max_deg"].get<double>(), 180.0);
+  EXPECT_EQ(profile["evidence"]["state"], "finite");
+  EXPECT_EQ(profile["evidence"]["coverage"]["members_evaluated"], 1);
+  EXPECT_EQ(profile["evidence"]["coverage"]["lattice_n"], 20000);
+  ASSERT_FALSE(profile["samples"].empty());
+  EXPECT_TRUE(profile.at("samples").at(0).contains("delta_deg"));
+  EXPECT_TRUE(profile.at("samples").at(0).contains("azimuth_deg"));
+  ASSERT_FALSE(profile["dark_regions"].empty());
+  EXPECT_TRUE(profile.at("dark_regions").at("segments").at(0).contains("kind"));
+  EXPECT_TRUE(profile.at("dark_regions").at("segments").at(0).contains("lo_deg"));
+  EXPECT_TRUE(profile.at("dark_regions").at("segments").at(0).contains("hi_deg"));
+  EXPECT_TRUE(profile.at("dark_regions").at("segments").at(0).contains("bin_count"));
+
+  const nlohmann::ordered_json refused_doc = nlohmann::ordered_json::parse(ProbeToJson(refused_result, "test"));
+  const nlohmann::ordered_json refused_profile = refused_doc.at("profiles").at(0);
+  EXPECT_EQ(refused_profile["evidence"]["state"], "refused");
+  EXPECT_EQ(refused_profile["evidence"]["mode"], "no_edge_in_context");
+  EXPECT_FALSE(refused_profile.contains("samples"));
 }
 
 }  // namespace
