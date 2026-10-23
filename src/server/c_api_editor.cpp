@@ -181,7 +181,7 @@ LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, L
   // P (its 180° subgroup merges) — see lumice_api_version.h's ledger.
   const ns::SymmetryGating gating = ns::DeriveSymmetryGating(ns::SymmetrySemantics::kPhysical, g, config.axis_);
   out->p_effective = gating.p_retained.NonTrivial() ? 1 : 0;
-  out->b_effective = (ns::detail::IsBApplicable(config.axis_) && g.b_applicable) ? 1 : 0;
+  out->b_effective = (gating.b_applicable && g.b_applicable) ? 1 : 0;
   return LUMICE_OK;
 }
 

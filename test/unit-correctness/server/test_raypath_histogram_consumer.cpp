@@ -822,7 +822,11 @@ Seg ExpectedSegment(const SimData& batch, const Seg& rp) {
   const AxisDistribution& axis = batch.crystal_axis_dists_[0];
   const bool d_applicable = detail::IsDApplicable(axis);
   const int sigma_a = d_applicable ? detail::ComputeSigmaA(axis.roll_dist.center) : 0;
-  return crystal.ReduceRaypath(rp, kSymAll, sigma_a, d_applicable, PRotationSet::Full(), true);
+  // The reducer's p_retained contract: the shape-intersected set, translated from the fixture
+  // crystal like the reduce-raypath audit suite's ShapeAdmitsAll — never a literal Full(), whose
+  // over-merge on a non-trivial-step shape is exactly what the contract exists to prevent.
+  return crystal.ReduceRaypath(rp, kSymAll, sigma_a, d_applicable,
+                               PRotationSet::FromStep(crystal.GeomSymmetry().p_step), true);
 }
 
 class Halo22 : public ::testing::Test {
