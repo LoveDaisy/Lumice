@@ -289,6 +289,42 @@ def test_cli_writes_the_same_cold_build_exception_to_log_and_summary(tmp_path, c
     assert "accepted with cold-build exception" in output.splitlines()[-1]
 
 
+def test_summary_files_cold_build_and_calibration_warnings_in_their_own_sections(tmp_path):
+    # write_summary splits the warning list by the "accepted with cold-build
+    # exception" substring; this pins the split itself — with one warning of
+    # each kind on one run, each lands under its own heading, so rewording
+    # either producer cannot silently re-file one into the other's section.
+    build = tmp_path / "build.json"
+    build.write_text(json.dumps({"phase": "build", "seconds": 477.375, "exit_code": 0}), encoding="utf-8")
+    tests = tmp_path / "tests.json"
+    tests.write_text(json.dumps({"phase": "ctest", "seconds": 500.0, "exit_code": 0}), encoding="utf-8")
+    durations = tmp_path / "durations.json"
+    durations.write_text(json.dumps(ruler_durations(2.5)), encoding="utf-8")
+    registry = write_registry(
+        tmp_path,
+        {"version": 4, "entries": [], "phase_budgets": [phase_budget("build", 420), MACHINE_BUDGET]},
+    )
+    summary = tmp_path / "summary.md"
+    argv = [
+        "--job", JOB,
+        "--phase-report", str(build),
+        "--phase-report", str(tests),
+        "--report", str(durations),
+        "--registry", str(registry),
+        "--allow-cold-build",
+        "--summary", str(summary),
+    ]
+    assert ctd.main(argv) == 0
+    text = summary.read_text(encoding="utf-8")
+    cold_heading = text.index("### Cold-build exceptions")
+    calibration_heading = text.index("### Calibration warnings")
+    cold_line = "accepted with cold-build exception"
+    calibration_line = "calibration band exceeded (raw factor 2.500, clamped to 2.000)"
+    assert cold_line in text and calibration_line in text
+    assert cold_heading < text.index(cold_line) < calibration_heading
+    assert text.index(calibration_line) > calibration_heading
+
+
 def test_missing_unknown_and_duplicate_phase_reports_are_red(tmp_path):
     budgets = [phase_budget("tests", 60)]
     errors, _, _ = ctd.check_phases(JOB, {}, budgets)
@@ -320,7 +356,7 @@ def test_phase_report_and_budget_schema_reject_invalid_values(tmp_path):
         ctd.load_phase_reports([report])
 
 
-# --- per-miss build budgets (registry v3) -------------------------------------
+# --- per-miss build budgets (registry v4) -------------------------------------
 #
 # The build phase's two conditions: the adaptive per-miss limit is the
 # authoritative ruler, the absolute max_seconds only the disaster backstop.

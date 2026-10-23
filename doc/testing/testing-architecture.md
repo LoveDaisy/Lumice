@@ -2171,7 +2171,7 @@ required member must be reported exactly once, an unregistered reported phase is
 sum must not exceed `max_seconds`. A single-phase budget may carry a `per_miss` block
 (`overhead_seconds`, `max_seconds_per_miss` — never on an aggregate), which gives the build phase a
 second condition, described below, or a `machine_factor` block (ctest phases only), which gives the
-ctest phase a machine-speed-normalized condition, also described below. This second rule catches a
+ctest phase a machine-speed-normalized condition, also described below. The per-miss rule catches a
 suite made of many individually
 sub-minute tests — the shape the per-test threshold is structurally unable to see.
 
