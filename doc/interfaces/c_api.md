@@ -126,6 +126,15 @@ only when the zenith is symmetric about 90° with a full-turn uniform azimuth: a
 merges 3-5 with 4-6, a plate no longer merges 1-3 with 2-3. `p_effective` / `b_effective` are
 those conditions intersected with the shape (`rotation_step < 6` / `horizontal_mirror`).
 
+**Current semantics of `p_effective` (no version — zero ABI delta, no struct change):** it now
+reports the analysis grouping's own derivation — the retained rotation set (the roll's
+periodicity joined with the pole-fold 180° subgroup on a zenith symmetric about 0°/180° over a
+uniform azimuth, then intersected with the shape's rotations) — not the roll probe intersected
+with `rotation_step`. A Lowitz alignment (zenith Gaussian centred on the pole over a locked roll)
+flips `p_effective` 0 → 1: its 180° subgroup merges analysis rows there. `LUMICE_IsPApplicable`
+itself is unchanged and keeps answering the roll-only question; see `lumice_api_version.h`'s
+ledger for the entry.
+
 **v4.47** is a pure append: `LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam*,
 LUMICE_CrystalSymmetry*)` reports which P / B / D elements a crystal's shape admits — the rotation
 step P may use (1, 2, 3 or 6), the valid vertical mirrors, the horizontal mirror — and whether D

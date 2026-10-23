@@ -93,6 +93,8 @@ warm-start 合约没有增加字段。字段和 coverage 边界见 `raypath-cli-
 
 **最近一次这样的 break 是 v4.48。** `LUMICE_CrystalSymmetry` 在 `d_effective` 之后新增尾部字段 `p_effective`、`b_effective`（sizeof 16 → 24）；`LUMICE_GetCrystalSymmetry` 会写满整个结构体，调用方需重新编译。同时新增 `LUMICE_IsPApplicable(roll 类型, roll 全宽)` 与 `LUMICE_IsBApplicable(方位角类型, 方位角全宽, zenith 类型, zenith 中心, zenith 全宽)`——P、B 的取向分布一半（对应 `LUMICE_IsDApplicable`）。光路约化现在只在 roll 对 60° 平移不变（满圈 uniform）时应用 P，只在 zenith 关于 90° 对称且方位角满圈 uniform 时应用 B：Parry 弧不再把 3-5 与 4-6 并为一行，板状晶体不再把 1-3 与 2-3 并为一行。`p_effective` / `b_effective` 是这两个条件再与形状相交（`rotation_step < 6` / `horizontal_mirror`）。
 
+**`p_effective` 的当前语义（不占版本号——零 ABI 变化，无结构体变化）：** 它现在报告分析分组自身的推导——保留旋转集（roll 周期性，加上「zenith 关于 0°/180° 对称且方位角满圈 uniform」时极点折回的 180° 子群，再与形状实有旋转相交）——而非 roll 探针再交 `rotation_step`。Lowitz 对齐（zenith 高斯中心在极点、roll 锁定）会把 `p_effective` 从 0 翻到 1：其 180° 子群在该处合并分析行。`LUMICE_IsPApplicable` 本身不变，仍回答 roll 单一问题；台账见 `lumice_api_version.h`。
+
 **v4.46：** `LUMICE_RenderParam` 在 `globe_back_fade` 之后新增尾部字段 `display_mode`（`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`，sizeof 6456 → 6460），调用方需重新编译。JSON 键为 `render.display_mode`，取值 `"normal"` 或 `"channel_br"`。该字段引入 gamma 之后的 sRGB B − R 灰度诊断；在 `tone: print` 下无效果，开启时带色类配置的场景不产出光路染色合成图。零值即 normal，所以零初始化的结构体和不含该键的文档渲染结果不变。
 
 **当前 `channel_br` 契约（后续语义修正，不改结构体布局）：** `clamp(0.5 + 2·(B − R), 0, 1)`
