@@ -1215,3 +1215,42 @@ budget** 的一次性冷构建授权；它不改变本段的单测试规则。�
 路径一律照红）；带 `ci:allow-cold-build` payload 的 PR run
 也只在 `run_attempt == 1` 时获得一次授权，**不得用 whole-run 或单 job rerun 重复消费**。标签只用于
 创建新 run，观察到目标 run 后立即移除。
+
+## §7.10 inner 档：diff 推导的迭代内环，以及它为什么不能收口
+
+完整协议以英文版 [`§7.10 The inner scope`](testing-architecture.md#710-the-inner-scope-diff-derived-iteration-loops-and-why-they-cannot-close-a-task)
+为唯一权威。这里保留执行时不可漏掉的要点：
+
+**推导单源。** 层映射唯一权威 = `cmake/lumice_layers.cmake` 的 configure 期产物
+`build/cmake_build/<flavor>/lumice_layer_map.tsv`；inner 不保存第二份路径→层表。产物不认识
+的 `src/` 文件 fail-loud（先补 manifest 再重建，重建即自愈）；无法归类的路径整个拒绝（exit 2），
+指名 `quick` 是最小可跑集。推导链逐文件打印（`路径 → 规则 → 面`），错误推导当场可见。
+
+**面表 v1（粗粒度）**：gui→ctest 四标签+gui correctness 池；raypath/analytic→直调
+`unit_correctness_test`（raypath+analytic 套件过滤）+`raypath_composition_test`；core→ctest 四
+标签；shell（main/launcher）→fast e2e+`ctest -L unit-correctness`；构建系统（根 CMakeLists、
+cmake/**）→ctest 四标签（多跑不少跑）；scripts→仅恒跑层；test-only 按根目录子表；docs→无构建层
+仅恒跑层；kernel 模式（`*.cu`/`*.metal`/`src/core/shared/**`）独立于面追加 parity 层；未知→exit 2。
+恒跑层 = 四 diff-scoped checker + `format.sh --check`，每次必跑。
+
+**两道守护挡在过滤器和绿色之间。** gtest 对零命中的 filter 返回 0，ctest 对零命中的标签选择同样
+返回 0——静默空选是快路径绝不允许产生的失败形态。故：ctest 选择先 `ctest -N` 断言选中数 >0；
+直调 gtest 解析 `[  PASSED  ] N tests`，N=0 判 FAIL；两者之间逐套件对账（参数化套件按注册的
+`Prefix/Suite.` 形态匹配——裸 `Suite.*` 臂对 `TEST_P` 套件选不中任何实例，N=0 守护对这种部分漏选
+结构性失明）。解析不出套件的 TU 回退整二进制——多跑不少跑。`--selfcheck` 对
+`test/unit-correctness` 全部 raypath/analytic TU 断言解析非空，并对实机构证 `test_li_parity.cpp`
+的十个 `TEST_P` 套件以 `Prefix/Suite.` 形态入选。
+
+**inner 不是收口闸**——本句在 `AGENTS.md` 表行、plan 生成器引用的本地命令笔记与英文版 §7.10 三处
+明写：面表刻意粗粒度，漏检由 quick 收口闸兜住；inner `RESULT: PASS` 的语义是「该 diff 推导出的
+层过了」，不是「改动完成」。构建层用裸 `cmake --build`，绝不经 `build.sh`（后者的无旗标调用会把
+热 `-gtj` 树重配回 `BUILD_TEST=OFF`——inner 要根治的正是这笔口味切换税）；任务期保持 `-gtj` 站立，
+inner 与收口 quick 都不付重建税。
+
+**一个面的代价（dated sample，2026-10-23，开发 Mac/M2 Max，commit `266fbaf0`，无并发，构建层除外）**：
+test TU 面 ~40s（unit-gtest 10 例 24s）；raypath 面测试层 248s（883 例 175s + composition 73s）；
+core 面测试层 572s（ctest 559s + parity 13s）；docs-only <15s；整二进制回退 291s（2819 例）。
+AC3 预算（raypath ≤2min、core ≤6min）在参照机契约口径下可达、在本样本超线——主因是套件本身的
+增长（§7.1 重测同证），裁量权在 owner（§7.3），不是 inner 能动的杠杆。另：ctest 四标签层含环境
+敏感用例 `ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`，曾观测到并发负载下红、隔离复跑
+绿——粗粒度层里的行业余波，先隔离复跑再诊断。

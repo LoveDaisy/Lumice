@@ -813,6 +813,17 @@ def check_diff(diff_args: list[str], content_ref: str) -> list[Violation]:
     return out
 
 
+def diff_verdict(diff_args: list[str], content_ref: str | None) -> list[Violation]:
+    """The diff-scoped verdict main() reports, as a callable unit.
+
+    scripts/test_inner.py's checker layer runs this same function instead of
+    shelling out to this CLI or re-deriving which entry point takes which
+    arguments — one seam per checker module, updated here when the internal
+    shape moves.
+    """
+    return check_diff(diff_args, content_ref)
+
+
 # -- selfcheck -------------------------------------------------------------------
 #
 # Fixtures below reproduce two real hits this scanner found in this codebase
@@ -1329,10 +1340,10 @@ def main() -> int:
         base, head = args.rng.split("..", 1)
         if not base or not head:
             parser.error("--range expects BASE..HEAD")
-        violations = check_diff([base, head], head)
+        violations = diff_verdict([base, head], head)
     else:
         # --staged, passed or defaulted to. Empty content_ref means the index.
-        violations = check_diff(["--cached"], "")
+        violations = diff_verdict(["--cached"], "")
 
     if violations:
         print("Loop-fatal-assert check FAILED:\n", file=sys.stderr)

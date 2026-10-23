@@ -201,8 +201,10 @@ fails the check.
   rerun cannot consume it again. Operating rules: `test/AGENTS.md`; full rules, the 60 s / 2×
   calibration and the per-miss constants: `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
   single authority is §7.8.
-- E2E split essentials: `./scripts/test.sh <quick|full|pr>` is the recommended entry point for a
-  local run (one call, a single per-layer summary ending in one `RESULT:` line). Bare `pytest
+- E2E split essentials: `./scripts/test.sh <quick|full|pr|inner>` is the recommended entry point for a
+  local run (one call, a single per-layer summary ending in one `RESULT:` line). `inner` runs a
+  diff-derived subset of these layers during iteration and is covered by the test-scope table
+  below; `quick`/`full`/`pr` are the closing scopes and are unchanged. Bare `pytest
   -v` runs the fast subset directly — pinned by `pyproject.toml`'s `addopts` (`-m "not slow"`), so
   it is structurally true and matches CI's fast leg; `pytest -v -m ''` is the escape hatch back to
   the full set, and any marker CI
@@ -214,11 +216,25 @@ fails the check.
 
   | Situation | Run |
   |---|---|
-  | Verify the change you just made | `./scripts/test.sh quick` |
+  | Iterating on a change — fast feedback scoped to what the diff touches | `./scripts/test.sh inner` |
+  | Verify the change you just made (the closing gate) | `./scripts/test.sh quick` |
   | Right after a static rebuild, before moving on | `./scripts/test.sh quick` |
   | Broader regression sweep — unsure how far a change reaches | `./scripts/test.sh full` |
   | Before opening a PR — reproduce the CI e2e-slow shape locally | `./scripts/test.sh pr` |
   | Confirm one specific gate/test actually fails on a deliberately-broken state (not a general sweep) | run that one check directly against the broken state, then again after the fix: `ctest -R <label>`, `pytest <file>::<test> -m ''`, or `gui_test --filter <name>` |
+
+  `inner` derives its layers from the current diff (`merge-base main..worktree`, or
+  `--files <paths>`): changed `src/` files go through the configure-time layer map (generated
+  from `cmake/lumice_layers.cmake` — the one manifest, no second path→layer table), and the
+  mapped faces pick the test layers (a raypath edit runs the raypath/analytic gtest suites
+  through a direct binary call; a docs-only diff runs no build at all), plus the four
+  diff-scoped checkers and `format.sh --check` on every run. It is deliberately coarse and
+  prints its derivation chain — **iteration = inner, closing = quick**: whatever a face misses
+  is caught by the quick gate before anything merges, so an inner `RESULT: PASS` never closes
+  a task. `inner` builds with plain `cmake --build`, never `build.sh` — build.sh passes
+  `-DBUILD_TEST` back unconditionally, so a flagless call would reconfigure the hot `-gtj`
+  tree and tear its test targets out. Keep `-gtj` standing for the task's duration and neither
+  `inner` nor the closing `quick` pays a flavor-switch rebuild.
 
   What each row **costs** in measured seconds, what each scope catches that the cheaper one
   structurally cannot, the budget rule naming who answers for the spend, and where each test runs

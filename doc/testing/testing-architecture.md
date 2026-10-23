@@ -1553,7 +1553,7 @@ saying so.
 | `main` only | the push to `main` of a merge (`ci.yml` jobs guarded to `push`) | `bench-ipo`: the `Lumice benchmark` run, from an IPO build on the four platforms, feeding `benchmark-summary`'s gh-pages history | a red `main` run; the benchmark curve |
 | Local schedule | daily, on the reference machines (`doc/testing/performance-testing.md`, "Precise throughput gate (local schedule)") | the throughput gate's `precise` profile (threshold 0.85; Metal uses 21 ratio-of-median reps, CUDA uses a 63-rep winsorized paired-ratio mean), Metal on the Metal reference machine and CUDA on a CUDA reference machine when it is reachable; a leg the idle check finds busy is skipped and recorded | a `[throughput-gate] <leg> fail` GitHub issue, and a staleness alert when a leg has not really run for too long |
 | Release | a `v*` tag (`release.yml`) | every release artifact, built with IPO; the export-surface check on each packaged engine file | no release |
-| Developer machine | `./scripts/test.sh {quick,full,pr}` | the 36 `gui_test` categories CI never runs, the `parity` tag (§7.5) and the real-timing pool | whatever the developer does next |
+| Developer machine | `./scripts/test.sh {quick,full,pr}` and, during iteration, `inner` (§7.10) | the 36 `gui_test` categories CI never runs, the `parity` tag (§7.5) and the real-timing pool | whatever the developer does next |
 
 **There is no nightly tier.** No workflow in this repository has a `schedule:` trigger, and none
 is needed for what the PR layer gave up: the tests that made the PR run long were made **cheaper
@@ -1650,6 +1650,20 @@ before `pr` started. Earlier isolated compile measurements on this machine were 
 33s after touching one leaf `.cpp`, and 49s after touching `src/core/math.hpp` (63 translation
 units). Those are historical measurements with different boundaries, not numbers to add
 to today's table to predict a current edit-test cycle.
+
+**Newer sample: 2026-10-23**, commit `266fbaf0`, the same machine and role, `-gtj release` tree
+warm, no concurrent load, `LUMICE_SKIP_GUI_TESTS`/`CI` unset. One unmodified
+`./scripts/test.sh quick` run: `ctest` **300s** (9/9), fast e2e **287s** (273 passed),
+gui_test correctness pool **253s** (524/524) — **quick ≈ 840s**, against the 306s the table
+above records from 2026-10-03. The drift is suite growth, not machine change (same machine,
+same role): the e2e set went 219 → 273 items and the gui pool 513 → 524 cases in the twenty
+days between the samples, and `LumiceUnitCorrectnessTest` alone now runs ~190s where the whole
+ctest layer once fit in 67s. Read the two samples as a range, not a trend line: the ctest layer
+was observed at 300–559s across four same-day runs of this task's probes. The drift is exactly
+what motivated the `inner` scope (§7.10) — iteration no longer pays the whole table — and its
+disposition (prune suites, re-anchor budgets, or accept) is §7.3's owner decision, not a gate
+this section can move. These figures supersede the 2026-10-03 numbers as "latest sample"; the
+older block stays for provenance.
 
 **CI.** Runners: GitHub-hosted, per job (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`,
 `windows-2022`). Concurrency: the jobs below run in parallel, so the run's wall clock is its
@@ -2442,3 +2456,92 @@ normal path, deliberately blind to intent. A genuine correction needs an owner d
 the expected shape is an explicit, loud `--amend-ledger` channel (requiring the old entry, the
 new entry, and the reason for the change) — decided when the first real correction arrives. Until
 then there is no in-place workaround to reach for, and that is the design.
+
+### §7.10 The `inner` scope: diff-derived iteration loops, and why they cannot close a task
+
+`./scripts/test.sh inner` is the developer-machine iteration loop. It reads the current diff
+(`merge-base(HEAD, main)`..worktree, or `--files <paths>`), maps every changed file to a face,
+and runs only the faces' layers — plus the four diff-scoped checkers (§7.9's gate among them)
+and `format.sh --check` on every invocation. It exists because quick's single undifferentiated
+scope had drifted out of shape for iteration: every task paid every layer (a raypath edit ran
+the GUI correctness pool), and plans that wrote "run quick after every step" produced 20–30-minute
+verify cycles. Derivation, guard logic and checker driving live in `scripts/test_inner.py`;
+`test.sh` executes the plan the `faces` subcommand emits (JSON on stdout, the derivation chain
+on stderr).
+
+**The layer map has one authority.** `cmake/lumice_layers.cmake` is flattened at configure time
+into `build/cmake_build/<flavor>/lumice_layer_map.tsv` (one `src/<rel><TAB><layer>` row per
+file). inner never keeps a second path→layer table; a `src/` file the map does not know fails
+loud naming the fix (add to the manifest, rebuild — the rebuild reconfigures and self-heals the
+map), and a diff that touches `cmake/**` prints a one-line staleness hint. Derivation is printed
+file by file (`path → rule → face`) so a wrong face is visible at a glance, and an unclassifiable
+path refuses the whole run (exit 2, nothing executed) naming `quick` as the minimal runnable set.
+
+**The face table (v1, deliberately coarse):**
+
+| Face | Trigger | Test layers |
+|---|---|---|
+| gui | `src/gui/**`, `test/gui/**` | ctest four labels + gui_test correctness pool |
+| raypath | layer `raypath`/`analytic` (map) | `unit_correctness_test` direct, `--gtest_filter` = the raypath+analytic suites + `raypath_composition_test` direct |
+| core | other `src/**` (map) | ctest four labels |
+| shell | `src/main.cpp`, `src/launcher/**` | fast e2e + `ctest -L unit-correctness` |
+| build-system | root `CMakeLists.txt`, `cmake/**` | ctest four labels (more, never less) |
+| scripts | `scripts/**` | checkers only — scripts are not build inputs; their own suites run through the test-only row below |
+| test-only | `test/**` by root subtable | the changed root's own binary or label; a changed `test/unit-correctness/*.cpp` runs only its TUs' suites |
+| docs | `.md`, `doc/**` | no build layer at all; checkers only |
+| kernel (mode, not face) | `*.cu`, `*.metal`, `src/core/shared/**` | the parity layer, added on top of whatever else the diff picks |
+| unknown | everything else | exit 2 + `quick` as the minimal runnable set |
+
+Deletions select nothing (they map to no face; the always-on checkers still run) and untracked
+files join the derivation but stay invisible to the diff-scoped checkers until `git add` — the
+same scope the pre-commit hook sees, with the same answer: the commit gate covers them.
+
+**Two guards stand between a filter and a green.** gtest exits 0 when a filter matches nothing,
+and so does ctest for a label that matches nothing — the silent-empty-selection shape is the one
+failure a fast path must never produce. So: every ctest selection runs `ctest -N` first and
+refuses to execute an empty selection (the layer is judged FAIL); every direct gtest run is
+parsed for `[  PASSED  ] N tests` with N=0 judged FAIL; and between the two, per-suite
+reconciliation asserts every parsed suite contributed at least one selected case — parameterized
+suites included, matched in their registered `Prefix/Suite.` form, because a bare `Suite.*` arm
+selects nothing for a `TEST_P` suite and the N=0 guard is structurally blind to that partial
+miss. A TU that yields no suite falls back to the whole binary — running more, never less.
+`--selfcheck` proves the parser's detection power against every `test/unit-correctness`
+raypath/analytic TU and, against the built binary, that `test_li_parity.cpp`'s ten `TEST_P`
+suites arrive selected in the `Prefix/Suite.` form.
+
+**inner is not a closing gate, and the docs say so three times** (the test-scope table in
+`AGENTS.md`, the local command-notes file the plan generator quotes, and here). The faces are
+coarse by
+design: a face can miss, and whatever it misses is caught by quick before anything merges. An
+inner `RESULT: PASS` means "the layers this diff's faces picked passed", not "the change is
+done" — every task still ends at a green `quick`, and §7.3's budget rule for that spend is
+unchanged. The build layer runs plain `cmake --build`, deliberately not `build.sh`: build.sh
+passes `-DBUILD_TEST` back unconditionally (OFF without `-t`/`-g`), so a flagless call on the
+hot `-gtj` tree would reconfigure the cache and tear the test targets out — the flavor-switching
+tax inner exists to avoid. Keep `-gtj` standing for the task's duration and neither inner nor
+the closing quick pays it.
+
+**What a face costs (dated sample, this machine).** 2026-10-23, commit `266fbaf0`, the
+development Mac (M2 Max, 12 cores — the machine bound to the Metal reference role in
+`doc/testing/machines.md`), `-gtj release` tree warm, no concurrent load. Test-layer wall clock,
+build layer excluded:
+
+| Probe (face) | Layers run | Wall clock |
+|---|---|---|
+| changed `test/unit-correctness` TU | build 0s; unit-gtest (10 tests, the TU's own suites) 24s; checkers+format | ~40s |
+| changed `src/raypath` file (raypath face) | build 120s; unit-gtest (883 tests / 86 suites) 175s; composition-gtest 73s; checkers+format | test layers **248s** |
+| changed `src/core` file (core face) | build 6s; ctest four labels 559s; parity (kernel header also named) 13s | test layers **572s** |
+| docs-only | checkers 1–2s; format 7–12s | **<15s** |
+| whole-binary fallback (TU without TEST macros) | build 114s; unit-gtest (2819 tests / 437 suites) 291s | test layers **291s** |
+
+Two honest footnotes. First, the AC3 budgets (raypath ≤2min, core ≤6min, test-layer clock) are
+**met on the reference-machine contract numbers and missed on this 2026-10-23 sample**: the
+raypath face measured 248s and the core face 572s. The dominant term is not inner's overhead —
+it is the suite itself: `LumiceUnitCorrectnessTest` alone runs ~190s here, and §7.1's re-measure
+below shows the same growth in quick's contract numbers. Suite mass is the lever that moves
+these figures, and pruning it is an owner decision (§7.3), not something inner can do. Second,
+the ctest four-label layer includes `ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`,
+which was observed to fail once under concurrent-machine load and to pass in an isolated rerun
+minutes later — an environment-sensitive test sitting in a coarse layer inner did not choose,
+recorded here because anyone reading an inner red on that suite should rerun it in isolation
+before diagnosing.

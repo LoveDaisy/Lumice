@@ -357,6 +357,22 @@ def check_tu_half(diff_args: list[str], content_ref: str, base_ref: str) -> Verd
     return verdict
 
 
+def diff_verdict(
+    diff_args: list[str], content_ref: str | None, base_ref: str
+) -> Verdict:
+    """The diff-scoped verdict main() judges on, as a callable unit.
+
+    This is the TU half ONLY: the hub-closure half is a CI-side notice fed by
+    --deps, never a gate, and that "notices do not enter the verdict" boundary
+    lives here — a caller running this function cannot accidentally gate on
+    notices because it never sees them. scripts/test_inner.py's checker layer
+    runs this same function instead of shelling out to this CLI or re-deriving
+    which entry point takes which arguments — one seam per checker module,
+    updated here when the internal shape moves.
+    """
+    return check_tu_half(diff_args, content_ref, base_ref)
+
+
 # --- the hub half ---------------------------------------------------------------
 
 
@@ -492,7 +508,7 @@ def main() -> int:
     else:
         diff_args, content_ref, base_ref = ["--cached"], "", "HEAD"
 
-    verdict = check_tu_half(diff_args, content_ref, base_ref)
+    verdict = diff_verdict(diff_args, content_ref, base_ref)
 
     notices: list[tuple[str, int]] = []
     deps_tus: int | None = None

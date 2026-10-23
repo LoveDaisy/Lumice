@@ -868,6 +868,18 @@ foreach(_rel IN LISTS LUMICE_LAYER_foundation_FILES)
 endforeach()
 list(REMOVE_ITEM lumice_src ${lumice_foundation_src})
 
+# Configure-time artifact for scripts/test_inner.py (`test.sh inner`): the manifest flattened to
+# `src/<rel><TAB><layer>` rows in the build tree. inner reads this instead of keeping a second
+# path->layer table (the manifest above stays the one authority); a stale map self-heals on the
+# next configure, which any build triggers.
+set(lumice_layer_map_path "${CMAKE_BINARY_DIR}/lumice_layer_map.tsv")
+file(WRITE "${lumice_layer_map_path}" "")
+foreach(_layer IN LISTS LUMICE_LAYER_ORDER)
+  foreach(_rel IN LISTS LUMICE_LAYER_${_layer}_FILES)
+    file(APPEND "${lumice_layer_map_path}" "src/${_rel}\t${_layer}\n")
+  endforeach()
+endforeach()
+
 # ==================================================================================================
 # OBJECT library — compile sources once, reuse .o files across targets (library, test, bench).
 # test/bench link lumice_obj directly so all symbols are accessible regardless of
