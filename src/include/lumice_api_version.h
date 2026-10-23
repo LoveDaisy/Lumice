@@ -538,6 +538,12 @@
 // itself is unchanged and keeps answering the roll-only question). LUMICE_ExpandRaypathClass with
 // LUMICE_SYMMETRY_SEMANTICS_PHYSICAL under the same axis gains the half-turn members for the same
 // reason; the LABEL semantics answer is unchanged. No struct resize, no new symbol.
+// CHANGED (against v4.57, no macro bump — zero ABI delta, semantics only): the gluing half-turn now
+// excludes zero-width pole-centred latitude families (kUniform spread 0, kGaussian/kGaussianLegacy/
+// kLaplacian sigma 0) — the same locked-zenith physical state as kNoRandom, samples never crossing
+// the pole, so the equal-leaves superposition never holds. External-visible value change: such a
+// degenerate axis flips p_effective 1 -> 0 (it wrongly read 1 through the half-turn leg); normal
+// corpora carry no zero-width pole-centred axis.
 #define LUMICE_API_VERSION 457
 
 #endif  // LUMICE_API_VERSION_H_
