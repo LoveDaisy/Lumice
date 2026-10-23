@@ -147,6 +147,29 @@ it was thinking of and false of the C struct beside it.
 
 </details>
 
+## [4.7.5] - 2026-10-23
+
+### ⚠️ Breaking Changes
+
+- **The bare `Lumice raypath` word no longer parses — the target/report modes are now the `raypath point` / `raypath report` subcommands** (#538). A 4.7.4 call like `Lumice raypath -f config.json --crystal 1 --path 3-5 --target 20,25` (or the `--report` form) now exits with a usage error naming the three subcommand words: `survey`, `point`, `report`. Add the subcommand word to your script — `raypath point` carries the old target-mode options unchanged, `raypath report` the old report-mode options, and `-h` after each word prints its own page.
+- **`LUMICE_GetCrystalSymmetry`'s `p_effective` now reports the physical grouping's retained-rotation set instead of the roll-only probe** (#540, #543; no `LUMICE_API_VERSION` bump — zero ABI delta, semantics only). It used to answer `LUMICE_IsPApplicable AND rotation_step < 6`; it now reports the analysis reduction's own derivation — the roll's periodicity plus the gluing 180° subgroup where the zenith is pole-symmetric over a uniform azimuth (a zero-width pole-centred latitude band no longer counts as gluing), intersected with the shape's rotations. A Lowitz-like alignment (zenith symmetric about 0°, uniform azimuth, locked roll on a prism) flips `p_effective` from 0 to 1, `LUMICE_ExpandRaypathClass` with `LUMICE_SYMMETRY_SEMANTICS_PHYSICAL` gains the half-turn members on the same axes (the LABEL-semantics answer is unchanged), and the GUI's analysis list merges those rows. No struct layout changed and no new symbol was added; a compiled consumer that relied on the old roll-only value must re-check its grouping logic.
+
+### CLI
+
+- **Added: `Lumice raypath point`** (#538). The one-sky-point query as its own subcommand, answering a sharper question: each component of the fiber now comes with a per-pose named-factor decomposition (rho/A/T/K — the new `factor` fields of schema 1), and the `--warm` contract generalizes — an earlier `point` output or a schema-4 `survey` document can seed the search, with `warm_index` in the output naming which objects were reused. A run accepts a time budget, and Ctrl-C now writes the partial result instead of nothing.
+- **Added: `Lumice raypath probe`** (#539). Cuts a profile of the path's band-sum map at a chosen position, in four `--along` forms — `radial`, `edge-normal`, `arc`, `tangential` — emitting the new JSON schema `lumice.path-probe` (schema_version 5). A radial form whose scope and grid match the warm document copies its samples instead of recomputing; a refused profile carries an honest refusal shell — state and mode only, never a fabricated reading.
+- **Changed: `raypath survey` routes by family and carries more evidence** (#530, #523, #537). A path's orientation measure now routes to a family — the concentration trichotomy (fixed / narrow / wide) with an idealization ladder that freezes dimensions tightest-first and a per-object survival filter deciding what stands as a band-sum map (schema 4 gains the `band` / `killed` / refusal fields, including `level0_refusal_mode`); a delta-axis partition that refuses now scopes to its own support card while the ladder still enumerates. Two evidence legs joined the document: the class's TIR share, and an opt-in Monte-Carlo region ESS leg (with `mc_ess_draws` and the `tir_share` / `mc_region_ess` blocks — the document stays byte-identical to before while the legs are off). The C17/C06/C09 faces (witness, dual-mechanism chroma, support set) are wired into the same documents.
+
+### GUI
+
+- **Changed: axis chips re-seat the preview pose, and the Reset row collapses to one button** (#521). Clicking a label chip in the Axis tab now re-derives the modal preview's pose through the same authority as the card thumbnail — chips are pose writers (renaming to a custom label counts too), closing the modal-vs-card divergence. The Reset row is a single `Reset All` button in the style of the Crystal/Filter rows; the "Reset:" caption and the redundant Reload button are gone, with the custom-disabled state and tooltips preserved — and the row still never writes pose.
+- **Changed: the right panel reads quieter** (#522). The Continue button keeps its purple identity at a lower luminance (the complaint was brightness against the Run green, not the hue). The Resolution combo loses its one-off rust warning tint — the "needs re-run" signalling already lived entirely in the Modified state, the ⚠/Revert control and the tooltips. The eleven flat aspect entries collapse into one combo (flippable presets become part of the entry, the control moves into the Background section); storage, serialization and window mechanics are untouched.
+- **Changed: a core JSON whose `render[].grid` cannot be honored now warns at import** (#527). The engine refused such a grid before and still does — unchanged configs render byte-identically; the change is that the GUI's import path now posts a notice naming the dropped grid instead of staying silent.
+
+### Engine C API
+
+- **Added: `LUMICE_API_VERSION` 454 → 457 — the raypath L2 query layer's appends** (#537, #538, #539). v4.55 adds the survey evidence legs' surface (`mc_ess_draws` suffix field plus the optional `tir_share` / `mc_region_ess` document blocks; absent legs leave the bytes identical to v4.54). v4.56 appends the point query's budget/interrupt suffix fields. v4.57 adds the path-probe entry family behind the new `lumice.path-probe` schema-5 document. All three are pure appends — no existing symbol or struct layout changed; this window's semantic changes (`p_effective`) are the Breaking entry above and carry no macro bump. The library is still not part of the download packages.
+
 ## [4.7.4] - 2026-10-19
 
 ### ⚠️ Breaking Changes
@@ -2920,6 +2943,7 @@ it was thinking of and false of the C struct beside it.
 - Basic ice crystal halo simulation
 - Support for common crystal types (hexagonal prism, plate, column)
 
+[4.7.5]: https://github.com/LoveDaisy/Lumice/compare/v4.7.4...v4.7.5
 [4.7.4]: https://github.com/LoveDaisy/Lumice/compare/v4.7.3...v4.7.4
 [4.7.3]: https://github.com/LoveDaisy/Lumice/compare/v4.7.2...v4.7.3
 [4.7.2]: https://github.com/LoveDaisy/Lumice/compare/v4.7.1...v4.7.2
