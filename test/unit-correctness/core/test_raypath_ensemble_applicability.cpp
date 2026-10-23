@@ -119,5 +119,61 @@ TEST(RaypathEnsembleApplicability, BIgnoresRoll) {
   EXPECT_TRUE(detail::IsBApplicable(axis));
 }
 
+// ---- Source B of the physical P gating: the gluing lemma (detail::GluingRetainsHalfTurn) ----
+// Equal pole leaves (zenith density symmetric about 0°/180° over a folding latitude path) with a
+// full-turn uniform azimuth make the measure invariant under the 180° rotation, whatever the roll.
+
+TEST(RaypathEnsembleApplicability, GluingNeedsOnlyTheZenithAndAzimuth) {
+  const AxisDistribution lowitz = ParseAxis(kLowitz);
+  EXPECT_TRUE(detail::GluingRetainsHalfTurn(lowitz));
+  // The wire zenith 180° centre (core latitude −90°) is the same pole pair.
+  AxisDistribution down = lowitz;
+  down.latitude_dist.center = -90.0f;
+  EXPECT_TRUE(detail::GluingRetainsHalfTurn(down));
+  // Every folding latitude type glues from its own centre slot: Laplacian, a pole-centred
+  // uniform interval (its far half folds back), and the legacy no-Jacobian Gaussian.
+  AxisDistribution lap = lowitz;
+  lap.latitude_dist = Distribution{ DistributionType::kLaplacian, 90.0f, 5.0f };
+  EXPECT_TRUE(detail::GluingRetainsHalfTurn(lap));
+  AxisDistribution uni = lowitz;
+  uni.latitude_dist = Distribution{ DistributionType::kUniform, 90.0f, 8.0f };
+  EXPECT_TRUE(detail::GluingRetainsHalfTurn(uni));
+  AxisDistribution legacy = lowitz;
+  legacy.latitude_dist = Distribution{ DistributionType::kGaussianLegacy, 90.0f, 5.0f };
+  EXPECT_TRUE(detail::GluingRetainsHalfTurn(legacy));
+  // Roll plays no part — the leaves feed the roll density, not the other way (design prediction 1:
+  // a roll centred at 30° keeps the half-turn).
+  AxisDistribution roll30 = lowitz;
+  roll30.roll_dist = Distribution{ DistributionType::kGaussian, 30.0f, 1.0f };
+  EXPECT_TRUE(detail::GluingRetainsHalfTurn(roll30));
+}
+
+TEST(RaypathEnsembleApplicability, GluingNegativeControls) {
+  const AxisDistribution lowitz = ParseAxis(kLowitz);
+  // Zenith centre 20°: the two leaves weigh P(zenith raw > 0) = Φ(centre/σ) ≠ 1/2 — the corpus's
+  // control axis, where the roll petals come out 49880/15656 instead of even.
+  AxisDistribution control = lowitz;
+  control.latitude_dist.center = 70.0f;
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(control));
+  // A non-uniform azimuth weights the leaves per sky position.
+  AxisDistribution az_gauss = lowitz;
+  az_gauss.azimuth_dist = Distribution{ DistributionType::kGaussian, 0.0f, 30.0f };
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(az_gauss));
+  // A zenith uniform over [0°,180°] never crosses a pole — nothing folds (prediction 2).
+  AxisDistribution band = ParseAxis(kColumn);
+  band.latitude_dist = Distribution{ DistributionType::kUniform, 0.0f, 180.0f };
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(band));
+  // The full-sphere uniform routes to the fold-free asin path: symmetric, but nothing glues.
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(ParseAxis(kRandom)));
+  // A locked zenith feeds one leaf only.
+  AxisDistribution locked = lowitz;
+  locked.latitude_dist = Distribution{ DistributionType::kNoRandom, 90.0f, 0.0f };
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(locked));
+  // kZigzag is answered conservatively, like the B channel.
+  AxisDistribution zig = lowitz;
+  zig.latitude_dist = Distribution{ DistributionType::kZigzag, 90.0f, 5.0f };
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(zig));
+}
+
 }  // namespace
 }  // namespace lumice

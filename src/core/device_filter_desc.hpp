@@ -134,7 +134,7 @@ struct DeviceFilterDesc {
   uint8_t shape_d_mirror_mask;  // GeometricSymmetry::d_valid_sigma_mask (bit sigma_a ⇒ D allowed)
   uint8_t shape_b_applicable;   // GeometricSymmetry::b_applicable (cones match)
   // Ensemble half for P and B (D's is `d_applicable` above).
-  uint8_t p_applicable;  // 0/1; DeriveSymmetryGating(kLabel, ...).p_applicable
+  uint8_t p_applicable;  // 0/1; DeriveSymmetryGating(kLabel, ...).p_retained keeps a rotation
   uint8_t b_applicable;  // 0/1; DeriveSymmetryGating(kLabel, ...).b_applicable
 };
 

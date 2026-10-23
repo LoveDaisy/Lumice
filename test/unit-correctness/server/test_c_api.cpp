@@ -1973,14 +1973,23 @@ TEST(GetCrystalSymmetryApi, PAndBEffectiveNeedBothAxisAndShape) {
   EXPECT_NE(s.p_effective, 0);
   EXPECT_NE(s.b_effective, 0);
 
-  // Axis rules P out (locked roll) and B out (plate zenith), shape unchanged.
+  // Axis rules: P out on the corpus's control axis (locked roll over zenith centre 20° — the two
+  // fold leaves weigh Φ(centre/σ) ≠ 1/2, nothing glues) and B out on the off-pole zenith.
   c.roll = { LUMICE_DIST_GAUSS, 0.0f, 1.0f };
-  c.zenith = { LUMICE_DIST_GAUSS, 0.0f, 1.0f };
+  c.zenith = { LUMICE_DIST_GAUSS, 20.0f, 1.0f };
   ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
   EXPECT_EQ(s.p_effective, 0);
   EXPECT_EQ(s.b_effective, 0);
   EXPECT_EQ(s.rotation_step, 1);
   EXPECT_NE(s.horizontal_mirror, 0);
+
+  // The same locked roll over a POLE-centred zenith (zenith 0°±1°): the gluing fold halves the
+  // leaves exactly, so the analysis grouping retains the 180° subgroup and p_effective flips on —
+  // the old roll-only probe said 0 here. B is still out (a plate's face 1 always faces up).
+  c.zenith = { LUMICE_DIST_GAUSS, 0.0f, 1.0f };
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_NE(s.p_effective, 0);
+  EXPECT_EQ(s.b_effective, 0);
 
   // Shape rules each out with the axis admitting both.
   c = SymmetryProbeCrystal(0, no_rotation, 0.0f);
@@ -2050,6 +2059,31 @@ TEST(ExpandRaypathClassApi, LabelAndPhysicalClassesDifferWhereTheCrystalLacksThe
   EXPECT_EQ(LUMICE_ExpandRaypathClass(nullptr, rp, 2, 1, 0, out, &n), LUMICE_ERR_NULL_ARG);
   EXPECT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 0, 1, 0, out, &n), LUMICE_ERR_INVALID_VALUE);
   EXPECT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 2, 1, 7, out, &n), LUMICE_ERR_INVALID_VALUE);
+}
+
+// The corpus's Lowitz alignment on a regular prism (zenith Gaussian 0°±40°, locked roll): the
+// gluing half-turn retains, so physical PBD expands {3,5} to the corpus's upper-arc class —
+// {3-5, 3-7, 6-8, 6-4}, four members where the old roll-only gate kept one D-pair — and the
+// label semantics answer is untouched (every 60-degree relabelling).
+TEST(ExpandRaypathClassApi, LowitzAxisPhysicalPBDExpandsToTheFourMemberClass) {
+  const float regular[6]{ 1, 1, 1, 1, 1, 1 };
+  auto c = SymmetryProbeCrystal(0, regular, 0.0f);
+  c.zenith = { LUMICE_DIST_GAUSS, 0.0f, 40.0f };
+  c.roll = { LUMICE_DIST_GAUSS, 0.0f, 0.3f };
+  const int rp[2]{ 3, 5 };
+  int out[LUMICE_MAX_RAYPATH_CLASS_MEMBERS * 2]{};
+  int n = 0;
+  const int pbd = LUMICE_RAYPATH_SYMMETRY_P | LUMICE_RAYPATH_SYMMETRY_B | LUMICE_RAYPATH_SYMMETRY_D;
+  ASSERT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 2, pbd, LUMICE_SYMMETRY_SEMANTICS_PHYSICAL, out, &n), LUMICE_OK);
+  ASSERT_EQ(n, 4);
+  std::set<std::pair<int, int>> members;
+  for (int k = 0; k < n; ++k) {
+    members.insert({ out[2 * k], out[2 * k + 1] });
+  }
+  EXPECT_EQ(members, (std::set<std::pair<int, int>>{ { 3, 5 }, { 3, 7 }, { 6, 8 }, { 6, 4 } }));
+  ASSERT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 2, LUMICE_RAYPATH_SYMMETRY_P, LUMICE_SYMMETRY_SEMANTICS_LABEL, out, &n),
+            LUMICE_OK);
+  EXPECT_EQ(n, 6);
 }
 
 TEST(GetCrystalSymmetryApi, RejectsNullAndUnknownType) {

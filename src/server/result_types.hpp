@@ -261,9 +261,10 @@ struct RaypathChainSegment {
 //    indexes this by the segment's position in the chain.
 struct RaypathCrystalReduceParams {
   int sigma_a = 0;
-  // The orientation ensemble's D / P / B conditions (detail::Is*Applicable).
+  // The orientation ensemble's D / P / B conditions (DeriveSymmetryGating for P: the retained
+  // rotation set, already intersected with the shape).
   bool d_applicable = false;
-  bool p_applicable = false;
+  PRotationSet p_retained{};
   bool b_applicable = false;
   // Default admits nothing: a crystal the context does not describe is not reduced.
   GeometricSymmetry geom{};

@@ -527,6 +527,17 @@
 // (the same gates; a matching scope reuses the warm document's radial samples). New JSON schema
 // "lumice.path-probe", schema_version 5 (doc/raypath/raypath-cli-output.md §10). No existing
 // symbol or struct layout changed.
+// CHANGED (against v4.57, no macro bump — zero ABI delta, semantics only): LUMICE_GetCrystalSymmetry's
+// p_effective now reports the physical analysis grouping's own derivation (the retained P rotation
+// set — roll periodicity plus the gluing half-turn on a pole-symmetric zenith over a uniform
+// azimuth, intersected with the shape's rotations) instead of the roll-only probe intersected with
+// rotation_step. External-visible value change: a crystal whose zenith distribution is symmetric
+// about 0°/180° with a uniform azimuth and a locked (or non-uniform) roll — e.g. a Lowitz
+// alignment (zenith Gaussian 0°±σ, roll narrow) on a regular prism — flips p_effective 0 → 1: the
+// 180° subgroup merges analysis rows there, while the 60° rotations still do not (LUMICE_IsPApplicable
+// itself is unchanged and keeps answering the roll-only question). LUMICE_ExpandRaypathClass with
+// LUMICE_SYMMETRY_SEMANTICS_PHYSICAL under the same axis gains the half-turn members for the same
+// reason; the LABEL semantics answer is unchanged. No struct resize, no new symbol.
 #define LUMICE_API_VERSION 457
 
 #endif  // LUMICE_API_VERSION_H_

@@ -1732,34 +1732,53 @@ TEST(DeriveSymmetryGating, LabelIgnoresShapeAndEnsemble) {
     for (const auto& axis : axes) {
       const SymmetryGating g = DeriveSymmetryGating(SymmetrySemantics::kLabel, shape, axis);
       EXPECT_EQ(g.geom, kFullHexagonalSymmetry);
-      EXPECT_TRUE(g.p_applicable);
+      EXPECT_EQ(g.p_retained, PRotationSet::Full());
       EXPECT_TRUE(g.b_applicable);
     }
   }
 }
 
-TEST(DeriveSymmetryGating, PhysicalIsTheShapeAndTheEnsemblesOwnConditions) {
-  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
-  const GeometricSymmetry shapes[] = {
-    kFullHexagonalSymmetry,
-    Crystal::CreatePrism(1.0f, three_fold).GeomSymmetry(),
-    Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f).GeomSymmetry(),
-  };
-  int p_on = 0;
-  int b_on = 0;
-  for (const auto& shape : shapes) {
-    for (const auto& axis : GatingScenarioAxes()) {
-      const SymmetryGating g = DeriveSymmetryGating(SymmetrySemantics::kPhysical, shape, axis);
-      EXPECT_EQ(g.geom, shape);
-      EXPECT_EQ(g.p_applicable, detail::IsPApplicable(axis));
-      EXPECT_EQ(g.b_applicable, detail::IsBApplicable(axis));
-      p_on += g.p_applicable ? 1 : 0;
-      b_on += g.b_applicable ? 1 : 0;
-    }
-  }
-  // The scenarios must switch each ensemble condition both ways, or the equality above is vacuous.
-  EXPECT_TRUE(p_on > 0 && p_on < 15);
-  EXPECT_TRUE(b_on > 0 && b_on < 15);
+// The physical regime's P half, on the full hexagonal shape, per scenario: the measure's own
+// subgroup of Z6 (source A = the roll's periodicity, source B = the gluing lemma's half-turn).
+//   random / column / plate: a full-turn uniform roll retains every rotation (source A alone;
+//     plate's pole-centred zenith glues the half-turn on top of the same Z6);
+//   parry: locked roll, column zenith — neither source fires, the identity only;
+//   lowitz-like: locked roll but pole-symmetric zenith over a folding Gaussian — Z2 (design AC3's
+//     physics: three classes, not six).
+TEST(DeriveSymmetryGating, PhysicalRetainsTheMeasureSubgroupOnTheFullShape) {
+  const auto axes = GatingScenarioAxes();
+  const SymmetryGating random = DeriveSymmetryGating(SymmetrySemantics::kPhysical, kFullHexagonalSymmetry, axes[0]);
+  const SymmetryGating column = DeriveSymmetryGating(SymmetrySemantics::kPhysical, kFullHexagonalSymmetry, axes[1]);
+  const SymmetryGating parry = DeriveSymmetryGating(SymmetrySemantics::kPhysical, kFullHexagonalSymmetry, axes[2]);
+  const SymmetryGating plate = DeriveSymmetryGating(SymmetrySemantics::kPhysical, kFullHexagonalSymmetry, axes[3]);
+  const SymmetryGating lowitz = DeriveSymmetryGating(SymmetrySemantics::kPhysical, kFullHexagonalSymmetry, axes[4]);
+  EXPECT_EQ(random.p_retained, PRotationSet::Full());
+  EXPECT_EQ(column.p_retained, PRotationSet::Full());
+  EXPECT_EQ(parry.p_retained, PRotationSet::Identity());
+  EXPECT_EQ(plate.p_retained, PRotationSet::Full());
+  EXPECT_EQ(lowitz.p_retained, PRotationSet::FromStep(3));
+  EXPECT_EQ(lowitz.geom, kFullHexagonalSymmetry);
+  // B is untouched by the P rework: random/plate/parry/column keep the old answers.
+  EXPECT_TRUE(random.b_applicable);
+  EXPECT_FALSE(plate.b_applicable);
+  EXPECT_TRUE(parry.b_applicable);
+  EXPECT_TRUE(column.b_applicable);
+}
+
+// The §2a half: a rotation acts on the crystal only if the shape maps onto itself under it.
+// A glued half-turn bounces off the face-alternating prism: the element survives in the measure
+// (⟨3⟩) yet ⟨3⟩ ∩ ⟨2⟩ = the identity, so no two faces merge (design prediction 4).
+TEST(DeriveSymmetryGating, ShapeInterceptionBouncesTheHalfTurnOffAnAlternatingPrism) {
+  const float alternating[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const GeometricSymmetry three_fold = Crystal::CreatePrism(1.0f, alternating).GeomSymmetry();
+  ASSERT_EQ(three_fold.p_step, 2);
+  const auto axes = GatingScenarioAxes();
+  // Z6 measure ∩ ⟨2⟩ = Z3: the even rotations survive.
+  EXPECT_EQ(DeriveSymmetryGating(SymmetrySemantics::kPhysical, three_fold, axes[0]).p_retained,
+            PRotationSet::FromStep(2));
+  // The glued half-turn ∩ ⟨2⟩: nothing left to merge.
+  EXPECT_EQ(DeriveSymmetryGating(SymmetrySemantics::kPhysical, three_fold, axes[4]).p_retained,
+            PRotationSet::Identity());
 }
 
 
@@ -1814,7 +1833,7 @@ TEST(ExpandRaypathByPeriod, IsWhatCrystalExpandRaypathForwardsTo) {
         for (int sigma_a : { 0, 3, 5 }) {
           for (int flags = 0; flags < 8; flags++) {
             const bool d = (flags & 1) != 0;
-            const bool pa = (flags & 2) != 0;
+            const PRotationSet pa = (flags & 2) != 0 ? PRotationSet::Full() : PRotationSet::Identity();
             const bool ba = (flags & 4) != 0;
             EXPECT_EQ(c.ExpandRaypath(rp, sym, sigma_a, d, pa, ba),
                       ExpandRaypathByPeriod(rp, sym, sigma_a, d, pa, ba, c.FnPeriod(), c.GeomSymmetry()));
@@ -1823,6 +1842,59 @@ TEST(ExpandRaypathByPeriod, IsWhatCrystalExpandRaypathForwardsTo) {
       }
     }
   }
+}
+
+// The gluing lemma's half-turn at the reduction level (what the L2 read-time merge consumes): with
+// the measure retaining {0, 3} — the derivation's Lowitz answer — a path and its half-turn image
+// fold onto one representative, in 180° strides; the 60° and 120° images stay apart.
+TEST(ReduceRaypathByPeriod, HalfTurnRetainedMergesInHalfTurnStridesOnly) {
+  const Crystal regular = Crystal::CreatePrism(1.0f);
+  const PRotationSet half_turn = PRotationSet::FromStep(3);
+  auto reduce = [&regular, half_turn](std::vector<IdType> rp) {
+    return ReduceRaypathByPeriod(rp, FilterConfig::kSymP, 0, false, half_turn, false, regular.FnPeriod(),
+                                 regular.GeomSymmetry());
+  };
+  const auto canon = reduce({ 3, 5 });
+  EXPECT_EQ(canon, (std::vector<IdType>{ 3, 5 }));
+  EXPECT_EQ(reduce({ 6, 8 }), canon);  // the half-turn image
+  const auto second = reduce({ 4, 6 });
+  EXPECT_NE(second, canon);             // a 60° stride the measure does not retain
+  EXPECT_EQ(reduce({ 7, 3 }), second);  // the half-turn image of {4, 6}
+  const auto members = ExpandRaypathByPeriod({ 3, 5 }, FilterConfig::kSymP, 0, false, half_turn, false,
+                                             regular.FnPeriod(), regular.GeomSymmetry());
+  ASSERT_EQ(members.size(), 2u);
+  EXPECT_EQ(members[0], (std::vector<IdType>{ 3, 5 }));
+  EXPECT_EQ(members[1], (std::vector<IdType>{ 6, 8 }));
+}
+
+// The full retained set keeps the six-fold stride it always had (the roll-uniform regression pin).
+TEST(ReduceRaypathByPeriod, FullRetainedSetKeepsTheSixFoldStride) {
+  const Crystal regular = Crystal::CreatePrism(1.0f);
+  auto reduce = [&regular](std::vector<IdType> rp) {
+    return ReduceRaypathByPeriod(rp, FilterConfig::kSymP, 0, false, PRotationSet::Full(), false, regular.FnPeriod(),
+                                 regular.GeomSymmetry());
+  };
+  const auto canon = reduce({ 3, 5 });
+  for (const auto& rp : { std::vector<IdType>{ 4, 6 }, std::vector<IdType>{ 5, 7 }, std::vector<IdType>{ 6, 8 },
+                          std::vector<IdType>{ 7, 3 }, std::vector<IdType>{ 8, 4 } }) {
+    EXPECT_EQ(reduce(rp), canon) << rp[0] << "-" << rp[1];
+  }
+}
+
+// The face-alternating prism bounces the glued half-turn off (the derivation's intersection is the
+// identity), so the P reduction merges nothing on the Lowitz axis — the shape half speaks.
+TEST(ReduceRaypathByPeriod, AlternatingPrismUnderTheGluedHalfTurnMergesNothing) {
+  const float alternating[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const Crystal three_fold = Crystal::CreatePrism(1.0f, alternating);
+  const SymmetryGating gating =
+      DeriveSymmetryGating(SymmetrySemantics::kPhysical, three_fold.GeomSymmetry(), GatingScenarioAxes()[4]);
+  ASSERT_EQ(gating.p_retained, PRotationSet::Identity());
+  auto reduce = [&three_fold, gating](std::vector<IdType> rp) {
+    return ReduceRaypathByPeriod(rp, FilterConfig::kSymP, 0, false, gating.p_retained, false, three_fold.FnPeriod(),
+                                 three_fold.GeomSymmetry());
+  };
+  EXPECT_EQ(reduce({ 3, 5 }), (std::vector<IdType>{ 3, 5 }));
+  EXPECT_NE(reduce({ 6, 8 }), reduce({ 3, 5 }));
 }
 
 }  // namespace

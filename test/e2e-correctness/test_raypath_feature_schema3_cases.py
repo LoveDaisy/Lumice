@@ -172,9 +172,14 @@ def test_beta_prism_hole_edge_is_the_constant_closed_curve_with_its_dispersion()
 
 def test_cone_chain_support_covers_the_corpus_band_and_kind1_is_lit():
     doc = _report(_CONE, "13-15-26-28", "--wavelength", "550", "--events", "8192")
+    # The cone axis is a pole-centred zenith Gaussian over a locked roll with a uniform azimuth:
+    # the gluing fold retains the 180° rotation, so each D-pair member's half-turn image (cone
+    # faces +3 cyclically within each band) joins the physical class.
     assert {tuple(m) for m in doc["scope"]["physical_members"]} == {
         (13, 15, 26, 28),
         (13, 17, 26, 24),
+        (16, 18, 23, 25),
+        (16, 14, 23, 27),
     }
     families = doc["support"]["families"]
     assert len(families) == 1 and families[0]["shared"]
@@ -185,7 +190,8 @@ def test_cone_chain_support_covers_the_corpus_band_and_kind1_is_lit():
     assert first["upper_rad"] > math.radians(120.0)
 
     kind1 = [f for f in _objects(doc) if f["kind"] == "kind_1"]
-    assert len(kind1) == 2
+    # One restricted-object record per physical member (four after the half-turn images joined).
+    assert len(kind1) == 4
     for record in kind1:
         assert record["existence"]["state"] == "computed"
         # Production face for this chain under a wobbling declared axis: the restricted
@@ -204,14 +210,23 @@ def test_plate_family_restricted_object_pins_the_azimuth_difference_support():
     doc = _report(_PLATE_GAUSS, "1-4-5-2", "--events", "8192")
     families = doc["support"]["families"]
     assert len(families) == 1 and families[0]["shared"]
-    assert {tuple(m) for m in families[0]["members"]} == {(1, 4, 5, 2), (1, 8, 7, 2)}
+    # The plate-gauss axis is a pole-centred zenith Gaussian over a locked roll: the gluing fold
+    # retains the 180° rotation, so the class grows from the σ pair to its four PBD members —
+    # the half-turn image (1, 7, 8, 2) and its own σ-mirror (1, 5, 4, 2) join.
+    assert {tuple(m) for m in families[0]["members"]} == {
+        (1, 4, 5, 2),
+        (1, 8, 7, 2),
+        (1, 7, 8, 2),
+        (1, 5, 4, 2),
+    }
     # 120 deg is the AZIMUTH difference to the sun, not the spherical deflection (the
     # corpus's pin: the spot's own deflection is 108.937 deg, anchored at the contour
     # docking unit test through the same producer).
     assert families[0]["intervals"][0]["upper_rad"] == pytest.approx(math.radians(120.0), abs=1e-8)
 
     restricted = [f for f in _objects(doc) if f["kind"] == "kind_1_restricted"]
-    assert len(restricted) == 2
+    # One record per physical member (four after the half-turn images joined).
+    assert len(restricted) == 4
     for record in restricted:
         assert record["existence"]["state"] == "computed"
         assert record["visibility"]["state"] == "partial"

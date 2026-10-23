@@ -224,7 +224,7 @@ std::vector<std::vector<int>> LabelOrbit(const std::vector<int>& representative)
   std::vector<IdType> path(representative.begin(), representative.end());
   std::vector<std::vector<int>> members;
   for (const auto& m : ExpandRaypathByPeriod(path, sym::kSymP | sym::kSymB | sym::kSymD, d.sigma_a, d.d_applicable,
-                                             label.p_applicable, label.b_applicable, kHexagonalFnPeriod, label.geom)) {
+                                             label.p_retained, label.b_applicable, kHexagonalFnPeriod, label.geom)) {
     std::vector<int> converted(m.begin(), m.end());
     if (std::find(members.begin(), members.end(), converted) == members.end()) {
       members.push_back(std::move(converted));

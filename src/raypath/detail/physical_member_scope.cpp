@@ -31,7 +31,7 @@ Error ResolvePhysicalMemberScope(const PhysicalMemberRequest& request, PhysicalM
   const auto d = detail::DeriveDSymmetryParams(request.crystal.axis_);
   const auto& gating = result.gating;
   for (const auto& member :
-       ExpandRaypathByPeriod(path, request.symmetry_bits, d.sigma_a, d.d_applicable, gating.p_applicable,
+       ExpandRaypathByPeriod(path, request.symmetry_bits, d.sigma_a, d.d_applicable, gating.p_retained,
                              gating.b_applicable, kHexagonalFnPeriod, gating.geom)) {
     std::vector<int> converted(member.begin(), member.end());
     if (std::find(result.members.begin(), result.members.end(), converted) == result.members.end()) {

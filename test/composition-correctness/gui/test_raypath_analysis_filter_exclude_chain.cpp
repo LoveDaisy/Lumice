@@ -286,9 +286,12 @@ TEST(RaypathAnalysisFilterExcludeChain, LowSymmetryShapeExcludesExactlyTheRowsMe
   EXPECT_EQ(exported, (std::vector<nlohmann::json>{ { 3, 5 }, { 5, 7 }, { 7, 3 } }));
 }
 
-// A regular prism with a locked roll (a Parry-like ensemble): P is not a physical symmetry, so the
-// list's P leaves 3-5 alone in its row, and the filter names 3-5 alone — a label P would take
-// 4-6 (dark on a Parry arc) and the other rotations with it.
+// A regular prism with a locked roll (a Parry-like ensemble): P is not a 60-degree physical
+// symmetry, so the list's P still merges nothing at 60-degree strides — but the default zenith
+// (a full-turn uniform, symmetric about the 0°/180° pole pair) over a folding latitude path
+// retains the 180° subgroup (the gluing fold), so the row's physical class is {3-5, 6-8}. The
+// Exclude writes the class's members individually, no symmetry bits — and never the label-P
+// class (4-6 is dark on this ensemble, so a label P would wrongly take it).
 TEST(RaypathAnalysisFilterExcludeChain, LockedRollExcludesOnlyTheRowItself) {
   SeedUnfilteredPrismDocument();
   g_state.crystals[0].roll = AxisDist{ AxisDistType::kGauss, 0.0f, 1.0f };
@@ -299,8 +302,9 @@ TEST(RaypathAnalysisFilterExcludeChain, LockedRollExcludesOnlyTheRowItself) {
   ASSERT_EQ(g_state.filters.size(), 1u);
   const FilterConfig& f = g_state.filters[0];
   EXPECT_FALSE(f.sym_p || f.sym_b || f.sym_d);
-  ASSERT_EQ(f.param.size(), 1u);
+  ASSERT_EQ(f.param.size(), 2u);
   EXPECT_EQ(f.param[0].text, "3-5");
+  EXPECT_EQ(f.param[1].text, "6-8");
 }
 
 }  // namespace

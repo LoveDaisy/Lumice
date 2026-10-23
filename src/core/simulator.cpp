@@ -1052,7 +1052,7 @@ ChainIdLayerContext MakeChainIdLayerContext(ChainIdInterningTable& table, const 
   ctx.d_applicable = d_params.d_applicable;
   ctx.sigma_a = d_params.sigma_a;
   const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kPhysical, crystal.GeomSymmetry(), axis);
-  ctx.p_applicable = gating.p_applicable;
+  ctx.p_retained = gating.p_retained;
   ctx.b_applicable = gating.b_applicable;
   return ctx;
 }
@@ -1064,7 +1064,7 @@ uint32_t InternRayChainId(const ChainIdLayerContext& ctx, const RayBuffer& buf, 
   std::vector<IdType> segment(data, data + rec.size_);
   // Crystal::ReduceRaypath reduces under the crystal's real shape (the kPhysical regime; a filter
   // on this crystal reduces under the kLabel regime instead — see MakeChainIdLayerContext).
-  segment = ctx.crystal->ReduceRaypath(segment, ctx.symmetry, ctx.sigma_a, ctx.d_applicable, ctx.p_applicable,
+  segment = ctx.crystal->ReduceRaypath(segment, ctx.symmetry, ctx.sigma_a, ctx.d_applicable, ctx.p_retained,
                                        ctx.b_applicable);
   return ctx.table->Intern(buf.ChainIdAt(idx), ctx.crystal_id, std::move(segment));
 }
