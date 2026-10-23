@@ -252,7 +252,7 @@ segment)` 建表，`Format(uint32_t id)`（`chain_id_table.hpp:86`，实现 `cha
 函数的输出）。上下文里查不到的 crystal id 不做任何约化。
 
 **这是物理对称（L2），不是 filter 的标号对称（L1）**（2026-09-28 起显式拆开）：分析列表的一行是一个物理类，
-所以这里的 P/B 还要与取向集体条件（`detail::IsPApplicable` / `IsBApplicable`）相交；filter 的 P/B/D 则是纯标号
+所以这里的 P/B 还要与取向集体条件相交（B 用 `detail::IsBApplicable`；P 是 `DeriveSymmetryGating` 的保留旋转集——roll 周期性与极点折回半转的逐元素并集再交形状）；filter 的 P/B/D 则是纯标号
 规约，不看形状也不看取向（`raypath-symmetry.md` §1.1）。两者在代码里由 `SymmetrySemantics`（`kLabel` /
 `kPhysical`，`src/core/crystal.hpp`）在每个约化入口显式点名，门控由唯一的 `DeriveSymmetryGating` 给出：
 `BuildRaypathReduceContext` 与 `MakeChainIdLayerContext` 传 `kPhysical`，`FilterSpec::Create` 与

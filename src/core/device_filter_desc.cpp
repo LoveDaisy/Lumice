@@ -27,7 +27,10 @@ namespace {
 // always meet, and both equal what FilterSpec computes on the CPU path.
 void FillCanonicalBytes(const Crystal& crystal, const std::vector<IdType>& rp, DeviceFilterDesc& out) {
   const GeometricSymmetry geom{ out.shape_p_step, out.shape_d_mirror_mask, out.shape_b_applicable != 0u };
-  auto canonical = ReduceRaypathByPeriod(rp, out.symmetry, out.sigma_a, out.d_applicable != 0u, out.p_applicable != 0u,
+  // The descriptor's P byte is the label regime's (DeriveSymmetryGating(kLabel).p_retained, the
+  // full rotation set when set), so the reduction strides by that set's generating step.
+  auto canonical = ReduceRaypathByPeriod(rp, out.symmetry, out.sigma_a, out.d_applicable != 0u,
+                                         out.p_applicable != 0u ? PRotationSet::Full() : PRotationSet::Identity(),
                                          out.b_applicable != 0u, crystal.FnPeriod(), geom);
   out.canonical_len = static_cast<uint8_t>(std::min<size_t>(canonical.size(), kMaxHits));
   for (uint8_t i = 0; i < out.canonical_len; ++i) {
@@ -134,7 +137,7 @@ DeviceFilterDesc BuildDeviceFilterDesc(const FilterConfig& config, const Crystal
   // path (FilterSpec::Create): the shape half is the full D6h and P/B are admitted whatever the
   // real shape and ensemble. D's ensemble half (d_applicable / sigma_a above) is not part of it.
   const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kLabel, crystal.GeomSymmetry(), axis_dist);
-  desc.p_applicable = gating.p_applicable ? 1u : 0u;
+  desc.p_applicable = gating.p_retained.NonTrivial() ? 1u : 0u;
   desc.b_applicable = gating.b_applicable ? 1u : 0u;
   desc.shape_p_step = gating.geom.p_step;
   desc.shape_d_mirror_mask = gating.geom.d_valid_sigma_mask;

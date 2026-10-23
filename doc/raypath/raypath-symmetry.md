@@ -109,10 +109,16 @@ same light only if the crystal **ensemble** holds the two labelings with equal w
 orientation distribution is invariant under the element. Each element moves a different part of
 the orientation:
 
-- **P (60° rotation about the c-axis)** is a shift of the **roll** angle. It holds iff roll's
-  distribution is invariant under a 60° shift — in this engine, a uniform roll over a full turn.
-  Azimuth does not enter: a Parry arc has a uniform azimuth and a locked roll, and lights 3-5
-  while its 60° image 4-6 stays dark.
+- **P (rotation about the c-axis)** is a shift of the **roll** angle, asked per rotation k·60°:
+  the measure retains rotation k iff roll's density is invariant under that shift — in this
+  engine, a uniform roll over a full turn retains all six. One more source exists: when a raw
+  zenith sample crosses a pole it is folded back with the azimuth and the roll shifted by 180°,
+  so an axis position's roll density is the equal-weight sum of the two pole leaves' roll
+  densities — 180°-periodic whenever the leaves weigh the same, i.e. the zenith is symmetric
+  about 0°/180° and the azimuth is uniform. That is how a Lowitz alignment (zenith Gaussian
+  centred on the pole, roll locked) retains the 180° subgroup while its 60° rotations stay
+  unbalanced. Azimuth otherwise does not enter: a Parry arc has a uniform azimuth and a locked
+  roll, and lights 3-5 while its 60° image 4-6 stays dark.
 - **B (σh)** reverses the c-axis: the same physical crystal labeled upside down is orientation
   (zenith, azimuth) against (180° − zenith, azimuth + 180°). It holds iff the **zenith** is
   symmetric about 90° **and the azimuth** is invariant under a half turn (in practice: uniform over
@@ -129,7 +135,9 @@ it has no effect there (fewer rows merge), never a wrong merge. A filter applies
 the ensemble (§1.1); only D reads its condition in both meanings. The three conditions are core's
 `detail::IsPApplicable` / `IsBApplicable` / `IsDApplicable` (`src/core/crystal.hpp`), exposed as
 `LUMICE_IsPApplicable` / `LUMICE_IsBApplicable` / `LUMICE_IsDApplicable` — what the filter
-editor's hints read.
+editor's hints read. The analysis list's P half is finer than the roll probe: the retained
+rotations are the per-element roll periodicities joined with the pole-fold half-turn above,
+intersected with the shape's rotations (`DeriveSymmetryGating`'s `PRotationSet`).
 
 An earlier version of this section tied P to a uniform azimuth and B to "a symmetric zenith
 distribution (plate crystals)". Both were wrong as physical conditions.
@@ -146,8 +154,14 @@ correspondingly.
 
 **Filter**: always applies — all six label rotations collapse to one.
 
-**Analysis list — enabling condition**: roll is uniform over 360° (§2b) — true for random, plate
-and column orientations, false for Parry and Lowitz, whose roll is locked. Azimuth plays no part.
+**Analysis list — enabling condition**: the retained rotation set (`DeriveSymmetryGating`,
+§2b) — the roll's periodicity and, on a zenith symmetric about 0°/180° over a uniform azimuth
+(the pole fold gluing the two leaves), the 180° subgroup; intersected with the rotations the
+shape has. A uniform roll retains all six (random, plate, column orientations); a locked roll
+over a pole-centred zenith retains the 180° subgroup (Lowitz alignments merge in half-turn
+strides); a locked roll over any other zenith retains nothing (Parry). The half-turn subgroup
+itself is intercepted where the shape lacks the rotation — a face-alternating prism merges
+nothing under it.
 
 **Effect**: the canonical raypath uses the smallest face permutation representative; six
 rotationally equivalent paths collapse to one. In the analysis list, on a shape with only a three-

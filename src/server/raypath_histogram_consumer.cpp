@@ -322,7 +322,7 @@ RaypathReduceContext BuildRaypathReduceContext(const SceneConfig& scene) {
       const GeometricSymmetry shape =
           std::visit([](const auto& param) { return DeriveGeometricSymmetry(param); }, setting.crystal_.param_);
       const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kPhysical, shape, setting.crystal_.axis_);
-      p.p_applicable = gating.p_applicable;
+      p.p_retained = gating.p_retained;
       p.b_applicable = gating.b_applicable;
       p.geom = gating.geom;
       ctx.crystal_params_[setting.crystal_.id_] = p;
@@ -410,7 +410,7 @@ RaypathHistogramResult ReduceRaypathHistogram(const RaypathHistogramResult& fine
         logged_unknown_crystal = true;
       }
       id = table.Intern(id, seg.crystal_id,
-                        ReduceRaypathByPeriod(seg.segment, symmetry, p.sigma_a, p.d_applicable, p.p_applicable,
+                        ReduceRaypathByPeriod(seg.segment, symmetry, p.sigma_a, p.d_applicable, p.p_retained,
                                               p.b_applicable, kHexagonalFnPeriod, p.geom));
     }
     auto& dst = merged[id];

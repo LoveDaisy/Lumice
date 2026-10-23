@@ -173,10 +173,14 @@ LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, L
   out->vertical_mirror_mask = g.d_valid_sigma_mask;
   out->horizontal_mirror = g.b_applicable ? 1 : 0;
   out->d_effective = ns::DMirrorActive(d.d_applicable, d.sigma_a, g) ? 1 : 0;
-  // P acts when the ensemble admits it and the shape leaves at least one non-identity rotation;
-  // B when the ensemble admits it and the shape has the horizontal mirror — the same
-  // intersections the reductions take (crystal.cpp PActive / BActive, detail::ReduceBuffer).
-  out->p_effective = (ns::detail::IsPApplicable(config.axis_) && g.p_step < ns::kHexagonalFnPeriod) ? 1 : 0;
+  // The one derivation the reductions read (crystal.cpp's DeriveSymmetryGating, kPhysical): P
+  // acts in the analysis list's physical grouping iff the retained rotation set keeps a
+  // non-identity element — the measure's roll periodicity and gluing half-turn intersected with
+  // the shape's rotations. B when the ensemble admits it and the shape has the horizontal mirror.
+  // Unlike the old inline roll-only probe, a pole-symmetric zenith over a locked roll reports
+  // P (its 180° subgroup merges) — see lumice_api_version.h's ledger.
+  const ns::SymmetryGating gating = ns::DeriveSymmetryGating(ns::SymmetrySemantics::kPhysical, g, config.axis_);
+  out->p_effective = gating.p_retained.NonTrivial() ? 1 : 0;
   out->b_effective = (ns::detail::IsBApplicable(config.axis_) && g.b_applicable) ? 1 : 0;
   return LUMICE_OK;
 }
@@ -251,7 +255,7 @@ LUMICE_ErrorCode LUMICE_ExpandRaypathClass(const LUMICE_CrystalParam* crystal, c
   const auto sym =
       static_cast<uint8_t>(symmetry & (ns::FilterConfig::kSymP | ns::FilterConfig::kSymB | ns::FilterConfig::kSymD));
   std::vector<std::vector<ns::IdType>> members;
-  for (auto& m : ns::ExpandRaypathByPeriod(rp, sym, d.sigma_a, d.d_applicable, gating.p_applicable, gating.b_applicable,
+  for (auto& m : ns::ExpandRaypathByPeriod(rp, sym, d.sigma_a, d.d_applicable, gating.p_retained, gating.b_applicable,
                                            ns::kHexagonalFnPeriod, gating.geom)) {
     if (std::find(members.begin(), members.end(), m) == members.end()) {
       members.push_back(std::move(m));

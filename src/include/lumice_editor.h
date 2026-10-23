@@ -222,7 +222,12 @@ typedef struct LUMICE_CrystalSymmetry_ {
   // acts whenever LUMICE_IsDApplicable does.)
   int d_effective;
   // Non-zero when P acts in the analysis list's physical grouping (v4.48): the axis condition
-  // LUMICE_IsPApplicable reports AND rotation_step < 6 (at least one rotation besides the identity).
+  // LUMICE_IsPApplicable reports AND rotation_step < 6 (at least one rotation besides the
+  // identity). Now the analysis reduction's own derivation (DeriveSymmetryGating, physical) —
+  // the retained rotation set: the roll's periodicity and, on a pole-symmetric zenith over a
+  // uniform azimuth (the gluing fold), the 180° subgroup, intersected with the shape's
+  // rotations. So a Lowitz-like axis (locked roll, pole-centred zenith) reports non-zero where
+  // the old roll-only probe reported zero; no struct layout changed (see lumice_api_version.h).
   int p_effective;
   // Non-zero when B acts in the analysis list's physical grouping (v4.48): the axis condition
   // LUMICE_IsBApplicable reports AND horizontal_mirror.

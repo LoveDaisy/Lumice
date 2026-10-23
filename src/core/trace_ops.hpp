@@ -83,9 +83,10 @@ struct ChainIdLayerContext {
   IdType crystal_id = kInvalidId;  // CrystalConfig::id_, see ChainIdTableEntry
   uint8_t symmetry = 0;            // FilterConfig::kSym* flags
   int sigma_a = 0;
-  // The orientation ensemble's D / P / B conditions (detail::Is*Applicable).
+  // The orientation ensemble's D / P / B conditions (DeriveSymmetryGating for P: the retained
+  // rotation set, already intersected with the shape).
   bool d_applicable = false;
-  bool p_applicable = false;
+  PRotationSet p_retained{};
   bool b_applicable = false;
 };
 

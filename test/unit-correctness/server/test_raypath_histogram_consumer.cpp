@@ -822,7 +822,7 @@ Seg ExpectedSegment(const SimData& batch, const Seg& rp) {
   const AxisDistribution& axis = batch.crystal_axis_dists_[0];
   const bool d_applicable = detail::IsDApplicable(axis);
   const int sigma_a = d_applicable ? detail::ComputeSigmaA(axis.roll_dist.center) : 0;
-  return crystal.ReduceRaypath(rp, kSymAll, sigma_a, d_applicable, true, true);
+  return crystal.ReduceRaypath(rp, kSymAll, sigma_a, d_applicable, PRotationSet::Full(), true);
 }
 
 class Halo22 : public ::testing::Test {
@@ -1308,8 +1308,10 @@ constexpr double kFixtureTotalOverK = 0.5;  // (15 + 5) / 40
 RaypathHistogramResult FinestFixture() {
   RaypathHistogramResult r;
   r.roi_mode_ = RaypathRoiMode::kFullSky;
-  r.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, true, true, true, kFullHexagonalSymmetry };
-  r.reduce_ctx_.crystal_params_[2] = RaypathCrystalReduceParams{ 0, false, true, true, kFullHexagonalSymmetry };
+  r.reduce_ctx_.crystal_params_[1] =
+      RaypathCrystalReduceParams{ 0, true, PRotationSet::Full(), true, kFullHexagonalSymmetry };
+  r.reduce_ctx_.crystal_params_[2] =
+      RaypathCrystalReduceParams{ 0, false, PRotationSet::Full(), true, kFullHexagonalSymmetry };
   r.reduce_ctx_.layer_multi_crystal_ = { false };
   r.other_energy_ = 5.0;
   r.other_count_ = 50;
@@ -1369,13 +1371,14 @@ TEST(ReadTimeReduction, RowCountIsMonotoneAndSumsAreConservedOverTheFourSymmetri
   EXPECT_NE(Find(p, "3-7"), nullptr);
   // P|B|D: two rows, whose segments are what the reduction authority says.
   EXPECT_EQ(pbd.entries_[0].chain_[0].segment,
-            ReduceRaypathByPeriod({ 4, 6 }, kSymAll, 0, true, true, true, 6, kFullHexagonalSymmetry));
+            ReduceRaypathByPeriod({ 4, 6 }, kSymAll, 0, true, PRotationSet::Full(), true, 6, kFullHexagonalSymmetry));
   EXPECT_EQ(pbd.entries_[0].chain_[0].segment,
-            ReduceRaypathByPeriod({ 3, 7 }, kSymAll, 0, true, true, true, 6, kFullHexagonalSymmetry));
+            ReduceRaypathByPeriod({ 3, 7 }, kSymAll, 0, true, PRotationSet::Full(), true, 6, kFullHexagonalSymmetry));
   EXPECT_DOUBLE_EQ(pbd.entries_[0].energy_, 12.0);
   EXPECT_EQ(pbd.entries_[0].count_, 120u);
-  EXPECT_EQ(pbd.entries_[1].chain_[0].segment,
-            ReduceRaypathByPeriod({ 2, 3, 5 }, kSymAll, 0, true, true, true, 6, kFullHexagonalSymmetry));
+  EXPECT_EQ(
+      pbd.entries_[1].chain_[0].segment,
+      ReduceRaypathByPeriod({ 2, 3, 5 }, kSymAll, 0, true, PRotationSet::Full(), true, 6, kFullHexagonalSymmetry));
   EXPECT_DOUBLE_EQ(pbd.entries_[1].energy_, 3.0);
   EXPECT_EQ(pbd.entries_[1].count_, 30u);
   EXPECT_EQ(pbd.entries_[0].display_, "3-5");
@@ -1411,8 +1414,8 @@ TEST(ReadTimeReduction, MergedRowErrorIsTheOrbitSumAndRecordScalarsPassThrough) 
   auto orbit_of = [&finest](const RaypathHistogramEntry& e, uint8_t sym) {
     size_t n = 0;
     for (const auto& f : finest.entries_) {
-      if (ReduceRaypathByPeriod(f.chain_[0].segment, sym, 0, true, true, true, 6, kFullHexagonalSymmetry) ==
-          e.chain_[0].segment) {
+      if (ReduceRaypathByPeriod(f.chain_[0].segment, sym, 0, true, PRotationSet::Full(), true, 6,
+                                kFullHexagonalSymmetry) == e.chain_[0].segment) {
         n++;
       }
     }
@@ -1446,8 +1449,10 @@ TEST(ReadTimeReduction, DIsAppliedPerLayerWithThatLayersCrystalParameters) {
   // crystal 1 is {3,5}'s D-image; on crystal 2 it is not, so the two chains
   // {3,7}->{3,7} and {3,5}->{3,5} merge on layer 0 only, and stay two rows.
   RaypathHistogramResult finest;
-  finest.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, true, true, true, kFullHexagonalSymmetry };
-  finest.reduce_ctx_.crystal_params_[2] = RaypathCrystalReduceParams{ 0, false, true, true, kFullHexagonalSymmetry };
+  finest.reduce_ctx_.crystal_params_[1] =
+      RaypathCrystalReduceParams{ 0, true, PRotationSet::Full(), true, kFullHexagonalSymmetry };
+  finest.reduce_ctx_.crystal_params_[2] =
+      RaypathCrystalReduceParams{ 0, false, PRotationSet::Full(), true, kFullHexagonalSymmetry };
   finest.reduce_ctx_.layer_multi_crystal_ = { false, false };
   auto add = [&finest](Seg a, Seg b, double energy) {
     RaypathHistogramEntry e;
@@ -1477,7 +1482,8 @@ TEST(ReadTimeReduction, RingEnergiesAreSummedElementwiseAndTheConeEchoIsKept) {
   finest.roi_mode_ = RaypathRoiMode::kCone;
   finest.cone_ring_count_ = 3;
   finest.cone_radius_rad_ = 0.25f;
-  finest.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, false, true, true, kFullHexagonalSymmetry };
+  finest.reduce_ctx_.crystal_params_[1] =
+      RaypathCrystalReduceParams{ 0, false, PRotationSet::Full(), true, kFullHexagonalSymmetry };
   finest.reduce_ctx_.layer_multi_crystal_ = { false };
   auto add = [&finest](Seg seg, std::vector<double> rings) {
     RaypathHistogramEntry e;
@@ -1667,6 +1673,73 @@ TEST(ReduceContext, LayerFlagIsPerLayerWhenOneCrystalIsAloneOnOneLayerAndSharedO
   const auto reduced = ReduceRaypathHistogram(finest, kSymAll);
   ASSERT_EQ(reduced.entries_.size(), 1u);
   EXPECT_EQ(reduced.entries_[0].display_, "(3-5) -> C1(1-3)");
+}
+
+// The corpus's C16 Lowitz alignment (regular prism; zenith Gaussian 0°±40°, roll Gaussian
+// 0°±0.3°, uniform azimuth — the axis the corpus audited to bit level): the measure retains the
+// 180° rotation only, so the twelve prism paths — six D-pair rows in the old conservative
+// listing — collapse into exactly three physical classes under PBD, the corpus's three-class
+// table: upper arc {3-5, 3-7, 6-8, 6-4}, lower {4-6, 8-6, 5-3, 7-3}, middle/ring {4-8, 8-4,
+// 5-7, 7-5}. The zenith-20° control axis (the corpus's negative control) retains nothing and
+// the same twelve paths stay six D-pair rows.
+CrystalConfig LowitzOrControlCrystal(IdType id, float zenith_mean_deg) {
+  nlohmann::json j = {
+    { "id", id },
+    { "type", "prism" },
+    { "shape", { { "height", 1.2 } } },
+    { "axis",
+      { { "zenith", { { "type", "gauss" }, { "mean", zenith_mean_deg }, { "std", 40 } } },
+        { "azimuth", { { "type", "uniform" }, { "mean", 0 }, { "std", 360 } } },
+        { "roll", { { "type", "gauss" }, { "mean", 0 }, { "std", 0.3 } } } } },
+  };
+  return j.get<CrystalConfig>();
+}
+
+TEST(ReadTimeReduction, LowitzAxisCollapsesTheSixDPairRowsIntoTheThreeCorpusClasses) {
+  const std::vector<Seg> kTwelvePaths = {
+    Seg{ 3, 5 }, Seg{ 3, 7 }, Seg{ 6, 8 }, Seg{ 6, 4 }, Seg{ 4, 6 }, Seg{ 8, 6 },
+    Seg{ 5, 3 }, Seg{ 7, 3 }, Seg{ 4, 8 }, Seg{ 8, 4 }, Seg{ 5, 7 }, Seg{ 7, 5 }
+  };
+  auto finest_for = [&](const CrystalConfig& crystal) {
+    SceneConfig scene;
+    MsInfo l0;
+    l0.prob_ = 0.0f;
+    l0.setting_.push_back(Setting(crystal));
+    scene.ms_.push_back(std::move(l0));
+    RaypathHistogramResult finest;
+    finest.reduce_ctx_ = BuildRaypathReduceContext(scene);
+    for (const Seg& seg : kTwelvePaths) {
+      RaypathHistogramEntry e;
+      e.chain_.push_back(RaypathChainSegment{ crystal.id_, seg });
+      e.energy_ = 1.0;
+      e.count_ = 1;
+      finest.entries_.push_back(std::move(e));
+    }
+    return finest;
+  };
+
+  const auto lowitz = finest_for(LowitzOrControlCrystal(1, 0.0f));
+  // The gate's own answer: the half-turn subgroup, not the full rotation set.
+  ASSERT_EQ(lowitz.reduce_ctx_.crystal_params_.at(1).p_retained, PRotationSet::FromStep(3));
+  const auto merged = ReduceRaypathHistogram(lowitz, kSymAll);
+  ASSERT_EQ(merged.entries_.size(), 3u);
+  ExpectSums(merged, 12.0, 12, "the three classes carry the twelve paths' sums");
+  std::map<std::string, double> by_display;
+  for (const auto& e : merged.entries_) {
+    by_display[e.display_] += e.energy_;
+  }
+  EXPECT_EQ(by_display.size(), 3u);
+  EXPECT_DOUBLE_EQ(by_display["3-5"], 4.0);  // upper arc
+  EXPECT_DOUBLE_EQ(by_display["4-6"], 4.0);  // lower arc
+  EXPECT_DOUBLE_EQ(by_display["4-8"], 4.0);  // middle / ring arc
+
+  // The control axis (zenith centre 20°): no gluing, so the gate keeps only the identity and the
+  // twelve paths reduce by D alone — six rows, the old conservative listing.
+  const auto control = finest_for(LowitzOrControlCrystal(1, 20.0f));
+  ASSERT_EQ(control.reduce_ctx_.crystal_params_.at(1).p_retained, PRotationSet::Identity());
+  const auto unmerged = ReduceRaypathHistogram(control, kSymAll);
+  EXPECT_EQ(unmerged.entries_.size(), 6u);
+  ExpectSums(unmerged, 12.0, 12, "the control axis keeps six D-pair rows");
 }
 
 // A frame's reduce cache holds one memo per symmetry (0..7), not one shared slot: two callers

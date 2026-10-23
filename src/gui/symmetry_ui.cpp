@@ -39,8 +39,9 @@ constexpr const char* kPFilterHover = "P: also match every 60\xc2\xb0 rotation o
 constexpr const char* kBFilterHover = "B: also match the path with 1<->2 and 13..18<->23..28 swapped";
 constexpr const char* kDFilterHover = "D: also match the path mirrored in the plane the roll mean selects";
 constexpr const char* kPAnalysisHover =
-    "P: merge 60\xc2\xb0 rotations, only where each crystal's shape and orientation make them\n"
-    "physically equivalent (unlike a filter's P, which merges face labels)";
+    "P: merge the rotations the orientation actually retains \xe2\x80\x94 all six 60\xc2\xb0 steps, or\n"
+    "only the 180\xc2\xb0 subgroup (pole-symmetric zenith over a uniform azimuth), per crystal's shape\n"
+    "and measure (unlike a filter's P, which merges face labels)";
 constexpr const char* kBAnalysisHover =
     "B: merge the 1<->2 / upper<->lower cone mirror, only where it is physically equivalent";
 constexpr const char* kDAnalysisHover =

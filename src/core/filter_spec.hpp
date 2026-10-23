@@ -20,9 +20,10 @@ struct RaypathOrbit {
   RaypathRecorder canonical_;
   uint8_t symmetry_ = FilterConfig::kSymNone;
   int sigma_a_ = 0;
-  // The orientation ensemble's D / P / B conditions (detail::Is*Applicable); false admits nothing.
+  // The orientation ensemble's D / P / B conditions (DeriveSymmetryGating for P: the retained
+  // rotation set; a filter's is the label regime's Full()); false admits nothing.
   bool d_applicable_ = false;
-  bool p_applicable_ = false;
+  PRotationSet p_retained_{};
   bool b_applicable_ = false;
   // fn_period_ < 0: empty crystal, no reduction. Otherwise the crystal's face-number modulus and
   // shape symmetry (Crystal::FnPeriod / GeomSymmetry), which detail::ReduceBuffer reduces under.
@@ -138,12 +139,13 @@ std::vector<ColorSpecGroupOwned> BuildColorSpecGroups(const ColorGatePlacement& 
 
 namespace detail {
 // In-place canonicalisation of a raypath byte buffer under (symmetry, sigma_a, d_applicable,
-// p_applicable, b_applicable) on a crystal of face-number modulus `fn_period` and shape symmetry
-// `geom` — the same arguments, with the same meaning, as ReduceRaypathByPeriod.
+// p_retained, b_applicable) on a crystal of face-number modulus `fn_period` and shape symmetry
+// `geom` — the same arguments, with the same meaning, as ReduceRaypathByPeriod (the P strides are
+// p_retained.GeneratorStep(), not geom.p_step).
 // Mirrors Crystal::ReduceRaypath (the byte-buffer form of the same rule, kept separate for the
 // per-ray hot path). Operates on a raw uint8_t buffer so it works uniformly on inline data_ and on
 // copies of arena slots. A no-op under kSymNone or fn_period < 0.
-void ReduceBuffer(uint8_t* data, size_t size, uint8_t symmetry, int sigma_a, bool d_applicable, bool p_applicable,
+void ReduceBuffer(uint8_t* data, size_t size, uint8_t symmetry, int sigma_a, bool d_applicable, PRotationSet p_retained,
                   bool b_applicable, int fn_period, const GeometricSymmetry& geom);
 }  // namespace detail
 

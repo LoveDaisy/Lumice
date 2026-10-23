@@ -361,7 +361,11 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_mc_ess.cpp"
   # The survey's C bridge (v4.54): struct_size and null-arg contracts, the stable refusal names,
   # the happy path's schema-4 document with the request echo.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_c_api.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_survey_c_api.cpp"
+  # The physical P gating's source B pinned to the fold mechanism: the flip-probability matrix,
+  # the declared density's half-turn periodicity (bit-level), and the half-turn-relabeled optical
+  # witness on the production sampler/evaluator/corridor pieces (the corpus audit, promoted).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_lowitz_gluing_mechanism.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE

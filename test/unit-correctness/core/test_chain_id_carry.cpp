@@ -111,8 +111,8 @@ std::vector<IdType> OracleReduce(const Crystal& crystal, const AxisDistribution&
                                  const std::vector<IdType>& rp) {
   bool d_applicable = detail::IsDApplicable(axis);
   int sigma_a = d_applicable ? detail::ComputeSigmaA(axis.roll_dist.center) : 0;
-  return crystal.ReduceRaypath(rp, symmetry, sigma_a, d_applicable, detail::IsPApplicable(axis),
-                               detail::IsBApplicable(axis));
+  const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kPhysical, crystal.GeomSymmetry(), axis);
+  return crystal.ReduceRaypath(rp, symmetry, sigma_a, d_applicable, gating.p_retained, gating.b_applicable);
 }
 
 std::string SegmentString(const std::vector<IdType>& seg) {
@@ -585,19 +585,19 @@ TEST(ChainIdFold, LayerContextDerivesSigmaAndDLikeFilterSpecCreate) {
   EXPECT_EQ(ctx.d_applicable, detail::IsDApplicable(d_axis));
   EXPECT_TRUE(ctx.d_applicable) << "this axis is D-applicable by construction";
   EXPECT_EQ(ctx.sigma_a, detail::ComputeSigmaA(d_axis.roll_dist.center));
-  EXPECT_TRUE(ctx.p_applicable) << "this axis is P-applicable by construction";
+  EXPECT_EQ(ctx.p_retained, PRotationSet::Full()) << "this axis is P-applicable by construction";
   EXPECT_TRUE(ctx.b_applicable) << "this axis is B-applicable by construction";
 
   // A locked roll drops P, a vertical c-axis drops B — each on its own.
   AxisDistribution no_p = MakeAxis();
   no_p.roll_dist = Distribution{ DistributionType::kNoRandom, 0.0f, 0.0f };
   auto ctx_p = MakeChainIdLayerContext(table, crystal, 7, no_p, kSymAll);
-  EXPECT_FALSE(ctx_p.p_applicable);
+  EXPECT_FALSE(ctx_p.p_retained.NonTrivial());
   EXPECT_TRUE(ctx_p.b_applicable);
   AxisDistribution no_b = MakeAxis();
   no_b.latitude_dist.center = 90.0f;
   auto ctx_b = MakeChainIdLayerContext(table, crystal, 7, no_b, kSymAll);
-  EXPECT_TRUE(ctx_b.p_applicable);
+  EXPECT_EQ(ctx_b.p_retained, PRotationSet::Full());
   EXPECT_FALSE(ctx_b.b_applicable);
 
   AxisDistribution no_d = MakeAxis();

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <numeric>
 #include <utility>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include "core/geo3d_closedform.hpp"
 #include "core/math.hpp"
 #include "core/optics.hpp"
+#include "core/shared/lat_path_selection.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {
@@ -577,11 +579,12 @@ std::vector<IdType> PCanonicalShiftByPeriod(const std::vector<IdType>& rp, int f
 }
 
 // Whether each symmetry element takes part, given request, ensemble and geometry: the one place the
-// three halves are intersected for Crystal's reduction and expansion. `p_applicable` /
-// `b_applicable` / `d_applicable` are the orientation ensemble's halves (detail::Is*Applicable);
-// `geom` (including geom.b_applicable) is the shape's.
-bool PActive(uint8_t symmetry, bool p_applicable) {
-  return (symmetry & sym::kSymP) && p_applicable;
+// three halves are intersected for Crystal's reduction and expansion. `p_retained` /
+// `b_applicable` / `d_applicable` are the orientation ensemble's halves (the P one already carries
+// the shape intersection from DeriveSymmetryGating); `geom` (including geom.b_applicable) is the
+// shape's.
+bool PActive(uint8_t symmetry, const PRotationSet& p_retained) {
+  return (symmetry & sym::kSymP) && p_retained.NonTrivial();
 }
 
 bool DActive(uint8_t symmetry, int sigma_a, bool d_applicable, const GeometricSymmetry& geom) {
@@ -596,15 +599,15 @@ bool BActive(uint8_t symmetry, bool b_applicable, const GeometricSymmetry& geom)
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                          bool d_applicable, bool p_applicable, bool b_applicable, int fn_period,
+                                          bool d_applicable, PRotationSet p_retained, bool b_applicable, int fn_period,
                                           const GeometricSymmetry& geom) {
   if (symmetry == sym::kSymNone || fn_period < 0) {
     return rp;
   }
 
   std::vector<IdType> reduced_rp = rp;
-  if (PActive(symmetry, p_applicable)) {
-    reduced_rp = PCanonicalShiftByPeriod(reduced_rp, fn_period, geom.p_step);
+  if (PActive(symmetry, p_retained)) {
+    reduced_rp = PCanonicalShiftByPeriod(reduced_rp, fn_period, p_retained.GeneratorStep());
   }
 
   if (DActive(symmetry, sigma_a, d_applicable, geom)) {
@@ -622,8 +625,8 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
     // When kSymP is also enabled, the D-image may no longer be P-canonical
     // (first pri shifted by sigma_a); re-canonicalize before lex comparison
     // so same orbit always reduces to the same representative.
-    if (PActive(symmetry, p_applicable)) {
-      rp_reflected = PCanonicalShiftByPeriod(rp_reflected, fn_period, geom.p_step);
+    if (PActive(symmetry, p_retained)) {
+      rp_reflected = PCanonicalShiftByPeriod(rp_reflected, fn_period, p_retained.GeneratorStep());
     }
     if (rp_reflected < reduced_rp) {
       reduced_rp = rp_reflected;
@@ -656,22 +659,22 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
-  return ReduceRaypath(rp, symmetry, 0, false, false, false);
+  return ReduceRaypath(rp, symmetry, 0, false, PRotationSet::Identity(), false);
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                           bool d_applicable, bool p_applicable, bool b_applicable) const {
-  return ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, fn_period_,
+                                           bool d_applicable, PRotationSet p_retained, bool b_applicable) const {
+  return ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, p_retained, b_applicable, fn_period_,
                                geom_symmetry_);
 }
 
 std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
-  return ExpandRaypath(rp, symmetry, 0, false, false, false);
+  return ExpandRaypath(rp, symmetry, 0, false, PRotationSet::Identity(), false);
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                                       bool d_applicable, bool p_applicable, bool b_applicable,
+                                                       bool d_applicable, PRotationSet p_retained, bool b_applicable,
                                                        int fn_period, const GeometricSymmetry& geom) {
   std::vector<std::vector<IdType>> result;
   result.emplace_back(rp);
@@ -679,9 +682,10 @@ std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>
     return result;
   }
 
-  if (PActive(symmetry, p_applicable)) {
-    // Only the rotations the shape admits: multiples of p_step (none when p_step >= fn_period).
-    const int step = geom.p_step > 0 ? geom.p_step : fn_period;
+  if (PActive(symmetry, p_retained)) {
+    // Only the rotations the retained set keeps — its generating stride already carries the shape
+    // intersection (the derivation's), and a stride ≥ fn_period enumerates nothing.
+    const int step = p_retained.GeneratorStep();
     for (int i = step; i < fn_period; i += step) {
       std::vector<IdType> curr_rp{ rp };
       bool changed = false;
@@ -759,8 +763,9 @@ std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>
 }
 
 std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                                        bool d_applicable, bool p_applicable, bool b_applicable) const {
-  return ExpandRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, fn_period_,
+                                                        bool d_applicable, PRotationSet p_retained,
+                                                        bool b_applicable) const {
+  return ExpandRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, p_retained, b_applicable, fn_period_,
                                geom_symmetry_);
 }
 
@@ -768,7 +773,7 @@ std::vector<IdType> LabelEquivalentFaces(IdType face, uint8_t symmetry, int sigm
   const SymmetryGating label =
       DeriveSymmetryGating(SymmetrySemantics::kLabel, kFullHexagonalSymmetry, AxisDistribution{});
   std::vector<IdType> faces;
-  for (const auto& rp : ExpandRaypathByPeriod({ face }, symmetry, sigma_a, d_applicable, label.p_applicable,
+  for (const auto& rp : ExpandRaypathByPeriod({ face }, symmetry, sigma_a, d_applicable, label.p_retained,
                                               label.b_applicable, kHexagonalFnPeriod, label.geom)) {
     if (std::find(faces.begin(), faces.end(), rp[0]) == faces.end()) {
       faces.push_back(rp[0]);
@@ -1212,14 +1217,101 @@ bool IsBApplicable(const AxisDistribution& d) {
                              d.latitude_dist.spread);
 }
 
+bool GluingRetainsHalfTurn(const AxisDistribution& d) {
+  // The latitude centre being a pole, within FloatEqual of the same predicate family.
+  auto latitude_centered_at_pole = [](float latitude_center_deg) {
+    return FloatEqual(latitude_center_deg, 90.0f) || FloatEqual(latitude_center_deg, -90.0f);
+  };
+  // Equal azimuth weighting is the same full-turn-uniform primitive the B and D ensemble
+  // conditions read: a non-uniform azimuth weights the two pole leaves per sky position.
+  if (!IsFullTurnUniform(d.azimuth_dist.type, d.azimuth_dist.spread)) {
+    return false;
+  }
+  // Only a latitude path that actually folds glues the two pole leaves — the fold (LUT flip or
+  // kGaussianLegacy's NormalizeLatitude, composed by ComposeAxisAngles' +π) IS the mechanism that
+  // mixes roll ψ with ψ+180°. Which paths fold is lat_path::SelectLatPath's statement, the same
+  // selector the CPU sampler and both device backends run, so this cannot drift onto a path that
+  // never folds: the full-sphere uniform (no fold, no leaf pair) and kNoRandom (a locked zenith
+  // feeds one leaf only) answer false here by construction.
+  switch (lat_path::SelectLatPath(d).kind) {
+    case lat_path::LatPathKind::kLutInverseCdf:
+    case lat_path::LatPathKind::kGaussLegacy:
+      break;
+    default:
+      return false;
+  }
+  // Equal leaves ⟺ the latitude density is symmetric about a pole — core latitude ±90°, the wire
+  // zenith 0°/180° pair (the raw half past the pole folds back with exactly the mass that stayed,
+  // whatever the width). Per-type reading of the centre slot, like IsBApplicableParams.
+  switch (d.latitude_dist.type) {
+    case DistributionType::kUniform:
+      return latitude_centered_at_pole(d.latitude_dist.UniformCenter());
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy:
+    case DistributionType::kLaplacian:
+      return latitude_centered_at_pole(d.latitude_dist.center);
+    case DistributionType::kZigzag:
+    case DistributionType::kNoRandom:
+      return false;
+  }
+  return false;
+}
+
 }  // namespace detail
+
+int PRotationSet::GeneratorStep() const {
+  int step = 0;
+  for (int k = 1; k < 6; ++k) {
+    if (Keeps(k)) {
+      step = std::gcd(step, k);
+    }
+  }
+  return step == 0 ? 6 : step;
+}
+
+namespace {
+
+// Source A of the physical P gating: the roll density's own periodicity, asked per element —
+// element k survives iff the density is invariant under a k·60° shift. Of this repo's
+// distribution families only a full-turn uniform is shift-invariant at all (and then for every k
+// at once), so today the loop collapses to Full() or Identity(); the loop is the shape of the
+// per-element question, and detail::IsPApplicable is its Z6 extreme (same primitive, one root).
+PRotationSet RollRetainedRotations(const Distribution& roll) {
+  PRotationSet set{};
+  for (int k = 0; k < 6; ++k) {
+    if (detail::IsFullTurnUniform(roll.type, roll.spread)) {
+      set.Keep(k);
+    }
+  }
+  return set;
+}
+
+// The subgroup of Z6 both sources generate together (invariance under either element set implies
+// invariance under the group they generate): the multiples of gcd(step_A, step_B).
+PRotationSet JoinRetainedSubgroups(const PRotationSet& a, const PRotationSet& b) {
+  return PRotationSet::FromStep(std::gcd(a.GeneratorStep(), b.GeneratorStep()));
+}
+
+// The shape half of the §2a intersection: a rotation acts on the crystal only if the shape maps
+// onto itself under it (multiples of geom.p_step). Intersecting subgroup ⟨s⟩ with the shape's
+// multiples of p_step gives the multiples of lcm(s, p_step) — this is what bounces a glued
+// half-turn off a face-alternating prism (⟨3⟩ ∩ ⟨2⟩ = the identity: the element survives in the
+// measure yet merges no two faces).
+PRotationSet RetainedOnShape(const PRotationSet& measure, int shape_p_step) {
+  return PRotationSet::FromStep(std::lcm(measure.GeneratorStep(), shape_p_step));
+}
+
+}  // namespace
 
 SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const GeometricSymmetry& shape_geom,
                                     const AxisDistribution& axis_dist) {
   if (semantics == SymmetrySemantics::kLabel) {
-    return { kFullHexagonalSymmetry, true, true };
+    return { kFullHexagonalSymmetry, PRotationSet::Full(), true };
   }
-  return { shape_geom, detail::IsPApplicable(axis_dist), detail::IsBApplicable(axis_dist) };
+  const PRotationSet measure = JoinRetainedSubgroups(
+      RollRetainedRotations(axis_dist.roll_dist),
+      detail::GluingRetainsHalfTurn(axis_dist) ? PRotationSet::FromStep(3) : PRotationSet::Identity());
+  return { shape_geom, RetainedOnShape(measure, shape_geom.p_step), detail::IsBApplicable(axis_dist) };
 }
 
 
