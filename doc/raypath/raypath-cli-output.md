@@ -879,7 +879,7 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `chromatic` | The chromatic layer's own evidence block plus the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`, §9.6). Its state follows the legs its routing arm ran: `unevaluated` only when no chromatic leg exists for the input class, `finite` when its legs computed, `refused` (with the leg's mode) when its only leg refused — on the identity arm the tint IS the block's only leg, so the block and the sub-block never disagree |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
 | `warm_index` | The `--warm` contract's survey side (always written; §9.9) |
-| `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran) |
+| `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran). `enforced` stays the enumeration legs' field — the one survey leg that really consumes a deadline is `mc_region_ess`, whose budget reading lives in its own leg block (§9.8), not here |
 | `timing` | `total_seconds` — the wall clock of the analysis **up to the end of assembly, excluding serialization**; each routing leg's cost rolls into this one figure |
 
 ### 9.2 Object kinds (the registry)
@@ -1255,8 +1255,10 @@ side-by-side in the product but never in each other's fields. Refusals:
 `sampler_unavailable` (the single-lambda spectrum cannot be assembled from the scene's light —
 a reference lambda outside the continuous band, or a discrete light with no slot at the
 reference wavelength), `budget_exhausted` (the deadline hit before the requested draw count
-completed; a partial measure's band coverage would vary with machine speed, breaking the
-seeded reproducibility the coverage declares).
+completed — the builder checks the deadline before each draw and mid-draw and never after one
+completes, so a measure with every requested draw completed never refuses and an empty measure
+always arrives flagged; a partial measure's band coverage would vary with machine speed,
+breaking the seeded reproducibility the coverage declares).
 
 The schema-4 field list for both legs is append-only like everything else: the 357 corpus
 assertion bench pins their first corpus appearance — the 357 shape's

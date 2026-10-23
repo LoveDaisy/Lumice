@@ -23,8 +23,10 @@
 // Refusals (fail closed, never a defaulted number): the single-lambda spectrum the leg needs
 // cannot be assembled from the scene's light (sampler_unavailable — a reference lambda outside
 // the continuous band, or a discrete light with no slot at the reference wavelength), or the
-// measure came back partial (budget_exhausted — the deadline hit before the requested draw
-// count completed; a partial measure's band coverage would vary with machine speed, breaking
+// measure came back short of the requested draws (budget_exhausted — the builder sets its flag
+// when the deadline stops the run before every requested draw completed; it checks before each
+// draw and mid-draw, never after one completes, so a full measure never refuses and an empty
+// one always does; a partial measure's band coverage would vary with machine speed, breaking
 // the seeded reproducibility the coverage declares).
 
 #include <string>
