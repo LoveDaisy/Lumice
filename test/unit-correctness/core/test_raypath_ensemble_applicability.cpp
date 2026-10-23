@@ -169,6 +169,21 @@ TEST(RaypathEnsembleApplicability, GluingNegativeControls) {
   AxisDistribution locked = lowitz;
   locked.latitude_dist = Distribution{ DistributionType::kNoRandom, 90.0f, 0.0f };
   EXPECT_FALSE(detail::GluingRetainsHalfTurn(locked));
+  // A zero-width pole-centred latitude is the same physical state as that locked zenith — the
+  // samples never cross the pole, so nothing folds the leaves together. Every folding family is
+  // pinned (the width slot is the uniform's full range, the others' σ/b).
+  AxisDistribution uni_delta = lowitz;
+  uni_delta.latitude_dist = Distribution{ DistributionType::kUniform, 90.0f, 0.0f };
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(uni_delta));
+  AxisDistribution gauss_delta = lowitz;
+  gauss_delta.latitude_dist = Distribution{ DistributionType::kGaussian, 90.0f, 0.0f };
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(gauss_delta));
+  AxisDistribution legacy_delta = lowitz;
+  legacy_delta.latitude_dist = Distribution{ DistributionType::kGaussianLegacy, 90.0f, 0.0f };
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(legacy_delta));
+  AxisDistribution lap_delta = lowitz;
+  lap_delta.latitude_dist = Distribution{ DistributionType::kLaplacian, 90.0f, 0.0f };
+  EXPECT_FALSE(detail::GluingRetainsHalfTurn(lap_delta));
   // kZigzag is answered conservatively, like the B channel.
   AxisDistribution zig = lowitz;
   zig.latitude_dist = Distribution{ DistributionType::kZigzag, 90.0f, 5.0f };

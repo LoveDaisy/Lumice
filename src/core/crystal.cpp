@@ -1241,15 +1241,19 @@ bool GluingRetainsHalfTurn(const AxisDistribution& d) {
       return false;
   }
   // Equal leaves ⟺ the latitude density is symmetric about a pole — core latitude ±90°, the wire
-  // zenith 0°/180° pair (the raw half past the pole folds back with exactly the mass that stayed,
-  // whatever the width). Per-type reading of the centre slot, like IsBApplicableParams.
+  // zenith 0°/180° pair (the raw half past the pole folds back with exactly the mass that stayed).
+  // Zero width is the degenerate exception, the same physical state as kNoRandom's locked zenith:
+  // every sample sits on the pole, the raw half past it is empty rather than equal, and nothing
+  // folds — so a pole-centred family holds only with non-degenerate support. FloatEqual of the
+  // same predicate family; a hair-thin band within its threshold is a missed merge, the safe side.
+  // Per-type reading of the centre and width slots, like IsBApplicableParams.
   switch (d.latitude_dist.type) {
     case DistributionType::kUniform:
-      return latitude_centered_at_pole(d.latitude_dist.UniformCenter());
+      return latitude_centered_at_pole(d.latitude_dist.UniformCenter()) && !FloatEqual(d.latitude_dist.spread, 0.0f);
     case DistributionType::kGaussian:
     case DistributionType::kGaussianLegacy:
     case DistributionType::kLaplacian:
-      return latitude_centered_at_pole(d.latitude_dist.center);
+      return latitude_centered_at_pole(d.latitude_dist.center) && !FloatEqual(d.latitude_dist.spread, 0.0f);
     case DistributionType::kZigzag:
     case DistributionType::kNoRandom:
       return false;
