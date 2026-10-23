@@ -29,7 +29,7 @@ if(POLICY CMP0091)
   set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 endif()
 
-project(Lumice VERSION 4.7.4)
+project(Lumice VERSION 4.7.5)
 
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 
