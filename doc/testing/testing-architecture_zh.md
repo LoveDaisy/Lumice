@@ -1044,11 +1044,12 @@ registry 在 `0fc3ecf7` 冻结；此前两次完整诊断 run 只校准 Windows/
 12.8 分钟 CI 的慢测试就是在它生效期间进入 PR 层的。本节是它的机械那一半，**补强而不替代**
 §7.3：§7.3 仍负责在改动之前（而不是 CI 红了之后）把这个问题提出来。
 
-**规则。** registry v3 在一个权威里保存两类约束：`entries` 延续单例规则——在接线 job 中，本次
+**规则。** registry v4 在一个权威里保存两类约束：`entries` 延续单例规则——在接线 job 中，本次
 run 耗时超过 **T = 60 s** 的每条测试都须有带理由的登记；`phase_budgets` 登记真实墙钟阶段及其串行
 聚合，要求每个成员恰好有一份报告、未知 phase 判红、成员和不得超过 `max_seconds`。单 phase 条目
 可另带 `per_miss` 块（`overhead_seconds`、`max_seconds_per_miss`——聚合条目不得携带），给 build
-相位加上下文所述的第二条件。后者专门捕获
+相位加上下文所述的第二条件；或带 `machine_factor` 块（仅限 ctest 相位），给 ctest 相位加下述的
+机器速度归一条件。后者专门捕获
 「每条都低于 60 s、总量却持续膨胀」的形状，不能用 worker-seconds 求和代替。
 
 `scripts/check_test_durations.py` 在 job 末尾比对同一张表。单例侧以下任一情况判红：
@@ -1160,6 +1161,34 @@ K = 5.0，盲区随腿延伸，直至各腿自己的样本积累起来；但它�
 暖构建 ×1.4——Windows 腿的 sccache 暖构建约为 ccache 腿的 7 倍），因为继承来的 overhead 会让贵腿
 的 0-miss 暖跑假红。
 
+**ctest 相位的机器速度尺子。** build 相位定价的是「单位改动要花多少编译」；ctest 相位没有这类
+工作量单位——套件每次相同，run 间方差的主体就是宿主速度。2026-10-22/23 一波让这个方差真实咬人：
+Windows 502–528 s、Ubuntu 386–467 s 对绝对 480/360 s 上限判红，全部零测试失败——托管机群整体漂到
+了比标定时代更慢的一档（行级中位比在 Windows 聚在 1.0/~1.25、Ubuntu 聚在 1.0/~1.2/~1.6——正是
+726 裁定记录过的 slow = fast × 1.253 双档结构）。按当代机群静态重锚常数是错误的形状：下次换档
+再咬。因此四条 ctest 预算改挂 `machine_factor` 块，判 `seconds ≤ max_seconds × factor`，其中
+`factor` 是同一份 per-test 报告中**标尺子集**的实测/标定中位比（`check_test_durations.py` 的
+`compute_machine_factor` 是算术的唯一实现；标定回放 import 它，绝不复抄）。子集为七条确定性纯计算
+测试（单条 ≥2 s，按跨 run 比值集中度选出，经墙钟驱动与源码 churn 两道筛——判据与被排除候选记在
+各腿 registry reason 里），标定秒逐腿各自冻结。这是 per-miss 归一的同构物：权威尺子量的是本次 run
+的宿主实际有多快，绝对上限只通过钳位带的上界存续。
+
+- **fail-closed 分层。** 标尺 id 在 per-test 报告缺席、或读数为零/非有限（被 skip 或改名的标尺
+  测试）即判红并点名——没有执行的标尺量不了机器，这个红正是逼出配对重标定的设计内强制函数。
+  raw factor 出 `clamp_band`（[0.8, 2.0]）时钳到带边界并发 `::warning`（带 raw 与钳后值）加
+  summary 行——绝不静默钳位；带上界兼任灾备背挡：归一后预算至多 2× 绝对上限，超线由预算算术
+  自然判红。per-test 报告只在 `machine_factor` 块需要处被消费，镜像 per_miss 规则。
+- **标定与防棘轮。** 标尺 id、标定秒与钳位带都是 registry 常数，60 天条款约束三者：2026-10-23
+  起 60 天内二次调整须带配对样本（同套件两档的前后读数）立结构任务。每 run 的 factor 随绿态
+  notice 留痕（`machine factor 1.263 from 7 rulers`），每个 run 都在免费积累标定样本，漂移在
+  咬人之前先在 run 历史里可见。
+- **灵敏度（诚实边界）。** 归一对「恰好均匀打在标尺所执行代码上的减速」结构性失明：标尺路径上
+  ×1.3 的退化与 ×1.3 的慢宿主在观测上同构（负对照钉在标定证据里：绿样本非标尺行 +30% 仍红；
+  仅标尺行 +30% 被吸收）。补偿控制是 per-test 2× 条目（真实变慢的测试先触发自己的条目）、
+  绝对预算的 performance 腿（`e2e-slow-performance` 与 benchmark 历史）和 notice 里逐 run 的
+  factor 读数。726 的双档确定性由此机制**消解**而非重锚：档位比现在逐 run 被测量，而不是烙在
+  常数里。
+
 **运行时检查，不是 diff 检查。** AGENTS.md 列出的四个 checker 读源码或 diff，所以也能在
 pre-commit 中运行；本闸读的是 CI job 刚量出来的耗时，这份输入别处不存在，所以不能在提交前运行，
 也不并入 `check_policies.py`。
@@ -1181,6 +1210,8 @@ budget** 的一次性冷构建授权；它不改变本段的单测试规则。�
 完整协议以英文版 [`§7.8 The one-run cold-build exception`](testing-architecture.md#78-the-one-run-cold-build-exception)
 为唯一权威。这里仅保留三个执行时不可漏掉的否定项：**测试运行耗时、测试失败、编译/链接失败及坏报告
 一律没有豁免**；授权只作用于**含 Build 的 phase budget 的两个条件**（per-miss 自适应上限与绝对外层
-界，§7.7）——per-miss 缓存报告缺席不在此列，照旧判红；带 `ci:allow-cold-build` payload 的 PR run
+界，§7.7）——per-miss 缓存报告缺席不在此列，照旧判红；ctest 预算自己的机器归一上限同样完全在
+例外范围之外（冷缓存能拖慢构建，不能让宿主 CPU 变慢，`machine_factor` 预算超线与其 fail-closed
+路径一律照红）；带 `ci:allow-cold-build` payload 的 PR run
 也只在 `run_attempt == 1` 时获得一次授权，**不得用 whole-run 或单 job rerun 重复消费**。标签只用于
 创建新 run，观察到目标 run 后立即移除。

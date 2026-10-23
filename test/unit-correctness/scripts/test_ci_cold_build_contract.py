@@ -171,9 +171,9 @@ def workflow_text_jobs(job_name):
     return load_workflow()["jobs"][job_name]["steps"]
 
 
-def test_registry_v3_per_miss_shape_and_terminal_values():
+def test_registry_v4_per_miss_shape_and_terminal_values():
     registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
-    assert registry["version"] == 3
+    assert registry["version"] == 4
 
     # The four build entries' two-condition shape and re-anchored outer bounds.
     expected = {
@@ -202,6 +202,20 @@ def test_registry_v3_per_miss_shape_and_terminal_values():
         # An aggregate is the owner's wall clock, not compile cost.
         assert "per_miss" not in aggregate, job
     assert all("members" not in budget for budget in registry["phase_budgets"] if "per_miss" in budget)
+
+    # The four ctest budgets carry the machine_factor block (registry v4); no
+    # other phase does — the normalization prices the host on the test phase
+    # only, and the owner's wall-clock aggregates stay absolute.
+    ctest = [b for b in registry["phase_budgets"] if b["phase"] == "ctest"]
+    assert {b["job"] for b in ctest} == {
+        "Ubuntu x86_64", "Ubuntu ARM64", "macOS ARM64", "Windows MSVC x86_64",
+    }
+    for budget in ctest:
+        machine = budget["machine_factor"]
+        assert len(machine["ruler_seconds"]) == 7, budget["job"]
+        assert all(v > 0 for v in machine["ruler_seconds"].values()), budget["job"]
+        assert machine["clamp_band"] == [0.8, 2.0], budget["job"]
+    assert all("machine_factor" not in b for b in registry["phase_budgets"] if b["phase"] != "ctest")
 
 
 def test_english_doc_is_the_single_protocol_authority():

@@ -123,11 +123,11 @@ def write_registry(tmp_path: Path, payload) -> Path:
     [
         {"entries": [], "phase_budgets": []},
         {"version": 1, "entries": [], "phase_budgets": []},
-        {"version": 3, "entries": [{"id": "a", "job": JOB, "ci_seconds": 40}], "phase_budgets": []},
-        {"version": 3, "entries": [{**entry("a", 40), "note": "x"}], "phase_budgets": []},
-        {"version": 3, "entries": [entry("a", "40")], "phase_budgets": []},
-        {"version": 3, "entries": [entry("a", 0)], "phase_budgets": []},
-        {"version": 3, "entries": [entry("a", 40), entry("a", 45)], "phase_budgets": []},
+        {"version": 4, "entries": [{"id": "a", "job": JOB, "ci_seconds": 40}], "phase_budgets": []},
+        {"version": 4, "entries": [{**entry("a", 40), "note": "x"}], "phase_budgets": []},
+        {"version": 4, "entries": [entry("a", "40")], "phase_budgets": []},
+        {"version": 4, "entries": [entry("a", 0)], "phase_budgets": []},
+        {"version": 4, "entries": [entry("a", 40), entry("a", 45)], "phase_budgets": []},
     ],
     ids=["no-version", "wrong-version", "missing-field", "unknown-field", "string-seconds", "zero-seconds",
          "duplicate"],
@@ -142,14 +142,24 @@ def test_v2_registry_is_rejected_after_the_per_miss_schema_change(tmp_path):
     # per-miss budget — must fail loudly rather than be read with its per_miss
     # entries silently ignored.
     payload = {"version": 2, "entries": [], "phase_budgets": [phase_budget("build", 420)]}
-    with pytest.raises(ctd.RegistryError, match="version 2 is not 3"):
+    with pytest.raises(ctd.RegistryError, match="version 2 is not 4"):
+        ctd.load_registry(write_registry(tmp_path, payload))
+
+
+def test_v3_registry_is_rejected_after_the_machine_factor_schema_change(tmp_path):
+    # Same migration discipline, one version later: a complete v3 registry —
+    # the shape every ctest budget ran on before machine normalization — must
+    # fail loudly rather than be read with its per-test semantics silently
+    # reinterpreted.
+    payload = {"version": 3, "entries": [], "phase_budgets": [phase_budget("ctest", 480)]}
+    with pytest.raises(ctd.RegistryError, match="version 3 is not 4"):
         ctd.load_registry(write_registry(tmp_path, payload))
 
 
 def test_main_is_red_on_malformed_registry(tmp_path, capsys):
     report = tmp_path / "r.json"
     report.write_text("{}", encoding="utf-8")
-    registry = write_registry(tmp_path, {"version": 3})
+    registry = write_registry(tmp_path, {"version": 4})
     assert ctd.main(["--job", JOB, "--report", str(report), "--registry", str(registry)]) == 1
     assert "::error::" in capsys.readouterr().out
 
@@ -162,7 +172,7 @@ def test_two_reports_of_one_job_are_merged(tmp_path, capsys):
     phase1.write_text(json.dumps({"a.py::t": 40, "::<fixture:f>": 3}), encoding="utf-8")
     phase2.write_text(json.dumps({"perf.py::t": 90, "::<fixture:f>": 5}), encoding="utf-8")
     assert ctd.load_reports([phase1, phase2]) == {"a.py::t": 40, "perf.py::t": 90, "::<fixture:f>": 5}
-    registry = write_registry(tmp_path, {"version": 3, "entries": [entry("a.py::t", 40)], "phase_budgets": []})
+    registry = write_registry(tmp_path, {"version": 4, "entries": [entry("a.py::t", 40)], "phase_budgets": []})
     argv = ["--job", JOB, "--report", str(phase1), "--report", str(phase2), "--registry", str(registry)]
     assert ctd.main(argv) == 1
     out = capsys.readouterr().out
@@ -257,7 +267,7 @@ def test_cli_writes_the_same_cold_build_exception_to_log_and_summary(tmp_path, c
     report.write_text(json.dumps({"phase": "build", "seconds": 477.375, "exit_code": 0}), encoding="utf-8")
     registry = write_registry(
         tmp_path,
-        {"version": 3, "entries": [], "phase_budgets": [phase_budget("build", 420)]},
+        {"version": 4, "entries": [], "phase_budgets": [phase_budget("build", 420)]},
     )
     summary = tmp_path / "summary.md"
     summary.write_text("audit evidence\n", encoding="utf-8")
@@ -297,7 +307,7 @@ def test_missing_unknown_and_duplicate_phase_reports_are_red(tmp_path):
 
 def test_phase_report_and_budget_schema_reject_invalid_values(tmp_path):
     registry = {
-        "version": 3,
+        "version": 4,
         "entries": [],
         "phase_budgets": [phase_budget("aggregate", 10, members=["tests", "tests"])],
     }
@@ -570,7 +580,7 @@ def test_cache_reports_without_a_per_miss_budget_are_never_consumed():
 )
 def test_per_miss_schema_rejects_malformed_blocks(tmp_path, payload):
     registry = {
-        "version": 3,
+        "version": 4,
         "entries": [],
         "phase_budgets": [{**PER_MISS_BUDGET, "per_miss": payload}],
     }
@@ -583,14 +593,14 @@ def test_per_miss_never_sits_on_an_aggregate(tmp_path):
     # rejects the combination at the fields check, before any per_miss
     # validation runs.
     registry = {
-        "version": 3,
+        "version": 4,
         "entries": [],
         "phase_budgets": [
             {**phase_budget("build+ctest", 1080, members=["build", "ctest"]),
              "per_miss": {"overhead_seconds": 30, "max_seconds_per_miss": 5.0}},
         ],
     }
-    with pytest.raises(ctd.RegistryError, match="optional 'members' or 'per_miss'"):
+    with pytest.raises(ctd.RegistryError, match="at most one of 'members', 'per_miss' or 'machine_factor'"):
         ctd.load_registry(write_registry(tmp_path, registry))
 
 
@@ -629,7 +639,7 @@ def test_main_consumes_the_cache_report_end_to_end(tmp_path, capsys):
     phase.write_text(json.dumps({"phase": "build", "seconds": 490.76, "exit_code": 0}), encoding="utf-8")
     cache = tmp_path / "cache-stats.json"
     cache.write_text(json.dumps({"phase": "build", "tool": "ccache", "misses": 121}), encoding="utf-8")
-    registry = write_registry(tmp_path, {"version": 3, "entries": [], "phase_budgets": [PER_MISS_BUDGET]})
+    registry = write_registry(tmp_path, {"version": 4, "entries": [], "phase_budgets": [PER_MISS_BUDGET]})
     argv = [
         "--job", JOB,
         "--phase-report", str(phase),
@@ -645,6 +655,228 @@ def test_main_consumes_the_cache_report_end_to_end(tmp_path, capsys):
     assert ctd.main(argv) == 1
     assert "compile-cost regression" in capsys.readouterr().out
 
+
+# --- machine-factor ctest budgets (registry v4) --------------------------------
+#
+# The ctest phase's machine-speed normalization: the ruler subset of the
+# per-test report measures how much slower this run's host is than the
+# calibration, and the phase budget scales by it. Mirror of the per-miss
+# section: the authoritative ruler is the factor, absolute max_seconds survives
+# only through the clamp band's upper edge (a raw factor past the band clamps
+# with a loud warning and the budget arithmetic judges from there).
+
+MACHINE_BUDGET = {
+    "job": JOB,
+    "phase": "ctest",
+    "max_seconds": 480,
+    "machine_factor": {
+        "ruler_seconds": {
+            "LumiceUnitCorrectnessTest::Schema3.AssemblyChainReportsTheLadder": 3.0,
+            "LumiceUnitCorrectnessTest::Schema3.FoldKeepsEveryRayAccounted": 5.0,
+            "LumiceUnitCorrectnessTest::Schema3.RoutingKeySurvivesTheRoll": 8.0,
+        },
+        "clamp_band": [0.8, 2.0],
+    },
+    "reason": "normalizes the ctest budget by measured machine speed",
+}
+
+
+def ruler_durations(factor: float, skip: str | None = None, zero: str | None = None) -> dict[str, float]:
+    out = {tid: cal * factor for tid, cal in MACHINE_BUDGET["machine_factor"]["ruler_seconds"].items()}
+    if skip is not None:
+        del out[skip]
+    if zero is not None:
+        out[zero] = 0.0
+    return out
+
+
+def run_machine(seconds: float, factor: float = 1.0, durations=None, budget=None):
+    if durations is None:
+        durations = ruler_durations(factor)
+    return ctd.check_phases(JOB, {"ctest": seconds}, [budget or MACHINE_BUDGET], durations=durations)
+
+
+def test_machine_normalized_budget_replays_a_tier_shifted_run_green():
+    # The incident shape: the same suite measures 1.25x on the slower host tier.
+    # 506.8s red at the absolute 480; the ruler reads the tier and the budget
+    # scales to 601.4s.
+    errors, notices, warnings = run_machine(506.8, 1.253)
+    assert errors == [] and warnings == []
+    assert any(
+        "506.8s / 601.4s (machine factor 1.253 from 3 rulers)" in notice for notice in notices
+    ), notices
+
+
+def test_real_regression_stays_red_when_the_ruler_says_the_machine_is_not_slower():
+    # The other incident shape (the branch that genuinely added ~100s of test
+    # work): the ruler reads factor 1.0, so normalization must not absorb it.
+    errors, _, _ = run_machine(506.8, 1.0)
+    assert len(errors) == 1
+    assert "machine-normalized limit 480s x factor 1.000 = 480.0s" in errors[0]
+
+
+def test_exactly_at_the_machine_normalized_limit_is_green():
+    errors, _, _ = run_machine(480.0 * 1.253, 1.253)
+    assert errors == []
+
+
+def test_missing_per_test_report_fails_closed():
+    errors, _, _ = ctd.check_phases(JOB, {"ctest": 100.0}, [MACHINE_BUDGET], durations=None)
+    assert len(errors) == 1
+    assert "fails closed" in errors[0] and "--report" in errors[0]
+
+
+def test_missing_ruler_id_fails_closed_and_names_it():
+    durations = ruler_durations(1.0, skip="LumiceUnitCorrectnessTest::Schema3.FoldKeepsEveryRayAccounted")
+    errors, _, _ = run_machine(100.0, durations=durations)
+    assert len(errors) == 1
+    assert "fails closed" in errors[0]
+    assert "Schema3.FoldKeepsEveryRayAccounted" in errors[0]
+    assert "§7.7 anti-ratchet" in errors[0]
+    # A missing measurement is not a slow phase: the cold-build exception does
+    # not accept it either (ctest never carries `build`, but pin the rule).
+    errors, _, warnings = ctd.check_phases(
+        JOB, {"ctest": 100.0}, [MACHINE_BUDGET], durations=durations, allow_cold_build=True
+    )
+    assert len(errors) == 1 and warnings == []
+
+
+def test_zero_ruler_reading_fails_closed():
+    # A skipped ruler test reads 0 and cannot measure the machine — the exact
+    # way a stale calibration would hide, so it must not read as "fast".
+    durations = ruler_durations(1.0, zero="LumiceUnitCorrectnessTest::Schema3.RoutingKeySurvivesTheRoll")
+    errors, _, _ = run_machine(100.0, durations=durations)
+    assert len(errors) == 1
+    assert "broken (zero or non-finite) readings" in errors[0]
+    assert "Schema3.RoutingKeySurvivesTheRoll" in errors[0]
+
+
+def test_band_exceeded_clamps_with_a_warning_and_does_not_stay_silent():
+    # Raw factor 2.5 clamps to the 2.0 upper edge: the budget judges from the
+    # clamped value (900s < 960s green, with a loud warning), and a phase over
+    # even the clamped budget still goes red.
+    errors, notices, warnings = run_machine(900.0, 2.5)
+    assert errors == []
+    assert len(warnings) == 1
+    assert "calibration band exceeded (raw factor 2.500, clamped to 2.000)" in warnings[0]
+    assert "§7.7 anti-ratchet" in warnings[0]
+    assert any("900.0s / 960.0s (machine factor 2.000 from 3 rulers)" in n for n in notices)
+
+    errors, _, warnings = run_machine(1000.0, 2.5)
+    assert len(errors) == 1
+    assert "machine-normalized limit 480s x factor 2.000 = 960.0s" in errors[0]
+    assert len(warnings) == 1  # the clamped run stays loudly warned either way
+
+
+def test_below_the_band_clamps_up_and_warns_the_same_way():
+    # A host faster than the calibration era clamps at the lower edge: budgets
+    # do not shrink below 0.8x, and the reader is told the calibration is stale.
+    errors, notices, warnings = run_machine(350.0, 0.5)
+    assert errors == []
+    assert len(warnings) == 1
+    assert "raw factor 0.500, clamped to 0.800" in warnings[0]
+    assert any("350.0s / 384.0s (machine factor 0.800 from 3 rulers)" in n for n in notices)
+
+    errors, _, _ = run_machine(400.0, 0.5)
+    assert len(errors) == 1
+    assert "machine-normalized limit 480s x factor 0.800 = 384.0s" in errors[0]
+
+
+def test_compute_machine_factor_matches_hand_computation():
+    ruler = {"a": 2.0, "b": 4.0, "c": 5.0, "d": 10.0, "e": 20.0}
+    durations = {"a": 2.5, "b": 4.5, "c": 7.5, "d": 12.5, "e": 25.0}
+    # ratios: 1.25, 1.125, 1.5, 1.25, 1.25 -> median 1.25
+    factor, raw = ctd.compute_machine_factor(ruler, durations, (0.8, 2.0))
+    assert raw == 1.25 and factor == 1.25
+    # computed once, consumed everywhere: check_phases' notice carries the same
+    # number this function returns.
+    budget = {
+        **MACHINE_BUDGET,
+        "machine_factor": {**MACHINE_BUDGET["machine_factor"], "ruler_seconds": ruler},
+    }
+    _, notices, _ = ctd.check_phases(JOB, {"ctest": 500.0}, [budget], durations=durations)
+    assert any("machine factor 1.250 from 5 rulers" in n for n in notices)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"ruler_seconds": {"a": 1.0, "b": 2.0}, "clamp_band": [0.8, 2.0]},
+        {"ruler_seconds": {"a": 1.0, "b": 2.0, "c": 3.0}, "clamp_band": [2.0, 0.8]},
+        {"ruler_seconds": {"a": 1.0, "b": 2.0, "c": 3.0}, "clamp_band": [0.0, 2.0]},
+        {"ruler_seconds": {"a": 1.0, "b": 2.0, "c": 3.0}, "clamp_band": [0.8, 2.0, 4.0]},
+        {"ruler_seconds": {"a": 1.0, "b": 2.0, "c": 0}, "clamp_band": [0.8, 2.0]},
+        {"ruler_seconds": {"a": 1.0, "b": 2.0, "c": -3.0}, "clamp_band": [0.8, 2.0]},
+        {"ruler_seconds": {"a": 1.0, "b": 2.0, "c": 3.0}, "clamp_band": [0.8, 2.0], "note": "x"},
+        {"ruler_seconds": {"": 1.0, "b": 2.0, "c": 3.0}, "clamp_band": [0.8, 2.0]},
+    ],
+    ids=[
+        "two-rulers", "inverted-band", "zero-lo", "three-element-band", "zero-calibration",
+        "negative-calibration", "extra-field", "empty-ruler-id",
+    ],
+)
+def test_machine_factor_schema_rejects_malformed_blocks(tmp_path, payload):
+    registry = {
+        "version": 4,
+        "entries": [],
+        "phase_budgets": [{**MACHINE_BUDGET, "machine_factor": payload}],
+    }
+    with pytest.raises(ctd.RegistryError):
+        ctd.load_registry(write_registry(tmp_path, registry))
+
+
+@pytest.mark.parametrize(
+    "budget",
+    [
+        # an aggregate: normalization would silently absorb what the owner's
+        # wall clock must show
+        {**phase_budget("build+ctest", 2160, members=["build", "ctest"]),
+         "machine_factor": MACHINE_BUDGET["machine_factor"]},
+        # the build phase already has its own adaptive ruler (per_miss)
+        {**PER_MISS_BUDGET, "machine_factor": MACHINE_BUDGET["machine_factor"]},
+        # an e2e phase has no ctest semantics to normalize
+        {**phase_budget("e2e", 600), "machine_factor": MACHINE_BUDGET["machine_factor"]},
+    ],
+    ids=["aggregate", "build-with-per-miss", "e2e-phase"],
+)
+def test_machine_factor_never_mounts_outside_the_ctest_phase(tmp_path, budget):
+    registry = {"version": 4, "entries": [], "phase_budgets": [budget]}
+    with pytest.raises(ctd.RegistryError):
+        ctd.load_registry(write_registry(tmp_path, registry))
+
+
+def test_machine_factor_and_per_miss_are_mutually_exclusive(tmp_path):
+    budget = {
+        **MACHINE_BUDGET,
+        "phase": "build",
+        "per_miss": {"overhead_seconds": 30, "max_seconds_per_miss": 5.0},
+    }
+    registry = {"version": 4, "entries": [], "phase_budgets": [budget]}
+    with pytest.raises(ctd.RegistryError):
+        ctd.load_registry(write_registry(tmp_path, registry))
+
+
+def test_main_consumes_the_per_test_report_end_to_end_for_the_factor(tmp_path, capsys):
+    report = tmp_path / "ctest-durations.json"
+    report.write_text(json.dumps(ruler_durations(1.253)), encoding="utf-8")
+    phase = tmp_path / "ctest.json"
+    phase.write_text(json.dumps({"phase": "ctest", "seconds": 506.8, "exit_code": 0}), encoding="utf-8")
+    registry = write_registry(tmp_path, {"version": 4, "entries": [], "phase_budgets": [MACHINE_BUDGET]})
+    argv = [
+        "--job", JOB,
+        "--report", str(report),
+        "--phase-report", str(phase),
+        "--registry", str(registry),
+    ]
+    assert ctd.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "machine factor 1.253 from 3 rulers" in out
+
+    # Red path through the same wiring: drop the ruler rows and the check
+    # fails closed on the same input shape.
+    report.write_text(json.dumps({"unrelated.py::t": 1.0}), encoding="utf-8")
+    assert ctd.main(argv) == 1
+    assert "fails closed" in capsys.readouterr().out
 
 # --- the plugin, from a real pytest session ---------------------------------
 

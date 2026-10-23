@@ -399,7 +399,7 @@ jobs:
           --report ci-duration/sccache-ready.json
 
       # The per-miss build budget's measurement half: the miss count the registry's
-      # per_miss entry (test/duration_registry.json, schema v3) consumes through
+      # per_miss entry (test/duration_registry.json, schema v4) consumes through
       # `check_test_durations.py --cache-report`. Runs after Build and before the
       # diagnostics below — on Windows before `sccache --stop-server` — so the
       # counters it reads are this run's increment (ccache was zeroed before

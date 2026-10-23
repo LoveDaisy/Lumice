@@ -92,7 +92,7 @@ together), never a silent bump.
 
 ## Test-duration registry (runtime gate)
 
-`test/duration_registry.json` v3 gates two kinds of quantity. `entries` keeps
+`test/duration_registry.json` v4 gates two kinds of quantity. `entries` keeps
 the per-test rule: over 60 s in a wired job ⇒ registered `id` / `job` /
 `ci_seconds` + a real reason; over 2× the registered time, a stale id, malformed
 data or a `TODO` is red. `phase_budgets` limits measured wall-clock phases and
@@ -101,7 +101,11 @@ are red. A single-phase budget may carry a `per_miss` block — the build phase
 judges `seconds ≤ overhead_seconds + max_seconds_per_miss × misses` as the
 authoritative ruler (the miss count is the one factor the change controls),
 with the absolute `max_seconds` kept as the disaster backstop; aggregates never
-carry `per_miss`. The input does not exist at pre-commit time, so this gate is
+carry `per_miss` — or a `machine_factor` block (ctest budgets only): the ctest
+phase judges `seconds ≤ max_seconds × factor`, factor = median measured/
+calibrated ratio over a 7-id ruler subset of the per-test report (host-speed
+normalization; missing/broken ruler readings fail closed, out-of-band factors
+clamp loudly). The input does not exist at pre-commit time, so this gate is
 not part of `check_policies.py`, and there is no per-test/env/inline exemption.
 A new test job is not covered until it wires reports, checker and artifacts —
 nothing audits that automatically. Registry rules, the 60 s / 2× calibration

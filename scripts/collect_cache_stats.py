@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Collect this run's compiler-cache miss count for the per-miss build budget.
 
-The build phase's registry budget (`test/duration_registry.json`, schema v3)
+The build phase's registry budget (`test/duration_registry.json`, schema v4)
 judges `seconds <= overhead_seconds + max_seconds_per_miss * misses`; this
 script writes the `misses` half as a closed three-field report
 `{"phase": ..., "tool": ..., "misses": ...}`. It must run after the build and
