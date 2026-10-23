@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# test.sh — one entry point for the three local test scopes.
+# test.sh — one entry point for the local test scopes.
 #
-#   quick : ctest + fast e2e + gui_test correctness pool
+#   quick : ctest + fast e2e + gui_test correctness pool   (the closing gate)
 #   full  : quick + gui_test real-timing pool
 #   pr    : full + shared-lib freshness + slow e2e (the CI e2e-slow shape)
+#   inner : iteration-time fast path — derives the layers from the current diff
 #
 # Two contracts this script owes its caller, both learned from how the scopes
 # used to be assembled by hand:
@@ -29,7 +30,9 @@
 # expect `./scripts/build.sh -tgj <type>` to have been run already, and say so
 # when it has not. `pr` is the one scope that may build, and only the shared
 # flavor, because the slow e2e layer loads liblumice_testapi (the test-only
-# superset of liblumice, see test/e2e/capi_runner.py) through ctypes.
+# superset of liblumice, see test/e2e/capi_runner.py) through ctypes. `inner`
+# builds too, but through plain `cmake --build` — see run_inner below for why
+# build.sh must not be re-entered there.
 
 set -u
 set -o pipefail
@@ -43,21 +46,27 @@ EXIT_USAGE=2
 
 usage() {
   echo "Usage:"
-  echo "  ./scripts/test.sh <quick|full|pr>"
+  echo "  ./scripts/test.sh <quick|full|pr|inner>"
   echo ""
-  echo "SCOPES (each one is a superset of the previous):"
+  echo "SCOPES:"
   echo "  quick:  ctest (unit-correctness|composition-correctness|parity|golden-analytic)"
   echo "          + fast e2e (pytest -n auto)"
   echo "          + gui_test correctness pool (--fixed-dt)"
   echo "  full:   quick + gui_test real-timing pool"
   echo "  pr:     full + shared-lib freshness check + slow e2e"
+  echo "  inner:  iteration-time fast path — reads the current diff (merge-base..worktree),"
+  echo "          derives the affected test layers, and runs only those plus the four"
+  echo "          diff-scoped checkers and format --check. Coarse by design: quick remains"
+  echo "          the closing gate. Accepts --files <paths> to derive from an explicit"
+  echo "          list instead of the diff."
   echo ""
   echo "ENVIRONMENT:"
   echo "  LUMICE_SKIP_GUI_TESTS / CI:  skip the gui_test layers (as build.sh does)."
   echo "  LUMICE_LIB:                  absolute path to liblumice_testapi; when set, the"
   echo "                               pr scope trusts it and never rebuilds."
   echo ""
-  echo "Builds the static flavor? No — run ./scripts/build.sh -tgj <type> first."
+  echo "Builds the static flavor? quick/full: no — run ./scripts/build.sh -tgj <type> first."
+  echo "pr: only the shared flavor. inner: yes, incrementally, via cmake --build."
 }
 
 die() {
@@ -321,6 +330,151 @@ layer_fast_e2e() {
   run_layer fast-e2e pytest -n auto
 }
 
+# ---------------------------------------------------------------------------
+# inner — the iteration-time fast path
+#
+# Derivation lives in scripts/test_inner.py (`faces` subcommand): diff ->
+# layer map (the configure-time artifact generated from
+# cmake/lumice_layers.cmake) -> faces -> the layer plan. This side only
+# executes the plan. inner is deliberately coarse — whatever a face misses is
+# quick's job to catch, which is why quick stays the closing gate.
+# ---------------------------------------------------------------------------
+
+plan_field() { # file key -> value ("" for JSON null)
+  python3 -c 'import json,sys
+value = json.load(open(sys.argv[1])).get(sys.argv[2])
+print("" if value is None else value)' "$1" "$2"
+}
+
+plan_layers() { # file -> newline-separated layer list
+  python3 -c 'import json,sys
+print("\n".join(json.load(open(sys.argv[1]))["layers"]))' "$1"
+}
+
+# The one guard every ctest selection inner makes goes through: a -L/-R filter
+# that matches zero tests exits 0, so without this an empty selection would read
+# as a green layer that ran nothing. (ctest -N prints its "Test #N:" lines
+# indented — match the line anywhere, not at column 0.)
+ctest_selection_count() { # selector args...
+  ctest -N --test-dir build/cmake_build/static "$@" | grep -c 'Test #'
+}
+
+guarded_ctest_layer() { # name selector args...
+  local name=$1
+  shift
+  local n
+  n=$(ctest_selection_count "$@") || true
+  if [[ ${n} -eq 0 ]]; then
+    record_layer "${name}" FAIL 0 "ctest selection matched 0 tests ($*) — refused to run an empty selection"
+    printf '\n========== [FAIL] %s: ctest selection matched 0 tests ==========\n' "${name}"
+    return 0
+  fi
+  run_layer "${name}" ctest --test-dir build/cmake_build/static --output-on-failure "$@"
+}
+
+run_inner() {
+  # The plan travels through a temp file OUTSIDE the repo: inner writes no
+  # repository state (the idempotency contract), so reruns never perturb the
+  # diff they derive from.
+  local plan
+  plan=$(mktemp) || die "inner: mktemp failed"
+  local plan_argv=(faces)
+  if [[ ${#INNER_FILES[@]} -gt 0 ]]; then
+    plan_argv+=(--files "${INNER_FILES[@]}")
+  fi
+
+  printf 'test.sh: scope=inner  deriving faces (chain below)\n'
+  python3 scripts/test_inner.py "${plan_argv[@]}" > "${plan}"
+  local rc=$?
+  if [[ ${rc} -ne 0 ]]; then
+    rm -f "${plan}"
+    # 2 = the derivation refused (unknown face, stale layer map): nothing ran.
+    exit "${rc}"
+  fi
+
+  local INNER_LAYERS=()
+  local l
+  while IFS= read -r l; do
+    [[ -n ${l} ]] && INNER_LAYERS+=("${l}")
+  done < <(plan_layers "${plan}")
+
+  has_inner_layer() {
+    local x
+    for x in ${INNER_LAYERS[@]+"${INNER_LAYERS[@]}"}; do
+      [[ ${x} == "$1" ]] && return 0
+    done
+    return 1
+  }
+
+  if [[ $(plan_field "${plan}" build_needed) == True ]]; then
+    detect_build_type
+    # Hoisted from layer_ctest's post-failure annotation: the compiled layers
+    # need a BUILD_TEST=ON static tree, and failing here costs seconds instead
+    # of surfacing after the build layer has already spent minutes.
+    grep -q '^BUILD_TEST:[^=]*=ON' "${STATIC_CACHE}" \
+      || die "static tree has BUILD_TEST=OFF — configure with ./scripts/build.sh -gtj ${BUILD_TYPE_LOWER}, and keep -gtj standing for the task's duration (see below)"
+    if has_inner_layer gui-correctness && [[ -z $(gui_skip_reason) ]]; then
+      grep -q '^BUILD_GUI:[^=]*=ON' "${STATIC_CACHE}" \
+        || die "the gui face needs BUILD_GUI=ON — configure with ./scripts/build.sh -gtj ${BUILD_TYPE_LOWER}"
+    fi
+    if [[ -z $(gui_skip_reason) ]] && has_inner_layer gui-correctness; then
+      preflight_gui_filters
+    fi
+    # Plain `cmake --build`, NOT build.sh: build.sh passes -DBUILD_TEST=... back
+    # unconditionally (OFF unless -t/-g), so a flagless build.sh call on the hot
+    # -gtj tree would reconfigure the cache and tear the test targets out — the
+    # flavor-switching tax inner exists to avoid. `cmake --build` touches no
+    # cache flags; a CMakeLists change makes ninja reconfigure with the standing
+    # flags on its own.
+    run_layer build cmake --build build/cmake_build/static
+  fi
+
+  if has_inner_layer ctest; then
+    guarded_ctest_layer ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"
+  fi
+  if has_inner_layer ctest-unit-correctness; then
+    guarded_ctest_layer ctest-unit-correctness -L unit-correctness
+  fi
+  # The direct gtest layers carry their own guards in test_inner.py: per-suite
+  # reconciliation against --gtest_list_tests before the run, and the PASSED
+  # count parse after it (gtest exits 0 on an empty filter match).
+  if has_inner_layer unit-gtest; then
+    run_layer unit-gtest python3 scripts/test_inner.py gtest --plan-file "${plan}" --target unit
+  fi
+  if has_inner_layer composition-gtest; then
+    run_layer composition-gtest python3 scripts/test_inner.py gtest --plan-file "${plan}" --target composition
+  fi
+  if has_inner_layer parity; then
+    guarded_ctest_layer parity -R LumiceParityTest
+  fi
+  if has_inner_layer composition-gui; then
+    guarded_ctest_layer composition-gui -R LumiceCompositionCorrectnessTest
+  fi
+  if has_inner_layer golden-analytic; then
+    guarded_ctest_layer golden-analytic -R LumiceGoldenAnalyticTest
+  fi
+  if has_inner_layer gui-correctness; then
+    run_gui_layer gui-correctness fixed
+  fi
+  if has_inner_layer fast-e2e; then
+    check_pytest_addopts
+    layer_fast_e2e
+  fi
+  if has_inner_layer script-unit-pytest; then
+    run_layer script-unit-pytest pytest -q test/unit-correctness/scripts
+  fi
+  # Always-on layers, last so their short output stays adjacent to the summary.
+  if has_inner_layer checkers; then
+    run_layer checkers python3 scripts/test_inner.py checkers --base "$(plan_field "${plan}" base)"
+  fi
+  if has_inner_layer format; then
+    run_layer format ./scripts/format.sh --check
+  fi
+
+  rm -f "${plan}"
+  print_summary inner
+}
+
 # Two phases, mirroring CI's e2e-slow job: the throughput gates must not measure
 # under the concurrent load of the parallel phase, so they run alone afterwards.
 # Phase 2 runs even if phase 1 failed (same no-fail-fast reasoning as the layers).
@@ -478,8 +632,18 @@ if [[ $# -eq 0 ]]; then
 fi
 
 SCOPE=$1
+INNER_FILES=()
 case "${SCOPE}" in
   quick|full|pr) ;;
+  inner)
+    shift
+    if [[ $# -gt 0 ]]; then
+      [[ $1 == --files ]] || die "inner: unexpected argument: $1 (only --files <paths> is accepted)"
+      shift
+      [[ $# -gt 0 ]] || die "inner: --files needs at least one path"
+      INNER_FILES=("$@")
+    fi
+    ;;
   -h|--help|help)
     usage
     exit 0
@@ -490,6 +654,11 @@ case "${SCOPE}" in
     exit "${EXIT_USAGE}"
     ;;
 esac
+
+if [[ ${SCOPE} == inner ]]; then
+  run_inner
+  exit $?
+fi
 
 if [[ $# -gt 1 ]]; then
   shift
@@ -530,3 +699,5 @@ fi
 
 print_summary "${SCOPE}"
 exit $?
+
+
