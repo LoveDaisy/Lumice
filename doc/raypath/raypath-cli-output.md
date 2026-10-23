@@ -1179,9 +1179,12 @@ partition with a finite collapse card on record stays a finite document; convers
 block does not imply a finite document (the refused card is a refusal record, not a structural
 object, and the witness is a payload with its own state that never counts). The one
 block-level non-finite state on this route: a refused level-0 partition AND a density the
-conversion cannot carry — every leg silent, and the block says `unevaluated` with the reason
-instead of claiming a reading nothing produced. The block is write-only: survey documents are
-serialized one way, and no in-tree reader deserializes them back into `SurveyDocument`.
+conversion cannot carry — the quantification legs are all silent (the ladder's rank scans,
+being density-independent, may still have produced readings), and the block says `unevaluated`
+with a reason that follows the scans: `no family-routing leg produced a reading` when nothing
+ran, `no quantification leg produced a reading` when the rank scans did. The block is
+write-only: survey documents are serialized one way, and no in-tree reader deserializes them
+back into `SurveyDocument`.
 
 ### 9.8 The exception evidence legs (`tir_share` / `mc_region_ess`)
 

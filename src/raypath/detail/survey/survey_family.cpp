@@ -661,7 +661,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
         "-sample witness lattice on the refused level-0 card; none is budget-enforced yet; "
         "enforcement lands with the quantification legs";
     AssembleRefusedSupport(witness_input, *input.members, support.refusal_mode, corner_chromatic_reason,
-                           corner_budget_note, false, out);
+                           corner_budget_note, RefusedSupportObjects::kAppendToObjects, out);
   }
   if (support.ok && input.density->Ok() && input.measure.zenith.kind == FamilyDimKind::kGauss) {
     // AC5's boundedness-role separation: the width went into the ladder; the support's own tail
@@ -958,7 +958,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
                          level0_refusal_mode + "), " +
                          (rank_ran ? "the ladder's per-member per-level rank scans (" +
                                          std::to_string(kFamilyLadderGrid) + " samples per free dimension)" :
-                                     "the ladder's level enumeration (no level asked the rank question)") +
+                                     "the ladder's level enumeration (no level got a rank answer)") +
                          ", and the " + std::to_string(kSurveyWitnessSampleCount) +
                          "-sample witness lattice on the refused level-0 card; no quantification leg ran (the "
                          "axis maps to no pose density); none is budget-enforced yet; enforcement lands with "
@@ -967,21 +967,23 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocume
   }
   // The block's state reads the legs' own outputs: finite once any leg produced one. The one
   // non-finite corner (the gate-order ruling's own definition): a refused level-0 partition AND
-  // a density the conversion cannot carry — every leg silent, and the block says so instead of
-  // claiming a reading nothing produced.
+  // a density the conversion cannot carry — every quantification leg silent (the ladder's rank
+  // scans are density-independent geometry and may still have produced readings), and the block
+  // says so instead of claiming a reading nothing produced.
   const bool legs_all_silent = out->chromatic.state == EvidenceState::kUnevaluated &&
                                out->weight_tint->evidence.state == EvidenceState::kUnevaluated;
   if (!level0_refusal_mode.empty() && legs_all_silent) {
     block.evidence.state = EvidenceState::kUnevaluated;
-    block.evidence.reason = "the level-0 delta partition refused (" + level0_refusal_mode +
-                            ") and the axis maps to no pose density (" + input.density->unsupported +
-                            "): no family-routing leg produced a reading";
+    block.evidence.reason =
+        "the level-0 delta partition refused (" + level0_refusal_mode + ") and the axis maps to no pose density (" +
+        input.density->unsupported +
+        "): " + (rank_ran ? "no quantification leg produced a reading" : "no family-routing leg produced a reading");
   } else {
     block.evidence.state = EvidenceState::kFinite;
     block.evidence.coverage.members_evaluated = member_count;
     block.evidence.coverage.geometry_basis =
         (!level0_refusal_mode.empty() && !rank_ran) ?
-            "the ladder's level enumeration on the nominal crystal shape (no level asked the rank question)" :
+            "the ladder's level enumeration on the nominal crystal shape (no level got a rank answer)" :
             "the per-member restricted-family rank scans at " + std::to_string(kFamilyLadderGrid) +
                 " samples per free dimension on the nominal crystal shape";
     block.evidence.coverage.wavelength_nm = input.wavelength_nm;
