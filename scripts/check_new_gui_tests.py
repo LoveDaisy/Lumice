@@ -362,6 +362,19 @@ def check(diff_args: list[str], content_ref: str, base_ref: str) -> tuple[list[V
     return violations, scanned
 
 
+def diff_verdict(
+    diff_args: list[str], content_ref: str | None, base_ref: str
+) -> tuple[list[Violation], int]:
+    """The diff-scoped verdict main() reports, as a callable unit.
+
+    scripts/test_inner.py's checker layer runs this same function instead of
+    shelling out to this CLI or re-deriving which entry point takes which
+    arguments — one seam per checker module, updated here when the internal
+    shape moves.
+    """
+    return check(diff_args, content_ref, base_ref)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -400,7 +413,7 @@ def main() -> int:
         # whose "before" picture is the commit it is staged on top of.
         diff_args, content_ref, base_ref = ["--cached"], "", "HEAD"
 
-    violations, scanned = check(diff_args, content_ref, base_ref)
+    violations, scanned = diff_verdict(diff_args, content_ref, base_ref)
     if violations:
         print("New-gui-test check FAILED:\n", file=sys.stderr)
         for v in sorted(violations, key=lambda x: (str(x.path), x.line)):

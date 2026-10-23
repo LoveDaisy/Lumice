@@ -196,14 +196,24 @@ def _git(args: list[str]) -> str:
     return proc.stdout.decode("utf-8", errors="replace")
 
 
-def blob(ref: str, rel: str) -> str:
-    """Content of `rel` at `ref`; empty ref means the index.
+def blob(ref: str | None, rel: str) -> str:
+    """Content of `rel` at `ref`; empty ref means the index, None means the worktree.
 
     Public rather than underscore-private because check_new_gui_tests.py — the
     second diff-scoped gate, asking the same "what did you just write?" question
     over a different domain — reads file contents the same way. Sharing the
     mechanism is the point; importing a private name across modules would not be.
+
+    The worktree mode exists for scripts/test_inner.py's checker layer: inner's
+    diff is merge-base..worktree, so the content the added lines refer to lives
+    on disk, not in the index — reading the index there would scan stale prose
+    whenever a change is written but not staged, and silently miss its violations.
     """
+    if ref is None:
+        try:
+            return (REPO_ROOT / rel).read_bytes().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
     spec = f"{ref}:{rel}" if ref else f":{rel}"
     proc = subprocess.run(["git", "show", spec], cwd=REPO_ROOT, capture_output=True)
     if proc.returncode != 0:
@@ -390,6 +400,19 @@ def check(diff_args: list[str], content_ref: str) -> tuple[list[Violation], int]
     return violations, scanned
 
 
+def diff_verdict(
+    diff_args: list[str], content_ref: str | None
+) -> tuple[list[Violation], int]:
+    """The diff-scoped verdict main() reports, as a callable unit.
+
+    scripts/test_inner.py's checker layer runs this same function instead of
+    shelling out to this CLI or re-deriving which entry point takes which
+    arguments — one seam per checker module, updated here when the internal
+    shape moves.
+    """
+    return check(diff_args, content_ref)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -427,7 +450,7 @@ def main() -> int:
         # --staged, passed or defaulted to. Empty content_ref means the index.
         diff_args, content_ref = ["--cached"], ""
 
-    violations, scanned = check(diff_args, content_ref)
+    violations, scanned = diff_verdict(diff_args, content_ref)
     if violations:
         print("New-reference check FAILED:\n", file=sys.stderr)
         for v in sorted(violations, key=lambda x: (str(x.path), x.line)):
