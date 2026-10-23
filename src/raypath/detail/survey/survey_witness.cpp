@@ -106,7 +106,8 @@ void AssembleWitness(const WitnessInput& input, SurveyObject* card) {
 
 void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
                             const std::string& refusal_mode, const std::string& chromatic_reason,
-                            const std::string& budget_note, bool clear_objects, SurveyDocument* out) {
+                            const std::string& budget_note, RefusedSupportObjects objects_discipline,
+                            SurveyDocument* out) {
   SurveyObject card;
   card.kind = SurveyObjectKind::kSupportSet;
   card.members = members;
@@ -125,7 +126,7 @@ void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector
     out->warm_index.seeds.push_back(std::move(seed));
     out->warm_index.seed_sources.emplace_back("witness_argmax");
   }
-  if (clear_objects) {
+  if (objects_discipline == RefusedSupportObjects::kReplaceObjects) {
     out->objects.clear();
   }
   out->objects.push_back(std::move(card));

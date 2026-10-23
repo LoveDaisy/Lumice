@@ -76,7 +76,7 @@
 // are kept POD-flat (escape-as-data statuses, no handles, no cross-call state) so a future
 // exposure is a pure additive v9 — the reopen conditions are registered in analytic-api.md
 // section 9. Dependency direction: family_rank -> path_evaluation (the table and chain),
-// so3, jet, path_rank (the tolerance vocabulary's neighbour, read-only).
+// so3, jet, path_rank (the tolerance vocabulary's neighbour, read-only), core/math.
 
 #include <algorithm>
 #include <cmath>

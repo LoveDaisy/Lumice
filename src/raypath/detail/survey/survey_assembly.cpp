@@ -367,7 +367,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
                                    std::to_string(kSurveyTirShareSampleCount) +
                                    " samples per lambda; none is budget-enforced yet; enforcement "
                                    "lands with the quantification legs",
-                               true, out);
+                               RefusedSupportObjects::kReplaceObjects, out);
         // The exception evidence leg on the same refused path: the partition's refusal says
         // nothing about the internal-reflection weight split, which the declared lattice still
         // answers (the witness's independence principle, one block down).
@@ -468,7 +468,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
                                    "-sample witness lattice; the routing v1 domain names the shapes it refuses "
                                    "(measure_shape_outside_routing_domain), never approximates them; none is "
                                    "budget-enforced yet; enforcement lands with the quantification legs",
-                               false, out);
+                               RefusedSupportObjects::kAppendToObjects, out);
         any_escaped = true;
         escape_mode = measure.refusal_mode;
       } else {
