@@ -6,10 +6,15 @@ Per-test reports are `{id: seconds}`. Phase reports come from
 `collect_cache_stats.py` and are consumed only by phase budgets carrying a
 `per_miss` block, which judge the build phase on
 `seconds <= overhead_seconds + max_seconds_per_miss * misses` with the
-absolute `max_seconds` kept as an outer bound. All are checked against the
-single tracked authority, `test/duration_registry.json`. A maintainer-
-authorized cold-build run may accept only over-limit phase budgets whose
-registered members include `build`.
+absolute `max_seconds` kept as an outer bound. A phase budget carrying a
+`machine_factor` block (ctest phases only) is judged on
+`seconds <= max_seconds * factor`, where factor is the median
+measured/calibrated ratio over a ruler subset of the per-test report —
+machine speed normalization, fail-closed on missing or broken ruler
+readings. All are checked against the single tracked authority,
+`test/duration_registry.json`. A maintainer-authorized cold-build run may
+accept only over-limit phase budgets whose registered members include
+`build`.
 """
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ import argparse
 import json
 import math
 import re
+import statistics
 import sys
 from pathlib import Path
 
@@ -27,10 +33,12 @@ THRESHOLD_S = 60.0
 SLOWDOWN_FACTOR = 2.0
 ROUND_TO_S = 5
 
-REGISTRY_VERSION = 3
+REGISTRY_VERSION = 4
 ENTRY_FIELDS = ("id", "job", "ci_seconds", "reason")
 PHASE_FIELDS = ("job", "phase", "max_seconds", "reason")
 PER_MISS_FIELDS = ("overhead_seconds", "max_seconds_per_miss")
+MACHINE_FACTOR_FIELDS = ("ruler_seconds", "clamp_band")
+MIN_RULERS = 3
 CACHE_TOOLS = ("ccache", "sccache")
 PLACEHOLDER_REASON = "TODO"
 # Hint in the outer-bound red message only: the reference leg's full-tree
@@ -99,9 +107,16 @@ def load_registry(path: Path) -> tuple[list[dict], list[dict]]:
     for index, budget in enumerate(budgets):
         where = f"{path}: phase_budgets[{index}]"
         fields = set(budget) if isinstance(budget, dict) else set()
-        allowed = (set(PHASE_FIELDS), set(PHASE_FIELDS) | {"members"}, set(PHASE_FIELDS) | {"per_miss"})
+        allowed = (
+            set(PHASE_FIELDS),
+            set(PHASE_FIELDS) | {"members"},
+            set(PHASE_FIELDS) | {"per_miss"},
+            set(PHASE_FIELDS) | {"machine_factor"},
+        )
         if fields not in allowed:
-            raise RegistryError(f"{where}: must have the phase fields and optional 'members' or 'per_miss'")
+            raise RegistryError(
+                f"{where}: must have the phase fields and at most one of 'members', 'per_miss' or 'machine_factor'"
+            )
         for field in ("job", "phase", "reason"):
             if not isinstance(budget[field], str) or (field != "reason" and not budget[field]):
                 raise RegistryError(f"{where}: '{field}' must be a non-empty string")
@@ -115,6 +130,36 @@ def load_registry(path: Path) -> tuple[list[dict], list[dict]]:
                 raise RegistryError(f"{where}: 'per_miss' must have exactly the fields {', '.join(PER_MISS_FIELDS)}")
             _non_negative_number(per_miss["overhead_seconds"], f"{where}: 'per_miss.overhead_seconds'")
             _positive_number(per_miss["max_seconds_per_miss"], f"{where}: 'per_miss.max_seconds_per_miss'")
+        machine_factor = budget.get("machine_factor")
+        if machine_factor is not None:
+            # Same exclusion applies: machine_factor never rides an aggregate
+            # or a per_miss build budget. Mounting it on anything but the ctest
+            # phase is a registry authoring error, not a runtime condition.
+            if budget["phase"] != "ctest":
+                raise RegistryError(
+                    f"{where}: 'machine_factor' is only allowed on the 'ctest' phase, not {budget['phase']!r}"
+                )
+            if not isinstance(machine_factor, dict) or set(machine_factor) != set(MACHINE_FACTOR_FIELDS):
+                raise RegistryError(
+                    f"{where}: 'machine_factor' must have exactly the fields {', '.join(MACHINE_FACTOR_FIELDS)}"
+                )
+            ruler = machine_factor["ruler_seconds"]
+            if not isinstance(ruler, dict) or len(ruler) < MIN_RULERS:
+                raise RegistryError(
+                    f"{where}: 'machine_factor.ruler_seconds' must map at least {MIN_RULERS} ruler ids to "
+                    "calibrated seconds (a median needs more than two readings)"
+                )
+            for ruler_id, calibrated in ruler.items():
+                if not isinstance(ruler_id, str) or not ruler_id:
+                    raise RegistryError(f"{where}: 'machine_factor.ruler_seconds' ids must be non-empty strings")
+                _positive_number(calibrated, f"{where}: 'machine_factor.ruler_seconds[{ruler_id!r}]'")
+            band = machine_factor["clamp_band"]
+            if not isinstance(band, list) or len(band) != 2:
+                raise RegistryError(f"{where}: 'machine_factor.clamp_band' must be a two-element [lo, hi] list")
+            _positive_number(band[0], f"{where}: 'machine_factor.clamp_band lo'")
+            _positive_number(band[1], f"{where}: 'machine_factor.clamp_band hi'")
+            if band[0] >= band[1]:
+                raise RegistryError(f"{where}: 'machine_factor.clamp_band' must be strictly increasing (0 < lo < hi)")
         members = budget.get("members", [budget["phase"]])
         if not isinstance(members, list) or not members or any(not isinstance(v, str) or not v for v in members):
             raise RegistryError(f"{where}: 'members' must be a non-empty list of non-empty strings")
@@ -256,12 +301,45 @@ def check(job: str, durations: dict[str, float], entries: list[dict]) -> tuple[l
     return errors, notices
 
 
+def compute_machine_factor(
+    ruler: dict[str, float], durations: dict[str, float], clamp_band: tuple[float, float]
+) -> tuple[float, float]:
+    """Machine speed factor: median measured/calibrated ratio over the ruler ids.
+
+    The single implementation of the factor arithmetic (the replay harness in
+    scratchpad evidence imports this — no second copy of the math). Raises
+    ValueError, with the offending ids named, when a ruler id is absent from
+    the report or reads zero/non-finite: a ruler that did not execute cannot
+    measure the machine, and a skipped or renamed ruler test is exactly how a
+    stale calibration would hide, so the check fails closed.
+    """
+    missing = sorted(ruler_id for ruler_id in ruler if ruler_id not in durations)
+    if missing:
+        raise ValueError(
+            "ruler ids absent from the per-test report: " + ", ".join(missing)
+            + ". Update ruler_seconds or recalibrate per the §7.7 anti-ratchet rule"
+        )
+    broken = sorted(
+        ruler_id for ruler_id, calibrated in ruler.items()
+        if not math.isfinite(durations[ruler_id]) or durations[ruler_id] <= 0
+    )
+    if broken:
+        raise ValueError(
+            "ruler ids with broken (zero or non-finite) readings: " + ", ".join(broken)
+            + " — a ruler that did not run cannot measure the machine"
+        )
+    raw = statistics.median(durations[ruler_id] / calibrated for ruler_id, calibrated in ruler.items())
+    factor = min(max(raw, clamp_band[0]), clamp_band[1])
+    return factor, raw
+
+
 def check_phases(
     job: str,
     phases: dict[str, float],
     budgets: list[dict],
     allow_cold_build: bool = False,
     cache_reports: dict[str, dict] | None = None,
+    durations: dict[str, float] | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     errors: list[str] = []
     notices: list[str] = []
@@ -314,8 +392,54 @@ def check_phases(
                             f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s with 0 misses "
                             f"(adaptive limit: {per_miss['overhead_seconds']:g}s overhead + 0 misses = {limit:g}s)"
                         )
+        # A machine_factor budget carries one condition: the machine-normalized
+        # limit max_seconds * factor, where factor measures how much slower
+        # than the calibration this run's host is (median over the ruler subset
+        # of the per-test report). The per-test report is consumed only where a
+        # machine_factor block needs it, mirroring the per_miss rule: no such
+        # block means --report data is never consulted for this budget.
+        machine = budget.get("machine_factor")
+        machine_factor_value: float | None = None
+        machine_raw: float | None = None
+        machine_ruler_count = 0
+        machine_error = ""
+        if machine is not None:
+            if durations is None:
+                machine_error = (
+                    f"phase budget {budget['phase']!r} for job {job!r} has a machine_factor block but no "
+                    "per-test duration report was passed (--report); the machine-normalized check fails "
+                    "closed — pass the collector's report or drop the machine_factor block"
+                )
+            else:
+                try:
+                    machine_factor_value, machine_raw = compute_machine_factor(
+                        machine["ruler_seconds"], durations, tuple(machine["clamp_band"])
+                    )
+                    machine_ruler_count = len(machine["ruler_seconds"])
+                except ValueError as error:
+                    machine_error = (
+                        f"phase budget {budget['phase']!r} for job {job!r}: the machine-normalized check "
+                        f"fails closed: {error}"
+                    )
         messages: list[str] = []
-        if adaptive_violation:
+        if machine_error:
+            messages.append(machine_error)
+        elif machine_factor_value is not None:
+            band = machine["clamp_band"]
+            if machine_raw < band[0] or machine_raw > band[1]:
+                warnings.append(
+                    f"phase budget {budget['phase']!r} for job {job!r}: calibration band exceeded "
+                    f"(raw factor {machine_raw:.3f}, clamped to {machine_factor_value:.3f}); recalibrate "
+                    "the ruler per the §7.7 anti-ratchet rule"
+                )
+            effective = budget["max_seconds"] * machine_factor_value
+            if seconds > effective:
+                messages.append(
+                    f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s "
+                    f"({'+'.join(members)}), over its machine-normalized limit {budget['max_seconds']}s x "
+                    f"factor {machine_factor_value:.3f} = {effective:.1f}s"
+                )
+        elif adaptive_violation:
             if seconds > budget["max_seconds"]:
                 adaptive_violation += f" and over its {budget['max_seconds']}s outer bound"
             messages.append(adaptive_violation)
@@ -344,9 +468,16 @@ def check_phases(
                 else:
                     errors.append(message)
         else:
-            notice = (
-                f"phase budget {budget['phase']!r} for job {job!r}: {seconds:.1f}s / {budget['max_seconds']}s"
-            )
+            if machine_factor_value is not None:
+                effective = budget["max_seconds"] * machine_factor_value
+                notice = (
+                    f"phase budget {budget['phase']!r} for job {job!r}: {seconds:.1f}s / {effective:.1f}s "
+                    f"(machine factor {machine_factor_value:.3f} from {machine_ruler_count} rulers)"
+                )
+            else:
+                notice = (
+                    f"phase budget {budget['phase']!r} for job {job!r}: {seconds:.1f}s / {budget['max_seconds']}s"
+                )
             if report is not None:
                 misses = report["misses"]
                 notice += f", {misses} misses" + (f" ({seconds / misses:.2f} s/miss)" if misses else "")
@@ -368,7 +499,14 @@ def write_summary(
         f"- Cold-build exception: `{'enabled' if allow_cold_build else 'disabled'}`",
         f"- Result: `{'FAIL' if errors else 'PASS'}`",
     ]
-    for title, messages in (("Errors", errors), ("Cold-build exceptions", warnings), ("Notices", notices)):
+    cold = [w for w in warnings if "accepted with cold-build exception" in w]
+    calibration = [w for w in warnings if "accepted with cold-build exception" not in w]
+    for title, messages in (
+        ("Errors", errors),
+        ("Cold-build exceptions", cold),
+        ("Calibration warnings", calibration),
+        ("Notices", notices),
+    ):
         if not messages:
             continue
         lines.extend(["", f"### {title}", ""])
@@ -410,6 +548,7 @@ def main(argv: list[str] | None = None) -> int:
         budgets,
         allow_cold_build=args.allow_cold_build,
         cache_reports=cache_reports,
+        durations=durations,
     )
     errors.extend(phase_errors)
     notices.extend(phase_notices)
