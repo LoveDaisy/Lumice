@@ -314,7 +314,10 @@ TEST(ContinueRender, ContinuationIsANewStreamUnderARandomSeedMetal) {
 // ---- CUDA legs: the CPU legs' propositions and rulers, verbatim, on the CUDA route — the
 // first non-CPU route to carry all four (Metal carries only the new-stream pair). CI has no
 // GPU, so every leg self-skips there and the job's contribution is compile coverage; runtime
-// validation runs on the Linux CUDA reference box (doc/testing/machines.md).
+// validation runs on the Linux CUDA reference box (doc/testing/machines.md). The duplication is
+// deliberate and bounded: the legs collapse into a backend-parameterized helper when a ruler's
+// criterion changes (touching every copy at once) or when a third route arrives carrying the
+// same P1 pair — until then the verbatim copies are cheaper than the parameterization.
 
 TEST(ContinueRender, ContinueAccumulatesCountEnergyAndPlanesCuda) {
   if (LUMICE_IsBackendAvailable(LUMICE_BACKEND_CUDA) == 0) {
