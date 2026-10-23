@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792735761631,
+  "lastUpdate": 1792735764029,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "bbe3d1883d9873540b5709ec8aa616be79897b36",
-          "message": "Merge pull request #427 from LoveDaisy/chore/raypath-analysis-compute-timing\n\ndocs(raypath-analysis): compute location moves per module maturity",
-          "timestamp": "2026-09-27T13:51:45+08:00",
-          "tree_id": "f291db49905b10460d4a5110faf832aca1be33b0",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/bbe3d1883d9873540b5709ec8aa616be79897b36"
-        },
-        "date": 1790489020581,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 92.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.1,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "cd82b68f1c2ab9e12e9b4f3b56f752998e9e3f34",
           "message": "Merge pull request #428 from LoveDaisy/chore/analyze-product-form-docs\n\ndocs(raypath-analysis): Analyze as the second product core (§5.1.8)",
           "timestamp": "2026-09-27T14:38:00+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "76fc7455b0fe29c44ca2c36c777f7cf3d88bbf16",
+          "message": "Merge pull request #540 from LoveDaisy/feat/gap2-subgroup-gating\n\nfeat(core): physical P gating as a per-element retained-rotation set (gap ②)",
+          "timestamp": "2026-10-23T13:58:39+08:00",
+          "tree_id": "344d73644fead342651a339dcc81d442de596644",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/76fc7455b0fe29c44ca2c36c777f7cf3d88bbf16"
+        },
+        "date": 1792735763275,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 85.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.7,
             "unit": "%"
           }
         ]
