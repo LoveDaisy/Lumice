@@ -879,7 +879,7 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `chromatic` | The chromatic layer's own evidence block plus the optional sub-blocks (`positional_dispersion`, `diagnose`, `weight_tint`, §9.6). Its state follows the legs its routing arm ran: `unevaluated` only when no chromatic leg exists for the input class, `finite` when its legs computed, `refused` (with the leg's mode) when its only leg refused — on the identity arm the tint IS the block's only leg, so the block and the sub-block never disagree |
 | `evidence` | The document-level state: the T0 routing verdict's own block (§9.3) |
 | `warm_index` | The `--warm` contract's survey side (always written; §9.9) |
-| `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran) |
+| `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran). `enforced` stays the enumeration legs' field — the one survey leg that really consumes a deadline is `mc_region_ess`, whose budget reading lives in its own leg block (§9.8), not here |
 | `timing` | `total_seconds` — the wall clock of the analysis **up to the end of assembly, excluding serialization**; each routing leg's cost rolls into this one figure |
 
 ### 9.2 Object kinds (the registry)
@@ -1179,9 +1179,12 @@ partition with a finite collapse card on record stays a finite document; convers
 block does not imply a finite document (the refused card is a refusal record, not a structural
 object, and the witness is a payload with its own state that never counts). The one
 block-level non-finite state on this route: a refused level-0 partition AND a density the
-conversion cannot carry — every leg silent, and the block says `unevaluated` with the reason
-instead of claiming a reading nothing produced. The block is write-only: survey documents are
-serialized one way, and no in-tree reader deserializes them back into `SurveyDocument`.
+conversion cannot carry — the quantification legs are all silent (the ladder's rank scans,
+being density-independent, may still have produced readings), and the block says `unevaluated`
+with a reason that follows the scans: `no family-routing leg produced a reading` when nothing
+ran, `no quantification leg produced a reading` when the rank scans did. The block is
+write-only: survey documents are serialized one way, and no in-tree reader deserializes them
+back into `SurveyDocument`.
 
 ### 9.8 The exception evidence legs (`tir_share` / `mc_region_ess`)
 
@@ -1255,8 +1258,10 @@ side-by-side in the product but never in each other's fields. Refusals:
 `sampler_unavailable` (the single-lambda spectrum cannot be assembled from the scene's light —
 a reference lambda outside the continuous band, or a discrete light with no slot at the
 reference wavelength), `budget_exhausted` (the deadline hit before the requested draw count
-completed; a partial measure's band coverage would vary with machine speed, breaking the
-seeded reproducibility the coverage declares).
+completed — the builder checks the deadline before each draw and mid-draw and never after one
+completes, so a measure with every requested draw completed never refuses and an empty measure
+always arrives flagged; a partial measure's band coverage would vary with machine speed,
+breaking the seeded reproducibility the coverage declares).
 
 The schema-4 field list for both legs is append-only like everything else: the 357 corpus
 assertion bench pins their first corpus appearance — the 357 shape's
@@ -1304,7 +1309,7 @@ request already fixes and a named mode — never silence.
 | `generator` | `lumice` (the product version) and `analytic_api_version`. |
 | `conventions` | The frames, the direction convention, the line's plane and its azimuth, the forms, the value's per-sr meaning, the dark-region classes, the `source` vocabulary and its premise, and the null spelling. |
 | `meta` | The request as applied: `crystal` (id, kind, shape scalars, `shape_is_nominal`, pyramid wedges), `faces`, `sun`, `at` (altitude/azimuth/direction/`deviation_deg`/`azimuth_about_sun_deg`), `wavelengths` (one entry per profile: `nm`, `source`, `refractive_index`), `budget_ms`, `interrupted`. |
-| `context` | Where the at point sits in the survey's structure — the point document's `survey_context` shape (§3.12), read at the at point: `source` (`warm` \| `inline`), `warm_index_absent`, and the `object` / `edge` / `band_sum` fields with their own states. |
+| `context` | Where the at point sits in the survey's structure — the point document's `survey_context` shape (§3.12), read at the at point: `source` (`warm` \| `inline`), `warm_index_absent`, and the `object` / `edge` / `band_sum` fields with their own states. The `band_sum` gate compares the warm scope against the query's **reference** wavelength — the first requested one, not each profile's own λ — so a multi-λ request's context is one reading at that reference, shared by every profile. |
 | `profiles` | One per requested wavelength, in order (§10.2). |
 | `derived` | Present when the request is an axis form and a 650 nm profile and the reference (the first requested) profile both carry edge readings and differ as profiles (the reference itself being the 650 nm profile derives nothing): `red_edge_width_deg` (the red edge minus the reference edge — the C09 anchor's deviation-axis quantity) and `rule` spelling how it was formed. An arc form's edges are azimuth positions, and no width is derived from them. |
 

@@ -640,7 +640,8 @@ void PrintSurveyUsage(const char* prog_name, std::ostream& output = std::cout) {
          << "  --mc-ess <draws>   Also run the opt-in MC region ESS leg: the MC corroboration\n"
          << "                     sampling's Kish effective sample size per 5-degree delta band\n"
          << "                     (seeded, reproducible for the fixed seed; deadline-bound by\n"
-         << "                     --budget). Requires a positive integer (max 200000); the leg\n"
+         << "                     --budget). Requires a positive integer (max " << LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS
+         << "); the leg\n"
          << "                     runs on the full-dimensional and refused-support routes.\n"
          << "  -o <path>          Write the JSON to this file instead of stdout.\n"
          << kHelpLogAndHelpOptions << "\n"

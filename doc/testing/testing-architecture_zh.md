@@ -832,7 +832,7 @@ ImGuiTestEngine 的 `IM_CHECK*`），会在第一行失败时就中止**整个�
 | ① 确定性截图（`modal_layout` / `defaults_panel_layout` / `capture_harness` / `visual`） | τ 处的 `n_diff` + 最大 8-连通块 `maxcc` | `maxcc ≤ K`；τ=16 在两个进 CI 的组间共用（§4.6 有扫描过程），K 按组各定；`capture_harness`/`visual` 只在参考机本机跑，τ=0，K=0 | `wedge_presets@0a191bea` 127 px（42.6 dB——曾越过旧 40 dB 地板）；`presets_expanded`/`presets_warning@dcfa5f9e` 90 px（53.45 dB） | 同机诚实拍摄 maxcc=0；CI llvmpipe 残留 35 px（`modal_layout`）/ 0 px（`defaults_panel_layout`） | `modal_layout` 2.0×（K/blob）/ 1.36×（drift/K）；`defaults_panel_layout` ∞ / 2.15×（§4.6 表里有其余数字） |
 | ② 辅助线层 parity（`export_parity` 的 `_lines` 孪生场景） | 成员掩码 XOR（"是不是画布本身"逐像素判定）+ 同一套最大连通块 `maxcc`，只是作用在掩码而非原始 Δ 上 | `maxcc ≤ K=4`，τ=0（掩码本就是二值的）；标记 OFF（英文版 §4.10 point 4b） | 丢末经线 135–339 px；丢末纬线 8–73 px；两条 `angular_dist` 线只画一条 360–640 px；丢地平线 196–305 px；每个圆移 1° 653–1295 px；场景已关的标记仍在某一臂画出 48–130 px（整帧 PSNR 上仅 0.02 dB——对它不可见） | 诚实 N=6 完全相同重复，0–2 px 的镜头域边缘抗锯齿残留，`maxcc ≤ 1` | K=4 是诚实块的 4×；最紧的真实破坏（`full_sky_dual_fisheye` 丢末纬线，8 px）仍是 K 的 2× |
 | ③ `export_parity` 仿真场景（`single_lens_angled` / `full_sky_dual_fisheye` / `single_lens_rectilinear` / print） | 4×4 块均值 PSNR | `mean − max(10σ, 1.0 dB)`，N=12——bm4 阈值 35.4 / 38.3 / 39.3 / 42.1 dB | CLI 臂 ±0.25 stop 曝光破坏在 bm4 下读 −1.19…−2.55 dB（低于诚实均值）；同一破坏在整帧 PSNR 下读作*改善*（英文版 §4.10 point 4——符号反转） | 诚实 N=12 次，各场景 σ = 0.016–0.105 dB | 低于诚实均值 0.2–6.8 dB，取决于 `max(10σ, 1.0 dB)` 哪一项起作用（print 场景 σ=0.105，是唯一 10σ 超过 1.0 dB 地板的一行） |
-| ③′ `lens_proj` / e2e 参考图 | 整帧 PSNR——未换 | `mean − max(4σ, 1.0 dB)`——未换 | 无在册样本——见下 | 现行标定阈值，17.5–27.0 dB | 不适用 |
+| ③′ `lens_proj` / e2e 参考图 | 整帧 PSNR——未换 | `mean − max(4σ, 1.0 dB)`——未换 | 无在册样本——见下 | 现行标定阈值，19.0–29.5 dB | 不适用 |
 
 **③′ 行的阈值是 tracked 数据，不是代码。** 它在树里的唯一一份拷贝是
 `test/gui/references/_thresholds.json`；`CheckAgainstReference` 在运行时按比较自身打印的
@@ -886,6 +886,10 @@ PSNR 看不见"的缺陷——每一对因场景改动而变化的读数，都�
   `test/support/block_mean_psnr.hpp:34`（`ComputeBlockMeanPsnr`）。单测：
   `test/unit-correctness/gui/test_pixel_diff_ruler.cpp`、`test_block_mean_psnr.cpp`。
 - `CheckAgainstReference` 的 `MaxCcRuler*` 参数：`test/gui/test_screenshot.hpp:58`。
+- ③′ 行的阈值解析：`test/support/reference_thresholds.hpp`（`ResolveReferenceThreshold`），由
+  `CheckAgainstReference` 的 PSNR 分支消费（`test/gui/test_screenshot.cpp`）；tracked 值在
+  `test/gui/references/_thresholds.json`，读通与失败形态单测在
+  `test/unit-correctness/gui/test_reference_thresholds.cpp`。
 - ①行的 K 值：`test/gui/visual/test_gui_modal_layout.cpp:72`（τ=16，K=70）、
   `test_gui_defaults_panel.cpp:78`（τ=16，K=40）、`test_gui_capture_smoke.cpp:28` 与
   `test_preview_pixels.cpp:44`（τ=0，K=0）。
@@ -1049,7 +1053,7 @@ run 耗时超过 **T = 60 s** 的每条测试都须有带理由的登记；`phas
 聚合，要求每个成员恰好有一份报告、未知 phase 判红、成员和不得超过 `max_seconds`。单 phase 条目
 可另带 `per_miss` 块（`overhead_seconds`、`max_seconds_per_miss`——聚合条目不得携带），给 build
 相位加上下文所述的第二条件；或带 `machine_factor` 块（仅限 ctest 相位），给 ctest 相位加下述的
-机器速度归一条件。后者专门捕获
+机器速度归一条件。per_miss 条件专门捕获
 「每条都低于 60 s、总量却持续膨胀」的形状，不能用 worker-seconds 求和代替。
 
 `scripts/check_test_durations.py` 在 job 末尾比对同一张表。单例侧以下任一情况判红：

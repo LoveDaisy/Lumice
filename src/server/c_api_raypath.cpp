@@ -435,6 +435,11 @@ LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeR
   if (request.wavelength_count < 0) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "negative wavelength count" }, err_buf, err_size);
   }
+  if (request.wavelength_count > rp::kMaxProbeWavelengthCount) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument,
+                    "at most " + std::to_string(rp::kMaxProbeWavelengthCount) + " wavelengths may be requested" },
+                  err_buf, err_size);
+  }
   if (request.wavelength_count > 0) {
     req.wavelengths_nm.assign(request.wavelengths_nm, request.wavelengths_nm + request.wavelength_count);
   }

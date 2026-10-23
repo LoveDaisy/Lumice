@@ -282,6 +282,16 @@ TEST(ProbeAnalysis, RefusalsNameThemselves) {
   EXPECT_TRUE(degraded_result.context.warm_index_absent);
   EXPECT_EQ(degraded_result.context.band_sum.state, "unevaluated");
   EXPECT_EQ(degraded_result.context.band_sum.reason, "warm_index_absent");
+
+  // The fourth refusal mode, inline_survey_refused (the edge-normal form's naming when the
+  // inline context assembly returns an Error, probe_analysis.cpp's edge_refused branch), has no
+  // drivable arm: every AssembleSurvey error is either pre-empted by AnalyzePathProbe's own
+  // validation (crystal id, wavelength band, sample count, at point) or produced by the
+  // crystal/path resolution that the probe repeats right after the context block — its own
+  // ResolveCrystalSceneScope with the same arguments — and reports as an Error before any
+  // profile is built (the same ResolveSingleLayerPath face rule and BuildFaceNormals conversion
+  // guard both calls). The mode is the fail-closed name for a future divergence between those
+  // two calls, not a state the engine surface can reach today.
 }
 
 // The chromatic lambda grid lives on the line: one profile per requested wavelength, the warm

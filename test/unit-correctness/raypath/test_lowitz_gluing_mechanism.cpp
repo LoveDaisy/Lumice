@@ -3,8 +3,9 @@
 //   1. the folded latitude law's flip probability is 1/2 at every bin for a pole-symmetric
 //      proposal (Gaussian, Laplacian, legacy-Gaussian, and a pole-centred uniform band, both
 //      folding path kinds), and departs from 1/2 on the corpus's zenith-20° control axis;
-//   2. DeclaredPoseDensity satisfies rho(lambda, phi, psi + pi) == rho(lambda, phi, psi) bit for
-//      bit on the corpus's Lowitz axis, and does not on the control;
+//   2. DeclaredPoseDensity satisfies rho(lambda, phi, psi + pi) == rho(lambda, phi, psi) to a
+//      1e-12 relative closeness on the corpus's Lowitz axis (the FP round trip through the roll
+//      wrap is the honest bound — see the density test's own note), and does not on the control;
 //   3. the optical witness at sampled poses: rotating the body labels by 180° (R -> R·Rz(pi),
 //      every prism face +3) leaves the outgoing direction, the corridor entry measure and the
 //      Fresnel transmission bit-identical — the corpus's R→R·Rz(π) audit promoted to a test on

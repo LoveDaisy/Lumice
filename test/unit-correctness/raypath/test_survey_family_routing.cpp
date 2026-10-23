@@ -313,12 +313,15 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   // record lands in the ladder level that proposed it, and no level-2 card is produced.
   ASSERT_FALSE(block.ladder[2].killed.empty());
   const FamilyKilledCandidate* killed = nullptr;
+  int survival_matches = 0;
   for (const FamilyKilledCandidate& candidate : block.ladder[2].killed) {
     if (candidate.reason == "survival_filter") {
       killed = &candidate;
+      ++survival_matches;
     }
   }
   ASSERT_NE(killed, nullptr);
+  ASSERT_EQ(survival_matches, 1);
   EXPECT_EQ(killed->kind, "regular_image");
   for (const SurveyObject& card : document.objects) {
     EXPECT_FALSE(card.band.has_value() && card.band->level == 2);
@@ -351,12 +354,15 @@ TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
   const FamilyRoutingBlock& block = *document.family_routing;
   ASSERT_FALSE(block.ladder[2].killed.empty());
   const FamilyKilledCandidate* killed = nullptr;
+  int survival_matches = 0;
   for (const FamilyKilledCandidate& candidate : block.ladder[2].killed) {
     if (candidate.reason == "survival_filter") {
       killed = &candidate;
+      ++survival_matches;
     }
   }
   ASSERT_NE(killed, nullptr);
+  ASSERT_EQ(survival_matches, 1);
   EXPECT_EQ(killed->kind, "regular_image");
   EXPECT_NEAR(killed->blur_deg, 10.42, 0.30);
   EXPECT_DOUBLE_EQ(killed->scale_deg, kSurvivalSpotFloorDeg);
@@ -708,12 +714,15 @@ TEST(FamilyRouting, LadderKillsTheUnprobeableImageWithNoMeasurementGroup) {
   EXPECT_EQ(level.generic_rank, 1);
   ASSERT_FALSE(level.killed.empty());
   const FamilyKilledCandidate* killed = nullptr;
+  int no_image_matches = 0;
   for (const FamilyKilledCandidate& candidate : level.killed) {
     if (candidate.reason == "no_valid_image") {
       killed = &candidate;
+      ++no_image_matches;
     }
   }
   ASSERT_NE(killed, nullptr);
+  ASSERT_EQ(no_image_matches, 1);
   EXPECT_EQ(killed->kind, "regular_image");
   EXPECT_FALSE(killed->has_position);
   EXPECT_FALSE(killed->blur_measured);

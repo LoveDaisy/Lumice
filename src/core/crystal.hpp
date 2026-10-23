@@ -643,9 +643,11 @@ bool IsPApplicable(const AxisDistribution& d);
 //   * azimuth is a full-turn uniform (otherwise the leaves' azimuth factors weight them
 //     per-position), and
 //   * the latitude density is symmetric about a pole (core latitude centre ±90°, the wire zenith
-//     0°/180° pair) — and only a latitude path that actually folds can glue at all, so the answer
-//     is derived from lat_path::SelectLatPath (kFullSphere and kNoRandom never fold, kNoRandom
-//     least of all: a locked zenith feeds one leaf only).
+//     0°/180° pair) with non-degenerate support — and only a latitude path that actually folds can
+//     glue at all, so the answer is derived from lat_path::SelectLatPath (kFullSphere and kNoRandom
+//     never fold, kNoRandom least of all: a locked zenith feeds one leaf only). A zero-width
+//     pole-centred family is that same locked-zenith physical state — every sample sits on the
+//     pole, nothing ever crosses it — and is excluded like kNoRandom.
 // Enumerated per DistributionType like IsBApplicableParams; kZigzag answers false until someone
 // decides its tilt-90° case otherwise (conservative, a missed merge is safe, a wrong one is not).
 bool GluingRetainsHalfTurn(const AxisDistribution& d);

@@ -85,6 +85,10 @@ void AssembleMcRegionEss(const McRegionEssInput& input, SurveyDocument* out) {
               input.draws);
     return;
   }
+  // BuildDiagnosticMeasure's flag contract: the flag is set only by its pre-draw and mid-draw
+  // deadline/ceiling checks — never after a draw completes — so a measure with every requested
+  // draw completed never carries it, and an empty measure always does. The completed_samples
+  // disjunct below is fail-closed defense, not a second reachable refusal cause.
   if (measure.budget_exhausted || measure.completed_samples == 0) {
     SurveyMcRegionEss& ess = out->mc_region_ess.emplace();
     ess.evidence.state = EvidenceState::kRefused;

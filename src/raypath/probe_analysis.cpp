@@ -408,21 +408,20 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
       // The refusal's cause: a context that names no edge is the form's own refusal; an inline
       // assembly that never produced a context is the infrastructure's, named for what failed.
       profile.refused_mode = inline_refused ? "inline_survey_refused" : "no_edge_in_context";
-      profile.dark_regions = DecomposeDark(layout, context, warm, {}, arc_form);
+      // No dark_regions on a refused profile: with no samples the decomposition is empty by
+      // construction, and doc §10.2 marks the field Finite only.
       result.profiles.push_back(std::move(profile));
       continue;
     }
     if (arc_refused) {
       profile.evidence_state = "refused";
       profile.refused_mode = "degenerate_arc_at_pole";
-      profile.dark_regions = DecomposeDark(layout, context, warm, {}, arc_form);
       result.profiles.push_back(std::move(profile));
       continue;
     }
     if (!density_ok) {
       profile.evidence_state = "refused";
       profile.refused_mode = "measure_not_expressible";
-      profile.dark_regions = DecomposeDark(layout, context, warm, {}, arc_form);
       result.profiles.push_back(std::move(profile));
       continue;
     }

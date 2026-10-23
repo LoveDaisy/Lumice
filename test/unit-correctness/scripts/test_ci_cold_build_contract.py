@@ -215,6 +215,9 @@ def test_registry_v4_per_miss_shape_and_terminal_values():
         assert len(machine["ruler_seconds"]) == 7, budget["job"]
         assert all(v > 0 for v in machine["ruler_seconds"].values()), budget["job"]
         assert machine["clamp_band"] == [0.8, 2.0], budget["job"]
+    # The "same 7-id ruler subset" the four reasons, §7.7 and AGENTS.md all declare: one set
+    # across the legs, so the factors stay trend-comparable.
+    assert len({frozenset(b["machine_factor"]["ruler_seconds"]) for b in ctest}) == 1
     assert all("machine_factor" not in b for b in registry["phase_budgets"] if b["phase"] != "ctest")
 
 
