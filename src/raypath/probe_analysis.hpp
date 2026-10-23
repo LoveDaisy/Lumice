@@ -146,7 +146,8 @@ struct ProbeProfile {
   double delta_min_deg = 0.0;          // the line's delta extent; the arc forms carry the wedge-wide
   double delta_max_deg = 0.0;          // extent, not the bare constant (see above)
   double azimuth_deg = 0.0;            // the line's azimuth (axis forms) or centre azimuth (arc forms)
-  double window_half_width_deg = 0.0;  // 0 = the full axis
+  double window_half_width_deg = 0.0;  // the axis forms' delta-window half width (0 = the full axis)
+                                       // or the arc forms' azimuth-sweep half width
   double bin_deg = 0.0;
   double wedge_half_width_deg = 0.0;
   std::string anchor_basis;  // edge-normal only: "support_interval_endpoint" | "caustic_edge_position"
