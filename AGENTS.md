@@ -190,8 +190,10 @@ fails the check.
   half is notice-only, on the `build` job's judging leg). Full rule statements: the scripts'
   docstrings, testing-architecture.md §4.9, and §7.9.
 - **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** `test/duration_registry.json`
-  is the single authority for two kinds of quantity — per-test time and phase budgets — and its v3
-  shape adds the build phase's adaptive per-miss ruler beside the absolute backstop. The runtime
+  is the single authority for two kinds of quantity — per-test time and phase budgets — and its v4
+  shape adds the build phase's adaptive per-miss ruler beside the absolute backstop, and the ctest
+  phase's machine-speed normalization (`machine_factor`: the budget scales by the median
+  measured/calibrated ratio of a 7-id ruler subset of the per-test report). The runtime
   input does not exist at pre-commit time, so the gate is not part of `check_policies.py`; there is no
   per-test/env/inline exemption. The sole exception is the maintainer-authorized, one-run cold-build
   protocol for phase budgets containing `build`; it never excuses test runtime or correctness,
