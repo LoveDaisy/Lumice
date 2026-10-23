@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792758214758,
+  "lastUpdate": 1792758217244,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "89c8c1cc6f2798f0c7ef0ea8a8c5f89d7bda19ec",
-          "message": "Merge pull request #429 from LoveDaisy/task/raypath-reduce-period-from-geometry\n\nfix(core): reduce raypaths only under the symmetry the crystal shape admits",
-          "timestamp": "2026-09-27T17:35:49+08:00",
-          "tree_id": "e56285d05d6ce1cec96e104506cb4b053d292439",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/89c8c1cc6f2798f0c7ef0ea8a8c5f89d7bda19ec"
-        },
-        "date": 1790502706783,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 92.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.1,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "7b889f79db8568517726cf7bd294d13c757a8974",
           "message": "Merge pull request #430 from LoveDaisy/task/raypath-pb-ensemble-applicability\n\nfix(core): apply P/B raypath symmetry only where the orientation ensemble admits it",
           "timestamp": "2026-09-27T20:03:03+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "44446dcf5082221f38943bb7ef5f2a4bb89c7240",
+          "message": "Merge pull request #543 from LoveDaisy/feat/survey-wave-review-sweep\n\nfix(core): zero-width pole-centred gluing excluded; the wave's review sweep (task-735)",
+          "timestamp": "2026-10-23T20:19:32+08:00",
+          "tree_id": "ea55d5da85b9ea01bace2af47e90705d3526c028",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/44446dcf5082221f38943bb7ef5f2a4bb89c7240"
+        },
+        "date": 1792758216427,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 96.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.5,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.3,
             "unit": "%"
           }
         ]
