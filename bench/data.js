@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792762295413,
+  "lastUpdate": 1792762297756,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "7b889f79db8568517726cf7bd294d13c757a8974",
-          "message": "Merge pull request #430 from LoveDaisy/task/raypath-pb-ensemble-applicability\n\nfix(core): apply P/B raypath symmetry only where the orientation ensemble admits it",
-          "timestamp": "2026-09-27T20:03:03+08:00",
-          "tree_id": "66c883c3d1bbf83bbd049a58b95f6e6c004751b1",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/7b889f79db8568517726cf7bd294d13c757a8974"
-        },
-        "date": 1790511583737,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 82.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.8,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "ac0fbdf294cc91312b0c421c64b99e05db8828fb",
           "message": "Merge pull request #431 from LoveDaisy/task/gpu-reduce-follows-cpu-symmetry\n\nfix(core): device filter reduction follows the crystal's shape and ensemble symmetry",
           "timestamp": "2026-09-27T21:42:14+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "61686ea7e253835425093a7964672997f4333dd5",
+          "message": "Merge pull request #544 from LoveDaisy/chore/release-4.7.5\n\nchore(release): cut 4.7.5",
+          "timestamp": "2026-10-23T21:28:21+08:00",
+          "tree_id": "db9017bd4b326dbf208009eade13622c90e7b9b6",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/61686ea7e253835425093a7964672997f4333dd5"
+        },
+        "date": 1792762297142,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 78,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.7,
             "unit": "%"
           }
         ]
