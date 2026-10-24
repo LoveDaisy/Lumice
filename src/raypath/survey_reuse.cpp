@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 
+#include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
@@ -24,6 +25,9 @@ WarmCandidate HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   WarmCandidate candidate;
   candidate.crystal_id = doc.request.crystal_id;
   candidate.path_layers = doc.request.path_layers;
+  candidate.location = doc.scene_layer ?
+                           ScopeLocation{ SelectionLocation::kSceneLayer, static_cast<size_t>(*doc.scene_layer) } :
+                           ScopeLocation{ SelectionLocation::kStandalone, 0 };
   candidate.config_fingerprint = doc.warm_index.config_fingerprint;
   candidate.decode_stage = WarmDecodeStage::kPayload;
   for (const auto& seed : doc.warm_index.seeds)
@@ -89,25 +93,26 @@ WarmCandidate HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   return candidate;
 }
 
-SurveyReuseDecision EvaluateSurveyReuse(const SurveyWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
-                                        double sun_azimuth_deg) {
+SurveyReuseDecision EvaluateSurveyFacts(const AdmittedWarmSource& admitted, double wavelength_nm,
+                                        double sun_altitude_deg, double sun_azimuth_deg) {
+  const SurveyWarmSource& warm = admitted.Facts();
   SurveyReuseDecision decision;
   const ObservationScope source{ warm.has_wavelength ? std::optional<double>(warm.wavelength_nm) : std::nullopt,
                                  warm.has_sun_altitude ? std::optional<double>(warm.sun_altitude_deg) : std::nullopt,
                                  warm.has_sun_azimuth ? std::optional<double>(warm.sun_azimuth_deg) : std::nullopt };
   const ObservationScope target{ wavelength_nm, sun_altitude_deg, sun_azimuth_deg };
   if (warm.early_stopped) {
-    decision.structure.reason = "survey_early_stopped_no_delta_axis";
+    decision.structure = SurveyStructureView::Unavailable("survey_early_stopped_no_delta_axis");
   } else if (!warm.has_support || warm.intervals.empty()) {
-    decision.structure.reason = "survey_carries_no_support";
+    decision.structure = SurveyStructureView::Unavailable("survey_carries_no_support");
   } else if (warm.geometry.kind != GeometryKind::kNominal) {
-    decision.structure.reason = "scope_value_mismatch";
+    decision.structure = SurveyStructureView::Unavailable("scope_value_mismatch");
   } else if (!source.wavelength_nm || !std::isfinite(*source.wavelength_nm) || *source.wavelength_nm <= 0.0) {
-    decision.structure.reason = "scope_field_missing";
+    decision.structure = SurveyStructureView::Unavailable("scope_field_missing");
   } else if (source.wavelength_nm != target.wavelength_nm) {
-    decision.structure.reason = "scope_value_mismatch";
+    decision.structure = SurveyStructureView::Unavailable("scope_value_mismatch");
   } else {
-    decision.structure.warm = &warm;
+    decision.structure = SurveyStructureView::FromAdmitted(admitted);
   }
   if (!source.wavelength_nm || !source.sun_altitude_deg || !source.sun_azimuth_deg ||
       !std::isfinite(*source.wavelength_nm) || *source.wavelength_nm <= 0.0 ||
@@ -126,12 +131,17 @@ SurveyReuseDecision EvaluateSurveyReuse(const SurveyWarmSource& warm, double wav
   return decision;
 }
 
+SurveyReuseDecision EvaluateSurveyReuse(const AdmittedWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
+                                        double sun_azimuth_deg) {
+  return EvaluateSurveyFacts(warm, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
+}
+
 bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
                             const char** basis) {
   if (!structure) {
     return false;
   }
-  const SurveyWarmSource& warm = *structure.warm;
+  const SurveyWarmSource& warm = *structure.Facts();
   bool has = false;
   double best = 0.0;
   const char* best_basis = "";
@@ -157,9 +167,10 @@ bool NearestStructureAnchor(const SurveyStructureView& structure, double deviati
 }
 
 // The context's answers, read off a harvest (warm document or inline assembly — the same shape).
-void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
-                       double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
-  const SurveyReuseDecision reuse = EvaluateSurveyReuse(warm, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
+static void FillSurveyFacts(const AdmittedWarmSource& admitted, double target_deviation_deg, double wavelength_nm,
+                            double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
+  const SurveyWarmSource& warm = admitted.Facts();
+  const SurveyReuseDecision reuse = EvaluateSurveyFacts(admitted, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
   const double delta = target_deviation_deg;
   const SurveyWarmSource::SupportInterval* containing = nullptr;
   const SurveyWarmSource::SupportInterval* closest = nullptr;
@@ -179,9 +190,9 @@ void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg
   }
   if (!reuse.structure) {
     out->object.state = "unevaluated";
-    out->object.reason = reuse.structure.reason;
+    out->object.reason = reuse.structure.Reason();
     out->edge.state = "unevaluated";
-    out->edge.reason = reuse.structure.reason;
+    out->edge.reason = reuse.structure.Reason();
   } else {
     // The partition containment is a certified structural fact; the nearest reading inherits it.
     const SurveyWarmSource::SupportInterval& hit = containing != nullptr ? *containing : *closest;
@@ -244,6 +255,10 @@ void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg
   }
 }
 
+void FillSurveyContext(const AdmittedWarmSource& warm, double target_deviation_deg, double wavelength_nm,
+                       double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
+  FillSurveyFacts(warm, target_deviation_deg, wavelength_nm, sun_altitude_deg, sun_azimuth_deg, out);
+}
 
 Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& selection, const WarmCandidate& candidate,
                             std::optional<AdmittedWarmSource>* out) {
@@ -296,6 +311,13 @@ Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& se
       return refuse("measure gate: the document's family measure echo does not match this query's config axis");
     }
   }
+  if (candidate.location) {
+    const ScopeLocation current = survey::ResolveSelectionLocation(config, selection);
+    if (candidate.location->location != current.location || (current.location == SelectionLocation::kSceneLayer &&
+                                                             candidate.location->layer_index != current.layer_index)) {
+      return refuse("scene layer gate: the document's scope.scene_layer does not match this query");
+    }
+  }
   if (!facts.index_present) {
     SurveyWarmSource absent;
     absent.family = WarmDocumentFamily::kSurvey;
@@ -333,18 +355,26 @@ Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& se
       !std::all_of(candidate.seeds.begin(), candidate.seeds.end(), [](double x) { return std::isfinite(x); })) {
     return refuse("seeds must be finite row-major matrices of nine numbers");
   }
+  if (!candidate.location) {
+    SurveyWarmSource absent;
+    absent.family = WarmDocumentFamily::kSurvey;
+    *out = AdmittedWarmSource(std::move(absent), candidate.seeds);
+    return {};
+  }
   // A missing index is still a survey provenance marker, but carries neither seeds
   // nor numeric facts. The query assembles its own context under the existing rule.
   *out = AdmittedWarmSource(std::move(facts), candidate.facts.index_present ? candidate.seeds : std::vector<double>{});
   return {};
 }
 
-bool CanReuseSurveyProfile(const SurveyWarmSource& warm, const ProfileReuseScope& scope,
+bool CanReuseSurveyProfile(const AdmittedWarmSource& admitted, const ProfileReuseScope& scope,
                            const PoseDensityConversion& density, const survey::ProbeLineLayout& layout) {
+  const SurveyWarmSource& warm = admitted.Facts();
   if (!scope.observation.wavelength_nm || !scope.observation.sun_altitude_deg || !scope.observation.sun_azimuth_deg)
     return false;
-  const SurveyReuseDecision reuse = EvaluateSurveyReuse(
-      warm, *scope.observation.wavelength_nm, *scope.observation.sun_altitude_deg, *scope.observation.sun_azimuth_deg);
+  const SurveyReuseDecision reuse =
+      EvaluateSurveyFacts(admitted, *scope.observation.wavelength_nm, *scope.observation.sun_altitude_deg,
+                          *scope.observation.sun_azimuth_deg);
   const bool same_line = warm.has_probe_azimuth && std::isfinite(warm.probe_azimuth_deg) &&
                          std::fabs(std::remainder(scope.azimuth_deg - warm.probe_azimuth_deg, 360.0)) < 1e-9;
   if (!scope.radial || !warm.has_probe || reuse.reading_reason != nullptr ||

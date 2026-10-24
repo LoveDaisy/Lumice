@@ -636,11 +636,11 @@ namespace {
 // still declares itself in the block).
 void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& request, const SinglePathMetadata& meta,
                         const std::optional<AdmittedWarmSource>& admitted, SurveyContextBlock* out) {
-  const SurveyWarmSource* source =
-      admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &admitted->Facts() : nullptr;
+  const AdmittedWarmSource* source =
+      admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &*admitted : nullptr;
   out->source = source != nullptr ? "warm" : "inline";
-  out->warm_index_absent = source != nullptr && !source->index_present;
-  const SurveyWarmSource* warm = source != nullptr && source->index_present ? source : nullptr;
+  out->warm_index_absent = source != nullptr && !source->Facts().index_present;
+  const AdmittedWarmSource* warm = source != nullptr && source->Facts().index_present ? source : nullptr;
   std::optional<AdmittedWarmSource> inline_source;
   if (warm == nullptr) {
     SurveyRequest survey_request;
@@ -659,7 +659,7 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
       out->band_sum.reason = "inline_survey_refused";
       return;
     }
-    warm = &inline_source->Facts();
+    warm = &*inline_source;
   }
   FillSurveyContext(*warm, meta.target_deviation_deg, meta.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg,
                     out);

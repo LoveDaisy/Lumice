@@ -379,13 +379,19 @@ when any of these fails:
    `measure` echo (kind/center/width per dimension) must equal the query config's own reading.
    Its absence is data (that arm did not run) and skips the gate with a declaration. (The
    fingerprint already carries the axis; this gate is the echo's independent chain.)
+5. **Resolved location** — the document's `scope.scene_layer` (null = standalone) must equal the
+   query's resolved scene allocation, including the explicit layer index. The fingerprint deliberately
+   excludes allocation; equal crystal/path/fingerprint across two layers cannot certify the same
+   warm facts. A legacy document without this field keeps its validated seeds for solver revalidation
+   but degrades its numeric index to inline context (`warm_index_absent: true`).
 
 **Implementation ownership.** `survey_reuse.hpp` is the product owner of these gates,
 `EvaluateSurveyReuse`, and `CanReuseSurveyProfile`. JSON decoding (`DecodeWarmCandidate`)
 and typed harvesting (`HarvestSurveyDocument`) produce the same untrusted candidate shape;
 neither grants reuse. Point and probe admit it with `ValidateWarmCandidate`, whose private
-admission token separates a decoded payload from usable input. Inline context assemblies take
-the same path. `survey_context.hpp` carries the shared context value. The C bridge decodes
+admission token separates a decoded payload from usable input. The context and profile reuse
+interfaces accept only that token, including inline assemblies. `survey_context.hpp` carries the
+shared context value. The C bridge decodes
 boundary text and maps errors; it does not compute fingerprints or compare measures.
 Decode failures retain their stage so unknown-crystal and request-identity errors keep their
 precedence over later malformed payloads. Missing scope is never a physical zero.
@@ -420,7 +426,10 @@ seeds. A schema-4 document with `warm_index` missing still takes the documented 
 survey document written before the block existed — or missing any of its fields is not refused
 and never partially consumed: the query degrades visibly to the inline context (no structural
 reuse, no seed consumption), and the document's `survey_context` declares it
-(`warm_index_absent: true`, the band-sum reading `unevaluated` with that reason).
+(`warm_index_absent: true`, the band-sum reading `unevaluated` with that reason). A complete index
+with no `scope.scene_layer` also takes this inline path, but retains its validated seed starts:
+location-unknown numeric facts cannot certify this allocation, whereas seeds are re-solved against
+current input rather than accepted as certificates.
 
 **The probe's consumption.** `raypath probe` reads the same index with the same gates. The
 harvest's structure answers where the at point sits (the context block of §10), and the document's
@@ -904,7 +913,7 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `schema`, `schema_version` | `lumice.path-survey`, 4 — a new document family; it shares no fields with the schema-1/3 documents, and a reader of one must reject the others |
 | `generator` | Lumice version and the analytic kernel's `analytic_api_version` |
 | `request` | The echo: `crystal_id`, `path_layers`, `symmetry_bits` (7 = physical P\|B\|D, 0 = literal), `wavelength_nm` (null when unset) and `budget_ms` as resolved |
-| `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg` |
+| `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg`; `geometry_kind: "realized"` appears only for a non-nominal typed geometry |
 | `routing` | The T0 leg: `early_stopped`, and per-member `members[]` records (`member`, `rank_zero`, `mechanism` — the kernel's roll-up slug, null when not computable, with `mechanism_unavailable` naming why — and the member's own `evidence` block) |
 | `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has an extremum fold — the position needs a fold to sit on; the minimum-deviation fold when the class has one, else the interior maximum at the support's upper edge), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed — and on that refused card, the declared-source `witness` sub-block (§9.2); the family route's own cards (the band-labelled survivors and the level-0 `support_set`, §9.2's family-form paragraph) |
 | `family_routing` | present only on the family arm's documents (§9.7): the measure echo, the freezing ladder with every level's rank coverage and killed candidates, and the block's own evidence. An early stop, a full-dimensional route and an outside-domain refusal carry no `family_routing` key at all |
@@ -917,6 +926,12 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `warm_index` | The `--warm` contract's survey side (always written; §9.9) |
 | `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran). `enforced` stays the enumeration legs' field — the one survey leg that really consumes a deadline is `mc_region_ess`, whose budget reading lives in its own leg block (§9.8), not here |
 | `timing` | `total_seconds` — the wall clock of the analysis **up to the end of assembly, excluding serialization**; each routing leg's cost rolls into this one figure |
+
+Non-default typed scope receipts append only the necessary discriminator: `scope.geometry_kind:
+"realized"`, `probes[].spec.member_aggregation: "physical_class"`, or
+`probes[].spec.measure_kind` / `family_routing.measure.measure_kind: "ideal_frozen"`.
+Their absence means nominal geometry, representative quantity and actual declared measure,
+respectively. Normal survey output emits none of these optional fields.
 
 ### 9.2 Object kinds (the registry)
 

@@ -20,11 +20,13 @@ struct PathSelection {
   std::optional<size_t> scene_layer;
 };
 enum class SelectionLocation { kStandalone, kSceneLayer };
-enum class MemberKind { kLiteral, kPhysicalL2 };
-struct MemberScope {
-  MemberKind member_kind = MemberKind::kLiteral;
+struct ScopeLocation {
   SelectionLocation location = SelectionLocation::kSceneLayer;
   size_t layer_index = 0;
+};
+enum class MemberKind { kLiteral, kPhysicalL2 };
+struct MemberScope : ScopeLocation {
+  MemberKind member_kind = MemberKind::kLiteral;
   std::vector<std::vector<int>> members;
 };
 

@@ -90,6 +90,7 @@ struct WarmCandidate {
   SurveyWarmSource facts;
   long long crystal_id = 0;
   std::vector<std::vector<int>> path_layers;
+  std::optional<ScopeLocation> location;
   std::string config_fingerprint;
   std::vector<double> seeds;
   // A boundary decode failure is carried to the product entry so unknown-crystal
@@ -125,7 +126,7 @@ struct ProfileReuseScope {
   int sample_count = 0;
   bool radial = false;
 };
-bool CanReuseSurveyProfile(const SurveyWarmSource& warm, const ProfileReuseScope& scope,
+bool CanReuseSurveyProfile(const AdmittedWarmSource& warm, const ProfileReuseScope& scope,
                            const PoseDensityConversion& density, const survey::ProbeLineLayout& layout);
 // The schema-4 value model's harvest, read once off an assembled document (the inline arm's
 // producer). The warm reader's JSON arm (DecodeWarmCandidate, single_path_json.hpp) mirrors this
@@ -133,10 +134,21 @@ bool CanReuseSurveyProfile(const SurveyWarmSource& warm, const ProfileReuseScope
 // query, whose inline arm assembles the same context and reads it through the same harvest.
 WarmCandidate HarvestSurveyDocument(const survey::SurveyDocument& doc);
 
-struct SurveyStructureView {
-  const SurveyWarmSource* warm = nullptr;
-  const char* reason = nullptr;
-  explicit operator bool() const { return warm != nullptr && reason == nullptr; }
+struct SurveyReuseDecision;
+class SurveyStructureView {
+ public:
+  SurveyStructureView() = default;
+  static SurveyStructureView Unavailable(const char* reason) { return { nullptr, reason }; }
+  explicit operator bool() const { return warm_ != nullptr && reason_ == nullptr; }
+  const SurveyWarmSource* Facts() const { return warm_; }
+  const char* Reason() const { return reason_; }
+
+ private:
+  static SurveyStructureView FromAdmitted(const AdmittedWarmSource& source) { return { &source.Facts(), nullptr }; }
+  SurveyStructureView(const SurveyWarmSource* warm, const char* reason) : warm_(warm), reason_(reason) {}
+  const SurveyWarmSource* warm_ = nullptr;
+  const char* reason_ = nullptr;
+  friend SurveyReuseDecision EvaluateSurveyFacts(const AdmittedWarmSource&, double, double, double);
 };
 
 struct SurveyReuseDecision {
@@ -144,7 +156,7 @@ struct SurveyReuseDecision {
   const char* reading_reason = nullptr;
 };
 
-SurveyReuseDecision EvaluateSurveyReuse(const SurveyWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
+SurveyReuseDecision EvaluateSurveyReuse(const AdmittedWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
                                         double sun_azimuth_deg);
 
 // The context's nearest structural anchor, shared by the point and probe queries.
@@ -156,7 +168,7 @@ bool NearestStructureAnchor(const SurveyStructureView& structure, double deviati
 // support, and the band-sum reading under the scope gate's exact-equality comparison of the
 // wavelength and the sun. The one context computation both the point query and the probe query
 // read; the point's caller passes its meta's values.
-void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
+void FillSurveyContext(const AdmittedWarmSource& warm, double target_deviation_deg, double wavelength_nm,
                        double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out);
 
 

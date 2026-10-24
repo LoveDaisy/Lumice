@@ -13,8 +13,11 @@ schema authority is `doc/raypath/raypath-cli-output.md`; the layered
   `survey_context.hpp` owns the shared context value. Both JSON decoding and typed
   `HarvestSurveyDocument` produce an untrusted `WarmCandidate`. Only
   `ValidateWarmCandidate` constructs an `AdmittedWarmSource`; the point/probe
-  entries and their inline assemblies use it before consuming facts. A fingerprint
-  admits identity, not numerical validity. The bridge only decodes and maps errors.
+  entries and their inline assemblies use it before consuming facts; public
+  structure/context/profile decisions require the admission token. Resolved scene
+  location is a separate identity gate because the routing fingerprint excludes it;
+  location-unknown indexes degrade to inline context while validated seeds remain
+  solver starts. A fingerprint admits identity, not numerical validity. The bridge only decodes and maps errors.
 - Input scope preparation lives in `detail/input_scope.*`, with physical member
   expansion still owned by `detail/physical_member_scope.*`. Actual family-measure
   reading lives in `detail/measure_scope.*`; the ideal freezing ladder stays in

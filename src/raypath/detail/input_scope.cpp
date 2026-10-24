@@ -5,6 +5,21 @@
 
 namespace lumice::raypath::survey {
 
+ScopeLocation ResolveSelectionLocation(const ConfigManager& config, const PathSelection& selected) {
+  const auto& scene = config.scene_;
+  size_t layer_index = selected.scene_layer.value_or(scene.ms_.size());
+  if (!selected.scene_layer)
+    for (size_t i = 0; i < scene.ms_.size(); ++i) {
+      if (std::any_of(scene.ms_[i].setting_.begin(), scene.ms_[i].setting_.end(),
+                      [&](const auto& setting) { return setting.crystal_.id_ == selected.crystal_id; })) {
+        layer_index = i;
+        break;
+      }
+    }
+  return { layer_index < scene.ms_.size() ? SelectionLocation::kSceneLayer : SelectionLocation::kStandalone,
+           layer_index };
+}
+
 Error ResolveCrystalSceneScope(const ConfigManager& config, const PathSelection& selected, CrystalSceneScope* out,
                                InputSnapshot* snapshot_out) {
   const auto crystal_id = selected.crystal_id;
@@ -19,23 +34,15 @@ Error ResolveCrystalSceneScope(const ConfigManager& config, const PathSelection&
   // The class: physical P|B|D by default, the literal sequence at bits 0. A configured but
   // unused crystal stays a valid standalone diagnostic object (the report's layer rule).
   SceneConfig scene = config.scene_;
-  size_t layer_index = selected.scene_layer.value_or(scene.ms_.size());
-  if (!selected.scene_layer)
-    for (size_t i = 0; i < scene.ms_.size(); ++i) {
-      if (std::any_of(scene.ms_[i].setting_.begin(), scene.ms_[i].setting_.end(),
-                      [&](const auto& setting) { return setting.crystal_.id_ == crystal_id; })) {
-        layer_index = i;
-        break;
-      }
-    }
-  if (!selected.scene_layer && layer_index == scene.ms_.size()) {
+  const ScopeLocation resolved = ResolveSelectionLocation(config, selected);
+  const size_t layer_index = resolved.layer_index;
+  if (resolved.location == SelectionLocation::kStandalone && !selected.scene_layer) {
     ScatteringSetting setting{};
     setting.crystal_ = configured->second;
     setting.crystal_proportion_ = 1;
     scene.ms_.push_back({ 0, { setting } });
   }
-  out->location =
-      layer_index < config.scene_.ms_.size() ? SelectionLocation::kSceneLayer : SelectionLocation::kStandalone;
+  out->location = resolved.location;
   out->layer_index = layer_index;
   out->identity = out->location == SelectionLocation::kSceneLayer ?
                       "selected scene entry snapshot" :

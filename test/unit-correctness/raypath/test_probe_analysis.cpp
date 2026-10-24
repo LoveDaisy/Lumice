@@ -15,6 +15,7 @@
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
+#include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
@@ -90,6 +91,10 @@ WarmCandidate Candidate(const ConfigManager& config, SurveyWarmSource facts) {
   candidate.facts.family = WarmDocumentFamily::kSurvey;
   candidate.crystal_id = 1;
   candidate.path_layers = { { 3, 5 } };
+  PathSelection selection;
+  selection.crystal_id = 1;
+  selection.path_layers = candidate.path_layers;
+  candidate.location = survey::ResolveSelectionLocation(config, selection);
   candidate.config_fingerprint =
       survey::RoutingConfigFingerprint(config, 1, candidate.path_layers, kDefaultSymmetryBits);
   return candidate;
@@ -202,12 +207,64 @@ TEST(ProbeAnalysis, TypedNonfiniteScopeDegradesWithoutInventingZeroProvenance) {
   EXPECT_EQ(out.profiles.front().source, "recomputed");
 }
 
+TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
+  auto config = survey::RandomPrismScene();
+  config.scene_.ms_.push_back(config.scene_.ms_.front());
+  auto request = RadialRequest(config, -30.0, 0.0);
+  request.scene_layer = 0;
+  WarmCandidate typed = Candidate(config, CraftedWarm(550.0, 20000));
+  std::optional<AdmittedWarmSource> admitted;
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  ASSERT_TRUE(admitted->Facts().index_present);
+  ProbeResult same_layer;
+  request.warm_candidate = typed;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &same_layer).Ok());
+  EXPECT_EQ(same_layer.profiles.front().source, "warm_reused");
+
+  request.scene_layer = 1;
+  const Error cross_layer = ValidateWarmCandidate(config, request, typed, &admitted);
+  EXPECT_NE(cross_layer.message.find("scene layer gate"), std::string::npos);
+  EXPECT_FALSE(admitted);
+  ProbeResult wrong_layer;
+  EXPECT_NE(AnalyzePathProbe(config, request, &wrong_layer).message.find("scene layer gate"), std::string::npos);
+  request.scene_layer.reset();
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
+
+  survey::SurveyDocument document;
+  document.request.crystal_id = 1;
+  document.request.path_layers = request.path_layers;
+  document.scene_layer = 0;
+  document.warm_index.config_fingerprint = typed.config_fingerprint;
+  document.warm_index.reuse_scope = "test receipt";
+  document.warm_index.produced_for = "test producer";
+  document.warm_index.seeds.push_back({ 1, 0, 0, 0, 1, 0, 0, 0, 1 });
+  document.warm_index.seed_sources.push_back("test");
+  auto wire = nlohmann::json::parse(survey::SurveyDocumentToJson(document, "test"));
+  WarmCandidate decoded;
+  ASSERT_TRUE(DecodeWarmCandidate(wire.dump(), &decoded).Ok());
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
+  ASSERT_TRUE(admitted->Facts().index_present);
+  request.scene_layer = 1;
+  EXPECT_NE(ValidateWarmCandidate(config, request, decoded, &admitted).message.find("scene layer gate"),
+            std::string::npos);
+  wire["scope"].erase("scene_layer");
+  ASSERT_TRUE(DecodeWarmCandidate(wire.dump(), &decoded).Ok());
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  EXPECT_FALSE(admitted->Facts().index_present);
+  EXPECT_EQ(admitted->Seeds().size(), 9u);
+}
+
 TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   const auto config = survey::PlateScene(1.5, 0.3);
   auto request = RadialRequest(config, -10.0, 0.0);
   survey::SurveyDocument document;
   document.request.crystal_id = request.crystal_id;
   document.request.path_layers = request.path_layers;
+  const auto location = survey::ResolveSelectionLocation(config, request);
+  if (location.location == SelectionLocation::kSceneLayer)
+    document.scene_layer = static_cast<long long>(location.layer_index);
   document.warm_index.config_fingerprint =
       survey::RoutingConfigFingerprint(config, request.crystal_id, request.path_layers, request.symmetry_bits);
   document.warm_index.reuse_scope = "test receipt";
@@ -226,22 +283,42 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
   ASSERT_TRUE(admitted);
   ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
-  auto aggregate = typed.facts;
-  aggregate.quantity.aggregation = MemberAggregation::kPhysicalClass;
-  EXPECT_STREQ(EvaluateSurveyReuse(aggregate, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
+  auto aggregate = typed;
+  aggregate.facts.quantity.aggregation = MemberAggregation::kPhysicalClass;
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, aggregate, &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.probes.emplace_back();
   document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
-  EXPECT_STREQ(EvaluateSurveyReuse(HarvestSurveyDocument(document).facts, 550.0, 20.0, 0.0).reading_reason,
-               "scope_value_mismatch");
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyDocument(document), &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.probes.clear();
   document.family_routing->measure.kind = MeasureKind::kIdealFrozen;
-  const auto ideal = HarvestSurveyDocument(document);
-  EXPECT_STREQ(EvaluateSurveyReuse(ideal.facts, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyDocument(document), &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.family_routing->measure.kind = MeasureKind::kActualDeclared;
   document.geometry.kind = GeometryKind::kRealized;
-  EXPECT_STREQ(EvaluateSurveyReuse(HarvestSurveyDocument(document).facts, 550.0, 20.0, 0.0).reading_reason,
-               "scope_value_mismatch");
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyDocument(document), &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
+  document.family_routing->measure.kind = MeasureKind::kIdealFrozen;
+  document.probes.emplace_back();
+  document.probes.back().spec.quantity.aggregation = MemberAggregation::kPhysicalClass;
+  document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
+  typed = HarvestSurveyDocument(document);
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());
+  EXPECT_EQ(decoded.facts.geometry.kind, typed.facts.geometry.kind);
+  EXPECT_EQ(decoded.facts.quantity.aggregation, typed.facts.quantity.aggregation);
+  EXPECT_EQ(decoded.facts.quantity.measure, typed.facts.quantity.measure);
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
+  document.probes.clear();
+  document.family_routing->measure.kind = MeasureKind::kActualDeclared;
   document.geometry.kind = GeometryKind::kNominal;
+  typed = HarvestSurveyDocument(document);
   typed.facts.measure_zenith.width_deg += 1.0;
   document.family_routing->measure.zenith.width_deg += 1.0;
   ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());

@@ -134,10 +134,10 @@ std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layou
   }
   const auto classify = [&](size_t k) {
     if (!structure) {
-      return std::pair<std::string, std::string>{ "unknown", structure.reason };
+      return std::pair<std::string, std::string>{ "unknown", structure.Reason() };
     }
     const double pos = layout.bins[k].delta_centre_deg;
-    for (const SurveyWarmSource::SupportInterval& interval : structure.warm->intervals) {
+    for (const SurveyWarmSource::SupportInterval& interval : structure.Facts()->intervals) {
       if (pos >= interval.lower_deg && pos <= interval.upper_deg) {
         return std::pair<std::string, std::string>{ samples[k].k > 0 ? "inside_support_positive" :
                                                                        "inside_support_zero",
@@ -189,8 +189,8 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     if (Error e = ValidateWarmCandidate(config, request, *request.warm_candidate, &admitted); !e.Ok())
       return e;
   }
-  const SurveyWarmSource* source =
-      admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &admitted->Facts() : nullptr;
+  const AdmittedWarmSource* source =
+      admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &*admitted : nullptr;
 
   // ---- inputs ----
   const auto crystal_it = config.crystals_.find(request.crystal_id);
@@ -302,15 +302,15 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
 
   // ---- the context (the point query's block, read at the at point) ----
   SurveyContextBlock& context = result.context;
-  const SurveyWarmSource* warm = nullptr;
+  const AdmittedWarmSource* warm = nullptr;
   std::optional<AdmittedWarmSource> inline_source;
   bool inline_refused = false;
-  if (source != nullptr && source->index_present) {
+  if (source != nullptr && source->Facts().index_present) {
     context.source = "warm";
     warm = source;
   } else {
     context.source = source != nullptr ? "warm" : "inline";
-    context.warm_index_absent = source != nullptr && !source->index_present;
+    context.warm_index_absent = source != nullptr && !source->Facts().index_present;
     SurveyRequest survey_request;
     static_cast<PathSelection&>(survey_request) = request;
     survey_request.wavelength_nm = reference_nm;
@@ -327,10 +327,10 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
       context.band_sum.state = "unevaluated";
       context.band_sum.reason = "inline_survey_refused";
     } else {
-      warm = &inline_source->Facts();
+      warm = &*inline_source;
     }
   }
-  SurveyStructureView reference_structure{ nullptr, "inline_survey_refused" };
+  SurveyStructureView reference_structure = SurveyStructureView::Unavailable("inline_survey_refused");
   if (warm != nullptr) {
     FillSurveyContext(*warm, meta.at_deviation_deg, reference_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg,
                       &context);
@@ -451,9 +451,10 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
         survey::ProbeLineSample& sample = profile.samples[k];
         sample.delta_deg = layout.bins[k].delta_centre_deg;
         sample.azimuth_deg = layout.bins[k].az_centre_deg;
-        sample.value = warm->probe_samples[k].value;
-        sample.k = warm->probe_samples[k].k;
-        sample.k_eff = warm->probe_samples[k].k_eff;
+        const auto& samples = warm->Facts().probe_samples;
+        sample.value = samples[k].value;
+        sample.k = samples[k].k;
+        sample.k_eff = samples[k].k_eff;
       }
     } else {
       profile.source = "recomputed";
@@ -486,7 +487,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     profile.readings.separation_deg = read.separation_deg;
 
     const SurveyStructureView profile_structure =
-        warm != nullptr ? reuse.structure : SurveyStructureView{ nullptr, "inline_survey_refused" };
+        warm != nullptr ? reuse.structure : SurveyStructureView::Unavailable("inline_survey_refused");
     profile.dark_regions = DecomposeDark(layout, profile_structure, profile.samples, arc_form);
     result.profiles.push_back(std::move(profile));
   }

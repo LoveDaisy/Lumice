@@ -504,6 +504,17 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     candidate->path_layers.push_back(std::move(faces));
   }
   candidate->decode_stage = WarmDecodeStage::kMeasure;
+  if (doc.contains("scope") && doc["scope"].is_object() && doc["scope"].contains("scene_layer")) {
+    const auto& layer = doc["scope"]["scene_layer"];
+    if (layer.is_null()) {
+      candidate->location = ScopeLocation{ SelectionLocation::kStandalone, 0 };
+    } else if (layer.is_number_integer() && layer.get<long long>() >= 0) {
+      candidate->location =
+          ScopeLocation{ SelectionLocation::kSceneLayer, static_cast<size_t>(layer.get<long long>()) };
+    } else {
+      return refuse("corrupt warm document: scope.scene_layer is not a nonnegative layer or null");
+    }
+  }
   // Measure echo extraction: the family arm's measure echo. Only the family-arm documents carry
   // family_routing; its absence is data (the arm did not run), so the gate skips with the
   // declaration carried in the survey source — the caller compares the echo when it is present.
@@ -527,6 +538,11 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
         !measure.contains("roll") || !read_dim(measure["zenith"], &survey->measure_zenith) ||
         !read_dim(measure["azimuth"], &survey->measure_azimuth) || !read_dim(measure["roll"], &survey->measure_roll)) {
       return refuse("corrupt warm document: family_routing.measure is present but malformed");
+    }
+    if (measure.contains("measure_kind")) {
+      if (measure["measure_kind"] != "ideal_frozen")
+        return refuse("corrupt warm document: unknown family measure kind");
+      survey->quantity.measure = MeasureKind::kIdealFrozen;
     }
     survey->has_measure_echo = true;
   }
@@ -583,6 +599,11 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     survey->wavelength_source = scope.contains("wavelength_source") && scope["wavelength_source"].is_string() ?
                                     scope["wavelength_source"].get<std::string>() :
                                     "";
+    if (scope.contains("geometry_kind")) {
+      if (scope["geometry_kind"] != "realized")
+        return refuse("corrupt warm document: unknown geometry kind");
+      survey->geometry.kind = GeometryKind::kRealized;
+    }
     if (scope.contains("sun_altitude_deg") && scope["sun_altitude_deg"].is_number()) {
       survey->sun_altitude_deg = scope["sun_altitude_deg"].get<double>();
       survey->has_sun_altitude = std::isfinite(survey->sun_altitude_deg);
@@ -640,6 +661,16 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     survey->has_probe = true;
     if (probe.contains("spec") && probe["spec"].is_object()) {
       const auto& spec = probe["spec"];
+      if (spec.contains("member_aggregation")) {
+        if (spec["member_aggregation"] != "physical_class")
+          return refuse("corrupt warm document: unknown member aggregation");
+        survey->quantity.aggregation = MemberAggregation::kPhysicalClass;
+      }
+      if (spec.contains("measure_kind")) {
+        if (spec["measure_kind"] != "ideal_frozen")
+          return refuse("corrupt warm document: unknown probe measure kind");
+        survey->quantity.measure = MeasureKind::kIdealFrozen;
+      }
       if (spec.contains("azimuth_deg") && spec["azimuth_deg"].is_number()) {
         survey->probe_azimuth_deg = spec["azimuth_deg"].get<double>();
         survey->has_probe_azimuth = std::isfinite(survey->probe_azimuth_deg);

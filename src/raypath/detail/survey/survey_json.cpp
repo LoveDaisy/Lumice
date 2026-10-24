@@ -197,6 +197,8 @@ Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
   Json measure = { { "zenith", FamilyDimMeasureJson(block.measure.zenith) },
                    { "azimuth", FamilyDimMeasureJson(block.measure.azimuth) },
                    { "roll", FamilyDimMeasureJson(block.measure.roll) } };
+  if (block.measure.kind == MeasureKind::kIdealFrozen)
+    measure["measure_kind"] = "ideal_frozen";
   Json ladder = Json::array();
   for (const FamilyLadderLevel& level : block.ladder) {
     Json frozen = Json::array();
@@ -276,6 +278,10 @@ Json ProbeJson(const SurveyProbe& probe) {
                 { "deterministic", probe.spec.deterministic },
                 { "representative", LayersJson({ probe.spec.representative })[0] },
                 { "member_count", probe.spec.member_count } };
+  if (probe.spec.quantity.aggregation == MemberAggregation::kPhysicalClass)
+    spec["member_aggregation"] = "physical_class";
+  if (probe.spec.quantity.measure == MeasureKind::kIdealFrozen)
+    spec["measure_kind"] = "ideal_frozen";
   Json samples = Json::array();
   for (const SurveyProbeSample& sample : probe.samples) {
     samples.push_back({ { "delta_deg", Num(sample.delta_deg) },
@@ -356,6 +362,8 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
     { "sun_altitude_deg", document.sun_altitude_deg.has_value() ? Num(*document.sun_altitude_deg) : Json(nullptr) },
     { "sun_azimuth_deg", document.sun_azimuth_deg.has_value() ? Num(*document.sun_azimuth_deg) : Json(nullptr) }
   };
+  if (document.geometry.kind == GeometryKind::kRealized)
+    doc["scope"]["geometry_kind"] = "realized";
 
   Json routing = { { "early_stopped", document.early_stopped } };
   Json verdicts = Json::array();

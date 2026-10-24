@@ -18,6 +18,8 @@ struct CrystalSceneScope : MemberScope {
 
 // `snapshot_out` (optional) receives the resolved scene snapshot — the MC-ESS leg reads it; the
 // probe's inline arm has no leg for it and passes null.
+ScopeLocation ResolveSelectionLocation(const ConfigManager& config, const PathSelection& selection);
+
 Error ResolveCrystalSceneScope(const ConfigManager& config, const PathSelection& selection, CrystalSceneScope* out,
                                InputSnapshot* snapshot_out = nullptr);
 

@@ -94,7 +94,19 @@ double Angle(const double a[3], const double b[3]) {
 }
 
 TEST(SurveyReuse, StructureAndReadingHaveSeparateScopeDependencies) {
-  SurveyWarmSource warm;
+  const ConfigManager config = Scene(Prism(1.2f));
+  PathSelection selection;
+  selection.crystal_id = 1;
+  selection.path_layers = { { 3, 5 } };
+  WarmCandidate candidate;
+  candidate.crystal_id = 1;
+  candidate.path_layers = selection.path_layers;
+  candidate.location = ScopeLocation{ SelectionLocation::kStandalone, 0 };
+  candidate.config_fingerprint =
+      survey::RoutingConfigFingerprint(config, selection.crystal_id, selection.path_layers, selection.symmetry_bits);
+  SurveyWarmSource& warm = candidate.facts;
+  warm.family = WarmDocumentFamily::kSurvey;
+  warm.index_present = true;
   warm.has_support = true;
   warm.intervals.push_back({ 21.9, 40.0, { 3, 5 } });
   warm.has_wavelength = true;
@@ -103,38 +115,49 @@ TEST(SurveyReuse, StructureAndReadingHaveSeparateScopeDependencies) {
   warm.sun_altitude_deg = 20.0;
   warm.has_sun_azimuth = true;
   warm.sun_azimuth_deg = 0.0;
+  const auto admit = [&] {
+    std::optional<AdmittedWarmSource> admitted;
+    EXPECT_TRUE(ValidateWarmCandidate(config, selection, candidate, &admitted).Ok());
+    return admitted;
+  };
 
   SurveyContextBlock context;
   context.source = "warm";
-  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
+  auto admitted = admit();
+  ASSERT_TRUE(admitted);
+  FillSurveyContext(*admitted, 22.1, 550.0, 20.0, 0.0, &context);
   EXPECT_EQ(context.object.state, "certified");
   EXPECT_TRUE(context.target_inside_support);
   EXPECT_EQ(context.edge.state, "finite");
 
   context = SurveyContextBlock{};
   context.source = "warm";
-  FillSurveyContext(warm, 22.1, 450.0, 20.0, 0.0, &context);
+  FillSurveyContext(*admitted, 22.1, 450.0, 20.0, 0.0, &context);
   EXPECT_EQ(context.object.reason, "scope_value_mismatch");
   EXPECT_EQ(context.edge.reason, "scope_value_mismatch");
 
   context = SurveyContextBlock{};
   context.source = "warm";
-  FillSurveyContext(warm, 41.0, 550.0, 30.0, 0.0, &context);
+  FillSurveyContext(*admitted, 41.0, 550.0, 30.0, 0.0, &context);
   EXPECT_EQ(context.object.state, "certified");
   EXPECT_FALSE(context.target_inside_support);
   EXPECT_DOUBLE_EQ(context.object_distance_deg, 1.0);
 
   warm.has_sun_altitude = false;
+  warm.has_probe = true;
+  admitted = admit();
+  ASSERT_TRUE(admitted);
   context = SurveyContextBlock{};
   context.source = "warm";
-  warm.has_probe = true;
-  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
+  FillSurveyContext(*admitted, 22.1, 550.0, 20.0, 0.0, &context);
   EXPECT_EQ(context.object.state, "certified");
   EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
   warm.has_wavelength = false;
+  admitted = admit();
+  ASSERT_TRUE(admitted);
   context = SurveyContextBlock{};
   context.source = "warm";
-  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
+  FillSurveyContext(*admitted, 22.1, 550.0, 20.0, 0.0, &context);
   EXPECT_EQ(context.object.reason, "scope_field_missing");
   EXPECT_EQ(context.edge.reason, "scope_field_missing");
   EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
