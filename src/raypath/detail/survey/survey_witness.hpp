@@ -21,8 +21,7 @@ enum class RefusedSupportObjects { kReplaceObjects, kAppendToObjects };
 // everything above the document level (block evidence, escape bookkeeping, the return verdict).
 void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
                             const std::string& refusal_mode, const std::string& chromatic_reason,
-                            const std::string& budget_note, RefusedSupportObjects objects_discipline,
-                            SurveyResult* out);
+                            const std::string& budget_note, RefusedSupportObjects objects_discipline, SurveyData* out);
 
 }  // namespace lumice::raypath::survey
 

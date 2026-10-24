@@ -7,9 +7,7 @@
 #include <string_view>
 #include <vector>
 
-#include "analytic/band_sum.hpp"     // PointMassMethodName's enum (the kernel's own)
-#include "analytic/family_rank.hpp"  // FamilyDimension: the frozen_dims rows' own enum
-#include "analytic/path_rank.hpp"    // the certificate's tolerances are the kernel's own constants
+#include "analytic/quantity_types.hpp"
 #include "raypath/domain/evidence.hpp"
 #include "raypath/domain/measure.hpp"
 

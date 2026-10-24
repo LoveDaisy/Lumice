@@ -1,10 +1,11 @@
 #ifndef LUMICE_RAYPATH_SURVEY_RESULT_HPP_
 #define LUMICE_RAYPATH_SURVEY_RESULT_HPP_
 
+#include "raypath/domain/result_identity.hpp"
 #include "raypath/results/survey_records.hpp"
 namespace lumice::raypath::survey {
 
-struct SurveyResult {
+struct SurveyData {
   GeometryScope geometry;
   int schema_version = 4;
 
@@ -73,6 +74,30 @@ struct SurveyResult {
       "consumer; budget enforcement lands with the band-sum/T3 quantification legs";
 };
 
+
+// A completed product owns one immutable value. Copies preserve identity and storage;
+// construction from revised assembly data creates a different snapshot.
+class SurveyResult : public FrozenValue<SurveyData> {
+ public:
+  using FrozenValue<SurveyData>::FrozenValue;
+  std::optional<ObjectRef> Reference(ObjectId id) const {
+    return id.ordinal < Data().objects.size() ? std::optional<ObjectRef>{ { Identity(), id } } : std::nullopt;
+  }
+  const SurveyObject* Resolve(ObjectRef ref) const {
+    return ref.result == Identity() && ref.object.ordinal < Data().objects.size() ?
+               &Data().objects[ref.object.ordinal] :
+               nullptr;
+  }
+
+  std::optional<MemberRef> Reference(MemberId id) const {
+    return id.ordinal < Data().members.size() ? std::optional<MemberRef>{ { Identity(), id } } : std::nullopt;
+  }
+  const std::vector<int>* Resolve(MemberRef ref) const {
+    return ref.result == Identity() && ref.member.ordinal < Data().members.size() ?
+               &Data().members[ref.member.ordinal] :
+               nullptr;
+  }
+};
 
 }  // namespace lumice::raypath::survey
 

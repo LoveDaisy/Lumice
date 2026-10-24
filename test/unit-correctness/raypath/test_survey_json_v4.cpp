@@ -11,15 +11,15 @@
 namespace lumice::raypath::survey {
 namespace {
 
-nlohmann::json Serialized(const SurveyResult& document) {
-  return nlohmann::json::parse(SurveyResultToJson(document, "test"));
+nlohmann::json Serialized(const SurveyData& document) {
+  return nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
 }
 
 // A minimal hand-built document in the early-stop shape. Its two members are deliberately NOT
 // the C14 real class (which is {1-2} alone — the plate ensemble is not mirror-symmetric): the
 // fixture covers the N-member serialization path, not that one corpus case.
-SurveyResult SourceImageDocument() {
-  SurveyResult document;
+SurveyData SourceImageDocument() {
+  SurveyData document;
   document.request.crystal_id = 1;
   document.request.path_layers = { { 1, 2 } };
   document.request.symmetry_bits = 7;
@@ -113,7 +113,7 @@ TEST(SurveyJsonV4, DefaultEvidenceIsFiniteWithCoverageDeclaration) {
 }
 
 TEST(SurveyJsonV4, RefusedBlockSerializesStateAndItsOpenMode) {
-  SurveyResult skeleton;
+  SurveyData skeleton;
   skeleton.chromatic = SurveyEvidence{};
   skeleton.chromatic.state = EvidenceState::kRefused;
   skeleton.chromatic.mode = "walk_truncated";
@@ -144,7 +144,7 @@ TEST(SurveyJsonV4, CertifiedBlocksCarryARegisteredMethod) {
   SurveyEvidence unevaluated;
   unevaluated.state = EvidenceState::kUnevaluated;
   unevaluated.reason = "fixture: a routing leg not wired";
-  SurveyResult skeleton;
+  SurveyData skeleton;
   skeleton.chromatic = refused;
   EvidenceState ignored = EvidenceState::kFinite;
   EXPECT_TRUE(EvidenceStateFromName("refused", &ignored));
@@ -177,7 +177,7 @@ TEST(SurveyJsonV4, CertifiedMethodRegistryRoundTripsAndStaysClosed) {
 }
 
 TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
-  SurveyResult document;
+  SurveyData document;
   document.request.crystal_id = 1;
   document.request.path_layers = { { 3, 5 } };
   document.request.symmetry_bits = 7;
@@ -358,7 +358,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
 // The tint leg's three serialized shapes. The unevaluated one rides the fixture above; the
 // refused and finite ones are pinned here.
 TEST(SurveyJsonV4, WeightTintRefusedSerializesStateAndModeOnly) {
-  SurveyResult document;
+  SurveyData document;
   document.weight_tint = SurveyWeightTint{};
   document.weight_tint->evidence.state = EvidenceState::kRefused;
   document.weight_tint->evidence.mode = "density_not_expressible";
@@ -370,7 +370,7 @@ TEST(SurveyJsonV4, WeightTintRefusedSerializesStateAndModeOnly) {
 }
 
 TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
-  SurveyResult document;
+  SurveyData document;
   document.weight_tint = SurveyWeightTint{};
   SurveyWeightTint& tint = *document.weight_tint;
   tint.n_red = 1.30803882;
@@ -420,7 +420,7 @@ TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
 // lattice_power_sum method, and the point-mass family's keys stay absent — one shape per
 // document, never both.
 TEST(SurveyJsonV4, WeightTintClassPowerSumCarriesTheEnergyFieldFamily) {
-  SurveyResult document;
+  SurveyData document;
   document.weight_tint = SurveyWeightTint{};
   SurveyWeightTint& tint = *document.weight_tint;
   tint.class_power_shape = true;
@@ -454,7 +454,7 @@ TEST(SurveyJsonV4, WeightTintClassPowerSumCarriesTheEnergyFieldFamily) {
 // so the block mirrors the leg's refusal — the two never disagree, and the sibling legs stay
 // absent (a point-mass path has no positional dispersion and no diagnose).
 TEST(SurveyJsonV4, IdentityArmBlockMirrorsTheTintRefusal) {
-  SurveyResult document;
+  SurveyData document;
   document.chromatic.state = EvidenceState::kRefused;
   document.chromatic.mode = "density_not_expressible";
   document.weight_tint = SurveyWeightTint{};
@@ -471,7 +471,7 @@ TEST(SurveyJsonV4, IdentityArmBlockMirrorsTheTintRefusal) {
 }
 
 TEST(SurveyJsonV4, EmptyProbeProfileSerializesNoReadingKeys) {
-  SurveyResult document;
+  SurveyData document;
   SurveyProbe probe;  // no edge, no peak: the honest empty readings
   probe.spec.wavelength_nm = 550.0;
   probe.spec.representative = { 3, 5 };
@@ -487,7 +487,7 @@ TEST(SurveyJsonV4, EmptyProbeProfileSerializesNoReadingKeys) {
 }
 
 TEST(SurveyJsonV4, EarlyStopDocumentCarriesNoneOfTheT1Keys) {
-  SurveyResult early_stop = SourceImageDocument();
+  SurveyData early_stop = SourceImageDocument();
   // What AssembleSurvey sets on a real early stop (the fixture's default-finite chromatic is
   // the schema-default rule pinned by DefaultEvidenceIsFiniteWithCoverageDeclaration above).
   early_stop.chromatic.state = EvidenceState::kUnevaluated;
@@ -509,7 +509,7 @@ TEST(SurveyJsonV4, EarlyStopDocumentCarriesNoneOfTheT1Keys) {
 }
 
 TEST(SurveyJsonV4, UnevaluatedEntriesNameKindsAndReason) {
-  SurveyResult skeleton;
+  SurveyData skeleton;
   skeleton.early_stopped = false;
   SurveyUnevaluated entry;
   entry.kinds = { SurveyObjectKind::kFamilyCollapsePoint, SurveyObjectKind::kRegularImage };
@@ -527,7 +527,7 @@ TEST(SurveyJsonV4, UnevaluatedEntriesNameKindsAndReason) {
 // ran neither leg serializes neither key — the C14 byte baseline's structural guarantee (the
 // pre-append documents are byte-stable because the keys cannot appear unfilled).
 TEST(SurveyJsonV4, DefaultDocumentCarriesNeitherExceptionLegKey) {
-  SurveyResult document;
+  SurveyData document;
   const auto parsed = Serialized(document);
   EXPECT_FALSE(parsed.contains("tir_share"));
   EXPECT_FALSE(parsed.contains("mc_region_ess"));
@@ -536,7 +536,7 @@ TEST(SurveyJsonV4, DefaultDocumentCarriesNeitherExceptionLegKey) {
 // The appends' full field sets on a hand-built document: every planned key round-trips with
 // its value (the schema-4 field list, pinned key by key).
 TEST(SurveyJsonV4, ExceptionLegsSerializeTheirAppendShape) {
-  SurveyResult document;
+  SurveyData document;
 
   document.tir_share = SurveyTirShare{};
   SurveyTirShare& tir = *document.tir_share;
@@ -610,7 +610,7 @@ TEST(SurveyJsonV4, ExceptionLegsSerializeTheirAppendShape) {
 // The refused shapes: exactly the evidence block ({state, mode}) — no defaulted number, the
 // tint leg's refused shape at the new top-level keys.
 TEST(SurveyJsonV4, ExceptionLegRefusalsSerializeStateAndModeOnly) {
-  SurveyResult document;
+  SurveyData document;
   document.tir_share = SurveyTirShare{};
   document.tir_share->evidence.state = EvidenceState::kRefused;
   document.tir_share->evidence.mode = "no_internal_interfaces";
@@ -636,7 +636,7 @@ TEST(SurveyJsonV4, ExceptionLegRefusalsSerializeStateAndModeOnly) {
 // was asked, the killed records with their numbers, the band and family_origin on the cards,
 // and the conditional presence of the whole key.
 TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
-  SurveyResult document;
+  SurveyData document;
   document.family_routing = FamilyRoutingBlock{};
   FamilyRoutingBlock& block = *document.family_routing;
   block.measure.zenith = { FamilyDimKind::kGauss, 0.0, 40.0 };
@@ -741,7 +741,7 @@ TEST(SurveyJsonV4, FamilyRoutingKeyIsAbsentWithoutTheArm) {
 // The block-level echo of the level-0 partition's refusal: the key exists exactly when the
 // partition refused, carrying the same mode string the refused card does.
 TEST(SurveyJsonV4, Level0RefusalModeKeyExistsExactlyWhenSet) {
-  SurveyResult document;
+  SurveyData document;
   document.family_routing = FamilyRoutingBlock{};
   const auto absent = Serialized(document);
   ASSERT_TRUE(absent.contains("family_routing"));

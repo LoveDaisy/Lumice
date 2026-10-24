@@ -89,7 +89,7 @@ struct TintFixture {
 // parallel side-face reflections square a Fresnel R that grows toward TIR at blue).
 TEST(SurveyTint, IdentityArmTintReadsBlueOverRedWithThePsiAverageMethod) {
   const TintFixture fix = TintFixture::Make();
-  SurveyResult document;
+  SurveyData document;
   AssembleWeightTint(fix.Input(200000), &document);
   ASSERT_TRUE(document.weight_tint.has_value());
   const SurveyWeightTint& tint = *document.weight_tint;
@@ -113,9 +113,9 @@ TEST(SurveyTint, IdentityArmTintReadsBlueOverRedWithThePsiAverageMethod) {
 // Determinism: the leg is a deterministic quadrature — two runs, same bytes of ratio.
 TEST(SurveyTint, TwoIdenticalRunsProduceTheSameRatio) {
   const TintFixture fix = TintFixture::Make();
-  SurveyResult first;
+  SurveyData first;
   AssembleWeightTint(fix.Input(100000), &first);
-  SurveyResult second;
+  SurveyData second;
   AssembleWeightTint(fix.Input(100000), &second);
   ASSERT_TRUE(first.weight_tint.has_value());
   ASSERT_TRUE(second.weight_tint.has_value());
@@ -131,8 +131,8 @@ TEST(SurveyTint, FixedPoseAxisRefusesTheTintButNotTheCertificate) {
   SurveyRequest request;
   request.crystal_id = 1;
   request.path_layers = { { 1, 3, 6, 2 } };
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_TRUE(document.early_stopped);
   ASSERT_EQ(document.objects.size(), 1u);
   EXPECT_EQ(document.objects.front().evidence.state, EvidenceState::kCertified);
@@ -153,7 +153,7 @@ TEST(SurveyTint, DeviatingSequenceRefusesWithNotRankZero) {
   const std::vector<int> deviating{ 3, 5 };
   TintInput input = fix.Input(100000);
   input.representative = &deviating;
-  SurveyResult document;
+  SurveyData document;
   AssembleWeightTint(input, &document);
   ASSERT_TRUE(document.weight_tint.has_value());
   EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
@@ -171,7 +171,7 @@ TEST(SurveyTint, UnresolvableRepresentativeRefusesWithMemberResolution) {
   const std::vector<int> unresolvable{ 99, 99 };
   TintInput input = fix.Input(100000);
   input.representative = &unresolvable;
-  SurveyResult document;
+  SurveyData document;
   AssembleWeightTint(input, &document);
   ASSERT_TRUE(document.weight_tint.has_value());
   EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
@@ -188,9 +188,9 @@ TEST(SurveyTint, IdentityDocumentCarriesNoPositionalDispersionOrDiagnose) {
   SurveyRequest request;
   request.crystal_id = 1;
   request.path_layers = { { 1, 3, 6, 2 } };
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
-  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   const auto& chromatic = parsed.at("chromatic");
   EXPECT_EQ(chromatic.at("state"), "finite");
   EXPECT_FALSE(chromatic.contains("positional_dispersion"));

@@ -64,9 +64,9 @@ AssembledSchema3Report AssembleSchema3Report(
     std::chrono::steady_clock::time_point enumeration_deadline = std::chrono::steady_clock::time_point::max());
 
 // Capture the pure scope and budget settings before execution storage is moved.
-FeatureReportResult PrepareFeatureReportResult(const PathFeatureReport& report);
+FeatureReportData PrepareFeatureReportResult(const PathFeatureReport& report);
 // Complete the sole result value, including source replay, coverage and work accounting.
-FeatureReportResult CompleteFeatureReportResult(FeatureReportResult result, AssembledSchema3Report assembled);
+FeatureReportResult CompleteFeatureReportResult(FeatureReportData result, AssembledSchema3Report assembled);
 
 }  // namespace lumice::raypath::schema3
 #endif  // LUMICE_RAYPATH_DETAIL_SCHEMA3_REPORT_ASSEMBLY_HPP_

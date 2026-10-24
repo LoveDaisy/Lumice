@@ -21,7 +21,8 @@ namespace lumice::raypath {
 // multi-layer document changes the answer on both sides together or not at all. A support_set
 // with zero intervals harvests nothing — has_support stays false and the context answers
 // survey_carries_no_support, the same shape as a document without support at all.
-WarmCandidate HarvestSurveyResult(const survey::SurveyResult& doc) {
+WarmCandidate HarvestSurveyResult(const survey::SurveyResult& result) {
+  const survey::SurveyData& doc = result.Data();
   WarmCandidate candidate;
   candidate.crystal_id = doc.request.crystal_id;
   candidate.path_layers = doc.request.path_layers;
@@ -56,12 +57,14 @@ WarmCandidate HarvestSurveyResult(const survey::SurveyResult& doc) {
         out_interval.lower_deg = interval.lower_deg;
         out_interval.upper_deg = interval.upper_deg;
         out_interval.members = card.members.empty() ? std::vector<int>{} : card.members.front();
+        out_interval.source_members = card.members;
         out.intervals.push_back(std::move(out_interval));
       }
     }
     if (card.caustic_edge.has_value()) {
       out.has_edge = true;
       out.edge_deg = card.caustic_edge->position_deg;
+      out.edge_members = card.members;
     }
   }
   out.has_support = !out.intervals.empty();
@@ -169,6 +172,9 @@ bool NearestStructureAnchor(const SurveyStructureView& structure, double deviati
 // The context's answers, read off a harvest (warm document or inline assembly — the same shape).
 static void FillSurveyFacts(const AdmittedWarmSource& admitted, double target_deviation_deg, double wavelength_nm,
                             double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
+  out->structure.reset();
+  out->object_ref.reset();
+  out->edge_ref.reset();
   const SurveyWarmSource& warm = admitted.Facts();
   const SurveyReuseDecision reuse = EvaluateSurveyFacts(admitted, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
   const double delta = target_deviation_deg;
@@ -208,6 +214,54 @@ static void FillSurveyFacts(const AdmittedWarmSource& admitted, double target_de
     out->edge.state = "finite";
     out->edge_distance_deg = std::fabs(delta - edge_position);
     out->edge_basis = edge_basis;
+    MemberScope members;
+    static_cast<ScopeLocation&>(members) = admitted.Location();
+    members.member_kind = admitted.MembersKind();
+    std::vector<ContextStructureObject> objects;
+    std::vector<std::vector<MemberId>> object_members;
+    const auto append = [&](ContextStructureObject object, const std::vector<std::vector<int>>& paths) {
+      std::vector<MemberId> ids;
+      for (const auto& path : paths) {
+        auto found = std::find(members.members.begin(), members.members.end(), path);
+        if (found == members.members.end()) {
+          members.members.push_back(path);
+          ids.push_back({ members.members.size() - 1 });
+        } else {
+          ids.push_back({ static_cast<size_t>(found - members.members.begin()) });
+        }
+      }
+      objects.push_back(object);
+      object_members.push_back(std::move(ids));
+    };
+    size_t object_index = 0;
+    size_t edge_index = 0;
+    bool edge_matched = false;
+    for (size_t i = 0; i < warm.intervals.size(); ++i) {
+      const auto& interval = warm.intervals[i];
+      const auto paths = interval.source_members.empty() ?
+                             (interval.members.empty() ? std::vector<std::vector<int>>{} :
+                                                         std::vector<std::vector<int>>{ interval.members }) :
+                             interval.source_members;
+      append({ ContextStructureObject::Kind::kSupportInterval, interval.lower_deg, interval.upper_deg }, paths);
+      if (&interval == &hit) {
+        object_index = i;
+      }
+      if (!edge_matched && (edge_position == interval.lower_deg || edge_position == interval.upper_deg)) {
+        edge_index = i;
+        edge_matched = true;
+      }
+    }
+    if (warm.has_edge) {
+      if (out->edge_basis == "caustic_edge_position") {
+        edge_index = objects.size();
+      }
+      append({ ContextStructureObject::Kind::kCausticEdge, warm.edge_deg, warm.edge_deg }, warm.edge_members);
+    }
+    out->structure = ContextStructure::Finalize(std::move(members), std::move(objects), std::move(object_members));
+    if (out->structure) {
+      out->object_ref = out->structure->Reference(ObjectId{ object_index });
+      out->edge_ref = out->structure->Reference(ObjectId{ edge_index });
+    }
   }
 
   // The band-sum reading: warm documents only, under the scope gate's exact-equality comparison
@@ -364,6 +418,8 @@ Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& se
   // A missing index is still a survey provenance marker, but carries neither seeds
   // nor numeric facts. The query assembles its own context under the existing rule.
   *out = AdmittedWarmSource(std::move(facts), candidate.facts.index_present ? candidate.seeds : std::vector<double>{});
+  (*out)->location_ = survey::ResolveSelectionLocation(config, selection);
+  (*out)->member_kind_ = selection.symmetry_bits == 0 ? MemberKind::kLiteral : MemberKind::kPhysicalL2;
   return {};
 }
 

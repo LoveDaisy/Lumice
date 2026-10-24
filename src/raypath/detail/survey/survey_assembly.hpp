@@ -27,6 +27,9 @@ struct SurveyAssemblyOptions {
   bool context_only = false;
 };
 
+Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& request, SurveyData* out,
+                         const SurveyAssemblyOptions& options = {});
+
 Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyResult* out,
                      const SurveyAssemblyOptions& options = {});
 

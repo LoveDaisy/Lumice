@@ -29,6 +29,23 @@ class ResultIdentity {
   uint64_t value_ = 0;
 };
 
+template <class T>
+class FrozenValue {
+ public:
+  FrozenValue() : FrozenValue(T{}) {}
+  explicit FrozenValue(T data)
+      : storage_(std::make_shared<const Storage>(Storage{ ResultIdentity::Create(), std::move(data) })) {}
+  const T& Data() const { return storage_->data; }
+  ResultIdentity Identity() const { return storage_->identity; }
+
+ private:
+  struct Storage {
+    ResultIdentity identity;
+    T data;
+  };
+  std::shared_ptr<const Storage> storage_;
+};
+
 struct ObjectId {
   size_t ordinal = 0;
 };
@@ -42,6 +59,21 @@ struct ObjectRef {
 struct MemberRef {
   ResultIdentity result;
   MemberId member;
+};
+
+struct RecordId {
+  size_t ordinal = 0;
+};
+struct SourceId {
+  size_t ordinal = 0;
+};
+struct RecordRef {
+  ResultIdentity result;
+  RecordId record;
+};
+struct SourceRef {
+  ResultIdentity result;
+  SourceId source;
 };
 
 // Construction copies/moves into exclusively owned storage before sharing it as const.

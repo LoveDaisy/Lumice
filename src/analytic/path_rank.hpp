@@ -14,11 +14,10 @@
 // slab with M = I). Whether any pose is valid at all is a separate question.
 
 #include "analytic/path_evaluation.hpp"
+#include "analytic/quantity_types.hpp"
 
 namespace lumice::analytic {
 
-constexpr double kRankZeroFoldTolerance = 1e-12;
-constexpr double kRankZeroWedgeToleranceDeg = 1e-9;
 
 // `slots` resolved by ResolveFaceSequence, slot_count >= 2.
 bool IsRankZeroPath(const FaceNormalTable& table, const int* slots, int slot_count);

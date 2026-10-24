@@ -28,8 +28,8 @@ SurveyRequest BaseRequest() {
 
 TEST(SurveyAssembly, RankZeroClassCollapsesToOneSourceImageCardAndStops) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, BaseRequest(), &document).Ok());
   EXPECT_TRUE(document.early_stopped);
   ASSERT_EQ(document.objects.size(), 1u);
   const SurveyObject& card = document.objects.front();
@@ -61,8 +61,8 @@ TEST(SurveyAssembly, LiteralScopeKeepsOnlyTheRequestedSequence) {
   const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyRequest request = BaseRequest();
   request.symmetry_bits = 0;
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_TRUE(document.early_stopped);
   // The early-stop document carries no family_routing key at all (the conditional-presence
   // negative): the rank-0 certificate's own card is the whole story.
@@ -84,8 +84,8 @@ TEST(SurveyAssembly, FamilyRestrictedPlateRoutesIntoTheLadderArm) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };  // through two side faces: a deviating prism path
   request.symmetry_bits = 0;           // the literal member: the arm's per-member shape, not the 12-member sweep
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_TRUE(document.unevaluated.empty());
   ASSERT_TRUE(document.family_routing.has_value());
@@ -122,8 +122,8 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;  // the literal single member: the seconds-scale shape of the arm
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   // The document-level unevaluated list is empty: the full-dimensional arm produced its cards
   // (the rank-0-family and rank-1-family kinds are structurally absent on this route, not
@@ -220,8 +220,8 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
 TEST(SurveyAssembly, StandaloneCrystalNotInAnySceneLayerStillRoutes) {
   ConfigManager config = PlateScene(0.3, 0.3);
   config.scene_.ms_.clear();  // the crystal is configured but allocated to no scattering layer
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, BaseRequest(), &document).Ok());
   // The standalone branch: no scene layer is named, and the identity says so.
   EXPECT_FALSE(document.scene_layer.has_value());
   EXPECT_EQ(document.scene_identity, std::string("standalone configured crystal (not a scene allocation)"));
@@ -235,41 +235,41 @@ TEST(SurveyAssembly, StandaloneCrystalNotInAnySceneLayerStillRoutes) {
 
 TEST(SurveyAssembly, RequestRefusalsKeepTheReportErrorSemantics) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyResult document;
+  SurveyData document;
   SurveyRequest request = BaseRequest();
   request.crystal_id = 99;
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kUnknownCrystalId);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kUnknownCrystalId);
 
   request = BaseRequest();
   request.path_layers = { { 1, 2 }, { 1, 2 } };
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kMultiLayerUnsupported);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kMultiLayerUnsupported);
 
   request = BaseRequest();
   request.path_layers = { { 1, 99 } };
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kFaceNotInCrystal);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kFaceNotInCrystal);
 
   request = BaseRequest();
   request.path_layers = {};
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kInvalidPath);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kInvalidPath);
 
   request = BaseRequest();
   request.wavelength_nm = 200.0;
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kWavelengthOutOfRange);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kWavelengthOutOfRange);
 
   request = BaseRequest();
   request.budget_ms = kMaxSurveyBudgetMs + 1;
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kInvalidArgument);
 
   request = BaseRequest();
   request.symmetry_bits = 8;
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kInvalidArgument);
 }
 
 TEST(SurveyAssembly, EndToEndJsonCarriesTheSchema4Contract) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
-  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, BaseRequest(), &document).Ok());
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   EXPECT_EQ(parsed.at("schema"), "lumice.path-survey");
   EXPECT_EQ(parsed.at("schema_version"), 4);
   ASSERT_EQ(parsed.at("objects").size(), 1u);
@@ -294,8 +294,8 @@ TEST(SurveyAssembly, DispersionTableCarriesTheFollowedOnsetRows) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   ASSERT_TRUE(document.positional_dispersion.has_value());
   const SurveyPositionalDispersion& dispersion = *document.positional_dispersion;
   EXPECT_TRUE(dispersion.has_min_deviation_row);
@@ -321,7 +321,7 @@ TEST(SurveyAssembly, DispersionTableCarriesTheFollowedOnsetRows) {
     }
   }
   EXPECT_TRUE(saw_min_row);
-  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   const auto& dispersion_json = parsed.at("chromatic").at("positional_dispersion");
   // The min-row scalars stay in place on a class that has them, and the rows ride as the new key.
   EXPECT_DOUBLE_EQ(dispersion_json.at("value_red_deg").get<double>(), dispersion.value_red_deg);
@@ -339,8 +339,8 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
   request.crystal_id = 1;
   request.path_layers = { { 13, 15, 26, 28 } };
   request.symmetry_bits = 0;  // the literal chain, the corpus's filter spelling
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_TRUE(document.unevaluated.empty());
   std::set<std::string> kinds;
@@ -398,7 +398,7 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
     }
   }
   EXPECT_TRUE(saw_max_row);
-  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   const auto& dispersion_json = parsed.at("chromatic").at("positional_dispersion");
   // The min-row scalars serialize only when the row exists: keys absent, rows present.
   EXPECT_FALSE(dispersion_json.contains("value_red_deg"));

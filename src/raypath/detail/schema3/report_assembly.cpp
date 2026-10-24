@@ -108,8 +108,8 @@ AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_
   return out;
 }
 
-FeatureReportResult PrepareFeatureReportResult(const PathFeatureReport& report) {
-  FeatureReportResult result;
+FeatureReportData PrepareFeatureReportResult(const PathFeatureReport& report) {
+  FeatureReportData result;
   result.requested_path_layers = report.requested_path_layers;
   if (report.unsupported_multicrystal) {
     result.outcome = ReportOutcome::kUnsupportedMulticrystal;
@@ -150,10 +150,10 @@ FeatureReportResult PrepareFeatureReportResult(const PathFeatureReport& report) 
   return result;
 }
 
-FeatureReportResult CompleteFeatureReportResult(FeatureReportResult result, AssembledSchema3Report assembled) {
+FeatureReportResult CompleteFeatureReportResult(FeatureReportData result, AssembledSchema3Report assembled) {
   if (result.outcome == ReportOutcome::kUnsupportedMulticrystal) {
     result.mc.observation_scope_note = kMcObservationScopeNote;
-    return result;
+    return FeatureReportResult(std::move(result));
   }
   auto& discovery = assembled.mc.discovery;
   for (const auto& feature : discovery.features) {
@@ -228,7 +228,7 @@ FeatureReportResult CompleteFeatureReportResult(FeatureReportResult result, Asse
   result.mc.observation_scope_note = std::move(assembled.mc.observation_scope_note);
   static_cast<DiscoveryRecords&>(result.mc.discovery) = std::move(static_cast<DiscoveryRecords&>(discovery));
   result.mc.discovery.measure = std::move(static_cast<DiagnosticMeasureFacts&>(discovery.measure));
-  return result;
+  return FeatureReportResult(std::move(result));
 }
 
 }  // namespace lumice::raypath::schema3

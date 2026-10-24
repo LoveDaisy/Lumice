@@ -2,7 +2,7 @@
 
 namespace lumice::raypath::survey {
 
-void AssembleTirShare(const TirShareInput& input, SurveyResult* out) {
+void AssembleTirShare(const TirShareInput& input, SurveyData* out) {
   out->tir_share = EvaluateTirShare(input);
 }
 

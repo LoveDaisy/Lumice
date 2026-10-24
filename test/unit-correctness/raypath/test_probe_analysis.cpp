@@ -29,6 +29,14 @@
 
 namespace lumice::raypath {
 namespace {
+Error AnalyzeProbeFixture(const ConfigManager& config, const ProbeRequest& request, ProbeData* out) {
+  ProbeResult result;
+  const Error error = AnalyzePathProbe(config, request, &result);
+  if (error.Ok()) {
+    *out = result.Data();
+  }
+  return error;
+}
 
 constexpr int kLattice = 2000000;  // the survey probe's count (the schema ruler)
 
@@ -144,8 +152,8 @@ TEST(ProbeAnalysis, TypedCandidatesCannotBypassIdentityAndMeasureAdmission) {
     }
     SCOPED_TRACE(axis);
     request.warm_candidate = bad;
-    ProbeResult out;
-    const Error error = AnalyzePathProbe(config, request, &out);
+    ProbeData out;
+    const Error error = AnalyzeProbeFixture(config, request, &out);
     EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
     EXPECT_NE(error.message.find(expected), std::string::npos) << error.message;
     EXPECT_TRUE(out.profiles.empty());
@@ -155,8 +163,8 @@ TEST(ProbeAnalysis, TypedCandidatesCannotBypassIdentityAndMeasureAdmission) {
   missing.facts.index_present = false;
   missing.facts.has_measure_echo = true;
   request.warm_candidate = missing;
-  ProbeResult out;
-  EXPECT_NE(AnalyzePathProbe(config, request, &out).message.find("measure gate"), std::string::npos);
+  ProbeData out;
+  EXPECT_NE(AnalyzeProbeFixture(config, request, &out).message.find("measure gate"), std::string::npos);
 }
 
 TEST(ProbeAnalysis, FactScopesProjectWavelengthSunTargetAndQuantityIndependently) {
@@ -164,33 +172,33 @@ TEST(ProbeAnalysis, FactScopesProjectWavelengthSunTargetAndQuantityIndependently
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);
   auto candidate = Candidate(config, CraftedWarm(550.0, 20000));
   request.warm_candidate = candidate;
-  ProbeResult inside;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &inside).Ok());
+  ProbeData inside;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &inside).Ok());
   EXPECT_TRUE(inside.context.target_inside_support);
   EXPECT_EQ(inside.profiles.front().source, "warm_reused");
   request.at_altitude_deg = -50.0;
-  ProbeResult outside;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &outside).Ok());
+  ProbeData outside;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &outside).Ok());
   EXPECT_FALSE(outside.context.target_inside_support);
   EXPECT_GT(outside.context.object_distance_deg, 0.0);
   EXPECT_EQ(outside.profiles.front().source, "warm_reused");
   request.wavelengths_nm = { 450.0 };
-  ProbeResult wavelength;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &wavelength).Ok());
+  ProbeData wavelength;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &wavelength).Ok());
   EXPECT_EQ(wavelength.context.object.reason, "scope_value_mismatch");
   EXPECT_EQ(wavelength.profiles.front().source, "recomputed");
   request.wavelengths_nm = { 550.0 };
   auto moved_sun = config;
   moved_sun.scene_.light_source_.param_.altitude_ = 1.0f;
-  ProbeResult sun;
-  ASSERT_TRUE(AnalyzePathProbe(moved_sun, request, &sun).Ok());
+  ProbeData sun;
+  ASSERT_TRUE(AnalyzeProbeFixture(moved_sun, request, &sun).Ok());
   EXPECT_EQ(sun.context.object.state, "certified");
   EXPECT_EQ(sun.context.band_sum.reason, "scope_value_mismatch");
   EXPECT_EQ(sun.profiles.front().source, "recomputed");
   candidate.facts.quantity.measure = MeasureKind::kIdealFrozen;
   request.warm_candidate = candidate;
-  ProbeResult ideal;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &ideal).Ok());
+  ProbeData ideal;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &ideal).Ok());
   EXPECT_EQ(ideal.context.object.state, "certified");
   EXPECT_EQ(ideal.context.band_sum.reason, "scope_value_mismatch");
   EXPECT_EQ(ideal.profiles.front().source, "recomputed");
@@ -201,8 +209,8 @@ TEST(ProbeAnalysis, TypedNonfiniteScopeDegradesWithoutInventingZeroProvenance) {
   auto request = RadialRequest(config, -30.0, 0.0);
   request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
   request.warm_candidate->facts.sun_altitude_deg = std::numeric_limits<double>::quiet_NaN();
-  ProbeResult out;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &out).Ok());
+  ProbeData out;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &out).Ok());
   EXPECT_EQ(out.context.object.state, "certified");
   EXPECT_EQ(out.context.band_sum.reason, "scope_field_missing");
   EXPECT_EQ(out.profiles.front().source, "recomputed");
@@ -218,21 +226,21 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
   ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
   ASSERT_TRUE(admitted);
   ASSERT_TRUE(admitted->Facts().index_present);
-  ProbeResult same_layer;
+  ProbeData same_layer;
   request.warm_candidate = typed;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &same_layer).Ok());
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &same_layer).Ok());
   EXPECT_EQ(same_layer.profiles.front().source, "warm_reused");
 
   request.scene_layer = 1;
   const Error cross_layer = ValidateWarmCandidate(config, request, typed, &admitted);
   EXPECT_NE(cross_layer.message.find("scene layer gate"), std::string::npos);
   EXPECT_FALSE(admitted);
-  ProbeResult wrong_layer;
-  EXPECT_NE(AnalyzePathProbe(config, request, &wrong_layer).message.find("scene layer gate"), std::string::npos);
+  ProbeData wrong_layer;
+  EXPECT_NE(AnalyzeProbeFixture(config, request, &wrong_layer).message.find("scene layer gate"), std::string::npos);
   request.scene_layer.reset();
   ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
 
-  survey::SurveyResult document;
+  survey::SurveyData document;
   document.request.crystal_id = 1;
   document.request.path_layers = request.path_layers;
   document.scene_layer = 0;
@@ -241,7 +249,7 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
   document.warm_index.produced_for = "test producer";
   document.warm_index.seeds.push_back({ 1, 0, 0, 0, 1, 0, 0, 0, 1 });
   document.warm_index.seed_sources.push_back("test");
-  auto wire = nlohmann::json::parse(survey::SurveyResultToJson(document, "test"));
+  auto wire = nlohmann::json::parse(survey::SurveyResultToJson(survey::SurveyResult(document), "test"));
   WarmCandidate decoded;
   ASSERT_TRUE(DecodeWarmCandidate(wire.dump(), &decoded).Ok());
   ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
@@ -260,7 +268,7 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
 TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   const auto config = survey::PlateScene(1.5, 0.3);
   auto request = RadialRequest(config, -10.0, 0.0);
-  survey::SurveyResult document;
+  survey::SurveyData document;
   document.request.crystal_id = request.crystal_id;
   document.request.path_layers = request.path_layers;
   const auto location = survey::ResolveSelectionLocation(config, request);
@@ -277,9 +285,9 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   const auto measure = survey::ReadFamilyMeasure(config.crystals_.at(1).axis_);
   ASSERT_TRUE(measure.ok);
   document.family_routing->measure = measure.measure;
-  WarmCandidate typed = HarvestSurveyResult(document);
+  WarmCandidate typed = HarvestSurveyResult(survey::SurveyResult(document));
   WarmCandidate decoded;
-  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(document, "test"), &decoded).Ok());
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).Ok());
   std::optional<AdmittedWarmSource> admitted;
   ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
   ASSERT_TRUE(admitted);
@@ -291,25 +299,28 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.probes.emplace_back();
   document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
-  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyResult(document), &admitted).Ok());
+  ASSERT_TRUE(
+      ValidateWarmCandidate(config, request, HarvestSurveyResult(survey::SurveyResult(document)), &admitted).Ok());
   ASSERT_TRUE(admitted);
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.probes.clear();
   document.family_routing->measure.kind = MeasureKind::kIdealFrozen;
-  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyResult(document), &admitted).Ok());
+  ASSERT_TRUE(
+      ValidateWarmCandidate(config, request, HarvestSurveyResult(survey::SurveyResult(document)), &admitted).Ok());
   ASSERT_TRUE(admitted);
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.family_routing->measure.kind = MeasureKind::kActualDeclared;
   document.geometry.kind = GeometryKind::kRealized;
-  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyResult(document), &admitted).Ok());
+  ASSERT_TRUE(
+      ValidateWarmCandidate(config, request, HarvestSurveyResult(survey::SurveyResult(document)), &admitted).Ok());
   ASSERT_TRUE(admitted);
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.family_routing->measure.kind = MeasureKind::kIdealFrozen;
   document.probes.emplace_back();
   document.probes.back().spec.quantity.aggregation = MemberAggregation::kPhysicalClass;
   document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
-  typed = HarvestSurveyResult(document);
-  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(document, "test"), &decoded).Ok());
+  typed = HarvestSurveyResult(survey::SurveyResult(document));
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).Ok());
   EXPECT_EQ(decoded.facts.geometry.kind, typed.facts.geometry.kind);
   EXPECT_EQ(decoded.facts.quantity.aggregation, typed.facts.quantity.aggregation);
   EXPECT_EQ(decoded.facts.quantity.measure, typed.facts.quantity.measure);
@@ -319,16 +330,16 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   document.probes.clear();
   document.family_routing->measure.kind = MeasureKind::kActualDeclared;
   document.geometry.kind = GeometryKind::kNominal;
-  typed = HarvestSurveyResult(document);
+  typed = HarvestSurveyResult(survey::SurveyResult(document));
   typed.facts.measure_zenith.width_deg += 1.0;
   document.family_routing->measure.zenith.width_deg += 1.0;
-  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(document, "test"), &decoded).Ok());
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).Ok());
   const Error typed_error = ValidateWarmCandidate(config, request, typed, &admitted);
   const Error wire_error = ValidateWarmCandidate(config, request, decoded, &admitted);
   EXPECT_EQ(typed_error.message, wire_error.message);
   EXPECT_NE(typed_error.message.find("measure gate"), std::string::npos);
   // Request identity wins over later corrupt payloads, exactly as at the old boundary.
-  auto wire = nlohmann::json::parse(survey::SurveyResultToJson(document, "test"));
+  auto wire = nlohmann::json::parse(survey::SurveyResultToJson(survey::SurveyResult(document), "test"));
   wire["request"]["crystal_id"] = 2;
   wire["family_routing"]["measure"] = nullptr;
   decoded.decode_error = DecodeWarmCandidate(wire.dump(), &decoded);
@@ -338,7 +349,7 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   EXPECT_EQ(ValidateWarmCandidate(config, request, decoded, &admitted).code, ErrorCode::kUnknownCrystalId);
   // Schema-4 keys are append-only; its version is not an admission gate.
   document.schema_version = 999;
-  EXPECT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(document, "test"), &decoded).Ok());
+  EXPECT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).Ok());
 }
 
 // The reuse arm: the scope matches, the grid is the warm grid, and the values (and the counts the
@@ -352,8 +363,8 @@ TEST(ProbeAnalysis, ReuseArmCopiesWarmValuesWhenScopeAndGridMatch) {
   request.sample_count = kLattice;  // must match the warm probe's lattice for the reuse
   request.warm_candidate = Candidate(config, warm);
 
-  ProbeResult result;
-  const Error e = AnalyzePathProbe(config, request, &result);
+  ProbeData result;
+  const Error e = AnalyzeProbeFixture(config, request, &result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 1u);
   const ProbeProfile& profile = result.profiles.front();
@@ -393,8 +404,8 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);
   request.warm_candidate = Candidate(config, CraftedWarm(650.0, 20000));  // the warm map ran at 650, the query asks 550
 
-  ProbeResult result;
-  const Error e = AnalyzePathProbe(config, request, &result);
+  ProbeData result;
+  const Error e = AnalyzeProbeFixture(config, request, &result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_EQ(result.profiles.front().source, "recomputed");
@@ -410,8 +421,8 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   ProbeRequest other_lattice = RadialRequest(config, -30.0, 0.0);
   other_lattice.sample_count = 10000;
   other_lattice.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
-  ProbeResult lattice_result;
-  ASSERT_TRUE(AnalyzePathProbe(config, other_lattice, &lattice_result).Ok());
+  ProbeData lattice_result;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, other_lattice, &lattice_result).Ok());
   ASSERT_EQ(lattice_result.profiles.size(), 1u);
   EXPECT_EQ(lattice_result.profiles.front().source, "recomputed");
 }
@@ -443,8 +454,8 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
                               producer.samples[k].k_eff };
   }
   request.warm_candidate = Candidate(config, warm);
-  ProbeResult result;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
+  ProbeData result;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_NE(result.meta.at_azimuth_about_sun_deg, 0.0);
   EXPECT_EQ(result.profiles.front().source, "recomputed");
@@ -455,22 +466,22 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
   EXPECT_GT(different_bins, 0u);
 
   request.at_azimuth_deg = 0.0;
-  ProbeResult same_line;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &same_line).Ok());
+  ProbeData same_line;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &same_line).Ok());
   EXPECT_NEAR(same_line.meta.at_azimuth_about_sun_deg, 0.0, 1e-9);
   EXPECT_EQ(same_line.profiles.front().source, "warm_reused");
   EXPECT_DOUBLE_EQ(same_line.profiles.front().samples[kEdgeBin].value, warm.probe_samples[kEdgeBin].value);
 
   request.warm_candidate->facts.has_probe_azimuth = false;
-  ProbeResult unknown_line;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &unknown_line).Ok());
+  ProbeData unknown_line;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &unknown_line).Ok());
   EXPECT_EQ(unknown_line.profiles.front().source, "recomputed");
 }
 
 TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile) {
   const ConfigManager config = survey::PlateScene(1.5, 0.3);
   const SurveyWarmSource crafted = CraftedWarm(550.0, 20000);
-  survey::SurveyResult document;
+  survey::SurveyData document;
   document.wavelength_nm = 550.0;
   document.sun_altitude_deg = 20.0;
   document.sun_azimuth_deg = 0.0;
@@ -482,15 +493,15 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
   }
   document.probes.push_back(std::move(probe));
 
-  SurveyWarmSource warm = HarvestSurveyResult(document).facts;
+  SurveyWarmSource warm = HarvestSurveyResult(survey::SurveyResult(document)).facts;
   warm.index_present = true;
   ASSERT_TRUE(warm.has_probe);
   EXPECT_FALSE(warm.has_probe_azimuth);
   ProbeRequest request = RadialRequest(config, -10.0, 0.0);
   request.wavelengths_nm = { 550.0 };
   request.warm_candidate = Candidate(config, warm);
-  ProbeResult result;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
+  ProbeData result;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_NEAR(result.meta.at_azimuth_about_sun_deg, 0.0, 1e-9);
   EXPECT_EQ(result.profiles.front().source, "recomputed");
@@ -499,7 +510,7 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
 TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   const ConfigManager config = survey::RandomPrismScene();
   const SurveyWarmSource crafted = CraftedWarm(550.0, 20000);
-  survey::SurveyResult document;
+  survey::SurveyData document;
   document.wavelength_nm = 550.0;
   survey::SurveyProbe probe;
   probe.spec.azimuth_deg = 0.0;
@@ -509,11 +520,11 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
     probe.samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
   }
   document.probes.push_back(std::move(probe));
-  const nlohmann::json wire = nlohmann::json::parse(survey::SurveyResultToJson(document, "test"));
+  const nlohmann::json wire = nlohmann::json::parse(survey::SurveyResultToJson(survey::SurveyResult(document), "test"));
   EXPECT_TRUE(wire["scope"]["sun_altitude_deg"].is_null());
   EXPECT_TRUE(wire["scope"]["sun_azimuth_deg"].is_null());
 
-  SurveyWarmSource warm = HarvestSurveyResult(document).facts;
+  SurveyWarmSource warm = HarvestSurveyResult(survey::SurveyResult(document)).facts;
   warm.index_present = true;
   warm.has_support = true;
   warm.intervals = crafted.intervals;
@@ -522,23 +533,23 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);
   request.wavelengths_nm = { 550.0 };
   request.warm_candidate = Candidate(config, warm);
-  ProbeResult result;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
+  ProbeData result;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_EQ(result.context.object.state, "certified");
   EXPECT_EQ(result.context.band_sum.reason, "scope_field_missing");
   EXPECT_EQ(result.profiles.front().source, "recomputed");
 
   document.sun_altitude_deg = 0.0;
-  warm = HarvestSurveyResult(document).facts;
+  warm = HarvestSurveyResult(survey::SurveyResult(document)).facts;
   EXPECT_TRUE(warm.has_sun_altitude);
   EXPECT_FALSE(warm.has_sun_azimuth);
   document.sun_azimuth_deg = 0.0;
-  warm = HarvestSurveyResult(document).facts;
+  warm = HarvestSurveyResult(survey::SurveyResult(document)).facts;
   EXPECT_TRUE(warm.has_sun_azimuth);
   warm.index_present = true;
   request.warm_candidate = Candidate(config, warm);
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_EQ(result.profiles.front().source, "warm_reused");
 }
@@ -555,8 +566,8 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
   request.warm_candidate->facts.edge_deg = 22.25;
 
-  ProbeResult result;
-  Error e = AnalyzePathProbe(config, request, &result);
+  ProbeData result;
+  Error e = AnalyzeProbeFixture(config, request, &result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 1u);
   const ProbeProfile& profile = result.profiles.front();
@@ -572,14 +583,14 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   EXPECT_EQ(profile.samples.size(), 200u);
 
   request.wavelengths_nm = { 550.0, 450.0 };
-  ProbeResult two_wavelengths;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &two_wavelengths).Ok());
+  ProbeData two_wavelengths;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &two_wavelengths).Ok());
   ASSERT_EQ(two_wavelengths.profiles.size(), 2u);
   EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].anchor_wavelength_nm, 550.0);
   EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].anchor_deg, 22.25);
   EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].wavelength_nm, 450.0);
   EXPECT_EQ(two_wavelengths.profiles[1].dark_regions.front().kind, "unknown");
-  const nlohmann::json wire = nlohmann::json::parse(ProbeToJson(two_wavelengths, "test"));
+  const nlohmann::json wire = nlohmann::json::parse(ProbeToJson(ProbeResult(two_wavelengths), "test"));
   EXPECT_DOUBLE_EQ(wire["profiles"][1]["spec"]["anchor_wavelength_nm"].get<double>(), 550.0);
 
   // The no-edge arm: a support-less context refuses by name.
@@ -592,8 +603,8 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   empty_warm.has_wavelength = true;
   empty_warm.wavelength_nm = 550.0;
   refused.warm_candidate = Candidate(config, empty_warm);
-  ProbeResult refused_result;
-  e = AnalyzePathProbe(config, refused, &refused_result);
+  ProbeData refused_result;
+  e = AnalyzeProbeFixture(config, refused, &refused_result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(refused_result.profiles.size(), 1u);
   EXPECT_EQ(refused_result.profiles.front().evidence_state, "refused");
@@ -601,8 +612,8 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
 
   ProbeRequest wrong_lambda = request;
   wrong_lambda.wavelengths_nm = { 450.0 };
-  ProbeResult wrong_result;
-  ASSERT_TRUE(AnalyzePathProbe(config, wrong_lambda, &wrong_result).Ok());
+  ProbeData wrong_result;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, wrong_lambda, &wrong_result).Ok());
   EXPECT_EQ(wrong_result.context.object.reason, "scope_value_mismatch");
   ASSERT_EQ(wrong_result.profiles.size(), 1u);
   EXPECT_EQ(wrong_result.profiles.front().evidence_state, "refused");
@@ -619,8 +630,8 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   // the document, so the test pays no inline delta partition (the CI budget's unit).
   request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
 
-  ProbeResult result;
-  Error e = AnalyzePathProbe(config, request, &result);
+  ProbeData result;
+  Error e = AnalyzeProbeFixture(config, request, &result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 1u);
   const ProbeProfile& profile = result.profiles.front();
@@ -643,8 +654,8 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   EXPECT_LE(profile.readings.peak_deg, 10.0);
 
   request.wavelengths_nm = { 450.0 };
-  ProbeResult wrong_lambda;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &wrong_lambda).Ok());
+  ProbeData wrong_lambda;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &wrong_lambda).Ok());
   EXPECT_EQ(wrong_lambda.profiles.front().dark_regions.front().kind, "unknown");
   EXPECT_EQ(wrong_lambda.profiles.front().dark_regions.front().reason, "scope_value_mismatch");
 
@@ -655,8 +666,8 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   // partition (~13 s locally, worse on CI) and the default budget interrupts it mid-shell —
   // the refusal is deviation-based and needs no inline assembly.
   degenerate.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
-  ProbeResult degenerate_result;
-  e = AnalyzePathProbe(config, degenerate, &degenerate_result);
+  ProbeData degenerate_result;
+  e = AnalyzeProbeFixture(config, degenerate, &degenerate_result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(degenerate_result.profiles.size(), 1u);
   EXPECT_EQ(degenerate_result.profiles.front().evidence_state, "refused");
@@ -668,8 +679,8 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
 TEST(ProbeAnalysis, RefusalsNameThemselves) {
   const ConfigManager config = survey::RandomPrismScene();
   ProbeRequest bad_at = RadialRequest(config, 99.0, 0.0);
-  ProbeResult result;
-  const Error e = AnalyzePathProbe(config, bad_at, &result);
+  ProbeData result;
+  const Error e = AnalyzeProbeFixture(config, bad_at, &result);
   EXPECT_FALSE(e.Ok());
   EXPECT_EQ(ErrorCodeName(e.code), std::string("invalid_target"));
 
@@ -678,8 +689,8 @@ TEST(ProbeAnalysis, RefusalsNameThemselves) {
   const ConfigManager plate = survey::FixedPosePlateScene(1.0);
   ProbeRequest plate_request = RadialRequest(plate, 0.0, 60.0);
   plate_request.at_altitude_deg = 0.0;  // the plate's sun is at (20, 0); delta 20
-  ProbeResult plate_result;
-  const Error plate_error = AnalyzePathProbe(plate, plate_request, &plate_result);
+  ProbeData plate_result;
+  const Error plate_error = AnalyzeProbeFixture(plate, plate_request, &plate_result);
   ASSERT_TRUE(plate_error.Ok()) << plate_error.message;
   EXPECT_EQ(plate_result.context.source, "inline");
   ASSERT_EQ(plate_result.profiles.size(), 1u);
@@ -694,8 +705,8 @@ TEST(ProbeAnalysis, RefusalsNameThemselves) {
   absent.family = WarmDocumentFamily::kSurvey;
   absent.index_present = false;
   degraded.warm_candidate = Candidate(config, absent);
-  ProbeResult degraded_result;
-  const Error degraded_error = AnalyzePathProbe(cheap, degraded, &degraded_result);
+  ProbeData degraded_result;
+  const Error degraded_error = AnalyzeProbeFixture(cheap, degraded, &degraded_result);
   ASSERT_TRUE(degraded_error.Ok()) << degraded_error.message;
   EXPECT_EQ(degraded_result.context.source, "warm");
   EXPECT_TRUE(degraded_result.context.warm_index_absent);
@@ -722,8 +733,8 @@ TEST(ProbeAnalysis, MultiLambdaGridLivesOnTheLineAndYieldsTheRedEdgeWidth) {
   request.sample_count = 20000;  // the 650 profile recomputes at the tiny lattice
   request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
 
-  ProbeResult result;
-  const Error e = AnalyzePathProbe(config, request, &result);
+  ProbeData result;
+  const Error e = AnalyzeProbeFixture(config, request, &result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 2u);
   EXPECT_EQ(result.profiles[0].source, "warm_reused");
@@ -737,8 +748,8 @@ TEST(ProbeAnalysis, MultiLambdaGridLivesOnTheLineAndYieldsTheRedEdgeWidth) {
   EXPECT_EQ(result.profiles[1].dark_regions.front().reason, "scope_value_mismatch");
 
   request.wavelengths_nm = { 450.0, 550.0 };
-  ProbeResult reversed;
-  ASSERT_TRUE(AnalyzePathProbe(config, request, &reversed).Ok());
+  ProbeData reversed;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &reversed).Ok());
   EXPECT_EQ(reversed.context.object.reason, "scope_value_mismatch");
   ASSERT_EQ(reversed.profiles.size(), 2u);
   EXPECT_EQ(reversed.profiles[0].dark_regions.front().kind, "unknown");
@@ -869,8 +880,8 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   finite_request.wavelengths_nm = { 550.0 };
   finite_request.sample_count = 20000;
   finite_request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
-  ProbeResult finite_result;
-  ASSERT_TRUE(AnalyzePathProbe(config, finite_request, &finite_result).Ok());
+  ProbeData finite_result;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, finite_request, &finite_result).Ok());
 
   ProbeRequest refused_request = RadialRequest(config, -30.0, 0.0);
   refused_request.along = ProbeAlong::kEdgeNormal;
@@ -881,11 +892,11 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   empty_warm.has_support = false;
   empty_warm.has_edge = false;
   refused_request.warm_candidate = Candidate(config, empty_warm);
-  ProbeResult refused_result;
-  ASSERT_TRUE(AnalyzePathProbe(config, refused_request, &refused_result).Ok());
+  ProbeData refused_result;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, refused_request, &refused_result).Ok());
 
-  const std::string finite_json = ProbeToJson(finite_result, "test");
-  EXPECT_EQ(finite_json, ProbeToJson(finite_result, "test"));  // produced once, byte-identical
+  const std::string finite_json = ProbeToJson(ProbeResult(finite_result), "test");
+  EXPECT_EQ(finite_json, ProbeToJson(ProbeResult(finite_result), "test"));  // produced once, byte-identical
 
   const nlohmann::ordered_json doc = nlohmann::ordered_json::parse(finite_json);
   EXPECT_EQ(doc["schema"], "lumice.path-probe");
@@ -933,7 +944,8 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   EXPECT_TRUE(profile.at("dark_regions").at("segments").at(0).contains("hi_deg"));
   EXPECT_TRUE(profile.at("dark_regions").at("segments").at(0).contains("bin_count"));
 
-  const nlohmann::ordered_json refused_doc = nlohmann::ordered_json::parse(ProbeToJson(refused_result, "test"));
+  const nlohmann::ordered_json refused_doc =
+      nlohmann::ordered_json::parse(ProbeToJson(ProbeResult(refused_result), "test"));
   const nlohmann::ordered_json refused_profile = refused_doc.at("profiles").at(0);
   EXPECT_EQ(refused_profile["evidence"]["state"], "refused");
   EXPECT_EQ(refused_profile["evidence"]["mode"], "no_edge_in_context");
@@ -951,9 +963,9 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   arc_request.wavelengths_nm = { 550.0 };
   arc_request.sample_count = 20000;
   arc_request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
-  ProbeResult arc_result;
-  ASSERT_TRUE(AnalyzePathProbe(config, arc_request, &arc_result).Ok());
-  const nlohmann::ordered_json arc_doc = nlohmann::ordered_json::parse(ProbeToJson(arc_result, "test"));
+  ProbeData arc_result;
+  ASSERT_TRUE(AnalyzeProbeFixture(config, arc_request, &arc_result).Ok());
+  const nlohmann::ordered_json arc_doc = nlohmann::ordered_json::parse(ProbeToJson(ProbeResult(arc_result), "test"));
   EXPECT_DOUBLE_EQ(arc_doc.at("profiles").at(0).at("spec").at("window_half_width_deg").get<double>(),
                    kProbeWindowHalfWidthDeg);
   EXPECT_EQ(arc_doc.at("profiles").at(0).at("evidence").at("state"), "finite");

@@ -18,7 +18,7 @@ constexpr double kRadToDeg = math::kRadToDegreeD;
 // The document-level escape rule's authority: the arm's document carries a finite structural
 // reading iff some card says so itself. The witness is a payload on its card with its own
 // state — a refused card carrying a finite witness is still not a finite structural object.
-bool AnyFiniteObject(const SurveyResult& document) {
+bool AnyFiniteObject(const SurveyData& document) {
   for (const SurveyObject& card : document.objects) {
     if (card.evidence.state == EvidenceState::kFinite) {
       return true;
@@ -29,7 +29,7 @@ bool AnyFiniteObject(const SurveyResult& document) {
 
 }  // namespace
 
-FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyResult* out) {
+FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* out) {
   FamilyRoutingBlock& block = out->family_routing.emplace();
   block.measure = input.measure;
   double sun_hat[3];

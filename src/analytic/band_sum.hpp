@@ -22,6 +22,7 @@
 
 #include "analytic/discovery.hpp"
 #include "analytic/pose_density.hpp"
+#include "analytic/quantity_types.hpp"
 
 namespace lumice::analytic {
 
@@ -53,7 +54,7 @@ struct PixelValue {
 // How a rank-0 call's mass was computed (section 5): the lattice mean of w under the random
 // density (deterministic, as parity requires), or this library's deterministic psi average under
 // any other density, with the change of the last doubling of its quadrature as `m_error`.
-enum class PointMassMethod { kLatticeMean, kPsiAverage };
+
 
 struct BandSumOutput {
   bool rank_zero = false;

@@ -8,6 +8,7 @@
 #include "core/crystal_kind.hpp"
 #include "core/crystal_param.hpp"
 #include "core/math.hpp"
+#include "core/random.hpp"
 #include "core/scene_values.hpp"
 
 namespace lumice {

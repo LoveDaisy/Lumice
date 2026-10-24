@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "core/random.hpp"
+#include "core/distribution.hpp"
 
 namespace lumice::raypath {
 

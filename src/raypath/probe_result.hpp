@@ -6,6 +6,7 @@
 
 #include "core/def.hpp"
 #include "raypath/domain/input_metadata.hpp"
+#include "raypath/domain/result_identity.hpp"
 #include "raypath/results/probe_line.hpp"
 #include "raypath/survey_context.hpp"
 namespace lumice::raypath {
@@ -108,7 +109,8 @@ struct ProbeProfile {
 
 // ---- result --------------------------------------------------------------------------------------
 
-struct ProbeResult {
+struct ProbeData {
+  MemberScope members;
   ProbeMetadata meta;
   // Where the --at point sits in the survey's structure: the point document's context shape, read
   // at the at point (warm document's facts, or the context-only T0-T2 assembly).
@@ -121,6 +123,21 @@ struct ProbeResult {
   double red_edge_width_deg = 0.0;
 };
 
+
+// A completed product owns one immutable value. Copies preserve identity and storage;
+// construction from revised assembly data creates a different snapshot.
+class ProbeResult : public FrozenValue<ProbeData> {
+ public:
+  using FrozenValue<ProbeData>::FrozenValue;
+  std::optional<MemberRef> Reference(MemberId id) const {
+    return id.ordinal < Data().members.members.size() ? std::optional<MemberRef>{ { Identity(), id } } : std::nullopt;
+  }
+  const std::vector<int>* Resolve(MemberRef ref) const {
+    return ref.result == Identity() && ref.member.ordinal < Data().members.members.size() ?
+               &Data().members.members[ref.member.ordinal] :
+               nullptr;
+  }
+};
 
 }  // namespace lumice::raypath
 

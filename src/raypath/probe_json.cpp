@@ -175,7 +175,8 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
 
 }  // namespace
 
-std::string ProbeToJson(const ProbeResult& result, const std::string& product_version) {
+std::string ProbeToJson(const ProbeResult& value, const std::string& product_version) {
+  const ProbeData& result = value.Data();
   nlohmann::ordered_json doc;
   doc["schema"] = "lumice.path-probe";
   doc["schema_version"] = 5;

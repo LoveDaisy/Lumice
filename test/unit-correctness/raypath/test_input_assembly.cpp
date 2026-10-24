@@ -13,7 +13,9 @@
 #include "raypath/detail/physical_member_scope.hpp"
 #include "raypath/domain/claim.hpp"
 #include "raypath/domain/result_identity.hpp"
+#include "raypath/feature_report_result.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_result.hpp"
 #include "survey_test_fixtures.hpp"
 #include "util/illuminant.hpp"
 
@@ -216,6 +218,56 @@ TEST(TypedResultValues, ReferencesBelongToFrozenSnapshots) {
   EXPECT_EQ(other->Resolve(*member), nullptr);
   EXPECT_FALSE(Snapshot::Finalize(members, { 42 }, {}));
   EXPECT_FALSE(Snapshot::Finalize(members, { 42 }, { { rp::MemberId{ 2 } } }));
+}
+
+TEST(TypedResultValues, CompletedProductsFreezeTheirOwnedTables) {
+  rp::survey::SurveyData data;
+  data.members = { { 3, 5 } };
+  rp::survey::SurveyObject object;
+  object.members = data.members;
+  data.objects.push_back(object);
+  const rp::survey::SurveyResult first(data);
+  const auto ref = first.Reference(rp::ObjectId{ 0 });
+  const auto member = first.Reference(rp::MemberId{ 0 });
+  ASSERT_TRUE(ref);
+  ASSERT_TRUE(member);
+  const auto copy = first;
+  EXPECT_EQ(copy.Resolve(*ref), first.Resolve(*ref));
+  static_assert(std::is_const_v<std::remove_reference_t<decltype(first.Data())>>);
+  data.members[0] = { 1, 2 };
+  data.objects[0].members = data.members;
+  const rp::survey::SurveyResult revised(std::move(data));
+  EXPECT_EQ(revised.Resolve(*ref), nullptr);
+  EXPECT_EQ(revised.Resolve(*member), nullptr);
+  EXPECT_EQ(*first.Resolve(*member), (std::vector<int>{ 3, 5 }));
+}
+
+TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
+  rp::FeatureReportData data;
+  data.scope.physical_members = { { 3, 5 } };
+  data.core.objects.resize(1);
+  data.annotations.resize(1);
+  data.annotations[0].matched_record = 0;
+  data.mc.discovery.features.resize(1);
+  data.mc.discovery.features[0].source_token = 0;
+  data.mc.discovery.measure.sources.push_back({ 7, 0, 0 });
+  const rp::FeatureReportResult report(data);
+  const auto object = report.Reference(rp::ObjectId{ 0 });
+  ASSERT_TRUE(object);
+  const auto record = report.MatchedRecord(*object);
+  ASSERT_TRUE(record);
+  const auto source = report.SourceOf(*record);
+  ASSERT_TRUE(source);
+  ASSERT_NE(report.Resolve(*source), nullptr);
+  EXPECT_EQ(report.Resolve(*source)->sample_index, 7u);
+  const rp::FeatureReportResult other(data);
+  EXPECT_EQ(other.Resolve(*object), nullptr);
+  EXPECT_EQ(other.Resolve(*record), nullptr);
+  EXPECT_EQ(other.Resolve(*source), nullptr);
+  EXPECT_FALSE(other.Reference(rp::RecordId{ 1 }));
+  data.annotations[0].matched_record = 2;
+  const rp::FeatureReportResult malformed(data);
+  EXPECT_FALSE(malformed.MatchedRecord(*malformed.Reference(rp::ObjectId{ 0 })));
 }
 
 }  // namespace

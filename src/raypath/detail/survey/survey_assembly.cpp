@@ -112,7 +112,7 @@ TirShareInput TirShareInputOf(const ConfigManager& config, const analytic::FaceN
 // the note names what actually ran: a refused leg never claims the draws it did not run.
 void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSnapshot& snapshot,
                                       const SurveyRequest& request, int member_count, double wavelength_nm,
-                                      SurveyResult* out) {
+                                      SurveyData* out) {
   if (request.mc_ess_draws <= 0) {
     return;
   }
@@ -143,8 +143,8 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
 
 }  // namespace
 
-Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyResult* out,
-                     const SurveyAssemblyOptions& options) {
+Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& request, SurveyData* out,
+                         const SurveyAssemblyOptions& options) {
   if (out == nullptr) {
     return { ErrorCode::kInvalidArgument, "null document output" };
   }
@@ -472,6 +472,19 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   out->total_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] crystal {}, path class routed: {} member(s), early stop {}",
             request.crystal_id, scope_members.size(), out->early_stopped ? "taken" : "not taken");
+  return {};
+}
+
+Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyResult* out,
+                     const SurveyAssemblyOptions& options) {
+  if (!out) {
+    return { ErrorCode::kInvalidArgument, "null survey output" };
+  }
+  SurveyData data;
+  if (const Error error = AssembleSurveyData(config, request, &data, options); !error.Ok()) {
+    return error;
+  }
+  *out = SurveyResult(std::move(data));
   return {};
 }
 

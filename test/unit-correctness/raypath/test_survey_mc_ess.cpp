@@ -65,7 +65,7 @@ struct McEssFixture {
 TEST(SurveyMcRegionEss, PositiveShapeEchoesTheRequestAndHoldsTheKishBounds) {
   const McEssFixture fix = McEssFixture::Make();
   const long long draws = 2000;
-  SurveyResult document;
+  SurveyData document;
   AssembleMcRegionEss(fix.Input(draws), &document);
   ASSERT_TRUE(document.mc_region_ess.has_value());
   const SurveyMcRegionEss& ess = *document.mc_region_ess;
@@ -93,9 +93,9 @@ TEST(SurveyMcRegionEss, PositiveShapeEchoesTheRequestAndHoldsTheKishBounds) {
 // last bit on every band's numbers (deterministic=false is a shape statement, not a wobble).
 TEST(SurveyMcRegionEss, SameSeedTwoRunsAgreeBitwise) {
   const McEssFixture fix = McEssFixture::Make();
-  SurveyResult first;
+  SurveyData first;
   AssembleMcRegionEss(fix.Input(500), &first);
-  SurveyResult second;
+  SurveyData second;
   AssembleMcRegionEss(fix.Input(500), &second);
   ASSERT_TRUE(first.mc_region_ess.has_value());
   ASSERT_TRUE(second.mc_region_ess.has_value());
@@ -116,13 +116,13 @@ TEST(SurveyMcRegionEss, AssemblyCarriesTheKeyOnlyWhenRequested) {
   request.crystal_id = 1;
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_FALSE(document.mc_region_ess.has_value());  // the flag did not ask
 
   request.mc_ess_draws = 500;
-  SurveyResult with_leg;
-  ASSERT_TRUE(AssembleSurvey(config, request, &with_leg).Ok());
+  SurveyData with_leg;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &with_leg).Ok());
   ASSERT_TRUE(with_leg.mc_region_ess.has_value());
   EXPECT_EQ(with_leg.mc_region_ess->evidence.state, EvidenceState::kFinite);
   EXPECT_EQ(with_leg.mc_region_ess->draws, 500);
@@ -139,8 +139,8 @@ TEST(SurveyMcRegionEss, DrawsPastTheCapRefuseAtTheAssembly) {
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;
   request.mc_ess_draws = kSurveyMcEssMaxDraws + 1;
-  SurveyResult document;
-  const Error error = AssembleSurvey(config, request, &document);
+  SurveyData document;
+  const Error error = AssembleSurveyData(config, request, &document);
   EXPECT_FALSE(error.Ok());
   EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
 }
@@ -155,8 +155,8 @@ TEST(SurveyMcRegionEss, RefusedLegNoteNamesTheRefusalNotARun) {
   request.symmetry_bits = 0;
   request.mc_ess_draws = kSurveyMcEssMaxDraws;
   request.budget_ms = 1;  // the deadline hits long before the requested draws can complete
-  SurveyResult document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   ASSERT_TRUE(document.mc_region_ess.has_value());
   EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kRefused);
   EXPECT_EQ(document.mc_region_ess->evidence.mode, "budget_exhausted");
@@ -171,7 +171,7 @@ TEST(SurveyMcRegionEss, RefusedLegNoteNamesTheRefusalNotARun) {
 // sample.
 TEST(SurveyMcRegionEss, DiscreteLightSlotHitRunsFinite) {
   const McEssFixture fix = McEssFixture::MakeFrom(DiscreteSlotScene(), 550.0);
-  SurveyResult document;
+  SurveyData document;
   AssembleMcRegionEss(fix.Input(500), &document);
   ASSERT_TRUE(document.mc_region_ess.has_value());
   EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kFinite);
@@ -180,7 +180,7 @@ TEST(SurveyMcRegionEss, DiscreteLightSlotHitRunsFinite) {
 
 TEST(SurveyMcRegionEss, DiscreteLightSlotMissRefusesSamplerUnavailable) {
   const McEssFixture fix = McEssFixture::MakeFrom(DiscreteSlotScene(), 600.0);
-  SurveyResult document;
+  SurveyData document;
   AssembleMcRegionEss(fix.Input(500), &document);
   ASSERT_TRUE(document.mc_region_ess.has_value());
   EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kRefused);
@@ -191,9 +191,9 @@ TEST(SurveyMcRegionEss, DiscreteLightSlotMissRefusesSamplerUnavailable) {
 // exactly, and the block sits at the document's top level.
 TEST(SurveyMcRegionEss, SerializedKeySetMatchesThePlannedAppend) {
   const McEssFixture fix = McEssFixture::Make();
-  SurveyResult document;
+  SurveyData document;
   AssembleMcRegionEss(fix.Input(200), &document);
-  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   ASSERT_TRUE(parsed.contains("mc_region_ess"));
   const auto& block = parsed.at("mc_region_ess");
   EXPECT_EQ(block.at("seed"), kSurveyMcEssSeed);

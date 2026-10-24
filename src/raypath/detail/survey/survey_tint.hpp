@@ -5,8 +5,8 @@
 #include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
-void AssembleWeightTint(const TintInput& input, SurveyResult* out);
-void AssembleClassTint(const ClassTintInput& input, SurveyResult* out);
-void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyResult* out);
+void AssembleWeightTint(const TintInput& input, SurveyData* out);
+void AssembleClassTint(const ClassTintInput& input, SurveyData* out);
+void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyData* out);
 }  // namespace lumice::raypath::survey
 #endif

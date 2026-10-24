@@ -85,7 +85,7 @@ const analytic::CriticalOnset* ExtremumFoldOnset(const std::vector<analytic::Cri
 
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
-                            double refractive_index, double wavelength_nm, SurveyResult* out) {
+                            double refractive_index, double wavelength_nm, SurveyData* out) {
   const ClassSupport support =
       AssembleClassSupport(table, polygons, members, refractive_index, wavelength_nm, out->request.symmetry_bits);
   if (!support.ok) {
@@ -161,7 +161,7 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
 
 void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
-                            int class_size, SurveyResult* out) {
+                            int class_size, SurveyData* out) {
   std::vector<int> slots;
   if (const Error slot_error = ResolveSingleLayerPath({ representative }, table, &slots); !slot_error.Ok()) {
     // Unreachable past the T1 arm (it resolved the same sequence), but the refusal stays honest.

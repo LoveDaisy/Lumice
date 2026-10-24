@@ -13,6 +13,7 @@
 #include "analytic/path_chain.hpp"
 #include "analytic/path_rank.hpp"
 #include "analytic/so3.hpp"
+#include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/fiber_quadrature.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
@@ -772,6 +773,9 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
   meta.lower_wedge_deg = crystal.lower_wedge_deg;
   meta.shape_is_nominal = crystal.shape_is_nominal;
   meta.faces = request.path_layers.front();
+  static_cast<ScopeLocation&>(result.members) = survey::ResolveSelectionLocation(config, request);
+  result.members.member_kind = MemberKind::kLiteral;
+  result.members.members = { meta.faces };
   meta.sun_altitude_deg = light.param_.altitude_;
   meta.sun_azimuth_deg = light.param_.azimuth_;
   meta.sun_diameter_deg = light.param_.diameter_;
@@ -918,6 +922,33 @@ void EnsureSurveyContext(SinglePathResult* result) {
   result->context_config.reset();
   result->context_request = SinglePathRequest{};
   result->context_warm.reset();
+}
+
+PointResult FinalizePointResult(SinglePathResult result, bool include_context) {
+  if (include_context) {
+    EnsureSurveyContext(&result);
+  } else {
+    result.survey_context = {};
+    for (SurveyContextField* field :
+         { &result.survey_context.object, &result.survey_context.edge, &result.survey_context.band_sum }) {
+      field->state = "unevaluated";
+      field->reason = "not_requested";
+    }
+  }
+  return PointResult(std::move(static_cast<PointData&>(result)));
+}
+
+Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest& request, bool include_context,
+                            PointResult* out) {
+  if (!out) {
+    return { ErrorCode::kInvalidArgument, "null point output" };
+  }
+  SinglePathResult execution;
+  if (const Error error = AnalyzeSinglePath(config, request, &execution); !error.Ok()) {
+    return error;
+  }
+  *out = FinalizePointResult(std::move(execution), include_context);
+  return {};
 }
 
 }  // namespace lumice::raypath

@@ -15,6 +15,7 @@
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath {
 // The survey document family is its own schema (schema 4); it shares nothing field-wise with the
@@ -36,5 +37,7 @@ struct SurveyRequest : PathSelection {
 // Runs the routing and serializes the document: `json_out` receives the schema-4 document.
 Error AnalyzePathSurvey(const ConfigManager& config, const SurveyRequest& request, const std::string& product_version,
                         std::string* json_out);
+Error AnalyzePathSurveyValue(const ConfigManager& config, const SurveyRequest& request, survey::SurveyResult* out);
+
 }  // namespace lumice::raypath
 #endif  // LUMICE_RAYPATH_SURVEY_REPORT_HPP_

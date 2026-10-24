@@ -183,8 +183,8 @@ std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layou
 
 }  // namespace
 
-Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out) {
-  *out = ProbeResult{};
+Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& request, ProbeData* out) {
+  *out = ProbeData{};
   std::optional<AdmittedWarmSource> admitted;
   if (request.warm_candidate) {
     if (Error e = ValidateWarmCandidate(config, request, *request.warm_candidate, &admitted); !e.Ok())
@@ -222,7 +222,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
              "budget_ms must be 0 (the default) or at most " + std::to_string(kMaxProbeBudgetMs) };
   }
 
-  ProbeResult result;
+  ProbeData result;
   ProbeMetadata& meta = result.meta;
   meta.analytic_api_version = analytic::kApiVersion;
   meta.crystal_id = request.crystal_id;
@@ -344,6 +344,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   if (Error e = survey::ResolveCrystalSceneScope(config, request, &class_scope); !e.Ok()) {
     return e;
   }
+  result.members = static_cast<const MemberScope&>(class_scope);
   const int member_count = static_cast<int>(class_scope.members.size());
   const PoseDensityConversion& density = class_scope.density;
   const bool density_ok = density.Ok();
@@ -518,6 +519,18 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   }
 
   *out = std::move(result);
+  return {};
+}
+
+Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out) {
+  if (!out) {
+    return { ErrorCode::kInvalidArgument, "null probe output" };
+  }
+  ProbeData data;
+  if (const Error error = AnalyzePathProbeData(config, request, &data); !error.Ok()) {
+    return error;
+  }
+  *out = ProbeResult(std::move(data));
   return {};
 }
 

@@ -33,6 +33,7 @@ set(LUMICE_LAYER_foundation_FILES
   core/crystal.hpp
   core/crystal_kind.hpp
   core/crystal_param.cpp
+  core/distribution.hpp
   core/scene_values.hpp
   core/crystal_param.hpp
   core/def.hpp
@@ -85,6 +86,7 @@ set(LUMICE_LAYER_foundation_FILES
   util/fatal.hpp
   util/illuminant.cpp
   util/illuminant.hpp
+  util/illuminant_type.hpp
   util/illuminant_data.hpp
   util/ink_transfer.hpp
   util/label_viewport_clamp.hpp
@@ -118,6 +120,7 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/field_types.hpp
   analytic/chromatic_types.hpp
   analytic/support_types.hpp
+  analytic/quantity_types.hpp
   analytic/fiber_types.hpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp

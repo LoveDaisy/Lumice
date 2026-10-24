@@ -504,7 +504,8 @@ Json Schema3ObjectJson(const StructureObjectRecord& object, const CorroborationA
 
 }  // namespace
 
-std::string PathFeatureReportV3ToJson(const FeatureReportResult& result, const char* lumice_version) {
+std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const char* lumice_version) {
+  const FeatureReportData& result = value.Data();
   const auto& assembled = result;
   if (result.outcome == ReportOutcome::kUnsupportedMulticrystal) {
     // The early path in the v3 shape: the segments and blocks it names, empty; the refusal row.

@@ -8,6 +8,7 @@
 #include "analytic/fiber_types.hpp"
 #include "core/def.hpp"
 #include "raypath/domain/input_metadata.hpp"
+#include "raypath/domain/result_identity.hpp"
 #include "raypath/survey_context.hpp"
 namespace lumice::raypath {
 
@@ -297,7 +298,8 @@ enum class Outcome {
   kDiscovered,  // components / incomplete / discovery are set (possibly zero components)
 };
 
-struct PointResult {
+struct PointData {
+  MemberScope members;
   SinglePathMetadata meta;
   Outcome outcome = Outcome::kDiscovered;
   PointMass point_mass;
@@ -313,6 +315,21 @@ struct PointResult {
   SurveyContextBlock survey_context;
 };
 
+
+// A completed product owns one immutable value. Copies preserve identity and storage;
+// construction from revised assembly data creates a different snapshot.
+class PointResult : public FrozenValue<PointData> {
+ public:
+  using FrozenValue<PointData>::FrozenValue;
+  std::optional<MemberRef> Reference(MemberId id) const {
+    return id.ordinal < Data().members.members.size() ? std::optional<MemberRef>{ { Identity(), id } } : std::nullopt;
+  }
+  const std::vector<int>* Resolve(MemberRef ref) const {
+    return ref.result == Identity() && ref.member.ordinal < Data().members.members.size() ?
+               &Data().members.members[ref.member.ordinal] :
+               nullptr;
+  }
+};
 
 }  // namespace lumice::raypath
 

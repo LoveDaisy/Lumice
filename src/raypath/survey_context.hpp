@@ -1,10 +1,22 @@
 #ifndef LUMICE_RAYPATH_SURVEY_CONTEXT_HPP_
 #define LUMICE_RAYPATH_SURVEY_CONTEXT_HPP_
 
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "raypath/domain/result_identity.hpp"
+
 namespace lumice::raypath {
+
+// A query retains the admitted structural projection it used, not a borrowed document.
+struct ContextStructureObject {
+  enum class Kind { kSupportInterval, kCausticEdge };
+  Kind kind = Kind::kSupportInterval;
+  double lower_deg = 0;
+  double upper_deg = 0;
+};
+using ContextStructure = StructureSnapshot<ContextStructureObject>;
 
 // One field of the survey context, in the four-state vocabulary (the evidence layer's; schema1
 // spells the states as strings). `state` is always serialized; the value fields exist exactly
@@ -19,6 +31,9 @@ struct SurveyContextField {
 // facts; without, the same facts from a context-only (T0–T2) assembly run here. Every field
 // carries its own state; a band-sum reading only ever appears under the scope gate's pass.
 struct SurveyContextBlock {
+  std::optional<ContextStructure> structure;
+  std::optional<ObjectRef> object_ref;
+  std::optional<ObjectRef> edge_ref;
   std::string source;                    // "warm" | "inline"
   double reference_wavelength_nm = 0.0;  // probe context only: first requested wavelength
   // True: a --warm schema-4 document was given but carried no (complete) warm_index — the

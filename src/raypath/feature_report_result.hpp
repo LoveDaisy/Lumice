@@ -52,7 +52,7 @@ struct ReportTiming {
 
 // One completed value. In particular, MC source witnesses have already been replayed;
 // neither a serializer nor a typed reader retains a sampler or an input snapshot.
-struct FeatureReportResult {
+struct FeatureReportData {
   ReportScope scope;
   ReportOutcome outcome = ReportOutcome::kCompleted;
   std::vector<std::vector<int>> requested_path_layers;
@@ -65,6 +65,70 @@ struct FeatureReportResult {
   std::vector<ReportCoverage> coverage;
   ReportBudgets budgets;
   ReportTiming timing;
+};
+
+// A completed product owns one immutable value. Copies preserve identity and storage;
+// construction from revised assembly data creates a different snapshot.
+class FeatureReportResult : public FrozenValue<FeatureReportData> {
+ public:
+  using FrozenValue<FeatureReportData>::FrozenValue;
+  std::optional<RecordRef> Reference(RecordId id) const {
+    return id.ordinal < Data().mc.discovery.features.size() ? std::optional<RecordRef>{ { Identity(), id } } :
+                                                              std::nullopt;
+  }
+  const DiagnosticFeatureRecord* Resolve(RecordRef ref) const {
+    return ref.result == Identity() && ref.record.ordinal < Data().mc.discovery.features.size() ?
+               &Data().mc.discovery.features[ref.record.ordinal] :
+               nullptr;
+  }
+  std::optional<SourceRef> Reference(SourceId id) const {
+    return id.ordinal < Data().mc.discovery.measure.sources.size() ? std::optional<SourceRef>{ { Identity(), id } } :
+                                                                     std::nullopt;
+  }
+  const DiagnosticSourceIdentity* Resolve(SourceRef ref) const {
+    return ref.result == Identity() && ref.source.ordinal < Data().mc.discovery.measure.sources.size() ?
+               &Data().mc.discovery.measure.sources[ref.source.ordinal] :
+               nullptr;
+  }
+  const schema3::CorroborationAnnotation* Annotation(ObjectRef ref) const {
+    return Resolve(ref) && ref.object.ordinal < Data().annotations.size() ? &Data().annotations[ref.object.ordinal] :
+                                                                            nullptr;
+  }
+  std::optional<RecordRef> MatchedRecord(ObjectRef ref) const {
+    const auto* annotation = Annotation(ref);
+    return annotation && annotation->matched_record >= 0 ?
+               Reference(RecordId{ static_cast<size_t>(annotation->matched_record) }) :
+               std::nullopt;
+  }
+  std::optional<SourceRef> SourceOf(RecordRef ref) const {
+    const auto* record = Resolve(ref);
+    return record && record->source_token ? Reference(SourceId{ static_cast<size_t>(*record->source_token) }) :
+                                            std::nullopt;
+  }
+  std::optional<RecordRef> UnattributedRecord(size_t index) const {
+    return index < Data().unattributed.structures.size() ?
+               Reference(RecordId{ Data().unattributed.structures[index].record_index }) :
+               std::nullopt;
+  }
+
+  std::optional<ObjectRef> Reference(ObjectId id) const {
+    return id.ordinal < Data().core.objects.size() ? std::optional<ObjectRef>{ { Identity(), id } } : std::nullopt;
+  }
+  const schema3::StructureObjectRecord* Resolve(ObjectRef ref) const {
+    return ref.result == Identity() && ref.object.ordinal < Data().core.objects.size() ?
+               &Data().core.objects[ref.object.ordinal] :
+               nullptr;
+  }
+
+  std::optional<MemberRef> Reference(MemberId id) const {
+    return id.ordinal < Data().scope.physical_members.size() ? std::optional<MemberRef>{ { Identity(), id } } :
+                                                               std::nullopt;
+  }
+  const std::vector<int>* Resolve(MemberRef ref) const {
+    return ref.result == Identity() && ref.member.ordinal < Data().scope.physical_members.size() ?
+               &Data().scope.physical_members[ref.member.ordinal] :
+               nullptr;
+  }
 };
 
 }  // namespace lumice::raypath

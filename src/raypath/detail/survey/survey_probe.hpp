@@ -30,7 +30,7 @@ struct ProbeInput {
   const std::vector<int>* fill_member = nullptr;
 };
 
-void RunSolarRadialProbe(const ProbeInput& input, SurveyResult* out);
+void RunSolarRadialProbe(const ProbeInput& input, SurveyData* out);
 
 }  // namespace lumice::raypath::survey
 #endif

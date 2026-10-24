@@ -2,7 +2,7 @@
 
 namespace lumice::raypath::survey {
 
-void RunSolarRadialProbe(const ProbeInput& input, SurveyResult* out) {
+void RunSolarRadialProbe(const ProbeInput& input, SurveyData* out) {
   const ProbeFrame frame = MakeProbeFrame(input.incident);
 
   const ProbeLineLayout layout = AxisLineLayout(kProbeDeltaMinDeg, kProbeDeltaMaxDeg, input.azimuth_deg);

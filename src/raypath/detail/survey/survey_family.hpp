@@ -72,7 +72,7 @@ struct FamilyArmOutcome {
   std::string refusal_mode;
 };
 
-FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyResult* out);
+FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* out);
 
 }  // namespace lumice::raypath::survey
 

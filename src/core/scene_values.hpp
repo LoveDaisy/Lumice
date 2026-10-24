@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "core/crystal_param.hpp"
-#include "util/illuminant_data.hpp"
+#include "util/illuminant_type.hpp"
 namespace lumice {
 
 // Every field carries a default so that a partially filled `SunParam` is a well-defined value

@@ -643,6 +643,14 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
           out.lower_deg = interval["lower_deg"].get<double>();
           out.upper_deg = interval["upper_deg"].get<double>();
           out.members = members;
+          if (card.contains("members") && card["members"].is_array()) {
+            for (const auto& member : card["members"]) {
+              if (member.is_array() && std::all_of(member.begin(), member.end(),
+                                                   [](const auto& face) { return face.is_number_integer(); })) {
+                out.source_members.push_back(member.get<std::vector<int>>());
+              }
+            }
+          }
           survey->intervals.push_back(std::move(out));
         }
       }
@@ -650,6 +658,14 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
           card["caustic_edge"].contains("position_deg") && card["caustic_edge"]["position_deg"].is_number()) {
         survey->has_edge = true;
         survey->edge_deg = card["caustic_edge"]["position_deg"].get<double>();
+        if (card.contains("members") && card["members"].is_array()) {
+          for (const auto& member : card["members"]) {
+            if (member.is_array() &&
+                std::all_of(member.begin(), member.end(), [](const auto& face) { return face.is_number_integer(); })) {
+              survey->edge_members.push_back(member.get<std::vector<int>>());
+            }
+          }
+        }
       }
     }
     survey->has_support = !survey->intervals.empty();

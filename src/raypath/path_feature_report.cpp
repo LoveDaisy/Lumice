@@ -167,7 +167,7 @@ Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatu
   if (const Error error = AssemblePathFeatureReport(config, request, &report); !error.Ok()) {
     return error;
   }
-  FeatureReportResult result = schema3::PrepareFeatureReportResult(report);
+  FeatureReportData result = schema3::PrepareFeatureReportResult(report);
   // The multicrystal early path never ran the discovery; the assembly's precondition excludes
   // it and the v3 early shape ignores the assembled side. The enumeration leg's anti-hang
   // deadline starts here: the enforced robustness floor (kEnumerationHangCapMs), independent
