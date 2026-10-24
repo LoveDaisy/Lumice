@@ -190,15 +190,7 @@ ProbeProfile CompleteProbeProfile(ProbeProfile profile, const MemberScope& membe
   scope.members.members = { profile.representative };
   scope.members.member_kind = MemberKind::kLiteral;
   BindQuantityScope(&scope, profile.quantity);
-  std::visit(
-      [&scope](auto& arm) {
-        using A = std::decay_t<decltype(arm)>;
-        if constexpr (std::is_same_v<A, Refused> || std::is_same_v<A, Unevaluated>)
-          arm.asked_scope = scope;
-        else
-          arm.scope = scope;
-      },
-      profile.claim);
+  profile.BindScope(scope);
   return profile;
 }
 

@@ -219,7 +219,30 @@ struct SurveyObject {
                                ClaimedValue<RegularImagePayload>, ClaimedValue<CausticPayload>,
                                ClaimedValue<BrightPayload>, ClaimedValue<SupportSetPayload>>;
 
-  SurveyObjectKind Kind() const { return static_cast<SurveyObjectKind>(payload_.index()); }
+  // Kind is a property of the alternative's TYPE, never of its position: appending a payload can
+  // not silently relabel every card.
+  SurveyObjectKind Kind() const {
+    return std::visit(
+        [](const auto& arm) {
+          using P = std::decay_t<decltype(arm)>;
+          if constexpr (std::is_same_v<P, ClaimedValue<SourceImagePayload>>) {
+            return SurveyObjectKind::kSourceImage;
+          } else if constexpr (std::is_same_v<P, ClaimedValue<FamilyCollapsePayload>>) {
+            return SurveyObjectKind::kFamilyCollapsePoint;
+          } else if constexpr (std::is_same_v<P, ClaimedValue<RegularImagePayload>>) {
+            return SurveyObjectKind::kRegularImage;
+          } else if constexpr (std::is_same_v<P, ClaimedValue<CausticPayload>>) {
+            return SurveyObjectKind::kCausticEdge;
+          } else if constexpr (std::is_same_v<P, ClaimedValue<BrightPayload>>) {
+            return SurveyObjectKind::kBrightDomain;
+          } else {
+            static_assert(std::is_same_v<P, ClaimedValue<SupportSetPayload>>,
+                          "every payload alternative names its kind here");
+            return SurveyObjectKind::kSupportSet;
+          }
+        },
+        payload_);
+  }
   bool IsFamilyKind() const {
     return Kind() == SurveyObjectKind::kFamilyCollapsePoint || Kind() == SurveyObjectKind::kCausticEdge ||
            Kind() == SurveyObjectKind::kRegularImage || Kind() == SurveyObjectKind::kBrightDomain;

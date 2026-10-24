@@ -420,7 +420,7 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
 }
 
 std::string ToJson(const PointResult& result, const std::string& product_version) {
-  if (result.Data().completion != CompletionState::kCompleted) {
+  if (!result.Data().Completed()) {
     throw std::invalid_argument("point: an uncompleted value has no publication");
   }
   return EncodePoint(result.Data(), result.Data().survey_context, product_version);

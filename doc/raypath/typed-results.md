@@ -42,27 +42,44 @@ incompatible warm index retains the existing degradation behavior.
 A frozen root is produced only by its completion entry, and that entry is where every
 cross-field invariant is enforced — not a per-field convenience check scattered across adapters.
 
-- **Report.** `FeatureReportData::outcome` starts at `kNotCompleted`; only the completion
-  assembly assigns the final outcome. `FeatureReportResult` refuses to freeze the construction
-  slot, and `PathFeatureReportV3ToJson` throws on a slot value. Coverage rows carry a machine role
-  (`kBaseInput` / `kBoundedDiscovery` / `kDeclaredSkip`): the codec partitions by that role, so a
-  renamed subject keeps its limitations and a row inserted at any position keeps the vocabulary
-  ledger in place. Only the bounded-discovery row may carry limitations.
-- **Point.** `PointData::completion` starts at `kNotCompleted`; `FinalizePointResult` is the only
-  entry that marks it. The data constructor refuses the slot and `ToJson` throws on it, so a
-  default-constructed point cannot be published as `kDiscovered`.
+- **Report.** `FeatureReportData::outcome` starts at `kNotCompleted`; the completion assembly is
+  the only intended assigner of a final outcome (it is a public field, so this is a documented
+  discipline, not a type barrier — the freeze validates the value's consistency instead).
+  `FeatureReportResult` refuses to freeze the construction slot, and `PathFeatureReportV3ToJson`
+  throws on a slot value. Coverage rows carry a machine role (`kBaseInput` / `kBoundedDiscovery` /
+  `kDeclaredSkip`): the codec partitions by that role, so a renamed subject keeps its limitations
+  and a row inserted at any position keeps the vocabulary ledger in place. Only the
+  bounded-discovery row may carry limitations, the unsupported arm publishes exactly its one
+  refusal row, and the freeze checks the tables the reader walks by ordinal: annotations and
+  objects agree in length, every `matched_record`, `source_token` and unattributed
+  `record_index` is in range.
+- **Point.** The completion marker is private to the value; `FinalizePointData` is the only
+  function that sets it, and it also refuses a sun grid whose parallel arrays disagree in length
+  (the encoder iterates the deviation column and reads the other two by index). The data
+  constructor refuses the unmarked slot and `ToJson` throws on it, so a default-constructed point
+  cannot be published as `kDiscovered`.
 - **Survey.** The `SurveyResult` constructor *is* the completion boundary: `FinalizeSurveyData`
   binds every claim's declared scope from the document's own facts (members, geometry, observation,
   quantity spec), and `Validated` then rejects inconsistent object adjuncts, a bright domain whose
   `probe_index` names no probe, an object member outside the class, and a successful probe claim
   without a quantity scope. Product adapters hand over data and keep no second binding rule, so
   every construction path — production, warm decode, tests — yields the same scopes.
-- **Probe.** A writable reading exists only as the return of `BeginFinite`, and a refusal's mode is
-  set together with its arm by `Refuse`; no accessor writes across arms. `ProbeResult` rejects a
-  successful profile claim that carries no declared quantity scope.
+- **Probe.** The claim is private: a writable reading exists only as the return of `BeginFinite`, a
+  certified arm only through `BeginCertified`, and a refusal's mode is set together with its arm by
+  `Refuse`. `ProbeResult` rejects a successful profile claim without a declared quantity scope and
+  a red-edge width whose two edge readings are absent.
 - **Report object records.** The unassessed chromatic arm is read-only: `Chromatic()` returns the
   declared defaults, and filling a verdict requires the explicit `SetChromatic` transition
   (`MutableChromatic()` throws before it).
+
+## Symbol placement recorded, not hidden
+
+Two placements lag their file location and are listed here so nobody takes them for internals:
+`results/report_structure.hpp` still lives in `lumice::raypath::schema3` although its record types
+are part of the report completion value; and the probe core in `detail/quantity/probe_line.*`
+still lives in `lumice::raypath::survey` although it is a shared capability beside
+`quantity::tint`/`tir_share`/`mc_ess`/`witness`. Both are renames deferred, not ownership
+statements.
 
 ## Claims and independent states
 

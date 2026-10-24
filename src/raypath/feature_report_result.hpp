@@ -193,8 +193,37 @@ class FeatureReportResult : public FrozenValue<FeatureReportData> {
       }
     }
     const bool unsupported = data.outcome == ReportOutcome::kUnsupportedMulticrystal;
-    if (unsupported ? bounded_rows != 0 : (base_rows != 1 || bounded_rows != 1)) {
+    if (unsupported) {
+      // The refusal arm publishes exactly its one refusal row; an empty coverage array would
+      // silently drop the machine statement the wire contract has always carried.
+      if (data.coverage.size() != 1 || data.coverage[0].role != CoverageRole::kBaseInput ||
+          data.coverage[0].status != CoverageStatus::kNotSupported) {
+        throw std::invalid_argument("feature report: the unsupported arm publishes exactly one refusal row");
+      }
+    } else if (base_rows != 1 || bounded_rows != 1) {
       throw std::invalid_argument("feature report: the coverage roles do not describe one completed run");
+    }
+    // The published associations are indexed by ordinal: every table the reader walks must agree
+    // in length, and every ordinal must be in range, before the value can be frozen.
+    if (data.annotations.size() != data.core.objects.size()) {
+      throw std::invalid_argument("feature report: the annotations and objects tables disagree in length");
+    }
+    const std::vector<DiagnosticFeatureRecord>& features = data.mc.discovery.features;
+    const std::vector<DiagnosticSourceIdentity>& sources = data.mc.discovery.measure.sources;
+    for (const schema3::CorroborationAnnotation& annotation : data.annotations) {
+      if (annotation.matched_record >= 0 && static_cast<size_t>(annotation.matched_record) >= features.size()) {
+        throw std::invalid_argument("feature report: an annotation names a record outside the evidence");
+      }
+    }
+    for (const DiagnosticFeatureRecord& feature : features) {
+      if (feature.source_token && *feature.source_token >= sources.size()) {
+        throw std::invalid_argument("feature report: a record names a source outside the measure");
+      }
+    }
+    for (const schema3::UnattributedStructure& structure : data.unattributed.structures) {
+      if (structure.record_index >= features.size()) {
+        throw std::invalid_argument("feature report: an unattributed structure names a record outside the evidence");
+      }
     }
     return data;
   }

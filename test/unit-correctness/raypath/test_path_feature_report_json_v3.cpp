@@ -272,6 +272,7 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   annotation.presence_ess = 50.0;
   annotation.match_distance = 0.01;
   annotation.tolerance_rad = 0.02;
+  run.assembled.mc.discovery.features.resize(1);  // the annotation's record must exist in the evidence
   annotation.matched_record = 0;
   annotation.matched_record_ess = 40.0;
   annotation.ruler = "sentinel_corroboration_ruler";
@@ -715,6 +716,7 @@ TEST(PathFeatureReportJsonV3, NonFiniteSpellingsFollowTheDeclaredConventions) {
   EXPECT_TRUE(saw_zero);
 
   // The infinite margin: a finding with no object image to bound it.
+  run.assembled.mc.discovery.features.resize(1);  // the finding's record must exist in the evidence
   schema3::UnattributedStructure finding{};
   finding.record_index = 0;
   finding.position = { 1.0, 0.0, 0.0 };

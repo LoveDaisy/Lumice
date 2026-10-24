@@ -3,6 +3,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -128,31 +129,56 @@ struct ProbeProfile {
   bool deterministic = true;
   std::vector<int> representative;
   int member_count = 0;
-  Claim<ProbeFiniteReading> claim;
-  survey::EvidenceState State() const { return ClaimState(claim); }
+  // The arm is private: a writable reading exists only as the return of BeginFinite, a certified
+  // arm only through BeginCertified, and a refusal's mode is set together with its arm by Refuse.
+ private:
+  Claim<ProbeFiniteReading> claim_;
+
+ public:
   // The explicit transitions: a writable reading exists only as the result of BeginFinite, and a
   // refusal's mode is set together with its arm. No accessor can write across arms.
   ProbeFiniteReading& BeginFinite() {
-    if (!std::holds_alternative<Finite<ProbeFiniteReading>>(claim)) {
-      claim = Finite<ProbeFiniteReading>{};
+    if (!std::holds_alternative<Finite<ProbeFiniteReading>>(claim_)) {
+      claim_ = Finite<ProbeFiniteReading>{};
     }
-    return std::get<Finite<ProbeFiniteReading>>(claim).value;
+    return std::get<Finite<ProbeFiniteReading>>(claim_).value;
   }
-  void Refuse(std::string reason) { claim = Refused{ std::move(reason), {} }; }
-  const ProbeFiniteReading& Reading() const { return std::get<Finite<ProbeFiniteReading>>(claim).value; }
-  const std::string& RefusalReason() const { return std::get<Refused>(claim).reason; }
+  Certified<ProbeFiniteReading>& BeginCertified(std::string method) {
+    claim_ = Certified<ProbeFiniteReading>{};
+    Certified<ProbeFiniteReading>& arm = std::get<Certified<ProbeFiniteReading>>(claim_);
+    arm.method = std::move(method);
+    return arm;
+  }
+  void Refuse(std::string reason) { claim_ = Refused{ std::move(reason), {} }; }
+  const ProbeFiniteReading& Reading() const { return std::get<Finite<ProbeFiniteReading>>(claim_).value; }
+  const std::string& RefusalReason() const { return std::get<Refused>(claim_).reason; }
+  const Claim<ProbeFiniteReading>& Claim() const { return claim_; }
+  // The one scope-binding entry: the arm that holds the declaration is chosen by its kind.
+  void BindScope(const ClaimScope& scope) {
+    std::visit(
+        [&scope](auto& arm) {
+          using A = std::decay_t<decltype(arm)>;
+          if constexpr (std::is_same_v<A, Refused> || std::is_same_v<A, Unevaluated>) {
+            arm.asked_scope = scope;
+          } else {
+            arm.scope = scope;
+          }
+        },
+        claim_);
+  }
+  survey::EvidenceState State() const { return ClaimState(claim_); }
   // The claim's declared scope, whichever arm holds it (the asked scope on a non-success arm).
   const ClaimScope& Scope() const {
-    if (const auto* finite = std::get_if<Finite<ProbeFiniteReading>>(&claim)) {
+    if (const auto* finite = std::get_if<Finite<ProbeFiniteReading>>(&claim_)) {
       return finite->scope;
     }
-    if (const auto* certified = std::get_if<Certified<ProbeFiniteReading>>(&claim)) {
+    if (const auto* certified = std::get_if<Certified<ProbeFiniteReading>>(&claim_)) {
       return certified->scope;
     }
-    if (const auto* refused = std::get_if<Refused>(&claim)) {
+    if (const auto* refused = std::get_if<Refused>(&claim_)) {
       return refused->asked_scope;
     }
-    return std::get<Unevaluated>(claim).asked_scope;
+    return std::get<Unevaluated>(claim_).asked_scope;
   }
 };
 
@@ -195,6 +221,21 @@ class ProbeResult : public FrozenValue<ProbeData> {
       if ((state == survey::EvidenceState::kFinite || state == survey::EvidenceState::kCertified) &&
           !profile.Scope().quantity) {
         throw std::invalid_argument("a probe profile's successful claim carries no quantity scope");
+      }
+    }
+    // The red-edge width exists only when the red profile and the reference (first) profile both
+    // carry an edge reading; a flag without its two readings is a contradictory value.
+    if (data.has_red_edge_width) {
+      bool red_finite = false;
+      for (const ProbeProfile& profile : data.profiles) {
+        if (profile.State() == survey::EvidenceState::kFinite && profile.wavelength_nm == kChromaticRedNm) {
+          red_finite = profile.Reading().readings.has_edge;
+          break;
+        }
+      }
+      if (data.profiles.size() < 2 || !red_finite || data.profiles.front().State() != survey::EvidenceState::kFinite ||
+          !data.profiles.front().Reading().readings.has_edge) {
+        throw std::invalid_argument("a red-edge width without its two edge readings is not a value");
       }
     }
     return data;

@@ -127,12 +127,12 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
     return j;
   }
   if (p.State() == survey::EvidenceState::kUnevaluated) {
-    j["evidence"] = { { "state", "unevaluated" }, { "reason", std::get<Unevaluated>(p.claim).reason } };
+    j["evidence"] = { { "state", "unevaluated" }, { "reason", std::get<Unevaluated>(p.Claim()).reason } };
     return j;
   }
-  const ProbeFiniteReading& reading = *ClaimValue(p.claim);
+  const ProbeFiniteReading& reading = *ClaimValue(p.Claim());
   j["source"] = reading.source == ProbeProfileSource::kWarmReused ? "warm_reused" : "recomputed";
-  if (const auto* certified = std::get_if<Certified<ProbeFiniteReading>>(&p.claim)) {
+  if (const auto* certified = std::get_if<Certified<ProbeFiniteReading>>(&p.Claim())) {
     j["evidence"] = { { "state", "certified" }, { "method", certified->method } };
   } else {
     j["evidence"] = {

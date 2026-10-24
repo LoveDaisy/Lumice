@@ -547,7 +547,7 @@ std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const ch
               { "optical_evaluations", 0 },
               { "field_component_evaluations", 0 },
               { "seconds", 0 } } },
-          { "observation_scope_note", schema3::kMcObservationScopeNote },
+          { "observation_scope_note", result.mc.observation_scope_note },
           { "unfinished", Json::array() } } },
       { "coverage", std::move(coverage) },
       { "budgets", { { "optical_evaluations", 0 }, { "field_component_evaluations", 0 } } }

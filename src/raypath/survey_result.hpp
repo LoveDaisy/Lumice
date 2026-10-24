@@ -230,8 +230,15 @@ class SurveyResult : public FrozenValue<SurveyData> {
     }
     for (const SurveyProbe& probe : data.probes) {
       const EvidenceState state = probe.State();
-      if ((state == EvidenceState::kFinite || state == EvidenceState::kCertified) && !probe.Scope().quantity) {
-        throw std::invalid_argument("a surveyed probe's successful claim carries no quantity scope");
+      if (state != EvidenceState::kFinite && state != EvidenceState::kCertified) {
+        continue;
+      }
+      // The binding made the scope non-empty; what can still be wrong is its CONTENT — a scope
+      // that names another line, member or wavelength than the probe's own declaration.
+      if (!probe.Scope().quantity || probe.Scope().quantity->wavelengths_nm.empty() ||
+          probe.Scope().quantity->wavelengths_nm.front() != probe.spec.wavelength_nm ||
+          probe.Scope().members.members != std::vector<std::vector<int>>{ probe.spec.representative }) {
+        throw std::invalid_argument("a surveyed probe's scope disagrees with its own declaration");
       }
     }
     return data;

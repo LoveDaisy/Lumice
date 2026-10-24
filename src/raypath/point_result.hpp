@@ -310,10 +310,14 @@ struct DiscoveredPoint {
   MeasureRegistration measure_registration;
 };
 
+struct PointData;
+
+// The single completion entry for the value layer: validates the payload's internal consistency
+// and marks the value complete. The marker is private, so no construction path can forge a
+// completed value by writing a flag.
+PointData FinalizePointData(PointData data);
+
 struct PointData {
-  // Set only by the completion entry (FinalizePointResult): a construction value that never ran
-  // it reaches no published root.
-  CompletionState completion = CompletionState::kNotCompleted;
   PointFactorQuantities quantities;
   MemberScope members;
   SinglePathMetadata meta;
@@ -330,7 +334,22 @@ struct PointData {
   // face inside OrbitFactors). A rho consumer reads this before treating a rho of 0 as dark.
   // Explicitly materialized context. Reading a value never starts a computation.
   SurveyContextBlock survey_context;
+
+  bool Completed() const { return completion_ == CompletionState::kCompleted; }
+
+ private:
+  friend PointData FinalizePointData(PointData data);
+  CompletionState completion_ = CompletionState::kNotCompleted;
 };
+
+inline PointData FinalizePointData(PointData data) {
+  const SunSphereGrid& grid = data.sun_grid;
+  if (grid.deviation_rad.size() != grid.valid.size() || grid.deviation_rad.size() != grid.entry_measure.size()) {
+    throw std::invalid_argument("point: the sun grid's parallel arrays disagree in length");
+  }
+  data.completion_ = CompletionState::kCompleted;
+  return data;
+}
 
 
 // A completed product owns one immutable value. Copies preserve identity and storage;
@@ -352,7 +371,7 @@ class PointResult : public FrozenValue<PointData> {
 
  private:
   static PointData Validated(PointData data) {
-    if (data.completion != CompletionState::kCompleted) {
+    if (!data.Completed()) {
       throw std::invalid_argument("point: the construction slot was frozen without a completion");
     }
     return data;

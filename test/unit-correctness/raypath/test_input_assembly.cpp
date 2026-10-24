@@ -244,6 +244,16 @@ TEST(TypedResultValues, CompletedProductsFreezeTheirOwnedTables) {
   EXPECT_EQ(*first.Resolve(*member), (std::vector<int>{ 3, 5 }));
 }
 
+rp::FeatureReportData CompletedReportFixture() {
+  rp::FeatureReportData data;
+  data.outcome = rp::ReportOutcome::kCompleted;
+  data.coverage.push_back(
+      { rp::CoverageRole::kBaseInput, "synthetic input", rp::CoverageStatus::kSupported, "test", {} });
+  data.coverage.push_back(
+      { rp::CoverageRole::kBoundedDiscovery, "synthetic discovery", rp::CoverageStatus::kSupported, "test", {} });
+  return data;
+}
+
 TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
   rp::FeatureReportData data;
   data.outcome = rp::ReportOutcome::kCompleted;
@@ -275,17 +285,15 @@ TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
   EXPECT_EQ(other.Resolve(*record), nullptr);
   EXPECT_EQ(other.Resolve(*source), nullptr);
   EXPECT_FALSE(other.Reference(rp::RecordId{ 1 }));
-  data.annotations[0].matched_record = 2;
-  const rp::FeatureReportResult malformed(data);
-  EXPECT_FALSE(malformed.MatchedRecord(*malformed.Reference(rp::ObjectId{ 0 })));
+  data.annotations[0].matched_record = 2;  // beyond features: the boundary refuses, not a silent miss
+  EXPECT_THROW(rp::FeatureReportResult{ data }, std::invalid_argument);
 }
 
 TEST(TypedResultValues, ConstructionSlotsAreNotPublishableValues) {
   // Point: the default construction slot asserts kDiscovered; only a completion may freeze it.
   EXPECT_THROW(rp::PointResult(rp::PointData{}), std::invalid_argument);
   rp::PointData completed;
-  completed.completion = rp::CompletionState::kCompleted;
-  EXPECT_NO_THROW(rp::PointResult(std::move(completed)));
+  EXPECT_NO_THROW(rp::PointResult(rp::FinalizePointData(std::move(completed))));
 
   // Probe: a successful profile's claim carries its declared scope, or it is not a value.
   rp::ProbeData unscoped;
@@ -297,7 +305,7 @@ TEST(TypedResultValues, ConstructionSlotsAreNotPublishableValues) {
   rp::ProbeProfile scoped_profile;
   auto& reading = scoped_profile.BeginFinite();
   reading.samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
-  std::get<rp::Finite<rp::ProbeFiniteReading>>(scoped_profile.claim).scope.quantity = scoped_profile.quantity;
+  scoped_profile.BeginCertified("synthetic").scope.quantity = scoped_profile.quantity;
   scoped.profiles.push_back(std::move(scoped_profile));
   EXPECT_NO_THROW(rp::ProbeResult(std::move(scoped)));
 
@@ -308,6 +316,58 @@ TEST(TypedResultValues, ConstructionSlotsAreNotPublishableValues) {
   EXPECT_NO_THROW(object.MutableChromatic());
   object.ClearChromatic();
   EXPECT_THROW(object.MutableChromatic(), std::bad_variant_access);
+}
+
+
+TEST(TypedResultValues, ReportCompletionRejectsDanglingInternalAssociations) {
+  // The public serializer indexes annotations by the object's ordinal: the freeze must refuse a
+  // value whose tables disagree before any reader can walk off the end.
+  rp::FeatureReportData uneven = CompletedReportFixture();
+  uneven.core.objects.resize(2);
+  uneven.annotations.resize(1);
+  EXPECT_THROW(rp::FeatureReportResult{ uneven }, std::invalid_argument);
+
+  rp::FeatureReportData bad_record = CompletedReportFixture();
+  bad_record.core.objects.resize(1);
+  bad_record.annotations.resize(1);
+  bad_record.mc.discovery.features.resize(1);
+  bad_record.annotations[0].matched_record = 5;
+  EXPECT_THROW(rp::FeatureReportResult{ bad_record }, std::invalid_argument);
+
+  rp::FeatureReportData bad_token = CompletedReportFixture();
+  bad_token.core.objects.resize(1);
+  bad_token.annotations.resize(1);
+  bad_token.mc.discovery.features.resize(1);
+  bad_token.mc.discovery.features[0].source_token = 7;
+  EXPECT_THROW(rp::FeatureReportResult{ bad_token }, std::invalid_argument);
+
+  rp::FeatureReportData bad_unattributed = CompletedReportFixture();
+  bad_unattributed.core.objects.resize(1);
+  bad_unattributed.annotations.resize(1);
+  bad_unattributed.unattributed.structures.emplace_back();
+  bad_unattributed.unattributed.structures[0].record_index = 9;
+  EXPECT_THROW(rp::FeatureReportResult{ bad_unattributed }, std::invalid_argument);
+
+  // The unsupported arm's refusal row is part of its published contract.
+  rp::FeatureReportData unsupported;
+  unsupported.outcome = rp::ReportOutcome::kUnsupportedMulticrystal;
+  EXPECT_THROW(rp::FeatureReportResult{ unsupported }, std::invalid_argument);
+}
+
+TEST(TypedResultValues, PointCompletionRejectsAnInconsistentSunGrid) {
+  rp::PointData data;
+  data.sun_grid.lat_count = 2;
+  data.sun_grid.lon_count = 3;
+  data.sun_grid.deviation_rad = { 1.0, 2.0, 3.0 };
+  data.sun_grid.valid = { 1, 1 };  // shorter than the deviation column it is read with
+  data.sun_grid.entry_measure = { 1.0, 2.0, 3.0 };
+  EXPECT_THROW(rp::PointResult(rp::FinalizePointData(std::move(data))), std::invalid_argument);
+}
+
+TEST(TypedResultValues, ProbeCompletionRejectsAContradictoryRedEdgeWidth) {
+  rp::ProbeData data;
+  data.has_red_edge_width = true;  // contracted with nothing: no profiles carry the two edges
+  EXPECT_THROW(rp::ProbeResult(std::move(data)), std::invalid_argument);
 }
 
 TEST(TypedResultValues, SurveyObjectClaimsExcludeContradictoryPayloads) {
@@ -368,8 +428,8 @@ TEST(TypedResultValues, PointAndProbeHaveExclusiveOutcomePayloads) {
   profile.BeginFinite().samples.push_back({ 22, 0, 0, 0, 0 });
   EXPECT_DOUBLE_EQ(profile.Reading().samples.front().value, 0.0);
   EXPECT_EQ(profile.State(), rp::survey::EvidenceState::kFinite);
-  profile.claim = rp::Refused{ "no_edge", {} };
-  EXPECT_EQ(rp::ClaimValue(profile.claim), nullptr);
+  profile.Refuse("no_edge");
+  EXPECT_EQ(rp::ClaimValue(profile.Claim()), nullptr);
   EXPECT_THROW(profile.Reading(), std::bad_variant_access);
   rp::schema3::StructureObjectRecord object;
   EXPECT_FALSE(object.ChromaticAssessed());
