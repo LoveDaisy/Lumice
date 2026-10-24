@@ -303,11 +303,16 @@ TEST(TypedResultValues, ConstructionSlotsAreNotPublishableValues) {
   EXPECT_THROW(rp::ProbeResult(std::move(unscoped)), std::invalid_argument);
   rp::ProbeData scoped;
   rp::ProbeProfile scoped_profile;
-  auto& reading = scoped_profile.BeginFinite();
-  reading.samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
-  scoped_profile.BeginCertified("synthetic").scope.quantity = scoped_profile.quantity;
+  scoped_profile.wavelength_nm = 550.0;
+  scoped_profile.quantity.wavelengths_nm = { 550.0 };
+  scoped_profile.representative = { 3, 5 };
+  scoped_profile.BeginFinite().samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
+  rp::ClaimScope scope;
+  scope.quantity = scoped_profile.quantity;
+  scope.members.members = { scoped_profile.representative };
+  scoped_profile.BindScope(scope);
   scoped.profiles.push_back(std::move(scoped_profile));
-  EXPECT_NO_THROW(rp::ProbeResult(std::move(scoped)));
+  EXPECT_NO_THROW(rp::ProbeResult(rp::FinalizeProbeData(std::move(scoped))));
 
   // Chromatic: the unassessed arm has no writable payload; the transition comes first.
   rp::schema3::StructureObjectRecord object;
@@ -367,7 +372,9 @@ TEST(TypedResultValues, PointCompletionRejectsAnInconsistentSunGrid) {
 TEST(TypedResultValues, ProbeCompletionRejectsAContradictoryRedEdgeWidth) {
   rp::ProbeData data;
   data.has_red_edge_width = true;  // contracted with nothing: no profiles carry the two edges
-  EXPECT_THROW(rp::ProbeResult(std::move(data)), std::invalid_argument);
+  EXPECT_THROW(rp::ProbeResult(rp::FinalizeProbeData(std::move(data))), std::invalid_argument);
+  // The bare construction slot is not publishable either.
+  EXPECT_THROW(rp::ProbeResult(rp::ProbeData{}), std::invalid_argument);
 }
 
 TEST(TypedResultValues, SurveyObjectClaimsExcludeContradictoryPayloads) {

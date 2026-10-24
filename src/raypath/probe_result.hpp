@@ -184,6 +184,12 @@ struct ProbeProfile {
 
 // ---- result --------------------------------------------------------------------------------------
 
+struct ProbeData;
+
+// The single completion entry for the value layer: marks a finished analysis. The marker is
+// private, so a bare ProbeData cannot be published as a completed result.
+ProbeData FinalizeProbeData(ProbeData data);
+
 struct ProbeData {
   MemberScope members;
   ProbeMetadata meta;
@@ -196,14 +202,26 @@ struct ProbeData {
   // other wavelength pairing is the profiles' own readings, unpicked here.
   bool has_red_edge_width = false;
   double red_edge_width_deg = 0.0;
+
+  bool Completed() const { return completion_ == CompletionState::kCompleted; }
+
+ private:
+  friend ProbeData FinalizeProbeData(ProbeData data);
+  CompletionState completion_ = CompletionState::kNotCompleted;
 };
+
+inline ProbeData FinalizeProbeData(ProbeData data) {
+  data.completion_ = CompletionState::kCompleted;
+  return data;
+}
 
 
 // A completed product owns one immutable value. Copies preserve identity and storage;
 // construction from revised assembly data creates a different snapshot.
 class ProbeResult : public FrozenValue<ProbeData> {
  public:
-  ProbeResult() : ProbeResult(ProbeData{}) {}
+  // The output slot an entry writes into: constructible, not publishable (ProbeToJson throws).
+  ProbeResult() : FrozenValue<ProbeData>(ProbeData{}) {}
   explicit ProbeResult(ProbeData data) : FrozenValue<ProbeData>(Validated(std::move(data))) {}
   std::optional<MemberRef> Reference(MemberId id) const {
     return id.ordinal < Data().members.members.size() ? std::optional<MemberRef>{ { Identity(), id } } : std::nullopt;
@@ -216,11 +234,19 @@ class ProbeResult : public FrozenValue<ProbeData> {
 
  private:
   static ProbeData Validated(ProbeData data) {
+    if (!data.Completed()) {
+      throw std::invalid_argument("probe: the construction slot was frozen without a completion");
+    }
     for (const ProbeProfile& profile : data.profiles) {
       const survey::EvidenceState state = profile.State();
-      if ((state == survey::EvidenceState::kFinite || state == survey::EvidenceState::kCertified) &&
-          !profile.Scope().quantity) {
-        throw std::invalid_argument("a probe profile's successful claim carries no quantity scope");
+      if (state != survey::EvidenceState::kFinite && state != survey::EvidenceState::kCertified) {
+        continue;
+      }
+      // The scope must name THIS profile's wavelength and representative, not merely be bound.
+      if (!profile.Scope().quantity || profile.Scope().quantity->wavelengths_nm.empty() ||
+          profile.Scope().quantity->wavelengths_nm.front() != profile.wavelength_nm ||
+          profile.Scope().members.members != std::vector<std::vector<int>>{ profile.representative }) {
+        throw std::invalid_argument("a probe profile's scope disagrees with its own declaration");
       }
     }
     // The red-edge width exists only when the red profile and the reference (first) profile both

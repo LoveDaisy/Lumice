@@ -90,16 +90,10 @@ V3Run MinimalV3Run() {
     schema3::ObjectKind::kKind3, schema3::ObjectKind::kS6Junction,
   };
   run.assembled.core.coverage.declared_not_produced = {
-    schema3::ObjectKind::kCorridorClosed,
-    schema3::ObjectKind::kS3SupportBoundary,
-    schema3::ObjectKind::kS4BranchBoundary,
-    schema3::ObjectKind::kS5DensityFeature,
-  };
-  run.assembled.core.coverage.declared_reasons = {
-    "serializer fixture",
-    "serializer fixture",
-    "serializer fixture",
-    "serializer fixture",
+    { schema3::ObjectKind::kCorridorClosed, "serializer fixture" },
+    { schema3::ObjectKind::kS3SupportBoundary, "serializer fixture" },
+    { schema3::ObjectKind::kS4BranchBoundary, "serializer fixture" },
+    { schema3::ObjectKind::kS5DensityFeature, "serializer fixture" },
   };
   schema3::CorroborationAnnotation annotation{};
   annotation.state = schema3::CorroborationState::kObserved;
@@ -174,7 +168,7 @@ DiagnosticFeatureRecord MaximalRecord(size_t valid_source_token) {
   in.interface_curves[0].stop = analytic::InterfaceWalkStop::kOpticalGate;
   in.source_event = analytic::InterfaceEventBracket{};
   in.source_event->source_width_rad = 0.2;
-  in.source_connected_feature = size_t{ 9 };
+  in.source_connected_feature = size_t{ 0 };  // a real ordinal: the ledger fixture holds one record
   in.deviation_minimum = analytic::DeviationStationaryPoint{};
   in.deviation_minimum->deviation_available = true;
   in.deviation_minimum->deviation_rad = 0.3852;

@@ -252,23 +252,20 @@ TEST(StructureEnumeration, CoverageTablePartitionsTheRegistry) {
   for (const ObjectKind kind : core.coverage.produced) {
     seen.insert(static_cast<int>(kind));
   }
-  for (const ObjectKind kind : core.coverage.declared_not_produced) {
-    seen.insert(static_cast<int>(kind));
+  for (const schema3::DeclaredNotProduced& row : core.coverage.declared_not_produced) {
+    seen.insert(static_cast<int>(row.kind));
+    EXPECT_FALSE(row.reason.empty());
   }
   for (const ObjectKind kind : RegisteredObjectKinds()) {
     EXPECT_EQ(seen.count(static_cast<int>(kind)), 1u) << "kind not covered exactly once";
   }
-  ASSERT_EQ(core.coverage.declared_reasons.size(), core.coverage.declared_not_produced.size());
-  for (const std::string& reason : core.coverage.declared_reasons) {
-    EXPECT_FALSE(reason.empty());
-  }
   // The declared kinds never appear as objects; the produced ones do (this member produces all
   // five).
   for (const StructureObjectRecord& object : core.objects) {
-    EXPECT_EQ(
-        std::find(core.coverage.declared_not_produced.begin(), core.coverage.declared_not_produced.end(), object.kind),
-        core.coverage.declared_not_produced.end())
-        << "a declared-not-produced kind materialized an object";
+    const bool declared =
+        std::any_of(core.coverage.declared_not_produced.begin(), core.coverage.declared_not_produced.end(),
+                    [&object](const schema3::DeclaredNotProduced& row) { return row.kind == object.kind; });
+    EXPECT_FALSE(declared) << "a declared-not-produced kind materialized an object";
   }
   EXPECT_NE(FindKind(core.objects, ObjectKind::kKind1), nullptr);
   EXPECT_NE(FindKind(core.objects, ObjectKind::kKind2), nullptr);

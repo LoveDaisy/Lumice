@@ -406,13 +406,13 @@ std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_ve
   {
     Json seeds = Json::array();
     Json sources = Json::array();
-    for (size_t i = 0; i < document.warm_index.seeds.size(); i++) {
+    for (const WarmSeed& row : document.warm_index.seeds) {
       Json seed = Json::array();
-      for (double v : document.warm_index.seeds[i]) {
+      for (double v : row.pose) {
         seed.push_back(Num(v));
       }
       seeds.push_back(std::move(seed));
-      sources.push_back(document.warm_index.seed_sources[i]);
+      sources.push_back(row.source);
     }
     doc["warm_index"] = { { "seeds", std::move(seeds) },
                           { "seed_sources", std::move(sources) },

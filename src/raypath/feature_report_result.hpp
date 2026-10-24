@@ -202,6 +202,18 @@ class FeatureReportResult : public FrozenValue<FeatureReportData> {
       }
     } else if (base_rows != 1 || bounded_rows != 1) {
       throw std::invalid_argument("feature report: the coverage roles do not describe one completed run");
+    } else {
+      // The outcome and the bounded row's status are one machine statement: completed means the
+      // search finished inside its account, partial means it did not.
+      const auto bounded = std::find_if(data.coverage.begin(), data.coverage.end(), [](const ReportCoverage& row) {
+        return row.role == CoverageRole::kBoundedDiscovery;
+      });
+      if (data.outcome == ReportOutcome::kCompleted && bounded->status != CoverageStatus::kSupported) {
+        throw std::invalid_argument("feature report: a completed outcome carries a partial coverage row");
+      }
+      if (data.outcome == ReportOutcome::kPartial && bounded->status != CoverageStatus::kNumericalIncomplete) {
+        throw std::invalid_argument("feature report: a partial outcome carries a complete coverage row");
+      }
     }
     // The published associations are indexed by ordinal: every table the reader walks must agree
     // in length, and every ordinal must be in range, before the value can be frozen.
@@ -218,6 +230,14 @@ class FeatureReportResult : public FrozenValue<FeatureReportData> {
     for (const DiagnosticFeatureRecord& feature : features) {
       if (feature.source_token && *feature.source_token >= sources.size()) {
         throw std::invalid_argument("feature report: a record names a source outside the measure");
+      }
+      if (feature.source_connected_feature && *feature.source_connected_feature >= features.size()) {
+        throw std::invalid_argument("feature report: a record names a connected record outside the evidence");
+      }
+    }
+    for (const schema3::StructureObjectRecord& object : data.core.objects) {
+      if (object.u.size() % 3 != 0) {
+        throw std::invalid_argument("feature report: a u preimage is not a whole number of triples");
       }
     }
     for (const schema3::UnattributedStructure& structure : data.unattributed.structures) {

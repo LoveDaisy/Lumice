@@ -1,6 +1,7 @@
 #include "raypath/probe_json.hpp"
 
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 #include <string>
 
 #include "raypath/detail/json_values.hpp"
@@ -187,6 +188,9 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
 }  // namespace
 
 std::string ProbeToJson(const ProbeResult& value, const std::string& product_version) {
+  if (!value.Data().Completed()) {
+    throw std::invalid_argument("probe: an uncompleted value has no publication");
+  }
   const ProbeData& result = value.Data();
   nlohmann::ordered_json doc;
   doc["schema"] = "lumice.path-probe";

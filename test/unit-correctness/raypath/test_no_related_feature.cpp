@@ -69,9 +69,9 @@ struct RulingCore {
     return *this;
   }
   RulingCore& WithS4Declared() {
-    core.coverage.declared_not_produced.push_back(ObjectKind::kS4BranchBoundary);
-    core.coverage.declared_reasons.push_back(
-        "owner ruling 2026-10-07: v1 declares the branch boundary, does not trace it (open math)");
+    core.coverage.declared_not_produced.push_back(
+        { ObjectKind::kS4BranchBoundary,
+          "owner ruling 2026-10-07: v1 declares the branch boundary, does not trace it (open math)" });
     return *this;
   }
 };

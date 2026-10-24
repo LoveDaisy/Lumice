@@ -296,13 +296,13 @@ EnumeratedCoverage V1Coverage() {
   EnumeratedCoverage coverage;
   coverage.produced = { ObjectKind::kKind1, ObjectKind::kKind1Restricted, ObjectKind::kKind2, ObjectKind::kKind3,
                         ObjectKind::kS6Junction };
-  coverage.declared_not_produced = { ObjectKind::kCorridorClosed, ObjectKind::kS3SupportBoundary,
-                                     ObjectKind::kS4BranchBoundary, ObjectKind::kS5DensityFeature };
-  coverage.declared_reasons = {
-    "no v8 producer for the corridor A=0 curve (the LI second batch A6 is the donor)",
-    "no 661 producer exposes a declared support boundary yet (v1 orbit supports are closed curves)",
-    "owner ruling 2026-10-07: v1 declares the branch boundary, does not trace it (open math)",
-    "no 661 producer exposes a density-feature image yet (v2 measure layer)",
+  coverage.declared_not_produced = {
+    { ObjectKind::kCorridorClosed, "no v8 producer for the corridor A=0 curve (the LI second batch A6 is the donor)" },
+    { ObjectKind::kS3SupportBoundary,
+      "no 661 producer exposes a declared support boundary yet (v1 orbit supports are closed curves)" },
+    { ObjectKind::kS4BranchBoundary,
+      "owner ruling 2026-10-07: v1 declares the branch boundary, does not trace it (open math)" },
+    { ObjectKind::kS5DensityFeature, "no 661 producer exposes a density-feature image yet (v2 measure layer)" },
   };
   return coverage;
 }

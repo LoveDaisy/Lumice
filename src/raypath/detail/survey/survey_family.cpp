@@ -140,8 +140,6 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     out->objects.push_back(FamilyCardOf(fact, input.wavelength_nm));
   }
   out->warm_index.seeds.insert(out->warm_index.seeds.end(), structure.seeds.begin(), structure.seeds.end());
-  out->warm_index.seed_sources.insert(out->warm_index.seed_sources.end(), structure.seed_sources.begin(),
-                                      structure.seed_sources.end());
   const bool rank_ran = structure.rank_ran;
   if (input.single_pose) {
     const double* pose = structure.single_pose.data();

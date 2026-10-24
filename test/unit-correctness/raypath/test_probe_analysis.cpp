@@ -124,11 +124,15 @@ ProbeRequest RadialRequest(const ConfigManager& config, double at_altitude, doub
 TEST(ProbeAnalysis, CertifiedProfileSerializesItsSuccessfulReading) {
   ProbeData data;
   ProbeProfile profile;
+  profile.wavelength_nm = 550.0;
+  profile.quantity.wavelengths_nm = { 550.0 };
+  profile.representative = { 3, 5 };
   auto& certified = profile.BeginCertified("synthetic");
   certified.scope.quantity = profile.quantity;  // a successful claim always carries its declared scope
+  certified.scope.members.members = { profile.representative };
   certified.value.samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
   data.profiles.push_back(std::move(profile));
-  const auto wire = nlohmann::json::parse(ProbeToJson(ProbeResult(std::move(data)), "test"));
+  const auto wire = nlohmann::json::parse(ProbeToJson(ProbeResult(FinalizeProbeData(std::move(data))), "test"));
   const auto& item = wire.at("profiles")[0];
   EXPECT_EQ(item.at("evidence").at("state"), "certified");
   EXPECT_EQ(item.at("evidence").at("method"), "synthetic");
@@ -263,8 +267,7 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
   document.warm_index.config_fingerprint = typed.config_fingerprint;
   document.warm_index.reuse_scope = "test receipt";
   document.warm_index.produced_for = "test producer";
-  document.warm_index.seeds.push_back({ 1, 0, 0, 0, 1, 0, 0, 0, 1 });
-  document.warm_index.seed_sources.push_back("test");
+  document.warm_index.seeds.push_back({ { 1, 0, 0, 0, 1, 0, 0, 0, 1 }, "test" });
   auto wire = nlohmann::json::parse(survey::SurveyResultToJson(survey::SurveyResult(document), "test"));
   WarmCandidate decoded;
   ASSERT_TRUE(DecodeWarmCandidate(wire.dump(), &decoded).Ok());

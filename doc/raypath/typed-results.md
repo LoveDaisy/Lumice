@@ -50,15 +50,19 @@ cross-field invariant is enforced — not a per-field convenience check scattere
   `kDeclaredSkip`): the codec partitions by that role, so a renamed subject keeps its limitations
   and a row inserted at any position keeps the vocabulary ledger in place. Only the
   bounded-discovery row may carry limitations, the unsupported arm publishes exactly its one
-  refusal row, and the freeze checks the tables the reader walks by ordinal: annotations and
-  objects agree in length, every `matched_record`, `source_token` and unattributed
-  `record_index` is in range.
+  refusal row, and the outcome agrees with the bounded row's status (`kCompleted` ↔ supported,
+  `kPartial` ↔ numerical incomplete). The freeze checks the tables the reader walks by ordinal:
+  annotations and objects agree in length, every `matched_record`, `source_token`,
+  `source_connected_feature` and unattributed `record_index` is in range, and each object's `u`
+  preimage is a whole number of triples.
 - **Point.** The completion marker is private to the value; `FinalizePointData` is the only
   function that sets it, and it also refuses a sun grid whose parallel arrays disagree in length
   (the encoder iterates the deviation column and reads the other two by index). The data
   constructor refuses the unmarked slot and `ToJson` throws on it, so a default-constructed point
   cannot be published as `kDiscovered`.
-- **Survey.** The `SurveyResult` constructor *is* the completion boundary: `FinalizeSurveyData`
+- **Survey.** The warm index is one row per held pose (`WarmSeed`: pose and the leg that held it),
+  so the serializer cannot walk a parallel `seed_sources` column past its end.
+  The `SurveyResult` constructor *is* the completion boundary: `FinalizeSurveyData`
   binds every claim's declared scope from the document's own facts (members, geometry, observation,
   quantity spec), and `Validated` then rejects inconsistent object adjuncts, a bright domain whose
   `probe_index` names no probe, an object member outside the class, and a successful probe claim
@@ -66,20 +70,42 @@ cross-field invariant is enforced — not a per-field convenience check scattere
   every construction path — production, warm decode, tests — yields the same scopes.
 - **Probe.** The claim is private: a writable reading exists only as the return of `BeginFinite`, a
   certified arm only through `BeginCertified`, and a refusal's mode is set together with its arm by
-  `Refuse`. `ProbeResult` rejects a successful profile claim without a declared quantity scope and
-  a red-edge width whose two edge readings are absent.
+  `Refuse`. The completion marker is private and set only by `FinalizeProbeData`; the data
+  constructor refuses the unmarked slot and `ProbeToJson` throws on it. The freeze rejects a
+  successful profile whose scope names another wavelength or representative than its own
+  declaration, and a red-edge width whose two edge readings are absent.
 - **Report object records.** The unassessed chromatic arm is read-only: `Chromatic()` returns the
   declared defaults, and filling a verdict requires the explicit `SetChromatic` transition
   (`MutableChromatic()` throws before it).
 
 ## Symbol placement recorded, not hidden
 
-Two placements lag their file location and are listed here so nobody takes them for internals:
-`results/report_structure.hpp` still lives in `lumice::raypath::schema3` although its record types
-are part of the report completion value; and the probe core in `detail/quantity/probe_line.*`
-still lives in `lumice::raypath::survey` although it is a shared capability beside
-`quantity::tint`/`tir_share`/`mc_ess`/`witness`. Both are renames deferred, not ownership
-statements.
+Several placements lag their file location and are listed here so nobody takes them for
+internals: `results/report_structure.hpp` still lives in `lumice::raypath::schema3` although its
+record types are part of the report completion value; the probe core in
+`detail/quantity/probe_line.*` still lives in `lumice::raypath::survey` although it is a shared
+capability beside `quantity::tint`/`tir_share`/`mc_ess`/`witness`; and `domain/evidence.hpp`,
+`domain/measure.hpp`, `domain/object_kind.hpp` and `results/probe_line.hpp` remain in
+`lumice::raypath::survey` for the same historical reason (the `survey::` prefix is therefore
+visible in `ProbeResult` fields and `Claim`). All are renames deferred, not ownership statements.
+
+## Tables a public serializer walks by index
+
+The completion boundary must make every one of these safe before the value can freeze. This is
+the census, checked against the four serializers and their typed readers:
+
+| Table | Reader | Guard |
+|---|---|---|
+| report `core.objects` ↔ `annotations` | `PathFeatureReportV3ToJson` | equal length at freeze |
+| report `coverage.declared_not_produced` ↔ reason | the vocabulary row | one row type (`DeclaredNotProduced`) — a mismatch is unrepresentable |
+| report ordinals (`matched_record`, `source_token`, `source_connected_feature`, `unattributed.record_index`) | serializer + typed accessors | in range at freeze |
+| report `object.u` | attribution / serializer | multiple of three at freeze |
+| survey `warm_index.seeds` ↔ `seed_sources` | `SurveyResultToJson` | one row type (`WarmSeed`) — a mismatch is unrepresentable |
+| point `sun_grid.{deviation_rad,valid,entry_measure}` | `SunGridJson` | equal length at `FinalizePointData` |
+| survey `grid_spacing_deg[2]` | the ladder block | fixed-size array, no index risk |
+
+Adding a reader that pairs two containers means adding its row here and giving it a guard (a
+single row type where possible); the census is the checklist that replaces per-round discovery.
 
 ## Claims and independent states
 

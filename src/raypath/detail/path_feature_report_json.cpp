@@ -707,9 +707,8 @@ std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const ch
   }
   const EnumeratedCoverage& vocabulary = assembled.core.coverage;
   Json declared = Json::array();
-  for (size_t i = 0; i < vocabulary.declared_not_produced.size(); ++i) {
-    declared.push_back({ { "kind", ObjectKindName(vocabulary.declared_not_produced[i]) },
-                         { "reason", vocabulary.declared_reasons[i] } });
+  for (const schema3::DeclaredNotProduced& row : vocabulary.declared_not_produced) {
+    declared.push_back({ { "kind", ObjectKindName(row.kind) }, { "reason", row.reason } });
   }
   Json produced = Json::array();
   for (ObjectKind kind : vocabulary.produced) {

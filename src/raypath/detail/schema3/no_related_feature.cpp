@@ -77,12 +77,10 @@ NoRelatedRuling DeriveNoRelatedFeature(const Schema3DiscoveryCore& core, const U
   }
 
   // ---- condition 4: S4 范围声明 --------------------------------------------------------
-  for (size_t i = 0; i < core.coverage.declared_not_produced.size(); i++) {
-    if (core.coverage.declared_not_produced[i] == ObjectKind::kS4BranchBoundary) {
+  for (const schema3::DeclaredNotProduced& row : core.coverage.declared_not_produced) {
+    if (row.kind == ObjectKind::kS4BranchBoundary) {
       ruling.s4_scope_declared = true;
-      if (i < core.coverage.declared_reasons.size()) {
-        ruling.s4_scope_note = core.coverage.declared_reasons[i];
-      }
+      ruling.s4_scope_note = row.reason;
       break;
     }
   }

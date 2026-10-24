@@ -1,9 +1,15 @@
 #include "raypath/detail/survey/survey_witness.hpp"
 
+#include "util/fatal.hpp"
+
 namespace lumice::raypath::survey {
 
 void AssembleWitness(const quantity::WitnessInput& input, SurveyObject* card) {
-  card->SetWitness(quantity::EvaluateWitness(input));
+  // The witness hangs on a support card only; a wrong-kind card is an assembly invariant break,
+  // not a silently dropped evidence block.
+  if (!card->SetWitness(quantity::EvaluateWitness(input))) {
+    FatalAbort("witness attached to a non-support survey card");
+  }
 }
 
 void AssembleRefusedSupport(const quantity::WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
@@ -25,8 +31,7 @@ void AssembleRefusedSupport(const quantity::WitnessInput& witness_input, const s
     for (int k = 0; k < 9; k++) {
       seed[static_cast<size_t>(k)] = card.Witness()->Value().pose[k];
     }
-    out->warm_index.seeds.push_back(std::move(seed));
-    out->warm_index.seed_sources.emplace_back("witness_argmax");
+    out->warm_index.seeds.push_back({ std::move(seed), "witness_argmax" });
   }
   if (objects_discipline == RefusedSupportObjects::kReplaceObjects) {
     out->objects.clear();

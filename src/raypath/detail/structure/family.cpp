@@ -435,8 +435,7 @@ void CollectWarmSeed(FamilyStructureResult* out, const FamilyCandidate& candidat
   for (int k = 0; k < 9; k++) {
     seed[static_cast<size_t>(k)] = candidate.pose[k];
   }
-  out->seeds.push_back(std::move(seed));
-  out->seed_sources.emplace_back(candidate.pose_source);
+  out->seeds.push_back({ std::move(seed), candidate.pose_source });
 }
 
 }  // namespace

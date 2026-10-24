@@ -537,7 +537,7 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     }
   }
 
-  *out = std::move(result);
+  *out = FinalizeProbeData(std::move(result));
   return {};
 }
 

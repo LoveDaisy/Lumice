@@ -31,16 +31,12 @@ WarmCandidate HarvestSurveyResult(const survey::SurveyResult& result) {
                            ScopeLocation{ SelectionLocation::kStandalone, 0 };
   candidate.config_fingerprint = doc.warm_index.config_fingerprint;
   candidate.decode_stage = WarmDecodeStage::kPayload;
-  for (const auto& seed : doc.warm_index.seeds)
-    candidate.seeds.insert(candidate.seeds.end(), seed.begin(), seed.end());
+  for (const survey::WarmSeed& seed : doc.warm_index.seeds)
+    candidate.seeds.insert(candidate.seeds.end(), seed.pose.begin(), seed.pose.end());
   SurveyWarmSource& out = candidate.facts;
   out.family = WarmDocumentFamily::kSurvey;
   // The typed document, like its serializer, always carries a warm_index block.
   out.index_present = true;
-  if (doc.warm_index.seeds.size() != doc.warm_index.seed_sources.size()) {
-    candidate.decode_error = { ErrorCode::kInvalidArgument,
-                               "warm index: the document's warm_index seeds and seed_sources disagree in length" };
-  }
   out.geometry = doc.geometry;
   out.early_stopped = doc.early_stopped;
   out.has_wavelength = std::isfinite(doc.wavelength_nm) && doc.wavelength_nm > 0.0;

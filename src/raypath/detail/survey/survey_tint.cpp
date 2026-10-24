@@ -2,16 +2,29 @@
 
 namespace lumice::raypath::survey {
 namespace {
+// The block mirrors the tint leg's own state arm by arm: a leg that did not run must not be
+// reported as a finite block whose sub-block says unevaluated.
 void MountTint(WeightTintResult tint, int member_count, const std::string& geometry_basis, SurveyData* out) {
   out->weight_tint = std::move(tint);
-  if (out->weight_tint->State() == EvidenceState::kRefused) {
-    out->chromatic.state = EvidenceState::kRefused;
-    out->chromatic.mode = out->weight_tint->Mode();
-  } else {
-    out->chromatic.state = EvidenceState::kFinite;
-    out->chromatic.coverage.members_evaluated = member_count;
-    out->chromatic.coverage.wavelength_nm = kChromaticBlueNm;
-    out->chromatic.coverage.geometry_basis = geometry_basis;
+  switch (out->weight_tint->State()) {
+    case EvidenceState::kRefused:
+      out->chromatic.state = EvidenceState::kRefused;
+      out->chromatic.mode = out->weight_tint->Mode();
+      break;
+    case EvidenceState::kUnevaluated:
+      out->chromatic.state = EvidenceState::kUnevaluated;
+      out->chromatic.reason = out->weight_tint->Reason();
+      break;
+    case EvidenceState::kCertified:
+      out->chromatic.state = EvidenceState::kCertified;
+      out->chromatic.method = out->weight_tint->Method();
+      break;
+    case EvidenceState::kFinite:
+      out->chromatic.state = EvidenceState::kFinite;
+      out->chromatic.coverage.members_evaluated = member_count;
+      out->chromatic.coverage.wavelength_nm = kChromaticBlueNm;
+      out->chromatic.coverage.geometry_basis = geometry_basis;
+      break;
   }
 }
 }  // namespace

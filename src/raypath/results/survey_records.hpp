@@ -550,9 +550,14 @@ struct SurveyRequestEcho {
 // the config fingerprint (the routing-axis projection's SHA256, config_fingerprint.hpp's single
 // implementation). A pure append on the schema-4 document — a pre-warm reader sees no key change,
 // and a survey whose arms held no pose carries `seeds: []` with the same declaration fields.
+// One held pose and the leg that held it, as a single row: the serializer can never walk one
+// column past the other.
+struct WarmSeed {
+  std::array<double, 9> pose{};
+  std::string source;
+};
 struct WarmIndexBlock {
-  std::vector<std::array<double, 9>> seeds;
-  std::vector<std::string> seed_sources;  // parallel to seeds: the leg that held the pose
+  std::vector<WarmSeed> seeds;
   std::string reuse_scope;
   std::string produced_for;
   std::string config_fingerprint;

@@ -5,10 +5,16 @@
 #include "raypath/results/structure.hpp"
 namespace lumice::raypath::schema3 {
 
+// One declared-not-produced entry: the kind and its reason are a single row, so a reader can
+// never walk one column past the other.
+struct DeclaredNotProduced {
+  ObjectKind kind;
+  std::string reason;
+};
+
 struct EnumeratedCoverage {
   std::vector<ObjectKind> produced;
-  std::vector<ObjectKind> declared_not_produced;
-  std::vector<std::string> declared_reasons;  // parallel to declared_not_produced
+  std::vector<DeclaredNotProduced> declared_not_produced;
 };
 
 struct EnumerationBudget {

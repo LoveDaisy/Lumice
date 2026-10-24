@@ -5,6 +5,7 @@
 #include "raypath/detail/structure/class_support.hpp"
 #include "raypath/domain/measure.hpp"
 #include "raypath/results/structure.hpp"
+#include "raypath/results/survey_records.hpp"
 
 namespace lumice::raypath::structure {
 
@@ -47,8 +48,7 @@ struct FamilyStructureResult {
   std::string refusal_mode;
   std::vector<structure::FamilyLadderLevel> ladder;
   std::vector<structure::FamilySurvivor> survivors;
-  std::vector<std::array<double, 9>> seeds;
-  std::vector<std::string> seed_sources;
+  std::vector<survey::WarmSeed> seeds;
   bool rank_ran = false;
   std::array<double, 9> single_pose{};
 };
