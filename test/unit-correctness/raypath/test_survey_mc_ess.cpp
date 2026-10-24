@@ -70,6 +70,9 @@ TEST(SurveyMcRegionEss, PositiveShapeEchoesTheRequestAndHoldsTheKishBounds) {
   ASSERT_TRUE(document.mc_region_ess.has_value());
   const SurveyMcRegionEss& ess = *document.mc_region_ess;
   ASSERT_EQ(ess.State(), EvidenceState::kFinite);
+  EXPECT_EQ(ess.Value().quantity.shape, GeometryKind::kDeclaredPopulation);
+  EXPECT_NE(ess.Scope().geometry.kind, GeometryKind::kNominal);
+  EXPECT_EQ(ess.Scope().geometry.kind, ess.Value().quantity.shape);
   EXPECT_EQ(ess.Value().seed, kSurveyMcEssSeed);
   EXPECT_EQ(ess.Value().draws, draws);
   EXPECT_DOUBLE_EQ(ess.Value().lambda_nm, fix.wavelength_nm);
@@ -121,11 +124,14 @@ TEST(SurveyMcRegionEss, AssemblyCarriesTheKeyOnlyWhenRequested) {
   EXPECT_FALSE(document.mc_region_ess.has_value());  // the flag did not ask
 
   request.mc_ess_draws = 500;
-  SurveyData with_leg;
-  ASSERT_TRUE(AssembleSurveyData(config, request, &with_leg).Ok());
+  SurveyResult published;
+  ASSERT_TRUE(AnalyzePathSurveyValue(config, request, &published).Ok());
+  const auto& with_leg = published.Data();
   ASSERT_TRUE(with_leg.mc_region_ess.has_value());
   EXPECT_EQ(with_leg.mc_region_ess->State(), EvidenceState::kFinite);
   EXPECT_EQ(with_leg.mc_region_ess->Value().draws, 500);
+  EXPECT_NE(with_leg.mc_region_ess->Scope().geometry.kind, GeometryKind::kNominal);
+  EXPECT_EQ(with_leg.mc_region_ess->Scope().geometry.kind, GeometryKind::kDeclaredPopulation);
   // The note names the leg it ran.
   EXPECT_NE(with_leg.budget_note.find("MC region ESS"), std::string::npos);
 }

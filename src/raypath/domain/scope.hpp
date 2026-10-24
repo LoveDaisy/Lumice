@@ -31,7 +31,7 @@ struct MemberScope : ScopeLocation {
   std::vector<std::vector<int>> members;
 };
 
-enum class GeometryKind { kNominal, kRealized };
+enum class GeometryKind { kNominal, kRealized, kDeclaredPopulation };
 struct GeometryScope {
   GeometryKind kind = GeometryKind::kNominal;
 };
@@ -88,7 +88,6 @@ enum class QuantityMethod {
 enum class DensityWeighting { kPoseDensity, kNone, kDeclaredPoseDensity, kActualSamplingWeights };
 enum class SpectralObservation { kReferenceWavelength, kFixedChromaticPair, kDiscreteSpectrum, kQuadrature };
 enum class SourceObservation { kSolarCenter, kSolarDisk };
-enum class QuantityShapeBasis { kNominal, kDeclaredPopulation, kRealized };
 struct QuantityContext;
 struct QuantitySpec {
   QuantityKind kind = QuantityKind::kBandSum;
@@ -100,7 +99,7 @@ struct QuantitySpec {
   DensityWeighting density = DensityWeighting::kPoseDensity;
   SpectralObservation spectrum = SpectralObservation::kReferenceWavelength;
   SourceObservation source = SourceObservation::kSolarCenter;
-  QuantityShapeBasis shape = QuantityShapeBasis::kNominal;
+  GeometryKind shape = GeometryKind::kNominal;
   ObservationScope observation;
   std::vector<double> wavelengths_nm;
   double regularization_epsilon = 0.0;

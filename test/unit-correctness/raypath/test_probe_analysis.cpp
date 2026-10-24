@@ -329,6 +329,12 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.probes.clear();
   document.family_routing->measure.kind = MeasureKind::kActualDeclared;
+  document.geometry.kind = GeometryKind::kDeclaredPopulation;
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).Ok());
+  EXPECT_EQ(decoded.facts.geometry.kind, GeometryKind::kDeclaredPopulation);
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  EXPECT_FALSE(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).structure);
   document.geometry.kind = GeometryKind::kNominal;
   typed = HarvestSurveyResult(survey::SurveyResult(document));
   typed.facts.measure_zenith.width_deg += 1.0;

@@ -492,35 +492,6 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   if (const Error error = AssembleSurveyData(config, request, &data, options); !error.Ok()) {
     return error;
   }
-  for (auto& object : data.objects) {
-    ClaimScope scope;
-    scope.members.members = object.members;
-    scope.members.member_kind = request.symmetry_bits == 0 ? MemberKind::kLiteral : MemberKind::kPhysicalL2;
-    static_cast<ScopeLocation&>(scope.members) = ResolveSelectionLocation(config, request);
-    scope.geometry = data.geometry;
-    scope.observation = { data.wavelength_nm, data.sun_altitude_deg, data.sun_azimuth_deg };
-    scope.measure.kind =
-        object.band && object.band->level > 0 ? MeasureKind::kIdealFrozen : MeasureKind::kActualDeclared;
-    scope.input = data.quantity_context;
-    scope.measure.reference = ReferenceMeasure::kNone;
-    object.BindScope(scope);
-    if (object.Witness()) {
-      ClaimScope witness_scope = object.Witness()->Scope();
-      witness_scope.input = data.quantity_context;
-      static_cast<ScopeLocation&>(witness_scope.members) =
-          static_cast<const ScopeLocation&>(data.quantity_context->members);
-      witness_scope.geometry = data.geometry;
-      witness_scope.observation = data.quantity_context->observation;
-      witness_scope.measure = { MeasureKind::kActualDeclared, ReferenceMeasure::kHaar };
-      object.Witness()->BindScope(witness_scope);
-      if (auto* value = object.Witness()->ValueOrNull()) {
-        value->quantity.context = data.quantity_context;
-        value->quantity.observation = witness_scope.observation;
-        witness_scope.quantity = value->quantity;
-        object.Witness()->BindScope(witness_scope);
-      }
-    }
-  }
   const auto bind_quantity = [&](auto& optional) {
     if (!optional)
       return;
@@ -533,8 +504,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
       value->quantity.context = data.quantity_context;
       value->quantity.observation.sun_altitude_deg = data.sun_altitude_deg;
       value->quantity.observation.sun_azimuth_deg = data.sun_azimuth_deg;
-      scope.quantity = value->quantity;
-      scope.measure = { value->quantity.measure, value->quantity.reference };
+      BindQuantityScope(&scope, value->quantity);
     }
     if (scope.quantity) {
       scope.observation = scope.quantity->observation;
@@ -542,6 +512,8 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
       scope.observation.sun_azimuth_deg = data.sun_azimuth_deg;
       scope.quantity->context = data.quantity_context;
       scope.quantity->observation = scope.observation;
+      const QuantitySpec quantity = *scope.quantity;
+      BindQuantityScope(&scope, quantity);
       if (scope.quantity->aggregation == MemberAggregation::kRepresentative) {
         scope.members.members = { data.request.path_layers.front() };
         scope.members.member_kind = MemberKind::kLiteral;
@@ -549,6 +521,21 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
     }
     optional->BindScope(scope);
   };
+  for (auto& object : data.objects) {
+    ClaimScope scope;
+    scope.members.members = object.members;
+    scope.members.member_kind = request.symmetry_bits == 0 ? MemberKind::kLiteral : MemberKind::kPhysicalL2;
+    static_cast<ScopeLocation&>(scope.members) = ResolveSelectionLocation(config, request);
+    scope.geometry = data.geometry;
+    scope.observation = { data.wavelength_nm, data.sun_altitude_deg, data.sun_azimuth_deg };
+    scope.measure.kind =
+        object.band && object.band->level > 0 ? MeasureKind::kIdealFrozen : MeasureKind::kActualDeclared;
+    scope.input = data.quantity_context;
+    scope.measure.reference = ReferenceMeasure::kNone;
+    object.BindScope(scope);
+    if (auto* witness = object.Witness())
+      bind_quantity(witness);
+  }
   bind_quantity(data.weight_tint);
   bind_quantity(data.tir_share);
   bind_quantity(data.mc_region_ess);

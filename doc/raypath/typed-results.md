@@ -95,6 +95,9 @@ density weighting, source/spectral observation, shape basis, and regularization 
 applicable. Its shared const `QuantityContext` owns the actual crystal distribution,
 light spectrum/source parameters, resolved members, and observation metadata. A spec
 selects the relevant part of those inputs; the context is not a universal cache key.
+`GeometryKind` is the single nominal/realized/declared-population vocabulary, and
+`BindQuantityScope` is the single quantity-to-claim projection of shape, observation
+and measure, used both by services and by query mounting.
 
 - Band-sum profiles are representative-member per-steradian values under the normalized
   Haar/PoseDensity protocol. `member_count` does not silently multiply stored samples.
@@ -121,7 +124,9 @@ selects the relevant part of those inputs; the context is not a universal cache 
 ## Field-group migration ledger
 
 The JSON contract remains [raypath-cli-output.md](raypath-cli-output.md). No normal-path
-wire-field or numerical evolution is introduced by these moves. The default of a
+wire-field or numerical evolution is introduced by these moves. The optional, non-default
+`scope.geometry_kind` also accepts `declared_population` to preserve conservative warm
+round-trips of that scope; it never becomes a nominal structural reuse candidate. The default of a
 hand-constructed, uncomputed typed declaration is now unevaluated; successful production
 legs explicitly construct their evidence. Timing values are observations, not bitwise
 comparison targets. Static wire prose and enum spelling remain codec responsibilities.

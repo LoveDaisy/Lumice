@@ -610,9 +610,12 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
                                     scope["wavelength_source"].get<std::string>() :
                                     "";
     if (scope.contains("geometry_kind")) {
-      if (scope["geometry_kind"] != "realized")
+      if (scope["geometry_kind"] == "realized")
+        survey->geometry.kind = GeometryKind::kRealized;
+      else if (scope["geometry_kind"] == "declared_population")
+        survey->geometry.kind = GeometryKind::kDeclaredPopulation;
+      else
         return refuse("corrupt warm document: unknown geometry kind");
-      survey->geometry.kind = GeometryKind::kRealized;
     }
     if (scope.contains("sun_altitude_deg") && scope["sun_altitude_deg"].is_number()) {
       survey->sun_altitude_deg = scope["sun_altitude_deg"].get<double>();

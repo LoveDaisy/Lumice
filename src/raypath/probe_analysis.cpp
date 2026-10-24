@@ -189,9 +189,7 @@ ProbeProfile CompleteProbeProfile(ProbeProfile profile, const MemberScope& membe
   scope.members = members;
   scope.members.members = { profile.representative };
   scope.members.member_kind = MemberKind::kLiteral;
-  scope.quantity = profile.quantity;
-  scope.observation = profile.quantity.observation;
-  scope.measure = { profile.quantity.measure, profile.quantity.reference };
+  BindQuantityScope(&scope, profile.quantity);
   std::visit(
       [&scope](auto& arm) {
         using A = std::decay_t<decltype(arm)>;

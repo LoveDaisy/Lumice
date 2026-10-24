@@ -28,6 +28,14 @@ inline QuantitySpec DescribeQuantity(QuantityKind kind, QuantityUnit unit, Quant
   return spec;
 }
 
+// The sole projection of a quantity's declared semantics onto its claim.
+inline void BindQuantityScope(ClaimScope* scope, const QuantitySpec& spec) {
+  scope->quantity = spec;
+  scope->geometry.kind = spec.shape;
+  scope->observation = spec.observation;
+  scope->measure = { spec.measure, spec.reference };
+}
+
 template <class Quantity>
 void DeclareQuantity(Quantity* result, QuantitySpec spec, std::vector<std::vector<int>> members,
                      std::optional<double> wavelength_nm) {
@@ -35,11 +43,9 @@ void DeclareQuantity(Quantity* result, QuantitySpec spec, std::vector<std::vecto
     spec.wavelengths_nm = { *wavelength_nm };
   spec.observation.wavelength_nm = wavelength_nm;
   ClaimScope scope;
-  scope.quantity = spec;
+  BindQuantityScope(&scope, spec);
   scope.members.location = SelectionLocation::kStandalone;
   scope.members.members = std::move(members);
-  scope.observation = spec.observation;
-  scope.measure = { spec.measure, spec.reference };
   result->BindScope(scope);
   if (auto* value = result->ValueOrNull())
     value->quantity = std::move(spec);
@@ -49,9 +55,7 @@ template <class Quantity>
 Quantity CompleteQuantity(Quantity result) {
   if (auto* value = result.ValueOrNull()) {
     ClaimScope scope = result.Scope();
-    scope.quantity = value->quantity;
-    scope.measure = { value->quantity.measure, value->quantity.reference };
-    scope.observation = value->quantity.observation;
+    BindQuantityScope(&scope, value->quantity);
     result.BindScope(scope);
   }
   return result;

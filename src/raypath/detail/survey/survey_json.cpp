@@ -366,6 +366,8 @@ std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_ve
   };
   if (document.geometry.kind == GeometryKind::kRealized)
     doc["scope"]["geometry_kind"] = "realized";
+  if (document.geometry.kind == GeometryKind::kDeclaredPopulation)
+    doc["scope"]["geometry_kind"] = "declared_population";
 
   Json routing = { { "early_stopped", document.early_stopped } };
   Json verdicts = Json::array();

@@ -56,7 +56,7 @@ SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input) {
   ess.Value().quantity =
       DescribeQuantity(QuantityKind::kMcEss, QuantityUnit::kDimensionless, QuantityMethod::kKishOuterDraw,
                        ReferenceMeasure::kActualProduct, DensityWeighting::kActualSamplingWeights);
-  ess.Value().quantity.shape = QuantityShapeBasis::kDeclaredPopulation;
+  ess.Value().quantity.shape = GeometryKind::kDeclaredPopulation;
   ess.Value().quantity.aggregation = MemberAggregation::kPhysicalClass;
   ess.Value().quantity.source =
       input.snapshot->light.param_.diameter_ > 0 ? SourceObservation::kSolarDisk : SourceObservation::kSolarCenter;
