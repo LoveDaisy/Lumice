@@ -1,4 +1,4 @@
-#include "raypath/detail/schema3/support_block.hpp"
+#include "raypath/detail/structure/support.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -6,7 +6,7 @@
 
 #include "analytic/dp_weight_kink.hpp"
 
-namespace lumice::raypath::schema3 {
+namespace lumice::raypath::structure {
 namespace {
 
 // The partition's own merge constant is the "same value" ruler everywhere on this block: an
@@ -151,4 +151,4 @@ bool SameSupport(const std::vector<analytic::DeviationInterval>& a, const std::v
   return true;
 }
 
-}  // namespace lumice::raypath::schema3
+}  // namespace lumice::raypath::structure

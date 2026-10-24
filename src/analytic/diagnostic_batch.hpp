@@ -6,49 +6,13 @@
 #include <cstdint>
 #include <vector>
 
+#include "analytic/diagnostic_types.hpp"
 #include "analytic/entry_measure.hpp"
 #include "analytic/path_chain.hpp"
 
 namespace lumice::analytic {
 
-struct DiagnosticInputRow {
-  CrystalShape crystal;
-  std::array<double, 9> pose{};
-  std::array<double, 3> incident{};
-  double refractive_index = 0;
-  uint64_t source_token = 0;
-};
-struct DiagnosticInterface {
-  bool reached = false;
-  double incidence = 0;
-  double discriminant = 0;  // negative means TIR; internal slots only
-  std::array<double, 3> discriminant_pose_gradient{};
-  bool pose_gradient_available = false;
-  double discriminant_index_derivative = 0;
-  double index_derivative_error = 0;
-  bool index_derivative_available = false;
-  double factor = 0;
-  bool factor_available = false;
-};
-struct DiagnosticOutputRow {
-  uint64_t source_token = 0;
-  Status input_status = Status::kInvalidValue;
-  uint64_t path_evaluations = 0;
-  ChainFailure optical_failure = ChainFailure::kNone;
-  bool path_valid = false;
-  std::array<double, 3> outgoing{};
-  // Right-trivialized body rotation, outgoing Cartesian component then axis.
-  std::array<std::array<double, 3>, 3> direction_pose_jacobian{};
-  bool direction_jacobian_available = false;
-  std::array<double, 3> direction_index_derivative{};
-  double direction_index_error = 0;
-  bool direction_index_available = false;
-  double interface_product = 0;
-  EntryMeasure entry;
-  bool entry_available = false;
-  CorridorDiagnostics corridor;
-  std::vector<DiagnosticInterface> interfaces;
-};
+
 struct DiagnosticBatchOptions {
   bool derivatives = false;
   bool corridor_lineage = false;
@@ -65,15 +29,7 @@ bool EvaluateDiagnosticBatch(const std::vector<int>& faces, const std::vector<Di
 // A local conditional interface equation on SO(3), not a joint caustic or an
 // observed colour boundary. The caller owns whether this pose chart belongs
 // to its declared source measure. Each accepted iterate must retain A*T > 0.
-enum class InterfaceSolveStatus {
-  kConverged,
-  kInvalidInput,
-  kUnavailable,
-  kNoSupport,
-  kDegenerate,
-  kIterationLimit,
-  kBudgetExceeded
-};
+
 struct InterfaceSolveOptions {
   int internal_slot = 0;
   double residual_tolerance = 1e-10;
@@ -81,40 +37,12 @@ struct InterfaceSolveOptions {
   int max_iterations = 32;
   bool require_positive_entry = true;
 };
-struct InterfaceStationaryPoint {
-  InterfaceSolveStatus status = InterfaceSolveStatus::kInvalidInput;
-  DiagnosticInputRow source;
-  DiagnosticOutputRow value;
-  std::vector<std::array<double, 9>> accepted_poses;
-  double travelled_rad = 0;
-  uint64_t path_evaluations = 0;
-};
+
 InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, const DiagnosticInputRow& source,
                                                const InterfaceSolveOptions& options, uint64_t max_path_evaluations,
                                                std::chrono::steady_clock::time_point deadline);
 
-enum class InterfaceWalkStop {
-  kClosed,
-  kAreaThreshold,
-  kGeometricContact,
-  kOpticalGate,
-  kCorrectorFailed,
-  kPointLimit,
-  kBudgetExceeded,
-  kInvalidInput
-};
-struct InterfaceEventBracket {
-  InterfaceWalkStop kind = InterfaceWalkStop::kInvalidInput;
-  InterfaceStationaryPoint positive;
-  InterfaceStationaryPoint nonpositive;
-  double source_width_rad = 0;
-};
-struct InterfaceCurve {
-  std::vector<InterfaceStationaryPoint> points;
-  std::vector<InterfaceEventBracket> events;
-  InterfaceWalkStop stop = InterfaceWalkStop::kInvalidInput;
-  uint64_t path_evaluations = 0;
-};
+
 // Walk one direction of a conditional interface curve in the body-incident S2
 // quotient. Product-area and raw-geometric-contact brackets remain different
 // predicates. Brackets give local source ranges, not exact contact certificates.
@@ -132,17 +60,7 @@ struct DeviationSolveOptions {
   double max_step_rad = .1;
   int max_iterations = 32;
 };
-struct DeviationStationaryPoint {
-  InterfaceSolveStatus status = InterfaceSolveStatus::kInvalidInput;
-  DiagnosticInputRow source;
-  DiagnosticOutputRow value;
-  bool deviation_available = false;  // Complete angle/correction/curvature snapshot.
-  double deviation_rad = 0;
-  std::array<double, 2> objective_curvatures{};
-  double hessian_error = 0;
-  double correction_rad = 0;
-  uint64_t path_evaluations = 0;
-};
+
 DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, const DiagnosticInputRow& source,
                                                  const DeviationSolveOptions& options, uint64_t max_path_evaluations,
                                                  std::chrono::steady_clock::time_point deadline);

@@ -4,24 +4,27 @@
 
 #include "analytic/dp_boundary.hpp"
 #include "analytic/dp_focus.hpp"
+#include "config/crystal_config.hpp"
+#include "config/light_config.hpp"
 #include "raypath/detail/json_values.hpp"
-#include "raypath/detail/measure/measure_geometry_contract.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/no_related_feature.hpp"
 #include "raypath/detail/schema3/structure_object.hpp"
+#include "raypath/domain/measure_geometry.hpp"
+#include "raypath/path_feature_report.hpp"
 
 namespace lumice::raypath {
-using schema3::ConstantDeltaCurve;
 using schema3::CorroborationAnnotation;
 using schema3::EnumeratedCoverage;
-using schema3::FamilySupport;
 using schema3::McSpectralVerification;
-using schema3::MemberSupport;
 using schema3::ObjectKind;
 using schema3::Schema3DiscoveryCore;
 using schema3::StructureObjectRecord;
 using schema3::UnattributedStructure;
+using structure::ConstantDeltaCurve;
+using structure::FamilySupport;
+using structure::MemberSupport;
 namespace {
 using detail::Array;
 using detail::Num;
@@ -177,7 +180,7 @@ Json FieldPointJson(const analytic::FieldStationaryPoint& point) {
 // buckets (actual_features/candidates/unfinished) and the v3 mc_evidence.records ride the SAME
 // function, so a field added to DiagnosticFeatureRecord cannot grow two divergent spellings
 // (a56). `sources` receives the per-token projection the record's witness contributes.
-Json FeatureRecordJson(const DiscoveryResult& discovery, const DiagnosticFeatureRecord& feature, size_t index,
+Json FeatureRecordJson(const CompletedDiscovery& discovery, const DiagnosticFeatureRecord& feature, size_t index,
                        Json* sources) {
   Json item = {
     { "id", index },
@@ -232,18 +235,17 @@ Json FeatureRecordJson(const DiscoveryResult& discovery, const DiagnosticFeature
   }
   if (feature.source_token) {
     item["source_token"] = *feature.source_token;
-    const auto& source = discovery.measure.sources[*feature.source_token];
-    AssembledInput input;
-    const auto replay = ReplayDiagnosticSource(discovery.measure, *feature.source_token, &input);
-    if (replay.Ok()) {
-      const auto& layer = input.layers[0];
-      const auto& spectral = input.spectrum.rows[source.spectral_row];
-      item["positive_source_witness"] = SourceJson({ layer.shape, layer.analytic_pose, input.source.incident_direction,
-                                                     spectral.refractive_index, *feature.source_token });
+    const auto source =
+        std::find_if(discovery.positive_sources.begin(), discovery.positive_sources.end(),
+                     [&](const PositiveSourceWitness& entry) { return entry.token == *feature.source_token; });
+    if (source != discovery.positive_sources.end()) {
+      if (source->coordinates) {
+        item["positive_source_witness"] = SourceJson(*source->coordinates);
+      }
+      (*sources)[std::to_string(source->token)] = { { "outer_sample", source->source.sample_index },
+                                                    { "member", source->source.member_index },
+                                                    { "spectral_row", source->source.spectral_row } };
     }
-    (*sources)[std::to_string(*feature.source_token)] = { { "outer_sample", source.sample_index },
-                                                          { "member", source.member_index },
-                                                          { "spectral_row", source.spectral_row } };
   } else {
     item["source_scope"] =
         "aggregate over the recorded physical-member/spectrum/product measure; no unique cause asserted";
@@ -502,9 +504,9 @@ Json Schema3ObjectJson(const StructureObjectRecord& object, const CorroborationA
 
 }  // namespace
 
-std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const schema3::AssembledSchema3Report& assembled,
-                                      const char* lumice_version) {
-  if (result.unsupported_multicrystal) {
+std::string PathFeatureReportV3ToJson(const FeatureReportResult& result, const char* lumice_version) {
+  const auto& assembled = result;
+  if (result.outcome == ReportOutcome::kUnsupportedMulticrystal) {
     // The early path in the v3 shape: the segments and blocks it names, empty; the refusal row.
     return Json{
       { "schema", "lumice.path-feature-report" },
@@ -533,7 +535,7 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
     }.dump();
   }
 
-  const DiscoveryResult& discovery = assembled.mc.discovery;
+  const CompletedDiscovery& discovery = assembled.mc.discovery;
   Json document = {
     { "schema", "lumice.path-feature-report" },
     { "schema_version", kFeatureReportSchemaVersion },
@@ -565,14 +567,14 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
   // -- scope: the input identity (the v2 scope, plus the renamed input-side blocks).
   // Built stepwise (the v2 shape): nlohmann's initializer lists decay {key, Json::array()}
   // pairs inside a nested object, so the two array-valued members are assigned, not listed.
-  const auto support = DescribeSupport(result.snapshot);
-  document["scope"] = { { "scene_identity", result.snapshot.scene_identity },
-                        { "spectrum_scope", result.spectrum_scope },
-                        { "seed", result.seed },
+  const auto& support = result.scope.support;
+  document["scope"] = { { "scene_identity", result.scope.scene_identity },
+                        { "spectrum_scope", result.scope.spectrum_scope },
+                        { "seed", result.scope.seed },
                         { "member_semantics", "physical_L2" },
-                        { "light", nlohmann::json(result.snapshot.light) },
-                        { "requested_outer_samples", result.requested_outer_samples },
-                        { "budget_ms", result.budget_ms } };
+                        { "light", nlohmann::json(result.scope.light) },
+                        { "requested_outer_samples", result.scope.requested_outer_samples },
+                        { "budget_ms", result.scope.budget_ms } };
   document["scope"]["support_dimensions"] = {
     { "pose_coordinate_count", support.pose_coordinate_count },
     { "pose_support_dimension", support.pose_support_dimension },
@@ -585,16 +587,16 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
       "geometric image dimension" }
   };
   document["scope"]["layers"] = Json::array();
-  document["scope"]["physical_members"] = result.representative_input.layers[0].scope.members;
+  document["scope"]["physical_members"] = result.scope.physical_members;
   document["scope"]["spectrum"] = Json::array();
-  for (const auto& layer : result.snapshot.layers) {
+  for (const auto& layer : result.scope.layers) {
     document["scope"]["layers"].push_back(
-        { { "scene_layer", result.standalone_crystal ? Json(nullptr) : Json(layer.layer_index) },
+        { { "scene_layer", layer.scene_layer ? Json(*layer.scene_layer) : Json(nullptr) },
           { "crystal", nlohmann::json(layer.crystal) },
-          { "representative_faces", layer.representative },
+          { "representative_faces", layer.representative_faces },
           { "symmetry_bits", layer.symmetry_bits } });
   }
-  for (const auto& row : result.representative_input.spectrum.rows) {
+  for (const auto& row : result.scope.spectrum) {
     document["scope"]["spectrum"].push_back({ { "nm", row.wavelength_nm },
                                               { "source_weight", Num(row.source_weight) },
                                               { "measure_mass", Num(row.measure_mass) },
@@ -672,18 +674,20 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
 
   // -- coverage: the bounded-search honesty rows, the vocabulary ledger row, the declared skips
   Json coverage = Json::array();
-  coverage.push_back(
-      { { "subject", "actual product input and physical L2" },
-        { "status", "supported" },
-        { "reason", "one selected crystal chain; actual distribution/shape/source/spectrum assembly" } });
-  coverage.push_back(
-      { { "subject", "bounded MC corroboration discovery" },
-        { "status",
-          discovery.budget_exhausted || !discovery.unfinished.empty() ? "numerical_incomplete" : "supported" },
-        { "limitations", discovery.limitations },
-        { "reason",
-          "only the recorded local windows and source seeds; no all-sky or source-topology completeness "
-          "claim" } });
+  const auto coverage_row = [](const ReportCoverage& row) {
+    const char* status = row.status == CoverageStatus::kSupported           ? "supported" :
+                         row.status == CoverageStatus::kNumericalIncomplete ? "numerical_incomplete" :
+                                                                              "not_supported";
+    Json value = { { "subject", row.subject }, { "status", status } };
+    if (row.subject == "bounded MC corroboration discovery") {
+      value["limitations"] = row.limitations;
+    }
+    value["reason"] = row.reason;
+    return value;
+  };
+  for (size_t i = 0; i < std::min<size_t>(2, result.coverage.size()); ++i) {
+    coverage.push_back(coverage_row(result.coverage[i]));
+  }
   const EnumeratedCoverage& vocabulary = assembled.core.coverage;
   Json declared = Json::array();
   for (size_t i = 0; i < vocabulary.declared_not_produced.size(); ++i) {
@@ -698,15 +702,8 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
                        { "status", "supported" },
                        { "produced", std::move(produced) },
                        { "declared_not_produced", std::move(declared) } });
-  if (!assembled.measure_skip_note.empty()) {
-    coverage.push_back({ { "subject", "declared measure" },
-                         { "status", "not_supported" },
-                         { "reason", assembled.measure_skip_note } });
-  }
-  if (!assembled.density_skip_note.empty()) {
-    coverage.push_back({ { "subject", "pose density conversion" },
-                         { "status", "not_supported" },
-                         { "reason", assembled.density_skip_note } });
+  for (size_t i = 2; i < result.coverage.size(); ++i) {
+    coverage.push_back(coverage_row(result.coverage[i]));
   }
   document["coverage"] = std::move(coverage);
 
@@ -715,38 +712,34 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
                               { "ruler", "mc_evidence.observation_options" } };
 
   // -- budgets: the v2 work account, plus the enumeration and attribution legs
-  const uint64_t attribution_dp = static_cast<uint64_t>(assembled.unattributed.counts.dp_evaluations) +
-                                  static_cast<uint64_t>(assembled.corroboration_counts.dp_evaluations);
-  const uint64_t attribution_presence = static_cast<uint64_t>(assembled.unattributed.counts.presence_ess_queries) +
-                                        static_cast<uint64_t>(assembled.corroboration_counts.presence_ess_queries);
-  document["budgets"] = {
-    { "requested_outer_samples", result.options.sampling.requested_samples },
-    { "completed_outer_samples", discovery.measure.completed_samples },
-    { "replicate_samples", discovery.replicate_samples },
-    { "replicate_seed", result.seed ^ 0x9e3779b9u },
-    { "max_optical_evaluations", result.options.sampling.max_optical_evaluations },
-    { "optical_evaluations", discovery.measure.optical_evaluations + discovery.replicate_path_evaluations +
-                                 discovery.event_path_evaluations + result.spectral_optical_evaluations },
-    { "max_field_component_evaluations", result.options.max_field_evaluations },
-    { "field_component_evaluations", discovery.field_component_evaluations + result.spectral_field_evaluations },
-    { "exhausted", discovery.budget_exhausted },
-    { "enumeration",
-      { { "max_optical_evaluations", assembled.core.budget.max_optical_evaluations },
-        { "sampling_evaluations", assembled.core.budget.sampling_evaluations },
-        { "hang_cap_ms", assembled.core.budget.hang_cap_ms },
-        { "truncated", assembled.core.budget.truncated },
-        { "truncation_note", assembled.core.budget.truncation_note } } },
-    { "attribution", { { "dp_evaluations", attribution_dp }, { "presence_ess_queries", attribution_presence } } }
-  };
+  document["budgets"] = { { "requested_outer_samples", result.budgets.requested_outer_samples },
+                          { "completed_outer_samples", result.budgets.completed_outer_samples },
+                          { "replicate_samples", result.budgets.replicate_samples },
+                          { "replicate_seed", result.budgets.replicate_seed },
+                          { "max_optical_evaluations", result.budgets.max_optical_evaluations },
+                          { "optical_evaluations", result.budgets.optical_evaluations },
+                          { "max_field_component_evaluations", result.budgets.max_field_component_evaluations },
+                          { "field_component_evaluations", result.budgets.field_component_evaluations },
+                          { "exhausted", result.budgets.exhausted },
+                          { "enumeration",
+                            { { "max_optical_evaluations", assembled.core.budget.max_optical_evaluations },
+                              { "sampling_evaluations", assembled.core.budget.sampling_evaluations },
+                              { "hang_cap_ms", assembled.core.budget.hang_cap_ms },
+                              { "truncated", assembled.core.budget.truncated },
+                              { "truncation_note", assembled.core.budget.truncation_note } } },
+                          { "attribution",
+                            { { "dp_evaluations", result.budgets.attribution_dp_evaluations },
+                              { "presence_ess_queries", result.budgets.attribution_presence_ess_queries } } } };
 
   // -- timing: the v2 legs, plus the schema3 assembly's own two
-  document["timing"] = { { "spectral_verification", Num(result.spectral_seconds) },
-                         { "capture", Num(result.capture_seconds) },
-                         { "assembly", Num(discovery.assembly_seconds) },
-                         { "source_events_and_edge_observations", Num(discovery.event_seconds) },
-                         { "field_discovery", Num(discovery.field_seconds) },
-                         { "enumeration", Num(assembled.enumeration_seconds) },
-                         { "attribution", Num(assembled.attribution_seconds) } };
+  document["timing"] = { { "spectral_verification", Num(result.timing.spectral_verification) },
+                         { "capture", Num(result.timing.capture) },
+                         { "assembly", Num(result.timing.assembly) },
+                         { "source_events_and_edge_observations",
+                           Num(result.timing.source_events_and_edge_observations) },
+                         { "field_discovery", Num(result.timing.field_discovery) },
+                         { "enumeration", Num(result.timing.enumeration) },
+                         { "attribution", Num(result.timing.attribution) } };
 
   // -- sources: the projection re-derived from the carried measure's token table
   document["sources"] = std::move(sources);
@@ -771,9 +764,20 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
   document["no_related_feature"] = std::move(ruling_json);
 
   // -- outcome: the single value; the basis rides beside it exactly when issued
-  document["outcome"] = ruling.issued                                                 ? "no_related_feature" :
-                        (discovery.budget_exhausted || !discovery.unfinished.empty()) ? "partial" :
-                                                                                        "completed";
+  switch (result.outcome) {
+    case ReportOutcome::kCompleted:
+      document["outcome"] = "completed";
+      break;
+    case ReportOutcome::kPartial:
+      document["outcome"] = "partial";
+      break;
+    case ReportOutcome::kNoRelatedFeature:
+      document["outcome"] = "no_related_feature";
+      break;
+    case ReportOutcome::kUnsupportedMulticrystal:
+      document["outcome"] = "unsupported_multicrystal";
+      break;
+  }
   if (ruling.issued) {
     document["basis"] = NoRelatedBasisName(ruling.basis);
   }

@@ -6,8 +6,8 @@
 
 #include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure_scope.hpp"
+#include "raypath/detail/quantity/probe_line.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
-#include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/survey_result.hpp"
 
 namespace lumice::raypath {

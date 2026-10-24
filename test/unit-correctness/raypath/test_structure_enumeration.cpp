@@ -30,6 +30,10 @@
 #include "raypath/detail/schema3/structure_enumeration.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::FamilySupport;
+using structure::MemberSupport;
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;

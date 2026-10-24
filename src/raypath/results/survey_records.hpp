@@ -211,6 +211,26 @@ struct FamilyRoutingBlock {
   std::optional<std::string> level0_refusal_mode;
 };
 
+struct WitnessResult {
+  EvidenceState state = EvidenceState::kRefused;
+  std::string mode;         // refused
+  SurveyCoverage coverage;  // finite
+  long long kept_count = 0;
+  long long sample_count = 0;
+  std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (discovery.hpp)
+  bool deterministic = true;                    // no RNG anywhere in the sample
+  double deviation_deg = 0.0;                   // the event's own deviation (the discovery's D)
+  double weight = 0.0;                          // the event's w = A*T (the lattice's unit)
+  double entry = 0.0;                           // the batch row's entry measure (its own read of A)
+  double interface_product = 0.0;               // the batch row's interface product
+  std::string source_note;                      // the declared source, spelled inside the document
+  // The argmax event's candidate pose, retained for the document's warm_index (the seed the
+  // query faces reuse). Not serialized on the card itself — it travels in the warm_index block
+  // under the leg name "witness_argmax".
+  bool has_pose = false;
+  double pose[9] = {};
+};
+
 // One object card. For the v1 source_image: `members` are the class members the card collapses
 // (the card is the sky-side object; the members are its preimage decomposition), `position` is
 // the sun's altitude/azimuth, `evidence` is certified with the method named, and `certificate`
@@ -327,25 +347,7 @@ struct SurveyObject {
   // declared-source lattice (the antipodal Fibonacci lattice over SO(3), the declared Haar
   // measure's own sampler) re-evaluated by the diagnostic batch at its pose: an existence
   // statement, never a distribution statistic. Absent from a card no leg produced.
-  struct WitnessPayload {
-    EvidenceState state = EvidenceState::kRefused;
-    std::string mode;         // refused
-    SurveyCoverage coverage;  // finite
-    long long kept_count = 0;
-    long long sample_count = 0;
-    std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (discovery.hpp)
-    bool deterministic = true;                    // no RNG anywhere in the sample
-    double deviation_deg = 0.0;                   // the event's own deviation (the discovery's D)
-    double weight = 0.0;                          // the event's w = A*T (the lattice's unit)
-    double entry = 0.0;                           // the batch row's entry measure (its own read of A)
-    double interface_product = 0.0;               // the batch row's interface product
-    std::string source_note;                      // the declared source, spelled inside the document
-    // The argmax event's candidate pose, retained for the document's warm_index (the seed the
-    // query faces reuse). Not serialized on the card itself — it travels in the warm_index block
-    // under the leg name "witness_argmax".
-    bool has_pose = false;
-    double pose[9] = {};
-  };
+  using WitnessPayload = WitnessResult;
 
   std::optional<WitnessPayload> witness;
 };

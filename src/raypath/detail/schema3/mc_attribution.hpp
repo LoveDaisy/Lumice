@@ -68,6 +68,7 @@
 
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/structure_enumeration.hpp"
+#include "raypath/results/report_attribution.hpp"
 
 namespace lumice::raypath::schema3 {
 
@@ -79,10 +80,7 @@ struct CorroborationThresholds {
 
 // Cost accounting where the cost happens (the 666.1 discipline). The kernel-internal walk and
 // Newton counts stay a registered gap (the G4 family).
-struct McAttributionCounts {
-  long long dp_evaluations = 0;        // SampleOptical chain evaluations for the delta images
-  long long presence_ess_queries = 0;  // one per object whose presence ESS was consulted
-};
+
 
 // The geometry the delta evaluation runs against. `sun_dir` points AT the sun (world frame) —
 // the delta axis's pole; the caller derives it from the evidence's own light configuration
@@ -139,16 +137,7 @@ double PresenceEss(const std::vector<analytic::WeightedSkySample>& components,
 
 // The per-object corroboration verdict, the judgment table's annotation (parallel to
 // core.objects in DeriveCorroboration's outcome). NaN = the quantity was not consulted.
-struct CorroborationAnnotation {
-  CorroborationState state = CorroborationState::kUnchecked;
-  double presence_ess = std::nan("");
-  double match_distance = std::nan("");
-  double tolerance_rad = std::nan("");
-  long long matched_record = -1;  // index into the evidence's features; -1 = none
-  double matched_record_ess = std::nan("");
-  std::string ruler;   // the declared ruler + parameter snapshot
-  std::string reason;  // the table arm's reading (the contract the review pinned)
-};
+
 
 // The backward pass: a COPY of the core with every object's `corroboration` field written, plus
 // the per-object annotations. `error` non-empty = the fail-visible refusal (bad pointers, an h
@@ -166,21 +155,8 @@ CorroborationOutcome DeriveCorroboration(const McAttributionInput& input);
 // reaches within tolerance. `min_margin_rad` = min over objects of (distance - tolerance),
 // positive by construction. The skipped counters keep the silences visible: a kActual record
 // without sky points and one below the floor are NOT findings, and their counts say so.
-struct UnattributedStructure {
-  size_t record_index = 0;
-  std::array<double, 3> position{};  // the record's sky point of closest approach
-  double delta_rad = 0.0;            // that point's deviation
-  double record_ess = 0.0;
-  double min_margin_rad = 0.0;
-  std::string ruler;
-};
-struct UnattributedOutcome {
-  std::vector<UnattributedStructure> structures;
-  long long skipped_no_position = 0;
-  long long skipped_below_ess = 0;
-  McAttributionCounts counts;
-  std::string error;
-};
+
+
 UnattributedOutcome DeriveUnattributed(const McAttributionInput& input);
 
 }  // namespace lumice::raypath::schema3

@@ -16,7 +16,7 @@
 
 #include "analytic/path_evaluation.hpp"
 #include "analytic/pose_density.hpp"
-#include "raypath/detail/schema3/support_block.hpp"  // MemberSupport (the returned rows' type)
+#include "raypath/detail/structure/class_support.hpp"  // MemberSupport (the returned rows' type)
 #include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
@@ -32,18 +32,6 @@ struct T1Outcome {
 // walk refusal, escape or member disagreement; on success appends the support_set card to
 // out->objects and returns the assemblies/rows for the caller's own downstream cards. On
 // refusal appends nothing (the caller owns the fail-closed card shape).
-struct ClassSupport {
-  bool ok = false;
-  std::string refusal_mode;  // the open refusal mode when !ok
-  std::vector<schema3::AxisAssembly> assemblies;
-  std::vector<schema3::MemberSupport> rows;
-  std::vector<analytic::DeviationInterval> intervals;  // the class-level support (== rows.front())
-};
-
-ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-                                  const std::vector<std::vector<int>>& members, double refractive_index,
-                                  double wavelength_nm, SurveyResult* out);
-
 // Runs the class's delta machine over `members` (the resolved class) at `refractive_index`,
 // with `representative` (the requested face sequence, for the two-face-chain premise) and
 // `wavelength_nm` (the coverage declaration's wavelength). Appends the three cards to

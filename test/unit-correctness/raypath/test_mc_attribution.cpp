@@ -33,6 +33,9 @@
 #include "raypath/scene_to_analytic.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::MemberSupport;
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;

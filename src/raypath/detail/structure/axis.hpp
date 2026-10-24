@@ -1,7 +1,7 @@
 #ifndef LUMICE_RAYPATH_DETAIL_SCHEMA3_GEOMETRY_SOURCE_HPP_
 #define LUMICE_RAYPATH_DETAIL_SCHEMA3_GEOMETRY_SOURCE_HPP_
 
-// schema3 report core, geometry adapter (scrum 666.1): the raypath-side consumer of the 660
+// Shared geometry adapter: the raypath-side consumer of the 660
 // kernel (src/analytic/dp_*), producing the 661 frozen contract's value types. The kernel keeps
 // the single authority for every geometry semantics; this layer is a TRANSPORT — the two
 // mapping groups it owns are declared here because the docking test
@@ -32,9 +32,10 @@
 #include "analytic/dp_field.hpp"
 #include "analytic/dp_focus.hpp"
 #include "analytic/dp_partition.hpp"
-#include "raypath/detail/measure/measure_geometry_contract.hpp"
+#include "raypath/domain/measure_geometry.hpp"
+#include "raypath/results/structure.hpp"
 
-namespace lumice::raypath::schema3 {
+namespace lumice::raypath::structure {
 
 // The angular tolerance every orbit-stream certificate call runs at — a caller discipline, not
 // a free knob: the measured floor is test_geometry_source.cpp's acos-at-1 finding (~1.5e-8 rad),
@@ -71,16 +72,6 @@ FiberSampleStream StreamOf(const analytic::OrbitFiberStream& stream);
 // The partition axis: the completeness certificate's data, in the contract's shape.
 // ---------------------------------------------------------------------------
 
-struct PartitionedAxis {
-  PartitionContext context{};  // the contract value type; kIncomplete names the refusal in
-                               // `regime_slug` below — the typed field keeps its kUnset sentinel
-                               // (no kernel slug has a contract value; see the module docstring)
-  std::string regime_slug;     // kernel EscapeRegimeName slug — the report-side datum (data)
-  std::string message;         // the walk's or the escape's LI message text (stable prefixes)
-  analytic::WalkStatus walk_status = analytic::WalkStatus::kOk;  // the kind-2 walk's own status
-  bool walk_closed = false;                                      // the walk's closure certificate (kOk)
-  std::vector<analytic::DeviationInterval> intervals;            // empty unless coverage == kComplete
-};
 
 // The ONE assembly of a field's axis (the kernel's own call order — WalkBoundary -> interior
 // critical points, slab branch or lattice Newton -> DomainTopologyOf -> IntervalPartition, and
@@ -110,6 +101,6 @@ PartitionedAxis PartitionAxisOf(const analytic::DeviationField& field);
 // G3 as-built).
 bool ContractRegimeOfSlug(const std::string& slug, EscapeRegime* out);
 
-}  // namespace lumice::raypath::schema3
+}  // namespace lumice::raypath::structure
 
 #endif  // LUMICE_RAYPATH_DETAIL_SCHEMA3_GEOMETRY_SOURCE_HPP_

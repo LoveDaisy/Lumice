@@ -10,6 +10,18 @@
 #include "raypath/detail/measure/visibility_certificate.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::AssembleAxis;
+using structure::AxisAssembly;
+using structure::ClusterFamilies;
+using structure::CurveOf;
+using structure::ExistenceOf;
+using structure::kOrbitAngularTol;
+using structure::MemberSupport;
+using structure::SameSupport;
+using structure::StreamOf;
+using structure::SupportRowOf;
+
 namespace {
 
 // The member's Phi-class annotation: the canonical (lexicographically smallest) member of its

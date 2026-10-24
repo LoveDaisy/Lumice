@@ -33,6 +33,7 @@ set(LUMICE_LAYER_foundation_FILES
   core/crystal.hpp
   core/crystal_kind.hpp
   core/crystal_param.cpp
+  core/scene_values.hpp
   core/crystal_param.hpp
   core/def.hpp
   core/exit_seam.hpp
@@ -113,6 +114,10 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/family_rank.cpp
   analytic/family_rank.hpp
   analytic/fiber_continuation.cpp
+  analytic/diagnostic_types.hpp
+  analytic/field_types.hpp
+  analytic/chromatic_types.hpp
+  analytic/support_types.hpp
   analytic/fiber_types.hpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp
@@ -269,6 +274,28 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/point_result.hpp
   raypath/probe_result.hpp
   raypath/survey_result.hpp
+  raypath/detail/quantity/probe_line.hpp
+  raypath/detail/quantity/probe_line.cpp
+  raypath/detail/quantity/tint.hpp
+  raypath/detail/quantity/tint.cpp
+  raypath/detail/quantity/tir_share.hpp
+  raypath/detail/quantity/tir_share.cpp
+  raypath/detail/quantity/mc_ess.hpp
+  raypath/detail/quantity/mc_ess.cpp
+  raypath/detail/quantity/witness.cpp
+  raypath/detail/quantity/witness.hpp
+  raypath/detail/structure/class_support.hpp
+  raypath/detail/structure/class_support.cpp
+  raypath/detail/structure/family.hpp
+  raypath/detail/structure/family.cpp
+  raypath/results/visibility.hpp
+  raypath/results/structure.hpp
+  raypath/results/report_structure.hpp
+  raypath/results/report_records.hpp
+  raypath/results/report_scope.hpp
+  raypath/results/report_enumeration.hpp
+  raypath/results/report_attribution.hpp
+  raypath/feature_report_result.hpp
   raypath/domain/claim.hpp
   raypath/domain/result_identity.hpp
   raypath/domain/scope.hpp
@@ -324,15 +351,15 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/measure/fiber_quadrature.cpp
   raypath/detail/measure/fiber_quadrature.hpp
   raypath/detail/measure/measure_geometry_contract.cpp
-  raypath/detail/measure/measure_geometry_contract.hpp
+  raypath/domain/measure_geometry.hpp
   raypath/detail/measure/visibility_certificate.cpp
   raypath/detail/measure/visibility_certificate.hpp
   raypath/detail/measure/weight_profile.cpp
   raypath/detail/measure/weight_profile.hpp
   raypath/detail/physical_member_scope.cpp
   raypath/detail/physical_member_scope.hpp
-  raypath/detail/schema3/geometry_source.cpp
-  raypath/detail/schema3/geometry_source.hpp
+  raypath/detail/structure/axis.cpp
+  raypath/detail/structure/axis.hpp
   raypath/detail/schema3/mc_attribution.cpp
   raypath/detail/schema3/mc_attribution.hpp
   raypath/detail/schema3/mc_evidence.cpp
@@ -345,8 +372,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/schema3/structure_object.hpp
   raypath/detail/schema3/structure_enumeration.cpp
   raypath/detail/schema3/structure_enumeration.hpp
-  raypath/detail/schema3/support_block.cpp
-  raypath/detail/schema3/support_block.hpp
+  raypath/detail/structure/support.cpp
+  raypath/detail/structure/support.hpp
   raypath/path_feature_report.hpp
   raypath/detail/path_feature_report.hpp
   raypath/detail/path_feature_report_json.cpp

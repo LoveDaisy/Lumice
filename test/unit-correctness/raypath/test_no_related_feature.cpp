@@ -22,6 +22,9 @@
 #include "raypath/path_feature_report.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::MemberSupport;
+
 namespace {
 
 // A synthetic core whose four condition inputs are all controlled by hand.

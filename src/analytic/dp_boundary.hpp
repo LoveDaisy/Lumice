@@ -61,6 +61,7 @@
 
 #include "analytic/dp_field.hpp"
 #include "analytic/dp_partition.hpp"
+#include "analytic/support_types.hpp"
 
 namespace lumice::analytic {
 
@@ -216,18 +217,7 @@ class BoundaryWalker {
 // Every way a walk refuses, one enum value per LI raise site (a regime is never silently merged):
 // kOk is the closed loop — the completeness certificate itself. The message carries LI's raise
 // text (stable prefixes; the numbers are diagnostics).
-enum class WalkStatus {
-  kOk,
-  kStepsExhausted,   // RuntimeError: MAX_WALK_STEPS without a corner or a closure
-  kStartNoPoint,     // ValueError: U_P has no point on the lattice
-  kStartCoversAll,   // ValueError: U_P covers the whole lattice — no boundary
-  kStartNoEdge,      // ValueError: no lattice point next to the boundary — also the
-                     // start-bisection shell fail-close (the message text distinguishes)
-  kCornerNotSimple,  // RuntimeError: a corner's outgoing margin is not unique
-  kNotClosed,        // RuntimeError: 1000 pieces without closing
-  kNotFinite,        // RuntimeError: D_P off the closure of U_P (fail closed)
-  kBadOrientation,   // ValueError: orientation not in {1, -1}
-};
+
 
 const char* WalkStatusName(WalkStatus status);
 

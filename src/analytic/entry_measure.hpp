@@ -21,6 +21,7 @@
 #include <array>
 #include <vector>
 
+#include "analytic/diagnostic_types.hpp"
 #include "analytic/path_evaluation.hpp"
 
 namespace lumice::analytic {
@@ -28,33 +29,6 @@ namespace lumice::analytic {
 // LI feasibility.EPS_REL: the corridor-area threshold is EPS_REL * (shortest crystal edge)^2.
 constexpr double kEntryMeasureEpsRel = 1e-6;
 
-enum class EntryMeasureStatus {
-  kOk,
-  kEntryBackface,      // the incident ray does not enter the entry face
-  kExitCriticalAngle,  // the internal ray cannot leave through the exit face
-  kCorridorEmpty,      // no line of that internal direction crosses every face polygon
-};
-
-struct EntryMeasure {
-  double value = 0.0;  // A_P, absolute area in the crystal's length unit squared; 0 unless kOk
-  EntryMeasureStatus status = EntryMeasureStatus::kEntryBackface;
-  double area_perp_internal = 0.0;  // the corridor footprint perpendicular to the internal direction
-};
-
-struct CorridorEdgeSource {
-  int path_index = 0;
-  int edge_index = 0;  // original corner -> next corner in FacePolygonTable
-};
-struct CorridorDiagnostics {
-  bool geometry_evaluated = false;  // false when an optical gate stopped evaluation
-  double raw_area = 0;
-  double area_threshold = 0;
-  std::array<std::array<double, 3>, 2> projection_basis{};
-  std::vector<std::array<double, 2>> vertices;
-  // One outgoing edge per vertex. Incoming/outgoing sources identify a local
-  // intersection, not a proof of complete source-domain topology.
-  std::vector<CorridorEdgeSource> edge_sources;
-};
 
 // The unfolded corridor of one face sequence (LI corridor_polygons): the entry face polygon, each
 // reflecting face's polygon on the ghost crystal it is met on, and the exit face polygon on the last

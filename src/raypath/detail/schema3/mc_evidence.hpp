@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "raypath/detail/feature_discovery.hpp"
+#include "raypath/results/report_attribution.hpp"
 
 namespace lumice::raypath::schema3 {
 
@@ -42,13 +43,7 @@ namespace lumice::raypath::schema3 {
 // a continuous-spectrum quadrature document, where v2 re-measured every actual feature under a
 // doubled quadrature and downgraded the movers. `available=false` = the document had nothing to
 // verify (discrete/diagnostic spectrum), never a claim of stability.
-struct McSpectralVerification {
-  bool available = false;
-  std::optional<double> movement_rad;  // null = the check did not run to a number
-  uint64_t optical_evaluations = 0;
-  uint64_t field_component_evaluations = 0;
-  double seconds = 0;
-};
+
 
 // The demoted v2 observation record. Field-group order: the carry (records, ruler, spectral
 // check), then the narrowing declaration.

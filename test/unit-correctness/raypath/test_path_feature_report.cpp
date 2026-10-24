@@ -17,7 +17,8 @@ nlohmann::json V3Document(PathFeatureReport& report) {
       report.unsupported_multicrystal ?
           schema3::AssembledSchema3Report{} :
           schema3::AssembleSchema3Report(std::move(report), report.options.sampling.max_optical_evaluations);
-  return nlohmann::json::parse(PathFeatureReportV3ToJson(report, assembled, "test"));
+  return nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(report), assembled), "test"));
 }
 ConfigManager Scene() {
   PrismCrystalParam prism;

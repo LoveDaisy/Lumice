@@ -27,7 +27,8 @@ nlohmann::json ReportV3Document(rp::PathFeatureReport& report) {
       report.unsupported_multicrystal ?
           schema3::AssembledSchema3Report{} :
           schema3::AssembleSchema3Report(std::move(report), report.options.sampling.max_optical_evaluations);
-  return nlohmann::json::parse(rp::PathFeatureReportV3ToJson(report, assembled, "test"));
+  return nlohmann::json::parse(rp::PathFeatureReportV3ToJson(
+      rp::schema3::CompleteFeatureReportResult(rp::schema3::PrepareFeatureReportResult(report), assembled), "test"));
 }
 
 ns::SceneConfig Scene(size_t count, bool random_shape = false) {

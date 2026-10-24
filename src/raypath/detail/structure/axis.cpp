@@ -1,6 +1,6 @@
-#include "raypath/detail/schema3/geometry_source.hpp"
+#include "raypath/detail/structure/axis.hpp"
 
-namespace lumice::raypath::schema3 {
+namespace lumice::raypath::structure {
 
 ExistenceState ExistenceOf(analytic::CurveExistence existence) {
   switch (existence) {
@@ -136,4 +136,4 @@ bool ContractRegimeOfSlug(const std::string& slug, EscapeRegime* out) {
   return false;
 }
 
-}  // namespace lumice::raypath::schema3
+}  // namespace lumice::raypath::structure

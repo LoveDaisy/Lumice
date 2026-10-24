@@ -32,8 +32,9 @@
 #include "raypath/detail/schema3/mc_attribution.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/no_related_feature.hpp"
+#include "raypath/detail/schema3/report_assembly.hpp"
 #include "raypath/detail/schema3/structure_object.hpp"
-#include "raypath/detail/schema3/support_block.hpp"
+#include "raypath/detail/structure/support.hpp"
 
 namespace lumice::raypath {
 namespace {
@@ -81,7 +82,7 @@ V3Run MinimalV3Run() {
   object.member = { 3, 5 };
   object.visibility.state = VisibilityState::kCertified;
   run.assembled.core.objects = { object };
-  schema3::MemberSupport support{};
+  structure::MemberSupport support{};
   support.member = { 3, 5 };
   run.assembled.core.support.members = { support };
   run.assembled.core.coverage.produced = {
@@ -106,7 +107,8 @@ V3Run MinimalV3Run() {
   run.assembled.mc.observation_options = run.report.options;
   run.assembled.mc.observation_scope_note = schema3::kMcObservationScopeNote;
   run.assembled.mc.discovery.measure.sources.push_back({ 0, 0, 0 });
-  run.document = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  run.document = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   return run;
 }
 
@@ -282,7 +284,8 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   object.u = { 0.1, 0.2, 0.3 };
   object.counterfactual = { true, 2.07, 0.75 };
 
-  const nlohmann::json maximal = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json maximal = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   const nlohmann::json* serialized = nullptr;
   for (const char* segment : { "actual", "candidate", "unfinished" }) {
     for (const nlohmann::json& entry : maximal["features"][segment]) {
@@ -342,7 +345,8 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   run.assembled.unattributed.skipped_below_ess = 2;
   run.assembled.unattributed.counts = { 7, 3 };
   run.assembled.unattributed.error = "sentinel_unattributed_error";
-  const nlohmann::json attributed = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json attributed = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   ExpectKeySet(attributed["unattributed_structures"],
                { "structures", "skipped_no_position", "skipped_below_ess", "error" }, "unattributed block");
   ExpectKeySet(attributed["unattributed_structures"]["structures"].back(),
@@ -353,7 +357,8 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   //    as a number — the early path's null face is the multicrystal test's).
   run.assembled.mc.spectral_verification.available = true;
   run.assembled.mc.spectral_verification.movement_rad = 0.5;
-  const nlohmann::json evidenced = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json evidenced = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   ExpectKeySet(evidenced["mc_evidence"],
                { "records", "observation_options", "spectral_verification", "observation_scope_note", "unfinished" },
                "mc_evidence block");
@@ -365,7 +370,8 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
 
   // -- NoRelatedRuling: the four conditions and the gate ride always; `basis` joins exactly
   //    when issued (the struct's own gating).
-  const nlohmann::json unissued = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json unissued = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   ExpectKeySet(unissued["no_related_feature"],
                { "issued", "partition_complete_no_escape", "partition_failure", "all_objects_unlit_or_none",
                  "unlit_failure", "no_sufficient_ess_unattributed", "unattributed_failure", "s4_scope_declared",
@@ -378,7 +384,8 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   run.assembled.ruling.unattributed_failure = "sentinel_unattributed_failure";
   run.assembled.ruling.s4_failure = "sentinel_s4_failure";
   run.assembled.ruling.s4_scope_note = "sentinel_s4_scope_note";
-  const nlohmann::json issued = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json issued = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   ExpectKeySet(issued["no_related_feature"],
                { "issued", "basis", "partition_complete_no_escape", "partition_failure", "all_objects_unlit_or_none",
                  "unlit_failure", "no_sufficient_ess_unattributed", "unattributed_failure", "s4_scope_declared",
@@ -388,7 +395,7 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
 
   // -- Support block: one maximal member row (every partition face and both gated arms open)
   //    and both family forms.
-  schema3::MemberSupport& row = run.assembled.core.support.members.front();
+  structure::MemberSupport& row = run.assembled.core.support.members.front();
   row.axis.regime_slug = "slab_crease";                        // opens the slug gate
   row.axis.context.escape_regime = EscapeRegime::kSlabCrease;  // opens the typed-key gate (G3);
                                                                // the kUnset arm is
@@ -401,7 +408,7 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   onset.has_measure_limit = true;
   onset.measure_limit = 0.2;
   row.endpoint_onsets = { onset };
-  schema3::ConstantDeltaCurve curve{};
+  structure::ConstantDeltaCurve curve{};
   curve.d_p = 0.3;
   curve.weight_step = 2;
   curve.wavelengths_nm = { 550 };
@@ -413,18 +420,19 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   shared_interval.n_components = 2;
   shared_interval.n_closed = 1;
   shared_interval.n_open = 1;
-  schema3::FamilySupport shared_family{};
+  structure::FamilySupport shared_family{};
   shared_family.shared = true;
   shared_family.intervals = { shared_interval };
   shared_family.members = { { 3, 5 } };
   shared_family.phi_class_note = "sentinel_family_phi";
-  schema3::FamilySupport disjoint_family{};
+  structure::FamilySupport disjoint_family{};
   disjoint_family.shared = false;
   disjoint_family.intervals = { shared_interval };  // carried but never emitted (see below)
   disjoint_family.members = { { 1, 3 } };
   disjoint_family.phi_class_note = "sentinel_other_phi";
   run.assembled.core.support.families = { shared_family, disjoint_family };
-  const nlohmann::json supported = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json supported = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   ExpectKeySet(supported["support"], { "members", "families" }, "support block");
   const nlohmann::json& member_row = supported["support"]["members"][0];
   ExpectKeySet(member_row, { "member", "partition", "endpoint_onsets", "constant_curves" }, "support member row");
@@ -459,10 +467,11 @@ TEST(PathFeatureReportJsonV3, UnsetEscapeRegimeOmitsTheTypedKey) {
   // when a producer actually sets a registered regime.
   V3Run run = MinimalV3Run();
   ASSERT_FALSE(run.assembled.core.support.members.empty());
-  schema3::MemberSupport& row = run.assembled.core.support.members.front();
+  structure::MemberSupport& row = run.assembled.core.support.members.front();
   row.axis.regime_slug = "slab_crease_touching";  // the kernel-facing slug, non-empty
   // context.escape_regime stays at its kUnset default: the "no regime was set" state.
-  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   const nlohmann::json& partition = document["support"]["members"][0]["partition"];
   EXPECT_FALSE(partition.contains("escape_regime"))
       << "the kUnset sentinel must omit the typed key, not serialize the sentinel's own name";
@@ -471,7 +480,8 @@ TEST(PathFeatureReportJsonV3, UnsetEscapeRegimeOmitsTheTypedKey) {
 
   // The explicit arm: a producer that sets a registered regime keeps both keys.
   row.axis.context.escape_regime = EscapeRegime::kSlabCrease;
-  const nlohmann::json named = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json named = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   const nlohmann::json& named_partition = named["support"]["members"][0]["partition"];
   EXPECT_EQ(named_partition["escape_regime"], "slab_crease");
   EXPECT_EQ(named_partition["escape_regime_slug"], "slab_crease_touching");
@@ -520,7 +530,8 @@ TEST(PathFeatureReportJsonV3, RecordFieldChecklistRidesTheLedger) {
   // dropped.
   V3Run run = MinimalV3Run();
   run.assembled.mc.discovery.features = { MaximalRecord(0) };
-  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   const nlohmann::json& record = document["mc_evidence"]["records"][0];
   EXPECT_EQ(record["id"], 0);
   EXPECT_EQ(record["kind"], "sentinel_kind");
@@ -663,12 +674,14 @@ TEST(PathFeatureReportJsonV3, OutcomeGrammarAndUnconditionalRuling) {
   // the rule that issued, and the outcome value outranks the partial arm.
   run.assembled.ruling.issued = true;
   run.assembled.ruling.basis = schema3::NoRelatedBasis::kCertifiedSmoothRadiance;
-  const nlohmann::json issued = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json issued = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   EXPECT_EQ(issued["outcome"], "no_related_feature");
   EXPECT_EQ(issued["basis"], "certified_smooth_radiance");
   EXPECT_EQ(issued["no_related_feature"]["basis"], "certified_smooth_radiance");
   run.assembled.ruling.basis = schema3::NoRelatedBasis::kZeroSpectralSignal;
-  const nlohmann::json zero = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json zero = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   EXPECT_EQ(zero["basis"], "zero_spectral_signal");
 }
 
@@ -689,7 +702,8 @@ TEST(PathFeatureReportJsonV3, NonFiniteSpellingsFollowTheDeclaredConventions) {
   // zero? No — it is the declared unknown, spelled 0.0 in the JSON (the convention's second
   // form) and must not come out as null.
   run.assembled.core.objects.front().walk_s = 0.0;
-  const nlohmann::json zeroed = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json zeroed = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   bool saw_zero = false;
   for (const char* segment : { "actual", "candidate", "unfinished" }) {
     for (const nlohmann::json& object : zeroed["features"][segment]) {
@@ -710,10 +724,12 @@ TEST(PathFeatureReportJsonV3, NonFiniteSpellingsFollowTheDeclaredConventions) {
   finding.min_margin_rad = std::numeric_limits<double>::infinity();
   finding.ruler = "test ruler";
   run.assembled.unattributed.structures.push_back(finding);
-  const nlohmann::json infinite = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json infinite = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   EXPECT_TRUE(infinite["unattributed_structures"]["structures"][0]["min_margin_rad"].is_null());
   run.assembled.unattributed.structures.back().min_margin_rad = 0.25;
-  const nlohmann::json finite = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json finite = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   EXPECT_DOUBLE_EQ(finite["unattributed_structures"]["structures"][0]["min_margin_rad"].get<double>(), 0.25);
 }
 
@@ -722,7 +738,8 @@ TEST(PathFeatureReportJsonV3, UnsupportedMulticrystalTakesTheV3EarlyShape) {
   report.unsupported_multicrystal = true;
   report.requested_path_layers = { { 3, 5 }, { 1, 3 } };
   schema3::AssembledSchema3Report empty{};
-  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(report, empty, "test"));
+  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(report), empty), "test"));
   EXPECT_EQ(document["outcome"], "unsupported_multicrystal");
   // The early path rides the SAME version constant as the main path — a second spelling here
   // would mislabel the document on the next bump while it still names the v3 shape.

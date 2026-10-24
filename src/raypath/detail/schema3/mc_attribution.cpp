@@ -9,6 +9,10 @@
 #include "raypath/detail/measure/visibility_certificate.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::ConstantDeltaCurve;
+using structure::MemberSupport;
+
 namespace {
 
 // The match distance on the deviation axis: the smallest gap between the record's sky-point

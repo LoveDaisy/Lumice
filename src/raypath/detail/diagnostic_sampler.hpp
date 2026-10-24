@@ -9,6 +9,7 @@
 
 #include "analytic/path_feature_discovery.hpp"
 #include "raypath/detail/input_assembly.hpp"
+#include "raypath/results/report_records.hpp"
 
 namespace lumice::raypath {
 
@@ -42,21 +43,9 @@ class DiagnosticSampler {
   std::vector<ShapeDrawPlan> shape_plans_;
 };
 
-struct DiagnosticSourceIdentity {
-  uint64_t sample_index = 0;
-  size_t member_index = 0;
-  size_t spectral_row = 0;
-};
-struct DiagnosticMeasure {
-  std::vector<analytic::WeightedSkySample> components;
-  // components[i].source_token indexes this table. Actual shapes/poses/source
-  // are replayed through run, which owns the snapshot, seed AND spectrum request.
-  // A source token is local to this measure, not a cross-run identifier.
-  std::vector<DiagnosticSourceIdentity> sources;
+
+struct DiagnosticMeasure : DiagnosticMeasureFacts {
   std::shared_ptr<const DiagnosticSampler> run;
-  uint64_t completed_samples = 0;
-  uint64_t optical_evaluations = 0;
-  bool budget_exhausted = false;
 };
 struct SamplingBudget {
   uint64_t requested_samples = 0;

@@ -34,37 +34,13 @@
 
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/schema3/mc_attribution.hpp"
+#include "raypath/results/report_attribution.hpp"
 
 namespace lumice::raypath::schema3 {
 
-enum class NoRelatedBasis {
-  kZeroSpectralSignal,       // rule A: the exact zero-signal predicate
-  kCertifiedSmoothRadiance,  // rule B: the conditioned certificate
-};
 
 const char* NoRelatedBasisName(NoRelatedBasis basis);
 
-struct NoRelatedRuling {
-  bool issued = false;
-  NoRelatedBasis basis = NoRelatedBasis::kCertifiedSmoothRadiance;  // read when issued
-  // The four conditions of rule B, evaluated regardless of which rule issues (the priority of
-  // rule A does not blind the report to what B would have said).
-  bool partition_complete_no_escape = false;
-  std::string partition_failure;  // naming the first offending support row
-  bool all_objects_unlit_or_none = false;
-  std::string unlit_failure;  // naming the first offending object
-  bool no_sufficient_ess_unattributed = false;
-  std::string unattributed_failure;  // naming the count and the closest margin
-  bool s4_scope_declared = false;
-  std::string s4_failure;
-  // Rule 3's gate (beside the four, not one of them).
-  bool two_d_valid_support = false;
-  // The scope declaration's own text (the coverage row's reason) when declared.
-  std::string s4_scope_note;
-  // Non-empty exactly when NOT issued: the "completed + empty list + absence not proven"
-  // reading the consumer assembles the outcome from.
-  std::string absence_not_proven_note;
-};
 
 // The pure ruling. `unattributed` is the forward pass's outcome on the SAME core (the caller
 // runs DeriveUnattributed first); `support_kind` is the declared measure's USupportKind;

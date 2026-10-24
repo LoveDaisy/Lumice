@@ -158,27 +158,41 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
   return {};
 }
 
-Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
-                               const std::string& product_version, std::string* json_out) {
-  if (!json_out) {
+Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatureReportRequest& request,
+                                    FeatureReportResult* out) {
+  if (!out) {
     return { ErrorCode::kInvalidArgument, "null report output" };
   }
   PathFeatureReport report;
   if (const Error error = AssemblePathFeatureReport(config, request, &report); !error.Ok()) {
     return error;
   }
+  FeatureReportResult result = schema3::PrepareFeatureReportResult(report);
   // The multicrystal early path never ran the discovery; the assembly's precondition excludes
   // it and the v3 early shape ignores the assembled side. The enumeration leg's anti-hang
   // deadline starts here: the enforced robustness floor (kEnumerationHangCapMs), independent
   // of the request's quality budget (--budget-ms bounds the discovery legs, report-only by
   // A4 for the enumeration's own cost vocabulary).
-  const schema3::AssembledSchema3Report assembled =
+  schema3::AssembledSchema3Report assembled =
       report.unsupported_multicrystal ?
           schema3::AssembledSchema3Report{} :
           schema3::AssembleSchema3Report(
               std::move(report), request.max_optical_evaluations,
               std::chrono::steady_clock::now() + std::chrono::milliseconds(schema3::kEnumerationHangCapMs));
-  *json_out = PathFeatureReportV3ToJson(report, assembled, product_version.c_str());
+  *out = schema3::CompleteFeatureReportResult(std::move(result), std::move(assembled));
+  return {};
+}
+
+Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
+                               const std::string& product_version, std::string* json_out) {
+  if (!json_out) {
+    return { ErrorCode::kInvalidArgument, "null report output" };
+  }
+  FeatureReportResult result;
+  if (const Error error = AnalyzePathFeatureReportValue(config, request, &result); !error.Ok()) {
+    return error;
+  }
+  *json_out = PathFeatureReportV3ToJson(result, product_version.c_str());
   return {};
 }
 

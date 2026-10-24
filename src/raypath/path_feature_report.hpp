@@ -16,6 +16,7 @@
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
+#include "raypath/feature_report_result.hpp"
 
 namespace lumice::raypath {
 constexpr int kFeatureReportSchemaVersion = 3;
@@ -38,6 +39,9 @@ struct PathFeatureReportRequest : PathSelection {
   double location_resolution_rad = .05 * 3.14159265358979323846 / 180;
   std::optional<std::chrono::steady_clock::time_point> deadline;
 };
+
+Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatureReportRequest& request,
+                                    FeatureReportResult* out);
 
 // Runs the analysis and serializes the report: `json_out` receives the same
 // bytes PathFeatureReportToJson would produce for the assembled report.
