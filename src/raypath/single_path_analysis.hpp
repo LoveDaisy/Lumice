@@ -30,6 +30,8 @@
 #include "core/def.hpp"
 #include "core/math.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/input_metadata.hpp"
 
 namespace lumice::raypath {
 
@@ -53,35 +55,12 @@ constexpr int kMaxPointBudgetMs = 120000;
 // block echoes the count.
 constexpr int kOrbitFactorSampleCount = 1024;
 
-constexpr double kDefaultWavelengthNm = 550.0;
 // The kernel's reference default (LI section 9.5.9) and its hard upper bound; the call cannot be
 // cancelled, so a larger request is refused.
 constexpr int kDefaultSampleCount = 1000000;
 constexpr int kMaxSampleCount = 100000000;
 constexpr int kDefaultSunGridLatCount = 90;
 constexpr int kMaxSunGridLatCount = 1800;
-
-enum class ErrorCode {
-  kOk,
-  kUnknownCrystalId,       // no crystal entry with this id in the config
-  kMultiLayerUnsupported,  // more than one scattering layer: v1 traces single-layer paths only
-  kInvalidPath,            // no layer, or a face sequence shorter than 2 or longer than the kernel's bound
-  kFaceNotInCrystal,       // a face number this crystal (at its nominal shape) does not have
-  kWavelengthOutOfRange,   // outside the refractive-index table [350, 900] nm
-  kInvalidTarget,          // non-finite, or at the sun / its antipode (no fiber is defined there)
-  kInvalidArgument,        // an option out of range (sample count, grid size, a warm seed that is no rotation)
-  kCrystalRejected,        // the engine's closed-form gate rejects the nominal shape
-  kPathInfeasible,         // no pose at all realises this face sequence
-};
-
-struct Error {
-  ErrorCode code = ErrorCode::kOk;
-  std::string message;
-  bool Ok() const { return code == ErrorCode::kOk; }
-};
-
-// Stable lower-case name of an error code (for a shell's output).
-const char* ErrorCodeName(ErrorCode code);
 
 // ---- the survey context (--warm consumption) ---------------------------------------------------
 
@@ -215,19 +194,6 @@ struct SinglePathRequest {
 };
 
 // ---- metadata: every conversion, as applied ------------------------------------------------------
-
-enum class WavelengthSource { kDefault, kConfigSingle, kUser };
-const char* WavelengthSourceName(WavelengthSource source);
-
-// One crystal shape scalar as the kernel received it: `value` is the distribution's centre slot,
-// which is the value itself (fixed), the interval midpoint (uniform), the mean (gauss) or the
-// location (laplacian).
-struct NominalShapeScalar {
-  std::string name;  // the config key: height, prism_h, upper_h, lower_h, face_distance[i]
-  double value = 0.0;
-  DistributionType distribution = DistributionType::kNoRandom;
-  double spread = 0.0;  // the distribution's second slot (0 for a fixed value)
-};
 
 struct SinglePathMetadata {
   int schema_version = kSchemaVersion;

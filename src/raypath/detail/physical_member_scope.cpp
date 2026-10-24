@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "analytic/path_evaluation.hpp"
 #include "core/raypath.hpp"
 
 namespace lumice::raypath {

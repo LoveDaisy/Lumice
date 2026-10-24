@@ -28,44 +28,6 @@ const char* const kCompletenessNote =
     "lose a component a sparser one found, so pass earlier component seeds back as warm seeds to keep "
     "them (LI phase-1 contract sections 9.5.6-9.5.7)";
 
-const char* ErrorCodeName(ErrorCode code) {
-  switch (code) {
-    case ErrorCode::kOk:
-      return "ok";
-    case ErrorCode::kUnknownCrystalId:
-      return "unknown_crystal_id";
-    case ErrorCode::kMultiLayerUnsupported:
-      return "multi_layer_unsupported";
-    case ErrorCode::kInvalidPath:
-      return "invalid_path";
-    case ErrorCode::kFaceNotInCrystal:
-      return "face_not_in_crystal";
-    case ErrorCode::kWavelengthOutOfRange:
-      return "wavelength_out_of_range";
-    case ErrorCode::kInvalidTarget:
-      return "invalid_target";
-    case ErrorCode::kInvalidArgument:
-      return "invalid_argument";
-    case ErrorCode::kCrystalRejected:
-      return "crystal_rejected";
-    case ErrorCode::kPathInfeasible:
-      return "path_infeasible";
-  }
-  return "unknown";
-}
-
-const char* WavelengthSourceName(WavelengthSource source) {
-  switch (source) {
-    case WavelengthSource::kDefault:
-      return "default";
-    case WavelengthSource::kConfigSingle:
-      return "config";
-    case WavelengthSource::kUser:
-      return "user";
-  }
-  return "unknown";
-}
-
 const char* ComponentKindName(ComponentKind kind) {
   return kind == ComponentKind::kArc ? "arc" : "closed";
 }

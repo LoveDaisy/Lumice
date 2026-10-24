@@ -13,7 +13,8 @@
 #include <vector>
 
 #include "config/config_manager.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/input_metadata.hpp"
 
 namespace lumice::raypath {
 constexpr int kFeatureReportSchemaVersion = 3;

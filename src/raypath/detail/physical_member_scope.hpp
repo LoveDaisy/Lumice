@@ -8,7 +8,8 @@
 
 #include "config/crystal_config.hpp"
 #include "core/crystal.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/input_metadata.hpp"
 
 namespace lumice::raypath {
 

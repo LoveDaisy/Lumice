@@ -12,7 +12,8 @@
 #include <vector>
 
 #include "config/config_manager.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/input_metadata.hpp"
 
 namespace lumice::raypath {
 // The survey document family is its own schema (schema 4); it shares nothing field-wise with the

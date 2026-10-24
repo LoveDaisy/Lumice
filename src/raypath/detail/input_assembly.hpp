@@ -7,11 +7,14 @@
 #include <string>
 #include <vector>
 
+#include "analytic/path_evaluation.hpp"
 #include "config/light_config.hpp"
+#include "config/proj_config.hpp"
 #include "core/sample_transform.hpp"
 #include "core/shape_sample.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/input_metadata.hpp"
 
 namespace lumice::raypath {
 

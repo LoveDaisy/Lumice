@@ -11,7 +11,8 @@
 #include "analytic/pose_density.hpp"
 #include "config/crystal_config.hpp"
 #include "config/light_config.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/input_metadata.hpp"
 
 namespace lumice::raypath {
 
