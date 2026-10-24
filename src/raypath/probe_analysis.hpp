@@ -21,9 +21,8 @@
 // The ruler constants are schema, not knobs (the survey probe's precedent): the bin is the survey
 // probe's 0.1 deg, the wedge the survey's, the window forms' half width kProbeWindowHalfWidthDeg,
 // the lattice the survey probe's antipodal-Fibonacci count. Every profile carries its evidence
-// state and a coverage declaration; the dark-region decomposition classifies the line's bins
-// against the context's support (the weak tail inside the support stays a finite-zero segment —
-// never clamped to a written zero; the C09 lesson).
+// state and a coverage declaration; the dark-region decomposition classifies each wavelength's
+// line against support valid at that wavelength, never the reference context by default.
 
 #include <optional>
 #include <string>
@@ -64,9 +63,8 @@ struct ProbeRequest {
   std::vector<std::vector<int>> path_layers;
   ProbeAlong along = ProbeAlong::kRadial;
   // The user's sky point (`analyze --center` convention). The radial/edge-normal forms read its
-  // azimuth about the sun; the arc/tangential forms read its deviation. Required for every form:
-  // the radial profile's value is azimuth-free (declared in its spec), and the warm reuse
-  // criterion does not compare the azimuth.
+  // azimuth about the sun; arc/tangential read its deviation. Uniform densities are
+  // azimuth-free, while non-uniform warm readings require the survey probe's line azimuth.
   double at_altitude_deg = 0.0;
   double at_azimuth_deg = 0.0;
   // Empty: the config's single wavelength or 550 (the point resolution), one profile. Non-empty:
@@ -114,14 +112,13 @@ struct ProbeMetadata {
 
 // ---- profiles ------------------------------------------------------------------------------------
 
-// The dark-region decomposition's segment classes (the query vocabulary "dark region" spelled per
-// bin run against the context's support).
+// Consecutive bin runs classified against support certified for this profile's wavelength.
 struct ProbeDarkSegment {
   std::string kind;     // "inside_support_positive" | "inside_support_zero" | "outside_support" | "unknown"
   double lo_deg = 0.0;  // along the line's sweep coordinate (deviation for the axis forms,
   double hi_deg = 0.0;  // azimuth for the arc forms), the run's first/last bin bounds
   int bin_count = 0;
-  std::string reason;  // unknown only: the context refusal's named cause
+  std::string reason;  // unknown only: the per-wavelength support refusal
 };
 
 struct ProbeProfileReadings {
@@ -152,9 +149,9 @@ struct ProbeProfile {
   double wedge_half_width_deg = 0.0;
   std::string anchor_basis;  // edge-normal only: "support_interval_endpoint" | "caustic_edge_position"
   double anchor_deg = 0.0;
-  // The form's declared semantics: the radial form's azimuth-free value (and that the warm reuse
-  // criterion does not compare the azimuth), the arc form's constant-delta reading, the
-  // edge-normal's anchor rule. Stated in the document, never implied.
+  double anchor_wavelength_nm = 0.0;
+  // The radial form is azimuth-free under uniform density; other densities require a matching
+  // producer line for warm reuse. The other forms describe their own line geometries.
   std::string semantics;
   double wavelength_nm = 0.0;
   double refractive_index = 0.0;
@@ -164,8 +161,8 @@ struct ProbeProfile {
   std::vector<int> representative;
   int member_count = 0;
   // The reading's provenance, mechanically named (the review's zero-recompute ruling):
-  // "warm_reused" — the values are the warm document's own samples, checked bit-equal against the
-  //   layout's bin centres, zero BandSum calls;
+  // "warm_reused" — the values are the warm document's own samples, checked against the
+  //   requested scope, line orientation (if non-uniform), and bin layout; no BandSum here;
   // "recomputed" — BandSum ran here (lattice-deterministic, no seed dependence).
   std::string source;
   // Evidence: "finite" with the coverage declaration (the spec above is the coverage), or
@@ -176,8 +173,7 @@ struct ProbeProfile {
   int members_evaluated = 0;                     // finite: 1 — the representative; the class reads xN
   std::vector<survey::ProbeLineSample> samples;  // finite only; both line coordinates spelled
   ProbeProfileReadings readings;                 // finite only
-  std::vector<ProbeDarkSegment> dark_regions;    // the decomposition; the context refusal propagates
-                                                 // as one "unknown" run with the named cause
+  std::vector<ProbeDarkSegment> dark_regions;    // classified at this profile's wavelength
 };
 
 // ---- result --------------------------------------------------------------------------------------

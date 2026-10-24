@@ -489,6 +489,23 @@ TEST_F(WarmContract, FieldMissingAndBlockAbsentDegradeWithNamedDeclarations) {
     const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
     EXPECT_EQ(context["band_sum"]["state"], "unevaluated");
     EXPECT_EQ(context["band_sum"]["reason"], "scope_field_missing");
+    EXPECT_EQ(context["object"]["state"], "certified");
+    EXPECT_EQ(context["edge"]["state"], "finite");
+  }
+  {
+    nlohmann::json doc = nlohmann::json::parse(survey_text);
+    doc["scope"].erase("wavelength_nm");
+    const ScenePtr scene = MakeScene(RandomScene().c_str());
+    Req q({ 3, 5 }, { 2 });
+    q.warm = doc.dump();
+    q.Bind();
+    const Outcome o = Analyse(scene.get(), q);
+    ASSERT_EQ(o.code, LUMICE_OK) << o.error;
+    const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+    EXPECT_EQ(context["object"]["reason"], "scope_field_missing");
+    EXPECT_EQ(context["edge"]["reason"], "scope_field_missing");
+    EXPECT_FALSE(context["object"].contains("target_inside_support"));
+    EXPECT_EQ(context["band_sum"]["reason"], "scope_field_missing");
   }
   {
     // The block-absent degradation on the cheap refused arm (the full-dimensional inline context
@@ -591,20 +608,31 @@ TEST_F(WarmContract, NonExactlyRepresentableSunStillConsumesTheReading) {
   EXPECT_GT(context["band_sum"]["value"].get<double>(), 0.0);
 }
 
-// The lambda side of the scope gate (MovedSunPasses... probes the sun only): a changed lambda is
-// also a scope_value_mismatch, and it must not touch the structural gates.
 TEST_F(WarmContract, ChangedLambdaNamesTheScopeMismatch) {
+  const double edge_450 =
+      2.0 * std::asin(1.3156924295898642 * std::sin(std::acos(-1.0) / 6.0)) * 180.0 / std::acos(-1.0) - 60.0;
+  EXPECT_NEAR(edge_450, 22.27163802869244, 1e-6);
+  EXPECT_LT(21.9161264398004, 22.1);
+  EXPECT_LT(22.1, edge_450);
+
   const std::string& survey_text = RandomSurvey();
   const ScenePtr scene = MakeScene(RandomScene().c_str());
   Req q({ 3, 5 }, { 2 });
-  q.c.wavelength_nm = 480.0;  // the document's D65 default resolved to 550
+  q.c.wavelength_nm = 450.0;
+  q.c.target_altitude_deg = -2.1;
+  q.c.target_azimuth_deg = 0.0;
   q.warm = survey_text;
   q.Bind();
   const Outcome o = Analyse(scene.get(), q);
   ASSERT_EQ(o.code, LUMICE_OK) << o.error;
   const nlohmann::json context = nlohmann::json::parse(Json(o.result.get()))["survey_context"];
+  EXPECT_NEAR(nlohmann::json::parse(Json(o.result.get()))["meta"]["target"]["deviation_deg"].get<double>(), 22.1, 1e-5);
   EXPECT_EQ(context["source"], "warm");
-  EXPECT_EQ(context["object"]["state"], "certified");  // the structure gates do not see lambda
+  EXPECT_EQ(context["object"]["state"], "unevaluated");
+  EXPECT_EQ(context["object"]["reason"], "scope_value_mismatch");
+  EXPECT_FALSE(context["object"].contains("target_inside_support"));
+  EXPECT_EQ(context["edge"]["state"], "unevaluated");
+  EXPECT_EQ(context["edge"]["reason"], "scope_value_mismatch");
   EXPECT_EQ(context["band_sum"]["state"], "unevaluated");
   EXPECT_EQ(context["band_sum"]["reason"], "scope_value_mismatch");
 }
@@ -655,6 +683,8 @@ TEST_F(WarmContract, WarmHarvestCarriesTheKappaFields) {
   ASSERT_TRUE(e.Ok()) << e.message;
   EXPECT_TRUE(harvest.index_present);
   EXPECT_TRUE(harvest.has_probe);
+  EXPECT_TRUE(harvest.has_probe_azimuth);
+  EXPECT_DOUBLE_EQ(harvest.probe_azimuth_deg, 0.0);
   EXPECT_EQ(harvest.probe_sample_count, 2000000);
   ASSERT_FALSE(harvest.probe_samples.empty());
   long long total_k = 0;
@@ -665,6 +695,21 @@ TEST_F(WarmContract, WarmHarvestCarriesTheKappaFields) {
   }
   EXPECT_GT(total_k, 0);
   EXPECT_GT(max_k_eff, 0.0);
+
+  nlohmann::json legacy = nlohmann::json::parse(RandomSurvey());
+  legacy["probes"][0]["spec"].erase("azimuth_deg");
+  legacy["generator"]["lumice"] = "4.7.4-dev";
+  seeds.clear();
+  rp::SurveyWarmSource older;
+  ASSERT_TRUE(rp::ParseWarmStart(legacy.dump(), gate, &seeds, &older).Ok());
+  EXPECT_TRUE(older.has_probe_azimuth);
+  EXPECT_DOUBLE_EQ(older.probe_azimuth_deg, 0.0);
+
+  legacy["generator"]["lumice"] = "unknown-producer";
+  seeds.clear();
+  rp::SurveyWarmSource unknown;
+  ASSERT_TRUE(rp::ParseWarmStart(legacy.dump(), gate, &seeds, &unknown).Ok());
+  EXPECT_FALSE(unknown.has_probe_azimuth);
 }
 
 // The warm path's first gate: an id that is not in the config used to reach the fingerprint's

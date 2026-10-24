@@ -37,22 +37,19 @@ nlohmann::ordered_json Conventions() {
       "per bin, per sr (the band-sum value convention; a uniform density's value is the "
       "full-annulus mean, azimuth-free)" },
     { "dark_regions",
-      "the line's bins classified against the context's support: inside_support_positive (bins with "
-      "events), inside_support_zero (bins without events inside the support — a weak tail, never "
-      "clamped into a written zero), outside_support (geometrically dark), unknown (the context did "
-      "not certify a support; its named cause rides the run). Segment bounds read the line's sweep "
-      "coordinate: deviation for the axis forms, azimuth for the arc forms" },
+      "each profile's bins are classified against support at that profile's wavelength; the "
+      "reference context is not borrowed across the lambda grid. Inside_support_positive means "
+      "events, inside_support_zero means no events inside support, outside_support is geometrically "
+      "dark, unknown means no support certificate at this wavelength (named reason). Segment "
+      "bounds use deviation for axis forms and azimuth for arc forms" },
     { "source",
       "warm_reused: the values are the warm document's own radial samples, checked bin-centre "
       "against the asked grid by the schema constants (bin, count, extent; centre tolerance far "
       "below the bin — a one-ulp platform wobble is representation noise, not another grid) — zero "
-      "BandSum calls. recomputed: BandSum ran here "
-      "(lattice-deterministic, no seed dependence — a probe consumes no fiber seeds). The reuse "
-      "criterion's premise is the ruler constants being schema: bin, wedge and lattice count are "
-      "schema, so the asked grid matching the warm grid is the whole check; the azimuth is absent "
-      "from the comparison on purpose (the radial form's azimuth-free value — a uniform-density "
-      "property, as the value convention above states it). The key is finite-only: a refused "
-      "profile omits it — nothing was reused or computed" },
+      "BandSum calls. recomputed: BandSum ran here (lattice-deterministic, no seed dependence). "
+      "Reuse requires the same wavelength and sun, bin layout, and sample count. Non-uniform "
+      "measures also require a known matching line azimuth; only the uniform density is "
+      "azimuth-free. A refused profile omits the source key" },
     { "null", "a number that is not defined (NaN) is written as null" },
   };
 }
@@ -120,6 +117,7 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
   if (!p.anchor_basis.empty()) {
     spec["anchor_basis"] = p.anchor_basis;
     spec["anchor_deg"] = Num(p.anchor_deg);
+    spec["anchor_wavelength_nm"] = Num(p.anchor_wavelength_nm);
   }
   nlohmann::ordered_json j = { { "along", p.along }, { "spec", std::move(spec) } };
   if (p.evidence_state == "refused") {

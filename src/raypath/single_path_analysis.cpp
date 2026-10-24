@@ -679,11 +679,13 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation, const a
 SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   SurveyWarmSource out;
   out.early_stopped = doc.early_stopped;
-  out.has_scope = true;
+  out.has_wavelength = std::isfinite(doc.wavelength_nm) && doc.wavelength_nm > 0.0;
   out.wavelength_nm = doc.wavelength_nm;
   out.wavelength_source = doc.wavelength_source;
-  out.sun_altitude_deg = doc.sun_altitude_deg;
-  out.sun_azimuth_deg = doc.sun_azimuth_deg;
+  out.has_sun_altitude = doc.sun_altitude_deg.has_value() && std::isfinite(*doc.sun_altitude_deg);
+  out.sun_altitude_deg = doc.sun_altitude_deg.value_or(0.0);
+  out.has_sun_azimuth = doc.sun_azimuth_deg.has_value() && std::isfinite(*doc.sun_azimuth_deg);
+  out.sun_azimuth_deg = doc.sun_azimuth_deg.value_or(0.0);
   for (const survey::SurveyObject& card : doc.objects) {
     if (card.support_set.has_value()) {
       for (const survey::SurveyObject::Interval& interval : card.support_set->intervals) {
@@ -703,6 +705,8 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   if (!doc.probes.empty()) {
     const survey::SurveyProbe& probe = doc.probes.front();
     out.has_probe = true;
+    out.has_probe_azimuth = probe.spec.azimuth_deg.has_value() && std::isfinite(*probe.spec.azimuth_deg);
+    out.probe_azimuth_deg = probe.spec.azimuth_deg.value_or(0.0);
     out.probe_bin_deg = probe.spec.bin_deg;
     out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
     for (const survey::SurveyProbeSample& sample : probe.samples) {
@@ -723,8 +727,35 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   return out;
 }
 
-bool NearestStructureAnchor(const SurveyWarmSource& warm, double deviation_deg, double* position_deg,
+SurveyReuseDecision EvaluateSurveyReuse(const SurveyWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
+                                        double sun_azimuth_deg) {
+  SurveyReuseDecision decision;
+  if (warm.early_stopped) {
+    decision.structure.reason = "survey_early_stopped_no_delta_axis";
+  } else if (!warm.has_support) {
+    decision.structure.reason = "survey_carries_no_support";
+  } else if (!warm.has_wavelength) {
+    decision.structure.reason = "scope_field_missing";
+  } else if (warm.wavelength_nm != wavelength_nm) {
+    decision.structure.reason = "scope_value_mismatch";
+  } else {
+    decision.structure.warm = &warm;
+  }
+  if (!warm.has_wavelength || !warm.has_sun_altitude || !warm.has_sun_azimuth) {
+    decision.reading_reason = "scope_field_missing";
+  } else if (warm.wavelength_nm != wavelength_nm || warm.sun_altitude_deg != sun_altitude_deg ||
+             warm.sun_azimuth_deg != sun_azimuth_deg) {
+    decision.reading_reason = "scope_value_mismatch";
+  }
+  return decision;
+}
+
+bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
                             const char** basis) {
+  if (!structure) {
+    return false;
+  }
+  const SurveyWarmSource& warm = *structure.warm;
   bool has = false;
   double best = 0.0;
   const char* best_basis = "";
@@ -752,31 +783,29 @@ bool NearestStructureAnchor(const SurveyWarmSource& warm, double deviation_deg, 
 // The context's answers, read off a harvest (warm document or inline assembly — the same shape).
 void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
                        double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
+  const SurveyReuseDecision reuse = EvaluateSurveyReuse(warm, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
   const double delta = target_deviation_deg;
   const SurveyWarmSource::SupportInterval* containing = nullptr;
   const SurveyWarmSource::SupportInterval* closest = nullptr;
   double closest_distance = std::numeric_limits<double>::infinity();
-  for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
-    if (delta >= interval.lower_deg && delta <= interval.upper_deg) {
-      containing = &interval;
-      break;
-    }
-    const double d = delta < interval.lower_deg ? interval.lower_deg - delta : delta - interval.upper_deg;
-    if (d < closest_distance) {
-      closest_distance = d;
-      closest = &interval;
+  if (reuse.structure) {
+    for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
+      if (delta >= interval.lower_deg && delta <= interval.upper_deg) {
+        containing = &interval;
+        break;
+      }
+      const double d = delta < interval.lower_deg ? interval.lower_deg - delta : delta - interval.upper_deg;
+      if (d < closest_distance) {
+        closest_distance = d;
+        closest = &interval;
+      }
     }
   }
-  if (warm.early_stopped) {
+  if (!reuse.structure) {
     out->object.state = "unevaluated";
-    out->object.reason = "survey_early_stopped_no_delta_axis";
+    out->object.reason = reuse.structure.reason;
     out->edge.state = "unevaluated";
-    out->edge.reason = "survey_early_stopped_no_delta_axis";
-  } else if (!warm.has_support) {
-    out->object.state = "unevaluated";
-    out->object.reason = "survey_carries_no_support";
-    out->edge.state = "unevaluated";
-    out->edge.reason = "survey_carries_no_support";
+    out->edge.reason = reuse.structure.reason;
   } else {
     // The partition containment is a certified structural fact; the nearest reading inherits it.
     const SurveyWarmSource::SupportInterval& hit = containing != nullptr ? *containing : *closest;
@@ -788,7 +817,7 @@ void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg
     // A certified support carries endpoints, so the shared walk always names an anchor here.
     double edge_position = 0.0;
     const char* edge_basis = "";
-    NearestStructureAnchor(warm, delta, &edge_position, &edge_basis);
+    NearestStructureAnchor(reuse.structure, delta, &edge_position, &edge_basis);
     out->edge.state = "finite";
     out->edge_distance_deg = std::fabs(delta - edge_position);
     out->edge_basis = edge_basis;
@@ -805,13 +834,9 @@ void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg
   } else if (!warm.has_probe) {
     out->band_sum.state = "unevaluated";
     out->band_sum.reason = "warm_document_has_no_probe";
-  } else if (!warm.has_scope) {
+  } else if (reuse.reading_reason != nullptr) {
     out->band_sum.state = "unevaluated";
-    out->band_sum.reason = "scope_field_missing";
-  } else if (wavelength_nm != warm.wavelength_nm || sun_altitude_deg != warm.sun_altitude_deg ||
-             sun_azimuth_deg != warm.sun_azimuth_deg) {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = "scope_value_mismatch";
+    out->band_sum.reason = reuse.reading_reason;
   } else {
     const SurveyWarmSource::ProbeSample* best = nullptr;
     double best_distance = std::numeric_limits<double>::infinity();
@@ -836,7 +861,9 @@ void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg
       out->band_sum_caliber = "the warm document's solar-radial band-sum profile at wavelength " +
                               std::to_string(warm.wavelength_nm) + " nm (" + warm.wavelength_source + "), sun at " +
                               std::to_string(warm.sun_altitude_deg) + "/" + std::to_string(warm.sun_azimuth_deg) +
-                              " — identity-verified against this query";
+                              ", survey line azimuth " +
+                              (warm.has_probe_azimuth ? std::to_string(warm.probe_azimuth_deg) : "unknown") +
+                              " — reference-line reading, not target-sky intensity";
     }
   }
 }

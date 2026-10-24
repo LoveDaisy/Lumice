@@ -1,5 +1,6 @@
 #include "raypath/single_path_json.hpp"
 
+#include <cmath>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -86,10 +87,11 @@ nlohmann::ordered_json Conventions() {
       "--warm contract): source warm (the given schema-4 document's facts) or inline (a context-only T0-T2 "
       "assembly on this request's config); every field carries its own state — certified (the support "
       "partition's containment fact), finite (a computed reading), unevaluated with a named reason — and the "
-      "value fields exist exactly when the state says something was read. The "
-      "band-sum reading exists only when a warm document's probe was consumed under the scope gate's "
-      "exact-equality comparison of wavelength and sun (scope_field_missing / scope_value_mismatch name the "
-      "two failures); warm_index_absent declares the documented degradation to the inline context" },
+      "value fields exist exactly when the state says something was read. Support and edge require "
+      "the producing wavelength; a missing or different wavelength leaves them unevaluated "
+      "(scope_field_missing / scope_value_mismatch). The band-sum reading additionally requires "
+      "the producing sun; it is the original survey line's nearest sample, not a target-sky "
+      "intensity. warm_index_absent declares degradation to the inline context" },
     { "reach",
       "whether delta (target deviation) lies in the range of D over every valid sun direction, probed on its own "
       "grid (independent of sun_grid) with the validity boundary bisected; false: delta is outside "
@@ -313,6 +315,9 @@ nlohmann::ordered_json SunGridJson(const SunSphereGrid& g) {
 // means "inside the support").
 nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& c) {
   nlohmann::ordered_json j = { { "source", c.source }, { "warm_index_absent", c.warm_index_absent } };
+  if (c.reference_wavelength_nm > 0.0) {
+    j["reference_wavelength_nm"] = Num(c.reference_wavelength_nm);
+  }
   nlohmann::ordered_json object = { { "state", c.object.state } };
   if (!c.object.reason.empty()) {
     object["reason"] = c.object.reason;
@@ -571,19 +576,23 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
       doc["routing"]["early_stopped"].is_boolean()) {
     survey->early_stopped = doc["routing"]["early_stopped"].get<bool>();
   }
-  // ...the scope receipt (the band-sum gate's comparison side)...
-  if (doc.contains("scope") && doc["scope"].is_object() && doc["scope"].contains("wavelength_nm") &&
-      doc["scope"]["wavelength_nm"].is_number() && doc["scope"].contains("sun_altitude_deg") &&
-      doc["scope"]["sun_altitude_deg"].is_number() && doc["scope"].contains("sun_azimuth_deg") &&
-      doc["scope"]["sun_azimuth_deg"].is_number()) {
-    survey->has_scope = true;
-    survey->wavelength_nm = doc["scope"]["wavelength_nm"].get<double>();
-    survey->wavelength_source =
-        doc["scope"].contains("wavelength_source") && doc["scope"]["wavelength_source"].is_string() ?
-            doc["scope"]["wavelength_source"].get<std::string>() :
-            "";
-    survey->sun_altitude_deg = doc["scope"]["sun_altitude_deg"].get<double>();
-    survey->sun_azimuth_deg = doc["scope"]["sun_azimuth_deg"].get<double>();
+  if (doc.contains("scope") && doc["scope"].is_object()) {
+    const auto& scope = doc["scope"];
+    if (scope.contains("wavelength_nm") && scope["wavelength_nm"].is_number()) {
+      survey->wavelength_nm = scope["wavelength_nm"].get<double>();
+      survey->has_wavelength = std::isfinite(survey->wavelength_nm) && survey->wavelength_nm > 0.0;
+    }
+    survey->wavelength_source = scope.contains("wavelength_source") && scope["wavelength_source"].is_string() ?
+                                    scope["wavelength_source"].get<std::string>() :
+                                    "";
+    if (scope.contains("sun_altitude_deg") && scope["sun_altitude_deg"].is_number()) {
+      survey->sun_altitude_deg = scope["sun_altitude_deg"].get<double>();
+      survey->has_sun_altitude = std::isfinite(survey->sun_altitude_deg);
+    }
+    if (scope.contains("sun_azimuth_deg") && scope["sun_azimuth_deg"].is_number()) {
+      survey->sun_azimuth_deg = scope["sun_azimuth_deg"].get<double>();
+      survey->has_sun_azimuth = std::isfinite(survey->sun_azimuth_deg);
+    }
   }
   // ...the support (every support card's intervals) and the certified edge. Members are the
   // card's first layer, the entry faces the partition ran on — the same reading the in-memory
@@ -631,6 +640,21 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
       doc["probes"][0].contains("samples") && doc["probes"][0]["samples"].is_array()) {
     const auto& probe = doc["probes"][0];
     survey->has_probe = true;
+    if (probe.contains("spec") && probe["spec"].is_object()) {
+      const auto& spec = probe["spec"];
+      if (spec.contains("azimuth_deg") && spec["azimuth_deg"].is_number()) {
+        survey->probe_azimuth_deg = spec["azimuth_deg"].get<double>();
+        survey->has_probe_azimuth = std::isfinite(survey->probe_azimuth_deg);
+      } else if (!spec.contains("azimuth_deg") && probe.contains("kind") && probe["kind"] == "solar_radial" &&
+                 doc.contains("generator") && doc["generator"].is_object() && doc["generator"].contains("lumice") &&
+                 doc["generator"]["lumice"].is_string() &&
+                 (doc["generator"]["lumice"] == "4.7.4-dev" || doc["generator"]["lumice"] == "4.7.5" ||
+                  doc["generator"]["lumice"] == "4.7.5-dev") &&
+                 doc["warm_index"]["produced_for"] == "lumice.path-survey schema 4, analytic api v8") {
+        survey->has_probe_azimuth = true;
+        survey->probe_azimuth_deg = 0.0;
+      }
+    }
     if (probe.contains("spec") && probe["spec"].is_object() && probe["spec"].contains("bin_deg") &&
         probe["spec"]["bin_deg"].is_number()) {
       survey->probe_bin_deg = probe["spec"]["bin_deg"].get<double>();

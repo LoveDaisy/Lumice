@@ -13,13 +13,10 @@
 //     distribution (all three slots) — the geometry and the measure the router reads;
 //   - the request: the literal path layers and the symmetry bits (the scope the class expansion
 //     runs under).
-// Excluded on purpose (the owner's routing ruling, routing.md ruling point 1): the sun position
-// and the wavelength/spectrum — neither participates in routing, so a warm document stays
-// structurally reusable across a moved sun or a changed lambda; both are re-checked per query
-// against the document's scope receipt instead (the band-sum consumption gate). Also excluded:
-// the crystal's scene-layer allocation and every other scene/renderer field — the router reads
-// the crystal, the path and the scope, nothing else (the layer stack's only routing role is
-// locating the crystal entry, which the crystal id already pins).
+// Excluded on purpose: sun and wavelength do not participate in routing. A passing fingerprint
+// admits a candidate and seeds, not its derived numeric facts: delta support and edge require the
+// same wavelength, and band-sum values also require the same sun (and non-uniform line azimuth).
+// Scene allocation and other renderer fields remain excluded from the routing projection.
 //
 // The value is the hex SHA256 of the projection's canonical JSON (sorted keys, no whitespace),
 // prefixed with the axis-set tag so a projection change invalidates every earlier fingerprint

@@ -268,6 +268,7 @@ Json ProbeJson(const SurveyProbe& probe) {
                 { "delta_max_deg", Num(probe.spec.delta_max_deg) },
                 { "bin_deg", Num(probe.spec.bin_deg) },
                 { "wedge_half_width_deg", Num(probe.spec.wedge_half_width_deg) },
+                { "azimuth_deg", probe.spec.azimuth_deg.has_value() ? Num(*probe.spec.azimuth_deg) : Json(nullptr) },
                 { "wavelength_nm", Num(probe.spec.wavelength_nm) },
                 { "refractive_index", Num(probe.spec.refractive_index) },
                 { "sample_count", probe.spec.sample_count },
@@ -345,14 +346,16 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
                        document.request.wavelength_given ? Json(Num(document.request.wavelength_nm)) : Json(nullptr) },
                      { "budget_ms", document.request.budget_ms } };
 
-  doc["scope"] = { { "scene_identity", document.scene_identity },
-                   { "scene_layer", document.scene_layer.has_value() ? Json(*document.scene_layer) : Json(nullptr) },
-                   { "members", LayersJson(document.members) },
-                   { "wavelength_nm", Num(document.wavelength_nm) },
-                   { "wavelength_source", document.wavelength_source },
-                   { "refractive_index", Num(document.refractive_index) },
-                   { "sun_altitude_deg", Num(document.sun_altitude_deg) },
-                   { "sun_azimuth_deg", Num(document.sun_azimuth_deg) } };
+  doc["scope"] = {
+    { "scene_identity", document.scene_identity },
+    { "scene_layer", document.scene_layer.has_value() ? Json(*document.scene_layer) : Json(nullptr) },
+    { "members", LayersJson(document.members) },
+    { "wavelength_nm", Num(document.wavelength_nm) },
+    { "wavelength_source", document.wavelength_source },
+    { "refractive_index", Num(document.refractive_index) },
+    { "sun_altitude_deg", document.sun_altitude_deg.has_value() ? Num(*document.sun_altitude_deg) : Json(nullptr) },
+    { "sun_azimuth_deg", document.sun_azimuth_deg.has_value() ? Num(*document.sun_azimuth_deg) : Json(nullptr) }
+  };
 
   Json routing = { { "early_stopped", document.early_stopped } };
   Json verdicts = Json::array();

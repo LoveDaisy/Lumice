@@ -162,6 +162,7 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
   probe.spec.delta_max_deg = kProbeDeltaMaxDeg;
   probe.spec.bin_deg = kProbeBinDeg;
   probe.spec.wedge_half_width_deg = kProbeWedgeHalfWidthDeg;
+  probe.spec.azimuth_deg = input.azimuth_deg;
   probe.spec.wavelength_nm = input.wavelength_nm;
   probe.spec.refractive_index = input.refractive_index;
   probe.spec.sample_count = input.sample_count;

@@ -415,6 +415,7 @@ struct SurveyProbeSpec {
   double delta_max_deg = 60.0;
   double bin_deg = 0.1;
   double wedge_half_width_deg = 0.0;
+  std::optional<double> azimuth_deg;
   double wavelength_nm = 0.0;
   double refractive_index = 0.0;
   long long sample_count = 0;
@@ -724,8 +725,8 @@ struct SurveyDocument {
   double wavelength_nm = 0.0;
   std::string wavelength_source;  // WavelengthSourceName
   double refractive_index = 0.0;
-  double sun_altitude_deg = 0.0;
-  double sun_azimuth_deg = 0.0;
+  std::optional<double> sun_altitude_deg;
+  std::optional<double> sun_azimuth_deg;
 
   // Routing: the T0 leg.
   bool early_stopped = false;
