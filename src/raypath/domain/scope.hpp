@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -43,19 +44,67 @@ struct ObservationScope {
 };
 
 enum class MeasureKind { kActualDeclared, kIdealFrozen };
-enum class ReferenceMeasure { kHaar };
+enum class ReferenceMeasure { kHaar, kAngleLebesgue, kOrbitParameter, kActualProduct, kNone };
 struct MeasureScope {
   MeasureKind kind = MeasureKind::kActualDeclared;
   ReferenceMeasure reference = ReferenceMeasure::kHaar;
 };
-enum class QuantityKind { kBandSum };
-enum class QuantityUnit { kPerSteradian };
-enum class MemberAggregation { kRepresentative, kPhysicalClass };
+enum class QuantityKind {
+  kBandSum,
+  kTintRatio,
+  kTirShare,
+  kMcEss,
+  kWitnessWeight,
+  kEntryArea,
+  kTransmission,
+  kPoseDensity,
+  kNormalJacobian,
+  kCoareaFactor,
+  kFactorProduct,
+  kFiberIntegral,
+  kOrbitIntegral
+};
+enum class QuantityUnit { kPerSteradian, kDimensionless, kArea, kMass, kPerRadianCubed, kPerRadianSquared };
+enum class MemberAggregation { kRepresentative, kPhysicalClass, kMember };
+enum class QuantityMethod {
+  kBandSumLattice,
+  kPointMassPsiAverage,
+  kPointMassLatticeMean,
+  kClassLatticePowerSum,
+  kSinglePoseDirect,
+  kPointMassBandSum,
+  kDiagnosticTirLattice,
+  kKishOuterDraw,
+  kLatticeArgmaxDiagnostic,
+  kEntryMeasure,
+  kInterfaceProduct,
+  kDeclaredPoseDensity,
+  kNormalJacobian,
+  kRegularizedCoarea,
+  kFactorProduct,
+  kFiberArclength,
+  kOrbitMidpoint
+};
+enum class DensityWeighting { kPoseDensity, kNone, kDeclaredPoseDensity, kActualSamplingWeights };
+enum class SpectralObservation { kReferenceWavelength, kFixedChromaticPair, kDiscreteSpectrum, kQuadrature };
+enum class SourceObservation { kSolarCenter, kSolarDisk };
+enum class QuantityShapeBasis { kNominal, kDeclaredPopulation, kRealized };
+struct QuantityContext;
 struct QuantitySpec {
   QuantityKind kind = QuantityKind::kBandSum;
   QuantityUnit unit = QuantityUnit::kPerSteradian;
   MemberAggregation aggregation = MemberAggregation::kRepresentative;
   MeasureKind measure = MeasureKind::kActualDeclared;
+  ReferenceMeasure reference = ReferenceMeasure::kHaar;
+  QuantityMethod method = QuantityMethod::kBandSumLattice;
+  DensityWeighting density = DensityWeighting::kPoseDensity;
+  SpectralObservation spectrum = SpectralObservation::kReferenceWavelength;
+  SourceObservation source = SourceObservation::kSolarCenter;
+  QuantityShapeBasis shape = QuantityShapeBasis::kNominal;
+  ObservationScope observation;
+  std::vector<double> wavelengths_nm;
+  double regularization_epsilon = 0.0;
+  std::shared_ptr<const QuantityContext> context;
 };
 }  // namespace lumice::raypath
 

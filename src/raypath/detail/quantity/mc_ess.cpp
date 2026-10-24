@@ -52,6 +52,28 @@ struct BandAccumulator {
 
 SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input) {
   SurveyMcRegionEss ess;
+  ess.SetState(EvidenceState::kFinite);
+  ess.Value().quantity =
+      DescribeQuantity(QuantityKind::kMcEss, QuantityUnit::kDimensionless, QuantityMethod::kKishOuterDraw,
+                       ReferenceMeasure::kActualProduct, DensityWeighting::kActualSamplingWeights);
+  ess.Value().quantity.shape = QuantityShapeBasis::kDeclaredPopulation;
+  ess.Value().quantity.aggregation = MemberAggregation::kPhysicalClass;
+  ess.Value().quantity.source =
+      input.snapshot->light.param_.diameter_ > 0 ? SourceObservation::kSolarDisk : SourceObservation::kSolarCenter;
+  DeclareQuantity(&ess, ess.Value().quantity,
+                  input.snapshot->layers.front().representative.empty() ?
+                      std::vector<std::vector<int>>{} :
+                      std::vector<std::vector<int>>{ input.snapshot->layers.front().representative },
+                  input.wavelength_nm);
+  PhysicalMemberScope evaluated_members;
+  if (ResolvePhysicalMemberScope(input.snapshot->layers.front(), &evaluated_members).Ok()) {
+    ClaimScope scope = ess.Scope();
+    scope.members = static_cast<const MemberScope&>(evaluated_members);
+    if (input.member_count >= 0 && static_cast<size_t>(input.member_count) < scope.members.members.size()) {
+      scope.members.members.resize(static_cast<size_t>(input.member_count));
+    }
+    ess.BindScope(scope);
+  }
   // The single-lambda spectrum request: the survey's reference wavelength through the sampled
   // branch. A discrete light must own a slot AT the reference wavelength (the survey's own
   // resolution guarantees it when the wavelength came from the scene, not from the user);
@@ -79,24 +101,24 @@ SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input) {
   budget.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(input.budget_ms);
   DiagnosticMeasure measure;
   if (const Error error = BuildDiagnosticMeasure(sampler, budget, &measure); !error.Ok()) {
-    ess.evidence.state = EvidenceState::kRefused;
-    ess.evidence.mode = "sampler_unavailable";
+    ess.SetState(EvidenceState::kRefused);
+    ess.Mode() = "sampler_unavailable";
     ILOG_INFO(GetGlobalLogger(), "[raypath survey] mc region ess refused: sampler_unavailable ({} draws requested)",
               input.draws);
-    return ess;
+    return CompleteQuantity(std::move(ess));
   }
   // BuildDiagnosticMeasure's flag contract: the flag is set only by its pre-draw and mid-draw
   // deadline/ceiling checks — never after a draw completes — so a measure with every requested
   // draw completed never carries it, and an empty measure always does. The completed_samples
   // disjunct below is fail-closed defense, not a second reachable refusal cause.
   if (measure.budget_exhausted || measure.completed_samples == 0) {
-    ess.evidence.state = EvidenceState::kRefused;
-    ess.evidence.mode = "budget_exhausted";
+    ess.SetState(EvidenceState::kRefused);
+    ess.Mode() = "budget_exhausted";
     // The refused leg's only record outside the {state, mode} block: a partial measure spent
     // real compute before the deadline, and the audit reader sees it nowhere else.
     ILOG_INFO(GetGlobalLogger(), "[raypath survey] mc region ess refused: budget_exhausted ({} of {} draws completed)",
               measure.completed_samples, input.draws);
-    return ess;
+    return CompleteQuantity(std::move(ess));
   }
 
   std::vector<BandAccumulator> bands(kSurveyMcEssBandCount);
@@ -127,36 +149,37 @@ SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input) {
     band.CloseGroup();
   }
 
-  ess.seed = kSurveyMcEssSeed;
-  ess.draws = input.draws;
-  ess.lambda_nm = input.wavelength_nm;
-  ess.band_deg = kSurveyMcEssBandDeg;
-  ess.bands.resize(kSurveyMcEssBandCount);
+  ess.Value().seed = kSurveyMcEssSeed;
+  ess.Value().draws = input.draws;
+  ess.Value().lambda_nm = input.wavelength_nm;
+  ess.Value().band_deg = kSurveyMcEssBandDeg;
+  ess.Value().bands.resize(kSurveyMcEssBandCount);
   for (int i = 0; i < kSurveyMcEssBandCount; i++) {
-    SurveyMcRegionEssBand& row = ess.bands[static_cast<size_t>(i)];
+    SurveyMcRegionEssBand& row = ess.Value().bands[static_cast<size_t>(i)];
     row.delta_min_deg = i * kSurveyMcEssBandDeg;
     row.delta_max_deg = (i + 1) * kSurveyMcEssBandDeg;
     row.ess = bands[static_cast<size_t>(i)].Ess();
     row.draw_count = bands[static_cast<size_t>(i)].draw_count;
     row.sum_weight = bands[static_cast<size_t>(i)].sum_weight;
+    row.sum_squared_weight = bands[static_cast<size_t>(i)].sum_squared;
   }
-  ess.deterministic = false;  // seeded random; a given seed reproduces the sample
-  ess.evidence.state = EvidenceState::kFinite;
-  ess.evidence.coverage.members_evaluated = input.member_count;
-  ess.evidence.coverage.geometry_basis =
+  ess.Value().deterministic = false;  // seeded random; a given seed reproduces the sample
+  ess.SetState(EvidenceState::kFinite);
+  ess.Coverage().members_evaluated = input.member_count;
+  ess.Coverage().geometry_basis =
       "the MC corroboration sampler's complete outer draws at the survey's scene snapshot, "
       "Y-channel weights banded by solar-radial deviation; a sampling-quality measurement, not "
       "a corroboration verdict (no agrees/silent/conflicts word applies)";
-  ess.evidence.coverage.wavelength_nm = input.wavelength_nm;
+  ess.Coverage().wavelength_nm = input.wavelength_nm;
 
   const double peak_ess =
-      std::max_element(ess.bands.begin(), ess.bands.end(),
+      std::max_element(ess.Value().bands.begin(), ess.Value().bands.end(),
                        [](const SurveyMcRegionEssBand& a, const SurveyMcRegionEssBand& b) { return a.ess < b.ess; })
           ->ess;
   ILOG_INFO(GetGlobalLogger(),
             "[raypath survey] mc region ess: {} draws at seed {}, lambda {:.1f} nm, {} completed, peak band ESS {:.1f}",
-            ess.draws, ess.seed, ess.lambda_nm, measure.completed_samples, peak_ess);
-  return ess;
+            ess.Value().draws, ess.Value().seed, ess.Value().lambda_nm, measure.completed_samples, peak_ess);
+  return CompleteQuantity(std::move(ess));
 }
 
 }  // namespace lumice::raypath::survey

@@ -55,19 +55,19 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyData* out) {
   out->probes.push_back(std::move(probe));
 
   for (SurveyObject& card : out->objects) {
-    if (card.kind != SurveyObjectKind::kBrightDomain || !card.bright_domain.has_value()) {
+    if (card.Kind() != SurveyObjectKind::kBrightDomain || card.Bright() == nullptr) {
       continue;
     }
     if (input.fill_member != nullptr && (card.members.size() != 1u || card.members.front() != *input.fill_member)) {
       continue;
     }
-    card.bright_domain->has_peak = readings.has_peak;
-    card.bright_domain->peak_delta_deg = readings.peak_delta_deg;
-    card.bright_domain->peak_value = readings.peak_value;
-    card.bright_domain->has_edge_reading = readings.has_edge;
-    card.bright_domain->edge_delta_deg = readings.edge_delta_deg;
-    card.bright_domain->kept_count = line.kept_count;
-    card.bright_domain->probe_index = static_cast<int>(out->probes.size()) - 1;
+    card.Bright()->has_peak = readings.has_peak;
+    card.Bright()->peak_delta_deg = readings.peak_delta_deg;
+    card.Bright()->peak_value = readings.peak_value;
+    card.Bright()->has_edge_reading = readings.has_edge;
+    card.Bright()->edge_delta_deg = readings.edge_delta_deg;
+    card.Bright()->kept_count = line.kept_count;
+    card.Bright()->probe_index = static_cast<int>(out->probes.size()) - 1;
   }
 }
 

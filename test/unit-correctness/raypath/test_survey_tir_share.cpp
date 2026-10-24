@@ -70,35 +70,35 @@ TEST(SurveyTirShare, TwoInternalInterfacesSeparateTheAggregateFromThePerInterfac
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
   const SurveyTirShare& tir = *document.tir_share;
-  if (tir.evidence.state != EvidenceState::kFinite) {
-    ADD_FAILURE() << "unexpected refusal mode: " << tir.evidence.mode;
+  if (tir.State() != EvidenceState::kFinite) {
+    ADD_FAILURE() << "unexpected refusal mode: " << tir.Mode();
     return;
   }
-  ASSERT_EQ(tir.interfaces.size(), 2u);
-  EXPECT_EQ(tir.interfaces[0].face, 15);
-  EXPECT_EQ(tir.interfaces[1].face, 26);
-  for (const SurveyTirShareInterface& row : tir.interfaces) {
+  ASSERT_EQ(tir.Value().interfaces.size(), 2u);
+  EXPECT_EQ(tir.Value().interfaces[0].face, 15);
+  EXPECT_EQ(tir.Value().interfaces[1].face, 26);
+  for (const SurveyTirShareInterface& row : tir.Value().interfaces) {
     EXPECT_GE(row.share_red, 0.0);
     EXPECT_LE(row.share_red, 1.0);
     EXPECT_GE(row.share_blue, 0.0);
     EXPECT_LE(row.share_blue, 1.0);
-    EXPECT_LE(tir.share_all_tir_red, row.share_red);
-    EXPECT_LE(tir.share_all_tir_blue, row.share_blue);
+    EXPECT_LE(tir.Value().share_all_tir_red, row.share_red);
+    EXPECT_LE(tir.Value().share_all_tir_blue, row.share_blue);
   }
-  EXPECT_GE(tir.share_all_tir_red, 0.0);
-  EXPECT_LE(tir.share_all_tir_red, 1.0);
-  EXPECT_GE(tir.share_all_tir_blue, 0.0);
-  EXPECT_LE(tir.share_all_tir_blue, 1.0);
-  EXPECT_EQ(tir.n_red, IceRefractiveIndex::Get(650.0));
-  EXPECT_EQ(tir.n_blue, IceRefractiveIndex::Get(450.0));
-  EXPECT_EQ(tir.sample_count, 20000);
-  EXPECT_EQ(tir.lattice, "antipodal_fibonacci");
-  EXPECT_EQ(tir.deterministic, true);
-  EXPECT_EQ(tir.representative, representative);
-  EXPECT_EQ(tir.member_count, 12);
-  EXPECT_GT(tir.kept_count_red, 0);
-  EXPECT_GT(tir.kept_count_blue, 0);
-  EXPECT_FALSE(tir.caliber.empty());
+  EXPECT_GE(tir.Value().share_all_tir_red, 0.0);
+  EXPECT_LE(tir.Value().share_all_tir_red, 1.0);
+  EXPECT_GE(tir.Value().share_all_tir_blue, 0.0);
+  EXPECT_LE(tir.Value().share_all_tir_blue, 1.0);
+  EXPECT_EQ(tir.Value().n_red, IceRefractiveIndex::Get(650.0));
+  EXPECT_EQ(tir.Value().n_blue, IceRefractiveIndex::Get(450.0));
+  EXPECT_EQ(tir.Value().sample_count, 20000);
+  EXPECT_EQ(tir.Value().lattice, "antipodal_fibonacci");
+  EXPECT_EQ(tir.Value().deterministic, true);
+  EXPECT_EQ(tir.Value().representative, representative);
+  EXPECT_EQ(tir.Value().member_count, 12);
+  EXPECT_GT(tir.Value().kept_count_red, 0);
+  EXPECT_GT(tir.Value().kept_count_blue, 0);
+  EXPECT_FALSE(tir.Value().caliber.empty());
 }
 
 // The k=1 degenerate form: with one internal interface the aggregate IS the per-interface row
@@ -112,14 +112,14 @@ TEST(SurveyTirShare, OneInternalInterfaceMakesTheAggregateIdenticalToTheRow) {
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
   const SurveyTirShare& tir = *document.tir_share;
-  if (tir.evidence.state != EvidenceState::kFinite) {
-    ADD_FAILURE() << "unexpected refusal mode: " << tir.evidence.mode;
+  if (tir.State() != EvidenceState::kFinite) {
+    ADD_FAILURE() << "unexpected refusal mode: " << tir.Mode();
     return;
   }
-  ASSERT_EQ(tir.interfaces.size(), 1u);
-  EXPECT_EQ(tir.interfaces[0].face, 5);
-  EXPECT_DOUBLE_EQ(tir.share_all_tir_red, tir.interfaces[0].share_red);
-  EXPECT_DOUBLE_EQ(tir.share_all_tir_blue, tir.interfaces[0].share_blue);
+  ASSERT_EQ(tir.Value().interfaces.size(), 1u);
+  EXPECT_EQ(tir.Value().interfaces[0].face, 5);
+  EXPECT_DOUBLE_EQ(tir.Value().share_all_tir_red, tir.Value().interfaces[0].share_red);
+  EXPECT_DOUBLE_EQ(tir.Value().share_all_tir_blue, tir.Value().interfaces[0].share_blue);
 }
 
 // The no-question shape: a two-face chain has one entry and one exit and no internal interface,
@@ -132,8 +132,8 @@ TEST(SurveyTirShare, SlabPathWithoutInternalInterfacesRefuses) {
   SurveyData document;
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
-  EXPECT_EQ(document.tir_share->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.tir_share->evidence.mode, "no_internal_interfaces");
+  EXPECT_EQ(document.tir_share->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.tir_share->Mode(), "no_internal_interfaces");
 }
 
 // The negative control: a representative naming a face the crystal lacks cannot resolve, and
@@ -145,8 +145,8 @@ TEST(SurveyTirShare, UnresolvableRepresentativeRefusesWithMemberResolution) {
   SurveyData document;
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
-  EXPECT_EQ(document.tir_share->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.tir_share->evidence.mode, "member_resolution");
+  EXPECT_EQ(document.tir_share->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.tir_share->Mode(), "member_resolution");
 }
 
 // Determinism: the leg is a deterministic lattice plus a deterministic batch — two runs agree
@@ -161,11 +161,11 @@ TEST(SurveyTirShare, TwoIdenticalRunsProduceTheSameShares) {
   AssembleTirShare(fix.Input(20000), &second);
   ASSERT_TRUE(first.tir_share.has_value());
   ASSERT_TRUE(second.tir_share.has_value());
-  ASSERT_EQ(first.tir_share->evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(first.tir_share->share_all_tir_red, second.tir_share->share_all_tir_red);
-  EXPECT_EQ(first.tir_share->share_all_tir_blue, second.tir_share->share_all_tir_blue);
-  EXPECT_EQ(first.tir_share->interfaces[0].share_red, second.tir_share->interfaces[0].share_red);
-  EXPECT_EQ(first.tir_share->interfaces[1].share_blue, second.tir_share->interfaces[1].share_blue);
+  ASSERT_EQ(first.tir_share->State(), EvidenceState::kFinite);
+  EXPECT_EQ(first.tir_share->Value().share_all_tir_red, second.tir_share->Value().share_all_tir_red);
+  EXPECT_EQ(first.tir_share->Value().share_all_tir_blue, second.tir_share->Value().share_all_tir_blue);
+  EXPECT_EQ(first.tir_share->Value().interfaces[0].share_red, second.tir_share->Value().interfaces[0].share_red);
+  EXPECT_EQ(first.tir_share->Value().interfaces[1].share_blue, second.tir_share->Value().interfaces[1].share_blue);
 }
 
 // The wiring, T1 arms: the full-dimensional route carries the document-level key (here on the
@@ -181,8 +181,8 @@ TEST(SurveyTirShare, AssemblyWiringFollowsTheArmScope) {
   ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   ASSERT_TRUE(document.tir_share.has_value());
-  EXPECT_EQ(document.tir_share->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.tir_share->evidence.mode, "no_internal_interfaces");
+  EXPECT_EQ(document.tir_share->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.tir_share->Mode(), "no_internal_interfaces");
   // The leg's refusal never touches the chromatic block (the T1 arm's block carries the
   // class tint's own finite state).
   EXPECT_EQ(document.chromatic.state, EvidenceState::kFinite);
@@ -210,13 +210,13 @@ TEST(SurveyTirShare, RefusedSupportArmStillRunsTheLeg) {
   SurveyData document;
   ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   ASSERT_EQ(document.objects.size(), 1u);
-  EXPECT_EQ(document.objects.front().evidence.state, EvidenceState::kRefused);
-  ASSERT_TRUE(document.objects.front().witness.has_value());
+  EXPECT_EQ(document.objects.front().Evidence().state, EvidenceState::kRefused);
+  ASSERT_TRUE(document.objects.front().Witness() != nullptr);
   ASSERT_TRUE(document.tir_share.has_value());
-  ASSERT_EQ(document.tir_share->evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(document.tir_share->interfaces.size(), 2u);
-  EXPECT_EQ(document.tir_share->interfaces[0].face, 1);
-  EXPECT_EQ(document.tir_share->interfaces[1].face, 5);
+  ASSERT_EQ(document.tir_share->State(), EvidenceState::kFinite);
+  EXPECT_EQ(document.tir_share->Value().interfaces.size(), 2u);
+  EXPECT_EQ(document.tir_share->Value().interfaces[0].face, 1);
+  EXPECT_EQ(document.tir_share->Value().interfaces[1].face, 5);
 }
 
 }  // namespace

@@ -127,7 +127,10 @@ FeatureReportData PrepareFeatureReportResult(const PathFeatureReport& report) {
   result.scope.support = DescribeSupport(report.snapshot);
   result.scope.requested_outer_samples = report.requested_outer_samples;
   result.scope.budget_ms = report.budget_ms;
-  result.scope.physical_members = report.representative_input.layers.front().scope.members;
+  const auto& member_scope = report.representative_input.layers.front().scope;
+  result.scope.physical_members = member_scope.members;
+  result.scope.member_kind = member_scope.member_kind;
+  result.scope.location = static_cast<const ScopeLocation&>(member_scope);
   result.scope.spectrum = report.representative_input.spectrum.rows;
   for (const auto& layer : report.snapshot.layers) {
     ReportLayerScope scope;

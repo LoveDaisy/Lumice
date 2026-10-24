@@ -3,12 +3,14 @@
 
 #include <cstdint>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "analytic/fiber_types.hpp"
 #include "core/def.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/result_identity.hpp"
+#include "raypath/results/quantity.hpp"
 #include "raypath/survey_context.hpp"
 namespace lumice::raypath {
 
@@ -298,19 +300,29 @@ enum class Outcome {
   kDiscovered,  // components / incomplete / discovery are set (possibly zero components)
 };
 
-struct PointData {
-  MemberScope members;
-  SinglePathMetadata meta;
-  Outcome outcome = Outcome::kDiscovered;
-  PointMass point_mass;
+struct DiscoveredPoint {
   std::vector<FiberComponent> components;
   std::vector<IncompleteComponent> incomplete;
   DiscoverySummary discovery;
   ReachSummary reach;  // kDiscovered only
+  MeasureRegistration measure_registration;
+};
+
+struct PointData {
+  PointFactorQuantities quantities;
+  MemberScope members;
+  SinglePathMetadata meta;
+  std::variant<DiscoveredPoint, PointMass> payload;
+  Outcome OutcomeValue() const {
+    return std::holds_alternative<PointMass>(payload) ? Outcome::kPointMass : Outcome::kDiscovered;
+  }
+  PointMass& Mass() { return std::get<PointMass>(payload); }
+  const PointMass& Mass() const { return std::get<PointMass>(payload); }
+  DiscoveredPoint& Discovered() { return std::get<DiscoveredPoint>(payload); }
+  const DiscoveredPoint& Discovered() const { return std::get<DiscoveredPoint>(payload); }
   SunSphereGrid sun_grid;
   // The declared measure's registration (kDiscovered only; the point-mass branch carries its own
   // face inside OrbitFactors). A rho consumer reads this before treating a rho of 0 as dark.
-  MeasureRegistration measure_registration;
   // Explicitly materialized context. Reading a value never starts a computation.
   SurveyContextBlock survey_context;
 };

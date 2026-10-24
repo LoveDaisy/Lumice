@@ -789,10 +789,10 @@ a document. The GUI workspace is not added by this interface.
 
 The query surfaces compiled by the C bridge are:
 
-- `path_feature_report.hpp` and `survey_report.hpp`: requests, budgets, and the
-  analysis-to-JSON entry for each document family.
-- `single_path_analysis.hpp` / `single_path_json.hpp`: point request/result, analysis,
-  serialization and boundary warm decoding.
+- `path_feature_report.hpp` and `survey_report.hpp`: requests, budgets, typed completion,
+  and the legacy analysis-to-JSON adapters for each document family.
+- `single_path_analysis.hpp` / `single_path_json.hpp`: point requests, execution envelope,
+  explicit typed completion, serialization and boundary warm decoding.
 - `probe_analysis.hpp` / `probe_json.hpp`: the draw-a-line request/result and serialization.
 
 Shared error and input metadata no longer come from the point result header. Their narrow
@@ -802,14 +802,24 @@ owners are `domain/error.hpp`, `domain/input_metadata.hpp`, `domain/scope.hpp`, 
 header. Input preparation (`detail/input_scope.*`, `detail/measure_scope.*`) is internal to
 raypath; member expansion continues through the existing physical-symmetry owner.
 
-Headers under `detail/` are internal to the module and its white-box tests. Existing exposed
-surfaces are not hidden by that rule: the bridge still reads the MC-ESS budget bound from
-`detail/survey/survey_mc_ess.hpp`, and the probe result uses the shared line-probe types.
-The public include closure is therefore not claimed to be detail-free. `scene_to_analytic.*`
-is also an internal input-conversion seam despite its legacy directory placement.
+The value-only public result headers are `point_result.hpp`, `probe_result.hpp`,
+`survey_result.hpp`, and `feature_report_result.hpp`. They own immutable snapshots with
+identity-bound, range-checked references; their include closures contain no detail, config,
+or JSON headers. Their complete field-group ledger and quantity/claim contracts are in
+[Typed raypath results](typed-results.md). Numerical formulas and normal-path wire fields
+are unchanged; an uncomputed typed declaration now defaults to unevaluated rather than
+claiming a finite result. Report serialization consumes one completed value and never
+replays a source or derives budgets/outcome.
 
-The ownership migration is narrow; numerical algorithms and wire fields remain at their
-existing owners:
+Headers under `detail/` remain internal to the module and its white-box tests. Shared
+structure/quantity producers live in `detail/structure/` and `detail/quantity/`; query
+adapters choose and mount their returned values. The bridge's MC-ESS budget-bound include
+from `detail/survey/survey_mc_ess.hpp` remains a legacy exception outside the clean result
+closure. `scene_to_analytic.*` is an internal input-conversion seam despite its legacy
+placement. The legacy point envelope's deferred context is an execution adapter, never part
+of `PointResult`.
+
+The earlier shared-input ownership migration remains in force:
 
 | Former owner | Current owner | Consumers / removed authority |
 |---|---|---|

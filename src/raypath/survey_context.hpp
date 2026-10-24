@@ -5,9 +5,20 @@
 #include <string>
 #include <vector>
 
+#include "raypath/domain/evidence.hpp"
+#include "raypath/domain/object_kind.hpp"
 #include "raypath/domain/result_identity.hpp"
 
 namespace lumice::raypath {
+
+enum class ContextSource { kWarm, kInline };
+enum class ContextEdgeBasis { kSupportIntervalEndpoint, kCausticEdgePosition };
+inline const char* ContextSourceName(ContextSource source) {
+  return source == ContextSource::kWarm ? "warm" : "inline";
+}
+inline const char* ContextEdgeBasisName(ContextEdgeBasis basis) {
+  return basis == ContextEdgeBasis::kSupportIntervalEndpoint ? "support_interval_endpoint" : "caustic_edge_position";
+}
 
 // A query retains the admitted structural projection it used, not a borrowed document.
 struct ContextStructureObject {
@@ -22,7 +33,7 @@ using ContextStructure = StructureSnapshot<ContextStructureObject>;
 // spells the states as strings). `state` is always serialized; the value fields exist exactly
 // when the state says something was read.
 struct SurveyContextField {
-  std::string state;   // "certified" | "finite" | "unevaluated"
+  survey::EvidenceState state = survey::EvidenceState::kUnevaluated;
   std::string reason;  // the unevaluated cause, named (never empty when unevaluated)
 };
 
@@ -34,7 +45,7 @@ struct SurveyContextBlock {
   std::optional<ContextStructure> structure;
   std::optional<ObjectRef> object_ref;
   std::optional<ObjectRef> edge_ref;
-  std::string source;                    // "warm" | "inline"
+  ContextSource source = ContextSource::kInline;
   double reference_wavelength_nm = 0.0;  // probe context only: first requested wavelength
   // True: a --warm schema-4 document was given but carried no (complete) warm_index — the
   // documented degradation (no structural reuse, no seed consumption, inline context).
@@ -42,13 +53,13 @@ struct SurveyContextBlock {
   // The target's deviation vs the delta-axis support: inside an interval, or the nearest card.
   SurveyContextField object;
   bool target_inside_support = false;
-  std::string object_kind;           // the owning/nearest card's kind (e.g. "support_set")
+  std::optional<survey::SurveyObjectKind> object_kind;
   std::vector<int> object_members;   // the card's members (empty when the document carried none)
   double object_distance_deg = 0.0;  // 0 when inside
   // The angular distance to the nearest edge (a support endpoint or the certified edge position).
   SurveyContextField edge;
   double edge_distance_deg = 0.0;
-  std::string edge_basis;  // "support_interval_endpoint" | "caustic_edge_position"
+  ContextEdgeBasis edge_basis = ContextEdgeBasis::kSupportIntervalEndpoint;
   // The band-sum reading at the nearest probe sample (warm documents only; the scope gate's
   // exact-equality comparison on lambda and sun decides, with the two named failure causes).
   SurveyContextField band_sum;

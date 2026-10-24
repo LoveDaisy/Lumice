@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "analytic/chromatic_types.hpp"
@@ -74,6 +75,15 @@ struct PairedCounterfactual {
 // StructureObjectRecord: one structural object. Field-group order follows the
 // contract: identity, the four machines, geometry, diagnostics.
 // ---------------------------------------------------------------------------
+struct ChromaticAssessment {
+  analytic::ChromaticVerdict verdict;
+  analytic::ChromaticThresholds thresholds;
+};
+// The unassessed wire shape carries declared defaults, not an evaluated colour claim.
+struct UnassessedChromatic {
+  ChromaticAssessment schema_defaults;
+};
+
 struct StructureObjectRecord {
   // -- identity
   ObjectKind kind = ObjectKind::kKind1;
@@ -91,9 +101,22 @@ struct StructureObjectRecord {
   // -- visibility (the certificate, verbatim; default = the fail-closed unproven)
   VisibilityCertificate visibility{};
   // -- chromatic (the verdict verbatim + the declared-parameter snapshot)
-  bool chromatic_assessed = false;
-  analytic::ChromaticVerdict chromatic{};
-  analytic::ChromaticThresholds chromatic_thresholds = analytic::ChromaticThresholdsSnapshot();
+  void ClearChromatic() { chromatic_ = UnassessedChromatic{}; }
+  bool ChromaticAssessed() const { return std::holds_alternative<ChromaticAssessment>(chromatic_); }
+  void SetChromatic(analytic::ChromaticVerdict verdict,
+                    analytic::ChromaticThresholds thresholds = analytic::ChromaticThresholds{}) {
+    chromatic_ = ChromaticAssessment{ std::move(verdict), thresholds };
+  }
+  const ChromaticAssessment& Chromatic() const {
+    if (const auto* value = std::get_if<ChromaticAssessment>(&chromatic_))
+      return *value;
+    return std::get<UnassessedChromatic>(chromatic_).schema_defaults;
+  }
+  ChromaticAssessment& Chromatic() {
+    if (auto* value = std::get_if<ChromaticAssessment>(&chromatic_))
+      return *value;
+    return std::get<UnassessedChromatic>(chromatic_).schema_defaults;
+  }
   // -- corroboration (v1: constant unchecked)
   CorroborationState corroboration = CorroborationState::kUnchecked;
   // -- geometry: sky position and u preimage, both first-class
@@ -102,6 +125,9 @@ struct StructureObjectRecord {
   std::vector<double> u;                       // u-S^2 preimage, 3N packed (empty = none)
   // -- diagnostics
   PairedCounterfactual counterfactual{};
+
+ private:
+  std::variant<UnassessedChromatic, ChromaticAssessment> chromatic_;
 };
 
 // The record's own bucket: DeriveBucket on the two machines the record carries.

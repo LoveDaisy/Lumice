@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/scene_values.hpp"
+#include "raypath/domain/scope.hpp"
 namespace lumice::raypath {
 
 enum class SpectrumOrigin { kDiscreteSum, kSampled, kQuadrature };
@@ -38,6 +39,8 @@ struct ReportLayerScope {
   uint8_t symmetry_bits = 0;
 };
 struct ReportScope {
+  MemberKind member_kind = MemberKind::kPhysicalL2;
+  ScopeLocation location;
   std::string scene_identity;
   std::string spectrum_scope;
   uint32_t seed = 0;

@@ -406,14 +406,14 @@ FamilyKilledCandidate KilledRecord(const std::vector<int>& member, const FamilyC
 SurveyObject SurvivingCard(const std::vector<int>& member, const FamilyCandidate& candidate, const BlurReading& blur,
                            int level, double wavelength_nm) {
   SurveyObject card;
-  card.kind = candidate.kind;
+  card.SetKind(candidate.kind);
   card.members = { member };
   card.has_position = candidate.has_position;
   card.position_altitude_deg = candidate.position_alt_deg;
   card.position_azimuth_deg = candidate.position_az_deg;
-  card.evidence.state = EvidenceState::kFinite;
-  card.evidence.coverage.members_evaluated = 1;
-  card.evidence.coverage.wavelength_nm = wavelength_nm;
+  card.SetState(EvidenceState::kFinite);
+  card.Coverage().members_evaluated = 1;
+  card.Coverage().wavelength_nm = wavelength_nm;
   SurveyObject::BandPayload band;
   band.level = level;
   band.frozen = blur.verdicts;
@@ -609,7 +609,7 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
                           candidate.anchors, sun_hat, input.refractive_index, candidate.scale_deg);
           if (blur.blur_deg <= candidate.scale_deg) {
             SurveyObject card = SurvivingCard(member, candidate, blur, k, input.wavelength_nm);
-            if (card.kind == SurveyObjectKind::kBrightDomain && support.ok && !support.intervals.empty()) {
+            if (card.Kind() == SurveyObjectKind::kBrightDomain && support.ok && !support.intervals.empty()) {
               // The bright_domain skeleton (the probe leg fills the profile readings): the
               // domain span is the class support's own — the same delta axis the level-0 card
               // declared. support.ok is the trust gate, not emptiness: the
@@ -619,7 +619,7 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
               SurveyObject::BrightDomainPayload domain;
               domain.domain_lower_deg = support.intervals.front().lower * kRadToDeg;
               domain.domain_upper_deg = support.intervals.back().upper * kRadToDeg;
-              card.bright_domain = std::move(domain);
+              card.SetBright(std::move(domain));
             }
             CollectWarmSeed(&result, candidate);
             result.objects.push_back(std::move(card));

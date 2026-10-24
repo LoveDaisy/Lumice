@@ -38,7 +38,6 @@ inline constexpr int kSurveyTintSampleCount = 1000000;  // the band_sum lattice 
 
 // The tint method slug of the 0D arm's single-pose direct read (the method registry's third
 // spelling, beside the kernel's point-mass names and the class power-sum).
-inline constexpr const char* kTintMethodSinglePoseDirect = "single_pose_direct";
 
 struct TintInput {
   const analytic::FaceNormalTable* table = nullptr;

@@ -227,8 +227,8 @@ TEST(StructureEnumeration, BetaEnumerationCarriesS2ChainsAndKind1) {
   const StructureObjectRecord* kind1 = FindKind(one.objects, ObjectKind::kKind1);
   ASSERT_NE(kind1, nullptr);
   EXPECT_EQ(kind1->existence, ExistenceState::kComputed);
-  EXPECT_TRUE(kind1->chromatic_assessed);
-  EXPECT_DOUBLE_EQ(kind1->chromatic_thresholds.edge_min_shift_rad, 0.5 * kDeg);
+  EXPECT_TRUE(kind1->ChromaticAssessed());
+  EXPECT_DOUBLE_EQ(kind1->Chromatic().thresholds.edge_min_shift_rad, 0.5 * kDeg);
   // No measure supplied: the visibility field ships its fail-closed default and the object
   // stays a candidate.
   EXPECT_EQ(kind1->visibility.state, VisibilityState::kUnproven);

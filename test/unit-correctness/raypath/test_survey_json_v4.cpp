@@ -40,14 +40,14 @@ SurveyData SourceImageDocument() {
   document.member_verdicts.push_back(verdict);
 
   SurveyObject card;
-  card.kind = SurveyObjectKind::kSourceImage;
+  card.SetKind(SurveyObjectKind::kSourceImage);
   card.members = document.members;
   card.has_position = true;
   card.position_altitude_deg = 20.0;
   card.position_azimuth_deg = 0.0;
-  card.evidence.state = EvidenceState::kCertified;
-  card.evidence.method = kCertifiedMethodPointMass;
-  card.certificate = SurveyCertificate{};
+  card.SetState(EvidenceState::kCertified);
+  card.Method() = kCertifiedMethodPointMass;
+  card.SetCertificate(SurveyCertificate{});
   document.objects.push_back(card);
 
   document.early_stopped = true;
@@ -100,16 +100,12 @@ TEST(SurveyJsonV4, ObjectKindRegistryHasSixAppendOnlyNames) {
   }
 }
 
-TEST(SurveyJsonV4, DefaultEvidenceIsFiniteWithCoverageDeclaration) {
+TEST(SurveyJsonV4, DefaultEvidenceIsUnevaluatedUntilAProducerRuns) {
   const auto document = Serialized(SourceImageDocument());
-  // The chromatic block of the early-stop fixture stays at its default, so the serialized
-  // document shows the default rule: state present, finite, coverage declared.
   const auto& chromatic = document.at("chromatic");
-  EXPECT_EQ(chromatic.at("state"), "finite");
-  EXPECT_TRUE(chromatic.contains("coverage"));
-  EXPECT_TRUE(chromatic.at("coverage").contains("geometry_basis"));
-  EXPECT_TRUE(chromatic.at("coverage").contains("wavelength_nm"));
-  EXPECT_TRUE(chromatic.at("coverage").contains("members_evaluated"));
+  EXPECT_EQ(chromatic.at("state"), "unevaluated");
+  EXPECT_EQ(chromatic.at("reason"), "not_requested");
+  EXPECT_FALSE(chromatic.contains("coverage"));
 }
 
 TEST(SurveyJsonV4, RefusedBlockSerializesStateAndItsOpenMode) {
@@ -186,12 +182,12 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   document.refractive_index = 1.306;
 
   SurveyObject support;
-  support.kind = SurveyObjectKind::kSupportSet;
+  support.SetKind(SurveyObjectKind::kSupportSet);
   support.members = { { 3, 5 } };
-  support.evidence.state = EvidenceState::kFinite;  // the partition is a finite computation; the
-                                                    // certified card is the caustic edge's position
-  support.evidence.coverage.members_evaluated = 12;
-  support.evidence.coverage.wavelength_nm = 550.0;
+  support.SetState(EvidenceState::kFinite);  // the partition is a finite computation; the
+                                             // certified card is the caustic edge's position
+  support.Coverage().members_evaluated = 12;
+  support.Coverage().wavelength_nm = 550.0;
   SurveyObject::SupportSetPayload support_payload;
   SurveyObject::Interval interval;
   interval.lower_deg = 22.2716;
@@ -207,14 +203,14 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   support_payload.endpoints.push_back(lower);
   support_payload.symmetry_bits = 7;
   support_payload.member_count = 12;
-  support.support_set = support_payload;
+  support.SetSupport(support_payload);
   document.objects.push_back(std::move(support));
 
   SurveyObject edge;
-  edge.kind = SurveyObjectKind::kCausticEdge;
+  edge.SetKind(SurveyObjectKind::kCausticEdge);
   edge.members = { { 3, 5 } };
-  edge.evidence.state = EvidenceState::kCertified;
-  edge.evidence.method = kCertifiedMethodSlabMinDeviationClosedForm;
+  edge.SetState(EvidenceState::kCertified);
+  edge.Method() = kCertifiedMethodSlabMinDeviationClosedForm;
   SurveyObject::CausticEdgePayload edge_payload;
   edge_payload.position_deg = 22.2716;
   edge_payload.profile = "finite_jump";
@@ -227,13 +223,13 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   certificate.cross_check_deg = 1e-9;
   certificate.tolerance_deg = 1e-6;
   edge_payload.certificate = certificate;
-  edge.caustic_edge = edge_payload;
+  edge.SetEdge(edge_payload);
   document.objects.push_back(std::move(edge));
 
   SurveyObject domain;
-  domain.kind = SurveyObjectKind::kBrightDomain;
+  domain.SetKind(SurveyObjectKind::kBrightDomain);
   domain.members = { { 3, 5 } };
-  domain.evidence.state = EvidenceState::kFinite;
+  domain.SetState(EvidenceState::kFinite);
   SurveyObject::BrightDomainPayload domain_payload;
   domain_payload.domain_lower_deg = 22.2716;
   domain_payload.domain_upper_deg = 50.6188;
@@ -244,7 +240,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   domain_payload.edge_delta_deg = 22.30;
   domain_payload.kept_count = 123456;
   domain_payload.probe_index = 0;
-  domain.bright_domain = domain_payload;
+  domain.SetBright(domain_payload);
   document.objects.push_back(std::move(domain));
 
   SurveyProbe probe;
@@ -283,8 +279,8 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   document.diagnose->has_position = true;
   document.diagnose->position_deg = 22.3;
   document.weight_tint = SurveyWeightTint{};
-  document.weight_tint->evidence.state = EvidenceState::kUnevaluated;
-  document.weight_tint->evidence.reason =
+  document.weight_tint->SetState(EvidenceState::kUnevaluated);
+  document.weight_tint->Reason() =
       "chromatic legs not run: the delta axis refused (slab_crease_touching), and the "
       "chromatic legs sit downstream of it";
   document.chromatic.state = EvidenceState::kFinite;
@@ -360,8 +356,8 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
 TEST(SurveyJsonV4, WeightTintRefusedSerializesStateAndModeOnly) {
   SurveyData document;
   document.weight_tint = SurveyWeightTint{};
-  document.weight_tint->evidence.state = EvidenceState::kRefused;
-  document.weight_tint->evidence.mode = "density_not_expressible";
+  document.weight_tint->SetState(EvidenceState::kRefused);
+  document.weight_tint->Mode() = "density_not_expressible";
   const auto parsed = Serialized(document);
   const auto& tint = parsed.at("chromatic").at("weight_tint");
   EXPECT_EQ(tint.at("state"), "refused");
@@ -373,23 +369,24 @@ TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
   SurveyData document;
   document.weight_tint = SurveyWeightTint{};
   SurveyWeightTint& tint = *document.weight_tint;
-  tint.n_red = 1.30803882;
-  tint.n_blue = 1.31569243;
-  tint.m_red = 0.001462474986811242;
-  tint.m_blue = 0.0024096673723776026;
-  tint.m_red_error = 1.2e-7;
-  tint.m_blue_error = 2.1e-7;
-  tint.method = "psi_average";
-  tint.sample_count = 1000000;
-  tint.representative = { 1, 3, 6, 2 };
-  tint.member_count = 6;
-  tint.ratio = 1.6476639902276924;
-  tint.direction = SurveyTintDirection::kBlueTinted;
-  tint.kept_count_red = 312000;
-  tint.kept_count_blue = 298000;
-  tint.evidence.state = EvidenceState::kFinite;
-  tint.evidence.coverage.members_evaluated = 1;
-  tint.evidence.coverage.wavelength_nm = 450.0;
+  tint.SetState(EvidenceState::kFinite);
+  tint.Value().n_red = 1.30803882;
+  tint.Value().n_blue = 1.31569243;
+  tint.Value().Mass().red = 0.001462474986811242;
+  tint.Value().Mass().blue = 0.0024096673723776026;
+  tint.Value().Mass().red_error = 1.2e-7;
+  tint.Value().Mass().blue_error = 2.1e-7;
+  tint.Value().Mass().protocol = TintMassProtocol::kPsiAverage;
+  tint.Value().sample_count = 1000000;
+  tint.Value().representative = { 1, 3, 6, 2 };
+  tint.Value().member_count = 6;
+  tint.Value().ratio = 1.6476639902276924;
+  tint.Value().direction = SurveyTintDirection::kBlueTinted;
+  tint.Value().kept_count_red = 312000;
+  tint.Value().kept_count_blue = 298000;
+  tint.SetState(EvidenceState::kFinite);
+  tint.Coverage().members_evaluated = 1;
+  tint.Coverage().wavelength_nm = 450.0;
 
   const auto parsed = Serialized(document);
   const auto& tint_json = parsed.at("chromatic").at("weight_tint");
@@ -423,22 +420,22 @@ TEST(SurveyJsonV4, WeightTintClassPowerSumCarriesTheEnergyFieldFamily) {
   SurveyData document;
   document.weight_tint = SurveyWeightTint{};
   SurveyWeightTint& tint = *document.weight_tint;
-  tint.class_power_shape = true;
-  tint.n_red = 1.30803882;
-  tint.n_blue = 1.31569243;
-  tint.energy_red = 2.4e-5;
-  tint.energy_blue = 3.7e-5;
-  tint.method = kClassTintMethodLatticePowerSum;
-  tint.sample_count = 1000000;
-  tint.representative = { 4, 8, 1, 7, 5 };
-  tint.member_count = 8;
-  tint.ratio = 1.541;
-  tint.direction = SurveyTintDirection::kBlueTinted;
-  tint.kept_count_red = 312000;
-  tint.kept_count_blue = 298000;
-  tint.evidence.state = EvidenceState::kFinite;
-  tint.evidence.coverage.members_evaluated = 1;
-  tint.evidence.coverage.wavelength_nm = 450.0;
+  tint.SetState(EvidenceState::kFinite);
+  tint.Value().reading = TintClassPowerReading{};
+  tint.Value().n_red = 1.30803882;
+  tint.Value().n_blue = 1.31569243;
+  tint.Value().Power().red = 2.4e-5;
+  tint.Value().Power().blue = 3.7e-5;
+  tint.Value().sample_count = 1000000;
+  tint.Value().representative = { 4, 8, 1, 7, 5 };
+  tint.Value().member_count = 8;
+  tint.Value().ratio = 1.541;
+  tint.Value().direction = SurveyTintDirection::kBlueTinted;
+  tint.Value().kept_count_red = 312000;
+  tint.Value().kept_count_blue = 298000;
+  tint.SetState(EvidenceState::kFinite);
+  tint.Coverage().members_evaluated = 1;
+  tint.Coverage().wavelength_nm = 450.0;
 
   const auto parsed = Serialized(document);
   const auto& tint_json = parsed.at("chromatic").at("weight_tint");
@@ -458,8 +455,8 @@ TEST(SurveyJsonV4, IdentityArmBlockMirrorsTheTintRefusal) {
   document.chromatic.state = EvidenceState::kRefused;
   document.chromatic.mode = "density_not_expressible";
   document.weight_tint = SurveyWeightTint{};
-  document.weight_tint->evidence.state = EvidenceState::kRefused;
-  document.weight_tint->evidence.mode = "density_not_expressible";
+  document.weight_tint->SetState(EvidenceState::kRefused);
+  document.weight_tint->Mode() = "density_not_expressible";
   const auto parsed = Serialized(document);
   const auto& chromatic = parsed.at("chromatic");
   EXPECT_EQ(chromatic.at("state"), "refused");
@@ -488,8 +485,7 @@ TEST(SurveyJsonV4, EmptyProbeProfileSerializesNoReadingKeys) {
 
 TEST(SurveyJsonV4, EarlyStopDocumentCarriesNoneOfTheT1Keys) {
   SurveyData early_stop = SourceImageDocument();
-  // What AssembleSurvey sets on a real early stop (the fixture's default-finite chromatic is
-  // the schema-default rule pinned by DefaultEvidenceIsFiniteWithCoverageDeclaration above).
+  // The assembly names why this particular chromatic leg was not requested.
   early_stop.chromatic.state = EvidenceState::kUnevaluated;
   early_stop.chromatic.reason = "survey v1: chromatic layer not wired";
   const auto document = Serialized(early_stop);
@@ -540,53 +536,55 @@ TEST(SurveyJsonV4, ExceptionLegsSerializeTheirAppendShape) {
 
   document.tir_share = SurveyTirShare{};
   SurveyTirShare& tir = *document.tir_share;
-  tir.n_red = 1.31;
-  tir.n_blue = 1.34;
-  tir.interfaces.push_back({ 5, 0.25, 0.4 });
-  tir.interfaces.push_back({ 7, 0.1, 0.2 });
-  tir.share_all_tir_red = 0.05;
-  tir.share_all_tir_blue = 0.12;
-  tir.sample_count = 250000;
-  tir.representative = { 3, 5, 7 };
-  tir.member_count = 12;
-  tir.kept_count_red = 240000;
-  tir.kept_count_blue = 241000;
-  tir.caliber = "fixture caliber";
-  tir.evidence.state = EvidenceState::kFinite;
-  tir.evidence.coverage.members_evaluated = 1;
-  tir.evidence.coverage.wavelength_nm = 550.0;
+  tir.SetState(EvidenceState::kFinite);
+  tir.Value().n_red = 1.31;
+  tir.Value().n_blue = 1.34;
+  tir.Value().interfaces.push_back({ 5, 0.25, 0.4 });
+  tir.Value().interfaces.push_back({ 7, 0.1, 0.2 });
+  tir.Value().share_all_tir_red = 0.05;
+  tir.Value().share_all_tir_blue = 0.12;
+  tir.Value().sample_count = 250000;
+  tir.Value().representative = { 3, 5, 7 };
+  tir.Value().member_count = 12;
+  tir.Value().kept_count_red = 240000;
+  tir.Value().kept_count_blue = 241000;
+  tir.Value().caliber = "fixture caliber";
+  tir.SetState(EvidenceState::kFinite);
+  tir.Coverage().members_evaluated = 1;
+  tir.Coverage().wavelength_nm = 550.0;
 
   document.mc_region_ess = SurveyMcRegionEss{};
   SurveyMcRegionEss& ess = *document.mc_region_ess;
-  ess.seed = 20261022;
-  ess.draws = 20000;
-  ess.lambda_nm = 550.0;
-  ess.band_deg = 5.0;
-  ess.bands.push_back({ 20.0, 25.0, 512.0, 800, 0.5 });
-  ess.bands.push_back({ 25.0, 30.0, 0.0, 0, 0.0 });
-  ess.evidence.state = EvidenceState::kFinite;
-  ess.evidence.coverage.members_evaluated = 12;
-  ess.evidence.coverage.wavelength_nm = 550.0;
+  ess.SetState(EvidenceState::kFinite);
+  ess.Value().seed = 20261022;
+  ess.Value().draws = 20000;
+  ess.Value().lambda_nm = 550.0;
+  ess.Value().band_deg = 5.0;
+  ess.Value().bands.push_back({ 20.0, 25.0, 512.0, 800, 0.5 });
+  ess.Value().bands.push_back({ 25.0, 30.0, 0.0, 0, 0.0 });
+  ess.SetState(EvidenceState::kFinite);
+  ess.Coverage().members_evaluated = 12;
+  ess.Coverage().wavelength_nm = 550.0;
 
   const auto parsed = Serialized(document);
   ASSERT_TRUE(parsed.contains("tir_share"));
   const auto& tir_json = parsed.at("tir_share");
-  EXPECT_EQ(tir_json.at("n_red"), tir.n_red);
-  EXPECT_EQ(tir_json.at("n_blue"), tir.n_blue);
+  EXPECT_EQ(tir_json.at("n_red"), tir.Value().n_red);
+  EXPECT_EQ(tir_json.at("n_blue"), tir.Value().n_blue);
   ASSERT_EQ(tir_json.at("interfaces").size(), 2u);
   EXPECT_EQ(tir_json.at("interfaces")[0].at("face"), 5);
-  EXPECT_EQ(tir_json.at("interfaces")[0].at("share_red"), tir.interfaces[0].share_red);
-  EXPECT_EQ(tir_json.at("interfaces")[0].at("share_blue"), tir.interfaces[0].share_blue);
-  EXPECT_EQ(tir_json.at("share_all_tir_red"), tir.share_all_tir_red);
-  EXPECT_EQ(tir_json.at("share_all_tir_blue"), tir.share_all_tir_blue);
-  EXPECT_EQ(tir_json.at("sample_count"), tir.sample_count);
+  EXPECT_EQ(tir_json.at("interfaces")[0].at("share_red"), tir.Value().interfaces[0].share_red);
+  EXPECT_EQ(tir_json.at("interfaces")[0].at("share_blue"), tir.Value().interfaces[0].share_blue);
+  EXPECT_EQ(tir_json.at("share_all_tir_red"), tir.Value().share_all_tir_red);
+  EXPECT_EQ(tir_json.at("share_all_tir_blue"), tir.Value().share_all_tir_blue);
+  EXPECT_EQ(tir_json.at("sample_count"), tir.Value().sample_count);
   EXPECT_EQ(tir_json.at("lattice"), "antipodal_fibonacci");
   EXPECT_EQ(tir_json.at("deterministic"), true);
   const std::vector<int> expected_representative{ 3, 5, 7 };
   EXPECT_EQ(tir_json.at("representative"), expected_representative);
   EXPECT_EQ(tir_json.at("member_count"), 12);
-  EXPECT_EQ(tir_json.at("kept_count_red"), tir.kept_count_red);
-  EXPECT_EQ(tir_json.at("kept_count_blue"), tir.kept_count_blue);
+  EXPECT_EQ(tir_json.at("kept_count_red"), tir.Value().kept_count_red);
+  EXPECT_EQ(tir_json.at("kept_count_blue"), tir.Value().kept_count_blue);
   EXPECT_EQ(tir_json.at("caliber"), "fixture caliber");
   EXPECT_EQ(tir_json.at("evidence").at("state"), "finite");
 
@@ -612,12 +610,13 @@ TEST(SurveyJsonV4, ExceptionLegsSerializeTheirAppendShape) {
 TEST(SurveyJsonV4, ExceptionLegRefusalsSerializeStateAndModeOnly) {
   SurveyData document;
   document.tir_share = SurveyTirShare{};
-  document.tir_share->evidence.state = EvidenceState::kRefused;
-  document.tir_share->evidence.mode = "no_internal_interfaces";
+  document.tir_share->SetState(EvidenceState::kRefused);
+  document.tir_share->Mode() = "no_internal_interfaces";
   document.mc_region_ess = SurveyMcRegionEss{};
-  document.mc_region_ess->seed = 20261022;  // filled before the refusal: still must not serialize
-  document.mc_region_ess->evidence.state = EvidenceState::kRefused;
-  document.mc_region_ess->evidence.mode = "budget_exhausted";
+  document.mc_region_ess->SetState(EvidenceState::kFinite);
+  document.mc_region_ess->Value().seed = 20261022;  // filled before the refusal: still must not serialize
+  document.mc_region_ess->SetState(EvidenceState::kRefused);
+  document.mc_region_ess->Mode() = "budget_exhausted";
 
   const auto parsed = Serialized(document);
   ASSERT_TRUE(parsed.contains("tir_share"));
@@ -681,12 +680,12 @@ TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
   block.evidence.coverage.members_evaluated = 1;
 
   SurveyObject card;
-  card.kind = SurveyObjectKind::kCausticEdge;
+  card.SetKind(SurveyObjectKind::kCausticEdge);
   card.members = { { 3, 5 } };
   card.has_position = true;
   card.position_altitude_deg = 36.0;
   card.position_azimuth_deg = 20.6;
-  card.evidence.state = EvidenceState::kFinite;
+  card.SetState(EvidenceState::kFinite);
   SurveyObject::BandPayload band;
   band.level = 1;
   band.frozen = { { "roll", "narrow" } };

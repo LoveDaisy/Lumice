@@ -234,16 +234,16 @@ TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
   const SurveyObject* support = nullptr;
   const SurveyObject* collapse = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kSupportSet) {
+    if (card.Kind() == SurveyObjectKind::kSupportSet) {
       support = &card;
     }
-    if (card.kind == SurveyObjectKind::kFamilyCollapsePoint) {
+    if (card.Kind() == SurveyObjectKind::kFamilyCollapsePoint) {
       collapse = &card;
     }
   }
   ASSERT_NE(support, nullptr);
   ASSERT_NE(collapse, nullptr);
-  EXPECT_TRUE(support->support_set.has_value());
+  EXPECT_TRUE(support->Support() != nullptr);
   ASSERT_TRUE(collapse->band.has_value());
   EXPECT_EQ(collapse->band->level, 1);
   EXPECT_NEAR(collapse->band->blur_deg, 0.6, 0.35);                // ~2x the frozen half-width (the mirror)
@@ -287,10 +287,10 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   const SurveyObject* fold = nullptr;
   const SurveyObject* domain = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kCausticEdge && card.band.has_value() && card.band->level == 1) {
+    if (card.Kind() == SurveyObjectKind::kCausticEdge && card.band.has_value() && card.band->level == 1) {
       fold = &card;
     }
-    if (card.kind == SurveyObjectKind::kBrightDomain && card.band.has_value() && card.band->level == 1) {
+    if (card.Kind() == SurveyObjectKind::kBrightDomain && card.band.has_value() && card.band->level == 1) {
       domain = &card;
     }
   }
@@ -330,16 +330,16 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   // own tail bound is a row).
   const SurveyObject* support = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kSupportSet) {
+    if (card.Kind() == SurveyObjectKind::kSupportSet) {
       support = &card;
     }
   }
   ASSERT_NE(support, nullptr);
-  ASSERT_TRUE(support->support_set.has_value());
-  ASSERT_EQ(support->support_set->density_tails.size(), 1u);
-  EXPECT_EQ(support->support_set->density_tails[0].dim, "zenith");
-  EXPECT_NEAR(support->support_set->density_tails[0].lower_deg, 0.0, 1e-9);
-  EXPECT_GT(support->support_set->density_tails[0].upper_deg, 100.0);  // the 12-sigma window
+  ASSERT_TRUE(support->Support() != nullptr);
+  ASSERT_EQ(support->Support()->density_tails.size(), 1u);
+  EXPECT_EQ(support->Support()->density_tails[0].dim, "zenith");
+  EXPECT_NEAR(support->Support()->density_tails[0].lower_deg, 0.0, 1e-9);
+  EXPECT_GT(support->Support()->density_tails[0].upper_deg, 100.0);  // the 12-sigma window
 }
 
 // The calibration ruler the design note spells for this shape, restored by the scale ruling
@@ -397,7 +397,7 @@ TEST(FamilyRouting, ParryShapeCarriesTheOneDimensionalImageAtLevelTwo) {
 
   const SurveyObject* regular = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kRegularImage && card.band.has_value() && card.band->level == 2) {
+    if (card.Kind() == SurveyObjectKind::kRegularImage && card.band.has_value() && card.band->level == 2) {
       regular = &card;
     }
   }
@@ -438,7 +438,7 @@ TEST(FamilyRouting, WideWobbleKillsTheCollapseCandidateItProposed) {
   EXPECT_EQ(killed.verdicts[0].dim, "zenith");
   EXPECT_EQ(killed.verdicts[0].verdict, "wide");
   for (const SurveyObject& card : document.objects) {
-    EXPECT_NE(card.kind, SurveyObjectKind::kFamilyCollapsePoint);
+    EXPECT_NE(card.Kind(), SurveyObjectKind::kFamilyCollapsePoint);
   }
 }
 
@@ -464,10 +464,10 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   const SurveyObject* collapse = nullptr;
   const SurveyObject* support = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kFamilyCollapsePoint) {
+    if (card.Kind() == SurveyObjectKind::kFamilyCollapsePoint) {
       collapse = &card;
     }
-    if (card.kind == SurveyObjectKind::kSupportSet) {
+    if (card.Kind() == SurveyObjectKind::kSupportSet) {
       support = &card;
     }
   }
@@ -485,8 +485,8 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   // kernel-side corridor fact at every near-plate pose, not a pose accident), so the tint
   // refuses with its named mode rather than defaulting a number.
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.weight_tint->evidence.mode, "single_pose_weight_unavailable");
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.weight_tint->Mode(), "single_pose_weight_unavailable");
   EXPECT_EQ(document.chromatic.state, EvidenceState::kRefused);
   EXPECT_TRUE(document.probes.empty());
   ASSERT_TRUE(document.positional_dispersion.has_value());
@@ -499,18 +499,18 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   ASSERT_TRUE(wedge_document.family_routing.has_value());
   const SurveyObject* wedge_collapse = nullptr;
   for (const SurveyObject& card : wedge_document.objects) {
-    if (card.kind == SurveyObjectKind::kFamilyCollapsePoint) {
+    if (card.Kind() == SurveyObjectKind::kFamilyCollapsePoint) {
       wedge_collapse = &card;
     }
   }
   ASSERT_NE(wedge_collapse, nullptr);
   EXPECT_TRUE(wedge_collapse->has_position);
   ASSERT_TRUE(wedge_document.weight_tint.has_value());
-  EXPECT_EQ(wedge_document.weight_tint->evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(wedge_document.weight_tint->method, std::string(kTintMethodSinglePoseDirect));
-  EXPECT_GT(wedge_document.weight_tint->m_red, 0.0);
-  EXPECT_GT(wedge_document.weight_tint->m_blue, 0.0);
-  EXPECT_GT(wedge_document.weight_tint->ratio, 0.0);
+  EXPECT_EQ(wedge_document.weight_tint->State(), EvidenceState::kFinite);
+  EXPECT_EQ(TintMethodName(wedge_document.weight_tint->Value().Method()), std::string(kTintMethodSinglePoseDirect));
+  EXPECT_GT(wedge_document.weight_tint->Value().Mass().red, 0.0);
+  EXPECT_GT(wedge_document.weight_tint->Value().Mass().blue, 0.0);
+  EXPECT_GT(wedge_document.weight_tint->Value().ratio, 0.0);
   EXPECT_EQ(wedge_document.chromatic.state, EvidenceState::kFinite);
 
   // The edge-on 3-5 chain kills with no numbers at all: a no_valid_image kill carries no
@@ -549,7 +549,7 @@ TEST(FamilyRouting, FixedZenithAndRollAskTheRankAtLevelZeroWithoutTheDensityLegs
 
   bool saw_regular = false;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kRegularImage) {
+    if (card.Kind() == SurveyObjectKind::kRegularImage) {
       saw_regular = card.band.has_value() && card.band->level == 0;
     }
   }
@@ -557,8 +557,8 @@ TEST(FamilyRouting, FixedZenithAndRollAskTheRankAtLevelZeroWithoutTheDensityLegs
   EXPECT_TRUE(document.probes.empty());
   EXPECT_EQ(document.chromatic.state, EvidenceState::kUnevaluated);
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kUnevaluated);
-  EXPECT_NE(document.weight_tint->evidence.reason.find("no pose density"), std::string::npos);
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kUnevaluated);
+  EXPECT_NE(document.weight_tint->Reason().find("no pose density"), std::string::npos);
 }
 
 // The outside-domain refusal: one refused support card with the named mode and the witness's
@@ -571,12 +571,12 @@ TEST(FamilyRouting, OutsideDomainShapeRefusesWithTheNamedModeAndAWitness) {
   EXPECT_FALSE(document.family_routing.has_value());
   ASSERT_EQ(document.objects.size(), 1u);
   const SurveyObject& card = document.objects.front();
-  EXPECT_EQ(card.kind, SurveyObjectKind::kSupportSet);
-  EXPECT_EQ(card.evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(card.evidence.mode, "measure_shape_outside_routing_domain: roll_zigzag");
-  ASSERT_TRUE(card.witness.has_value());
-  EXPECT_EQ(card.witness->state, EvidenceState::kFinite);
-  EXPECT_GT(card.witness->kept_count, 0);
+  EXPECT_EQ(card.Kind(), SurveyObjectKind::kSupportSet);
+  EXPECT_EQ(card.State(), EvidenceState::kRefused);
+  EXPECT_EQ(card.Mode(), "measure_shape_outside_routing_domain: roll_zigzag");
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kFinite);
+  EXPECT_GT(card.Witness()->Value().kept_count, 0);
   EXPECT_EQ(document.evidence.state, EvidenceState::kRefused);
   EXPECT_EQ(document.evidence.mode, "measure_shape_outside_routing_domain: roll_zigzag");
   EXPECT_TRUE(document.probes.empty());
@@ -609,13 +609,13 @@ TEST(FamilyRouting, RefusedPartitionScopesToTheLevelZeroCardAndTheLadderStillRun
   // coexistence the evidence layering asks for), and no fabricated support payload.
   ASSERT_EQ(document.objects.size(), 1u);
   const SurveyObject& card = document.objects.front();
-  EXPECT_EQ(card.kind, SurveyObjectKind::kSupportSet);
-  EXPECT_EQ(card.evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(card.evidence.mode, "slab_crease_touching");
-  EXPECT_FALSE(card.support_set.has_value());
-  ASSERT_TRUE(card.witness.has_value());
-  EXPECT_EQ(card.witness->state, EvidenceState::kFinite);
-  EXPECT_GT(card.witness->kept_count, 0);
+  EXPECT_EQ(card.Kind(), SurveyObjectKind::kSupportSet);
+  EXPECT_EQ(card.State(), EvidenceState::kRefused);
+  EXPECT_EQ(card.Mode(), "slab_crease_touching");
+  EXPECT_FALSE(card.Support() != nullptr);
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kFinite);
+  EXPECT_GT(card.Witness()->Value().kept_count, 0);
 
   // The block: the refusal echoed at block level, the ladder enumerated (level 1 asked the
   // rank and honestly recorded its empty outcome — no proposals, no kills, no valid samples),

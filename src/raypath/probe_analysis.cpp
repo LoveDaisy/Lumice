@@ -103,7 +103,7 @@ survey::ProbeLineLayout ArcLayout(double delta_deg, double azimuth_centre_deg) {
 // what the request fixed).
 void FillProfileSpec(ProbeProfile* profile, const ProbeRequest& request, const ProbeMetadata& meta,
                      const std::vector<int>& representative, int member_count) {
-  profile->along = ProbeAlongName(request.along);
+  profile->along = request.along;
   profile->azimuth_deg = meta.at_azimuth_about_sun_deg;
   profile->bin_deg = survey::kProbeBinDeg;
   profile->wedge_half_width_deg = survey::kProbeWedgeHalfWidthDeg;
@@ -135,21 +135,22 @@ std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layou
   }
   const auto classify = [&](size_t k) {
     if (!structure) {
-      return std::pair<std::string, std::string>{ "unknown", structure.Reason() };
+      return std::pair<ProbeDarkKind, std::string>{ ProbeDarkKind::kUnknown, structure.Reason() };
     }
     const double pos = layout.bins[k].delta_centre_deg;
     for (const SurveyWarmSource::SupportInterval& interval : structure.Facts()->intervals) {
       if (pos >= interval.lower_deg && pos <= interval.upper_deg) {
-        return std::pair<std::string, std::string>{ samples[k].k > 0 ? "inside_support_positive" :
-                                                                       "inside_support_zero",
-                                                    std::string() };
+        return std::pair<ProbeDarkKind, std::string>{ samples[k].k > 0 ? ProbeDarkKind::kInsideSupportPositive :
+                                                                         ProbeDarkKind::kInsideSupportZero,
+                                                      std::string() };
       }
     }
-    return std::pair<std::string, std::string>{ "outside_support", std::string() };
+    return std::pair<ProbeDarkKind, std::string>{ ProbeDarkKind::kOutsideSupport, std::string() };
   };
   const auto lo_of = [&](size_t k) { return arc_form ? layout.bins[k].az_lo_deg : layout.bins[k].delta_lo_deg; };
   const auto hi_of = [&](size_t k) { return arc_form ? layout.bins[k].az_hi_deg : layout.bins[k].delta_hi_deg; };
-  std::string current_kind, current_reason;
+  ProbeDarkKind current_kind = ProbeDarkKind::kUnknown;
+  std::string current_reason;
   double lo = 0.0, hi = 0.0;
   int count = 0;
   const auto flush = [&]() {
@@ -179,6 +180,28 @@ std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layou
     flush();
   }
   return segments;
+}
+
+ProbeProfile CompleteProbeProfile(ProbeProfile profile, const MemberScope& members,
+                                  const std::shared_ptr<const QuantityContext>& input) {
+  ClaimScope scope;
+  scope.input = input;
+  scope.members = members;
+  scope.members.members = { profile.representative };
+  scope.members.member_kind = MemberKind::kLiteral;
+  scope.quantity = profile.quantity;
+  scope.observation = profile.quantity.observation;
+  scope.measure = { profile.quantity.measure, profile.quantity.reference };
+  std::visit(
+      [&scope](auto& arm) {
+        using A = std::decay_t<decltype(arm)>;
+        if constexpr (std::is_same_v<A, Refused> || std::is_same_v<A, Unevaluated>)
+          arm.asked_scope = scope;
+        else
+          arm.scope = scope;
+      },
+      profile.claim);
+  return profile;
 }
 
 }  // namespace
@@ -307,10 +330,10 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   std::optional<AdmittedWarmSource> inline_source;
   bool inline_refused = false;
   if (source != nullptr && source->Facts().index_present) {
-    context.source = "warm";
+    context.source = ContextSource::kWarm;
     warm = source;
   } else {
-    context.source = source != nullptr ? "warm" : "inline";
+    context.source = source != nullptr ? ContextSource::kWarm : ContextSource::kInline;
     context.warm_index_absent = source != nullptr && !source->Facts().index_present;
     SurveyRequest survey_request;
     static_cast<PathSelection&>(survey_request) = request;
@@ -321,11 +344,11 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
       e = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
     if (!e.Ok()) {
       inline_refused = true;
-      context.object.state = "unevaluated";
+      context.object.state = survey::EvidenceState::kUnevaluated;
       context.object.reason = "inline_survey_refused";
-      context.edge.state = "unevaluated";
+      context.edge.state = survey::EvidenceState::kUnevaluated;
       context.edge.reason = "inline_survey_refused";
-      context.band_sum.state = "unevaluated";
+      context.band_sum.state = survey::EvidenceState::kUnevaluated;
       context.band_sum.reason = "inline_survey_refused";
     } else {
       warm = &*inline_source;
@@ -345,6 +368,12 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     return e;
   }
   result.members = static_cast<const MemberScope&>(class_scope);
+  QuantityContext quantity_context;
+  quantity_context.members = result.members;
+  quantity_context.crystal = crystal_it->second;
+  quantity_context.light = light;
+  quantity_context.observation = { reference_nm, light.param_.altitude_, light.param_.azimuth_ };
+  const auto quantity_input = std::make_shared<const QuantityContext>(std::move(quantity_context));
   const int member_count = static_cast<int>(class_scope.members.size());
   const PoseDensityConversion& density = class_scope.density;
   const bool density_ok = density.Ok();
@@ -361,7 +390,7 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   // block names); a context with neither is the named refusal.
   bool has_anchor = false;
   double anchor = 0.0;
-  const char* anchor_basis = "";
+  ContextEdgeBasis anchor_basis = ContextEdgeBasis::kSupportIntervalEndpoint;
   if (reference_structure) {
     has_anchor = NearestStructureAnchor(reference_structure, meta.at_deviation_deg, &anchor, &anchor_basis);
   }
@@ -397,6 +426,10 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     // so they echo it too; "0 = the full axis" stays the axis forms' reading alone.
     profile.window_half_width_deg = (windowed || arc_form) ? kProbeWindowHalfWidthDeg : 0.0;
     profile.wavelength_nm = meta.wavelengths[w].nm;
+    profile.quantity.context = quantity_input;
+    profile.quantity.aggregation = MemberAggregation::kRepresentative;
+    profile.quantity.observation = { profile.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg };
+    profile.quantity.wavelengths_nm = { profile.wavelength_nm };
     profile.refractive_index = meta.wavelengths[w].refractive_index;
     profile.sample_count = request.sample_count > 0 ? request.sample_count : survey::kSurveyProbeSampleCount;
     if (windowed && has_anchor) {
@@ -409,25 +442,25 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     const bool arc_refused =
         arc_form && (meta.at_deviation_deg <= kArcDegenerateNearDeg || meta.at_deviation_deg >= kArcDegenerateFarDeg);
     if (edge_refused) {
-      profile.evidence_state = "refused";
+      profile.claim = Refused{};
       // The refusal's cause: a context that names no edge is the form's own refusal; an inline
       // assembly that never produced a context is the infrastructure's, named for what failed.
-      profile.refused_mode = inline_refused ? "inline_survey_refused" : "no_edge_in_context";
+      profile.RefusalReason() = inline_refused ? "inline_survey_refused" : "no_edge_in_context";
       // No dark_regions on a refused profile: with no samples the decomposition is empty by
       // construction, and doc §10.2 marks the field Finite only.
-      result.profiles.push_back(std::move(profile));
+      result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
     if (arc_refused) {
-      profile.evidence_state = "refused";
-      profile.refused_mode = "degenerate_arc_at_pole";
-      result.profiles.push_back(std::move(profile));
+      profile.claim = Refused{};
+      profile.RefusalReason() = "degenerate_arc_at_pole";
+      result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
     if (!density_ok) {
-      profile.evidence_state = "refused";
-      profile.refused_mode = "measure_not_expressible";
-      result.profiles.push_back(std::move(profile));
+      profile.claim = Refused{};
+      profile.RefusalReason() = "measure_not_expressible";
+      result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
 
@@ -445,12 +478,12 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
                                            radial };
     const bool reused = warm != nullptr && CanReuseSurveyProfile(*warm, profile_scope, density, layout);
     if (reused) {
-      profile.source = "warm_reused";
-      profile.evidence_state = "finite";
-      profile.members_evaluated = 1;
-      profile.samples.resize(layout.bins.size());
+      profile.BeginFinite();
+      profile.Reading().source = ProbeProfileSource::kWarmReused;
+      profile.Reading().members_evaluated = 1;
+      profile.Reading().samples.resize(layout.bins.size());
       for (size_t k = 0; k < layout.bins.size(); k++) {
-        survey::ProbeLineSample& sample = profile.samples[k];
+        survey::ProbeLineSample& sample = profile.Reading().samples[k];
         sample.delta_deg = layout.bins[k].delta_centre_deg;
         sample.azimuth_deg = layout.bins[k].az_centre_deg;
         const auto& samples = warm->Facts().probe_samples;
@@ -459,39 +492,39 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
         sample.k_eff = samples[k].k_eff;
       }
     } else {
-      profile.source = "recomputed";
+      profile.BeginFinite();
+      profile.Reading().source = ProbeProfileSource::kRecomputed;
       survey::ProbeLineProfile line = survey::EvaluateProbeLine(
           table, polygons, request.path_layers[0], density, frame, layout, meta.wavelengths[w].nm,
           meta.wavelengths[w].refractive_index, meta.incident_direction, profile.sample_count);
-      profile.evidence_state = "finite";
-      profile.members_evaluated = 1;
-      profile.samples = std::move(line.samples);
+      profile.Reading().members_evaluated = 1;
+      profile.Reading().samples = std::move(line.samples);
     }
 
     // The readings: the edge (first non-empty bin) and the peak (the argmax), two things, on the
     // line's sweep coordinate — the deviation for the axis forms, the azimuth for the arc forms
     // (the rule the dark decomposition's bounds already follow; on a constant-delta arc a delta
     // reading would be a constant echo, a position of nothing).
-    std::vector<double> centres(profile.samples.size());
-    std::vector<double> values(profile.samples.size());
-    std::vector<int> counts(profile.samples.size());
-    for (size_t k = 0; k < profile.samples.size(); k++) {
-      centres[k] = arc_form ? profile.samples[k].azimuth_deg : profile.samples[k].delta_deg;
-      values[k] = profile.samples[k].value;
-      counts[k] = profile.samples[k].k;
+    std::vector<double> centres(profile.Reading().samples.size());
+    std::vector<double> values(profile.Reading().samples.size());
+    std::vector<int> counts(profile.Reading().samples.size());
+    for (size_t k = 0; k < profile.Reading().samples.size(); k++) {
+      centres[k] = arc_form ? profile.Reading().samples[k].azimuth_deg : profile.Reading().samples[k].delta_deg;
+      values[k] = profile.Reading().samples[k].value;
+      counts[k] = profile.Reading().samples[k].k;
     }
     const survey::ProbeReadings read = survey::ReadProbeProfile(centres, values, counts);
-    profile.readings.has_edge = read.has_edge;
-    profile.readings.edge_deg = read.edge_delta_deg;
-    profile.readings.has_peak = read.has_peak;
-    profile.readings.peak_deg = read.peak_delta_deg;
-    profile.readings.peak_value = read.peak_value;
-    profile.readings.separation_deg = read.separation_deg;
+    profile.Reading().readings.has_edge = read.has_edge;
+    profile.Reading().readings.edge_deg = read.edge_delta_deg;
+    profile.Reading().readings.has_peak = read.has_peak;
+    profile.Reading().readings.peak_deg = read.peak_delta_deg;
+    profile.Reading().readings.peak_value = read.peak_value;
+    profile.Reading().readings.separation_deg = read.separation_deg;
 
     const SurveyStructureView profile_structure =
         warm != nullptr ? reuse.structure : SurveyStructureView::Unavailable("inline_survey_refused");
-    profile.dark_regions = DecomposeDark(layout, profile_structure, profile.samples, arc_form);
-    result.profiles.push_back(std::move(profile));
+    profile.Reading().dark_regions = DecomposeDark(layout, profile_structure, profile.Reading().samples, arc_form);
+    result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
   }
   if (stopped()) {
     meta.interrupted = true;
@@ -505,16 +538,16 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   if (result.profiles.size() >= 2 && !arc_form) {
     const ProbeProfile* red = nullptr;
     for (const ProbeProfile& p : result.profiles) {
-      if (p.evidence_state == "finite" && p.wavelength_nm == kRedNm) {
+      if (p.State() == survey::EvidenceState::kFinite && p.wavelength_nm == kRedNm) {
         red = &p;
         break;
       }
     }
     const ProbeProfile& reference = result.profiles.front();
-    if (red != nullptr && &reference != red && reference.evidence_state == "finite" && reference.readings.has_edge &&
-        red->readings.has_edge) {
+    if (red != nullptr && &reference != red && reference.State() == survey::EvidenceState::kFinite &&
+        reference.Reading().readings.has_edge && red->Reading().readings.has_edge) {
       result.has_red_edge_width = true;
-      result.red_edge_width_deg = red->readings.edge_deg - reference.readings.edge_deg;
+      result.red_edge_width_deg = red->Reading().readings.edge_deg - reference.Reading().readings.edge_deg;
     }
   }
 

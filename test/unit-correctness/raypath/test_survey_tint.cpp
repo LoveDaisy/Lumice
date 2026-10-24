@@ -93,18 +93,18 @@ TEST(SurveyTint, IdentityArmTintReadsBlueOverRedWithThePsiAverageMethod) {
   AssembleWeightTint(fix.Input(200000), &document);
   ASSERT_TRUE(document.weight_tint.has_value());
   const SurveyWeightTint& tint = *document.weight_tint;
-  EXPECT_EQ(tint.evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(tint.method, "psi_average");
-  EXPECT_GT(tint.m_blue, 0.0);
-  EXPECT_GT(tint.m_red, 0.0);
-  EXPECT_DOUBLE_EQ(tint.ratio, tint.m_blue / tint.m_red);
-  EXPECT_GT(tint.ratio, 1.2);
-  EXPECT_EQ(tint.direction, SurveyTintDirection::kBlueTinted);
-  EXPECT_EQ(tint.n_blue, IceRefractiveIndex::Get(450.0));
-  EXPECT_EQ(tint.n_red, IceRefractiveIndex::Get(650.0));
-  EXPECT_EQ(tint.sample_count, 200000);
-  EXPECT_GT(tint.kept_count_red, 0);
-  EXPECT_GT(tint.kept_count_blue, 0);  // the existence witness, both lambdas
+  EXPECT_EQ(tint.State(), EvidenceState::kFinite);
+  EXPECT_EQ(tint.Value().Method(), QuantityMethod::kPointMassPsiAverage);
+  EXPECT_GT(tint.Value().Mass().blue, 0.0);
+  EXPECT_GT(tint.Value().Mass().red, 0.0);
+  EXPECT_DOUBLE_EQ(tint.Value().ratio, tint.Value().Mass().blue / tint.Value().Mass().red);
+  EXPECT_GT(tint.Value().ratio, 1.2);
+  EXPECT_EQ(tint.Value().direction, SurveyTintDirection::kBlueTinted);
+  EXPECT_EQ(tint.Value().n_blue, IceRefractiveIndex::Get(450.0));
+  EXPECT_EQ(tint.Value().n_red, IceRefractiveIndex::Get(650.0));
+  EXPECT_EQ(tint.Value().sample_count, 200000);
+  EXPECT_GT(tint.Value().kept_count_red, 0);
+  EXPECT_GT(tint.Value().kept_count_blue, 0);  // the existence witness, both lambdas
   // The block mirrors its only leg (the identity arm's block-state rule).
   EXPECT_EQ(document.chromatic.state, EvidenceState::kFinite);
   EXPECT_EQ(document.chromatic.coverage.members_evaluated, 6);
@@ -119,9 +119,9 @@ TEST(SurveyTint, TwoIdenticalRunsProduceTheSameRatio) {
   AssembleWeightTint(fix.Input(100000), &second);
   ASSERT_TRUE(first.weight_tint.has_value());
   ASSERT_TRUE(second.weight_tint.has_value());
-  EXPECT_EQ(first.weight_tint->ratio, second.weight_tint->ratio);
-  EXPECT_EQ(first.weight_tint->m_red, second.weight_tint->m_red);
-  EXPECT_EQ(first.weight_tint->m_blue, second.weight_tint->m_blue);
+  EXPECT_EQ(first.weight_tint->Value().ratio, second.weight_tint->Value().ratio);
+  EXPECT_EQ(first.weight_tint->Value().Mass().red, second.weight_tint->Value().Mass().red);
+  EXPECT_EQ(first.weight_tint->Value().Mass().blue, second.weight_tint->Value().Mass().blue);
 }
 
 // The honest refusal: a fixed-pose axis maps to no pose density, and the leg refuses instead of
@@ -135,14 +135,14 @@ TEST(SurveyTint, FixedPoseAxisRefusesTheTintButNotTheCertificate) {
   ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_TRUE(document.early_stopped);
   ASSERT_EQ(document.objects.size(), 1u);
-  EXPECT_EQ(document.objects.front().evidence.state, EvidenceState::kCertified);
+  EXPECT_EQ(document.objects.front().Evidence().state, EvidenceState::kCertified);
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.weight_tint->evidence.mode, "density_not_expressible");
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.weight_tint->Mode(), "density_not_expressible");
   // The block mirrors the refusal; no numeric field is written.
   EXPECT_EQ(document.chromatic.state, EvidenceState::kRefused);
   EXPECT_EQ(document.chromatic.mode, "density_not_expressible");
-  EXPECT_DOUBLE_EQ(document.weight_tint->ratio, 0.0);
+  EXPECT_EQ(document.weight_tint->ValueOrNull(), nullptr);
 }
 
 // The rank-disagreement refusal: a deviating sequence on the same plate ({3,5}: side face in,
@@ -156,11 +156,11 @@ TEST(SurveyTint, DeviatingSequenceRefusesWithNotRankZero) {
   SurveyData document;
   AssembleWeightTint(input, &document);
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.weight_tint->evidence.mode, "not_rank_zero");
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.weight_tint->Mode(), "not_rank_zero");
   EXPECT_EQ(document.chromatic.state, EvidenceState::kRefused);
   EXPECT_EQ(document.chromatic.mode, "not_rank_zero");
-  EXPECT_DOUBLE_EQ(document.weight_tint->ratio, 0.0);
+  EXPECT_EQ(document.weight_tint->ValueOrNull(), nullptr);
 }
 
 // The member-resolution negative control: a representative naming a face the crystal lacks
@@ -174,9 +174,9 @@ TEST(SurveyTint, UnresolvableRepresentativeRefusesWithMemberResolution) {
   SurveyData document;
   AssembleWeightTint(input, &document);
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.weight_tint->evidence.mode, "member_resolution");
-  EXPECT_DOUBLE_EQ(document.weight_tint->ratio, 0.0);
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.weight_tint->Mode(), "member_resolution");
+  EXPECT_EQ(document.weight_tint->ValueOrNull(), nullptr);
   EXPECT_EQ(document.chromatic.state, EvidenceState::kRefused);
   EXPECT_EQ(document.chromatic.mode, "member_resolution");
 }

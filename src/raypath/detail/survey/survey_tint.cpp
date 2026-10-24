@@ -4,9 +4,9 @@ namespace lumice::raypath::survey {
 namespace {
 void MountTint(SurveyWeightTint tint, int member_count, const std::string& geometry_basis, SurveyData* out) {
   out->weight_tint = std::move(tint);
-  if (out->weight_tint->evidence.state == EvidenceState::kRefused) {
+  if (out->weight_tint->State() == EvidenceState::kRefused) {
     out->chromatic.state = EvidenceState::kRefused;
-    out->chromatic.mode = out->weight_tint->evidence.mode;
+    out->chromatic.mode = out->weight_tint->Mode();
   } else {
     out->chromatic.state = EvidenceState::kFinite;
     out->chromatic.coverage.members_evaluated = member_count;

@@ -1,13 +1,8 @@
 #ifndef CORE_RANDOM_H_
 #define CORE_RANDOM_H_
 
-// Probability models and RNG engines, split out of core/math.hpp (which keeps the
-// linear algebra / geometry solvers / scalar helpers). The two families move
-// together because their interfaces are coupled — RandomNumberGenerator::Get takes
-// a Distribution by value, RandomSampler::SampleSphericalPointsSph takes an
-// AxisDistribution — so extracting one alone would leave random.hpp including
-// math.hpp anyway. Splitting here also drops <nlohmann/json.hpp> (and <random>)
-// from every math.hpp consumer that does not touch distributions.
+// RNG engines and JSON adapters. The value-only probability models live in
+// core/distribution.hpp so result readers do not import either execution or JSON.
 
 #include <cstddef>
 #include <cstdint>

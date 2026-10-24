@@ -1,6 +1,8 @@
 #ifndef LUMICE_RAYPATH_FEATURE_REPORT_RESULT_HPP_
 #define LUMICE_RAYPATH_FEATURE_REPORT_RESULT_HPP_
 
+#include <algorithm>
+
 #include "raypath/domain/result_identity.hpp"
 #include "raypath/results/report_attribution.hpp"
 #include "raypath/results/report_enumeration.hpp"
@@ -105,12 +107,29 @@ class FeatureReportResult : public FrozenValue<FeatureReportData> {
     return record && record->source_token ? Reference(SourceId{ static_cast<size_t>(*record->source_token) }) :
                                             std::nullopt;
   }
+  std::optional<RecordRef> ConnectedRecord(RecordRef ref) const {
+    const auto* record = Resolve(ref);
+    return record && record->source_connected_feature ? Reference(RecordId{ *record->source_connected_feature }) :
+                                                        std::nullopt;
+  }
+  std::optional<MemberRef> SourceMember(SourceRef ref) const {
+    const auto* source = Resolve(ref);
+    return source ? Reference(MemberId{ source->member_index }) : std::nullopt;
+  }
   std::optional<RecordRef> UnattributedRecord(size_t index) const {
     return index < Data().unattributed.structures.size() ?
                Reference(RecordId{ Data().unattributed.structures[index].record_index }) :
                std::nullopt;
   }
 
+  std::optional<MemberRef> ObjectMember(ObjectRef ref) const {
+    const auto* object = Resolve(ref);
+    if (!object)
+      return std::nullopt;
+    const auto& members = Data().scope.physical_members;
+    const auto found = std::find(members.begin(), members.end(), object->member);
+    return found == members.end() ? std::nullopt : Reference(MemberId{ static_cast<size_t>(found - members.begin()) });
+  }
   std::optional<ObjectRef> Reference(ObjectId id) const {
     return id.ordinal < Data().core.objects.size() ? std::optional<ObjectRef>{ { Identity(), id } } : std::nullopt;
   }

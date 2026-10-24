@@ -5,11 +5,37 @@
 #include <vector>
 
 #include "core/def.hpp"
+#include "raypath/domain/claim.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/result_identity.hpp"
 #include "raypath/results/probe_line.hpp"
+#include "raypath/results/quantity.hpp"
 #include "raypath/survey_context.hpp"
 namespace lumice::raypath {
+
+enum class ProbeAlong {
+  kRadial,      // the full delta axis at the user's azimuth about the sun
+  kEdgeNormal,  // the same delta-axis geometry, windowed at the context's nearest edge
+  kArc,         // a constant-delta arc through the user's point
+  kTangential,  // the arc geometry, spelled as the transverse crossing
+};
+const char* ProbeAlongName(ProbeAlong along);
+
+enum class ProbeProfileSource { kWarmReused, kRecomputed };
+enum class ProbeDarkKind { kInsideSupportPositive, kInsideSupportZero, kOutsideSupport, kUnknown };
+inline const char* ProbeDarkKindName(ProbeDarkKind kind) {
+  switch (kind) {
+    case ProbeDarkKind::kInsideSupportPositive:
+      return "inside_support_positive";
+    case ProbeDarkKind::kInsideSupportZero:
+      return "inside_support_zero";
+    case ProbeDarkKind::kOutsideSupport:
+      return "outside_support";
+    case ProbeDarkKind::kUnknown:
+      return "unknown";
+  }
+  return "unknown";
+}
 
 // ---- metadata: every conversion, as applied ------------------------------------------------------
 
@@ -45,7 +71,7 @@ struct ProbeMetadata {
 
 // Consecutive bin runs classified against support certified for this profile's wavelength.
 struct ProbeDarkSegment {
-  std::string kind;     // "inside_support_positive" | "inside_support_zero" | "outside_support" | "unknown"
+  ProbeDarkKind kind = ProbeDarkKind::kUnknown;
   double lo_deg = 0.0;  // along the line's sweep coordinate (deviation for the axis forms,
   double hi_deg = 0.0;  // azimuth for the arc forms), the run's first/last bin bounds
   int bin_count = 0;
@@ -61,11 +87,20 @@ struct ProbeProfileReadings {
   double separation_deg = 0.0;  // peak - edge, signed
 };
 
+struct ProbeFiniteReading {
+  ProbeProfileSource source = ProbeProfileSource::kRecomputed;
+  int members_evaluated = 0;
+  std::vector<survey::ProbeLineSample> samples;
+  ProbeProfileReadings readings;
+  std::vector<ProbeDarkSegment> dark_regions;
+};
+
 // One line's profile: the spec echoed, the reading's provenance named, the samples, the two
 // readings, and the dark-region decomposition. A refused profile carries the spec shell the
 // request already fixes and an evidence state of refused with the named mode — never silence.
 struct ProbeProfile {
-  std::string along;  // ProbeAlongName's spelling, echoed
+  QuantitySpec quantity;
+  ProbeAlong along = ProbeAlong::kRadial;
   // The line's spec — every number a reader needs to reproduce the line (the caliber discipline:
   // schema, echoed, never a knob). The extent is the bins' actual span: the axis forms' window
   // ends at the last bin's hi edge, and the arc forms carry an extent of wedge_half_width_deg
@@ -78,7 +113,7 @@ struct ProbeProfile {
                                        // or the arc forms' azimuth-sweep half width
   double bin_deg = 0.0;
   double wedge_half_width_deg = 0.0;
-  std::string anchor_basis;  // edge-normal only: "support_interval_endpoint" | "caustic_edge_position"
+  std::optional<ContextEdgeBasis> anchor_basis;
   double anchor_deg = 0.0;
   double anchor_wavelength_nm = 0.0;
   // The radial form is azimuth-free under uniform density; other densities require a matching
@@ -91,20 +126,17 @@ struct ProbeProfile {
   bool deterministic = true;
   std::vector<int> representative;
   int member_count = 0;
-  // The reading's provenance, mechanically named (the review's zero-recompute ruling):
-  // "warm_reused" — the values are the warm document's own samples, checked against the
-  //   requested scope, line orientation (if non-uniform), and bin layout; no BandSum here;
-  // "recomputed" — BandSum ran here (lattice-deterministic, no seed dependence).
-  std::string source;
-  // Evidence: "finite" with the coverage declaration (the spec above is the coverage), or
-  // "refused" with the named mode: no_edge_in_context, measure_not_expressible,
-  // degenerate_arc_at_pole, inline_survey_refused.
-  std::string evidence_state;
-  std::string refused_mode;
-  int members_evaluated = 0;                     // finite: 1 — the representative; the class reads xN
-  std::vector<survey::ProbeLineSample> samples;  // finite only; both line coordinates spelled
-  ProbeProfileReadings readings;                 // finite only
-  std::vector<ProbeDarkSegment> dark_regions;    // classified at this profile's wavelength
+  Claim<ProbeFiniteReading> claim;
+  survey::EvidenceState State() const { return ClaimState(claim); }
+  void BeginFinite() {
+    if (!std::holds_alternative<Finite<ProbeFiniteReading>>(claim)) {
+      claim = Finite<ProbeFiniteReading>{};
+    }
+  }
+  ProbeFiniteReading& Reading() { return std::get<Finite<ProbeFiniteReading>>(claim).value; }
+  const ProbeFiniteReading& Reading() const { return std::get<Finite<ProbeFiniteReading>>(claim).value; }
+  std::string& RefusalReason() { return std::get<Refused>(claim).reason; }
+  const std::string& RefusalReason() const { return std::get<Refused>(claim).reason; }
 };
 
 // ---- result --------------------------------------------------------------------------------------

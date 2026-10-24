@@ -25,14 +25,19 @@ constexpr const char* kWitnessSourceNote =
 
 WitnessResult EvaluateWitness(const WitnessInput& input) {
   WitnessResult witness;
+  witness.SetState(EvidenceState::kFinite);
+  witness.Value().quantity =
+      DescribeQuantity(QuantityKind::kWitnessWeight, QuantityUnit::kArea, QuantityMethod::kLatticeArgmaxDiagnostic,
+                       ReferenceMeasure::kHaar, DensityWeighting::kNone);
+  DeclareQuantity(&witness, witness.Value().quantity, { *input.representative }, input.wavelength_nm);
   std::vector<int> slots;
   if (const Error slot_error = ResolveSingleLayerPath({ *input.representative }, *input.table, &slots);
       !slot_error.Ok()) {
     // Unreachable past the assembly's request-level resolution, but the refusal stays honest —
     // the same discipline as the sibling legs (the tint's member_resolution mode).
-    witness.state = EvidenceState::kRefused;
-    witness.mode = "member_resolution";
-    return witness;
+    witness.SetState(EvidenceState::kRefused);
+    witness.Mode() = "member_resolution";
+    return CompleteQuantity(std::move(witness));
   }
 
   // The declared source's own existence sample: every kept event has w = A*T > 0. One
@@ -41,9 +46,9 @@ WitnessResult EvaluateWitness(const WitnessInput& input) {
                                    input.refractive_index, input.incident);
   const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count);
   if (events.empty()) {
-    witness.state = EvidenceState::kRefused;
-    witness.mode = kWitnessRefusalMode;
-    return witness;
+    witness.SetState(EvidenceState::kRefused);
+    witness.Mode() = kWitnessRefusalMode;
+    return CompleteQuantity(std::move(witness));
   }
   const analytic::SampleEvent& best = *std::max_element(
       events.begin(), events.end(),
@@ -68,36 +73,36 @@ WitnessResult EvaluateWitness(const WitnessInput& input) {
   if (!analytic::EvaluateDiagnosticBatch(*input.representative, { row }, {}, &values) || values.size() != 1 ||
       !values[0].path_valid || !values[0].entry_available || !(values[0].entry.value > 0.0) ||
       !(values[0].interface_product > 0.0)) {
-    witness.state = EvidenceState::kRefused;
-    witness.mode = kWitnessRefusalMode;
-    return witness;
+    witness.SetState(EvidenceState::kRefused);
+    witness.Mode() = kWitnessRefusalMode;
+    return CompleteQuantity(std::move(witness));
   }
 
-  witness.state = EvidenceState::kFinite;
-  witness.coverage.members_evaluated = 1;  // the representative; the class reads xN
-  witness.coverage.geometry_basis =
+  witness.SetState(EvidenceState::kFinite);
+  witness.Coverage().members_evaluated = 1;  // the representative; the class reads xN
+  witness.Coverage().geometry_basis =
       "the declared-source lattice argmax pose, re-evaluated by the diagnostic batch on the "
       "nominal crystal shape";
-  witness.coverage.wavelength_nm = input.wavelength_nm;
-  witness.kept_count = static_cast<long long>(events.size());
-  witness.sample_count = input.sample_count;
-  witness.lattice = "antipodal_fibonacci";
-  witness.deterministic = true;
-  witness.deviation_deg = best.event.deviation * math::kRadToDegreeD;
-  witness.weight = best.weight;
-  witness.entry = values[0].entry.value;
-  witness.interface_product = values[0].interface_product;
-  witness.source_note = kWitnessSourceNote;
+  witness.Coverage().wavelength_nm = input.wavelength_nm;
+  witness.Value().kept_count = static_cast<long long>(events.size());
+  witness.Value().sample_count = input.sample_count;
+  witness.Value().lattice = "antipodal_fibonacci";
+  witness.Value().deterministic = true;
+  witness.Value().deviation_deg = best.event.deviation * math::kRadToDegreeD;
+  witness.Value().weight = best.weight;
+  witness.Value().entry = values[0].entry.value;
+  witness.Value().interface_product = values[0].interface_product;
+  witness.Value().source_note = kWitnessSourceNote;
   // The argmax pose is the one the assembly actually held: retain it for the document's
   // warm_index (the leg name is "witness_argmax"; the collector reads it from here).
-  witness.has_pose = true;
+  witness.Value().has_pose = true;
   for (int k = 0; k < 9; k++) {
-    witness.pose[k] = pose[k];
+    witness.Value().pose[k] = pose[k];
   }
 
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] witness: {} kept of {} lattice events, max w {:.6e}, entry {:.6e}",
             events.size(), input.sample_count, best.weight, values[0].entry.value);
-  return witness;
+  return CompleteQuantity(std::move(witness));
 }
 
 }  // namespace lumice::raypath::survey

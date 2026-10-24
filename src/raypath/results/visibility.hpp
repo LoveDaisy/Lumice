@@ -1,6 +1,8 @@
 #ifndef LUMICE_RAYPATH_RESULTS_VISIBILITY_HPP_
 #define LUMICE_RAYPATH_RESULTS_VISIBILITY_HPP_
 
+#include <string>
+
 #include "raypath/domain/measure_geometry.hpp"
 namespace lumice::raypath {
 
@@ -27,7 +29,7 @@ struct VisibilityCertificate {
   bool saw_zero_area = false;          // some in-support sample has A == 0, T > 0
   bool saw_zero_transmission = false;  // some in-support sample has T == 0, A > 0
   // Stable machine string naming the blocking condition for kUnproven ("" for the others).
-  const char* reason = "";
+  std::string reason;
 };
 
 }  // namespace lumice::raypath

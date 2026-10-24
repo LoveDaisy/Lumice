@@ -45,14 +45,6 @@ namespace lumice::raypath {
 constexpr double kProbeWindowHalfWidthDeg = 10.0;
 constexpr int kMaxProbeWavelengthCount = 32;
 
-enum class ProbeAlong {
-  kRadial,      // the full delta axis at the user's azimuth about the sun
-  kEdgeNormal,  // the same delta-axis geometry, windowed at the context's nearest edge
-  kArc,         // a constant-delta arc through the user's point
-  kTangential,  // the arc geometry, spelled as the transverse crossing
-};
-const char* ProbeAlongName(ProbeAlong along);
-
 // The budget's default and bound (the point query's shape); enforcement sits at the per-lambda
 // BandSum boundaries, so a stopped run serializes the profiles it has with meta.interrupted.
 constexpr int kDefaultProbeBudgetMs = 15000;

@@ -33,8 +33,8 @@
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/no_related_feature.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
-#include "raypath/detail/schema3/structure_object.hpp"
 #include "raypath/detail/structure/support.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath {
 namespace {
@@ -242,14 +242,13 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   object.visibility.saw_zero_area = true;
   object.visibility.saw_zero_transmission = true;
   object.visibility.reason = "sentinel_visibility_reason";
-  object.chromatic_assessed = true;
-  object.chromatic = {};
-  object.chromatic.kind = analytic::ChromaticVerdictKind::kTint;
-  object.chromatic.color = analytic::ChromaticColor::kRed;
-  object.chromatic.visible = true;
-  object.chromatic.coverage_complete = false;
-  object.chromatic.has_position = true;
-  object.chromatic.position = 0.02;
+  object.SetChromatic({});
+  object.Chromatic().verdict.kind = analytic::ChromaticVerdictKind::kTint;
+  object.Chromatic().verdict.color = analytic::ChromaticColor::kRed;
+  object.Chromatic().verdict.visible = true;
+  object.Chromatic().verdict.coverage_complete = false;
+  object.Chromatic().verdict.has_position = true;
+  object.Chromatic().verdict.position = 0.02;
   analytic::ChromaticFeature feature{};
   feature.kind = analytic::ChromaticFeatureKind::kEdge;
   feature.source = "sentinel_feature_source";
@@ -264,10 +263,10 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   feature.contrast = 0.06;
   feature.weight = 0.07;
   feature.lit_fraction = 0.08;
-  object.chromatic.features = { feature };
-  object.chromatic.has_tint = true;
-  object.chromatic.tint = { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
-  object.chromatic.notes = { "sentinel_chromatic_note" };
+  object.Chromatic().verdict.features = { feature };
+  object.Chromatic().verdict.has_tint = true;
+  object.Chromatic().verdict.tint = { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+  object.Chromatic().verdict.notes = { "sentinel_chromatic_note" };
   annotation = {};
   annotation.state = schema3::CorroborationState::kObserved;
   annotation.presence_ess = 50.0;

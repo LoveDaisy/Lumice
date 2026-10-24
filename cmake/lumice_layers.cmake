@@ -299,6 +299,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/results/report_enumeration.hpp
   raypath/results/report_attribution.hpp
   raypath/feature_report_result.hpp
+  raypath/results/quantity.hpp
+  raypath/domain/object_kind.hpp
   raypath/domain/claim.hpp
   raypath/domain/result_identity.hpp
   raypath/domain/scope.hpp
@@ -372,7 +374,6 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/schema3/report_assembly.cpp
   raypath/detail/schema3/report_assembly.hpp
   raypath/detail/schema3/structure_object.cpp
-  raypath/detail/schema3/structure_object.hpp
   raypath/detail/schema3/structure_enumeration.cpp
   raypath/detail/schema3/structure_enumeration.hpp
   raypath/detail/structure/support.cpp

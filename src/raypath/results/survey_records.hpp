@@ -5,98 +5,21 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "analytic/quantity_types.hpp"
+#include "raypath/domain/claim.hpp"
 #include "raypath/domain/evidence.hpp"
 #include "raypath/domain/measure.hpp"
+#include "raypath/domain/object_kind.hpp"
+#include "raypath/results/quantity.hpp"
 
 
 namespace lumice::raypath::survey {
 
-// The object-kind registry. Registration order is the document order of any listing of the
-// vocabulary; the registry grows append-only (a new kind is a new enum value plus its name —
-// never a re-spelling of an old one).
-enum class SurveyObjectKind {
-  kSourceImage,          // T0 identity certificate (M = I and zero wedge): the sun's preimage
-  kFamilyCollapsePoint,  // T1 rank 0 on the limit family
-  kRegularImage,         // T1 rank 1: a one-dimensional regular image
-  kCausticEdge,          // T1 rank 2: the critical image of the relevant projection
-  kBrightDomain,         // a two-dimensional bright domain (weight profiles live here)
-  kSupportSet,           // the support set: boundary curves with mechanism labels, holes
-};
-
-struct SurveyObjectKindNameEntry {
-  SurveyObjectKind kind;
-  const char* name;
-};
-
-inline const std::vector<SurveyObjectKindNameEntry>& SurveyObjectKindTable() {
-  static const std::vector<SurveyObjectKindNameEntry> kTable = {
-    { SurveyObjectKind::kSourceImage, "source_image" },
-    { SurveyObjectKind::kFamilyCollapsePoint, "family_collapse_point" },
-    { SurveyObjectKind::kRegularImage, "regular_image" },
-    { SurveyObjectKind::kCausticEdge, "caustic_edge" },
-    { SurveyObjectKind::kBrightDomain, "bright_domain" },
-    { SurveyObjectKind::kSupportSet, "support_set" },
-  };
-  return kTable;
-}
-
-inline const char* SurveyObjectKindName(SurveyObjectKind kind) {
-  for (const auto& entry : SurveyObjectKindTable()) {
-    if (entry.kind == kind) {
-      return entry.name;
-    }
-  }
-  return "source_image";
-}
-
-// False for anything outside the registered vocabulary.
-inline bool SurveyObjectKindFromName(std::string_view name, SurveyObjectKind* out) {
-  for (const auto& entry : SurveyObjectKindTable()) {
-    if (name == entry.name) {
-      *out = entry.kind;
-      return true;
-    }
-  }
-  return false;
-}
-
-// The registry itself, registration order — projected from the name table above, of which it is
-// not a second copy. The serializer's coverage row and the assembly's unevaluated entries read
-// this rather than keeping their own copies.
-inline const std::vector<SurveyObjectKind>& AllSurveyObjectKinds() {
-  static const std::vector<SurveyObjectKind> kKinds = [] {
-    std::vector<SurveyObjectKind> kinds;
-    kinds.reserve(SurveyObjectKindTable().size());
-    for (const auto& entry : SurveyObjectKindTable()) {
-      kinds.push_back(entry.kind);
-    }
-    return kinds;
-  }();
-  return kKinds;
-}
-
-// The coverage declaration a finite state must carry (the design's default: state required,
-// defaulting to finite with this block). What "finite" covered THIS run.
-struct SurveyCoverage {
-  int members_evaluated = 0;  // class members the leg evaluated
-  std::string geometry_basis = "nominal crystal shape at the distribution centres";
-  double wavelength_nm = 0.0;  // the reference wavelength the leg ran at
-};
-
-// One declaration block's evidence. `state` is always serialized; the accompanying field depends
-// on it: certified -> method (registered); refused -> mode (open string); unevaluated -> reason;
-// finite -> coverage. A default-constructed block is exactly the schema default: finite plus its
-// coverage declaration.
-struct SurveyEvidence {
-  EvidenceState state = EvidenceState::kFinite;
-  std::string method;       // certified
-  std::string mode;         // refused
-  std::string reason;       // unevaluated
-  SurveyCoverage coverage;  // finite
-};
+// Evidence/coverage and the four-arm claim have their sole definitions in domain/.
 
 // The rank-0 identity certificate's declared tolerances: the kernel's own constants
 // (analytic/path_rank.hpp), restated on the card so a reader needs no kernel header. The
@@ -209,10 +132,8 @@ struct FamilyRoutingBlock {
   std::optional<std::string> level0_refusal_mode;
 };
 
-struct WitnessResult {
-  EvidenceState state = EvidenceState::kRefused;
-  std::string mode;         // refused
-  SurveyCoverage coverage;  // finite
+struct WitnessValues {
+  QuantitySpec quantity;
   long long kept_count = 0;
   long long sample_count = 0;
   std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (discovery.hpp)
@@ -229,20 +150,18 @@ struct WitnessResult {
   double pose[9] = {};
 };
 
+class WitnessResult : public ClaimedValue<WitnessValues> {};
+
 // One object card. For the v1 source_image: `members` are the class members the card collapses
 // (the card is the sky-side object; the members are its preimage decomposition), `position` is
 // the sun's altitude/azimuth, `evidence` is certified with the method named, and `certificate`
-// carries the declared tolerances. The T1 payloads are per-kind optionals: exactly the payload
-// of the card's kind is filled, and a payload absent from the document is one the routing arm
-// never produced (fields only ever appear when the assembly filled them).
+// carries the declared tolerances. The payload variant determines the kind; each arm owns its own claim. A family
+// representative and a delta edge remain different payloads.
 struct SurveyObject {
-  SurveyObjectKind kind = SurveyObjectKind::kSourceImage;
   std::vector<std::vector<int>> members;
   bool has_position = false;
   double position_altitude_deg = 0.0;
   double position_azimuth_deg = 0.0;
-  SurveyEvidence evidence;
-  std::optional<SurveyCertificate> certificate;
 
   // --- kSupportSet payload: the class's delta-axis support -------------------------------
   // One partition interval (the kernel's DeviationInterval, degrees on the wire) and the
@@ -309,9 +228,6 @@ struct SurveyObject {
     int probe_index = -1;         // the probes[] entry the readings came from
   };
 
-  std::optional<SupportSetPayload> support_set;
-  std::optional<CausticEdgePayload> caustic_edge;
-  std::optional<BrightDomainPayload> bright_domain;
 
   // --- the family routing's payloads (only the family arm's cards carry them) ------------
   // The band label: the ladder level the card survived at, the frozen dimensions with their
@@ -347,7 +263,161 @@ struct SurveyObject {
   // statement, never a distribution statistic. Absent from a card no leg produced.
   using WitnessPayload = WitnessResult;
 
-  std::optional<WitnessPayload> witness;
+  WitnessPayload* Witness() { return witness_ ? &*witness_ : nullptr; }
+  const WitnessPayload* Witness() const { return witness_ ? &*witness_ : nullptr; }
+  bool SetWitness(WitnessPayload value) {
+    if (Kind() != SurveyObjectKind::kSupportSet)
+      return false;
+    witness_ = std::move(value);
+    return true;
+  }
+
+  struct SourceImagePayload {
+    std::optional<SurveyCertificate> certificate;
+  };
+  struct FamilyCollapsePayload {};
+  struct RegularImagePayload {};
+  struct CausticPayload {
+    std::optional<CausticEdgePayload> delta;
+  };
+  struct BrightPayload {
+    std::optional<BrightDomainPayload> domain;
+  };
+  using Payload = std::variant<ClaimedValue<SourceImagePayload>, ClaimedValue<FamilyCollapsePayload>,
+                               ClaimedValue<RegularImagePayload>, ClaimedValue<CausticPayload>,
+                               ClaimedValue<BrightPayload>, ClaimedValue<SupportSetPayload>>;
+
+  SurveyObjectKind Kind() const { return static_cast<SurveyObjectKind>(payload_.index()); }
+  bool SetKind(SurveyObjectKind kind) {
+    switch (kind) {
+      case SurveyObjectKind::kSourceImage:
+        payload_ = ClaimedValue<SourceImagePayload>{};
+        witness_.reset();
+        return true;
+      case SurveyObjectKind::kFamilyCollapsePoint:
+        payload_ = ClaimedValue<FamilyCollapsePayload>{};
+        witness_.reset();
+        return true;
+      case SurveyObjectKind::kRegularImage:
+        payload_ = ClaimedValue<RegularImagePayload>{};
+        witness_.reset();
+        return true;
+      case SurveyObjectKind::kCausticEdge:
+        payload_ = ClaimedValue<CausticPayload>{};
+        witness_.reset();
+        return true;
+      case SurveyObjectKind::kBrightDomain:
+        payload_ = ClaimedValue<BrightPayload>{};
+        witness_.reset();
+        return true;
+      case SurveyObjectKind::kSupportSet:
+        payload_ = ClaimedValue<SupportSetPayload>{};
+        witness_.reset();
+        return true;
+    }
+    return false;
+  }
+  EvidenceState State() const {
+    return std::visit([](const auto& c) { return c.State(); }, payload_);
+  }
+  bool SetState(EvidenceState state) {
+    return std::visit([state](auto& c) { return c.SetState(state); }, payload_);
+  }
+  SurveyCoverage& Coverage() {
+    return std::visit([](auto& c) -> SurveyCoverage& { return c.Coverage(); }, payload_);
+  }
+  const SurveyCoverage& Coverage() const {
+    return std::visit([](const auto& c) -> const SurveyCoverage& { return c.Coverage(); }, payload_);
+  }
+  std::string& Method() {
+    return std::visit([](auto& c) -> std::string& { return c.Method(); }, payload_);
+  }
+  const std::string& Method() const {
+    return std::visit([](const auto& c) -> const std::string& { return c.Method(); }, payload_);
+  }
+  std::string& Mode() {
+    return std::visit([](auto& c) -> std::string& { return c.Mode(); }, payload_);
+  }
+  const std::string& Mode() const {
+    return std::visit([](const auto& c) -> const std::string& { return c.Mode(); }, payload_);
+  }
+  std::string& Reason() {
+    return std::visit([](auto& c) -> std::string& { return c.Reason(); }, payload_);
+  }
+  const std::string& Reason() const {
+    return std::visit([](const auto& c) -> const std::string& { return c.Reason(); }, payload_);
+  }
+  SurveyEvidence Evidence() const {
+    return std::visit([](const auto& c) { return c.Evidence(); }, payload_);
+  }
+  const Payload& Declaration() const { return payload_; }
+  void BindScope(const ClaimScope& scope) {
+    std::visit([&scope](auto& c) { c.BindScope(scope); }, payload_);
+  }
+  const SupportSetPayload* Support() const { return Value<SupportSetPayload>(); }
+  SupportSetPayload* Support() { return Value<SupportSetPayload>(); }
+  const CausticEdgePayload* Edge() const {
+    const auto* value = Value<CausticPayload>();
+    return value && value->delta ? &*value->delta : nullptr;
+  }
+  CausticEdgePayload* Edge() {
+    auto* value = Value<CausticPayload>();
+    return value && value->delta ? &*value->delta : nullptr;
+  }
+  const BrightDomainPayload* Bright() const {
+    const auto* value = Value<BrightPayload>();
+    return value && value->domain ? &*value->domain : nullptr;
+  }
+  BrightDomainPayload* Bright() {
+    auto* value = Value<BrightPayload>();
+    return value && value->domain ? &*value->domain : nullptr;
+  }
+  const SurveyCertificate* Certificate() const {
+    const auto* value = Value<SourceImagePayload>();
+    return value && value->certificate ? &*value->certificate : nullptr;
+  }
+  bool SetSupport(SupportSetPayload value) {
+    auto* target = Value<SupportSetPayload>();
+    if (!target)
+      return false;
+    *target = std::move(value);
+    return true;
+  }
+  bool SetEdge(CausticEdgePayload value) {
+    auto* target = Value<CausticPayload>();
+    if (!target)
+      return false;
+    target->delta = std::move(value);
+    return true;
+  }
+  bool SetBright(BrightDomainPayload value) {
+    auto* target = Value<BrightPayload>();
+    if (!target)
+      return false;
+    target->domain = std::move(value);
+    return true;
+  }
+  bool SetCertificate(SurveyCertificate value) {
+    auto* target = Value<SourceImagePayload>();
+    if (!target)
+      return false;
+    target->certificate = std::move(value);
+    return true;
+  }
+
+ private:
+  template <class T>
+  const T* Value() const {
+    const auto* claim = std::get_if<ClaimedValue<T>>(&payload_);
+    return claim ? claim->ValueOrNull() : nullptr;
+  }
+  template <class T>
+  T* Value() {
+    auto* claim = std::get_if<ClaimedValue<T>>(&payload_);
+    return claim ? claim->ValueOrNull() : nullptr;
+  }
+  Payload payload_;
+  std::optional<WitnessPayload> witness_;
 };
 
 // The T0 leg's per-member record: the routing fact the certificate (or its absence) states for
@@ -404,8 +474,10 @@ struct SurveyProbeSample {
 // apart: `edge_*` = where the support starts (the first non-empty bin contains the minimum-
 // deviation edge, geometrically no event lies below it), `peak_*` = where the profile is
 // brightest (the value argmax) — finite readings, never the certified edge position.
+enum class SurveyProbeKind { kSolarRadial };
+
 struct SurveyProbe {
-  std::string kind = "solar_radial";
+  SurveyProbeKind kind = SurveyProbeKind::kSolarRadial;
   SurveyProbeSpec spec;
   SurveyEvidence evidence;  // finite + the coverage declaration
   std::vector<SurveyProbeSample> samples;
@@ -518,7 +590,7 @@ struct SurveyDiagnoseBlock {
 // section 9.6). `kNeutral` is the degenerate exact-1.0 point.
 enum class SurveyTintDirection { kBlueTinted, kRedTinted, kNeutral };
 
-// The same full-coverage-switch form as PointMassMethodName below: a new vocabulary value fails
+// The full-coverage switch below: a new vocabulary value fails
 // -Wswitch at the switch itself; the trailing return only satisfies control-reaches-end for
 // today's fully-covered enum.
 inline const char* SurveyTintDirectionName(SurveyTintDirection direction) {
@@ -539,17 +611,8 @@ inline const char* SurveyTintDirectionName(SurveyTintDirection direction) {
 // switch itself; the trailing return only satisfies control-reaches-end for today's
 // fully-covered enum. The class power-sum path is survey-side, not a kernel method: its slug
 // is the constant below, and the two families never share a field shape (see SurveyWeightTint).
-inline const char* PointMassMethodName(analytic::PointMassMethod method) {
-  switch (method) {
-    case analytic::PointMassMethod::kPsiAverage:
-      return "psi_average";
-    case analytic::PointMassMethod::kLatticeMean:
-      return "lattice_mean";
-  }
-  return "lattice_mean";
-}
-
 constexpr const char* kClassTintMethodLatticePowerSum = "lattice_power_sum";
+inline constexpr const char* kTintMethodSinglePoseDirect = "single_pose_direct";
 
 // One weight-tint evaluation. The two shapes this struct carries share the ratio/question but
 // not the reading, and the field sets never merge:
@@ -563,19 +626,26 @@ constexpr const char* kClassTintMethodLatticePowerSum = "lattice_power_sum";
 // Either way the tint runs on the class representative, with `member_count` declaring the
 // class size it stands for (the probe's relabeled-equivalence discipline), and `ratio` is the
 // blue reading over the red one.
-struct SurveyWeightTint {
+enum class TintMassProtocol { kPsiAverage, kLatticeMean, kSinglePoseDirect };
+struct TintMassReading {
+  double red = 0;
+  double blue = 0;
+  double red_error = 0;
+  double blue_error = 0;
+  TintMassProtocol protocol = TintMassProtocol::kLatticeMean;
+};
+struct TintClassPowerReading {
+  double red = 0;
+  double blue = 0;
+};
+
+struct WeightTintValues {
+  QuantitySpec quantity;
+  QuantityUnit reading_unit = QuantityUnit::kMass;
   std::string red_label = kChromaticRedLabel;
   std::string blue_label = kChromaticBlueLabel;
-  bool class_power_shape = false;  // the reading's shape: point-mass masses vs lattice power sum
   double n_red = 0.0;
   double n_blue = 0.0;
-  double m_red = 0.0;
-  double m_blue = 0.0;
-  double m_red_error = 0.0;
-  double m_blue_error = 0.0;
-  double energy_red = 0.0;   // class shape: the per-sample average power at the red index
-  double energy_blue = 0.0;  // class shape: the per-sample average power at the blue index
-  std::string method;        // PointMassMethodName or kClassTintMethodLatticePowerSum: the reading's own path
   long long sample_count = 0;
   std::string lattice = "antipodal_fibonacci";  // the sampler's own lattice kind (band_sum.hpp)
   bool deterministic = true;                    // no RNG anywhere in the sample
@@ -589,8 +659,43 @@ struct SurveyWeightTint {
                         "): point-mass band-sum transmission weights at the sun direction; fixed " +
                         ChromaticPairProseRedFirst() +
                         " index pair, unweighted by SPD or CMF — not a disk-integrated D65 B/R";
-  SurveyEvidence evidence;
+  std::variant<TintMassReading, TintClassPowerReading> reading;
+  bool IsClassPower() const { return std::holds_alternative<TintClassPowerReading>(reading); }
+  TintMassReading& Mass() { return std::get<TintMassReading>(reading); }
+  const TintMassReading& Mass() const { return std::get<TintMassReading>(reading); }
+  TintClassPowerReading& Power() { return std::get<TintClassPowerReading>(reading); }
+  const TintClassPowerReading& Power() const { return std::get<TintClassPowerReading>(reading); }
+  QuantityMethod Method() const {
+    if (IsClassPower())
+      return QuantityMethod::kClassLatticePowerSum;
+    switch (Mass().protocol) {
+      case TintMassProtocol::kPsiAverage:
+        return QuantityMethod::kPointMassPsiAverage;
+      case TintMassProtocol::kLatticeMean:
+        return QuantityMethod::kPointMassLatticeMean;
+      case TintMassProtocol::kSinglePoseDirect:
+        return QuantityMethod::kSinglePoseDirect;
+    }
+    return QuantityMethod::kPointMassBandSum;
+  }
 };
+
+inline const char* TintMethodName(QuantityMethod method) {
+  switch (method) {
+    case QuantityMethod::kPointMassPsiAverage:
+      return "psi_average";
+    case QuantityMethod::kPointMassLatticeMean:
+      return "lattice_mean";
+    case QuantityMethod::kClassLatticePowerSum:
+      return kClassTintMethodLatticePowerSum;
+    case QuantityMethod::kSinglePoseDirect:
+      return kTintMethodSinglePoseDirect;
+    default:
+      return "point_mass_band_sum";
+  }
+}
+
+class SurveyWeightTint : public ClaimedValue<WeightTintValues> {};
 
 // One internal interface's row of the TIR share leg: the face's literal number (the
 // representative's own, since slots resolve 1:1) and the per-lambda TIR weight shares.
@@ -598,6 +703,8 @@ struct SurveyTirShareInterface {
   int face = 0;
   double share_red = 0.0;
   double share_blue = 0.0;
+  double tir_weight_red = 0.0;
+  double tir_weight_blue = 0.0;
 };
 
 // The TIR share leg (the schema-4 append; the exception evidence leg that decomposes the class
@@ -608,7 +715,14 @@ struct SurveyTirShareInterface {
 // never a cross-lambda ratio). Present only on a document whose arm ran the leg (the T1 arm
 // and the refused-support arm); a path with no internal interface refuses the leg
 // (no_internal_interfaces — the question is meaningless for that path shape), never zero.
-struct SurveyTirShare {
+struct TirShareValues {
+  QuantitySpec quantity;
+  double total_weight_red = 0.0;
+  double total_weight_blue = 0.0;
+  double all_tir_weight_red = 0.0;
+  double all_tir_weight_blue = 0.0;
+  long long chart_degenerate_red = 0;
+  long long chart_degenerate_blue = 0;
   double n_red = 0.0;
   double n_blue = 0.0;
   std::vector<SurveyTirShareInterface> interfaces;
@@ -622,8 +736,9 @@ struct SurveyTirShare {
   long long kept_count_red = 0;
   long long kept_count_blue = 0;
   std::string caliber;
-  SurveyEvidence evidence;
 };
+
+class SurveyTirShare : public ClaimedValue<TirShareValues> {};
 
 // One delta band's row of the MC region ESS leg: the Kish effective sample size of the band's
 // Y-channel draw weights (rows grouped by outer draw — one draw is one sampling act even when
@@ -634,6 +749,7 @@ struct SurveyMcRegionEssBand {
   double ess = 0.0;
   long long draw_count = 0;
   double sum_weight = 0.0;
+  double sum_squared_weight = 0.0;
 };
 
 // The opt-in MC region ESS leg (the schema-4 append): the MC corroboration sampling's effective
@@ -643,15 +759,17 @@ struct SurveyMcRegionEssBand {
 // reproducible, so `deterministic` is false by construction: the field exists to state the
 // leg's own shape against the deterministic legs' true — a deterministic quadrature carries no
 // ESS semantics and never appears on one. Present only when the caller requested the leg.
-struct SurveyMcRegionEss {
+struct McRegionEssValues {
+  QuantitySpec quantity;
   long long seed = 0;
   long long draws = 0;
   double lambda_nm = 0.0;
   double band_deg = 0.0;
   std::vector<SurveyMcRegionEssBand> bands;
   bool deterministic = false;  // seeded random; a given seed reproduces the sample
-  SurveyEvidence evidence;
 };
+
+class SurveyMcRegionEss : public ClaimedValue<McRegionEssValues> {};
 
 // The request as the document answered it (the echo).
 struct SurveyRequestEcho {

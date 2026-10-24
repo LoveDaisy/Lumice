@@ -314,35 +314,36 @@ nlohmann::ordered_json SunGridJson(const SunSphereGrid& g) {
 // only under "finite" (so an unevaluated distance can never be misread as the certified 0 that
 // means "inside the support").
 nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& c) {
-  nlohmann::ordered_json j = { { "source", c.source }, { "warm_index_absent", c.warm_index_absent } };
+  nlohmann::ordered_json j = { { "source", ContextSourceName(c.source) },
+                               { "warm_index_absent", c.warm_index_absent } };
   if (c.reference_wavelength_nm > 0.0) {
     j["reference_wavelength_nm"] = Num(c.reference_wavelength_nm);
   }
-  nlohmann::ordered_json object = { { "state", c.object.state } };
+  nlohmann::ordered_json object = { { "state", survey::EvidenceStateName(c.object.state) } };
   if (!c.object.reason.empty()) {
     object["reason"] = c.object.reason;
   }
-  if (c.object.state == "certified") {
+  if (c.object.state == survey::EvidenceState::kCertified) {
     object["target_inside_support"] = c.target_inside_support;
-    object["kind"] = c.object_kind;
+    object["kind"] = c.object_kind ? survey::SurveyObjectKindName(*c.object_kind) : "";
     object["members"] = c.object_members;
     object["distance_deg"] = Num(c.object_distance_deg);
   }
   j["object"] = std::move(object);
-  nlohmann::ordered_json edge = { { "state", c.edge.state } };
+  nlohmann::ordered_json edge = { { "state", survey::EvidenceStateName(c.edge.state) } };
   if (!c.edge.reason.empty()) {
     edge["reason"] = c.edge.reason;
   }
-  if (c.edge.state == "finite") {
+  if (c.edge.state == survey::EvidenceState::kFinite) {
     edge["distance_deg"] = Num(c.edge_distance_deg);
-    edge["basis"] = c.edge_basis;
+    edge["basis"] = ContextEdgeBasisName(c.edge_basis);
   }
   j["edge"] = std::move(edge);
-  nlohmann::ordered_json band = { { "state", c.band_sum.state } };
+  nlohmann::ordered_json band = { { "state", survey::EvidenceStateName(c.band_sum.state) } };
   if (!c.band_sum.reason.empty()) {
     band["reason"] = c.band_sum.reason;
   }
-  if (c.band_sum.state == "finite") {
+  if (c.band_sum.state == survey::EvidenceState::kFinite) {
     band["value"] = Num(c.band_sum_value);
     band["delta_deg"] = Num(c.band_sum_delta_deg);
     band["bin_deg"] = Num(c.band_sum_bin_deg);
@@ -368,16 +369,17 @@ Error Invalid(const std::string& what) {
 
 }  // namespace
 
-std::string ToJson(const SinglePathResult& result, const std::string& product_version) {
+static std::string EncodePoint(const PointData& result, const SurveyContextBlock& context,
+                               const std::string& product_version) {
   nlohmann::ordered_json doc;
   doc[kKeySchemaVersion] = result.meta.schema_version;
   doc["generator"] = { { "lumice", product_version }, { "analytic_api_version", result.meta.analytic_api_version } };
   doc["conventions"] = Conventions();
   doc["meta"] = MetaJson(result.meta);
-  if (result.outcome == Outcome::kPointMass) {
+  if (result.OutcomeValue() == Outcome::kPointMass) {
     // Rank 0: no fiber is traced, so there are no components and no discovery.
     doc["outcome"] = "point_mass";
-    const PointMass& pm = result.point_mass;
+    const PointMass& pm = result.Mass();
     nlohmann::ordered_json pm_json = { { "direction", Array(pm.direction, 3) },
                                        { "altitude_deg", Num(pm.altitude_deg) },
                                        { "azimuth_deg", Num(pm.azimuth_deg) },
@@ -386,19 +388,19 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
     doc["point_mass"] = std::move(pm_json);
   } else {
     doc["outcome"] = "discovered";
-    doc["measure_registration"] = MeasureRegistrationJson(result.measure_registration);
+    doc["measure_registration"] = MeasureRegistrationJson(result.Discovered().measure_registration);
     nlohmann::ordered_json components = nlohmann::ordered_json::array();
-    for (const auto& c : result.components) {
+    for (const auto& c : result.Discovered().components) {
       components.push_back(ComponentJson(c));
     }
     doc[kKeyComponents] = std::move(components);
     nlohmann::ordered_json incomplete = nlohmann::ordered_json::array();
-    for (const auto& c : result.incomplete) {
+    for (const auto& c : result.Discovered().incomplete) {
       incomplete.push_back(IncompleteJson(c));
     }
     doc[kKeyIncomplete] = std::move(incomplete);
-    doc["discovery"] = DiscoveryJson(result.discovery);
-    doc["reach"] = ReachJson(result.reach);
+    doc["discovery"] = DiscoveryJson(result.Discovered().discovery);
+    doc["reach"] = ReachJson(result.Discovered().reach);
   }
   // Absent when the grid was not asked for (--grid 0).
   if (result.sun_grid.lat_count > 0) {
@@ -406,10 +408,18 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
   }
   // The survey context: where the target sits in the survey's structure (always written; every
   // field carries its own state, so absence can never read as answered).
-  // Cost contract: on a deferred result SurveyContextOf runs the context-only T0-T2 assembly
-  // (seconds); callers that serialize more than once materialize first via EnsureSurveyContext.
-  doc["survey_context"] = SurveyContextJson(SurveyContextOf(result));
+  // The value encoder receives the completed context explicitly. Only the legacy envelope
+  // adapter below may call SurveyContextOf.
+  doc["survey_context"] = SurveyContextJson(context);
   return doc.dump();
+}
+
+std::string ToJson(const SinglePathResult& result, const std::string& product_version) {
+  return EncodePoint(result, SurveyContextOf(result), product_version);
+}
+
+std::string ToJson(const PointResult& result, const std::string& product_version) {
+  return EncodePoint(result.Data(), result.Data().survey_context, product_version);
 }
 
 Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {

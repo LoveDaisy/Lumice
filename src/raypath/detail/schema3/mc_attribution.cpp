@@ -206,13 +206,13 @@ long long MemberIndexOf(const Schema3DiscoveryCore& core, const std::vector<int>
 }
 
 double DeclaredWidthOf(const StructureObjectRecord& object) {
-  if (!object.chromatic_assessed || object.chromatic.features.empty()) {
+  if (!object.ChromaticAssessed() || object.Chromatic().verdict.features.empty()) {
     return 0.0;
   }
   // The kernel's own dominant rule (visible first, then the largest score, first maximal wins)
   // — the registered gap's local restatement, see the header.
   const analytic::ChromaticFeature* top = nullptr;
-  for (const analytic::ChromaticFeature& feature : object.chromatic.features) {
+  for (const analytic::ChromaticFeature& feature : object.Chromatic().verdict.features) {
     if (top == nullptr || (feature.visible && !top->visible) ||
         (feature.visible == top->visible && feature.Score() > top->Score())) {
       top = &feature;

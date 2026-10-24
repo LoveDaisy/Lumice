@@ -51,8 +51,8 @@ WarmCandidate HarvestSurveyResult(const survey::SurveyResult& result) {
   out.has_sun_azimuth = doc.sun_azimuth_deg.has_value() && std::isfinite(*doc.sun_azimuth_deg);
   out.sun_azimuth_deg = doc.sun_azimuth_deg.value_or(0.0);
   for (const survey::SurveyObject& card : doc.objects) {
-    if (card.support_set.has_value()) {
-      for (const survey::SurveyObject::Interval& interval : card.support_set->intervals) {
+    if (card.Support() != nullptr) {
+      for (const survey::SurveyObject::Interval& interval : card.Support()->intervals) {
         SurveyWarmSource::SupportInterval out_interval;
         out_interval.lower_deg = interval.lower_deg;
         out_interval.upper_deg = interval.upper_deg;
@@ -61,9 +61,9 @@ WarmCandidate HarvestSurveyResult(const survey::SurveyResult& result) {
         out.intervals.push_back(std::move(out_interval));
       }
     }
-    if (card.caustic_edge.has_value()) {
+    if (card.Edge() != nullptr) {
       out.has_edge = true;
-      out.edge_deg = card.caustic_edge->position_deg;
+      out.edge_deg = card.Edge()->position_deg;
       out.edge_members = card.members;
     }
   }
@@ -140,26 +140,26 @@ SurveyReuseDecision EvaluateSurveyReuse(const AdmittedWarmSource& warm, double w
 }
 
 bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
-                            const char** basis) {
+                            ContextEdgeBasis* basis) {
   if (!structure) {
     return false;
   }
   const SurveyWarmSource& warm = *structure.Facts();
   bool has = false;
   double best = 0.0;
-  const char* best_basis = "";
+  ContextEdgeBasis best_basis = ContextEdgeBasis::kSupportIntervalEndpoint;
   for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
     for (const double end : { interval.lower_deg, interval.upper_deg }) {
       if (!has || std::fabs(deviation_deg - end) < std::fabs(deviation_deg - best)) {
         best = end;
-        best_basis = "support_interval_endpoint";
+        best_basis = ContextEdgeBasis::kSupportIntervalEndpoint;
         has = true;
       }
     }
   }
   if (warm.has_edge && (!has || std::fabs(deviation_deg - warm.edge_deg) < std::fabs(deviation_deg - best))) {
     best = warm.edge_deg;
-    best_basis = "caustic_edge_position";
+    best_basis = ContextEdgeBasis::kCausticEdgePosition;
     has = true;
   }
   if (has) {
@@ -195,23 +195,23 @@ static void FillSurveyFacts(const AdmittedWarmSource& admitted, double target_de
     }
   }
   if (!reuse.structure) {
-    out->object.state = "unevaluated";
+    out->object.state = survey::EvidenceState::kUnevaluated;
     out->object.reason = reuse.structure.Reason();
-    out->edge.state = "unevaluated";
+    out->edge.state = survey::EvidenceState::kUnevaluated;
     out->edge.reason = reuse.structure.Reason();
   } else {
     // The partition containment is a certified structural fact; the nearest reading inherits it.
     const SurveyWarmSource::SupportInterval& hit = containing != nullptr ? *containing : *closest;
-    out->object.state = "certified";
+    out->object.state = survey::EvidenceState::kCertified;
     out->target_inside_support = containing != nullptr;
-    out->object_kind = "support_set";
+    out->object_kind = survey::SurveyObjectKind::kSupportSet;
     out->object_members = hit.members;
     out->object_distance_deg = containing != nullptr ? 0.0 : closest_distance;
     // A certified support carries endpoints, so the shared walk always names an anchor here.
     double edge_position = 0.0;
-    const char* edge_basis = "";
+    ContextEdgeBasis edge_basis = ContextEdgeBasis::kSupportIntervalEndpoint;
     NearestStructureAnchor(reuse.structure, delta, &edge_position, &edge_basis);
-    out->edge.state = "finite";
+    out->edge.state = survey::EvidenceState::kFinite;
     out->edge_distance_deg = std::fabs(delta - edge_position);
     out->edge_basis = edge_basis;
     MemberScope members;
@@ -252,7 +252,7 @@ static void FillSurveyFacts(const AdmittedWarmSource& admitted, double target_de
       }
     }
     if (warm.has_edge) {
-      if (out->edge_basis == "caustic_edge_position") {
+      if (out->edge_basis == ContextEdgeBasis::kCausticEdgePosition) {
         edge_index = objects.size();
       }
       append({ ContextStructureObject::Kind::kCausticEdge, warm.edge_deg, warm.edge_deg }, warm.edge_members);
@@ -266,17 +266,17 @@ static void FillSurveyFacts(const AdmittedWarmSource& admitted, double target_de
 
   // The band-sum reading: warm documents only, under the scope gate's exact-equality comparison
   // (both sides resolved the same way, so equal configs give bit-equal doubles here).
-  if (out->source == "inline") {
-    out->band_sum.state = "unevaluated";
+  if (out->source == ContextSource::kInline) {
+    out->band_sum.state = survey::EvidenceState::kUnevaluated;
     out->band_sum.reason = "inline_context_runs_no_probe";
   } else if (out->warm_index_absent) {
-    out->band_sum.state = "unevaluated";
+    out->band_sum.state = survey::EvidenceState::kUnevaluated;
     out->band_sum.reason = "warm_index_absent";
   } else if (!warm.has_probe) {
-    out->band_sum.state = "unevaluated";
+    out->band_sum.state = survey::EvidenceState::kUnevaluated;
     out->band_sum.reason = "warm_document_has_no_probe";
   } else if (reuse.reading_reason != nullptr) {
-    out->band_sum.state = "unevaluated";
+    out->band_sum.state = survey::EvidenceState::kUnevaluated;
     out->band_sum.reason = reuse.reading_reason;
   } else {
     const SurveyWarmSource::ProbeSample* best = nullptr;
@@ -292,10 +292,10 @@ static void FillSurveyFacts(const AdmittedWarmSource& admitted, double target_de
       }
     }
     if (best == nullptr) {
-      out->band_sum.state = "unevaluated";
+      out->band_sum.state = survey::EvidenceState::kUnevaluated;
       out->band_sum.reason = "warm_document_has_no_probe";
     } else {
-      out->band_sum.state = "finite";
+      out->band_sum.state = survey::EvidenceState::kFinite;
       out->band_sum_value = best->value;
       out->band_sum_delta_deg = best->delta_deg;
       out->band_sum_bin_deg = warm.probe_bin_deg;

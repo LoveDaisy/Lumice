@@ -70,14 +70,15 @@ TEST(SurveyWitness, ExistenceLadderKeepsPositiveCountsAtEveryRung) {
     // Non-fatal per rung: each rung is an independent measurement; one bad rung must not
     // silently skip the others.
     SurveyObject card;
+    card.SetKind(SurveyObjectKind::kSupportSet);
     AssembleWitness(fix.Input(n), &card);
-    EXPECT_TRUE(card.witness.has_value());
-    if (!card.witness.has_value()) {
+    EXPECT_TRUE(card.Witness() != nullptr);
+    if (card.Witness() == nullptr) {
       continue;
     }
-    EXPECT_EQ(card.witness->state, EvidenceState::kFinite);
-    EXPECT_GT(card.witness->kept_count, 0);
-    EXPECT_EQ(card.witness->sample_count, n);
+    EXPECT_EQ(card.Witness()->State(), EvidenceState::kFinite);
+    EXPECT_GT(card.Witness()->Value().kept_count, 0);
+    EXPECT_EQ(card.Witness()->Value().sample_count, n);
   }
 }
 
@@ -86,21 +87,22 @@ TEST(SurveyWitness, ExistenceLadderKeepsPositiveCountsAtEveryRung) {
 TEST(SurveyWitness, PositiveWitnessCarriesTheFullReadingSet) {
   const WitnessFixture fix = WitnessFixture::Make();
   SurveyObject card;
+  card.SetKind(SurveyObjectKind::kSupportSet);
   AssembleWitness(fix.Input(100000), &card);
-  ASSERT_TRUE(card.witness.has_value());
-  const SurveyObject::WitnessPayload& witness = *card.witness;
-  EXPECT_EQ(witness.state, EvidenceState::kFinite);
-  EXPECT_GT(witness.kept_count, 0);
-  EXPECT_GT(witness.weight, 0.0);
-  EXPECT_GT(witness.entry, 0.0);
-  EXPECT_GT(witness.interface_product, 0.0);
-  EXPECT_TRUE(std::isfinite(witness.deviation_deg));
-  EXPECT_EQ(witness.sample_count, 100000);
-  EXPECT_EQ(witness.lattice, "antipodal_fibonacci");
-  EXPECT_TRUE(witness.deterministic);
-  EXPECT_FALSE(witness.source_note.empty());
-  EXPECT_EQ(witness.coverage.members_evaluated, 1);
-  EXPECT_DOUBLE_EQ(witness.coverage.wavelength_nm, 550.0);
+  ASSERT_TRUE(card.Witness() != nullptr);
+  const SurveyObject::WitnessPayload& witness = *card.Witness();
+  EXPECT_EQ(witness.State(), EvidenceState::kFinite);
+  EXPECT_GT(witness.Value().kept_count, 0);
+  EXPECT_GT(witness.Value().weight, 0.0);
+  EXPECT_GT(witness.Value().entry, 0.0);
+  EXPECT_GT(witness.Value().interface_product, 0.0);
+  EXPECT_TRUE(std::isfinite(witness.Value().deviation_deg));
+  EXPECT_EQ(witness.Value().sample_count, 100000);
+  EXPECT_EQ(witness.Value().lattice, "antipodal_fibonacci");
+  EXPECT_TRUE(witness.Value().deterministic);
+  EXPECT_FALSE(witness.Value().source_note.empty());
+  EXPECT_EQ(witness.Coverage().members_evaluated, 1);
+  EXPECT_DOUBLE_EQ(witness.Coverage().wavelength_nm, 550.0);
 }
 
 // The negative control: a representative naming a face the crystal lacks refuses with the same
@@ -111,12 +113,12 @@ TEST(SurveyWitness, UnresolvableRepresentativeRefusesWithMemberResolution) {
   WitnessInput input = fix.Input(100000);
   input.representative = &unresolvable;
   SurveyObject card;
+  card.SetKind(SurveyObjectKind::kSupportSet);
   AssembleWitness(input, &card);
-  ASSERT_TRUE(card.witness.has_value());
-  EXPECT_EQ(card.witness->state, EvidenceState::kRefused);
-  EXPECT_EQ(card.witness->mode, "member_resolution");
-  EXPECT_EQ(card.witness->kept_count, 0);
-  EXPECT_DOUBLE_EQ(card.witness->weight, 0.0);
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kRefused);
+  EXPECT_EQ(card.Witness()->Mode(), "member_resolution");
+  EXPECT_EQ(card.Witness()->ValueOrNull(), nullptr);
 }
 
 // The coexistence at full scale: the C17-shaped class's partition refuses (the corpus's
@@ -134,23 +136,23 @@ TEST(SurveyWitness, RefusedSupportCardCarriesTheFiniteWitness) {
   EXPECT_FALSE(document.early_stopped);
   ASSERT_EQ(document.objects.size(), 1u);
   const SurveyObject& card = document.objects.front();
-  EXPECT_EQ(card.kind, SurveyObjectKind::kSupportSet);
+  EXPECT_EQ(card.Kind(), SurveyObjectKind::kSupportSet);
   // The refused card's own evidence stays refused; the witness sub-block is finite on it.
-  EXPECT_EQ(card.evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(card.evidence.mode, "slab_crease_touching");
-  ASSERT_TRUE(card.witness.has_value());
-  EXPECT_EQ(card.witness->state, EvidenceState::kFinite);
-  EXPECT_GT(card.witness->kept_count, 0);
-  EXPECT_GT(card.witness->entry, 0.0);
-  EXPECT_GT(card.witness->interface_product, 0.0);
+  EXPECT_EQ(card.State(), EvidenceState::kRefused);
+  EXPECT_EQ(card.Mode(), "slab_crease_touching");
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kFinite);
+  EXPECT_GT(card.Witness()->Value().kept_count, 0);
+  EXPECT_GT(card.Witness()->Value().entry, 0.0);
+  EXPECT_GT(card.Witness()->Value().interface_product, 0.0);
   // The document-level evidence carries the refusal; the chromatic legs name the axis refusal.
   EXPECT_EQ(document.evidence.state, EvidenceState::kRefused);
   EXPECT_EQ(document.evidence.mode, "slab_crease_touching");
   EXPECT_EQ(document.chromatic.state, EvidenceState::kUnevaluated);
   EXPECT_NE(document.chromatic.reason.find("slab_crease_touching"), std::string::npos);
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kUnevaluated);
-  EXPECT_EQ(document.weight_tint->evidence.reason, document.chromatic.reason);
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kUnevaluated);
+  EXPECT_EQ(document.weight_tint->Reason(), document.chromatic.reason);
   EXPECT_FALSE(document.positional_dispersion.has_value());
   EXPECT_FALSE(document.diagnose.has_value());
   EXPECT_TRUE(document.probes.empty());
@@ -184,12 +186,14 @@ TEST(SurveyWitness, SerializedWitnessShapesFollowThePayloadRegistry) {
   // witness serializes exactly {state, mode}; a full-dimensional card serializes none.
   SurveyData shapes;
   SurveyObject refused_card;
-  SurveyObject::WitnessPayload refused_payload;  // the struct default state is refused
-  refused_payload.mode = "no_declared_source_witness";
-  refused_card.witness = std::move(refused_payload);
+  refused_card.SetKind(SurveyObjectKind::kSupportSet);
+  SurveyObject::WitnessPayload refused_payload;
+  refused_payload.SetState(EvidenceState::kRefused);
+  refused_payload.Mode() = "no_declared_source_witness";
+  refused_card.SetWitness(std::move(refused_payload));
   shapes.objects.push_back(refused_card);
   SurveyObject t1_card;
-  t1_card.kind = SurveyObjectKind::kSupportSet;
+  t1_card.SetKind(SurveyObjectKind::kSupportSet);
   shapes.objects.push_back(t1_card);
   const auto shape_doc = nlohmann::json::parse(SurveyResultToJson(SurveyResult(shapes), "test"));
   const auto& refused = shape_doc.at("objects")[0].at("witness");

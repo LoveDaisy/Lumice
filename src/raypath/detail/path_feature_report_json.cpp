@@ -10,9 +10,9 @@
 #include "raypath/detail/measure/visibility_certificate.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/no_related_feature.hpp"
-#include "raypath/detail/schema3/structure_object.hpp"
 #include "raypath/domain/measure_geometry.hpp"
 #include "raypath/path_feature_report.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath {
 using schema3::CorroborationAnnotation;
@@ -411,18 +411,18 @@ Json SupportBlockJson(const Schema3DiscoveryCore& core) {
 }
 
 Json ChromaticJson(const StructureObjectRecord& object) {
-  Json verdict = { { "kind", ChromaticVerdictKindName(object.chromatic.kind) },
-                   { "color", ChromaticColorName(object.chromatic.color) },
-                   { "visible", object.chromatic.visible },
-                   { "coverage_complete", object.chromatic.coverage_complete },
-                   { "faces", object.chromatic.faces },
-                   { "n_red", Num(object.chromatic.n_red) },
-                   { "n_blue", Num(object.chromatic.n_blue) } };
-  if (object.chromatic.has_position) {
-    verdict["position_rad"] = Num(object.chromatic.position);
+  Json verdict = { { "kind", ChromaticVerdictKindName(object.Chromatic().verdict.kind) },
+                   { "color", ChromaticColorName(object.Chromatic().verdict.color) },
+                   { "visible", object.Chromatic().verdict.visible },
+                   { "coverage_complete", object.Chromatic().verdict.coverage_complete },
+                   { "faces", object.Chromatic().verdict.faces },
+                   { "n_red", Num(object.Chromatic().verdict.n_red) },
+                   { "n_blue", Num(object.Chromatic().verdict.n_blue) } };
+  if (object.Chromatic().verdict.has_position) {
+    verdict["position_rad"] = Num(object.Chromatic().verdict.position);
   }
   Json features = Json::array();
-  for (const analytic::ChromaticFeature& feature : object.chromatic.features) {
+  for (const analytic::ChromaticFeature& feature : object.Chromatic().verdict.features) {
     features.push_back({ { "kind", ChromaticFeatureKindName(feature.kind) },
                          { "source", feature.source },
                          { "color", ChromaticColorName(feature.color) },
@@ -438,23 +438,23 @@ Json ChromaticJson(const StructureObjectRecord& object) {
                          { "lit_fraction", Num(feature.lit_fraction) } });
   }
   verdict["features"] = std::move(features);
-  if (object.chromatic.has_tint) {
-    verdict["tint"] = { { "energy_red", Num(object.chromatic.tint.energy_red) },
-                        { "energy_blue", Num(object.chromatic.tint.energy_blue) },
-                        { "ratio", Num(object.chromatic.tint.ratio) },
-                        { "tir_fraction_red", Num(object.chromatic.tint.tir_fraction_red) },
-                        { "tir_fraction_blue", Num(object.chromatic.tint.tir_fraction_blue) },
-                        { "direction_dispersion", Num(object.chromatic.tint.direction_dispersion) } };
+  if (object.Chromatic().verdict.has_tint) {
+    verdict["tint"] = { { "energy_red", Num(object.Chromatic().verdict.tint.energy_red) },
+                        { "energy_blue", Num(object.Chromatic().verdict.tint.energy_blue) },
+                        { "ratio", Num(object.Chromatic().verdict.tint.ratio) },
+                        { "tir_fraction_red", Num(object.Chromatic().verdict.tint.tir_fraction_red) },
+                        { "tir_fraction_blue", Num(object.Chromatic().verdict.tint.tir_fraction_blue) },
+                        { "direction_dispersion", Num(object.Chromatic().verdict.tint.direction_dispersion) } };
   }
-  verdict["notes"] = object.chromatic.notes;
-  const analytic::ChromaticThresholds& t = object.chromatic_thresholds;
+  verdict["notes"] = object.Chromatic().verdict.notes;
+  const analytic::ChromaticThresholds& t = object.Chromatic().thresholds;
   Json thresholds = { { "n_red", Num(t.n_red) },
                       { "n_blue", Num(t.n_blue) },
                       { "edge_min_shift_rad", Num(t.edge_min_shift_rad) },
                       { "edge_spread_per_shift", Num(t.edge_spread_per_shift) },
                       { "calibration_white_max_deviation", Num(t.calibration_white_max_deviation) },
                       { "tint_ratio_min", Num(t.tint_ratio_min) } };
-  return { { "assessed", object.chromatic_assessed },
+  return { { "assessed", object.ChromaticAssessed() },
            { "verdict", std::move(verdict) },
            { "thresholds", std::move(thresholds) } };
 }
@@ -470,7 +470,7 @@ Json Schema3ObjectJson(const StructureObjectRecord& object, const CorroborationA
     { "evidence", EvidenceFormName(visibility.evidence) }, { "jets_ok", visibility.jets_ok },
     { "saw_zero_area", visibility.saw_zero_area },         { "saw_zero_transmission", visibility.saw_zero_transmission }
   };
-  if (visibility.reason[0] != '\0') {
+  if (!visibility.reason.empty()) {
     visibility_json["reason"] = visibility.reason;
   }
   Json geometry = { { "u", Array(object.u) } };

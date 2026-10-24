@@ -14,6 +14,8 @@
 #include "raypath/domain/claim.hpp"
 #include "raypath/domain/result_identity.hpp"
 #include "raypath/feature_report_result.hpp"
+#include "raypath/point_result.hpp"
+#include "raypath/probe_result.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_result.hpp"
 #include "survey_test_fixtures.hpp"
@@ -246,6 +248,7 @@ TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
   rp::FeatureReportData data;
   data.scope.physical_members = { { 3, 5 } };
   data.core.objects.resize(1);
+  data.core.objects[0].member = { 3, 5 };
   data.annotations.resize(1);
   data.annotations[0].matched_record = 0;
   data.mc.discovery.features.resize(1);
@@ -254,12 +257,14 @@ TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
   const rp::FeatureReportResult report(data);
   const auto object = report.Reference(rp::ObjectId{ 0 });
   ASSERT_TRUE(object);
+  EXPECT_TRUE(report.ObjectMember(*object));
   const auto record = report.MatchedRecord(*object);
   ASSERT_TRUE(record);
   const auto source = report.SourceOf(*record);
   ASSERT_TRUE(source);
   ASSERT_NE(report.Resolve(*source), nullptr);
   EXPECT_EQ(report.Resolve(*source)->sample_index, 7u);
+  EXPECT_TRUE(report.SourceMember(*source));
   const rp::FeatureReportResult other(data);
   EXPECT_EQ(other.Resolve(*object), nullptr);
   EXPECT_EQ(other.Resolve(*record), nullptr);
@@ -268,6 +273,88 @@ TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
   data.annotations[0].matched_record = 2;
   const rp::FeatureReportResult malformed(data);
   EXPECT_FALSE(malformed.MatchedRecord(*malformed.Reference(rp::ObjectId{ 0 })));
+}
+
+TEST(TypedResultValues, SurveyObjectClaimsExcludeContradictoryPayloads) {
+  rp::survey::SurveyObject object;
+  EXPECT_EQ(object.State(), rp::survey::EvidenceState::kUnevaluated);
+  EXPECT_FALSE(object.SetKind(static_cast<rp::survey::SurveyObjectKind>(999)));
+  ASSERT_TRUE(object.SetKind(rp::survey::SurveyObjectKind::kSupportSet));
+  EXPECT_FALSE(object.SetSupport({}));
+  ASSERT_TRUE(object.SetState(rp::survey::EvidenceState::kFinite));
+  ASSERT_TRUE(object.SetSupport({}));
+  EXPECT_NE(object.Support(), nullptr);
+  EXPECT_EQ(object.Edge(), nullptr);
+  EXPECT_FALSE(object.SetEdge({}));
+  ASSERT_TRUE(object.SetState(rp::survey::EvidenceState::kRefused));
+  object.Mode() = "partition_refused";
+  EXPECT_EQ(object.Support(), nullptr);
+  object.SetWitness(rp::survey::WitnessResult{});
+  ASSERT_TRUE(object.Witness()->SetState(rp::survey::EvidenceState::kFinite));
+  object.Witness()->Value().weight = 1.0;
+  EXPECT_EQ(object.State(), rp::survey::EvidenceState::kRefused);
+  EXPECT_GT(object.Witness()->Value().weight, 0.0);
+  EXPECT_FALSE(object.SetState(static_cast<rp::survey::EvidenceState>(999)));
+  EXPECT_EQ(object.State(), rp::survey::EvidenceState::kRefused);
+}
+
+TEST(TypedResultValues, RefusalRemovesNumbersButRetainsTheAskedScope) {
+  rp::survey::SurveyWeightTint tint;
+  EXPECT_EQ(tint.ValueOrNull(), nullptr);
+  EXPECT_EQ(tint.State(), rp::survey::EvidenceState::kUnevaluated);
+  rp::ClaimScope scope;
+  scope.members.members = { { 3, 5 } };
+  scope.observation.wavelength_nm = 550;
+  tint.BindScope(scope);
+  ASSERT_TRUE(tint.SetState(rp::survey::EvidenceState::kFinite));
+  tint.Value().ratio = 0.0;
+  EXPECT_DOUBLE_EQ(tint.Value().ratio, 0.0);
+  tint.Value().reading = rp::survey::TintClassPowerReading{ 1.0, 0.0 };
+  EXPECT_TRUE(tint.Value().IsClassPower());
+  EXPECT_EQ(tint.Value().Method(), rp::QuantityMethod::kClassLatticePowerSum);
+  EXPECT_THROW(tint.Value().Mass(), std::bad_variant_access);
+  ASSERT_TRUE(tint.SetState(rp::survey::EvidenceState::kRefused));
+  tint.Mode() = "zero_band_weight";
+  EXPECT_EQ(tint.ValueOrNull(), nullptr);
+  EXPECT_THROW(tint.Value(), std::bad_variant_access);
+  EXPECT_EQ(tint.Scope().members.members, scope.members.members);
+  EXPECT_EQ(tint.Scope().observation.wavelength_nm, 550);
+}
+
+TEST(TypedResultValues, PointAndProbeHaveExclusiveOutcomePayloads) {
+  rp::PointData point;
+  point.Discovered().incomplete.emplace_back();
+  EXPECT_EQ(point.Discovered().incomplete.size(), 1u);
+  point.payload = rp::PointMass{};
+  EXPECT_EQ(point.OutcomeValue(), rp::Outcome::kPointMass);
+  EXPECT_EQ(std::get_if<rp::DiscoveredPoint>(&point.payload), nullptr);
+  rp::ProbeProfile profile;
+  EXPECT_EQ(profile.State(), rp::survey::EvidenceState::kUnevaluated);
+  profile.BeginFinite();
+  profile.Reading().samples.push_back({ 22, 0, 0, 0, 0 });
+  EXPECT_DOUBLE_EQ(profile.Reading().samples.front().value, 0.0);
+  EXPECT_EQ(profile.State(), rp::survey::EvidenceState::kFinite);
+  profile.claim = rp::Refused{ "no_edge", {} };
+  EXPECT_EQ(rp::ClaimValue(profile.claim), nullptr);
+  EXPECT_THROW(profile.Reading(), std::bad_variant_access);
+  rp::schema3::StructureObjectRecord object;
+  EXPECT_FALSE(object.ChromaticAssessed());
+  object.SetChromatic({});
+  EXPECT_TRUE(object.ChromaticAssessed());
+  object.ClearChromatic();
+  EXPECT_FALSE(object.ChromaticAssessed());
+}
+
+TEST(TypedResultValues, QuantityMeasuresDoNotConflateTheTwoDensities) {
+  rp::PointFactorQuantities point;
+  EXPECT_EQ(point.density.reference, rp::ReferenceMeasure::kAngleLebesgue);
+  EXPECT_EQ(point.density.density, rp::DensityWeighting::kDeclaredPoseDensity);
+  EXPECT_EQ(point.orbit_integral.reference, rp::ReferenceMeasure::kOrbitParameter);
+  EXPECT_EQ(point.orbit_integral.unit, rp::QuantityUnit::kMass);
+  rp::QuantitySpec band_sum;
+  EXPECT_EQ(band_sum.reference, rp::ReferenceMeasure::kHaar);
+  EXPECT_EQ(band_sum.density, rp::DensityWeighting::kPoseDensity);
+  EXPECT_EQ(band_sum.unit, rp::QuantityUnit::kPerSteradian);
 }
 
 }  // namespace

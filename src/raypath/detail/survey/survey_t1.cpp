@@ -103,7 +103,7 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
   const analytic::CriticalOnset* onset = ExtremumFoldOnset(assemblies.front().onsets);
   if (onset != nullptr) {
     SurveyObject edge;
-    edge.kind = SurveyObjectKind::kCausticEdge;
+    edge.SetKind(SurveyObjectKind::kCausticEdge);
     edge.members = members;
     const bool is_minimum_fold = onset->source == analytic::OnsetSource::kInteriorMinimum;
     double apex_deg = 0.0;
@@ -112,12 +112,12 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
         is_minimum_fold && ClosedFormMinDeviation(table, representative, refractive_index, &apex_deg, &closed_form_deg);
     if (closed_form && std::fabs(DegOf(onset->value) - closed_form_deg) > DegOf(kClosedFormToleranceRad)) {
       // The two readings of one quantity disagree beyond the restatement's own error: refuse.
-      edge.evidence.state = EvidenceState::kRefused;
-      edge.evidence.mode = "closed_form_mismatch";
+      edge.SetState(EvidenceState::kRefused);
+      edge.Mode() = "closed_form_mismatch";
     } else {
-      edge.evidence.state = EvidenceState::kFinite;
-      edge.evidence.coverage.members_evaluated = static_cast<int>(members.size());
-      edge.evidence.coverage.wavelength_nm = wavelength_nm;
+      edge.SetState(EvidenceState::kFinite);
+      edge.Coverage().members_evaluated = static_cast<int>(members.size());
+      edge.Coverage().wavelength_nm = wavelength_nm;
       SurveyObject::CausticEdgePayload payload;
       payload.position_deg = DegOf(onset->value);
       payload.profile = analytic::OnsetProfileName(onset->profile);
@@ -127,8 +127,8 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
           std::fabs(onset->value - class_support.front().lower) <= analytic::kExtremumAtol ||
           std::fabs(onset->value - class_support.back().upper) <= analytic::kExtremumAtol;
       if (closed_form) {
-        edge.evidence.state = EvidenceState::kCertified;
-        edge.evidence.method = kCertifiedMethodSlabMinDeviationClosedForm;
+        edge.SetState(EvidenceState::kCertified);
+        edge.Method() = kCertifiedMethodSlabMinDeviationClosedForm;
         SurveyObject::EdgeCertificate certificate;
         certificate.formula = "2*asin(n*sin(A/2)) - A";
         certificate.apex_angle_deg = apex_deg;
@@ -136,7 +136,7 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
         certificate.tolerance_deg = DegOf(kClosedFormToleranceRad);
         payload.certificate = std::move(certificate);
       }
-      edge.caustic_edge = std::move(payload);
+      edge.SetEdge(std::move(payload));
     }
     out->objects.push_back(std::move(edge));
   }
@@ -145,15 +145,15 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
   // leg fills the peak/edge readings (the sharp edge lives on the caustic card, certified;
   // the brightness peak lives here, finite — different quantities, different states).
   SurveyObject domain;
-  domain.kind = SurveyObjectKind::kBrightDomain;
+  domain.SetKind(SurveyObjectKind::kBrightDomain);
   domain.members = members;
-  domain.evidence.state = EvidenceState::kFinite;
-  domain.evidence.coverage.members_evaluated = static_cast<int>(members.size());
-  domain.evidence.coverage.wavelength_nm = wavelength_nm;
+  domain.SetState(EvidenceState::kFinite);
+  domain.Coverage().members_evaluated = static_cast<int>(members.size());
+  domain.Coverage().wavelength_nm = wavelength_nm;
   SurveyObject::BrightDomainPayload domain_payload;
   domain_payload.domain_lower_deg = DegOf(class_support.front().lower);
   domain_payload.domain_upper_deg = DegOf(class_support.back().upper);
-  domain.bright_domain = std::move(domain_payload);
+  domain.SetBright(std::move(domain_payload));
   out->objects.push_back(std::move(domain));
 
   return { true, {} };

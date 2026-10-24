@@ -8,16 +8,32 @@
 #include "util/logger.hpp"
 
 namespace lumice::raypath::survey {
+namespace {
+SurveyWeightTint CompleteTint(SurveyWeightTint tint) {
+  if (auto* value = tint.ValueOrNull())
+    value->quantity.method = value->Method();
+  return CompleteQuantity(std::move(tint));
+}
+}  // namespace
+
 SurveyWeightTint EvaluateWeightTint(const TintInput& input) {
   SurveyWeightTint tint;
+  tint.SetState(EvidenceState::kFinite);
+  QuantitySpec asked =
+      DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless, QuantityMethod::kPointMassBandSum,
+                       ReferenceMeasure::kHaar, DensityWeighting::kPoseDensity);
+  asked.spectrum = SpectralObservation::kFixedChromaticPair;
+  asked.wavelengths_nm = { kChromaticRedNm, kChromaticBlueNm };
+  DeclareQuantity(&tint, asked, { *input.representative }, std::nullopt);
+
   if (!input.density->Ok()) {
     // The axis maps to no pose density (a fixed pose, for one): the leg refuses rather than
     // approximating. The degenerate is an honest capability boundary, not a physical
     // impossibility — a single pose's weight is exactly computable in principle; what is
     // missing is a pose-density encoding for a delta distribution (kernel gap, not wired here).
-    tint.evidence.state = EvidenceState::kRefused;
-    tint.evidence.mode = "density_not_expressible";
-    return tint;
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "density_not_expressible";
+    return CompleteTint(std::move(tint));
   }
 
   std::vector<int> slots;
@@ -25,9 +41,9 @@ SurveyWeightTint EvaluateWeightTint(const TintInput& input) {
       !slot_error.Ok()) {
     // Unreachable past the assembly's request-level resolution (it resolved the same sequence),
     // but the refusal stays honest — the same discipline as the sibling chromatic legs.
-    tint.evidence.state = EvidenceState::kRefused;
-    tint.evidence.mode = "member_resolution";
-    return tint;
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "member_resolution";
+    return CompleteTint(std::move(tint));
   }
 
   // Two calls, one lattice size, one empty pixel table: the masses are what the ratio reads.
@@ -43,49 +59,65 @@ SurveyWeightTint EvaluateWeightTint(const TintInput& input) {
                         input.incident, input.sample_count, empty_table, density);
   if (!red.rank_zero || !blue.rank_zero) {
     // The T0 verdict and the kernel's own rank check disagree: refuse, never a map read as a mass.
-    tint.evidence.state = EvidenceState::kRefused;
-    tint.evidence.mode = "not_rank_zero";
-    return tint;
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "not_rank_zero";
+    return CompleteTint(std::move(tint));
   }
   if (!(red.m > 0.0) || !(blue.m > 0.0) || !std::isfinite(red.m) || !std::isfinite(blue.m)) {
     // A degenerate band makes the ratio no number; the document must not carry a silent inf.
-    tint.evidence.state = EvidenceState::kRefused;
-    tint.evidence.mode = "zero_band_weight";
-    return tint;
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "zero_band_weight";
+    return CompleteTint(std::move(tint));
   }
 
-  tint.n_red = n_red;
-  tint.n_blue = n_blue;
-  tint.m_red = red.m;
-  tint.m_blue = blue.m;
-  tint.m_red_error = red.m_error;
-  tint.m_blue_error = blue.m_error;
-  tint.method = PointMassMethodName(red.method);
-  tint.sample_count = input.sample_count;
-  tint.lattice = "antipodal_fibonacci";  // band_sum's sampler kind, restated for the document
-  tint.deterministic = true;
-  tint.representative = *input.representative;
-  tint.member_count = input.member_count;
-  tint.ratio = blue.m / red.m;
-  tint.direction = tint.ratio > 1.0 ?
-                       SurveyTintDirection::kBlueTinted :
-                       (tint.ratio < 1.0 ? SurveyTintDirection::kRedTinted : SurveyTintDirection::kNeutral);
-  tint.kept_count_red = red.kept_count;
-  tint.kept_count_blue = blue.kept_count;
-  tint.evidence.state = EvidenceState::kFinite;
-  tint.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
-  tint.evidence.coverage.geometry_basis =
+  tint.Value().n_red = n_red;
+  tint.Value().n_blue = n_blue;
+  tint.Value().Mass().red = red.m;
+  tint.Value().Mass().blue = blue.m;
+  tint.Value().Mass().red_error = red.m_error;
+  tint.Value().Mass().blue_error = blue.m_error;
+  tint.Value().Mass().protocol = red.method == analytic::PointMassMethod::kPsiAverage ? TintMassProtocol::kPsiAverage :
+                                                                                        TintMassProtocol::kLatticeMean;
+  tint.Value().quantity =
+      DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless,
+                       red.method == analytic::PointMassMethod::kPsiAverage ? QuantityMethod::kPointMassPsiAverage :
+                                                                              QuantityMethod::kPointMassLatticeMean,
+                       ReferenceMeasure::kHaar, DensityWeighting::kPoseDensity);
+  tint.Value().quantity.spectrum = SpectralObservation::kFixedChromaticPair;
+  tint.Value().quantity.wavelengths_nm = { kChromaticRedNm, kChromaticBlueNm };
+  tint.Value().sample_count = input.sample_count;
+  tint.Value().lattice = "antipodal_fibonacci";  // band_sum's sampler kind, restated for the document
+  tint.Value().deterministic = true;
+  tint.Value().representative = *input.representative;
+  tint.Value().member_count = input.member_count;
+  tint.Value().ratio = blue.m / red.m;
+  tint.Value().direction = tint.Value().ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
+                                                      (tint.Value().ratio < 1.0 ? SurveyTintDirection::kRedTinted :
+                                                                                  SurveyTintDirection::kNeutral);
+  tint.Value().kept_count_red = red.kept_count;
+  tint.Value().kept_count_blue = blue.kept_count;
+  tint.SetState(EvidenceState::kFinite);
+  tint.Coverage().members_evaluated = 1;  // the representative; the class reads xN
+  tint.Coverage().geometry_basis =
       "the point-mass band sum on the class representative at the fixed " + ChromaticPairProseRedFirst() + " pair";
-  tint.evidence.coverage.wavelength_nm = kChromaticBlueNm;
+  tint.Coverage().wavelength_nm = kChromaticBlueNm;
 
 
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] weight tint: method {}, ratio {:.6f} ({} samples per lambda)",
-            tint.method, tint.ratio, input.sample_count);
-  return tint;
+            TintMethodName(tint.Value().Method()), tint.Value().ratio, input.sample_count);
+  return CompleteTint(std::move(tint));
 }
 
 SurveyWeightTint EvaluateClassTint(const ClassTintInput& input) {
   SurveyWeightTint tint;
+  tint.SetState(EvidenceState::kFinite);
+  QuantitySpec asked =
+      DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless, QuantityMethod::kClassLatticePowerSum,
+                       ReferenceMeasure::kHaar, DensityWeighting::kNone);
+  asked.spectrum = SpectralObservation::kFixedChromaticPair;
+  asked.wavelengths_nm = { kChromaticRedNm, kChromaticBlueNm };
+  DeclareQuantity(&tint, asked, { *input.representative }, std::nullopt);
+
   // One refusal shape for this arm's sub-block: the block has other legs with real output, so
   // the refusal stays in the sub-block (the block-state rule is the T1 arm's own).
 
@@ -95,10 +127,10 @@ SurveyWeightTint EvaluateClassTint(const ClassTintInput& input) {
       !slot_error.Ok()) {
     // Unreachable past the assembly's request-level resolution, but the refusal stays honest —
     // the same discipline as the sibling legs.
-    tint.class_power_shape = true;
-    tint.evidence.state = EvidenceState::kRefused;
-    tint.evidence.mode = "member_resolution";
-    return tint;
+    tint.Value().reading = TintClassPowerReading{};
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "member_resolution";
+    return CompleteTint(std::move(tint));
   }
 
   // Two passes, one lattice size, one shared lattice: the declared source sampled at each
@@ -126,49 +158,62 @@ SurveyWeightTint EvaluateClassTint(const ClassTintInput& input) {
   power_sum(n_blue, &weight_blue, &kept_blue);
   if (!(weight_red > 0.0) || !(weight_blue > 0.0) || !std::isfinite(weight_red) || !std::isfinite(weight_blue)) {
     // A degenerate band makes the ratio no number; the document must not carry a silent inf.
-    tint.class_power_shape = true;
-    tint.evidence.state = EvidenceState::kRefused;
-    tint.evidence.mode = "zero_band_weight";
-    return tint;
+    tint.Value().reading = TintClassPowerReading{};
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "zero_band_weight";
+    return CompleteTint(std::move(tint));
   }
 
-  tint.class_power_shape = true;
-  tint.n_red = n_red;
-  tint.n_blue = n_blue;
-  tint.energy_red = weight_red / static_cast<double>(input.sample_count);
-  tint.energy_blue = weight_blue / static_cast<double>(input.sample_count);
-  tint.method = kClassTintMethodLatticePowerSum;
-  tint.sample_count = input.sample_count;
-  tint.lattice = "antipodal_fibonacci";
-  tint.deterministic = true;
-  tint.representative = *input.representative;
-  tint.member_count = input.member_count;
-  tint.ratio = weight_blue / weight_red;
-  tint.direction = tint.ratio > 1.0 ?
-                       SurveyTintDirection::kBlueTinted :
-                       (tint.ratio < 1.0 ? SurveyTintDirection::kRedTinted : SurveyTintDirection::kNeutral);
-  tint.kept_count_red = kept_red;
-  tint.kept_count_blue = kept_blue;
-  tint.caliber = std::string("sum(w(") + kChromaticBlueLabel + "))/sum(w(" + kChromaticRedLabel +
-                 ")): class power-sum over the declared antipodal Fibonacci lattice (per-sample average "
-                 "powers, kept events' w = A*T); fixed " +
-                 ChromaticPairProseRedFirst() +
-                 " index pair, unweighted by SPD or CMF — not a disk-integrated D65 B/R and not the "
-                 "point-mass mass ratio";
-  tint.evidence.state = EvidenceState::kFinite;
-  tint.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
-  tint.evidence.coverage.geometry_basis =
+  tint.Value().reading = TintClassPowerReading{};
+  tint.Value().n_red = n_red;
+  tint.Value().n_blue = n_blue;
+  tint.Value().Power().red = weight_red / static_cast<double>(input.sample_count);
+  tint.Value().Power().blue = weight_blue / static_cast<double>(input.sample_count);
+  tint.Value().quantity =
+      DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless, QuantityMethod::kClassLatticePowerSum,
+                       ReferenceMeasure::kHaar, DensityWeighting::kNone);
+  tint.Value().quantity.spectrum = SpectralObservation::kFixedChromaticPair;
+  tint.Value().quantity.wavelengths_nm = { kChromaticRedNm, kChromaticBlueNm };
+  tint.Value().reading_unit = QuantityUnit::kArea;
+  tint.Value().sample_count = input.sample_count;
+  tint.Value().lattice = "antipodal_fibonacci";
+  tint.Value().deterministic = true;
+  tint.Value().representative = *input.representative;
+  tint.Value().member_count = input.member_count;
+  tint.Value().ratio = weight_blue / weight_red;
+  tint.Value().direction = tint.Value().ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
+                                                      (tint.Value().ratio < 1.0 ? SurveyTintDirection::kRedTinted :
+                                                                                  SurveyTintDirection::kNeutral);
+  tint.Value().kept_count_red = kept_red;
+  tint.Value().kept_count_blue = kept_blue;
+  tint.Value().caliber = std::string("sum(w(") + kChromaticBlueLabel + "))/sum(w(" + kChromaticRedLabel +
+                         ")): class power-sum over the declared antipodal Fibonacci lattice (per-sample average "
+                         "powers, kept events' w = A*T); fixed " +
+                         ChromaticPairProseRedFirst() +
+                         " index pair, unweighted by SPD or CMF — not a disk-integrated D65 B/R and not the "
+                         "point-mass mass ratio";
+  tint.SetState(EvidenceState::kFinite);
+  tint.Coverage().members_evaluated = 1;  // the representative; the class reads xN
+  tint.Coverage().geometry_basis =
       "the class power-sum on the class representative over the declared lattice at the fixed " +
       ChromaticPairProseRedFirst() + " pair";
-  tint.evidence.coverage.wavelength_nm = kChromaticBlueNm;
+  tint.Coverage().wavelength_nm = kChromaticBlueNm;
 
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] class tint: method {}, ratio {:.6f} ({} samples per lambda)",
-            tint.method, tint.ratio, input.sample_count);
-  return tint;
+            TintMethodName(tint.Value().Method()), tint.Value().ratio, input.sample_count);
+  return CompleteTint(std::move(tint));
 }
 
 SurveyWeightTint EvaluateSinglePoseTint(const SinglePoseTintInput& input) {
   SurveyWeightTint tint;
+  tint.SetState(EvidenceState::kFinite);
+  QuantitySpec asked =
+      DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless, QuantityMethod::kSinglePoseDirect,
+                       ReferenceMeasure::kNone, DensityWeighting::kNone);
+  asked.spectrum = SpectralObservation::kFixedChromaticPair;
+  asked.wavelengths_nm = { kChromaticRedNm, kChromaticBlueNm };
+  DeclareQuantity(&tint, asked, { *input.representative }, std::nullopt);
+
   const double n_red = IceRefractiveIndex::Get(kChromaticRedNm);
   const double n_blue = IceRefractiveIndex::Get(kChromaticBlueNm);
   double m_red = 0.0;
@@ -201,38 +246,44 @@ SurveyWeightTint EvaluateSinglePoseTint(const SinglePoseTintInput& input) {
     (red ? m_red : m_blue) = values[0].entry.value * values[0].interface_product;
   }
   if (tint_ok && m_red > 0.0 && m_blue > 0.0) {
-    tint.n_red = n_red;
-    tint.n_blue = n_blue;
-    tint.m_red = m_red;
-    tint.m_blue = m_blue;
-    tint.method = kTintMethodSinglePoseDirect;
-    tint.sample_count = 1;
-    tint.lattice = "single_pose";
-    tint.deterministic = true;
-    tint.representative = *input.representative;
-    tint.member_count = input.member_count;
-    tint.ratio = m_blue / m_red;
-    tint.direction = tint.ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
-                     tint.ratio < 1.0 ? SurveyTintDirection::kRedTinted :
-                                        SurveyTintDirection::kNeutral;
-    tint.kept_count_red = 1;
-    tint.kept_count_blue = 1;
-    tint.caliber = std::string("w(") + kChromaticBlueLabel + ")/w(" + kChromaticRedLabel +
-                   "): single-pose w = A*T at the fixed pose, the diagnostic batch's own "
-                   "re-evaluation; fixed " +
-                   ChromaticPairProseRedFirst() +
-                   " index pair, unweighted by SPD or CMF — not a band sum and not the "
-                   "point-mass mass ratio";
-    tint.evidence.state = EvidenceState::kFinite;
-    tint.evidence.coverage.members_evaluated = 1;  // the representative; the class reads xN
-    tint.evidence.coverage.geometry_basis =
+    tint.Value().n_red = n_red;
+    tint.Value().n_blue = n_blue;
+    tint.Value().Mass().red = m_red;
+    tint.Value().Mass().blue = m_blue;
+    tint.Value().Mass().protocol = TintMassProtocol::kSinglePoseDirect;
+    tint.Value().quantity =
+        DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless, QuantityMethod::kSinglePoseDirect,
+                         ReferenceMeasure::kNone, DensityWeighting::kNone);
+    tint.Value().quantity.spectrum = SpectralObservation::kFixedChromaticPair;
+    tint.Value().quantity.wavelengths_nm = { kChromaticRedNm, kChromaticBlueNm };
+    tint.Value().reading_unit = QuantityUnit::kArea;
+    tint.Value().sample_count = 1;
+    tint.Value().lattice = "single_pose";
+    tint.Value().deterministic = true;
+    tint.Value().representative = *input.representative;
+    tint.Value().member_count = input.member_count;
+    tint.Value().ratio = m_blue / m_red;
+    tint.Value().direction = tint.Value().ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
+                             tint.Value().ratio < 1.0 ? SurveyTintDirection::kRedTinted :
+                                                        SurveyTintDirection::kNeutral;
+    tint.Value().kept_count_red = 1;
+    tint.Value().kept_count_blue = 1;
+    tint.Value().caliber = std::string("w(") + kChromaticBlueLabel + ")/w(" + kChromaticRedLabel +
+                           "): single-pose w = A*T at the fixed pose, the diagnostic batch's own "
+                           "re-evaluation; fixed " +
+                           ChromaticPairProseRedFirst() +
+                           " index pair, unweighted by SPD or CMF — not a band sum and not the "
+                           "point-mass mass ratio";
+    tint.SetState(EvidenceState::kFinite);
+    tint.Coverage().members_evaluated = 1;  // the representative; the class reads xN
+    tint.Coverage().geometry_basis =
         "the diagnostic batch at the axis's single pose at the " + ChromaticPairProseRedFirst() + " pair";
-    tint.evidence.coverage.wavelength_nm = kChromaticBlueNm;
+    tint.Coverage().wavelength_nm = kChromaticBlueNm;
   } else {
-    tint.evidence.state = EvidenceState::kRefused;
-    tint.evidence.mode = "single_pose_weight_unavailable";
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "single_pose_weight_unavailable";
   }
-  return tint;
+  return CompleteTint(std::move(tint));
 }
 
 }  // namespace lumice::raypath::survey

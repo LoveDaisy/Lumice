@@ -41,9 +41,9 @@
 #include "analytic/dp_chromatic.hpp"
 #include "analytic/pose_density.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
-#include "raypath/detail/schema3/structure_object.hpp"
 #include "raypath/detail/structure/support.hpp"
 #include "raypath/results/report_enumeration.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath::schema3 {
 

@@ -175,33 +175,33 @@ TEST(ProbeAnalysis, FactScopesProjectWavelengthSunTargetAndQuantityIndependently
   ProbeData inside;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &inside).Ok());
   EXPECT_TRUE(inside.context.target_inside_support);
-  EXPECT_EQ(inside.profiles.front().source, "warm_reused");
+  EXPECT_EQ(inside.profiles.front().Reading().source, ProbeProfileSource::kWarmReused);
   request.at_altitude_deg = -50.0;
   ProbeData outside;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &outside).Ok());
   EXPECT_FALSE(outside.context.target_inside_support);
   EXPECT_GT(outside.context.object_distance_deg, 0.0);
-  EXPECT_EQ(outside.profiles.front().source, "warm_reused");
+  EXPECT_EQ(outside.profiles.front().Reading().source, ProbeProfileSource::kWarmReused);
   request.wavelengths_nm = { 450.0 };
   ProbeData wavelength;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &wavelength).Ok());
   EXPECT_EQ(wavelength.context.object.reason, "scope_value_mismatch");
-  EXPECT_EQ(wavelength.profiles.front().source, "recomputed");
+  EXPECT_EQ(wavelength.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
   request.wavelengths_nm = { 550.0 };
   auto moved_sun = config;
   moved_sun.scene_.light_source_.param_.altitude_ = 1.0f;
   ProbeData sun;
   ASSERT_TRUE(AnalyzeProbeFixture(moved_sun, request, &sun).Ok());
-  EXPECT_EQ(sun.context.object.state, "certified");
+  EXPECT_EQ(sun.context.object.state, survey::EvidenceState::kCertified);
   EXPECT_EQ(sun.context.band_sum.reason, "scope_value_mismatch");
-  EXPECT_EQ(sun.profiles.front().source, "recomputed");
+  EXPECT_EQ(sun.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
   candidate.facts.quantity.measure = MeasureKind::kIdealFrozen;
   request.warm_candidate = candidate;
   ProbeData ideal;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &ideal).Ok());
-  EXPECT_EQ(ideal.context.object.state, "certified");
+  EXPECT_EQ(ideal.context.object.state, survey::EvidenceState::kCertified);
   EXPECT_EQ(ideal.context.band_sum.reason, "scope_value_mismatch");
-  EXPECT_EQ(ideal.profiles.front().source, "recomputed");
+  EXPECT_EQ(ideal.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
 }
 
 TEST(ProbeAnalysis, TypedNonfiniteScopeDegradesWithoutInventingZeroProvenance) {
@@ -211,9 +211,9 @@ TEST(ProbeAnalysis, TypedNonfiniteScopeDegradesWithoutInventingZeroProvenance) {
   request.warm_candidate->facts.sun_altitude_deg = std::numeric_limits<double>::quiet_NaN();
   ProbeData out;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &out).Ok());
-  EXPECT_EQ(out.context.object.state, "certified");
+  EXPECT_EQ(out.context.object.state, survey::EvidenceState::kCertified);
   EXPECT_EQ(out.context.band_sum.reason, "scope_field_missing");
-  EXPECT_EQ(out.profiles.front().source, "recomputed");
+  EXPECT_EQ(out.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
 }
 
 TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
@@ -229,7 +229,7 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
   ProbeData same_layer;
   request.warm_candidate = typed;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &same_layer).Ok());
-  EXPECT_EQ(same_layer.profiles.front().source, "warm_reused");
+  EXPECT_EQ(same_layer.profiles.front().Reading().source, ProbeProfileSource::kWarmReused);
 
   request.scene_layer = 1;
   const Error cross_layer = ValidateWarmCandidate(config, request, typed, &admitted);
@@ -368,33 +368,33 @@ TEST(ProbeAnalysis, ReuseArmCopiesWarmValuesWhenScopeAndGridMatch) {
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 1u);
   const ProbeProfile& profile = result.profiles.front();
-  EXPECT_EQ(profile.source, "warm_reused");
-  EXPECT_EQ(profile.evidence_state, "finite");
-  ASSERT_EQ(profile.samples.size(), 1800u);
-  for (size_t k = 0; k < profile.samples.size(); k++) {
-    EXPECT_DOUBLE_EQ(profile.samples[k].value, warm.probe_samples[k].value);
-    EXPECT_EQ(profile.samples[k].k, warm.probe_samples[k].k);
+  EXPECT_EQ(profile.Reading().source, ProbeProfileSource::kWarmReused);
+  EXPECT_EQ(profile.State(), survey::EvidenceState::kFinite);
+  ASSERT_EQ(profile.Reading().samples.size(), 1800u);
+  for (size_t k = 0; k < profile.Reading().samples.size(); k++) {
+    EXPECT_DOUBLE_EQ(profile.Reading().samples[k].value, warm.probe_samples[k].value);
+    EXPECT_EQ(profile.Reading().samples[k].k, warm.probe_samples[k].k);
   }
   // The readings read off the crafted grid: the edge is the first non-empty bin, the peak the
   // argmax of the crafted values (the edge's own 1.0 beats the 0.5 tail).
-  EXPECT_TRUE(profile.readings.has_edge);
-  EXPECT_DOUBLE_EQ(profile.readings.edge_deg, edge);
-  EXPECT_TRUE(profile.readings.has_peak);
-  EXPECT_DOUBLE_EQ(profile.readings.peak_deg, edge);
+  EXPECT_TRUE(profile.Reading().readings.has_edge);
+  EXPECT_DOUBLE_EQ(profile.Reading().readings.edge_deg, edge);
+  EXPECT_TRUE(profile.Reading().readings.has_peak);
+  EXPECT_DOUBLE_EQ(profile.Reading().readings.peak_deg, edge);
   // The context is the warm document's, and the band-sum reading passes the scope gate.
-  EXPECT_EQ(result.context.source, "warm");
-  EXPECT_EQ(result.context.object.state, "certified");
-  EXPECT_EQ(result.context.band_sum.state, "finite");
+  EXPECT_EQ(result.context.source, ContextSource::kWarm);
+  EXPECT_EQ(result.context.object.state, survey::EvidenceState::kCertified);
+  EXPECT_EQ(result.context.band_sum.state, survey::EvidenceState::kFinite);
   // The dark decomposition: outside, the edge's own positive run, the weak tail stays its own
   // finite-zero class (never clamped into a written zero), the positive tail, outside.
-  ASSERT_EQ(profile.dark_regions.size(), 6u);
-  EXPECT_EQ(profile.dark_regions[0].kind, "outside_support");
-  EXPECT_EQ(profile.dark_regions[1].kind, "inside_support_zero");
-  EXPECT_EQ(profile.dark_regions[2].kind, "inside_support_positive");
-  EXPECT_EQ(profile.dark_regions[3].kind, "inside_support_zero");
-  EXPECT_GT(profile.dark_regions[3].bin_count, 0);  // the weak tail stays its own class
-  EXPECT_EQ(profile.dark_regions[4].kind, "inside_support_positive");
-  EXPECT_EQ(profile.dark_regions[5].kind, "outside_support");
+  ASSERT_EQ(profile.Reading().dark_regions.size(), 6u);
+  EXPECT_EQ(profile.Reading().dark_regions[0].kind, ProbeDarkKind::kOutsideSupport);
+  EXPECT_EQ(profile.Reading().dark_regions[1].kind, ProbeDarkKind::kInsideSupportZero);
+  EXPECT_EQ(profile.Reading().dark_regions[2].kind, ProbeDarkKind::kInsideSupportPositive);
+  EXPECT_EQ(profile.Reading().dark_regions[3].kind, ProbeDarkKind::kInsideSupportZero);
+  EXPECT_GT(profile.Reading().dark_regions[3].bin_count, 0);  // the weak tail stays its own class
+  EXPECT_EQ(profile.Reading().dark_regions[4].kind, ProbeDarkKind::kInsideSupportPositive);
+  EXPECT_EQ(profile.Reading().dark_regions[5].kind, ProbeDarkKind::kOutsideSupport);
 }
 
 // The scope mismatch family: the warm document's lambda differs, so the line recomputes and the
@@ -408,14 +408,14 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   const Error e = AnalyzeProbeFixture(config, request, &result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 1u);
-  EXPECT_EQ(result.profiles.front().source, "recomputed");
-  EXPECT_EQ(result.context.band_sum.state, "unevaluated");
+  EXPECT_EQ(result.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
+  EXPECT_EQ(result.context.band_sum.state, survey::EvidenceState::kUnevaluated);
   EXPECT_EQ(result.context.band_sum.reason, "scope_value_mismatch");
-  EXPECT_EQ(result.context.object.state, "unevaluated");
+  EXPECT_EQ(result.context.object.state, survey::EvidenceState::kUnevaluated);
   EXPECT_EQ(result.context.object.reason, "scope_value_mismatch");
-  ASSERT_FALSE(result.profiles.front().dark_regions.empty());
-  EXPECT_EQ(result.profiles.front().dark_regions.front().kind, "unknown");
-  EXPECT_EQ(result.profiles.front().dark_regions.front().reason, "scope_value_mismatch");
+  ASSERT_FALSE(result.profiles.front().Reading().dark_regions.empty());
+  EXPECT_EQ(result.profiles.front().Reading().dark_regions.front().kind, ProbeDarkKind::kUnknown);
+  EXPECT_EQ(result.profiles.front().Reading().dark_regions.front().reason, "scope_value_mismatch");
 
   // The lattice is part of the same gate: a warm document computed at another n recomputes too.
   ProbeRequest other_lattice = RadialRequest(config, -30.0, 0.0);
@@ -424,7 +424,7 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   ProbeData lattice_result;
   ASSERT_TRUE(AnalyzeProbeFixture(config, other_lattice, &lattice_result).Ok());
   ASSERT_EQ(lattice_result.profiles.size(), 1u);
-  EXPECT_EQ(lattice_result.profiles.front().source, "recomputed");
+  EXPECT_EQ(lattice_result.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
 }
 
 TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
@@ -458,10 +458,10 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_NE(result.meta.at_azimuth_about_sun_deg, 0.0);
-  EXPECT_EQ(result.profiles.front().source, "recomputed");
+  EXPECT_EQ(result.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
   size_t different_bins = 0;
   for (size_t k = 0; k < producer.samples.size(); k++) {
-    different_bins += result.profiles.front().samples[k].value != producer.samples[k].value;
+    different_bins += result.profiles.front().Reading().samples[k].value != producer.samples[k].value;
   }
   EXPECT_GT(different_bins, 0u);
 
@@ -469,13 +469,13 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
   ProbeData same_line;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &same_line).Ok());
   EXPECT_NEAR(same_line.meta.at_azimuth_about_sun_deg, 0.0, 1e-9);
-  EXPECT_EQ(same_line.profiles.front().source, "warm_reused");
-  EXPECT_DOUBLE_EQ(same_line.profiles.front().samples[kEdgeBin].value, warm.probe_samples[kEdgeBin].value);
+  EXPECT_EQ(same_line.profiles.front().Reading().source, ProbeProfileSource::kWarmReused);
+  EXPECT_DOUBLE_EQ(same_line.profiles.front().Reading().samples[kEdgeBin].value, warm.probe_samples[kEdgeBin].value);
 
   request.warm_candidate->facts.has_probe_azimuth = false;
   ProbeData unknown_line;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &unknown_line).Ok());
-  EXPECT_EQ(unknown_line.profiles.front().source, "recomputed");
+  EXPECT_EQ(unknown_line.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
 }
 
 TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile) {
@@ -504,7 +504,7 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_NEAR(result.meta.at_azimuth_about_sun_deg, 0.0, 1e-9);
-  EXPECT_EQ(result.profiles.front().source, "recomputed");
+  EXPECT_EQ(result.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
 }
 
 TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
@@ -536,9 +536,9 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   ProbeData result;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
-  EXPECT_EQ(result.context.object.state, "certified");
+  EXPECT_EQ(result.context.object.state, survey::EvidenceState::kCertified);
   EXPECT_EQ(result.context.band_sum.reason, "scope_field_missing");
-  EXPECT_EQ(result.profiles.front().source, "recomputed");
+  EXPECT_EQ(result.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
 
   document.sun_altitude_deg = 0.0;
   warm = HarvestSurveyResult(survey::SurveyResult(document)).facts;
@@ -551,7 +551,7 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   request.warm_candidate = Candidate(config, warm);
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
-  EXPECT_EQ(result.profiles.front().source, "warm_reused");
+  EXPECT_EQ(result.profiles.front().Reading().source, ProbeProfileSource::kWarmReused);
 }
 
 // The edge-normal form: the window anchors at the nearest of the support endpoints and the
@@ -571,16 +571,16 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 1u);
   const ProbeProfile& profile = result.profiles.front();
-  EXPECT_EQ(profile.evidence_state, "finite");
-  EXPECT_EQ(profile.source, "recomputed");  // only the radial form reuses the warm map
-  EXPECT_EQ(profile.anchor_basis, "caustic_edge_position");
+  EXPECT_EQ(profile.State(), survey::EvidenceState::kFinite);
+  EXPECT_EQ(profile.Reading().source, ProbeProfileSource::kRecomputed);  // only the radial form reuses the warm map
+  EXPECT_EQ(profile.anchor_basis, ContextEdgeBasis::kCausticEdgePosition);
   EXPECT_DOUBLE_EQ(profile.anchor_deg, 22.25);
   EXPECT_DOUBLE_EQ(profile.anchor_wavelength_nm, 550.0);
   EXPECT_DOUBLE_EQ(result.context.reference_wavelength_nm, 550.0);
   EXPECT_DOUBLE_EQ(profile.window_half_width_deg, 10.0);
   EXPECT_NEAR(profile.delta_min_deg, 12.25, 1e-9);
   EXPECT_NEAR(profile.delta_max_deg, 32.25, 1e-9);
-  EXPECT_EQ(profile.samples.size(), 200u);
+  EXPECT_EQ(profile.Reading().samples.size(), 200u);
 
   request.wavelengths_nm = { 550.0, 450.0 };
   ProbeData two_wavelengths;
@@ -589,7 +589,7 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].anchor_wavelength_nm, 550.0);
   EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].anchor_deg, 22.25);
   EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].wavelength_nm, 450.0);
-  EXPECT_EQ(two_wavelengths.profiles[1].dark_regions.front().kind, "unknown");
+  EXPECT_EQ(two_wavelengths.profiles[1].Reading().dark_regions.front().kind, ProbeDarkKind::kUnknown);
   const nlohmann::json wire = nlohmann::json::parse(ProbeToJson(ProbeResult(two_wavelengths), "test"));
   EXPECT_DOUBLE_EQ(wire["profiles"][1]["spec"]["anchor_wavelength_nm"].get<double>(), 550.0);
 
@@ -607,8 +607,8 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   e = AnalyzeProbeFixture(config, refused, &refused_result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(refused_result.profiles.size(), 1u);
-  EXPECT_EQ(refused_result.profiles.front().evidence_state, "refused");
-  EXPECT_EQ(refused_result.profiles.front().refused_mode, "no_edge_in_context");
+  EXPECT_EQ(refused_result.profiles.front().State(), survey::EvidenceState::kRefused);
+  EXPECT_EQ(refused_result.profiles.front().RefusalReason(), "no_edge_in_context");
 
   ProbeRequest wrong_lambda = request;
   wrong_lambda.wavelengths_nm = { 450.0 };
@@ -616,8 +616,8 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   ASSERT_TRUE(AnalyzeProbeFixture(config, wrong_lambda, &wrong_result).Ok());
   EXPECT_EQ(wrong_result.context.object.reason, "scope_value_mismatch");
   ASSERT_EQ(wrong_result.profiles.size(), 1u);
-  EXPECT_EQ(wrong_result.profiles.front().evidence_state, "refused");
-  EXPECT_EQ(wrong_result.profiles.front().refused_mode, "no_edge_in_context");
+  EXPECT_EQ(wrong_result.profiles.front().State(), survey::EvidenceState::kRefused);
+  EXPECT_EQ(wrong_result.profiles.front().RefusalReason(), "no_edge_in_context");
 }
 
 // The arc form: a constant-delta arc swept over azimuth at the asked deviation; the degenerate
@@ -635,29 +635,29 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 1u);
   const ProbeProfile& profile = result.profiles.front();
-  EXPECT_EQ(profile.evidence_state, "finite");
-  EXPECT_EQ(profile.source, "recomputed");
-  EXPECT_EQ(profile.samples.size(), 200u);
-  for (const auto& sample : profile.samples) {
+  EXPECT_EQ(profile.State(), survey::EvidenceState::kFinite);
+  EXPECT_EQ(profile.Reading().source, ProbeProfileSource::kRecomputed);
+  EXPECT_EQ(profile.Reading().samples.size(), 200u);
+  for (const auto& sample : profile.Reading().samples) {
     EXPECT_NEAR(sample.delta_deg, 30.0, 1e-9);
   }
-  EXPECT_NEAR(profile.samples.front().azimuth_deg, -9.95, 1e-9);
-  EXPECT_NEAR(profile.samples.back().azimuth_deg, 9.95, 1e-9);
+  EXPECT_NEAR(profile.Reading().samples.front().azimuth_deg, -9.95, 1e-9);
+  EXPECT_NEAR(profile.Reading().samples.back().azimuth_deg, 9.95, 1e-9);
 
   // The readings sit on the sweep coordinate (the azimuth here): a position on the arc, never
   // the constant-delta echo — the same rule the dark decomposition's bounds follow.
-  ASSERT_TRUE(profile.readings.has_edge);
-  ASSERT_TRUE(profile.readings.has_peak);
-  EXPECT_GE(profile.readings.edge_deg, -10.0);
-  EXPECT_LE(profile.readings.edge_deg, 10.0);
-  EXPECT_GE(profile.readings.peak_deg, -10.0);
-  EXPECT_LE(profile.readings.peak_deg, 10.0);
+  ASSERT_TRUE(profile.Reading().readings.has_edge);
+  ASSERT_TRUE(profile.Reading().readings.has_peak);
+  EXPECT_GE(profile.Reading().readings.edge_deg, -10.0);
+  EXPECT_LE(profile.Reading().readings.edge_deg, 10.0);
+  EXPECT_GE(profile.Reading().readings.peak_deg, -10.0);
+  EXPECT_LE(profile.Reading().readings.peak_deg, 10.0);
 
   request.wavelengths_nm = { 450.0 };
   ProbeData wrong_lambda;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &wrong_lambda).Ok());
-  EXPECT_EQ(wrong_lambda.profiles.front().dark_regions.front().kind, "unknown");
-  EXPECT_EQ(wrong_lambda.profiles.front().dark_regions.front().reason, "scope_value_mismatch");
+  EXPECT_EQ(wrong_lambda.profiles.front().Reading().dark_regions.front().kind, ProbeDarkKind::kUnknown);
+  EXPECT_EQ(wrong_lambda.profiles.front().Reading().dark_regions.front().reason, "scope_value_mismatch");
 
   // The degenerate pole: an arc through the sun itself is not a circle there.
   ProbeRequest degenerate = RadialRequest(config, 0.0, 0.0);
@@ -670,8 +670,8 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   e = AnalyzeProbeFixture(config, degenerate, &degenerate_result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(degenerate_result.profiles.size(), 1u);
-  EXPECT_EQ(degenerate_result.profiles.front().evidence_state, "refused");
-  EXPECT_EQ(degenerate_result.profiles.front().refused_mode, "degenerate_arc_at_pole");
+  EXPECT_EQ(degenerate_result.profiles.front().State(), survey::EvidenceState::kRefused);
+  EXPECT_EQ(degenerate_result.profiles.front().RefusalReason(), "degenerate_arc_at_pole");
 }
 
 // The refusal shapes: an out-of-range at point, an axis that maps to no pose density (the inline
@@ -692,10 +692,10 @@ TEST(ProbeAnalysis, RefusalsNameThemselves) {
   ProbeData plate_result;
   const Error plate_error = AnalyzeProbeFixture(plate, plate_request, &plate_result);
   ASSERT_TRUE(plate_error.Ok()) << plate_error.message;
-  EXPECT_EQ(plate_result.context.source, "inline");
+  EXPECT_EQ(plate_result.context.source, ContextSource::kInline);
   ASSERT_EQ(plate_result.profiles.size(), 1u);
-  EXPECT_EQ(plate_result.profiles.front().evidence_state, "refused");
-  EXPECT_EQ(plate_result.profiles.front().refused_mode, "measure_not_expressible");
+  EXPECT_EQ(plate_result.profiles.front().State(), survey::EvidenceState::kRefused);
+  EXPECT_EQ(plate_result.profiles.front().RefusalReason(), "measure_not_expressible");
 
   // The warm_index_absent degradation: a schema-4 document without its warm_index block degrades
   // visibly to the inline context and never claims the warm band-sum.
@@ -708,9 +708,9 @@ TEST(ProbeAnalysis, RefusalsNameThemselves) {
   ProbeData degraded_result;
   const Error degraded_error = AnalyzeProbeFixture(cheap, degraded, &degraded_result);
   ASSERT_TRUE(degraded_error.Ok()) << degraded_error.message;
-  EXPECT_EQ(degraded_result.context.source, "warm");
+  EXPECT_EQ(degraded_result.context.source, ContextSource::kWarm);
   EXPECT_TRUE(degraded_result.context.warm_index_absent);
-  EXPECT_EQ(degraded_result.context.band_sum.state, "unevaluated");
+  EXPECT_EQ(degraded_result.context.band_sum.state, survey::EvidenceState::kUnevaluated);
   EXPECT_EQ(degraded_result.context.band_sum.reason, "warm_index_absent");
 
   // The fourth refusal mode, inline_survey_refused (the edge-normal form's naming when the
@@ -737,23 +737,23 @@ TEST(ProbeAnalysis, MultiLambdaGridLivesOnTheLineAndYieldsTheRedEdgeWidth) {
   const Error e = AnalyzeProbeFixture(config, request, &result);
   ASSERT_TRUE(e.Ok()) << e.message;
   ASSERT_EQ(result.profiles.size(), 2u);
-  EXPECT_EQ(result.profiles[0].source, "warm_reused");
-  EXPECT_EQ(result.profiles[1].source, "recomputed");
+  EXPECT_EQ(result.profiles[0].Reading().source, ProbeProfileSource::kWarmReused);
+  EXPECT_EQ(result.profiles[1].Reading().source, ProbeProfileSource::kRecomputed);
   EXPECT_DOUBLE_EQ(result.profiles[1].wavelength_nm, 650.0);
   EXPECT_TRUE(result.has_red_edge_width);
   EXPECT_DOUBLE_EQ(result.red_edge_width_deg,
-                   result.profiles[1].readings.edge_deg - result.profiles[0].readings.edge_deg);
-  ASSERT_FALSE(result.profiles[1].dark_regions.empty());
-  EXPECT_EQ(result.profiles[1].dark_regions.front().kind, "unknown");
-  EXPECT_EQ(result.profiles[1].dark_regions.front().reason, "scope_value_mismatch");
+                   result.profiles[1].Reading().readings.edge_deg - result.profiles[0].Reading().readings.edge_deg);
+  ASSERT_FALSE(result.profiles[1].Reading().dark_regions.empty());
+  EXPECT_EQ(result.profiles[1].Reading().dark_regions.front().kind, ProbeDarkKind::kUnknown);
+  EXPECT_EQ(result.profiles[1].Reading().dark_regions.front().reason, "scope_value_mismatch");
 
   request.wavelengths_nm = { 450.0, 550.0 };
   ProbeData reversed;
   ASSERT_TRUE(AnalyzeProbeFixture(config, request, &reversed).Ok());
   EXPECT_EQ(reversed.context.object.reason, "scope_value_mismatch");
   ASSERT_EQ(reversed.profiles.size(), 2u);
-  EXPECT_EQ(reversed.profiles[0].dark_regions.front().kind, "unknown");
-  EXPECT_EQ(reversed.profiles[1].dark_regions[2].kind, "inside_support_positive");
+  EXPECT_EQ(reversed.profiles[0].Reading().dark_regions.front().kind, ProbeDarkKind::kUnknown);
+  EXPECT_EQ(reversed.profiles[1].Reading().dark_regions[2].kind, ProbeDarkKind::kInsideSupportPositive);
 }
 
 // ---- the C API gate (the bridge's own additions: null args, the struct_size gate, named

@@ -11,7 +11,7 @@ schema authority is `doc/raypath/raypath-cli-output.md`; the layered
   `domain/measure.hpp` leaves, not in a query result header.
 - `survey_reuse.hpp` owns warm candidate admission and per-fact/profile qualification;
   `survey_context.hpp` owns the shared context value. Both JSON decoding and typed
-  `HarvestSurveyDocument` produce an untrusted `WarmCandidate`. Only
+  `HarvestSurveyResult` produce an untrusted `WarmCandidate`. Only
   `ValidateWarmCandidate` constructs an `AdmittedWarmSource`; the point/probe
   entries and their inline assemblies use it before consuming facts; public
   structure/context/profile decisions require the admission token. Resolved scene
@@ -20,11 +20,16 @@ schema authority is `doc/raypath/raypath-cli-output.md`; the layered
   solver starts. A fingerprint admits identity, not numerical validity. The bridge only decodes and maps errors.
 - Input scope preparation lives in `detail/input_scope.*`, with physical member
   expansion still owned by `detail/physical_member_scope.*`. Actual family-measure
-  reading lives in `detail/measure_scope.*`; the ideal freezing ladder stays in
-  `detail/survey/survey_family.*`. Do not merge actual weights with ideal rank inputs.
-- The bridge still includes `detail/survey/survey_mc_ess.hpp` for its budget bound;
-  the probe header still exposes the shared line-probe result types. These are
-  existing surfaces, not a claim that the whole public include closure is detail-free.
+  reading lives in `detail/measure_scope.*`; the ideal freezing ladder lives in
+  `detail/structure/family.*`. Do not merge actual weights with ideal rank inputs.
+- The four public result headers (`point_result.hpp`, `probe_result.hpp`, `survey_result.hpp`,
+  `feature_report_result.hpp`) own immutable typed snapshots with result-bound references.
+  Their include closures contain no detail/config/JSON headers. Value leaves live in `results/`
+  and `domain/`; shared numerical producers live in `detail/structure/` and `detail/quantity/`
+  and do not write query documents. See `doc/raypath/typed-results.md` for the field ledger,
+  claim/quantity contracts and the explicitly temporary execution adapters.
+- The bridge still includes `detail/survey/survey_mc_ess.hpp` for its budget bound; this is the
+  remaining legacy bridge exception, not a dependency of any public result header.
 - Everything under `src/raypath/detail/` is internal implementation:
   includable only by the module itself and its own tests (the boundary and
   its rationale: `doc/raypath/raypath-cli-output.md` §8).

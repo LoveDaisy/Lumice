@@ -129,13 +129,13 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
   ess_input.budget_ms = request.budget_ms;
   AssembleMcRegionEss(ess_input, out);
   const SurveyMcRegionEss& ess = *out->mc_region_ess;
-  if (ess.evidence.state == EvidenceState::kFinite) {
+  if (ess.State() == EvidenceState::kFinite) {
     out->budget_note += " The requested MC region ESS leg ran " + std::to_string(request.mc_ess_draws) +
                         " seeded draws at the reference lambda; it is the one budget-bounded leg (the "
                         "survey budget is its deadline guardrail) — the enumeration's unenforced legs "
                         "are the others.";
   } else {
-    out->budget_note += " The requested MC region ESS leg was refused (" + ess.evidence.mode +
+    out->budget_note += " The requested MC region ESS leg was refused (" + ess.Mode() +
                         "): " + std::to_string(request.mc_ess_draws) +
                         " draws were requested and no bands were published.";
   }
@@ -204,6 +204,14 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
   const std::vector<std::vector<int>>& scope_members = class_scope.members;
   const PoseDensityConversion& density = class_scope.density;
 
+  QuantityContext quantity_context;
+  quantity_context.members = static_cast<const MemberScope&>(class_scope);
+  quantity_context.crystal = config.crystals_.at(request.crystal_id);
+  quantity_context.light = config.scene_.light_source_;
+  quantity_context.observation = { wavelength.wavelength_nm, config.scene_.light_source_.param_.altitude_,
+                                   config.scene_.light_source_.param_.azimuth_ };
+  out->quantity_context = std::make_shared<const QuantityContext>(std::move(quantity_context));
+
   // Scope and echo.
   out->geometry = crystal.geometry;
   out->schema_version = kSurveySchemaVersion;
@@ -248,14 +256,14 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
     // walk beyond the certificate's own, no delta axis, no fiber, no field work.
     out->early_stopped = true;
     SurveyObject card;
-    card.kind = SurveyObjectKind::kSourceImage;
+    card.SetKind(SurveyObjectKind::kSourceImage);
     card.members = scope_members;
     card.has_position = true;
     card.position_altitude_deg = *out->sun_altitude_deg;
     card.position_azimuth_deg = *out->sun_azimuth_deg;
-    card.evidence.state = EvidenceState::kCertified;
-    card.evidence.method = kCertifiedMethodPointMass;
-    card.certificate = SurveyCertificate{};
+    card.SetState(EvidenceState::kCertified);
+    card.Method() = kCertifiedMethodPointMass;
+    card.SetCertificate(SurveyCertificate{});
     out->objects.push_back(std::move(card));
     out->evidence.state = EvidenceState::kCertified;
     out->evidence.method = kCertifiedMethodPointMass;
@@ -483,6 +491,71 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   SurveyData data;
   if (const Error error = AssembleSurveyData(config, request, &data, options); !error.Ok()) {
     return error;
+  }
+  for (auto& object : data.objects) {
+    ClaimScope scope;
+    scope.members.members = object.members;
+    scope.members.member_kind = request.symmetry_bits == 0 ? MemberKind::kLiteral : MemberKind::kPhysicalL2;
+    static_cast<ScopeLocation&>(scope.members) = ResolveSelectionLocation(config, request);
+    scope.geometry = data.geometry;
+    scope.observation = { data.wavelength_nm, data.sun_altitude_deg, data.sun_azimuth_deg };
+    scope.measure.kind =
+        object.band && object.band->level > 0 ? MeasureKind::kIdealFrozen : MeasureKind::kActualDeclared;
+    scope.input = data.quantity_context;
+    scope.measure.reference = ReferenceMeasure::kNone;
+    object.BindScope(scope);
+    if (object.Witness()) {
+      ClaimScope witness_scope = object.Witness()->Scope();
+      witness_scope.input = data.quantity_context;
+      static_cast<ScopeLocation&>(witness_scope.members) =
+          static_cast<const ScopeLocation&>(data.quantity_context->members);
+      witness_scope.geometry = data.geometry;
+      witness_scope.observation = data.quantity_context->observation;
+      witness_scope.measure = { MeasureKind::kActualDeclared, ReferenceMeasure::kHaar };
+      object.Witness()->BindScope(witness_scope);
+      if (auto* value = object.Witness()->ValueOrNull()) {
+        value->quantity.context = data.quantity_context;
+        value->quantity.observation = witness_scope.observation;
+        witness_scope.quantity = value->quantity;
+        object.Witness()->BindScope(witness_scope);
+      }
+    }
+  }
+  const auto bind_quantity = [&](auto& optional) {
+    if (!optional)
+      return;
+    ClaimScope scope = optional->Scope();
+    scope.input = data.quantity_context;
+    scope.members = data.quantity_context->members;
+    scope.geometry = data.geometry;
+    scope.observation = data.quantity_context->observation;
+    if (auto* value = optional->ValueOrNull()) {
+      value->quantity.context = data.quantity_context;
+      value->quantity.observation.sun_altitude_deg = data.sun_altitude_deg;
+      value->quantity.observation.sun_azimuth_deg = data.sun_azimuth_deg;
+      scope.quantity = value->quantity;
+      scope.measure = { value->quantity.measure, value->quantity.reference };
+    }
+    if (scope.quantity) {
+      scope.observation = scope.quantity->observation;
+      scope.observation.sun_altitude_deg = data.sun_altitude_deg;
+      scope.observation.sun_azimuth_deg = data.sun_azimuth_deg;
+      scope.quantity->context = data.quantity_context;
+      scope.quantity->observation = scope.observation;
+      if (scope.quantity->aggregation == MemberAggregation::kRepresentative) {
+        scope.members.members = { data.request.path_layers.front() };
+        scope.members.member_kind = MemberKind::kLiteral;
+      }
+    }
+    optional->BindScope(scope);
+  };
+  bind_quantity(data.weight_tint);
+  bind_quantity(data.tir_share);
+  bind_quantity(data.mc_region_ess);
+  for (auto& probe : data.probes) {
+    probe.spec.quantity.context = data.quantity_context;
+    probe.spec.quantity.observation = { probe.spec.wavelength_nm, data.sun_altitude_deg, data.sun_azimuth_deg };
+    probe.spec.quantity.wavelengths_nm = { probe.spec.wavelength_nm };
   }
   *out = SurveyResult(std::move(data));
   return {};

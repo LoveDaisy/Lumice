@@ -15,7 +15,7 @@
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
-#include "raypath/detail/schema3/structure_object.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath {
 using schema3::AssembledSchema3Report;

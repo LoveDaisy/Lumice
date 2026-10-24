@@ -50,11 +50,11 @@ ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const 
   // (the first member's onsets at an interval endpoint — the members share the axis) and the
   // caliber the partition ran on.
   SurveyObject card;
-  card.kind = SurveyObjectKind::kSupportSet;
+  card.SetKind(SurveyObjectKind::kSupportSet);
   card.members = members;
-  card.evidence.state = EvidenceState::kFinite;
-  card.evidence.coverage.members_evaluated = static_cast<int>(members.size());
-  card.evidence.coverage.wavelength_nm = wavelength_nm;
+  card.SetState(EvidenceState::kFinite);
+  card.Coverage().members_evaluated = static_cast<int>(members.size());
+  card.Coverage().wavelength_nm = wavelength_nm;
   SurveyObject::SupportSetPayload payload;
   payload.symmetry_bits = symmetry_bits;
   payload.member_count = static_cast<int>(members.size());
@@ -75,7 +75,7 @@ ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const 
     label.multiplicity = onset.multiplicity;
     payload.endpoints.push_back(std::move(label));
   }
-  card.support_set = std::move(payload);
+  card.SetSupport(std::move(payload));
   support.card = std::move(card);
   support.ok = true;
   return support;

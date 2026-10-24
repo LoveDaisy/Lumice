@@ -1,41 +1,166 @@
 # Typed raypath results
 
-The query products are values, not execution workspaces. Public result leaves do not
-retain configuration managers, requests, cancellation pointers, or deferred computations.
-Mathematical kernels remain the authority over their formulas and refusal domains.
+The four query products are completed values, not execution workspaces. Their public
+headers are `point_result.hpp`, `probe_result.hpp`, `survey_result.hpp`, and
+`feature_report_result.hpp` under `src/raypath/`. Each owns immutable data through
+`FrozenValue<T>`; `Data()` returns a const reference. No result retains a configuration
+manager, request, cancellation pointer, sampler, or deferred computation.
 
-## Migration ledger
+The query entry headers remain separate from these value headers. The typed entries are
+`AnalyzePathPointValue`, `AnalyzePathProbe`, `AnalyzePathSurveyValue`, and
+`AnalyzePathFeatureReportValue`. The point entry takes an explicit `include_context`;
+false produces an unevaluated/not-requested context without running a survey. Its explicit
+`FinalizePointResult` adapter is also available to internal callers already holding an
+execution envelope. Reading or serializing a completed typed point does not materialize
+anything.
 
-This ledger names the existing machine-data groups and their producers. A row is not a
-claim that all of its migration is complete; the ownership column describes the current
-state. The JSON field contract remains [raypath-cli-output.md](raypath-cli-output.md).
-No wire evolution is authorized by a type move. Timing values are observations, not
-bitwise compatibility targets.
+## Ownership and references
 
-| Producer / former owner | Machine-data groups | Value owner / consumers |
+A completion allocates one process-local identity. Copying a result preserves both that
+identity and its shared const data. Moving preserves the identity on the destination.
+Constructing a result from revised assembly data allocates a different identity, even
+when the object count and ordinals are unchanged. The public data view cannot change an
+object/member mapping. Mutable `PointData`, `ProbeData`, `SurveyData`, and
+`FeatureReportData` are construction values, not additional computation pipelines.
+
+`ObjectRef`, `MemberRef`, `RecordRef`, and `SourceRef` combine that identity with a local
+ordinal. The concrete results create references only within their tables and reject
+foreign identities or out-of-range references on resolution. Report annotation/matched
+record/source/unattributed associations use those checked lookups. Buckets remain a
+view of the same object order through the existing `BucketOf` rule, not separate tables.
+
+A point/probe context owns its admitted structural projection as an immutable
+`ContextStructure`. Its object and edge references belong to that projection, not to an
+unrelated survey's ordinal. The projection retains member face sequences and their
+location/selection semantics. Typed harvest and JSON import retain all supplied member
+rows; numeric qualification still goes through `ValidateWarmCandidate` and the existing
+per-fact gates. Disk integers never become process-local result identities. A missing or
+incompatible warm index retains the existing degradation behavior.
+
+## Claims and independent states
+
+`Claim<T>` has four exclusive arms: `Certified<T>`, `Finite<T>`, `Refused`, and
+`Unevaluated`. The latter two contain no `T`. Default construction is unevaluated. A
+finite zero is a successful numeric value, not a missing value. `ClaimedValue<T>` is the
+single implementation of construction-time transitions, scope binding, evidence
+projection, and success-only numeric access. A transition to refusal discards numbers
+but retains the asked scope.
+
+Survey objects select one of six payload kinds. Kind is derived from the variant rather
+than stored beside independent optional payloads. Support, delta-edge, bright-domain,
+and source-certificate setters reject an incompatible kind/state. A family fold's
+representative sky position is not a delta edge or an ordered curve; its delta payload
+remains absent. Witness attachment is restricted to support objects, and its claim is
+independent of the partition claim: a refused partition plus a finite positive witness
+is valid. A witness never upgrades the family routing's structural-output verdict.
+
+Point mass and discovered fibers are mutually exclusive point payloads. The discovered
+arm owns incomplete components as well as completed ones. Probe profiles carry a spec
+and a claim; refused profiles have no samples/readings, while a finite all-zero profile
+keeps its bins. Probe direction, provenance, context evidence/source/anchor, and dark-run
+classification have closed typed vocabularies.
+
+Report existence, visibility, chromatic assessment, and corroboration remain separate
+state machines. They are not converted to survey evidence. Unassessed chromatic data
+has a distinct arm containing the schema's declared defaults, not an evaluated colour
+claim. The previous walk-arclength, unknown/nonfinite, partial coverage, and
+no-related-feature rules are unchanged.
+
+## Capability owners
+
+- `detail/structure/axis.*`: the sole `AssembleAxis`, its walk/partition/onset ordering,
+  and contract translations formerly owned by the schema3 geometry adapter.
+- `detail/structure/support.*`: `SupportRowOf`, constant-delta circles and their
+  wavelength continuation, support equality, and family clustering.
+- `detail/structure/class_support.*`: class support as a returned fact/card, not a
+  write into a command document.
+- `detail/structure/family.*`: freeze ordering, rank scans, per-candidate survival,
+  retained representatives and seed poses. The survey adapter schedules quantity legs
+  and mounts the returned structure. Level-zero refusal does not gate the ladder.
+- `detail/quantity/probe_line.*`: the common frame/layout/profile reader and one
+  `EvaluateProbeLine` implementation for survey and explicit probes.
+- `detail/quantity/{tint,tir_share,mc_ess,witness}.*`: returned claims. These services
+  neither receive nor mutate a query result. The survey adapters own mounting and
+  block-level evidence policy.
+
+The mathematical implementations were moved, not replaced with parallel kernels. The
+C06 constant-TIR-circle data remains on the existing report support surface. This does
+not introduce a survey circle product, Lowitz curve connectivity, new quadrature, or
+new collision geometry.
+
+## Quantity scope
+
+`QuantitySpec` describes kind, unit, method, member aggregation, reference measure,
+density weighting, source/spectral observation, shape basis, and regularization where
+applicable. Its shared const `QuantityContext` owns the actual crystal distribution,
+light spectrum/source parameters, resolved members, and observation metadata. A spec
+selects the relevant part of those inputs; the context is not a universal cache key.
+
+- Band-sum profiles are representative-member per-steradian values under the normalized
+  Haar/PoseDensity protocol. `member_count` does not silently multiply stored samples.
+  Each online wavelength retains its own observation scope.
+- Point factors distinguish raw entry area from `A/a²`, transmission, normal Jacobian,
+  regularized coarea factor, angle-coordinate `DeclaredPoseDensity`, factor product,
+  fiber-arclength integral, and orbit integral. Mass is not labelled per steradian;
+  the two density reference measures are not conflated.
+- Tint has exclusive mass and class-power readings. Its typed mass protocol distinguishes
+  psi-average, lattice mean, and single-pose direct evaluation. The actual method is
+  derived from the reading and then recorded in its quantity spec. The fixed chromatic
+  pair is not an integrated SPD/CMF colour measurement.
+- Witness and class-power calculations carry no rho weighting; the witness is an
+  existence sample, not a distribution estimate.
+- TIR share retains the already accumulated numerator/denominator, per-interface
+  weights, and excluded-chart counts, beside its ratios. Its scope remains the nominal
+  representative and fixed pair, not full-spectrum or regional TIR.
+- MC ESS retains sum of weights and sum of squared outer-draw weights, counts, seed,
+  and band domain under the actual product sampler. It is sampling quality, not intensity.
+- Structural family claims distinguish actual support from ideal-frozen levels; the
+  input measure remains actual and the band records retain the frozen dimensions and
+  survival ruler.
+
+## Field-group migration ledger
+
+The JSON contract remains [raypath-cli-output.md](raypath-cli-output.md). No normal-path
+wire-field or numerical evolution is introduced by these moves. The default of a
+hand-constructed, uncomputed typed declaration is now unevaluated; successful production
+legs explicitly construct their evidence. Timing values are observations, not bitwise
+comparison targets. Static wire prose and enum spelling remain codec responsibilities.
+
+| Previous owner / producer | Existing machine-data groups | Unique value owner and consumers |
 |---|---|---|
-| `single_path_analysis.hpp` | metadata, outcome, components, incomplete, discovery, point_mass, reach, sun_grid, measure_registration | `point_result.hpp`; legacy execution envelope, point codec |
-| `survey_context.hpp` | object, edge, band_sum, reference wavelength, source/degradation | context value; point/probe |
-| `probe_analysis.hpp` | metadata, profile spec/samples/readings/dark regions, red_edge_width | `probe_result.hpp`, `results/probe_line.hpp`; probe query/codec |
-| `detail/survey/survey_document.hpp` | request, scope, resolved members, routing, objects, unevaluated declarations, evidence | `survey_result.hpp`, `results/survey_records.hpp`; survey assembly/codec/reuse |
-| family routing | actual measure, ladder, fixed/free dims, killed proposals, level0 refusal, tails, bands, origin | survey records; structure extraction pending |
-| positional dispersion and diagnose | index pair, followed onsets, verdicts, thresholds, coverage | survey records; capability extraction pending |
-| tint/TIR/MC ESS/witness | state, method, numbers, counts, wavelength, lattice, refusal | survey records; return-value service extraction pending |
-| warm admission | fingerprint, resolved location, producer/scope receipts, seed poses/profile rows | `survey_reuse`; admission remains mandatory |
-| geometry/support | partition, intervals, topology, onsets, constant curves per wavelength, family groups | shared capability extraction pending |
-| report enumeration | object kind/member/slot, four states, u/sky position, thresholds, vocabulary | report completion migration pending |
-| report input assembly | light, crystal, axes, shape, layers, spectrum, support dimensions, seed/options | report completion migration pending |
-| feature discovery / MC | records, source tokens, measure, observation options, spectral verification, unfinished | report completion migration pending |
-| attribution/ruling | annotations, unattributed, counts, ruling, outcome/basis | report completion migration pending |
-| report serializer | coverage, budgets, timing, unsupported path | report completion migration pending |
+| `single_path_analysis.hpp` | meta/outcome/components/incomplete/discovery/point_mass/reach/sun_grid/measure_registration | `point_result.hpp`; point execution, typed completion and codec |
+| context assembly/reuse | object/edge/band_sum, reference lambda, source and degradation | `survey_context.hpp` plus owned structural projection; point/probe and shared context codec |
+| `probe_analysis.hpp`, survey probe | meta, profile spec/samples/readings/dark_regions, red_edge_width | `probe_result.hpp`, `results/probe_line.hpp`; quantity service, probe query and codec |
+| former survey document | request/scope/resolved members, routing, objects, unevaluated/evidence | `survey_result.hpp`, `results/survey_records.hpp`; survey assembly, typed harvest and codec |
+| survey family | measure/ladder/frozen/free dimensions/killed/level0 refusal/tails/band/origin | survey records, produced by `structure/family`; query mounts them without rerunning rank |
+| survey chromatic legs | positional dispersion, followed onsets, diagnose/verdict/thresholds/coverage | survey records; existing chromatic producer and codec, with their original refusal shape |
+| tint/TIR/ESS/witness | methods, values, counts, pair/lattice, coverage/refusal | claim-owned quantity values in survey records; quantity services return, query adapters mount |
+| warm admission | fingerprint, resolved location, producer/scope receipts, seeds and profile rows | `survey_reuse`; both import paths remain untrusted until admitted |
+| geometry/support | member partition/intervals/topology/onsets/constant curves per lambda/family groups | `results/structure.hpp`; structure capability and report/survey consumers |
+| enumeration | kind/member/slot/phi, independent states, u/sky position/counterfactual/thresholds/vocabulary | `results/report_structure.hpp`, `report_enumeration.hpp`; enumeration and completed report |
+| report input | light/crystal/axis/shape/layers/spectrum/support_dimensions/seed/options | `results/report_scope.hpp`, pure scene values; captured before moving execution storage |
+| discovery/MC | every record subfield, measure/source identities, observation ruler, spectral verification, unfinished | `results/report_records.hpp`, `report_attribution.hpp`; completed MC evidence has no sampler |
+| report source replay | positive_source_witness and source-token rows | completion stage materializes `PositiveSourceWitness`; codec never calls `ReplayDiagnosticSource` |
+| attribution/ruling | annotations/unattributed/counts/ruling/outcome/basis | completed report; checked local references and original independent ruling |
+| former report serializer assembly | coverage/budgets/timing, unsupported multi-crystal path | `FeatureReportData` completion; serializer takes one `FeatureReportResult` plus generator text |
 
-## Execution compatibility
+The maximal MC-record fixture and existing literal JSON key/null/absence pins retain
+the `kMcMigrationLedger` as their reference. The tests also exercise C01 edge/probe
+semantics, C10 independent ladder routing, C16 survival/representatives, C17 refused
+support plus witness, C06 support circles, and the existing unavailable-density cases.
+This is a value/ownership migration, not a new uniform test census over the full corpus.
 
-`SinglePathResult` temporarily extends the unique `PointResult` data value with the
-legacy deferred-context inputs. `SurveyContextOf` / `EnsureSurveyContext` are execution
-operations, not readers of `PointResult`. The workspace migration will replace this
-envelope. The public point value itself contains no execution input.
+## Remaining execution adapters
 
-The former survey document and its evidence header no longer own a second set of
-fields. Warm candidates remain untrusted regardless of whether their source is JSON
-or a typed survey; the resolved-location and per-fact admission gates still apply.
+`SinglePathResult` is the temporary legacy execution envelope: one `PointData` plus the
+old deferred-context inputs. `SurveyContextOf` and `EnsureSurveyContext` operate only on
+that envelope. Workspace execution will replace them; the completed `PointResult`
+contains neither. The legacy string-returning report/survey entry points are thin typed
+assembly → codec adapters. The C bridge remains a legacy JSON handle consumer until its
+typed-view migration; the MC draw-limit include is an existing bridge-boundary exception.
+
+`AssembleSurveyData` is construction-time staging used by query policy and focused
+fixtures, not a second public result model or a second computation path. The old
+`survey_document.hpp`, schema3 geometry/support owners, evidence header, and empty
+structure-object forwarding header are removed. Mutable construction values cannot
+change a previously published snapshot.

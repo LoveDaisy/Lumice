@@ -291,7 +291,7 @@ TEST(ContourDocking, PlaceholderUStarvesTheCertificateEverywhere) {
   }
   const VisibilityCertificate dark = CertifyVisibility(PlateMeasure(), contract, nullptr, nullptr, 1e-9);
   EXPECT_EQ(dark.state, VisibilityState::kUnproven);
-  EXPECT_STREQ(dark.reason, "no_in_support_samples");
+  EXPECT_EQ(dark.reason, "no_in_support_samples");
   EXPECT_TRUE(std::isnan(dark.lit_fraction));
 }
 

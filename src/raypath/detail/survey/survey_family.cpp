@@ -20,7 +20,7 @@ constexpr double kRadToDeg = math::kRadToDegreeD;
 // state — a refused card carrying a finite witness is still not a finite structural object.
 bool AnyFiniteObject(const SurveyData& document) {
   for (const SurveyObject& card : document.objects) {
-    if (card.evidence.state == EvidenceState::kFinite) {
+    if (card.State() == EvidenceState::kFinite) {
       return true;
     }
   }
@@ -96,7 +96,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     tail.dim = "zenith";
     tail.lower_deg = lower * kRadToDeg;
     tail.upper_deg = upper * kRadToDeg;
-    out->objects.back().support_set->density_tails.push_back(std::move(tail));
+    out->objects.back().Support()->density_tails.push_back(std::move(tail));
   }
 
   FamilyStructureInput structure_input;
@@ -233,8 +233,8 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     out->chromatic.state = EvidenceState::kUnevaluated;
     out->chromatic.reason = density_reason;
     out->weight_tint = SurveyWeightTint{};
-    out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
-    out->weight_tint->evidence.reason = density_reason;
+    out->weight_tint->SetState(EvidenceState::kUnevaluated);
+    out->weight_tint->Reason() = density_reason;
     if (level0_refusal_mode.empty()) {
       out->budget_note =
           "the family arm's legs are the T0 routing verdict, the per-member delta partition and "
@@ -261,8 +261,8 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
   // a density the conversion cannot carry — every quantification leg silent (the ladder's rank
   // scans are density-independent geometry and may still have produced readings), and the block
   // says so instead of claiming a reading nothing produced.
-  const bool legs_all_silent = out->chromatic.state == EvidenceState::kUnevaluated &&
-                               out->weight_tint->evidence.state == EvidenceState::kUnevaluated;
+  const bool legs_all_silent =
+      out->chromatic.state == EvidenceState::kUnevaluated && out->weight_tint->State() == EvidenceState::kUnevaluated;
   if (!level0_refusal_mode.empty() && legs_all_silent) {
     block.evidence.state = EvidenceState::kUnevaluated;
     block.evidence.reason =

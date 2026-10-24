@@ -640,7 +640,7 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
                         const std::optional<AdmittedWarmSource>& admitted, SurveyContextBlock* out) {
   const AdmittedWarmSource* source =
       admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &*admitted : nullptr;
-  out->source = source != nullptr ? "warm" : "inline";
+  out->source = source != nullptr ? ContextSource::kWarm : ContextSource::kInline;
   out->warm_index_absent = source != nullptr && !source->Facts().index_present;
   const AdmittedWarmSource* warm = source != nullptr && source->Facts().index_present ? source : nullptr;
   std::optional<AdmittedWarmSource> inline_source;
@@ -653,11 +653,11 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
     if (e.Ok())
       e = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
     if (!e.Ok()) {
-      out->object.state = "unevaluated";
+      out->object.state = survey::EvidenceState::kUnevaluated;
       out->object.reason = "inline_survey_refused";
-      out->edge.state = "unevaluated";
+      out->edge.state = survey::EvidenceState::kUnevaluated;
       out->edge.reason = "inline_survey_refused";
-      out->band_sum.state = "unevaluated";
+      out->band_sum.state = survey::EvidenceState::kUnevaluated;
       out->band_sum.reason = "inline_survey_refused";
       return;
     }
@@ -776,6 +776,22 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
   static_cast<ScopeLocation&>(result.members) = survey::ResolveSelectionLocation(config, request);
   result.members.member_kind = MemberKind::kLiteral;
   result.members.members = { meta.faces };
+  QuantityContext quantity_context;
+  quantity_context.members = result.members;
+  quantity_context.crystal = crystal_it->second;
+  quantity_context.light = light;
+  quantity_context.observation = { wavelength.wavelength_nm, light.param_.altitude_, light.param_.azimuth_ };
+  const auto quantity_input = std::make_shared<const QuantityContext>(std::move(quantity_context));
+  for (QuantitySpec* spec :
+       { &result.quantities.entry, &result.quantities.normalized_entry, &result.quantities.transmission,
+         &result.quantities.density, &result.quantities.jacobian, &result.quantities.coarea, &result.quantities.product,
+         &result.quantities.fiber_integral, &result.quantities.orbit_integral }) {
+    spec->context = quantity_input;
+    spec->observation = quantity_input->observation;
+    spec->wavelengths_nm = { wavelength.wavelength_nm };
+    spec->aggregation = MemberAggregation::kMember;
+  }
+  result.quantities.coarea.regularization_epsilon = kFactorsEpsilon;
   meta.sun_altitude_deg = light.param_.altitude_;
   meta.sun_azimuth_deg = light.param_.azimuth_;
   meta.sun_diameter_deg = light.param_.diameter_;
@@ -809,7 +825,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
   // The declared measure: one u-marginal for the registration and (rank 0) the orbit integral.
   const double sun_hat[3] = { -meta.incident_direction[0], -meta.incident_direction[1], -meta.incident_direction[2] };
   const UMarginal marginal = MakeUMarginal(crystal_it->second.axis_, sun_hat);
-  result.measure_registration = RegisterMeasure(marginal, crystal_it->second.axis_);
+  result.Discovered().measure_registration = RegisterMeasure(marginal, crystal_it->second.axis_);
 
   // ---- rank 0, and whether the path is realisable at all ----
   const RankProbe rank = ProbeRank(ctx);
@@ -839,18 +855,18 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
   result.context_warm = std::move(admitted);
 
   if (rank.rank_zero) {
-    result.outcome = Outcome::kPointMass;
+    result.payload = PointMass{};
     const double sun[3] = { sun_hat[0], sun_hat[1], sun_hat[2] };
     double pose[9];
     RotationTaking(rank.first_valid_u, sun, pose);
     const PointDetail probe = ctx.Detail(pose, 0.0);
     for (int i = 0; i < 3; i++) {
-      result.point_mass.direction[i] = probe.outgoing_direction[i];
+      result.Mass().direction[i] = probe.outgoing_direction[i];
     }
-    DirToAltAz(result.point_mass.direction, &result.point_mass.altitude_deg, &result.point_mass.azimuth_deg);
-    result.point_mass.target_separation_deg =
-        analytic::so3::AngleBetween(result.point_mass.direction, meta.target_direction) * math::kRadToDegreeD;
-    result.point_mass.orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat, &stop);
+    DirToAltAz(result.Mass().direction, &result.Mass().altitude_deg, &result.Mass().azimuth_deg);
+    result.Mass().target_separation_deg =
+        analytic::so3::AngleBetween(result.Mass().direction, meta.target_direction) * math::kRadToDegreeD;
+    result.Mass().orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat, &stop);
     if (stopped()) {
       meta.interrupted = true;
     }
@@ -859,8 +875,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
   }
 
   // ---- discovery and the fibers ----
-  result.outcome = Outcome::kDiscovered;
-  result.reach = ProbeReach(ctx, delta, &stop);
+  result.Discovered().reach = ProbeReach(ctx, delta, &stop);
   if (stopped()) {
     meta.interrupted = true;
   }
@@ -880,12 +895,12 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
       meta.interrupted = true;
       break;  // the unconverted components stay unconverted: the document is partial, marked so
     }
-    result.components.push_back(ToComponent(c, &ctx));
+    result.Discovered().components.push_back(ToComponent(c, &ctx));
   }
   for (const analytic::IncompleteCandidate& c : found.incomplete) {
-    result.incomplete.push_back(ToIncomplete(c));
+    result.Discovered().incomplete.push_back(ToIncomplete(c));
   }
-  DiscoverySummary& s = result.discovery;
+  DiscoverySummary& s = result.Discovered().discovery;
   s.complete = found.Complete();
   s.pool_count = found.pool_count;
   s.extra_seed_count = found.extra_seed_count;
@@ -931,7 +946,7 @@ PointResult FinalizePointResult(SinglePathResult result, bool include_context) {
     result.survey_context = {};
     for (SurveyContextField* field :
          { &result.survey_context.object, &result.survey_context.edge, &result.survey_context.band_sum }) {
-      field->state = "unevaluated";
+      field->state = survey::EvidenceState::kUnevaluated;
       field->reason = "not_requested";
     }
   }

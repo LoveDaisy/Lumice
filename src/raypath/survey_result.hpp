@@ -1,11 +1,15 @@
 #ifndef LUMICE_RAYPATH_SURVEY_RESULT_HPP_
 #define LUMICE_RAYPATH_SURVEY_RESULT_HPP_
 
+#include <algorithm>
+
 #include "raypath/domain/result_identity.hpp"
+#include "raypath/results/quantity.hpp"
 #include "raypath/results/survey_records.hpp"
 namespace lumice::raypath::survey {
 
 struct SurveyData {
+  std::shared_ptr<const QuantityContext> quantity_context;
   GeometryScope geometry;
   int schema_version = 4;
 
@@ -80,6 +84,26 @@ struct SurveyData {
 class SurveyResult : public FrozenValue<SurveyData> {
  public:
   using FrozenValue<SurveyData>::FrozenValue;
+  std::optional<std::vector<MemberRef>> ObjectMembers(ObjectRef ref) const {
+    const auto* object = Resolve(ref);
+    if (!object)
+      return std::nullopt;
+    std::vector<MemberRef> members;
+    for (const auto& path : object->members) {
+      const auto found = std::find(Data().members.begin(), Data().members.end(), path);
+      if (found == Data().members.end())
+        return std::nullopt;
+      members.push_back({ Identity(), MemberId{ static_cast<size_t>(found - Data().members.begin()) } });
+    }
+    return members;
+  }
+  const SurveyProbe* ProbeFor(ObjectRef ref) const {
+    const auto* object = Resolve(ref);
+    const auto* domain = object ? object->Bright() : nullptr;
+    return domain && domain->probe_index >= 0 && static_cast<size_t>(domain->probe_index) < Data().probes.size() ?
+               &Data().probes[static_cast<size_t>(domain->probe_index)] :
+               nullptr;
+  }
   std::optional<ObjectRef> Reference(ObjectId id) const {
     return id.ordinal < Data().objects.size() ? std::optional<ObjectRef>{ { Identity(), id } } : std::nullopt;
   }

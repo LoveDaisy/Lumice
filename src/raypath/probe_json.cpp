@@ -114,23 +114,27 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
     { "representative", p.representative },
     { "member_count", p.member_count },
   };
-  if (!p.anchor_basis.empty()) {
-    spec["anchor_basis"] = p.anchor_basis;
+  if (p.anchor_basis.has_value()) {
+    spec["anchor_basis"] = ContextEdgeBasisName(*p.anchor_basis);
     spec["anchor_deg"] = Num(p.anchor_deg);
     spec["anchor_wavelength_nm"] = Num(p.anchor_wavelength_nm);
   }
-  nlohmann::ordered_json j = { { "along", p.along }, { "spec", std::move(spec) } };
-  if (p.evidence_state == "refused") {
+  nlohmann::ordered_json j = { { "along", ProbeAlongName(p.along) }, { "spec", std::move(spec) } };
+  if (p.State() == survey::EvidenceState::kRefused) {
     // No source key on a refusal: nothing was reused or computed, and the empty string the
     // default member would serialize is a third value the vocabulary never named.
-    j["evidence"] = { { "state", "refused" }, { "mode", p.refused_mode } };
+    j["evidence"] = { { "state", "refused" }, { "mode", p.RefusalReason() } };
     return j;
   }
-  j["source"] = p.source;
+  if (p.State() == survey::EvidenceState::kUnevaluated) {
+    j["evidence"] = { { "state", "unevaluated" }, { "reason", std::get<Unevaluated>(p.claim).reason } };
+    return j;
+  }
+  j["source"] = p.Reading().source == ProbeProfileSource::kWarmReused ? "warm_reused" : "recomputed";
   j["evidence"] = {
     { "state", "finite" },
     { "coverage",
-      { { "members_evaluated", p.members_evaluated },
+      { { "members_evaluated", p.Reading().members_evaluated },
         { "geometry_basis", "nominal crystal shape at the distribution centres" },
         { "wavelength_nm", Num(p.wavelength_nm) },
         { "lattice_n", p.sample_count },
@@ -141,7 +145,7 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
         { "member_count", p.member_count } } },
   };
   nlohmann::ordered_json samples = nlohmann::ordered_json::array();
-  for (const auto& s : p.samples) {
+  for (const auto& s : p.Reading().samples) {
     samples.push_back({ { "delta_deg", Num(s.delta_deg) },
                         { "azimuth_deg", Num(s.azimuth_deg) },
                         { "value", Num(s.value) },
@@ -149,21 +153,23 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
                         { "k_eff", Num(s.k_eff) } });
   }
   j["samples"] = std::move(samples);
-  nlohmann::ordered_json readings = { { "has_edge", p.readings.has_edge }, { "has_peak", p.readings.has_peak } };
-  if (p.readings.has_edge) {
-    readings["edge_deg"] = Num(p.readings.edge_deg);
+  nlohmann::ordered_json readings = { { "has_edge", p.Reading().readings.has_edge },
+                                      { "has_peak", p.Reading().readings.has_peak } };
+  if (p.Reading().readings.has_edge) {
+    readings["edge_deg"] = Num(p.Reading().readings.edge_deg);
   }
-  if (p.readings.has_peak) {
-    readings["peak_deg"] = Num(p.readings.peak_deg);
-    readings["peak_value"] = Num(p.readings.peak_value);
-    readings["separation_deg"] = Num(p.readings.separation_deg);
+  if (p.Reading().readings.has_peak) {
+    readings["peak_deg"] = Num(p.Reading().readings.peak_deg);
+    readings["peak_value"] = Num(p.Reading().readings.peak_value);
+    readings["separation_deg"] = Num(p.Reading().readings.separation_deg);
   }
   j["readings"] = std::move(readings);
   nlohmann::ordered_json segments = nlohmann::ordered_json::array();
-  for (const auto& s : p.dark_regions) {
-    nlohmann::ordered_json segment = {
-      { "kind", s.kind }, { "lo_deg", Num(s.lo_deg) }, { "hi_deg", Num(s.hi_deg) }, { "bin_count", s.bin_count }
-    };
+  for (const auto& s : p.Reading().dark_regions) {
+    nlohmann::ordered_json segment = { { "kind", ProbeDarkKindName(s.kind) },
+                                       { "lo_deg", Num(s.lo_deg) },
+                                       { "hi_deg", Num(s.hi_deg) },
+                                       { "bin_count", s.bin_count } };
     if (!s.reason.empty()) {
       segment["reason"] = s.reason;
     }

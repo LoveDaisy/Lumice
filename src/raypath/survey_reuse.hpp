@@ -167,7 +167,7 @@ SurveyReuseDecision EvaluateSurveyReuse(const AdmittedWarmSource& warm, double w
 
 // The context's nearest structural anchor, shared by the point and probe queries.
 bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
-                            const char** basis);
+                            ContextEdgeBasis* basis);
 
 // The context's answers, read off a harvest (a warm document's facts or the inline assembly's —
 // the same shape either way): the query point's containment and edge distances in the delta-axis

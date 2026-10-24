@@ -2,6 +2,7 @@
 #define LUMICE_RAYPATH_DOMAIN_EVIDENCE_HPP_
 
 #include <array>
+#include <string>
 #include <string_view>
 #include <utility>
 namespace lumice::raypath::survey {
@@ -11,6 +12,21 @@ enum class EvidenceState {
   kFinite,       // a finite computation; carries a coverage declaration
   kRefused,      // a refusal; the open `mode` string names it
   kUnevaluated,  // not computed; carries the reason
+};
+
+struct SurveyCoverage {
+  int members_evaluated = 0;
+  long long sample_count = 0;
+  std::string geometry_basis = "nominal crystal shape at the distribution centres";
+  double wavelength_nm = 0.0;
+};
+
+struct SurveyEvidence {
+  EvidenceState state = EvidenceState::kUnevaluated;
+  std::string method;                    // certified
+  std::string mode;                      // refused
+  std::string reason = "not_requested";  // unevaluated
+  SurveyCoverage coverage;               // finite
 };
 
 // The name table is the one authority: the writer and the parser below both read it, so a new
@@ -28,7 +44,7 @@ inline const char* EvidenceStateName(EvidenceState state) {
       return entry.first.data();
     }
   }
-  return "finite";
+  return "unevaluated";
 }
 
 // False for anything outside the closed vocabulary.

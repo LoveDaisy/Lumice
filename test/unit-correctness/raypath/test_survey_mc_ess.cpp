@@ -69,17 +69,17 @@ TEST(SurveyMcRegionEss, PositiveShapeEchoesTheRequestAndHoldsTheKishBounds) {
   AssembleMcRegionEss(fix.Input(draws), &document);
   ASSERT_TRUE(document.mc_region_ess.has_value());
   const SurveyMcRegionEss& ess = *document.mc_region_ess;
-  ASSERT_EQ(ess.evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(ess.seed, kSurveyMcEssSeed);
-  EXPECT_EQ(ess.draws, draws);
-  EXPECT_DOUBLE_EQ(ess.lambda_nm, fix.wavelength_nm);
-  EXPECT_DOUBLE_EQ(ess.band_deg, 5.0);
-  ASSERT_EQ(ess.bands.size(), static_cast<size_t>(kSurveyMcEssBandCount));
-  EXPECT_EQ(ess.bands.front().delta_min_deg, 0.0);
-  EXPECT_EQ(ess.bands.back().delta_max_deg, 180.0);
-  EXPECT_FALSE(ess.deterministic);
+  ASSERT_EQ(ess.State(), EvidenceState::kFinite);
+  EXPECT_EQ(ess.Value().seed, kSurveyMcEssSeed);
+  EXPECT_EQ(ess.Value().draws, draws);
+  EXPECT_DOUBLE_EQ(ess.Value().lambda_nm, fix.wavelength_nm);
+  EXPECT_DOUBLE_EQ(ess.Value().band_deg, 5.0);
+  ASSERT_EQ(ess.Value().bands.size(), static_cast<size_t>(kSurveyMcEssBandCount));
+  EXPECT_EQ(ess.Value().bands.front().delta_min_deg, 0.0);
+  EXPECT_EQ(ess.Value().bands.back().delta_max_deg, 180.0);
+  EXPECT_FALSE(ess.Value().deterministic);
   long long total_draw_hits = 0;
-  for (const SurveyMcRegionEssBand& band : ess.bands) {
+  for (const SurveyMcRegionEssBand& band : ess.Value().bands) {
     EXPECT_GE(band.ess, 0.0);
     EXPECT_LE(band.ess, static_cast<double>(draws));  // the Kish hard bound
     EXPECT_GE(band.draw_count, 0);
@@ -99,12 +99,12 @@ TEST(SurveyMcRegionEss, SameSeedTwoRunsAgreeBitwise) {
   AssembleMcRegionEss(fix.Input(500), &second);
   ASSERT_TRUE(first.mc_region_ess.has_value());
   ASSERT_TRUE(second.mc_region_ess.has_value());
-  ASSERT_EQ(first.mc_region_ess->evidence.state, EvidenceState::kFinite);
-  ASSERT_EQ(second.mc_region_ess->evidence.state, EvidenceState::kFinite);
-  for (size_t i = 0; i < first.mc_region_ess->bands.size(); i++) {
-    EXPECT_EQ(first.mc_region_ess->bands[i].ess, second.mc_region_ess->bands[i].ess);
-    EXPECT_EQ(first.mc_region_ess->bands[i].draw_count, second.mc_region_ess->bands[i].draw_count);
-    EXPECT_EQ(first.mc_region_ess->bands[i].sum_weight, second.mc_region_ess->bands[i].sum_weight);
+  ASSERT_EQ(first.mc_region_ess->State(), EvidenceState::kFinite);
+  ASSERT_EQ(second.mc_region_ess->State(), EvidenceState::kFinite);
+  for (size_t i = 0; i < first.mc_region_ess->Value().bands.size(); i++) {
+    EXPECT_EQ(first.mc_region_ess->Value().bands[i].ess, second.mc_region_ess->Value().bands[i].ess);
+    EXPECT_EQ(first.mc_region_ess->Value().bands[i].draw_count, second.mc_region_ess->Value().bands[i].draw_count);
+    EXPECT_EQ(first.mc_region_ess->Value().bands[i].sum_weight, second.mc_region_ess->Value().bands[i].sum_weight);
   }
 }
 
@@ -124,8 +124,8 @@ TEST(SurveyMcRegionEss, AssemblyCarriesTheKeyOnlyWhenRequested) {
   SurveyData with_leg;
   ASSERT_TRUE(AssembleSurveyData(config, request, &with_leg).Ok());
   ASSERT_TRUE(with_leg.mc_region_ess.has_value());
-  EXPECT_EQ(with_leg.mc_region_ess->evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(with_leg.mc_region_ess->draws, 500);
+  EXPECT_EQ(with_leg.mc_region_ess->State(), EvidenceState::kFinite);
+  EXPECT_EQ(with_leg.mc_region_ess->Value().draws, 500);
   // The note names the leg it ran.
   EXPECT_NE(with_leg.budget_note.find("MC region ESS"), std::string::npos);
 }
@@ -158,8 +158,8 @@ TEST(SurveyMcRegionEss, RefusedLegNoteNamesTheRefusalNotARun) {
   SurveyData document;
   ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   ASSERT_TRUE(document.mc_region_ess.has_value());
-  EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.mc_region_ess->evidence.mode, "budget_exhausted");
+  EXPECT_EQ(document.mc_region_ess->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.mc_region_ess->Mode(), "budget_exhausted");
   EXPECT_NE(document.budget_note.find("MC region ESS"), std::string::npos);
   EXPECT_NE(document.budget_note.find("refused"), std::string::npos);
   EXPECT_EQ(document.budget_note.find("seeded draws"), std::string::npos);
@@ -174,8 +174,8 @@ TEST(SurveyMcRegionEss, DiscreteLightSlotHitRunsFinite) {
   SurveyData document;
   AssembleMcRegionEss(fix.Input(500), &document);
   ASSERT_TRUE(document.mc_region_ess.has_value());
-  EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(document.mc_region_ess->draws, 500);
+  EXPECT_EQ(document.mc_region_ess->State(), EvidenceState::kFinite);
+  EXPECT_EQ(document.mc_region_ess->Value().draws, 500);
 }
 
 TEST(SurveyMcRegionEss, DiscreteLightSlotMissRefusesSamplerUnavailable) {
@@ -183,8 +183,8 @@ TEST(SurveyMcRegionEss, DiscreteLightSlotMissRefusesSamplerUnavailable) {
   SurveyData document;
   AssembleMcRegionEss(fix.Input(500), &document);
   ASSERT_TRUE(document.mc_region_ess.has_value());
-  EXPECT_EQ(document.mc_region_ess->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.mc_region_ess->evidence.mode, "sampler_unavailable");
+  EXPECT_EQ(document.mc_region_ess->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.mc_region_ess->Mode(), "sampler_unavailable");
 }
 
 // The serialized shape on a real document: the key list matches the planned schema-4 append

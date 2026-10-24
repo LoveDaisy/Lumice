@@ -24,8 +24,8 @@
 #include "core/crystal_param.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
-#include "raypath/detail/schema3/structure_object.hpp"
 #include "raypath/detail/structure/axis.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath::schema3 {
 

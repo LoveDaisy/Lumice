@@ -248,10 +248,9 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     // stage gate keeps a deadline-fired member from starting the leg at all; inside it, the
     // kernel's own shift-pair bound refuses the features a declared bound cannot compare.
     if (slot_count >= 3 && !PastDeadline(deadline)) {
-      kind1.chromatic =
-          analytic::Diagnose(*in.normals, *in.polygons, slots, slot_count, analytic::kNRed, analytic::kNBlue);
-      kind1.chromatic_assessed = true;
-      kind1.chromatic_thresholds = analytic::ChromaticThresholdsSnapshot();
+      kind1.SetChromatic(
+          analytic::Diagnose(*in.normals, *in.polygons, slots, slot_count, analytic::kNRed, analytic::kNBlue));
+      kind1.Chromatic().thresholds = analytic::ChromaticThresholdsSnapshot();
     }
     out.objects.push_back(std::move(kind1));
   }
