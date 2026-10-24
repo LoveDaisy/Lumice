@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792828977465,
+  "lastUpdate": 1792828983585,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "ac0fbdf294cc91312b0c421c64b99e05db8828fb",
-          "message": "Merge pull request #431 from LoveDaisy/task/gpu-reduce-follows-cpu-symmetry\n\nfix(core): device filter reduction follows the crystal's shape and ensemble symmetry",
-          "timestamp": "2026-09-27T21:42:14+08:00",
-          "tree_id": "900e6e02f3b3e8425e7b98cde0722045fca77d1c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/ac0fbdf294cc91312b0c421c64b99e05db8828fb"
-        },
-        "date": 1790517274397,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 916091.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1025863.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 859514.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 700775.4,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "b845c83f0138957e21f6ba7e7bcf5c1f42a0dfd1",
           "message": "Merge pull request #432 from LoveDaisy/chore/analyze-workspace-layout-docs\n\ndocs: finalize the Analyze workspace layout (raypath-analysis §5.1.8)",
           "timestamp": "2026-09-28T00:31:26+08:00",
@@ -9590,6 +9542,54 @@ window.BENCHMARK_DATA = {
             "value": 900146,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f6b77fdab11fb6bc88f63fcb794f68de73f690ea",
+          "message": "Merge pull request #545 from LoveDaisy/feat/raypath-warm-structure-scope\n\nfix(raypath): scope warm numeric facts to their producing wavelength",
+          "timestamp": "2026-10-24T15:57:44+08:00",
+          "tree_id": "4f5fec9f158d5d80e6cdc8ff173a351e2c42d8c7",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f6b77fdab11fb6bc88f63fcb794f68de73f690ea"
+        },
+        "date": 1792828982926,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 660083.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1011916.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 728429.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 588041.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
