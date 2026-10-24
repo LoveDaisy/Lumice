@@ -705,8 +705,8 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   if (!doc.probes.empty()) {
     const survey::SurveyProbe& probe = doc.probes.front();
     out.has_probe = true;
-    out.has_probe_azimuth = std::isfinite(probe.spec.azimuth_deg);
-    out.probe_azimuth_deg = probe.spec.azimuth_deg;
+    out.has_probe_azimuth = probe.spec.azimuth_deg.has_value() && std::isfinite(*probe.spec.azimuth_deg);
+    out.probe_azimuth_deg = probe.spec.azimuth_deg.value_or(0.0);
     out.probe_bin_deg = probe.spec.bin_deg;
     out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
     for (const survey::SurveyProbeSample& sample : probe.samples) {

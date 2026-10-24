@@ -8,6 +8,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "include/lumice_base.h"
@@ -216,6 +217,34 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
   ProbeResult unknown_line;
   ASSERT_TRUE(AnalyzePathProbe(config, request, &unknown_line).Ok());
   EXPECT_EQ(unknown_line.profiles.front().source, "recomputed");
+}
+
+TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile) {
+  const ConfigManager config = survey::PlateScene(1.5, 0.3);
+  const SurveyWarmSource crafted = CraftedWarm(550.0, 20000);
+  survey::SurveyDocument document;
+  document.wavelength_nm = 550.0;
+  document.sun_altitude_deg = 20.0;
+  survey::SurveyProbe probe;
+  probe.spec.bin_deg = crafted.probe_bin_deg;
+  probe.spec.sample_count = crafted.probe_sample_count;
+  for (const auto& sample : crafted.probe_samples) {
+    probe.samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
+  }
+  document.probes.push_back(std::move(probe));
+
+  SurveyWarmSource warm = HarvestSurveyDocument(document);
+  warm.index_present = true;
+  ASSERT_TRUE(warm.has_probe);
+  EXPECT_FALSE(warm.has_probe_azimuth);
+  ProbeRequest request = RadialRequest(config, -10.0, 0.0);
+  request.wavelengths_nm = { 550.0 };
+  request.warm_survey = warm;
+  ProbeResult result;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
+  ASSERT_EQ(result.profiles.size(), 1u);
+  EXPECT_NEAR(result.meta.at_azimuth_about_sun_deg, 0.0, 1e-9);
+  EXPECT_EQ(result.profiles.front().source, "recomputed");
 }
 
 // The edge-normal form: the window anchors at the nearest of the support endpoints and the
