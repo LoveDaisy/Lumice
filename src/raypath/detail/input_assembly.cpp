@@ -216,7 +216,7 @@ Error CaptureInput(const SceneConfig& scene, const std::string& scene_identity,
     if (!found)
       return { ErrorCode::kUnknownCrystalId, "crystal key absent from selected layer" };
     snapshot.layers.push_back({ scene_identity, layer.layer_index, *found, layer.representative, layer.symmetry_bits,
-                                SymmetrySemantics::kPhysical });
+                                SymmetrySemantics::kPhysical, layer.location });
   }
   *out = std::move(snapshot);
   return {};
@@ -407,7 +407,7 @@ Error EvaluateChain(const AssembledInput& input, const std::vector<size_t>& memb
     const auto& faces = layer.scope.members[members[i]];
     LayerEvaluation evaluation;
     evaluation.incident = direction;
-    if (layer.geometry_status != analytic::Status::kOk) {
+    if (layer.geometry.kind != GeometryKind::kRealized || layer.geometry_status != analytic::Status::kOk) {
       result.layers.push_back(std::move(evaluation));
       *out = std::move(result);
       return {};

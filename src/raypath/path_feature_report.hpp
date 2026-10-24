@@ -15,6 +15,7 @@
 #include "config/config_manager.hpp"
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
+#include "raypath/domain/scope.hpp"
 
 namespace lumice::raypath {
 constexpr int kFeatureReportSchemaVersion = 3;
@@ -26,9 +27,7 @@ constexpr uint64_t kDefaultFeatureReportOpticalEvaluations = 4000000;
 constexpr uint64_t kDefaultFeatureReportFieldEvaluations = 250000000;
 constexpr int kDefaultFeatureReportBudgetMs = 15000;
 constexpr int kMaxFeatureReportBudgetMs = 120000;
-struct PathFeatureReportRequest {
-  IdType crystal_id = 0;
-  std::vector<std::vector<int>> path_layers;
+struct PathFeatureReportRequest : PathSelection {
   std::vector<double> wavelengths_nm;
   std::vector<double> wavelength_weights;
   int sample_count = 0;  // zero selects a work-aware dyadic prefix
@@ -37,8 +36,6 @@ struct PathFeatureReportRequest {
   uint64_t max_field_evaluations = kDefaultFeatureReportFieldEvaluations;
   double bandwidth_rad = 3.14159265358979323846 / 180;
   double location_resolution_rad = .05 * 3.14159265358979323846 / 180;
-  uint8_t symmetry_bits = 7;  // physical P|B|D; zero means the concrete requested path
-  std::optional<size_t> scene_layer;
   std::optional<std::chrono::steady_clock::time_point> deadline;
 };
 

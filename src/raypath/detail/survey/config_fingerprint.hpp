@@ -27,14 +27,9 @@
 #include <vector>
 
 #include "config/config_manager.hpp"
+#include "raypath/domain/scope.hpp"
 
 namespace lumice::raypath::survey {
-
-// The physical symmetry bits the scope runs under unless a caller names another: the survey
-// command's default, the point query's inline-assembly scope, and the same query's fingerprint
-// input are one semantic — this constant is its one spelling (three bare 7s would drift the day
-// the default moves).
-constexpr uint8_t kDefaultSymmetryBits = 7;
 
 // `path_layers` is the request's own layer encoding (the survey request's, already validated).
 std::string RoutingConfigFingerprint(const ConfigManager& config, uint64_t crystal_id,

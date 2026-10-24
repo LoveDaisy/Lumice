@@ -30,6 +30,7 @@
 
 #include "analytic/family_rank.hpp"
 #include "analytic/path_evaluation.hpp"
+#include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"  // PoseDensityConversion
 
@@ -52,27 +53,12 @@ inline constexpr double kSurvivalSpotFloorDeg = 1.0;
 // one-dimensional family's image track and the extent basis of a two-dimensional family's
 // domain): at most 16 EvaluateFamilyPoint calls, a determinism and cost bound in one.
 inline constexpr int kFamilyExtentProbeCount = 16;
-// The refusal mode prefix of the v1 domain gate (the mode is an open string; the named shape
-// follows the colon).
-inline constexpr const char* kMeasureOutsideDomainPrefix = "measure_shape_outside_routing_domain: ";
-
 // One freeze candidate: a gauss zenith/roll dimension with the width that ranks it.
 struct FamilyFreezeCandidate {
   analytic::FamilyDimension dim = analytic::FamilyDimension::kRoll;  // never kAzimuth
   double center_deg = 0.0;  // the freeze value (the parameter centre), normalized legal
   double width_deg = 0.0;   // the measure's sigma — the filter's input, never the rank's
 };
-
-// The measure reading: the extraction plus the v1 domain gate, one call (the gate reads the
-// same classification the echo reports, so the two can never disagree about what was read).
-struct FamilyMeasureReading {
-  bool ok = false;
-  std::string refusal_mode;  // kMeasureOutsideDomainPrefix + the named shape, when !ok
-  bool single_pose = false;  // all three dimensions fixed — the 0D arm (in the domain)
-  FamilyRoutingMeasure measure;
-};
-
-FamilyMeasureReading ReadFamilyMeasure(const AxisDistribution& axis);
 
 // The freeze candidates tightest-first (ties zenith before roll — canonical, deterministic).
 std::vector<FamilyFreezeCandidate> FreezeCandidates(const FamilyRoutingMeasure& measure);

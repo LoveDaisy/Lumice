@@ -850,7 +850,7 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
     SurveyRequest survey_request;
     survey_request.crystal_id = request.crystal_id;
     survey_request.path_layers = request.path_layers;
-    survey_request.symmetry_bits = survey::kDefaultSymmetryBits;
+    survey_request.symmetry_bits = kDefaultSymmetryBits;
     survey_request.wavelength_nm = meta.wavelength_nm;
     survey::SurveyDocument doc;
     const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });

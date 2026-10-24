@@ -117,7 +117,7 @@ LUMICE_ErrorCode GateWarm(const lumice::ConfigManager& config, const std::string
   gate.crystal_id = static_cast<long long>(crystal_id);
   gate.path_layers = path_layers;
   gate.config_fingerprint =
-      rp::survey::RoutingConfigFingerprint(config, crystal_id, path_layers, rp::survey::kDefaultSymmetryBits);
+      rp::survey::RoutingConfigFingerprint(config, crystal_id, path_layers, rp::kDefaultSymmetryBits);
   const auto configured = config.crystals_.find(crystal_id);
   rp::SurveyWarmSource survey_source;
   if (const rp::Error e = rp::ParseWarmStart(warm_text, gate, seeds, &survey_source); !e.Ok()) {

@@ -14,6 +14,7 @@
 #include "config/config_manager.hpp"
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
+#include "raypath/domain/scope.hpp"
 
 namespace lumice::raypath {
 // The survey document family is its own schema (schema 4); it shares nothing field-wise with the
@@ -22,14 +23,11 @@ constexpr int kSurveySchemaVersion = 4;
 constexpr int kDefaultSurveyBudgetMs = 15000;
 constexpr int kMaxSurveyBudgetMs = 120000;
 
-struct SurveyRequest {
-  IdType crystal_id = 0;
-  std::vector<std::vector<int>> path_layers;
+struct SurveyRequest : PathSelection {
   // Unset: the scene's wavelength if its spectrum is exactly one discrete wavelength, else
   // kDefaultWavelengthNm — the same resolution the target-fiber request spells.
   std::optional<double> wavelength_nm;
   int budget_ms = kDefaultSurveyBudgetMs;
-  uint8_t symmetry_bits = 7;  // physical P|B|D; zero means the concrete requested path
   // 0 (the default) = the opt-in MC region ESS leg does not run; positive = its requested
   // draw count, at most survey::kSurveyMcEssMaxDraws (enforced in AssembleSurvey).
   int mc_ess_draws = 0;

@@ -157,6 +157,7 @@ PoseDensityConversion ConvertAxisToPoseDensity(const AxisDistribution& axis) {
   PoseDensityConversion out;
   if (axis.IsFullSphereUniform()) {
     out.spec.family = analytic::PoseFamily::kRandom;
+    out.measure.reference = ReferenceMeasure::kHaar;
     return out;
   }
   if (!axis.IsAzRotationallySymmetric()) {

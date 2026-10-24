@@ -675,8 +675,7 @@ TEST_F(WarmContract, WarmHarvestCarriesTheKappaFields) {
   rp::WarmGateContext gate;
   gate.crystal_id = 1;
   gate.path_layers = { { 3, 5 } };
-  gate.config_fingerprint =
-      rp::survey::RoutingConfigFingerprint(config, 1, gate.path_layers, rp::survey::kDefaultSymmetryBits);
+  gate.config_fingerprint = rp::survey::RoutingConfigFingerprint(config, 1, gate.path_layers, rp::kDefaultSymmetryBits);
   std::vector<double> seeds;
   rp::SurveyWarmSource harvest;
   const rp::Error e = rp::ParseWarmStart(RandomSurvey(), gate, &seeds, &harvest);

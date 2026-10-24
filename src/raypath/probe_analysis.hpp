@@ -31,6 +31,7 @@
 #include "config/config_manager.hpp"
 #include "core/def.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
+#include "raypath/domain/scope.hpp"
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
@@ -56,11 +57,9 @@ const char* ProbeAlongName(ProbeAlong along);
 constexpr int kDefaultProbeBudgetMs = 15000;
 constexpr int kMaxProbeBudgetMs = 120000;
 
-struct ProbeRequest {
-  IdType crystal_id = 0;
+struct ProbeRequest : PathSelection {
   // One face sequence per scattering layer, as the point request spells; v1 takes exactly one
   // layer and refuses more.
-  std::vector<std::vector<int>> path_layers;
   ProbeAlong along = ProbeAlong::kRadial;
   // The user's sky point (`analyze --center` convention). The radial/edge-normal forms read its
   // azimuth about the sun; arc/tangential read its deviation. Uniform densities are

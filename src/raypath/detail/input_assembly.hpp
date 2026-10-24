@@ -80,6 +80,7 @@ struct LayerSelection {
   IdType crystal_id;
   std::vector<int> representative;
   uint8_t symmetry_bits;
+  SelectionLocation location = SelectionLocation::kSceneLayer;
 };
 struct InputSnapshot {
   std::string scene_identity;
@@ -126,6 +127,7 @@ struct DiscreteSpectrumSum {};
 using SpectrumRequest = std::variant<DiscreteSpectrumSum, WavelengthSample, SpectrumQuadrature>;
 
 struct AssembledLayer {
+  GeometryScope geometry{ GeometryKind::kRealized };
   PhysicalMemberScope scope;
   LayerSample sample;
   ShapeSample shape_sample;

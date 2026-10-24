@@ -306,7 +306,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     SurveyRequest survey_request;
     survey_request.crystal_id = request.crystal_id;
     survey_request.path_layers = request.path_layers;
-    survey_request.symmetry_bits = survey::kDefaultSymmetryBits;
+    survey_request.symmetry_bits = kDefaultSymmetryBits;
     survey_request.wavelength_nm = reference_nm;
     survey::SurveyDocument doc;
     const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
@@ -333,9 +333,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
 
   // ---- the class scope and the density conversion (the survey assembly's own authority) ----
   survey::CrystalSceneScope class_scope;
-  if (Error e = survey::ResolveCrystalSceneScope(config, request.crystal_id, request.path_layers,
-                                                 survey::kDefaultSymmetryBits, &class_scope);
-      !e.Ok()) {
+  if (Error e = survey::ResolveCrystalSceneScope(config, request, &class_scope); !e.Ok()) {
     return e;
   }
   const int member_count = static_cast<int>(class_scope.members.size());

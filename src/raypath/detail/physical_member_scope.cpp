@@ -27,6 +27,9 @@ Error ResolvePhysicalMemberScope(const PhysicalMemberRequest& request, PhysicalM
   }
   PhysicalMemberScope result;
   result.snapshot = request;
+  result.layer_index = request.layer_index;
+  result.location = request.location;
+  result.member_kind = request.symmetry_bits == 0 ? MemberKind::kLiteral : MemberKind::kPhysicalL2;
   const auto shape = std::visit([](const auto& p) { return DeriveGeometricSymmetry(p); }, request.crystal.param_);
   result.gating = DeriveSymmetryGating(request.semantics, shape, request.crystal.axis_);
   const auto d = detail::DeriveDSymmetryParams(request.crystal.axis_);

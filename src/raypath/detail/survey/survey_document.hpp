@@ -17,6 +17,7 @@
 #include "analytic/family_rank.hpp"  // FamilyDimension: the frozen_dims rows' own enum
 #include "analytic/path_rank.hpp"    // the certificate's tolerances are the kernel's own constants
 #include "raypath/detail/survey/evidence.hpp"
+#include "raypath/domain/measure.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -123,38 +124,6 @@ struct SurveyCertificate {
 // APPEND that carries it; the block appears on exactly the documents the family arm produced
 // (the probes key's own conditional-presence discipline — an early stop, a full-dimensional
 // route and an outside-domain refusal carry none).
-
-// The routing vocabulary of one orientation dimension. A width NEVER enters a rank question —
-// it feeds only the freeze order and the survival filter.
-enum class FamilyDimKind { kFixed, kGauss, kUniformFull };
-
-inline const char* FamilyDimKindName(FamilyDimKind kind) {
-  switch (kind) {
-    case FamilyDimKind::kFixed:
-      return "fixed";
-    case FamilyDimKind::kGauss:
-      return "gauss";
-    case FamilyDimKind::kUniformFull:
-      return "uniform";
-  }
-  return "uniform";
-}
-
-struct FamilyDimMeasure {
-  FamilyDimKind kind = FamilyDimKind::kUniformFull;
-  double center_deg = 0.0;  // the fixed value / gauss mean / the uniform's own midpoint echo
-  double width_deg = 0.0;   // the gauss sigma (the freeze candidate's width); 0 for fixed; the
-                            // uniform's full range as a raw echo — a uniform is never a freeze
-                            // candidate, so its width is display only
-};
-
-// The measure the router read, in ROUTING coordinates (zenith = 90 - latitude, the density
-// conversion's own formula), so the echo and the kernel's family dimensions speak one name.
-struct FamilyRoutingMeasure {
-  FamilyDimMeasure zenith;
-  FamilyDimMeasure azimuth;
-  FamilyDimMeasure roll;
-};
 
 // The dimension names in canonical (zenith, azimuth, roll) order — the kernel enum's own order;
 // the family block's dim vocabulary on the wire (frozen_dims rows and free_dims entries),

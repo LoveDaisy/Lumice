@@ -32,6 +32,7 @@
 #include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
+#include "raypath/domain/scope.hpp"
 
 namespace lumice::raypath {
 
@@ -164,12 +165,10 @@ struct SurveyContextBlock {
   std::string band_sum_caliber;  // both sides' lambda/sun identity, for the reading's declaration
 };
 
-struct SinglePathRequest {
-  IdType crystal_id = 0;
+struct SinglePathRequest : PathSelection {
   // One face sequence per scattering layer, in Lumice face numbers (entry, internal reflections,
   // exit). v1 takes exactly one layer; the list shape exists so a shell can hand over whatever the
   // user wrote and this module alone decides what is refused.
-  std::vector<std::vector<int>> path_layers;
   // The sky point, azimuth measured as the sun's (`analyze --center` convention).
   double target_altitude_deg = 0.0;
   double target_azimuth_deg = 0.0;

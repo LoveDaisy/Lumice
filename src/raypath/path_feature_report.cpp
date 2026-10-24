@@ -87,8 +87,10 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
     }
     spectrum = std::move(quadrature);
   }
-  const std::vector<LayerSelection> selection{ { layer_index, request.crystal_id, request.path_layers[0],
-                                                 request.symmetry_bits } };
+  const std::vector<LayerSelection> selection{
+    { layer_index, request.crystal_id, request.path_layers[0], request.symmetry_bits,
+      layer_index >= config.scene_.ms_.size() ? SelectionLocation::kStandalone : SelectionLocation::kSceneLayer }
+  };
   InputSnapshot snapshot;
   const std::string identity = layer_index >= config.scene_.ms_.size() ?
                                    "standalone configured crystal (not a scene allocation)" :

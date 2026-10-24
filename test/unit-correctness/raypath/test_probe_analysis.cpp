@@ -179,8 +179,7 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
   ASSERT_EQ(analytic::BuildFaceNormals(ConvertCrystal(config.crystals_.at(1).param_).shape, &table, &polygons),
             analytic::Status::kOk);
   survey::CrystalSceneScope scope;
-  ASSERT_TRUE(
-      survey::ResolveCrystalSceneScope(config, 1, request.path_layers, survey::kDefaultSymmetryBits, &scope).Ok());
+  ASSERT_TRUE(survey::ResolveCrystalSceneScope(config, request, &scope).Ok());
   WavelengthChoice wavelength;
   ASSERT_TRUE(ResolveWavelength(config.scene_.light_source_, 550.0, &wavelength).Ok());
   double incident[3];

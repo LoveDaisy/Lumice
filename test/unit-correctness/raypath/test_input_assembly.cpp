@@ -7,7 +7,11 @@
 #include "core/wl_stratifier.hpp"
 #include "gtest/gtest.h"
 #include "raypath/detail/input_assembly.hpp"
+#include "raypath/detail/input_scope.hpp"
+#include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
+#include "raypath/scene_to_analytic.hpp"
+#include "survey_test_fixtures.hpp"
 #include "util/illuminant.hpp"
 
 namespace {
@@ -169,3 +173,44 @@ TEST(AssembledInputMembers, SnapshotBitsAndEnsembleGateDoNotReadLiveState) {
 }
 
 }  // namespace
+
+TEST(AssembledInputMembers, TypedSelectionKeepsLiteralAndLocationDistinct) {
+  auto config = rp::survey::RandomPrismScene();
+  rp::PathSelection selected;
+  selected.crystal_id = 1;
+  selected.path_layers = { { 3, 5 } };
+  rp::survey::CrystalSceneScope physical;
+  ASSERT_TRUE(rp::survey::ResolveCrystalSceneScope(config, selected, &physical).Ok());
+  EXPECT_EQ(physical.member_kind, rp::MemberKind::kPhysicalL2);
+  EXPECT_GT(physical.members.size(), 1u);
+  selected.symmetry_bits = 0;
+  selected.scene_layer = 0;
+  rp::survey::CrystalSceneScope literal;
+  ASSERT_TRUE(rp::survey::ResolveCrystalSceneScope(config, selected, &literal).Ok());
+  EXPECT_EQ(literal.member_kind, rp::MemberKind::kLiteral);
+  EXPECT_EQ(literal.location, rp::SelectionLocation::kSceneLayer);
+  EXPECT_EQ(literal.members, selected.path_layers);
+  config.scene_.ms_.clear();
+  selected.scene_layer.reset();
+  rp::InputSnapshot snapshot;
+  ASSERT_TRUE(rp::survey::ResolveCrystalSceneScope(config, selected, &literal, &snapshot).Ok());
+  EXPECT_EQ(literal.location, rp::SelectionLocation::kStandalone);
+  EXPECT_EQ(snapshot.layers.front().location, rp::SelectionLocation::kStandalone);
+  selected.scene_layer = 0;
+  EXPECT_FALSE(rp::survey::ResolveCrystalSceneScope(config, selected, &literal).Ok());
+}
+
+TEST(AssembledInputMembers, NominalGeometryAndActualMeasureHaveExplicitScopes) {
+  auto config = rp::survey::PlateScene(1.5, 0.3);
+  const auto& crystal = config.crystals_.at(1);
+  EXPECT_EQ(rp::ConvertCrystal(crystal.param_).geometry.kind, rp::GeometryKind::kNominal);
+  EXPECT_EQ(rp::AssembledLayer{}.geometry.kind, rp::GeometryKind::kRealized);
+  const auto measure = rp::survey::ReadFamilyMeasure(crystal.axis_);
+  ASSERT_TRUE(measure.ok);
+  EXPECT_EQ(measure.measure.scope.kind, rp::MeasureKind::kActualDeclared);
+  EXPECT_EQ(measure.measure.zenith.kind, rp::survey::FamilyDimKind::kGauss);
+  EXPECT_GT(measure.measure.zenith.width_deg, 0.0);
+  EXPECT_EQ(rp::ConvertAxisToPoseDensity(crystal.axis_).measure.reference, rp::ReferenceMeasure::kDeclaredAngles);
+  const auto haar = rp::survey::RandomPrismScene();
+  EXPECT_EQ(rp::ConvertAxisToPoseDensity(haar.crystals_.at(1).axis_).measure.reference, rp::ReferenceMeasure::kHaar);
+}

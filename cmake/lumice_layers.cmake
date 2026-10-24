@@ -263,6 +263,12 @@ set(LUMICE_LAYER_engine_FILES
 
 set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
+  raypath/domain/scope.hpp
+  raypath/domain/measure.hpp
+  raypath/detail/input_scope.hpp
+  raypath/detail/input_scope.cpp
+  raypath/detail/measure_scope.hpp
+  raypath/detail/measure_scope.cpp
   raypath/domain/error.cpp
   raypath/domain/error.hpp
   raypath/domain/input_metadata.cpp

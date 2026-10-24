@@ -143,51 +143,6 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
 
 }  // namespace
 
-Error ResolveCrystalSceneScope(const ConfigManager& config, IdType crystal_id,
-                               const std::vector<std::vector<int>>& path_layers, uint8_t symmetry_bits,
-                               CrystalSceneScope* out, InputSnapshot* snapshot_out) {
-  const auto configured = config.crystals_.find(crystal_id);
-  if (configured == config.crystals_.end()) {
-    return { ErrorCode::kUnknownCrystalId, "unknown crystal id" };
-  }
-  // The class: physical P|B|D by default, the literal sequence at bits 0. A configured but
-  // unused crystal stays a valid standalone diagnostic object (the report's layer rule).
-  SceneConfig scene = config.scene_;
-  size_t layer_index = scene.ms_.size();
-  for (size_t i = 0; i < scene.ms_.size(); ++i) {
-    if (std::any_of(scene.ms_[i].setting_.begin(), scene.ms_[i].setting_.end(),
-                    [&](const auto& setting) { return setting.crystal_.id_ == crystal_id; })) {
-      layer_index = i;
-      break;
-    }
-  }
-  if (layer_index == scene.ms_.size()) {
-    ScatteringSetting setting{};
-    setting.crystal_ = configured->second;
-    setting.crystal_proportion_ = 1;
-    scene.ms_.push_back({ 0, { setting } });
-  }
-  out->in_scene = layer_index < config.scene_.ms_.size();
-  out->layer_index = layer_index;
-  out->identity =
-      out->in_scene ? "selected scene entry snapshot" : "standalone configured crystal (not a scene allocation)";
-  const std::vector<LayerSelection> selection{ { layer_index, crystal_id, path_layers[0], symmetry_bits } };
-  InputSnapshot snapshot;
-  if (Error error = CaptureInput(scene, out->identity, selection, &snapshot); !error.Ok()) {
-    return error;
-  }
-  PhysicalMemberScope scope;
-  if (Error error = ResolvePhysicalMemberScope(snapshot.layers.front(), &scope); !error.Ok()) {
-    return error;
-  }
-  out->members = scope.members;
-  out->density = ConvertAxisToPoseDensity(configured->second.axis_);
-  if (snapshot_out != nullptr) {
-    *snapshot_out = std::move(snapshot);
-  }
-  return {};
-}
-
 Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out,
                      const SurveyAssemblyOptions& options) {
   if (out == nullptr) {
@@ -242,9 +197,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   // unused crystal stays a valid standalone diagnostic object (the report's layer rule).
   CrystalSceneScope class_scope;
   InputSnapshot snapshot;
-  if (Error error = ResolveCrystalSceneScope(config, request.crystal_id, request.path_layers, request.symmetry_bits,
-                                             &class_scope, &snapshot);
-      !error.Ok()) {
+  if (Error error = ResolveCrystalSceneScope(config, request, &class_scope, &snapshot); !error.Ok()) {
     return error;
   }
   const std::string& identity = class_scope.identity;
@@ -260,7 +213,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   out->request.wavelength_nm = request.wavelength_nm.value_or(0.0);
   out->request.budget_ms = request.budget_ms;
   out->scene_identity = identity;
-  if (class_scope.in_scene) {
+  if (class_scope.location == SelectionLocation::kSceneLayer) {
     out->scene_layer = static_cast<long long>(class_scope.layer_index);
   }
   out->members = scope_members;
