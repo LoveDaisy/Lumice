@@ -93,6 +93,53 @@ double Angle(const double a[3], const double b[3]) {
   return std::atan2(analytic::so3::Norm3(c), analytic::so3::Dot3(a, b));
 }
 
+TEST(SurveyReuse, StructureAndReadingHaveSeparateScopeDependencies) {
+  SurveyWarmSource warm;
+  warm.has_support = true;
+  warm.intervals.push_back({ 21.9, 40.0, { 3, 5 } });
+  warm.has_wavelength = true;
+  warm.wavelength_nm = 550.0;
+  warm.has_sun_altitude = true;
+  warm.sun_altitude_deg = 20.0;
+  warm.has_sun_azimuth = true;
+  warm.sun_azimuth_deg = 0.0;
+
+  SurveyContextBlock context;
+  context.source = "warm";
+  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
+  EXPECT_EQ(context.object.state, "certified");
+  EXPECT_TRUE(context.target_inside_support);
+  EXPECT_EQ(context.edge.state, "finite");
+
+  context = SurveyContextBlock{};
+  context.source = "warm";
+  FillSurveyContext(warm, 22.1, 450.0, 20.0, 0.0, &context);
+  EXPECT_EQ(context.object.reason, "scope_value_mismatch");
+  EXPECT_EQ(context.edge.reason, "scope_value_mismatch");
+
+  context = SurveyContextBlock{};
+  context.source = "warm";
+  FillSurveyContext(warm, 41.0, 550.0, 30.0, 0.0, &context);
+  EXPECT_EQ(context.object.state, "certified");
+  EXPECT_FALSE(context.target_inside_support);
+  EXPECT_DOUBLE_EQ(context.object_distance_deg, 1.0);
+
+  warm.has_sun_altitude = false;
+  context = SurveyContextBlock{};
+  context.source = "warm";
+  warm.has_probe = true;
+  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
+  EXPECT_EQ(context.object.state, "certified");
+  EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
+  warm.has_wavelength = false;
+  context = SurveyContextBlock{};
+  context.source = "warm";
+  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
+  EXPECT_EQ(context.object.reason, "scope_field_missing");
+  EXPECT_EQ(context.edge.reason, "scope_field_missing");
+  EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
+}
+
 // ---- conversions ----------------------------------------------------------------------------
 
 TEST(SinglePathConvert, TakesTheCentreSlotOfEveryDistribution) {

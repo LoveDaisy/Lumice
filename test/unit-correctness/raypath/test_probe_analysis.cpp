@@ -11,8 +11,11 @@
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
+#include "raypath/detail/survey/config_fingerprint.hpp"
+#include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/probe_json.hpp"
+#include "raypath/scene_to_analytic.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath {
@@ -40,11 +43,15 @@ SurveyWarmSource CraftedWarm(double wavelength_nm, int sample_count) {
   SurveyWarmSource warm;
   warm.from_survey_document = true;
   warm.index_present = true;
-  warm.has_scope = true;
+  warm.has_wavelength = true;
   warm.wavelength_nm = wavelength_nm;
   warm.wavelength_source = "default";
-  warm.sun_altitude_deg = 0.0;  // RandomPrismScene's sun (0, 0)
+  warm.has_sun_altitude = true;
+  warm.sun_altitude_deg = 0.0;
+  warm.has_sun_azimuth = true;
   warm.sun_azimuth_deg = 0.0;
+  warm.has_probe_azimuth = true;
+  warm.probe_azimuth_deg = 0.0;
   warm.has_support = true;
   warm.intervals.push_back({ 21.9, 40.0, { 3, 5 } });
   warm.has_edge = true;
@@ -163,12 +170,50 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
   request.wavelengths_nm = { 550.0 };
   SurveyWarmSource warm = CraftedWarm(550.0, 20000);
   warm.sun_altitude_deg = 20.0;
+  analytic::FaceNormalTable table;
+  analytic::FacePolygonTable polygons;
+  ASSERT_EQ(analytic::BuildFaceNormals(ConvertCrystal(config.crystals_.at(1).param_).shape, &table, &polygons),
+            analytic::Status::kOk);
+  survey::CrystalSceneScope scope;
+  ASSERT_TRUE(
+      survey::ResolveCrystalSceneScope(config, 1, request.path_layers, survey::kDefaultSymmetryBits, &scope).Ok());
+  WavelengthChoice wavelength;
+  ASSERT_TRUE(ResolveWavelength(config.scene_.light_source_, 550.0, &wavelength).Ok());
+  double incident[3];
+  SunIncidentDirection(config.scene_.light_source_.param_, incident);
+  const survey::ProbeFrame frame = survey::MakeProbeFrame(incident);
+  const survey::ProbeLineLayout producer_layout = survey::AxisLineLayout(0.0, 180.0, 0.0);
+  const survey::ProbeLineProfile producer =
+      survey::EvaluateProbeLine(table, polygons, request.path_layers[0], scope.density, frame, producer_layout, 550.0,
+                                wavelength.refractive_index, incident, 20000);
+  ASSERT_EQ(producer.samples.size(), warm.probe_samples.size());
+  for (size_t k = 0; k < producer.samples.size(); k++) {
+    warm.probe_samples[k] = { producer.samples[k].delta_deg, producer.samples[k].value, producer.samples[k].k,
+                              producer.samples[k].k_eff };
+  }
   request.warm_survey = warm;
   ProbeResult result;
   ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_NE(result.meta.at_azimuth_about_sun_deg, 0.0);
   EXPECT_EQ(result.profiles.front().source, "recomputed");
+  size_t different_bins = 0;
+  for (size_t k = 0; k < producer.samples.size(); k++) {
+    different_bins += result.profiles.front().samples[k].value != producer.samples[k].value;
+  }
+  EXPECT_GT(different_bins, 0u);
+
+  request.at_azimuth_deg = 0.0;
+  ProbeResult same_line;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &same_line).Ok());
+  EXPECT_NEAR(same_line.meta.at_azimuth_about_sun_deg, 0.0, 1e-9);
+  EXPECT_EQ(same_line.profiles.front().source, "warm_reused");
+  EXPECT_DOUBLE_EQ(same_line.profiles.front().samples[kEdgeBin].value, warm.probe_samples[kEdgeBin].value);
+
+  request.warm_survey->has_probe_azimuth = false;
+  ProbeResult unknown_line;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &unknown_line).Ok());
+  EXPECT_EQ(unknown_line.profiles.front().source, "recomputed");
 }
 
 // The edge-normal form: the window anchors at the nearest of the support endpoints and the
@@ -192,10 +237,23 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   EXPECT_EQ(profile.source, "recomputed");  // only the radial form reuses the warm map
   EXPECT_EQ(profile.anchor_basis, "caustic_edge_position");
   EXPECT_DOUBLE_EQ(profile.anchor_deg, 22.25);
+  EXPECT_DOUBLE_EQ(profile.anchor_wavelength_nm, 550.0);
+  EXPECT_DOUBLE_EQ(result.context.reference_wavelength_nm, 550.0);
   EXPECT_DOUBLE_EQ(profile.window_half_width_deg, 10.0);
   EXPECT_NEAR(profile.delta_min_deg, 12.25, 1e-9);
   EXPECT_NEAR(profile.delta_max_deg, 32.25, 1e-9);
   EXPECT_EQ(profile.samples.size(), 200u);
+
+  request.wavelengths_nm = { 550.0, 450.0 };
+  ProbeResult two_wavelengths;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &two_wavelengths).Ok());
+  ASSERT_EQ(two_wavelengths.profiles.size(), 2u);
+  EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].anchor_wavelength_nm, 550.0);
+  EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].anchor_deg, 22.25);
+  EXPECT_DOUBLE_EQ(two_wavelengths.profiles[1].wavelength_nm, 450.0);
+  EXPECT_EQ(two_wavelengths.profiles[1].dark_regions.front().kind, "unknown");
+  const nlohmann::json wire = nlohmann::json::parse(ProbeToJson(two_wavelengths, "test"));
+  EXPECT_DOUBLE_EQ(wire["profiles"][1]["spec"]["anchor_wavelength_nm"].get<double>(), 550.0);
 
   // The no-edge arm: a support-less context refuses by name.
   ProbeRequest refused = RadialRequest(config, -30.0, 0.0);
@@ -204,7 +262,7 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   SurveyWarmSource empty_warm;
   empty_warm.from_survey_document = true;
   empty_warm.index_present = true;
-  empty_warm.has_scope = true;
+  empty_warm.has_wavelength = true;
   empty_warm.wavelength_nm = 550.0;
   refused.warm_survey = empty_warm;
   ProbeResult refused_result;
@@ -256,6 +314,12 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   EXPECT_LE(profile.readings.edge_deg, 10.0);
   EXPECT_GE(profile.readings.peak_deg, -10.0);
   EXPECT_LE(profile.readings.peak_deg, 10.0);
+
+  request.wavelengths_nm = { 450.0 };
+  ProbeResult wrong_lambda;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &wrong_lambda).Ok());
+  EXPECT_EQ(wrong_lambda.profiles.front().dark_regions.front().kind, "unknown");
+  EXPECT_EQ(wrong_lambda.profiles.front().dark_regions.front().reason, "scope_value_mismatch");
 
   // The degenerate pole: an arc through the sun itself is not a circle there.
   ProbeRequest degenerate = RadialRequest(config, 0.0, 0.0);
@@ -464,6 +528,7 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   const nlohmann::ordered_json doc = nlohmann::ordered_json::parse(finite_json);
   EXPECT_EQ(doc["schema"], "lumice.path-probe");
   EXPECT_EQ(doc["schema_version"], 5);
+  EXPECT_DOUBLE_EQ(doc["context"]["reference_wavelength_nm"].get<double>(), 550.0);
   static const char* kTopKeys[] = { "schema", "schema_version", "generator", "conventions",
                                     "meta",   "context",        "profiles" };
   size_t k = 0;

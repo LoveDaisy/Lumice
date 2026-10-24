@@ -97,12 +97,12 @@ struct SurveyWarmSource {
   bool from_survey_document = false;
   bool index_present = false;
   bool early_stopped = false;  // the identity arm: no delta-axis structure exists to reuse
-  // The scope receipt (the band-sum consumption gate's comparison side). has_scope false = the
-  // receipt (or a field of it) was missing — that gate answers scope_field_missing.
-  bool has_scope = false;
+  bool has_wavelength = false;
   double wavelength_nm = 0.0;
-  std::string wavelength_source;  // carried for the reading's caliber declaration, never compared
+  std::string wavelength_source;
+  bool has_sun_altitude = false;
   double sun_altitude_deg = 0.0;
+  bool has_sun_azimuth = false;
   double sun_azimuth_deg = 0.0;
   // The support: every support card's delta-axis intervals, with the card's members (the first
   // layer's faces — both harvest arms read that same layer). has_support true exactly when at
@@ -127,6 +127,8 @@ struct SurveyWarmSource {
                          // warm document's numbers and not a manufactured zero
   };
   bool has_probe = false;
+  bool has_probe_azimuth = false;
+  double probe_azimuth_deg = 0.0;
   double probe_bin_deg = 0.0;
   int probe_sample_count = 0;  // the warm probe's lattice n — the reuse criterion compares it
                                // (the profile's asked count must be the count the warm values
@@ -159,7 +161,8 @@ struct SurveyContextField {
 // facts; without, the same facts from a context-only (T0–T2) assembly run here. Every field
 // carries its own state; a band-sum reading only ever appears under the scope gate's pass.
 struct SurveyContextBlock {
-  std::string source;  // "warm" | "inline"
+  std::string source;                    // "warm" | "inline"
+  double reference_wavelength_nm = 0.0;  // probe context only: first requested wavelength
   // True: a --warm schema-4 document was given but carried no (complete) warm_index — the
   // documented degradation (no structural reuse, no seed consumption, inline context).
   bool warm_index_absent = false;
@@ -538,12 +541,22 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
 // query, whose inline arm assembles the same context and reads it through the same harvest.
 SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc);
 
-// The context's nearest structural anchor, the one walk both consumers read: the closest of the
-// support intervals' endpoints and the certified edge position to the deviation — an endpoint
-// wins a tie against the certified edge, the first interval's endpoint against the next's
-// (strict-lesser in sweep order). The point context's edge block and the probe's edge-normal
-// anchor name the same winner, so they cannot silently disagree.
-bool NearestStructureAnchor(const SurveyWarmSource& warm, double deviation_deg, double* position_deg,
+struct SurveyStructureView {
+  const SurveyWarmSource* warm = nullptr;
+  const char* reason = nullptr;
+  explicit operator bool() const { return warm != nullptr && reason == nullptr; }
+};
+
+struct SurveyReuseDecision {
+  SurveyStructureView structure;
+  const char* reading_reason = nullptr;
+};
+
+SurveyReuseDecision EvaluateSurveyReuse(const SurveyWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
+                                        double sun_azimuth_deg);
+
+// The context's nearest structural anchor, shared by the point and probe queries.
+bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
                             const char** basis);
 
 // The context's answers, read off a harvest (a warm document's facts or the inline assembly's —

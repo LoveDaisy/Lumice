@@ -51,7 +51,7 @@ Lumice raypath report -f <config> --crystal <id> --path <faces> [--events N] ...
 | `--path <faces>` | The raypath as `analyze` prints it: `3-5`, `3-6-4-8`; `C1(3-5)` if the layer names its crystal (must equal `--crystal`). Multi-layer chains (`(3-5) -> (1-3)`) are handed to the engine, which refuses them as `multi_layer_unsupported`. Required. |
 | `--target <alt>,<az>` | The sky point, degrees; azimuth measured as the sun's (the `analyze --center` convention). Required for `point`. |
 | `--along <form>` | `probe` only: `radial` \| `edge-normal` \| `arc` \| `tangential` — which line the probe library profiles (§10). Required. |
-| `--at <alt>,<az>` | `probe` only: the sky point the line passes through, same convention as `--target`. Required for every form — including `radial`, whose value is azimuth-free (the document declares it, and the warm reuse does not compare the azimuth). |
+| `--at <alt>,<az>` | `probe` only: the sky point the line passes through, same convention as `--target`. Required for every form — including `radial`; its value is azimuth-free only under uniform density. Non-uniform radial warm reuse requires the producing line azimuth. |
 | `--lambda <nm>[,<nm>...]` | `probe` only: one or more wavelengths in [350, 900], comma-separated or the flag repeated — the chromatic lambda grid lives on the line (one profile per wavelength, each with its own refractive index), never a multi-wavelength map. Default: the config's single wavelength or 550. |
 | `--wavelength <nm>` | In [350, 900]. Default: the config's, when its spectrum is exactly one wavelength; else 550. The choice is recorded in `meta.wavelength.source`. (`report` without it uses the actual scene spectrum.) |
 | `--events <N>` | Seed events of the component search — poses sampled to locate the fiber, **not** traced rays. K/M suffix; at most 100M (`LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`). Default 1M. (`report`: even outer samples, its own range. `probe`: the band-sum lattice n, default 2000000 — the survey probe's ruler.) |
@@ -268,9 +268,9 @@ computed reading), `unevaluated` with a named reason — so absence can never re
 |---|---|
 | `source` | `"warm"` (the given schema-4 document's facts) or `"inline"` (the context-only assembly) |
 | `warm_index_absent` | True: a `--warm` schema-4 document was given but carried no (complete) `warm_index` block — the documented degradation (§5); the context still answers, inline |
-| `object.state` (+ `reason`) | The target's deviation against the delta-axis support: `certified` (inside an interval, distance 0, or the nearest card's distance) or `unevaluated`. The value fields `target_inside_support`, `kind`, `members`, `distance_deg` exist exactly when the state is `certified` — an unevaluated object carries no distance, so absence can never be misread as the certified 0 that means "inside the support" |
-| `edge.state` (+ `reason`) | The angular distance to the nearest edge. The value fields `distance_deg`, `basis` (`support_interval_endpoint` or `caustic_edge_position`) exist exactly when the state is `finite` |
-| `band_sum.state` (+ `value`, `delta_deg`, `bin_deg`, `caliber`, or `reason`) | The warm document's solar-radial band-sum reading at the nearest probe sample. Consumed only when the scope gate passes: the query's resolved wavelength and sun must EQUAL the document's scope receipt exactly (identity, not approximation); the two named failures are `scope_field_missing` (a receipt field absent) and `scope_value_mismatch` (a value differs — a moved sun or a changed lambda). Inline contexts and degraded warm files name why they have no reading (`inline_context_runs_no_probe`, `warm_index_absent`, `warm_document_has_no_probe`) |
+| `object.state` (+ `reason`) | The target's deviation against the delta-axis support at the query wavelength: `certified` (inside an interval, distance 0, or the nearest card's distance) or `unevaluated`. The value fields `target_inside_support`, `kind`, `members`, `distance_deg` exist exactly when the state is `certified` — an unevaluated object carries no distance and never means certified outside. Missing/different producing wavelength yields `scope_field_missing`/`scope_value_mismatch`; an absent support or early stop keeps its own reason first. |
+| `edge.state` (+ `reason`) | The angular distance to the nearest edge at the query wavelength. The value fields `distance_deg`, `basis` (`support_interval_endpoint` or `caustic_edge_position`) exist exactly when the state is `finite`; missing/different producing wavelength uses the object's same named reason. |
+| `band_sum.state` (+ `value`, `delta_deg`, `bin_deg`, `caliber`, or `reason`) | The warm document's **survey reference line**, not the target point's sky intensity: nearest probe sample, with producing wavelength, sun and line azimuth in `caliber` (unknown if not established). Consumed only when wavelength and sun match the `scope` receipt exactly. `scope_field_missing` (receipt incomplete) and `scope_value_mismatch` (value differs) name failures; inline/absent probe have their own reasons. A target change chooses a different nearest sample on the same line, not a different line. |
 
 ### 3.9 Empty results
 
@@ -392,6 +392,20 @@ answers from a context-only (T0–T2) assembly on its own config: cheap by const
 band-sum reading is then honestly absent (`inline_context_runs_no_probe`) — the probe is T3
 quantification the context-only mode does not run.
 
+The routing fingerprint admits a candidate, not all its numeric facts. The current consumers use
+these dependencies (a family object's sky position is not the delta-axis body's support):
+
+| Candidate / reading | Wavelength | Sun | Target or line | Measure |
+|---|---|---|---|---|
+| Routing identity, held seeds | Not part of the fingerprint; seeds must be solved and verified | Not part of the fingerprint; seeds must be verified | Seeds are starts, never solutions | Crystal axis and path must pass identity gates |
+| Delta-axis support / caustic edge | Must match the producing wavelength; unknown means `unevaluated` | Independent of sun's sky placement | Containment/distance recomputed against the query deviation | Identity/measure gate still applies |
+| Survey band-sum reference line | Must match | Must match | Target deviation selects a sample on the **original line**, not target-sky intensity | Original density applies; no implicit new line |
+| Radial profile warm samples | Must match | Must match | Bin grid and lattice count match; non-uniform density additionally requires matching line azimuth (uniform is azimuth-free) | Original density must pass identity; unknown line azimuth cannot qualify non-uniform reuse |
+| Per-profile dark regions | Each profile needs support at its own wavelength | Support geometry is sun-independent; event counts come from the current line | Classified bin by bin at the requested layout | The identity gate still applies |
+
+An unavailable numeric field does not force a fresh T0–T2 partition or invalidate revalidated
+seeds. A schema-4 document with `warm_index` missing still takes the documented inline path.
+
 **Degradation, not refusal.** A schema-4 document whose `warm_index` block is absent — every
 survey document written before the block existed — or missing any of its fields is not refused
 and never partially consumed: the query degrades visibly to the inline context (no structural
@@ -403,20 +417,22 @@ harvest's structure answers where the at point sits (the context block of §10),
 radial probe samples become the radial form's profile when — and only when — the scope matches:
 the requested wavelength equals the document's `scope.wavelength_nm`, the sun position equals the
 document's, the document carries a probe at the same 0.1-degree bin, and the requested band-sum
-lattice equals the count the warm values were computed at. The profile then names its provenance
-`warm_reused` (the values are the document's own, grid-identity by the schema constants with far-sub-bin centre tolerance; zero band-sum
-calls) and every other profile names itself `recomputed`. The azimuth is deliberately absent from
-the comparison: the radial profile's value is azimuth-free — a uniform-density property, the
-condition `conventions.value` states — the form's declared semantics.
+lattice equals the count the warm values were computed at. For a non-uniform density the producer's
+probe line azimuth must also be known and equal to the asked line's modulo 360°; uniform density
+needs no line-azimuth comparison. The profile then names its provenance `warm_reused` (the values
+are the document's own, with far-sub-bin centre tolerance; zero band-sum calls), and every other
+profile names itself `recomputed`. The producer writes `probes[].spec.azimuth_deg`; old built-in
+4.7.4-dev/4.7.5(-dev) schema-4 documents with the known producer receipt and no field used a fixed
+0° line. An unknown producer's missing azimuth grants no non-uniform reuse, even if its other
+fields match.
 
 *The reuse criterion's premise.* That check is the whole check because the ruler constants are
 schema: the 0.1-degree bin, the survey wedge, and the lattice n are constants of the probe's
 caliber, echoed in every profile's spec, so the asked grid matching the warm grid is guaranteed by
 the constants being equal. If any of them ever becomes a knob, the reuse criterion must grow the
 comparison — a knobbed ruler silently reuses values computed on a different ruler otherwise. The
-azimuth exemption rides its own stated condition: the radial value is azimuth-free under the
-uniform density (`conventions.value`), and a measure outside that condition has no azimuth-free
-line to exempt.
+azimuth exemption holds only under uniform density; otherwise even an identical grid at a different
+azimuth is a different weighted integral.
 
 **Versions.** The schema-4 arm does not compare `schema_version` (the schema-1 arm above does):
 the family name is the discriminator, `warm_index.produced_for` records what produced the
@@ -1038,6 +1054,7 @@ the schema (the serialized `spec` echoes every one), not tuning knobs:
 | probe domain | [0°, 180°] deviation from the sun — the whole delta axis | the radial range the slice covers; the corpus's C06/C09 supports sit outside the original [15°, 60°] slice, and a support-derived window would make the bin layout a per-class branch — one ruler for every class |
 | probe bin | 0.1° (1800 samples) | one narrow azimuthal wedge per bin; under the uniform density the band-sum value is the full annulus's per-sr mean, so the wedge's azimuth carries no information |
 | probe wedge half-width | 1.0° (`spec.wedge_half_width_deg`) | the wedge's azimuthal extent — part of the probe's caliber, so a reader can reconstruct the sliced solid angle |
+| probe line azimuth | `spec.azimuth_deg`, 0° in the built-in survey | The actual wedge direction in the sun-centred probe frame; uniform density makes values azimuth-free, other densities do not. |
 | probe sample count | 2,000,000 | the band-sum lattice size (`n`); the sampler is the antipodal Fibonacci lattice — **deterministic, no seed** (the coverage declaration names lattice + count + determinism, never a nonexistent seed value) |
 | probe reference λ/n | the document's `scope.wavelength_nm` / `refractive_index` | the probe shares the routing's reference ruler, so its edge reading, the support's lower end and the certified edge position are directly comparable |
 | probe representative | the request's face sequence (`spec.representative`) standing for `spec.member_count` class members | the members are relabelings of one physical class; the class-level reading is the representative's ×N |
@@ -1279,18 +1296,19 @@ fingerprint. A reader treats a missing or incomplete block on the wire as the do
 |---|---|
 | `seeds[]` | The poses the assembly actually held, 9 row-major doubles each; `[]` when no arm held one (the identity and full-dimensional arms hold none today) |
 | `seed_sources[]` | Parallel to `seeds`: the leg that held the pose — `witness_argmax` (the refused-support card's lattice argmax), `family_collapse_anchor`, `family_fold_anchor`, `single_pose_nominal` (the 0D arm's production Euler pose). Killed candidates never contribute |
-| `reuse_scope` | The declared reuse domain: structural facts (routing, object cards, support) reuse across sun and wavelength changes; probe band-sum readings are valid only at the producing document's wavelength and sun — the consuming query compares the `scope` receipt per read |
+| `reuse_scope` | A declaration, **not** a reader gate: routing identity admits candidates and held seeds across sun/λ changes, but seeds still require solver verification; delta support/edge require the producing λ; band-sum values require λ and sun, plus the producing line azimuth for non-uniform radial reuse. The consumer tests numeric receipts, not this text. Older overbroad declarations do not grant reuse. |
 | `produced_for` | The producer receipt: schema family + the analytic kernel's API version |
 | `config_fingerprint` | The routing-axis projection's SHA256 (§5, gate 3): the axis set is the crystal entry whole (shape + axis), the literal path layers, and the symmetry bits — sun, wavelength/spectrum and scene allocation excluded; one implementation serves the writer and the query's reader, and a config field that starts to affect routing extends the projection and this list in the same change |
 
 **The in-tree reader's footprint, named block by block.** The schema-4 document has exactly one
 in-tree consumer, the point query's warm reader — and it does NOT deserialize the document: it
-reads `warm_index` (all five fields), the `scope` receipt's wavelength/sun/source (the band-sum
-gate's comparison side), the `objects[]` ownership facts (each support card's intervals + members,
-each caustic edge's position), the `probes[]` band-sum samples and bin, and the family arm's
-`measure` echo (the fourth gate's comparison side). Nothing else — no reconstruction of
-`SurveyDocument`, no second deserializer. The partial-reader boundary is the contract: §5's gates
-name exactly these blocks, and a consumer needing more joins them here.
+reads `warm_index` (all five fields), the `scope` receipt's independently present wavelength and
+sun/source (structure requires λ; reference readings also require sun), the `objects[]` ownership
+facts (each support card's intervals + members, each caustic edge's position), the `probes[]`
+profile spec (including line azimuth, bin and lattice) and samples, and the family arm's `measure`
+echo (the fourth gate's comparison side). The probe query shares this reader and numeric-reuse
+predicate. The partial-reader boundary is the contract: §5's gates name these blocks; no second
+deserializer is needed.
 
 ## 10. `Lumice raypath probe` output (schema 5)
 
@@ -1309,7 +1327,7 @@ request already fixes and a named mode — never silence.
 | `generator` | `lumice` (the product version) and `analytic_api_version`. |
 | `conventions` | The frames, the direction convention, the line's plane and its azimuth, the forms, the value's per-sr meaning, the dark-region classes, the `source` vocabulary and its premise, and the null spelling. |
 | `meta` | The request as applied: `crystal` (id, kind, shape scalars, `shape_is_nominal`, pyramid wedges), `faces`, `sun`, `at` (altitude/azimuth/direction/`deviation_deg`/`azimuth_about_sun_deg`), `wavelengths` (one entry per profile: `nm`, `source`, `refractive_index`), `budget_ms`, `interrupted`. |
-| `context` | Where the at point sits in the survey's structure — the point document's `survey_context` shape (§3.12), read at the at point: `source` (`warm` \| `inline`), `warm_index_absent`, and the `object` / `edge` / `band_sum` fields with their own states. The `band_sum` gate compares the warm scope against the query's **reference** wavelength — the first requested one, not each profile's own λ — so a multi-λ request's context is one reading at that reference, shared by every profile. |
+| `context` | Point-style `survey_context` (§3.12) at `meta.wavelengths[0].nm`, explicitly echoed as `reference_wavelength_nm`; `object`/`edge`/`band_sum` describe that reference wavelength only. A mismatch leaves structural facts unevaluated, not false outside. Other profiles never borrow this context as their own structural certificate. |
 | `profiles` | One per requested wavelength, in order (§10.2). |
 | `derived` | Present when the request is an axis form and a 650 nm profile and the reference (the first requested) profile both carry edge readings and differ as profiles (the reference itself being the 650 nm profile derives nothing): `red_edge_width_deg` (the red edge minus the reference edge — the C09 anchor's deviation-axis quantity) and `rule` spelling how it was formed. An arc form's edges are azimuth positions, and no width is derived from them. |
 
@@ -1318,12 +1336,12 @@ request already fixes and a named mode — never silence.
 | Key | Meaning |
 |---|---|
 | `along` | The form, echoed: `radial` \| `edge-normal` \| `arc` \| `tangential`. |
-| `spec` | The line's caliber, echoed: `delta_min_deg` / `delta_max_deg` (the line's delta extent — the bins' actual span; the arc forms carry an extent of `wedge_half_width_deg` total width, the constant delta ± half of it, while the constant deviation itself lives in each sample's `delta_deg`), `azimuth_deg` (the axis forms' line azimuth, the arc forms' centre azimuth), `window_half_width_deg` (the axis forms' delta window, 0 = the full axis; the arc forms echo their azimuth sweep's half width), `bin_deg`, `wedge_half_width_deg`, `semantics` (what the form claims — the radial form's azimuth-free value, the arc form's constant-delta reading, the edge-normal's anchor rule), `wavelength_nm`, `refractive_index`, `sample_count`, `lattice` (`antipodal_fibonacci`), `deterministic` (a probe consumes no seeds), `representative`, `member_count`. The edge-normal form adds `anchor_basis` (`support_interval_endpoint` \| `caustic_edge_position`) and `anchor_deg`. |
+| `spec` | The echoed line caliber: `delta_min_deg` / `delta_max_deg`, `azimuth_deg`, `window_half_width_deg`, `bin_deg`, `wedge_half_width_deg`, `semantics` (radial is azimuth-free only under uniform density), `wavelength_nm`, `refractive_index`, `sample_count`, `lattice`, `deterministic`, `representative`, `member_count`. Edge-normal adds `anchor_basis`, `anchor_deg`, and `anchor_wavelength_nm`: the anchor belongs to the **reference** wavelength even when this profile's samples use another λ. |
 | `source` | Finite only. The reading's provenance: `warm_reused` (the values are the warm document's own radial samples, the grid identity is the schema constants — bin width, count, extent, with bin centres compared to a far-sub-bin tolerance, so a one-ulp contraction wobble between platforms is representation noise, never a different grid — zero band-sum calls) or `recomputed` (band-sum ran here; lattice-deterministic, no seed dependence). The premise — the ruler constants are schema — is stated in `conventions.source` and §5. |
 | `evidence` | `state: "finite"` with a `coverage` block (the spec's caliber restated: members evaluated, geometry basis, wavelength, lattice n, bin, delta domain, determinism, representative, member count), or `state: "refused"` with `mode`: `no_edge_in_context` (an edge-normal form with neither a support endpoint nor a certified edge in the context), `degenerate_arc_at_pole` (an arc through the sun or its antipode is not a circle there), `measure_not_expressible` (the config's axis maps to no pose density — the band-sum has no measure to read), `inline_survey_refused` (an edge-normal form whose inline context assembly refused — the context blocks carry the same named reason). |
 | `samples[]` | Finite only. One row per bin: `delta_deg` and `azimuth_deg` (the bin centre's two coordinates in the line's plane), `value` (per sr, the band-sum convention), `k` (the bin's event count), `k_eff`. |
 | `readings` | Finite only. `has_edge` / `edge_deg` (the first non-empty bin's centre — where events start, finite to half a bin) and `has_peak` / `peak_deg` / `peak_value` / `separation_deg` (the value argmax — where the profile is brightest; a different thing from the edge, and the two stay two fields). The positions sit on the line's sweep coordinate: the deviation for the axis forms, the azimuth for the arc forms (the same rule the `dark_regions` bounds follow). |
-| `dark_regions` | Finite only. `segments[]`: consecutive bin runs classified against the context's support — `inside_support_positive` (bins with events), `inside_support_zero` (bins without events inside the support: a weak tail, never clamped into a written zero), `outside_support` (geometrically dark), `unknown` (the context did not certify a support; the run carries its named cause). Each run: `kind`, `lo_deg` / `hi_deg` (along the line's sweep coordinate: deviation for the axis forms, azimuth for the arc forms), `bin_count`, and `reason` when unknown. The arc forms attribute support membership at their constant deviation — the per-bin split happens only between the positive and zero classes. |
+| `dark_regions` | Finite only. Each profile's bins are classified with a **support certificate at that profile's λ**, not the reference context's λ. `segments[]` groups consecutive `inside_support_positive` / `inside_support_zero` / `outside_support` runs, or `unknown` with its named reason when that λ lacks usable support. Bounds follow deviation for axis forms and azimuth for arc forms; arc bins share one deviation but retain their own event counts. A BandSum recomputation does not manufacture a support certificate. |
 
 ### 10.3 The forms' two line geometries
 

@@ -35,9 +35,8 @@ namespace {
 
 // The forms' declared semantics, spelled once each (the document states them, never implies).
 const char* RadialSemantics() {
-  return "the delta axis at the user's azimuth about the sun; under the uniform density the "
-         "band-sum value formula makes the profile azimuth-free, so the value does not depend on "
-         "the --at azimuth, and the warm reuse criterion does not compare it either";
+  return "the delta axis at the user's azimuth about the sun; under a uniform pose density the "
+         "band-sum value is azimuth-free; otherwise warm values require the same line azimuth";
 }
 
 const char* EdgeNormalSemantics() {
@@ -121,31 +120,27 @@ void FillProfileSpec(ProbeProfile* profile, const ProbeRequest& request, const P
 constexpr double kArcDegenerateNearDeg = 0.05;
 constexpr double kArcDegenerateFarDeg = 179.95;
 
-// The dark-region decomposition: consecutive bin runs classified against the context's support.
+// The dark-region decomposition uses support validated for this profile's wavelength.
 // Inside the support, the weak tail (k = 0) stays its own finite-zero class — never clamped into
 // a written zero; outside is the geometrically dark side; a context that did not certify the
 // support propagates one "unknown" run with its named cause. The segment bounds read the line's
 // sweep coordinate: the delta axis for the axis forms, the azimuth for the arc forms.
-std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layout, const SurveyContextBlock& context,
-                                            const SurveyWarmSource* warm,
+std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layout, const SurveyStructureView& structure,
                                             const std::vector<survey::ProbeLineSample>& samples, bool arc_form) {
   std::vector<ProbeDarkSegment> segments;
   if (samples.empty()) {
     return segments;
   }
-  const bool support_certified = context.object.state == "certified";
   const auto classify = [&](size_t k) {
-    if (!support_certified) {
-      return std::pair<std::string, std::string>{ "unknown", context.object.reason };
+    if (!structure) {
+      return std::pair<std::string, std::string>{ "unknown", structure.reason };
     }
     const double pos = layout.bins[k].delta_centre_deg;
-    if (warm != nullptr) {
-      for (const SurveyWarmSource::SupportInterval& interval : warm->intervals) {
-        if (pos >= interval.lower_deg && pos <= interval.upper_deg) {
-          return std::pair<std::string, std::string>{ samples[k].k > 0 ? "inside_support_positive" :
-                                                                         "inside_support_zero",
-                                                      std::string() };
-        }
+    for (const SurveyWarmSource::SupportInterval& interval : structure.warm->intervals) {
+      if (pos >= interval.lower_deg && pos <= interval.upper_deg) {
+        return std::pair<std::string, std::string>{ samples[k].k > 0 ? "inside_support_positive" :
+                                                                       "inside_support_zero",
+                                                    std::string() };
       }
     }
     return std::pair<std::string, std::string>{ "outside_support", std::string() };
@@ -247,6 +242,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     meta.wavelengths.push_back({ choice.wavelength_nm, choice.source, choice.refractive_index });
   }
   const double reference_nm = meta.wavelengths.front().nm;
+  result.context.reference_wavelength_nm = reference_nm;
 
   const CrystalConversion crystal = ConvertCrystal(crystal_it->second.param_);
   analytic::FaceNormalTable table;
@@ -327,9 +323,12 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
       warm = &inline_harvest;
     }
   }
+  SurveyStructureView reference_structure{ nullptr, "inline_survey_refused" };
   if (warm != nullptr) {
     FillSurveyContext(*warm, meta.at_deviation_deg, reference_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg,
                       &context);
+    reference_structure =
+        EvaluateSurveyReuse(*warm, reference_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg).structure;
   }
 
   // ---- the class scope and the density conversion (the survey assembly's own authority) ----
@@ -344,10 +343,8 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   const bool density_ok = density.Ok();
 
   // ---- the line ----
-  // The radial form's reuse side: the warm document's radial samples, when the scope matches and
-  // the grid is this layout's grid bit for bit. The premise is the ruler constants being schema
-  // (the profile's spec comment says so); the azimuth is deliberately absent from the comparison —
-  // the radial profile's value is azimuth-free, the form's declared semantics.
+  // The radial warm sample is the producer's declared line. Only a uniform pose density
+  // makes its value independent of the line's azimuth.
   const bool radial = request.along == ProbeAlong::kRadial;
   const bool windowed = request.along == ProbeAlong::kEdgeNormal;
   const bool arc_form = request.along == ProbeAlong::kArc || request.along == ProbeAlong::kTangential;
@@ -358,8 +355,8 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   bool has_anchor = false;
   double anchor = 0.0;
   const char* anchor_basis = "";
-  if (warm != nullptr) {
-    has_anchor = NearestStructureAnchor(*warm, meta.at_deviation_deg, &anchor, &anchor_basis);
+  if (reference_structure) {
+    has_anchor = NearestStructureAnchor(reference_structure, meta.at_deviation_deg, &anchor, &anchor_basis);
   }
 
   survey::ProbeLineLayout layout;
@@ -398,6 +395,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     if (windowed && has_anchor) {
       profile.anchor_basis = anchor_basis;
       profile.anchor_deg = anchor;
+      profile.anchor_wavelength_nm = reference_nm;
     }
 
     const bool edge_refused = windowed && !has_anchor;
@@ -429,10 +427,17 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     // Reuse or recompute. Radial only: the warm map's slice is the radial line; the windowed and
     // arc geometries are this query's own, always recomputed (lattice-deterministic, no seed).
     bool reused = false;
-    if (radial && warm != nullptr && warm->has_probe && warm->has_scope &&
-        meta.wavelengths[w].nm == warm->wavelength_nm && meta.sun_altitude_deg == warm->sun_altitude_deg &&
-        meta.sun_azimuth_deg == warm->sun_azimuth_deg && warm->probe_bin_deg == survey::kProbeBinDeg &&
-        warm->probe_sample_count == profile.sample_count && warm->probe_samples.size() == layout.bins.size()) {
+    const SurveyReuseDecision reuse =
+        warm != nullptr ?
+            EvaluateSurveyReuse(*warm, profile.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg) :
+            SurveyReuseDecision{};
+    const bool same_line =
+        warm != nullptr && warm->has_probe_azimuth &&
+        std::fabs(std::remainder(meta.at_azimuth_about_sun_deg - warm->probe_azimuth_deg, 360.0)) < 1e-9;
+    if (radial && warm != nullptr && warm->has_probe && reuse.reading_reason == nullptr &&
+        (density.spec.family == analytic::PoseFamily::kRandom || same_line) &&
+        warm->probe_bin_deg == survey::kProbeBinDeg && warm->probe_sample_count == profile.sample_count &&
+        warm->probe_samples.size() == layout.bins.size()) {
       reused = true;
       // The grid identity is the schema constants (bin width, count, extent — all checked
       // above), not bit-equal doubles: the document's echoed centres and this layout's centres
@@ -489,7 +494,9 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     profile.readings.peak_value = read.peak_value;
     profile.readings.separation_deg = read.separation_deg;
 
-    profile.dark_regions = DecomposeDark(layout, context, warm, profile.samples, arc_form);
+    const SurveyStructureView profile_structure =
+        warm != nullptr ? reuse.structure : SurveyStructureView{ nullptr, "inline_survey_refused" };
+    profile.dark_regions = DecomposeDark(layout, profile_structure, profile.samples, arc_form);
     result.profiles.push_back(std::move(profile));
   }
   if (stopped()) {

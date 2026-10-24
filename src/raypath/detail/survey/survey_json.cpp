@@ -268,6 +268,7 @@ Json ProbeJson(const SurveyProbe& probe) {
                 { "delta_max_deg", Num(probe.spec.delta_max_deg) },
                 { "bin_deg", Num(probe.spec.bin_deg) },
                 { "wedge_half_width_deg", Num(probe.spec.wedge_half_width_deg) },
+                { "azimuth_deg", Num(probe.spec.azimuth_deg) },
                 { "wavelength_nm", Num(probe.spec.wavelength_nm) },
                 { "refractive_index", Num(probe.spec.refractive_index) },
                 { "sample_count", probe.spec.sample_count },
