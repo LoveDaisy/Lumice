@@ -438,7 +438,7 @@ SurveyObject SurvivingCard(const std::vector<int>& member, const FamilyCandidate
 // The document-level escape rule's authority: the arm's document carries a finite structural
 // reading iff some card says so itself. The witness is a payload on its card with its own
 // state — a refused card carrying a finite witness is still not a finite structural object.
-bool AnyFiniteObject(const SurveyDocument& document) {
+bool AnyFiniteObject(const SurveyResult& document) {
   for (const SurveyObject& card : document.objects) {
     if (card.evidence.state == EvidenceState::kFinite) {
       return true;
@@ -449,7 +449,7 @@ bool AnyFiniteObject(const SurveyDocument& document) {
 
 // A surviving candidate's held pose joins the document's warm_index under its leg name (killed
 // candidates never contribute — the seed retention records what the assembly kept).
-void CollectWarmSeed(SurveyDocument* out, const FamilyCandidate& candidate) {
+void CollectWarmSeed(SurveyResult* out, const FamilyCandidate& candidate) {
   if (!candidate.has_pose) {
     return;
   }
@@ -491,7 +491,7 @@ std::vector<FamilyFreezeCandidate> FreezeCandidates(const FamilyRoutingMeasure& 
   return out;
 }
 
-FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocument* out) {
+FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyResult* out) {
   FamilyRoutingBlock& block = out->family_routing.emplace();
   block.measure = input.measure;
   double sun_hat[3];

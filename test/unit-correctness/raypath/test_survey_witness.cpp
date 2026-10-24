@@ -129,7 +129,7 @@ TEST(SurveyWitness, RefusedSupportCardCarriesTheFiniteWitness) {
   request.crystal_id = 1;
   request.path_layers = { { 3, 1, 5, 7 } };
   request.symmetry_bits = 0;  // the literal single member: the seconds-scale shape
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   ASSERT_EQ(document.objects.size(), 1u);
@@ -167,9 +167,9 @@ TEST(SurveyWitness, SerializedWitnessShapesFollowThePayloadRegistry) {
   request.crystal_id = 1;
   request.path_layers = { { 3, 1, 5, 7 } };
   request.symmetry_bits = 0;
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
   const auto& witness = parsed.at("objects")[0].at("witness");
   EXPECT_EQ(witness.at("state"), "finite");
   EXPECT_GT(witness.at("kept_count").get<long long>(), 0);
@@ -182,7 +182,7 @@ TEST(SurveyWitness, SerializedWitnessShapesFollowThePayloadRegistry) {
 
   // The refused shape and the absent payload, pinned synthetically: a card with a refused
   // witness serializes exactly {state, mode}; a full-dimensional card serializes none.
-  SurveyDocument shapes;
+  SurveyResult shapes;
   SurveyObject refused_card;
   SurveyObject::WitnessPayload refused_payload;  // the struct default state is refused
   refused_payload.mode = "no_declared_source_witness";
@@ -191,7 +191,7 @@ TEST(SurveyWitness, SerializedWitnessShapesFollowThePayloadRegistry) {
   SurveyObject t1_card;
   t1_card.kind = SurveyObjectKind::kSupportSet;
   shapes.objects.push_back(t1_card);
-  const auto shape_doc = nlohmann::json::parse(SurveyDocumentToJson(shapes, "test"));
+  const auto shape_doc = nlohmann::json::parse(SurveyResultToJson(shapes, "test"));
   const auto& refused = shape_doc.at("objects")[0].at("witness");
   EXPECT_EQ(refused.size(), 2u);  // {state, mode} — the whole shape, like the tint's refusal
   EXPECT_EQ(refused.at("state"), "refused");

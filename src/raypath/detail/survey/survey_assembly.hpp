@@ -9,9 +9,9 @@
 #include "config/config_manager.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/input_scope.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_report.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -27,7 +27,7 @@ struct SurveyAssemblyOptions {
   bool context_only = false;
 };
 
-Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out,
+Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyResult* out,
                      const SurveyAssemblyOptions& options = {});
 
 }  // namespace lumice::raypath::survey

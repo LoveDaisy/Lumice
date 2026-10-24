@@ -3,7 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include "raypath/detail/json_values.hpp"
-#include "raypath/detail/survey/evidence.hpp"
+#include "raypath/domain/evidence.hpp"
 #include "raypath/single_path_analysis.hpp"  // WavelengthSourceName
 
 namespace lumice::raypath::survey {
@@ -340,7 +340,7 @@ Json DiagnoseJson(const SurveyDiagnoseBlock& block) {
 
 }  // namespace
 
-std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lumice_version) {
+std::string SurveyResultToJson(const SurveyResult& document, const char* lumice_version) {
   Json doc = { { "schema", "lumice.path-survey" },
                { "schema_version", document.schema_version },
                { "generator", { { "lumice", lumice_version }, { "analytic_api_version", analytic::kApiVersion } } } };

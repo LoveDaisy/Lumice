@@ -92,7 +92,7 @@ TEST(SurveyProbe, SmallSampleRealAssemblyEdgeBinContainsTheClosedForm) {
   input.member_count = 12;
   input.sample_count = 100000;  // the seconds-scale smoke; the bench runs the full caliber
 
-  SurveyDocument document;
+  SurveyResult document;
   RunSolarRadialProbe(input, &document);
   ASSERT_EQ(document.probes.size(), 1u);
   const SurveyProbe& probe = document.probes.front();

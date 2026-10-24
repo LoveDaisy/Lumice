@@ -24,8 +24,8 @@
 #include <vector>
 
 #include "analytic/discovery.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -69,7 +69,7 @@ enum class RefusedSupportObjects { kReplaceObjects, kAppendToObjects };
 void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
                             const std::string& refusal_mode, const std::string& chromatic_reason,
                             const std::string& budget_note, RefusedSupportObjects objects_discipline,
-                            SurveyDocument* out);
+                            SurveyResult* out);
 
 }  // namespace lumice::raypath::survey
 

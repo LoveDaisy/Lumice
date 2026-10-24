@@ -148,7 +148,7 @@ ProbeLineLayout AxisLineLayout(double delta_min_deg, double delta_max_deg, doubl
   return layout;
 }
 
-void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out) {
+void RunSolarRadialProbe(const ProbeInput& input, SurveyResult* out) {
   const ProbeFrame frame = MakeProbeFrame(input.incident);
 
   const ProbeLineLayout layout = AxisLineLayout(kProbeDeltaMinDeg, kProbeDeltaMaxDeg, input.azimuth_deg);

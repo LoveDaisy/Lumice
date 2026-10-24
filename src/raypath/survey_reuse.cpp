@@ -7,8 +7,8 @@
 #include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath {
 
@@ -21,7 +21,7 @@ namespace lumice::raypath {
 // multi-layer document changes the answer on both sides together or not at all. A support_set
 // with zero intervals harvests nothing — has_support stays false and the context answers
 // survey_carries_no_support, the same shape as a document without support at all.
-WarmCandidate HarvestSurveyDocument(const survey::SurveyDocument& doc) {
+WarmCandidate HarvestSurveyResult(const survey::SurveyResult& doc) {
   WarmCandidate candidate;
   candidate.crystal_id = doc.request.crystal_id;
   candidate.path_layers = doc.request.path_layers;

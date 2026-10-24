@@ -31,8 +31,8 @@
 #include "analytic/family_rank.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "raypath/detail/measure_scope.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"  // PoseDensityConversion
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -99,7 +99,7 @@ struct FamilyArmOutcome {
   std::string refusal_mode;
 };
 
-FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyDocument* out);
+FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyResult* out);
 
 }  // namespace lumice::raypath::survey
 

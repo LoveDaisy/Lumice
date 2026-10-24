@@ -17,7 +17,7 @@
 #include "analytic/path_evaluation.hpp"
 #include "analytic/pose_density.hpp"
 #include "raypath/detail/schema3/support_block.hpp"  // MemberSupport (the returned rows' type)
-#include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -42,7 +42,7 @@ struct ClassSupport {
 
 ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                                   const std::vector<std::vector<int>>& members, double refractive_index,
-                                  double wavelength_nm, SurveyDocument* out);
+                                  double wavelength_nm, SurveyResult* out);
 
 // Runs the class's delta machine over `members` (the resolved class) at `refractive_index`,
 // with `representative` (the requested face sequence, for the two-face-chain premise) and
@@ -50,7 +50,7 @@ ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const 
 // out->objects on success, the one refused support_set card on refusal.
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
-                            double refractive_index, double wavelength_nm, SurveyDocument* out);
+                            double refractive_index, double wavelength_nm, SurveyResult* out);
 
 // The chromatic layer's v1 legs on the representative: the positional-dispersion table (the
 // kernel's wavelength-critical table at the fixed 650/450 pair — every onset row the table
@@ -61,7 +61,7 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
 // once any leg ran.
 void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
-                            int class_size, SurveyDocument* out);
+                            int class_size, SurveyResult* out);
 
 }  // namespace lumice::raypath::survey
 

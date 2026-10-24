@@ -12,7 +12,7 @@ namespace {
 
 // One refusal: the tint sub-block and the chromatic block (its only leg's owner on this arm)
 // carry the same mode, and no numeric field is written.
-void RefuseTint(SurveyDocument* out, const char* mode) {
+void RefuseTint(SurveyResult* out, const char* mode) {
   SurveyWeightTint& tint = out->weight_tint.emplace();
   tint.evidence.state = EvidenceState::kRefused;
   tint.evidence.mode = mode;
@@ -22,7 +22,7 @@ void RefuseTint(SurveyDocument* out, const char* mode) {
 
 }  // namespace
 
-void AssembleWeightTint(const TintInput& input, SurveyDocument* out) {
+void AssembleWeightTint(const TintInput& input, SurveyResult* out) {
   if (!input.density->Ok()) {
     // The axis maps to no pose density (a fixed pose, for one): the leg refuses rather than
     // approximating. The degenerate is an honest capability boundary, not a physical
@@ -98,7 +98,7 @@ void AssembleWeightTint(const TintInput& input, SurveyDocument* out) {
             tint.method, tint.ratio, input.sample_count);
 }
 
-void AssembleClassTint(const ClassTintInput& input, SurveyDocument* out) {
+void AssembleClassTint(const ClassTintInput& input, SurveyResult* out) {
   // One refusal shape for this arm's sub-block: the block has other legs with real output, so
   // the refusal stays in the sub-block (the block-state rule is the T1 arm's own).
   const auto refuse = [out](const char* mode) {
@@ -181,7 +181,7 @@ void AssembleClassTint(const ClassTintInput& input, SurveyDocument* out) {
             tint.method, tint.ratio, input.sample_count);
 }
 
-void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyDocument* out) {
+void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyResult* out) {
   const double n_red = IceRefractiveIndex::Get(kChromaticRedNm);
   const double n_blue = IceRefractiveIndex::Get(kChromaticBlueNm);
   double m_red = 0.0;

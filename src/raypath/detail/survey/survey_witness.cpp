@@ -107,7 +107,7 @@ void AssembleWitness(const WitnessInput& input, SurveyObject* card) {
 void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
                             const std::string& refusal_mode, const std::string& chromatic_reason,
                             const std::string& budget_note, RefusedSupportObjects objects_discipline,
-                            SurveyDocument* out) {
+                            SurveyResult* out) {
   SurveyObject card;
   card.kind = SurveyObjectKind::kSupportSet;
   card.members = members;

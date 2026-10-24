@@ -112,7 +112,7 @@ TirShareInput TirShareInputOf(const ConfigManager& config, const analytic::FaceN
 // the note names what actually ran: a refused leg never claims the draws it did not run.
 void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSnapshot& snapshot,
                                       const SurveyRequest& request, int member_count, double wavelength_nm,
-                                      SurveyDocument* out) {
+                                      SurveyResult* out) {
   if (request.mc_ess_draws <= 0) {
     return;
   }
@@ -143,7 +143,7 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
 
 }  // namespace
 
-Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyDocument* out,
+Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, SurveyResult* out,
                      const SurveyAssemblyOptions& options) {
   if (out == nullptr) {
     return { ErrorCode::kInvalidArgument, "null document output" };

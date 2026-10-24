@@ -24,8 +24,8 @@
 
 #include "analytic/band_sum.hpp"
 #include "analytic/path_evaluation.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -53,7 +53,7 @@ struct TintInput {
 // Computes the two point-mass band sums and fills out->weight_tint; sets the chromatic block's
 // own state (the block mirrors its only leg on this arm). Refusals keep the document honest —
 // a refusal mode, never a defaulted ratio.
-void AssembleWeightTint(const TintInput& input, SurveyDocument* out);
+void AssembleWeightTint(const TintInput& input, SurveyResult* out);
 
 // The tint leg's caliber constant on the T1 arm (schema: the serialized block echoes it; the
 // ladder that pinned the value and its acceptance lines are in the task's progress record).
@@ -81,7 +81,7 @@ struct ClassTintInput {
   int sample_count = kSurveyClassTintSampleCount;
 };
 
-void AssembleClassTint(const ClassTintInput& input, SurveyDocument* out);
+void AssembleClassTint(const ClassTintInput& input, SurveyResult* out);
 
 // The 0D arm's weight tint: the single-pose direct read (w = A*T at each lambda of the fixed
 // pair, the diagnostic batch's own re-evaluation — the witness's reading discipline), never a
@@ -98,7 +98,7 @@ struct SinglePoseTintInput {
 // Fills out->weight_tint and mirrors the chromatic block's own state (the tint is the 0D arm's
 // only chromatic leg). Refusals keep the document honest — single_pose_weight_unavailable, the
 // weight is unavailable, never defaulted.
-void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyDocument* out);
+void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyResult* out);
 
 }  // namespace lumice::raypath::survey
 

@@ -53,16 +53,6 @@ constexpr double kDefaultClusterRadius = 0.3;                                   
 constexpr int kNewtonIterations = 30;
 constexpr double kNewtonStopFraction = 1e-2;
 
-enum class ComponentKind { kClosed, kArc };
-
-// The four incomplete counters of section 9.5.6, as a candidate's cause.
-enum class IncompleteCause {
-  kArcBackwardFailed,
-  kArcBackwardClosedAnomaly,
-  kUnnamedEvent,
-  kNotConverged,
-};
-
 // A component: its corrected seed and its traces. `backward` is the trace with the orientation
 // reversed, run for an arc only (closed: empty, PoseCount() == 0). The stitched arc of section 9.5.5
 // follows from the two and is not stored.

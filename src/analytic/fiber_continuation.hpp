@@ -23,38 +23,11 @@
 #include <limits>
 #include <vector>
 
+#include "analytic/fiber_types.hpp"
 #include "analytic/jet.hpp"
 #include "analytic/so3.hpp"
 
 namespace lumice::analytic {
-
-// LI FiberStatus: closed.
-enum class FiberStatus {
-  kClosed,
-  kEventTerminated,
-  kNumericalFailure,
-  kBudgetExhausted,
-};
-
-// LI TerminationReason, grouped by the status it maps to (StatusOf).
-enum class FiberReason {
-  kClosedLoop,
-  kTirBoundary,
-  kBranchBoundary,
-  kPathInfeasible,
-  kVisibilityBoundary,
-  kChartBoundary,
-  kRankLoss,
-  kTopologyAmbiguity,
-  kCorrectorFailure,
-  kLinearSolveFailure,
-  kNonFinite,
-  kStepUnderflow,
-  kInvalidNumericalInput,
-  kStepBudget,
-  kArclengthBudget,
-  kEvaluationBudget,
-};
 
 // continuation._status_for_reason.
 FiberStatus StatusOf(FiberReason reason);

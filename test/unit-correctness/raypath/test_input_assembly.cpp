@@ -1,6 +1,7 @@
 #include <cmath>
 #include <limits>
 #include <set>
+#include <type_traits>
 
 #include "core/color_util.hpp"
 #include "core/geo3d.hpp"
@@ -10,6 +11,8 @@
 #include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
+#include "raypath/domain/claim.hpp"
+#include "raypath/domain/result_identity.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "survey_test_fixtures.hpp"
 #include "util/illuminant.hpp"
@@ -170,6 +173,49 @@ TEST(AssembledInputMembers, SnapshotBitsAndEnsembleGateDoNotReadLiveState) {
   EXPECT_EQ(full.snapshot.scene_identity, "scene 9");
   request.semantics = ns::SymmetrySemantics::kLabel;
   EXPECT_FALSE(rp::ResolvePhysicalMemberScope(request, &none).Ok());
+}
+
+TEST(TypedResultValues, ClaimsSeparateMissingFromFiniteZero) {
+  rp::Claim<double> claim;
+  EXPECT_TRUE(std::holds_alternative<rp::Unevaluated>(claim));
+  EXPECT_EQ(rp::ClaimValue(claim), nullptr);
+  claim = rp::Refused{ "outside_domain", {} };
+  EXPECT_EQ(rp::ClaimValue(claim), nullptr);
+  claim = rp::Finite<double>{ 0.0, {}, {} };
+  ASSERT_NE(rp::ClaimValue(claim), nullptr);
+  EXPECT_EQ(*rp::ClaimValue(claim), 0.0);
+  claim = rp::Certified<double>{ 1.0, "closed_form", {} };
+  ASSERT_NE(rp::ClaimValue(claim), nullptr);
+  EXPECT_EQ(*rp::ClaimValue(claim), 1.0);
+}
+
+TEST(TypedResultValues, ReferencesBelongToFrozenSnapshots) {
+  rp::MemberScope members;
+  members.member_kind = rp::MemberKind::kPhysicalL2;
+  members.members = { { 3, 5 }, { 4, 6 } };
+  using Snapshot = rp::StructureSnapshot<int>;
+  auto original = Snapshot::Finalize(members, { 42 }, { { rp::MemberId{ 0 } } });
+  ASSERT_TRUE(original);
+  const auto ref = original->Reference(rp::ObjectId{ 0 });
+  const auto member = original->Reference(rp::MemberId{ 1 });
+  ASSERT_TRUE(ref);
+  ASSERT_TRUE(member);
+  EXPECT_EQ(original->Reference(rp::ObjectId{ 1 }), std::nullopt);
+  EXPECT_EQ(original->Reference(rp::MemberId{ 2 }), std::nullopt);
+  auto copy = *original;
+  auto moved = std::move(*original);
+  original.reset();
+  EXPECT_EQ(copy.Resolve(*ref), moved.Resolve(*ref));
+  EXPECT_EQ(*copy.Resolve(*ref), 42);
+  EXPECT_EQ(*copy.Resolve(*member), members.members[1]);
+  static_assert(std::is_const_v<std::remove_reference_t<decltype(copy.Objects())>>);
+  static_assert(std::is_const_v<std::remove_reference_t<decltype(copy.Members())>>);
+  auto other = Snapshot::Finalize(members, { 43 }, { { rp::MemberId{ 0 } } });
+  ASSERT_TRUE(other);
+  EXPECT_EQ(other->Resolve(*ref), nullptr);
+  EXPECT_EQ(other->Resolve(*member), nullptr);
+  EXPECT_FALSE(Snapshot::Finalize(members, { 42 }, {}));
+  EXPECT_FALSE(Snapshot::Finalize(members, { 42 }, { { rp::MemberId{ 2 } } }));
 }
 
 }  // namespace

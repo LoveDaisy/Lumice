@@ -50,7 +50,7 @@ struct BandAccumulator {
 
 }  // namespace
 
-void AssembleMcRegionEss(const McRegionEssInput& input, SurveyDocument* out) {
+void AssembleMcRegionEss(const McRegionEssInput& input, SurveyResult* out) {
   // The single-lambda spectrum request: the survey's reference wavelength through the sampled
   // branch. A discrete light must own a slot AT the reference wavelength (the survey's own
   // resolution guarantees it when the wavelength came from the scene, not from the user);

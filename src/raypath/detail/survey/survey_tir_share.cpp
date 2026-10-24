@@ -11,7 +11,7 @@
 namespace lumice::raypath::survey {
 namespace {
 
-void RefuseTirShare(SurveyDocument* out, const char* mode) {
+void RefuseTirShare(SurveyResult* out, const char* mode) {
   SurveyTirShare& tir = out->tir_share.emplace();
   tir.evidence.state = EvidenceState::kRefused;
   tir.evidence.mode = mode;
@@ -19,7 +19,7 @@ void RefuseTirShare(SurveyDocument* out, const char* mode) {
 
 }  // namespace
 
-void AssembleTirShare(const TirShareInput& input, SurveyDocument* out) {
+void AssembleTirShare(const TirShareInput& input, SurveyResult* out) {
   std::vector<int> slots;
   if (const Error slot_error = ResolveSingleLayerPath({ *input.representative }, *input.table, &slots);
       !slot_error.Ok()) {

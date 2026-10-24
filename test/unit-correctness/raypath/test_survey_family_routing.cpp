@@ -51,9 +51,9 @@ const Distribution kUniformFull{ DistributionType::kUniform, 0.0f, 360.0f };
 // assembly is deterministic (diagnostic-batch lattice evaluation, no RNG), so the document's
 // three read-side faces — the ladder shape, the kill numbers, the JSON serialization — read the
 // same trace once instead of paying it three times.
-const SurveyDocument& SharedLowitzDocument() {
-  static const SurveyDocument document = [] {
-    SurveyDocument doc;
+const SurveyResult& SharedLowitzDocument() {
+  static const SurveyResult document = [] {
+    SurveyResult doc;
     const ConfigManager config = LowitzMeasureScene(40.0, 0.3);
     if (!AssembleSurvey(config, LiteralRequest({ 3, 5 }), &doc).Ok()) {
       ADD_FAILURE() << "the shared Lowitz assembly failed";
@@ -202,7 +202,7 @@ TEST(FamilyRouting, FreezeCandidatesSortTightestFirst) {
 // blur against the spot floor.
 TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_TRUE(document.unevaluated.empty());
@@ -267,7 +267,7 @@ TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
 // candidate is killed and reported in the ladder level that proposed it (never a card), with
 // the wide verdict and the clamped one-sided probe on record.
 TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
-  const SurveyDocument& document = SharedLowitzDocument();
+  const SurveyResult& document = SharedLowitzDocument();
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
 
@@ -349,7 +349,7 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
 // the same record stays narrow: the two frozen dimensions of one object read differently
 // (the narrow half of AC5's dimension-times-object property).
 TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
-  const SurveyDocument& document = SharedLowitzDocument();
+  const SurveyResult& document = SharedLowitzDocument();
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
   ASSERT_FALSE(block.ladder[2].killed.empty());
@@ -390,7 +390,7 @@ TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
 // narrow freezes with the band at level 2.
 TEST(FamilyRouting, ParryShapeCarriesTheOneDimensionalImageAtLevelTwo) {
   const ConfigManager config = ParryMeasureScene(1.0, 0.3);
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
   ASSERT_TRUE(document.family_routing.has_value());
   ASSERT_EQ(document.family_routing->ladder.size(), 3u);
@@ -420,7 +420,7 @@ TEST(FamilyRouting, ParryShapeCarriesTheOneDimensionalImageAtLevelTwo) {
 // produced (the reachability stays on the support card; the object claim dies).
 TEST(FamilyRouting, WideWobbleKillsTheCollapseCandidateItProposed) {
   const ConfigManager config = PlateScene(1.0, 5.0);
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
@@ -448,7 +448,7 @@ TEST(FamilyRouting, WideWobbleKillsTheCollapseCandidateItProposed) {
 // honestly unevaluated.
 TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   const ConfigManager config = SinglePoseScene();
-  SurveyDocument document;
+  SurveyResult document;
   // The pinned mirror 1-2-1: valid at the canonical pose (the 3-5 wedge is edge-on to the sun
   // there — its no_valid_image kill is the honest answer, not a failure of the arm).
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
@@ -494,7 +494,7 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
 
   // A chain whose corridor carries weight at the same pose (1-3: basal entry, side exit): the
   // single-pose read computes — the method slug named, both masses positive, never a band sum.
-  SurveyDocument wedge_document;
+  SurveyResult wedge_document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 3 }), &wedge_document).Ok());
   ASSERT_TRUE(wedge_document.family_routing.has_value());
   const SurveyObject* wedge_collapse = nullptr;
@@ -516,14 +516,14 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   // The edge-on 3-5 chain kills with no numbers at all: a no_valid_image kill carries no
   // blur/scale/clamped "measurement" — the group is absent from the serialized record, not
   // zeroed (the 0D arm sets its scale floor before the pose evaluates; it must not leak).
-  SurveyDocument edge_document;
+  SurveyResult edge_document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &edge_document).Ok());
   ASSERT_TRUE(edge_document.family_routing.has_value());
   ASSERT_EQ(edge_document.family_routing->ladder.size(), 1u);
   ASSERT_EQ(edge_document.family_routing->ladder[0].killed.size(), 1u);
   EXPECT_EQ(edge_document.family_routing->ladder[0].killed.front().reason, "no_valid_image");
   EXPECT_FALSE(edge_document.family_routing->ladder[0].killed.front().blur_measured);
-  const auto edge_parsed = nlohmann::json::parse(SurveyDocumentToJson(edge_document, "test"));
+  const auto edge_parsed = nlohmann::json::parse(SurveyResultToJson(edge_document, "test"));
   const auto& edge_killed = edge_parsed.at("family_routing").at("ladder").at(0).at("killed").at(0);
   EXPECT_FALSE(edge_killed.contains("blur_deg"));
   EXPECT_FALSE(edge_killed.contains("scale_deg"));
@@ -536,7 +536,7 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
 // while the ladder runs (the structure domain is wider than the density domain).
 TEST(FamilyRouting, FixedZenithAndRollAskTheRankAtLevelZeroWithoutTheDensityLegs) {
   const ConfigManager config = FixedPosePlateScene(1.5);
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   ASSERT_TRUE(document.family_routing.has_value());
@@ -565,7 +565,7 @@ TEST(FamilyRouting, FixedZenithAndRollAskTheRankAtLevelZeroWithoutTheDensityLegs
 // positive fact, no family_routing key, no approximation into the domain.
 TEST(FamilyRouting, OutsideDomainShapeRefusesWithTheNamedModeAndAWitness) {
   const ConfigManager config = ZigzagRollScene();
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_FALSE(document.family_routing.has_value());
@@ -580,7 +580,7 @@ TEST(FamilyRouting, OutsideDomainShapeRefusesWithTheNamedModeAndAWitness) {
   EXPECT_EQ(document.evidence.state, EvidenceState::kRefused);
   EXPECT_EQ(document.evidence.mode, "measure_shape_outside_routing_domain: roll_zigzag");
   EXPECT_TRUE(document.probes.empty());
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
   EXPECT_FALSE(parsed.contains("family_routing"));
   EXPECT_FALSE(parsed.contains("probes"));
   EXPECT_EQ(parsed.at("objects")[0].at("evidence").at("mode"), "measure_shape_outside_routing_domain: roll_zigzag");
@@ -601,7 +601,7 @@ TEST(FamilyRouting, RefusedPartitionScopesToTheLevelZeroCardAndTheLadderStillRun
   for (auto& setting : config.scene_.ms_.front().setting_) {
     setting.crystal_.axis_.latitude_dist = crystal.axis_.latitude_dist;
   }
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 1, 5, 7 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
 
@@ -647,11 +647,11 @@ TEST(FamilyRouting, RefusedPartitionScopesToTheLevelZeroCardAndTheLadderStillRun
 // The conditional-presence negative (AC7's mechanical form): the full-dimensional and the
 // early-stop documents carry no family_routing key at all.
 TEST(FamilyRouting, RandomAndEarlyStopDocumentsCarryNoFamilyRoutingKey) {
-  SurveyDocument random_document;
+  SurveyResult random_document;
   ASSERT_TRUE(AssembleSurvey(RandomPrismScene(), LiteralRequest({ 3, 5 }), &random_document).Ok());
   EXPECT_FALSE(random_document.family_routing.has_value());
   SurveyRequest early = LiteralRequest({ 1, 2 });
-  SurveyDocument early_document;
+  SurveyResult early_document;
   ASSERT_TRUE(AssembleSurvey(PlateScene(0.3, 0.3), early, &early_document).Ok());
   EXPECT_TRUE(early_document.early_stopped);
   EXPECT_FALSE(early_document.family_routing.has_value());
@@ -660,8 +660,8 @@ TEST(FamilyRouting, RandomAndEarlyStopDocumentsCarryNoFamilyRoutingKey) {
 // The serialized family document's shape: the measure echo, the ladder with its rank coverage
 // and killed records, the band on the cards, and the conditional keys.
 TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
-  const SurveyDocument& document = SharedLowitzDocument();
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const SurveyResult& document = SharedLowitzDocument();
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
   ASSERT_TRUE(parsed.contains("family_routing"));
   const auto& family = parsed.at("family_routing");
   EXPECT_EQ(family.at("measure").at("zenith").at("kind"), "gauss");
@@ -706,7 +706,7 @@ TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
 // pinned the serialized shape.
 TEST(FamilyRouting, LadderKillsTheUnprobeableImageWithNoMeasurementGroup) {
   const ConfigManager config = ParryMeasureScene(1.0, 0.3);
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 2, 5 }), &document).Ok());
   ASSERT_TRUE(document.family_routing.has_value());
   ASSERT_EQ(document.family_routing->ladder.size(), 3u);
@@ -729,7 +729,7 @@ TEST(FamilyRouting, LadderKillsTheUnprobeableImageWithNoMeasurementGroup) {
   EXPECT_TRUE(killed->verdicts.empty());
   // Serialized: kind and reason present, the position and the measurement group absent —
   // the same conditional-presence discipline the 0D edge-on kill pins.
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
   const auto& level2 = parsed.at("family_routing").at("ladder").at(2);
   ASSERT_TRUE(level2.contains("killed"));
   const nlohmann::json* record = nullptr;

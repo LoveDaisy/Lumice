@@ -20,8 +20,9 @@
 
 #include "analytic/band_sum.hpp"
 #include "analytic/pose_density.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/results/probe_line.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -96,23 +97,6 @@ ProbeFrame MakeProbeFrame(const double incident[3]);
 // Unit direction at deviation `delta_rad` from the frame's incident and azimuth `az_rad` about it.
 void ProbeDirection(const ProbeFrame& frame, double delta_rad, double az_rad, double out[3]);
 
-// One evaluated bin of a probe line, both coordinates spelled (the profile document's row).
-struct ProbeLineSample {
-  double delta_deg = 0.0;    // the bin centre's deviation from the sun
-  double azimuth_deg = 0.0;  // the bin centre's azimuth about the sun, in the probe frame
-  double value = 0.0;        // per sr (the band-sum value convention)
-  int k = 0;
-  double k_eff = 0.0;
-};
-
-// One wavelength's evaluated profile.
-struct ProbeLineProfile {
-  double wavelength_nm = 0.0;
-  double refractive_index = 0.0;
-  long long kept_count = 0;
-  std::vector<ProbeLineSample> samples;
-};
-
 // One bin's rectangle in the (deviation, azimuth) plane, degrees. The corners are read lo-to-hi
 // in the fixed order (delta_lo, az_lo) -> (delta_lo, az_hi) -> (delta_hi, az_hi) -> (delta_hi,
 // az_lo), the winding the built-in layout has always written.
@@ -153,7 +137,7 @@ ProbeLineProfile EvaluateProbeLine(const analytic::FaceNormalTable& table, const
 // Runs the band-sum probe and appends it to out->probes; fills the profile fields of the
 // bright_domain card when the document carries one. Never refuses: a path with no kept event
 // yields all-zero pixels and the honest empty readings.
-void RunSolarRadialProbe(const ProbeInput& input, SurveyDocument* out);
+void RunSolarRadialProbe(const ProbeInput& input, SurveyResult* out);
 
 }  // namespace lumice::raypath::survey
 

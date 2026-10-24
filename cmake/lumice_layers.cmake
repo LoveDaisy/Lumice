@@ -113,6 +113,7 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/family_rank.cpp
   analytic/family_rank.hpp
   analytic/fiber_continuation.cpp
+  analytic/fiber_types.hpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp
   analytic/jet2.hpp
@@ -263,6 +264,13 @@ set(LUMICE_LAYER_engine_FILES
 
 set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
+  raypath/results/survey_records.hpp
+  raypath/results/probe_line.hpp
+  raypath/point_result.hpp
+  raypath/probe_result.hpp
+  raypath/survey_result.hpp
+  raypath/domain/claim.hpp
+  raypath/domain/result_identity.hpp
   raypath/domain/scope.hpp
   raypath/domain/measure.hpp
   raypath/detail/input_scope.hpp
@@ -290,14 +298,13 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/input_assembly.cpp
   raypath/detail/input_assembly.hpp
   raypath/detail/json_values.hpp
-  raypath/detail/survey/evidence.hpp
+  raypath/domain/evidence.hpp
   raypath/detail/survey/config_fingerprint.cpp
   raypath/detail/survey/config_fingerprint.hpp
   raypath/detail/survey/survey_assembly.cpp
   raypath/detail/survey/survey_assembly.hpp
   raypath/detail/survey/survey_mc_ess.cpp
   raypath/detail/survey/survey_mc_ess.hpp
-  raypath/detail/survey/survey_document.hpp
   raypath/detail/survey/survey_family.cpp
   raypath/detail/survey/survey_family.hpp
   raypath/detail/survey/survey_json.cpp

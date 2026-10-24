@@ -10,11 +10,11 @@ Error AnalyzePathSurvey(const ConfigManager& config, const SurveyRequest& reques
   if (json_out == nullptr) {
     return { ErrorCode::kInvalidArgument, "null json output" };
   }
-  survey::SurveyDocument document;
+  survey::SurveyResult document;
   if (Error error = survey::AssembleSurvey(config, request, &document); !error.Ok()) {
     return error;
   }
-  *json_out = survey::SurveyDocumentToJson(document, product_version.c_str());
+  *json_out = survey::SurveyResultToJson(document, product_version.c_str());
   return {};
 }
 

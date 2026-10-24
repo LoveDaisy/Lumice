@@ -85,7 +85,7 @@ const analytic::CriticalOnset* ExtremumFoldOnset(const std::vector<analytic::Cri
 
 ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                                   const std::vector<std::vector<int>>& members, double refractive_index,
-                                  double wavelength_nm, SurveyDocument* out) {
+                                  double wavelength_nm, SurveyResult* out) {
   // One axis assembly per member; the support row is the schema3 machine's own (the same
   // assembly feeds the objects and the row — no second partition anywhere).
   ClassSupport support;
@@ -161,7 +161,7 @@ ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const 
 
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
-                            double refractive_index, double wavelength_nm, SurveyDocument* out) {
+                            double refractive_index, double wavelength_nm, SurveyResult* out) {
   const ClassSupport support = AssembleClassSupport(table, polygons, members, refractive_index, wavelength_nm, out);
   if (!support.ok) {
     return { false, support.refusal_mode };
@@ -235,7 +235,7 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
 
 void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
-                            int class_size, SurveyDocument* out) {
+                            int class_size, SurveyResult* out) {
   std::vector<int> slots;
   if (const Error slot_error = ResolveSingleLayerPath({ representative }, table, &slots); !slot_error.Ok()) {
     // Unreachable past the T1 arm (it resolved the same sequence), but the refusal stays honest.

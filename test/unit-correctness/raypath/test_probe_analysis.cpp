@@ -20,6 +20,7 @@
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_json.hpp"
+#include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/probe_json.hpp"
 #include "raypath/scene_to_analytic.hpp"
@@ -231,7 +232,7 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
   request.scene_layer.reset();
   ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
 
-  survey::SurveyDocument document;
+  survey::SurveyResult document;
   document.request.crystal_id = 1;
   document.request.path_layers = request.path_layers;
   document.scene_layer = 0;
@@ -240,7 +241,7 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
   document.warm_index.produced_for = "test producer";
   document.warm_index.seeds.push_back({ 1, 0, 0, 0, 1, 0, 0, 0, 1 });
   document.warm_index.seed_sources.push_back("test");
-  auto wire = nlohmann::json::parse(survey::SurveyDocumentToJson(document, "test"));
+  auto wire = nlohmann::json::parse(survey::SurveyResultToJson(document, "test"));
   WarmCandidate decoded;
   ASSERT_TRUE(DecodeWarmCandidate(wire.dump(), &decoded).Ok());
   ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
@@ -259,7 +260,7 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
 TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   const auto config = survey::PlateScene(1.5, 0.3);
   auto request = RadialRequest(config, -10.0, 0.0);
-  survey::SurveyDocument document;
+  survey::SurveyResult document;
   document.request.crystal_id = request.crystal_id;
   document.request.path_layers = request.path_layers;
   const auto location = survey::ResolveSelectionLocation(config, request);
@@ -276,9 +277,9 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   const auto measure = survey::ReadFamilyMeasure(config.crystals_.at(1).axis_);
   ASSERT_TRUE(measure.ok);
   document.family_routing->measure = measure.measure;
-  WarmCandidate typed = HarvestSurveyDocument(document);
+  WarmCandidate typed = HarvestSurveyResult(document);
   WarmCandidate decoded;
-  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(document, "test"), &decoded).Ok());
   std::optional<AdmittedWarmSource> admitted;
   ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
   ASSERT_TRUE(admitted);
@@ -290,25 +291,25 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.probes.emplace_back();
   document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
-  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyDocument(document), &admitted).Ok());
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyResult(document), &admitted).Ok());
   ASSERT_TRUE(admitted);
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.probes.clear();
   document.family_routing->measure.kind = MeasureKind::kIdealFrozen;
-  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyDocument(document), &admitted).Ok());
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyResult(document), &admitted).Ok());
   ASSERT_TRUE(admitted);
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.family_routing->measure.kind = MeasureKind::kActualDeclared;
   document.geometry.kind = GeometryKind::kRealized;
-  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyDocument(document), &admitted).Ok());
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, HarvestSurveyResult(document), &admitted).Ok());
   ASSERT_TRUE(admitted);
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.family_routing->measure.kind = MeasureKind::kIdealFrozen;
   document.probes.emplace_back();
   document.probes.back().spec.quantity.aggregation = MemberAggregation::kPhysicalClass;
   document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
-  typed = HarvestSurveyDocument(document);
-  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());
+  typed = HarvestSurveyResult(document);
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(document, "test"), &decoded).Ok());
   EXPECT_EQ(decoded.facts.geometry.kind, typed.facts.geometry.kind);
   EXPECT_EQ(decoded.facts.quantity.aggregation, typed.facts.quantity.aggregation);
   EXPECT_EQ(decoded.facts.quantity.measure, typed.facts.quantity.measure);
@@ -318,16 +319,16 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   document.probes.clear();
   document.family_routing->measure.kind = MeasureKind::kActualDeclared;
   document.geometry.kind = GeometryKind::kNominal;
-  typed = HarvestSurveyDocument(document);
+  typed = HarvestSurveyResult(document);
   typed.facts.measure_zenith.width_deg += 1.0;
   document.family_routing->measure.zenith.width_deg += 1.0;
-  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(document, "test"), &decoded).Ok());
   const Error typed_error = ValidateWarmCandidate(config, request, typed, &admitted);
   const Error wire_error = ValidateWarmCandidate(config, request, decoded, &admitted);
   EXPECT_EQ(typed_error.message, wire_error.message);
   EXPECT_NE(typed_error.message.find("measure gate"), std::string::npos);
   // Request identity wins over later corrupt payloads, exactly as at the old boundary.
-  auto wire = nlohmann::json::parse(survey::SurveyDocumentToJson(document, "test"));
+  auto wire = nlohmann::json::parse(survey::SurveyResultToJson(document, "test"));
   wire["request"]["crystal_id"] = 2;
   wire["family_routing"]["measure"] = nullptr;
   decoded.decode_error = DecodeWarmCandidate(wire.dump(), &decoded);
@@ -337,7 +338,7 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   EXPECT_EQ(ValidateWarmCandidate(config, request, decoded, &admitted).code, ErrorCode::kUnknownCrystalId);
   // Schema-4 keys are append-only; its version is not an admission gate.
   document.schema_version = 999;
-  EXPECT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());
+  EXPECT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(document, "test"), &decoded).Ok());
 }
 
 // The reuse arm: the scope matches, the grid is the warm grid, and the values (and the counts the
@@ -469,7 +470,7 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
 TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile) {
   const ConfigManager config = survey::PlateScene(1.5, 0.3);
   const SurveyWarmSource crafted = CraftedWarm(550.0, 20000);
-  survey::SurveyDocument document;
+  survey::SurveyResult document;
   document.wavelength_nm = 550.0;
   document.sun_altitude_deg = 20.0;
   document.sun_azimuth_deg = 0.0;
@@ -481,7 +482,7 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
   }
   document.probes.push_back(std::move(probe));
 
-  SurveyWarmSource warm = HarvestSurveyDocument(document).facts;
+  SurveyWarmSource warm = HarvestSurveyResult(document).facts;
   warm.index_present = true;
   ASSERT_TRUE(warm.has_probe);
   EXPECT_FALSE(warm.has_probe_azimuth);
@@ -498,7 +499,7 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
 TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   const ConfigManager config = survey::RandomPrismScene();
   const SurveyWarmSource crafted = CraftedWarm(550.0, 20000);
-  survey::SurveyDocument document;
+  survey::SurveyResult document;
   document.wavelength_nm = 550.0;
   survey::SurveyProbe probe;
   probe.spec.azimuth_deg = 0.0;
@@ -508,11 +509,11 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
     probe.samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
   }
   document.probes.push_back(std::move(probe));
-  const nlohmann::json wire = nlohmann::json::parse(survey::SurveyDocumentToJson(document, "test"));
+  const nlohmann::json wire = nlohmann::json::parse(survey::SurveyResultToJson(document, "test"));
   EXPECT_TRUE(wire["scope"]["sun_altitude_deg"].is_null());
   EXPECT_TRUE(wire["scope"]["sun_azimuth_deg"].is_null());
 
-  SurveyWarmSource warm = HarvestSurveyDocument(document).facts;
+  SurveyWarmSource warm = HarvestSurveyResult(document).facts;
   warm.index_present = true;
   warm.has_support = true;
   warm.intervals = crafted.intervals;
@@ -529,11 +530,11 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   EXPECT_EQ(result.profiles.front().source, "recomputed");
 
   document.sun_altitude_deg = 0.0;
-  warm = HarvestSurveyDocument(document).facts;
+  warm = HarvestSurveyResult(document).facts;
   EXPECT_TRUE(warm.has_sun_altitude);
   EXPECT_FALSE(warm.has_sun_azimuth);
   document.sun_azimuth_deg = 0.0;
-  warm = HarvestSurveyDocument(document).facts;
+  warm = HarvestSurveyResult(document).facts;
   EXPECT_TRUE(warm.has_sun_azimuth);
   warm.index_present = true;
   request.warm_candidate = Candidate(config, warm);

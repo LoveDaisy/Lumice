@@ -28,7 +28,7 @@ SurveyRequest BaseRequest() {
 
 TEST(SurveyAssembly, RankZeroClassCollapsesToOneSourceImageCardAndStops) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
   EXPECT_TRUE(document.early_stopped);
   ASSERT_EQ(document.objects.size(), 1u);
@@ -61,7 +61,7 @@ TEST(SurveyAssembly, LiteralScopeKeepsOnlyTheRequestedSequence) {
   const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyRequest request = BaseRequest();
   request.symmetry_bits = 0;
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   EXPECT_TRUE(document.early_stopped);
   // The early-stop document carries no family_routing key at all (the conditional-presence
@@ -84,7 +84,7 @@ TEST(SurveyAssembly, FamilyRestrictedPlateRoutesIntoTheLadderArm) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };  // through two side faces: a deviating prism path
   request.symmetry_bits = 0;           // the literal member: the arm's per-member shape, not the 12-member sweep
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_TRUE(document.unevaluated.empty());
@@ -122,7 +122,7 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;  // the literal single member: the seconds-scale shape of the arm
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   // The document-level unevaluated list is empty: the full-dimensional arm produced its cards
@@ -220,7 +220,7 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
 TEST(SurveyAssembly, StandaloneCrystalNotInAnySceneLayerStillRoutes) {
   ConfigManager config = PlateScene(0.3, 0.3);
   config.scene_.ms_.clear();  // the crystal is configured but allocated to no scattering layer
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
   // The standalone branch: no scene layer is named, and the identity says so.
   EXPECT_FALSE(document.scene_layer.has_value());
@@ -235,7 +235,7 @@ TEST(SurveyAssembly, StandaloneCrystalNotInAnySceneLayerStillRoutes) {
 
 TEST(SurveyAssembly, RequestRefusalsKeepTheReportErrorSemantics) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyDocument document;
+  SurveyResult document;
   SurveyRequest request = BaseRequest();
   request.crystal_id = 99;
   EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kUnknownCrystalId);
@@ -267,9 +267,9 @@ TEST(SurveyAssembly, RequestRefusalsKeepTheReportErrorSemantics) {
 
 TEST(SurveyAssembly, EndToEndJsonCarriesTheSchema4Contract) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
   EXPECT_EQ(parsed.at("schema"), "lumice.path-survey");
   EXPECT_EQ(parsed.at("schema_version"), 4);
   ASSERT_EQ(parsed.at("objects").size(), 1u);
@@ -294,7 +294,7 @@ TEST(SurveyAssembly, DispersionTableCarriesTheFollowedOnsetRows) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   ASSERT_TRUE(document.positional_dispersion.has_value());
   const SurveyPositionalDispersion& dispersion = *document.positional_dispersion;
@@ -321,7 +321,7 @@ TEST(SurveyAssembly, DispersionTableCarriesTheFollowedOnsetRows) {
     }
   }
   EXPECT_TRUE(saw_min_row);
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
   const auto& dispersion_json = parsed.at("chromatic").at("positional_dispersion");
   // The min-row scalars stay in place on a class that has them, and the rows ride as the new key.
   EXPECT_DOUBLE_EQ(dispersion_json.at("value_red_deg").get<double>(), dispersion.value_red_deg);
@@ -339,7 +339,7 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
   request.crystal_id = 1;
   request.path_layers = { { 13, 15, 26, 28 } };
   request.symmetry_bits = 0;  // the literal chain, the corpus's filter spelling
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_TRUE(document.unevaluated.empty());
@@ -398,7 +398,7 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
     }
   }
   EXPECT_TRUE(saw_max_row);
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(document, "test"));
   const auto& dispersion_json = parsed.at("chromatic").at("positional_dispersion");
   // The min-row scalars serialize only when the row exists: keys absent, rows present.
   EXPECT_FALSE(dispersion_json.contains("value_red_deg"));

@@ -29,8 +29,8 @@
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -53,7 +53,7 @@ struct TirShareInput {
 // shape with the mode. The document-level leg stands alone: it never touches the chromatic
 // block (whose arms carry their own legs and block-state rules). Never throws, never writes a
 // partial numeric shape.
-void AssembleTirShare(const TirShareInput& input, SurveyDocument* out);
+void AssembleTirShare(const TirShareInput& input, SurveyResult* out);
 
 }  // namespace lumice::raypath::survey
 

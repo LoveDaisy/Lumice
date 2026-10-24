@@ -33,7 +33,7 @@
 #include <vector>
 
 #include "raypath/detail/input_assembly.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 
@@ -59,7 +59,7 @@ struct McRegionEssInput {
 // finite with the bands, or the refused shape with the mode. The document-level leg stands
 // alone: it never touches the chromatic block. Never throws, never writes a partial numeric
 // shape.
-void AssembleMcRegionEss(const McRegionEssInput& input, SurveyDocument* out);
+void AssembleMcRegionEss(const McRegionEssInput& input, SurveyResult* out);
 
 }  // namespace lumice::raypath::survey
 

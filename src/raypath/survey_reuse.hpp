@@ -12,7 +12,7 @@
 #include "raypath/survey_context.hpp"
 
 namespace lumice::raypath::survey {
-struct SurveyDocument;
+struct SurveyResult;
 struct ProbeLineLayout;
 }  // namespace lumice::raypath::survey
 
@@ -132,7 +132,7 @@ bool CanReuseSurveyProfile(const AdmittedWarmSource& warm, const ProfileReuseSco
 // producer). The warm reader's JSON arm (DecodeWarmCandidate, single_path_json.hpp) mirrors this
 // field-for-field — the dual-arm oracle test pins the two arms together. Shared with the probe
 // query, whose inline arm assembles the same context and reads it through the same harvest.
-WarmCandidate HarvestSurveyDocument(const survey::SurveyDocument& doc);
+WarmCandidate HarvestSurveyResult(const survey::SurveyResult& doc);
 
 struct SurveyReuseDecision;
 class SurveyStructureView {

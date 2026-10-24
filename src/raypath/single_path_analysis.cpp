@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "analytic/discovery.hpp"
 #include "analytic/entry_measure.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_chain.hpp"
@@ -16,8 +17,8 @@
 #include "raypath/detail/measure/fiber_quadrature.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_result.hpp"
 #include "util/sky_direction.hpp"
 
 namespace lumice::raypath {
@@ -646,10 +647,10 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
     SurveyRequest survey_request;
     static_cast<PathSelection&>(survey_request) = request;
     survey_request.wavelength_nm = meta.wavelength_nm;
-    survey::SurveyDocument doc;
+    survey::SurveyResult doc;
     Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
     if (e.Ok())
-      e = ValidateWarmCandidate(config, request, HarvestSurveyDocument(doc), &inline_source);
+      e = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
     if (!e.Ok()) {
       out->object.state = "unevaluated";
       out->object.reason = "inline_survey_refused";

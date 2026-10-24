@@ -66,7 +66,7 @@ TEST(SurveyTirShare, TwoInternalInterfacesSeparateTheAggregateFromThePerInterfac
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
   const std::vector<int> representative{ 13, 15, 26, 28 };
   fix.representative = representative;
-  SurveyDocument document;
+  SurveyResult document;
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
   const SurveyTirShare& tir = *document.tir_share;
@@ -108,7 +108,7 @@ TEST(SurveyTirShare, OneInternalInterfaceMakesTheAggregateIdenticalToTheRow) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kRegularPrism);
   const std::vector<int> representative{ 3, 5, 7 };
   fix.representative = representative;
-  SurveyDocument document;
+  SurveyResult document;
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
   const SurveyTirShare& tir = *document.tir_share;
@@ -129,7 +129,7 @@ TEST(SurveyTirShare, SlabPathWithoutInternalInterfacesRefuses) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kRegularPrism);
   const std::vector<int> representative{ 3, 5 };
   fix.representative = representative;
-  SurveyDocument document;
+  SurveyResult document;
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
   EXPECT_EQ(document.tir_share->evidence.state, EvidenceState::kRefused);
@@ -142,7 +142,7 @@ TEST(SurveyTirShare, UnresolvableRepresentativeRefusesWithMemberResolution) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kRegularPrism);
   const std::vector<int> unresolvable{ 99, 99 };
   fix.representative = unresolvable;
-  SurveyDocument document;
+  SurveyResult document;
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
   EXPECT_EQ(document.tir_share->evidence.state, EvidenceState::kRefused);
@@ -155,9 +155,9 @@ TEST(SurveyTirShare, TwoIdenticalRunsProduceTheSameShares) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
   const std::vector<int> representative{ 13, 15, 26, 28 };
   fix.representative = representative;
-  SurveyDocument first;
+  SurveyResult first;
   AssembleTirShare(fix.Input(20000), &first);
-  SurveyDocument second;
+  SurveyResult second;
   AssembleTirShare(fix.Input(20000), &second);
   ASSERT_TRUE(first.tir_share.has_value());
   ASSERT_TRUE(second.tir_share.has_value());
@@ -177,7 +177,7 @@ TEST(SurveyTirShare, AssemblyWiringFollowsTheArmScope) {
   request.crystal_id = 1;
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;  // the literal single member: the seconds-scale shape of the arm
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   ASSERT_TRUE(document.tir_share.has_value());
@@ -191,7 +191,7 @@ TEST(SurveyTirShare, AssemblyWiringFollowsTheArmScope) {
   SurveyRequest plate_request;
   plate_request.crystal_id = 1;
   plate_request.path_layers = { { 1, 3, 6, 2 } };
-  SurveyDocument plate_document;
+  SurveyResult plate_document;
   ASSERT_TRUE(AssembleSurvey(plate, plate_request, &plate_document).Ok());
   EXPECT_TRUE(plate_document.early_stopped);
   EXPECT_FALSE(plate_document.tir_share.has_value());  // the identity arm does not run the leg
@@ -207,7 +207,7 @@ TEST(SurveyTirShare, RefusedSupportArmStillRunsTheLeg) {
   request.crystal_id = 1;
   request.path_layers = { { 3, 1, 5, 7 } };
   request.symmetry_bits = 0;
-  SurveyDocument document;
+  SurveyResult document;
   ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
   ASSERT_EQ(document.objects.size(), 1u);
   EXPECT_EQ(document.objects.front().evidence.state, EvidenceState::kRefused);
