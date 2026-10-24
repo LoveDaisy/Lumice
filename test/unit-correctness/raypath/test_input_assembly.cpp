@@ -246,6 +246,11 @@ TEST(TypedResultValues, CompletedProductsFreezeTheirOwnedTables) {
 
 TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
   rp::FeatureReportData data;
+  data.outcome = rp::ReportOutcome::kCompleted;
+  data.coverage.push_back(
+      { rp::CoverageRole::kBaseInput, "synthetic input", rp::CoverageStatus::kSupported, "test", {} });
+  data.coverage.push_back(
+      { rp::CoverageRole::kBoundedDiscovery, "synthetic discovery", rp::CoverageStatus::kSupported, "test", {} });
   data.scope.physical_members = { { 3, 5 } };
   data.core.objects.resize(1);
   data.core.objects[0].member = { 3, 5 };
@@ -273,6 +278,36 @@ TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
   data.annotations[0].matched_record = 2;
   const rp::FeatureReportResult malformed(data);
   EXPECT_FALSE(malformed.MatchedRecord(*malformed.Reference(rp::ObjectId{ 0 })));
+}
+
+TEST(TypedResultValues, ConstructionSlotsAreNotPublishableValues) {
+  // Point: the default construction slot asserts kDiscovered; only a completion may freeze it.
+  EXPECT_THROW(rp::PointResult(rp::PointData{}), std::invalid_argument);
+  rp::PointData completed;
+  completed.completion = rp::CompletionState::kCompleted;
+  EXPECT_NO_THROW(rp::PointResult(std::move(completed)));
+
+  // Probe: a successful profile's claim carries its declared scope, or it is not a value.
+  rp::ProbeData unscoped;
+  rp::ProbeProfile profile;
+  profile.BeginFinite().samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
+  unscoped.profiles.push_back(std::move(profile));
+  EXPECT_THROW(rp::ProbeResult(std::move(unscoped)), std::invalid_argument);
+  rp::ProbeData scoped;
+  rp::ProbeProfile scoped_profile;
+  auto& reading = scoped_profile.BeginFinite();
+  reading.samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
+  std::get<rp::Finite<rp::ProbeFiniteReading>>(scoped_profile.claim).scope.quantity = scoped_profile.quantity;
+  scoped.profiles.push_back(std::move(scoped_profile));
+  EXPECT_NO_THROW(rp::ProbeResult(std::move(scoped)));
+
+  // Chromatic: the unassessed arm has no writable payload; the transition comes first.
+  rp::schema3::StructureObjectRecord object;
+  EXPECT_THROW(object.MutableChromatic(), std::bad_variant_access);
+  object.SetChromatic({});
+  EXPECT_NO_THROW(object.MutableChromatic());
+  object.ClearChromatic();
+  EXPECT_THROW(object.MutableChromatic(), std::bad_variant_access);
 }
 
 TEST(TypedResultValues, SurveyObjectClaimsExcludeContradictoryPayloads) {
@@ -330,8 +365,7 @@ TEST(TypedResultValues, PointAndProbeHaveExclusiveOutcomePayloads) {
   EXPECT_EQ(std::get_if<rp::DiscoveredPoint>(&point.payload), nullptr);
   rp::ProbeProfile profile;
   EXPECT_EQ(profile.State(), rp::survey::EvidenceState::kUnevaluated);
-  profile.BeginFinite();
-  profile.Reading().samples.push_back({ 22, 0, 0, 0, 0 });
+  profile.BeginFinite().samples.push_back({ 22, 0, 0, 0, 0 });
   EXPECT_DOUBLE_EQ(profile.Reading().samples.front().value, 0.0);
   EXPECT_EQ(profile.State(), rp::survey::EvidenceState::kFinite);
   profile.claim = rp::Refused{ "no_edge", {} };

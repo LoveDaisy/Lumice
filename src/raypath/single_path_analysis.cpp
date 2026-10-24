@@ -950,6 +950,7 @@ PointResult FinalizePointResult(SinglePathResult result, bool include_context) {
       field->reason = "not_requested";
     }
   }
+  static_cast<PointData&>(result).completion = CompletionState::kCompleted;
   return PointResult(std::move(static_cast<PointData&>(result)));
 }
 

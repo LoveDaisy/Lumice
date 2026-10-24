@@ -250,7 +250,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     if (slot_count >= 3 && !PastDeadline(deadline)) {
       kind1.SetChromatic(
           analytic::Diagnose(*in.normals, *in.polygons, slots, slot_count, analytic::kNRed, analytic::kNBlue));
-      kind1.Chromatic().thresholds = analytic::ChromaticThresholdsSnapshot();
+      kind1.MutableChromatic().thresholds = analytic::ChromaticThresholdsSnapshot();
     }
     out.objects.push_back(std::move(kind1));
   }

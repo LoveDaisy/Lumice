@@ -107,16 +107,16 @@ struct StructureObjectRecord {
                     analytic::ChromaticThresholds thresholds = analytic::ChromaticThresholds{}) {
     chromatic_ = ChromaticAssessment{ std::move(verdict), thresholds };
   }
+  // The unassessed arm exposes the declared defaults READ-ONLY: a serializer may project them,
+  // but no writable path may carry an assessed verdict while ChromaticAssessed() stays false.
   const ChromaticAssessment& Chromatic() const {
     if (const auto* value = std::get_if<ChromaticAssessment>(&chromatic_))
       return *value;
     return std::get<UnassessedChromatic>(chromatic_).schema_defaults;
   }
-  ChromaticAssessment& Chromatic() {
-    if (auto* value = std::get_if<ChromaticAssessment>(&chromatic_))
-      return *value;
-    return std::get<UnassessedChromatic>(chromatic_).schema_defaults;
-  }
+  // Filling a verdict's fields is legal only after the explicit SetChromatic transition; reading
+  // it before that throws std::bad_variant_access (the arm does not exist).
+  ChromaticAssessment& MutableChromatic() { return std::get<ChromaticAssessment>(chromatic_); }
   // -- corroboration (v1: constant unchecked)
   CorroborationState corroboration = CorroborationState::kUnchecked;
   // -- geometry: sky position and u preimage, both first-class

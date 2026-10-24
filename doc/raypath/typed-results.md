@@ -37,6 +37,33 @@ rows; numeric qualification still goes through `ValidateWarmCandidate` and the e
 per-fact gates. Disk integers never become process-local result identities. A missing or
 incompatible warm index retains the existing degradation behavior.
 
+## The completion boundary
+
+A frozen root is produced only by its completion entry, and that entry is where every
+cross-field invariant is enforced — not a per-field convenience check scattered across adapters.
+
+- **Report.** `FeatureReportData::outcome` starts at `kNotCompleted`; only the completion
+  assembly assigns the final outcome. `FeatureReportResult` refuses to freeze the construction
+  slot, and `PathFeatureReportV3ToJson` throws on a slot value. Coverage rows carry a machine role
+  (`kBaseInput` / `kBoundedDiscovery` / `kDeclaredSkip`): the codec partitions by that role, so a
+  renamed subject keeps its limitations and a row inserted at any position keeps the vocabulary
+  ledger in place. Only the bounded-discovery row may carry limitations.
+- **Point.** `PointData::completion` starts at `kNotCompleted`; `FinalizePointResult` is the only
+  entry that marks it. The data constructor refuses the slot and `ToJson` throws on it, so a
+  default-constructed point cannot be published as `kDiscovered`.
+- **Survey.** The `SurveyResult` constructor *is* the completion boundary: `FinalizeSurveyData`
+  binds every claim's declared scope from the document's own facts (members, geometry, observation,
+  quantity spec), and `Validated` then rejects inconsistent object adjuncts, a bright domain whose
+  `probe_index` names no probe, an object member outside the class, and a successful probe claim
+  without a quantity scope. Product adapters hand over data and keep no second binding rule, so
+  every construction path — production, warm decode, tests — yields the same scopes.
+- **Probe.** A writable reading exists only as the return of `BeginFinite`, and a refusal's mode is
+  set together with its arm by `Refuse`; no accessor writes across arms. `ProbeResult` rejects a
+  successful profile claim that carries no declared quantity scope.
+- **Report object records.** The unassessed chromatic arm is read-only: `Chromatic()` returns the
+  declared defaults, and filling a verdict requires the explicit `SetChromatic` transition
+  (`MutableChromatic()` throws before it).
+
 ## Claims and independent states
 
 `Claim<T>` has four exclusive arms: `Certified<T>`, `Finite<T>`, `Refused`, and

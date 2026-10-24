@@ -13,6 +13,11 @@
 
 namespace lumice::raypath {
 
+// A construction value becomes a completed result only through its completion entry. The two
+// roots whose default construction would otherwise assert a successful outcome (report:
+// kCompleted, point: kDiscovered) carry this state, and their freeze validates it.
+enum class CompletionState { kNotCompleted, kCompleted };
+
 // Identity belongs to a frozen structure, never a container address or a wire ordinal.
 class ResultIdentity {
  public:

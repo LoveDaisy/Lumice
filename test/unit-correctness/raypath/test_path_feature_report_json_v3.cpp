@@ -243,12 +243,12 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   object.visibility.saw_zero_transmission = true;
   object.visibility.reason = "sentinel_visibility_reason";
   object.SetChromatic({});
-  object.Chromatic().verdict.kind = analytic::ChromaticVerdictKind::kTint;
-  object.Chromatic().verdict.color = analytic::ChromaticColor::kRed;
-  object.Chromatic().verdict.visible = true;
-  object.Chromatic().verdict.coverage_complete = false;
-  object.Chromatic().verdict.has_position = true;
-  object.Chromatic().verdict.position = 0.02;
+  object.MutableChromatic().verdict.kind = analytic::ChromaticVerdictKind::kTint;
+  object.MutableChromatic().verdict.color = analytic::ChromaticColor::kRed;
+  object.MutableChromatic().verdict.visible = true;
+  object.MutableChromatic().verdict.coverage_complete = false;
+  object.MutableChromatic().verdict.has_position = true;
+  object.MutableChromatic().verdict.position = 0.02;
   analytic::ChromaticFeature feature{};
   feature.kind = analytic::ChromaticFeatureKind::kEdge;
   feature.source = "sentinel_feature_source";
@@ -263,10 +263,10 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   feature.contrast = 0.06;
   feature.weight = 0.07;
   feature.lit_fraction = 0.08;
-  object.Chromatic().verdict.features = { feature };
-  object.Chromatic().verdict.has_tint = true;
-  object.Chromatic().verdict.tint = { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
-  object.Chromatic().verdict.notes = { "sentinel_chromatic_note" };
+  object.MutableChromatic().verdict.features = { feature };
+  object.MutableChromatic().verdict.has_tint = true;
+  object.MutableChromatic().verdict.tint = { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+  object.MutableChromatic().verdict.notes = { "sentinel_chromatic_note" };
   annotation = {};
   annotation.state = schema3::CorroborationState::kObserved;
   annotation.presence_ess = 50.0;
@@ -730,6 +730,66 @@ TEST(PathFeatureReportJsonV3, NonFiniteSpellingsFollowTheDeclaredConventions) {
   const nlohmann::json finite = nlohmann::json::parse(PathFeatureReportV3ToJson(
       schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled), "test"));
   EXPECT_DOUBLE_EQ(finite["unattributed_structures"]["structures"][0]["min_margin_rad"].get<double>(), 0.25);
+}
+
+TEST(PathFeatureReportJsonV3, CoverageProjectionReadsRolesNotTextOrPosition) {
+  V3Run run = MinimalV3Run();
+  const FeatureReportResult original =
+      schema3::CompleteFeatureReportResult(schema3::PrepareFeatureReportResult(run.report), run.assembled);
+  FeatureReportData renamed_data = original.Data();
+  bool renamed = false;
+  for (ReportCoverage& row : renamed_data.coverage) {
+    if (row.role == CoverageRole::kBoundedDiscovery) {
+      row.subject = "renamed bounded discovery";  // display text only: the role carries the shape
+      row.limitations = { "one bounded window" };
+      renamed = true;
+    }
+  }
+  ASSERT_TRUE(renamed);
+  const auto renamed_doc =
+      nlohmann::json::parse(PathFeatureReportV3ToJson(FeatureReportResult(std::move(renamed_data)), "test"));
+  ASSERT_EQ(renamed_doc.at("coverage").size(), 3u);
+  EXPECT_EQ(renamed_doc.at("coverage")[0].at("subject").get<std::string>(), "actual product input and physical L2");
+  EXPECT_EQ(renamed_doc.at("coverage")[1].at("subject").get<std::string>(), "renamed bounded discovery");
+  EXPECT_TRUE(renamed_doc.at("coverage")[1].contains("limitations"));
+  EXPECT_EQ(renamed_doc.at("coverage")[1].at("limitations")[0].get<std::string>(), "one bounded window");
+  EXPECT_EQ(renamed_doc.at("coverage")[2].at("subject").get<std::string>(), "object-kind vocabulary");
+
+  // A declared skip inserted FIRST must still be emitted after the vocabulary ledger: the
+  // emission order is the roles' own, not the array position.
+  FeatureReportData shifted_data = original.Data();
+  shifted_data.coverage.insert(shifted_data.coverage.begin(), { CoverageRole::kDeclaredSkip,
+                                                                "early skip",
+                                                                CoverageStatus::kNotSupported,
+                                                                "declared before the base rows",
+                                                                {} });
+  const auto shifted_doc =
+      nlohmann::json::parse(PathFeatureReportV3ToJson(FeatureReportResult(std::move(shifted_data)), "test"));
+  ASSERT_EQ(shifted_doc.at("coverage").size(), 4u);
+  EXPECT_EQ(shifted_doc.at("coverage")[0].at("subject").get<std::string>(), "actual product input and physical L2");
+  EXPECT_EQ(shifted_doc.at("coverage")[1].at("subject").get<std::string>(), "bounded MC corroboration discovery");
+  EXPECT_TRUE(shifted_doc.at("coverage")[1].contains("limitations"));
+  EXPECT_EQ(shifted_doc.at("coverage")[2].at("subject").get<std::string>(), "object-kind vocabulary");
+  EXPECT_EQ(shifted_doc.at("coverage")[3].at("subject").get<std::string>(), "early skip");
+}
+
+TEST(PathFeatureReportJsonV3, TheConstructionSlotIsNotPublishable) {
+  // The data constructor refuses a value no completion assembly produced.
+  EXPECT_THROW(FeatureReportResult(FeatureReportData{}), std::invalid_argument);
+  // The out-param slot is constructible but not serializable.
+  EXPECT_THROW(PathFeatureReportV3ToJson(FeatureReportResult{}, "test"), std::invalid_argument);
+  // A final outcome without the coverage roles is still not a completed run.
+  FeatureReportData no_roles;
+  no_roles.outcome = ReportOutcome::kCompleted;
+  EXPECT_THROW(FeatureReportResult{ no_roles }, std::invalid_argument);
+  // Only the bounded-discovery role may carry limitations.
+  FeatureReportData stray_limitations;
+  stray_limitations.outcome = ReportOutcome::kCompleted;
+  stray_limitations.coverage.push_back(
+      { CoverageRole::kBaseInput, "base", CoverageStatus::kSupported, "", { "stray" } });
+  stray_limitations.coverage.push_back(
+      { CoverageRole::kBoundedDiscovery, "bounded", CoverageStatus::kSupported, "", {} });
+  EXPECT_THROW(FeatureReportResult{ stray_limitations }, std::invalid_argument);
 }
 
 TEST(PathFeatureReportJsonV3, UnsupportedMulticrystalTakesTheV3EarlyShape) {

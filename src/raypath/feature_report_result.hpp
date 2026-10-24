@@ -2,6 +2,7 @@
 #define LUMICE_RAYPATH_FEATURE_REPORT_RESULT_HPP_
 
 #include <algorithm>
+#include <stdexcept>
 
 #include "raypath/domain/result_identity.hpp"
 #include "raypath/results/report_attribution.hpp"
@@ -11,9 +12,24 @@
 
 namespace lumice::raypath {
 
-enum class ReportOutcome { kCompleted, kPartial, kNoRelatedFeature, kUnsupportedMulticrystal };
+enum class ReportOutcome {
+  kNotCompleted,  // the construction-slot default: no completion assembly has run yet
+  kCompleted,
+  kPartial,
+  kNoRelatedFeature,
+  kUnsupportedMulticrystal,
+};
 enum class CoverageStatus { kSupported, kNumericalIncomplete, kNotSupported };
+// The row's machine role, owned by the completion assembly. The codec partitions by this role;
+// display text and array position carry no meaning (a renamed subject keeps its limitations, an
+// inserted row keeps the vocabulary ledger in place).
+enum class CoverageRole {
+  kBaseInput,         // the actual product input the run read
+  kBoundedDiscovery,  // the bounded-search honesty row; the only role carrying limitations
+  kDeclaredSkip,      // a leg the run declared it did not evaluate
+};
 struct ReportCoverage {
+  CoverageRole role = CoverageRole::kBaseInput;
   std::string subject;
   CoverageStatus status = CoverageStatus::kNotSupported;
   std::string reason;
@@ -56,7 +72,9 @@ struct ReportTiming {
 // neither a serializer nor a typed reader retains a sampler or an input snapshot.
 struct FeatureReportData {
   ReportScope scope;
-  ReportOutcome outcome = ReportOutcome::kCompleted;
+  // kNotCompleted is the construction slot's value; only the completion assembly assigns a
+  // final outcome, and FeatureReportResult refuses to freeze the slot.
+  ReportOutcome outcome = ReportOutcome::kNotCompleted;
   std::vector<std::vector<int>> requested_path_layers;
   schema3::Schema3DiscoveryCore core;
   std::vector<schema3::CorroborationAnnotation> annotations;
@@ -73,7 +91,10 @@ struct FeatureReportData {
 // construction from revised assembly data creates a different snapshot.
 class FeatureReportResult : public FrozenValue<FeatureReportData> {
  public:
-  using FrozenValue<FeatureReportData>::FrozenValue;
+  // The output slot an entry writes into. No completion has run, so the value is not
+  // publishable: the data constructor below rejects it and PathFeatureReportV3ToJson throws on it.
+  FeatureReportResult() : FrozenValue<FeatureReportData>(FeatureReportData{}) {}
+  explicit FeatureReportResult(FeatureReportData data) : FrozenValue<FeatureReportData>(Validated(std::move(data))) {}
   std::optional<RecordRef> Reference(RecordId id) const {
     return id.ordinal < Data().mc.discovery.features.size() ? std::optional<RecordRef>{ { Identity(), id } } :
                                                               std::nullopt;
@@ -148,7 +169,37 @@ class FeatureReportResult : public FrozenValue<FeatureReportData> {
                &Data().scope.physical_members[ref.member.ordinal] :
                nullptr;
   }
+
+ private:
+  static FeatureReportData Validated(FeatureReportData data) {
+    if (data.outcome == ReportOutcome::kNotCompleted) {
+      throw std::invalid_argument("feature report: the construction slot was frozen without a completion");
+    }
+    size_t base_rows = 0;
+    size_t bounded_rows = 0;
+    for (const ReportCoverage& row : data.coverage) {
+      switch (row.role) {
+        case CoverageRole::kBaseInput:
+          ++base_rows;
+          break;
+        case CoverageRole::kBoundedDiscovery:
+          ++bounded_rows;
+          break;
+        case CoverageRole::kDeclaredSkip:
+          break;
+      }
+      if (row.role != CoverageRole::kBoundedDiscovery && !row.limitations.empty()) {
+        throw std::invalid_argument("feature report: only the bounded-discovery coverage row carries limitations");
+      }
+    }
+    const bool unsupported = data.outcome == ReportOutcome::kUnsupportedMulticrystal;
+    if (unsupported ? bounded_rows != 0 : (base_rows != 1 || bounded_rows != 1)) {
+      throw std::invalid_argument("feature report: the coverage roles do not describe one completed run");
+    }
+    return data;
+  }
 };
+
 
 }  // namespace lumice::raypath
 

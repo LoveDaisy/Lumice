@@ -409,5 +409,9 @@ TEST(SinglePathJson, WarmSeedReaderRejectsWhatIsNotThisFormat) {
   EXPECT_EQ(code_of(no_seed.dump()), ErrorCode::kInvalidArgument);
 }
 
+TEST(SinglePathJson, TheConstructionSlotIsNotPublishable) {
+  EXPECT_THROW(ToJson(PointResult{}, "test"), std::invalid_argument);
+}
+
 }  // namespace
 }  // namespace lumice::raypath

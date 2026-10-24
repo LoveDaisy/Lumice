@@ -476,4 +476,41 @@ TEST(SurveyAssembly, PublishedResultOwnsItsScopeAndRefusedQuantity) {
   EXPECT_EQ(data.weight_tint->Scope().input, data.quantity_context);
 }
 
+TEST(SurveyAssembly, CompletionBindsTheDeclaredScopeAndRejectsDanglingReferences) {
+  const ConfigManager config = RandomPrismScene();
+  SurveyRequest request = BaseRequest();
+  request.path_layers = { { 3, 5 } };
+  request.symmetry_bits = 0;
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
+
+  // Completion binds the claim's declared scope from the document's own facts, on every
+  // construction path: the finite probe's scope resolves quantity, representative and observation.
+  const survey::SurveyResult result(document);
+  ASSERT_FALSE(result.Data().probes.empty());
+  const SurveyProbe& probe = result.Data().probes.front();
+  ASSERT_TRUE(probe.Scope().quantity.has_value());
+  EXPECT_EQ(probe.Scope().members.members, std::vector<std::vector<int>>{ probe.spec.representative });
+  ASSERT_TRUE(probe.Scope().observation.wavelength_nm.has_value());
+  EXPECT_DOUBLE_EQ(*probe.Scope().observation.wavelength_nm, probe.spec.wavelength_nm);
+
+  // A bright domain may not reference a probe outside the result.
+  SurveyData dangling = document;
+  bool rewired = false;
+  for (SurveyObject& object : dangling.objects) {
+    if (auto* bright = object.Bright()) {
+      bright->probe_index = static_cast<int>(dangling.probes.size()) + 3;
+      rewired = true;
+    }
+  }
+  ASSERT_TRUE(rewired);
+  EXPECT_THROW(survey::SurveyResult{ dangling }, std::invalid_argument);
+
+  // An object may not reference a member outside its own class.
+  SurveyData foreign = document;
+  ASSERT_FALSE(foreign.objects.empty());
+  foreign.objects.front().members = { { 9, 9, 9 } };
+  EXPECT_THROW(survey::SurveyResult{ foreign }, std::invalid_argument);
+}
+
 }  // namespace lumice::raypath::survey

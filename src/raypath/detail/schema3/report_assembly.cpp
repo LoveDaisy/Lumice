@@ -114,7 +114,8 @@ FeatureReportData PrepareFeatureReportResult(const PathFeatureReport& report) {
   if (report.unsupported_multicrystal) {
     result.outcome = ReportOutcome::kUnsupportedMulticrystal;
     result.coverage.push_back(
-        { "multi-crystal chain",
+        { CoverageRole::kBaseInput,
+          "multi-crystal chain",
           CoverageStatus::kNotSupported,
           "single-crystal internal reflections are supported, but this multi-crystal request was not evaluated",
           {} });
@@ -200,22 +201,30 @@ FeatureReportResult CompleteFeatureReportResult(FeatureReportData result, Assemb
   result.timing.field_discovery = discovery.field_seconds;
   result.timing.enumeration = assembled.enumeration_seconds;
   result.timing.attribution = assembled.attribution_seconds;
-  result.coverage.push_back({ "actual product input and physical L2",
+  result.coverage.push_back({ CoverageRole::kBaseInput,
+                              "actual product input and physical L2",
                               CoverageStatus::kSupported,
                               "one selected crystal chain; actual distribution/shape/source/spectrum assembly",
                               {} });
   const bool partial = discovery.budget_exhausted || !discovery.unfinished.empty();
   result.coverage.push_back(
-      { "bounded MC corroboration discovery",
+      { CoverageRole::kBoundedDiscovery, "bounded MC corroboration discovery",
         partial ? CoverageStatus::kNumericalIncomplete : CoverageStatus::kSupported,
         "only the recorded local windows and source seeds; no all-sky or source-topology completeness claim",
         discovery.limitations });
   if (!assembled.measure_skip_note.empty()) {
-    result.coverage.push_back({ "declared measure", CoverageStatus::kNotSupported, assembled.measure_skip_note, {} });
+    result.coverage.push_back({ CoverageRole::kDeclaredSkip,
+                                "declared measure",
+                                CoverageStatus::kNotSupported,
+                                assembled.measure_skip_note,
+                                {} });
   }
   if (!assembled.density_skip_note.empty()) {
-    result.coverage.push_back(
-        { "pose density conversion", CoverageStatus::kNotSupported, assembled.density_skip_note, {} });
+    result.coverage.push_back({ CoverageRole::kDeclaredSkip,
+                                "pose density conversion",
+                                CoverageStatus::kNotSupported,
+                                assembled.density_skip_note,
+                                {} });
   }
   result.outcome = assembled.ruling.issued ? ReportOutcome::kNoRelatedFeature :
                    partial                 ? ReportOutcome::kPartial :

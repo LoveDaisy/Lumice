@@ -494,66 +494,8 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   if (const Error error = AssembleSurveyData(config, request, &data, options); !error.Ok()) {
     return error;
   }
-  const auto bind_quantity = [&](auto& optional) {
-    if (!optional)
-      return;
-    ClaimScope scope = optional->Scope();
-    scope.input = data.quantity_context;
-    scope.members = data.quantity_context->members;
-    scope.geometry = data.geometry;
-    scope.observation = data.quantity_context->observation;
-    if (auto* value = optional->ValueOrNull()) {
-      value->quantity.context = data.quantity_context;
-      value->quantity.observation.sun_altitude_deg = data.sun_altitude_deg;
-      value->quantity.observation.sun_azimuth_deg = data.sun_azimuth_deg;
-      BindQuantityScope(&scope, value->quantity);
-    }
-    if (scope.quantity) {
-      scope.observation = scope.quantity->observation;
-      scope.observation.sun_altitude_deg = data.sun_altitude_deg;
-      scope.observation.sun_azimuth_deg = data.sun_azimuth_deg;
-      scope.quantity->context = data.quantity_context;
-      scope.quantity->observation = scope.observation;
-      const QuantitySpec quantity = *scope.quantity;
-      BindQuantityScope(&scope, quantity);
-      if (scope.quantity->aggregation == MemberAggregation::kRepresentative) {
-        scope.members.members = { data.request.path_layers.front() };
-        scope.members.member_kind = MemberKind::kLiteral;
-      }
-    }
-    optional->BindScope(scope);
-  };
-  for (auto& object : data.objects) {
-    ClaimScope scope;
-    scope.members.members = object.members;
-    scope.members.member_kind = request.symmetry_bits == 0 ? MemberKind::kLiteral : MemberKind::kPhysicalL2;
-    static_cast<ScopeLocation&>(scope.members) = ResolveSelectionLocation(config, request);
-    scope.geometry = data.geometry;
-    scope.observation = { data.wavelength_nm, data.sun_altitude_deg, data.sun_azimuth_deg };
-    scope.measure.kind =
-        object.band && object.band->level > 0 ? MeasureKind::kIdealFrozen : MeasureKind::kActualDeclared;
-    scope.input = data.quantity_context;
-    scope.measure.reference = ReferenceMeasure::kNone;
-    object.BindScope(scope);
-    if (auto* witness = object.Witness())
-      bind_quantity(witness);
-  }
-  bind_quantity(data.weight_tint);
-  bind_quantity(data.tir_share);
-  bind_quantity(data.mc_region_ess);
-  for (auto& probe : data.probes) {
-    QuantitySpec& quantity = probe.spec.quantity;
-    quantity.context = data.quantity_context;
-    quantity.observation = { probe.spec.wavelength_nm, data.sun_altitude_deg, data.sun_azimuth_deg };
-    quantity.wavelengths_nm = { probe.spec.wavelength_nm };
-    ClaimScope scope = probe.Scope();
-    scope.input = data.quantity_context;
-    scope.members = data.quantity_context->members;
-    scope.members.members = { probe.spec.representative };
-    scope.members.member_kind = MemberKind::kLiteral;
-    BindQuantityScope(&scope, quantity);
-    probe.BindScope(scope);
-  }
+  // The completion boundary binds every claim's declared scope itself (FinalizeSurveyData); the
+  // adapter keeps no second copy of that rule.
   *out = SurveyResult(std::move(data));
   return {};
 }

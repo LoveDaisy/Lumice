@@ -1,7 +1,9 @@
 #ifndef LUMICE_RAYPATH_PROBE_RESULT_HPP_
 #define LUMICE_RAYPATH_PROBE_RESULT_HPP_
 
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/def.hpp"
@@ -128,15 +130,30 @@ struct ProbeProfile {
   int member_count = 0;
   Claim<ProbeFiniteReading> claim;
   survey::EvidenceState State() const { return ClaimState(claim); }
-  void BeginFinite() {
+  // The explicit transitions: a writable reading exists only as the result of BeginFinite, and a
+  // refusal's mode is set together with its arm. No accessor can write across arms.
+  ProbeFiniteReading& BeginFinite() {
     if (!std::holds_alternative<Finite<ProbeFiniteReading>>(claim)) {
       claim = Finite<ProbeFiniteReading>{};
     }
+    return std::get<Finite<ProbeFiniteReading>>(claim).value;
   }
-  ProbeFiniteReading& Reading() { return std::get<Finite<ProbeFiniteReading>>(claim).value; }
+  void Refuse(std::string reason) { claim = Refused{ std::move(reason), {} }; }
   const ProbeFiniteReading& Reading() const { return std::get<Finite<ProbeFiniteReading>>(claim).value; }
-  std::string& RefusalReason() { return std::get<Refused>(claim).reason; }
   const std::string& RefusalReason() const { return std::get<Refused>(claim).reason; }
+  // The claim's declared scope, whichever arm holds it (the asked scope on a non-success arm).
+  const ClaimScope& Scope() const {
+    if (const auto* finite = std::get_if<Finite<ProbeFiniteReading>>(&claim)) {
+      return finite->scope;
+    }
+    if (const auto* certified = std::get_if<Certified<ProbeFiniteReading>>(&claim)) {
+      return certified->scope;
+    }
+    if (const auto* refused = std::get_if<Refused>(&claim)) {
+      return refused->asked_scope;
+    }
+    return std::get<Unevaluated>(claim).asked_scope;
+  }
 };
 
 // ---- result --------------------------------------------------------------------------------------
@@ -160,7 +177,8 @@ struct ProbeData {
 // construction from revised assembly data creates a different snapshot.
 class ProbeResult : public FrozenValue<ProbeData> {
  public:
-  using FrozenValue<ProbeData>::FrozenValue;
+  ProbeResult() : ProbeResult(ProbeData{}) {}
+  explicit ProbeResult(ProbeData data) : FrozenValue<ProbeData>(Validated(std::move(data))) {}
   std::optional<MemberRef> Reference(MemberId id) const {
     return id.ordinal < Data().members.members.size() ? std::optional<MemberRef>{ { Identity(), id } } : std::nullopt;
   }
@@ -169,7 +187,20 @@ class ProbeResult : public FrozenValue<ProbeData> {
                &Data().members.members[ref.member.ordinal] :
                nullptr;
   }
+
+ private:
+  static ProbeData Validated(ProbeData data) {
+    for (const ProbeProfile& profile : data.profiles) {
+      const survey::EvidenceState state = profile.State();
+      if ((state == survey::EvidenceState::kFinite || state == survey::EvidenceState::kCertified) &&
+          !profile.Scope().quantity) {
+        throw std::invalid_argument("a probe profile's successful claim carries no quantity scope");
+      }
+    }
+    return data;
+  }
 };
+
 
 }  // namespace lumice::raypath
 

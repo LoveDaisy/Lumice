@@ -2,7 +2,9 @@
 #define LUMICE_RAYPATH_POINT_RESULT_HPP_
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -309,6 +311,9 @@ struct DiscoveredPoint {
 };
 
 struct PointData {
+  // Set only by the completion entry (FinalizePointResult): a construction value that never ran
+  // it reaches no published root.
+  CompletionState completion = CompletionState::kNotCompleted;
   PointFactorQuantities quantities;
   MemberScope members;
   SinglePathMetadata meta;
@@ -332,7 +337,10 @@ struct PointData {
 // construction from revised assembly data creates a different snapshot.
 class PointResult : public FrozenValue<PointData> {
  public:
-  using FrozenValue<PointData>::FrozenValue;
+  // The output slot an entry writes into. No completion has run, so the value is not
+  // publishable: the data constructor rejects it and ToJson throws on it.
+  PointResult() : FrozenValue<PointData>(PointData{}) {}
+  explicit PointResult(PointData data) : FrozenValue<PointData>(Validated(std::move(data))) {}
   std::optional<MemberRef> Reference(MemberId id) const {
     return id.ordinal < Data().members.members.size() ? std::optional<MemberRef>{ { Identity(), id } } : std::nullopt;
   }
@@ -341,7 +349,16 @@ class PointResult : public FrozenValue<PointData> {
                &Data().members.members[ref.member.ordinal] :
                nullptr;
   }
+
+ private:
+  static PointData Validated(PointData data) {
+    if (data.completion != CompletionState::kCompleted) {
+      throw std::invalid_argument("point: the construction slot was frozen without a completion");
+    }
+    return data;
+  }
 };
+
 
 }  // namespace lumice::raypath
 

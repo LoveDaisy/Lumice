@@ -1,6 +1,8 @@
 #include "raypath/detail/path_feature_report_json.hpp"
 
 #include <nlohmann/json.hpp>
+#include <stdexcept>
+#include <utility>
 
 #include "analytic/dp_boundary.hpp"
 #include "analytic/dp_focus.hpp"
@@ -459,6 +461,19 @@ Json ChromaticJson(const StructureObjectRecord& object) {
            { "thresholds", std::move(thresholds) } };
 }
 
+// One coverage row: the machine role decides the shape; the subject is display text only.
+Json CoverageRowJson(const ReportCoverage& row) {
+  const char* status = row.status == CoverageStatus::kSupported           ? "supported" :
+                       row.status == CoverageStatus::kNumericalIncomplete ? "numerical_incomplete" :
+                                                                            "not_supported";
+  Json value = { { "subject", row.subject }, { "status", status } };
+  if (row.role == CoverageRole::kBoundedDiscovery) {
+    value["limitations"] = row.limitations;
+  }
+  value["reason"] = row.reason;
+  return value;
+}
+
 Json Schema3ObjectJson(const StructureObjectRecord& object, const CorroborationAnnotation& annotation, size_t id) {
   Json existence = { { "state", ExistenceStateName(object.existence) }, { "walk_s", Num(object.walk_s) } };
   if (object.existence == ExistenceState::kEscaped && !object.escape_regime_slug.empty()) {
@@ -507,8 +522,16 @@ Json Schema3ObjectJson(const StructureObjectRecord& object, const CorroborationA
 std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const char* lumice_version) {
   const FeatureReportData& result = value.Data();
   const auto& assembled = result;
+  if (result.outcome == ReportOutcome::kNotCompleted) {
+    // The construction slot is not a product; a completed value never carries this outcome.
+    throw std::invalid_argument("feature report: an uncompleted value has no publication");
+  }
   if (result.outcome == ReportOutcome::kUnsupportedMulticrystal) {
     // The early path in the v3 shape: the segments and blocks it names, empty; the refusal row.
+    Json coverage = Json::array();
+    for (const ReportCoverage& row : result.coverage) {
+      coverage.push_back(CoverageRowJson(row));
+    }
     return Json{
       { "schema", "lumice.path-feature-report" },
       { "schema_version", kFeatureReportSchemaVersion },
@@ -526,12 +549,7 @@ std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const ch
               { "seconds", 0 } } },
           { "observation_scope_note", schema3::kMcObservationScopeNote },
           { "unfinished", Json::array() } } },
-      { "coverage",
-        { { { "subject", "multi-crystal chain" },
-            { "status", "not_supported" },
-            { "reason",
-              "single-crystal internal reflections are supported, but this multi-crystal request was not "
-              "evaluated" } } } },
+      { "coverage", std::move(coverage) },
       { "budgets", { { "optical_evaluations", 0 }, { "field_component_evaluations", 0 } } }
     }.dump();
   }
@@ -673,21 +691,19 @@ std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const ch
     { "unfinished", discovery.unfinished }
   };
 
-  // -- coverage: the bounded-search honesty rows, the vocabulary ledger row, the declared skips
+  // -- coverage: the bounded-search honesty rows, the vocabulary ledger row, the declared skips.
+  // The order is the roles' own (base input, bounded discovery, the ledger, the declared skips);
+  // neither the display text nor an array position selects a row's meaning.
   Json coverage = Json::array();
-  const auto coverage_row = [](const ReportCoverage& row) {
-    const char* status = row.status == CoverageStatus::kSupported           ? "supported" :
-                         row.status == CoverageStatus::kNumericalIncomplete ? "numerical_incomplete" :
-                                                                              "not_supported";
-    Json value = { { "subject", row.subject }, { "status", status } };
-    if (row.subject == "bounded MC corroboration discovery") {
-      value["limitations"] = row.limitations;
+  for (const ReportCoverage& row : result.coverage) {
+    if (row.role == CoverageRole::kBaseInput) {
+      coverage.push_back(CoverageRowJson(row));
     }
-    value["reason"] = row.reason;
-    return value;
-  };
-  for (size_t i = 0; i < std::min<size_t>(2, result.coverage.size()); ++i) {
-    coverage.push_back(coverage_row(result.coverage[i]));
+  }
+  for (const ReportCoverage& row : result.coverage) {
+    if (row.role == CoverageRole::kBoundedDiscovery) {
+      coverage.push_back(CoverageRowJson(row));
+    }
   }
   const EnumeratedCoverage& vocabulary = assembled.core.coverage;
   Json declared = Json::array();
@@ -703,8 +719,10 @@ std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const ch
                        { "status", "supported" },
                        { "produced", std::move(produced) },
                        { "declared_not_produced", std::move(declared) } });
-  for (size_t i = 2; i < result.coverage.size(); ++i) {
-    coverage.push_back(coverage_row(result.coverage[i]));
+  for (const ReportCoverage& row : result.coverage) {
+    if (row.role == CoverageRole::kDeclaredSkip) {
+      coverage.push_back(CoverageRowJson(row));
+    }
   }
   document["coverage"] = std::move(coverage);
 
@@ -766,6 +784,8 @@ std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const ch
 
   // -- outcome: the single value; the basis rides beside it exactly when issued
   switch (result.outcome) {
+    case ReportOutcome::kNotCompleted:
+      throw std::invalid_argument("feature report: an uncompleted value has no publication");
     case ReportOutcome::kCompleted:
       document["outcome"] = "completed";
       break;

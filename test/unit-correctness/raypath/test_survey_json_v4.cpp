@@ -705,6 +705,7 @@ TEST(SurveyJsonV4, ExceptionLegRefusalsSerializeStateAndModeOnly) {
 // and the conditional presence of the whole key.
 TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
   SurveyData document;
+  document.members = { { 3, 5 } };  // the class its card belongs to
   document.family_routing = FamilyRoutingBlock{};
   FamilyRoutingBlock& block = *document.family_routing;
   block.measure.zenith = { FamilyDimKind::kGauss, 0.0, 40.0 };

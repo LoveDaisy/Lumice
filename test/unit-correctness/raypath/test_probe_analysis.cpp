@@ -125,8 +125,10 @@ TEST(ProbeAnalysis, CertifiedProfileSerializesItsSuccessfulReading) {
   ProbeData data;
   ProbeProfile profile;
   profile.claim = Certified<ProbeFiniteReading>{};
-  std::get<Certified<ProbeFiniteReading>>(profile.claim).method = "synthetic";
-  std::get<Certified<ProbeFiniteReading>>(profile.claim).value.samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
+  auto& certified = std::get<Certified<ProbeFiniteReading>>(profile.claim);
+  certified.method = "synthetic";
+  certified.scope.quantity = profile.quantity;  // a successful claim always carries its declared scope
+  certified.value.samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
   data.profiles.push_back(std::move(profile));
   const auto wire = nlohmann::json::parse(ProbeToJson(ProbeResult(std::move(data)), "test"));
   const auto& item = wire.at("profiles")[0];

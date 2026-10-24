@@ -440,24 +440,21 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     const bool arc_refused =
         arc_form && (meta.at_deviation_deg <= kArcDegenerateNearDeg || meta.at_deviation_deg >= kArcDegenerateFarDeg);
     if (edge_refused) {
-      profile.claim = Refused{};
       // The refusal's cause: a context that names no edge is the form's own refusal; an inline
       // assembly that never produced a context is the infrastructure's, named for what failed.
-      profile.RefusalReason() = inline_refused ? "inline_survey_refused" : "no_edge_in_context";
+      profile.Refuse(inline_refused ? "inline_survey_refused" : "no_edge_in_context");
       // No dark_regions on a refused profile: with no samples the decomposition is empty by
       // construction, and doc §10.2 marks the field Finite only.
       result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
     if (arc_refused) {
-      profile.claim = Refused{};
-      profile.RefusalReason() = "degenerate_arc_at_pole";
+      profile.Refuse("degenerate_arc_at_pole");
       result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
     if (!density_ok) {
-      profile.claim = Refused{};
-      profile.RefusalReason() = "measure_not_expressible";
+      profile.Refuse("measure_not_expressible");
       result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
@@ -475,13 +472,13 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
                                            profile.sample_count,
                                            radial };
     const bool reused = warm != nullptr && CanReuseSurveyProfile(*warm, profile_scope, density, layout);
+    ProbeFiniteReading& reading = profile.BeginFinite();
     if (reused) {
-      profile.BeginFinite();
-      profile.Reading().source = ProbeProfileSource::kWarmReused;
-      profile.Reading().members_evaluated = 1;
-      profile.Reading().samples.resize(layout.bins.size());
+      reading.source = ProbeProfileSource::kWarmReused;
+      reading.members_evaluated = 1;
+      reading.samples.resize(layout.bins.size());
       for (size_t k = 0; k < layout.bins.size(); k++) {
-        survey::ProbeLineSample& sample = profile.Reading().samples[k];
+        survey::ProbeLineSample& sample = reading.samples[k];
         sample.delta_deg = layout.bins[k].delta_centre_deg;
         sample.azimuth_deg = layout.bins[k].az_centre_deg;
         const auto& samples = warm->Facts().probe_samples;
@@ -490,38 +487,37 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
         sample.k_eff = samples[k].k_eff;
       }
     } else {
-      profile.BeginFinite();
-      profile.Reading().source = ProbeProfileSource::kRecomputed;
+      reading.source = ProbeProfileSource::kRecomputed;
       survey::ProbeLineProfile line = survey::EvaluateProbeLine(
           table, polygons, request.path_layers[0], density, frame, layout, meta.wavelengths[w].nm,
           meta.wavelengths[w].refractive_index, meta.incident_direction, profile.sample_count);
-      profile.Reading().members_evaluated = 1;
-      profile.Reading().samples = std::move(line.samples);
+      reading.members_evaluated = 1;
+      reading.samples = std::move(line.samples);
     }
 
     // The readings: the edge (first non-empty bin) and the peak (the argmax), two things, on the
     // line's sweep coordinate — the deviation for the axis forms, the azimuth for the arc forms
     // (the rule the dark decomposition's bounds already follow; on a constant-delta arc a delta
     // reading would be a constant echo, a position of nothing).
-    std::vector<double> centres(profile.Reading().samples.size());
-    std::vector<double> values(profile.Reading().samples.size());
-    std::vector<int> counts(profile.Reading().samples.size());
-    for (size_t k = 0; k < profile.Reading().samples.size(); k++) {
-      centres[k] = arc_form ? profile.Reading().samples[k].azimuth_deg : profile.Reading().samples[k].delta_deg;
-      values[k] = profile.Reading().samples[k].value;
-      counts[k] = profile.Reading().samples[k].k;
+    std::vector<double> centres(reading.samples.size());
+    std::vector<double> values(reading.samples.size());
+    std::vector<int> counts(reading.samples.size());
+    for (size_t k = 0; k < reading.samples.size(); k++) {
+      centres[k] = arc_form ? reading.samples[k].azimuth_deg : reading.samples[k].delta_deg;
+      values[k] = reading.samples[k].value;
+      counts[k] = reading.samples[k].k;
     }
     const survey::ProbeReadings read = survey::ReadProbeProfile(centres, values, counts);
-    profile.Reading().readings.has_edge = read.has_edge;
-    profile.Reading().readings.edge_deg = read.edge_delta_deg;
-    profile.Reading().readings.has_peak = read.has_peak;
-    profile.Reading().readings.peak_deg = read.peak_delta_deg;
-    profile.Reading().readings.peak_value = read.peak_value;
-    profile.Reading().readings.separation_deg = read.separation_deg;
+    reading.readings.has_edge = read.has_edge;
+    reading.readings.edge_deg = read.edge_delta_deg;
+    reading.readings.has_peak = read.has_peak;
+    reading.readings.peak_deg = read.peak_delta_deg;
+    reading.readings.peak_value = read.peak_value;
+    reading.readings.separation_deg = read.separation_deg;
 
     const SurveyStructureView profile_structure =
         warm != nullptr ? reuse.structure : SurveyStructureView::Unavailable("inline_survey_refused");
-    profile.Reading().dark_regions = DecomposeDark(layout, profile_structure, profile.Reading().samples, arc_form);
+    reading.dark_regions = DecomposeDark(layout, profile_structure, reading.samples, arc_form);
     result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
   }
   if (stopped()) {
