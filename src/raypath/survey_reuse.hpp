@@ -115,6 +115,8 @@ class AdmittedWarmSource {
 Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& selection, const WarmCandidate& candidate,
                             std::optional<AdmittedWarmSource>* out);
 
+struct PoseDensityConversion;
+
 struct ProfileReuseScope {
   ObservationScope observation;
   QuantitySpec quantity;
@@ -123,8 +125,8 @@ struct ProfileReuseScope {
   int sample_count = 0;
   bool radial = false;
 };
-bool CanReuseSurveyProfile(const SurveyWarmSource& warm, const ProfileReuseScope& scope, const MeasureScope& measure,
-                           const survey::ProbeLineLayout& layout);
+bool CanReuseSurveyProfile(const SurveyWarmSource& warm, const ProfileReuseScope& scope,
+                           const PoseDensityConversion& density, const survey::ProbeLineLayout& layout);
 // The schema-4 value model's harvest, read once off an assembled document (the inline arm's
 // producer). The warm reader's JSON arm (DecodeWarmCandidate, single_path_json.hpp) mirrors this
 // field-for-field — the dual-arm oracle test pins the two arms together. Shared with the probe

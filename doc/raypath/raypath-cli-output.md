@@ -380,6 +380,16 @@ when any of these fails:
    Its absence is data (that arm did not run) and skips the gate with a declaration. (The
    fingerprint already carries the axis; this gate is the echo's independent chain.)
 
+**Implementation ownership.** `survey_reuse.hpp` is the product owner of these gates,
+`EvaluateSurveyReuse`, and `CanReuseSurveyProfile`. JSON decoding (`DecodeWarmCandidate`)
+and typed harvesting (`HarvestSurveyDocument`) produce the same untrusted candidate shape;
+neither grants reuse. Point and probe admit it with `ValidateWarmCandidate`, whose private
+admission token separates a decoded payload from usable input. Inline context assemblies take
+the same path. `survey_context.hpp` carries the shared context value. The C bridge decodes
+boundary text and maps errors; it does not compute fingerprints or compare measures.
+Decode failures retain their stage so unknown-crystal and request-identity errors keep their
+precedence over later malformed payloads. Missing scope is never a physical zero.
+
 *The seed harvest.* The document's `warm_index.seeds` (each 9 numbers, with `seed_sources`
 naming the leg that held the pose — `witness_argmax`, `family_collapse_anchor`,
 `family_fold_anchor`, `single_pose_nominal`; arms that hold no pose leave `seeds: []`) join the
@@ -768,46 +778,56 @@ a document. The GUI workspace is not added by this interface.
 
 ## 8. Module boundary and surface
 
-The raypath module under `src/raypath/` exposes exactly four public headers to the engine:
+The query surfaces compiled by the C bridge are:
 
-- `src/raypath/path_feature_report.hpp` — the feature-report entry point, narrowed to
-  `PathFeatureReportRequest` + its constants + `AnalyzePathFeatureReport(config, request,
-  product_version, std::string* json_out)`: the module runs the analysis, assembles the report and
-  serializes it internally, so the caller never compiles the report types.
-- `src/raypath/survey_report.hpp` — the survey entry point on the same shape:
-  `SurveyRequest` + its constants + `AnalyzePathSurvey(config, request, product_version,
-  std::string* json_out)` (v4.54; §9).
-- `src/raypath/single_path_analysis.hpp` — `AnalyzeSinglePath` over the analytic kernel.
-- `src/raypath/single_path_json.hpp` — `ToJson` / `ParseWarmSeeds` (`kSunGridSignificantDigits`
-  included, as a published constant).
+- `path_feature_report.hpp` and `survey_report.hpp`: requests, budgets, and the
+  analysis-to-JSON entry for each document family.
+- `single_path_analysis.hpp` / `single_path_json.hpp`: point request/result, analysis,
+  serialization and boundary warm decoding.
+- `probe_analysis.hpp` / `probe_json.hpp`: the draw-a-line request/result and serialization.
 
-The bridge (`src/server/c_api_raypath.cpp`) compiles exactly these four (plus its own
-server/config includes) — this minimal set *is* the module's surface to the engine, by
-construction rather than by convention. Everything else under `src/raypath/` is module-internal
-in one of two shapes: headers in `detail/` are internal by location and may be included only by
-the module itself and its own tests (`test/unit-correctness/raypath/`,
-`test/composition-correctness/raypath/`, which deliberately reach into `detail/` as the module's
-own white-box oracle); the one legacy exception is `src/raypath/scene_to_analytic.{hpp,cpp}`,
-internal by consumer fact though not relocated — its only includes are `single_path_analysis.cpp`,
-`detail/input_assembly.cpp` and the module's own test — and a candidate for a future `detail/`
-move in its own change. `detail/path_feature_report_json.{hpp,cpp}` is internal on the same
-grounds: the bridge takes a JSON string now, and the only other consumer of the report types ever
-was that same composition test.
+Shared error and input metadata no longer come from the point result header. Their narrow
+owners are `domain/error.hpp`, `domain/input_metadata.hpp`, `domain/scope.hpp`, and
+`domain/measure.hpp`. `survey_reuse.hpp` owns typed warm admission and numeric compatibility;
+`survey_context.hpp` owns the context value shared by point and probe. There is no umbrella
+header. Input preparation (`detail/input_scope.*`, `detail/measure_scope.*`) is internal to
+raypath; member expansion continues through the existing physical-symmetry owner.
 
-The boundary is cheap to re-verify mechanically — the include closure of the four public
-headers must contain no `raypath/detail` file and no `analytic/diagnostic_batch`:
+Headers under `detail/` are internal to the module and its white-box tests. Existing exposed
+surfaces are not hidden by that rule: the bridge still reads the MC-ESS budget bound from
+`detail/survey/survey_mc_ess.hpp`, and the probe result uses the shared line-probe types.
+The public include closure is therefore not claimed to be detail-free. `scene_to_analytic.*`
+is also an internal input-conversion seam despite its legacy directory placement.
+
+The ownership migration is narrow; numerical algorithms and wire fields remain at their
+existing owners:
+
+| Former owner | Current owner | Consumers / removed authority |
+|---|---|---|
+| Point result header: Error, wavelength/nominal-shape metadata | `domain/error.*`, `domain/input_metadata.*` | Input conversion and all requests include the leaves; old definitions deleted |
+| Physical/scene scope member lists | `domain/scope.hpp::MemberScope`, `detail/input_scope.*` | Capture, survey, probe and report retain one resolved list; physical expansion unchanged |
+| Survey document measure values / family router's measure reader | `domain/measure.hpp`, `detail/measure_scope.*` | Family ladder and warm admission; actual measure is separate from `IdealFamilyScope` |
+| Bridge's warm gate / decoder's physical comparisons | `survey_reuse.cpp::ValidateWarmCandidate` | Both query entries and inline typed harvest; no bridge fingerprint or measure comparisons |
+| Point's context helpers / probe's local profile gate | `survey_reuse.*`, `survey_context.hpp` | Point/probe share numerical qualification and context projection; old branches deleted |
+| Routing fingerprint implementation | `detail/survey/config_fingerprint.*` (unchanged) | Survey producer and admission service share the same digest and axis set |
+
+Geometry scope distinguishes nominal survey facts from realized report draws. Observation
+scope projects only the dependencies a fact reads (body support: wavelength; readings: wavelength
+and both solar coordinates). Quantity scope distinguishes representative, actual-measure
+band-sum per-steradian readings from class aggregates or ideal-frozen facts. These tags do not
+replace or recalculate the numerical kernels.
+
+The shared inputs and report/survey requests can be checked independently of point:
 
 ```bash
-printf '#include "raypath/path_feature_report.hpp"
-#include "raypath/survey_report.hpp"
-#include "raypath/single_path_analysis.hpp"
-#include "raypath/single_path_json.hpp"
-' | g++ -H -fsyntax-only -x c++ - -std=c++17 -I src 2>&1 | grep -cE "analytic/diagnostic_batch|feature_discovery|raypath/detail"
+grep -n 'include "raypath/single_path_analysis.hpp"' \
+  src/raypath/scene_to_analytic.hpp src/raypath/detail/input_assembly.hpp \
+  src/raypath/detail/physical_member_scope.hpp src/raypath/path_feature_report.hpp \
+  src/raypath/survey_report.hpp src/raypath/probe_analysis.hpp
 ```
 
-`0` is the expected answer. This is the probe that pinned the boundary when the bridge surface
-was narrowed (its baseline counted 6 hits — four internal headers plus the analytic kernel
-surface — before the narrowing landed).
+No matches is the expected result. This checks the specific dependency removal, not the
+complete future module boundary.
 
 ## 9. `Lumice raypath survey` output (schema 4)
 

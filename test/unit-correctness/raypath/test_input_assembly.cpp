@@ -207,10 +207,10 @@ TEST(AssembledInputMembers, NominalGeometryAndActualMeasureHaveExplicitScopes) {
   EXPECT_EQ(rp::AssembledLayer{}.geometry.kind, rp::GeometryKind::kRealized);
   const auto measure = rp::survey::ReadFamilyMeasure(crystal.axis_);
   ASSERT_TRUE(measure.ok);
-  EXPECT_EQ(measure.measure.scope.kind, rp::MeasureKind::kActualDeclared);
+  EXPECT_EQ(measure.measure.kind, rp::MeasureKind::kActualDeclared);
   EXPECT_EQ(measure.measure.zenith.kind, rp::survey::FamilyDimKind::kGauss);
   EXPECT_GT(measure.measure.zenith.width_deg, 0.0);
-  EXPECT_EQ(rp::ConvertAxisToPoseDensity(crystal.axis_).measure.reference, rp::ReferenceMeasure::kDeclaredAngles);
+  EXPECT_EQ(rp::ConvertAxisToPoseDensity(crystal.axis_).measure.reference, rp::ReferenceMeasure::kHaar);
   const auto haar = rp::survey::RandomPrismScene();
   EXPECT_EQ(rp::ConvertAxisToPoseDensity(haar.crystals_.at(1).axis_).measure.reference, rp::ReferenceMeasure::kHaar);
 }

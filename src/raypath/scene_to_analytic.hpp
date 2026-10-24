@@ -63,7 +63,8 @@ Error ResolveSingleLayerPath(const std::vector<std::vector<int>>& layers, const 
 // column and plate (parry and lowitz) are the same density for the same numbers; it is named after
 // the nearer of the two presets' means (90 / 0 degrees).
 struct PoseDensityConversion {
-  MeasureScope measure;
+  // All analytic pose densities are relative to Haar, including non-uniform ones.
+  MeasureScope measure{ MeasureKind::kActualDeclared, ReferenceMeasure::kHaar };
   analytic::PoseDensitySpec spec;
   std::string unsupported;  // empty when `spec` is valid
   bool Ok() const { return unsupported.empty(); }

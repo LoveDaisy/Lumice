@@ -441,7 +441,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
                                            survey::kProbeBinDeg,
                                            profile.sample_count,
                                            radial };
-    const bool reused = warm != nullptr && CanReuseSurveyProfile(*warm, profile_scope, density.measure, layout);
+    const bool reused = warm != nullptr && CanReuseSurveyProfile(*warm, profile_scope, density, layout);
     if (reused) {
       profile.source = "warm_reused";
       profile.evidence_state = "finite";

@@ -4,16 +4,24 @@ Module surface rules for the raypath analysis module. The field reference and
 schema authority is `doc/raypath/raypath-cli-output.md`; the layered
 (schema3) design record is `doc/raypath/raypath-schema3-layered-design.md`.
 
-- The module's public headers — the ones the bridge `src/server/c_api_raypath.cpp`
-  compiles from this directory — are `path_feature_report.hpp` /
-  `single_path_analysis.hpp` / `single_path_json.hpp` (the point query) and
-  `probe_analysis.hpp` / `probe_json.hpp` (the probe query, the L2 draw-a-line
-  face), plus `survey_report.hpp` (the survey's serialization entry, whose
-  request/analysis types the bridge uses). The two query faces also consume the
-  shared line-probe core and the survey context through
-  `detail/survey/survey_probe.hpp` / `detail/survey/survey_document.hpp`
-  (detail/ is internal to this module; the bridge compiling a detail header is a
-  fact of the survey's assembly types living there, not an invitation).
+- The bridge consumes `path_feature_report.hpp`, `survey_report.hpp`,
+  `single_path_analysis.hpp` / `single_path_json.hpp`, and
+  `probe_analysis.hpp` / `probe_json.hpp`. Shared input values live in the narrow
+  `domain/error.hpp`, `domain/input_metadata.hpp`, `domain/scope.hpp` and
+  `domain/measure.hpp` leaves, not in a query result header.
+- `survey_reuse.hpp` owns warm candidate admission and per-fact/profile qualification;
+  `survey_context.hpp` owns the shared context value. Both JSON decoding and typed
+  `HarvestSurveyDocument` produce an untrusted `WarmCandidate`. Only
+  `ValidateWarmCandidate` constructs an `AdmittedWarmSource`; the point/probe
+  entries and their inline assemblies use it before consuming facts. A fingerprint
+  admits identity, not numerical validity. The bridge only decodes and maps errors.
+- Input scope preparation lives in `detail/input_scope.*`, with physical member
+  expansion still owned by `detail/physical_member_scope.*`. Actual family-measure
+  reading lives in `detail/measure_scope.*`; the ideal freezing ladder stays in
+  `detail/survey/survey_family.*`. Do not merge actual weights with ideal rank inputs.
+- The bridge still includes `detail/survey/survey_mc_ess.hpp` for its budget bound;
+  the probe header still exposes the shared line-probe result types. These are
+  existing surfaces, not a claim that the whole public include closure is detail-free.
 - Everything under `src/raypath/detail/` is internal implementation:
   includable only by the module itself and its own tests (the boundary and
   its rationale: `doc/raypath/raypath-cli-output.md` §8).

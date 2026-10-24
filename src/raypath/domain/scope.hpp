@@ -41,10 +41,10 @@ struct ObservationScope {
 };
 
 enum class MeasureKind { kActualDeclared, kIdealFrozen };
-enum class ReferenceMeasure { kHaar, kDeclaredAngles };
+enum class ReferenceMeasure { kHaar };
 struct MeasureScope {
   MeasureKind kind = MeasureKind::kActualDeclared;
-  ReferenceMeasure reference = ReferenceMeasure::kDeclaredAngles;
+  ReferenceMeasure reference = ReferenceMeasure::kHaar;
 };
 enum class QuantityKind { kBandSum };
 enum class QuantityUnit { kPerSteradian };

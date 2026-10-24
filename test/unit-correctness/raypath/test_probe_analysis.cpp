@@ -226,6 +226,22 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
   ASSERT_TRUE(admitted);
   ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
+  auto aggregate = typed.facts;
+  aggregate.quantity.aggregation = MemberAggregation::kPhysicalClass;
+  EXPECT_STREQ(EvaluateSurveyReuse(aggregate, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
+  document.probes.emplace_back();
+  document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
+  EXPECT_STREQ(EvaluateSurveyReuse(HarvestSurveyDocument(document).facts, 550.0, 20.0, 0.0).reading_reason,
+               "scope_value_mismatch");
+  document.probes.clear();
+  document.family_routing->measure.kind = MeasureKind::kIdealFrozen;
+  const auto ideal = HarvestSurveyDocument(document);
+  EXPECT_STREQ(EvaluateSurveyReuse(ideal.facts, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
+  document.family_routing->measure.kind = MeasureKind::kActualDeclared;
+  document.geometry.kind = GeometryKind::kRealized;
+  EXPECT_STREQ(EvaluateSurveyReuse(HarvestSurveyDocument(document).facts, 550.0, 20.0, 0.0).reading_reason,
+               "scope_value_mismatch");
+  document.geometry.kind = GeometryKind::kNominal;
   typed.facts.measure_zenith.width_deg += 1.0;
   document.family_routing->measure.zenith.width_deg += 1.0;
   ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());

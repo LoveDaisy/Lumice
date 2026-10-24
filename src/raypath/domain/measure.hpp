@@ -32,7 +32,7 @@ struct FamilyDimMeasure {
 // The measure the router read, in ROUTING coordinates (zenith = 90 - latitude, the density
 // conversion's own formula), so the echo and the kernel's family dimensions speak one name.
 struct FamilyRoutingMeasure {
-  MeasureScope scope;
+  MeasureKind kind = MeasureKind::kActualDeclared;
   FamilyDimMeasure zenith;
   FamilyDimMeasure azimuth;
   FamilyDimMeasure roll;

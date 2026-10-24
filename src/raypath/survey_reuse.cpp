@@ -75,6 +75,8 @@ WarmCandidate HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   }
   out.has_measure_echo = doc.family_routing.has_value();
   if (out.has_measure_echo) {
+    if (doc.family_routing->measure.kind != MeasureKind::kActualDeclared)
+      out.quantity.measure = doc.family_routing->measure.kind;
     const auto read_dim = [](const survey::FamilyDimMeasure& dim, SurveyWarmSource::MeasureDimEcho* e) {
       e->kind = survey::FamilyDimKindName(dim.kind);
       e->center_deg = dim.center_deg;
@@ -288,7 +290,7 @@ Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& se
       return echo.kind == survey::FamilyDimKindName(dim.kind) && echo.center_deg == dim.center_deg &&
              echo.width_deg == dim.width_deg;
     };
-    if (!mine.ok || mine.measure.scope.kind != MeasureKind::kActualDeclared ||
+    if (!mine.ok || mine.measure.kind != MeasureKind::kActualDeclared ||
         !same(facts.measure_zenith, mine.measure.zenith) || !same(facts.measure_azimuth, mine.measure.azimuth) ||
         !same(facts.measure_roll, mine.measure.roll)) {
       return refuse("measure gate: the document's family measure echo does not match this query's config axis");
@@ -337,8 +339,8 @@ Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& se
   return {};
 }
 
-bool CanReuseSurveyProfile(const SurveyWarmSource& warm, const ProfileReuseScope& scope, const MeasureScope& measure,
-                           const survey::ProbeLineLayout& layout) {
+bool CanReuseSurveyProfile(const SurveyWarmSource& warm, const ProfileReuseScope& scope,
+                           const PoseDensityConversion& density, const survey::ProbeLineLayout& layout) {
   if (!scope.observation.wavelength_nm || !scope.observation.sun_altitude_deg || !scope.observation.sun_azimuth_deg)
     return false;
   const SurveyReuseDecision reuse = EvaluateSurveyReuse(
@@ -346,11 +348,11 @@ bool CanReuseSurveyProfile(const SurveyWarmSource& warm, const ProfileReuseScope
   const bool same_line = warm.has_probe_azimuth && std::isfinite(warm.probe_azimuth_deg) &&
                          std::fabs(std::remainder(scope.azimuth_deg - warm.probe_azimuth_deg, 360.0)) < 1e-9;
   if (!scope.radial || !warm.has_probe || reuse.reading_reason != nullptr ||
-      measure.kind != MeasureKind::kActualDeclared || warm.quantity.kind != scope.quantity.kind ||
-      warm.quantity.unit != scope.quantity.unit || warm.quantity.aggregation != scope.quantity.aggregation ||
-      warm.quantity.measure != scope.quantity.measure || (measure.reference != ReferenceMeasure::kHaar && !same_line) ||
-      warm.probe_bin_deg != scope.bin_deg || warm.probe_sample_count != scope.sample_count ||
-      warm.probe_samples.size() != layout.bins.size())
+      density.measure.kind != MeasureKind::kActualDeclared || density.measure.reference != ReferenceMeasure::kHaar ||
+      warm.quantity.kind != scope.quantity.kind || warm.quantity.unit != scope.quantity.unit ||
+      warm.quantity.aggregation != scope.quantity.aggregation || warm.quantity.measure != scope.quantity.measure ||
+      (density.spec.family != analytic::PoseFamily::kRandom && !same_line) || warm.probe_bin_deg != scope.bin_deg ||
+      warm.probe_sample_count != scope.sample_count || warm.probe_samples.size() != layout.bins.size())
     return false;
   // Different FP contraction can move a serialized centre by an ulp, not a bin.
   constexpr double kGridTolDeg = 1e-9;
