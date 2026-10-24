@@ -141,6 +141,11 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   EXPECT_EQ(result.profiles.front().source, "recomputed");
   EXPECT_EQ(result.context.band_sum.state, "unevaluated");
   EXPECT_EQ(result.context.band_sum.reason, "scope_value_mismatch");
+  EXPECT_EQ(result.context.object.state, "unevaluated");
+  EXPECT_EQ(result.context.object.reason, "scope_value_mismatch");
+  ASSERT_FALSE(result.profiles.front().dark_regions.empty());
+  EXPECT_EQ(result.profiles.front().dark_regions.front().kind, "unknown");
+  EXPECT_EQ(result.profiles.front().dark_regions.front().reason, "scope_value_mismatch");
 
   // The lattice is part of the same gate: a warm document computed at another n recomputes too.
   ProbeRequest other_lattice = RadialRequest(config, -30.0, 0.0);
@@ -150,6 +155,20 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   ASSERT_TRUE(AnalyzePathProbe(config, other_lattice, &lattice_result).Ok());
   ASSERT_EQ(lattice_result.profiles.size(), 1u);
   EXPECT_EQ(lattice_result.profiles.front().source, "recomputed");
+}
+
+TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
+  const ConfigManager config = survey::PlateScene(1.5, 0.3);
+  ProbeRequest request = RadialRequest(config, -10.0, 90.0);
+  request.wavelengths_nm = { 550.0 };
+  SurveyWarmSource warm = CraftedWarm(550.0, 20000);
+  warm.sun_altitude_deg = 20.0;
+  request.warm_survey = warm;
+  ProbeResult result;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
+  ASSERT_EQ(result.profiles.size(), 1u);
+  EXPECT_NE(result.meta.at_azimuth_about_sun_deg, 0.0);
+  EXPECT_EQ(result.profiles.front().source, "recomputed");
 }
 
 // The edge-normal form: the window anchors at the nearest of the support endpoints and the
@@ -194,6 +213,15 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   ASSERT_EQ(refused_result.profiles.size(), 1u);
   EXPECT_EQ(refused_result.profiles.front().evidence_state, "refused");
   EXPECT_EQ(refused_result.profiles.front().refused_mode, "no_edge_in_context");
+
+  ProbeRequest wrong_lambda = request;
+  wrong_lambda.wavelengths_nm = { 450.0 };
+  ProbeResult wrong_result;
+  ASSERT_TRUE(AnalyzePathProbe(config, wrong_lambda, &wrong_result).Ok());
+  EXPECT_EQ(wrong_result.context.object.reason, "scope_value_mismatch");
+  ASSERT_EQ(wrong_result.profiles.size(), 1u);
+  EXPECT_EQ(wrong_result.profiles.front().evidence_state, "refused");
+  EXPECT_EQ(wrong_result.profiles.front().refused_mode, "no_edge_in_context");
 }
 
 // The arc form: a constant-delta arc swept over azimuth at the asked deviation; the degenerate
@@ -313,6 +341,17 @@ TEST(ProbeAnalysis, MultiLambdaGridLivesOnTheLineAndYieldsTheRedEdgeWidth) {
   EXPECT_TRUE(result.has_red_edge_width);
   EXPECT_DOUBLE_EQ(result.red_edge_width_deg,
                    result.profiles[1].readings.edge_deg - result.profiles[0].readings.edge_deg);
+  ASSERT_FALSE(result.profiles[1].dark_regions.empty());
+  EXPECT_EQ(result.profiles[1].dark_regions.front().kind, "unknown");
+  EXPECT_EQ(result.profiles[1].dark_regions.front().reason, "scope_value_mismatch");
+
+  request.wavelengths_nm = { 450.0, 550.0 };
+  ProbeResult reversed;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &reversed).Ok());
+  EXPECT_EQ(reversed.context.object.reason, "scope_value_mismatch");
+  ASSERT_EQ(reversed.profiles.size(), 2u);
+  EXPECT_EQ(reversed.profiles[0].dark_regions.front().kind, "unknown");
+  EXPECT_EQ(reversed.profiles[1].dark_regions[2].kind, "inside_support_positive");
 }
 
 // ---- the C API gate (the bridge's own additions: null args, the struct_size gate, named
