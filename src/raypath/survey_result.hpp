@@ -2,6 +2,7 @@
 #define LUMICE_RAYPATH_SURVEY_RESULT_HPP_
 
 #include <algorithm>
+#include <stdexcept>
 
 #include "raypath/domain/result_identity.hpp"
 #include "raypath/results/quantity.hpp"
@@ -40,8 +41,8 @@ struct SurveyData {
   // ran (the T1 arm and the refused-support arm run the TIR share; the MC region ESS runs
   // only when requested) — an arm that did not run a leg leaves no key at all, which reads as
   // "this arm does not carry the leg", never as a refusal.
-  std::optional<SurveyTirShare> tir_share;
-  std::optional<SurveyMcRegionEss> mc_region_ess;
+  std::optional<TirShareResult> tir_share;
+  std::optional<McRegionEssResult> mc_region_ess;
 
   // The family routing block (the measure-to-family arm's own record): present only on a
   // document that arm produced — an early stop, a full-dimensional route and an
@@ -63,7 +64,7 @@ struct SurveyData {
   SurveyEvidence chromatic;
   std::optional<SurveyPositionalDispersion> positional_dispersion;
   std::optional<SurveyDiagnoseBlock> diagnose;
-  std::optional<SurveyWeightTint> weight_tint;
+  std::optional<WeightTintResult> weight_tint;
 
   // The document-level evidence: the T0 routing verdict's own state.
   SurveyEvidence evidence;
@@ -83,7 +84,8 @@ struct SurveyData {
 // construction from revised assembly data creates a different snapshot.
 class SurveyResult : public FrozenValue<SurveyData> {
  public:
-  using FrozenValue<SurveyData>::FrozenValue;
+  SurveyResult() : SurveyResult(SurveyData{}) {}
+  explicit SurveyResult(SurveyData data) : FrozenValue<SurveyData>(Validated(std::move(data))) {}
   std::optional<std::vector<MemberRef>> ObjectMembers(ObjectRef ref) const {
     const auto* object = Resolve(ref);
     if (!object)
@@ -120,6 +122,15 @@ class SurveyResult : public FrozenValue<SurveyData> {
     return ref.result == Identity() && ref.member.ordinal < Data().members.size() ?
                &Data().members[ref.member.ordinal] :
                nullptr;
+  }
+
+ private:
+  static SurveyData Validated(SurveyData data) {
+    for (const SurveyObject& object : data.objects) {
+      if (!object.AdjunctsValid())
+        throw std::invalid_argument("inconsistent survey object adjuncts");
+    }
+    return data;
   }
 };
 

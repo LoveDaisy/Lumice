@@ -417,6 +417,36 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
 }
 
 }  // namespace
+TEST(SurveyAssembly, PublishedProbeCarriesItsQuantityAndResolvedScope) {
+  for (int scenario = 0; scenario < 2; ++scenario) {
+    SCOPED_TRACE(scenario);
+    const auto check = [scenario] {
+      const ConfigManager config = scenario == 0 ? RandomPrismScene() : PlateScene(0.3, 0.3);
+      SurveyRequest request = BaseRequest();
+      request.path_layers = { { 3, 5 } };
+      request.symmetry_bits = 0;
+      SurveyResult result;
+      ASSERT_TRUE(AssembleSurvey(config, request, &result).Ok());
+      const SurveyData& data = result.Data();
+      ASSERT_EQ(data.probes.size(), 1u);
+      const SurveyProbe& probe = data.probes.front();
+      ASSERT_EQ(probe.State(), EvidenceState::kFinite);
+      const ClaimScope& scope = probe.Scope();
+      ASSERT_TRUE(scope.quantity);
+      EXPECT_EQ(scope.quantity->kind, QuantityKind::kBandSum);
+      EXPECT_EQ(scope.quantity->measure, probe.spec.quantity.measure);
+      EXPECT_EQ(scope.measure.kind, probe.spec.quantity.measure);
+      EXPECT_EQ(scope.quantity->context, data.quantity_context);
+      EXPECT_EQ(scope.input, data.quantity_context);
+      EXPECT_EQ(scope.members.members, (std::vector<std::vector<int>>{ probe.spec.representative }));
+      EXPECT_EQ(scope.members.location, data.quantity_context->members.location);
+      ASSERT_TRUE(scope.observation.wavelength_nm);
+      EXPECT_DOUBLE_EQ(*scope.observation.wavelength_nm, probe.spec.wavelength_nm);
+    };
+    check();
+  }
+}
+
 TEST(SurveyAssembly, PublishedResultOwnsItsScopeAndRefusedQuantity) {
   SurveyResult result;
   {

@@ -8,9 +8,10 @@
 #include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table
 #include "util/logger.hpp"
 
-namespace lumice::raypath::survey {
-SurveyTirShare EvaluateTirShare(const TirShareInput& input) {
-  SurveyTirShare tir;
+namespace lumice::raypath::quantity {
+using survey::EvidenceState;
+TirShareResult EvaluateTirShare(const TirShareInput& input) {
+  TirShareResult tir;
   tir.SetState(EvidenceState::kFinite);
   tir.Value().quantity =
       DescribeQuantity(QuantityKind::kTirShare, QuantityUnit::kDimensionless, QuantityMethod::kDiagnosticTirLattice,
@@ -143,7 +144,7 @@ SurveyTirShare EvaluateTirShare(const TirShareInput& input) {
   tir.Value().n_blue = n_blue;
   tir.Value().interfaces.resize(static_cast<size_t>(internal_count));
   for (int j = 0; j < internal_count; j++) {
-    SurveyTirShareInterface& row = tir.Value().interfaces[static_cast<size_t>(j)];
+    TirShareInterface& row = tir.Value().interfaces[static_cast<size_t>(j)];
     row.face = (*input.representative)[static_cast<size_t>(j) + 1];
     row.tir_weight_red = sum_interface_tir[0][static_cast<size_t>(j)];
     row.tir_weight_blue = sum_interface_tir[1][static_cast<size_t>(j)];
@@ -185,4 +186,4 @@ SurveyTirShare EvaluateTirShare(const TirShareInput& input) {
   return CompleteQuantity(std::move(tir));
 }
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::quantity

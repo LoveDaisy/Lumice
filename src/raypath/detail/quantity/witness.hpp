@@ -24,10 +24,10 @@
 #include <vector>
 
 #include "analytic/discovery.hpp"
-#include "raypath/results/survey_records.hpp"
+#include "raypath/results/quantity.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::quantity {
 
 // The witness lattice size (schema, not tuning: the serialized block echoes it). Small on
 // purpose — the gate is kept_count > 0, an existence question; the ladder that pinned the
@@ -51,5 +51,5 @@ struct WitnessInput {
 
 WitnessResult EvaluateWitness(const WitnessInput& input);
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::quantity
 #endif

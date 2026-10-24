@@ -48,19 +48,23 @@ but retains the asked scope.
 
 Survey objects select one of six payload kinds. Kind is derived from the variant rather
 than stored beside independent optional payloads. Support, delta-edge, bright-domain,
-and source-certificate setters reject an incompatible kind/state. A family fold's
-representative sky position is not a delta edge or an ordered curve; its delta payload
-remains absent. Witness attachment is restricted to support objects, and its claim is
-independent of the partition claim: a refused partition plus a finite positive witness
-is valid. A witness never upgrades the family routing's structural-output verdict.
+and source-certificate setters reject an incompatible kind/state. Family band, origin and
+sky position are cleared when kind or successful state changes; `SurveyResult` rejects
+inconsistent construction values before freezing them. A family fold's representative
+sky position is not a delta edge or an ordered curve; its delta payload remains absent.
+Witness attachment is restricted to support objects, and its claim is independent of
+the partition claim: a refused partition plus a finite positive witness is valid. A
+witness never upgrades the family routing's structural-output verdict.
 
 Point mass and discovered fibers are mutually exclusive point payloads. The discovered
 arm owns incomplete components as well as completed ones. Probe profiles carry a spec
 and a claim; refused profiles have no samples/readings, while a finite all-zero profile
 keeps its bins. Survey probes likewise own their samples/readings only in a successful
-claim arm; their default and refused arms carry no numeric payload. Probe direction,
-provenance, context evidence/source/anchor, and dark-run classification have closed
-typed vocabularies.
+claim arm; their default and refused arms carry no numeric payload. Completion binds
+each successful survey probe's `ClaimScope` to its actual quantity, representative
+member, resolved location and observation, rather than leaving scope only in the spec.
+Probe direction, provenance, context evidence/source/anchor, and dark-run classification
+have closed typed vocabularies.
 
 Report existence, visibility, chromatic assessment, and corroboration remain separate
 state machines. They are not converted to survey evidence. Unassessed chromatic data
@@ -81,9 +85,9 @@ no-related-feature rules are unchanged.
   Level-zero refusal does not gate the ladder.
 - `detail/quantity/probe_line.*`: the common frame/layout/profile reader and one
   `EvaluateProbeLine` implementation for survey and explicit probes.
-- `detail/quantity/{tint,tir_share,mc_ess,witness}.*`: returned claims. These services
-  neither receive nor mutate a query result. The survey adapters own mounting and
-  block-level evidence policy.
+- `detail/quantity/{tint,tir_share,mc_ess,witness}.*`: capability-owned returned claims
+  and value types in `results/quantity.hpp`. These services neither depend on survey records
+  nor mutate query results. Survey adapters alone mount the values and decide block evidence.
 
 The mathematical implementations were moved, not replaced with parallel kernels. The
 C06 constant-TIR-circle data remains on the existing report support surface. This does
@@ -141,7 +145,7 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | former survey document | request/scope/resolved members, routing, objects, unevaluated/evidence | `survey_result.hpp`, `results/survey_records.hpp`; survey assembly, typed harvest and codec |
 | survey family | measure/ladder/frozen/free dimensions/killed/level0 refusal/tails/band/origin | structure facts and survey records; survey adapter alone mounts cards without rerunning rank |
 | survey chromatic legs | positional dispersion, followed onsets, diagnose/verdict/thresholds/coverage | survey records; existing chromatic producer and codec, with their original refusal shape |
-| tint/TIR/ESS/witness | methods, values, counts, pair/lattice, coverage/refusal | claim-owned quantity values in survey records; quantity services return, query adapters mount |
+| tint/TIR/ESS/witness | methods, values, counts, pair/lattice, coverage/refusal | claim-owned capability values in `results/quantity.hpp`; survey adapters mount them without reimplementation |
 | warm admission | fingerprint, resolved location, producer/scope receipts, seeds and profile rows | `survey_reuse`; both import paths remain untrusted until admitted |
 | geometry/support | member partition/intervals/topology/onsets/constant curves per lambda/family groups | `results/structure.hpp`; structure capability and report/survey consumers |
 | enumeration | kind/member/slot/phi, independent states, u/sky position/counterfactual/thresholds/vocabulary | `results/report_structure.hpp`, `report_enumeration.hpp`; enumeration and completed report |

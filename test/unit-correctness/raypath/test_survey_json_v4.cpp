@@ -279,7 +279,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   document.diagnose->color = "blue";
   document.diagnose->has_position = true;
   document.diagnose->position_deg = 22.3;
-  document.weight_tint = SurveyWeightTint{};
+  document.weight_tint = WeightTintResult{};
   document.weight_tint->SetState(EvidenceState::kUnevaluated);
   document.weight_tint->Reason() =
       "chromatic legs not run: the delta axis refused (slab_crease_touching), and the "
@@ -356,7 +356,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
 // refused and finite ones are pinned here.
 TEST(SurveyJsonV4, WeightTintRefusedSerializesStateAndModeOnly) {
   SurveyData document;
-  document.weight_tint = SurveyWeightTint{};
+  document.weight_tint = WeightTintResult{};
   document.weight_tint->SetState(EvidenceState::kRefused);
   document.weight_tint->Mode() = "density_not_expressible";
   const auto parsed = Serialized(document);
@@ -368,8 +368,8 @@ TEST(SurveyJsonV4, WeightTintRefusedSerializesStateAndModeOnly) {
 
 TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
   SurveyData document;
-  document.weight_tint = SurveyWeightTint{};
-  SurveyWeightTint& tint = *document.weight_tint;
+  document.weight_tint = WeightTintResult{};
+  WeightTintResult& tint = *document.weight_tint;
   tint.SetState(EvidenceState::kFinite);
   tint.Value().n_red = 1.30803882;
   tint.Value().n_blue = 1.31569243;
@@ -382,7 +382,7 @@ TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
   tint.Value().representative = { 1, 3, 6, 2 };
   tint.Value().member_count = 6;
   tint.Value().ratio = 1.6476639902276924;
-  tint.Value().direction = SurveyTintDirection::kBlueTinted;
+  tint.Value().direction = TintDirection::kBlueTinted;
   tint.Value().kept_count_red = 312000;
   tint.Value().kept_count_blue = 298000;
   tint.SetState(EvidenceState::kFinite);
@@ -419,8 +419,8 @@ TEST(SurveyJsonV4, WeightTintFiniteCarriesTheFullFieldSet) {
 // document, never both.
 TEST(SurveyJsonV4, WeightTintClassPowerSumCarriesTheEnergyFieldFamily) {
   SurveyData document;
-  document.weight_tint = SurveyWeightTint{};
-  SurveyWeightTint& tint = *document.weight_tint;
+  document.weight_tint = WeightTintResult{};
+  WeightTintResult& tint = *document.weight_tint;
   tint.SetState(EvidenceState::kFinite);
   tint.Value().reading = TintClassPowerReading{};
   tint.Value().n_red = 1.30803882;
@@ -431,7 +431,7 @@ TEST(SurveyJsonV4, WeightTintClassPowerSumCarriesTheEnergyFieldFamily) {
   tint.Value().representative = { 4, 8, 1, 7, 5 };
   tint.Value().member_count = 8;
   tint.Value().ratio = 1.541;
-  tint.Value().direction = SurveyTintDirection::kBlueTinted;
+  tint.Value().direction = TintDirection::kBlueTinted;
   tint.Value().kept_count_red = 312000;
   tint.Value().kept_count_blue = 298000;
   tint.SetState(EvidenceState::kFinite);
@@ -455,7 +455,7 @@ TEST(SurveyJsonV4, IdentityArmBlockMirrorsTheTintRefusal) {
   SurveyData document;
   document.chromatic.state = EvidenceState::kRefused;
   document.chromatic.mode = "density_not_expressible";
-  document.weight_tint = SurveyWeightTint{};
+  document.weight_tint = WeightTintResult{};
   document.weight_tint->SetState(EvidenceState::kRefused);
   document.weight_tint->Mode() = "density_not_expressible";
   const auto parsed = Serialized(document);
@@ -466,6 +466,34 @@ TEST(SurveyJsonV4, IdentityArmBlockMirrorsTheTintRefusal) {
   EXPECT_EQ(chromatic.at("weight_tint").at("mode"), "density_not_expressible");
   EXPECT_FALSE(chromatic.contains("positional_dispersion"));
   EXPECT_FALSE(chromatic.contains("diagnose"));
+}
+
+TEST(SurveyJsonV4, FamilyAdjunctsCannotOutliveKindOrSuccessfulState) {
+  SurveyObject card;
+  card.SetKind(SurveyObjectKind::kRegularImage);
+  card.SetState(EvidenceState::kFinite);
+  card.has_position = true;
+  card.band = SurveyObject::BandPayload{};
+  card.family_origin = SurveyObject::FamilyOriginPayload{};
+  card.SetState(EvidenceState::kRefused);
+  EXPECT_FALSE(card.band);
+  EXPECT_FALSE(card.family_origin);
+  EXPECT_FALSE(card.has_position);
+  card.SetState(EvidenceState::kFinite);
+  card.band = SurveyObject::BandPayload{};
+  card.family_origin = SurveyObject::FamilyOriginPayload{};
+  card.SetKind(SurveyObjectKind::kSupportSet);
+  EXPECT_FALSE(card.band);
+  EXPECT_FALSE(card.family_origin);
+  SurveyData document;
+  document.objects.push_back(card);
+  EXPECT_FALSE(Serialized(document).at("objects")[0].contains("band"));
+  document.objects.front().band = SurveyObject::BandPayload{};
+  EXPECT_THROW((void)SurveyResult{ document }, std::invalid_argument);
+  document.objects.front().band.reset();
+  document.objects.front().SetState(EvidenceState::kRefused);
+  document.objects.front().has_position = true;
+  EXPECT_THROW((void)SurveyResult{ document }, std::invalid_argument);
 }
 
 TEST(SurveyJsonV4, ProbeRefusalDiscardsReadingsWhileFiniteZeroRemainsAValue) {
@@ -575,8 +603,8 @@ TEST(SurveyJsonV4, DefaultDocumentCarriesNeitherExceptionLegKey) {
 TEST(SurveyJsonV4, ExceptionLegsSerializeTheirAppendShape) {
   SurveyData document;
 
-  document.tir_share = SurveyTirShare{};
-  SurveyTirShare& tir = *document.tir_share;
+  document.tir_share = TirShareResult{};
+  TirShareResult& tir = *document.tir_share;
   tir.SetState(EvidenceState::kFinite);
   tir.Value().n_red = 1.31;
   tir.Value().n_blue = 1.34;
@@ -594,8 +622,8 @@ TEST(SurveyJsonV4, ExceptionLegsSerializeTheirAppendShape) {
   tir.Coverage().members_evaluated = 1;
   tir.Coverage().wavelength_nm = 550.0;
 
-  document.mc_region_ess = SurveyMcRegionEss{};
-  SurveyMcRegionEss& ess = *document.mc_region_ess;
+  document.mc_region_ess = McRegionEssResult{};
+  McRegionEssResult& ess = *document.mc_region_ess;
   ess.SetState(EvidenceState::kFinite);
   ess.Value().seed = 20261022;
   ess.Value().draws = 20000;
@@ -650,10 +678,10 @@ TEST(SurveyJsonV4, ExceptionLegsSerializeTheirAppendShape) {
 // tint leg's refused shape at the new top-level keys.
 TEST(SurveyJsonV4, ExceptionLegRefusalsSerializeStateAndModeOnly) {
   SurveyData document;
-  document.tir_share = SurveyTirShare{};
+  document.tir_share = TirShareResult{};
   document.tir_share->SetState(EvidenceState::kRefused);
   document.tir_share->Mode() = "no_internal_interfaces";
-  document.mc_region_ess = SurveyMcRegionEss{};
+  document.mc_region_ess = McRegionEssResult{};
   document.mc_region_ess->SetState(EvidenceState::kFinite);
   document.mc_region_ess->Value().seed = 20261022;  // filled before the refusal: still must not serialize
   document.mc_region_ess->SetState(EvidenceState::kRefused);

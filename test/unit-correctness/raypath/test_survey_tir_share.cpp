@@ -43,8 +43,8 @@ struct TirShareFixture {
     return fix;
   }
 
-  TirShareInput Input(int sample_count) const {
-    TirShareInput input;
+  quantity::TirShareInput Input(int sample_count) const {
+    quantity::TirShareInput input;
     input.table = &table;
     input.polygons = &polygons;
     input.crystal = &shape;
@@ -62,14 +62,14 @@ struct TirShareFixture {
 // the all-TIR aggregate bounded by each per-interface share (all-TIR poses are a subset of each
 // single-interface-TIR set — subset sums of non-negative weights can only sit below), and the
 // echoes complete.
-TEST(SurveyTirShare, TwoInternalInterfacesSeparateTheAggregateFromThePerInterfaceShares) {
+TEST(TirShareResult, TwoInternalInterfacesSeparateTheAggregateFromThePerInterfaceShares) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
   const std::vector<int> representative{ 13, 15, 26, 28 };
   fix.representative = representative;
   SurveyData document;
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
-  const SurveyTirShare& tir = *document.tir_share;
+  const TirShareResult& tir = *document.tir_share;
   if (tir.State() != EvidenceState::kFinite) {
     ADD_FAILURE() << "unexpected refusal mode: " << tir.Mode();
     return;
@@ -77,7 +77,7 @@ TEST(SurveyTirShare, TwoInternalInterfacesSeparateTheAggregateFromThePerInterfac
   ASSERT_EQ(tir.Value().interfaces.size(), 2u);
   EXPECT_EQ(tir.Value().interfaces[0].face, 15);
   EXPECT_EQ(tir.Value().interfaces[1].face, 26);
-  for (const SurveyTirShareInterface& row : tir.Value().interfaces) {
+  for (const TirShareInterface& row : tir.Value().interfaces) {
     EXPECT_GE(row.share_red, 0.0);
     EXPECT_LE(row.share_red, 1.0);
     EXPECT_GE(row.share_blue, 0.0);
@@ -104,14 +104,14 @@ TEST(SurveyTirShare, TwoInternalInterfacesSeparateTheAggregateFromThePerInterfac
 // The k=1 degenerate form: with one internal interface the aggregate IS the per-interface row
 // (identical additions in identical order), exactly — the assertion bench pins the identity at
 // this shape.
-TEST(SurveyTirShare, OneInternalInterfaceMakesTheAggregateIdenticalToTheRow) {
+TEST(TirShareResult, OneInternalInterfaceMakesTheAggregateIdenticalToTheRow) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kRegularPrism);
   const std::vector<int> representative{ 3, 5, 7 };
   fix.representative = representative;
   SurveyData document;
   AssembleTirShare(fix.Input(20000), &document);
   ASSERT_TRUE(document.tir_share.has_value());
-  const SurveyTirShare& tir = *document.tir_share;
+  const TirShareResult& tir = *document.tir_share;
   if (tir.State() != EvidenceState::kFinite) {
     ADD_FAILURE() << "unexpected refusal mode: " << tir.Mode();
     return;
@@ -125,7 +125,7 @@ TEST(SurveyTirShare, OneInternalInterfaceMakesTheAggregateIdenticalToTheRow) {
 // The no-question shape: a two-face chain has one entry and one exit and no internal interface,
 // and the leg refuses rather than reporting a share (or an absence) — the question is
 // meaningless for the path shape.
-TEST(SurveyTirShare, SlabPathWithoutInternalInterfacesRefuses) {
+TEST(TirShareResult, SlabPathWithoutInternalInterfacesRefuses) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kRegularPrism);
   const std::vector<int> representative{ 3, 5 };
   fix.representative = representative;
@@ -138,7 +138,7 @@ TEST(SurveyTirShare, SlabPathWithoutInternalInterfacesRefuses) {
 
 // The negative control: a representative naming a face the crystal lacks cannot resolve, and
 // the leg refuses with the sibling legs' member_resolution shape.
-TEST(SurveyTirShare, UnresolvableRepresentativeRefusesWithMemberResolution) {
+TEST(TirShareResult, UnresolvableRepresentativeRefusesWithMemberResolution) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kRegularPrism);
   const std::vector<int> unresolvable{ 99, 99 };
   fix.representative = unresolvable;
@@ -151,7 +151,7 @@ TEST(SurveyTirShare, UnresolvableRepresentativeRefusesWithMemberResolution) {
 
 // Determinism: the leg is a deterministic lattice plus a deterministic batch — two runs agree
 // to the last bit on every share.
-TEST(SurveyTirShare, TwoIdenticalRunsProduceTheSameShares) {
+TEST(TirShareResult, TwoIdenticalRunsProduceTheSameShares) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
   const std::vector<int> representative{ 13, 15, 26, 28 };
   fix.representative = representative;
@@ -171,7 +171,7 @@ TEST(SurveyTirShare, TwoIdenticalRunsProduceTheSameShares) {
 // The wiring, T1 arms: the full-dimensional route carries the document-level key (here on the
 // two-face prism path, where the leg itself refuses with no_internal_interfaces — the key is
 // the leg having run, not its verdict); the identity arm's early stop carries no key at all.
-TEST(SurveyTirShare, AssemblyWiringFollowsTheArmScope) {
+TEST(TirShareResult, AssemblyWiringFollowsTheArmScope) {
   const ConfigManager config = RandomPrismScene();
   SurveyRequest request;
   request.crystal_id = 1;
@@ -201,7 +201,7 @@ TEST(SurveyTirShare, AssemblyWiringFollowsTheArmScope) {
 // witness hangs its positive fact on the refused card, and the TIR share leg runs on the same
 // path — finite, with its two per-interface rows (the refusal says the support is unknown, not
 // that the internal-reflection question vanished).
-TEST(SurveyTirShare, RefusedSupportArmStillRunsTheLeg) {
+TEST(TirShareResult, RefusedSupportArmStillRunsTheLeg) {
   const ConfigManager config = RegularPrismSceneWithSun(15.0);
   SurveyRequest request;
   request.crystal_id = 1;

@@ -5,7 +5,7 @@
 #include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
-void AssembleWitness(const WitnessInput& input, SurveyObject* card);
+void AssembleWitness(const quantity::WitnessInput& input, SurveyObject* card);
 
 // The refused-support arm's objects discipline: the refusing arm either replaces the cards the
 // arm produced before its refusal (kReplaceObjects) or appends the refused card to them
@@ -19,7 +19,7 @@ enum class RefusedSupportObjects { kReplaceObjects, kAppendToObjects };
 // are spelled by the caller (the three refusals' wording differs deliberately — never unified
 // here), and `objects_discipline` carries each arm's own objects discipline. The caller keeps
 // everything above the document level (block evidence, escape bookkeeping, the return verdict).
-void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
+void AssembleRefusedSupport(const quantity::WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
                             const std::string& refusal_mode, const std::string& chromatic_reason,
                             const std::string& budget_note, RefusedSupportObjects objects_discipline, SurveyData* out);
 

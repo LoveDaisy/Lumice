@@ -2,8 +2,8 @@
 
 namespace lumice::raypath::survey {
 
-void AssembleTirShare(const TirShareInput& input, SurveyData* out) {
-  out->tir_share = EvaluateTirShare(input);
+void AssembleTirShare(const quantity::TirShareInput& input, SurveyData* out) {
+  out->tir_share = quantity::EvaluateTirShare(input);
 }
 
 }  // namespace lumice::raypath::survey

@@ -5,7 +5,7 @@
 #include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
-void AssembleTirShare(const TirShareInput& input, SurveyData* out);
+void AssembleTirShare(const quantity::TirShareInput& input, SurveyData* out);
 }
 
 #endif

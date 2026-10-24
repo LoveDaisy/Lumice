@@ -2,7 +2,7 @@
 
 namespace lumice::raypath::survey {
 namespace {
-void MountTint(SurveyWeightTint tint, int member_count, const std::string& geometry_basis, SurveyData* out) {
+void MountTint(WeightTintResult tint, int member_count, const std::string& geometry_basis, SurveyData* out) {
   out->weight_tint = std::move(tint);
   if (out->weight_tint->State() == EvidenceState::kRefused) {
     out->chromatic.state = EvidenceState::kRefused;
@@ -16,18 +16,18 @@ void MountTint(SurveyWeightTint tint, int member_count, const std::string& geome
 }
 }  // namespace
 
-void AssembleWeightTint(const TintInput& input, SurveyData* out) {
-  MountTint(EvaluateWeightTint(input), input.member_count,
+void AssembleWeightTint(const quantity::TintInput& input, SurveyData* out) {
+  MountTint(quantity::EvaluateWeightTint(input), input.member_count,
             "the tint leg ran on the class representative at the fixed " + ChromaticPairProseRedFirst() + " pair", out);
 }
 
-void AssembleClassTint(const ClassTintInput& input, SurveyData* out) {
-  out->weight_tint = EvaluateClassTint(input);
+void AssembleClassTint(const quantity::ClassTintInput& input, SurveyData* out) {
+  out->weight_tint = quantity::EvaluateClassTint(input);
 }
 
-void AssembleSinglePoseTint(const SinglePoseTintInput& input, SurveyData* out) {
+void AssembleSinglePoseTint(const quantity::SinglePoseTintInput& input, SurveyData* out) {
   MountTint(
-      EvaluateSinglePoseTint(input), input.member_count,
+      quantity::EvaluateSinglePoseTint(input), input.member_count,
       "the 0D arm's only chromatic leg is the single-pose weight at the " + ChromaticPairProseRedFirst() + " pair",
       out);
 }

@@ -10,7 +10,8 @@
 #include "raypath/detail/diagnostic_sampler.hpp"
 #include "util/logger.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::quantity {
+using survey::EvidenceState;
 namespace {
 
 // One band's Kish accumulation, in the PresenceEss grouping discipline: rows arrive in outer
@@ -50,8 +51,8 @@ struct BandAccumulator {
 
 }  // namespace
 
-SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input) {
-  SurveyMcRegionEss ess;
+McRegionEssResult EvaluateMcRegionEss(const McRegionEssInput& input) {
+  McRegionEssResult ess;
   ess.SetState(EvidenceState::kFinite);
   ess.Value().quantity =
       DescribeQuantity(QuantityKind::kMcEss, QuantityUnit::kDimensionless, QuantityMethod::kKishOuterDraw,
@@ -155,7 +156,7 @@ SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input) {
   ess.Value().band_deg = kSurveyMcEssBandDeg;
   ess.Value().bands.resize(kSurveyMcEssBandCount);
   for (int i = 0; i < kSurveyMcEssBandCount; i++) {
-    SurveyMcRegionEssBand& row = ess.Value().bands[static_cast<size_t>(i)];
+    McRegionEssBand& row = ess.Value().bands[static_cast<size_t>(i)];
     row.delta_min_deg = i * kSurveyMcEssBandDeg;
     row.delta_max_deg = (i + 1) * kSurveyMcEssBandDeg;
     row.ess = bands[static_cast<size_t>(i)].Ess();
@@ -174,7 +175,7 @@ SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input) {
 
   const double peak_ess =
       std::max_element(ess.Value().bands.begin(), ess.Value().bands.end(),
-                       [](const SurveyMcRegionEssBand& a, const SurveyMcRegionEssBand& b) { return a.ess < b.ess; })
+                       [](const McRegionEssBand& a, const McRegionEssBand& b) { return a.ess < b.ess; })
           ->ess;
   ILOG_INFO(GetGlobalLogger(),
             "[raypath survey] mc region ess: {} draws at seed {}, lambda {:.1f} nm, {} completed, peak band ESS {:.1f}",
@@ -182,4 +183,4 @@ SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input) {
   return CompleteQuantity(std::move(ess));
 }
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::quantity

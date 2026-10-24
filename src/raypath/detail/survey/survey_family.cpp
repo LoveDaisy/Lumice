@@ -80,7 +80,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
   if (!support.ok) {
     level0_refusal_mode = support.refusal_mode;
     block.level0_refusal_mode = support.refusal_mode;
-    WitnessInput witness_input;
+    quantity::WitnessInput witness_input;
     witness_input.table = input.table;
     witness_input.polygons = input.polygons;
     witness_input.crystal = input.crystal;
@@ -104,7 +104,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
         support.refusal_mode +
         "), the ladder's per-level rank scans "
         "and the " +
-        std::to_string(kSurveyWitnessSampleCount) +
+        std::to_string(quantity::kSurveyWitnessSampleCount) +
         "-sample witness lattice on the refused level-0 card; none is budget-enforced yet; "
         "enforcement lands with the quantification legs";
     AssembleRefusedSupport(witness_input, *input.members, support.refusal_mode, corner_chromatic_reason,
@@ -148,7 +148,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     // The 0D weight tint: the single-pose direct read, never a band sum (the design's own
     // sentence) — the tint module's own entry. The positional chromatic legs say they have no
     // structure to follow.
-    SinglePoseTintInput tint_input;
+    quantity::SinglePoseTintInput tint_input;
     tint_input.crystal = input.crystal;
     tint_input.representative = input.representative;
     for (int c = 0; c < 9; c++) {
@@ -185,7 +185,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
       out->budget_note =
           "the 0D family arm's legs are the T0 routing verdict, the per-member delta partition "
           "attempt (refused: " +
-          level0_refusal_mode + "), the " + std::to_string(kSurveyWitnessSampleCount) +
+          level0_refusal_mode + "), the " + std::to_string(quantity::kSurveyWitnessSampleCount) +
           "-sample witness lattice on the refused level-0 card, the single-pose image evaluation "
           "and the single-pose weight at the " +
           ChromaticPairProseRedFirst() +
@@ -211,7 +211,8 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
           "the family arm's legs are the T0 routing verdict, the per-member delta partition, the "
           "ladder's per-member per-level rank scans (" +
           std::to_string(structure::kFamilyLadderGrid) + " samples per free dimension), the band-sum probe, the " +
-          "chromatic pair and the class tint's two-lambda power sum (" + std::to_string(kSurveyClassTintSampleCount) +
+          "chromatic pair and the class tint's two-lambda power sum (" +
+          std::to_string(quantity::kSurveyClassTintSampleCount) +
           " samples per lambda); none is budget-enforced yet; enforcement lands with the "
           "quantification legs";
     } else {
@@ -220,10 +221,10 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
           "attempt (refused: " +
           level0_refusal_mode + "), the ladder's per-member per-level rank scans (" +
           std::to_string(structure::kFamilyLadderGrid) + " samples per free dimension), the " +
-          std::to_string(kSurveyWitnessSampleCount) +
+          std::to_string(quantity::kSurveyWitnessSampleCount) +
           "-sample witness lattice on the refused level-0 card, the band-sum probe, the chromatic "
           "pair and the class tint's two-lambda power sum (" +
-          std::to_string(kSurveyClassTintSampleCount) +
+          std::to_string(quantity::kSurveyClassTintSampleCount) +
           " samples per lambda); none is budget-enforced yet; enforcement lands with the "
           "quantification legs";
     }
@@ -242,7 +243,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     RunSolarRadialProbe(probe_input, out);
     AssembleChromaticLayer(*input.table, *input.polygons, *input.representative, input.density->spec, member_count,
                            out);
-    ClassTintInput class_tint_input;
+    quantity::ClassTintInput class_tint_input;
     class_tint_input.table = input.table;
     class_tint_input.polygons = input.polygons;
     class_tint_input.representative = input.representative;
@@ -257,7 +258,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
                                        "), and the probe/chromatic/tint legs sit downstream of the density conversion";
     out->chromatic.state = EvidenceState::kUnevaluated;
     out->chromatic.reason = density_reason;
-    out->weight_tint = SurveyWeightTint{};
+    out->weight_tint = WeightTintResult{};
     out->weight_tint->SetState(EvidenceState::kUnevaluated);
     out->weight_tint->Reason() = density_reason;
     if (level0_refusal_mode.empty()) {
@@ -275,7 +276,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
                          (rank_ran ? "the ladder's per-member per-level rank scans (" +
                                          std::to_string(structure::kFamilyLadderGrid) + " samples per free dimension)" :
                                      "the ladder's level enumeration (no level got a rank answer)") +
-                         ", and the " + std::to_string(kSurveyWitnessSampleCount) +
+                         ", and the " + std::to_string(quantity::kSurveyWitnessSampleCount) +
                          "-sample witness lattice on the refused level-0 card; no quantification leg ran (the "
                          "axis maps to no pose density); none is budget-enforced yet; enforcement lands with "
                          "the quantification legs";

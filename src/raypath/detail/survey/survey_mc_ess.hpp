@@ -5,7 +5,7 @@
 #include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
-void AssembleMcRegionEss(const McRegionEssInput& input, SurveyData* out);
+void AssembleMcRegionEss(const quantity::McRegionEssInput& input, SurveyData* out);
 }
 
 #endif

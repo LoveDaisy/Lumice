@@ -29,10 +29,10 @@
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
-#include "raypath/results/survey_records.hpp"
+#include "raypath/results/quantity.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::quantity {
 
 // The pinned lattice size (schema, not tuning: the serialized block echoes it) — the class
 // tint's own size, so the two power-sum legs read one shared lattice. The ladder that pinned
@@ -53,8 +53,8 @@ struct TirShareInput {
 // shape with the mode. The document-level leg stands alone: it never touches the chromatic
 // block (whose arms carry their own legs and block-state rules). Never throws, never writes a
 // partial numeric shape.
-SurveyTirShare EvaluateTirShare(const TirShareInput& input);
+TirShareResult EvaluateTirShare(const TirShareInput& input);
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::quantity
 
 #endif  // LUMICE_RAYPATH_DETAIL_QUANTITY_TIR_SHARE_H_

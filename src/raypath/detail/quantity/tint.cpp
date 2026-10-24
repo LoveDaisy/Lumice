@@ -7,17 +7,18 @@
 #include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table
 #include "util/logger.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::quantity {
+using survey::EvidenceState;
 namespace {
-SurveyWeightTint CompleteTint(SurveyWeightTint tint) {
+WeightTintResult CompleteTint(WeightTintResult tint) {
   if (auto* value = tint.ValueOrNull())
     value->quantity.method = value->Method();
   return CompleteQuantity(std::move(tint));
 }
 }  // namespace
 
-SurveyWeightTint EvaluateWeightTint(const TintInput& input) {
-  SurveyWeightTint tint;
+WeightTintResult EvaluateWeightTint(const TintInput& input) {
+  WeightTintResult tint;
   tint.SetState(EvidenceState::kFinite);
   QuantitySpec asked =
       DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless, QuantityMethod::kPointMassBandSum,
@@ -91,9 +92,9 @@ SurveyWeightTint EvaluateWeightTint(const TintInput& input) {
   tint.Value().representative = *input.representative;
   tint.Value().member_count = input.member_count;
   tint.Value().ratio = blue.m / red.m;
-  tint.Value().direction = tint.Value().ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
-                                                      (tint.Value().ratio < 1.0 ? SurveyTintDirection::kRedTinted :
-                                                                                  SurveyTintDirection::kNeutral);
+  tint.Value().direction = tint.Value().ratio > 1.0 ?
+                               TintDirection::kBlueTinted :
+                               (tint.Value().ratio < 1.0 ? TintDirection::kRedTinted : TintDirection::kNeutral);
   tint.Value().kept_count_red = red.kept_count;
   tint.Value().kept_count_blue = blue.kept_count;
   tint.SetState(EvidenceState::kFinite);
@@ -108,8 +109,8 @@ SurveyWeightTint EvaluateWeightTint(const TintInput& input) {
   return CompleteTint(std::move(tint));
 }
 
-SurveyWeightTint EvaluateClassTint(const ClassTintInput& input) {
-  SurveyWeightTint tint;
+WeightTintResult EvaluateClassTint(const ClassTintInput& input) {
+  WeightTintResult tint;
   tint.SetState(EvidenceState::kFinite);
   QuantitySpec asked =
       DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless, QuantityMethod::kClassLatticePowerSum,
@@ -181,9 +182,9 @@ SurveyWeightTint EvaluateClassTint(const ClassTintInput& input) {
   tint.Value().representative = *input.representative;
   tint.Value().member_count = input.member_count;
   tint.Value().ratio = weight_blue / weight_red;
-  tint.Value().direction = tint.Value().ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
-                                                      (tint.Value().ratio < 1.0 ? SurveyTintDirection::kRedTinted :
-                                                                                  SurveyTintDirection::kNeutral);
+  tint.Value().direction = tint.Value().ratio > 1.0 ?
+                               TintDirection::kBlueTinted :
+                               (tint.Value().ratio < 1.0 ? TintDirection::kRedTinted : TintDirection::kNeutral);
   tint.Value().kept_count_red = kept_red;
   tint.Value().kept_count_blue = kept_blue;
   tint.Value().caliber = std::string("sum(w(") + kChromaticBlueLabel + "))/sum(w(" + kChromaticRedLabel +
@@ -204,8 +205,8 @@ SurveyWeightTint EvaluateClassTint(const ClassTintInput& input) {
   return CompleteTint(std::move(tint));
 }
 
-SurveyWeightTint EvaluateSinglePoseTint(const SinglePoseTintInput& input) {
-  SurveyWeightTint tint;
+WeightTintResult EvaluateSinglePoseTint(const SinglePoseTintInput& input) {
+  WeightTintResult tint;
   tint.SetState(EvidenceState::kFinite);
   QuantitySpec asked =
       DescribeQuantity(QuantityKind::kTintRatio, QuantityUnit::kDimensionless, QuantityMethod::kSinglePoseDirect,
@@ -263,9 +264,9 @@ SurveyWeightTint EvaluateSinglePoseTint(const SinglePoseTintInput& input) {
     tint.Value().representative = *input.representative;
     tint.Value().member_count = input.member_count;
     tint.Value().ratio = m_blue / m_red;
-    tint.Value().direction = tint.Value().ratio > 1.0 ? SurveyTintDirection::kBlueTinted :
-                             tint.Value().ratio < 1.0 ? SurveyTintDirection::kRedTinted :
-                                                        SurveyTintDirection::kNeutral;
+    tint.Value().direction = tint.Value().ratio > 1.0 ? TintDirection::kBlueTinted :
+                             tint.Value().ratio < 1.0 ? TintDirection::kRedTinted :
+                                                        TintDirection::kNeutral;
     tint.Value().kept_count_red = 1;
     tint.Value().kept_count_blue = 1;
     tint.Value().caliber = std::string("w(") + kChromaticBlueLabel + ")/w(" + kChromaticRedLabel +
@@ -286,4 +287,4 @@ SurveyWeightTint EvaluateSinglePoseTint(const SinglePoseTintInput& input) {
   return CompleteTint(std::move(tint));
 }
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::quantity

@@ -2,11 +2,11 @@
 
 namespace lumice::raypath::survey {
 
-void AssembleWitness(const WitnessInput& input, SurveyObject* card) {
-  card->SetWitness(EvaluateWitness(input));
+void AssembleWitness(const quantity::WitnessInput& input, SurveyObject* card) {
+  card->SetWitness(quantity::EvaluateWitness(input));
 }
 
-void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
+void AssembleRefusedSupport(const quantity::WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
                             const std::string& refusal_mode, const std::string& chromatic_reason,
                             const std::string& budget_note, RefusedSupportObjects objects_discipline, SurveyData* out) {
   SurveyObject card;
@@ -34,7 +34,7 @@ void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector
   out->objects.push_back(std::move(card));
   out->chromatic.state = EvidenceState::kUnevaluated;
   out->chromatic.reason = chromatic_reason;
-  out->weight_tint = SurveyWeightTint{};
+  out->weight_tint = WeightTintResult{};
   out->weight_tint->SetState(EvidenceState::kUnevaluated);
   out->weight_tint->Reason() = chromatic_reason;
   out->budget_note = budget_note;

@@ -8,7 +8,8 @@
 #include "core/math.hpp"  // math::kRadToDegreeD — the deviation's unit conversion
 #include "util/logger.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::quantity {
+using survey::EvidenceState;
 namespace {
 
 constexpr const char* kWitnessRefusalMode = "no_declared_source_witness";
@@ -105,4 +106,4 @@ WitnessResult EvaluateWitness(const WitnessInput& input) {
   return CompleteQuantity(std::move(witness));
 }
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::quantity

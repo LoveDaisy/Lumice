@@ -67,8 +67,8 @@ struct TintFixture {
     return fix;
   }
 
-  TintInput Input(int sample_count) const {
-    TintInput input;
+  quantity::TintInput Input(int sample_count) const {
+    quantity::TintInput input;
     input.table = &table;
     input.polygons = &polygons;
     input.representative = &representative;
@@ -92,14 +92,14 @@ TEST(SurveyTint, IdentityArmTintReadsBlueOverRedWithThePsiAverageMethod) {
   SurveyData document;
   AssembleWeightTint(fix.Input(200000), &document);
   ASSERT_TRUE(document.weight_tint.has_value());
-  const SurveyWeightTint& tint = *document.weight_tint;
+  const WeightTintResult& tint = *document.weight_tint;
   EXPECT_EQ(tint.State(), EvidenceState::kFinite);
   EXPECT_EQ(tint.Value().Method(), QuantityMethod::kPointMassPsiAverage);
   EXPECT_GT(tint.Value().Mass().blue, 0.0);
   EXPECT_GT(tint.Value().Mass().red, 0.0);
   EXPECT_DOUBLE_EQ(tint.Value().ratio, tint.Value().Mass().blue / tint.Value().Mass().red);
   EXPECT_GT(tint.Value().ratio, 1.2);
-  EXPECT_EQ(tint.Value().direction, SurveyTintDirection::kBlueTinted);
+  EXPECT_EQ(tint.Value().direction, TintDirection::kBlueTinted);
   EXPECT_EQ(tint.Value().n_blue, IceRefractiveIndex::Get(450.0));
   EXPECT_EQ(tint.Value().n_red, IceRefractiveIndex::Get(650.0));
   EXPECT_EQ(tint.Value().sample_count, 200000);
@@ -151,7 +151,7 @@ TEST(SurveyTint, FixedPoseAxisRefusesTheTintButNotTheCertificate) {
 TEST(SurveyTint, DeviatingSequenceRefusesWithNotRankZero) {
   const TintFixture fix = TintFixture::Make();
   const std::vector<int> deviating{ 3, 5 };
-  TintInput input = fix.Input(100000);
+  quantity::TintInput input = fix.Input(100000);
   input.representative = &deviating;
   SurveyData document;
   AssembleWeightTint(input, &document);
@@ -169,7 +169,7 @@ TEST(SurveyTint, DeviatingSequenceRefusesWithNotRankZero) {
 TEST(SurveyTint, UnresolvableRepresentativeRefusesWithMemberResolution) {
   const TintFixture fix = TintFixture::Make();
   const std::vector<int> unresolvable{ 99, 99 };
-  TintInput input = fix.Input(100000);
+  quantity::TintInput input = fix.Input(100000);
   input.representative = &unresolvable;
   SurveyData document;
   AssembleWeightTint(input, &document);

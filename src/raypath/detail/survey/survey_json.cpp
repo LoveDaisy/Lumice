@@ -427,12 +427,12 @@ std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_ve
   // refusal serializes exactly its evidence block ({state, mode}), byte-compatible with the
   // tint leg's refused shape — no defaulted number reaches the document.
   if (document.tir_share.has_value()) {
-    const SurveyTirShare& tir = *document.tir_share;
+    const TirShareResult& tir = *document.tir_share;
     if (tir.ValueOrNull() == nullptr) {
       doc["tir_share"] = EvidenceJson(tir.Evidence());
     } else {
       Json interfaces = Json::array();
-      for (const SurveyTirShareInterface& row : tir.Value().interfaces) {
+      for (const TirShareInterface& row : tir.Value().interfaces) {
         interfaces.push_back(
             { { "face", row.face }, { "share_red", Num(row.share_red) }, { "share_blue", Num(row.share_blue) } });
       }
@@ -453,12 +453,12 @@ std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_ve
     }
   }
   if (document.mc_region_ess.has_value()) {
-    const SurveyMcRegionEss& ess = *document.mc_region_ess;
+    const McRegionEssResult& ess = *document.mc_region_ess;
     if (ess.ValueOrNull() == nullptr) {
       doc["mc_region_ess"] = EvidenceJson(ess.Evidence());
     } else {
       Json bands = Json::array();
-      for (const SurveyMcRegionEssBand& band : ess.Value().bands) {
+      for (const McRegionEssBand& band : ess.Value().bands) {
         bands.push_back({ { "delta_min_deg", Num(band.delta_min_deg) },
                           { "delta_max_deg", Num(band.delta_max_deg) },
                           { "ess", Num(band.ess) },
@@ -511,7 +511,7 @@ std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_ve
     doc["chromatic"]["diagnose"] = DiagnoseJson(*document.diagnose);
   }
   if (document.weight_tint.has_value()) {
-    const SurveyWeightTint& tint = *document.weight_tint;
+    const WeightTintResult& tint = *document.weight_tint;
     if (tint.State() == EvidenceState::kUnevaluated || tint.State() == EvidenceState::kRefused) {
       // The not-computed shapes: exactly the evidence block ({state, reason} / {state, mode}),
       // byte-compatible with the leg's pre-wiring marker.
@@ -539,7 +539,7 @@ std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_ve
       tint_json["representative"] = LayersJson({ tint.Value().representative })[0];
       tint_json["member_count"] = tint.Value().member_count;
       tint_json["ratio"] = Num(tint.Value().ratio);
-      tint_json["direction"] = SurveyTintDirectionName(tint.Value().direction);
+      tint_json["direction"] = TintDirectionName(tint.Value().direction);
       tint_json["kept_count_red"] = tint.Value().kept_count_red;
       tint_json["kept_count_blue"] = tint.Value().kept_count_blue;
       tint_json["caliber"] = tint.Value().caliber;

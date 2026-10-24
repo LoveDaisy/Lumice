@@ -289,7 +289,7 @@ TEST(TypedResultValues, SurveyObjectClaimsExcludeContradictoryPayloads) {
   ASSERT_TRUE(object.SetState(rp::survey::EvidenceState::kRefused));
   object.Mode() = "partition_refused";
   EXPECT_EQ(object.Support(), nullptr);
-  object.SetWitness(rp::survey::WitnessResult{});
+  object.SetWitness(rp::WitnessResult{});
   ASSERT_TRUE(object.Witness()->SetState(rp::survey::EvidenceState::kFinite));
   object.Witness()->Value().weight = 1.0;
   EXPECT_EQ(object.State(), rp::survey::EvidenceState::kRefused);
@@ -299,7 +299,7 @@ TEST(TypedResultValues, SurveyObjectClaimsExcludeContradictoryPayloads) {
 }
 
 TEST(TypedResultValues, RefusalRemovesNumbersButRetainsTheAskedScope) {
-  rp::survey::SurveyWeightTint tint;
+  rp::WeightTintResult tint;
   EXPECT_EQ(tint.ValueOrNull(), nullptr);
   EXPECT_EQ(tint.State(), rp::survey::EvidenceState::kUnevaluated);
   rp::ClaimScope scope;
@@ -309,7 +309,7 @@ TEST(TypedResultValues, RefusalRemovesNumbersButRetainsTheAskedScope) {
   ASSERT_TRUE(tint.SetState(rp::survey::EvidenceState::kFinite));
   tint.Value().ratio = 0.0;
   EXPECT_DOUBLE_EQ(tint.Value().ratio, 0.0);
-  tint.Value().reading = rp::survey::TintClassPowerReading{ 1.0, 0.0 };
+  tint.Value().reading = rp::TintClassPowerReading{ 1.0, 0.0 };
   EXPECT_TRUE(tint.Value().IsClassPower());
   EXPECT_EQ(tint.Value().Method(), rp::QuantityMethod::kClassLatticePowerSum);
   EXPECT_THROW(tint.Value().Mass(), std::bad_variant_access);

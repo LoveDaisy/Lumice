@@ -43,8 +43,8 @@ struct WitnessFixture {
     return fix;
   }
 
-  WitnessInput Input(int sample_count) const {
-    WitnessInput input;
+  quantity::WitnessInput Input(int sample_count) const {
+    quantity::WitnessInput input;
     input.table = &table;
     input.polygons = &polygons;
     input.crystal = &crystal;
@@ -110,7 +110,7 @@ TEST(SurveyWitness, PositiveWitnessCarriesTheFullReadingSet) {
 TEST(SurveyWitness, UnresolvableRepresentativeRefusesWithMemberResolution) {
   const WitnessFixture fix = WitnessFixture::Make();
   const std::vector<int> unresolvable{ 99, 99 };
-  WitnessInput input = fix.Input(100000);
+  quantity::WitnessInput input = fix.Input(100000);
   input.representative = &unresolvable;
   SurveyObject card;
   card.SetKind(SurveyObjectKind::kSupportSet);

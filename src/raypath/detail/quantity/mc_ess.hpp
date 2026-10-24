@@ -33,9 +33,9 @@
 #include <vector>
 
 #include "raypath/detail/input_assembly.hpp"
-#include "raypath/results/survey_records.hpp"
+#include "raypath/results/quantity.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::quantity {
 
 // The leg's schema constants (the serialized block echoes them all): the fixed seed, the band
 // grid, and the draw cap (the engine refuses more; the C API mirrors it as a shell-facing
@@ -59,8 +59,8 @@ struct McRegionEssInput {
 // finite with the bands, or the refused shape with the mode. The document-level leg stands
 // alone: it never touches the chromatic block. Never throws, never writes a partial numeric
 // shape.
-SurveyMcRegionEss EvaluateMcRegionEss(const McRegionEssInput& input);
+McRegionEssResult EvaluateMcRegionEss(const McRegionEssInput& input);
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::quantity
 
 #endif  // LUMICE_RAYPATH_DETAIL_QUANTITY_MC_ESS_H_

@@ -532,7 +532,7 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   // when both exist and differ as profiles. An axis-form quantity — the edges it subtracts sit
   // on the deviation axis (the C09 anchor's delta-axis quantity), and an arc form's edges would
   // be azimuth positions with no width meaning.
-  const double kRedNm = survey::kChromaticRedNm;
+  const double kRedNm = kChromaticRedNm;
   if (result.profiles.size() >= 2 && !arc_form) {
     const ProbeProfile* red = nullptr;
     for (const ProbeProfile& p : result.profiles) {

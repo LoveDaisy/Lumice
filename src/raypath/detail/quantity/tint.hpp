@@ -24,14 +24,14 @@
 
 #include "analytic/band_sum.hpp"
 #include "analytic/path_evaluation.hpp"
-#include "raypath/results/survey_records.hpp"
+#include "raypath/results/quantity.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::quantity {
 
 // The tint leg's caliber constant (schema, not tuning: the serialized block echoes it and
 // the assertion bench reads it back). The wavelength pair itself is NOT defined here — it is
-// the chromatic layer's single authority in results/survey_records.hpp (kChromaticRedNm /
+// the chromatic layer's single authority in results/quantity.hpp (kChromaticRedNm /
 // kChromaticBlueNm), shared with the positional-dispersion leg; only the lattice size is
 // tint-local.
 inline constexpr int kSurveyTintSampleCount = 1000000;  // the band_sum lattice size (its `n`)
@@ -52,7 +52,7 @@ struct TintInput {
 // Computes the two point-mass band sums and returns the weight-tint record; sets the chromatic block's
 // own state (the block mirrors its only leg on this arm). Refusals keep the document honest —
 // a refusal mode, never a defaulted ratio.
-SurveyWeightTint EvaluateWeightTint(const TintInput& input);
+WeightTintResult EvaluateWeightTint(const TintInput& input);
 
 // The tint leg's caliber constant on the T1 arm (schema: the serialized block echoes it; the
 // ladder that pinned the value and its acceptance lines are in the task's progress record).
@@ -80,7 +80,7 @@ struct ClassTintInput {
   int sample_count = kSurveyClassTintSampleCount;
 };
 
-SurveyWeightTint EvaluateClassTint(const ClassTintInput& input);
+WeightTintResult EvaluateClassTint(const ClassTintInput& input);
 
 // The 0D arm's weight tint: the single-pose direct read (w = A*T at each lambda of the fixed
 // pair, the diagnostic batch's own re-evaluation — the witness's reading discipline), never a
@@ -97,8 +97,8 @@ struct SinglePoseTintInput {
 // Returns the weight-tint record and mirrors the chromatic block's own state (the tint is the 0D arm's
 // only chromatic leg). Refusals keep the document honest — single_pose_weight_unavailable, the
 // weight is unavailable, never defaulted.
-SurveyWeightTint EvaluateSinglePoseTint(const SinglePoseTintInput& input);
+WeightTintResult EvaluateSinglePoseTint(const SinglePoseTintInput& input);
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::quantity
 
 #endif  // LUMICE_RAYPATH_DETAIL_QUANTITY_TINT_HPP_

@@ -2,8 +2,8 @@
 
 namespace lumice::raypath::survey {
 
-void AssembleMcRegionEss(const McRegionEssInput& input, SurveyData* out) {
-  out->mc_region_ess = EvaluateMcRegionEss(input);
+void AssembleMcRegionEss(const quantity::McRegionEssInput& input, SurveyData* out) {
+  out->mc_region_ess = quantity::EvaluateMcRegionEss(input);
 }
 
 }  // namespace lumice::raypath::survey

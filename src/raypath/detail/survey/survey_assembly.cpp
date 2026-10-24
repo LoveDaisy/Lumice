@@ -93,10 +93,11 @@ SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, cons
 
 // The two TIR-share call sites below build the same input (the leg's own defaults carry the
 // rest), so the wiring stays one line per arm like the ESS leg's shared wrapper.
-TirShareInput TirShareInputOf(const ConfigManager& config, const analytic::FaceNormalTable& table,
-                              const analytic::FacePolygonTable& polygons, const analytic::CrystalShape& crystal,
-                              const std::vector<int>& representative, int member_count) {
-  TirShareInput input;
+quantity::TirShareInput TirShareInputOf(const ConfigManager& config, const analytic::FaceNormalTable& table,
+                                        const analytic::FacePolygonTable& polygons,
+                                        const analytic::CrystalShape& crystal, const std::vector<int>& representative,
+                                        int member_count) {
+  quantity::TirShareInput input;
   input.table = &table;
   input.polygons = &polygons;
   input.crystal = &crystal;
@@ -118,7 +119,7 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
   }
   double sun_hat[3];
   SunIncidentDirection(config.scene_.light_source_.param_, sun_hat);
-  McRegionEssInput ess_input;
+  quantity::McRegionEssInput ess_input;
   ess_input.snapshot = &snapshot;
   ess_input.wavelength_nm = wavelength_nm;
   for (int k = 0; k < 3; k++) {
@@ -128,7 +129,7 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
   ess_input.draws = request.mc_ess_draws;
   ess_input.budget_ms = request.budget_ms;
   AssembleMcRegionEss(ess_input, out);
-  const SurveyMcRegionEss& ess = *out->mc_region_ess;
+  const McRegionEssResult& ess = *out->mc_region_ess;
   if (ess.State() == EvidenceState::kFinite) {
     out->budget_note += " The requested MC region ESS leg ran " + std::to_string(request.mc_ess_draws) +
                         " seeded draws at the reference lambda; it is the one budget-bounded leg (the "
@@ -157,7 +158,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
   if (request.symmetry_bits > 7 || request.budget_ms <= 0 || request.budget_ms > kMaxSurveyBudgetMs) {
     return { ErrorCode::kInvalidArgument, "invalid survey symmetry bits or budget request" };
   }
-  if (request.mc_ess_draws < 0 || request.mc_ess_draws > kSurveyMcEssMaxDraws) {
+  if (request.mc_ess_draws < 0 || request.mc_ess_draws > quantity::kSurveyMcEssMaxDraws) {
     return { ErrorCode::kInvalidArgument, "invalid survey mc ess draws request" };
   }
 
@@ -276,7 +277,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
           "the context-only assembly's legs are the T0 routing verdict alone; the "
           "T3 quantification legs (the tint) are skipped";
     } else {
-      TintInput tint_input;
+      quantity::TintInput tint_input;
       tint_input.table = &table;
       tint_input.polygons = &polygons;
       tint_input.representative = &request.path_layers[0];
@@ -286,7 +287,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
       AssembleWeightTint(tint_input, out);
       out->budget_note = "the identity arm's legs are the T0 routing verdict (milliseconds) and the " +
                          ChromaticPairProseBlueFirst() + " band-sum tint pair (" +
-                         std::to_string(kSurveyTintSampleCount) +
+                         std::to_string(quantity::kSurveyTintSampleCount) +
                          " samples per lambda); neither is budget-enforced yet; enforcement lands "
                          "with the quantification legs";
     }
@@ -308,7 +309,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
         // source's positive event on the SAME refused card (the refused+finite coexistence the
         // evidence layering asks for); the chromatic legs sit downstream of the delta axis and
         // honestly say so instead of the stale v1 reason.
-        WitnessInput witness_input;
+        quantity::WitnessInput witness_input;
         witness_input.table = &table;
         witness_input.polygons = &polygons;
         witness_input.crystal = &crystal.shape;
@@ -323,10 +324,11 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
                                    "), and the chromatic legs sit downstream of it",
                                "the refused-support arm's legs are the T0 routing verdict, the "
                                "per-member partition attempt (refused: " +
-                                   outcome.refusal_mode + "), the " + std::to_string(kSurveyWitnessSampleCount) +
+                                   outcome.refusal_mode + "), the " +
+                                   std::to_string(quantity::kSurveyWitnessSampleCount) +
                                    "-sample witness lattice, and the TIR share leg's re-classification "
                                    "of the declared lattice at " +
-                                   std::to_string(kSurveyTirShareSampleCount) +
+                                   std::to_string(quantity::kSurveyTirShareSampleCount) +
                                    " samples per lambda; none is budget-enforced yet; enforcement "
                                    "lands with the quantification legs",
                                RefusedSupportObjects::kReplaceObjects, out);
@@ -353,10 +355,10 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
           out->budget_note =
               "the full-dimensional arm's legs (per-member delta partition, the band-sum probe, "
               "the chromatic pair, the class tint's two-lambda power sum at " +
-              std::to_string(kSurveyClassTintSampleCount) +
+              std::to_string(quantity::kSurveyClassTintSampleCount) +
               " samples per lambda, and the TIR share "
               "leg's re-classification of the same declared lattice at " +
-              std::to_string(kSurveyTirShareSampleCount) +
+              std::to_string(quantity::kSurveyTirShareSampleCount) +
               " samples per lambda) are not budget-enforced yet; enforcement lands with the "
               "quantification legs";
         }
@@ -386,7 +388,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
           // The arm's own tint leg: the class power-sum over the declared lattice (a different
           // reading and field family from the identity arm's point-mass masses; its refusals
           // stay in the sub-block — the block already carries legs with real output).
-          ClassTintInput class_tint_input;
+          quantity::ClassTintInput class_tint_input;
           class_tint_input.table = &table;
           class_tint_input.polygons = &polygons;
           class_tint_input.representative = &request.path_layers[0];
@@ -412,7 +414,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
       // is routed or refused, never parked.
       const FamilyMeasureReading measure = ReadFamilyMeasure(configured->second.axis_);
       if (!measure.ok) {
-        WitnessInput witness_input;
+        quantity::WitnessInput witness_input;
         witness_input.table = &table;
         witness_input.polygons = &polygons;
         witness_input.crystal = &crystal.shape;
@@ -426,7 +428,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
                                "chromatic legs not run: the measure shape is outside the routing v1 domain, and "
                                "the legs sit downstream of the routing",
                                "the refused-measure arm's legs are the T0 routing verdict and the " +
-                                   std::to_string(kSurveyWitnessSampleCount) +
+                                   std::to_string(quantity::kSurveyWitnessSampleCount) +
                                    "-sample witness lattice; the routing v1 domain names the shapes it refuses "
                                    "(measure_shape_outside_routing_domain), never approximates them; none is "
                                    "budget-enforced yet; enforcement lands with the quantification legs",
@@ -540,9 +542,17 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   bind_quantity(data.tir_share);
   bind_quantity(data.mc_region_ess);
   for (auto& probe : data.probes) {
-    probe.spec.quantity.context = data.quantity_context;
-    probe.spec.quantity.observation = { probe.spec.wavelength_nm, data.sun_altitude_deg, data.sun_azimuth_deg };
-    probe.spec.quantity.wavelengths_nm = { probe.spec.wavelength_nm };
+    QuantitySpec& quantity = probe.spec.quantity;
+    quantity.context = data.quantity_context;
+    quantity.observation = { probe.spec.wavelength_nm, data.sun_altitude_deg, data.sun_azimuth_deg };
+    quantity.wavelengths_nm = { probe.spec.wavelength_nm };
+    ClaimScope scope = probe.Scope();
+    scope.input = data.quantity_context;
+    scope.members = data.quantity_context->members;
+    scope.members.members = { probe.spec.representative };
+    scope.members.member_kind = MemberKind::kLiteral;
+    BindQuantityScope(&scope, quantity);
+    probe.BindScope(scope);
   }
   *out = SurveyResult(std::move(data));
   return {};

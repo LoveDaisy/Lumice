@@ -44,7 +44,7 @@ static_assert(LUMICE_PATH_SURVEY_MAX_BUDGET_MS == lumice::raypath::kMaxSurveyBud
               "lumice_raypath.h and the survey module must agree on the budget bound");
 static_assert(LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS == lumice::raypath::kDefaultSurveyBudgetMs,
               "lumice_raypath.h and the survey module must agree on the default budget");
-static_assert(LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS == lumice::raypath::survey::kSurveyMcEssMaxDraws,
+static_assert(LUMICE_PATH_SURVEY_MAX_MC_ESS_DRAWS == lumice::raypath::quantity::kSurveyMcEssMaxDraws,
               "lumice_raypath.h and the survey module must agree on the mc-ess draw bound");
 static_assert(LUMICE_PATH_PROBE_DEFAULT_BUDGET_MS == lumice::raypath::kDefaultProbeBudgetMs,
               "lumice_raypath.h and the probe module must agree on the default budget");
