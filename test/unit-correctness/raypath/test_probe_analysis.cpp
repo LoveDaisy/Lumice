@@ -16,6 +16,7 @@
 #include "include/lumice_scene.h"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/detail/survey/survey_json.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/probe_json.hpp"
 #include "raypath/scene_to_analytic.hpp"
@@ -225,6 +226,7 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
   survey::SurveyDocument document;
   document.wavelength_nm = 550.0;
   document.sun_altitude_deg = 20.0;
+  document.sun_azimuth_deg = 0.0;
   survey::SurveyProbe probe;
   probe.spec.bin_deg = crafted.probe_bin_deg;
   probe.spec.sample_count = crafted.probe_sample_count;
@@ -245,6 +247,53 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_NEAR(result.meta.at_azimuth_about_sun_deg, 0.0, 1e-9);
   EXPECT_EQ(result.profiles.front().source, "recomputed");
+}
+
+TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
+  const ConfigManager config = survey::RandomPrismScene();
+  const SurveyWarmSource crafted = CraftedWarm(550.0, 20000);
+  survey::SurveyDocument document;
+  document.wavelength_nm = 550.0;
+  survey::SurveyProbe probe;
+  probe.spec.azimuth_deg = 0.0;
+  probe.spec.bin_deg = crafted.probe_bin_deg;
+  probe.spec.sample_count = crafted.probe_sample_count;
+  for (const auto& sample : crafted.probe_samples) {
+    probe.samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
+  }
+  document.probes.push_back(std::move(probe));
+  const nlohmann::json wire = nlohmann::json::parse(survey::SurveyDocumentToJson(document, "test"));
+  EXPECT_TRUE(wire["scope"]["sun_altitude_deg"].is_null());
+  EXPECT_TRUE(wire["scope"]["sun_azimuth_deg"].is_null());
+
+  SurveyWarmSource warm = HarvestSurveyDocument(document);
+  warm.index_present = true;
+  warm.has_support = true;
+  warm.intervals = crafted.intervals;
+  EXPECT_FALSE(warm.has_sun_altitude);
+  EXPECT_FALSE(warm.has_sun_azimuth);
+  ProbeRequest request = RadialRequest(config, -30.0, 0.0);
+  request.wavelengths_nm = { 550.0 };
+  request.warm_survey = warm;
+  ProbeResult result;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
+  ASSERT_EQ(result.profiles.size(), 1u);
+  EXPECT_EQ(result.context.object.state, "certified");
+  EXPECT_EQ(result.context.band_sum.reason, "scope_field_missing");
+  EXPECT_EQ(result.profiles.front().source, "recomputed");
+
+  document.sun_altitude_deg = 0.0;
+  warm = HarvestSurveyDocument(document);
+  EXPECT_TRUE(warm.has_sun_altitude);
+  EXPECT_FALSE(warm.has_sun_azimuth);
+  document.sun_azimuth_deg = 0.0;
+  warm = HarvestSurveyDocument(document);
+  EXPECT_TRUE(warm.has_sun_azimuth);
+  warm.index_present = true;
+  request.warm_survey = warm;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
+  ASSERT_EQ(result.profiles.size(), 1u);
+  EXPECT_EQ(result.profiles.front().source, "warm_reused");
 }
 
 // The edge-normal form: the window anchors at the nearest of the support endpoints and the

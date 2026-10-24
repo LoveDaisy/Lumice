@@ -297,8 +297,8 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
     card.kind = SurveyObjectKind::kSourceImage;
     card.members = scope_members;
     card.has_position = true;
-    card.position_altitude_deg = out->sun_altitude_deg;
-    card.position_azimuth_deg = out->sun_azimuth_deg;
+    card.position_altitude_deg = *out->sun_altitude_deg;
+    card.position_azimuth_deg = *out->sun_azimuth_deg;
     card.evidence.state = EvidenceState::kCertified;
     card.evidence.method = kCertifiedMethodPointMass;
     card.certificate = SurveyCertificate{};

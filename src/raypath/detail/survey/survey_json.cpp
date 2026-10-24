@@ -346,14 +346,16 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
                        document.request.wavelength_given ? Json(Num(document.request.wavelength_nm)) : Json(nullptr) },
                      { "budget_ms", document.request.budget_ms } };
 
-  doc["scope"] = { { "scene_identity", document.scene_identity },
-                   { "scene_layer", document.scene_layer.has_value() ? Json(*document.scene_layer) : Json(nullptr) },
-                   { "members", LayersJson(document.members) },
-                   { "wavelength_nm", Num(document.wavelength_nm) },
-                   { "wavelength_source", document.wavelength_source },
-                   { "refractive_index", Num(document.refractive_index) },
-                   { "sun_altitude_deg", Num(document.sun_altitude_deg) },
-                   { "sun_azimuth_deg", Num(document.sun_azimuth_deg) } };
+  doc["scope"] = {
+    { "scene_identity", document.scene_identity },
+    { "scene_layer", document.scene_layer.has_value() ? Json(*document.scene_layer) : Json(nullptr) },
+    { "members", LayersJson(document.members) },
+    { "wavelength_nm", Num(document.wavelength_nm) },
+    { "wavelength_source", document.wavelength_source },
+    { "refractive_index", Num(document.refractive_index) },
+    { "sun_altitude_deg", document.sun_altitude_deg.has_value() ? Num(*document.sun_altitude_deg) : Json(nullptr) },
+    { "sun_azimuth_deg", document.sun_azimuth_deg.has_value() ? Num(*document.sun_azimuth_deg) : Json(nullptr) }
+  };
 
   Json routing = { { "early_stopped", document.early_stopped } };
   Json verdicts = Json::array();

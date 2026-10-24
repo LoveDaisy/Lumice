@@ -725,8 +725,8 @@ struct SurveyDocument {
   double wavelength_nm = 0.0;
   std::string wavelength_source;  // WavelengthSourceName
   double refractive_index = 0.0;
-  double sun_altitude_deg = 0.0;
-  double sun_azimuth_deg = 0.0;
+  std::optional<double> sun_altitude_deg;
+  std::optional<double> sun_azimuth_deg;
 
   // Routing: the T0 leg.
   bool early_stopped = false;

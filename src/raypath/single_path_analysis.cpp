@@ -682,10 +682,10 @@ SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
   out.has_wavelength = std::isfinite(doc.wavelength_nm) && doc.wavelength_nm > 0.0;
   out.wavelength_nm = doc.wavelength_nm;
   out.wavelength_source = doc.wavelength_source;
-  out.has_sun_altitude = std::isfinite(doc.sun_altitude_deg);
-  out.sun_altitude_deg = doc.sun_altitude_deg;
-  out.has_sun_azimuth = std::isfinite(doc.sun_azimuth_deg);
-  out.sun_azimuth_deg = doc.sun_azimuth_deg;
+  out.has_sun_altitude = doc.sun_altitude_deg.has_value() && std::isfinite(*doc.sun_altitude_deg);
+  out.sun_altitude_deg = doc.sun_altitude_deg.value_or(0.0);
+  out.has_sun_azimuth = doc.sun_azimuth_deg.has_value() && std::isfinite(*doc.sun_azimuth_deg);
+  out.sun_azimuth_deg = doc.sun_azimuth_deg.value_or(0.0);
   for (const survey::SurveyObject& card : doc.objects) {
     if (card.support_set.has_value()) {
       for (const survey::SurveyObject::Interval& interval : card.support_set->intervals) {
