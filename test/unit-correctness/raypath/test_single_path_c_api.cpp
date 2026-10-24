@@ -556,14 +556,14 @@ TEST_F(WarmContract, EmptyIntervalListDegradesLikeNoSupport) {
   EXPECT_FALSE(context["edge"].contains("distance_deg"));
 }
 
-// The dual-arm oracle: the JSON-arm harvest (through ParseWarmStart inside the bridge) and the
+// The dual-arm oracle: the JSON-arm harvest (through DecodeWarmCandidate inside the bridge) and the
 // in-memory harvest (inside the analysis's inline assembly) must read the same blocks of the
 // same document — here the same config runs both arms, and the structural answers must come out
 // field-for-field identical. Only band_sum differs by design (the warm reading exists, the
 // inline one names why it does not).
 TEST_F(WarmContract, BothHarvestArmsReadTheSameBlocks) {
   // On the cheap refused arm (the full-dimensional pair costs a delta partition per side and
-  // runs on the dev-machine bench layer): the JSON-arm harvest (through ParseWarmStart inside
+  // runs on the dev-machine bench layer): the JSON-arm harvest (through DecodeWarmCandidate inside
   // the bridge) and the in-memory harvest (inside the analysis's inline assembly) must read the
   // same blocks of the same document — here the same config runs both arms, and the structural
   // answers must come out field-for-field identical.
@@ -662,7 +662,7 @@ TEST_F(WarmContract, WitnessArgmaxSeedTravelsBackAsAWarmSeed) {
             doc["warm_index"]["seeds"].size());
 }
 
-// The warm harvest's JSON arm, pinned on a real document: ParseWarmStart reads the probe
+// The warm harvest's JSON arm, pinned on a real document: DecodeWarmCandidate reads the probe
 // samples' k / k_eff and the lattice count off the asset — the probe tests' crafted in-memory
 // sources never exercise this reader path.
 TEST_F(WarmContract, WarmHarvestCarriesTheKappaFields) {
@@ -672,14 +672,15 @@ TEST_F(WarmContract, WarmHarvestCarriesTheKappaFields) {
                                                             "WarmContract.WarmHarvestCarriesTheKappaFields",
                                                             lumice::GetGlobalLogger(), nullptr, &config)));
   namespace rp = lumice::raypath;
-  rp::WarmGateContext gate;
-  gate.crystal_id = 1;
-  gate.path_layers = { { 3, 5 } };
-  gate.config_fingerprint = rp::survey::RoutingConfigFingerprint(config, 1, gate.path_layers, rp::kDefaultSymmetryBits);
-  std::vector<double> seeds;
-  rp::SurveyWarmSource harvest;
-  const rp::Error e = rp::ParseWarmStart(RandomSurvey(), gate, &seeds, &harvest);
+  rp::PathSelection selection;
+  selection.crystal_id = 1;
+  selection.path_layers = { { 3, 5 } };
+  rp::WarmCandidate candidate;
+  ASSERT_TRUE(rp::DecodeWarmCandidate(RandomSurvey(), &candidate).Ok());
+  std::optional<rp::AdmittedWarmSource> admitted;
+  const rp::Error e = rp::ValidateWarmCandidate(config, selection, candidate, &admitted);
   ASSERT_TRUE(e.Ok()) << e.message;
+  const auto& harvest = admitted->Facts();
   EXPECT_TRUE(harvest.index_present);
   EXPECT_TRUE(harvest.has_probe);
   EXPECT_TRUE(harvest.has_probe_azimuth);
@@ -698,16 +699,18 @@ TEST_F(WarmContract, WarmHarvestCarriesTheKappaFields) {
   nlohmann::json legacy = nlohmann::json::parse(RandomSurvey());
   legacy["probes"][0]["spec"].erase("azimuth_deg");
   legacy["generator"]["lumice"] = "4.7.4-dev";
-  seeds.clear();
-  rp::SurveyWarmSource older;
-  ASSERT_TRUE(rp::ParseWarmStart(legacy.dump(), gate, &seeds, &older).Ok());
+  rp::WarmCandidate older_candidate;
+  ASSERT_TRUE(rp::DecodeWarmCandidate(legacy.dump(), &older_candidate).Ok());
+  ASSERT_TRUE(rp::ValidateWarmCandidate(config, selection, older_candidate, &admitted).Ok());
+  const auto& older = admitted->Facts();
   EXPECT_TRUE(older.has_probe_azimuth);
   EXPECT_DOUBLE_EQ(older.probe_azimuth_deg, 0.0);
 
   legacy["generator"]["lumice"] = "unknown-producer";
-  seeds.clear();
-  rp::SurveyWarmSource unknown;
-  ASSERT_TRUE(rp::ParseWarmStart(legacy.dump(), gate, &seeds, &unknown).Ok());
+  rp::WarmCandidate unknown_candidate;
+  ASSERT_TRUE(rp::DecodeWarmCandidate(legacy.dump(), &unknown_candidate).Ok());
+  ASSERT_TRUE(rp::ValidateWarmCandidate(config, selection, unknown_candidate, &admitted).Ok());
+  const auto& unknown = admitted->Facts();
   EXPECT_FALSE(unknown.has_probe_azimuth);
 }
 

@@ -205,6 +205,7 @@ Error AssembleSurvey(const ConfigManager& config, const SurveyRequest& request, 
   const PoseDensityConversion& density = class_scope.density;
 
   // Scope and echo.
+  out->geometry = crystal.geometry;
   out->schema_version = kSurveySchemaVersion;
   out->request.crystal_id = static_cast<long long>(request.crystal_id);
   out->request.path_layers = request.path_layers;

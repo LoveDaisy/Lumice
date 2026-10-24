@@ -29,10 +29,10 @@
 #include "config/config_manager.hpp"
 #include "core/def.hpp"
 #include "core/math.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
+#include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
 
@@ -63,108 +63,6 @@ constexpr int kMaxSampleCount = 100000000;
 constexpr int kDefaultSunGridLatCount = 90;
 constexpr int kMaxSunGridLatCount = 1800;
 
-// ---- the survey context (--warm consumption) ---------------------------------------------------
-
-// A schema-4 warm document's harvest: the seeds ride the request's warm_seeds; the facts the
-// survey context reads ride this. Filled by ParseWarmStart (single_path_json.hpp) after the
-// consistency gates; a document that carried no (complete) warm_index leaves index_present false
-// — the warm_index_absent degradation, declared downstream, never an error here.
-struct SurveyWarmSource {
-  // True only when the input was a schema-4 survey document (the family discriminator): the
-  // bridge hands the query only such a harvest, so "not a survey document" (schema-1, inline
-  // context) and "a schema-4 document without its warm_index block" (the warm_index_absent
-  // degradation) stay two different absences.
-  bool from_survey_document = false;
-  bool index_present = false;
-  bool early_stopped = false;  // the identity arm: no delta-axis structure exists to reuse
-  bool has_wavelength = false;
-  double wavelength_nm = 0.0;
-  std::string wavelength_source;
-  bool has_sun_altitude = false;
-  double sun_altitude_deg = 0.0;
-  bool has_sun_azimuth = false;
-  double sun_azimuth_deg = 0.0;
-  // The support: every support card's delta-axis intervals, with the card's members (the first
-  // layer's faces — both harvest arms read that same layer). has_support true exactly when at
-  // least one interval was harvested: a support_set with an empty interval list reads as no
-  // support (the context answers survey_carries_no_support, never a dereference of nothing).
-  struct SupportInterval {
-    double lower_deg = 0.0;
-    double upper_deg = 0.0;
-    std::vector<int> members;
-  };
-  bool has_support = false;
-  std::vector<SupportInterval> intervals;
-  // The caustic edge's certified position (an edge-distance candidate).
-  bool has_edge = false;
-  double edge_deg = 0.0;
-  // The canonical probe's radial profile (the band-sum readings).
-  struct ProbeSample {
-    double delta_deg = 0.0;
-    double value = 0.0;
-    int k = 0;           // the sample's event count — the dark-region decomposition's classifier
-    double k_eff = 0.0;  // the sample's effective count, so a reused profile's rows carry the
-                         // warm document's numbers and not a manufactured zero
-  };
-  bool has_probe = false;
-  bool has_probe_azimuth = false;
-  double probe_azimuth_deg = 0.0;
-  double probe_bin_deg = 0.0;
-  int probe_sample_count = 0;  // the warm probe's lattice n — the reuse criterion compares it
-                               // (the profile's asked count must be the count the warm values
-                               // were computed at, or the values are recomputed)
-  std::vector<ProbeSample> probe_samples;
-  // The family arm's measure echo, read as the concentration language's numbers (the measure
-  // gate's fourth comparison: the caller re-derives its own reading from the query config and
-  // compares per dimension; a document without family_routing skips the gate with a declaration).
-  struct MeasureDimEcho {
-    std::string kind;  // "fixed" | "gauss" | "uniform"
-    double center_deg = 0.0;
-    double width_deg = 0.0;
-  };
-  bool has_measure_echo = false;
-  MeasureDimEcho measure_zenith;
-  MeasureDimEcho measure_azimuth;
-  MeasureDimEcho measure_roll;
-};
-
-// One field of the survey context, in the four-state vocabulary (the evidence layer's; schema1
-// spells the states as strings). `state` is always serialized; the value fields exist exactly
-// when the state says something was read.
-struct SurveyContextField {
-  std::string state;   // "certified" | "finite" | "unevaluated"
-  std::string reason;  // the unevaluated cause, named (never empty when unevaluated)
-};
-
-// The survey context block (schema1's top-level append): where the target sits in the survey's
-// structure. "Survey is the query's index" made concrete — with warm, the producing document's
-// facts; without, the same facts from a context-only (T0–T2) assembly run here. Every field
-// carries its own state; a band-sum reading only ever appears under the scope gate's pass.
-struct SurveyContextBlock {
-  std::string source;                    // "warm" | "inline"
-  double reference_wavelength_nm = 0.0;  // probe context only: first requested wavelength
-  // True: a --warm schema-4 document was given but carried no (complete) warm_index — the
-  // documented degradation (no structural reuse, no seed consumption, inline context).
-  bool warm_index_absent = false;
-  // The target's deviation vs the delta-axis support: inside an interval, or the nearest card.
-  SurveyContextField object;
-  bool target_inside_support = false;
-  std::string object_kind;           // the owning/nearest card's kind (e.g. "support_set")
-  std::vector<int> object_members;   // the card's members (empty when the document carried none)
-  double object_distance_deg = 0.0;  // 0 when inside
-  // The angular distance to the nearest edge (a support endpoint or the certified edge position).
-  SurveyContextField edge;
-  double edge_distance_deg = 0.0;
-  std::string edge_basis;  // "support_interval_endpoint" | "caustic_edge_position"
-  // The band-sum reading at the nearest probe sample (warm documents only; the scope gate's
-  // exact-equality comparison on lambda and sun decides, with the two named failure causes).
-  SurveyContextField band_sum;
-  double band_sum_value = 0.0;
-  double band_sum_delta_deg = 0.0;  // the nearest sample's own deviation
-  double band_sum_bin_deg = 0.0;
-  std::string band_sum_caliber;  // both sides' lambda/sun identity, for the reading's declaration
-};
-
 struct SinglePathRequest : PathSelection {
   // One face sequence per scattering layer, in Lumice face numbers (entry, internal reflections,
   // exit). v1 takes exactly one layer; the list shape exists so a shell can hand over whatever the
@@ -181,10 +79,9 @@ struct SinglePathRequest : PathSelection {
   // pose). Densifying is not monotone (LI section 9.5.7); feeding back seeds is the only way to keep
   // what a sparser call found.
   std::vector<double> warm_seeds;
-  // A schema-4 warm document's harvest (the survey facts the context reads), when --warm named a
-  // survey document that passed the consistency gates. Unset: the context is computed inline
-  // (a context-only T0-T2 assembly on this request's own config).
-  std::optional<SurveyWarmSource> warm_survey;
+  // Untrusted warm candidate. The query admits it through survey_reuse before
+  // consuming seeds or facts; absent means inline context.
+  std::optional<WarmCandidate> warm_candidate;
   // The budget and the caller's one-way stop flag (see lumice_raypath.h): the deadline resolves
   // once at entry (0 = none for an internal caller; the bridge resolves the documented default),
   // the flag is polled at loop boundaries only. A stopped run reports meta.interrupted.
@@ -495,42 +392,11 @@ struct SinglePathResult {
   bool survey_context_ready = false;
   std::shared_ptr<const ConfigManager> context_config;
   SinglePathRequest context_request;
+  std::optional<AdmittedWarmSource> context_warm;
 };
 
 // The whole analysis. On error `out` is left default-constructed.
 Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& request, SinglePathResult* out);
-
-// The schema-4 value model's harvest, read once off an assembled document (the inline arm's
-// producer). The warm reader's JSON arm (ParseWarmStart, single_path_json.hpp) mirrors this
-// field-for-field — the dual-arm oracle test pins the two arms together. Shared with the probe
-// query, whose inline arm assembles the same context and reads it through the same harvest.
-SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc);
-
-struct SurveyStructureView {
-  const SurveyWarmSource* warm = nullptr;
-  const char* reason = nullptr;
-  explicit operator bool() const { return warm != nullptr && reason == nullptr; }
-};
-
-struct SurveyReuseDecision {
-  SurveyStructureView structure;
-  const char* reading_reason = nullptr;
-};
-
-SurveyReuseDecision EvaluateSurveyReuse(const SurveyWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
-                                        double sun_azimuth_deg);
-
-// The context's nearest structural anchor, shared by the point and probe queries.
-bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
-                            const char** basis);
-
-// The context's answers, read off a harvest (a warm document's facts or the inline assembly's —
-// the same shape either way): the query point's containment and edge distances in the delta-axis
-// support, and the band-sum reading under the scope gate's exact-equality comparison of the
-// wavelength and the sun. The one context computation both the point query and the probe query
-// read; the point's caller passes its meta's values.
-void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
-                       double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out);
 
 // The survey context on demand: the stored block when already computed, else built from the
 // retained deferral inputs. NOT a cheap accessor — on a deferred result this runs the

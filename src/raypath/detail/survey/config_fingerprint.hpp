@@ -3,9 +3,8 @@
 
 // The routing-axis config fingerprint — the --warm contract's structural gate's one comparison
 // input, with ONE implementation here that both sides call: the writer (the survey document's
-// warm_index block, via survey_assembly) and the reader (the point query's gate, via the C API
-// bridge). Two spellings would drift into a permanent false-mismatch red state (a56), so no
-// caller serializes or hashes the projection itself.
+// warm_index block, via survey_assembly) and the reader (the warm admission service). Two spellings would drift into a
+// permanent false-mismatch red state (a56), so no caller serializes or hashes the projection itself.
 //
 // The axis set (the contract; a config field that starts to affect routing must be added to this
 // projection and to the doc/raypath/raypath-cli-output.md axis table in the same change):

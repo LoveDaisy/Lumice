@@ -380,6 +380,7 @@ struct SurveyUnevaluated {
 // document's own, so the probe's edge reading and the support's lower end share one ruler),
 // and the representative member the probe ran on with the class size it stands for.
 struct SurveyProbeSpec {
+  QuantitySpec quantity;
   double delta_min_deg = 15.0;
   double delta_max_deg = 60.0;
   double bin_deg = 0.1;
@@ -661,7 +662,7 @@ struct SurveyMcRegionEss {
 struct SurveyRequestEcho {
   long long crystal_id = 0;
   std::vector<std::vector<int>> path_layers;
-  unsigned symmetry_bits = 7;  // P|B|D; 0 = the literal path (the report request's encoding)
+  unsigned symmetry_bits = kDefaultSymmetryBits;  // P|B|D; 0 = the literal path (the report request's encoding)
   bool wavelength_given = false;
   double wavelength_nm = 0.0;  // as given, 0 when unset
   int budget_ms = 0;           // as resolved (default substituted); out-of-range values are
@@ -683,6 +684,7 @@ struct WarmIndexBlock {
 
 // The whole document, pre-serialization.
 struct SurveyDocument {
+  GeometryScope geometry;
   int schema_version = 4;
 
   SurveyRequestEcho request;

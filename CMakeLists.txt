@@ -1113,6 +1113,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/input_scope.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/measure_scope.cpp"
+  "${PROJ_SRC_DIR}/raypath/survey_reuse.cpp"
   "${PROJ_SRC_DIR}/raypath/domain/error.cpp"
   "${PROJ_SRC_DIR}/raypath/domain/input_metadata.cpp"
   "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"

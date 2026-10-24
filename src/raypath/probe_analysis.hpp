@@ -31,8 +31,9 @@
 #include "config/config_manager.hpp"
 #include "core/def.hpp"
 #include "raypath/detail/survey/survey_probe.hpp"
+#include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
 
@@ -70,11 +71,9 @@ struct ProbeRequest : PathSelection {
   // the online lambda grid — one profile per entry, in order, each with its own refractive index.
   std::vector<double> wavelengths_nm;
   int sample_count = 0;  // the band-sum lattice n; 0 = the survey probe's count
-  // The warm harvest after the bridge's gates (single_path_analysis.hpp). Unset: the context is
-  // computed inline (a context-only T0-T2 assembly on this request's own config). The seeds ride
-  // nowhere: a probe consumes no fiber seeds — the band-sum is lattice-deterministic — and the
-  // spec says so.
-  std::optional<SurveyWarmSource> warm_survey;
+  // Untrusted warm candidate, decoded from JSON or harvested from a typed survey.
+  // The query admits it through survey_reuse before consuming seeds or facts.
+  std::optional<WarmCandidate> warm_candidate;
   int budget_ms = 0;  // 0 = the documented default; polled at the per-lambda boundaries
   const volatile int* interrupted = nullptr;
 };

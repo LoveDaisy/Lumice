@@ -14,8 +14,6 @@
 
 #include "config/config_manager.hpp"
 #include "include/lumice_raypath.h"
-#include "raypath/detail/survey/config_fingerprint.hpp"
-#include "raypath/detail/survey/survey_family.hpp"
 #include "raypath/detail/survey/survey_mc_ess.hpp"
 #include "raypath/path_feature_report.hpp"
 #include "raypath/probe_analysis.hpp"
@@ -95,63 +93,6 @@ LUMICE_ErrorCode Refuse(const lumice::raypath::Error& e, char* err_buf, size_t e
   return LUMICE_ERR_INVALID_VALUE;
 }
 
-// The warm gates, one home for both query faces (the point and the probe): the crystal-existence
-// precondition the gates presuppose, the three comparison gates the reader runs (crystal id, path
-// layers, config fingerprint) and the fourth (the family measure echo, compared here where the
-// config lives). The seeds land in *seeds (the probe discards them: the band-sum consumes none);
-// only a schema-4 survey document's harvest lands in *warm_survey — a schema-1 seed sheet feeds
-// the seeds alone and the context stays inline.
-LUMICE_ErrorCode GateWarm(const lumice::ConfigManager& config, const std::string& warm_text, lumice::IdType crystal_id,
-                          const std::vector<std::vector<int>>& path_layers, std::vector<double>* seeds,
-                          std::optional<lumice::raypath::SurveyWarmSource>* warm_survey, char* err_buf,
-                          size_t err_size) {
-  namespace rp = lumice::raypath;
-  if (config.crystals_.find(crystal_id) == config.crystals_.end()) {
-    return Refuse({ rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(crystal_id) },
-                  err_buf, err_size);
-  }
-  // The warm gates' comparison context: the routing-axis config fingerprint (the projection's
-  // single implementation), the crystal and the path, and — for the fourth gate — this query's
-  // own family-measure reading.
-  rp::WarmGateContext gate;
-  gate.crystal_id = static_cast<long long>(crystal_id);
-  gate.path_layers = path_layers;
-  gate.config_fingerprint =
-      rp::survey::RoutingConfigFingerprint(config, crystal_id, path_layers, rp::kDefaultSymmetryBits);
-  const auto configured = config.crystals_.find(crystal_id);
-  rp::SurveyWarmSource survey_source;
-  if (const rp::Error e = rp::ParseWarmStart(warm_text, gate, seeds, &survey_source); !e.Ok()) {
-    return Refuse(e, err_buf, err_size);
-  }
-  // Gate 4 (the measure echo): only family-arm documents carry the echo — its absence skips the
-  // gate with the declaration the harvest recorded.
-  if (survey_source.has_measure_echo) {
-    const rp::survey::FamilyMeasureReading mine = rp::survey::ReadFamilyMeasure(configured->second.axis_);
-    const auto mismatch = [&]() {
-      return Refuse({ rp::ErrorCode::kInvalidArgument,
-                      "warm index: measure gate: the document's family measure echo does not match this "
-                      "query's config axis" },
-                    err_buf, err_size);
-    };
-    if (!mine.ok) {
-      return mismatch();
-    }
-    const auto same = [](const rp::SurveyWarmSource::MeasureDimEcho& echo, const rp::survey::FamilyDimMeasure& dim) {
-      return echo.kind == rp::survey::FamilyDimKindName(dim.kind) && echo.center_deg == dim.center_deg &&
-             echo.width_deg == dim.width_deg;
-    };
-    if (!same(survey_source.measure_zenith, mine.measure.zenith) ||
-        !same(survey_source.measure_azimuth, mine.measure.azimuth) ||
-        !same(survey_source.measure_roll, mine.measure.roll)) {
-      return mismatch();
-    }
-  }
-  if (survey_source.from_survey_document) {
-    *warm_survey = std::move(survey_source);
-  }
-  return LUMICE_OK;
-}
-
 LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathRequest& request,
                          LUMICE_SinglePathResult** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
@@ -212,15 +153,9 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   }
 
   if (request.warm_json != nullptr && request.warm_json_len > 0) {
-    // GateWarm writes the harvest only when the text was a schema-4 survey document: a schema-1
-    // seed sheet feeds the seeds alone and the context stays inline (the two absences — not a
-    // survey document vs a survey document without its warm_index — must not merge).
-    if (const LUMICE_ErrorCode err =
-            GateWarm(config, std::string(request.warm_json, request.warm_json_len), req.crystal_id, req.path_layers,
-                     &req.warm_seeds, &req.warm_survey, err_buf, err_size);
-        err != LUMICE_OK) {
-      return err;
-    }
+    req.warm_candidate.emplace();
+    req.warm_candidate->decode_error =
+        rp::DecodeWarmCandidate(std::string(request.warm_json, request.warm_json_len), &*req.warm_candidate);
   }
 
   rp::SinglePathResult result;
@@ -466,15 +401,9 @@ LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeR
   }
 
   if (request.warm_json != nullptr && request.warm_json_len > 0) {
-    // GateWarm writes the harvest only when the text was a schema-4 survey document: a probe
-    // consumes no seeds (the band-sum uses none), and a schema-1 sheet leaves the context inline.
-    std::vector<double> discarded_seeds;
-    if (const LUMICE_ErrorCode err =
-            GateWarm(config, std::string(request.warm_json, request.warm_json_len), req.crystal_id, req.path_layers,
-                     &discarded_seeds, &req.warm_survey, err_buf, err_size);
-        err != LUMICE_OK) {
-      return err;
-    }
+    req.warm_candidate.emplace();
+    req.warm_candidate->decode_error =
+        rp::DecodeWarmCandidate(std::string(request.warm_json, request.warm_json_len), &*req.warm_candidate);
   }
 
   rp::ProbeResult result;

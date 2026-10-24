@@ -269,6 +269,9 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/input_scope.cpp
   raypath/detail/measure_scope.hpp
   raypath/detail/measure_scope.cpp
+  raypath/survey_context.hpp
+  raypath/survey_reuse.hpp
+  raypath/survey_reuse.cpp
   raypath/domain/error.cpp
   raypath/domain/error.hpp
   raypath/domain/input_metadata.cpp

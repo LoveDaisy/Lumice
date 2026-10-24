@@ -629,231 +629,27 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation, const a
 
 }  // namespace
 
-// ---- the survey context ---------------------------------------------------------------------------
-
-// The schema-4 value model's harvest: the facts the context reads, read once off the assembled
-// document (the warm reader's JSON arm mirrors this — the two must read the same blocks, the
-// dual-arm oracle test pins them field-for-field). Members are the card's first layer: the
-// support partition ran on the entry faces, and both arms read that same layer, so a future
-// multi-layer document changes the answer on both sides together or not at all. A support_set
-// with zero intervals harvests nothing — has_support stays false and the context answers
-// survey_carries_no_support, the same shape as a document without support at all.
-SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
-  SurveyWarmSource out;
-  out.early_stopped = doc.early_stopped;
-  out.has_wavelength = std::isfinite(doc.wavelength_nm) && doc.wavelength_nm > 0.0;
-  out.wavelength_nm = doc.wavelength_nm;
-  out.wavelength_source = doc.wavelength_source;
-  out.has_sun_altitude = doc.sun_altitude_deg.has_value() && std::isfinite(*doc.sun_altitude_deg);
-  out.sun_altitude_deg = doc.sun_altitude_deg.value_or(0.0);
-  out.has_sun_azimuth = doc.sun_azimuth_deg.has_value() && std::isfinite(*doc.sun_azimuth_deg);
-  out.sun_azimuth_deg = doc.sun_azimuth_deg.value_or(0.0);
-  for (const survey::SurveyObject& card : doc.objects) {
-    if (card.support_set.has_value()) {
-      for (const survey::SurveyObject::Interval& interval : card.support_set->intervals) {
-        SurveyWarmSource::SupportInterval out_interval;
-        out_interval.lower_deg = interval.lower_deg;
-        out_interval.upper_deg = interval.upper_deg;
-        out_interval.members = card.members.empty() ? std::vector<int>{} : card.members.front();
-        out.intervals.push_back(std::move(out_interval));
-      }
-    }
-    if (card.caustic_edge.has_value()) {
-      out.has_edge = true;
-      out.edge_deg = card.caustic_edge->position_deg;
-    }
-  }
-  out.has_support = !out.intervals.empty();
-  if (!doc.probes.empty()) {
-    const survey::SurveyProbe& probe = doc.probes.front();
-    out.has_probe = true;
-    out.has_probe_azimuth = probe.spec.azimuth_deg.has_value() && std::isfinite(*probe.spec.azimuth_deg);
-    out.probe_azimuth_deg = probe.spec.azimuth_deg.value_or(0.0);
-    out.probe_bin_deg = probe.spec.bin_deg;
-    out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
-    for (const survey::SurveyProbeSample& sample : probe.samples) {
-      out.probe_samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
-    }
-  }
-  out.has_measure_echo = doc.family_routing.has_value();
-  if (out.has_measure_echo) {
-    const auto read_dim = [](const survey::FamilyDimMeasure& dim, SurveyWarmSource::MeasureDimEcho* e) {
-      e->kind = survey::FamilyDimKindName(dim.kind);
-      e->center_deg = dim.center_deg;
-      e->width_deg = dim.width_deg;
-    };
-    read_dim(doc.family_routing->measure.zenith, &out.measure_zenith);
-    read_dim(doc.family_routing->measure.azimuth, &out.measure_azimuth);
-    read_dim(doc.family_routing->measure.roll, &out.measure_roll);
-  }
-  return out;
-}
-
-SurveyReuseDecision EvaluateSurveyReuse(const SurveyWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
-                                        double sun_azimuth_deg) {
-  SurveyReuseDecision decision;
-  if (warm.early_stopped) {
-    decision.structure.reason = "survey_early_stopped_no_delta_axis";
-  } else if (!warm.has_support) {
-    decision.structure.reason = "survey_carries_no_support";
-  } else if (!warm.has_wavelength) {
-    decision.structure.reason = "scope_field_missing";
-  } else if (warm.wavelength_nm != wavelength_nm) {
-    decision.structure.reason = "scope_value_mismatch";
-  } else {
-    decision.structure.warm = &warm;
-  }
-  if (!warm.has_wavelength || !warm.has_sun_altitude || !warm.has_sun_azimuth) {
-    decision.reading_reason = "scope_field_missing";
-  } else if (warm.wavelength_nm != wavelength_nm || warm.sun_altitude_deg != sun_altitude_deg ||
-             warm.sun_azimuth_deg != sun_azimuth_deg) {
-    decision.reading_reason = "scope_value_mismatch";
-  }
-  return decision;
-}
-
-bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
-                            const char** basis) {
-  if (!structure) {
-    return false;
-  }
-  const SurveyWarmSource& warm = *structure.warm;
-  bool has = false;
-  double best = 0.0;
-  const char* best_basis = "";
-  for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
-    for (const double end : { interval.lower_deg, interval.upper_deg }) {
-      if (!has || std::fabs(deviation_deg - end) < std::fabs(deviation_deg - best)) {
-        best = end;
-        best_basis = "support_interval_endpoint";
-        has = true;
-      }
-    }
-  }
-  if (warm.has_edge && (!has || std::fabs(deviation_deg - warm.edge_deg) < std::fabs(deviation_deg - best))) {
-    best = warm.edge_deg;
-    best_basis = "caustic_edge_position";
-    has = true;
-  }
-  if (has) {
-    *position_deg = best;
-    *basis = best_basis;
-  }
-  return has;
-}
-
-// The context's answers, read off a harvest (warm document or inline assembly — the same shape).
-void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
-                       double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
-  const SurveyReuseDecision reuse = EvaluateSurveyReuse(warm, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
-  const double delta = target_deviation_deg;
-  const SurveyWarmSource::SupportInterval* containing = nullptr;
-  const SurveyWarmSource::SupportInterval* closest = nullptr;
-  double closest_distance = std::numeric_limits<double>::infinity();
-  if (reuse.structure) {
-    for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
-      if (delta >= interval.lower_deg && delta <= interval.upper_deg) {
-        containing = &interval;
-        break;
-      }
-      const double d = delta < interval.lower_deg ? interval.lower_deg - delta : delta - interval.upper_deg;
-      if (d < closest_distance) {
-        closest_distance = d;
-        closest = &interval;
-      }
-    }
-  }
-  if (!reuse.structure) {
-    out->object.state = "unevaluated";
-    out->object.reason = reuse.structure.reason;
-    out->edge.state = "unevaluated";
-    out->edge.reason = reuse.structure.reason;
-  } else {
-    // The partition containment is a certified structural fact; the nearest reading inherits it.
-    const SurveyWarmSource::SupportInterval& hit = containing != nullptr ? *containing : *closest;
-    out->object.state = "certified";
-    out->target_inside_support = containing != nullptr;
-    out->object_kind = "support_set";
-    out->object_members = hit.members;
-    out->object_distance_deg = containing != nullptr ? 0.0 : closest_distance;
-    // A certified support carries endpoints, so the shared walk always names an anchor here.
-    double edge_position = 0.0;
-    const char* edge_basis = "";
-    NearestStructureAnchor(reuse.structure, delta, &edge_position, &edge_basis);
-    out->edge.state = "finite";
-    out->edge_distance_deg = std::fabs(delta - edge_position);
-    out->edge_basis = edge_basis;
-  }
-
-  // The band-sum reading: warm documents only, under the scope gate's exact-equality comparison
-  // (both sides resolved the same way, so equal configs give bit-equal doubles here).
-  if (out->source == "inline") {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = "inline_context_runs_no_probe";
-  } else if (out->warm_index_absent) {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = "warm_index_absent";
-  } else if (!warm.has_probe) {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = "warm_document_has_no_probe";
-  } else if (reuse.reading_reason != nullptr) {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = reuse.reading_reason;
-  } else {
-    const SurveyWarmSource::ProbeSample* best = nullptr;
-    double best_distance = std::numeric_limits<double>::infinity();
-    for (const SurveyWarmSource::ProbeSample& sample : warm.probe_samples) {
-      if (std::isnan(sample.value)) {
-        continue;  // an undefined reading is no reading: the pick spans the defined ones
-      }
-      const double d = std::fabs(delta - sample.delta_deg);
-      if (d < best_distance) {
-        best_distance = d;
-        best = &sample;
-      }
-    }
-    if (best == nullptr) {
-      out->band_sum.state = "unevaluated";
-      out->band_sum.reason = "warm_document_has_no_probe";
-    } else {
-      out->band_sum.state = "finite";
-      out->band_sum_value = best->value;
-      out->band_sum_delta_deg = best->delta_deg;
-      out->band_sum_bin_deg = warm.probe_bin_deg;
-      out->band_sum_caliber = "the warm document's solar-radial band-sum profile at wavelength " +
-                              std::to_string(warm.wavelength_nm) + " nm (" + warm.wavelength_source + "), sun at " +
-                              std::to_string(warm.sun_altitude_deg) + "/" + std::to_string(warm.sun_azimuth_deg) +
-                              ", survey line azimuth " +
-                              (warm.has_probe_azimuth ? std::to_string(warm.probe_azimuth_deg) : "unknown") +
-                              " — reference-line reading, not target-sky intensity";
-    }
-  }
-}
-
 namespace {
 
 // The survey context for this query: warm harvest when a schema-4 document passed the gates, the
 // context-only T0-T2 assembly otherwise (and also under the warm_index_absent degradation, which
 // still declares itself in the block).
 void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& request, const SinglePathMetadata& meta,
-                        SurveyContextBlock* out) {
-  if (request.warm_survey.has_value()) {
-    out->source = "warm";
-    out->warm_index_absent = !request.warm_survey->index_present;
-  } else {
-    out->source = "inline";
-  }
-  const SurveyWarmSource* warm =
-      request.warm_survey.has_value() && request.warm_survey->index_present ? &*request.warm_survey : nullptr;
-  SurveyWarmSource inline_harvest;
+                        const std::optional<AdmittedWarmSource>& admitted, SurveyContextBlock* out) {
+  const SurveyWarmSource* source =
+      admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &admitted->Facts() : nullptr;
+  out->source = source != nullptr ? "warm" : "inline";
+  out->warm_index_absent = source != nullptr && !source->index_present;
+  const SurveyWarmSource* warm = source != nullptr && source->index_present ? source : nullptr;
+  std::optional<AdmittedWarmSource> inline_source;
   if (warm == nullptr) {
     SurveyRequest survey_request;
-    survey_request.crystal_id = request.crystal_id;
-    survey_request.path_layers = request.path_layers;
-    survey_request.symmetry_bits = kDefaultSymmetryBits;
+    static_cast<PathSelection&>(survey_request) = request;
     survey_request.wavelength_nm = meta.wavelength_nm;
     survey::SurveyDocument doc;
-    const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
+    Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
+    if (e.Ok())
+      e = ValidateWarmCandidate(config, request, HarvestSurveyDocument(doc), &inline_source);
     if (!e.Ok()) {
       out->object.state = "unevaluated";
       out->object.reason = "inline_survey_refused";
@@ -863,8 +659,7 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
       out->band_sum.reason = "inline_survey_refused";
       return;
     }
-    inline_harvest = HarvestSurveyDocument(doc);
-    warm = &inline_harvest;
+    warm = &inline_source->Facts();
   }
   FillSurveyContext(*warm, meta.target_deviation_deg, meta.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg,
                     out);
@@ -901,8 +696,15 @@ void SunSphereGridCellCentre(const SunSphereGrid& grid, int lat_index, int lon_i
   u[2] = std::sin(lat);
 }
 
-Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& request, SinglePathResult* out) {
+Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& input_request, SinglePathResult* out) {
   *out = SinglePathResult{};
+  SinglePathRequest request = input_request;
+  std::optional<AdmittedWarmSource> admitted;
+  if (request.warm_candidate) {
+    if (Error e = ValidateWarmCandidate(config, request, *request.warm_candidate, &admitted); !e.Ok())
+      return e;
+    request.warm_seeds.insert(request.warm_seeds.end(), admitted->Seeds().begin(), admitted->Seeds().end());
+  }
 
   // ---- inputs ----
   const auto crystal_it = config.crystals_.find(request.crystal_id);
@@ -1028,6 +830,8 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   // serialization computes and caches it; the deadline gate stays on the discovery legs only.
   result.context_config = std::make_shared<const ConfigManager>(config);
   result.context_request = request;
+  result.context_request.warm_candidate.reset();
+  result.context_warm = std::move(admitted);
 
   if (rank.rank_zero) {
     result.outcome = Outcome::kPointMass;
@@ -1099,7 +903,7 @@ SurveyContextBlock SurveyContextOf(const SinglePathResult& result) {
   }
   SurveyContextBlock out;
   if (result.context_config != nullptr) {
-    BuildSurveyContext(*result.context_config, result.context_request, result.meta, &out);
+    BuildSurveyContext(*result.context_config, result.context_request, result.meta, result.context_warm, &out);
   }
   return out;
 }
@@ -1112,6 +916,7 @@ void EnsureSurveyContext(SinglePathResult* result) {
   result->survey_context_ready = true;
   result->context_config.reset();
   result->context_request = SinglePathRequest{};
+  result->context_warm.reset();
 }
 
 }  // namespace lumice::raypath

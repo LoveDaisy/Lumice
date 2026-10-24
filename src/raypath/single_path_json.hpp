@@ -34,24 +34,8 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
 // reader's.
 Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds);
 
-// The two-family warm reader. A schema-1 document takes exactly ParseWarmSeeds's path (its seeds
-// and nothing else — a schema-1 file is not a survey index). A schema-4 survey document goes
-// through the consistency gates first — crystal id, path layers, and the config fingerprint are
-// compared here, and the family arm's measure echo is read here but compared by the caller (the
-// C API bridge, which owns the config: c_api_raypath.cpp's Analyze is the fourth gate's home) —
-// each refusal an `invalid_argument: warm index: ...` naming the gate; then the harvest fills
-// `survey` and the seeds from the document's warm_index block. A document whose warm_index block
-// is absent or missing any of its fields is NOT a refusal: `survey->index_present` stays false
-// (the documented warm_index_absent degradation — no structural reuse, no seed consumption) and
-// the query runs its context inline.
-struct WarmGateContext {
-  std::string config_fingerprint;  // RoutingConfigFingerprint's value for this request's config
-  long long crystal_id = 0;
-  std::vector<std::vector<int>> path_layers;
-};
-
-Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, std::vector<double>* seeds,
-                     SurveyWarmSource* survey);
+// Decode only: candidate identity and numeric facts are validated by survey_reuse.
+Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate);
 
 // The survey context block's one JSON spelling — the point document's `survey_context` and the
 // probe document's `context` are the same shape, and this is its one writer. Exported so the two

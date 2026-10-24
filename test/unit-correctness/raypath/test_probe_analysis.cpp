@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -14,12 +15,14 @@
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
+#include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_json.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/probe_json.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/single_path_json.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath {
@@ -45,7 +48,7 @@ double GridCentreDeg(int k) {
 
 SurveyWarmSource CraftedWarm(double wavelength_nm, int sample_count) {
   SurveyWarmSource warm;
-  warm.from_survey_document = true;
+  warm.family = WarmDocumentFamily::kSurvey;
   warm.index_present = true;
   warm.has_wavelength = true;
   warm.wavelength_nm = wavelength_nm;
@@ -81,6 +84,17 @@ SurveyWarmSource CraftedWarm(double wavelength_nm, int sample_count) {
   return warm;
 }
 
+WarmCandidate Candidate(const ConfigManager& config, SurveyWarmSource facts) {
+  WarmCandidate candidate;
+  candidate.facts = std::move(facts);
+  candidate.facts.family = WarmDocumentFamily::kSurvey;
+  candidate.crystal_id = 1;
+  candidate.path_layers = { { 3, 5 } };
+  candidate.config_fingerprint =
+      survey::RoutingConfigFingerprint(config, 1, candidate.path_layers, kDefaultSymmetryBits);
+  return candidate;
+}
+
 ProbeRequest RadialRequest(const ConfigManager& config, double at_altitude, double at_azimuth) {
   ProbeRequest request;
   request.crystal_id = 1;
@@ -93,6 +107,146 @@ ProbeRequest RadialRequest(const ConfigManager& config, double at_altitude, doub
   return request;
 }
 
+TEST(ProbeAnalysis, TypedCandidatesCannotBypassIdentityAndMeasureAdmission) {
+  const ConfigManager config = survey::RandomPrismScene();
+  ProbeRequest request = RadialRequest(config, -30.0, 0.0);
+  const WarmCandidate good = Candidate(config, CraftedWarm(550.0, 20000));
+  for (int axis = 0; axis < 5; ++axis) {
+    auto bad = good;
+    const char* expected = "";
+    switch (axis) {
+      case 0:
+        bad.crystal_id = 2;
+        expected = "crystal gate";
+        break;
+      case 1:
+        bad.path_layers = { { 1, 2 } };
+        expected = "path gate";
+        break;
+      case 2:
+        bad.config_fingerprint = "wrong";
+        expected = "config fingerprint gate";
+        break;
+      case 3:
+        bad.facts.has_measure_echo = true;
+        expected = "measure gate";
+        break;
+      case 4:
+        bad.facts.intervals[0].upper_deg = std::numeric_limits<double>::infinity();
+        expected = "invalid support interval";
+        break;
+    }
+    SCOPED_TRACE(axis);
+    request.warm_candidate = bad;
+    ProbeResult out;
+    const Error error = AnalyzePathProbe(config, request, &out);
+    EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+    EXPECT_NE(error.message.find(expected), std::string::npos) << error.message;
+    EXPECT_TRUE(out.profiles.empty());
+  }
+  // Missing index still checks identity and measure instead of becoming a bypass.
+  auto missing = good;
+  missing.facts.index_present = false;
+  missing.facts.has_measure_echo = true;
+  request.warm_candidate = missing;
+  ProbeResult out;
+  EXPECT_NE(AnalyzePathProbe(config, request, &out).message.find("measure gate"), std::string::npos);
+}
+
+TEST(ProbeAnalysis, FactScopesProjectWavelengthSunTargetAndQuantityIndependently) {
+  const ConfigManager config = survey::RandomPrismScene();
+  ProbeRequest request = RadialRequest(config, -30.0, 0.0);
+  auto candidate = Candidate(config, CraftedWarm(550.0, 20000));
+  request.warm_candidate = candidate;
+  ProbeResult inside;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &inside).Ok());
+  EXPECT_TRUE(inside.context.target_inside_support);
+  EXPECT_EQ(inside.profiles.front().source, "warm_reused");
+  request.at_altitude_deg = -50.0;
+  ProbeResult outside;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &outside).Ok());
+  EXPECT_FALSE(outside.context.target_inside_support);
+  EXPECT_GT(outside.context.object_distance_deg, 0.0);
+  EXPECT_EQ(outside.profiles.front().source, "warm_reused");
+  request.wavelengths_nm = { 450.0 };
+  ProbeResult wavelength;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &wavelength).Ok());
+  EXPECT_EQ(wavelength.context.object.reason, "scope_value_mismatch");
+  EXPECT_EQ(wavelength.profiles.front().source, "recomputed");
+  request.wavelengths_nm = { 550.0 };
+  auto moved_sun = config;
+  moved_sun.scene_.light_source_.param_.altitude_ = 1.0f;
+  ProbeResult sun;
+  ASSERT_TRUE(AnalyzePathProbe(moved_sun, request, &sun).Ok());
+  EXPECT_EQ(sun.context.object.state, "certified");
+  EXPECT_EQ(sun.context.band_sum.reason, "scope_value_mismatch");
+  EXPECT_EQ(sun.profiles.front().source, "recomputed");
+  candidate.facts.quantity.measure = MeasureKind::kIdealFrozen;
+  request.warm_candidate = candidate;
+  ProbeResult ideal;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &ideal).Ok());
+  EXPECT_EQ(ideal.context.object.state, "certified");
+  EXPECT_EQ(ideal.context.band_sum.reason, "scope_value_mismatch");
+  EXPECT_EQ(ideal.profiles.front().source, "recomputed");
+}
+
+TEST(ProbeAnalysis, TypedNonfiniteScopeDegradesWithoutInventingZeroProvenance) {
+  const auto config = survey::RandomPrismScene();
+  auto request = RadialRequest(config, -30.0, 0.0);
+  request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
+  request.warm_candidate->facts.sun_altitude_deg = std::numeric_limits<double>::quiet_NaN();
+  ProbeResult out;
+  ASSERT_TRUE(AnalyzePathProbe(config, request, &out).Ok());
+  EXPECT_EQ(out.context.object.state, "certified");
+  EXPECT_EQ(out.context.band_sum.reason, "scope_field_missing");
+  EXPECT_EQ(out.profiles.front().source, "recomputed");
+}
+
+TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
+  const auto config = survey::PlateScene(1.5, 0.3);
+  auto request = RadialRequest(config, -10.0, 0.0);
+  survey::SurveyDocument document;
+  document.request.crystal_id = request.crystal_id;
+  document.request.path_layers = request.path_layers;
+  document.warm_index.config_fingerprint =
+      survey::RoutingConfigFingerprint(config, request.crystal_id, request.path_layers, request.symmetry_bits);
+  document.warm_index.reuse_scope = "test receipt";
+  document.warm_index.produced_for = "test producer";
+  document.wavelength_nm = 550.0;
+  document.sun_altitude_deg = 20.0;
+  document.sun_azimuth_deg = 0.0;
+  document.family_routing.emplace();
+  const auto measure = survey::ReadFamilyMeasure(config.crystals_.at(1).axis_);
+  ASSERT_TRUE(measure.ok);
+  document.family_routing->measure = measure.measure;
+  WarmCandidate typed = HarvestSurveyDocument(document);
+  WarmCandidate decoded;
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());
+  std::optional<AdmittedWarmSource> admitted;
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, typed, &admitted).Ok());
+  ASSERT_TRUE(admitted);
+  ASSERT_TRUE(ValidateWarmCandidate(config, request, decoded, &admitted).Ok());
+  typed.facts.measure_zenith.width_deg += 1.0;
+  document.family_routing->measure.zenith.width_deg += 1.0;
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());
+  const Error typed_error = ValidateWarmCandidate(config, request, typed, &admitted);
+  const Error wire_error = ValidateWarmCandidate(config, request, decoded, &admitted);
+  EXPECT_EQ(typed_error.message, wire_error.message);
+  EXPECT_NE(typed_error.message.find("measure gate"), std::string::npos);
+  // Request identity wins over later corrupt payloads, exactly as at the old boundary.
+  auto wire = nlohmann::json::parse(survey::SurveyDocumentToJson(document, "test"));
+  wire["request"]["crystal_id"] = 2;
+  wire["family_routing"]["measure"] = nullptr;
+  decoded.decode_error = DecodeWarmCandidate(wire.dump(), &decoded);
+  EXPECT_FALSE(decoded.decode_error.Ok());
+  EXPECT_NE(ValidateWarmCandidate(config, request, decoded, &admitted).message.find("crystal gate"), std::string::npos);
+  request.crystal_id = 999;
+  EXPECT_EQ(ValidateWarmCandidate(config, request, decoded, &admitted).code, ErrorCode::kUnknownCrystalId);
+  // Schema-4 keys are append-only; its version is not an admission gate.
+  document.schema_version = 999;
+  EXPECT_TRUE(DecodeWarmCandidate(survey::SurveyDocumentToJson(document, "test"), &decoded).Ok());
+}
+
 // The reuse arm: the scope matches, the grid is the warm grid, and the values (and the counts the
 // dark decomposition classifies by) are the warm document's own — zero BandSum calls.
 TEST(ProbeAnalysis, ReuseArmCopiesWarmValuesWhenScopeAndGridMatch) {
@@ -102,7 +256,7 @@ TEST(ProbeAnalysis, ReuseArmCopiesWarmValuesWhenScopeAndGridMatch) {
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);
   request.wavelengths_nm = { 550.0 };
   request.sample_count = kLattice;  // must match the warm probe's lattice for the reuse
-  request.warm_survey = warm;
+  request.warm_candidate = Candidate(config, warm);
 
   ProbeResult result;
   const Error e = AnalyzePathProbe(config, request, &result);
@@ -143,7 +297,7 @@ TEST(ProbeAnalysis, ReuseArmCopiesWarmValuesWhenScopeAndGridMatch) {
 TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   const ConfigManager config = survey::RandomPrismScene();
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);
-  request.warm_survey = CraftedWarm(650.0, 20000);  // the warm map ran at 650, the query asks 550
+  request.warm_candidate = Candidate(config, CraftedWarm(650.0, 20000));  // the warm map ran at 650, the query asks 550
 
   ProbeResult result;
   const Error e = AnalyzePathProbe(config, request, &result);
@@ -161,7 +315,7 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
   // The lattice is part of the same gate: a warm document computed at another n recomputes too.
   ProbeRequest other_lattice = RadialRequest(config, -30.0, 0.0);
   other_lattice.sample_count = 10000;
-  other_lattice.warm_survey = CraftedWarm(550.0, 20000);
+  other_lattice.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
   ProbeResult lattice_result;
   ASSERT_TRUE(AnalyzePathProbe(config, other_lattice, &lattice_result).Ok());
   ASSERT_EQ(lattice_result.profiles.size(), 1u);
@@ -194,7 +348,7 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
     warm.probe_samples[k] = { producer.samples[k].delta_deg, producer.samples[k].value, producer.samples[k].k,
                               producer.samples[k].k_eff };
   }
-  request.warm_survey = warm;
+  request.warm_candidate = Candidate(config, warm);
   ProbeResult result;
   ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
@@ -213,7 +367,7 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
   EXPECT_EQ(same_line.profiles.front().source, "warm_reused");
   EXPECT_DOUBLE_EQ(same_line.profiles.front().samples[kEdgeBin].value, warm.probe_samples[kEdgeBin].value);
 
-  request.warm_survey->has_probe_azimuth = false;
+  request.warm_candidate->facts.has_probe_azimuth = false;
   ProbeResult unknown_line;
   ASSERT_TRUE(AnalyzePathProbe(config, request, &unknown_line).Ok());
   EXPECT_EQ(unknown_line.profiles.front().source, "recomputed");
@@ -234,13 +388,13 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
   }
   document.probes.push_back(std::move(probe));
 
-  SurveyWarmSource warm = HarvestSurveyDocument(document);
+  SurveyWarmSource warm = HarvestSurveyDocument(document).facts;
   warm.index_present = true;
   ASSERT_TRUE(warm.has_probe);
   EXPECT_FALSE(warm.has_probe_azimuth);
   ProbeRequest request = RadialRequest(config, -10.0, 0.0);
   request.wavelengths_nm = { 550.0 };
-  request.warm_survey = warm;
+  request.warm_candidate = Candidate(config, warm);
   ProbeResult result;
   ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
@@ -265,7 +419,7 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   EXPECT_TRUE(wire["scope"]["sun_altitude_deg"].is_null());
   EXPECT_TRUE(wire["scope"]["sun_azimuth_deg"].is_null());
 
-  SurveyWarmSource warm = HarvestSurveyDocument(document);
+  SurveyWarmSource warm = HarvestSurveyDocument(document).facts;
   warm.index_present = true;
   warm.has_support = true;
   warm.intervals = crafted.intervals;
@@ -273,7 +427,7 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   EXPECT_FALSE(warm.has_sun_azimuth);
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);
   request.wavelengths_nm = { 550.0 };
-  request.warm_survey = warm;
+  request.warm_candidate = Candidate(config, warm);
   ProbeResult result;
   ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
@@ -282,14 +436,14 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   EXPECT_EQ(result.profiles.front().source, "recomputed");
 
   document.sun_altitude_deg = 0.0;
-  warm = HarvestSurveyDocument(document);
+  warm = HarvestSurveyDocument(document).facts;
   EXPECT_TRUE(warm.has_sun_altitude);
   EXPECT_FALSE(warm.has_sun_azimuth);
   document.sun_azimuth_deg = 0.0;
-  warm = HarvestSurveyDocument(document);
+  warm = HarvestSurveyDocument(document).facts;
   EXPECT_TRUE(warm.has_sun_azimuth);
   warm.index_present = true;
-  request.warm_survey = warm;
+  request.warm_candidate = Candidate(config, warm);
   ASSERT_TRUE(AnalyzePathProbe(config, request, &result).Ok());
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_EQ(result.profiles.front().source, "warm_reused");
@@ -304,8 +458,8 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   request.along = ProbeAlong::kEdgeNormal;
   // The at point sits 7.75 degrees from the certified edge (22.25 on the grid) and 8.1 from the
   // support's lower endpoint: the edge wins the anchor.
-  request.warm_survey = CraftedWarm(550.0, 20000);
-  request.warm_survey->edge_deg = 22.25;
+  request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
+  request.warm_candidate->facts.edge_deg = 22.25;
 
   ProbeResult result;
   Error e = AnalyzePathProbe(config, request, &result);
@@ -339,11 +493,11 @@ TEST(ProbeAnalysis, EdgeNormalAnchorsAtNearestEdgeAndRefusesWithoutOne) {
   refused.along = ProbeAlong::kEdgeNormal;
   refused.sample_count = kLattice;  // never reached: the refusal precedes any BandSum
   SurveyWarmSource empty_warm;
-  empty_warm.from_survey_document = true;
+  empty_warm.family = WarmDocumentFamily::kSurvey;
   empty_warm.index_present = true;
   empty_warm.has_wavelength = true;
   empty_warm.wavelength_nm = 550.0;
-  refused.warm_survey = empty_warm;
+  refused.warm_candidate = Candidate(config, empty_warm);
   ProbeResult refused_result;
   e = AnalyzePathProbe(config, refused, &refused_result);
   ASSERT_TRUE(e.Ok()) << e.message;
@@ -369,7 +523,7 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   request.along = ProbeAlong::kArc;
   // A crafted warm context: the arc form never reuses the warm map, but the context comes from
   // the document, so the test pays no inline delta partition (the CI budget's unit).
-  request.warm_survey = CraftedWarm(550.0, 20000);
+  request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
 
   ProbeResult result;
   Error e = AnalyzePathProbe(config, request, &result);
@@ -406,7 +560,7 @@ TEST(ProbeAnalysis, ArcFormSweepsAzimuthAtTheAskedDeviation) {
   // The crafted context, like the first request: without it the inline arm runs the delta
   // partition (~13 s locally, worse on CI) and the default budget interrupts it mid-shell —
   // the refusal is deviation-based and needs no inline assembly.
-  degenerate.warm_survey = CraftedWarm(550.0, 20000);
+  degenerate.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
   ProbeResult degenerate_result;
   e = AnalyzePathProbe(config, degenerate, &degenerate_result);
   ASSERT_TRUE(e.Ok()) << e.message;
@@ -443,9 +597,9 @@ TEST(ProbeAnalysis, RefusalsNameThemselves) {
   const ConfigManager cheap = survey::FixedPosePlateScene(1.0);
   ProbeRequest degraded = RadialRequest(cheap, 0.0, 60.0);
   SurveyWarmSource absent;
-  absent.from_survey_document = true;
+  absent.family = WarmDocumentFamily::kSurvey;
   absent.index_present = false;
-  degraded.warm_survey = absent;
+  degraded.warm_candidate = Candidate(config, absent);
   ProbeResult degraded_result;
   const Error degraded_error = AnalyzePathProbe(cheap, degraded, &degraded_result);
   ASSERT_TRUE(degraded_error.Ok()) << degraded_error.message;
@@ -472,7 +626,7 @@ TEST(ProbeAnalysis, MultiLambdaGridLivesOnTheLineAndYieldsTheRedEdgeWidth) {
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);
   request.wavelengths_nm = { 550.0, 650.0 };
   request.sample_count = 20000;  // the 650 profile recomputes at the tiny lattice
-  request.warm_survey = CraftedWarm(550.0, 20000);
+  request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
 
   ProbeResult result;
   const Error e = AnalyzePathProbe(config, request, &result);
@@ -620,7 +774,7 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   ProbeRequest finite_request = RadialRequest(config, -30.0, 0.0);
   finite_request.wavelengths_nm = { 550.0 };
   finite_request.sample_count = 20000;
-  finite_request.warm_survey = CraftedWarm(550.0, 20000);
+  finite_request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
   ProbeResult finite_result;
   ASSERT_TRUE(AnalyzePathProbe(config, finite_request, &finite_result).Ok());
 
@@ -632,7 +786,7 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   empty_warm.intervals.clear();
   empty_warm.has_support = false;
   empty_warm.has_edge = false;
-  refused_request.warm_survey = empty_warm;
+  refused_request.warm_candidate = Candidate(config, empty_warm);
   ProbeResult refused_result;
   ASSERT_TRUE(AnalyzePathProbe(config, refused_request, &refused_result).Ok());
 
@@ -702,7 +856,7 @@ TEST(ProbeAnalysis, Schema5JsonShapeIsPinnedAndProducedOnce) {
   arc_request.along = ProbeAlong::kArc;
   arc_request.wavelengths_nm = { 550.0 };
   arc_request.sample_count = 20000;
-  arc_request.warm_survey = CraftedWarm(550.0, 20000);
+  arc_request.warm_candidate = Candidate(config, CraftedWarm(550.0, 20000));
   ProbeResult arc_result;
   ASSERT_TRUE(AnalyzePathProbe(config, arc_request, &arc_result).Ok());
   const nlohmann::ordered_json arc_doc = nlohmann::ordered_json::parse(ProbeToJson(arc_result, "test"));

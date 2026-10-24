@@ -13,6 +13,7 @@
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_document.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/single_path_analysis.hpp"
 #include "util/sky_direction.hpp"
 
 namespace lumice::raypath {
@@ -183,6 +184,13 @@ std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layou
 
 Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out) {
   *out = ProbeResult{};
+  std::optional<AdmittedWarmSource> admitted;
+  if (request.warm_candidate) {
+    if (Error e = ValidateWarmCandidate(config, request, *request.warm_candidate, &admitted); !e.Ok())
+      return e;
+  }
+  const SurveyWarmSource* source =
+      admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &admitted->Facts() : nullptr;
 
   // ---- inputs ----
   const auto crystal_it = config.crystals_.find(request.crystal_id);
@@ -295,21 +303,21 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   // ---- the context (the point query's block, read at the at point) ----
   SurveyContextBlock& context = result.context;
   const SurveyWarmSource* warm = nullptr;
-  SurveyWarmSource inline_harvest;
+  std::optional<AdmittedWarmSource> inline_source;
   bool inline_refused = false;
-  if (request.warm_survey.has_value() && request.warm_survey->index_present) {
+  if (source != nullptr && source->index_present) {
     context.source = "warm";
-    warm = &*request.warm_survey;
+    warm = source;
   } else {
-    context.source = request.warm_survey.has_value() ? "warm" : "inline";
-    context.warm_index_absent = request.warm_survey.has_value() && !request.warm_survey->index_present;
+    context.source = source != nullptr ? "warm" : "inline";
+    context.warm_index_absent = source != nullptr && !source->index_present;
     SurveyRequest survey_request;
-    survey_request.crystal_id = request.crystal_id;
-    survey_request.path_layers = request.path_layers;
-    survey_request.symmetry_bits = kDefaultSymmetryBits;
+    static_cast<PathSelection&>(survey_request) = request;
     survey_request.wavelength_nm = reference_nm;
     survey::SurveyDocument doc;
-    const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
+    Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
+    if (e.Ok())
+      e = ValidateWarmCandidate(config, request, HarvestSurveyDocument(doc), &inline_source);
     if (!e.Ok()) {
       inline_refused = true;
       context.object.state = "unevaluated";
@@ -319,8 +327,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
       context.band_sum.state = "unevaluated";
       context.band_sum.reason = "inline_survey_refused";
     } else {
-      inline_harvest = HarvestSurveyDocument(doc);
-      warm = &inline_harvest;
+      warm = &inline_source->Facts();
     }
   }
   SurveyStructureView reference_structure{ nullptr, "inline_survey_refused" };
@@ -424,31 +431,17 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
 
     // Reuse or recompute. Radial only: the warm map's slice is the radial line; the windowed and
     // arc geometries are this query's own, always recomputed (lattice-deterministic, no seed).
-    bool reused = false;
     const SurveyReuseDecision reuse =
         warm != nullptr ?
             EvaluateSurveyReuse(*warm, profile.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg) :
             SurveyReuseDecision{};
-    const bool same_line =
-        warm != nullptr && warm->has_probe_azimuth &&
-        std::fabs(std::remainder(meta.at_azimuth_about_sun_deg - warm->probe_azimuth_deg, 360.0)) < 1e-9;
-    if (radial && warm != nullptr && warm->has_probe && reuse.reading_reason == nullptr &&
-        (density.spec.family == analytic::PoseFamily::kRandom || same_line) &&
-        warm->probe_bin_deg == survey::kProbeBinDeg && warm->probe_sample_count == profile.sample_count &&
-        warm->probe_samples.size() == layout.bins.size()) {
-      reused = true;
-      // The grid identity is the schema constants (bin width, count, extent — all checked
-      // above), not bit-equal doubles: the document's echoed centres and this layout's centres
-      // are one expression spelled in two TUs on two platforms, and FP contraction may sit a
-      // single ulp between them — orders of magnitude below the bin, never a different grid.
-      constexpr double kGridTolDeg = 1e-9;  // the bin is 0.1 deg; a wrong grid is off by O(bin)
-      for (size_t k = 0; k < layout.bins.size(); k++) {
-        if (std::fabs(warm->probe_samples[k].delta_deg - layout.bins[k].delta_centre_deg) > kGridTolDeg) {
-          reused = false;
-          break;
-        }
-      }
-    }
+    const ProfileReuseScope profile_scope{ { profile.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg },
+                                           {},
+                                           meta.at_azimuth_about_sun_deg,
+                                           survey::kProbeBinDeg,
+                                           profile.sample_count,
+                                           radial };
+    const bool reused = warm != nullptr && CanReuseSurveyProfile(*warm, profile_scope, density.measure, layout);
     if (reused) {
       profile.source = "warm_reused";
       profile.evidence_state = "finite";

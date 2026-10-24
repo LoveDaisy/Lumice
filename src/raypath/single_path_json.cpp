@@ -455,8 +455,10 @@ Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
   return {};
 }
 
-Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, std::vector<double>* seeds,
-                     SurveyWarmSource* survey) {
+Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate) {
+  *candidate = {};
+  auto* seeds = &candidate->seeds;
+  auto* survey = &candidate->facts;
   nlohmann::json doc = nlohmann::json::parse(json_text, nullptr, /*allow_exceptions=*/false);
   if (doc.is_discarded()) {
     return Invalid("not a JSON document");
@@ -472,38 +474,37 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
   if (!is_survey) {
     // The schema-1 arm, spelled exactly as ParseWarmSeeds's: a target-fiber output is a seed
     // sheet, not a survey index — the survey context stays unset and the query computes it
-    // inline (from_survey_document stays false: the bridge hands the query nothing here).
+    // inline (the product owner sees a seed sheet, not a survey index).
     return ParseWarmSeeds(json_text, seeds);
   }
-  survey->from_survey_document = true;
+  survey->family = WarmDocumentFamily::kSurvey;
   const auto refuse = [](const std::string& why) { return Error{ ErrorCode::kInvalidArgument, "warm index: " + why }; };
-  // Gate 1-2: the crystal and the path, against the request echo.
+  // Decode the request echo; the product owner compares its physical identity.
   if (!doc.contains("request") || !doc["request"].is_object()) {
     return refuse("the document carries no request echo");
   }
   const auto& request = doc["request"];
-  if (!request.contains("crystal_id") || !request["crystal_id"].is_number_integer() ||
-      request["crystal_id"].get<long long>() != gate.crystal_id) {
+  if (!request.contains("crystal_id") || !request["crystal_id"].is_number_integer()) {
     return refuse("crystal gate: the document's request.crystal_id does not match this query");
   }
+  candidate->crystal_id = request["crystal_id"].get<long long>();
+  candidate->decode_stage = WarmDecodeStage::kPath;
   if (!request.contains("path_layers") || !request["path_layers"].is_array()) {
     return refuse("path gate: the document's request carries no path_layers");
   }
-  if (request["path_layers"].size() != gate.path_layers.size()) {
-    return refuse("path gate: the document's request.path_layers does not match this query");
-  }
-  for (size_t i = 0; i < gate.path_layers.size(); i++) {
-    const auto& layer = request["path_layers"][i];
-    if (!layer.is_array() || layer.size() != gate.path_layers[i].size()) {
+  for (const auto& layer : request["path_layers"]) {
+    if (!layer.is_array())
       return refuse("path gate: the document's request.path_layers does not match this query");
-    }
-    for (size_t j = 0; j < gate.path_layers[i].size(); j++) {
-      if (!layer[j].is_number_integer() || layer[j].get<int>() != gate.path_layers[i][j]) {
+    std::vector<int> faces;
+    for (const auto& face : layer) {
+      if (!face.is_number_integer())
         return refuse("path gate: the document's request.path_layers does not match this query");
-      }
+      faces.push_back(face.get<int>());
     }
+    candidate->path_layers.push_back(std::move(faces));
   }
-  // Gate 4 (declared-skip): the family arm's measure echo. Only the family-arm documents carry
+  candidate->decode_stage = WarmDecodeStage::kMeasure;
+  // Measure echo extraction: the family arm's measure echo. Only the family-arm documents carry
   // family_routing; its absence is data (the arm did not run), so the gate skips with the
   // declaration carried in the survey source — the caller compares the echo when it is present.
   if (doc.contains("family_routing") && doc["family_routing"].is_object() &&
@@ -529,7 +530,7 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
     }
     survey->has_measure_echo = true;
   }
-  // Gate 3: the config fingerprint — the one comparison input with no pre-existing echo.
+  // Decode the index receipt; no fingerprint is compared at this boundary.
   const bool index_block =
       doc.contains("warm_index") && doc["warm_index"].is_object() && doc["warm_index"].contains("seeds") &&
       doc["warm_index"]["seeds"].is_array() && doc["warm_index"].contains("seed_sources") &&
@@ -543,12 +544,9 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
     survey->index_present = false;
     return {};
   }
-  if (doc["warm_index"]["config_fingerprint"].get<std::string>() != gate.config_fingerprint) {
-    return refuse(
-        "config fingerprint gate: the document's warm_index.config_fingerprint does not "
-        "match this query's config (a config field in the routing projection changed)");
-  }
+  candidate->config_fingerprint = doc["warm_index"]["config_fingerprint"].get<std::string>();
   survey->index_present = true;
+  candidate->decode_stage = WarmDecodeStage::kPayload;
 
   // The harvest: the seeds...
   const auto& doc_seeds = doc["warm_index"]["seeds"];
