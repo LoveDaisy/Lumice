@@ -121,6 +121,22 @@ ProbeRequest RadialRequest(const ConfigManager& config, double at_altitude, doub
   return request;
 }
 
+TEST(ProbeAnalysis, CertifiedProfileSerializesItsSuccessfulReading) {
+  ProbeData data;
+  ProbeProfile profile;
+  profile.claim = Certified<ProbeFiniteReading>{};
+  std::get<Certified<ProbeFiniteReading>>(profile.claim).method = "synthetic";
+  std::get<Certified<ProbeFiniteReading>>(profile.claim).value.samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
+  data.profiles.push_back(std::move(profile));
+  const auto wire = nlohmann::json::parse(ProbeToJson(ProbeResult(std::move(data)), "test"));
+  const auto& item = wire.at("profiles")[0];
+  EXPECT_EQ(item.at("evidence").at("state"), "certified");
+  EXPECT_EQ(item.at("evidence").at("method"), "synthetic");
+  EXPECT_FALSE(item.at("evidence").contains("coverage"));
+  ASSERT_EQ(item.at("samples").size(), 1u);
+  EXPECT_DOUBLE_EQ(item.at("samples")[0].at("value").get<double>(), 0.0);
+}
+
 TEST(ProbeAnalysis, TypedCandidatesCannotBypassIdentityAndMeasureAdmission) {
   const ConfigManager config = survey::RandomPrismScene();
   ProbeRequest request = RadialRequest(config, -30.0, 0.0);
@@ -265,6 +281,21 @@ TEST(ProbeAnalysis, WarmAdmissionSeparatesSceneLayersAndUnscopedLegacyIndexes) {
   EXPECT_EQ(admitted->Seeds().size(), 9u);
 }
 
+TEST(ProbeAnalysis, RefusedSurveyProbeCannotSupplyWarmReadingsOrScope) {
+  survey::SurveyData document;
+  document.probes.emplace_back();
+  auto& probe = document.probes.back();
+  probe.spec.quantity.measure = MeasureKind::kIdealFrozen;
+  probe.SetState(survey::EvidenceState::kRefused);
+  probe.Mode() = "not_computed";
+  const WarmCandidate typed = HarvestSurveyResult(survey::SurveyResult(document));
+  WarmCandidate decoded;
+  ASSERT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).Ok());
+  EXPECT_FALSE(typed.facts.has_probe);
+  EXPECT_FALSE(decoded.facts.has_probe);
+  EXPECT_EQ(typed.facts.quantity.measure, decoded.facts.quantity.measure);
+}
+
 TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   const auto config = survey::PlateScene(1.5, 0.3);
   auto request = RadialRequest(config, -10.0, 0.0);
@@ -298,6 +329,7 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   ASSERT_TRUE(admitted);
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.probes.emplace_back();
+  document.probes.back().SetState(survey::EvidenceState::kFinite);
   document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
   ASSERT_TRUE(
       ValidateWarmCandidate(config, request, HarvestSurveyResult(survey::SurveyResult(document)), &admitted).Ok());
@@ -317,6 +349,7 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   EXPECT_STREQ(EvaluateSurveyReuse(*admitted, 550.0, 20.0, 0.0).reading_reason, "scope_value_mismatch");
   document.family_routing->measure.kind = MeasureKind::kIdealFrozen;
   document.probes.emplace_back();
+  document.probes.back().SetState(survey::EvidenceState::kFinite);
   document.probes.back().spec.quantity.aggregation = MemberAggregation::kPhysicalClass;
   document.probes.back().spec.quantity.measure = MeasureKind::kIdealFrozen;
   typed = HarvestSurveyResult(survey::SurveyResult(document));
@@ -494,8 +527,9 @@ TEST(ProbeAnalysis, TypedSurveyWithoutProbeAzimuthDoesNotReuseNonUniformProfile)
   survey::SurveyProbe probe;
   probe.spec.bin_deg = crafted.probe_bin_deg;
   probe.spec.sample_count = crafted.probe_sample_count;
+  probe.SetState(survey::EvidenceState::kFinite);
   for (const auto& sample : crafted.probe_samples) {
-    probe.samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
+    probe.Value().samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
   }
   document.probes.push_back(std::move(probe));
 
@@ -522,8 +556,9 @@ TEST(ProbeAnalysis, TypedSurveyWithoutSunScopeDoesNotReuseReading) {
   probe.spec.azimuth_deg = 0.0;
   probe.spec.bin_deg = crafted.probe_bin_deg;
   probe.spec.sample_count = crafted.probe_sample_count;
+  probe.SetState(survey::EvidenceState::kFinite);
   for (const auto& sample : crafted.probe_samples) {
-    probe.samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
+    probe.Value().samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
   }
   document.probes.push_back(std::move(probe));
   const nlohmann::json wire = nlohmann::json::parse(survey::SurveyResultToJson(survey::SurveyResult(document), "test"));

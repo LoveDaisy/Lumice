@@ -7,8 +7,12 @@
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::structure {
 namespace {
+
+using survey::FamilyDimKind;
+using survey::FamilyDimMeasure;
+using survey::FamilyRoutingMeasure;
 
 constexpr double kDegToRad = math::kDegreeToRadD;
 constexpr double kRadToDeg = math::kRadToDegreeD;
@@ -297,7 +301,7 @@ BlurReading MeasureBlur(const analytic::FaceNormalTable& table, const int* slots
 // zero-thickness limit of the curve, so one floor serves the family); only the
 // two-dimensional bright domain declares its probe set's extent.
 struct FamilyCandidate {
-  SurveyObjectKind kind = SurveyObjectKind::kFamilyCollapsePoint;
+  FamilyImageKind kind = FamilyImageKind::kCollapsePoint;
   bool viable = true;
   bool has_position = false;
   double position_alt_deg = 0.0;
@@ -321,7 +325,7 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
   std::vector<FamilyCandidate> out;
   for (const analytic::CollapseRecord& collapse : rank.collapse_components) {
     FamilyCandidate candidate;
-    candidate.kind = SurveyObjectKind::kFamilyCollapsePoint;
+    candidate.kind = FamilyImageKind::kCollapsePoint;
     candidate.has_position = true;
     candidate.position_alt_deg = collapse.image_alt_deg;
     candidate.position_az_deg = collapse.image_az_deg;
@@ -347,7 +351,7 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
       }
       const analytic::FoldPointRecord& representative = rank.crossings[static_cast<size_t>(component.representative)];
       FamilyCandidate candidate;
-      candidate.kind = SurveyObjectKind::kCausticEdge;
+      candidate.kind = FamilyImageKind::kCausticEdge;
       candidate.has_position = true;
       candidate.position_alt_deg = representative.image_alt_deg;
       candidate.position_az_deg = representative.image_az_deg;
@@ -366,7 +370,7 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
   }
   if (rank.generic_rank == 1 || rank.generic_rank == 2) {
     FamilyCandidate candidate;
-    candidate.kind = rank.generic_rank == 1 ? SurveyObjectKind::kRegularImage : SurveyObjectKind::kBrightDomain;
+    candidate.kind = rank.generic_rank == 1 ? FamilyImageKind::kRegularImage : FamilyImageKind::kBrightDomain;
     candidate.anchors = ExtentAnchors(table, slots, slot_count, spec, rank.generic_rank, sun_hat, refractive_index);
     candidate.sample_count = static_cast<int>(candidate.anchors.size());
     if (candidate.anchors.size() < 2) {
@@ -388,7 +392,7 @@ FamilyKilledCandidate KilledRecord(const std::vector<int>& member, const FamilyC
                                    const BlurReading* blur, const char* reason) {
   FamilyKilledCandidate killed;
   killed.member = member;
-  killed.kind = SurveyObjectKindName(candidate.kind);
+  killed.kind = candidate.kind;
   killed.has_position = candidate.has_position;
   killed.position_altitude_deg = candidate.position_alt_deg;
   killed.position_azimuth_deg = candidate.position_az_deg;
@@ -403,29 +407,22 @@ FamilyKilledCandidate KilledRecord(const std::vector<int>& member, const FamilyC
   return killed;
 }
 
-SurveyObject SurvivingCard(const std::vector<int>& member, const FamilyCandidate& candidate, const BlurReading& blur,
-                           int level, double wavelength_nm) {
-  SurveyObject card;
-  card.SetKind(candidate.kind);
-  card.members = { member };
-  card.has_position = candidate.has_position;
-  card.position_altitude_deg = candidate.position_alt_deg;
-  card.position_azimuth_deg = candidate.position_az_deg;
-  card.SetState(EvidenceState::kFinite);
-  card.Coverage().members_evaluated = 1;
-  card.Coverage().wavelength_nm = wavelength_nm;
-  SurveyObject::BandPayload band;
-  band.level = level;
-  band.frozen = blur.verdicts;
-  band.blur_deg = blur.blur_deg;
-  band.scale_deg = candidate.scale_deg;
-  band.clamped = blur.clamped;
-  card.band = std::move(band);
-  SurveyObject::FamilyOriginPayload origin;
-  origin.sample_count = candidate.sample_count;
-  origin.crossing_count = candidate.crossing_count;
-  card.family_origin = origin;
-  return card;
+FamilySurvivor SurvivingFact(const std::vector<int>& member, const FamilyCandidate& candidate, const BlurReading& blur,
+                             int level) {
+  FamilySurvivor fact;
+  fact.kind = candidate.kind;
+  fact.member = member;
+  fact.has_position = candidate.has_position;
+  fact.position_altitude_deg = candidate.position_alt_deg;
+  fact.position_azimuth_deg = candidate.position_az_deg;
+  fact.level = level;
+  fact.frozen = blur.verdicts;
+  fact.blur_deg = blur.blur_deg;
+  fact.scale_deg = candidate.scale_deg;
+  fact.clamped = blur.clamped;
+  fact.sample_count = candidate.sample_count;
+  fact.crossing_count = candidate.crossing_count;
+  return fact;
 }
 
 // A surviving candidate's held pose joins the document's warm_index under its leg name (killed
@@ -505,7 +502,7 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
     for (const std::vector<int>& member : *input.members) {
       const std::vector<int>& slots = member_slots[member_index++];
       FamilyCandidate candidate;
-      candidate.kind = SurveyObjectKind::kFamilyCollapsePoint;
+      candidate.kind = FamilyImageKind::kCollapsePoint;
       candidate.scale_deg = kSurvivalSpotFloorDeg;
       candidate.sample_count = 1;
       std::vector<double> segments(3 * (slots.size() + 1), 0.0);
@@ -532,13 +529,12 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
         candidate.pose[k] = pose[k];
       }
       candidate.pose_source = "single_pose_nominal";
-      SurveyObject card = SurvivingCard(member, candidate, BlurReading{}, 0, input.wavelength_nm);
-      card.band->frozen.clear();
+      FamilySurvivor fact = SurvivingFact(member, candidate, BlurReading{}, 0);
       for (const FamilyFrozenDim& dim : level.frozen_dims) {
-        card.band->frozen.push_back({ DimName(dim.dim), "narrow" });
+        fact.frozen.push_back({ DimName(dim.dim), "narrow" });
       }
       CollectWarmSeed(&result, candidate);
-      result.objects.push_back(std::move(card));
+      result.survivors.push_back(std::move(fact));
     }
     result.ladder.push_back(std::move(level));
 
@@ -608,21 +604,14 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
               MeasureBlur(*input.table, slots.data(), static_cast<int>(slots.size()), spec, level.frozen_dims,
                           candidate.anchors, sun_hat, input.refractive_index, candidate.scale_deg);
           if (blur.blur_deg <= candidate.scale_deg) {
-            SurveyObject card = SurvivingCard(member, candidate, blur, k, input.wavelength_nm);
-            if (card.Kind() == SurveyObjectKind::kBrightDomain && support.ok && !support.intervals.empty()) {
-              // The bright_domain skeleton (the probe leg fills the profile readings): the
-              // domain span is the class support's own — the same delta axis the level-0 card
-              // declared. support.ok is the trust gate, not emptiness: the
-              // member_supports_disagree refusal fills intervals (the front member's own)
-              // before refusing. A degenerate empty support carries no span; the card survives
-              // without one.
-              SurveyObject::BrightDomainPayload domain;
-              domain.domain_lower_deg = support.intervals.front().lower * kRadToDeg;
-              domain.domain_upper_deg = support.intervals.back().upper * kRadToDeg;
-              card.SetBright(std::move(domain));
+            FamilySurvivor fact = SurvivingFact(member, candidate, blur, k);
+            if (fact.kind == FamilyImageKind::kBrightDomain && support.ok && !support.intervals.empty()) {
+              fact.has_domain = true;
+              fact.domain_lower_deg = support.intervals.front().lower * kRadToDeg;
+              fact.domain_upper_deg = support.intervals.back().upper * kRadToDeg;
             }
             CollectWarmSeed(&result, candidate);
-            result.objects.push_back(std::move(card));
+            result.survivors.push_back(std::move(fact));
           } else {
             level.objects_killed += 1;
             level.killed.push_back(KilledRecord(member, candidate, &blur, "survival_filter"));
@@ -636,4 +625,4 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
   return result;
 }
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::structure

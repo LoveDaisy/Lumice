@@ -174,7 +174,7 @@ TEST(FamilyRouting, FreezeCandidatesSortTightestFirst) {
   const FamilyMeasureReading reading = ReadFamilyMeasure(
       AxisOf({ DistributionType::kGaussian, 90.0f, 40.0f }, kUniformFull, { DistributionType::kGaussian, 0.0f, 0.3f }));
   ASSERT_TRUE(reading.ok);
-  const std::vector<FamilyFreezeCandidate> candidates = FreezeCandidates(reading.measure);
+  const std::vector<structure::FamilyFreezeCandidate> candidates = structure::FreezeCandidates(reading.measure);
   ASSERT_EQ(candidates.size(), 2u);
   EXPECT_EQ(candidates[0].dim, analytic::FamilyDimension::kRoll);
   EXPECT_NEAR(candidates[0].width_deg, 0.3, 1e-6);
@@ -183,13 +183,13 @@ TEST(FamilyRouting, FreezeCandidatesSortTightestFirst) {
 
   const FamilyMeasureReading tie = ReadFamilyMeasure(
       AxisOf({ DistributionType::kGaussian, 90.0f, 5.0f }, kUniformFull, { DistributionType::kGaussian, 0.0f, 5.0f }));
-  const std::vector<FamilyFreezeCandidate> tie_candidates = FreezeCandidates(tie.measure);
+  const std::vector<structure::FamilyFreezeCandidate> tie_candidates = structure::FreezeCandidates(tie.measure);
   ASSERT_EQ(tie_candidates.size(), 2u);
   EXPECT_EQ(tie_candidates[0].dim, analytic::FamilyDimension::kZenith);
   EXPECT_EQ(tie_candidates[1].dim, analytic::FamilyDimension::kRoll);
 
   const FamilyMeasureReading none = ReadFamilyMeasure(AxisOf(kFixed90, kUniformFull, kUniformFull));
-  EXPECT_TRUE(FreezeCandidates(none.measure).empty());
+  EXPECT_TRUE(structure::FreezeCandidates(none.measure).empty());
 }
 
 // ---- the assembly: the corpus calibrations ----------------------------------------------------------
@@ -227,7 +227,7 @@ TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
   EXPECT_EQ(block.ladder[1].frozen_dims[0].dim, analytic::FamilyDimension::kZenith);
   EXPECT_NEAR(block.ladder[1].frozen_dims[0].width_deg, 0.3, 1e-6);
   EXPECT_EQ(block.ladder[1].generic_rank, 0);
-  EXPECT_EQ(block.ladder[1].grid, kFamilyLadderGrid);
+  EXPECT_EQ(block.ladder[1].grid, structure::kFamilyLadderGrid);
 
   // The cards: the level-0 support_set AND the level-1 collapse point (the reachability does
   // not collapse with the concentration — both are reported).
@@ -248,7 +248,7 @@ TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
   EXPECT_EQ(collapse->band->level, 1);
   EXPECT_NEAR(collapse->band->blur_deg, 0.6, 0.35);                // ~2x the frozen half-width (the mirror)
   EXPECT_LT(collapse->band->blur_deg, collapse->band->scale_deg);  // the survival verdict
-  EXPECT_DOUBLE_EQ(collapse->band->scale_deg, kSurvivalSpotFloorDeg);
+  EXPECT_DOUBLE_EQ(collapse->band->scale_deg, structure::kSurvivalSpotFloorDeg);
   ASSERT_EQ(collapse->band->frozen.size(), 1u);
   EXPECT_EQ(collapse->band->frozen[0].dim, "zenith");
   EXPECT_EQ(collapse->band->frozen[0].verdict, "narrow");
@@ -300,11 +300,11 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   EXPECT_EQ(fold->band->frozen[0].dim, "roll");
   EXPECT_EQ(fold->band->frozen[0].verdict, "narrow");
   EXPECT_LT(fold->band->blur_deg, fold->band->scale_deg);
-  EXPECT_DOUBLE_EQ(fold->band->scale_deg, kSurvivalSpotFloorDeg);  // the cross-section reading
+  EXPECT_DOUBLE_EQ(fold->band->scale_deg, structure::kSurvivalSpotFloorDeg);  // the cross-section reading
   ASSERT_TRUE(fold->family_origin.has_value());
   EXPECT_GT(fold->family_origin->crossing_count, 0);
   ASSERT_NE(domain, nullptr) << "the two-dimensional family's bright domain carries the band";
-  EXPECT_GT(domain->band->scale_deg, kSurvivalSpotFloorDeg);  // the domain keeps the extent reading
+  EXPECT_GT(domain->band->scale_deg, structure::kSurvivalSpotFloorDeg);  // the domain keeps the extent reading
 
   // Level 2 under the scale ruling (the design authority's decision on decision point 1: a
   // curve-like object's scale is its structural cross-section floor, never its overall extent
@@ -322,7 +322,7 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   }
   ASSERT_NE(killed, nullptr);
   ASSERT_EQ(survival_matches, 1);
-  EXPECT_EQ(killed->kind, "regular_image");
+  EXPECT_EQ(killed->kind, structure::FamilyImageKind::kRegularImage);
   for (const SurveyObject& card : document.objects) {
     EXPECT_FALSE(card.band.has_value() && card.band->level == 2);
   }
@@ -363,11 +363,11 @@ TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
   }
   ASSERT_NE(killed, nullptr);
   ASSERT_EQ(survival_matches, 1);
-  EXPECT_EQ(killed->kind, "regular_image");
+  EXPECT_EQ(killed->kind, structure::FamilyImageKind::kRegularImage);
   EXPECT_NEAR(killed->blur_deg, 10.42, 0.30);
-  EXPECT_DOUBLE_EQ(killed->scale_deg, kSurvivalSpotFloorDeg);
-  EXPECT_GT(killed->blur_deg, 5.0 * kSurvivalSpotFloorDeg);  // the kill has room, not margin
-  EXPECT_TRUE(killed->clamped);                              // the zenith center 0 minus 20 clamps one-sided
+  EXPECT_DOUBLE_EQ(killed->scale_deg, structure::kSurvivalSpotFloorDeg);
+  EXPECT_GT(killed->blur_deg, 5.0 * structure::kSurvivalSpotFloorDeg);  // the kill has room, not margin
+  EXPECT_TRUE(killed->clamped);                                         // the zenith center 0 minus 20 clamps one-sided
   bool zenith_wide = false;
   bool roll_narrow = false;
   for (const FamilyBandVerdict& verdict : killed->verdicts) {
@@ -429,10 +429,10 @@ TEST(FamilyRouting, WideWobbleKillsTheCollapseCandidateItProposed) {
   EXPECT_EQ(level.objects_proposed, 1);
   ASSERT_EQ(level.killed.size(), 1u);
   const FamilyKilledCandidate& killed = level.killed.front();
-  EXPECT_EQ(killed.kind, "family_collapse_point");
+  EXPECT_EQ(killed.kind, structure::FamilyImageKind::kCollapsePoint);
   EXPECT_EQ(killed.reason, "survival_filter");
   EXPECT_NEAR(killed.blur_deg, 5.0, 0.5);  // the mirror doubles the 2.5-degree half-width
-  EXPECT_DOUBLE_EQ(killed.scale_deg, kSurvivalSpotFloorDeg);
+  EXPECT_DOUBLE_EQ(killed.scale_deg, structure::kSurvivalSpotFloorDeg);
   EXPECT_TRUE(killed.clamped);
   ASSERT_EQ(killed.verdicts.size(), 1u);
   EXPECT_EQ(killed.verdicts[0].dim, "zenith");
@@ -674,7 +674,7 @@ TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
   const auto& level1 = family.at("ladder").at(1);
   ASSERT_TRUE(level1.contains("rank"));
   EXPECT_EQ(level1.at("rank").at("generic_rank"), 2);
-  EXPECT_EQ(level1.at("rank").at("grid"), kFamilyLadderGrid);
+  EXPECT_EQ(level1.at("rank").at("grid"), structure::kFamilyLadderGrid);
   ASSERT_EQ(level1.at("frozen_dims").size(), 1u);
   EXPECT_EQ(level1.at("frozen_dims").at(0).at("dim"), "roll");
   EXPECT_GT(level1.at("objects_proposed"), 0);
@@ -685,7 +685,7 @@ TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
   ASSERT_EQ(level2.at("killed").size(), 1u);
   EXPECT_EQ(level2.at("killed").at(0).at("kind"), "regular_image");
   EXPECT_NEAR(level2.at("killed").at(0).at("blur_deg").get<double>(), 10.42, 0.30);
-  EXPECT_DOUBLE_EQ(level2.at("killed").at(0).at("scale_deg").get<double>(), kSurvivalSpotFloorDeg);
+  EXPECT_DOUBLE_EQ(level2.at("killed").at(0).at("scale_deg").get<double>(), structure::kSurvivalSpotFloorDeg);
   EXPECT_EQ(level2.at("objects_proposed"), 1);
   EXPECT_EQ(family.at("evidence").at("state"), "finite");
   // The band lives on the surviving cards; the killed candidate's numbers live in the ladder.
@@ -723,7 +723,7 @@ TEST(FamilyRouting, LadderKillsTheUnprobeableImageWithNoMeasurementGroup) {
   }
   ASSERT_NE(killed, nullptr);
   ASSERT_EQ(no_image_matches, 1);
-  EXPECT_EQ(killed->kind, "regular_image");
+  EXPECT_EQ(killed->kind, structure::FamilyImageKind::kRegularImage);
   EXPECT_FALSE(killed->has_position);
   EXPECT_FALSE(killed->blur_measured);
   EXPECT_TRUE(killed->verdicts.empty());

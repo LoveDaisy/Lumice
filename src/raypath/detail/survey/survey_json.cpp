@@ -127,24 +127,17 @@ Json ObjectJson(const SurveyObject& object) {
   }
   if (object.Witness() != nullptr) {
     const SurveyObject::WitnessPayload& witness = *object.Witness();
-    Json block = { { "state", EvidenceStateName(witness.State()) } };
-    if (witness.State() == EvidenceState::kRefused) {
-      // The fail-closed shape: exactly the state and its mode, byte-compatible with the tint
-      // leg's refused shape — no defaulted number reaches the document.
-      block["mode"] = witness.Mode();
-    } else {
-      block["coverage"] = { { "members_evaluated", witness.Coverage().members_evaluated },
-                            { "geometry_basis", witness.Coverage().geometry_basis },
-                            { "wavelength_nm", Num(witness.Coverage().wavelength_nm) } };
-      block["kept_count"] = witness.Value().kept_count;
-      block["sample_count"] = witness.Value().sample_count;
-      block["lattice"] = witness.Value().lattice;
-      block["deterministic"] = witness.Value().deterministic;
-      block["deviation_deg"] = Num(witness.Value().deviation_deg);
-      block["weight"] = Num(witness.Value().weight);
-      block["entry"] = Num(witness.Value().entry);
-      block["interface_product"] = Num(witness.Value().interface_product);
-      block["source_note"] = witness.Value().source_note;
+    Json block = EvidenceJson(witness.Evidence());
+    if (const WitnessValues* value = witness.ValueOrNull()) {
+      block["kept_count"] = value->kept_count;
+      block["sample_count"] = value->sample_count;
+      block["lattice"] = value->lattice;
+      block["deterministic"] = value->deterministic;
+      block["deviation_deg"] = Num(value->deviation_deg);
+      block["weight"] = Num(value->weight);
+      block["entry"] = Num(value->entry);
+      block["interface_product"] = Num(value->interface_product);
+      block["source_note"] = value->source_note;
     }
     card["witness"] = std::move(block);
   }
@@ -233,7 +226,8 @@ Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
     if (!level.killed.empty()) {
       Json killed = Json::array();
       for (const FamilyKilledCandidate& candidate : level.killed) {
-        Json record = { { "member", LayersJson({ candidate.member })[0] }, { "kind", candidate.kind } };
+        Json record = { { "member", LayersJson({ candidate.member })[0] },
+                        { "kind", SurveyObjectKindName(SurveyKindOf(candidate.kind)) } };
         if (candidate.has_position) {
           record["position"] = { { "altitude_deg", Num(candidate.position_altitude_deg) },
                                  { "azimuth_deg", Num(candidate.position_azimuth_deg) } };
@@ -283,29 +277,30 @@ Json ProbeJson(const SurveyProbe& probe) {
     spec["member_aggregation"] = "physical_class";
   if (probe.spec.quantity.measure == MeasureKind::kIdealFrozen)
     spec["measure_kind"] = "ideal_frozen";
+  Json out = { { "kind", "solar_radial" },
+               { "spec", std::move(spec) },
+               { "evidence", EvidenceJson(probe.Evidence()) } };
+  const SurveyProbeReading* reading = probe.ValueOrNull();
+  if (reading == nullptr)
+    return out;
   Json samples = Json::array();
-  for (const SurveyProbeSample& sample : probe.samples) {
+  for (const SurveyProbeSample& sample : reading->samples) {
     samples.push_back({ { "delta_deg", Num(sample.delta_deg) },
                         { "value", Num(sample.value) },
                         { "k", sample.k },
                         { "k_eff", Num(sample.k_eff) } });
   }
-  Json out = { { "kind", "solar_radial" },
-               { "spec", std::move(spec) },
-               { "evidence", EvidenceJson(probe.evidence) },
-               { "samples", std::move(samples) } };
-  if (probe.has_edge) {
-    out["edge"] = { { "bin", probe.edge_bin }, { "delta_deg", Num(probe.edge_delta_deg) } };
+  out["samples"] = std::move(samples);
+  if (reading->has_edge) {
+    out["edge"] = { { "bin", reading->edge_bin }, { "delta_deg", Num(reading->edge_delta_deg) } };
   }
-  if (probe.has_peak) {
-    out["peak"] = { { "delta_deg", Num(probe.peak_delta_deg) }, { "value", Num(probe.peak_value) } };
+  if (reading->has_peak) {
+    out["peak"] = { { "delta_deg", Num(reading->peak_delta_deg) }, { "value", Num(reading->peak_value) } };
   }
-  // The separation needs both readings to exist; on an empty profile a serialized 0 would read
-  // as "the peak sits at the edge", which is a claim about a profile that has neither.
-  if (probe.has_edge && probe.has_peak) {
-    out["separation_deg"] = Num(probe.separation_deg);
+  if (reading->has_edge && reading->has_peak) {
+    out["separation_deg"] = Num(reading->separation_deg);
   }
-  out["kept_count"] = probe.kept_count;
+  out["kept_count"] = reading->kept_count;
   return out;
 }
 

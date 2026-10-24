@@ -36,6 +36,9 @@ struct T1Outcome {
 // with `representative` (the requested face sequence, for the two-face-chain premise) and
 // `wavelength_nm` (the coverage declaration's wavelength). Appends the three cards to
 // out->objects on success, the one refused support_set card on refusal.
+SurveyObject SupportCardOf(const structure::ClassSupport& support, const std::vector<std::vector<int>>& members,
+                           double wavelength_nm, unsigned symmetry_bits);
+
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
                             double refractive_index, double wavelength_nm, SurveyData* out);

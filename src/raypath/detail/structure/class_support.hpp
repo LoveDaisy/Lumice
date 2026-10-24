@@ -2,12 +2,10 @@
 #define LUMICE_RAYPATH_DETAIL_STRUCTURE_CLASS_SUPPORT_HPP_
 
 #include "raypath/detail/structure/support.hpp"
-#include "raypath/results/survey_records.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::structure {
 
 struct ClassSupport {
-  std::optional<SurveyObject> card;
   bool ok = false;
   std::string refusal_mode;  // the open refusal mode when !ok
   std::vector<structure::AxisAssembly> assemblies;
@@ -16,9 +14,8 @@ struct ClassSupport {
 };
 
 ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-                                  const std::vector<std::vector<int>>& members, double refractive_index,
-                                  double wavelength_nm, unsigned symmetry_bits);
+                                  const std::vector<std::vector<int>>& members, double refractive_index);
 
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::structure
 #endif

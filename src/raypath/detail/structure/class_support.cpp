@@ -1,13 +1,11 @@
 #include "raypath/detail/structure/class_support.hpp"
 
-#include "core/math.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::structure {
 
 ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-                                  const std::vector<std::vector<int>>& members, double refractive_index,
-                                  double wavelength_nm, unsigned symmetry_bits) {
+                                  const std::vector<std::vector<int>>& members, double refractive_index) {
   // One axis assembly per member; the support row is the schema3 machine's own (the same
   // assembly feeds the objects and the row — no second partition anywhere).
   ClassSupport support;
@@ -46,40 +44,9 @@ ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const 
     }
   }
 
-  // The support_set card: the class's delta-axis support with the endpoint mechanism labels
-  // (the first member's onsets at an interval endpoint — the members share the axis) and the
-  // caliber the partition ran on.
-  SurveyObject card;
-  card.SetKind(SurveyObjectKind::kSupportSet);
-  card.members = members;
-  card.SetState(EvidenceState::kFinite);
-  card.Coverage().members_evaluated = static_cast<int>(members.size());
-  card.Coverage().wavelength_nm = wavelength_nm;
-  SurveyObject::SupportSetPayload payload;
-  payload.symmetry_bits = symmetry_bits;
-  payload.member_count = static_cast<int>(members.size());
-  for (const analytic::DeviationInterval& interval : support.intervals) {
-    SurveyObject::Interval out_interval;
-    out_interval.lower_deg = interval.lower * math::kRadToDegreeD;
-    out_interval.upper_deg = interval.upper * math::kRadToDegreeD;
-    out_interval.n_components = interval.n_components;
-    out_interval.n_closed = interval.n_closed;
-    out_interval.n_open = interval.n_open;
-    payload.intervals.push_back(out_interval);
-  }
-  for (const analytic::CriticalOnset& onset : support.rows.front().endpoint_onsets) {
-    SurveyObject::EndpointLabel label;
-    label.delta_deg = onset.value * math::kRadToDegreeD;
-    label.source = analytic::OnsetSourceName(onset.source);
-    label.profile = analytic::OnsetProfileName(onset.profile);
-    label.multiplicity = onset.multiplicity;
-    payload.endpoints.push_back(std::move(label));
-  }
-  card.SetSupport(std::move(payload));
-  support.card = std::move(card);
   support.ok = true;
   return support;
 }
 
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::structure

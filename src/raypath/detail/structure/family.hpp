@@ -4,9 +4,9 @@
 #include "analytic/family_rank.hpp"
 #include "raypath/detail/structure/class_support.hpp"
 #include "raypath/domain/measure.hpp"
-#include "raypath/results/survey_records.hpp"
+#include "raypath/results/structure.hpp"
 
-namespace lumice::raypath::survey {
+namespace lumice::raypath::structure {
 
 // The declared constants of the routing (schema, not tuning: the ladder block echoes them and
 // the assertion benches read them back).
@@ -33,21 +33,20 @@ struct FamilyFreezeCandidate {
 };
 
 // The freeze candidates tightest-first (ties zenith before roll — canonical, deterministic).
-std::vector<FamilyFreezeCandidate> FreezeCandidates(const FamilyRoutingMeasure& measure);
+std::vector<FamilyFreezeCandidate> FreezeCandidates(const survey::FamilyRoutingMeasure& measure);
 
 struct FamilyStructureInput {
   const analytic::FaceNormalTable* table = nullptr;
   const std::vector<std::vector<int>>* members = nullptr;
-  FamilyRoutingMeasure measure;
+  survey::FamilyRoutingMeasure measure;
   bool single_pose = false;
   double incident[3] = { 0.0, 0.0, -1.0 };
   double refractive_index = 0.0;
-  double wavelength_nm = 0.0;
 };
 struct FamilyStructureResult {
   std::string refusal_mode;
-  std::vector<FamilyLadderLevel> ladder;
-  std::vector<SurveyObject> objects;
+  std::vector<structure::FamilyLadderLevel> ladder;
+  std::vector<structure::FamilySurvivor> survivors;
   std::vector<std::array<double, 9>> seeds;
   std::vector<std::string> seed_sources;
   bool rank_ran = false;
@@ -56,5 +55,5 @@ struct FamilyStructureResult {
 
 FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input, const ClassSupport& support);
 
-}  // namespace lumice::raypath::survey
+}  // namespace lumice::raypath::structure
 #endif

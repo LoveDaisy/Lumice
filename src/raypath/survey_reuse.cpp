@@ -70,14 +70,16 @@ WarmCandidate HarvestSurveyResult(const survey::SurveyResult& result) {
   out.has_support = !out.intervals.empty();
   if (!doc.probes.empty()) {
     const survey::SurveyProbe& probe = doc.probes.front();
-    out.quantity = probe.spec.quantity;
-    out.has_probe = true;
-    out.has_probe_azimuth = probe.spec.azimuth_deg.has_value() && std::isfinite(*probe.spec.azimuth_deg);
-    out.probe_azimuth_deg = probe.spec.azimuth_deg.value_or(0.0);
-    out.probe_bin_deg = probe.spec.bin_deg;
-    out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
-    for (const survey::SurveyProbeSample& sample : probe.samples) {
-      out.probe_samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
+    if (const survey::SurveyProbeReading* reading = probe.ValueOrNull()) {
+      out.has_probe = true;
+      out.quantity = probe.spec.quantity;
+      out.has_probe_azimuth = probe.spec.azimuth_deg.has_value() && std::isfinite(*probe.spec.azimuth_deg);
+      out.probe_azimuth_deg = probe.spec.azimuth_deg.value_or(0.0);
+      out.probe_bin_deg = probe.spec.bin_deg;
+      out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
+      for (const survey::SurveyProbeSample& sample : reading->samples) {
+        out.probe_samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
+      }
     }
   }
   out.has_measure_echo = doc.family_routing.has_value();

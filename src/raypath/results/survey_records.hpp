@@ -15,6 +15,7 @@
 #include "raypath/domain/measure.hpp"
 #include "raypath/domain/object_kind.hpp"
 #include "raypath/results/quantity.hpp"
+#include "raypath/results/structure.hpp"
 
 
 namespace lumice::raypath::survey {
@@ -41,74 +42,25 @@ struct SurveyCertificate {
 // (the probes key's own conditional-presence discipline — an early stop, a full-dimensional
 // route and an outside-domain refusal carry none).
 
-// The dimension names in canonical (zenith, azimuth, roll) order — the kernel enum's own order;
-// the family block's dim vocabulary on the wire (frozen_dims rows and free_dims entries),
-// spelled once — the structs carry the enum themselves.
-inline const char* DimName(analytic::FamilyDimension dim) {
-  switch (dim) {
-    case analytic::FamilyDimension::kZenith:
-      return "zenith";
-    case analytic::FamilyDimension::kAzimuth:
-      return "azimuth";
-    case analytic::FamilyDimension::kRoll:
-      return "roll";
+using structure::DimName;
+using structure::FamilyBandVerdict;
+using structure::FamilyFrozenDim;
+using structure::FamilyKilledCandidate;
+using structure::FamilyLadderLevel;
+
+inline SurveyObjectKind SurveyKindOf(structure::FamilyImageKind kind) {
+  switch (kind) {
+    case structure::FamilyImageKind::kCollapsePoint:
+      return SurveyObjectKind::kFamilyCollapsePoint;
+    case structure::FamilyImageKind::kCausticEdge:
+      return SurveyObjectKind::kCausticEdge;
+    case structure::FamilyImageKind::kRegularImage:
+      return SurveyObjectKind::kRegularImage;
+    case structure::FamilyImageKind::kBrightDomain:
+      return SurveyObjectKind::kBrightDomain;
   }
-  return "roll";
+  return SurveyObjectKind::kFamilyCollapsePoint;
 }
-
-// One frozen dimension of a ladder level: the freeze value and the width that was frozen (the
-// measure's own sigma — reported, never consumed by the rank question).
-struct FamilyFrozenDim {
-  analytic::FamilyDimension dim = analytic::FamilyDimension::kRoll;  // the enum; the name is the wire's
-  double center_deg = 0.0;
-  double width_deg = 0.0;  // 0 for the measure's own fixed dimensions
-};
-
-// One narrow/wide verdict of one frozen dimension against one object (AC5: narrow/wide is a
-// property of the (dimension, object) pair, never of the dimension alone).
-struct FamilyBandVerdict {
-  std::string dim;
-  std::string verdict;  // "narrow" | "wide"
-};
-
-// A candidate the survival filter killed, recorded in the ladder level it was proposed at:
-// every level reports its proposals — the survivors as object cards, the killed here.
-struct FamilyKilledCandidate {
-  std::vector<int> member;
-  std::string kind;  // SurveyObjectKindName of the proposed card
-  bool has_position = false;
-  double position_altitude_deg = 0.0;
-  double position_azimuth_deg = 0.0;
-  bool blur_measured = false;  // the survival filter ran; a no_valid_image kill carries no numbers
-  double blur_deg = 0.0;
-  double scale_deg = 0.0;
-  bool clamped = false;  // a blur probe clamped into its dimension's legal range (one-sided)
-  std::string reason;    // "survival_filter" | "no_valid_image"
-  std::vector<FamilyBandVerdict> verdicts;
-};
-
-// One ladder level. Level 0 is the actual support (the measure's fixed dimensions already
-// frozen): it owns the support_set card, and asks the rank question only when the fixed
-// dimensions already leave at most two free. Levels 1..K freeze the k tightest gauss
-// candidates. `rank_asked` false means the level's family has three free dimensions (a level 0
-// with no fixed dimension — the rank entry's own refusal domain), so the level owns the support
-// alone and the rank fields below stay unset.
-struct FamilyLadderLevel {
-  int level = 0;
-  std::vector<FamilyFrozenDim> frozen_dims;
-  std::vector<analytic::FamilyDimension> free_dims;  // the enum; the name is the wire's
-  bool rank_asked = false;
-  int generic_rank = -1;  // the first member's whose rank run returned ok; relabelings share it
-                          // (the support's own relabeling logic, one physical class)
-  int grid = 0;
-  double grid_spacing_deg[2] = { 0.0, 0.0 };
-  int samples = 0;
-  int valid_samples = 0;
-  int rank_refused_members = 0;  // a member the rank entry refused (data, not a verdict)
-  int objects_proposed = 0;
-  int objects_killed = 0;
-  std::vector<FamilyKilledCandidate> killed;
-};
 
 // The density-support tail rows on the family arm's support_set card (AC5's boundedness-role
 // separation): the width entered the ladder, the support's own tail bounds are reported here.
@@ -476,10 +428,7 @@ struct SurveyProbeSample {
 // brightest (the value argmax) — finite readings, never the certified edge position.
 enum class SurveyProbeKind { kSolarRadial };
 
-struct SurveyProbe {
-  SurveyProbeKind kind = SurveyProbeKind::kSolarRadial;
-  SurveyProbeSpec spec;
-  SurveyEvidence evidence;  // finite + the coverage declaration
+struct SurveyProbeReading {
   std::vector<SurveyProbeSample> samples;
   bool has_edge = false;
   int edge_bin = -1;
@@ -487,8 +436,13 @@ struct SurveyProbe {
   bool has_peak = false;
   double peak_delta_deg = 0.0;
   double peak_value = 0.0;
-  double separation_deg = 0.0;  // peak_delta_deg - edge_delta_deg, signed
-  long long kept_count = 0;     // the sample's kept events (the T2 witness count)
+  double separation_deg = 0.0;
+  long long kept_count = 0;
+};
+
+struct SurveyProbe : ClaimedValue<SurveyProbeReading> {
+  SurveyProbeKind kind = SurveyProbeKind::kSolarRadial;
+  SurveyProbeSpec spec;
 };
 
 // The chromatic layer's fixed wavelength pair — the single authority every chromatic-site

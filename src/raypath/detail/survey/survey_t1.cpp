@@ -83,17 +83,47 @@ const analytic::CriticalOnset* ExtremumFoldOnset(const std::vector<analytic::Cri
 
 }  // namespace
 
+SurveyObject SupportCardOf(const structure::ClassSupport& support, const std::vector<std::vector<int>>& members,
+                           double wavelength_nm, unsigned symmetry_bits) {
+  SurveyObject card;
+  card.SetKind(SurveyObjectKind::kSupportSet);
+  card.members = members;
+  card.SetState(EvidenceState::kFinite);
+  card.Coverage().members_evaluated = static_cast<int>(members.size());
+  card.Coverage().wavelength_nm = wavelength_nm;
+  SurveyObject::SupportSetPayload payload;
+  payload.symmetry_bits = symmetry_bits;
+  payload.member_count = static_cast<int>(members.size());
+  for (const analytic::DeviationInterval& interval : support.intervals) {
+    SurveyObject::Interval row;
+    row.lower_deg = DegOf(interval.lower);
+    row.upper_deg = DegOf(interval.upper);
+    row.n_components = interval.n_components;
+    row.n_closed = interval.n_closed;
+    row.n_open = interval.n_open;
+    payload.intervals.push_back(row);
+  }
+  for (const analytic::CriticalOnset& onset : support.rows.front().endpoint_onsets) {
+    SurveyObject::EndpointLabel label;
+    label.delta_deg = DegOf(onset.value);
+    label.source = analytic::OnsetSourceName(onset.source);
+    label.profile = analytic::OnsetProfileName(onset.profile);
+    label.multiplicity = onset.multiplicity;
+    payload.endpoints.push_back(std::move(label));
+  }
+  card.SetSupport(std::move(payload));
+  return card;
+}
+
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
                             double refractive_index, double wavelength_nm, SurveyData* out) {
-  const ClassSupport support =
-      AssembleClassSupport(table, polygons, members, refractive_index, wavelength_nm, out->request.symmetry_bits);
+  const structure::ClassSupport support = structure::AssembleClassSupport(table, polygons, members, refractive_index);
   if (!support.ok) {
     return { false, support.refusal_mode };
   }
-  out->objects.push_back(*support.card);
+  out->objects.push_back(SupportCardOf(support, members, wavelength_nm, out->request.symmetry_bits));
   const std::vector<structure::AxisAssembly>& assemblies = support.assemblies;
-  const std::vector<structure::MemberSupport>& rows = support.rows;
   const std::vector<analytic::DeviationInterval>& class_support = support.intervals;
 
   // The caustic_edge card: the support's extremum fold. On a two-face chain the MINIMUM's

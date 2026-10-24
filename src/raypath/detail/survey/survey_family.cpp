@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iterator>
 
 #include "analytic/pose_density.hpp"
 #include "core/math.hpp"
@@ -27,6 +26,33 @@ bool AnyFiniteObject(const SurveyData& document) {
   return false;
 }
 
+SurveyObject FamilyCardOf(const structure::FamilySurvivor& fact, double wavelength_nm) {
+  SurveyObject card;
+  card.SetKind(SurveyKindOf(fact.kind));
+  card.members = { fact.member };
+  card.has_position = fact.has_position;
+  card.position_altitude_deg = fact.position_altitude_deg;
+  card.position_azimuth_deg = fact.position_azimuth_deg;
+  card.SetState(EvidenceState::kFinite);
+  card.Coverage().members_evaluated = 1;
+  card.Coverage().wavelength_nm = wavelength_nm;
+  SurveyObject::BandPayload band;
+  band.level = fact.level;
+  band.frozen = fact.frozen;
+  band.blur_deg = fact.blur_deg;
+  band.scale_deg = fact.scale_deg;
+  band.clamped = fact.clamped;
+  card.band = std::move(band);
+  card.family_origin = SurveyObject::FamilyOriginPayload{ fact.sample_count, fact.crossing_count };
+  if (fact.has_domain) {
+    SurveyObject::BrightDomainPayload domain;
+    domain.domain_lower_deg = fact.domain_lower_deg;
+    domain.domain_upper_deg = fact.domain_upper_deg;
+    card.SetBright(std::move(domain));
+  }
+  return card;
+}
+
 }  // namespace
 
 FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* out) {
@@ -40,11 +66,10 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
 
   // Level 0's support: the delta machine's own (orientation-distribution independent), with the
   // density-support tail rows the measure's gauss zenith contributes.
-  const ClassSupport support =
-      AssembleClassSupport(*input.table, *input.polygons, *input.members, input.refractive_index, input.wavelength_nm,
-                           out->request.symmetry_bits);
-  if (support.card) {
-    out->objects.push_back(*support.card);
+  const structure::ClassSupport support =
+      structure::AssembleClassSupport(*input.table, *input.polygons, *input.members, input.refractive_index);
+  if (support.ok) {
+    out->objects.push_back(SupportCardOf(support, *input.members, input.wavelength_nm, out->request.symmetry_bits));
   }
   // The partition refusal's scope is the level-0 card itself: the delta partition is a geometry
   // fact about the support, the orientation ladder below a measure fact that runs regardless
@@ -99,21 +124,21 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     out->objects.back().Support()->density_tails.push_back(std::move(tail));
   }
 
-  FamilyStructureInput structure_input;
+  structure::FamilyStructureInput structure_input;
   structure_input.table = input.table;
   structure_input.members = input.members;
   structure_input.measure = input.measure;
   structure_input.single_pose = input.single_pose;
   structure_input.refractive_index = input.refractive_index;
-  structure_input.wavelength_nm = input.wavelength_nm;
   std::copy(input.incident, input.incident + 3, structure_input.incident);
-  FamilyStructureResult structure = EvaluateFamilyStructure(structure_input, support);
+  structure::FamilyStructureResult structure = structure::EvaluateFamilyStructure(structure_input, support);
   if (!structure.refusal_mode.empty()) {
     return { false, structure.refusal_mode };
   }
   block.ladder = std::move(structure.ladder);
-  out->objects.insert(out->objects.end(), std::make_move_iterator(structure.objects.begin()),
-                      std::make_move_iterator(structure.objects.end()));
+  for (const structure::FamilySurvivor& fact : structure.survivors) {
+    out->objects.push_back(FamilyCardOf(fact, input.wavelength_nm));
+  }
   out->warm_index.seeds.insert(out->warm_index.seeds.end(), structure.seeds.begin(), structure.seeds.end());
   out->warm_index.seed_sources.insert(out->warm_index.seed_sources.end(), structure.seed_sources.begin(),
                                       structure.seed_sources.end());
@@ -185,7 +210,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
       out->budget_note =
           "the family arm's legs are the T0 routing verdict, the per-member delta partition, the "
           "ladder's per-member per-level rank scans (" +
-          std::to_string(kFamilyLadderGrid) + " samples per free dimension), the band-sum probe, the " +
+          std::to_string(structure::kFamilyLadderGrid) + " samples per free dimension), the band-sum probe, the " +
           "chromatic pair and the class tint's two-lambda power sum (" + std::to_string(kSurveyClassTintSampleCount) +
           " samples per lambda); none is budget-enforced yet; enforcement lands with the "
           "quantification legs";
@@ -194,7 +219,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
           "the family arm's legs are the T0 routing verdict, the per-member delta partition "
           "attempt (refused: " +
           level0_refusal_mode + "), the ladder's per-member per-level rank scans (" +
-          std::to_string(kFamilyLadderGrid) + " samples per free dimension), the " +
+          std::to_string(structure::kFamilyLadderGrid) + " samples per free dimension), the " +
           std::to_string(kSurveyWitnessSampleCount) +
           "-sample witness lattice on the refused level-0 card, the band-sum probe, the chromatic "
           "pair and the class tint's two-lambda power sum (" +
@@ -239,7 +264,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
       out->budget_note =
           "the family arm's legs are the T0 routing verdict, the per-member delta partition and "
           "the ladder's per-member per-level rank scans (" +
-          std::to_string(kFamilyLadderGrid) +
+          std::to_string(structure::kFamilyLadderGrid) +
           " samples per free dimension); no quantification leg ran (the axis maps to no pose "
           "density); none is budget-enforced yet; enforcement lands with the quantification legs";
     } else {
@@ -248,7 +273,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
                              "partition attempt (refused: ") +
                          level0_refusal_mode + "), " +
                          (rank_ran ? "the ladder's per-member per-level rank scans (" +
-                                         std::to_string(kFamilyLadderGrid) + " samples per free dimension)" :
+                                         std::to_string(structure::kFamilyLadderGrid) + " samples per free dimension)" :
                                      "the ladder's level enumeration (no level got a rank answer)") +
                          ", and the " + std::to_string(kSurveyWitnessSampleCount) +
                          "-sample witness lattice on the refused level-0 card; no quantification leg ran (the "
@@ -275,7 +300,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     block.evidence.coverage.geometry_basis =
         (!level0_refusal_mode.empty() && !rank_ran) ?
             "the ladder's level enumeration on the nominal crystal shape (no level got a rank answer)" :
-            "the per-member restricted-family rank scans at " + std::to_string(kFamilyLadderGrid) +
+            "the per-member restricted-family rank scans at " + std::to_string(structure::kFamilyLadderGrid) +
                 " samples per free dimension on the nominal crystal shape";
     block.evidence.coverage.wavelength_nm = input.wavelength_nm;
   }

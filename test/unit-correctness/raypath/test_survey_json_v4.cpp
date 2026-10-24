@@ -244,6 +244,7 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   document.objects.push_back(std::move(domain));
 
   SurveyProbe probe;
+  probe.SetState(EvidenceState::kFinite);
   probe.spec.wavelength_nm = 550.0;
   probe.spec.refractive_index = 1.306;
   probe.spec.sample_count = 2000000;
@@ -255,15 +256,15 @@ TEST(SurveyJsonV4, T1PayloadsProbeAndChromaticLegsSerializeTheirKeys) {
   sample.value = 0.4;
   sample.k = 9;
   sample.k_eff = 7.2;
-  probe.samples.push_back(sample);
-  probe.has_edge = true;
-  probe.edge_bin = 73;
-  probe.edge_delta_deg = 22.35;
-  probe.has_peak = true;
-  probe.peak_delta_deg = 22.85;
-  probe.peak_value = 0.42;
-  probe.separation_deg = 0.5;
-  probe.kept_count = 123456;
+  probe.Value().samples.push_back(sample);
+  probe.Value().has_edge = true;
+  probe.Value().edge_bin = 73;
+  probe.Value().edge_delta_deg = 22.35;
+  probe.Value().has_peak = true;
+  probe.Value().peak_delta_deg = 22.85;
+  probe.Value().peak_value = 0.42;
+  probe.Value().separation_deg = 0.5;
+  probe.Value().kept_count = 123456;
   document.probes.push_back(std::move(probe));
 
   document.positional_dispersion = SurveyPositionalDispersion{};
@@ -467,12 +468,52 @@ TEST(SurveyJsonV4, IdentityArmBlockMirrorsTheTintRefusal) {
   EXPECT_FALSE(chromatic.contains("diagnose"));
 }
 
+TEST(SurveyJsonV4, ProbeRefusalDiscardsReadingsWhileFiniteZeroRemainsAValue) {
+  SurveyData document;
+  SurveyProbe probe;
+  probe.SetState(EvidenceState::kFinite);
+  probe.Value().samples.push_back({ 25.0, 0.0, 0, 0.0 });
+  probe.SetState(EvidenceState::kRefused);
+  probe.Mode() = "synthetic_refusal";
+  EXPECT_EQ(probe.ValueOrNull(), nullptr);
+  document.probes.push_back(probe);
+  auto item = Serialized(document).at("probes")[0];
+  EXPECT_EQ(item.at("evidence").at("mode"), "synthetic_refusal");
+  EXPECT_FALSE(item.contains("samples"));
+  EXPECT_FALSE(item.contains("kept_count"));
+  document.probes.front().SetState(EvidenceState::kFinite);
+  document.probes.front().Value().samples.push_back({ 25.0, 0.0, 0, 0.0 });
+  item = Serialized(document).at("probes")[0];
+  EXPECT_EQ(item.at("evidence").at("state"), "finite");
+  EXPECT_EQ(item.at("samples")[0].at("value"), 0.0);
+}
+
+TEST(SurveyJsonV4, WitnessSerializesUnevaluatedAndCertifiedWithoutFiniteCoverage) {
+  SurveyData document;
+  SurveyObject support;
+  support.SetKind(SurveyObjectKind::kSupportSet);
+  ASSERT_TRUE(support.SetWitness(WitnessResult{}));
+  document.objects.push_back(support);
+  auto witness = Serialized(document).at("objects")[0].at("witness");
+  EXPECT_EQ(witness.at("state"), "unevaluated");
+  EXPECT_EQ(witness.at("reason"), "not_requested");
+  EXPECT_FALSE(witness.contains("weight"));
+  document.objects.front().Witness()->SetState(EvidenceState::kCertified);
+  document.objects.front().Witness()->Method() = "synthetic";
+  witness = Serialized(document).at("objects")[0].at("witness");
+  EXPECT_EQ(witness.at("state"), "certified");
+  EXPECT_EQ(witness.at("method"), "synthetic");
+  EXPECT_FALSE(witness.contains("coverage"));
+  EXPECT_DOUBLE_EQ(witness.at("weight").get<double>(), 0.0);
+}
+
 TEST(SurveyJsonV4, EmptyProbeProfileSerializesNoReadingKeys) {
   SurveyData document;
   SurveyProbe probe;  // no edge, no peak: the honest empty readings
+  probe.SetState(EvidenceState::kFinite);
   probe.spec.wavelength_nm = 550.0;
   probe.spec.representative = { 3, 5 };
-  probe.kept_count = 0;
+  probe.Value().kept_count = 0;
   document.probes.push_back(probe);
   const auto parsed = Serialized(document);
   const auto& probe_json = parsed.at("probes")[0];
@@ -655,7 +696,7 @@ TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
   level1.free_dims = { analytic::FamilyDimension::kZenith, analytic::FamilyDimension::kAzimuth };
   level1.rank_asked = true;
   level1.generic_rank = 2;
-  level1.grid = kFamilyLadderGrid;
+  level1.grid = structure::kFamilyLadderGrid;
   level1.grid_spacing_deg[0] = 1.4173;
   level1.grid_spacing_deg[1] = 2.8125;
   level1.samples = 16384;
@@ -664,7 +705,7 @@ TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
   level1.objects_killed = 1;
   FamilyKilledCandidate killed;
   killed.member = { 3, 5 };
-  killed.kind = "regular_image";
+  killed.kind = structure::FamilyImageKind::kRegularImage;
   killed.has_position = true;
   killed.position_altitude_deg = 12.5;
   killed.position_azimuth_deg = 40.0;
@@ -710,7 +751,7 @@ TEST(SurveyJsonV4, FamilyRoutingBlockSerializesItsAppendShape) {
   const auto& rank_level = ladder.at(1);
   EXPECT_EQ(rank_level.at("free_dims"), nlohmann::json::array({ "zenith", "azimuth" }));
   EXPECT_EQ(rank_level.at("rank").at("generic_rank"), 2);
-  EXPECT_EQ(rank_level.at("rank").at("grid"), kFamilyLadderGrid);
+  EXPECT_EQ(rank_level.at("rank").at("grid"), structure::kFamilyLadderGrid);
   ASSERT_EQ(rank_level.at("rank").at("grid_spacing_deg").size(), 2u);
   EXPECT_EQ(rank_level.at("objects_proposed"), 4);
   ASSERT_EQ(rank_level.at("killed").size(), 1u);

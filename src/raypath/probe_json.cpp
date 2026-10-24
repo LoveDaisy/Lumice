@@ -130,22 +130,27 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
     j["evidence"] = { { "state", "unevaluated" }, { "reason", std::get<Unevaluated>(p.claim).reason } };
     return j;
   }
-  j["source"] = p.Reading().source == ProbeProfileSource::kWarmReused ? "warm_reused" : "recomputed";
-  j["evidence"] = {
-    { "state", "finite" },
-    { "coverage",
-      { { "members_evaluated", p.Reading().members_evaluated },
-        { "geometry_basis", "nominal crystal shape at the distribution centres" },
-        { "wavelength_nm", Num(p.wavelength_nm) },
-        { "lattice_n", p.sample_count },
-        { "bin_deg", Num(p.bin_deg) },
-        { "delta_domain_deg", { Num(p.delta_min_deg), Num(p.delta_max_deg) } },
-        { "deterministic", p.deterministic },
-        { "representative", p.representative },
-        { "member_count", p.member_count } } },
-  };
+  const ProbeFiniteReading& reading = *ClaimValue(p.claim);
+  j["source"] = reading.source == ProbeProfileSource::kWarmReused ? "warm_reused" : "recomputed";
+  if (const auto* certified = std::get_if<Certified<ProbeFiniteReading>>(&p.claim)) {
+    j["evidence"] = { { "state", "certified" }, { "method", certified->method } };
+  } else {
+    j["evidence"] = {
+      { "state", "finite" },
+      { "coverage",
+        { { "members_evaluated", reading.members_evaluated },
+          { "geometry_basis", "nominal crystal shape at the distribution centres" },
+          { "wavelength_nm", Num(p.wavelength_nm) },
+          { "lattice_n", p.sample_count },
+          { "bin_deg", Num(p.bin_deg) },
+          { "delta_domain_deg", { Num(p.delta_min_deg), Num(p.delta_max_deg) } },
+          { "deterministic", p.deterministic },
+          { "representative", p.representative },
+          { "member_count", p.member_count } } },
+    };
+  }
   nlohmann::ordered_json samples = nlohmann::ordered_json::array();
-  for (const auto& s : p.Reading().samples) {
+  for (const auto& s : reading.samples) {
     samples.push_back({ { "delta_deg", Num(s.delta_deg) },
                         { "azimuth_deg", Num(s.azimuth_deg) },
                         { "value", Num(s.value) },
@@ -153,19 +158,19 @@ nlohmann::ordered_json ProfileJson(const ProbeProfile& p) {
                         { "k_eff", Num(s.k_eff) } });
   }
   j["samples"] = std::move(samples);
-  nlohmann::ordered_json readings = { { "has_edge", p.Reading().readings.has_edge },
-                                      { "has_peak", p.Reading().readings.has_peak } };
-  if (p.Reading().readings.has_edge) {
-    readings["edge_deg"] = Num(p.Reading().readings.edge_deg);
+  nlohmann::ordered_json readings = { { "has_edge", reading.readings.has_edge },
+                                      { "has_peak", reading.readings.has_peak } };
+  if (reading.readings.has_edge) {
+    readings["edge_deg"] = Num(reading.readings.edge_deg);
   }
-  if (p.Reading().readings.has_peak) {
-    readings["peak_deg"] = Num(p.Reading().readings.peak_deg);
-    readings["peak_value"] = Num(p.Reading().readings.peak_value);
-    readings["separation_deg"] = Num(p.Reading().readings.separation_deg);
+  if (reading.readings.has_peak) {
+    readings["peak_deg"] = Num(reading.readings.peak_deg);
+    readings["peak_value"] = Num(reading.readings.peak_value);
+    readings["separation_deg"] = Num(reading.readings.separation_deg);
   }
   j["readings"] = std::move(readings);
   nlohmann::ordered_json segments = nlohmann::ordered_json::array();
-  for (const auto& s : p.Reading().dark_regions) {
+  for (const auto& s : reading.dark_regions) {
     nlohmann::ordered_json segment = { { "kind", ProbeDarkKindName(s.kind) },
                                        { "lo_deg", Num(s.lo_deg) },
                                        { "hi_deg", Num(s.hi_deg) },
