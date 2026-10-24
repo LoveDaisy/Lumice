@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -460,6 +462,41 @@ struct ProbeReq {
     c.layer_count = static_cast<int>(layers.size());
   }
 };
+
+TEST(ProbeCApi, WarmDocumentScopesReferenceAndPerProfileClassification) {
+  const auto load = [](const char* name) {
+    const std::string path = std::string(LUMICE_WARM_FIXTURE_DIR) + "/" + name;
+    std::ifstream file(path);
+    EXPECT_TRUE(file.is_open()) << path;
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+  };
+  const std::string scene_text = load("warm_random_scene.json");
+  const std::string warm_text = load("warm_random_survey.json");
+  LUMICE_Scene* raw = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(scene_text.c_str(), &raw), LUMICE_OK);
+  const ProbeScenePtr scene(raw);
+  ProbeReq request;
+  const double wavelengths[] = { 450.0, 550.0 };
+  request.c.wavelengths_nm = wavelengths;
+  request.c.wavelength_count = 2;
+  request.c.sample_count = 20000;
+  request.c.warm_json = warm_text.c_str();
+  request.c.warm_json_len = warm_text.size();
+  LUMICE_PathProbe* raw_result = nullptr;
+  char error[512]{};
+  ASSERT_EQ(LUMICE_AnalyzePathProbe(scene.get(), &request.c, &raw_result, error, sizeof(error)), LUMICE_OK) << error;
+  const std::unique_ptr<LUMICE_PathProbe, void (*)(LUMICE_PathProbe*)> result(raw_result, LUMICE_PathProbeDestroy);
+  size_t length = 0;
+  ASSERT_EQ(LUMICE_PathProbeToJson(result.get(), nullptr, 0, &length), LUMICE_OK);
+  std::string text(length + 1, '\0');
+  ASSERT_EQ(LUMICE_PathProbeToJson(result.get(), text.data(), text.size(), &length), LUMICE_OK);
+  text.resize(length);
+  const nlohmann::json document = nlohmann::json::parse(text);
+  EXPECT_DOUBLE_EQ(document["context"]["reference_wavelength_nm"].get<double>(), 450.0);
+  EXPECT_EQ(document["context"]["object"]["reason"], "scope_value_mismatch");
+  EXPECT_EQ(document["profiles"][0]["dark_regions"]["segments"][0]["kind"], "unknown");
+  EXPECT_EQ(document["profiles"][1]["dark_regions"]["segments"][0]["kind"], "outside_support");
+}
 
 TEST(ProbeCApi, NullArgumentsAreRejected) {
   const ProbeScenePtr scene = MakeProbeCApiScene();
