@@ -158,14 +158,12 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
         rp::DecodeWarmCandidate(std::string(request.warm_json, request.warm_json_len), &*req.warm_candidate);
   }
 
-  rp::SinglePathResult result;
-  if (const rp::Error e = rp::AnalyzeSinglePath(config, req, &result); !e.Ok()) {
+  rp::PointResult result;
+  if (const rp::Error e = rp::AnalyzePathPointValue(config, req, true, &result); !e.Ok()) {
     return Refuse(e, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_SinglePathResult_>();
-  // The one-shot serialization computes the deferred survey context exactly once and caches it
-  // in the result (results that never serialize never pay the context-only T0-T2 assembly).
-  rp::EnsureSurveyContext(&result);
+  // Completion materializes the requested context once; encoding only reads the owned value.
   handle->json = rp::ToJson(result, LUMICE_GetVersionString());
   *out = handle.release();
   return LUMICE_OK;
