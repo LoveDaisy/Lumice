@@ -10,6 +10,7 @@
 #include "config/config_manager.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/input_scope.hpp"
+#include "raypath/prepared_geometry.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_report.hpp"
 #include "raypath/survey_result.hpp"
@@ -31,6 +32,9 @@ struct SurveyAssemblyOptions {
   // contract — a stop here is an explicit cancel, and every cut leg fails closed with its own
   // named refusal (never a fabricated partition, tint or band). Null: exactly today's run.
   const analytic::DiscoveryStop* stop = nullptr;
+  // Prepared tables for the selection's crystal (a workspace's own build): the assembly then
+  // builds no tables of its own. Null: the assembly's own one build, exactly as before.
+  const PreparedGeometry* geometry = nullptr;
 };
 
 Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& request, SurveyData* out,

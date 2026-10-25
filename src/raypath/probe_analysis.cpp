@@ -12,6 +12,7 @@
 #include "raypath/detail/quantity/probe_line.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/prepared_geometry.hpp"
 #include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
@@ -197,7 +198,8 @@ ProbeProfile CompleteProbeProfile(ProbeProfile profile, const MemberScope& membe
 
 }  // namespace
 
-Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& request, ProbeData* out) {
+Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& request, ProbeData* out,
+                           const PreparedGeometry* prepared) {
   *out = ProbeData{};
   std::optional<AdmittedWarmSource> admitted;
   if (request.warm_candidate) {
@@ -267,19 +269,18 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   const double reference_nm = meta.wavelengths.front().nm;
   result.context.reference_wavelength_nm = reference_nm;
 
-  const CrystalConversion crystal = ConvertCrystal(crystal_it->second.param_);
-  analytic::FaceNormalTable table;
-  analytic::FacePolygonTable polygons;
-  switch (analytic::BuildFaceNormals(crystal.shape, &table, &polygons)) {
-    case analytic::Status::kOk:
-      break;
-    case analytic::Status::kInvalidConfig:
-      return { ErrorCode::kCrystalRejected,
-               "the engine builds no crystal from entry " + std::to_string(request.crystal_id) + "'s nominal shape" };
-    case analytic::Status::kInvalidValue:
-      return { ErrorCode::kCrystalRejected, "crystal entry " + std::to_string(request.crystal_id) +
-                                                "'s nominal shape has a value the kernel cannot take" };
+  // The geometry: prepared by a workspace when it already built the selection's tables, else
+  // this query's own one build (the workspace's reuse read counts the builds).
+  PreparedGeometry built;
+  const PreparedGeometry* geometry = prepared != nullptr ? prepared : &built;
+  if (prepared == nullptr) {
+    if (Error e = PrepareGeometry(crystal_it->second, &built); !e.Ok()) {
+      return e;
+    }
   }
+  const CrystalConversion& crystal = geometry->conversion;
+  const analytic::FaceNormalTable& table = geometry->table;
+  const analytic::FacePolygonTable& polygons = geometry->polygons;
 
   std::vector<int> slots;
   if (Error e = ResolveSingleLayerPath(request.path_layers, table, &slots); !e.Ok()) {
@@ -573,12 +574,13 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   return {};
 }
 
-Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out) {
+Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out,
+                       const PreparedGeometry* geometry) {
   if (!out) {
     return { ErrorCode::kInvalidArgument, "null probe output" };
   }
   ProbeData data;
-  if (const Error error = AnalyzePathProbeData(config, request, &data); !error.Ok()) {
+  if (const Error error = AnalyzePathProbeData(config, request, &data, geometry); !error.Ok()) {
     return error;
   }
   *out = ProbeResult(std::move(data));

@@ -74,7 +74,12 @@ WarmCandidate HarvestSurveyResult(const survey::SurveyResult& result) {
       out.probe_bin_deg = probe.spec.bin_deg;
       out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
       for (const survey::SurveyProbeSample& sample : reading->samples) {
-        out.probe_samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
+        // An empty bin's k_eff is the producer's NaN (the wire's null). The JSON decode arm
+        // reads that null back as the struct's 0.0 — the admission gate's finite-k_eff
+        // contract is the POST-decode shape — so the typed harvest carries the same value:
+        // undefined reads 0, never NaN (the two arms stay one semantics).
+        const double k_eff = sample.k == 0 && !std::isfinite(sample.k_eff) ? 0.0 : sample.k_eff;
+        out.probe_samples.push_back({ sample.delta_deg, sample.value, sample.k, k_eff });
       }
     }
   }

@@ -33,6 +33,7 @@
 #include "core/def.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
+#include "raypath/prepared_geometry.hpp"
 #include "raypath/probe_result.hpp"
 #include "raypath/survey_reuse.hpp"
 
@@ -75,7 +76,10 @@ struct ProbeRequest : PathSelection {
 };
 
 // The whole analysis. On error `out` is left default-constructed.
-Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out);
+// `geometry` (optional): a workspace's prepared tables for the selection's crystal — the query
+// then builds no tables of its own (the workspace's reuse read).
+Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out,
+                       const PreparedGeometry* geometry = nullptr);
 
 }  // namespace lumice::raypath
 

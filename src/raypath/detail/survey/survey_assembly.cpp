@@ -18,6 +18,7 @@
 #include "raypath/detail/survey/survey_tint.hpp"
 #include "raypath/detail/survey/survey_tir_share.hpp"
 #include "raypath/detail/survey/survey_witness.hpp"
+#include "raypath/prepared_geometry.hpp"
 #include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
@@ -178,19 +179,16 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
   }
 
   // The nominal crystal's geometry: the rank-0 certificate is algebraic on this shape.
-  const CrystalConversion crystal = ConvertCrystal(configured->second.param_);
-  analytic::FaceNormalTable table;
-  analytic::FacePolygonTable polygons;
-  switch (analytic::BuildFaceNormals(crystal.shape, &table, &polygons)) {
-    case analytic::Status::kOk:
-      break;
-    case analytic::Status::kInvalidConfig:
-      return { ErrorCode::kCrystalRejected,
-               "the engine builds no crystal from entry " + std::to_string(request.crystal_id) + "'s nominal shape" };
-    case analytic::Status::kInvalidValue:
-      return { ErrorCode::kCrystalRejected, "crystal entry " + std::to_string(request.crystal_id) +
-                                                "'s nominal shape has a value the kernel cannot take" };
+  PreparedGeometry built_geometry;
+  const PreparedGeometry* geometry = options.geometry != nullptr ? options.geometry : &built_geometry;
+  if (options.geometry == nullptr) {
+    if (Error e = PrepareGeometry(configured->second, &built_geometry); !e.Ok()) {
+      return e;
+    }
   }
+  const CrystalConversion& crystal = geometry->conversion;
+  const analytic::FaceNormalTable& table = geometry->table;
+  const analytic::FacePolygonTable& polygons = geometry->polygons;
   // The request's own path: single layer, faces the crystal has (the report's error semantics).
   std::vector<int> slots;
   if (Error error = ResolveSingleLayerPath(request.path_layers, table, &slots); !error.Ok()) {

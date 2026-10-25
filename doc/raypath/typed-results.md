@@ -107,6 +107,17 @@ the census, checked against the four serializers and their typed readers:
 Adding a reader that pairs two containers means adding its row here and giving it a guard (a
 single row type where possible); the census is the checklist that replaces per-round discovery.
 
+## Encoding cost and output-scale boundary
+
+Serialization is a pure projection over a completed value: it starts no physical computation
+(measured — a second serialization of the same result is byte-identical and produces no
+context), and its CPU cost scales with the output document's size (the JSON text length),
+not with the query's physical work. The encoding boundaries the execution contract declares:
+the deadline and the cancel token govern the execution alone; an already-frozen result's
+encoding runs to completion however large the document, with no interrupted half-document.
+Budget accounting on the wire stays the observation it always was (timing blocks), never a
+bitwise comparison target.
+
 ## Claims and independent states
 
 `Claim<T>` has four exclusive arms: `Certified<T>`, `Finite<T>`, `Refused`, and

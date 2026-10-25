@@ -33,6 +33,7 @@
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
 #include "raypath/point_result.hpp"
+#include "raypath/prepared_geometry.hpp"
 #include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
@@ -84,8 +85,10 @@ struct SinglePathRequest : PathSelection {
 // envelope that once retained the inputs for a later materialization is gone: a result is a
 // frozen value, and nothing a reader does — getters, serialization, repeated reads — can start
 // physical computation). A caller that declares no context pays nothing for it.
+// `geometry` (optional): a workspace's prepared tables for the selection's crystal — the query
+// then builds no tables of its own (the workspace's reuse read).
 Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest& request, bool include_context,
-                            PointResult* out);
+                            PointResult* out, const PreparedGeometry* geometry = nullptr);
 
 }  // namespace lumice::raypath
 

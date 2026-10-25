@@ -18,6 +18,7 @@
 #include "raypath/detail/measure/fiber_quadrature.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/prepared_geometry.hpp"
 #include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_result.hpp"
@@ -719,7 +720,7 @@ namespace {
 // a context the caller may declare (in-execution context production reads it; nothing is
 // retained in the result — the deferred envelope is gone).
 Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& input_request, PointData* out,
-                        std::optional<AdmittedWarmSource>* admitted_out) {
+                        std::optional<AdmittedWarmSource>* admitted_out, const PreparedGeometry* prepared) {
   *out = PointData{};
   SinglePathRequest request = input_request;
   std::optional<AdmittedWarmSource> admitted;
@@ -769,19 +770,18 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
     return e;
   }
 
-  const CrystalConversion crystal = ConvertCrystal(crystal_it->second.param_);
-  analytic::FaceNormalTable table;
-  analytic::FacePolygonTable polygons;
-  switch (analytic::BuildFaceNormals(crystal.shape, &table, &polygons)) {
-    case analytic::Status::kOk:
-      break;
-    case analytic::Status::kInvalidConfig:
-      return { ErrorCode::kCrystalRejected,
-               "the engine builds no crystal from entry " + std::to_string(request.crystal_id) + "'s nominal shape" };
-    case analytic::Status::kInvalidValue:
-      return { ErrorCode::kCrystalRejected, "crystal entry " + std::to_string(request.crystal_id) +
-                                                "'s nominal shape has a value the kernel cannot take" };
+  // The geometry: the caller's prepared tables when a workspace already built them (no
+  // rebuild, the workspace's own reuse read), else this query's own one build.
+  PreparedGeometry built;
+  const PreparedGeometry* geometry = prepared != nullptr ? prepared : &built;
+  if (prepared == nullptr) {
+    if (Error e = PrepareGeometry(crystal_it->second, &built); !e.Ok()) {
+      return e;
+    }
   }
+  const CrystalConversion& crystal = geometry->conversion;
+  const analytic::FaceNormalTable& table = geometry->table;
+  const analytic::FacePolygonTable& polygons = geometry->polygons;
 
   std::vector<int> slots;
   if (Error e = ResolveSingleLayerPath(request.path_layers, table, &slots); !e.Ok()) {
@@ -947,14 +947,14 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
 }  // namespace
 
 Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest& request, bool include_context,
-                            PointResult* out) {
+                            PointResult* out, const PreparedGeometry* geometry) {
   if (!out) {
     return { ErrorCode::kInvalidArgument, "null point output" };
   }
   *out = PointResult{};  // on error the caller's slot is left empty (the module's standing contract)
   PointData execution;
   std::optional<AdmittedWarmSource> admitted;
-  if (const Error error = RunPointExecution(config, request, &execution, &admitted); !error.Ok()) {
+  if (const Error error = RunPointExecution(config, request, &execution, &admitted, geometry); !error.Ok()) {
     return error;
   }
   if (include_context) {

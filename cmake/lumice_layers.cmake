@@ -315,6 +315,10 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/survey_reuse.cpp
   raypath/query_control.hpp
   raypath/query_control.cpp
+  raypath/prepared_geometry.hpp
+  raypath/prepared_geometry.cpp
+  raypath/workspace.hpp
+  raypath/workspace.cpp
   raypath/domain/error.cpp
   raypath/domain/error.hpp
   raypath/domain/input_metadata.cpp
