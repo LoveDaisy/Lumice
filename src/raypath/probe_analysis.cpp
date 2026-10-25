@@ -12,6 +12,7 @@
 #include "raypath/detail/quantity/probe_line.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/survey_result.hpp"
@@ -302,16 +303,17 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   const survey::ProbeFrame frame = survey::MakeProbeFrame(meta.incident_direction);
   meta.at_azimuth_about_sun_deg = FrameAzimuthOf(frame, meta.at_direction);
 
-  // The budget: 0 = the documented default at this layer too (the bridge resolves the same
-  // constant before the call; a direct caller passes 0 and gets the identical semantics), and
-  // meta echoes the value that applies.
-  meta.budget_ms = request.budget_ms > 0 ? request.budget_ms : kDefaultProbeBudgetMs;
-
-  // The deadline (the point query's shape): resolved once at entry, polled at the per-lambda
-  // BandSum boundaries; a stopped run serializes the profiles it has — meta.interrupted, an
-  // honest early exit, never a failure.
-  const analytic::DiscoveryStop stop{ std::chrono::steady_clock::now() + std::chrono::milliseconds(meta.budget_ms),
-                                      request.interrupted };
+  // The budget and its deadline, resolved once at entry by the one owner (query_control.hpp —
+  // 0 = the documented default at this layer too: the bridge resolves the same constant before
+  // the call, a direct caller passes 0 and gets the identical semantics, and meta echoes the
+  // resolved value). Polled at the per-lambda BandSum boundaries; a stopped run serializes the
+  // profiles it has — meta.interrupted, an honest early exit, never a failure.
+  BudgetRequest budget_request;
+  budget_request.budget_ms = request.budget_ms;
+  budget_request.interrupted = request.interrupted;
+  const LegControl budget = ResolveLeg(BudgetWindow::kProbeLambdas, budget_request);
+  meta.budget_ms = budget.resolved_ms;
+  const analytic::DiscoveryStop stop = budget.stop;
   const auto stopped = [&stop]() { return stop.Stopped(); };
 
   // ---- the context (the point query's block, read at the at point) ----

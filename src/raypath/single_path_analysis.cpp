@@ -18,6 +18,7 @@
 #include "raypath/detail/measure/fiber_quadrature.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_result.hpp"
 #include "util/sky_direction.hpp"
@@ -805,14 +806,16 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
   meta.wavelength_source = wavelength.source;
   meta.refractive_index = wavelength.refractive_index;
   const analytic::ContinuationParams params;
-  // The budget, resolved once at entry; polled at loop boundaries only. A stopped run serializes
-  // its partial document with meta.interrupted — an honest early exit, not a failure.
-  const analytic::DiscoveryStop stop{ request.budget_ms > 0 ? std::chrono::steady_clock::now() +
-                                                                  std::chrono::milliseconds(request.budget_ms) :
-                                                              std::chrono::steady_clock::time_point::max(),
-                                      request.interrupted };
+  // The budget, resolved once at entry by the one owner (query_control.hpp — the window's
+  // zero rule is point's own: no deadline); polled at loop boundaries only. A stopped run
+  // serializes its partial document with meta.interrupted — an honest early exit, not a failure.
+  BudgetRequest budget_request;
+  budget_request.budget_ms = request.budget_ms;
+  budget_request.interrupted = request.interrupted;
+  const LegControl budget = ResolveLeg(BudgetWindow::kPointDiscovery, budget_request);
+  const analytic::DiscoveryStop stop = budget.stop;
   const auto stopped = [&stop]() { return stop.Stopped(); };
-  meta.budget_ms = request.budget_ms > 0 ? request.budget_ms : 0;
+  meta.budget_ms = budget.resolved_ms;
   meta.sample_count = request.sample_count;
   meta.band_half_width_rad = analytic::kDefaultBandHalfWidth;
   meta.cluster_radius_rad = analytic::kDefaultClusterRadius;

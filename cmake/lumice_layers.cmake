@@ -312,6 +312,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/survey_context.hpp
   raypath/survey_reuse.hpp
   raypath/survey_reuse.cpp
+  raypath/query_control.hpp
+  raypath/query_control.cpp
   raypath/domain/error.cpp
   raypath/domain/error.hpp
   raypath/domain/input_metadata.cpp

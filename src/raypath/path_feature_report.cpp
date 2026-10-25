@@ -8,6 +8,7 @@
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/path_feature_report_json.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
+#include "raypath/query_control.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath {
@@ -133,8 +134,14 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
       samples *= 2;
     }
   }
-  DiscoveryOptions options{ { samples, request.max_optical_evaluations,
-                              request.deadline.value_or(begin + std::chrono::milliseconds(request.budget_ms)) },
+  // The discovery quality window, resolved by the one owner: the C entry pins the absolute
+  // deadline at its own start; an internal caller gets begin + budget (query_control.hpp).
+  BudgetRequest quality_request;
+  quality_request.budget_ms = request.budget_ms;
+  quality_request.absolute_deadline = request.deadline;
+  quality_request.start = begin;
+  const LegControl quality = ResolveLeg(BudgetWindow::kQualityDeadline, quality_request);
+  DiscoveryOptions options{ { samples, request.max_optical_evaluations, quality.stop.deadline },
                             request.bandwidth_rad,
                             request.location_resolution_rad,
                             request.max_field_evaluations,
@@ -172,13 +179,13 @@ Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatu
   // it and the v3 early shape ignores the assembled side. The enumeration leg's anti-hang
   // deadline starts here: the enforced robustness floor (kEnumerationHangCapMs), independent
   // of the request's quality budget (--budget-ms bounds the discovery legs, report-only by
-  // A4 for the enumeration's own cost vocabulary).
+  // A4 for the enumeration's own cost vocabulary). Resolved by the one owner, like every
+  // window (query_control.hpp).
   schema3::AssembledSchema3Report assembled =
       report.unsupported_multicrystal ?
           schema3::AssembledSchema3Report{} :
-          schema3::AssembleSchema3Report(
-              std::move(report), request.max_optical_evaluations,
-              std::chrono::steady_clock::now() + std::chrono::milliseconds(schema3::kEnumerationHangCapMs));
+          schema3::AssembleSchema3Report(std::move(report), request.max_optical_evaluations,
+                                         ResolveLeg(BudgetWindow::kHangCap, {}).stop.deadline);
   *out = schema3::CompleteFeatureReportResult(std::move(result), std::move(assembled));
   return {};
 }

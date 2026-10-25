@@ -1082,6 +1082,7 @@ lumice_apply_engine_compile_options(lumice_analytic_kernel)
 # liblumice_analytic, whose surface is the kernel alone; that is why it sits outside lumice_obj.
 add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/path_feature_report.cpp"
+  "${PROJ_SRC_DIR}/raypath/query_control.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/diagnostic_sampler.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/feature_discovery.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/input_assembly.cpp"

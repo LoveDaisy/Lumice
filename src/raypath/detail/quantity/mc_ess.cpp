@@ -8,6 +8,7 @@
 #include "analytic/so3.hpp"
 #include "core/math.hpp"  // math::kRadToDegreeD — the deviation's unit conversion
 #include "raypath/detail/diagnostic_sampler.hpp"
+#include "raypath/query_control.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath::quantity {
@@ -95,11 +96,14 @@ McRegionEssResult EvaluateMcRegionEss(const McRegionEssInput& input) {
                             SpectrumRequest{ std::move(sample) });
   SamplingBudget budget;
   budget.requested_samples = static_cast<uint64_t>(input.draws);
-  // The deadline is the survey budget guardrail; the draw count is capped at the request
-  // boundary, so the optical-evaluation ceiling adds nothing the deadline does not already
-  // enforce and stays out of the way.
+  // The deadline is the survey budget guardrail (resolved by the one owner, query_control.hpp
+  // — this leg's own start plus the survey budget, verbatim); the draw count is capped at the
+  // request boundary, so the optical-evaluation ceiling adds nothing the deadline does not
+  // already enforce and stays out of the way.
   budget.max_optical_evaluations = ~uint64_t{ 0 };
-  budget.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(input.budget_ms);
+  BudgetRequest guardrail_request;
+  guardrail_request.budget_ms = input.budget_ms;
+  budget.deadline = ResolveLeg(BudgetWindow::kLegGuardrail, guardrail_request).stop.deadline;
   DiagnosticMeasure measure;
   if (const Error error = BuildDiagnosticMeasure(sampler, budget, &measure); !error.Ok()) {
     ess.SetState(EvidenceState::kRefused);
