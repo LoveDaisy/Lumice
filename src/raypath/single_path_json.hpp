@@ -25,7 +25,6 @@ constexpr int kSunGridSignificantDigits = 9;
 
 // The whole result as one JSON document (a UTF-8 string, no trailing newline). `product_version`
 // is the Lumice version that produced it (generator.lumice).
-std::string ToJson(const SinglePathResult& result, const std::string& product_version);
 std::string ToJson(const PointResult& result, const std::string& product_version);
 
 // The warm seeds of an earlier output: every components[*].seed then every incomplete[*].seed,

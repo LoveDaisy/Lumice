@@ -210,6 +210,7 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | Previous owner / producer | Existing machine-data groups | Unique value owner and consumers |
 |---|---|---|
 | `single_path_analysis.hpp` | meta/outcome/components/incomplete/discovery/point_mass/reach/sun_grid/measure_registration | `point_result.hpp`; point execution, typed completion and codec |
+| deleted envelope (former `SinglePathResult` deferral) | context_config/context_request/context_warm/survey_context_ready — never wire keys (verified pre-deletion) | no owner: the deferred state is unrepresentable; a declared context is produced by `AnalyzePathPointValue` in the execution |
 | context assembly/reuse | object/edge/band_sum, reference lambda, source and degradation | `survey_context.hpp` plus owned structural projection; point/probe and shared context codec |
 | `probe_analysis.hpp`, survey probe | meta, profile spec/samples/readings/dark_regions, red_edge_width | `probe_result.hpp`, `results/probe_line.hpp`; quantity service, probe query and codec |
 | former survey document | request/scope/resolved members, routing, objects, unevaluated/evidence | `survey_result.hpp`, `results/survey_records.hpp`; survey assembly, typed harvest and codec |
@@ -233,12 +234,17 @@ This is a value/ownership migration, not a new uniform test census over the full
 
 ## Remaining execution adapters
 
-`SinglePathResult` is the temporary legacy execution envelope: one `PointData` plus the
-old deferred-context inputs. `SurveyContextOf` and `EnsureSurveyContext` operate only on
-that envelope. Workspace execution will replace them; the completed `PointResult`
-contains neither. The legacy string-returning report/survey entry points are thin typed
-assembly → codec adapters. The C bridge remains a legacy JSON handle consumer until its
-typed-view migration; the MC draw-limit include is an existing bridge-boundary exception.
+The legacy point execution envelope (`SinglePathResult` with its deferred-context inputs
+`context_config`/`context_request`/`context_warm`/`survey_context_ready`, and the
+`AnalyzeSinglePath`/`SurveyContextOf`/`EnsureSurveyContext`/`FinalizePointResult`
+materialization family) is deleted: one typed entry, `AnalyzePathPointValue`, runs the
+discovery legs and produces a declared context in the execution itself — a completed
+`PointResult` owns its context block, and no reader (getter, serializer, repeated read)
+can start physical computation. The C surface's `LUMICE_AnalyzeSinglePath` name is the
+public ABI's and stays (a thin adapter over the typed entry). The legacy string-returning
+report/survey entry points are thin typed assembly → codec adapters. The C bridge remains
+a legacy JSON handle consumer until its typed-view migration; the MC draw-limit include is
+an existing bridge-boundary exception.
 
 `AssembleSurveyData` is construction-time staging used by query policy and focused
 fixtures, not a second public result model or a second computation path. The old

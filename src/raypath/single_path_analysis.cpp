@@ -713,8 +713,14 @@ void SunSphereGridCellCentre(const SunSphereGrid& grid, int lat_index, int lon_i
   u[2] = std::sin(lat);
 }
 
-Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& input_request, SinglePathResult* out) {
-  *out = SinglePathResult{};
+namespace {
+
+// The execution body: discovery legs into a plain PointData, plus the admitted warm source for
+// a context the caller may declare (in-execution context production reads it; nothing is
+// retained in the result — the deferred envelope is gone).
+Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& input_request, PointData* out,
+                        std::optional<AdmittedWarmSource>* admitted_out) {
+  *out = PointData{};
   SinglePathRequest request = input_request;
   std::optional<AdmittedWarmSource> admitted;
   if (request.warm_candidate) {
@@ -752,7 +758,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
     return { ErrorCode::kInvalidTarget, "the target altitude must be finite and in [-90, 90], the azimuth finite" };
   }
 
-  SinglePathResult result;
+  PointData result;
   SinglePathMetadata& meta = result.meta;
   meta.analytic_api_version = analytic::kApiVersion;
   meta.crystal_id = request.crystal_id;
@@ -868,14 +874,9 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
     }
   }
 
-  // The survey context defers (SurveyContextOf / EnsureSurveyContext): the inline branch's
-  // context-only T0-T2 assembly IS the delta partition — measured as the analysis's dominant
-  // cost — so it must not tax consumers that never read the context. The bridge's one-shot
-  // serialization computes and caches it; the deadline gate stays on the discovery legs only.
-  result.context_config = std::make_shared<const ConfigManager>(config);
-  result.context_request = request;
-  result.context_request.warm_candidate.reset();
-  result.context_warm = std::move(admitted);
+  // The context, when the caller declares it, is produced by the entry from `admitted` after
+  // the legs return — in the execution, cancel-stoppable, never stored as deferred inputs.
+  *admitted_out = std::move(admitted);
 
   if (rank.rank_zero) {
     result.payload = PointMass{};
@@ -943,61 +944,37 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
 }
 
 
-SurveyContextBlock SurveyContextOf(const SinglePathResult& result) {
-  if (result.survey_context_ready) {
-    return result.survey_context;
-  }
-  SurveyContextBlock out;
-  if (result.context_config != nullptr) {
-    // Cancel-only (ruling 4): the deferred context pays no window, only an explicit cancel.
-    const analytic::DiscoveryStop context_stop{ std::chrono::steady_clock::time_point::max(),
-                                                result.context_request.interrupted, result.context_request.cancel };
-    BuildSurveyContext(*result.context_config, result.context_request, result.meta, result.context_warm, &out,
-                       &context_stop);
-  }
-  return out;
-}
-
-void EnsureSurveyContext(SinglePathResult* result) {
-  if (result->survey_context_ready) {
-    return;
-  }
-  result->survey_context = SurveyContextOf(*result);
-  // A cancel caught by the context (the discovery legs already finished) still names the
-  // query's outcome — the axes are orthogonal, the outcome follows the single authority.
-  if (result->survey_context.object.reason == "stop_requested") {
-    result->meta.execution = ExecutionOutcome::kCancelled;
-  }
-  result->survey_context_ready = true;
-  result->context_config.reset();
-  result->context_request = SinglePathRequest{};
-  result->context_warm.reset();
-}
-
-PointResult FinalizePointResult(SinglePathResult result, bool include_context) {
-  if (include_context) {
-    EnsureSurveyContext(&result);
-  } else {
-    result.survey_context = {};
-    for (SurveyContextField* field :
-         { &result.survey_context.object, &result.survey_context.edge, &result.survey_context.band_sum }) {
-      field->state = survey::EvidenceState::kUnevaluated;
-      field->reason = "not_requested";
-    }
-  }
-  return PointResult(FinalizePointData(std::move(static_cast<PointData&>(result))));
-}
+}  // namespace
 
 Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest& request, bool include_context,
                             PointResult* out) {
   if (!out) {
     return { ErrorCode::kInvalidArgument, "null point output" };
   }
-  SinglePathResult execution;
-  if (const Error error = AnalyzeSinglePath(config, request, &execution); !error.Ok()) {
+  *out = PointResult{};  // on error the caller's slot is left empty (the module's standing contract)
+  PointData execution;
+  std::optional<AdmittedWarmSource> admitted;
+  if (const Error error = RunPointExecution(config, request, &execution, &admitted); !error.Ok()) {
     return error;
   }
-  *out = FinalizePointResult(std::move(execution), include_context);
+  if (include_context) {
+    // The context cost is part of the execution (ruling 4): cancel-stoppable through the same
+    // one-way token, never bounded by the discovery legs' window, never deferred to a reader.
+    const analytic::DiscoveryStop context_stop{ std::chrono::steady_clock::time_point::max(), request.interrupted,
+                                                request.cancel };
+    BuildSurveyContext(config, request, execution.meta, admitted, &execution.survey_context, &context_stop);
+    if (execution.survey_context.object.reason == "stop_requested") {
+      execution.meta.execution = ExecutionOutcome::kCancelled;
+    }
+  } else {
+    execution.survey_context = {};
+    for (SurveyContextField* field :
+         { &execution.survey_context.object, &execution.survey_context.edge, &execution.survey_context.band_sum }) {
+      field->state = survey::EvidenceState::kUnevaluated;
+      field->reason = "not_requested";
+    }
+  }
+  *out = PointResult(FinalizePointData(std::move(execution)));
   return {};
 }
 

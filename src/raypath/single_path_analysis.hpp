@@ -79,35 +79,13 @@ struct SinglePathRequest : PathSelection {
   const analytic::StopToken* cancel = nullptr;
 };
 
-// The legacy execution envelope owns one value and deferred context inputs.
-struct SinglePathResult : PointData {
-  // The deferral inputs, retained until the context is first computed; dropped afterwards.
-  bool survey_context_ready = false;
-  std::shared_ptr<const ConfigManager> context_config;
-  SinglePathRequest context_request;
-  std::optional<AdmittedWarmSource> context_warm;
-};
-
-// The whole analysis. On error `out` is left default-constructed.
-Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& request, SinglePathResult* out);
-
+// The whole analysis, one typed entry: the execution runs the discovery legs and — when
+// include_context is declared — produces the survey context IN THE EXECUTION (the deferred
+// envelope that once retained the inputs for a later materialization is gone: a result is a
+// frozen value, and nothing a reader does — getters, serialization, repeated reads — can start
+// physical computation). A caller that declares no context pays nothing for it.
 Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest& request, bool include_context,
                             PointResult* out);
-
-// The survey context on demand: the stored block when already computed, else built from the
-// retained deferral inputs. NOT a cheap accessor — on a deferred result this runs the
-// context-only T0-T2 assembly (the delta partition: seconds, ~13 s on the random full-dim
-// scene) unless a warm document's facts fill the context directly. Pure — the result is not
-// modified, so a second call on an unmaterialized result pays again; EnsureSurveyContext is
-// the materialize-once entry the C API bridge runs before its one-shot serialization.
-SurveyContextBlock SurveyContextOf(const SinglePathResult& result);
-
-// Computes the context once and stores it (idempotent; drops the retained inputs). The C API
-// bridge calls this before its one-shot serialization so a result's json computes it exactly once.
-void EnsureSurveyContext(SinglePathResult* result);
-
-// Explicit completion is the only entry that materializes the requested context.
-PointResult FinalizePointResult(SinglePathResult result, bool include_context);
 
 }  // namespace lumice::raypath
 

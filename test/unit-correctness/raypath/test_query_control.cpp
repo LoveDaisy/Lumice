@@ -10,6 +10,7 @@
 #include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
+#include "raypath/single_path_json.hpp"
 #include "survey_test_fixtures.hpp"
 
 // The budget owner's contract (query_control.hpp) and the runtime reads the S1 exit pins:
@@ -196,6 +197,29 @@ TEST(QueryControl, McEssLegResolvesItsGuardrailOnce) {
 }  // namespace
 }  // namespace lumice::raypath
 
+// A completed value's serialization is pure and stable: two reads of the same result are
+// byte-identical and start nothing (the deferred-materialization path that once paid per read
+// is gone; the result owns its context block).
+namespace lumice::raypath {
+TEST(QueryResultReading, RepeatedSerializationIsIdenticalAndStartsNothing) {
+  const ConfigManager config = survey::RandomPrismScene();
+  SinglePathRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 1, 2 } };
+  request.target_altitude_deg = 30.0;
+  request.target_azimuth_deg = 90.0;
+  request.sample_count = 2000;
+  request.sun_grid_lat_count = 0;
+  request.budget_ms = 120000;
+  PointResult result;
+  ASSERT_TRUE(AnalyzePathPointValue(config, request, true, &result).Ok());
+  const std::string first = ToJson(result, "test-version");
+  const std::string second = ToJson(result, "test-version");
+  EXPECT_EQ(first, second);
+  EXPECT_FALSE(first.empty());
+}
+}  // namespace lumice::raypath
+
 // ============================================================================================
 // The stop-authority handshakes (S2): every stoppable stage runs for real, is ENTERED (the
 // poll ledger moves — proof the loop is inside its pollable region), then cancelled from this
@@ -298,13 +322,13 @@ TEST(QueryStopHandshake, PointDiscoveryIsEnteredThenCancelled) {
   analytic::StopToken token;
   request.cancel = &token;
 
-  SinglePathResult envelope;
-  WorkerHandle worker([&] { (void)AnalyzeSinglePath(config, request, &envelope); });  // no context materialization
+  PointResult result;
+  WorkerHandle worker([&] { (void)AnalyzePathPointValue(config, request, false, &result); });
   ASSERT_TRUE(WaitForPoll(token, analytic::kPollBandLattice, kEnterBound)) << "the discovery lattice never polled";
   token.RequestCancel();
   ASSERT_TRUE(worker.JoinBounded(kJoinBound)) << "the discovery legs ignored the cancel";
-  EXPECT_EQ(envelope.meta.execution, ExecutionOutcome::kCancelled);
-  EXPECT_TRUE(envelope.meta.interrupted);
+  EXPECT_EQ(result.Data().meta.execution, ExecutionOutcome::kCancelled);
+  EXPECT_TRUE(result.Data().meta.interrupted);
 }
 
 // The legacy signal entry stays a first-class cancel: the same single authority reads it, the
@@ -326,14 +350,14 @@ TEST(QueryStopHandshake, TheLegacySignalFlagIsAnExplicitCancel) {
   // the cancel source — the single authority reads both, and the outcome must name the signal.
   analytic::StopToken observer;
   request.cancel = &observer;
-  SinglePathResult envelope;
-  WorkerHandle worker([&] { (void)AnalyzeSinglePath(config, request, &envelope); });
+  PointResult result;
+  WorkerHandle worker([&] { (void)AnalyzePathPointValue(config, request, false, &result); });
   ASSERT_TRUE(WaitForPoll(observer, analytic::kPollBandLattice, kEnterBound)) << "the discovery lattice never polled";
   signalled = 1;
   ASSERT_TRUE(worker.JoinBounded(kJoinBound)) << "the legacy signal was ignored";
   EXPECT_FALSE(observer.CancelRequested());  // the token never fired: the signal alone stopped it
-  EXPECT_EQ(envelope.meta.execution, ExecutionOutcome::kCancelled);  // the signal IS an explicit cancel
-  EXPECT_TRUE(envelope.meta.interrupted);
+  EXPECT_EQ(result.Data().meta.execution, ExecutionOutcome::kCancelled);  // the signal IS an explicit cancel
+  EXPECT_TRUE(result.Data().meta.interrupted);
 }
 
 // The probe's lambda phase: entered via the lattice poll, cancelled mid-line, the cut profile

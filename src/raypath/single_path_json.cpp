@@ -408,15 +408,10 @@ static std::string EncodePoint(const PointData& result, const SurveyContextBlock
     doc["sun_grid"] = SunGridJson(result.sun_grid);
   }
   // The survey context: where the target sits in the survey's structure (always written; every
-  // field carries its own state, so absence can never read as answered).
-  // The value encoder receives the completed context explicitly. Only the legacy envelope
-  // adapter below may call SurveyContextOf.
+  // field carries its own state, so absence can never read as answered). The encoder reads the
+  // completed value's own context block — encoding never computes anything.
   doc["survey_context"] = SurveyContextJson(context);
   return doc.dump();
-}
-
-std::string ToJson(const SinglePathResult& result, const std::string& product_version) {
-  return EncodePoint(result, SurveyContextOf(result), product_version);
 }
 
 std::string ToJson(const PointResult& result, const std::string& product_version) {

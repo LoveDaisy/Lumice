@@ -44,7 +44,7 @@ ConfigManager PrismScene() {
   return c;
 }
 
-SinglePathResult Analyse(std::vector<int> faces, double alt, double az) {
+PointResult Analyse(std::vector<int> faces, double alt, double az) {
   SinglePathRequest r;
   r.crystal_id = 1;
   r.path_layers = { std::move(faces) };
@@ -52,19 +52,19 @@ SinglePathResult Analyse(std::vector<int> faces, double alt, double az) {
   r.target_azimuth_deg = az;
   r.sample_count = kSamples;
   r.sun_grid_lat_count = kGridRows;
-  SinglePathResult out;
-  const Error e = AnalyzeSinglePath(PrismScene(), r, &out);
+  PointResult out;
+  const Error e = AnalyzePathPointValue(PrismScene(), r, true, &out);
   EXPECT_TRUE(e.Ok()) << e.message;
   return out;
 }
 
 // The 22-degree-halo path at a point on its ring: closed components, the discovered outcome.
-const SinglePathResult& Halo() {
-  static const SinglePathResult r = Analyse({ 3, 5 }, 20.0, 25.0);
+const PointResult& Halo() {
+  static const PointResult r = Analyse({ 3, 5 }, 20.0, 25.0);
   return r;
 }
 
-nlohmann::json Doc(const SinglePathResult& r) {
+nlohmann::json Doc(const PointResult& r) {
   return nlohmann::json::parse(ToJson(r, "test-version"));
 }
 
@@ -176,8 +176,8 @@ const char* const kDiscoveredKeys[] = {
 };
 
 TEST(SinglePathJson, EveryFieldOfADiscoveredResultHasItsKey) {
-  ASSERT_FALSE(Halo().Discovered().components.empty());
-  ASSERT_FALSE(Halo().Discovered().components[0].points.empty());
+  ASSERT_FALSE(Halo().Data().Discovered().components.empty());
+  ASSERT_FALSE(Halo().Data().Discovered().components[0].points.empty());
   const nlohmann::json doc = Doc(Halo());
   for (const char* key : kDiscoveredKeys) {
     EXPECT_TRUE(doc.contains(nlohmann::json::json_pointer(key))) << key;
@@ -270,15 +270,15 @@ TEST(SinglePathJson, SunGridArraysKeepNineSignificantDigits) {
     }
   }
   int longer = 0;
-  for (double x : Halo().sun_grid.deviation_rad) {
+  for (double x : Halo().Data().sun_grid.deviation_rad) {
     longer += std::isfinite(x) && !nine_digit(x) ? 1 : 0;
   }
   EXPECT_GT(longer, 0);
 }
 
 TEST(SinglePathJson, RankZeroWritesThePointMassAndNoDiscovery) {
-  const SinglePathResult r = Analyse({ 1, 2 }, 30.0, 90.0);
-  ASSERT_EQ(r.OutcomeValue(), Outcome::kPointMass);
+  const PointResult r = Analyse({ 1, 2 }, 30.0, 90.0);
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kPointMass);
   const nlohmann::json doc = Doc(r);
   EXPECT_EQ(doc["outcome"], "point_mass");
   for (const char* key : { "/point_mass/direction", "/point_mass/altitude_deg", "/point_mass/azimuth_deg",
@@ -300,9 +300,9 @@ TEST(SinglePathJson, RankZeroWritesThePointMassAndNoDiscovery) {
 // honest unavailable state (named reason, the support spelled) and no integral — never a
 // defaulted number. Exactly one of the two block shapes is written.
 TEST(SinglePathJson, OrbitFactorsSpellTheUnavailableStateWhenTheSupportIsNotASpinOrbit) {
-  const SinglePathResult r = Analyse({ 1, 2 }, 30.0, 90.0);
-  ASSERT_EQ(r.OutcomeValue(), Outcome::kPointMass);
-  ASSERT_FALSE(r.Mass().orbit_factors.available);
+  const PointResult r = Analyse({ 1, 2 }, 30.0, 90.0);
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kPointMass);
+  ASSERT_FALSE(r.Data().Mass().orbit_factors.available);
   const nlohmann::json doc = Doc(r);
   const auto& orbit = doc["point_mass"]["orbit_factors"];
   EXPECT_EQ(orbit["available"], false);
@@ -325,10 +325,10 @@ TEST(SinglePathJson, OrbitFactorsOnASpinOrbitCarryTheGridAndTheIntegral) {
   q.target_altitude_deg = 30.0;
   q.target_azimuth_deg = 90.0;
   q.sun_grid_lat_count = 0;
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, q, &r).Ok());
-  ASSERT_EQ(r.OutcomeValue(), Outcome::kPointMass);
-  ASSERT_TRUE(r.Mass().orbit_factors.available);
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, q, true, &r).Ok());
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kPointMass);
+  ASSERT_TRUE(r.Data().Mass().orbit_factors.available);
   const nlohmann::json doc = Doc(r);
   const auto& orbit = doc["point_mass"]["orbit_factors"];
   EXPECT_EQ(orbit["available"], true);
@@ -348,12 +348,12 @@ TEST(SinglePathJson, OrbitFactorsOnASpinOrbitCarryTheGridAndTheIntegral) {
 }
 
 TEST(SinglePathJson, SeedsRoundTripBitExactly) {
-  const SinglePathResult& r = Halo();
+  const PointResult& r = Halo();
   std::vector<double> expected;
-  for (const auto& c : r.Discovered().components) {
+  for (const auto& c : r.Data().Discovered().components) {
     expected.insert(expected.end(), c.seed, c.seed + 9);
   }
-  for (const auto& c : r.Discovered().incomplete) {
+  for (const auto& c : r.Data().Discovered().incomplete) {
     expected.insert(expected.end(), c.seed, c.seed + 9);
   }
   ASSERT_FALSE(expected.empty());
@@ -365,12 +365,13 @@ TEST(SinglePathJson, SeedsRoundTripBitExactly) {
 }
 
 TEST(SinglePathJson, NanIsWrittenAsNull) {
-  SinglePathResult r;
-  r.meta.target_deviation_deg = std::numeric_limits<double>::quiet_NaN();
+  PointData data;
+  data.meta.target_deviation_deg = std::numeric_limits<double>::quiet_NaN();
   FiberComponent c;
   c.points.emplace_back();
   c.points[0].residual_norm = std::numeric_limits<double>::infinity();
-  r.Discovered().components.push_back(c);
+  data.Discovered().components.push_back(c);
+  const PointResult r(FinalizePointData(std::move(data)));
   const nlohmann::json doc = Doc(r);
   EXPECT_TRUE(doc["meta"]["target"]["deviation_deg"].is_null());
   EXPECT_TRUE(doc["components"][0]["points"][0]["residual_norm"].is_null());
