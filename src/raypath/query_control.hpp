@@ -23,6 +23,7 @@
 #include <optional>
 
 #include "analytic/discovery.hpp"
+#include "raypath/domain/outcome.hpp"  // ExecutionOutcome — the result layer's vocabulary
 
 namespace lumice::raypath {
 
@@ -93,24 +94,6 @@ inline constexpr int kPollMcEssDraws = 20;         // survey MC ESS leg, per dra
 inline constexpr int kPollEnumerationMember = 21;  // report enumeration, per member
 inline constexpr int kPollSamplerDraws = 23;       // the diagnostic sampler's draw loops (survey MC ESS
                                                    // and report discovery — never both in one query)
-
-// The execution outcome axis (the new contract's four outcomes; the input-error fourth stays
-// the Error return path). Orthogonal to evidence and freshness: a cancelled run may carry
-// valid finite facts, a completed run may be all-refused — neither implies the other. Derived
-// from the stop authority's reason, never re-derived per consumer.
-enum class ExecutionOutcome { kCompleted, kCancelled, kDeadlineExceeded };
-
-inline const char* ExecutionOutcomeName(ExecutionOutcome outcome) {
-  switch (outcome) {
-    case ExecutionOutcome::kCompleted:
-      return "completed";
-    case ExecutionOutcome::kCancelled:
-      return "cancelled";
-    case ExecutionOutcome::kDeadlineExceeded:
-      return "deadline_exceeded";
-  }
-  return "unknown_execution_outcome";
-}
 
 // The outcome a face records from its stop: completed unless its authority observed a reason.
 // (The stop argument is the LAST thing the face polled; a cancel racing the final poll reads

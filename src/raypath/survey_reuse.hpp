@@ -152,9 +152,9 @@ class SurveyStructureView {
  private:
   static SurveyStructureView FromAdmitted(const AdmittedWarmSource& source) { return { &source.Facts(), nullptr }; }
   SurveyStructureView(const SurveyWarmSource* warm, const char* reason) : warm_(warm), reason_(reason) {}
+  friend SurveyReuseDecision EvaluateSurveyReuse(const AdmittedWarmSource&, double, double, double);
   const SurveyWarmSource* warm_ = nullptr;
   const char* reason_ = nullptr;
-  friend SurveyReuseDecision EvaluateSurveyFacts(const AdmittedWarmSource&, double, double, double);
 };
 
 struct SurveyReuseDecision {

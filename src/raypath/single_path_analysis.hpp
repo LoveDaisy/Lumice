@@ -6,8 +6,9 @@
 // components of the fiber over a sky point, each component's poses with per-pose detail, and the
 // deviation over the whole sun-direction sphere. It strings liblumice_analytic's kernel
 // (src/analytic/: EvaluatePath, the fiber continuation, component discovery) to a scene config,
-// and it knows nothing of a user interface. PointResult is the immutable completed value;
-// SinglePathResult is the temporary internal envelope that retains deferred context inputs.
+// and it knows nothing of a user interface. PointResult is the immutable completed value — the
+// one execution entry produces everything the caller declared, in the execution itself; a
+// result retains no deferred inputs and no materialization hooks (AC3's shape).
 //
 // Every conversion from the scene to the kernel's inputs is decided here once and recorded in the
 // result (SinglePathMetadata): the crystal's shape (a distribution in the config, a nominal value

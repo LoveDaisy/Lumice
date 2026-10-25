@@ -15,7 +15,7 @@
 #include "raypath/prepared_geometry.hpp"
 #include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/single_path_analysis.hpp"  // kMaxSampleCount — the sample bound the probe request echoes
 #include "raypath/survey_result.hpp"
 #include "util/sky_direction.hpp"
 
@@ -348,6 +348,7 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     Error e = survey::AssembleSurvey(config, survey_request, &doc, context_options);
     if (context_stop.Stopped()) {
       inline_refused = true;
+      context.cut_by_stop = true;
       context.object.state = survey::EvidenceState::kUnevaluated;
       context.object.reason = "stop_requested";
       context.edge.state = survey::EvidenceState::kUnevaluated;

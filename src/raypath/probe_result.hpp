@@ -10,8 +10,8 @@
 #include "core/def.hpp"
 #include "raypath/domain/claim.hpp"
 #include "raypath/domain/input_metadata.hpp"
+#include "raypath/domain/outcome.hpp"  // ExecutionOutcome — the outcome axis's vocabulary
 #include "raypath/domain/result_identity.hpp"
-#include "raypath/query_control.hpp"  // ExecutionOutcome — the outcome axis's one vocabulary
 #include "raypath/results/probe_line.hpp"
 #include "raypath/results/quantity.hpp"
 #include "raypath/survey_context.hpp"

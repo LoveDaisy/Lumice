@@ -17,6 +17,11 @@
 // harvest by value (HarvestSurveyResult — no JSON anywhere on this chain), and a consumer can
 // re-extract warm from any returned survey result at any time.
 //
+// Concurrency: a workspace instance is NOT thread-safe — its slots and counters are plain
+// members. One instance serves one calling thread at a time (the issue's boundary: queries run
+// on the caller's thread); cross-workspace parallelism and read-only sharing of returned
+// results are the supported shapes. The cancel token is the one deliberately thread-safe piece.
+//
 // The reuse criterion is not the workspace's to invent: the slot is addressed by the request's
 // selection (crystal + path class — storage addressing, not a judgment), and every reuse
 // decision runs through the existing single authority (ValidateWarmCandidate's admission, then
@@ -81,6 +86,13 @@ class AnalysisWorkspace {
     std::vector<std::vector<int>> path_layers;
     unsigned symmetry_bits = 0;
     double wavelength_nm = 0.0;
+    // The request fields OUTSIDE the selection that change the document's content: the ESS
+    // evidence block exists only when asked (and its guardrail reads the budget), the budget
+    // is echoed verbatim, and the scene layer decides the scope the document carries. A key
+    // without them would silently serve one request's document to a differently-shaped one.
+    int mc_ess_draws = 0;
+    int budget_ms = 0;
+    long long scene_layer = -2;  // -2 = unset (the request's nullopt), -1 = standalone
     survey::SurveyResult result;
   } survey_slot_;
 

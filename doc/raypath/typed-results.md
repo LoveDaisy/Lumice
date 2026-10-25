@@ -221,6 +221,7 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | Previous owner / producer | Existing machine-data groups | Unique value owner and consumers |
 |---|---|---|
 | `single_path_analysis.hpp` | meta/outcome/components/incomplete/discovery/point_mass/reach/sun_grid/measure_registration | `point_result.hpp`; point execution, typed completion and codec |
+| query_control's unified deadline (`ResolveQueryDeadline`/`QueryDeadline`) | resolve-once, leg-clamped absolute deadline — internal only today | no production entry consumes it yet: the new-query entries that wire it land with the C-handle slice (739.4); AC5's end-to-end span is proven at the unit read, not yet through a public entry |
 | deleted envelope (former `SinglePathResult` deferral) | context_config/context_request/context_warm/survey_context_ready — never wire keys (verified pre-deletion) | no owner: the deferred state is unrepresentable; a declared context is produced by `AnalyzePathPointValue` in the execution |
 | context assembly/reuse | object/edge/band_sum, reference lambda, source and degradation | `survey_context.hpp` plus owned structural projection; point/probe and shared context codec |
 | `probe_analysis.hpp`, survey probe | meta, profile spec/samples/readings/dark_regions, red_edge_width | `probe_result.hpp`, `results/probe_line.hpp`; quantity service, probe query and codec |

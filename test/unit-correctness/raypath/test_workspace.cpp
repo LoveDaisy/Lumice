@@ -150,6 +150,40 @@ TEST(Workspace, SurveyToPointIsTheTypedWarmChainWithNoRecompute) {
   EXPECT_EQ(workspace->StructureRunCount(), runs);
 }
 
+TEST(Workspace, CrossShapeRequestsNeverHitTheSurveySlot) {
+  // The slot key must cover every request field that changes the document: a same-selection
+  // request with different mc_ess_draws / budget_ms / scene_layer is a different document and
+  // must run fresh (the structure-run counter moves), never serve the cached one silently.
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(TwoCrystalScene(), &workspace).Ok());
+  survey::SurveyResult first;
+  ASSERT_TRUE(workspace->QuerySurvey(SurveyOf({ 1, 2 }, 550.0), &first).Ok());
+  const long runs = workspace->StructureRunCount();
+  ASSERT_GE(runs, 1);
+
+  struct Variant {
+    const char* what;
+    void (*mutate)(SurveyRequest*);
+  };
+  const Variant variants[] = {
+    { "mc_ess_draws", [](SurveyRequest* r) { r->mc_ess_draws = 64; } },
+    { "budget_ms", [](SurveyRequest* r) { r->budget_ms = 30000; } },
+  };
+  long expected_runs = runs;
+  for (const Variant& variant : variants) {
+    SurveyRequest request = SurveyOf({ 1, 2 }, 550.0);
+    variant.mutate(&request);
+    survey::SurveyResult result;
+    if (const Error error = workspace->QuerySurvey(request, &result); !error.Ok()) {
+      ADD_FAILURE() << variant.what << ": " << error.message;
+      continue;
+    }
+    expected_runs += 1;
+    EXPECT_EQ(workspace->StructureRunCount(), expected_runs)
+        << variant.what << " served a stale document instead of one fresh run";
+  }
+}
+
 TEST(Workspace, ACancelledSurveyNeverFillsTheWarmSlot) {
   std::unique_ptr<AnalysisWorkspace> workspace;
   ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &workspace).Ok());

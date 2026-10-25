@@ -99,7 +99,7 @@ WarmCandidate HarvestSurveyResult(const survey::SurveyResult& result) {
   return candidate;
 }
 
-SurveyReuseDecision EvaluateSurveyFacts(const AdmittedWarmSource& admitted, double wavelength_nm,
+SurveyReuseDecision EvaluateSurveyReuse(const AdmittedWarmSource& admitted, double wavelength_nm,
                                         double sun_altitude_deg, double sun_azimuth_deg) {
   const SurveyWarmSource& warm = admitted.Facts();
   SurveyReuseDecision decision;
@@ -135,11 +135,6 @@ SurveyReuseDecision EvaluateSurveyFacts(const AdmittedWarmSource& admitted, doub
     decision.reading_reason = "scope_value_mismatch";
   }
   return decision;
-}
-
-SurveyReuseDecision EvaluateSurveyReuse(const AdmittedWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
-                                        double sun_azimuth_deg) {
-  return EvaluateSurveyFacts(warm, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
 }
 
 bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
@@ -179,7 +174,7 @@ static void FillSurveyFacts(const AdmittedWarmSource& admitted, double target_de
   out->object_ref.reset();
   out->edge_ref.reset();
   const SurveyWarmSource& warm = admitted.Facts();
-  const SurveyReuseDecision reuse = EvaluateSurveyFacts(admitted, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
+  const SurveyReuseDecision reuse = EvaluateSurveyReuse(admitted, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
   const double delta = target_deviation_deg;
   const SurveyWarmSource::SupportInterval* containing = nullptr;
   const SurveyWarmSource::SupportInterval* closest = nullptr;
@@ -432,7 +427,7 @@ bool CanReuseSurveyProfile(const AdmittedWarmSource& admitted, const ProfileReus
   if (!scope.observation.wavelength_nm || !scope.observation.sun_altitude_deg || !scope.observation.sun_azimuth_deg)
     return false;
   const SurveyReuseDecision reuse =
-      EvaluateSurveyFacts(admitted, *scope.observation.wavelength_nm, *scope.observation.sun_altitude_deg,
+      EvaluateSurveyReuse(admitted, *scope.observation.wavelength_nm, *scope.observation.sun_altitude_deg,
                           *scope.observation.sun_azimuth_deg);
   const bool same_line = warm.has_probe_azimuth && std::isfinite(warm.probe_azimuth_deg) &&
                          std::fabs(std::remainder(scope.azimuth_deg - warm.probe_azimuth_deg, 360.0)) < 1e-9;

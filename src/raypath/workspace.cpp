@@ -93,10 +93,14 @@ Error AnalysisWorkspace::QueryProbe(const ProbeRequest& request, ProbeResult* ou
 
 Error AnalysisWorkspace::QuerySurvey(const SurveyRequest& request, survey::SurveyResult* out,
                                      const analytic::StopToken* cancel) {
+  const long long layer = request.scene_layer.has_value() ? static_cast<long long>(*request.scene_layer) :
+                                                            -2LL;  // unset (the standalone shape writes -1)
   const bool cached = survey_slot_.crystal_id == request.crystal_id &&
                       survey_slot_.path_layers == request.path_layers &&
                       survey_slot_.symmetry_bits == request.symmetry_bits &&
-                      survey_slot_.wavelength_nm == request.wavelength_nm.value_or(0.0);
+                      survey_slot_.wavelength_nm == request.wavelength_nm.value_or(0.0) &&
+                      survey_slot_.mc_ess_draws == request.mc_ess_draws &&
+                      survey_slot_.budget_ms == request.budget_ms && survey_slot_.scene_layer == layer;
   if (cached) {
     *out = survey_slot_.result;  // the frozen value's shared storage: zero recomputation
     return {};
@@ -115,14 +119,23 @@ Error AnalysisWorkspace::QuerySurvey(const SurveyRequest& request, survey::Surve
   // Only a run the workspace saw complete fills the slots: a cancelled or cut survey never
   // masquerades as a cached block (its own refusal/truncation markers say what ran).
   const survey::SurveyData& data = out->Data();
+  // A requested-but-guardrail-cut ESS leg is a truncated document even when the block-level
+  // refusal left the document-level state finite: it never enters the slot (a later, larger
+  // request must not reuse the cut block as complete).
+  const bool ess_complete =
+      request.mc_ess_draws <= 0 ||
+      (data.mc_region_ess.has_value() && data.mc_region_ess->State() == survey::EvidenceState::kFinite);
   const bool complete = (data.evidence.state == survey::EvidenceState::kCertified ||
                          data.evidence.state == survey::EvidenceState::kFinite) &&
-                        !(cancel != nullptr && cancel->CancelRequested());
+                        ess_complete && !(cancel != nullptr && cancel->CancelRequested());
   if (complete) {
     survey_slot_.crystal_id = request.crystal_id;
     survey_slot_.path_layers = request.path_layers;
     survey_slot_.symmetry_bits = request.symmetry_bits;
     survey_slot_.wavelength_nm = request.wavelength_nm.value_or(0.0);
+    survey_slot_.mc_ess_draws = request.mc_ess_draws;
+    survey_slot_.budget_ms = request.budget_ms;
+    survey_slot_.scene_layer = layer;
     survey_slot_.result = *out;
     warm_slot_.crystal_id = request.crystal_id;
     warm_slot_.path_layers = request.path_layers;

@@ -67,6 +67,11 @@ struct SurveyContextBlock {
   double band_sum_delta_deg = 0.0;  // the nearest sample's own deviation
   double band_sum_bin_deg = 0.0;
   std::string band_sum_caliber;  // both sides' lambda/sun identity, for the reading's declaration
+
+  // True when a cooperative stop cut the context's assembly short: the typed signal the
+  // outcome axis derives from (the fields' "stop_requested" reasons are the display form).
+  // Not serialized — an uncut context leaves it false.
+  bool cut_by_stop = false;
 };
 
 

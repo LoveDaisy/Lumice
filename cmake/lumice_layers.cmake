@@ -302,6 +302,7 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/feature_report_result.hpp
   raypath/results/quantity.hpp
   raypath/domain/object_kind.hpp
+  raypath/domain/outcome.hpp
   raypath/domain/claim.hpp
   raypath/domain/result_identity.hpp
   raypath/domain/scope.hpp

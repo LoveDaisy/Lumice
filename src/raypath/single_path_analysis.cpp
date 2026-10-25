@@ -658,6 +658,7 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
     Error e = survey::AssembleSurvey(config, survey_request, &doc, context_options);
     if (stop != nullptr && stop->Stopped()) {
       // The cut context claims nothing: the three fields refuse with the stop's own name.
+      out->cut_by_stop = true;
       out->object.state = survey::EvidenceState::kUnevaluated;
       out->object.reason = "stop_requested";
       out->edge.state = survey::EvidenceState::kUnevaluated;
@@ -963,8 +964,8 @@ Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest
     const analytic::DiscoveryStop context_stop{ std::chrono::steady_clock::time_point::max(), request.interrupted,
                                                 request.cancel };
     BuildSurveyContext(config, request, execution.meta, admitted, &execution.survey_context, &context_stop);
-    if (execution.survey_context.object.reason == "stop_requested") {
-      execution.meta.execution = ExecutionOutcome::kCancelled;
+    if (execution.survey_context.cut_by_stop) {
+      execution.meta.execution = ExecutionOutcome::kCancelled;  // the typed cut signal
     }
   } else {
     execution.survey_context = {};

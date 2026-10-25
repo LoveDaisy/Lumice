@@ -4,8 +4,8 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "raypath/domain/outcome.hpp"  // ExecutionOutcome — the outcome axis's vocabulary
 #include "raypath/domain/result_identity.hpp"
-#include "raypath/query_control.hpp"  // ExecutionOutcome — the outcome axis's one vocabulary
 #include "raypath/results/report_attribution.hpp"
 #include "raypath/results/report_enumeration.hpp"
 #include "raypath/results/report_records.hpp"
