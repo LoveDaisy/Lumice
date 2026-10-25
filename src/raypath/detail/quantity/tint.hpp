@@ -27,6 +27,11 @@
 #include "raypath/results/quantity.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
+// The real namespace's forward declaration (a global-scope one would be shadowed by
+// lumice::analytic in the field lookups below).
+namespace lumice::analytic {
+struct DiscoveryStop;  // the shared stop judgment (analytic/stop.hpp, via discovery.hpp)
+}
 namespace lumice::raypath::quantity {
 
 // The tint leg's caliber constant (schema, not tuning: the serialized block echoes it and
@@ -47,6 +52,9 @@ struct TintInput {
   double incident[3] = { 0.0, 0.0, -1.0 };           // the sun's propagation direction (SunIncidentDirection)
   int member_count = 0;                              // the class size the representative stands for
   int sample_count = kSurveyTintSampleCount;
+  // Cooperative stop for the two lambda passes (BuildEvents' own poll) — an explicit cancel;
+  // a cut pass keeps the block's refusal shape and never fabricates the full ratio.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 
 // Computes the two point-mass band sums and returns the weight-tint record; sets the chromatic block's
@@ -78,6 +86,9 @@ struct ClassTintInput {
   double incident[3] = { 0.0, 0.0, -1.0 };           // the sun's propagation direction (SunIncidentDirection)
   int member_count = 0;                              // the class size the representative stands for
   int sample_count = kSurveyClassTintSampleCount;
+  // Cooperative stop for the two lambda passes (BuildEvents' own poll) — an explicit cancel;
+  // a cut pass keeps the block's refusal shape and never fabricates the full ratio.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 
 WeightTintResult EvaluateClassTint(const ClassTintInput& input);

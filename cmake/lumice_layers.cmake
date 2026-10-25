@@ -119,6 +119,7 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/diagnostic_types.hpp
   analytic/field_types.hpp
   analytic/chromatic_types.hpp
+  analytic/stop.hpp
   analytic/support_types.hpp
   analytic/quantity_types.hpp
   analytic/fiber_types.hpp

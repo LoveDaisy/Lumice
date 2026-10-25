@@ -82,6 +82,51 @@ long BudgetResolutionCount(BudgetWindow window);
 long QueryDeadlineResolutionCount();
 void ResetBudgetResolutionCountsForTest();
 
+// Poll-ledger site ids the raypath faces own (range 16..31 — analytic/stop.hpp's split). A
+// site's counter moving during a run is the evidence its stop point is real; the handshake
+// tests wait on exactly these counters before cancelling.
+inline constexpr int kPollSurveyT0 = 16;           // survey assembly, per member verdict
+inline constexpr int kPollStructureMember = 17;    // class support, per member field+axis+partition
+inline constexpr int kPollProbeLambdas = 18;       // probe, per-lambda boundary
+inline constexpr int kPollPointLegs = 19;          // point discovery legs' boundaries
+inline constexpr int kPollMcEssDraws = 20;         // survey MC ESS leg, per draw chunk
+inline constexpr int kPollEnumerationMember = 21;  // report enumeration, per member
+inline constexpr int kPollSamplerDraws = 23;       // the diagnostic sampler's draw loops (survey MC ESS
+                                                   // and report discovery — never both in one query)
+
+// The execution outcome axis (the new contract's four outcomes; the input-error fourth stays
+// the Error return path). Orthogonal to evidence and freshness: a cancelled run may carry
+// valid finite facts, a completed run may be all-refused — neither implies the other. Derived
+// from the stop authority's reason, never re-derived per consumer.
+enum class ExecutionOutcome { kCompleted, kCancelled, kDeadlineExceeded };
+
+inline const char* ExecutionOutcomeName(ExecutionOutcome outcome) {
+  switch (outcome) {
+    case ExecutionOutcome::kCompleted:
+      return "completed";
+    case ExecutionOutcome::kCancelled:
+      return "cancelled";
+    case ExecutionOutcome::kDeadlineExceeded:
+      return "deadline_exceeded";
+  }
+  return "unknown_execution_outcome";
+}
+
+// The outcome a face records from its stop: completed unless its authority observed a reason.
+// (The stop argument is the LAST thing the face polled; a cancel racing the final poll reads
+// as completed — the run was over.)
+inline ExecutionOutcome OutcomeOf(const analytic::DiscoveryStop& stop) {
+  switch (stop.Why()) {
+    case analytic::StopReason::kCancelled:
+      return ExecutionOutcome::kCancelled;
+    case analytic::StopReason::kDeadline:
+      return ExecutionOutcome::kDeadlineExceeded;
+    case analytic::StopReason::kNone:
+      break;
+  }
+  return ExecutionOutcome::kCompleted;
+}
+
 }  // namespace lumice::raypath
 
 #endif  // LUMICE_RAYPATH_QUERY_CONTROL_HPP_

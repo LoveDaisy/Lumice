@@ -467,8 +467,8 @@ TEST(StructureEnumeration, DeadlineProducesHonestTruncation) {
   in.normals = &t.normals;
   in.polygons = &t.polys;
   in.base_index = 1.307;
-  const Schema3DiscoveryCore core =
-      EnumerateLayer(in, { { 1, 4, 5, 2 }, { 3, 6, 4, 8 } }, std::chrono::steady_clock::time_point::min());
+  const analytic::DiscoveryStop fired{ std::chrono::steady_clock::time_point::min(), nullptr, nullptr };
+  const Schema3DiscoveryCore core = EnumerateLayer(in, { { 1, 4, 5, 2 }, { 3, 6, 4, 8 } }, fired);
   EXPECT_TRUE(core.budget.truncated);
   EXPECT_FALSE(core.budget.truncation_note.empty());
   EXPECT_EQ(core.budget.hang_cap_ms, 0);  // the layer reports cuts; the caller owns the cap value

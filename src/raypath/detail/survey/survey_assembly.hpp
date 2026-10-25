@@ -6,6 +6,7 @@
 // the LUMICE_ANALYTIC_ClassifyCriticalStructure implementation, whose rank-0 arm is
 // IsRankZeroPath's M = I and zero-wedge check); nothing here re-derives a geometry verdict.
 
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
 #include "config/config_manager.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/input_scope.hpp"
@@ -25,6 +26,11 @@ struct SurveyAssemblyOptions {
   // no T3 quantification (the probe, the chromatic legs, the tint, the witness lattice). The
   // budget note says so instead of claiming legs that did not run.
   bool context_only = false;
+  // Cooperative stop for the assembly's real loops (T0 verdicts, the structure walks, the
+  // sampling legs, the MC ESS draws). The survey's legs stay deadline-unenforced by their own
+  // contract — a stop here is an explicit cancel, and every cut leg fails closed with its own
+  // named refusal (never a fabricated partition, tint or band). Null: exactly today's run.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 
 Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& request, SurveyData* out,

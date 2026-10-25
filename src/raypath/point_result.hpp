@@ -12,6 +12,7 @@
 #include "core/def.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/result_identity.hpp"
+#include "raypath/query_control.hpp"  // ExecutionOutcome — the outcome axis's one vocabulary
 #include "raypath/results/quantity.hpp"
 #include "raypath/survey_context.hpp"
 namespace lumice::raypath {
@@ -63,6 +64,9 @@ struct SinglePathMetadata {
   // stopped early — a partial document, honestly marked.
   int budget_ms = 0;
   bool interrupted = false;
+  // The execution outcome axis (internal typed read; the wire keeps its interrupted convention):
+  // completed / cancelled / deadline_exceeded, derived from the query's single stop authority.
+  ExecutionOutcome execution = ExecutionOutcome::kCompleted;
 };
 
 // ---- per-pose detail --------------------------------------------------------------------------

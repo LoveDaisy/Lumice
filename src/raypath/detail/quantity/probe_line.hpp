@@ -105,10 +105,14 @@ ProbeLineLayout AxisLineLayout(double delta_min_deg, double delta_max_deg, doubl
 // in the frame, and evaluates analytic::BandSum once for the one wavelength/index pair (the
 // chromatic lambda grid lives on the caller's loop, never a multi-wavelength map). Never
 // refuses: a path with no kept event yields the honest all-zero profile.
+// `stop` (optional) rides into the lattice pass: a cut line keeps the bins it completed over
+// the run lattice prefix and sets `truncated` — the profile never presents partial sums as the
+// full-lattice estimate.
 ProbeLineProfile EvaluateProbeLine(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                                    const std::vector<int>& representative, const PoseDensityConversion& density,
                                    const ProbeFrame& frame, const ProbeLineLayout& layout, double wavelength_nm,
-                                   double refractive_index, const double incident[3], int sample_count);
+                                   double refractive_index, const double incident[3], int sample_count,
+                                   const analytic::DiscoveryStop* stop = nullptr);
 
 
 }  // namespace lumice::raypath::survey

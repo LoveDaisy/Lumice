@@ -38,6 +38,7 @@
 #include <string>
 #include <vector>
 
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
 #include "analytic/dp_chromatic.hpp"
 #include "analytic/pose_density.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
@@ -136,18 +137,20 @@ double KinkWalkArclength(analytic::WalkStatus status);
 // run; true existence with the later legs absent when it did) and the member's truncation
 // note says what was cut. The default is no deadline (max()), which every existing caller
 // and test keeps.
-MemberEnumeration EnumerateMember(
-    const EnumerationInput& in, const std::vector<int>& member,
-    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
+MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<int>& member,
+                                  const analytic::DiscoveryStop& stop = analytic::DiscoveryStop{});
 
 // Enumerates a layer: every member, then the family aggregate. A row joins a family only when
 // it shares BOTH the reflection-group orbit (the carried Phi-class note) and the intervals
 // (SameSupport) — the Phi-class expression of, e.g., C06's eight PBD variants. The deadline is
 // EnumerateMember's (a member the cap cut still contributes its row, so the support block
 // stays one row per member); the budget's truncation fields report the cuts.
-Schema3DiscoveryCore EnumerateLayer(
-    const EnumerationInput& in, const std::vector<std::vector<int>>& members,
-    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
+// `stop` is the enumeration leg's single judgment (the anti-hang cap's deadline with any
+// cancel token folded in): polled per member and per stage gate, exactly where the old raw
+// deadline was read. A member the stop cut still contributes its row (the support block stays
+// one row per member); the budget's truncation fields report the cuts.
+Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vector<std::vector<int>>& members,
+                                    const analytic::DiscoveryStop& stop = analytic::DiscoveryStop{});
 
 }  // namespace lumice::raypath::schema3
 

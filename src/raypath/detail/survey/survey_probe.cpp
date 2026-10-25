@@ -9,7 +9,7 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyData* out) {
 
   const ProbeLineProfile line =
       EvaluateProbeLine(*input.table, *input.polygons, *input.representative, *input.density, frame, layout,
-                        input.wavelength_nm, input.refractive_index, input.incident, input.sample_count);
+                        input.wavelength_nm, input.refractive_index, input.incident, input.sample_count, input.stop);
 
   SurveyProbe probe;
   probe.spec.delta_min_deg = kProbeDeltaMinDeg;
@@ -24,6 +24,14 @@ void RunSolarRadialProbe(const ProbeInput& input, SurveyData* out) {
   probe.spec.deterministic = true;
   probe.spec.representative = *input.representative;
   probe.spec.member_count = input.member_count;
+  if (line.truncated) {
+    // The cut line's readings are the run prefix's: refused with the stop's name — the
+    // built-in probe claims no full-lattice readings it did not run.
+    probe.SetState(EvidenceState::kRefused);
+    probe.Mode() = "stop_requested";
+    out->probes.push_back(std::move(probe));
+    return;
+  }
   probe.SetState(EvidenceState::kFinite);
   probe.Coverage().members_evaluated = 1;  // the representative; the class reads xN
   probe.Coverage().wavelength_nm = input.wavelength_nm;

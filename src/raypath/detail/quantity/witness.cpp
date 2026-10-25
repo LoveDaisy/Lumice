@@ -45,7 +45,14 @@ WitnessResult EvaluateWitness(const WitnessInput& input) {
   // streaming pass; the entry measure is evaluated only for kept events.
   analytic::IceDiscovery discovery(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()),
                                    input.refractive_index, input.incident);
-  const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count);
+  const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count, input.stop);
+  if (input.stop != nullptr && input.stop->Stopped()) {
+    // The lattice leg is one unit: cut mid-lattice it claims nothing — a named refusal, never
+    // a fabricated witness count (the kept events of a prefix are not the declared sample).
+    witness.SetState(EvidenceState::kRefused);
+    witness.Mode() = "stop_requested";
+    return CompleteQuantity(std::move(witness));
+  }
   if (events.empty()) {
     witness.SetState(EvidenceState::kRefused);
     witness.Mode() = kWitnessRefusalMode;

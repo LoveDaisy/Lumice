@@ -13,11 +13,15 @@ struct ProbeLineSample {
   double k_eff = 0.0;
 };
 
-// One wavelength's evaluated profile.
+// One wavelength's evaluated profile. Under a cooperative stop the samples are the completed
+// prefix's bins — `completed_lattice`/`truncated` say which lattice actually ran, so a partial
+// line is never presented as the full-lattice estimate.
 struct ProbeLineProfile {
   double wavelength_nm = 0.0;
   double refractive_index = 0.0;
   long long kept_count = 0;
+  int completed_lattice = 0;  // the lattice prefix that ran (== the request when not truncated)
+  bool truncated = false;
   std::vector<ProbeLineSample> samples;
 };
 

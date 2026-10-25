@@ -16,6 +16,8 @@ enum class WalkStatus {
   kNotClosed,        // RuntimeError: 1000 pieces without closing
   kNotFinite,        // RuntimeError: D_P off the closure of U_P (fail closed)
   kBadOrientation,   // ValueError: orientation not in {1, -1}
+  kStopRequested,    // not a walk failure: a cooperative stop fired at a poll boundary — no loop
+                     // data is claimed (fail closed, like every refusal) and the caller says why
 };
 
 struct DeviationInterval {

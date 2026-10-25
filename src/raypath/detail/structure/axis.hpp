@@ -85,7 +85,10 @@ struct AxisAssembly {
   analytic::BoundaryWalkRecord record;          // the closed walk's rich bookkeeping (chains)
 };
 
-AxisAssembly AssembleAxis(const analytic::DeviationField& field);
+// `stop` (optional) is the walk's cooperative stop: a poll at the march's step boundaries
+// fails closed with kStopRequested — no loop, no partition claimed (the walk's own refusal
+// invariant), and the caller's refusal mode carries the stop's name.
+AxisAssembly AssembleAxis(const analytic::DeviationField& field, const analytic::DiscoveryStop* stop = nullptr);
 
 // The partition view of the assembly (the certificate's consumption face). A walk refusal means
 // no partition was run (coverage kUnknown, intervals empty — the kernel's own fail-closed

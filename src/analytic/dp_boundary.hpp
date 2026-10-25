@@ -59,6 +59,7 @@
 #include <utility>
 #include <vector>
 
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
 #include "analytic/dp_field.hpp"
 #include "analytic/dp_partition.hpp"
 #include "analytic/support_types.hpp"
@@ -228,6 +229,10 @@ struct BoundaryWalkOptions {
   int lattice_n = 20000;
   double step = kWalkStepRad;
   int max_walk_steps = kMaxWalkSteps;
+  // Cooperative stop, polled at the march's step boundaries (never inside a step's numerics):
+  // when it fires the walk fails closed with kStopRequested — no loop data, no partition — and
+  // the caller says why. Null (the default, and every C-surface caller) walks exactly as before.
+  const DiscoveryStop* stop = nullptr;
 };
 
 // One march along the zero set of `margin` from `start` (a point on it) until a gate of U_P stops

@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "analytic/stop.hpp"
 #include "config/config_manager.hpp"
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
@@ -38,6 +39,9 @@ struct PathFeatureReportRequest : PathSelection {
   double bandwidth_rad = 3.14159265358979323846 / 180;
   double location_resolution_rad = .05 * 3.14159265358979323846 / 180;
   std::optional<std::chrono::steady_clock::time_point> deadline;
+  // The query's one-way cancel token (the new contract's cancel core). Every stop the report
+  // installs folds it in; the C surface's legacy flag entry keeps its own documented path.
+  const analytic::StopToken* cancel = nullptr;
 };
 
 Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatureReportRequest& request,

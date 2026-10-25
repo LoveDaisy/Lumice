@@ -41,7 +41,8 @@ SurveyObject SupportCardOf(const structure::ClassSupport& support, const std::ve
 
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
-                            double refractive_index, double wavelength_nm, SurveyData* out);
+                            double refractive_index, double wavelength_nm, SurveyData* out,
+                            const analytic::DiscoveryStop* stop = nullptr);
 
 // The chromatic layer's v1 legs on the representative: the positional-dispersion table (the
 // kernel's wavelength-critical table at the fixed 650/450 pair — every onset row the table

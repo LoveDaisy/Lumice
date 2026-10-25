@@ -35,6 +35,10 @@
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/results/quantity.hpp"
 
+namespace lumice::analytic {
+struct DiscoveryStop;  // the shared stop judgment (analytic/stop.hpp, via discovery.hpp)
+}
+
 namespace lumice::raypath::quantity {
 
 // The leg's schema constants (the serialized block echoes them all): the fixed seed, the band
@@ -53,6 +57,9 @@ struct McRegionEssInput {
   int member_count = 0;                     // the class size (the declared member filter bound)
   long long draws = 0;                      // requested outer draws, in (0, kSurveyMcEssMaxDraws]
   int budget_ms = 0;                        // the survey request's budget, as the deadline guardrail
+  // Cooperative stop riding into the sampler's draw loop beside the guardrail deadline (the
+  // single judgment: the stop carries both the deadline and any cancel token).
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 
 // Runs the sampler, the measure and the band aggregation, and returns the MC ESS record —

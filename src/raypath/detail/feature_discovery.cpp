@@ -181,7 +181,7 @@ void FindSourceBoundaries(const DiscoveryOptions& options, DiscoveryResult* resu
     }
     const auto spent =
         result->measure.optical_evaluations + result->replicate_path_evaluations + result->event_path_evaluations;
-    if (spent >= options.sampling.max_optical_evaluations || Clock::now() >= options.sampling.deadline) {
+    if (SamplingBudgetExceeded(options.sampling, spent)) {
       result->budget_exhausted = true;
       return;
     }
@@ -438,7 +438,7 @@ void FindEvents(const DiscoveryOptions& options, DiscoveryResult* result) {
       for (size_t spectral = 0; spectral < input.spectrum.rows.size(); ++spectral) {
         const auto spent =
             result->measure.optical_evaluations + result->replicate_path_evaluations + result->event_path_evaluations;
-        if (spent >= options.sampling.max_optical_evaluations || Clock::now() >= options.sampling.deadline) {
+        if (SamplingBudgetExceeded(options.sampling, spent)) {
           paired.complete = false;
           result->budget_exhausted = true;
           break;

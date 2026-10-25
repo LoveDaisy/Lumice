@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
 #include "analytic/path_evaluation.hpp"
 #include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/structure/family.hpp"
@@ -58,6 +59,10 @@ struct FamilyArmInput {
   // The query-face context mode: T0-T2 structure only — the weight legs (probe / chromatic /
   // tint) and the witness lattice are skipped when set.
   bool context_only = false;
+  // Cooperative stop, polled at the arm's own boundaries (the level loops, the survivor card
+  // loop) and riding into the level-0 structure support; a cut fails closed with the arm's
+  // named refusal. The survey's legs stay deadline-unenforced — this is an explicit cancel.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 
 // The arm's outcome. The document-level escape rule: the document refuses only when the arm

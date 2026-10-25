@@ -9,6 +9,7 @@
 #include "raypath/detail/survey/survey_t1.hpp"
 #include "raypath/detail/survey/survey_tint.hpp"
 #include "raypath/detail/survey/survey_witness.hpp"
+#include "raypath/query_control.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath::survey {
@@ -66,8 +67,8 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
 
   // Level 0's support: the delta machine's own (orientation-distribution independent), with the
   // density-support tail rows the measure's gauss zenith contributes.
-  const structure::ClassSupport support =
-      structure::AssembleClassSupport(*input.table, *input.polygons, *input.members, input.refractive_index);
+  const structure::ClassSupport support = structure::AssembleClassSupport(*input.table, *input.polygons, *input.members,
+                                                                          input.refractive_index, input.stop);
   if (support.ok) {
     out->objects.push_back(SupportCardOf(support, *input.members, input.wavelength_nm, out->request.symmetry_bits));
   }
@@ -137,6 +138,14 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
   }
   block.ladder = std::move(structure.ladder);
   for (const structure::FamilySurvivor& fact : structure.survivors) {
+    if (input.stop != nullptr) {
+      if (input.stop->token != nullptr) {
+        input.stop->token->NotePoll(raypath::kPollSurveyT0);  // the family arm's own boundaries
+      }
+      if (input.stop->Stopped()) {
+        break;  // the survivor cards past the cut are not fabricated; the ladder stands as built
+      }
+    }
     out->objects.push_back(FamilyCardOf(fact, input.wavelength_nm));
   }
   out->warm_index.seeds.insert(out->warm_index.seeds.end(), structure.seeds.begin(), structure.seeds.end());
@@ -237,6 +246,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
       probe_input.incident[c] = input.incident[c];
     }
     probe_input.member_count = member_count;
+    probe_input.stop = input.stop;
     probe_input.fill_member = input.representative;
     RunSolarRadialProbe(probe_input, out);
     AssembleChromaticLayer(*input.table, *input.polygons, *input.representative, input.density->spec, member_count,
@@ -249,6 +259,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
       class_tint_input.incident[c] = input.incident[c];
     }
     class_tint_input.member_count = member_count;
+    class_tint_input.stop = input.stop;
     AssembleClassTint(class_tint_input, out);
   } else {
     const std::string density_reason = "no quantification legs ran: the axis maps to no pose density (" +

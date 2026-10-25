@@ -313,8 +313,18 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   budget_request.interrupted = request.interrupted;
   const LegControl budget = ResolveLeg(BudgetWindow::kProbeLambdas, budget_request);
   meta.budget_ms = budget.resolved_ms;
-  const analytic::DiscoveryStop stop = budget.stop;
-  const auto stopped = [&stop]() { return stop.Stopped(); };
+  // The lambda boundaries' one stop: the resolved window with the query's cancel folded in.
+  const analytic::DiscoveryStop stop{ budget.stop.deadline, request.interrupted, request.cancel };
+  const auto stopped = [&stop]() {
+    if (stop.token != nullptr) {
+      stop.token->NotePoll(kPollProbeLambdas);
+    }
+    return stop.Stopped();
+  };
+  // The context's own stop is CANCEL-ONLY (ruling 4): the context cost is stoppable by an
+  // explicit cancel, never by the lambda window — a leg cut does not interrupt it.
+  const analytic::DiscoveryStop context_stop{ std::chrono::steady_clock::time_point::max(), request.interrupted,
+                                              request.cancel };
 
   // ---- the context (the point query's block, read at the at point) ----
   SurveyContextBlock& context = result.context;
@@ -331,8 +341,19 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     static_cast<PathSelection&>(survey_request) = request;
     survey_request.wavelength_nm = reference_nm;
     survey::SurveyResult doc;
-    Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
-    if (e.Ok())
+    survey::SurveyAssemblyOptions context_options;
+    context_options.context_only = true;
+    context_options.stop = &context_stop;
+    Error e = survey::AssembleSurvey(config, survey_request, &doc, context_options);
+    if (context_stop.Stopped()) {
+      inline_refused = true;
+      context.object.state = survey::EvidenceState::kUnevaluated;
+      context.object.reason = "stop_requested";
+      context.edge.state = survey::EvidenceState::kUnevaluated;
+      context.edge.reason = "stop_requested";
+      context.band_sum.state = survey::EvidenceState::kUnevaluated;
+      context.band_sum.reason = "stop_requested";
+    } else if (e.Ok())
       e = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
     if (!e.Ok()) {
       inline_refused = true;
@@ -484,7 +505,15 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
       reading.source = ProbeProfileSource::kRecomputed;
       survey::ProbeLineProfile line = survey::EvaluateProbeLine(
           table, polygons, request.path_layers[0], density, frame, layout, meta.wavelengths[w].nm,
-          meta.wavelengths[w].refractive_index, meta.incident_direction, profile.sample_count);
+          meta.wavelengths[w].refractive_index, meta.incident_direction, profile.sample_count, &stop);
+      if (line.truncated) {
+        // The cut line's prefix bins are not the full lattice: the profile refuses with the
+        // stop's name and claims no readings it did not run.
+        profile.Refuse("stop_requested");
+        result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
+        meta.interrupted = true;
+        continue;
+      }
       reading.members_evaluated = 1;
       reading.samples = std::move(line.samples);
     }
@@ -517,6 +546,7 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   if (stopped()) {
     meta.interrupted = true;
   }
+  meta.execution = OutcomeOf(stop);
 
   // The red-edge width: the 650 nm profile's edge minus the reference (first) profile's edge,
   // when both exist and differ as profiles. An axis-form quantity — the edges it subtracts sit

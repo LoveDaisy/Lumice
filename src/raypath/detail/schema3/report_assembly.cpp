@@ -5,6 +5,7 @@
 #include <chrono>
 #include <limits>
 
+#include "analytic/discovery.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
 namespace lumice::raypath::schema3 {
@@ -16,7 +17,7 @@ constexpr int kEnumerationGrid = 720;
 }  // namespace
 
 AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_t max_optical_evaluations,
-                                             std::chrono::steady_clock::time_point enumeration_deadline) {
+                                             const analytic::DiscoveryStop& enumeration_stop) {
   // The header's precondition, mechanized: the early path never ran the discovery this module
   // reads, so assembling over it dereferences an empty layer (the shape the production wiring
   // hit once as SIGSEGV before the conditional-assembly discipline existed).
@@ -58,7 +59,7 @@ AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_
   in.grid = kEnumerationGrid;
 
   const auto enumeration_begin = std::chrono::steady_clock::now();
-  out.core = EnumerateLayer(in, layer.scope.members, enumeration_deadline);
+  out.core = EnumerateLayer(in, layer.scope.members, enumeration_stop);
   out.enumeration_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - enumeration_begin).count();
   // The budget's configured cap rides the report (the request's own vocabulary); the
   // enumeration counts what it built, the kernel-internal counts stay the registered gap.
@@ -66,7 +67,7 @@ AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_
       static_cast<long long>(std::min<uint64_t>(max_optical_evaluations, std::numeric_limits<long long>::max()));
   // The anti-hang cap's installed value rides the budget only when a deadline was installed
   // (the default-argument callers — unit tests, future non-CLI consumers — keep hang_cap_ms 0).
-  if (enumeration_deadline != std::chrono::steady_clock::time_point::max()) {
+  if (enumeration_stop.deadline != std::chrono::steady_clock::time_point::max()) {
     out.core.budget.hang_cap_ms = kEnumerationHangCapMs;
   }
 

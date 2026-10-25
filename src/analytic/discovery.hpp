@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "analytic/stop.hpp"
+
 // Component discovery for one fixed path and one target direction: the seeds of the fiber
 // X_(P,d) = { R : F_P(R) = d }, each distinct component traced once and classified (LI
 // docs/phase1-math-contract.md section 9.5, strategy reference-discovery-v1; LI discovery.py
@@ -161,6 +163,41 @@ double NewtonCorrect(const Map& map, const TargetChart& chart, double stop, cons
   return norm;
 }
 
+// Optional cooperative stop for the sampling loops, polled at the loop boundary only (never
+// inside the numerics): a steady-clock deadline, a one-way interrupted flag (0 -> 1, owned by the
+// caller — a signal handler's sig_atomic_t; this code only reads it), a shared one-way StopToken,
+// or any combination. A stop is data, not an error: the loop returns what it found so far and
+// the caller says so. This struct IS the single stop judgment: every polling site reads
+// Stopped()/Why() here, never its own re-derivation — the flag, the token and the timer fold
+// into one verdict, with the explicit-intent sources outranking the timer.
+struct DiscoveryStop {
+  std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
+  const volatile int* interrupted = nullptr;
+  const StopToken* token = nullptr;
+
+  StopReason Why() const {
+    if (interrupted != nullptr && *interrupted != 0) {
+      return StopReason::kCancelled;  // the legacy signal entry is an explicit cancel
+    }
+    if (token != nullptr && token->CancelRequested()) {
+      return StopReason::kCancelled;
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return StopReason::kDeadline;
+    }
+    return StopReason::kNone;
+  }
+  bool Stopped() const { return Why() != StopReason::kNone; }
+};
+
+// Poll-ledger site ids this module owns (range 0..15, stop.hpp's split).
+inline constexpr int kPollBandLattice = 0;    // BuildBand, every 1024 lattice samples
+inline constexpr int kPollEventsLattice = 2;  // BuildEvents, every 1024 lattice samples
+inline constexpr int kPollPoolClusters = 1;   // DiscoverOnPool, per cluster (the fiber boundary)
+// dp_boundary's walk (the structure assembly's dominant loop): march steps and piece rounds.
+inline constexpr int kPollWalkSteps = 3;
+inline constexpr int kPollWalkPieces = 4;
+
 // Section 9.5.5 (LI _trace_and_classify): the forward trace with `params`, then — on an arc event —
 // the backward trace with initial_tangent_sign negated; appends a component or an incomplete
 // candidate and counts it. `trace(params)` runs one trace of `seed`; production passes TraceFiber
@@ -238,10 +275,19 @@ void ClassifyAndTrace(const Map& map, const TargetChart& chart, const Continuati
 template <class Map, class Admit>
 void DiscoverOnPool(const Map& map, const TargetChart& chart, const ContinuationParams& params,
                     const double* pool_poses, int pool_size, int extra_count, const double* band_offsets,
-                    double cluster_radius, double distance_threshold, const Admit& admit, DiscoveryOutput* out) {
+                    double cluster_radius, double distance_threshold, const Admit& admit, DiscoveryOutput* out,
+                    const DiscoveryStop* stop = nullptr) {
   const std::vector<std::vector<int>> clusters = GeodesicCluster(pool_poses, pool_size, cluster_radius);
   out->raw_cluster_count = static_cast<int>(clusters.size());
   for (const std::vector<int>& cluster : clusters) {
+    // The pool phase's poll (the fiber phase's outer boundary: one cluster = admit + fold +
+    // a forward/backward trace pair, each trace itself bounded by its evaluation budgets).
+    if (stop != nullptr && stop->token != nullptr) {
+      stop->token->NotePoll(kPollPoolClusters);
+    }
+    if (stop != nullptr && stop->Stopped()) {
+      return;  // the clusters not yet classified stay uncounted; the caller marks the stop
+    }
     const int representative = Representative(cluster, extra_count, band_offsets);
     double seed[9];
     if (!admit(pool_poses + 9 * static_cast<size_t>(representative), seed)) {
@@ -315,21 +361,6 @@ double TargetDeviation(const double incident_direction[3], const double target_d
 void CandidatePose(const double incident_direction[3], const double target_direction[3], const BandEvent& event,
                    double r[9]);
 
-// Optional cooperative stop for the sampling loops, polled at the loop boundary only (never
-// inside the numerics): a steady-clock deadline, a one-way interrupted flag (0 -> 1, owned by the
-// caller — a signal handler's sig_atomic_t; this code only reads it), or both. A stop is data,
-// not an error: the loop returns what it found so far and the caller says so.
-struct DiscoveryStop {
-  std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
-  const volatile int* interrupted = nullptr;
-  bool Stopped() const {
-    if (interrupted != nullptr && *interrupted != 0) {
-      return true;
-    }
-    return std::chrono::steady_clock::now() >= deadline;
-  }
-};
-
 // One crystal and one concrete path, lit from one direction: the fixed context of a discovery call.
 // Holds the path map (path_fiber.hpp) and the corridor (entry_measure.hpp), so it is neither
 // copyable nor movable. Not thread-safe (the corridor keeps clipping scratch); one per call.
@@ -353,7 +384,9 @@ class IceDiscovery {
   // increasing (D, index), with w in the native entry-measure unit (the engine reference scale,
   // LI's own since its module C caliber fix). The same lattice
   // point, path chain, deviation and gates as BuildBand (one EvaluateLatticePoint), without the band.
-  std::vector<SampleEvent> BuildEvents(int sample_count);
+  // Same poll cadence as BuildBand: the lattice boundary only. With a stop, the returned
+  // events are the kept prefix — `completed` (if non-null) receives the sample count run.
+  std::vector<SampleEvent> BuildEvents(int sample_count, const DiscoveryStop* stop = nullptr, int* completed = nullptr);
 
   // Lattice point i of n: u, phi = Phi_P(-u), D and the index into `event`, the Fresnel factor T into
   // `transmission`. False when the path is not valid at that point (nothing else is set then).
@@ -370,7 +403,8 @@ class IceDiscovery {
   // `extra_count` row-major rotations.
   DiscoveryOutput DiscoverOnBand(const double target_direction[3], const std::vector<BandEvent>& band,
                                  const double* extra_seeds, int extra_count, double cluster_radius,
-                                 double distance_threshold, const ContinuationParams& params);
+                                 double distance_threshold, const ContinuationParams& params,
+                                 const DiscoveryStop* stop = nullptr);
 
   // BuildBand for the target's deviation, then DiscoverOnBand: one discovery call.
   DiscoveryOutput Discover(const double target_direction[3], int sample_count, double band_half_width,

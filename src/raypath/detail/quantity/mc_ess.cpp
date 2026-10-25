@@ -103,7 +103,17 @@ McRegionEssResult EvaluateMcRegionEss(const McRegionEssInput& input) {
   budget.max_optical_evaluations = ~uint64_t{ 0 };
   BudgetRequest guardrail_request;
   guardrail_request.budget_ms = input.budget_ms;
-  budget.deadline = ResolveLeg(BudgetWindow::kLegGuardrail, guardrail_request).stop.deadline;
+  const LegControl guardrail = ResolveLeg(BudgetWindow::kLegGuardrail, guardrail_request);
+  budget.deadline = guardrail.stop.deadline;
+  // The single judgment the draw loops poll: this leg's own guardrail deadline merged with the
+  // caller's cancel token (and legacy signal) — one stop object, no second verdict anywhere.
+  analytic::DiscoveryStop merged_stop;
+  if (input.stop != nullptr) {
+    merged_stop.deadline = guardrail.stop.deadline;
+    merged_stop.interrupted = input.stop->interrupted;
+    merged_stop.token = input.stop->token;
+    budget.stop = &merged_stop;
+  }
   DiagnosticMeasure measure;
   if (const Error error = BuildDiagnosticMeasure(sampler, budget, &measure); !error.Ok()) {
     ess.SetState(EvidenceState::kRefused);

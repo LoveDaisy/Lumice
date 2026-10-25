@@ -54,10 +54,16 @@ WeightTintResult EvaluateWeightTint(const TintInput& input) {
   const analytic::PixelTable empty_table;
   const analytic::BandSumOutput red =
       analytic::BandSum(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()), n_red,
-                        input.incident, input.sample_count, empty_table, density);
+                        input.incident, input.sample_count, empty_table, density, input.stop);
   const analytic::BandSumOutput blue =
       analytic::BandSum(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()), n_blue,
-                        input.incident, input.sample_count, empty_table, density);
+                        input.incident, input.sample_count, empty_table, density, input.stop);
+  if ((red.truncated || blue.truncated) && input.stop != nullptr && input.stop->Stopped()) {
+    // The ratio needs both masses over the full lattice: a cut pass claims nothing.
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "stop_requested";
+    return CompleteTint(std::move(tint));
+  }
   if (!red.rank_zero || !blue.rank_zero) {
     // The T0 verdict and the kernel's own rank check disagree: refuse, never a map read as a mass.
     tint.SetState(EvidenceState::kRefused);
@@ -147,7 +153,7 @@ WeightTintResult EvaluateClassTint(const ClassTintInput& input) {
     // copyable nor const-evaluable), so each lambda invocation builds its own.
     analytic::IceDiscovery discovery(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()),
                                      refractive_index, input.incident);
-    const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count);
+    const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count, input.stop);
     double sum = 0.0;
     for (const analytic::SampleEvent& event : events) {
       sum += event.weight;
@@ -157,6 +163,14 @@ WeightTintResult EvaluateClassTint(const ClassTintInput& input) {
   };
   power_sum(n_red, &weight_red, &kept_red);
   power_sum(n_blue, &weight_blue, &kept_blue);
+  if (input.stop != nullptr && input.stop->Stopped()) {
+    // The ratio needs both passes over the full lattice: a cut pass claims nothing — a named
+    // refusal (the prefix's kept weights are not the declared sample).
+    tint.Value().reading = TintClassPowerReading{};
+    tint.SetState(EvidenceState::kRefused);
+    tint.Mode() = "stop_requested";
+    return CompleteTint(std::move(tint));
+  }
   if (!(weight_red > 0.0) || !(weight_blue > 0.0) || !std::isfinite(weight_red) || !std::isfinite(weight_blue)) {
     // A degenerate band makes the ratio no number; the document must not carry a silent inf.
     tint.Value().reading = TintClassPowerReading{};

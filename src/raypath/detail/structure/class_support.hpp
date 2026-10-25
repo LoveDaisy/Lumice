@@ -13,8 +13,12 @@ struct ClassSupport {
   std::vector<analytic::DeviationInterval> intervals;  // the class-level support (== rows.front())
 };
 
+// `stop` (optional) polls per member (the structure assembly's outer boundary) and rides into
+// each member's walk; a stop fails closed with refusal_mode "stop_requested" — the honest
+// truncation marker, never a fabricated support.
 ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-                                  const std::vector<std::vector<int>>& members, double refractive_index);
+                                  const std::vector<std::vector<int>>& members, double refractive_index,
+                                  const analytic::DiscoveryStop* stop = nullptr);
 
 
 }  // namespace lumice::raypath::structure

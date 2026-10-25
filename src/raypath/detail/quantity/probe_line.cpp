@@ -74,7 +74,8 @@ ProbeReadings ReadProbeProfile(const std::vector<double>& values_deg, const std:
 ProbeLineProfile EvaluateProbeLine(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                                    const std::vector<int>& representative, const PoseDensityConversion& density,
                                    const ProbeFrame& frame, const ProbeLineLayout& layout, double wavelength_nm,
-                                   double refractive_index, const double incident[3], int sample_count) {
+                                   double refractive_index, const double incident[3], int sample_count,
+                                   const analytic::DiscoveryStop* stop) {
   const size_t bins = layout.bins.size();
   std::vector<double> centre_dirs(3 * bins);
   std::vector<double> corner_dirs(12 * bins);
@@ -111,9 +112,11 @@ ProbeLineProfile EvaluateProbeLine(const analytic::FaceNormalTable& table, const
   profile.refractive_index = refractive_index;
   const analytic::BandSumOutput band =
       analytic::BandSum(table, polygons, slots.data(), static_cast<int>(slots.size()), refractive_index, incident,
-                        sample_count, pixels, pose_density);
+                        sample_count, pixels, pose_density, stop);
   {
     profile.kept_count = band.kept_count;
+    profile.completed_lattice = band.completed_samples;
+    profile.truncated = band.truncated;
     profile.samples.resize(bins);
     for (size_t k = 0; k < bins; k++) {
       ProbeLineSample& sample = profile.samples[k];

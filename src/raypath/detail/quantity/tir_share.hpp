@@ -32,6 +32,12 @@
 #include "raypath/results/quantity.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
+// The real namespace's forward declaration (a global-scope one would be shadowed by
+// lumice::analytic in the field lookups below).
+namespace lumice::analytic {
+struct DiscoveryStop;  // the shared stop judgment (analytic/stop.hpp, via discovery.hpp)
+}
+
 namespace lumice::raypath::quantity {
 
 // The pinned lattice size (schema, not tuning: the serialized block echoes it) — the class
@@ -47,6 +53,9 @@ struct TirShareInput {
   double incident[3] = { 0.0, 0.0, -1.0 };           // the sun's propagation direction (SunIncidentDirection)
   int member_count = 0;                              // the class size the representative stands for
   int sample_count = kSurveyTirShareSampleCount;
+  // Cooperative stop for the leg's lattice passes (BuildEvents' own poll) — an explicit
+  // cancel; a cut pass keeps its evidence shape and never fabricates the full lattice.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 
 // Runs the two lambda passes and returns the TIR share record — finite with the shares, or the refused

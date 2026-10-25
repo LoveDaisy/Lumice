@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "analytic/stop.hpp"
 #include "config/config_manager.hpp"
 #include "core/def.hpp"
 #include "raypath/domain/input_metadata.hpp"
@@ -68,6 +69,9 @@ struct ProbeRequest : PathSelection {
   std::optional<WarmCandidate> warm_candidate;
   int budget_ms = 0;  // 0 = the documented default; polled at the per-lambda boundaries
   const volatile int* interrupted = nullptr;
+  // The query's one-way cancel token (the new contract's cancel core): folded into the same
+  // single stop the per-lambda boundaries poll, and into the context's cancel-only stop.
+  const analytic::StopToken* cancel = nullptr;
 };
 
 // The whole analysis. On error `out` is left default-constructed.

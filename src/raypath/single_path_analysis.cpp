@@ -638,7 +638,8 @@ namespace {
 // context-only T0-T2 assembly otherwise (and also under the warm_index_absent degradation, which
 // still declares itself in the block).
 void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& request, const SinglePathMetadata& meta,
-                        const std::optional<AdmittedWarmSource>& admitted, SurveyContextBlock* out) {
+                        const std::optional<AdmittedWarmSource>& admitted, SurveyContextBlock* out,
+                        const analytic::DiscoveryStop* stop) {
   const AdmittedWarmSource* source =
       admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &*admitted : nullptr;
   out->source = source != nullptr ? ContextSource::kWarm : ContextSource::kInline;
@@ -650,7 +651,20 @@ void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& re
     static_cast<PathSelection&>(survey_request) = request;
     survey_request.wavelength_nm = meta.wavelength_nm;
     survey::SurveyResult doc;
-    Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
+    survey::SurveyAssemblyOptions context_options;
+    context_options.context_only = true;
+    context_options.stop = stop;
+    Error e = survey::AssembleSurvey(config, survey_request, &doc, context_options);
+    if (stop != nullptr && stop->Stopped()) {
+      // The cut context claims nothing: the three fields refuse with the stop's own name.
+      out->object.state = survey::EvidenceState::kUnevaluated;
+      out->object.reason = "stop_requested";
+      out->edge.state = survey::EvidenceState::kUnevaluated;
+      out->edge.reason = "stop_requested";
+      out->band_sum.state = survey::EvidenceState::kUnevaluated;
+      out->band_sum.reason = "stop_requested";
+      return;
+    }
     if (e.Ok())
       e = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
     if (!e.Ok()) {
@@ -813,8 +827,14 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
   budget_request.budget_ms = request.budget_ms;
   budget_request.interrupted = request.interrupted;
   const LegControl budget = ResolveLeg(BudgetWindow::kPointDiscovery, budget_request);
-  const analytic::DiscoveryStop stop = budget.stop;
-  const auto stopped = [&stop]() { return stop.Stopped(); };
+  // The discovery legs' one stop: the resolved window with the query's cancel folded in.
+  const analytic::DiscoveryStop stop{ budget.stop.deadline, request.interrupted, request.cancel };
+  const auto stopped = [&stop]() {
+    if (stop.token != nullptr) {
+      stop.token->NotePoll(kPollPointLegs);
+    }
+    return stop.Stopped();
+  };
   meta.budget_ms = budget.resolved_ms;
   meta.sample_count = request.sample_count;
   meta.band_half_width_rad = analytic::kDefaultBandHalfWidth;
@@ -873,6 +893,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
     if (stopped()) {
       meta.interrupted = true;
     }
+    meta.execution = OutcomeOf(stop);
     *out = std::move(result);
     return {};
   }
@@ -903,6 +924,8 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& in
   for (const analytic::IncompleteCandidate& c : found.incomplete) {
     result.Discovered().incomplete.push_back(ToIncomplete(c));
   }
+  meta.execution = OutcomeOf(stop);
+  meta.interrupted = meta.interrupted || stop.Stopped();
   DiscoverySummary& s = result.Discovered().discovery;
   s.complete = found.Complete();
   s.pool_count = found.pool_count;
@@ -926,7 +949,11 @@ SurveyContextBlock SurveyContextOf(const SinglePathResult& result) {
   }
   SurveyContextBlock out;
   if (result.context_config != nullptr) {
-    BuildSurveyContext(*result.context_config, result.context_request, result.meta, result.context_warm, &out);
+    // Cancel-only (ruling 4): the deferred context pays no window, only an explicit cancel.
+    const analytic::DiscoveryStop context_stop{ std::chrono::steady_clock::time_point::max(),
+                                                result.context_request.interrupted, result.context_request.cancel };
+    BuildSurveyContext(*result.context_config, result.context_request, result.meta, result.context_warm, &out,
+                       &context_stop);
   }
   return out;
 }
@@ -936,6 +963,11 @@ void EnsureSurveyContext(SinglePathResult* result) {
     return;
   }
   result->survey_context = SurveyContextOf(*result);
+  // A cancel caught by the context (the discovery legs already finished) still names the
+  // query's outcome — the axes are orthogonal, the outcome follows the single authority.
+  if (result->survey_context.object.reason == "stop_requested") {
+    result->meta.execution = ExecutionOutcome::kCancelled;
+  }
   result->survey_context_ready = true;
   result->context_config.reset();
   result->context_request = SinglePathRequest{};

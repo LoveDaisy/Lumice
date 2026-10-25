@@ -117,8 +117,10 @@ SurveyObject SupportCardOf(const structure::ClassSupport& support, const std::ve
 
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
-                            double refractive_index, double wavelength_nm, SurveyData* out) {
-  const structure::ClassSupport support = structure::AssembleClassSupport(table, polygons, members, refractive_index);
+                            double refractive_index, double wavelength_nm, SurveyData* out,
+                            const analytic::DiscoveryStop* stop) {
+  const structure::ClassSupport support =
+      structure::AssembleClassSupport(table, polygons, members, refractive_index, stop);
   if (!support.ok) {
     return { false, support.refusal_mode };
   }

@@ -28,6 +28,9 @@ struct ProbeInput {
   // ran on the representative, and a relabeled sibling's card must not carry its numbers).
   // Null = the T1 arm's shape: every bright_domain card (one) reads the profile.
   const std::vector<int>* fill_member = nullptr;
+  // Cooperative stop for the line's lattice pass — an explicit cancel; a cut line's readings
+  // carry `truncated` and never present the prefix as the full lattice.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 
 void RunSolarRadialProbe(const ProbeInput& input, SurveyData* out);

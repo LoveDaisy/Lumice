@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "analytic/stop.hpp"
 #include "config/config_manager.hpp"
 #include "core/def.hpp"
 #include "core/math.hpp"
@@ -73,6 +74,9 @@ struct SinglePathRequest : PathSelection {
   // the flag is polled at loop boundaries only. A stopped run reports meta.interrupted.
   int budget_ms = 0;
   const volatile int* interrupted = nullptr;
+  // The query's one-way cancel token (the new contract's cancel core): folded into the
+  // discovery legs' single stop and into the context's cancel-only stop.
+  const analytic::StopToken* cancel = nullptr;
 };
 
 // The legacy execution envelope owns one value and deferred context inputs.

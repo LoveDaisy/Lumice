@@ -58,6 +58,11 @@ struct PixelValue {
 
 struct BandSumOutput {
   bool rank_zero = false;
+  // Honesty under a stop: the lattice prefix that actually ran (== n when nothing stopped).
+  // Values over a truncated lattice are partial sums of that prefix — consumers must read
+  // `truncated` and never present them as the full-lattice estimate.
+  int completed_samples = 0;
+  bool truncated = false;
   std::vector<PixelValue> pixels;
   // Rank 0 only.
   double m = 0.0;
@@ -96,7 +101,7 @@ void PlacePointMass(double m, const double incident[3], const PixelTable& pixels
 // pixel is 0 (or, for rank 0, m = 0).
 BandSumOutput BandSum(const FaceNormalTable& table, const FacePolygonTable& polygons, const int* slots, int slot_count,
                       double refractive_index, const double incident[3], int n, const PixelTable& pixels,
-                      const PoseDensity& density);
+                      const PoseDensity& density, const DiscoveryStop* stop = nullptr);
 
 }  // namespace lumice::analytic
 

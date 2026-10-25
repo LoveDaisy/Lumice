@@ -18,6 +18,7 @@
 #include "raypath/detail/survey/survey_tint.hpp"
 #include "raypath/detail/survey/survey_tir_share.hpp"
 #include "raypath/detail/survey/survey_witness.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/logger.hpp"
 
@@ -96,7 +97,7 @@ SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, cons
 quantity::TirShareInput TirShareInputOf(const ConfigManager& config, const analytic::FaceNormalTable& table,
                                         const analytic::FacePolygonTable& polygons,
                                         const analytic::CrystalShape& crystal, const std::vector<int>& representative,
-                                        int member_count) {
+                                        int member_count, const analytic::DiscoveryStop* stop) {
   quantity::TirShareInput input;
   input.table = &table;
   input.polygons = &polygons;
@@ -104,6 +105,7 @@ quantity::TirShareInput TirShareInputOf(const ConfigManager& config, const analy
   input.representative = &representative;
   SunIncidentDirection(config.scene_.light_source_.param_, input.incident);
   input.member_count = member_count;
+  input.stop = stop;
   return input;
 }
 
@@ -113,7 +115,7 @@ quantity::TirShareInput TirShareInputOf(const ConfigManager& config, const analy
 // the note names what actually ran: a refused leg never claims the draws it did not run.
 void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSnapshot& snapshot,
                                       const SurveyRequest& request, int member_count, double wavelength_nm,
-                                      SurveyData* out) {
+                                      SurveyData* out, const analytic::DiscoveryStop* stop = nullptr) {
   if (request.mc_ess_draws <= 0) {
     return;
   }
@@ -128,6 +130,7 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
   ess_input.member_count = member_count;
   ess_input.draws = request.mc_ess_draws;
   ess_input.budget_ms = request.budget_ms;
+  ess_input.stop = stop;
   AssembleMcRegionEss(ess_input, out);
   const McRegionEssResult& ess = *out->mc_region_ess;
   if (ess.State() == EvidenceState::kFinite) {
@@ -241,6 +244,18 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
   bool any_escaped = false;
   std::string escape_mode;
   for (const auto& member : scope_members) {
+    // The T0 leg's poll (per member verdict — Classify is the per-member cost).
+    if (options.stop != nullptr) {
+      if (options.stop->token != nullptr) {
+        options.stop->token->NotePoll(raypath::kPollSurveyT0);
+      }
+      if (options.stop->Stopped()) {
+        out->budget_note +=
+            " The T0 routing leg stopped at a cooperative poll (explicit cancel); "
+            "the members past the cut carry no verdict.";
+        return {};  // the document holds what the cut left: honest, never fabricated
+      }
+    }
     SurveyMemberVerdict verdict =
         MemberVerdictOf(table, polygons, member, density, wavelength.refractive_index, &any_escaped, &escape_mode);
     all_rank_zero = all_rank_zero && verdict.rank_zero;
@@ -284,6 +299,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
       tint_input.density = &density;  // the same conversion the routing gate checked
       SunIncidentDirection(config.scene_.light_source_.param_, tint_input.incident);
       tint_input.member_count = static_cast<int>(scope_members.size());
+      tint_input.stop = options.stop;
       AssembleWeightTint(tint_input, out);
       out->budget_note = "the identity arm's legs are the T0 routing verdict (milliseconds) and the " +
                          ChromaticPairProseBlueFirst() + " band-sum tint pair (" +
@@ -300,8 +316,9 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
     out->early_stopped = false;
     const bool full_dimensional = density.Ok() && density.spec.family == analytic::PoseFamily::kRandom;
     if (full_dimensional) {
-      const T1Outcome outcome = AssembleT1Objects(table, polygons, scope_members, request.path_layers[0],
-                                                  wavelength.refractive_index, wavelength.wavelength_nm, out);
+      const T1Outcome outcome =
+          AssembleT1Objects(table, polygons, scope_members, request.path_layers[0], wavelength.refractive_index,
+                            wavelength.wavelength_nm, out, options.stop);
       if (!outcome.ok) {
         // Fail closed downstream of the support: the cards after a refused support are not
         // produced, and the document carries the refusal. The support refusal says the support
@@ -336,10 +353,10 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
         // nothing about the internal-reflection weight split, which the declared lattice still
         // answers (the witness's independence principle, one block down).
         AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
-                                         static_cast<int>(scope_members.size())),
+                                         static_cast<int>(scope_members.size()), options.stop),
                          out);
         AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope_members.size()),
-                                         wavelength.wavelength_nm, out);
+                                         wavelength.wavelength_nm, out, options.stop);
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
       } else {
@@ -379,6 +396,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
           probe_input.wavelength_nm = wavelength.wavelength_nm;
           SunIncidentDirection(config.scene_.light_source_.param_, probe_input.incident);
           probe_input.member_count = static_cast<int>(scope_members.size());
+          probe_input.stop = options.stop;
           RunSolarRadialProbe(probe_input, out);
           // The chromatic layer's v1 legs on the representative (orthogonal to the position
           // objects; the dispersion and diagnose legs are separate kernel paths, separate
@@ -399,10 +417,10 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
           // document-level block of its own, beside family_routing; its refusals never touch the
           // chromatic block).
           AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
-                                           static_cast<int>(scope_members.size())),
+                                           static_cast<int>(scope_members.size()), options.stop),
                            out);
           AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope_members.size()),
-                                           wavelength.wavelength_nm, out);
+                                           wavelength.wavelength_nm, out, options.stop);
         }
       }
     } else {
@@ -439,6 +457,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
         FamilyArmInput family_input;
         family_input.table = &table;
         family_input.polygons = &polygons;
+        family_input.stop = options.stop;
         family_input.crystal = &crystal.shape;
         family_input.members = &scope_members;
         family_input.representative = &request.path_layers[0];

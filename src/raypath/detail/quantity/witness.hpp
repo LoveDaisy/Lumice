@@ -27,6 +27,12 @@
 #include "raypath/results/quantity.hpp"
 #include "raypath/scene_to_analytic.hpp"
 
+// The real namespace's forward declaration (a global-scope one would be shadowed by
+// lumice::analytic in the field lookups below).
+namespace lumice::analytic {
+struct DiscoveryStop;  // the shared stop judgment (analytic/stop.hpp, via discovery.hpp)
+}
+
 namespace lumice::raypath::quantity {
 
 // The witness lattice size (schema, not tuning: the serialized block echoes it). Small on
@@ -47,6 +53,9 @@ struct WitnessInput {
   // The query-face context mode: the lattice leg is T3 quantification, skipped (no witness
   // sub-block at all) when the assembly runs context-only.
   bool context_only = false;
+  // Cooperative stop for the lattice pass (BuildEvents' own poll) — an explicit cancel; a cut
+  // pass keeps the card's evidence shape and never fabricates the witness lattice.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 
 WitnessResult EvaluateWitness(const WitnessInput& input);

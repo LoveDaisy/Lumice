@@ -70,10 +70,12 @@ FiberSampleStream StreamOf(const analytic::OrbitFiberStream& stream) {
   return out;
 }
 
-AxisAssembly AssembleAxis(const analytic::DeviationField& field) {
+AxisAssembly AssembleAxis(const analytic::DeviationField& field, const analytic::DiscoveryStop* stop) {
   AxisAssembly out;
   analytic::BoundaryWalkRecord record;
-  const analytic::WalkResult walk = analytic::WalkBoundary(field, analytic::BoundaryWalkOptions{}, &record);
+  analytic::BoundaryWalkOptions walk_options;
+  walk_options.stop = stop;
+  const analytic::WalkResult walk = analytic::WalkBoundary(field, walk_options, &record);
   out.axis.walk_status = walk.status;
   out.axis.walk_closed = walk.status == analytic::WalkStatus::kOk;
   if (!out.axis.walk_closed) {

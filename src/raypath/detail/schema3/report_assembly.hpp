@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/schema3/mc_attribution.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
@@ -61,7 +62,7 @@ struct AssembledSchema3Report {
 
 AssembledSchema3Report AssembleSchema3Report(
     PathFeatureReport&& report, uint64_t max_optical_evaluations,
-    std::chrono::steady_clock::time_point enumeration_deadline = std::chrono::steady_clock::time_point::max());
+    const analytic::DiscoveryStop& enumeration_stop = analytic::DiscoveryStop{});
 
 // Capture the pure scope and budget settings before execution storage is moved.
 FeatureReportData PrepareFeatureReportResult(const PathFeatureReport& report);

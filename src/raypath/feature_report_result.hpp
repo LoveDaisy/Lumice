@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "raypath/domain/result_identity.hpp"
+#include "raypath/query_control.hpp"  // ExecutionOutcome — the outcome axis's one vocabulary
 #include "raypath/results/report_attribution.hpp"
 #include "raypath/results/report_enumeration.hpp"
 #include "raypath/results/report_records.hpp"
@@ -75,6 +76,10 @@ struct FeatureReportData {
   // kNotCompleted is the construction slot's value; only the completion assembly assigns a
   // final outcome, and FeatureReportResult refuses to freeze the slot.
   ReportOutcome outcome = ReportOutcome::kNotCompleted;
+  // The execution outcome axis (internal typed read, orthogonal to ReportOutcome's own
+  // machine): completed / cancelled / deadline_exceeded, derived from the report's single stop
+  // authorities; the wire keeps its existing outcome conventions.
+  ExecutionOutcome execution = ExecutionOutcome::kCompleted;
   std::vector<std::vector<int>> requested_path_layers;
   schema3::Schema3DiscoveryCore core;
   std::vector<schema3::CorroborationAnnotation> annotations;

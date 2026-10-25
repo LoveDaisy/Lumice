@@ -6,6 +6,7 @@
 #include "analytic/diagnostic_batch.hpp"
 #include "analytic/discovery.hpp"
 #include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table
+#include "raypath/query_control.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath::quantity {
@@ -48,12 +49,23 @@ TirShareResult EvaluateTirShare(const TirShareInput& input) {
   long long kept_count[2] = { 0, 0 };
 
   for (int lambda = 0; lambda < 2; lambda++) {
+    if (input.stop != nullptr) {
+      if (input.stop->token != nullptr) {
+        input.stop->token->NotePoll(raypath::kPollSurveyT0);  // the leg's pass boundary
+      }
+      if (input.stop->Stopped()) {
+        // The shares need both passes over the full lattice: a cut pass claims nothing.
+        tir.SetState(EvidenceState::kRefused);
+        tir.Mode() = "stop_requested";
+        return CompleteQuantity(std::move(tir));
+      }
+    }
     const double refractive_index = lambda == 0 ? n_red : n_blue;
     // One discovery per pass (the corridor keeps clipping scratch; the type is neither copyable
     // nor movable), the tint's own two-pass shape at one shared lattice size.
     analytic::IceDiscovery discovery(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()),
                                      refractive_index, input.incident);
-    const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count);
+    const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count, input.stop);
     // Every kept event re-posed and re-derived in one batch call; the batch is the classifier,
     // the shares' numerator and denominator both read the discovery-side w = A*T.
     std::vector<analytic::DiagnosticInputRow> rows;

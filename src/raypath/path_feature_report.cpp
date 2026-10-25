@@ -141,7 +141,10 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
   quality_request.absolute_deadline = request.deadline;
   quality_request.start = begin;
   const LegControl quality = ResolveLeg(BudgetWindow::kQualityDeadline, quality_request);
-  DiscoveryOptions options{ { samples, request.max_optical_evaluations, quality.stop.deadline },
+  // The discovery legs' one stop: the quality window with the query's cancel folded in.
+  const analytic::DiscoveryStop quality_stop{ quality.stop.deadline, nullptr, request.cancel };
+  DiscoveryOptions options{ { samples, request.max_optical_evaluations, quality.stop.deadline,
+                              request.cancel != nullptr ? &quality_stop : nullptr },
                             request.bandwidth_rad,
                             request.location_resolution_rad,
                             request.max_field_evaluations,
@@ -150,6 +153,9 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
                             4,
                             6 };
   error = BuildPathFeatureReport(scene, identity, selection, spectrum, 1497, options, out);
+  if (error.Ok() && request.cancel != nullptr) {
+    out->discovery_execution = OutcomeOf(quality_stop);
+  }
   if (!error.Ok()) {
     return error;
   }
@@ -181,11 +187,19 @@ Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatu
   // of the request's quality budget (--budget-ms bounds the discovery legs, report-only by
   // A4 for the enumeration's own cost vocabulary). Resolved by the one owner, like every
   // window (query_control.hpp).
+  // The enumeration leg's one stop: the anti-hang cap's window with the query's cancel
+  // folded in (the window resolved by the one owner, like every window).
+  const analytic::DiscoveryStop enumeration_stop{ ResolveLeg(BudgetWindow::kHangCap, {}).stop.deadline, nullptr,
+                                                  request.cancel };
+  // Captured before the move below: the discovery legs' observed outcome rides the detail
+  // struct, and whichever single stop saw a reason wins (both fold the same cancel token).
+  const ExecutionOutcome discovery_execution = report.discovery_execution;
   schema3::AssembledSchema3Report assembled =
       report.unsupported_multicrystal ?
           schema3::AssembledSchema3Report{} :
-          schema3::AssembleSchema3Report(std::move(report), request.max_optical_evaluations,
-                                         ResolveLeg(BudgetWindow::kHangCap, {}).stop.deadline);
+          schema3::AssembleSchema3Report(std::move(report), request.max_optical_evaluations, enumeration_stop);
+  result.execution =
+      OutcomeOf(enumeration_stop) != ExecutionOutcome::kCompleted ? OutcomeOf(enumeration_stop) : discovery_execution;
   *out = schema3::CompleteFeatureReportResult(std::move(result), std::move(assembled));
   return {};
 }
