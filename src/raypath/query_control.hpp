@@ -78,7 +78,9 @@ QueryDeadline ResolveQueryDeadline(const BudgetRequest& request);
 // Runtime reads: resolutions this process installed, per window and for the unified path.
 // One query's run must move its own windows' counters by exactly the leg count and nothing
 // else's — the counters exist to make "resolved once, no second resolution" observable, not
-// to be production telemetry.
+// to be production telemetry. Premise: ONE query executes at a time in the process — the
+// per-window counts are decisive only without concurrent query executions (the faces run on
+// the caller's thread; a future parallel executor owes these reads a per-query ledger).
 long BudgetResolutionCount(BudgetWindow window);
 long QueryDeadlineResolutionCount();
 void ResetBudgetResolutionCountsForTest();

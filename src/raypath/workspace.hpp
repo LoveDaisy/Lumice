@@ -57,7 +57,8 @@ class AnalysisWorkspace {
   Error QueryProbe(const ProbeRequest& request, ProbeResult* out, const analytic::StopToken* cancel = nullptr);
   Error QuerySurvey(const SurveyRequest& request, survey::SurveyResult* out,
                     const analytic::StopToken* cancel = nullptr);
-  Error QueryReport(const PathFeatureReportRequest& request, FeatureReportResult* out);
+  Error QueryReport(const PathFeatureReportRequest& request, FeatureReportResult* out,
+                    const analytic::StopToken* cancel = nullptr);
 
   // ---- the reuse reads (the workspace's own decision ledger, for the acceptance tests) ----
   long GeometryBuildCount() const { return geometry_builds_; }  // face-table builds performed

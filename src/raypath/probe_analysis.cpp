@@ -347,6 +347,9 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     context_options.stop = &context_stop;
     Error e = survey::AssembleSurvey(config, survey_request, &doc, context_options);
     if (context_stop.Stopped()) {
+      // The cut context claims nothing AND engages nothing: a T0-cut assembly still returns
+      // Ok, so anything but a full exit here would fall through to the disengaged optional's
+      // dereference below — the three fields refuse with the stop's name and the arm is done.
       inline_refused = true;
       context.cut_by_stop = true;
       context.object.state = survey::EvidenceState::kUnevaluated;
@@ -355,9 +358,16 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
       context.edge.reason = "stop_requested";
       context.band_sum.state = survey::EvidenceState::kUnevaluated;
       context.band_sum.reason = "stop_requested";
-    } else if (e.Ok())
-      e = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
-    if (!e.Ok()) {
+    } else if (!e.Ok()) {
+      inline_refused = true;
+      context.object.state = survey::EvidenceState::kUnevaluated;
+      context.object.reason = "inline_survey_refused";
+      context.edge.state = survey::EvidenceState::kUnevaluated;
+      context.edge.reason = "inline_survey_refused";
+      context.band_sum.state = survey::EvidenceState::kUnevaluated;
+      context.band_sum.reason = "inline_survey_refused";
+    } else if (Error admission = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
+               !admission.Ok()) {
       inline_refused = true;
       context.object.state = survey::EvidenceState::kUnevaluated;
       context.object.reason = "inline_survey_refused";
@@ -366,7 +376,7 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
       context.band_sum.state = survey::EvidenceState::kUnevaluated;
       context.band_sum.reason = "inline_survey_refused";
     } else {
-      warm = &*inline_source;
+      warm = &*inline_source;  // engaged: the admission succeeded above
     }
   }
   SurveyStructureView reference_structure = SurveyStructureView::Unavailable("inline_survey_refused");

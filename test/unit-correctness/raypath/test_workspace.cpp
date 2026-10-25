@@ -168,6 +168,7 @@ TEST(Workspace, CrossShapeRequestsNeverHitTheSurveySlot) {
   const Variant variants[] = {
     { "mc_ess_draws", [](SurveyRequest* r) { r->mc_ess_draws = 64; } },
     { "budget_ms", [](SurveyRequest* r) { r->budget_ms = 30000; } },
+    { "scene_layer", [](SurveyRequest* r) { r->scene_layer = 0; } },
   };
   long expected_runs = runs;
   for (const Variant& variant : variants) {

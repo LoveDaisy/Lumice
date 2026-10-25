@@ -19,6 +19,7 @@
 // below 16, raypath 16 and up) and each module declares its own constants.
 
 #include <atomic>
+#include <cassert>
 
 namespace lumice::analytic {
 
@@ -31,7 +32,12 @@ class StopToken {
 
   // Called by polling sites only; `site` in [0, kSiteCount). Relaxed: the ledger is evidence,
   // not ordering — the loop's own next read of CancelRequested() is what acts on the request.
-  void NotePoll(int site) const { polls_[static_cast<size_t>(site)].fetch_add(1, std::memory_order_relaxed); }
+  // The assert is the guard rail for the site constants' growth: a 33rd site fails loudly in
+  // every debug/test build instead of writing out of bounds silently in release.
+  void NotePoll(int site) const {
+    assert(site >= 0 && site < kSiteCount);
+    polls_[static_cast<size_t>(site)].fetch_add(1, std::memory_order_relaxed);
+  }
   long PollCount(int site) const { return polls_[static_cast<size_t>(site)].load(std::memory_order_relaxed); }
 
   static constexpr int kSiteCount = 32;

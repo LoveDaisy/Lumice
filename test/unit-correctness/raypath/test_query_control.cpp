@@ -360,6 +360,33 @@ TEST(QueryStopHandshake, TheLegacySignalFlagIsAnExplicitCancel) {
   EXPECT_TRUE(result.Data().meta.interrupted);
 }
 
+// The probe's context phase (the S0 measurement's dominant block, and the exact path where a
+// cut once fell through to a disengaged optional): entered via the T0 poll, cancelled, and the
+// query returns with the named refusal — the context claims nothing, the lambdas never start.
+TEST(QueryStopHandshake, ProbeContextIsEnteredThenCancelled) {
+  const ConfigManager config = survey::RandomPrismScene();  // the heavy full-dim column
+  ProbeRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 5 } };
+  request.along = ProbeAlong::kRadial;
+  request.at_altitude_deg = 20.0;
+  request.at_azimuth_deg = 25.0;
+  request.budget_ms = 120000;
+  analytic::StopToken token;
+  request.cancel = &token;
+
+  ProbeResult result;
+  WorkerHandle worker([&] { (void)AnalyzePathProbe(config, request, &result); });
+  ASSERT_TRUE(WaitForPoll(token, kPollSurveyT0, kEnterBound)) << "the probe context never polled";
+  token.RequestCancel();
+  ASSERT_TRUE(worker.JoinBounded(kJoinBound)) << "the probe context ignored the cancel";
+  EXPECT_EQ(result.Data().meta.execution, ExecutionOutcome::kCancelled);
+  EXPECT_EQ(result.Data().context.object.reason, "stop_requested");
+  EXPECT_EQ(result.Data().context.edge.reason, "stop_requested");
+  EXPECT_TRUE(result.Data().context.cut_by_stop);  // the typed signal, not the display string
+  EXPECT_TRUE(result.Data().meta.interrupted);     // the first lambda boundary saw the token
+}
+
 // The probe's lambda phase: entered via the lattice poll, cancelled mid-line, the cut profile
 // refuses with the stop's name and claims no readings it did not run.
 TEST(QueryStopHandshake, ProbeLambdaLineIsEnteredThenCancelled) {

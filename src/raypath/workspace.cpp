@@ -144,11 +144,18 @@ Error AnalysisWorkspace::QuerySurvey(const SurveyRequest& request, survey::Surve
   return {};
 }
 
-Error AnalysisWorkspace::QueryReport(const PathFeatureReportRequest& request, FeatureReportResult* out) {
+Error AnalysisWorkspace::QueryReport(const PathFeatureReportRequest& request, FeatureReportResult* out,
+                                     const analytic::StopToken* cancel) {
   // The report consumes no warm candidate (its evidence is its own); it runs on the snapshot
-  // through the same single entry. Its geometry lives in its own input assembly (the diagnostic
-  // sampler's capture), which the report face owns.
-  return AnalyzePathFeatureReportValue(snapshot_, request, out);
+  // through the same single entry, with the query's token folded into both of its stop
+  // authorities (the discovery quality window and the enumeration cap). Its geometry lives in
+  // its own input assembly (the diagnostic sampler's capture), which the report face owns.
+  PathFeatureReportRequest effective = request;
+  effective.cancel = cancel;
+  if (cancel == nullptr) {
+    return AnalyzePathFeatureReportValue(snapshot_, request, out);
+  }
+  return AnalyzePathFeatureReportValue(snapshot_, effective, out);
 }
 
 }  // namespace lumice::raypath
