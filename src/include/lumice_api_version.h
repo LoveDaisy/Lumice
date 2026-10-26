@@ -544,6 +544,10 @@
 // the pole, so the equal-leaves superposition never holds. External-visible value change: such a
 // degenerate axis flips p_effective 1 -> 0 (it wrongly read 1 through the half-turn leg); normal
 // corpora carry no zero-width pole-centred axis.
-#define LUMICE_API_VERSION 457
+// ADDED (v4.58): typed raypath result readers for point, probe, survey and report; C workspace,
+// warm-data import/harvest and one-way cancellation handles; four synchronous queries with one
+// absolute deadline. Existing Analyze symbols, request layouts and JSON schemas are unchanged.
+// Typed getters borrow immutable result storage with indexed record extents; ToJson is optional.
+#define LUMICE_API_VERSION 458
 
 #endif  // LUMICE_API_VERSION_H_

@@ -20,7 +20,7 @@ declaring what you use. There is no umbrella header.
 | `lumice_render.h` | Renderer parameters, annotation, projection |
 | `lumice_editor.h` | Editor support: key names, legality checks, crystal mesh, raypath text validation, Miller conversion |
 | `lumice_engine.h` | Server lifecycle, committing a scene, result frames, raypath analysis run, trace backend selection |
-| `lumice_raypath.h` | Target-point single-path analysis and target-free feature reports (opaque results + JSON) |
+| `lumice_raypath.h` | Four typed raypath result views, workspace/warm/cancel handles, and optional JSON output |
 
 ```c
 #include "lumice_engine.h"  // includes lumice_base.h, lumice_render.h and lumice_scene.h
@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 457        // ABI version, encoded major*100 + minor (v4.57)
+#define LUMICE_API_VERSION 458        // ABI version, encoded major*100 + minor (v4.58)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -65,6 +65,32 @@ It is bumped when the public symbol set grows and on every BREAKING struct-layou
 compile-cache entry of every TU in the includer's closure, so keeping the define out of
 `lumice_base.h`'s wide closure makes a bump recompile only the files that textually use the
 macro. Include `lumice_api_version.h` directly wherever you reference `LUMICE_API_VERSION`.
+
+### Typed raypath results
+
+The four `LUMICE_Analyze*` entries remain available. Each result handle owns one immutable typed
+value; `*ToJson` derives and memoizes an optional representation of that value. A typed getter
+never parses JSON or starts a computation. `LUMICE_PathWorkspaceCreate` captures the Scene when
+created, and its four synchronous `LUMICE_PathWorkspaceQuery*` calls take no live Scene. A result
+remains readable after the Scene or Workspace is destroyed and after subsequent queries.
+
+`LUMICE_PathWarmDataFromSurvey` and `LUMICE_PathWarmDataFromPoint` extract independently owned
+facts from a result; `LUMICE_PathWarmDataFromJson` explicitly imports legacy warm text. The new
+query path refuses a request carrying warm text, including one that also supplies typed warm data;
+there is no implicit preference. A `LUMICE_PathCancelToken` is one-way and may be requested from
+another thread. The query options' positive `deadline_ms` resolves one absolute deadline at entry;
+zero means no deadline on the new path. Execution outcomes distinguish a cooperative deadline
+stop from an explicit cancellation. The old Analyze entries retain their published budget behavior.
+
+Each result family has `GetInfo` plus named semantic-block and indexed getters. The caller sets an
+output record's `struct_size` to its compiled extent. A published complete extent or a larger
+future tail is accepted; an unpublished intermediate or undersized extent is rejected without
+writing beyond the caller's buffer. Growing record arrays use indexed reads, not a library-sized
+stride. Homogeneous scalar arrays and UTF-8 `{data,length}` strings are read-only borrows from the
+result, valid until its Destroy; strings are NUL-terminated and `length` excludes the terminator.
+Read-only getters and `ToJson` may run concurrently on a live result, but Destroy must wait for
+all reads and borrowed-pointer uses. Missing values carry an explicit availability or evidence
+state; invalid indices and variant kinds have named read statuses rather than a plausible zero.
 
 **v4.54** is a pure append. Added the path survey — `LUMICE_PathSurveyRequest` (with a
 `struct_size` head), the opaque `LUMICE_PathSurvey`, `LUMICE_AnalyzePathSurvey`,

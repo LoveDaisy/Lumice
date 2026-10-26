@@ -221,7 +221,8 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | Previous owner / producer | Existing machine-data groups | Unique value owner and consumers |
 |---|---|---|
 | `single_path_analysis.hpp` | meta/outcome/components/incomplete/discovery/point_mass/reach/sun_grid/measure_registration | `point_result.hpp`; point execution, typed completion and codec |
-| query_control's unified deadline (`ResolveQueryDeadline`/`QueryDeadline`) | resolve-once, leg-clamped absolute deadline — internal only today | no production entry consumes it yet: the new-query entries that wire it land with the C-handle slice (739.4); AC5's end-to-end span is proven at the unit read, not yet through a public entry |
+| legacy C `LUMICE_Analyze*` entries | Scene-taking request adapters and optional `warm_json` decode; no independent result model | retained as compatibility shims over the same typed completions; retirement target after callers use workspace queries and explicit WarmData import |
+| query_control's unified deadline (`ResolveQueryDeadline`/`QueryDeadline`) | resolve-once absolute deadline — execution state rather than a wire key | the C workspace's four query entries resolve it once; stoppable legs consume its absolute stop and the typed result retains the observed outcome |
 | deleted envelope (former `SinglePathResult` deferral) | context_config/context_request/context_warm/survey_context_ready — never wire keys (verified pre-deletion) | no owner: the deferred state is unrepresentable; a declared context is produced by `AnalyzePathPointValue` in the execution |
 | context assembly/reuse | object/edge/band_sum, reference lambda, source and degradation | `survey_context.hpp` plus owned structural projection; point/probe and shared context codec |
 | `probe_analysis.hpp`, survey probe | meta, profile spec/samples/readings/dark_regions, red_edge_width | `probe_result.hpp`, `results/probe_line.hpp`; quantity service, probe query and codec |
@@ -252,11 +253,14 @@ The legacy point execution envelope (`SinglePathResult` with its deferred-contex
 materialization family) is deleted: one typed entry, `AnalyzePathPointValue`, runs the
 discovery legs and produces a declared context in the execution itself — a completed
 `PointResult` owns its context block, and no reader (getter, serializer, repeated read)
-can start physical computation. The C surface's `LUMICE_AnalyzeSinglePath` name is the
-public ABI's and stays (a thin adapter over the typed entry). The legacy string-returning
-report/survey entry points are thin typed assembly → codec adapters. The C bridge remains
-a legacy JSON handle consumer until its typed-view migration; the MC draw-limit include is
-an existing bridge-boundary exception.
+can start physical computation. The C surface's `LUMICE_AnalyzeSinglePath` name remains the
+published ABI, but its handle owns the completed `PointResult`; the report, survey and
+probe handles likewise own their frozen results. Their `ToJson` entries derive and cache
+an optional document from those values, and their typed C getters borrow immutable data
+from the result handle rather than parsing the document. The new C workspace captures a
+Scene at creation and runs the four typed queries through the same execution owners;
+explicit typed warm data comes from a completed result or a legacy document import.
+The MC draw-limit include remains an existing bridge-boundary exception.
 
 `AssembleSurveyData` is construction-time staging used by query policy and focused
 fixtures, not a second public result model or a second computation path. The old
