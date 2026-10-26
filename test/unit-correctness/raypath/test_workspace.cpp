@@ -419,6 +419,10 @@ TEST(Workspace, ACancelledSurveyNeverFillsTheWarmSlot) {
   }
   const bool entered = token.PollCount(kPollSurveyT0) > 0;
   token.RequestCancel();
+  while (!done && std::chrono::steady_clock::now() < bound) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  ASSERT_TRUE(done) << "the workspace survey ignored the cancel";
   worker.join();
   ASSERT_TRUE(entered) << "the survey's structure leg never polled";
   EXPECT_EQ(cut.Data().execution, ExecutionOutcome::kCancelled);
