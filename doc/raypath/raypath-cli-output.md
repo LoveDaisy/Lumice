@@ -6,31 +6,31 @@ poses with per-pose detail, and the path's deviation over the whole sun-directio
 (`doc/raypath/raypath-analysis.md` §5.1.8). `analyze` lists the raypaths that light the sky; `raypath` is
 what you ask about one of them.
 
-It writes one JSON document. This page is that document's field reference, and the one place a
-reader (the Analyze-workspace prototype, a script, the GUI later) should learn it from.
+It writes one JSON document per query. This page is the wire field reference; C consumers
+can instead read the completed result through the typed getters in `lumice_raypath.h`.
 
-There are three deliberately separate documents. `raypath point` writes the target-fiber
-document (`schema_version: 1`, sections 1–6); its keys, ordering, and `--warm` behavior are
-supersets of the original `--target` form — fields are only ever appended. `raypath report`
-writes the target-free `lumice.path-feature-report` document in section 7. `raypath survey`
-writes the census document (`lumice.path-survey`, schema_version 4) in section 9. Neither mode
-silently substitutes for another.
+There are four deliberately separate documents: `raypath point` writes schema 1,
+`raypath report` schema 3, `raypath survey` schema 4, and `raypath probe` schema 5.
+Neither mode silently substitutes for another.
 
 ## 1. Where the document comes from
 
-The CLI is a thin shell. The computation and the serialization both live in the engine:
+The CLI creates a typed workspace, imports `--warm` through `LUMICE_PathWarmDataFromJson`
+when requested, runs a `LUMICE_PathWorkspaceQuery*` call, then writes the result's `*ToJson`
+representation. The legacy `LUMICE_Analyze*` calls are still published and delegate to the
+same typed analysis entries, retaining their legacy budget and request-extent contracts.
 
 | Piece | Where |
 |---|---|
-| The analysis | `lumice::raypath::AnalyzeSinglePath` (`src/raypath/single_path_analysis.hpp`) over the analytic kernel (`src/analytic/`) |
-| The JSON form and the `--warm` reader | `lumice::raypath::ToJson` / `ParseWarmSeeds` (`src/raypath/single_path_json.hpp`) — one file, shared key names |
-| The public entry point | `LUMICE_AnalyzeSinglePath` → opaque `LUMICE_SinglePathResult` → `LUMICE_SinglePathResultToJson` (`lumice_raypath.h`, v4.50) |
-| The subcommand | `src/main.cpp` (`ParsePointOptions` / `RunPoint`; family dispatch in `main`) |
+| The analysis | `AnalyzePathPointValue`, `AnalyzePathProbe`, `AnalyzePathSurveyValue`, `AnalyzePathFeatureReportValue` (`src/raypath/`) |
+| JSON projection and warm decoding | `single_path_json.cpp`, `probe_json.cpp`, `detail/survey/survey_json.cpp`, `detail/path_feature_report_json.cpp`; `DecodeWarmCandidate` for schema 1/4 |
+| The C interface | `LUMICE_PathWorkspaceQuery*` → immutable result handle → typed getters or optional `*ToJson` (`lumice_raypath.h`) |
+| The subcommands | `src/main.cpp` (`RunPoint`, `RunProbe`, `RunSurvey`, `RunReport`) |
 
-So the GUI, when it grows an Analyze workspace, reads **the same document** through the same
-`lumice_raypath.h` call; there is no second serializer to drift from this one. The result is exposed as
-JSON rather than as a C struct mirror on purpose: it holds variable-length nested lists whose
-fields an interface will keep adding to. Typed readers can be appended to `lumice_raypath.h` later.
+A GUI consumer need not read JSON: the typed C getters borrow from the same completed result
+that the encoders project. Encoding does not execute a query. Warm text is an untrusted input:
+decoding checks representation, then the shared reuse owner checks scene identity, scope and
+individual facts; a fingerprint is not an authenticity certificate.
 
 ## 2. Command line
 
@@ -55,7 +55,7 @@ Lumice raypath report -f <config> --crystal <id> --path <faces> [--events N] ...
 | `--lambda <nm>[,<nm>...]` | `probe` only: one or more wavelengths in [350, 900], comma-separated or the flag repeated — the chromatic lambda grid lives on the line (one profile per wavelength, each with its own refractive index), never a multi-wavelength map. Default: the config's single wavelength or 550. |
 | `--wavelength <nm>` | In [350, 900]. Default: the config's, when its spectrum is exactly one wavelength; else 550. The choice is recorded in `meta.wavelength.source`. (`report` without it uses the actual scene spectrum.) |
 | `--events <N>` | Seed events of the component search — poses sampled to locate the fiber, **not** traced rays. K/M suffix; at most 100M (`LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`). Default 1M. (`report`: even outer samples, its own range. `probe`: the band-sum lattice n, default 2000000 — the survey probe's ruler.) |
-| `--budget-ms <N>` | `point`, `probe` and `report`: the numerical deadline in milliseconds (default 15000; max 120000; `probe` checks it at the per-wavelength boundaries). Checked at the computation's loop boundaries: a stopped run serializes what it has and reports `meta.interrupted` — an honest early exit, exit code 0. Two legs are deliberately outside the polling: the inline context-only survey assembly (T0–T2, cheap and bounded by design) and the fiber continuation's inner steps (bounded by the `--max-evaluations` family instead) — a heavy case can overshoot the declared value by their cost |
+| `--budget-ms <N>` | `point`, `probe` and `report`: one whole-query deadline in milliseconds (default 15000; max 120000). Point/probe poll at their leg boundaries and carry the one deadline into context assembly; report discovery and enumeration share it. A stopped run publishes its honest partial result, not fabricated completion. The old C Analyze entries retain their own per-leg windows (§1). |
 | `--grid <rows>` | Latitude rows of the sun-direction grid; longitude is twice that. [0, 720]; 0 leaves `sun_grid` out. Default 90. |
 | `--warm <file>` | What a previous output is worth (§5): a schema-1 `point` document's seeds start the search; a schema-4 `survey` document is the index the query consumes (§5, the `survey_context` block). |
 | `-o <path>` | Write the document here instead of stdout (never both). |
@@ -67,13 +67,13 @@ one of `unknown_crystal_id`, `multi_layer_unsupported`, `invalid_path`, `face_no
 `wavelength_out_of_range`, `invalid_target`, `invalid_argument`, `crystal_rejected`,
 `path_infeasible`, `invalid_scene`.
 
-**Progress and Ctrl-C differ from `analyze`, deliberately.** The engine call has no cancellation
-point and no progress callback, so stderr gets one line when the analysis starts and one when it
-ends, and Ctrl-C ends the process without writing anything (there is no partial result to write).
+**Progress and Ctrl-C differ from `analyze`, deliberately.** The synchronous query has no
+progress callback, so stderr gets a start and completion line. Point and probe install a
+one-way SIGINT flag: a stopped run writes its honestly marked partial result and exits 0.
+Survey and report keep the default SIGINT disposition and write no result on interruption.
 With `-o`, the document goes to `<path>.tmp` first and is renamed over `<path>`, so `<path>` is
-never half a document; an interrupted run may leave the `.tmp` behind. Measured cost (arm64 mac,
-`3-5`, grid 90): 1M events 0.03 s, 10M 0.28 s, 100M 2.8 s at 155 MB peak; a 720-row grid is a
-13 MB document.
+never half a document. Measured cost (arm64 mac, `3-5`, grid 90): 1M events 0.03 s,
+10M 0.28 s, 100M 2.8 s at 155 MB peak; a 720-row grid is a 13 MB document.
 
 ## 3. The document
 
@@ -267,7 +267,7 @@ computed reading), `unevaluated` with a named reason — so absence can never re
 | Key | Meaning |
 |---|---|
 | `source` | `"warm"` (the given schema-4 document's facts) or `"inline"` (the context-only assembly) |
-| `warm_index_absent` | True: a `--warm` schema-4 document was given but carried no (complete) `warm_index` block — the documented degradation (§5); the context still answers, inline |
+| `warm_index_absent` | True: a `--warm` schema-4 document lacked a complete `warm_index` receipt — legacy degradation (§5); a present wrongly typed field is refused |
 | `object.state` (+ `reason`) | The target's deviation against the delta-axis support at the query wavelength: `certified` (inside an interval, distance 0, or the nearest card's distance) or `unevaluated`. The value fields `target_inside_support`, `kind`, `members`, `distance_deg` exist exactly when the state is `certified` — an unevaluated object carries no distance and never means certified outside. Missing/different producing wavelength yields `scope_field_missing`/`scope_value_mismatch`; an absent support or early stop keeps its own reason first. |
 | `edge.state` (+ `reason`) | The angular distance to the nearest edge at the query wavelength. The value fields `distance_deg`, `basis` (`support_interval_endpoint` or `caustic_edge_position`) exist exactly when the state is `finite`; missing/different producing wavelength uses the object's same named reason. |
 | `band_sum.state` (+ `value`, `delta_deg`, `bin_deg`, `caliber`, or `reason`) | The warm document's **survey reference line**, not the target point's sky intensity: nearest probe sample, with producing wavelength, sun and line azimuth in `caliber` (unknown if not established). Consumed only when wavelength and sun match the `scope` receipt exactly. `scope_field_missing` (receipt incomplete) and `scope_value_mismatch` (value differs) name failures; inline/absent probe have their own reasons. A target change chooses a different nearest sample on the same line, not a different line. |
@@ -387,7 +387,7 @@ when any of these fails:
 
 **Implementation ownership.** `survey_reuse.hpp` is the product owner of these gates,
 `EvaluateSurveyReuse`, and `CanReuseSurveyProfile`. JSON decoding (`DecodeWarmCandidate`)
-and typed harvesting (`HarvestSurveyDocument`) produce the same untrusted candidate shape;
+and typed harvesting (`HarvestSurveyResult`) produce the same untrusted candidate shape;
 neither grants reuse. Point and probe admit it with `ValidateWarmCandidate`, whose private
 admission token separates a decoded payload from usable input. The context and profile reuse
 interfaces accept only that token, including inline assemblies. `survey_context.hpp` carries the
@@ -422,14 +422,13 @@ these dependencies (a family object's sky position is not the delta-axis body's 
 An unavailable numeric field does not force a fresh T0–T2 partition or invalidate revalidated
 seeds. A schema-4 document with `warm_index` missing still takes the documented inline path.
 
-**Degradation, not refusal.** A schema-4 document whose `warm_index` block is absent — every
-survey document written before the block existed — or missing any of its fields is not refused
-and never partially consumed: the query degrades visibly to the inline context (no structural
-reuse, no seed consumption), and the document's `survey_context` declares it
-(`warm_index_absent: true`, the band-sum reading `unevaluated` with that reason). A complete index
-with no `scope.scene_layer` also takes this inline path, but retains its validated seed starts:
-location-unknown numeric facts cannot certify this allocation, whereas seeds are re-solved against
-current input rather than accepted as certificates.
+**Degradation, not refusal.** A schema-4 document with no complete `warm_index` receipt
+(written before all receipt fields existed) degrades visibly to inline context, with no
+structural reuse or seed consumption: `warm_index_absent: true`, and band sum `unevaluated`
+for that reason. A **present but wrongly typed** receipt field is corrupt and refused.
+A complete index with no `scope.scene_layer` also takes the inline path, but retains its
+validated seed starts: location-unknown numeric facts cannot certify this allocation,
+whereas seeds are re-solved against current input rather than accepted as certificates.
 
 **The probe's consumption.** `raypath probe` reads the same index with the same gates. The
 harvest's structure answers where the at point sits (the context block of §10), and the document's
@@ -453,11 +452,10 @@ comparison — a knobbed ruler silently reuses values computed on a different ru
 azimuth exemption holds only under uniform density; otherwise even an identical grid at a different
 azimuth is a different weighted integral.
 
-**Versions.** The schema-4 arm does not compare `schema_version` (the schema-1 arm above does):
-the family name is the discriminator, `warm_index.produced_for` records what produced the
-document, and append-only growth freezes the semantics of the keys this reader consumes. A
-future change to a consumed key's meaning is the one thing that must gate on `schema_version`
-here — that is this contract's version discipline.
+**Versions.** Schema 1 requires version 1 and schema 4 requires version 4. The family name
+selects the decoder; a foreign family or version is refused before the candidate reaches the
+reuse owner. Append-only keys that this reader does not consume remain harmless, but edits to
+consumed values are merely untrusted candidates, never certified by `produced_for` or a hash.
 
 A warm seed is a starting point, not a certificate. The engine's builds for different CPU tiers
 (the release's baseline and x86-64-v3 engines) are compiled with different floating-point

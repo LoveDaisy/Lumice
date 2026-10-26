@@ -221,8 +221,8 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | Producer | Machine-data groups | Typed owner | C view | JSON projection |
 |---|---|---|---|---|
 | `single_path_analysis.hpp` | meta/outcome/components/incomplete/discovery/point_mass/reach/sun_grid/measure_registration | `point_result.hpp`; point execution and completion | `PathPointGetInfo/Component/Sample/Mass/Discovery/Reach/SunGrid/MeasureRegistration` and indexed orbit/incomplete/shape | point schema 1 |
-| legacy C `LUMICE_Analyze*` entries | Scene-taking adapters and optional `warm_json` decode; no independent result model | same four typed completions; compatibility shims to retire after callers migrate | same four result handles and getters, not a second view | unchanged legacy `ToJson` outputs |
-| query control | resolve-once absolute deadline, execution outcome (not a wire key) | workspace query owner and completed result | four `PathWorkspaceQuery*` entries; `GetInfo.execution` | existing budget/stop observation |
+| legacy C `LUMICE_Analyze*` entries | Scene-taking adapters and optional `warm_json` decode; no independent result model | same four typed completions; retained published compatibility entry points | same four result handles and getters, not a second view | unchanged legacy `ToJson` outputs |
+| query control | resolve-once absolute deadline, execution outcome (not a wire key) | workspace query owner and completed result | four `PathWorkspaceQuery*` entries; `GetInfo.execution` | existing budget/stop observation; CLI now chooses workspace query deadline |
 | deleted point envelope | deferred context inputs (never wire keys) | no owner; context completed by `AnalyzePathPointValue` | none; no deferred getter | none |
 | context assembly/reuse | object/edge/band_sum, reference lambda, source and degradation | `survey_context.hpp` with owned structural projection | `PathPointGetContext`, `PathProbeGetContext` | point `survey_context`, probe `context` |
 | `probe_analysis.hpp`, survey probe | meta, profiles/spec/samples/readings/dark_regions, red edge | `probe_result.hpp`, `results/probe_line.hpp`; common quantity service | `PathProbeGetInfo/Profile/Sample/DarkRegion/Quantity/Evidence` | probe schema 5 |
@@ -230,7 +230,7 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | survey family | measure/ladder/frozen/free dimensions/killed/level0 refusal/tails/band/origin | structure facts mounted once into survey records | `PathSurveyGetFamily/FamilyLevel/FamilyDimension/FamilyFrozenDim/FamilyKilled` and object adjuncts | survey `family_routing`, `objects` |
 | survey chromatic | dispersion/followed onsets, diagnose/verdict/features/coverage | survey records; chromatic producer | `PathSurveyGetChromatic/Dispersion/FollowedOnset/Diagnose/DiagnoseFeature/Evidence` | survey `chromatic` |
 | tint/TIR/ESS/witness | methods, values, counts, pair/lattice, coverage/refusal | claim-owned values in `results/quantity.hpp`; survey mounts returned facts | `PathSurveyGetTint/TirShare/TirInterface/McEss/McEssBand/Witness`, quantity and evidence readers | survey `chromatic.weight_tint`, `tir_share`, `mc_region_ess`, `objects[].witness` |
-| warm admission | fingerprint, location, receipts, seeds and profile rows | `survey_reuse`; both import paths require admission | `PathSurveyGetScope/WarmSeed`; `PathWarmDataFromSurvey/FromPoint/FromJson` | survey `warm_index`; schema 1/4 import |
+| warm admission | fingerprint, location, receipts, seeds and profile rows | `survey_reuse`; both import paths require admission; schema-1/4 JSON decoding only checks representation | `PathSurveyGetScope/WarmSeed`; `PathWarmDataFromSurvey/FromPoint/FromJson` | survey `warm_index`; schema 1/4 import; no query executed by codec |
 | geometry/support | member partition/intervals/topology/onsets/curves/family groups | `results/structure.hpp`; report and survey consume shared facts | `PathReportGetSupport*`, `PathReportGetOrbit*`, `PathSurveyGetSupport*` | report `support`; survey support objects |
 | enumeration | kind/member/slot/phi, independent states, u/position/counterfactual/thresholds/vocabulary | `results/report_structure.hpp`, `report_enumeration.hpp` | `PathReportGetObject/Visibility/Chromatic/ChromaticFeature/ProducedKind` | report `features` |
 | report input | light/crystal/axis/shape/layers/spectrum/support dimensions/seed/options | `results/report_scope.hpp`; captured scene values and requested layers | `PathReportGetScope/RequestedLayer/Layer/LayerAxis/LayerShape/RawSpectrumRow/SpectralRow` | report `scope`, unsupported `requested_path_layers` |
@@ -238,6 +238,41 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | report source replay | positive-source witness and source-token rows | completion materializes `PositiveSourceWitness`; codec never replays | `PathReportGetSource/PositiveSource` | report `sources`, record witnesses |
 | attribution/ruling | annotations/unattributed/counts/ruling/outcome/basis | completed report with checked local references | `PathReportGetAnnotation/Unattributed/UnattributedSummary/Ruling/Info` | report `features[].attribution`, `unattributed_structures`, `no_related_feature` |
 | former report serializer assembly | coverage/budgets/timing, unsupported multi-crystal path | `FeatureReportData` completion; serializer takes one frozen result | `PathReportGetCoverage/DeclaredSkip/Budgets/Info/RequestedLayer`; timing remains observational | report `coverage`, `budgets`, `timing`, unsupported outcome |
+
+## Codec and CLI cutover
+
+The four JSON encoders project completed typed values only; the C getters and encoders borrow
+from the same value but do not read each other's representation. The public codec headers
+have no nlohmann include; JSON-only helpers live under `detail/`. The C bridge includes no
+`detail/` header. `ParseWarmSeeds` remains a thin schema-1 reader for direct callers and uses
+the same parse routine as `DecodeWarmCandidate`; the latter imports schema 1/4 into an untrusted
+candidate. `WarmOrigin` retains whether it came from a completed result or external JSON through
+admission; it does not affect admission or certify the input. `HarvestSurveyResult` is the typed
+source of those facts, not a second admission criterion. `ValidateWarmCandidate` alone judges
+identity, scope and per-fact reuse; absent or incomplete legacy `warm_index` and absent scene
+location degrade by name, while a present wrongly typed receipt field, unsupported schema or
+malformed numeric row is refused. Point and survey reject unknown schema versions at their typed
+freeze boundaries; probe and report have no mutable schema tag. An edited but structurally
+valid document remains a candidate, not authenticated by its fingerprint.
+
+The CLI now creates a workspace for each of its four analysis commands, explicitly imports
+`--warm`, queries a typed result and calls the existing `ToJson`. The published legacy Analyze
+entries still accept their historical request extents and decode their warm text in the C
+compatibility shell; they call the same four typed analysis entries, not a JSON result pipeline.
+The removed internal `AnalyzePathSurvey` and `AnalyzePathFeatureReport` JSON-returning wrappers
+had no remaining callers. No report/probe reverse decoder, Scene config re-parser or L0 migration
+is implied by this cutover.
+
+**Execution distinction:** on a complete run, the seven baseline CLI documents in the replay
+recipe below retain the same normalized SHA-256 (7/7); only top-level timing is excluded. On
+a truncated run the CLI's positive budget now applies to the entire workspace query. The old
+C Analyze entries keep their leg-specific windows, point/probe zero defaults and report's
+legacy start-at-entry window. CLI point/probe still use their one-way interruption flags;
+survey/report retain default SIGINT disposition. Full-report CLI oracles explicitly request
+a long query budget; the C10 degenerate-family truncation arm keeps 15000 ms. A 15-second
+default that cuts a longer complete report is a query outcome, not a changed object fact.
+Deadline/cancellation outcomes and physical evidence remain separate axes, and a truncated
+document is not a wire-equality oracle.
 
 ## Typed C baseline replay and coverage audit
 

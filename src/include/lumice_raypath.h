@@ -16,17 +16,18 @@ extern "C" {
 // Everything computed once ONE single-layer raypath of ONE crystal entry has been chosen: the
 // components of the fiber of crystal poses that send the sun into a given sky point, each
 // component's poses with per-pose detail, and the path's deviation over the whole sun-direction
-// sphere (doc/raypath/raypath-analysis.md section 5.1.8). Synchronous and deterministic (the same scene and
-// request give the same result); it runs on the calling thread, is independent of any
-// LUMICE_Server, and cannot be cancelled — sample_count bounds its cost.
+// sphere (doc/raypath/raypath-analysis.md section 5.1.8). Synchronous; an uninterrupted completed
+// run is deterministic for a scene and request, while deadline/cancelled partial coverage can vary.
+// It runs on the calling thread, independently of any LUMICE_Server. The legacy Analyze entry accepts its published
+// budget/interrupt group; the workspace query uses one absolute deadline and an optional cancellation token.
 //
 // The opaque result owns a completed, immutable typed value. ToJson derives an optional UTF-8
 // representation on first request and caches it for the result's lifetime; later calls copy the
 // same bytes. Concurrent reads and length-query-then-fetch return identical data. The result is
 // independent of its Scene after Analyze returns; Destroy must not overlap a read.
 
-// The largest sample_count a request may ask for: the call cannot be cancelled, so its cost is
-// bounded here instead.
+// The largest sample_count a request may ask for: bounds the discovery work even when no
+// deadline was requested.
 #define LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT 100000000
 // The largest sun_grid_lat_count a request may ask for (longitude is twice that): bounds the
 // grid's memory for any caller, not only the CLI (which caps --grid lower still).

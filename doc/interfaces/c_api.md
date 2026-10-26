@@ -81,6 +81,12 @@ there is no implicit preference. A `LUMICE_PathCancelToken` is one-way and may b
 another thread. The query options' positive `deadline_ms` resolves one absolute deadline at entry;
 zero means no deadline on the new path. Execution outcomes distinguish a cooperative deadline
 stop from an explicit cancellation. The old Analyze entries retain their published budget behavior.
+The four `raypath` CLI analysis commands use workspace queries with explicit warm import and
+serialize only their completed handles; they do not parse their own output to make decisions.
+The CLI's positive budget now bounds the whole workspace query, while old C callers retain
+per-leg legacy windows and the old zero/default behavior. A point Workspace query also honors
+its request's `interrupted` pointer when the request extent contains that field; an older prefix
+cannot be read past its boundary.
 
 Each result family has `GetInfo` plus named semantic-block and indexed getters. The caller sets an
 output record's `struct_size` to its compiled extent. A published complete extent or a larger
@@ -130,9 +136,10 @@ acquire no fields. See `raypath-cli-output.md` section 7.
 **v4.50** is a pure append. Added: single-path analysis — `LUMICE_SinglePathRequest` (with a
 `struct_size` head), the opaque `LUMICE_SinglePathResult`, `LUMICE_AnalyzeSinglePath(scene, request,
 &out, err_buf, err_size)`, `LUMICE_SinglePathResultToJson` (the `LUMICE_SceneToJson` buffer contract)
-and `LUMICE_SinglePathResultDestroy`, plus `LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`. The result is read
-through its JSON form, documented in `raypath-cli-output.md`. Behavior: `LUMICE_SetLogLevel(NULL,
-level)` now sets the engine-wide log level (it used to do nothing), for a caller with no server.
+and `LUMICE_SinglePathResultDestroy`, plus `LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`. At v4.50,
+JSON was the only result reader; the typed getters documented above were added later.
+Behavior: `LUMICE_SetLogLevel(NULL, level)` now sets the engine-wide log level (it used to do
+nothing), for a caller with no server.
 
 **v4.49** is a pure append plus a behavior restoration. Added: `LUMICE_CouldFilterMatchFace(crystal,
 face, symmetry)` — `LUMICE_CouldCrystalHaveFace` with the filter's own P/B/D taken into account
