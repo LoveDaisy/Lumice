@@ -204,6 +204,40 @@ TEST(SinglePathCApi, TypedReadersUseResultOwnedStorageAndBoundedExtents) {
   }
 }
 
+TEST(SinglePathCApi, WorkspacePointWithoutContextDoesNotPublishContextView) {
+  ScenePtr scene = MakeScene();
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &raw_workspace, nullptr, 0), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathWorkspace, decltype(&LUMICE_PathWorkspaceDestroy)> workspace(raw_workspace,
+                                                                                          LUMICE_PathWorkspaceDestroy);
+  scene.reset();
+
+  Req request({ 3, 5 }, { 2 });
+  request.c.sample_count = 100;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = 15000;
+  options.include_context = 0;
+  LUMICE_SinglePathResult* raw_result = nullptr;
+  char error[256]{};
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &request.c, &options, &raw_result, error, sizeof(error)),
+            LUMICE_OK)
+      << error;
+  ResultPtr result(raw_result);
+  workspace.reset();
+
+  LUMICE_PathContext context{};
+  context.struct_size = sizeof(context);
+  EXPECT_EQ(LUMICE_PathPointGetContext(result.get(), &context), LUMICE_PATH_READ_NOT_AVAILABLE);
+  EXPECT_EQ(context.struct_size, sizeof(context));
+  EXPECT_EQ(context.source, 0);
+  EXPECT_EQ(context.object_state, 0);
+  const auto document = nlohmann::json::parse(Json(result.get()));
+  EXPECT_EQ(document.at("survey_context").at("object").at("reason"), "not_requested");
+  EXPECT_EQ(document.at("survey_context").at("edge").at("reason"), "not_requested");
+  EXPECT_EQ(document.at("survey_context").at("band_sum").at("reason"), "not_requested");
+}
+
 TEST(SinglePathCApi, CancelledSurveyHasTypedExecutionOutcome) {
   const ScenePtr scene = MakeScene();
   LUMICE_PathWorkspace* workspace = nullptr;
