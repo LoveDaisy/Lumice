@@ -172,6 +172,11 @@ Checks:
      gui-api-boundary rule owns it — but it counts as above every layer, so a
      layered file including a shell file is an inversion too.
 
+  20. raypath-typed-boundary — public raypath values and their transitive in-tree
+      header closure never include query execution, codecs, detail or JSON; the
+      C bridge does not include raypath/detail, and codec implementations do not
+      include query entry headers. Declaration/value dependencies stay legal.
+
 Add a new check as a function returning a list of Violation and append it to
 CHECKS, and add a numbered entry above. Keep each check deterministic and
 artifact-inspecting.
@@ -2359,6 +2364,89 @@ def check_layer_inversion() -> list[Violation]:
     return out
 
 
+# --- raypath-typed-boundary ---------------------------------------------------
+RAYPATH_QUERY_HEADERS = frozenset(
+    {
+        "raypath/single_path_analysis.hpp",
+        "raypath/probe_analysis.hpp",
+        "raypath/survey_report.hpp",
+        "raypath/path_feature_report.hpp",
+        "raypath/workspace.hpp",
+        "raypath/query_control.hpp",
+    }
+)
+RAYPATH_VALUE_HEADERS = (
+    "raypath/point_result.hpp",
+    "raypath/probe_result.hpp",
+    "raypath/survey_result.hpp",
+    "raypath/feature_report_result.hpp",
+    "raypath/survey_context.hpp",
+)
+RAYPATH_CODEC_SOURCES = (
+    "raypath/single_path_json.cpp",
+    "raypath/probe_json.cpp",
+    "raypath/detail/survey/survey_json.cpp",
+    "raypath/detail/path_feature_report_json.cpp",
+)
+
+
+def check_raypath_typed_boundary() -> list[Violation]:
+    """Check the promised dependency edges, not semantic purity of the computations.
+
+    Public value closures follow resolved in-tree quote includes recursively. Bridge and
+    codec checks inspect their direct includes; an execution header cannot hide behind
+    a codec's in-tree includes because the closure is checked from each codec source.
+    """
+    rule = "raypath-typed-boundary"
+    out: list[Violation] = []
+    value_roots = list(RAYPATH_VALUE_HEADERS)
+    for directory in (SRC / "raypath" / "domain", SRC / "raypath" / "results"):
+        value_roots.extend(path.relative_to(SRC).as_posix() for path in sorted(directory.glob("*.hpp")))
+    value_roots.extend(path.relative_to(SRC).as_posix() for path in sorted((SRC / "raypath" / "domain").glob("*.cpp")))
+
+    def forbidden_value(target: str) -> bool:
+        return (target in RAYPATH_QUERY_HEADERS or target.startswith("raypath/detail/") or
+                target.startswith("raypath/") and "json" in Path(target).stem)
+
+    def walk(root: str, forbidden, reject_json: bool = False) -> None:
+        visited: set[str] = set()
+        pending = [(root, root)]
+        while pending:
+            rel, chain = pending.pop()
+            if rel in visited:
+                continue
+            visited.add(rel)
+            path = SRC / rel
+            if not path.is_file():
+                continue
+            for lineno, _orig, code in code_lines(path):
+                if reject_json and re.match(r'^\s*#\s*include\s*[<\"]nlohmann/json.hpp[>\"]', code):
+                    out.append(Violation(path, lineno, rule, f"{chain} includes JSON"))
+                match = _QUOTED_INCLUDE.match(code)
+                if not match:
+                    continue
+                target = _resolve_include(rel, match.group(1))
+                if target is None:
+                    continue
+                if forbidden(target):
+                    out.append(Violation(path, lineno, rule, f"{chain} -> {target}: forbidden dependency"))
+                elif target.endswith((".hpp", ".h", ".inl")):
+                    pending.append((target, f"{chain} -> {target}"))
+
+    for root in value_roots:
+        walk(root, forbidden_value, reject_json=True)
+    for rel in RAYPATH_CODEC_SOURCES:
+        walk(rel, lambda target: target in RAYPATH_QUERY_HEADERS)
+    bridge = SRC / "server" / "c_api_raypath.cpp"
+    if bridge.is_file():
+        for lineno, _orig, code in code_lines(bridge):
+            match = _QUOTED_INCLUDE.match(code)
+            if match and (target := _resolve_include("server/c_api_raypath.cpp", match.group(1))):
+                if target.startswith("raypath/detail/"):
+                    out.append(Violation(bridge, lineno, rule, f"bridge includes {target}"))
+    return out
+
+
 CHECKS = [
     check_getenv_centralization,
     check_env_knob_registration,
@@ -2379,6 +2467,7 @@ CHECKS = [
     check_no_test_symbol_in_src,
     check_analytic_symbol_scope,
     check_layer_inversion,
+    check_raypath_typed_boundary,
 ]
 
 
@@ -2405,7 +2494,7 @@ def main() -> int:
         "no-default-constructed-crystal-slots, gui-test-suite-args-sync, no-bare-print, "
         "msvc-string-literal-limit, user-defaults-single-write-path, "
         "pytest-invocation-marker, no-render-in-benchmark-poll, no-test-symbol-in-src, "
-        "analytic-symbol-scope, layer-inversion)."
+        "analytic-symbol-scope, layer-inversion, raypath-typed-boundary)."
     )
     return 0
 

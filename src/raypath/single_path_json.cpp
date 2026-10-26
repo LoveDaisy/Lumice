@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "raypath/detail/json_values.hpp"
-#include "raypath/survey_report.hpp"
+#include "raypath/survey_result.hpp"
 #include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {

@@ -8,9 +8,8 @@
 #include "config/crystal_config.hpp"
 #include "config/light_config.hpp"
 #include "raypath/detail/json_values.hpp"
-#include "raypath/detail/schema3/no_related_feature.hpp"
 #include "raypath/domain/measure_geometry.hpp"
-#include "raypath/path_feature_report.hpp"
+#include "raypath/feature_report_result.hpp"
 #include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath {
@@ -28,6 +27,16 @@ namespace {
 using detail::Array;
 using detail::Num;
 using Json = nlohmann::ordered_json;
+
+const char* NoRelatedBasisName(schema3::NoRelatedBasis basis) {
+  switch (basis) {
+    case schema3::NoRelatedBasis::kZeroSpectralSignal:
+      return "zero_spectral_signal";
+    case schema3::NoRelatedBasis::kCertifiedSmoothRadiance:
+      return "certified_smooth_radiance";
+  }
+  return "certified_smooth_radiance";
+}
 
 const char* EvidenceName(DiagnosticEvidence evidence) {
   switch (evidence) {

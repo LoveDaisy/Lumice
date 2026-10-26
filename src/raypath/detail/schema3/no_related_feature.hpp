@@ -38,10 +38,6 @@
 
 namespace lumice::raypath::schema3 {
 
-
-const char* NoRelatedBasisName(NoRelatedBasis basis);
-
-
 // The pure ruling. `unattributed` is the forward pass's outcome on the SAME core (the caller
 // runs DeriveUnattributed first); `support_kind` is the declared measure's USupportKind;
 // `zero_spectral_signal` is the v2 predicate's verdict (input_assembly's ZeroSpectralSignal —

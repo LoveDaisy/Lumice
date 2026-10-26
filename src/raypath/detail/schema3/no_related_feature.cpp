@@ -7,16 +7,6 @@
 
 namespace lumice::raypath::schema3 {
 
-const char* NoRelatedBasisName(NoRelatedBasis basis) {
-  switch (basis) {
-    case NoRelatedBasis::kZeroSpectralSignal:
-      return "zero_spectral_signal";
-    case NoRelatedBasis::kCertifiedSmoothRadiance:
-      return "certified_smooth_radiance";
-  }
-  return "certified_smooth_radiance";
-}
-
 namespace {
 
 // The absence-not-proven reading, fixed text: a refusal to issue is the consumer's cue to

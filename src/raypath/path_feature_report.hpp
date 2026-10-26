@@ -21,7 +21,6 @@ struct ConfigManager;
 }
 
 namespace lumice::raypath {
-constexpr int kFeatureReportSchemaVersion = 3;
 constexpr int kDefaultFeatureReportSampleCount = 65536;
 constexpr int kMaxFeatureReportSampleCount = 1000000;
 constexpr int kMaxFeatureReportWavelengthCount = 32;

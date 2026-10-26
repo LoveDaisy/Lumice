@@ -195,7 +195,6 @@ TEST(NoRelatedFeature, ZeroSignalIssuesBasisAEvenWhenBWouldAlsoIssue) {
                                           CleanForward(), USupportKind::kArea, true);
   EXPECT_TRUE(ruling.issued);
   EXPECT_EQ(ruling.basis, NoRelatedBasis::kZeroSpectralSignal);
-  EXPECT_EQ(std::string(NoRelatedBasisName(ruling.basis)), "zero_spectral_signal");
   // B's conditions are still evaluated and reported — the priority does not blind the report.
   EXPECT_TRUE(ruling.partition_complete_no_escape);
   EXPECT_TRUE(ruling.two_d_valid_support);
@@ -209,7 +208,6 @@ TEST(NoRelatedFeature, ZeroSignalIssuesBasisAEvenWhenBIsBlocked) {
   EXPECT_TRUE(ruling.issued);
   EXPECT_EQ(ruling.basis, NoRelatedBasis::kZeroSpectralSignal);
   EXPECT_FALSE(ruling.two_d_valid_support);
-  EXPECT_EQ(std::string(NoRelatedBasisName(NoRelatedBasis::kCertifiedSmoothRadiance)), "certified_smooth_radiance");
 }
 
 // ---- the zero-signal predicate, at its new single home -------------------------------------------

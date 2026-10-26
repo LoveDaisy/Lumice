@@ -13,6 +13,8 @@
 
 namespace lumice::raypath {
 
+inline constexpr int kFeatureReportSchemaVersion = 3;
+
 enum class ReportOutcome {
   kNotCompleted,  // the construction-slot default: no completion assembly has run yet
   kCompleted,

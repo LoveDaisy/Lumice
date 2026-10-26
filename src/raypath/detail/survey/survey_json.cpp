@@ -4,7 +4,7 @@
 #include "raypath/detail/json_values.hpp"
 #include "raypath/domain/evidence.hpp"
 #include "raypath/domain/input_metadata.hpp"
-#include "raypath/survey_report.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 namespace {

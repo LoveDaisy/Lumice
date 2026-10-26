@@ -2789,9 +2789,8 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetScope(const LUMICE_PathSurvey* result,
   if (d.request.wavelength_given) {
     out->request_wavelength_nm = d.request.wavelength_nm;
   }
-  out->member_kind = d.quantity_context ?
-                         MapTag(d.quantity_context->members.member_kind, kMemberTags) :
-                         (d.request.symmetry_bits == 0 ? LUMICE_PATH_MEMBER_LITERAL : LUMICE_PATH_MEMBER_PHYSICAL_L2);
+  out->member_kind =
+      d.quantity_context ? MapTag(d.quantity_context->members.member_kind, kMemberTags) : LUMICE_PATH_TAG_UNKNOWN;
   out->geometry_kind = MapTag(d.geometry.kind, kGeometryTags);
   out->wavelength_source = Text(d.wavelength_source);
   out->refractive_index = d.refractive_index;
