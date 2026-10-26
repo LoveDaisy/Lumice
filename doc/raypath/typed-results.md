@@ -218,26 +218,26 @@ hand-constructed, uncomputed typed declaration is now unevaluated; successful pr
 legs explicitly construct their evidence. Timing values are observations, not bitwise
 comparison targets. Static wire prose and enum spelling remain codec responsibilities.
 
-| Previous owner / producer | Existing machine-data groups | Unique value owner and consumers |
-|---|---|---|
-| `single_path_analysis.hpp` | meta/outcome/components/incomplete/discovery/point_mass/reach/sun_grid/measure_registration | `point_result.hpp`; point execution, typed completion and codec |
-| legacy C `LUMICE_Analyze*` entries | Scene-taking request adapters and optional `warm_json` decode; no independent result model | retained as compatibility shims over the same typed completions; retirement target after callers use workspace queries and explicit WarmData import |
-| query_control's unified deadline (`ResolveQueryDeadline`/`QueryDeadline`) | resolve-once absolute deadline — execution state rather than a wire key | the C workspace's four query entries resolve it once; stoppable legs consume its absolute stop and the typed result retains the observed outcome |
-| deleted envelope (former `SinglePathResult` deferral) | context_config/context_request/context_warm/survey_context_ready — never wire keys (verified pre-deletion) | no owner: the deferred state is unrepresentable; a declared context is produced by `AnalyzePathPointValue` in the execution |
-| context assembly/reuse | object/edge/band_sum, reference lambda, source and degradation | `survey_context.hpp` plus owned structural projection; point/probe and shared context codec |
-| `probe_analysis.hpp`, survey probe | meta, profile spec/samples/readings/dark_regions, red_edge_width | `probe_result.hpp`, `results/probe_line.hpp`; quantity service, probe query and codec |
-| former survey document | request/scope/resolved members, routing, objects, unevaluated/evidence | `survey_result.hpp`, `results/survey_records.hpp`; survey assembly, typed harvest and codec |
-| survey family | measure/ladder/frozen/free dimensions/killed/level0 refusal/tails/band/origin | structure facts and survey records; survey adapter alone mounts cards without rerunning rank |
-| survey chromatic legs | positional dispersion, followed onsets, diagnose/verdict/thresholds/coverage | survey records; existing chromatic producer and codec, with their original refusal shape |
-| tint/TIR/ESS/witness | methods, values, counts, pair/lattice, coverage/refusal | claim-owned capability values in `results/quantity.hpp`; survey adapters mount them without reimplementation |
-| warm admission | fingerprint, resolved location, producer/scope receipts, seeds and profile rows | `survey_reuse`; both import paths remain untrusted until admitted |
-| geometry/support | member partition/intervals/topology/onsets/constant curves per lambda/family groups | `results/structure.hpp`; structure capability and report/survey consumers |
-| enumeration | kind/member/slot/phi, independent states, u/sky position/counterfactual/thresholds/vocabulary | `results/report_structure.hpp`, `report_enumeration.hpp`; enumeration and completed report |
-| report input | light/crystal/axis/shape/layers/spectrum/support_dimensions/seed/options | `results/report_scope.hpp`, pure scene values; captured before moving execution storage |
-| discovery/MC | every record subfield, measure/source identities, observation ruler, spectral verification, unfinished | `results/report_records.hpp`, `report_attribution.hpp`; completed MC evidence has no sampler |
-| report source replay | positive_source_witness and source-token rows | completion stage materializes `PositiveSourceWitness`; codec never calls `ReplayDiagnosticSource` |
-| attribution/ruling | annotations/unattributed/counts/ruling/outcome/basis | completed report; checked local references and original independent ruling |
-| former report serializer assembly | coverage/budgets/timing, unsupported multi-crystal path | `FeatureReportData` completion; serializer takes one `FeatureReportResult` plus generator text |
+| Producer | Machine-data groups | Typed owner | C view | JSON projection |
+|---|---|---|---|---|
+| `single_path_analysis.hpp` | meta/outcome/components/incomplete/discovery/point_mass/reach/sun_grid/measure_registration | `point_result.hpp`; point execution and completion | `PathPointGetInfo/Component/Sample/Mass/Discovery/Reach/SunGrid/MeasureRegistration` and indexed orbit/incomplete/shape | point schema 1 |
+| legacy C `LUMICE_Analyze*` entries | Scene-taking adapters and optional `warm_json` decode; no independent result model | same four typed completions; compatibility shims to retire after callers migrate | same four result handles and getters, not a second view | unchanged legacy `ToJson` outputs |
+| query control | resolve-once absolute deadline, execution outcome (not a wire key) | workspace query owner and completed result | four `PathWorkspaceQuery*` entries; `GetInfo.execution` | existing budget/stop observation |
+| deleted point envelope | deferred context inputs (never wire keys) | no owner; context completed by `AnalyzePathPointValue` | none; no deferred getter | none |
+| context assembly/reuse | object/edge/band_sum, reference lambda, source and degradation | `survey_context.hpp` with owned structural projection | `PathPointGetContext`, `PathProbeGetContext` | point `survey_context`, probe `context` |
+| `probe_analysis.hpp`, survey probe | meta, profiles/spec/samples/readings/dark_regions, red edge | `probe_result.hpp`, `results/probe_line.hpp`; common quantity service | `PathProbeGetInfo/Profile/Sample/DarkRegion/Quantity/Evidence` | probe schema 5 |
+| former survey document | request/scope/members, routing, objects, unevaluated/evidence | `survey_result.hpp`, `results/survey_records.hpp`; typed harvest | `PathSurveyGetInfo/Scope/Member/MemberVerdict/Object/Unevaluated/Evidence` | survey schema 4 |
+| survey family | measure/ladder/frozen/free dimensions/killed/level0 refusal/tails/band/origin | structure facts mounted once into survey records | `PathSurveyGetFamily/FamilyLevel/FamilyDimension/FamilyFrozenDim/FamilyKilled` and object adjuncts | survey `family_routing`, `objects` |
+| survey chromatic | dispersion/followed onsets, diagnose/verdict/features/coverage | survey records; chromatic producer | `PathSurveyGetChromatic/Dispersion/FollowedOnset/Diagnose/DiagnoseFeature/Evidence` | survey `chromatic` |
+| tint/TIR/ESS/witness | methods, values, counts, pair/lattice, coverage/refusal | claim-owned values in `results/quantity.hpp`; survey mounts returned facts | `PathSurveyGetTint/TirShare/TirInterface/McEss/McEssBand/Witness`, quantity and evidence readers | survey `chromatic.weight_tint`, `tir_share`, `mc_region_ess`, `objects[].witness` |
+| warm admission | fingerprint, location, receipts, seeds and profile rows | `survey_reuse`; both import paths require admission | `PathSurveyGetScope/WarmSeed`; `PathWarmDataFromSurvey/FromPoint/FromJson` | survey `warm_index`; schema 1/4 import |
+| geometry/support | member partition/intervals/topology/onsets/curves/family groups | `results/structure.hpp`; report and survey consume shared facts | `PathReportGetSupport*`, `PathReportGetOrbit*`, `PathSurveyGetSupport*` | report `support`; survey support objects |
+| enumeration | kind/member/slot/phi, independent states, u/position/counterfactual/thresholds/vocabulary | `results/report_structure.hpp`, `report_enumeration.hpp` | `PathReportGetObject/Visibility/Chromatic/ChromaticFeature/ProducedKind` | report `features` |
+| report input | light/crystal/axis/shape/layers/spectrum/support dimensions/seed/options | `results/report_scope.hpp`; captured scene values and requested layers | `PathReportGetScope/RequestedLayer/Layer/LayerAxis/LayerShape/RawSpectrumRow/SpectralRow` | report `scope`, unsupported `requested_path_layers` |
+| discovery/MC | record subfields, measure/source identities, observation ruler, spectral verification, unfinished | `results/report_records.hpp`, `report_attribution.hpp`; completed MC evidence has no sampler | `PathReportGetMcEvidence/Record/RecordAdjuncts/Field*/Diagnostic*/Corridor*/PositiveSource` | report `mc_evidence` |
+| report source replay | positive-source witness and source-token rows | completion materializes `PositiveSourceWitness`; codec never replays | `PathReportGetSource/PositiveSource` | report `sources`, record witnesses |
+| attribution/ruling | annotations/unattributed/counts/ruling/outcome/basis | completed report with checked local references | `PathReportGetAnnotation/Unattributed/UnattributedSummary/Ruling/Info` | report `features[].attribution`, `unattributed_structures`, `no_related_feature` |
+| former report serializer assembly | coverage/budgets/timing, unsupported multi-crystal path | `FeatureReportData` completion; serializer takes one frozen result | `PathReportGetCoverage/DeclaredSkip/Budgets/Info/RequestedLayer`; timing remains observational | report `coverage`, `budgets`, `timing`, unsupported outcome |
 
 The maximal MC-record fixture and existing literal JSON key/null/absence pins retain
 the `kMcMigrationLedger` as their reference. The tests also exercise C01 edge/probe
