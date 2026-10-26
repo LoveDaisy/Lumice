@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793040876924,
+  "lastUpdate": 1793040879622,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "b845c83f0138957e21f6ba7e7bcf5c1f42a0dfd1",
-          "message": "Merge pull request #432 from LoveDaisy/chore/analyze-workspace-layout-docs\n\ndocs: finalize the Analyze workspace layout (raypath-analysis §5.1.8)",
-          "timestamp": "2026-09-28T00:31:26+08:00",
-          "tree_id": "26b84bc5a84d9c0089605c7b002cce526807c507",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/b845c83f0138957e21f6ba7e7bcf5c1f42a0dfd1"
-        },
-        "date": 1790527393261,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 86,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "25b83e949546f15f97e44007554cd6d5a4ddd1e3",
           "message": "Merge pull request #433 from LoveDaisy/chore/repo-roles-and-shared-lib-docs\n\ndocs: repository roles for Lumice / Lumice Integral, and the shared library's first consumer",
           "timestamp": "2026-09-28T01:28:05+08:00",
@@ -13981,6 +13937,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Ubuntu x86_64",
             "value": 98.8,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.7,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "204775d4b7b287915b6fe3941773c1eb8df34d19",
+          "message": "Merge pull request #547 from LoveDaisy/feat/raypath-typed-architecture\n\nrefactor(raypath): complete typed-first query and C API architecture",
+          "timestamp": "2026-10-27T02:50:35+08:00",
+          "tree_id": "3a08be3734802675a46cfc191fef7514cdae32c2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/204775d4b7b287915b6fe3941773c1eb8df34d19"
+        },
+        "date": 1793040878851,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 91.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.2,
             "unit": "%"
           },
           {
