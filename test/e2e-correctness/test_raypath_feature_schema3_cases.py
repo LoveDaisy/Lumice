@@ -60,8 +60,9 @@ def _document(config: Path, path: str, args: tuple[str, ...]) -> dict:
     return doc
 
 
-def _report(config: Path, path: str, *args: str) -> dict:
-    return _document(config, path, tuple(args))
+def _report(config: Path, path: str, *args: str, budget_ms: int = 120000) -> dict:
+    # Full-result oracles must not accidentally measure the default whole-query deadline.
+    return _document(config, path, ("--budget-ms", str(budget_ms), *args))
 
 
 def _objects(doc: dict) -> list[dict]:
@@ -250,7 +251,7 @@ def test_c10_degenerate_family_report_terminates_with_honest_truncation(config):
     # bodies (the marched kink walk's duplicated arcs on this family) ship walk_truncated with
     # no curve data, the chromatic leg assesses what its declared comparison bound affords, and
     # the budget names the cuts. Nothing is fabricated in place of what did not run.
-    doc = _report(config, "3-6-4-8", "--wavelength", "550", "--events", "8192")
+    doc = _report(config, "3-6-4-8", "--wavelength", "550", "--events", "8192", budget_ms=15000)
     enumeration = doc["budgets"]["enumeration"]
     assert enumeration["hang_cap_ms"] == 300000
     assert enumeration["truncated"] is True
