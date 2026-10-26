@@ -208,6 +208,35 @@ TEST(Workspace, SurveyClassTintObservesQueryCancelBeforeCompletingItsLattice) {
   EXPECT_EQ(result.Data().execution, ExecutionOutcome::kCancelled);
 }
 
+TEST(Workspace, SurveyChromaticObservesQueryCancelBeforePairFinishes) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &workspace).Ok());
+  SurveyRequest request = SurveyOf({ 3, 5 }, 550.0);
+  request.symmetry_bits = 0;
+  request.budget_ms = 0;
+  analytic::StopToken token;
+  survey::SurveyResult result;
+  Error error;
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    error = workspace->QuerySurvey(request, &result, &token);
+    done = true;
+  });
+  const auto bound = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (token.PollCount(kPollSurveyChromatic) == 0 && !done && std::chrono::steady_clock::now() < bound) {
+    std::this_thread::yield();
+  }
+  const bool entered_chromatic = token.PollCount(kPollSurveyChromatic) > 0;
+  token.RequestCancel();
+  worker.join();
+  ASSERT_TRUE(error.Ok());
+  ASSERT_TRUE(entered_chromatic) << "the full-dimensional survey never entered chromatic analysis";
+  EXPECT_EQ(result.Data().execution, ExecutionOutcome::kCancelled);
+  EXPECT_EQ(result.Data().chromatic.state, survey::EvidenceState::kRefused);
+  EXPECT_EQ(result.Data().chromatic.mode, "stop_requested");
+  EXPECT_FALSE(result.Data().diagnose.has_value());
+}
+
 TEST(Workspace, CreationIsLazyAndOwnsNothingButTheSnapshot) {
   std::unique_ptr<AnalysisWorkspace> workspace;
   ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &workspace).Ok());

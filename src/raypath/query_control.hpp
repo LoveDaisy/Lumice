@@ -94,6 +94,7 @@ inline constexpr int kPollProbeLambdas = 18;       // probe, per-lambda boundary
 inline constexpr int kPollPointLegs = 19;          // point discovery legs' boundaries
 inline constexpr int kPollMcEssDraws = 20;         // survey MC ESS leg, per draw chunk
 inline constexpr int kPollEnumerationMember = 21;  // report enumeration, per member
+inline constexpr int kPollSurveyChromatic = 22;    // survey chromatic pair, at leg entry
 inline constexpr int kPollSamplerDraws = 23;       // the diagnostic sampler's draw loops (survey MC ESS
                                                    // and report discovery — never both in one query)
 

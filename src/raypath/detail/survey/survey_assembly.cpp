@@ -423,7 +423,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
           // objects; the dispersion and diagnose legs are separate kernel paths, separate
           // sub-blocks).
           AssembleChromaticLayer(table, polygons, request.path_layers[0], density.spec,
-                                 static_cast<int>(scope_members.size()), out);
+                                 static_cast<int>(scope_members.size()), out, options.stop);
           // The arm's own tint leg: the class power-sum over the declared lattice (a different
           // reading and field family from the identity arm's point-mass masses; its refusals
           // stay in the sub-block — the block already carries legs with real output).

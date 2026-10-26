@@ -249,8 +249,8 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     probe_input.stop = input.stop;
     probe_input.fill_member = input.representative;
     RunSolarRadialProbe(probe_input, out);
-    AssembleChromaticLayer(*input.table, *input.polygons, *input.representative, input.density->spec, member_count,
-                           out);
+    AssembleChromaticLayer(*input.table, *input.polygons, *input.representative, input.density->spec, member_count, out,
+                           input.stop);
     quantity::ClassTintInput class_tint_input;
     class_tint_input.table = input.table;
     class_tint_input.polygons = input.polygons;

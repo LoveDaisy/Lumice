@@ -53,7 +53,7 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
 // once any leg ran.
 void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
-                            int class_size, SurveyData* out);
+                            int class_size, SurveyData* out, const analytic::DiscoveryStop* stop);
 
 }  // namespace lumice::raypath::survey
 
