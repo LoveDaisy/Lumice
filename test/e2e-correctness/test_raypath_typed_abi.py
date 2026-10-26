@@ -97,7 +97,7 @@ def _product_library_path():
     }["win32" if sys.platform.startswith("win") else "linux" if sys.platform.startswith("linux") else "darwin"]
     matches = list((ROOT / "build" / "Release" / "shared").rglob(name))
     if not matches:
-        pytest.skip("product shared library needs ./scripts/build.sh -sj release")
+        pytest.fail("product shared library needs ./scripts/build.sh -sj release", pytrace=False)
     assert len(matches) == 1, matches
     install = ROOT / "build" / "cmake_install" / "shared"
     product = install / name if sys.platform.startswith("win") else install / "lib" / name
@@ -307,6 +307,12 @@ def _run_independent_client(check):
     assert run.returncode == 0, f"{check}: exit {run.returncode}\n{run.stdout}\n{run.stderr}"
 
 
+def test_missing_shared_build_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+    with pytest.raises(pytest.fail.Exception, match="product shared library needs"):
+        _product_library_path()
+
+
 def test_published_request_extents_and_future_tail_keep_borrowed_result_alive():
     _run_independent_client("point")
 
@@ -417,7 +423,12 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           LUMICE_PathProbeProfile profile = {0};
           profile.struct_size = sizeof(profile);
           if (LUMICE_PathProbeGetProfile(probe_result, 0, &profile) != LUMICE_PATH_READ_OK ||
-              profile.state == 0) return 18;
+              profile.state == 0 || profile.along != LUMICE_PATH_PROBE_ALONG_RADIAL) return 18;
+          LUMICE_PathQuantitySpec quantity = {0};
+          quantity.struct_size = sizeof(quantity);
+          if (LUMICE_PathProbeGetQuantity(probe_result, 0, &quantity) != LUMICE_PATH_READ_OK ||
+              quantity.kind != LUMICE_PATH_QUANTITY_BAND_SUM ||
+              quantity.unit != LUMICE_PATH_UNIT_PER_SR) return 24;
           options.warm = NULL;
           LUMICE_PathFeatureReportRequest report = {0};
           report.struct_size = sizeof(report);
@@ -438,7 +449,9 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           LUMICE_PathReportCoverage coverage = {0};
           coverage.struct_size = sizeof(coverage);
           if (LUMICE_PathReportGetCoverage(report_result, 0, &coverage) != LUMICE_PATH_READ_OK ||
-              coverage.subject.length == 0) return 19;
+              coverage.subject.length == 0 ||
+              coverage.role != LUMICE_PATH_COVERAGE_BASE_INPUT ||
+              coverage.status != LUMICE_PATH_COVERAGE_SUPPORTED) return 19;
           const int multi_faces[] = {3, 5, 1, 3};
           const int multi_counts[] = {2, 2};
           report.faces = multi_faces;
