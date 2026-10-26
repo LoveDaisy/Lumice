@@ -119,6 +119,7 @@ struct KinkOptions {
   int lattice_n = 20000;
   double step = kWalkStepRad;
   int max_walk_steps = kMaxWalkSteps;
+  const DiscoveryStop* stop = nullptr;  // A cut may return a prefix; check stop before publishing it.
 };
 
 // The both-ways walk of one marched seed, as an injectable seam: LI's failure-counting test

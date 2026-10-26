@@ -9,10 +9,14 @@
 
 #include "analytic/pose_density.hpp"
 #include "core/math.hpp"
+#include "raypath/detail/quantity/probe_line.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/prepared_geometry.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/single_path_analysis.hpp"  // kMaxSampleCount — the sample bound the probe request echoes
+#include "raypath/survey_result.hpp"
 #include "util/sky_direction.hpp"
 
 namespace lumice::raypath {
@@ -101,7 +105,7 @@ survey::ProbeLineLayout ArcLayout(double delta_deg, double azimuth_centre_deg) {
 // what the request fixed).
 void FillProfileSpec(ProbeProfile* profile, const ProbeRequest& request, const ProbeMetadata& meta,
                      const std::vector<int>& representative, int member_count) {
-  profile->along = ProbeAlongName(request.along);
+  profile->along = request.along;
   profile->azimuth_deg = meta.at_azimuth_about_sun_deg;
   profile->bin_deg = survey::kProbeBinDeg;
   profile->wedge_half_width_deg = survey::kProbeWedgeHalfWidthDeg;
@@ -133,21 +137,22 @@ std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layou
   }
   const auto classify = [&](size_t k) {
     if (!structure) {
-      return std::pair<std::string, std::string>{ "unknown", structure.reason };
+      return std::pair<ProbeDarkKind, std::string>{ ProbeDarkKind::kUnknown, structure.Reason() };
     }
     const double pos = layout.bins[k].delta_centre_deg;
-    for (const SurveyWarmSource::SupportInterval& interval : structure.warm->intervals) {
+    for (const SurveyWarmSource::SupportInterval& interval : structure.Facts()->intervals) {
       if (pos >= interval.lower_deg && pos <= interval.upper_deg) {
-        return std::pair<std::string, std::string>{ samples[k].k > 0 ? "inside_support_positive" :
-                                                                       "inside_support_zero",
-                                                    std::string() };
+        return std::pair<ProbeDarkKind, std::string>{ samples[k].k > 0 ? ProbeDarkKind::kInsideSupportPositive :
+                                                                         ProbeDarkKind::kInsideSupportZero,
+                                                      std::string() };
       }
     }
-    return std::pair<std::string, std::string>{ "outside_support", std::string() };
+    return std::pair<ProbeDarkKind, std::string>{ ProbeDarkKind::kOutsideSupport, std::string() };
   };
   const auto lo_of = [&](size_t k) { return arc_form ? layout.bins[k].az_lo_deg : layout.bins[k].delta_lo_deg; };
   const auto hi_of = [&](size_t k) { return arc_form ? layout.bins[k].az_hi_deg : layout.bins[k].delta_hi_deg; };
-  std::string current_kind, current_reason;
+  ProbeDarkKind current_kind = ProbeDarkKind::kUnknown;
+  std::string current_reason;
   double lo = 0.0, hi = 0.0;
   int count = 0;
   const auto flush = [&]() {
@@ -179,10 +184,30 @@ std::vector<ProbeDarkSegment> DecomposeDark(const survey::ProbeLineLayout& layou
   return segments;
 }
 
+ProbeProfile CompleteProbeProfile(ProbeProfile profile, const MemberScope& members,
+                                  const std::shared_ptr<const QuantityContext>& input) {
+  ClaimScope scope;
+  scope.input = input;
+  scope.members = members;
+  scope.members.members = { profile.representative };
+  scope.members.member_kind = MemberKind::kLiteral;
+  BindQuantityScope(&scope, profile.quantity);
+  profile.BindScope(scope);
+  return profile;
+}
+
 }  // namespace
 
-Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out) {
-  *out = ProbeResult{};
+Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& request, ProbeData* out,
+                           const PreparedGeometry* prepared) {
+  *out = ProbeData{};
+  std::optional<AdmittedWarmSource> admitted;
+  if (request.warm_candidate) {
+    if (Error e = ValidateWarmCandidate(config, request, *request.warm_candidate, &admitted); !e.Ok())
+      return e;
+  }
+  const AdmittedWarmSource* source =
+      admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &*admitted : nullptr;
 
   // ---- inputs ----
   const auto crystal_it = config.crystals_.find(request.crystal_id);
@@ -213,7 +238,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
              "budget_ms must be 0 (the default) or at most " + std::to_string(kMaxProbeBudgetMs) };
   }
 
-  ProbeResult result;
+  ProbeData result;
   ProbeMetadata& meta = result.meta;
   meta.analytic_api_version = analytic::kApiVersion;
   meta.crystal_id = request.crystal_id;
@@ -244,19 +269,18 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   const double reference_nm = meta.wavelengths.front().nm;
   result.context.reference_wavelength_nm = reference_nm;
 
-  const CrystalConversion crystal = ConvertCrystal(crystal_it->second.param_);
-  analytic::FaceNormalTable table;
-  analytic::FacePolygonTable polygons;
-  switch (analytic::BuildFaceNormals(crystal.shape, &table, &polygons)) {
-    case analytic::Status::kOk:
-      break;
-    case analytic::Status::kInvalidConfig:
-      return { ErrorCode::kCrystalRejected,
-               "the engine builds no crystal from entry " + std::to_string(request.crystal_id) + "'s nominal shape" };
-    case analytic::Status::kInvalidValue:
-      return { ErrorCode::kCrystalRejected, "crystal entry " + std::to_string(request.crystal_id) +
-                                                "'s nominal shape has a value the kernel cannot take" };
+  // The geometry: prepared by a workspace when it already built the selection's tables, else
+  // this query's own one build (the workspace's reuse read counts the builds).
+  PreparedGeometry built;
+  const PreparedGeometry* geometry = prepared != nullptr ? prepared : &built;
+  if (prepared == nullptr) {
+    if (Error e = PrepareGeometry(crystal_it->second, &built); !e.Ok()) {
+      return e;
+    }
   }
+  const CrystalConversion& crystal = geometry->conversion;
+  const analytic::FaceNormalTable& table = geometry->table;
+  const analytic::FacePolygonTable& polygons = geometry->polygons;
 
   std::vector<int> slots;
   if (Error e = ResolveSingleLayerPath(request.path_layers, table, &slots); !e.Ok()) {
@@ -280,50 +304,89 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   const survey::ProbeFrame frame = survey::MakeProbeFrame(meta.incident_direction);
   meta.at_azimuth_about_sun_deg = FrameAzimuthOf(frame, meta.at_direction);
 
-  // The budget: 0 = the documented default at this layer too (the bridge resolves the same
-  // constant before the call; a direct caller passes 0 and gets the identical semantics), and
-  // meta echoes the value that applies.
-  meta.budget_ms = request.budget_ms > 0 ? request.budget_ms : kDefaultProbeBudgetMs;
-
-  // The deadline (the point query's shape): resolved once at entry, polled at the per-lambda
-  // BandSum boundaries; a stopped run serializes the profiles it has — meta.interrupted, an
-  // honest early exit, never a failure.
-  const analytic::DiscoveryStop stop{ std::chrono::steady_clock::now() + std::chrono::milliseconds(meta.budget_ms),
-                                      request.interrupted };
-  const auto stopped = [&stop]() { return stop.Stopped(); };
+  // The budget and its deadline, resolved once at entry by the one owner (query_control.hpp —
+  // 0 = the documented default at this layer too: the bridge resolves the same constant before
+  // the call, a direct caller passes 0 and gets the identical semantics, and meta echoes the
+  // resolved value). Polled at the per-lambda BandSum boundaries; a stopped run serializes the
+  // profiles it has — meta.interrupted, an honest early exit, never a failure.
+  LegControl budget;
+  if (request.query_deadline) {
+    budget.stop = request.query_deadline->LegStop();
+    budget.resolved_ms = request.query_deadline->resolved_ms;
+  } else {
+    BudgetRequest budget_request;
+    budget_request.budget_ms = request.budget_ms;
+    budget_request.interrupted = request.interrupted;
+    budget = ResolveLeg(BudgetWindow::kProbeLambdas, budget_request);
+  }
+  meta.budget_ms = budget.resolved_ms;
+  // The lambda boundaries' one stop: the resolved window with the query's cancel folded in.
+  const analytic::DiscoveryStop stop{ budget.stop.deadline, request.interrupted, request.cancel };
+  const auto stopped = [&stop]() {
+    if (stop.token != nullptr) {
+      stop.token->NotePoll(kPollProbeLambdas);
+    }
+    return stop.Stopped();
+  };
+  // A unified query carries its entry deadline through context assembly; legacy retains the
+  // cancel-only context, independent of its lambda window.
+  const analytic::DiscoveryStop context_stop{ request.query_deadline ? request.query_deadline->at :
+                                                                       std::chrono::steady_clock::time_point::max(),
+                                              request.interrupted, request.cancel };
 
   // ---- the context (the point query's block, read at the at point) ----
   SurveyContextBlock& context = result.context;
-  const SurveyWarmSource* warm = nullptr;
-  SurveyWarmSource inline_harvest;
+  const AdmittedWarmSource* warm = nullptr;
+  std::optional<AdmittedWarmSource> inline_source;
   bool inline_refused = false;
-  if (request.warm_survey.has_value() && request.warm_survey->index_present) {
-    context.source = "warm";
-    warm = &*request.warm_survey;
+  if (source != nullptr && source->Facts().index_present) {
+    context.source = ContextSource::kWarm;
+    warm = source;
   } else {
-    context.source = request.warm_survey.has_value() ? "warm" : "inline";
-    context.warm_index_absent = request.warm_survey.has_value() && !request.warm_survey->index_present;
+    context.source = source != nullptr ? ContextSource::kWarm : ContextSource::kInline;
+    context.warm_index_absent = source != nullptr && !source->Facts().index_present;
     SurveyRequest survey_request;
-    survey_request.crystal_id = request.crystal_id;
-    survey_request.path_layers = request.path_layers;
-    survey_request.symmetry_bits = survey::kDefaultSymmetryBits;
+    static_cast<PathSelection&>(survey_request) = request;
     survey_request.wavelength_nm = reference_nm;
-    survey::SurveyDocument doc;
-    const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
-    if (!e.Ok()) {
+    survey::SurveyResult doc;
+    survey::SurveyAssemblyOptions context_options;
+    context_options.context_only = true;
+    context_options.stop = &context_stop;
+    Error e = survey::AssembleSurvey(config, survey_request, &doc, context_options);
+    if (context_stop.Stopped()) {
+      // The cut context claims nothing AND engages nothing: a T0-cut assembly still returns
+      // Ok, so anything but a full exit here would fall through to the disengaged optional's
+      // dereference below — the three fields refuse with the stop's name and the arm is done.
       inline_refused = true;
-      context.object.state = "unevaluated";
+      context.cut_by_stop = true;
+      context.object.state = survey::EvidenceState::kUnevaluated;
+      context.object.reason = "stop_requested";
+      context.edge.state = survey::EvidenceState::kUnevaluated;
+      context.edge.reason = "stop_requested";
+      context.band_sum.state = survey::EvidenceState::kUnevaluated;
+      context.band_sum.reason = "stop_requested";
+    } else if (!e.Ok()) {
+      inline_refused = true;
+      context.object.state = survey::EvidenceState::kUnevaluated;
       context.object.reason = "inline_survey_refused";
-      context.edge.state = "unevaluated";
+      context.edge.state = survey::EvidenceState::kUnevaluated;
       context.edge.reason = "inline_survey_refused";
-      context.band_sum.state = "unevaluated";
+      context.band_sum.state = survey::EvidenceState::kUnevaluated;
+      context.band_sum.reason = "inline_survey_refused";
+    } else if (Error admission = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
+               !admission.Ok()) {
+      inline_refused = true;
+      context.object.state = survey::EvidenceState::kUnevaluated;
+      context.object.reason = "inline_survey_refused";
+      context.edge.state = survey::EvidenceState::kUnevaluated;
+      context.edge.reason = "inline_survey_refused";
+      context.band_sum.state = survey::EvidenceState::kUnevaluated;
       context.band_sum.reason = "inline_survey_refused";
     } else {
-      inline_harvest = HarvestSurveyDocument(doc);
-      warm = &inline_harvest;
+      warm = &*inline_source;  // engaged: the admission succeeded above
     }
   }
-  SurveyStructureView reference_structure{ nullptr, "inline_survey_refused" };
+  SurveyStructureView reference_structure = SurveyStructureView::Unavailable("inline_survey_refused");
   if (warm != nullptr) {
     FillSurveyContext(*warm, meta.at_deviation_deg, reference_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg,
                       &context);
@@ -333,11 +396,16 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
 
   // ---- the class scope and the density conversion (the survey assembly's own authority) ----
   survey::CrystalSceneScope class_scope;
-  if (Error e = survey::ResolveCrystalSceneScope(config, request.crystal_id, request.path_layers,
-                                                 survey::kDefaultSymmetryBits, &class_scope);
-      !e.Ok()) {
+  if (Error e = survey::ResolveCrystalSceneScope(config, request, &class_scope); !e.Ok()) {
     return e;
   }
+  result.members = static_cast<const MemberScope&>(class_scope);
+  QuantityContext quantity_context;
+  quantity_context.members = result.members;
+  quantity_context.crystal = crystal_it->second;
+  quantity_context.light = light;
+  quantity_context.observation = { reference_nm, light.param_.altitude_, light.param_.azimuth_ };
+  const auto quantity_input = std::make_shared<const QuantityContext>(std::move(quantity_context));
   const int member_count = static_cast<int>(class_scope.members.size());
   const PoseDensityConversion& density = class_scope.density;
   const bool density_ok = density.Ok();
@@ -354,7 +422,7 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
   // block names); a context with neither is the named refusal.
   bool has_anchor = false;
   double anchor = 0.0;
-  const char* anchor_basis = "";
+  ContextEdgeBasis anchor_basis = ContextEdgeBasis::kSupportIntervalEndpoint;
   if (reference_structure) {
     has_anchor = NearestStructureAnchor(reference_structure, meta.at_deviation_deg, &anchor, &anchor_basis);
   }
@@ -390,6 +458,10 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     // so they echo it too; "0 = the full axis" stays the axis forms' reading alone.
     profile.window_half_width_deg = (windowed || arc_form) ? kProbeWindowHalfWidthDeg : 0.0;
     profile.wavelength_nm = meta.wavelengths[w].nm;
+    profile.quantity.context = quantity_input;
+    profile.quantity.aggregation = MemberAggregation::kRepresentative;
+    profile.quantity.observation = { profile.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg };
+    profile.quantity.wavelengths_nm = { profile.wavelength_nm };
     profile.refractive_index = meta.wavelengths[w].refractive_index;
     profile.sample_count = request.sample_count > 0 ? request.sample_count : survey::kSurveyProbeSampleCount;
     if (windowed && has_anchor) {
@@ -402,129 +474,134 @@ Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request,
     const bool arc_refused =
         arc_form && (meta.at_deviation_deg <= kArcDegenerateNearDeg || meta.at_deviation_deg >= kArcDegenerateFarDeg);
     if (edge_refused) {
-      profile.evidence_state = "refused";
       // The refusal's cause: a context that names no edge is the form's own refusal; an inline
       // assembly that never produced a context is the infrastructure's, named for what failed.
-      profile.refused_mode = inline_refused ? "inline_survey_refused" : "no_edge_in_context";
+      profile.Refuse(inline_refused ? "inline_survey_refused" : "no_edge_in_context");
       // No dark_regions on a refused profile: with no samples the decomposition is empty by
       // construction, and doc §10.2 marks the field Finite only.
-      result.profiles.push_back(std::move(profile));
+      result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
     if (arc_refused) {
-      profile.evidence_state = "refused";
-      profile.refused_mode = "degenerate_arc_at_pole";
-      result.profiles.push_back(std::move(profile));
+      profile.Refuse("degenerate_arc_at_pole");
+      result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
     if (!density_ok) {
-      profile.evidence_state = "refused";
-      profile.refused_mode = "measure_not_expressible";
-      result.profiles.push_back(std::move(profile));
+      profile.Refuse("measure_not_expressible");
+      result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
       continue;
     }
 
     // Reuse or recompute. Radial only: the warm map's slice is the radial line; the windowed and
     // arc geometries are this query's own, always recomputed (lattice-deterministic, no seed).
-    bool reused = false;
     const SurveyReuseDecision reuse =
         warm != nullptr ?
             EvaluateSurveyReuse(*warm, profile.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg) :
             SurveyReuseDecision{};
-    const bool same_line =
-        warm != nullptr && warm->has_probe_azimuth &&
-        std::fabs(std::remainder(meta.at_azimuth_about_sun_deg - warm->probe_azimuth_deg, 360.0)) < 1e-9;
-    if (radial && warm != nullptr && warm->has_probe && reuse.reading_reason == nullptr &&
-        (density.spec.family == analytic::PoseFamily::kRandom || same_line) &&
-        warm->probe_bin_deg == survey::kProbeBinDeg && warm->probe_sample_count == profile.sample_count &&
-        warm->probe_samples.size() == layout.bins.size()) {
-      reused = true;
-      // The grid identity is the schema constants (bin width, count, extent — all checked
-      // above), not bit-equal doubles: the document's echoed centres and this layout's centres
-      // are one expression spelled in two TUs on two platforms, and FP contraction may sit a
-      // single ulp between them — orders of magnitude below the bin, never a different grid.
-      constexpr double kGridTolDeg = 1e-9;  // the bin is 0.1 deg; a wrong grid is off by O(bin)
-      for (size_t k = 0; k < layout.bins.size(); k++) {
-        if (std::fabs(warm->probe_samples[k].delta_deg - layout.bins[k].delta_centre_deg) > kGridTolDeg) {
-          reused = false;
-          break;
-        }
-      }
-    }
+    const ProfileReuseScope profile_scope{ { profile.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg },
+                                           {},
+                                           meta.at_azimuth_about_sun_deg,
+                                           survey::kProbeBinDeg,
+                                           profile.sample_count,
+                                           radial };
+    const bool reused = warm != nullptr && CanReuseSurveyProfile(*warm, profile_scope, density, layout);
+    ProbeFiniteReading& reading = profile.BeginFinite();
     if (reused) {
-      profile.source = "warm_reused";
-      profile.evidence_state = "finite";
-      profile.members_evaluated = 1;
-      profile.samples.resize(layout.bins.size());
+      reading.source = ProbeProfileSource::kWarmReused;
+      reading.members_evaluated = 1;
+      reading.samples.resize(layout.bins.size());
       for (size_t k = 0; k < layout.bins.size(); k++) {
-        survey::ProbeLineSample& sample = profile.samples[k];
+        survey::ProbeLineSample& sample = reading.samples[k];
         sample.delta_deg = layout.bins[k].delta_centre_deg;
         sample.azimuth_deg = layout.bins[k].az_centre_deg;
-        sample.value = warm->probe_samples[k].value;
-        sample.k = warm->probe_samples[k].k;
-        sample.k_eff = warm->probe_samples[k].k_eff;
+        const auto& samples = warm->Facts().probe_samples;
+        sample.value = samples[k].value;
+        sample.k = samples[k].k;
+        sample.k_eff = samples[k].k_eff;
       }
     } else {
-      profile.source = "recomputed";
+      reading.source = ProbeProfileSource::kRecomputed;
       survey::ProbeLineProfile line = survey::EvaluateProbeLine(
           table, polygons, request.path_layers[0], density, frame, layout, meta.wavelengths[w].nm,
-          meta.wavelengths[w].refractive_index, meta.incident_direction, profile.sample_count);
-      profile.evidence_state = "finite";
-      profile.members_evaluated = 1;
-      profile.samples = std::move(line.samples);
+          meta.wavelengths[w].refractive_index, meta.incident_direction, profile.sample_count, &stop);
+      if (line.truncated) {
+        // The cut line's prefix bins are not the full lattice: the profile refuses with the
+        // stop's name and claims no readings it did not run.
+        profile.Refuse("stop_requested");
+        result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
+        meta.interrupted = true;
+        continue;
+      }
+      reading.members_evaluated = 1;
+      reading.samples = std::move(line.samples);
     }
 
     // The readings: the edge (first non-empty bin) and the peak (the argmax), two things, on the
     // line's sweep coordinate — the deviation for the axis forms, the azimuth for the arc forms
     // (the rule the dark decomposition's bounds already follow; on a constant-delta arc a delta
     // reading would be a constant echo, a position of nothing).
-    std::vector<double> centres(profile.samples.size());
-    std::vector<double> values(profile.samples.size());
-    std::vector<int> counts(profile.samples.size());
-    for (size_t k = 0; k < profile.samples.size(); k++) {
-      centres[k] = arc_form ? profile.samples[k].azimuth_deg : profile.samples[k].delta_deg;
-      values[k] = profile.samples[k].value;
-      counts[k] = profile.samples[k].k;
+    std::vector<double> centres(reading.samples.size());
+    std::vector<double> values(reading.samples.size());
+    std::vector<int> counts(reading.samples.size());
+    for (size_t k = 0; k < reading.samples.size(); k++) {
+      centres[k] = arc_form ? reading.samples[k].azimuth_deg : reading.samples[k].delta_deg;
+      values[k] = reading.samples[k].value;
+      counts[k] = reading.samples[k].k;
     }
     const survey::ProbeReadings read = survey::ReadProbeProfile(centres, values, counts);
-    profile.readings.has_edge = read.has_edge;
-    profile.readings.edge_deg = read.edge_delta_deg;
-    profile.readings.has_peak = read.has_peak;
-    profile.readings.peak_deg = read.peak_delta_deg;
-    profile.readings.peak_value = read.peak_value;
-    profile.readings.separation_deg = read.separation_deg;
+    reading.readings.has_edge = read.has_edge;
+    reading.readings.edge_deg = read.edge_delta_deg;
+    reading.readings.has_peak = read.has_peak;
+    reading.readings.peak_deg = read.peak_delta_deg;
+    reading.readings.peak_value = read.peak_value;
+    reading.readings.separation_deg = read.separation_deg;
 
     const SurveyStructureView profile_structure =
-        warm != nullptr ? reuse.structure : SurveyStructureView{ nullptr, "inline_survey_refused" };
-    profile.dark_regions = DecomposeDark(layout, profile_structure, profile.samples, arc_form);
-    result.profiles.push_back(std::move(profile));
+        warm != nullptr ? reuse.structure : SurveyStructureView::Unavailable("inline_survey_refused");
+    reading.dark_regions = DecomposeDark(layout, profile_structure, reading.samples, arc_form);
+    result.profiles.push_back(CompleteProbeProfile(std::move(profile), class_scope, quantity_input));
   }
   if (stopped()) {
     meta.interrupted = true;
   }
+  meta.execution = OutcomeOf(stop);
 
   // The red-edge width: the 650 nm profile's edge minus the reference (first) profile's edge,
   // when both exist and differ as profiles. An axis-form quantity — the edges it subtracts sit
   // on the deviation axis (the C09 anchor's delta-axis quantity), and an arc form's edges would
   // be azimuth positions with no width meaning.
-  const double kRedNm = survey::kChromaticRedNm;
+  const double kRedNm = kChromaticRedNm;
   if (result.profiles.size() >= 2 && !arc_form) {
     const ProbeProfile* red = nullptr;
     for (const ProbeProfile& p : result.profiles) {
-      if (p.evidence_state == "finite" && p.wavelength_nm == kRedNm) {
+      if (p.State() == survey::EvidenceState::kFinite && p.wavelength_nm == kRedNm) {
         red = &p;
         break;
       }
     }
     const ProbeProfile& reference = result.profiles.front();
-    if (red != nullptr && &reference != red && reference.evidence_state == "finite" && reference.readings.has_edge &&
-        red->readings.has_edge) {
+    if (red != nullptr && &reference != red && reference.State() == survey::EvidenceState::kFinite &&
+        reference.Reading().readings.has_edge && red->Reading().readings.has_edge) {
       result.has_red_edge_width = true;
-      result.red_edge_width_deg = red->readings.edge_deg - reference.readings.edge_deg;
+      result.red_edge_width_deg = red->Reading().readings.edge_deg - reference.Reading().readings.edge_deg;
     }
   }
 
-  *out = std::move(result);
+  *out = FinalizeProbeData(std::move(result));
+  return {};
+}
+
+Error AnalyzePathProbe(const ConfigManager& config, const ProbeRequest& request, ProbeResult* out,
+                       const PreparedGeometry* geometry) {
+  if (!out) {
+    return { ErrorCode::kInvalidArgument, "null probe output" };
+  }
+  ProbeData data;
+  if (const Error error = AnalyzePathProbeData(config, request, &data, geometry); !error.Ok()) {
+    return error;
+  }
+  *out = ProbeResult(std::move(data));
   return {};
 }
 

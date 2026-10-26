@@ -51,6 +51,7 @@
 #include "analytic/entry_measure.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/pose_density.hpp"
+#include "analytic/support_types.hpp"
 
 namespace lumice::analytic {
 
@@ -108,43 +109,14 @@ double RefinementErrorEstimate(double integral_n, double integral_2n);
 // Mirrors of the measure contract's MeasureBinding / FiberSampleStream::EvidenceForm /
 // ExistenceState (layer direction forbids the include; the docking test maps value-for-value and
 // fails on drift). Values and order match the contract's exactly.
-enum class FiberMeasureBinding { kSolidAngle, kFiberParameter };
-enum class FiberEvidenceForm { kStructural, kSampledExhaustive, kSampledPartial };
-enum class CurveExistence { kComputed, kEscaped, kWalkTruncated, kS4Declared };
+
 
 // ---- the orbit fiber-stream producer (M1 feedstock) ------------------------------------------------------
 
 // One point of the orbit stream: the contract's FiberSample fields plus the world-frame outgoing
 // (contract-neutral; the target-assignment and family-collapse anchors read it — the fold
 // identity makes it theta-independent on a member's valid arc).
-struct OrbitFiberPoint {
-  double u[3] = { 0.0, 0.0, 0.0 };         // R^T s_hat: the TRUE body-frame sun direction (never a placeholder)
-  double outgoing[3] = { 0.0, 0.0, 0.0 };  // world frame, propagation direction
-  double area = 0.0;                       // A: the corridor entry measure (0 unless the corridor opens)
-  double transmission = 0.0;               // T: the path power with every internal reflectance
-  bool valid = false;                      // path valid AND A > 0 AND T > 0 (the kept convention)
-  bool jet_degenerate = false;             // orbit-regularity: the sun at the family-axis pole
-  double parameter = 0.0;                  // theta
-  double weight = 0.0;                     // 2 pi / grid
-};
 
-struct OrbitFiberStream {
-  std::vector<OrbitFiberPoint> samples;
-  // The producer's routing declaration (the mirrored vocabulary; see the enum block above):
-  // the weights are dtheta elements of the orbit's own parameterization, and the stream covers
-  // that orbit to its declared resolution (`grid`), which is the kSampledExhaustive claim.
-  FiberMeasureBinding binding = FiberMeasureBinding::kFiberParameter;
-  FiberEvidenceForm evidence = FiberEvidenceForm::kSampledExhaustive;
-  int grid = 0;
-  // The sun sits at the family-axis pole: the orbit circle collapses to a point, every sample is
-  // marked jet_degenerate and `note` says so (never silent). A spec with no family axis
-  // (FamilyAxis false — random orientation, or a column off the pole) returns an EMPTY stream
-  // with the reason in `note`: the sigma->0 support is not one circle, so there is no orbit to
-  // sample. Both are producer verdicts, not errors.
-  bool spin_degenerate = false;
-  std::string note;
-  const char* source_name = "orbit-spin-grid";
-};
 
 // One member's spin integral feedstock: a periodic midpoint grid of grid points over the
 // Rz(theta) R0 poses, R0 the identity when the family axis is +e3 (the plate family — the

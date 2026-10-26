@@ -8,7 +8,7 @@
 
 #include "core/optics.hpp"  // IceRefractiveIndex: the dispersion closed form's n pair
 #include "raypath/detail/survey/survey_assembly.hpp"
-#include "raypath/detail/survey/survey_json.hpp"
+#include "raypath/survey_report.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {
@@ -28,14 +28,14 @@ SurveyRequest BaseRequest() {
 
 TEST(SurveyAssembly, RankZeroClassCollapsesToOneSourceImageCardAndStops) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, BaseRequest(), &document).Ok());
   EXPECT_TRUE(document.early_stopped);
   ASSERT_EQ(document.objects.size(), 1u);
   const SurveyObject& card = document.objects.front();
-  EXPECT_EQ(card.kind, SurveyObjectKind::kSourceImage);
-  EXPECT_EQ(card.evidence.state, EvidenceState::kCertified);
-  EXPECT_TRUE(CertifiedMethodRegistered(card.evidence.method));
+  EXPECT_EQ(card.Kind(), SurveyObjectKind::kSourceImage);
+  EXPECT_EQ(card.State(), EvidenceState::kCertified);
+  EXPECT_TRUE(CertifiedMethodRegistered(card.Method()));
   // The card is the sky-side object; the PBD class's one member is its preimage. The physical
   // plate ensemble is not symmetric under c -> -c (zenith 0 wobble is not zenith 180 wobble), so
   // the horizontal mirror is not applicable and the reversed sequence 2-1 is NOT in the class.
@@ -44,7 +44,7 @@ TEST(SurveyAssembly, RankZeroClassCollapsesToOneSourceImageCardAndStops) {
   EXPECT_TRUE(card.has_position);
   EXPECT_DOUBLE_EQ(card.position_altitude_deg, 20.0);
   EXPECT_DOUBLE_EQ(card.position_azimuth_deg, 0.0);
-  EXPECT_TRUE(card.certificate.has_value());
+  EXPECT_TRUE(card.Certificate() != nullptr);
   // The negative half of the smoke contract, at the model level: no other kind exists.
   for (const SurveyMemberVerdict& verdict : document.member_verdicts) {
     EXPECT_TRUE(verdict.rank_zero);
@@ -61,8 +61,8 @@ TEST(SurveyAssembly, LiteralScopeKeepsOnlyTheRequestedSequence) {
   const ConfigManager config = PlateScene(0.3, 0.3);
   SurveyRequest request = BaseRequest();
   request.symmetry_bits = 0;
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_TRUE(document.early_stopped);
   // The early-stop document carries no family_routing key at all (the conditional-presence
   // negative): the rank-0 certificate's own card is the whole story.
@@ -84,8 +84,8 @@ TEST(SurveyAssembly, FamilyRestrictedPlateRoutesIntoTheLadderArm) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };  // through two side faces: a deviating prism path
   request.symmetry_bits = 0;           // the literal member: the arm's per-member shape, not the 12-member sweep
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_TRUE(document.unevaluated.empty());
   ASSERT_TRUE(document.family_routing.has_value());
@@ -101,8 +101,8 @@ TEST(SurveyAssembly, FamilyRestrictedPlateRoutesIntoTheLadderArm) {
   // The cards: the level-0 support plus the level-1 survivors, each carrying its band.
   std::set<std::string> kinds;
   for (const SurveyObject& card : document.objects) {
-    kinds.insert(SurveyObjectKindName(card.kind));
-    if (card.kind == SurveyObjectKind::kSupportSet) {
+    kinds.insert(SurveyObjectKindName(card.Kind()));
+    if (card.Kind() == SurveyObjectKind::kSupportSet) {
       continue;
     }
     EXPECT_TRUE(card.band.has_value());
@@ -122,8 +122,8 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;  // the literal single member: the seconds-scale shape of the arm
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   // The document-level unevaluated list is empty: the full-dimensional arm produced its cards
   // (the rank-0-family and rank-1-family kinds are structurally absent on this route, not
@@ -132,7 +132,7 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   ASSERT_EQ(document.objects.size(), 3u);
   std::set<std::string> kinds;
   for (const SurveyObject& card : document.objects) {
-    kinds.insert(SurveyObjectKindName(card.kind));
+    kinds.insert(SurveyObjectKindName(card.Kind()));
   }
   EXPECT_EQ(kinds, std::set<std::string>({ "support_set", "caustic_edge", "bright_domain" }));
   // The wide-measure no-change assertion: a full-dimensional document carries no
@@ -143,53 +143,53 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   // The support_set card: the corpus 450nm partition shape (three intervals, the first closed,
   // the rest open components) with the endpoint mechanism vocabulary.
   const SurveyObject& support = document.objects[0];
-  EXPECT_EQ(support.kind, SurveyObjectKind::kSupportSet);
-  ASSERT_TRUE(support.support_set.has_value());
-  EXPECT_EQ(support.evidence.state, EvidenceState::kFinite);
-  ASSERT_EQ(support.support_set->intervals.size(), 3u);
-  EXPECT_EQ(support.support_set->intervals[0].n_closed, 1);
-  EXPECT_EQ(support.support_set->intervals[1].n_closed, 0);
-  EXPECT_EQ(support.support_set->intervals[2].n_closed, 0);
+  EXPECT_EQ(support.Kind(), SurveyObjectKind::kSupportSet);
+  ASSERT_TRUE(support.Support() != nullptr);
+  EXPECT_EQ(support.State(), EvidenceState::kFinite);
+  ASSERT_EQ(support.Support()->intervals.size(), 3u);
+  EXPECT_EQ(support.Support()->intervals[0].n_closed, 1);
+  EXPECT_EQ(support.Support()->intervals[1].n_closed, 0);
+  EXPECT_EQ(support.Support()->intervals[2].n_closed, 0);
   std::set<std::string> sources;
-  for (const SurveyObject::EndpointLabel& label : support.support_set->endpoints) {
+  for (const SurveyObject::EndpointLabel& label : support.Support()->endpoints) {
     sources.insert(label.source);
   }
   EXPECT_EQ(sources, std::set<std::string>({ "interior_minimum", "boundary_extremum", "corner" }));
-  EXPECT_EQ(support.support_set->symmetry_bits, 0u);
-  EXPECT_EQ(support.support_set->member_count, 1);
+  EXPECT_EQ(support.Support()->symmetry_bits, 0u);
+  EXPECT_EQ(support.Support()->member_count, 1);
 
   // The caustic_edge card: the min-deviation fold, certified closed-form on the two-face chain.
   const SurveyObject& edge = document.objects[1];
-  EXPECT_EQ(edge.kind, SurveyObjectKind::kCausticEdge);
-  ASSERT_TRUE(edge.caustic_edge.has_value());
-  EXPECT_TRUE(edge.caustic_edge->coincident_with_support);
-  EXPECT_EQ(edge.caustic_edge->profile, "finite_jump");
-  ASSERT_EQ(edge.evidence.state, EvidenceState::kCertified);
-  EXPECT_EQ(edge.evidence.method, std::string(kCertifiedMethodSlabMinDeviationClosedForm));
-  ASSERT_TRUE(edge.caustic_edge->certificate.has_value());
+  EXPECT_EQ(edge.Kind(), SurveyObjectKind::kCausticEdge);
+  ASSERT_TRUE(edge.Edge() != nullptr);
+  EXPECT_TRUE(edge.Edge()->coincident_with_support);
+  EXPECT_EQ(edge.Edge()->profile, "finite_jump");
+  ASSERT_EQ(edge.State(), EvidenceState::kCertified);
+  EXPECT_EQ(edge.Method(), std::string(kCertifiedMethodSlabMinDeviationClosedForm));
+  ASSERT_TRUE(edge.Edge()->certificate.has_value());
   // The corpus anchor: the closed form for the 60-degree prism (face normals 120 degrees apart).
   const double closed_form_deg = 2.0 * std::asin(document.refractive_index * 0.5) * 180.0 / kPi - 60.0;
-  const double error = std::fabs(edge.caustic_edge->position_deg - closed_form_deg);
+  const double error = std::fabs(edge.Edge()->position_deg - closed_form_deg);
   EXPECT_LT(error, 1e-4);  // the engine's own cross-check tolerance is 1e-6 rad (~5.7e-5 deg)
-  EXPECT_EQ(edge.caustic_edge->certificate->formula, "2*asin(n*sin(A/2)) - A");
-  EXPECT_NEAR(edge.caustic_edge->certificate->apex_angle_deg, 60.0, 1e-6);
+  EXPECT_EQ(edge.Edge()->certificate->formula, "2*asin(n*sin(A/2)) - A");
+  EXPECT_NEAR(edge.Edge()->certificate->apex_angle_deg, 60.0, 1e-6);
   // The support's lower end is the same edge (the coincidence the corpus lesson turns on).
-  EXPECT_NEAR(support.support_set->intervals[0].lower_deg, edge.caustic_edge->position_deg, 1e-4);
+  EXPECT_NEAR(support.Support()->intervals[0].lower_deg, edge.Edge()->position_deg, 1e-4);
 
   // The bright_domain card: the span plus the probe leg's readings (the peak is a finite
   // profile quantity, not the certified edge; the readings reference the probes[] entry).
   const SurveyObject& domain = document.objects[2];
-  EXPECT_EQ(domain.kind, SurveyObjectKind::kBrightDomain);
-  ASSERT_TRUE(domain.bright_domain.has_value());
-  EXPECT_TRUE(domain.bright_domain->has_peak);
-  EXPECT_GT(domain.bright_domain->peak_value, 0.0);
-  EXPECT_TRUE(domain.bright_domain->has_edge_reading);
+  EXPECT_EQ(domain.Kind(), SurveyObjectKind::kBrightDomain);
+  ASSERT_TRUE(domain.Bright() != nullptr);
+  EXPECT_TRUE(domain.Bright()->has_peak);
+  EXPECT_GT(domain.Bright()->peak_value, 0.0);
+  EXPECT_TRUE(domain.Bright()->has_edge_reading);
   // The finite edge reading sits in the same bin as the certified position (half a bin).
-  EXPECT_NEAR(domain.bright_domain->edge_delta_deg, edge.caustic_edge->position_deg, 0.05);
-  EXPECT_GT(domain.bright_domain->kept_count, 0);
-  EXPECT_EQ(domain.bright_domain->probe_index, 0);
+  EXPECT_NEAR(domain.Bright()->edge_delta_deg, edge.Edge()->position_deg, 0.05);
+  EXPECT_GT(domain.Bright()->kept_count, 0);
+  EXPECT_EQ(domain.Bright()->probe_index, 0);
   ASSERT_EQ(document.probes.size(), 1u);
-  EXPECT_EQ(document.probes.front().kind, "solar_radial");
+  EXPECT_EQ(document.probes.front().kind, SurveyProbeKind::kSolarRadial);
   // The chromatic layer's v1 legs: the dispersion direction is the corpus's red-inner-blue-
   // outer, the displacement matches the closed-form pair, and the two mechanisms stay in
   // separate sub-blocks with the tint leg's honest unevaluated.
@@ -207,11 +207,11 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
   // The arm's own tint leg: the class power-sum shape (the reading is the lattice's weight
   // ratio, not the identity arm's point-mass masses).
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(document.weight_tint->method, std::string(kClassTintMethodLatticePowerSum));
-  EXPECT_TRUE(document.weight_tint->class_power_shape);
-  EXPECT_GT(document.weight_tint->kept_count_red, 0);
-  EXPECT_GT(document.weight_tint->kept_count_blue, 0);
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kFinite);
+  EXPECT_EQ(TintMethodName(document.weight_tint->Value().Method()), std::string(kClassTintMethodLatticePowerSum));
+  EXPECT_TRUE(document.weight_tint->Value().IsClassPower());
+  EXPECT_GT(document.weight_tint->Value().kept_count_red, 0);
+  EXPECT_GT(document.weight_tint->Value().kept_count_blue, 0);
   EXPECT_EQ(document.chromatic.state, EvidenceState::kFinite);
   // The document's own evidence stays finite: the routing refused nothing.
   EXPECT_EQ(document.evidence.state, EvidenceState::kFinite);
@@ -220,56 +220,56 @@ TEST(SurveyAssembly, RandomPrismLiteralAssemblesTheThreeT1Cards) {
 TEST(SurveyAssembly, StandaloneCrystalNotInAnySceneLayerStillRoutes) {
   ConfigManager config = PlateScene(0.3, 0.3);
   config.scene_.ms_.clear();  // the crystal is configured but allocated to no scattering layer
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, BaseRequest(), &document).Ok());
   // The standalone branch: no scene layer is named, and the identity says so.
   EXPECT_FALSE(document.scene_layer.has_value());
   EXPECT_EQ(document.scene_identity, std::string("standalone configured crystal (not a scene allocation)"));
   // The routing itself is unchanged: the same plate class collapses and stops.
   EXPECT_TRUE(document.early_stopped);
   ASSERT_EQ(document.objects.size(), 1u);
-  EXPECT_EQ(document.objects.front().kind, SurveyObjectKind::kSourceImage);
-  EXPECT_EQ(document.objects.front().evidence.state, EvidenceState::kCertified);
+  EXPECT_EQ(document.objects.front().Kind(), SurveyObjectKind::kSourceImage);
+  EXPECT_EQ(document.objects.front().Evidence().state, EvidenceState::kCertified);
   EXPECT_TRUE(document.unevaluated.empty());
 }
 
 TEST(SurveyAssembly, RequestRefusalsKeepTheReportErrorSemantics) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyDocument document;
+  SurveyData document;
   SurveyRequest request = BaseRequest();
   request.crystal_id = 99;
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kUnknownCrystalId);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kUnknownCrystalId);
 
   request = BaseRequest();
   request.path_layers = { { 1, 2 }, { 1, 2 } };
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kMultiLayerUnsupported);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kMultiLayerUnsupported);
 
   request = BaseRequest();
   request.path_layers = { { 1, 99 } };
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kFaceNotInCrystal);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kFaceNotInCrystal);
 
   request = BaseRequest();
   request.path_layers = {};
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kInvalidPath);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kInvalidPath);
 
   request = BaseRequest();
   request.wavelength_nm = 200.0;
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kWavelengthOutOfRange);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kWavelengthOutOfRange);
 
   request = BaseRequest();
   request.budget_ms = kMaxSurveyBudgetMs + 1;
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kInvalidArgument);
 
   request = BaseRequest();
   request.symmetry_bits = 8;
-  EXPECT_EQ(AssembleSurvey(config, request, &document).code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(AssembleSurveyData(config, request, &document).code, ErrorCode::kInvalidArgument);
 }
 
 TEST(SurveyAssembly, EndToEndJsonCarriesTheSchema4Contract) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, BaseRequest(), &document).Ok());
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, BaseRequest(), &document).Ok());
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   EXPECT_EQ(parsed.at("schema"), "lumice.path-survey");
   EXPECT_EQ(parsed.at("schema_version"), 4);
   ASSERT_EQ(parsed.at("objects").size(), 1u);
@@ -294,8 +294,8 @@ TEST(SurveyAssembly, DispersionTableCarriesTheFollowedOnsetRows) {
   SurveyRequest request = BaseRequest();
   request.path_layers = { { 3, 5 } };
   request.symmetry_bits = 0;
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   ASSERT_TRUE(document.positional_dispersion.has_value());
   const SurveyPositionalDispersion& dispersion = *document.positional_dispersion;
   EXPECT_TRUE(dispersion.has_min_deviation_row);
@@ -321,7 +321,7 @@ TEST(SurveyAssembly, DispersionTableCarriesTheFollowedOnsetRows) {
     }
   }
   EXPECT_TRUE(saw_min_row);
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   const auto& dispersion_json = parsed.at("chromatic").at("positional_dispersion");
   // The min-row scalars stay in place on a class that has them, and the rows ride as the new key.
   EXPECT_DOUBLE_EQ(dispersion_json.at("value_red_deg").get<double>(), dispersion.value_red_deg);
@@ -339,13 +339,13 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
   request.crystal_id = 1;
   request.path_layers = { { 13, 15, 26, 28 } };
   request.symmetry_bits = 0;  // the literal chain, the corpus's filter spelling
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, request, &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_TRUE(document.unevaluated.empty());
   std::set<std::string> kinds;
   for (const SurveyObject& card : document.objects) {
-    kinds.insert(SurveyObjectKindName(card.kind));
+    kinds.insert(SurveyObjectKindName(card.Kind()));
   }
   EXPECT_EQ(kinds, std::set<std::string>({ "support_set", "caustic_edge", "bright_domain" }));
 
@@ -353,26 +353,26 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
   const SurveyObject* edge = nullptr;
   const SurveyObject* support = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kCausticEdge) {
+    if (card.Kind() == SurveyObjectKind::kCausticEdge) {
       edge = &card;
     }
-    if (card.kind == SurveyObjectKind::kSupportSet) {
+    if (card.Kind() == SurveyObjectKind::kSupportSet) {
       support = &card;
     }
   }
   ASSERT_NE(edge, nullptr);
   ASSERT_NE(support, nullptr);
-  ASSERT_TRUE(edge->caustic_edge.has_value());
-  EXPECT_EQ(edge->evidence.state, EvidenceState::kFinite);  // no two-face closed form on a 4-face chain
-  EXPECT_FALSE(edge->caustic_edge->certificate.has_value());
-  EXPECT_EQ(edge->caustic_edge->profile, "finite_jump");
-  EXPECT_TRUE(edge->caustic_edge->has_measure_limit);
-  EXPECT_TRUE(edge->caustic_edge->coincident_with_support);
+  ASSERT_TRUE(edge->Edge() != nullptr);
+  EXPECT_EQ(edge->State(), EvidenceState::kFinite);  // no two-face closed form on a 4-face chain
+  EXPECT_FALSE(edge->Edge()->certificate.has_value());
+  EXPECT_EQ(edge->Edge()->profile, "finite_jump");
+  EXPECT_TRUE(edge->Edge()->has_measure_limit);
+  EXPECT_TRUE(edge->Edge()->coincident_with_support);
   // The corpus anchor: 149.084904 degrees at n(550) = 1.3110129101 (LI cross-checked to 1.3e-6);
   // the band leaves room for cross-version onset reordering far below any physical ambiguity.
-  EXPECT_NEAR(edge->caustic_edge->position_deg, 149.0849, 0.02);
-  ASSERT_FALSE(support->support_set->intervals.empty());
-  EXPECT_NEAR(support->support_set->intervals.back().upper_deg, edge->caustic_edge->position_deg, 0.02);
+  EXPECT_NEAR(edge->Edge()->position_deg, 149.0849, 0.02);
+  ASSERT_FALSE(support->Support()->intervals.empty());
+  EXPECT_NEAR(support->Support()->intervals.back().upper_deg, edge->Edge()->position_deg, 0.02);
 
   // The dispersion: no min row, the rows carry the leg.
   ASSERT_TRUE(document.positional_dispersion.has_value());
@@ -391,14 +391,14 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
       }
       // The corpus spread (400/550/700 nm = 147.820/149.085/149.705): the pair brackets the
       // 550 nm reference position, blue inner, red outer.
-      EXPECT_NEAR(row.values_deg[0], edge->caustic_edge->position_deg, 1.0);
-      EXPECT_NEAR(row.values_deg[1], edge->caustic_edge->position_deg, 1.0);
+      EXPECT_NEAR(row.values_deg[0], edge->Edge()->position_deg, 1.0);
+      EXPECT_NEAR(row.values_deg[1], edge->Edge()->position_deg, 1.0);
       EXPECT_GT(row.values_deg[0], row.values_deg[1]);
       EXPECT_EQ(row.direction, "blue_inner_red_outer");
     }
   }
   EXPECT_TRUE(saw_max_row);
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   const auto& dispersion_json = parsed.at("chromatic").at("positional_dispersion");
   // The min-row scalars serialize only when the row exists: keys absent, rows present.
   EXPECT_FALSE(dispersion_json.contains("value_red_deg"));
@@ -417,4 +417,100 @@ TEST(SurveyAssembly, MaxFoldClassAssemblesAFiniteCausticCardAndRowOnlyDispersion
 }
 
 }  // namespace
+TEST(SurveyAssembly, PublishedProbeCarriesItsQuantityAndResolvedScope) {
+  for (int scenario = 0; scenario < 2; ++scenario) {
+    SCOPED_TRACE(scenario);
+    const auto check = [scenario] {
+      const ConfigManager config = scenario == 0 ? RandomPrismScene() : PlateScene(0.3, 0.3);
+      SurveyRequest request = BaseRequest();
+      request.path_layers = { { 3, 5 } };
+      request.symmetry_bits = 0;
+      SurveyResult result;
+      ASSERT_TRUE(AssembleSurvey(config, request, &result).Ok());
+      const SurveyData& data = result.Data();
+      ASSERT_EQ(data.probes.size(), 1u);
+      const SurveyProbe& probe = data.probes.front();
+      ASSERT_EQ(probe.State(), EvidenceState::kFinite);
+      const ClaimScope& scope = probe.Scope();
+      ASSERT_TRUE(scope.quantity);
+      EXPECT_EQ(scope.quantity->kind, QuantityKind::kBandSum);
+      EXPECT_EQ(scope.quantity->measure, probe.spec.quantity.measure);
+      EXPECT_EQ(scope.measure.kind, probe.spec.quantity.measure);
+      EXPECT_EQ(scope.quantity->context, data.quantity_context);
+      EXPECT_EQ(scope.input, data.quantity_context);
+      EXPECT_EQ(scope.members.members, (std::vector<std::vector<int>>{ probe.spec.representative }));
+      EXPECT_EQ(scope.members.location, data.quantity_context->members.location);
+      ASSERT_TRUE(scope.observation.wavelength_nm);
+      EXPECT_DOUBLE_EQ(*scope.observation.wavelength_nm, probe.spec.wavelength_nm);
+    };
+    check();
+  }
+}
+
+TEST(SurveyAssembly, PublishedResultOwnsItsScopeAndRefusedQuantity) {
+  SurveyResult result;
+  {
+    ConfigManager config = FixedPosePlateScene(1.5);
+    SurveyRequest request;
+    request.crystal_id = 1;
+    request.path_layers = { { 1, 2 } };
+    ASSERT_TRUE(AnalyzePathSurveyValue(config, request, &result).Ok());
+  }
+  const auto& data = result.Data();
+  ASSERT_EQ(data.objects.size(), 1u);
+  const auto ref = result.Reference(ObjectId{ 0 });
+  ASSERT_TRUE(ref);
+  const auto members = result.ObjectMembers(*ref);
+  ASSERT_TRUE(members);
+  ASSERT_FALSE(members->empty());
+  ASSERT_NE(result.Resolve(members->front()), nullptr);
+  EXPECT_EQ(*result.Resolve(members->front()), (std::vector<int>{ 1, 2 }));
+  ASSERT_TRUE(data.quantity_context);
+  EXPECT_EQ(data.quantity_context->crystal.id_, 1);
+  ASSERT_TRUE(data.weight_tint);
+  EXPECT_EQ(data.weight_tint->State(), EvidenceState::kRefused);
+  EXPECT_EQ(data.weight_tint->ValueOrNull(), nullptr);
+  ASSERT_TRUE(data.weight_tint->Scope().quantity);
+  EXPECT_EQ(data.weight_tint->Scope().quantity->kind, QuantityKind::kTintRatio);
+  EXPECT_EQ(data.weight_tint->Scope().quantity->method, QuantityMethod::kPointMassBandSum);
+  EXPECT_EQ(data.weight_tint->Scope().input, data.quantity_context);
+}
+
+TEST(SurveyAssembly, CompletionBindsTheDeclaredScopeAndRejectsDanglingReferences) {
+  const ConfigManager config = RandomPrismScene();
+  SurveyRequest request = BaseRequest();
+  request.path_layers = { { 3, 5 } };
+  request.symmetry_bits = 0;
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, request, &document).Ok());
+
+  // Completion binds the claim's declared scope from the document's own facts, on every
+  // construction path: the finite probe's scope resolves quantity, representative and observation.
+  const survey::SurveyResult result(document);
+  ASSERT_FALSE(result.Data().probes.empty());
+  const SurveyProbe& probe = result.Data().probes.front();
+  ASSERT_TRUE(probe.Scope().quantity.has_value());
+  EXPECT_EQ(probe.Scope().members.members, std::vector<std::vector<int>>{ probe.spec.representative });
+  ASSERT_TRUE(probe.Scope().observation.wavelength_nm.has_value());
+  EXPECT_DOUBLE_EQ(*probe.Scope().observation.wavelength_nm, probe.spec.wavelength_nm);
+
+  // A bright domain may not reference a probe outside the result.
+  SurveyData dangling = document;
+  bool rewired = false;
+  for (SurveyObject& object : dangling.objects) {
+    if (auto* bright = object.Bright()) {
+      bright->probe_index = static_cast<int>(dangling.probes.size()) + 3;
+      rewired = true;
+    }
+  }
+  ASSERT_TRUE(rewired);
+  EXPECT_THROW(survey::SurveyResult{ dangling }, std::invalid_argument);
+
+  // An object may not reference a member outside its own class.
+  SurveyData foreign = document;
+  ASSERT_FALSE(foreign.objects.empty());
+  foreign.objects.front().members = { { 9, 9, 9 } };
+  EXPECT_THROW(survey::SurveyResult{ foreign }, std::invalid_argument);
+}
+
 }  // namespace lumice::raypath::survey

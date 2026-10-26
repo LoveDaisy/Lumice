@@ -200,6 +200,8 @@ const char* WalkStatusName(WalkStatus status) {
       return "not_finite";
     case WalkStatus::kBadOrientation:
       return "bad_orientation";
+    case WalkStatus::kStopRequested:
+      return "stop_requested";
   }
   return "unknown_walk_status";
 }
@@ -813,6 +815,20 @@ ZeroSetWalk WalkZeroSet(const BoundaryWalker& walker, const double start[3], int
   so3::Copy3(start, u);
   double arc = 0.0;
   for (int taken = 0; taken < options.max_walk_steps; taken++) {
+    // The march's cooperative poll (every 16 steps — a step's numerics are never entered
+    // mid-flight). A stop returns the fail-closed refusal: no points claimed, no corner.
+    if (options.stop != nullptr && (taken % 16) == 0) {
+      if (options.stop->token != nullptr) {
+        options.stop->token->NotePoll(kPollWalkSteps);
+      }
+      if (options.stop->Stopped()) {
+        walk.status = WalkStatus::kStopRequested;
+        walk.points.clear();
+        walk.met_corner = false;
+        walk.message = "boundary walk stopped at a cooperative poll";
+        return walk;
+      }
+    }
     double tangent[3];
     walker.Direction(u, margin, tangent);
     for (int i = 0; i < 3; i++) {
@@ -1049,6 +1065,16 @@ WalkResult WalkBoundary(const DeviationField& field, const BoundaryWalkOptions& 
     bool closed = false;
     for (int round = 0; round < 1000 && !closed; round++) {
       // 2. pick the outgoing margin, probe past the corner, walk the piece to the next corner.
+      if (options.stop != nullptr) {
+        if (options.stop->token != nullptr) {
+          options.stop->token->NotePoll(kPollWalkPieces);
+        }
+        if (options.stop->Stopped()) {
+          result.status = WalkStatus::kStopRequested;
+          result.message = "boundary walk stopped at a cooperative poll";
+          return result;
+        }
+      }
       int outgoing = -1;
       if (OutgoingMargin(walker, u, incoming, incoming_coincident, &outgoing, &message) != WalkStatus::kOk) {
         result.status = WalkStatus::kCornerNotSimple;

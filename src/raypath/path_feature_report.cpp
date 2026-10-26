@@ -5,9 +5,10 @@
 #include <limits>
 
 #include "analytic/so3.hpp"
+#include "config/config_manager.hpp"
 #include "raypath/detail/path_feature_report.hpp"
-#include "raypath/detail/path_feature_report_json.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
+#include "raypath/query_control.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath {
@@ -27,7 +28,8 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
   }
   if ((request.sample_count != 0 && (request.sample_count < 64 || request.sample_count > kMaxFeatureReportSampleCount ||
                                      request.sample_count % 2)) ||
-      request.budget_ms <= 0 || request.budget_ms > kMaxFeatureReportBudgetMs || request.max_optical_evaluations == 0 ||
+      (request.budget_ms < 0 || (request.budget_ms == 0 && !request.query_deadline)) ||
+      request.budget_ms > kMaxFeatureReportBudgetMs || request.max_optical_evaluations == 0 ||
       request.max_optical_evaluations > kMaxFeatureReportSampleEvaluations || request.max_field_evaluations == 0 ||
       request.max_field_evaluations > 1000000000 || !(request.bandwidth_rad > 0) || request.bandwidth_rad >= 1 ||
       !std::isfinite(request.bandwidth_rad) || !(request.location_resolution_rad > 0) ||
@@ -87,8 +89,10 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
     }
     spectrum = std::move(quadrature);
   }
-  const std::vector<LayerSelection> selection{ { layer_index, request.crystal_id, request.path_layers[0],
-                                                 request.symmetry_bits } };
+  const std::vector<LayerSelection> selection{
+    { layer_index, request.crystal_id, request.path_layers[0], request.symmetry_bits,
+      layer_index >= config.scene_.ms_.size() ? SelectionLocation::kStandalone : SelectionLocation::kSceneLayer }
+  };
   InputSnapshot snapshot;
   const std::string identity = layer_index >= config.scene_.ms_.size() ?
                                    "standalone configured crystal (not a scene allocation)" :
@@ -131,8 +135,23 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
       samples *= 2;
     }
   }
-  DiscoveryOptions options{ { samples, request.max_optical_evaluations,
-                              request.deadline.value_or(begin + std::chrono::milliseconds(request.budget_ms)) },
+  // The discovery quality window, resolved by the one owner: the C entry pins the absolute
+  // deadline at its own start; an internal caller gets begin + budget (query_control.hpp).
+  LegControl quality;
+  if (request.query_deadline) {
+    quality.stop = request.query_deadline->LegStop();
+    quality.resolved_ms = request.query_deadline->resolved_ms;
+  } else {
+    BudgetRequest quality_request;
+    quality_request.budget_ms = request.budget_ms;
+    quality_request.absolute_deadline = request.deadline;
+    quality_request.start = begin;
+    quality = ResolveLeg(BudgetWindow::kQualityDeadline, quality_request);
+  }
+  // The discovery legs' one stop: the quality window with the query's cancel folded in.
+  const analytic::DiscoveryStop quality_stop{ quality.stop.deadline, nullptr, request.cancel };
+  DiscoveryOptions options{ { samples, request.max_optical_evaluations, quality.stop.deadline,
+                              (request.cancel != nullptr || request.query_deadline) ? &quality_stop : nullptr },
                             request.bandwidth_rad,
                             request.location_resolution_rad,
                             request.max_field_evaluations,
@@ -141,6 +160,9 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
                             4,
                             6 };
   error = BuildPathFeatureReport(scene, identity, selection, spectrum, 1497, options, out);
+  if (error.Ok() && (request.cancel != nullptr || request.query_deadline)) {
+    out->discovery_execution = OutcomeOf(quality_stop);
+  }
   if (!error.Ok()) {
     return error;
   }
@@ -156,27 +178,34 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
   return {};
 }
 
-Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
-                               const std::string& product_version, std::string* json_out) {
-  if (!json_out) {
+Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatureReportRequest& request,
+                                    FeatureReportResult* out) {
+  if (!out) {
     return { ErrorCode::kInvalidArgument, "null report output" };
   }
   PathFeatureReport report;
   if (const Error error = AssemblePathFeatureReport(config, request, &report); !error.Ok()) {
     return error;
   }
-  // The multicrystal early path never ran the discovery; the assembly's precondition excludes
-  // it and the v3 early shape ignores the assembled side. The enumeration leg's anti-hang
-  // deadline starts here: the enforced robustness floor (kEnumerationHangCapMs), independent
-  // of the request's quality budget (--budget-ms bounds the discovery legs, report-only by
-  // A4 for the enumeration's own cost vocabulary).
-  const schema3::AssembledSchema3Report assembled =
+  FeatureReportData result = schema3::PrepareFeatureReportResult(report);
+  // The legacy enumeration window is an independent anti-hang cap; a workspace query also
+  // carries its resolved whole-query deadline into this leg. The earlier deadline wins.
+  const auto enumeration_deadline =
+      request.query_deadline ?
+          std::min(std::chrono::steady_clock::now() + std::chrono::milliseconds(schema3::kEnumerationHangCapMs),
+                   request.query_deadline->at) :
+          ResolveLeg(BudgetWindow::kHangCap, {}).stop.deadline;
+  const analytic::DiscoveryStop enumeration_stop{ enumeration_deadline, nullptr, request.cancel };
+  // Captured before the move below: the discovery legs' observed outcome rides the detail
+  // struct, and whichever single stop saw a reason wins (both fold the same cancel token).
+  const ExecutionOutcome discovery_execution = report.discovery_execution;
+  schema3::AssembledSchema3Report assembled =
       report.unsupported_multicrystal ?
           schema3::AssembledSchema3Report{} :
-          schema3::AssembleSchema3Report(
-              std::move(report), request.max_optical_evaluations,
-              std::chrono::steady_clock::now() + std::chrono::milliseconds(schema3::kEnumerationHangCapMs));
-  *json_out = PathFeatureReportV3ToJson(report, assembled, product_version.c_str());
+          schema3::AssembleSchema3Report(std::move(report), request.max_optical_evaluations, enumeration_stop);
+  result.execution =
+      OutcomeOf(enumeration_stop) != ExecutionOutcome::kCompleted ? OutcomeOf(enumeration_stop) : discovery_execution;
+  *out = schema3::CompleteFeatureReportResult(std::move(result), std::move(assembled));
   return {};
 }
 

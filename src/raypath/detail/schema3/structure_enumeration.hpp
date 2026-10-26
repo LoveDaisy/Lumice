@@ -38,13 +38,20 @@
 #include <string>
 #include <vector>
 
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
 #include "analytic/dp_chromatic.hpp"
 #include "analytic/pose_density.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
-#include "raypath/detail/schema3/structure_object.hpp"
-#include "raypath/detail/schema3/support_block.hpp"
+#include "raypath/detail/structure/support.hpp"
+#include "raypath/results/report_enumeration.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::MemberSupport;
+using structure::SameSupport;
+using structure::SupportBlock;
+
 
 // A1's event-word registration (the plan's assumption A1 — tir_boundary attaches to the kind-3
 // TIR onset, NOT a second kind-2; the scrum text's "kind-2/kind-2" is the suspected typo): the
@@ -62,11 +69,7 @@ constexpr size_t kMaxCarriedCurvePoints = 100000;
 
 // The vocabulary ledger's machine face (Table A): every registered kind appears EXACTLY once,
 // as produced or declared-not-produced, with the reason string for the declared ones.
-struct EnumeratedCoverage {
-  std::vector<ObjectKind> produced;
-  std::vector<ObjectKind> declared_not_produced;
-  std::vector<std::string> declared_reasons;  // parallel to declared_not_produced
-};
+
 
 // Cost accounting over the caller's budget vocabulary. v1 counts what the enumeration itself
 // spawns (the declared-resolution samplings); the kernel-internal walk/Newton evaluation counts
@@ -76,13 +79,7 @@ struct EnumeratedCoverage {
 // above are report-only by A4's ruling): when the caller installs a deadline, members or legs a
 // deadline cut ship the honest truncated face and say so here — a robustness floor against
 // pathological inputs, not a quality knob.
-struct EnumerationBudget {
-  long long max_optical_evaluations = 0;  // <= 0: unconstrained (666.3 wires the flag)
-  long long sampling_evaluations = 0;     // orbit + restricted stream points built
-  long long hang_cap_ms = 0;              // the installed anti-hang cap; 0 = none installed
-  bool truncated = false;                 // the cap fired somewhere in this enumeration
-  std::string truncation_note;            // what was cut (empty when not truncated)
-};
+
 
 // One layer's inputs. The pointers are borrowed and must outlive the call; the measure side is
 // optional — without it the restricted/orbit legs are skipped (declared in the coverage).
@@ -106,13 +103,7 @@ struct EnumerationInput {
 // no measure side ran); EnumerateLayer is its only writer and the streams' only read entry
 // past this header: MemberEnumeration.orbit below is the move-out staging field, not a second
 // home for the same stream.
-struct Schema3DiscoveryCore {
-  std::vector<StructureObjectRecord> objects;
-  SupportBlock support;
-  std::vector<analytic::OrbitFiberStream> orbits;
-  EnumeratedCoverage coverage;
-  EnumerationBudget budget;
-};
+
 
 // One member's objects and support row.
 struct MemberEnumeration {
@@ -146,18 +137,20 @@ double KinkWalkArclength(analytic::WalkStatus status);
 // run; true existence with the later legs absent when it did) and the member's truncation
 // note says what was cut. The default is no deadline (max()), which every existing caller
 // and test keeps.
-MemberEnumeration EnumerateMember(
-    const EnumerationInput& in, const std::vector<int>& member,
-    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
+MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<int>& member,
+                                  const analytic::DiscoveryStop& stop = analytic::DiscoveryStop{});
 
 // Enumerates a layer: every member, then the family aggregate. A row joins a family only when
 // it shares BOTH the reflection-group orbit (the carried Phi-class note) and the intervals
 // (SameSupport) — the Phi-class expression of, e.g., C06's eight PBD variants. The deadline is
 // EnumerateMember's (a member the cap cut still contributes its row, so the support block
 // stays one row per member); the budget's truncation fields report the cuts.
-Schema3DiscoveryCore EnumerateLayer(
-    const EnumerationInput& in, const std::vector<std::vector<int>>& members,
-    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
+// `stop` is the enumeration leg's single judgment (the anti-hang cap's deadline with any
+// cancel token folded in): polled per member and per stage gate, exactly where the old raw
+// deadline was read. A member the stop cut still contributes its row (the support block stays
+// one row per member); the budget's truncation fields report the cuts.
+Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vector<std::vector<int>>& members,
+                                    const analytic::DiscoveryStop& stop = analytic::DiscoveryStop{});
 
 }  // namespace lumice::raypath::schema3
 

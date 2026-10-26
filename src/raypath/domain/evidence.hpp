@@ -1,17 +1,10 @@
-#ifndef RAYPATH_DETAIL_SURVEY_EVIDENCE_H_
-#define RAYPATH_DETAIL_SURVEY_EVIDENCE_H_
-
-// The survey's evidence-state vocabulary: the four-value main state of the diagnostic-pipeline
-// design (certified / finite / refused / unevaluated), closed like the kernel's own enums, with
-// the refusal mode as an open string (the analytic-api precedent: status closed / reason open —
-// refusal causes cannot be pre-enumerated, but the state itself must be switchable). Every
-// declaration block in a survey document carries one of these states; the serializer never omits
-// it, so an absent state can never read as "settled".
+#ifndef LUMICE_RAYPATH_DOMAIN_EVIDENCE_HPP_
+#define LUMICE_RAYPATH_DOMAIN_EVIDENCE_HPP_
 
 #include <array>
+#include <string>
 #include <string_view>
 #include <utility>
-
 namespace lumice::raypath::survey {
 
 enum class EvidenceState {
@@ -19,6 +12,21 @@ enum class EvidenceState {
   kFinite,       // a finite computation; carries a coverage declaration
   kRefused,      // a refusal; the open `mode` string names it
   kUnevaluated,  // not computed; carries the reason
+};
+
+struct SurveyCoverage {
+  int members_evaluated = 0;
+  long long sample_count = 0;
+  std::string geometry_basis = "nominal crystal shape at the distribution centres";
+  double wavelength_nm = 0.0;
+};
+
+struct SurveyEvidence {
+  EvidenceState state = EvidenceState::kUnevaluated;
+  std::string method;                    // certified
+  std::string mode;                      // refused
+  std::string reason = "not_requested";  // unevaluated
+  SurveyCoverage coverage;               // finite
 };
 
 // The name table is the one authority: the writer and the parser below both read it, so a new
@@ -36,7 +44,7 @@ inline const char* EvidenceStateName(EvidenceState state) {
       return entry.first.data();
     }
   }
-  return "finite";
+  return "unevaluated";
 }
 
 // False for anything outside the closed vocabulary.
@@ -72,6 +80,7 @@ inline bool CertifiedMethodRegistered(std::string_view method) {
   return false;
 }
 
+
 }  // namespace lumice::raypath::survey
 
-#endif  // RAYPATH_DETAIL_SURVEY_EVIDENCE_H_
+#endif  // LUMICE_RAYPATH_DOMAIN_EVIDENCE_HPP_

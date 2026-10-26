@@ -1,4 +1,4 @@
-// The schema3 geometry adapter (src/raypath/detail/schema3/geometry_source.{hpp,cpp}): the
+// The schema3 geometry adapter (src/raypath/detail/structure/axis.{hpp,cpp}): the
 // production consumer the contour docking test carried its mappings for. The walk-status ->
 // existence reading per kernel value, the mirrored-struct -> contract conversions, the escape
 // regime slug table (G3 as-built: kernel slugs are data, the contract's typed field carries the
@@ -24,10 +24,18 @@
 #include "core/crystal_param.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
-#include "raypath/detail/schema3/geometry_source.hpp"
-#include "raypath/detail/schema3/structure_object.hpp"
+#include "raypath/detail/structure/axis.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::ChainOf;
+using structure::ContractRegimeOfSlug;
+using structure::ExistenceOf;
+using structure::ExistenceOfWalkStatus;
+using structure::PartitionAxisOf;
+using structure::PartitionedAxis;
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;

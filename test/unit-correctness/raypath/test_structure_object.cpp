@@ -1,4 +1,4 @@
-// The schema3 object record (src/raypath/detail/schema3/structure_object.hpp): the four-state
+// The schema3 object record (src/raypath/results/report_structure.hpp): the four-state
 // machines' data layer, pinned before any producer exists. The derivation's exhaustive 4x4
 // existence x visibility grid, the fail-closed arms (escaped / walk_truncated / s4_declared and
 // UNKNOWN cast values never reach actual), the open enums' registered-table walks, the default
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "raypath/detail/schema3/structure_object.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath::schema3 {
 namespace {
@@ -140,19 +140,19 @@ TEST(StructureObject, BucketOfReadsTheRecord) {
 TEST(StructureObject, RecordDefaults) {
   StructureObjectRecord record;
   EXPECT_EQ(BucketOf(record), FeatureBucket::kCandidate);
-  EXPECT_FALSE(record.chromatic_assessed);
+  EXPECT_FALSE(record.ChromaticAssessed());
   EXPECT_EQ(record.slot, -1);
   EXPECT_TRUE(record.phi_class_note.empty());
   EXPECT_TRUE(record.u.empty());
   EXPECT_FALSE(record.has_sky_position);
   EXPECT_EQ(record.visibility.state, VisibilityState::kUnproven);
-  EXPECT_STREQ(record.visibility.reason, "");
+  EXPECT_EQ(record.visibility.reason, "");
   EXPECT_FALSE(record.counterfactual.available);
   EXPECT_STREQ(CorroborationStateName(record.corroboration), "unchecked");
   // The declared-parameter snapshot is present even when unassessed: the record always carries
   // which criterion a chromatic label would come from.
-  EXPECT_DOUBLE_EQ(record.chromatic_thresholds.n_red, 1.307);
-  EXPECT_DOUBLE_EQ(record.chromatic_thresholds.n_blue, 1.317);
+  EXPECT_DOUBLE_EQ(record.Chromatic().thresholds.n_red, 1.307);
+  EXPECT_DOUBLE_EQ(record.Chromatic().thresholds.n_blue, 1.317);
 }
 
 }  // namespace

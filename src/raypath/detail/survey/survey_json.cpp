@@ -1,10 +1,10 @@
-#include "raypath/detail/survey/survey_json.hpp"
-
 #include <nlohmann/json.hpp>
 
+#include "analytic/path_evaluation.hpp"
 #include "raypath/detail/json_values.hpp"
-#include "raypath/detail/survey/evidence.hpp"
-#include "raypath/single_path_analysis.hpp"  // WavelengthSourceName
+#include "raypath/domain/evidence.hpp"
+#include "raypath/domain/input_metadata.hpp"
+#include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
 namespace {
@@ -50,21 +50,21 @@ Json LayersJson(const std::vector<std::vector<int>>& layers) {
 }
 
 Json ObjectJson(const SurveyObject& object) {
-  Json card = { { "kind", SurveyObjectKindName(object.kind) } };
+  Json card = { { "kind", SurveyObjectKindName(object.Kind()) } };
   card["members"] = LayersJson(object.members);
   if (object.has_position) {
     card["position"] = { { "altitude_deg", Num(object.position_altitude_deg) },
                          { "azimuth_deg", Num(object.position_azimuth_deg) } };
   }
-  card["evidence"] = EvidenceJson(object.evidence);
-  if (object.certificate.has_value()) {
+  card["evidence"] = EvidenceJson(object.Evidence());
+  if (object.Certificate() != nullptr) {
     card["certificate"] = { { "criterion", "fold matrix M = I and zero wedge (analytic IsRankZeroPath)" },
-                            { "fold_tolerance", Num(object.certificate->fold_tolerance) },
-                            { "wedge_tolerance_deg", Num(object.certificate->wedge_tolerance_deg) } };
+                            { "fold_tolerance", Num(object.Certificate()->fold_tolerance) },
+                            { "wedge_tolerance_deg", Num(object.Certificate()->wedge_tolerance_deg) } };
   }
-  if (object.support_set.has_value()) {
+  if (object.Support() != nullptr) {
     Json intervals = Json::array();
-    for (const SurveyObject::Interval& interval : object.support_set->intervals) {
+    for (const SurveyObject::Interval& interval : object.Support()->intervals) {
       intervals.push_back({ { "lower_deg", Num(interval.lower_deg) },
                             { "upper_deg", Num(interval.upper_deg) },
                             { "n_components", interval.n_components },
@@ -72,7 +72,7 @@ Json ObjectJson(const SurveyObject& object) {
                             { "n_open", interval.n_open } });
     }
     Json endpoints = Json::array();
-    for (const SurveyObject::EndpointLabel& endpoint : object.support_set->endpoints) {
+    for (const SurveyObject::EndpointLabel& endpoint : object.Support()->endpoints) {
       endpoints.push_back({ { "delta_deg", Num(endpoint.delta_deg) },
                             { "source", endpoint.source },
                             { "profile", endpoint.profile },
@@ -80,11 +80,11 @@ Json ObjectJson(const SurveyObject& object) {
     }
     Json support = { { "intervals", std::move(intervals) },
                      { "endpoints", std::move(endpoints) },
-                     { "symmetry_bits", object.support_set->symmetry_bits },
-                     { "member_count", object.support_set->member_count } };
-    if (!object.support_set->density_tails.empty()) {
+                     { "symmetry_bits", object.Support()->symmetry_bits },
+                     { "member_count", object.Support()->member_count } };
+    if (!object.Support()->density_tails.empty()) {
       Json tails = Json::array();
-      for (const FamilySupportTail& tail : object.support_set->density_tails) {
+      for (const FamilySupportTail& tail : object.Support()->density_tails) {
         tails.push_back(
             { { "dim", tail.dim }, { "lower_deg", Num(tail.lower_deg) }, { "upper_deg", Num(tail.upper_deg) } });
       }
@@ -92,15 +92,15 @@ Json ObjectJson(const SurveyObject& object) {
     }
     card["support_set"] = std::move(support);
   }
-  if (object.caustic_edge.has_value()) {
-    Json edge = { { "position_deg", Num(object.caustic_edge->position_deg) },
-                  { "profile", object.caustic_edge->profile },
-                  { "coincident_with_support", object.caustic_edge->coincident_with_support } };
-    if (object.caustic_edge->has_measure_limit) {
-      edge["measure_limit"] = Num(object.caustic_edge->measure_limit);
+  if (object.Edge() != nullptr) {
+    Json edge = { { "position_deg", Num(object.Edge()->position_deg) },
+                  { "profile", object.Edge()->profile },
+                  { "coincident_with_support", object.Edge()->coincident_with_support } };
+    if (object.Edge()->has_measure_limit) {
+      edge["measure_limit"] = Num(object.Edge()->measure_limit);
     }
-    if (object.caustic_edge->certificate.has_value()) {
-      const SurveyObject::EdgeCertificate& certificate = *object.caustic_edge->certificate;
+    if (object.Edge()->certificate.has_value()) {
+      const SurveyObject::EdgeCertificate& certificate = *object.Edge()->certificate;
       edge["certificate"] = { { "formula", certificate.formula },
                               { "apex_angle_deg", Num(certificate.apex_angle_deg) },
                               { "cross_check_deg", Num(certificate.cross_check_deg) },
@@ -108,42 +108,35 @@ Json ObjectJson(const SurveyObject& object) {
     }
     card["caustic_edge"] = std::move(edge);
   }
-  if (object.bright_domain.has_value()) {
-    Json domain = { { "domain_lower_deg", Num(object.bright_domain->domain_lower_deg) },
-                    { "domain_upper_deg", Num(object.bright_domain->domain_upper_deg) } };
-    if (object.bright_domain->has_peak) {
-      domain["peak"] = { { "delta_deg", Num(object.bright_domain->peak_delta_deg) },
-                         { "value", Num(object.bright_domain->peak_value) } };
+  if (object.Bright() != nullptr) {
+    Json domain = { { "domain_lower_deg", Num(object.Bright()->domain_lower_deg) },
+                    { "domain_upper_deg", Num(object.Bright()->domain_upper_deg) } };
+    if (object.Bright()->has_peak) {
+      domain["peak"] = { { "delta_deg", Num(object.Bright()->peak_delta_deg) },
+                         { "value", Num(object.Bright()->peak_value) } };
     }
-    if (object.bright_domain->has_edge_reading) {
-      domain["edge_reading_deg"] = Num(object.bright_domain->edge_delta_deg);
+    if (object.Bright()->has_edge_reading) {
+      domain["edge_reading_deg"] = Num(object.Bright()->edge_delta_deg);
     }
-    domain["kept_count"] = object.bright_domain->kept_count;
-    if (object.bright_domain->probe_index >= 0) {
-      domain["probe_index"] = object.bright_domain->probe_index;
+    domain["kept_count"] = object.Bright()->kept_count;
+    if (object.Bright()->probe_index >= 0) {
+      domain["probe_index"] = object.Bright()->probe_index;
     }
     card["bright_domain"] = std::move(domain);
   }
-  if (object.witness.has_value()) {
-    const SurveyObject::WitnessPayload& witness = *object.witness;
-    Json block = { { "state", EvidenceStateName(witness.state) } };
-    if (witness.state == EvidenceState::kRefused) {
-      // The fail-closed shape: exactly the state and its mode, byte-compatible with the tint
-      // leg's refused shape — no defaulted number reaches the document.
-      block["mode"] = witness.mode;
-    } else {
-      block["coverage"] = { { "members_evaluated", witness.coverage.members_evaluated },
-                            { "geometry_basis", witness.coverage.geometry_basis },
-                            { "wavelength_nm", Num(witness.coverage.wavelength_nm) } };
-      block["kept_count"] = witness.kept_count;
-      block["sample_count"] = witness.sample_count;
-      block["lattice"] = witness.lattice;
-      block["deterministic"] = witness.deterministic;
-      block["deviation_deg"] = Num(witness.deviation_deg);
-      block["weight"] = Num(witness.weight);
-      block["entry"] = Num(witness.entry);
-      block["interface_product"] = Num(witness.interface_product);
-      block["source_note"] = witness.source_note;
+  if (object.Witness() != nullptr) {
+    const SurveyObject::WitnessPayload& witness = *object.Witness();
+    Json block = EvidenceJson(witness.Evidence());
+    if (const WitnessValues* value = witness.ValueOrNull()) {
+      block["kept_count"] = value->kept_count;
+      block["sample_count"] = value->sample_count;
+      block["lattice"] = value->lattice;
+      block["deterministic"] = value->deterministic;
+      block["deviation_deg"] = Num(value->deviation_deg);
+      block["weight"] = Num(value->weight);
+      block["entry"] = Num(value->entry);
+      block["interface_product"] = Num(value->interface_product);
+      block["source_note"] = value->source_note;
     }
     card["witness"] = std::move(block);
   }
@@ -197,6 +190,8 @@ Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
   Json measure = { { "zenith", FamilyDimMeasureJson(block.measure.zenith) },
                    { "azimuth", FamilyDimMeasureJson(block.measure.azimuth) },
                    { "roll", FamilyDimMeasureJson(block.measure.roll) } };
+  if (block.measure.kind == MeasureKind::kIdealFrozen)
+    measure["measure_kind"] = "ideal_frozen";
   Json ladder = Json::array();
   for (const FamilyLadderLevel& level : block.ladder) {
     Json frozen = Json::array();
@@ -230,7 +225,8 @@ Json FamilyRoutingJson(const FamilyRoutingBlock& block) {
     if (!level.killed.empty()) {
       Json killed = Json::array();
       for (const FamilyKilledCandidate& candidate : level.killed) {
-        Json record = { { "member", LayersJson({ candidate.member })[0] }, { "kind", candidate.kind } };
+        Json record = { { "member", LayersJson({ candidate.member })[0] },
+                        { "kind", SurveyObjectKindName(SurveyKindOf(candidate.kind)) } };
         if (candidate.has_position) {
           record["position"] = { { "altitude_deg", Num(candidate.position_altitude_deg) },
                                  { "azimuth_deg", Num(candidate.position_azimuth_deg) } };
@@ -276,29 +272,34 @@ Json ProbeJson(const SurveyProbe& probe) {
                 { "deterministic", probe.spec.deterministic },
                 { "representative", LayersJson({ probe.spec.representative })[0] },
                 { "member_count", probe.spec.member_count } };
+  if (probe.spec.quantity.aggregation == MemberAggregation::kPhysicalClass)
+    spec["member_aggregation"] = "physical_class";
+  if (probe.spec.quantity.measure == MeasureKind::kIdealFrozen)
+    spec["measure_kind"] = "ideal_frozen";
+  Json out = { { "kind", "solar_radial" },
+               { "spec", std::move(spec) },
+               { "evidence", EvidenceJson(probe.Evidence()) } };
+  const SurveyProbeReading* reading = probe.ValueOrNull();
+  if (reading == nullptr)
+    return out;
   Json samples = Json::array();
-  for (const SurveyProbeSample& sample : probe.samples) {
+  for (const SurveyProbeSample& sample : reading->samples) {
     samples.push_back({ { "delta_deg", Num(sample.delta_deg) },
                         { "value", Num(sample.value) },
                         { "k", sample.k },
                         { "k_eff", Num(sample.k_eff) } });
   }
-  Json out = { { "kind", probe.kind },
-               { "spec", std::move(spec) },
-               { "evidence", EvidenceJson(probe.evidence) },
-               { "samples", std::move(samples) } };
-  if (probe.has_edge) {
-    out["edge"] = { { "bin", probe.edge_bin }, { "delta_deg", Num(probe.edge_delta_deg) } };
+  out["samples"] = std::move(samples);
+  if (reading->has_edge) {
+    out["edge"] = { { "bin", reading->edge_bin }, { "delta_deg", Num(reading->edge_delta_deg) } };
   }
-  if (probe.has_peak) {
-    out["peak"] = { { "delta_deg", Num(probe.peak_delta_deg) }, { "value", Num(probe.peak_value) } };
+  if (reading->has_peak) {
+    out["peak"] = { { "delta_deg", Num(reading->peak_delta_deg) }, { "value", Num(reading->peak_value) } };
   }
-  // The separation needs both readings to exist; on an empty profile a serialized 0 would read
-  // as "the peak sits at the edge", which is a claim about a profile that has neither.
-  if (probe.has_edge && probe.has_peak) {
-    out["separation_deg"] = Num(probe.separation_deg);
+  if (reading->has_edge && reading->has_peak) {
+    out["separation_deg"] = Num(reading->separation_deg);
   }
-  out["kept_count"] = probe.kept_count;
+  out["kept_count"] = reading->kept_count;
   return out;
 }
 
@@ -334,7 +335,9 @@ Json DiagnoseJson(const SurveyDiagnoseBlock& block) {
 
 }  // namespace
 
-std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lumice_version) {
+std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_version) {
+  detail::g_json_encode_calls.fetch_add(1, std::memory_order_relaxed);
+  const SurveyData& document = result.Data();
   Json doc = { { "schema", "lumice.path-survey" },
                { "schema_version", document.schema_version },
                { "generator", { { "lumice", lumice_version }, { "analytic_api_version", analytic::kApiVersion } } } };
@@ -356,6 +359,10 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
     { "sun_altitude_deg", document.sun_altitude_deg.has_value() ? Num(*document.sun_altitude_deg) : Json(nullptr) },
     { "sun_azimuth_deg", document.sun_azimuth_deg.has_value() ? Num(*document.sun_azimuth_deg) : Json(nullptr) }
   };
+  if (document.geometry.kind == GeometryKind::kRealized)
+    doc["scope"]["geometry_kind"] = "realized";
+  if (document.geometry.kind == GeometryKind::kDeclaredPopulation)
+    doc["scope"]["geometry_kind"] = "declared_population";
 
   Json routing = { { "early_stopped", document.early_stopped } };
   Json verdicts = Json::array();
@@ -399,13 +406,13 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
   {
     Json seeds = Json::array();
     Json sources = Json::array();
-    for (size_t i = 0; i < document.warm_index.seeds.size(); i++) {
+    for (const WarmSeed& row : document.warm_index.seeds) {
       Json seed = Json::array();
-      for (double v : document.warm_index.seeds[i]) {
+      for (double v : row.pose) {
         seed.push_back(Num(v));
       }
       seeds.push_back(std::move(seed));
-      sources.push_back(document.warm_index.seed_sources[i]);
+      sources.push_back(row.source);
     }
     doc["warm_index"] = { { "seeds", std::move(seeds) },
                           { "seed_sources", std::move(sources) },
@@ -420,51 +427,51 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
   // refusal serializes exactly its evidence block ({state, mode}), byte-compatible with the
   // tint leg's refused shape — no defaulted number reaches the document.
   if (document.tir_share.has_value()) {
-    const SurveyTirShare& tir = *document.tir_share;
-    if (tir.evidence.state == EvidenceState::kRefused) {
-      doc["tir_share"] = EvidenceJson(tir.evidence);
+    const TirShareResult& tir = *document.tir_share;
+    if (tir.ValueOrNull() == nullptr) {
+      doc["tir_share"] = EvidenceJson(tir.Evidence());
     } else {
       Json interfaces = Json::array();
-      for (const SurveyTirShareInterface& row : tir.interfaces) {
+      for (const TirShareInterface& row : tir.Value().interfaces) {
         interfaces.push_back(
             { { "face", row.face }, { "share_red", Num(row.share_red) }, { "share_blue", Num(row.share_blue) } });
       }
-      doc["tir_share"] = { { "n_red", Num(tir.n_red) },
-                           { "n_blue", Num(tir.n_blue) },
+      doc["tir_share"] = { { "n_red", Num(tir.Value().n_red) },
+                           { "n_blue", Num(tir.Value().n_blue) },
                            { "interfaces", std::move(interfaces) },
-                           { "share_all_tir_red", Num(tir.share_all_tir_red) },
-                           { "share_all_tir_blue", Num(tir.share_all_tir_blue) },
-                           { "sample_count", tir.sample_count },
-                           { "lattice", tir.lattice },
-                           { "deterministic", tir.deterministic },
-                           { "representative", LayersJson({ tir.representative })[0] },
-                           { "member_count", tir.member_count },
-                           { "kept_count_red", tir.kept_count_red },
-                           { "kept_count_blue", tir.kept_count_blue },
-                           { "caliber", tir.caliber },
-                           { "evidence", EvidenceJson(tir.evidence) } };
+                           { "share_all_tir_red", Num(tir.Value().share_all_tir_red) },
+                           { "share_all_tir_blue", Num(tir.Value().share_all_tir_blue) },
+                           { "sample_count", tir.Value().sample_count },
+                           { "lattice", tir.Value().lattice },
+                           { "deterministic", tir.Value().deterministic },
+                           { "representative", LayersJson({ tir.Value().representative })[0] },
+                           { "member_count", tir.Value().member_count },
+                           { "kept_count_red", tir.Value().kept_count_red },
+                           { "kept_count_blue", tir.Value().kept_count_blue },
+                           { "caliber", tir.Value().caliber },
+                           { "evidence", EvidenceJson(tir.Evidence()) } };
     }
   }
   if (document.mc_region_ess.has_value()) {
-    const SurveyMcRegionEss& ess = *document.mc_region_ess;
-    if (ess.evidence.state == EvidenceState::kRefused) {
-      doc["mc_region_ess"] = EvidenceJson(ess.evidence);
+    const McRegionEssResult& ess = *document.mc_region_ess;
+    if (ess.ValueOrNull() == nullptr) {
+      doc["mc_region_ess"] = EvidenceJson(ess.Evidence());
     } else {
       Json bands = Json::array();
-      for (const SurveyMcRegionEssBand& band : ess.bands) {
+      for (const McRegionEssBand& band : ess.Value().bands) {
         bands.push_back({ { "delta_min_deg", Num(band.delta_min_deg) },
                           { "delta_max_deg", Num(band.delta_max_deg) },
                           { "ess", Num(band.ess) },
                           { "draw_count", band.draw_count },
                           { "sum_weight", Num(band.sum_weight) } });
       }
-      doc["mc_region_ess"] = { { "seed", ess.seed },
-                               { "draws", ess.draws },
-                               { "lambda_nm", Num(ess.lambda_nm) },
-                               { "band_deg", Num(ess.band_deg) },
+      doc["mc_region_ess"] = { { "seed", ess.Value().seed },
+                               { "draws", ess.Value().draws },
+                               { "lambda_nm", Num(ess.Value().lambda_nm) },
+                               { "band_deg", Num(ess.Value().band_deg) },
                                { "bands", std::move(bands) },
-                               { "deterministic", ess.deterministic },
-                               { "evidence", EvidenceJson(ess.evidence) } };
+                               { "deterministic", ess.Value().deterministic },
+                               { "evidence", EvidenceJson(ess.Evidence()) } };
     }
   }
   if (document.positional_dispersion.has_value()) {
@@ -504,39 +511,39 @@ std::string SurveyDocumentToJson(const SurveyDocument& document, const char* lum
     doc["chromatic"]["diagnose"] = DiagnoseJson(*document.diagnose);
   }
   if (document.weight_tint.has_value()) {
-    const SurveyWeightTint& tint = *document.weight_tint;
-    if (tint.evidence.state == EvidenceState::kUnevaluated || tint.evidence.state == EvidenceState::kRefused) {
+    const WeightTintResult& tint = *document.weight_tint;
+    if (tint.State() == EvidenceState::kUnevaluated || tint.State() == EvidenceState::kRefused) {
       // The not-computed shapes: exactly the evidence block ({state, reason} / {state, mode}),
       // byte-compatible with the leg's pre-wiring marker.
-      doc["chromatic"]["weight_tint"] = EvidenceJson(tint.evidence);
+      doc["chromatic"]["weight_tint"] = EvidenceJson(tint.Evidence());
     } else {
       // The reading's own field family: point-mass masses vs class power sums — one shape per
       // document, never both (the caliber string names the reading either way).
-      Json tint_json = { { "red_label", tint.red_label },
-                         { "blue_label", tint.blue_label },
-                         { "n_red", Num(tint.n_red) },
-                         { "n_blue", Num(tint.n_blue) } };
-      if (tint.class_power_shape) {
-        tint_json["energy_red"] = Num(tint.energy_red);
-        tint_json["energy_blue"] = Num(tint.energy_blue);
+      Json tint_json = { { "red_label", tint.Value().red_label },
+                         { "blue_label", tint.Value().blue_label },
+                         { "n_red", Num(tint.Value().n_red) },
+                         { "n_blue", Num(tint.Value().n_blue) } };
+      if (tint.Value().IsClassPower()) {
+        tint_json["energy_red"] = Num(tint.Value().Power().red);
+        tint_json["energy_blue"] = Num(tint.Value().Power().blue);
       } else {
-        tint_json["m_red"] = Num(tint.m_red);
-        tint_json["m_blue"] = Num(tint.m_blue);
-        tint_json["m_red_error"] = Num(tint.m_red_error);
-        tint_json["m_blue_error"] = Num(tint.m_blue_error);
+        tint_json["m_red"] = Num(tint.Value().Mass().red);
+        tint_json["m_blue"] = Num(tint.Value().Mass().blue);
+        tint_json["m_red_error"] = Num(tint.Value().Mass().red_error);
+        tint_json["m_blue_error"] = Num(tint.Value().Mass().blue_error);
       }
-      tint_json["method"] = tint.method;
-      tint_json["sample_count"] = tint.sample_count;
-      tint_json["lattice"] = tint.lattice;
-      tint_json["deterministic"] = tint.deterministic;
-      tint_json["representative"] = LayersJson({ tint.representative })[0];
-      tint_json["member_count"] = tint.member_count;
-      tint_json["ratio"] = Num(tint.ratio);
-      tint_json["direction"] = SurveyTintDirectionName(tint.direction);
-      tint_json["kept_count_red"] = tint.kept_count_red;
-      tint_json["kept_count_blue"] = tint.kept_count_blue;
-      tint_json["caliber"] = tint.caliber;
-      tint_json["evidence"] = EvidenceJson(tint.evidence);
+      tint_json["method"] = TintMethodName(tint.Value().Method());
+      tint_json["sample_count"] = tint.Value().sample_count;
+      tint_json["lattice"] = tint.Value().lattice;
+      tint_json["deterministic"] = tint.Value().deterministic;
+      tint_json["representative"] = LayersJson({ tint.Value().representative })[0];
+      tint_json["member_count"] = tint.Value().member_count;
+      tint_json["ratio"] = Num(tint.Value().ratio);
+      tint_json["direction"] = TintDirectionName(tint.Value().direction);
+      tint_json["kept_count_red"] = tint.Value().kept_count_red;
+      tint_json["kept_count_blue"] = tint.Value().kept_count_blue;
+      tint_json["caliber"] = tint.Value().caliber;
+      tint_json["evidence"] = EvidenceJson(tint.Evidence());
       doc["chromatic"]["weight_tint"] = std::move(tint_json);
     }
   }

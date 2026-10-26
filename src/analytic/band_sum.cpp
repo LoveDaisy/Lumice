@@ -318,10 +318,13 @@ void PlacePointMass(double m, const double incident[3], const PixelTable& pixels
 
 BandSumOutput BandSum(const FaceNormalTable& table, const FacePolygonTable& polygons, const int* slots, int slot_count,
                       double refractive_index, const double incident[3], int n, const PixelTable& pixels,
-                      const PoseDensity& density) {
+                      const PoseDensity& density, const DiscoveryStop* stop) {
   BandSumOutput out;
   IceDiscovery sampler(table, polygons, slots, slot_count, refractive_index, incident);
-  const std::vector<SampleEvent> events = sampler.BuildEvents(n);
+  int completed = n;
+  const std::vector<SampleEvent> events = sampler.BuildEvents(n, stop, &completed);
+  out.completed_samples = completed;
+  out.truncated = completed < n;
   out.kept_count = static_cast<int>(events.size());
   out.pixels.reserve(static_cast<size_t>(pixels.count));
   out.rank_zero = IsRankZeroPath(table, slots, slot_count);

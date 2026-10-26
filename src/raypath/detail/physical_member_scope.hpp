@@ -8,7 +8,8 @@
 
 #include "config/crystal_config.hpp"
 #include "core/crystal.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/scope.hpp"
 
 namespace lumice::raypath {
 
@@ -21,11 +22,11 @@ struct PhysicalMemberRequest {
   std::vector<int> representative;
   uint8_t symmetry_bits;
   SymmetrySemantics semantics;
+  SelectionLocation location = SelectionLocation::kSceneLayer;
 };
-struct PhysicalMemberScope {
+struct PhysicalMemberScope : MemberScope {
   PhysicalMemberRequest snapshot;
   SymmetryGating gating;
-  std::vector<std::vector<int>> members;
 };
 Error ResolvePhysicalMemberScope(const PhysicalMemberRequest& request, PhysicalMemberScope* out);
 

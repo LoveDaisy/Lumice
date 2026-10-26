@@ -25,16 +25,12 @@
 
 #include <string>
 
+#include "analytic/diagnostic_types.hpp"
 #include "core/geo3d_closedform.hpp"
 #include "lumice_analytic_core.h"
 
 namespace lumice::analytic {
 
-enum class Status {
-  kOk,
-  kInvalidValue,   // a value the caller got wrong: non-finite, non-unit, unused crystal field set, ...
-  kInvalidConfig,  // a crystal the engine's closed-form validity gate rejects
-};
 
 // Upper bound on face slots across the closed-form crystal kinds (the pyramid's 20; the prism's 8
 // are its first 8 slots).
@@ -91,17 +87,7 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
 // analytic-symbol-scope), so an in-tree caller such as the single-path analysis module
 // (src/raypath/) cannot fill the C struct; the overload below converts and forwards, so there is
 // still one BuildFaceNormals.
-enum class CrystalShapeKind { kPrism, kPyramid };
 
-struct CrystalShape {
-  CrystalShapeKind kind = CrystalShapeKind::kPrism;
-  double height = 0.0;
-  double face_distance[6]{};
-  double upper_h = 0.0;
-  double lower_h = 0.0;
-  double upper_wedge_deg = 0.0;
-  double lower_wedge_deg = 0.0;
-};
 
 Status BuildFaceNormals(const CrystalShape& shape, FaceNormalTable* out, FacePolygonTable* polygons = nullptr);
 

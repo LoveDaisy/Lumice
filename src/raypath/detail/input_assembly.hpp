@@ -7,25 +7,19 @@
 #include <string>
 #include <vector>
 
+#include "analytic/path_evaluation.hpp"
 #include "config/light_config.hpp"
+#include "config/proj_config.hpp"
 #include "core/sample_transform.hpp"
 #include "core/shape_sample.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/input_metadata.hpp"
+#include "raypath/results/report_scope.hpp"
 
 namespace lumice::raypath {
 
-enum class SpectrumOrigin { kDiscreteSum, kSampled, kQuadrature };
-struct SpectralRow {
-  float wavelength_nm = 0;
-  double source_weight = 0;
-  double measure_mass = 0;
-  double refractive_index = 0;
-  std::array<double, 3> xyz_basis{};
-  std::array<double, 3> coefficient{};
-  SpectrumOrigin origin = SpectrumOrigin::kDiscreteSum;
-  std::string provenance;
-};
+
 struct WavelengthSample {
   float wavelength_nm;
   // Required for a discrete spectrum, absent for a continuous one. Weight is
@@ -77,19 +71,14 @@ struct LayerSelection {
   IdType crystal_id;
   std::vector<int> representative;
   uint8_t symmetry_bits;
+  SelectionLocation location = SelectionLocation::kSceneLayer;
 };
 struct InputSnapshot {
   std::string scene_identity;
   LightSourceConfig light;
   std::vector<PhysicalMemberRequest> layers;
 };
-struct SupportDescription {
-  int pose_coordinate_count = 0;
-  int pose_support_dimension = 0;     // ZYZ quotient, not the optical map rank
-  int shape_parameter_dimension = 0;  // not a rank of realized polyhedra
-  int source_direction_dimension = 0;
-  int spectral_dimension = 0;
-};
+
 SupportDescription DescribeSupport(const InputSnapshot& snapshot);
 
 Error CaptureInput(const SceneConfig& scene, const std::string& scene_identity,
@@ -123,6 +112,7 @@ struct DiscreteSpectrumSum {};
 using SpectrumRequest = std::variant<DiscreteSpectrumSum, WavelengthSample, SpectrumQuadrature>;
 
 struct AssembledLayer {
+  GeometryScope geometry{ GeometryKind::kRealized };
   PhysicalMemberScope scope;
   LayerSample sample;
   ShapeSample shape_sample;

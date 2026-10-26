@@ -8,8 +8,21 @@
 #include "analytic/dp_weight_kink.hpp"
 #include "analytic/reflection_group.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
+#include "raypath/query_control.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::AssembleAxis;
+using structure::AxisAssembly;
+using structure::ClusterFamilies;
+using structure::CurveOf;
+using structure::ExistenceOf;
+using structure::kOrbitAngularTol;
+using structure::MemberSupport;
+using structure::SameSupport;
+using structure::StreamOf;
+using structure::SupportRowOf;
+
 namespace {
 
 // The member's Phi-class annotation: the canonical (lexicographically smallest) member of its
@@ -101,14 +114,19 @@ StructureObjectRecord DeadlineKind1(const std::vector<int>& member, MemberSuppor
   return kind1;
 }
 
-bool PastDeadline(std::chrono::steady_clock::time_point deadline) {
-  return std::chrono::steady_clock::now() >= deadline;
+// The enumeration leg's one judgment: the stop's deadline (with any cancel token) plus the
+// ledger note — exactly where the old raw PastDeadline read.
+bool PastDeadline(const analytic::DiscoveryStop& stop) {
+  if (stop.token != nullptr) {
+    stop.token->NotePoll(lumice::raypath::kPollEnumerationMember);
+  }
+  return stop.Stopped();
 }
 
 }  // namespace
 
 MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<int>& member,
-                                  std::chrono::steady_clock::time_point deadline) {
+                                  const analytic::DiscoveryStop& stop) {
   MemberEnumeration out;
   if (in.normals == nullptr || in.polygons == nullptr || member.size() < 2 ||
       member.size() > static_cast<size_t>(analytic::kMaxFaceCount)) {
@@ -125,7 +143,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
 
   // Stage gate: the axis assembly is the member's first expensive leg; past the deadline it
   // has not run, so nothing of this member is known.
-  if (PastDeadline(deadline)) {
+  if (PastDeadline(stop)) {
     out.objects.push_back(DeadlineKind1(member, &out.support));
     note = "axis assembly not run (deadline); ";
     return out;
@@ -165,7 +183,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
   // visibility/chromatic, restricted) do not run. Kind-1 keeps the existence the axis
   // assembly actually established, with the later legs absent — the assessed=false chromatic
   // and the unproven visibility default are the declared not-run shapes.
-  if (PastDeadline(deadline)) {
+  if (PastDeadline(stop)) {
     StructureObjectRecord kind1 = BaseRecord(ObjectKind::kKind1, member);
     kind1.existence =
         assembly.axis.walk_closed ?
@@ -235,11 +253,10 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     // chromatic: the kernel's path-level verdict (rank-0 paths have no field; skip them). The
     // stage gate keeps a deadline-fired member from starting the leg at all; inside it, the
     // kernel's own shift-pair bound refuses the features a declared bound cannot compare.
-    if (slot_count >= 3 && !PastDeadline(deadline)) {
-      kind1.chromatic =
-          analytic::Diagnose(*in.normals, *in.polygons, slots, slot_count, analytic::kNRed, analytic::kNBlue);
-      kind1.chromatic_assessed = true;
-      kind1.chromatic_thresholds = analytic::ChromaticThresholdsSnapshot();
+    if (slot_count >= 3 && !PastDeadline(stop)) {
+      kind1.SetChromatic(
+          analytic::Diagnose(*in.normals, *in.polygons, slots, slot_count, analytic::kNRed, analytic::kNBlue));
+      kind1.MutableChromatic().thresholds = analytic::ChromaticThresholdsSnapshot();
     }
     out.objects.push_back(std::move(kind1));
   }
@@ -248,7 +265,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
   // stream (built once, above) — the v1 carrier of the C09 unlit shape ("contour present, no
   // passage"). Stage gate: the deadline applies here too (the curve body and its certificate
   // are the member's last expensive leg).
-  if (PastDeadline(deadline)) {
+  if (PastDeadline(stop)) {
     note += "restricted leg not run (deadline); ";
   } else if (stream_wanted && analytic::FamilyPinned(*in.normals, slots, slot_count, *in.density)) {
     const analytic::RestrictedFamilyCurve curve = analytic::MakeRestrictedFamilyCurve(
@@ -285,13 +302,13 @@ EnumeratedCoverage V1Coverage() {
   EnumeratedCoverage coverage;
   coverage.produced = { ObjectKind::kKind1, ObjectKind::kKind1Restricted, ObjectKind::kKind2, ObjectKind::kKind3,
                         ObjectKind::kS6Junction };
-  coverage.declared_not_produced = { ObjectKind::kCorridorClosed, ObjectKind::kS3SupportBoundary,
-                                     ObjectKind::kS4BranchBoundary, ObjectKind::kS5DensityFeature };
-  coverage.declared_reasons = {
-    "no v8 producer for the corridor A=0 curve (the LI second batch A6 is the donor)",
-    "no 661 producer exposes a declared support boundary yet (v1 orbit supports are closed curves)",
-    "owner ruling 2026-10-07: v1 declares the branch boundary, does not trace it (open math)",
-    "no 661 producer exposes a density-feature image yet (v2 measure layer)",
+  coverage.declared_not_produced = {
+    { ObjectKind::kCorridorClosed, "no v8 producer for the corridor A=0 curve (the LI second batch A6 is the donor)" },
+    { ObjectKind::kS3SupportBoundary,
+      "no 661 producer exposes a declared support boundary yet (v1 orbit supports are closed curves)" },
+    { ObjectKind::kS4BranchBoundary,
+      "owner ruling 2026-10-07: v1 declares the branch boundary, does not trace it (open math)" },
+    { ObjectKind::kS5DensityFeature, "no 661 producer exposes a density-feature image yet (v2 measure layer)" },
   };
   return coverage;
 }
@@ -299,14 +316,14 @@ EnumeratedCoverage V1Coverage() {
 }  // namespace
 
 Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vector<std::vector<int>>& members,
-                                    std::chrono::steady_clock::time_point deadline) {
+                                    const analytic::DiscoveryStop& stop) {
   Schema3DiscoveryCore core;
   core.coverage = V1Coverage();
   long long stream_points = 0;
   std::vector<std::string> notes;
   std::string truncation_notes;
   for (const std::vector<int>& member : members) {
-    MemberEnumeration one = EnumerateMember(in, member, deadline);
+    MemberEnumeration one = EnumerateMember(in, member, stop);
     for (StructureObjectRecord& object : one.objects) {
       core.objects.push_back(std::move(object));
     }

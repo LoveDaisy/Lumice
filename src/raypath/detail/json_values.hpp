@@ -1,13 +1,10 @@
 #ifndef RAYPATH_DETAIL_JSON_VALUES_HPP_
 #define RAYPATH_DETAIL_JSON_VALUES_HPP_
 
-// The single owner of the JSON number encoding shared by both raypath schemas
-// (single-path and feature report): a non-finite double (NaN and the
-// infinities, which JSON cannot spell) is written as null, and the sun-grid
-// arrays are rounded to kSunGridSignificantDigits before writing. The two
-// serializers must not hand-roll their own copies — the contract statement
-// lives in doc/raypath/raypath-cli-output.md.
+// The shared JSON number encoding for the four raypath result families. Non-finite doubles
+// become null, and the sun-grid arrays are rounded before writing.
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -15,8 +12,23 @@
 #include <vector>
 
 #include "raypath/single_path_json.hpp"
+#include "raypath/survey_context.hpp"
+
+namespace lumice::raypath {
+nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& context);
+}
 
 namespace lumice::raypath::detail {
+
+inline std::atomic<long> g_json_encode_calls{ 0 };
+inline std::atomic<long> g_json_decode_calls{ 0 };
+
+inline long JsonEncodeCalls() {
+  return g_json_encode_calls.load(std::memory_order_relaxed);
+}
+inline long JsonDecodeCalls() {
+  return g_json_decode_calls.load(std::memory_order_relaxed);
+}
 
 // A double as a JSON value: NaN and the infinities (which JSON cannot spell) become null.
 inline nlohmann::ordered_json Num(double x) {

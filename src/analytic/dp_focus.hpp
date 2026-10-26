@@ -57,6 +57,7 @@
 #include "analytic/dp_partition.hpp"
 #include "analytic/path_rank.hpp"
 #include "analytic/pose_density.hpp"
+#include "analytic/support_types.hpp"
 
 namespace lumice::analytic {
 
@@ -88,26 +89,6 @@ constexpr double kCriticalPointMergeRad = 1e-6;
 
 // ---- the onset vocabulary -------------------------------------------------------------------------------
 
-enum class OnsetLocation { kInterior, kBoundary };
-enum class OnsetSource {
-  kInteriorMinimum,
-  kInteriorMaximum,
-  kInteriorSaddle,
-  kInteriorDegenerate,
-  kSlabAxis,
-  kSlabCircle,
-  kBoundaryExtremum,
-  kCorner,
-};
-enum class OnsetProfile {
-  kFiniteJump,
-  kLogDivergence,
-  kInverseSqrtDivergence,
-  kConePoint,
-  kCrease,
-  kBoundaryOnset,
-  kDegenerate,
-};
 
 // LI's identifier strings (location / source / profile of CriticalOnset.as_json): stable for the
 // report side and the parity fixtures; a name, not a description.
@@ -126,18 +107,7 @@ bool ProfileIsJacobianFocusing(OnsetProfile profile);
 // critical points merged into this record — same value within kExtremumAtol, same location,
 // source and profile (the mirror images of one extremum, the corners where several margins meet)
 // — keeping the smallest gradient_norm (LI CriticalOnset).
-struct CriticalOnset {
-  double value = 0.0;
-  OnsetLocation location = OnsetLocation::kInterior;
-  OnsetSource source = OnsetSource::kInteriorMinimum;
-  OnsetProfile profile = OnsetProfile::kFiniteJump;
-  double gradient_norm = 0.0;
-  bool has_measure_limit = false;
-  double measure_limit = 0.0;
-  int multiplicity = 1;
 
-  bool JacobianFocusing() const { return ProfileIsJacobianFocusing(profile); }
-};
 
 // ---- the density-side labels (LI confined_dimensions / _family_axis / family_pinned) ---------------------
 

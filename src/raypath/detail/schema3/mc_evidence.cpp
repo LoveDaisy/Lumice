@@ -2,6 +2,7 @@
 
 namespace lumice::raypath::schema3 {
 
+
 const char* const kMcObservationScopeNote =
     "these parameters define the MC corroboration observation ruler; they do not define feature "
     "identity (the v2 discovery observation, demoted and narrowed — scrum 666 ruling 2026-10-07)";

@@ -9,6 +9,13 @@
 
 #include "analytic/path_feature_discovery.hpp"
 #include "raypath/detail/input_assembly.hpp"
+#include "raypath/results/report_records.hpp"
+
+namespace lumice::analytic {
+struct DiscoveryStop;  // the shared stop judgment (analytic/stop.hpp, via discovery.hpp)
+}
+
+#include "raypath/query_control.hpp"  // kPollSamplerDraws
 
 namespace lumice::raypath {
 
@@ -42,27 +49,35 @@ class DiagnosticSampler {
   std::vector<ShapeDrawPlan> shape_plans_;
 };
 
-struct DiagnosticSourceIdentity {
-  uint64_t sample_index = 0;
-  size_t member_index = 0;
-  size_t spectral_row = 0;
-};
-struct DiagnosticMeasure {
-  std::vector<analytic::WeightedSkySample> components;
-  // components[i].source_token indexes this table. Actual shapes/poses/source
-  // are replayed through run, which owns the snapshot, seed AND spectrum request.
-  // A source token is local to this measure, not a cross-run identifier.
-  std::vector<DiagnosticSourceIdentity> sources;
+
+struct DiagnosticMeasure : DiagnosticMeasureFacts {
   std::shared_ptr<const DiagnosticSampler> run;
-  uint64_t completed_samples = 0;
-  uint64_t optical_evaluations = 0;
-  bool budget_exhausted = false;
 };
 struct SamplingBudget {
   uint64_t requested_samples = 0;
   uint64_t max_optical_evaluations = 0;
   std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
+  // When set, this IS the draw loops' judgment: the deadline above and any cancel token fold
+  // into one stop (the single-authority rule) and the loops poll it instead of the raw clock.
+  // Null: exactly today's deadline-only checks.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
+// The draw/iteration loops' one judgment (the single-authority rule): a stop present folds its
+// deadline and cancel token into one verdict; absent, the raw deadline-only check runs exactly
+// as before. The evaluation cap rides alongside in both shapes.
+inline bool SamplingBudgetExceeded(const SamplingBudget& budget, uint64_t optical_evaluations) {
+  if (optical_evaluations >= budget.max_optical_evaluations) {
+    return true;
+  }
+  if (budget.stop != nullptr) {
+    if (budget.stop->token != nullptr) {
+      budget.stop->token->NotePoll(kPollSamplerDraws);
+    }
+    return budget.stop->Stopped();
+  }
+  return std::chrono::steady_clock::now() >= budget.deadline;
+}
+
 // One concrete single-crystal chain, all its physical members and spectral rows.
 // Only complete outer draws enter the measure. A partial member/spectrum group
 // is discarded on deadline, while its spent evaluations remain in the ledger.

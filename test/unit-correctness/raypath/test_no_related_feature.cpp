@@ -22,6 +22,9 @@
 #include "raypath/path_feature_report.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::MemberSupport;
+
 namespace {
 
 // A synthetic core whose four condition inputs are all controlled by hand.
@@ -66,9 +69,9 @@ struct RulingCore {
     return *this;
   }
   RulingCore& WithS4Declared() {
-    core.coverage.declared_not_produced.push_back(ObjectKind::kS4BranchBoundary);
-    core.coverage.declared_reasons.push_back(
-        "owner ruling 2026-10-07: v1 declares the branch boundary, does not trace it (open math)");
+    core.coverage.declared_not_produced.push_back(
+        { ObjectKind::kS4BranchBoundary,
+          "owner ruling 2026-10-07: v1 declares the branch boundary, does not trace it (open math)" });
     return *this;
   }
 };
@@ -192,7 +195,6 @@ TEST(NoRelatedFeature, ZeroSignalIssuesBasisAEvenWhenBWouldAlsoIssue) {
                                           CleanForward(), USupportKind::kArea, true);
   EXPECT_TRUE(ruling.issued);
   EXPECT_EQ(ruling.basis, NoRelatedBasis::kZeroSpectralSignal);
-  EXPECT_EQ(std::string(NoRelatedBasisName(ruling.basis)), "zero_spectral_signal");
   // B's conditions are still evaluated and reported — the priority does not blind the report.
   EXPECT_TRUE(ruling.partition_complete_no_escape);
   EXPECT_TRUE(ruling.two_d_valid_support);
@@ -206,7 +208,6 @@ TEST(NoRelatedFeature, ZeroSignalIssuesBasisAEvenWhenBIsBlocked) {
   EXPECT_TRUE(ruling.issued);
   EXPECT_EQ(ruling.basis, NoRelatedBasis::kZeroSpectralSignal);
   EXPECT_FALSE(ruling.two_d_valid_support);
-  EXPECT_EQ(std::string(NoRelatedBasisName(NoRelatedBasis::kCertifiedSmoothRadiance)), "certified_smooth_radiance");
 }
 
 // ---- the zero-signal predicate, at its new single home -------------------------------------------

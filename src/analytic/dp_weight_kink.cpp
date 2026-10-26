@@ -39,6 +39,7 @@ BoundaryWalkOptions WalkOptionsOf(const KinkOptions& options) {
   BoundaryWalkOptions out;
   out.step = options.step;
   out.max_walk_steps = options.max_walk_steps;
+  out.stop = options.stop;
   return out;
 }
 
@@ -217,9 +218,20 @@ KinkCurve MarchedCurve(const BoundaryWalker& walker, int step, int margin, const
   curve.index = walker.field().RefractiveIndex();
   curve.coverage = KinkCoverage::kMarchedUncertified;
 
+  const auto stopped_at_sample = [&options](size_t index) {
+    if (options.stop == nullptr || index % 1024 != 0)
+      return false;
+    if (options.stop->token != nullptr)
+      options.stop->token->NotePoll(kPollKinkLattice);
+    return options.stop->Stopped();
+  };
+  if (options.stop != nullptr && options.stop->Stopped())
+    return curve;
   std::vector<double> lattice;  // the strictly-inside lattice points only
   double u[3];
   for (int i = 0; i < options.lattice_n; i++) {
+    if (stopped_at_sample(static_cast<size_t>(i)))
+      return curve;
     double f[3];
     LatticePoint(options.lattice_n, i, f);
     for (int c = 0; c < 3; c++) {
@@ -239,6 +251,8 @@ KinkCurve MarchedCurve(const BoundaryWalker& walker, int step, int margin, const
   double margins[2 * kMaxFaceCount];
   std::vector<std::pair<double, int>> seeds;  // (|disc|, lattice point index)
   for (size_t k = 0; k < lattice.size() / 3; k++) {
+    if (stopped_at_sample(k))
+      return curve;
     walker.Margins(&lattice[3 * k], margins);
     const double size = std::fabs(margins[margin]);
     if (size < kSeedBand) {
@@ -246,6 +260,8 @@ KinkCurve MarchedCurve(const BoundaryWalker& walker, int step, int margin, const
     }
   }
   std::sort(seeds.begin(), seeds.end());
+  if (options.stop != nullptr && options.stop->Stopped())
+    return curve;
   // The covered radius as a chord (LI: 2 sin(SEED_COVERED_STEPS * WALK_STEP_RAD / 2)); brute-force
   // nearest-walked-point, the arc point count's scale (a cKDTree's query semantics).
   const double covered = 2.0 * std::sin(kSeedCoveredSteps * options.step / 2.0);
@@ -253,6 +269,8 @@ KinkCurve MarchedCurve(const BoundaryWalker& walker, int step, int margin, const
   std::vector<double> walked;
   std::string first_error;
   for (const auto& [size, seed_index] : seeds) {
+    if (options.stop != nullptr && options.stop->Stopped())
+      return curve;
     const double* seed = &lattice[3 * static_cast<size_t>(seed_index)];
     bool covered_already = false;
     for (size_t k = 0; k + 2 < walked.size() && !covered_already; k += 3) {
@@ -377,6 +395,8 @@ std::vector<KinkCurve> WeightKinks(const DeviationField& field, const KinkOption
 
   std::vector<KinkCurve> out;
   for (int step = 1; step < slot_count - 1; step++) {
+    if (options.stop != nullptr && options.stop->Stopped())
+      break;
     const int margin = 2 * step + 1;  // internal_step_tir_discriminant
     const double* m = incidence[step];
     if (std::fabs(so3::Dot3(m, n_a)) <= kGreatCircleAtol) {

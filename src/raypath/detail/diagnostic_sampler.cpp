@@ -146,8 +146,7 @@ Error BuildDiagnosticMeasure(const DiagnosticSampler& sampler, const SamplingBud
   DiagnosticMeasure result;
   result.run = std::make_shared<const DiagnosticSampler>(sampler);
   for (uint64_t i = 0; i < budget.requested_samples; ++i) {
-    if (std::chrono::steady_clock::now() >= budget.deadline ||
-        result.optical_evaluations >= budget.max_optical_evaluations) {
+    if (SamplingBudgetExceeded(budget, result.optical_evaluations)) {
       result.budget_exhausted = true;
       break;
     }
@@ -161,8 +160,7 @@ Error BuildDiagnosticMeasure(const DiagnosticSampler& sampler, const SamplingBud
     const auto source_begin = result.sources.size();
     for (size_t member = 0; member < input.layers[0].scope.members.size() && !result.budget_exhausted; ++member) {
       for (size_t spectral = 0; spectral < input.spectrum.rows.size(); ++spectral) {
-        if (std::chrono::steady_clock::now() >= budget.deadline ||
-            result.optical_evaluations >= budget.max_optical_evaluations) {
+        if (SamplingBudgetExceeded(budget, result.optical_evaluations)) {
           result.budget_exhausted = true;
           break;
         }

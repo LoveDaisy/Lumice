@@ -117,6 +117,387 @@ std::string Json(const LUMICE_PathFeatureReport* report) {
   return text;
 }
 
+TEST(PathFeatureReportCApi, TypedReadersExposeObjectsEvidenceAndAbsenceWithoutParsing) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  LUMICE_PathReportInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathReportGetInfo(outcome.report.get(), &info), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(info.requested_outer_samples, 64u);
+  EXPECT_EQ(info.execution, LUMICE_PATH_OUTCOME_COMPLETED);
+  EXPECT_LE(info.coverage_count, nlohmann::json::parse(Json(outcome.report.get())).at("coverage").size());
+  EXPECT_GT(info.declared_skip_count, 0u);
+  LUMICE_PathReportRuling ruling{};
+  ruling.struct_size = sizeof(ruling);
+  ASSERT_EQ(LUMICE_PathReportGetRuling(outcome.report.get(), &ruling), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(ruling.issued, info.absence_issued);
+  LUMICE_PathReportScope scope{};
+  scope.struct_size = sizeof(scope);
+  ASSERT_EQ(LUMICE_PathReportGetScope(outcome.report.get(), &scope), LUMICE_PATH_READ_OK);
+  EXPECT_GT(scope.scene_identity.length, 0u);
+  EXPECT_EQ(scope.raw_spectrum_kind, 2);
+  EXPECT_EQ(scope.raw_illuminant, 3);  // the D65 scene
+  ASSERT_GT(scope.layer_count, 0u);
+  LUMICE_PathReportLayer layer{};
+  layer.struct_size = sizeof(layer);
+  ASSERT_EQ(LUMICE_PathReportGetLayer(outcome.report.get(), 0, &layer), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(layer.crystal_id, 1);
+  EXPECT_EQ(layer.crystal_kind, 1);
+  EXPECT_EQ(layer.shape_scalar_count, 10u);
+  LUMICE_PathReportAxis axis{};
+  axis.struct_size = sizeof(axis);
+  ASSERT_EQ(LUMICE_PathReportGetLayerAxis(outcome.report.get(), 0, 0, &axis), LUMICE_PATH_READ_OK);
+  EXPECT_GT(axis.distribution, 0);
+  LUMICE_PathReportShapeScalar scalar{};
+  scalar.struct_size = sizeof(scalar);
+  ASSERT_EQ(LUMICE_PathReportGetLayerShape(outcome.report.get(), 0, 0, &scalar), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(std::string(scalar.name.data, scalar.name.length), "height");
+  EXPECT_EQ(LUMICE_PathReportGetLayerShape(outcome.report.get(), 0, 1, &scalar), LUMICE_PATH_READ_NOT_AVAILABLE);
+  LUMICE_PathRawSpectrumRow raw{};
+  raw.struct_size = sizeof(raw);
+  EXPECT_EQ(LUMICE_PathReportGetRawSpectrumRow(outcome.report.get(), 0, &raw), LUMICE_PATH_READ_INVALID_KIND);
+  EXPECT_GT(scope.member_count, 0u);
+  if (scope.member_count > 0) {
+    LUMICE_PathFaceSequence member{};
+    member.struct_size = sizeof(member);
+    ASSERT_EQ(LUMICE_PathReportGetMember(outcome.report.get(), 0, &member), LUMICE_PATH_READ_OK);
+    EXPECT_GE(member.face_count, 2u);
+  }
+  if (scope.spectrum_row_count > 0) {
+    LUMICE_PathSpectralRow row{};
+    row.struct_size = sizeof(row);
+    EXPECT_EQ(LUMICE_PathReportGetSpectralRow(outcome.report.get(), 0, &row), LUMICE_PATH_READ_OK);
+    EXPECT_GE(row.wavelength_nm, 350.0);
+  }
+  if (info.support_member_count > 0) {
+    LUMICE_PathReportSupportMember support{};
+    support.struct_size = sizeof(support);
+    ASSERT_EQ(LUMICE_PathReportGetSupportMember(outcome.report.get(), 0, &support), LUMICE_PATH_READ_OK);
+    EXPECT_NE(support.coverage, 0);
+    EXPECT_NE(support.walk_status, 0);
+    if (support.onset_count > 0) {
+      LUMICE_PathReportOnset onset{};
+      onset.struct_size = sizeof(onset);
+      EXPECT_EQ(LUMICE_PathReportGetSupportOnset(outcome.report.get(), 0, 0, &onset), LUMICE_PATH_READ_OK);
+    }
+    if (support.constant_curve_count > 0) {
+      LUMICE_PathReportCurve curve{};
+      curve.struct_size = sizeof(curve);
+      ASSERT_EQ(LUMICE_PathReportGetConstantCurve(outcome.report.get(), 0, 0, &curve), LUMICE_PATH_READ_OK);
+      if (curve.wavelength_count > 0) {
+        LUMICE_PathReportCurveWavelength wavelength{};
+        wavelength.struct_size = sizeof(wavelength);
+        EXPECT_EQ(LUMICE_PathReportGetCurveWavelength(outcome.report.get(), 0, 0, 0, &wavelength), LUMICE_PATH_READ_OK);
+      }
+    }
+    if (support.interval_count > 0) {
+      LUMICE_PathReportInterval interval{};
+      interval.struct_size = sizeof(interval);
+      EXPECT_EQ(LUMICE_PathReportGetSupportInterval(outcome.report.get(), 0, 0, &interval), LUMICE_PATH_READ_OK);
+      EXPECT_LE(interval.lower_rad, interval.upper_rad);
+    }
+  }
+  LUMICE_PathReportBudgets budgets{};
+  budgets.struct_size = sizeof(budgets);
+  if (info.orbit_count > 0) {
+    LUMICE_PathReportOrbit orbit{};
+    orbit.struct_size = sizeof(orbit);
+    ASSERT_EQ(LUMICE_PathReportGetOrbit(outcome.report.get(), 0, &orbit), LUMICE_PATH_READ_OK);
+    if (orbit.sample_count > 0) {
+      LUMICE_PathReportOrbitSample sample{};
+      sample.struct_size = sizeof(sample);
+      EXPECT_EQ(LUMICE_PathReportGetOrbitSample(outcome.report.get(), 0, 0, &sample), LUMICE_PATH_READ_OK);
+    }
+  }
+  if (info.support_family_count > 0) {
+    LUMICE_PathReportSupportFamily family{};
+    family.struct_size = sizeof(family);
+    ASSERT_EQ(LUMICE_PathReportGetSupportFamily(outcome.report.get(), 0, &family), LUMICE_PATH_READ_OK);
+    if (family.interval_count > 0) {
+      LUMICE_PathReportInterval interval{};
+      interval.struct_size = sizeof(interval);
+      EXPECT_EQ(LUMICE_PathReportGetFamilyInterval(outcome.report.get(), 0, 0, &interval), LUMICE_PATH_READ_OK);
+    }
+    if (family.member_count > 0) {
+      LUMICE_PathFaceSequence member{};
+      member.struct_size = sizeof(member);
+      EXPECT_EQ(LUMICE_PathReportGetFamilyMember(outcome.report.get(), 0, 0, &member), LUMICE_PATH_READ_OK);
+    }
+  }
+  ASSERT_EQ(LUMICE_PathReportGetBudgets(outcome.report.get(), &budgets), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(budgets.completed_outer_samples, info.completed_outer_samples);
+  const auto budget_wire = nlohmann::json::parse(Json(outcome.report.get())).at("budgets");
+  EXPECT_EQ(budgets.enumeration_max_optical_evaluations, budget_wire.at("enumeration").at("max_optical_evaluations"));
+  LUMICE_PathReportMcEvidence mc{};
+  mc.struct_size = sizeof(mc);
+  ASSERT_EQ(LUMICE_PathReportGetMcEvidence(outcome.report.get(), &mc), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(mc.completed_samples, info.completed_outer_samples);
+  if (mc.unfinished_count > 0) {
+    LUMICE_PathText unfinished{};
+    EXPECT_EQ(LUMICE_PathReportGetMcUnfinished(outcome.report.get(), 0, &unfinished), LUMICE_PATH_READ_OK);
+    EXPECT_GT(unfinished.length, 0u);
+  }
+  if (mc.limitation_count > 0) {
+    LUMICE_PathText limitation{};
+    EXPECT_EQ(LUMICE_PathReportGetMcLimitation(outcome.report.get(), 0, &limitation), LUMICE_PATH_READ_OK);
+    EXPECT_GT(limitation.length, 0u);
+  }
+  if (mc.component_count > 0) {
+    LUMICE_PathMcComponent component{};
+    component.struct_size = sizeof(component);
+    EXPECT_EQ(LUMICE_PathReportGetMcComponent(outcome.report.get(), 0, &component), LUMICE_PATH_READ_OK);
+  }
+  if (mc.positive_source_count > 0) {
+    LUMICE_PathPositiveSource source{};
+    source.struct_size = sizeof(source);
+    EXPECT_EQ(LUMICE_PathReportGetPositiveSource(outcome.report.get(), 0, &source), LUMICE_PATH_READ_OK);
+    if (source.coordinates_available) {
+      EXPECT_GE(source.crystal_kind, 1);
+      EXPECT_LE(source.crystal_kind, 2);
+      EXPECT_GT(source.height, 0.0);
+    }
+  }
+  ASSERT_GT(info.coverage_count, 0u);
+
+  LUMICE_PathReportCoverage coverage{};
+  coverage.struct_size = sizeof(coverage);
+  ASSERT_EQ(LUMICE_PathReportGetCoverage(outcome.report.get(), 0, &coverage), LUMICE_PATH_READ_OK);
+  EXPECT_GT(coverage.subject.length, 0u);
+  EXPECT_EQ(LUMICE_PathReportGetCoverage(outcome.report.get(), info.coverage_count, &coverage),
+            LUMICE_PATH_READ_INVALID_INDEX);
+  EXPECT_EQ(coverage.subject.data, nullptr);
+
+  LUMICE_PathReportObject object{};
+  object.struct_size = sizeof(object);
+  if (info.object_count > 0) {
+    ASSERT_EQ(LUMICE_PathReportGetObject(outcome.report.get(), 0, &object), LUMICE_PATH_READ_OK);
+    EXPECT_GT(object.kind.length, 0u);
+    if (object.u_count) {
+      EXPECT_NE(object.u, nullptr);
+    }
+    LUMICE_PathReportAnnotation annotation{};
+    annotation.struct_size = sizeof(annotation);
+    ASSERT_EQ(LUMICE_PathReportGetAnnotation(outcome.report.get(), 0, &annotation), LUMICE_PATH_READ_OK);
+    EXPECT_NE(annotation.state, 0);
+    LUMICE_PathReportVisibility visibility{};
+    visibility.struct_size = sizeof(visibility);
+    ASSERT_EQ(LUMICE_PathReportGetVisibility(outcome.report.get(), 0, &visibility), LUMICE_PATH_READ_OK);
+    EXPECT_EQ(visibility.state, object.visibility);
+    EXPECT_GT(visibility.evidence_form.length, 0u);
+    LUMICE_PathReportChromatic chromatic{};
+    chromatic.struct_size = sizeof(chromatic);
+    ASSERT_EQ(LUMICE_PathReportGetChromatic(outcome.report.get(), 0, &chromatic), LUMICE_PATH_READ_OK);
+    EXPECT_EQ(chromatic.assessed, object.chromatic_assessed);
+    EXPECT_GT(chromatic.edge_min_shift_rad, 0.0);
+    if (chromatic.feature_count > 0) {
+      LUMICE_PathReportChromaticFeature feature{};
+      feature.struct_size = sizeof(feature);
+      EXPECT_EQ(LUMICE_PathReportGetChromaticFeature(outcome.report.get(), 0, 0, &feature), LUMICE_PATH_READ_OK);
+    }
+    if (chromatic.note_count > 0) {
+      LUMICE_PathText note{};
+      EXPECT_EQ(LUMICE_PathReportGetChromaticNote(outcome.report.get(), 0, 0, &note), LUMICE_PATH_READ_OK);
+    }
+  }
+  EXPECT_EQ(LUMICE_PathReportGetObject(outcome.report.get(), info.object_count, &object),
+            LUMICE_PATH_READ_INVALID_INDEX);
+  EXPECT_EQ(object.kind.data, nullptr);
+  if (info.produced_kind_count > 0) {
+    LUMICE_PathText produced{};
+    ASSERT_EQ(LUMICE_PathReportGetProducedKind(outcome.report.get(), 0, &produced), LUMICE_PATH_READ_OK);
+    EXPECT_GT(produced.length, 0u);
+  }
+
+  LUMICE_PathReportRecord record{};
+  record.struct_size = sizeof(record);
+  if (info.record_count > 0) {
+    ASSERT_EQ(LUMICE_PathReportGetRecord(outcome.report.get(), 0, &record), LUMICE_PATH_READ_OK);
+    EXPECT_GT(record.kind.length, 0u);
+    if (record.sky_point_count > 0) {
+      LUMICE_PathReportSkyPoint point{};
+      point.struct_size = sizeof(point);
+      EXPECT_EQ(LUMICE_PathReportGetSkyPoint(outcome.report.get(), 0, 0, &point), LUMICE_PATH_READ_OK);
+    }
+    if (record.source_parameter_count > 0) {
+      LUMICE_PathReportSourceParameter parameter{};
+      parameter.struct_size = sizeof(parameter);
+      EXPECT_EQ(LUMICE_PathReportGetSourceParameter(outcome.report.get(), 0, 0, &parameter), LUMICE_PATH_READ_OK);
+      EXPECT_GT(parameter.name.length, 0u);
+    }
+  }
+  const auto check_record = [&](size_t index) {
+    ASSERT_EQ(LUMICE_PathReportGetRecord(outcome.report.get(), index, &record), LUMICE_PATH_READ_OK);
+    LUMICE_PathRecordAdjuncts adjuncts{};
+    adjuncts.struct_size = sizeof(adjuncts);
+    ASSERT_EQ(LUMICE_PathReportGetRecordAdjuncts(outcome.report.get(), index, &adjuncts), LUMICE_PATH_READ_OK);
+    if (record.field_point_count > 0) {
+      LUMICE_PathFieldPoint point{};
+      point.struct_size = sizeof(point);
+      ASSERT_EQ(LUMICE_PathReportGetFieldPoint(outcome.report.get(), index, 0, &point), LUMICE_PATH_READ_OK);
+      LUMICE_PathFieldJet jet{};
+      jet.struct_size = sizeof(jet);
+      EXPECT_EQ(LUMICE_PathReportGetFieldJet(outcome.report.get(), index, 0, 0, &jet), LUMICE_PATH_READ_OK);
+      EXPECT_EQ(LUMICE_PathReportGetFieldJet(outcome.report.get(), index, 0, 5, &jet), LUMICE_PATH_READ_INVALID_KIND);
+    }
+    if (adjuncts.boundary_source_available) {
+      LUMICE_PathDiagnosticSource source{};
+      source.struct_size = sizeof(source);
+      EXPECT_EQ(LUMICE_PathReportGetBoundarySource(outcome.report.get(), index, &source), LUMICE_PATH_READ_OK);
+    }
+    if (adjuncts.boundary_value_available) {
+      LUMICE_PathDiagnosticValue value{};
+      value.struct_size = sizeof(value);
+      ASSERT_EQ(LUMICE_PathReportGetBoundaryValue(outcome.report.get(), index, &value), LUMICE_PATH_READ_OK);
+      if (value.interface_count > 0) {
+        LUMICE_PathDiagnosticInterface interface{};
+        interface.struct_size = sizeof(interface);
+        EXPECT_EQ(LUMICE_PathReportGetBoundaryInterface(outcome.report.get(), index, 0, &interface),
+                  LUMICE_PATH_READ_OK);
+      }
+    }
+  };
+  for (size_t index = 0; index < info.record_count; ++index) {
+    check_record(index);
+  }
+  EXPECT_EQ(LUMICE_PathReportGetRecord(outcome.report.get(), info.record_count, &record),
+            LUMICE_PATH_READ_INVALID_INDEX);
+  if (info.source_count > 0) {
+    LUMICE_PathReportSource source{};
+    source.struct_size = sizeof(source);
+    EXPECT_EQ(LUMICE_PathReportGetSource(outcome.report.get(), 0, &source), LUMICE_PATH_READ_OK);
+    EXPECT_LT(source.spectral_row, scope.spectrum_row_count);
+  }
+  LUMICE_PathUnattributedSummary unattributed{};
+  unattributed.struct_size = sizeof(unattributed);
+  ASSERT_EQ(LUMICE_PathReportGetUnattributedSummary(outcome.report.get(), &unattributed), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(unattributed.structure_count, info.unattributed_count);
+  if (info.unattributed_count > 0) {
+    LUMICE_PathUnattributed row{};
+    row.struct_size = sizeof(row);
+    EXPECT_EQ(LUMICE_PathReportGetUnattributed(outcome.report.get(), 0, &row), LUMICE_PATH_READ_OK);
+    EXPECT_LT(row.record_index, info.record_count);
+  }
+  if (info.declared_skip_count > 0) {
+    LUMICE_PathReportDeclaredSkip skipped{};
+    skipped.struct_size = sizeof(skipped);
+    ASSERT_EQ(LUMICE_PathReportGetDeclaredSkip(outcome.report.get(), 0, &skipped), LUMICE_PATH_READ_OK);
+    EXPECT_GT(skipped.reason.length, 0u);
+  }
+  EXPECT_EQ(LUMICE_PathReportGetInfo(nullptr, &info), LUMICE_PATH_READ_NULL_ARG);
+  EXPECT_EQ(info.object_count, 0u);
+  EXPECT_EQ(info.struct_size, sizeof(info));
+}
+
+TEST(PathFeatureReportCApi, TypedRecordsMatchPopulatedReportAndRejectAbsentNestedPayloads) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  // B-only keeps populated records without the unused full P/B/D expansion.
+  request.c.symmetry_bits_plus_one = 3;
+  const double wavelength = 550.0;
+  request.c.wavelengths_nm = &wavelength;
+  request.c.wavelength_count = 1;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const auto document = nlohmann::json::parse(Json(outcome.report.get()));
+  const auto& records = document.at("mc_evidence").at("records");
+  ASSERT_GT(records.size(), 0u);
+  LUMICE_PathReportInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathReportGetInfo(outcome.report.get(), &info), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(info.record_count, records.size());
+  const auto check_populated_record = [&](size_t index) {
+    LUMICE_PathReportRecord record{};
+    record.struct_size = sizeof(record);
+    ASSERT_EQ(LUMICE_PathReportGetRecord(outcome.report.get(), index, &record), LUMICE_PATH_READ_OK);
+    EXPECT_EQ(std::string(record.kind.data, record.kind.length), records[index].at("kind"));
+    const std::string evidence = records[index].at("evidence").get<std::string>();
+    if (evidence == "actual") {
+      EXPECT_EQ(record.evidence, LUMICE_PATH_MC_ACTUAL);
+    } else if (evidence == "candidate") {
+      EXPECT_EQ(record.evidence, LUMICE_PATH_MC_CANDIDATE);
+    } else if (evidence == "unfinished") {
+      EXPECT_EQ(record.evidence, LUMICE_PATH_MC_UNFINISHED);
+    } else {
+      ADD_FAILURE() << "unrecognized record evidence: " << evidence;
+    }
+    EXPECT_EQ(record.equation, records[index].at("fixed_observation").at("equation"));
+    EXPECT_EQ(record.contributor_fraction_available, records[index].contains("contributor_fraction_of_estimated_Y"));
+    if (record.contributor_fraction_available) {
+      EXPECT_EQ(record.contributor_fraction_of_estimated_y, records[index].at("contributor_fraction_of_estimated_Y"));
+    }
+    LUMICE_PathRecordAdjuncts adjuncts{};
+    adjuncts.struct_size = sizeof(adjuncts);
+    ASSERT_EQ(LUMICE_PathReportGetRecordAdjuncts(outcome.report.get(), index, &adjuncts), LUMICE_PATH_READ_OK);
+    EXPECT_EQ(adjuncts.band_available, records[index].contains("band"));
+    LUMICE_PathFieldBand band{};
+    band.struct_size = sizeof(band);
+    EXPECT_EQ(LUMICE_PathReportGetFieldBand(outcome.report.get(), index, &band),
+              adjuncts.band_available ? LUMICE_PATH_READ_OK : LUMICE_PATH_READ_NOT_AVAILABLE);
+    if (adjuncts.band_available) {
+      for (size_t boundary = 0; boundary < 2; ++boundary) {
+        EXPECT_EQ(band.boundary_count[boundary], records[index].at("band").at("boundaries")[boundary].size());
+      }
+    }
+    LUMICE_PathCorridor corridor{};
+    corridor.struct_size = sizeof(corridor);
+    const auto diagnostic =
+        LUMICE_PathReportGetCorridor(outcome.report.get(), index, LUMICE_PATH_DIAGNOSTIC_BOUNDARY, 0, 0, &corridor);
+    EXPECT_EQ(diagnostic, adjuncts.boundary_value_available ? LUMICE_PATH_READ_OK : LUMICE_PATH_READ_NOT_AVAILABLE);
+  };
+  for (size_t index = 0; index < info.record_count; ++index) {
+    check_populated_record(index);
+  }
+  ASSERT_GT(info.source_count, 0u);
+  LUMICE_PathPositiveSource witness{};
+  witness.struct_size = sizeof(witness);
+  ASSERT_EQ(LUMICE_PathReportGetPositiveSource(outcome.report.get(), 0, &witness), LUMICE_PATH_READ_OK);
+  ASSERT_LT(witness.token, info.source_count);
+  LUMICE_PathReportSource source{};
+  source.struct_size = sizeof(source);
+  ASSERT_EQ(LUMICE_PathReportGetSource(outcome.report.get(), witness.token, &source), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(witness.sample_index, source.sample_index);
+  EXPECT_EQ(witness.member_index, source.member_index);
+  EXPECT_EQ(witness.spectral_row, source.spectral_row);
+  const auto& source_wire = document.at("sources").at(std::to_string(witness.token));
+  EXPECT_EQ(source.sample_index, source_wire.at("outer_sample"));
+  EXPECT_EQ(source.member_index, source_wire.at("member"));
+  EXPECT_EQ(source.spectral_row, source_wire.at("spectral_row"));
+
+  LUMICE_PathDiagnosticValue diagnostic{};
+  diagnostic.struct_size = sizeof(diagnostic);
+  EXPECT_EQ(LUMICE_PathReportGetDiagnosticValue(outcome.report.get(), 0, 0, 0, 0, &diagnostic),
+            LUMICE_PATH_READ_INVALID_KIND);
+  EXPECT_EQ(LUMICE_PathReportGetDiagnosticValue(outcome.report.get(), info.record_count,
+                                                LUMICE_PATH_DIAGNOSTIC_BOUNDARY, 0, 0, &diagnostic),
+            LUMICE_PATH_READ_INVALID_INDEX);
+}
+
+TEST(PathFeatureReportCApi, RawDiscreteSpectrumRowsRemainDistinctFromResolvedRows) {
+  auto document = nlohmann::json::parse(kSceneJson);
+  document["scene"]["light_source"]["spectrum"] = nlohmann::json::array();
+  document["scene"]["light_source"]["spectrum"].push_back({ { "wavelength", 550 }, { "weight", 1 } });
+  const std::string scene_json = document.dump();
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(scene_json.c_str(), &raw_scene), LUMICE_OK);
+  const ScenePtr scene(raw_scene);
+  Request request;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  LUMICE_PathReportScope scope{};
+  scope.struct_size = sizeof(scope);
+  ASSERT_EQ(LUMICE_PathReportGetScope(outcome.report.get(), &scope), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(scope.raw_spectrum_kind, 1);
+  ASSERT_EQ(scope.raw_spectrum_count, 1u);
+  LUMICE_PathRawSpectrumRow row{};
+  row.struct_size = sizeof(row);
+  ASSERT_EQ(LUMICE_PathReportGetRawSpectrumRow(outcome.report.get(), 0, &row), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(row.wavelength_nm, 550.0);
+  EXPECT_EQ(row.weight, 1.0);
+  EXPECT_EQ(LUMICE_PathReportGetRawSpectrumRow(outcome.report.get(), 1, &row), LUMICE_PATH_READ_INVALID_INDEX);
+}
+
 TEST(PathFeatureReportCApi, NullArgumentsAndPointersAreRejected) {
   const ScenePtr scene = MakeScene();
   Request request;
@@ -172,6 +553,28 @@ TEST(PathFeatureReportCApi, UnsupportedMultiCrystalStillRejectsInvalidInput) {
   const auto document = nlohmann::json::parse(Json(outcome.report.get()));
   EXPECT_EQ(document["outcome"], "unsupported_multicrystal");
   EXPECT_EQ(document["budgets"]["optical_evaluations"], 0);
+  LUMICE_PathReportInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathReportGetInfo(outcome.report.get(), &info), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(info.requested_layer_count, 2u);
+  LUMICE_PathFaceSequence first{};
+  first.struct_size = sizeof(first);
+  ASSERT_EQ(LUMICE_PathReportGetRequestedLayer(outcome.report.get(), 0, &first), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(first.face_count, 2u);
+  EXPECT_EQ((std::vector<int>{ first.faces[0], first.faces[1] }),
+            document["requested_path_layers"][0].get<std::vector<int>>());
+  LUMICE_PathFaceSequence second{};
+  second.struct_size = sizeof(second);
+  ASSERT_EQ(LUMICE_PathReportGetRequestedLayer(outcome.report.get(), 1, &second), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(second.face_count, 2u);
+  EXPECT_EQ((std::vector<int>{ second.faces[0], second.faces[1] }),
+            document["requested_path_layers"][1].get<std::vector<int>>());
+  EXPECT_EQ(LUMICE_PathReportGetRequestedLayer(outcome.report.get(), 2, &second), LUMICE_PATH_READ_INVALID_INDEX);
+  EXPECT_EQ(second.face_count, 0u);
+  LUMICE_PathReportScope scope{};
+  scope.struct_size = sizeof(scope);
+  EXPECT_EQ(LUMICE_PathReportGetScope(outcome.report.get(), &scope), LUMICE_PATH_READ_NOT_AVAILABLE);
+  EXPECT_EQ(scope.scene_identity.data, nullptr);
 
   request.c.crystal_id = 99;
   outcome = Analyse(scene.get(), &request.c);

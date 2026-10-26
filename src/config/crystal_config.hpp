@@ -8,6 +8,8 @@
 #include "core/crystal_kind.hpp"
 #include "core/crystal_param.hpp"
 #include "core/math.hpp"
+#include "core/random.hpp"
+#include "core/scene_values.hpp"
 
 namespace lumice {
 
@@ -51,7 +53,6 @@ const char* ShapeWedgeAngleKeyName(bool upper);
 //!   parameterization, for the same reason.
 const char* ShapeIndicesKeyName(bool upper);
 
-using CrystalParam = std::variant<PrismCrystalParam, PyramidCrystalParam>;
 
 // Per-param shape (de)serialization. Declared here (definitions in crystal_config.cpp)
 // so consumers outside that TU — e.g. the C API mesh-preview path — can build a
@@ -60,12 +61,6 @@ void to_json(nlohmann::json& j, const PrismCrystalParam& p);
 void from_json(const nlohmann::json& j, PrismCrystalParam& p);
 void to_json(nlohmann::json& j, const PyramidCrystalParam& p);
 void from_json(const nlohmann::json& j, PyramidCrystalParam& p);
-
-struct CrystalConfig {
-  IdType id_;
-  CrystalParam param_;
-  AxisDistribution axis_;
-};
 
 using CrystalConfigPtrU = std::unique_ptr<CrystalConfig>;
 using CrystalConfigPtrS = std::shared_ptr<CrystalConfig>;

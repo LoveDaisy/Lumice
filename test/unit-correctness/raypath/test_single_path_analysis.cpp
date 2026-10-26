@@ -94,7 +94,19 @@ double Angle(const double a[3], const double b[3]) {
 }
 
 TEST(SurveyReuse, StructureAndReadingHaveSeparateScopeDependencies) {
-  SurveyWarmSource warm;
+  const ConfigManager config = Scene(Prism(1.2f));
+  PathSelection selection;
+  selection.crystal_id = 1;
+  selection.path_layers = { { 3, 5 } };
+  WarmCandidate candidate;
+  candidate.crystal_id = 1;
+  candidate.path_layers = selection.path_layers;
+  candidate.location = ScopeLocation{ SelectionLocation::kStandalone, 0 };
+  candidate.config_fingerprint =
+      survey::RoutingConfigFingerprint(config, selection.crystal_id, selection.path_layers, selection.symmetry_bits);
+  SurveyWarmSource& warm = candidate.facts;
+  warm.family = WarmDocumentFamily::kSurvey;
+  warm.index_present = true;
   warm.has_support = true;
   warm.intervals.push_back({ 21.9, 40.0, { 3, 5 } });
   warm.has_wavelength = true;
@@ -103,38 +115,49 @@ TEST(SurveyReuse, StructureAndReadingHaveSeparateScopeDependencies) {
   warm.sun_altitude_deg = 20.0;
   warm.has_sun_azimuth = true;
   warm.sun_azimuth_deg = 0.0;
+  const auto admit = [&] {
+    std::optional<AdmittedWarmSource> admitted;
+    EXPECT_TRUE(ValidateWarmCandidate(config, selection, candidate, &admitted).Ok());
+    return admitted;
+  };
 
   SurveyContextBlock context;
-  context.source = "warm";
-  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
-  EXPECT_EQ(context.object.state, "certified");
+  context.source = ContextSource::kWarm;
+  auto admitted = admit();
+  ASSERT_TRUE(admitted);
+  FillSurveyContext(*admitted, 22.1, 550.0, 20.0, 0.0, &context);
+  EXPECT_EQ(context.object.state, survey::EvidenceState::kCertified);
   EXPECT_TRUE(context.target_inside_support);
-  EXPECT_EQ(context.edge.state, "finite");
+  EXPECT_EQ(context.edge.state, survey::EvidenceState::kFinite);
 
   context = SurveyContextBlock{};
-  context.source = "warm";
-  FillSurveyContext(warm, 22.1, 450.0, 20.0, 0.0, &context);
+  context.source = ContextSource::kWarm;
+  FillSurveyContext(*admitted, 22.1, 450.0, 20.0, 0.0, &context);
   EXPECT_EQ(context.object.reason, "scope_value_mismatch");
   EXPECT_EQ(context.edge.reason, "scope_value_mismatch");
 
   context = SurveyContextBlock{};
-  context.source = "warm";
-  FillSurveyContext(warm, 41.0, 550.0, 30.0, 0.0, &context);
-  EXPECT_EQ(context.object.state, "certified");
+  context.source = ContextSource::kWarm;
+  FillSurveyContext(*admitted, 41.0, 550.0, 30.0, 0.0, &context);
+  EXPECT_EQ(context.object.state, survey::EvidenceState::kCertified);
   EXPECT_FALSE(context.target_inside_support);
   EXPECT_DOUBLE_EQ(context.object_distance_deg, 1.0);
 
   warm.has_sun_altitude = false;
-  context = SurveyContextBlock{};
-  context.source = "warm";
   warm.has_probe = true;
-  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
-  EXPECT_EQ(context.object.state, "certified");
+  admitted = admit();
+  ASSERT_TRUE(admitted);
+  context = SurveyContextBlock{};
+  context.source = ContextSource::kWarm;
+  FillSurveyContext(*admitted, 22.1, 550.0, 20.0, 0.0, &context);
+  EXPECT_EQ(context.object.state, survey::EvidenceState::kCertified);
   EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
   warm.has_wavelength = false;
+  admitted = admit();
+  ASSERT_TRUE(admitted);
   context = SurveyContextBlock{};
-  context.source = "warm";
-  FillSurveyContext(warm, 22.1, 550.0, 20.0, 0.0, &context);
+  context.source = ContextSource::kWarm;
+  FillSurveyContext(*admitted, 22.1, 550.0, 20.0, 0.0, &context);
   EXPECT_EQ(context.object.reason, "scope_field_missing");
   EXPECT_EQ(context.edge.reason, "scope_field_missing");
   EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
@@ -263,25 +286,25 @@ TEST(SinglePathConvert, SunAndTargetDirections) {
   EXPECT_NEAR(s[2], -std::sin(20.0 * kDeg), 1e-7);
   EXPECT_NEAR(analytic::so3::Norm3(s), 1.0, 1e-15);
 
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 1, 2 }, 30.0, 90.0), &r).Ok());
-  EXPECT_NEAR(r.meta.target_direction[0], 0.0, 1e-15);
-  EXPECT_NEAR(r.meta.target_direction[1], -std::cos(30.0 * kDeg), 1e-15);
-  EXPECT_NEAR(r.meta.target_direction[2], -std::sin(30.0 * kDeg), 1e-15);
-  EXPECT_NEAR(r.meta.incident_direction[0], s[0], 0.0);
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(1.0f)), Request({ 1, 2 }, 30.0, 90.0), false, &r).Ok());
+  EXPECT_NEAR(r.Data().meta.target_direction[0], 0.0, 1e-15);
+  EXPECT_NEAR(r.Data().meta.target_direction[1], -std::cos(30.0 * kDeg), 1e-15);
+  EXPECT_NEAR(r.Data().meta.target_direction[2], -std::sin(30.0 * kDeg), 1e-15);
+  EXPECT_NEAR(r.Data().meta.incident_direction[0], s[0], 0.0);
   // Great-circle distance between (20, 0) and (30, 90).
   const double expected = std::acos(std::sin(20.0 * kDeg) * std::sin(30.0 * kDeg));
-  EXPECT_NEAR(r.meta.target_deviation_deg, expected / kDeg, 1e-5);
-  EXPECT_EQ(r.meta.schema_version, kSchemaVersion);
-  EXPECT_EQ(r.meta.analytic_api_version, analytic::kApiVersion);
-  EXPECT_EQ(r.meta.wavelength_source, WavelengthSource::kConfigSingle);
-  EXPECT_EQ(r.meta.faces, (std::vector<int>{ 1, 2 }));
+  EXPECT_NEAR(r.Data().meta.target_deviation_deg, expected / kDeg, 1e-5);
+  EXPECT_EQ(r.Data().meta.schema_version, kSchemaVersion);
+  EXPECT_EQ(r.Data().meta.analytic_api_version, analytic::kApiVersion);
+  EXPECT_EQ(r.Data().meta.wavelength_source, WavelengthSource::kConfigSingle);
+  EXPECT_EQ(r.Data().meta.faces, (std::vector<int>{ 1, 2 }));
 }
 
 TEST(SinglePathConvert, RequestErrors) {
   const ConfigManager scene = Scene(Prism(1.0f));
-  SinglePathResult r;
-  auto code = [&](SinglePathRequest q) { return AnalyzeSinglePath(scene, q, &r).code; };
+  PointResult r;
+  auto code = [&](SinglePathRequest q) { return AnalyzePathPointValue(scene, q, false, &r).code; };
 
   SinglePathRequest q = Request({ 3, 5 }, 20.0, 25.0);
   q.crystal_id = 7;
@@ -317,9 +340,10 @@ TEST(SinglePathConvert, RequestErrors) {
   // Opposite face distances summing to zero: the engine builds no crystal.
   PrismCrystalParam flat = Prism(1.0f);
   flat.d_[0] = Fixed(-1.0f);
-  EXPECT_EQ(AnalyzeSinglePath(Scene(flat), Request({ 3, 5 }, 20.0, 25.0), &r).code, ErrorCode::kCrystalRejected);
+  EXPECT_EQ(AnalyzePathPointValue(Scene(flat), Request({ 3, 5 }, 20.0, 25.0), false, &r).code,
+            ErrorCode::kCrystalRejected);
   // On error the result is left empty.
-  EXPECT_TRUE(r.meta.faces.empty());
+  EXPECT_TRUE(r.Data().meta.faces.empty());
 }
 
 // ---- pose angles ----------------------------------------------------------------------------
@@ -372,10 +396,10 @@ TEST(SinglePathSunGrid, MatchesSingleEvaluationsAtIndependentPoses) {
   SinglePathRequest q = Request({ 13, 15, 26, 28 }, 20.0, 40.0);
   q.sun_grid_lat_count = 30;
   q.sample_count = 1000;
-  SinglePathResult r;
-  const Error e = AnalyzeSinglePath(Scene(crystal), q, &r);
+  PointResult r;
+  const Error e = AnalyzePathPointValue(Scene(crystal), q, false, &r);
   ASSERT_TRUE(e.Ok()) << e.message;
-  const SunSphereGrid& g = r.sun_grid;
+  const SunSphereGrid& g = r.Data().sun_grid;
   ASSERT_EQ(g.lat_count, 30);
   ASSERT_EQ(g.lon_count, 60);
   ASSERT_EQ(g.deviation_rad.size(), 1800u);
@@ -384,7 +408,7 @@ TEST(SinglePathSunGrid, MatchesSingleEvaluationsAtIndependentPoses) {
   ASSERT_EQ(analytic::BuildFaceNormals(ConvertCrystal(crystal).shape, &table), analytic::Status::kOk);
   std::vector<int> slots;
   ASSERT_TRUE(ResolveSingleLayerPath(q.path_layers, table, &slots).Ok());
-  const double* incident = r.meta.incident_direction;
+  const double* incident = r.Data().meta.incident_direction;
   const double sun[3] = { -incident[0], -incident[1], -incident[2] };
   std::vector<double> segments(3 * (slots.size() + 1));
   std::vector<double> transmittances(slots.size());
@@ -420,8 +444,8 @@ TEST(SinglePathSunGrid, MatchesSingleEvaluationsAtIndependentPoses) {
     analytic::PathOutputs out{};
     out.segment_directions = segments.data();
     out.interface_transmittances = transmittances.data();
-    const bool ok = analytic::EvaluatePath(table, slots.data(), static_cast<int>(slots.size()), r.meta.refractive_index,
-                                           incident, pose, &out);
+    const bool ok = analytic::EvaluatePath(table, slots.data(), static_cast<int>(slots.size()),
+                                           r.Data().meta.refractive_index, incident, pose, &out);
     const size_t cell = static_cast<size_t>(i) * g.lon_count + j;
     if (ok != (g.valid[cell] != 0)) {
       ADD_FAILURE() << "cell " << i << "," << j << ": grid validity " << int(g.valid[cell]) << ", evaluation " << ok;
@@ -446,26 +470,24 @@ TEST(SinglePathRankZero, AParallelFacePairIsAPointMass) {
   for (const std::vector<int>& faces : { std::vector<int>{ 1, 2 }, std::vector<int>{ 3, 6 } }) {
     SinglePathRequest q = Request(faces, 20.0, 25.0);
     q.sun_grid_lat_count = 10;
-    SinglePathResult r;
-    if (!AnalyzeSinglePath(Scene(Prism(1.0f)), q, &r).Ok()) {
+    PointResult r;
+    if (!AnalyzePathPointValue(Scene(Prism(1.0f)), q, false, &r).Ok()) {
       ADD_FAILURE() << faces[0] << "-" << faces[1] << " failed";
       continue;
     }
-    EXPECT_EQ(r.outcome, Outcome::kPointMass);
-    EXPECT_TRUE(r.components.empty());
-    EXPECT_TRUE(r.incomplete.empty());
-    EXPECT_EQ(r.discovery.pool_count, 0);  // discovery never ran
-    EXPECT_LT(Angle(r.point_mass.direction, r.meta.incident_direction), 1e-12);
-    EXPECT_NEAR(r.point_mass.altitude_deg, 20.0, 1e-5);
-    EXPECT_NEAR(r.point_mass.azimuth_deg, 0.0, 1e-5);
-    EXPECT_NEAR(r.point_mass.target_separation_deg, r.meta.target_deviation_deg, 1e-9);
-    EXPECT_EQ(r.sun_grid.lat_count, 10);  // the grid is still drawn
+    EXPECT_EQ(r.Data().OutcomeValue(), Outcome::kPointMass);
+    EXPECT_EQ(std::get_if<DiscoveredPoint>(&r.Data().payload), nullptr);  // discovery never ran
+    EXPECT_LT(Angle(r.Data().Mass().direction, r.Data().meta.incident_direction), 1e-12);
+    EXPECT_NEAR(r.Data().Mass().altitude_deg, 20.0, 1e-5);
+    EXPECT_NEAR(r.Data().Mass().azimuth_deg, 0.0, 1e-5);
+    EXPECT_NEAR(r.Data().Mass().target_separation_deg, r.Data().meta.target_deviation_deg, 1e-9);
+    EXPECT_EQ(r.Data().sun_grid.lat_count, 10);  // the grid is still drawn
   }
   // The sun is a legal target for a point mass (no fiber needs defining there).
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 1, 2 }, 20.0, 0.0), &r).Ok());
-  EXPECT_EQ(r.outcome, Outcome::kPointMass);
-  EXPECT_LT(r.point_mass.target_separation_deg, 1e-5);
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(1.0f)), Request({ 1, 2 }, 20.0, 0.0), false, &r).Ok());
+  EXPECT_EQ(r.Data().OutcomeValue(), Outcome::kPointMass);
+  EXPECT_LT(r.Data().Mass().target_separation_deg, 1e-5);
 }
 
 // A 2-degree wedge between the entry and exit faces: nearly a plate, but the outgoing direction does
@@ -474,16 +496,17 @@ TEST(SinglePathRankZero, AParallelFacePairIsAPointMass) {
 // this case red), an exact plate's stays below 1e-13 rad (a tolerance of 1e-14 turns the case above
 // red); the tolerance, 1e-10, sits between them.
 TEST(SinglePathRankZero, ANearlyParallelPairIsNotAPointMass) {
-  SinglePathResult r;
-  const Error e = AnalyzeSinglePath(Scene(Pyramid(1.0f, 0.5f, 0.0f, 2.0f, 28.0f)), Request({ 3, 16 }, 20.0, 25.0), &r);
+  PointResult r;
+  const Error e =
+      AnalyzePathPointValue(Scene(Pyramid(1.0f, 0.5f, 0.0f, 2.0f, 28.0f)), Request({ 3, 16 }, 20.0, 25.0), false, &r);
   ASSERT_TRUE(e.Ok()) << e.message;
-  EXPECT_EQ(r.outcome, Outcome::kDiscovered);
+  EXPECT_EQ(r.Data().OutcomeValue(), Outcome::kDiscovered);
 }
 
 // ---- discovery and fibers ---------------------------------------------------------------------
 
-void ExpectFibersLandOnTheTarget(const SinglePathResult& r) {
-  for (const FiberComponent& c : r.components) {
+void ExpectFibersLandOnTheTarget(const PointResult& r) {
+  for (const FiberComponent& c : r.Data().Discovered().components) {
     if (c.points.empty()) {
       ADD_FAILURE() << "a component with no points";
       continue;
@@ -500,14 +523,15 @@ void ExpectFibersLandOnTheTarget(const SinglePathResult& r) {
       if (!p.valid) {
         continue;  // an arc's end pose sits on its boundary event
       }
-      EXPECT_LT(Angle(p.outgoing_direction, r.meta.target_direction), 1e-8);
+      EXPECT_LT(Angle(p.outgoing_direction, r.Data().meta.target_direction), 1e-8);
       double product = 1.0;
       for (double t : p.interface_transmittances) {
         product *= t;
       }
       EXPECT_NEAR(p.total_transmission, product, 1e-15);
-      if (p.segment_directions.size() != 3 * (r.meta.faces.size() + 1)) {
-        ADD_FAILURE() << p.segment_directions.size() << " segment values for " << r.meta.faces.size() << " faces";
+      if (p.segment_directions.size() != 3 * (r.Data().meta.faces.size() + 1)) {
+        ADD_FAILURE() << p.segment_directions.size() << " segment values for " << r.Data().meta.faces.size()
+                      << " faces";
         continue;
       }
       // The first segment is the sun's light in the crystal frame: -u.
@@ -526,28 +550,30 @@ void ExpectFibersLandOnTheTarget(const SinglePathResult& r) {
 }
 
 TEST(SinglePathDiscovery, TwentyTwoDegreeFibersLandOnTheTarget) {
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
-  EXPECT_EQ(r.outcome, Outcome::kDiscovered);
-  ASSERT_FALSE(r.components.empty());
-  EXPECT_EQ(r.discovery.admissible_count,
-            r.discovery.dedup_merged + static_cast<int>(r.components.size()) + static_cast<int>(r.incomplete.size()));
-  EXPECT_EQ(r.discovery.complete, r.incomplete.empty());
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), false, &r).Ok());
+  EXPECT_EQ(r.Data().OutcomeValue(), Outcome::kDiscovered);
+  ASSERT_FALSE(r.Data().Discovered().components.empty());
+  EXPECT_EQ(r.Data().Discovered().discovery.admissible_count,
+            r.Data().Discovered().discovery.dedup_merged + static_cast<int>(r.Data().Discovered().components.size()) +
+                static_cast<int>(r.Data().Discovered().incomplete.size()));
+  EXPECT_EQ(r.Data().Discovered().discovery.complete, r.Data().Discovered().incomplete.empty());
   ExpectFibersLandOnTheTarget(r);
 }
 
 // Inside the 22-degree halo's inner edge no pose sends 3-5 light: the answer is "none", and it is a
 // successful, complete answer rather than an error.
 TEST(SinglePathDiscovery, ADarkTargetIsCompleteWithNoComponent) {
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 8.0), &r).Ok());
-  EXPECT_EQ(r.outcome, Outcome::kDiscovered);
-  EXPECT_TRUE(r.components.empty());
-  EXPECT_TRUE(r.discovery.complete);
-  EXPECT_EQ(r.discovery.pool_count, 0);
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 8.0), false, &r).Ok());
+  EXPECT_EQ(r.Data().OutcomeValue(), Outcome::kDiscovered);
+  EXPECT_TRUE(r.Data().Discovered().components.empty());
+  EXPECT_TRUE(r.Data().Discovered().discovery.complete);
+  EXPECT_EQ(r.Data().Discovered().discovery.pool_count, 0);
   // And the reason is geometric: the target's deviation is below 3-5's minimum deviation.
-  EXPECT_FALSE(r.reach.target_in_range);
-  EXPECT_LT(r.reach.target_deviation_rad, r.reach.deviation_min_rad - r.reach.tolerance_rad);
+  EXPECT_FALSE(r.Data().Discovered().reach.target_in_range);
+  EXPECT_LT(r.Data().Discovered().reach.target_deviation_rad,
+            r.Data().Discovered().reach.deviation_min_rad - r.Data().Discovered().reach.tolerance_rad);
 }
 
 // ---- reach: the two empty outcomes --------------------------------------------------------------
@@ -559,41 +585,41 @@ TEST(SinglePathDiscovery, ADarkTargetIsCompleteWithNoComponent) {
 // it. Both empty results look alike in `components`; reach tells them apart, and — validity being
 // direction-level — says the same thing about both heights.
 TEST(SinglePathReach, SeparatesUnreachableFromBlockedByTheFiniteCrystal) {
-  SinglePathResult tall;
-  SinglePathResult flat;
-  SinglePathResult beyond;
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(0.8f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), &tall).Ok());
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(0.5f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), &flat).Ok());
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(0.5f)), Request({ 3, 6, 4, 8 }, 20.0, 140.0), &beyond).Ok());
+  PointResult tall;
+  PointResult flat;
+  PointResult beyond;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(0.8f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), false, &tall).Ok());
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(0.5f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), false, &flat).Ok());
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(0.5f)), Request({ 3, 6, 4, 8 }, 20.0, 140.0), false, &beyond).Ok());
 
-  EXPECT_FALSE(tall.components.empty());
-  EXPECT_TRUE(tall.reach.target_in_range);
+  EXPECT_FALSE(tall.Data().Discovered().components.empty());
+  EXPECT_TRUE(tall.Data().Discovered().reach.target_in_range);
 
-  EXPECT_TRUE(flat.components.empty());
-  EXPECT_TRUE(flat.reach.target_in_range);  // reachable, blocked by the finite crystal
+  EXPECT_TRUE(flat.Data().Discovered().components.empty());
+  EXPECT_TRUE(flat.Data().Discovered().reach.target_in_range);  // reachable, blocked by the finite crystal
 
-  EXPECT_TRUE(beyond.components.empty());
-  EXPECT_FALSE(beyond.reach.target_in_range);  // geometrically unreachable
+  EXPECT_TRUE(beyond.Data().Discovered().components.empty());
+  EXPECT_FALSE(beyond.Data().Discovered().reach.target_in_range);  // geometrically unreachable
 
   // Direction-level: the crystal's height does not enter the range.
-  EXPECT_EQ(tall.reach.deviation_min_rad, flat.reach.deviation_min_rad);
-  EXPECT_EQ(tall.reach.deviation_max_rad, flat.reach.deviation_max_rad);
-  EXPECT_EQ(tall.reach.tolerance_rad, flat.reach.tolerance_rad);
+  EXPECT_EQ(tall.Data().Discovered().reach.deviation_min_rad, flat.Data().Discovered().reach.deviation_min_rad);
+  EXPECT_EQ(tall.Data().Discovered().reach.deviation_max_rad, flat.Data().Discovered().reach.deviation_max_rad);
+  EXPECT_EQ(tall.Data().Discovered().reach.tolerance_rad, flat.Data().Discovered().reach.tolerance_rad);
 }
 
 // The probed range is made of attained values, and the tolerance reaches the exact range [0, 120 deg]
 // that the probe itself approaches from inside at both ends (a cone point at the pole, a smooth
 // maximum at the equator).
 TEST(SinglePathReach, ToleranceCoversTheExactRangeOfARotationPath) {
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), &r).Ok());
-  EXPECT_EQ(r.reach.probe_lat_count, kReachProbeLatCount);
-  EXPECT_GT(r.reach.tolerance_rad, 0.0);
-  EXPECT_GE(r.reach.deviation_min_rad, 0.0);
-  EXPECT_LE(r.reach.deviation_max_rad, 2.0 * kPi / 3.0 + 1e-12);
-  EXPECT_LE(r.reach.deviation_min_rad - r.reach.tolerance_rad, 0.0);
-  EXPECT_GE(r.reach.deviation_max_rad + r.reach.tolerance_rad, 2.0 * kPi / 3.0);
-  EXPECT_NEAR(r.reach.target_deviation_rad, r.meta.target_deviation_deg * kDeg, 1e-12);
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(1.0f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), false, &r).Ok());
+  EXPECT_EQ(r.Data().Discovered().reach.probe_lat_count, kReachProbeLatCount);
+  EXPECT_GT(r.Data().Discovered().reach.tolerance_rad, 0.0);
+  EXPECT_GE(r.Data().Discovered().reach.deviation_min_rad, 0.0);
+  EXPECT_LE(r.Data().Discovered().reach.deviation_max_rad, 2.0 * kPi / 3.0 + 1e-12);
+  EXPECT_LE(r.Data().Discovered().reach.deviation_min_rad - r.Data().Discovered().reach.tolerance_rad, 0.0);
+  EXPECT_GE(r.Data().Discovered().reach.deviation_max_rad + r.Data().Discovered().reach.tolerance_rad, 2.0 * kPi / 3.0);
+  EXPECT_NEAR(r.Data().Discovered().reach.target_deviation_rad, r.Data().meta.target_deviation_deg * kDeg, 1e-12);
 }
 
 // A target on the anti-solar vertical (azimuth 180) at altitude a sits at delta = 160 - a degrees
@@ -601,17 +627,17 @@ TEST(SinglePathReach, ToleranceCoversTheExactRangeOfARotationPath) {
 // one two tolerances beyond is not.
 TEST(SinglePathReach, TheToleranceBandIsInclusive) {
   const ConfigManager scene = Scene(Prism(1.0f));
-  SinglePathResult probe;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 6, 4, 8 }, 20.0, 120.0), &probe).Ok());
-  const double max_deg = probe.reach.deviation_max_rad / kDeg;
-  const double tol_deg = probe.reach.tolerance_rad / kDeg;
+  PointResult probe;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, Request({ 3, 6, 4, 8 }, 20.0, 120.0), false, &probe).Ok());
+  const double max_deg = probe.Data().Discovered().reach.deviation_max_rad / kDeg;
+  const double tol_deg = probe.Data().Discovered().reach.tolerance_rad / kDeg;
   for (const auto& [beyond_deg, in_range] : { std::pair{ 0.5 * tol_deg, true }, std::pair{ 2.0 * tol_deg, false } }) {
-    SinglePathResult r;
-    if (!AnalyzeSinglePath(scene, Request({ 3, 6, 4, 8 }, 160.0 - max_deg - beyond_deg, 180.0), &r).Ok()) {
+    PointResult r;
+    if (!AnalyzePathPointValue(scene, Request({ 3, 6, 4, 8 }, 160.0 - max_deg - beyond_deg, 180.0), false, &r).Ok()) {
       ADD_FAILURE() << "analysis failed, beyond by " << beyond_deg << " deg";
       continue;
     }
-    EXPECT_EQ(r.reach.target_in_range, in_range) << "beyond by " << beyond_deg << " deg";
+    EXPECT_EQ(r.Data().Discovered().reach.target_in_range, in_range) << "beyond by " << beyond_deg << " deg";
   }
 }
 
@@ -622,33 +648,34 @@ TEST(SinglePathReach, IsIndependentOfGridAndSampling) {
   SinglePathRequest b = a;
   b.sun_grid_lat_count = 90;
   b.sample_count = 1000;
-  SinglePathResult ra;
-  SinglePathResult rb;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, a, &ra).Ok());
-  ASSERT_TRUE(AnalyzeSinglePath(scene, b, &rb).Ok());
-  EXPECT_EQ(ra.reach.deviation_min_rad, rb.reach.deviation_min_rad);
-  EXPECT_EQ(ra.reach.deviation_max_rad, rb.reach.deviation_max_rad);
-  EXPECT_EQ(ra.reach.tolerance_rad, rb.reach.tolerance_rad);
-  EXPECT_EQ(ra.reach.target_in_range, rb.reach.target_in_range);
+  PointResult ra;
+  PointResult rb;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, a, false, &ra).Ok());
+  ASSERT_TRUE(AnalyzePathPointValue(scene, b, false, &rb).Ok());
+  EXPECT_EQ(ra.Data().Discovered().reach.deviation_min_rad, rb.Data().Discovered().reach.deviation_min_rad);
+  EXPECT_EQ(ra.Data().Discovered().reach.deviation_max_rad, rb.Data().Discovered().reach.deviation_max_rad);
+  EXPECT_EQ(ra.Data().Discovered().reach.tolerance_rad, rb.Data().Discovered().reach.tolerance_rad);
+  EXPECT_EQ(ra.Data().Discovered().reach.target_in_range, rb.Data().Discovered().reach.target_in_range);
 }
 
 // Seeds fed back are Gauss-Newton starts of their own clusters: a second call that has them cannot
 // come back with fewer components, even from a sparser sample.
 TEST(SinglePathDiscovery, WarmSeedsKeepEveryComponent) {
   const ConfigManager scene = Scene(Prism(1.0f));
-  SinglePathResult first;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 5, 6, 7 }, 18.0, 175.0), &first).Ok());
-  ASSERT_FALSE(first.components.empty());  // otherwise there is nothing to keep
+  PointResult first;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, Request({ 3, 5, 6, 7 }, 18.0, 175.0), false, &first).Ok());
+  ASSERT_FALSE(first.Data().Discovered().components.empty());  // otherwise there is nothing to keep
   SinglePathRequest q = Request({ 3, 5, 6, 7 }, 18.0, 175.0);
   q.sample_count = 1000;
-  for (const FiberComponent& c : first.components) {
+  for (const FiberComponent& c : first.Data().Discovered().components) {
     q.warm_seeds.insert(q.warm_seeds.end(), c.seed, c.seed + 9);
   }
-  SinglePathResult second;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, q, &second).Ok());
-  EXPECT_EQ(second.meta.warm_seed_count, static_cast<int>(first.components.size()));
-  EXPECT_EQ(second.discovery.extra_seed_count, static_cast<int>(first.components.size()));
-  EXPECT_GE(second.components.size(), first.components.size());
+  PointResult second;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, q, false, &second).Ok());
+  EXPECT_EQ(second.Data().meta.warm_seed_count, static_cast<int>(first.Data().Discovered().components.size()));
+  EXPECT_EQ(second.Data().Discovered().discovery.extra_seed_count,
+            static_cast<int>(first.Data().Discovered().components.size()));
+  EXPECT_GE(second.Data().Discovered().components.size(), first.Data().Discovered().components.size());
   ExpectFibersLandOnTheTarget(second);
 }
 
@@ -741,10 +768,10 @@ TEST(AxisToPoseDensity, InexpressibleAxesAreRefusedByName) {
 // multiplied, and the component integral is the left-endpoint arclength sum the serializer's
 // rule sentence states.
 TEST(SinglePathFactors, KCareaMatchesTheKernelJacobianAndTheIntegralFollowsItsRule) {
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
-  ASSERT_EQ(r.outcome, Outcome::kDiscovered);
-  ASSERT_FALSE(r.components.empty());
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), false, &r).Ok());
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kDiscovered);
+  ASSERT_FALSE(r.Data().Discovered().components.empty());
 
   // The kernel map, built independently through the same conversions the module spells.
   const CrystalConversion c = ConvertCrystal(Prism(1.0f));
@@ -758,11 +785,11 @@ TEST(SinglePathFactors, KCareaMatchesTheKernelJacobianAndTheIntegralFollowsItsRu
   SunIncidentDirection(sun, incident);
   // The analysis's own index (the echo is the authority — a nearby-but-unequal n flips
   // availability at the near-TIR poses the fiber reaches).
-  const analytic::IcePathMap map(table, slots.data(), static_cast<int>(slots.size()), r.meta.refractive_index,
+  const analytic::IcePathMap map(table, slots.data(), static_cast<int>(slots.size()), r.Data().meta.refractive_index,
                                  incident);
 
   int checked = 0;
-  for (const FiberComponent& component : r.components) {
+  for (const FiberComponent& component : r.Data().Discovered().components) {
     for (const PointDetail& p : component.points) {
       const analytic::NormalJacobian j = analytic::fiber_detail::NormalJacobianAt(map, p.pose);
       if (p.jacobian_available != j.available) {
@@ -807,16 +834,16 @@ TEST(SinglePathFactors, KCareaMatchesTheKernelJacobianAndTheIntegralFollowsItsRu
 // latitude law over 1/(2 pi)^2 and is constant in azimuth at a fixed zenith.
 TEST(SinglePathFactors, RhoIsTheDeclaredDensityDeclared) {
   // Fixed axis: the joint density is 0 everywhere off the Dirac slice, which is every traced pose.
-  SinglePathResult fixed;
-  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), &fixed).Ok());
-  ASSERT_FALSE(fixed.components.empty());
-  for (const FiberComponent& component : fixed.components) {
+  PointResult fixed;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), false, &fixed).Ok());
+  ASSERT_FALSE(fixed.Data().Discovered().components.empty());
+  for (const FiberComponent& component : fixed.Data().Discovered().components) {
     for (const PointDetail& p : component.points) {
       EXPECT_EQ(p.rho, 0.0);
     }
   }
-  EXPECT_FALSE(fixed.measure_registration.registered_gap);
-  EXPECT_EQ(fixed.measure_registration.support_kind, "point");
+  EXPECT_FALSE(fixed.Data().Discovered().measure_registration.registered_gap);
+  EXPECT_EQ(fixed.Data().Discovered().measure_registration.support_kind, "point");
 
   // Full-random axis: rho(phi) = rho_lat(phi) / (2 pi)^2, an oracle rebuilt here from the axis
   // the config carries (the module's own conversion is not reused).
@@ -826,13 +853,13 @@ TEST(SinglePathFactors, RhoIsTheDeclaredDensityDeclared) {
   crystal.axis_.azimuth_dist = kFullTurn;
   crystal.axis_.latitude_dist = { DistributionType::kUniform, 90.0f, 180.0f };
   crystal.axis_.roll_dist = kFullTurn;
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
-  ASSERT_FALSE(r.components.empty());
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, Request({ 3, 5 }, 20.0, 25.0), false, &r).Ok());
+  ASSERT_FALSE(r.Data().Discovered().components.empty());
   const LatitudeDensity lat = MakeLatitudeDensity(crystal.axis_.latitude_dist);
   double rho_min = std::numeric_limits<double>::infinity();
   double rho_max = 0.0;
-  for (const FiberComponent& component : r.components) {
+  for (const FiberComponent& component : r.Data().Discovered().components) {
     for (const PointDetail& p : component.points) {
       const double phi = (90.0 - p.angles.zenith_deg) * kDeg;
       const double expected = lat.Evaluate(phi) / (2.0 * kPi * 2.0 * kPi);
@@ -843,11 +870,11 @@ TEST(SinglePathFactors, RhoIsTheDeclaredDensityDeclared) {
   }
   EXPECT_GE(rho_max, 0.0);
   EXPECT_LT(rho_min, std::numeric_limits<double>::infinity());
-  EXPECT_EQ(r.measure_registration.support_kind, "area");
-  EXPECT_TRUE(r.measure_registration.fast_path);
+  EXPECT_EQ(r.Data().Discovered().measure_registration.support_kind, "area");
+  EXPECT_TRUE(r.Data().Discovered().measure_registration.fast_path);
   // The all-spread area axis is not a gap: both dirac predicates fall through, so the registration
   // stays silent (the green arm of the fixed-azimuth red test below).
-  EXPECT_FALSE(r.measure_registration.registered_gap);
+  EXPECT_FALSE(r.Data().Discovered().measure_registration.registered_gap);
 }
 
 // The rank-0 orbit integral reproduces the measure layer's own kFiberParameter quadrature on the
@@ -875,10 +902,10 @@ TEST(SinglePathFactors, OrbitIntegralReproducesTheQuadratureOnTheLI51Constructio
   q.target_altitude_deg = 30.0;
   q.target_azimuth_deg = 90.0;
   q.sun_grid_lat_count = 0;
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, q, &r).Ok());
-  ASSERT_EQ(r.outcome, Outcome::kPointMass);
-  const OrbitFactors& orbit = r.point_mass.orbit_factors;
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, q, false, &r).Ok());
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kPointMass);
+  const OrbitFactors& orbit = r.Data().Mass().orbit_factors;
   ASSERT_TRUE(orbit.available);
   ASSERT_EQ(orbit.measure_support, "spin_orbit");
   ASSERT_GT(orbit.kept_count, 0);
@@ -891,12 +918,12 @@ TEST(SinglePathFactors, OrbitIntegralReproducesTheQuadratureOnTheLI51Constructio
   ASSERT_EQ(analytic::BuildFaceNormals(c.shape, &table, &polygons), analytic::Status::kOk);
   std::vector<int> slots;
   ASSERT_TRUE(ResolveSingleLayerPath({ { 1, 2 } }, table, &slots).Ok());
-  const double n = r.meta.refractive_index;
+  const double n = r.Data().meta.refractive_index;
   double sun_hat[3];
   // The sun points AT the sun: the negation of the propagation direction.
-  sun_hat[0] = -r.meta.incident_direction[0];
-  sun_hat[1] = -r.meta.incident_direction[1];
-  sun_hat[2] = -r.meta.incident_direction[2];
+  sun_hat[0] = -r.Data().meta.incident_direction[0];
+  sun_hat[1] = -r.Data().meta.incident_direction[1];
+  sun_hat[2] = -r.Data().meta.incident_direction[2];
   const UMarginal orbit_measure = MakeUMarginal(crystal.axis_, sun_hat);
   analytic::Corridor corridor(table, polygons, slots.data(), static_cast<int>(slots.size()));
   std::vector<double> segments(3 * (slots.size() + 1));
@@ -940,14 +967,16 @@ TEST(SinglePathFactors, AFixedAzimuthAreaAxisDeclaresItsRegisteredGap) {
   crystal.axis_.latitude_dist = { DistributionType::kUniform, 90.0f, 180.0f };
   crystal.axis_.azimuth_dist = Fixed(0.0f);  // the fixed azimuth is the gap's own trigger
   crystal.axis_.roll_dist = kFullTurn;
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
-  ASSERT_EQ(r.outcome, Outcome::kDiscovered);
-  EXPECT_EQ(r.measure_registration.support_kind, "area");
-  EXPECT_TRUE(r.measure_registration.registered_gap);
-  ASSERT_FALSE(r.measure_registration.note.empty());
-  EXPECT_NE(r.measure_registration.note.find("fixed azimuth"), std::string::npos) << r.measure_registration.note;
-  EXPECT_NE(r.measure_registration.note.find("read-as-zero"), std::string::npos) << r.measure_registration.note;
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, Request({ 3, 5 }, 20.0, 25.0), false, &r).Ok());
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kDiscovered);
+  EXPECT_EQ(r.Data().Discovered().measure_registration.support_kind, "area");
+  EXPECT_TRUE(r.Data().Discovered().measure_registration.registered_gap);
+  ASSERT_FALSE(r.Data().Discovered().measure_registration.note.empty());
+  EXPECT_NE(r.Data().Discovered().measure_registration.note.find("fixed azimuth"), std::string::npos)
+      << r.Data().Discovered().measure_registration.note;
+  EXPECT_NE(r.Data().Discovered().measure_registration.note.find("read-as-zero"), std::string::npos)
+      << r.Data().Discovered().measure_registration.note;
 }
 
 // The registered-gap red arm's other dirac slot: a fixed zenith (latitude) with a spread,
@@ -961,14 +990,16 @@ TEST(SinglePathFactors, AFixedZenithAreaAxisDeclaresItsRegisteredGap) {
       45.0f);  // a fixed zenith away from the poles (Fixed(90) is the pole: the degenerate branch claims it first)
   crystal.axis_.azimuth_dist = { DistributionType::kUniform, 30.0f, 60.0f };  // spread, non-uniform
   crystal.axis_.roll_dist = kFullTurn;
-  SinglePathResult r;
-  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 5 }, 20.0, 25.0), &r).Ok());
-  ASSERT_EQ(r.outcome, Outcome::kDiscovered);
-  EXPECT_EQ(r.measure_registration.support_kind, "area");
-  EXPECT_TRUE(r.measure_registration.registered_gap);
-  ASSERT_FALSE(r.measure_registration.note.empty());
-  EXPECT_NE(r.measure_registration.note.find("fixed zenith"), std::string::npos) << r.measure_registration.note;
-  EXPECT_NE(r.measure_registration.note.find("read-as-zero"), std::string::npos) << r.measure_registration.note;
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, Request({ 3, 5 }, 20.0, 25.0), false, &r).Ok());
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kDiscovered);
+  EXPECT_EQ(r.Data().Discovered().measure_registration.support_kind, "area");
+  EXPECT_TRUE(r.Data().Discovered().measure_registration.registered_gap);
+  ASSERT_FALSE(r.Data().Discovered().measure_registration.note.empty());
+  EXPECT_NE(r.Data().Discovered().measure_registration.note.find("fixed zenith"), std::string::npos)
+      << r.Data().Discovered().measure_registration.note;
+  EXPECT_NE(r.Data().Discovered().measure_registration.note.find("read-as-zero"), std::string::npos)
+      << r.Data().Discovered().measure_registration.note;
 }
 
 // The fingerprint's hash is the contract's promise ("hex SHA256" in

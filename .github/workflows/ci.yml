@@ -1654,9 +1654,14 @@ jobs:
           -DBUILD_GUI=OFF
           -DBUILD_SHARED_LIBS=ON
           -DLUMICE_ISA_LEVEL=baseline
+          -DCMAKE_INSTALL_PREFIX="$PWD/build/cmake_install/shared"
 
       - name: Build
         run: cmake --build build --parallel
+
+      # Typed C consumers load the installed product library, not the test API library.
+      - name: Install product library for external C consumers
+        run: cmake --install build --component Unspecified --prefix "$PWD/build/cmake_install/shared"
 
       # The analytic library's install rules and package config (root CMakeLists.txt,
       # doc/interfaces/analytic-api.md section 8.4) run nowhere else in CI: the tests below read the build

@@ -1,4 +1,4 @@
-// The schema3 support block (src/raypath/detail/schema3/support_block.{hpp,cpp}): the delta-axis
+// The schema3 support block (src/raypath/detail/structure/support.{hpp,cpp}): the delta-axis
 // facts per member — the schema1 reach in target-free form. The C05/C06 exact 120-degree
 // complement as interval predicates, the endpoint onsets (every partition endpoint carries one,
 // measured on both beta chains), the C06 hole edge as a constant-D_P closed curve with its
@@ -20,9 +20,17 @@
 
 #include "analytic/reflection_group.hpp"
 #include "core/optics.hpp"
-#include "raypath/detail/schema3/support_block.hpp"
+#include "raypath/detail/structure/support.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::ClusterFamilies;
+using structure::ConstantDeltaCurve;
+using structure::FamilySupport;
+using structure::MemberSupport;
+using structure::MemberSupportOf;
+using structure::SupportBlock;
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;

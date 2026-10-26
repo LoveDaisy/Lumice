@@ -16,8 +16,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "analytic/dp_focus.hpp"
@@ -577,6 +580,36 @@ TEST(DPFocus, WavelengthTableInteriorMinimumFollowsTheClosedForm) {
   EXPECT_NEAR(minimum.displacement_deg, displacement, 1e-8);
   EXPECT_NEAR(minimum.displacement_deg, 0.580962, 1e-6);  // the issue's anchor
   EXPECT_NEAR(minimum.values_deg[1], 21.916127, 1e-6);    // C01 at n(550)
+}
+
+TEST(DPFocus, WavelengthTableStopsDuringAClassificationWalk) {
+  const Fixture f(Prism());
+  const int faces[2] = { 3, 5 };
+  int slots[2];
+  f.Resolve(faces, 2, slots);
+  StopToken token;
+  const DiscoveryStop stop{ std::chrono::steady_clock::time_point::max(), nullptr, &token };
+  FocusingOptions options;
+  options.walk.stop = &stop;
+  WavelengthCriticalTable table;
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    table = WavelengthCriticalTableOf(f.normals, f.polygons, slots, 2, Random(), { "red", "blue" }, { 1.31, 1.32 },
+                                      options);
+    done = true;
+  });
+  const auto bound = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  const auto polls = [&] { return token.PollCount(kPollWalkSteps) + token.PollCount(kPollWalkPieces); };
+  while (polls() == 0 && !done && std::chrono::steady_clock::now() < bound) {
+    std::this_thread::yield();
+  }
+  const bool entered_walk = polls() > 0 && !done;
+  token.RequestCancel();
+  worker.join();
+  ASSERT_TRUE(entered_walk) << "classification walk finished before the cancel handshake";
+  EXPECT_TRUE(table.escaped);
+  EXPECT_EQ(table.message, "stop_requested");
+  EXPECT_TRUE(table.onsets.empty());
 }
 
 // The refusal paths. 3-1-4-6-2 at n = 1.34 has no lattice point in U_P (LI's walk refuses the

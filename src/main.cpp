@@ -71,6 +71,16 @@ struct SceneDeleter {
   void operator()(LUMICE_Scene* scene) const { LUMICE_SceneDestroy(scene); }
 };
 using ScenePtr = std::unique_ptr<LUMICE_Scene, SceneDeleter>;
+using PathWorkspacePtr = std::unique_ptr<LUMICE_PathWorkspace, decltype(&LUMICE_PathWorkspaceDestroy)>;
+using PathWarmPtr = std::unique_ptr<LUMICE_PathWarmData, decltype(&LUMICE_PathWarmDataDestroy)>;
+
+PathWorkspacePtr CreatePathWorkspace(const LUMICE_Scene* scene, char* err_buf, size_t err_size) {
+  LUMICE_PathWorkspace* raw = nullptr;
+  if (LUMICE_PathWorkspaceCreate(scene, &raw, err_buf, err_size) != LUMICE_OK) {
+    return { nullptr, LUMICE_PathWorkspaceDestroy };
+  }
+  return { raw, LUMICE_PathWorkspaceDestroy };
+}
 
 // Result frames get the same treatment, but from a shared header — util/result_frame.hpp,
 // which the GUI's two call sites use as well. See there for why the wrapper exists at all.
@@ -3303,9 +3313,7 @@ int ParseSurveyOptions(int argc, char** argv, int first, SurveyOptions& opts) {
   return -1;
 }
 
-// Survey: one synchronous call into the engine (LUMICE_AnalyzePathSurvey), no server. The v1
-// routing leg is millisecond work with no cancellation point, so Ctrl-C keeps its default
-// meaning (the process ends, nothing is written) — the same contract as the target/report modes.
+// Survey queries a completed result from the workspace; Ctrl-C keeps its default disposition.
 int RunSurvey(const SurveyOptions& opts) {
   const SharedOptions& shared = opts.shared;
   LUMICE_SetLogLevel(nullptr, shared.log_level);
@@ -3347,7 +3355,14 @@ int RunSurvey(const SurveyOptions& opts) {
   const auto start = std::chrono::steady_clock::now();
   LUMICE_PathSurvey* raw_survey = nullptr;
   char err_buf[1024] = {};
-  if (auto err = LUMICE_AnalyzePathSurvey(scene.get(), &request, &raw_survey, err_buf, sizeof(err_buf));
+  auto workspace = CreatePathWorkspace(scene.get(), err_buf, sizeof(err_buf));
+  if (!workspace) {
+    std::cerr << "Error: " << err_buf << "\n";
+    return 1;
+  }
+  LUMICE_PathQueryOptions query{ sizeof(query), request.budget_ms, nullptr, nullptr, 0 };
+  if (auto err =
+          LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &request, &query, &raw_survey, err_buf, sizeof(err_buf));
       err != LUMICE_OK) {
     if (err_buf[0] != '\0') {
       std::cerr << "Error: " << err_buf << "\n";
@@ -3360,12 +3375,15 @@ int RunSurvey(const SurveyOptions& opts) {
   const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
   size_t len = 0;
-  if (const LUMICE_ErrorCode err = LUMICE_PathSurveyToJson(survey.get(), nullptr, 0, &len); err != LUMICE_OK) {
+  if (const auto err = LUMICE_PathSurveyToJson(survey.get(), nullptr, 0, &len); err != LUMICE_OK) {
     std::cerr << "Error: path survey serialization failed (error code " << static_cast<int>(err) << ")\n";
     return 1;
   }
   std::string text(len + 1, '\0');
-  LUMICE_PathSurveyToJson(survey.get(), text.data(), text.size(), &len);
+  if (const auto err = LUMICE_PathSurveyToJson(survey.get(), text.data(), text.size(), &len); err != LUMICE_OK) {
+    std::cerr << "Error: path survey serialization failed (error code " << static_cast<int>(err) << ")\n";
+    return 1;
+  }
   text.resize(len);
   text += '\n';
 
@@ -3387,10 +3405,8 @@ int RunSurvey(const SurveyOptions& opts) {
   return 0;
 }
 
-// Raypath point: one synchronous call into the engine (LUMICE_AnalyzeSinglePath), no server. The
-// budget bounds the engine's loop-boundary polls and the SIGINT handler flips the flag the engine
-// reads — a stopped run serializes its partial document and exits 0 (an honest early exit, not a
-// failure).
+// Point's SIGINT flag is polled by the workspace query at computation boundaries; an interrupted
+// result retains its partial-document contract.
 int RunPoint(const PointOptions& opts) {
   const SharedOptions& shared = opts.shared;
   LUMICE_SetLogLevel(nullptr, shared.log_level);
@@ -3443,8 +3459,8 @@ int RunPoint(const PointOptions& opts) {
   request.wavelength_nm = opts.wavelength_nm.has_value() ? *opts.wavelength_nm : 0.0;
   request.sample_count = opts.events;
   request.sun_grid_lat_count = opts.grid_rows;
-  request.warm_json = warm_text.empty() ? nullptr : warm_text.data();
-  request.warm_json_len = warm_text.size();
+  request.warm_json = nullptr;
+  request.warm_json_len = 0;
   request.deadline_ms = opts.budget_ms;  // 0 = the engine's documented default
   request.interrupted = &g_point_interrupted;
 
@@ -3457,7 +3473,25 @@ int RunPoint(const PointOptions& opts) {
   std::signal(SIGINT, HandlePointSigint);
   LUMICE_SinglePathResult* raw_result = nullptr;
   char err_buf[1024] = {};
-  if (auto err = LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw_result, err_buf, sizeof(err_buf));
+  auto workspace = CreatePathWorkspace(scene.get(), err_buf, sizeof(err_buf));
+  if (!workspace) {
+    std::signal(SIGINT, SIG_DFL);
+    std::cerr << "Error: " << err_buf << "\n";
+    return 1;
+  }
+  LUMICE_PathWarmData* raw_warm = nullptr;
+  if (!warm_text.empty() && LUMICE_PathWarmDataFromJson(warm_text.data(), warm_text.size(), &raw_warm, err_buf,
+                                                        sizeof(err_buf)) != LUMICE_OK) {
+    std::signal(SIGINT, SIG_DFL);
+    std::cerr << "Error: " << err_buf << "\n";
+    return 1;
+  }
+  PathWarmPtr warm(raw_warm, LUMICE_PathWarmDataDestroy);
+  LUMICE_PathQueryOptions query{ sizeof(query),
+                                 opts.budget_ms > 0 ? opts.budget_ms : LUMICE_SINGLE_PATH_DEFAULT_BUDGET_MS, nullptr,
+                                 warm.get(), 1 };
+  if (auto err =
+          LUMICE_PathWorkspaceQueryPoint(workspace.get(), &request, &query, &raw_result, err_buf, sizeof(err_buf));
       err != LUMICE_OK) {
     std::signal(SIGINT, SIG_DFL);
     if (err_buf[0] != '\0') {
@@ -3473,9 +3507,15 @@ int RunPoint(const PointOptions& opts) {
   const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
   size_t len = 0;
-  LUMICE_SinglePathResultToJson(result.get(), nullptr, 0, &len);
+  if (LUMICE_SinglePathResultToJson(result.get(), nullptr, 0, &len) != LUMICE_OK) {
+    std::cerr << "Error: single-path serialization failed\n";
+    return 1;
+  }
   std::string text(len + 1, '\0');
-  LUMICE_SinglePathResultToJson(result.get(), text.data(), text.size(), &len);
+  if (LUMICE_SinglePathResultToJson(result.get(), text.data(), text.size(), &len) != LUMICE_OK) {
+    std::cerr << "Error: single-path serialization failed\n";
+    return 1;
+  }
   text.resize(len);
   text += '\n';
 
@@ -3497,10 +3537,8 @@ int RunPoint(const PointOptions& opts) {
   return 0;
 }
 
-// Raypath probe: one synchronous call into the engine (LUMICE_AnalyzePathProbe), no server. The
-// budget bounds the engine's per-wavelength polls and the SIGINT handler flips the flag the
-// engine reads — a stopped run serializes the profiles it has and exits 0 (an honest early exit,
-// not a failure).
+// Probe's SIGINT flag is polled by the workspace query at wavelength boundaries; completed
+// profiles are retained in a stopped result.
 int RunProbe(const ProbeOptions& opts) {
   const SharedOptions& shared = opts.shared;
   LUMICE_SetLogLevel(nullptr, shared.log_level);
@@ -3554,8 +3592,8 @@ int RunProbe(const ProbeOptions& opts) {
   request.wavelengths_nm = opts.wavelengths_nm.empty() ? nullptr : opts.wavelengths_nm.data();
   request.wavelength_count = static_cast<int>(opts.wavelengths_nm.size());
   request.sample_count = opts.events;
-  request.warm_json = warm_text.empty() ? nullptr : warm_text.data();
-  request.warm_json_len = warm_text.size();
+  request.warm_json = nullptr;
+  request.warm_json_len = 0;
   request.budget_ms = opts.budget_ms;  // 0 = the engine's documented default
   request.interrupted = &g_probe_interrupted;
 
@@ -3580,7 +3618,25 @@ int RunProbe(const ProbeOptions& opts) {
   std::signal(SIGINT, HandleProbeSigint);
   LUMICE_PathProbe* raw_probe = nullptr;
   char err_buf[1024] = {};
-  if (auto err = LUMICE_AnalyzePathProbe(scene.get(), &request, &raw_probe, err_buf, sizeof(err_buf));
+  auto workspace = CreatePathWorkspace(scene.get(), err_buf, sizeof(err_buf));
+  if (!workspace) {
+    std::signal(SIGINT, SIG_DFL);
+    std::cerr << "Error: " << err_buf << "\n";
+    return 1;
+  }
+  LUMICE_PathWarmData* raw_warm = nullptr;
+  if (!warm_text.empty() && LUMICE_PathWarmDataFromJson(warm_text.data(), warm_text.size(), &raw_warm, err_buf,
+                                                        sizeof(err_buf)) != LUMICE_OK) {
+    std::signal(SIGINT, SIG_DFL);
+    std::cerr << "Error: " << err_buf << "\n";
+    return 1;
+  }
+  PathWarmPtr warm(raw_warm, LUMICE_PathWarmDataDestroy);
+  LUMICE_PathQueryOptions query{ sizeof(query),
+                                 opts.budget_ms > 0 ? opts.budget_ms : LUMICE_PATH_PROBE_DEFAULT_BUDGET_MS, nullptr,
+                                 warm.get(), 0 };
+  if (auto err =
+          LUMICE_PathWorkspaceQueryProbe(workspace.get(), &request, &query, &raw_probe, err_buf, sizeof(err_buf));
       err != LUMICE_OK) {
     std::signal(SIGINT, SIG_DFL);
     if (err_buf[0] != '\0') {
@@ -3595,9 +3651,15 @@ int RunProbe(const ProbeOptions& opts) {
   const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
   size_t len = 0;
-  LUMICE_PathProbeToJson(probe.get(), nullptr, 0, &len);
+  if (LUMICE_PathProbeToJson(probe.get(), nullptr, 0, &len) != LUMICE_OK) {
+    std::cerr << "Error: path probe serialization failed\n";
+    return 1;
+  }
   std::string text(len + 1, '\0');
-  LUMICE_PathProbeToJson(probe.get(), text.data(), text.size(), &len);
+  if (LUMICE_PathProbeToJson(probe.get(), text.data(), text.size(), &len) != LUMICE_OK) {
+    std::cerr << "Error: path probe serialization failed\n";
+    return 1;
+  }
   text.resize(len);
   text += '\n';
 
@@ -3662,7 +3724,15 @@ int RunReport(const ReportOptions& opts) {
   const auto start = std::chrono::steady_clock::now();
   LUMICE_PathFeatureReport* raw_report = nullptr;
   char err_buf[1024] = {};
-  if (auto err = LUMICE_AnalyzePathFeatureReport(scene.get(), &request, &raw_report, err_buf, sizeof(err_buf));
+  auto workspace = CreatePathWorkspace(scene.get(), err_buf, sizeof(err_buf));
+  if (!workspace) {
+    std::cerr << "Error: " << err_buf << "\n";
+    return 1;
+  }
+  LUMICE_PathQueryOptions query{ sizeof(query), opts.report_budget_ms > 0 ? opts.report_budget_ms : 15000, nullptr,
+                                 nullptr, 0 };
+  if (auto err =
+          LUMICE_PathWorkspaceQueryReport(workspace.get(), &request, &query, &raw_report, err_buf, sizeof(err_buf));
       err != LUMICE_OK) {
     if (err_buf[0] != '\0') {
       std::cerr << "Error: " << err_buf << "\n";
@@ -3674,9 +3744,15 @@ int RunReport(const ReportOptions& opts) {
   const std::unique_ptr<LUMICE_PathFeatureReport, void (*)(LUMICE_PathFeatureReport*)> report(
       raw_report, LUMICE_PathFeatureReportDestroy);
   size_t len = 0;
-  LUMICE_PathFeatureReportToJson(report.get(), nullptr, 0, &len);
+  if (LUMICE_PathFeatureReportToJson(report.get(), nullptr, 0, &len) != LUMICE_OK) {
+    std::cerr << "Error: path feature report serialization failed\n";
+    return 1;
+  }
   std::string text(len + 1, '\0');
-  LUMICE_PathFeatureReportToJson(report.get(), text.data(), text.size(), &len);
+  if (LUMICE_PathFeatureReportToJson(report.get(), text.data(), text.size(), &len) != LUMICE_OK) {
+    std::cerr << "Error: path feature report serialization failed\n";
+    return 1;
+  }
   text.resize(len);
   text += '\n';
   const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();

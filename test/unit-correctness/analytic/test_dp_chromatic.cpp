@@ -12,8 +12,11 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "analytic/dp_chromatic.hpp"
@@ -162,6 +165,36 @@ TEST(DPChromatic, ThreeOneFiveKinkVisibleGateNot) {
   EXPECT_FALSE(gate->visible);
   EXPECT_NEAR(Deg(gate->shift), -0.327, 0.02);
   EXPECT_NEAR(Deg(gate->spread), 108.65, 0.2);
+}
+
+TEST(DPChromatic, CancelDuringKinkLatticeLeavesNoCertifiedVerdict) {
+  const Fixture fixture(PrismH1());
+  const int faces[3] = { 3, 7, 5 };
+  int slots[3];
+  fixture.Resolve(faces, 3, slots);
+  StopToken token;
+  const DiscoveryStop stop{ std::chrono::steady_clock::time_point::max(), nullptr, &token };
+  ChromaticOptions options;
+  options.stop = &stop;
+  ChromaticVerdict verdict;
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    verdict = Diagnose(fixture.normals, fixture.polygons, slots, 3, kNRed, kNBlue, options);
+    done = true;
+  });
+  const auto bound = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (token.PollCount(kPollKinkLattice) == 0 && !done && std::chrono::steady_clock::now() < bound) {
+    std::this_thread::yield();
+  }
+  const bool entered_lattice = token.PollCount(kPollKinkLattice) > 0 && !done;
+  token.RequestCancel();
+  worker.join();
+  ASSERT_TRUE(entered_lattice) << "the diagnostic kink lattice was never entered before cancellation";
+  EXPECT_FALSE(verdict.coverage_complete);
+  EXPECT_FALSE(verdict.visible);
+  EXPECT_TRUE(verdict.features.empty());
+  ASSERT_EQ(verdict.notes.size(), 1u);
+  EXPECT_EQ(verdict.notes.front(), "stop_requested");
 }
 
 // A one-sided line without assessed features is kUnresolved, never a silent kNone (LI's own test

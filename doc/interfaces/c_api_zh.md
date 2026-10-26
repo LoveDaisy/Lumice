@@ -19,7 +19,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 | `lumice_render.h` | 渲染参数、标注、投影 |
 | `lumice_editor.h` | 编辑器支撑：键名、合法性检查、晶体网格、光路文本校验、Miller 指数转换 |
 | `lumice_engine.h` | 服务器生命周期、提交场景、结果帧、光路分析运行、后端选择 |
-| `lumice_raypath.h` | 单光路目标点分析与 target-free feature report（不透明结果 + JSON） |
+| `lumice_raypath.h` | 四类光路结果的 typed 读取面、workspace/warm/cancel 句柄与可选 JSON 输出 |
 
 ```c
 #include "lumice_engine.h"  // 同时包含 lumice_base.h、lumice_render.h、lumice_scene.h
@@ -45,7 +45,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ```c
 // lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
 //（lumice_base.h 刻意不包含它，原因见下）
-#define LUMICE_API_VERSION 457        // ABI 版本，编码为 major*100 + minor（v4.57）
+#define LUMICE_API_VERSION 458        // ABI 版本，编码为 major*100 + minor（v4.58）
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
@@ -62,6 +62,34 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 `lumice_api_version.h`：宏**值**变化会使其包含闭包内全部 TU 的编译缓存条目失效，把 define 挡在
 `lumice_base.h` 的宽闭包之外，bump 就只需重编文本上使用该宏的文件。凡引用 `LUMICE_API_VERSION`
 处请直接包含 `lumice_api_version.h`。
+
+### 类型化光路结果
+
+四个既有 `LUMICE_Analyze*` 入口保留；每个结果句柄持有一份不可变的 typed 值，`*ToJson`
+只是从该值派生并缓存的可选表示。typed getter 不解析 JSON，也不启动物理计算。
+`LUMICE_PathWorkspaceCreate` 在创建时捕获 Scene，四个同步 `LUMICE_PathWorkspaceQuery*` 入口
+不再接受另一份活 Scene。Scene/Workspace 销毁或后续 query 不影响已经取得的结果。
+
+`LUMICE_PathWarmDataFromSurvey` / `LUMICE_PathWarmDataFromPoint` 从结果提取独立持有的复用数据；
+`LUMICE_PathWarmDataFromJson` 是旧 warm 文本的显式导入入口。新 query 对携带 warm 文本的请求
+具名拒绝，文本与 typed warm 同时给出也不暗选其一。`LUMICE_PathCancelToken` 可从另一线程
+单向请求取消。正数 `deadline_ms` 在入口解析为一次绝对截止，0 表示新路径不设截止；执行结局
+区分协作式截止与显式取消。既有 Analyze 入口的预算语义不变。四个 `raypath` CLI 分析命令
+现走 workspace query，warm 文本在查询前显式导入，只对完成的句柄编码，不解析输出作业务判断。
+CLI 的正数预算现在约束整个 workspace 查询；旧 C 调用仍保持逐腿窗口和旧零值/默认值合同。
+point 的 Workspace 查询还会读取请求中已发布 extent 覆盖的 `interrupted` 指针；旧前缀不得越界读取。
+
+四种结果各有 `GetInfo` 与按语义块命名的 indexed getter。调用方把输出记录的 `struct_size`
+设为编译时的完整 extent：已发布的完整 extent 或更大的未来尾部可接受；未发布的中间尺寸与
+过小尺寸被拒绝，未知尾部不写。可增长的复杂记录逐项读取，而不是把当前库的 struct stride
+强加给旧调用方。同质标量数组与 UTF-8 `{data,length}` 字符串从结果只读借用，至该结果
+Destroy 为止；字符串以 NUL 结尾，长度不含终止符。活结果上的只读 getter/`ToJson`
+可以并发，但 Destroy 必须等待所有读取与借用指针使用结束。缺失值由 available/evidence
+显式标记；非法索引与 variant kind 返回具名读取状态，不把默认零当结果。
+有语义的整数字段均使用能力头内具名的 `LUMICE_PATH_*` 常量：0 表示未识别或不可用；
+`along` 与 field-equation 是以 0 起始的既有值域，未识别值用 -1。bridge 将内部枚举
+逐项映射到公开数值，内部枚举调序不得静默改变 C 合同。`PathSurveyGetScope.member_kind`
+只读取已完成结果的 quantity context；若该事实缺席，则返回 unknown tag（0），不从请求位推断物理成员范围。
 
 **v4.54** 是纯追加。新增光路 survey——带 `struct_size` 头的 `LUMICE_PathSurveyRequest`、不透明的
 `LUMICE_PathSurvey`、`LUMICE_AnalyzePathSurvey`、`LUMICE_PathSurveyToJson`（与
@@ -87,7 +115,8 @@ actual/candidate/unfinished 分离、partial work 和显式的不支持多晶体
 有限晶体 `A*T`，结果使用独立的 `lumice.path-feature-report` schema；v4.50 的目标点请求、JSON 与
 warm-start 合约没有增加字段。字段和 coverage 边界见 `raypath-cli-output.md` §7。
 
-**v4.50** 是纯追加。新增单光路分析：带 `struct_size` 头的 `LUMICE_SinglePathRequest`、不透明的 `LUMICE_SinglePathResult`、`LUMICE_AnalyzeSinglePath(scene, request, &out, err_buf, err_size)`、`LUMICE_SinglePathResultToJson`（与 `LUMICE_SceneToJson` 同一缓冲区契约）、`LUMICE_SinglePathResultDestroy`，以及 `LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`。结果经其 JSON 形式读取，字段见 `raypath-cli-output.md`。行为：`LUMICE_SetLogLevel(NULL, level)` 现在设置引擎全局日志级别（原为什么都不做），供不建 server 的调用方使用。
+**v4.50** 是纯追加。新增单光路分析：带 `struct_size` 头的 `LUMICE_SinglePathRequest`、不透明的 `LUMICE_SinglePathResult`、`LUMICE_AnalyzeSinglePath(scene, request, &out, err_buf, err_size)`、`LUMICE_SinglePathResultToJson`（与 `LUMICE_SceneToJson` 同一缓冲区契约）、`LUMICE_SinglePathResultDestroy`，以及 `LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`。v4.50 当时只能经 JSON 读取结果；上文的 typed getter
+是后续追加的。行为：`LUMICE_SetLogLevel(NULL, level)` 现在设置引擎全局日志级别（原为什么都不做），供不建 server 的调用方使用。
 
 **v4.49** 是纯追加加一处行为恢复。新增 `LUMICE_CouldFilterMatchFace(crystal, face, symmetry)`——考虑 filter 自身 P/B/D 的 `LUMICE_CouldCrystalHaveFace`（没有面积的面仍可经由 filter 对称重新编号到的面匹配）——以及 `LUMICE_ExpandRaypathClass(crystal, faces, n, symmetry, semantics, out, &count)`，按两种含义之一（`LUMICE_SYMMETRY_SEMANTICS_LABEL` / `LUMICE_SYMMETRY_SEMANTICS_PHYSICAL`）给出一条光路在一组对称位下的等价类（至多 `LUMICE_MAX_RAYPATH_CLASS_MEMBERS` 个成员）。行为：**filter** 的 P/B/D 恢复为标号等价，与 v4.46 及以前相同——P、B 不论晶体形状与取向都生效，D 不变。下文 v4.47、v4.48 所述的收窄现在只适用于光路分析列表的分组；`LUMICE_GetCrystalSymmetry` 与 `LUMICE_IsPApplicable` / `LUMICE_IsBApplicable` 含义不变，服务于该分组与 filter 编辑器的提示（见 `raypath-symmetry.zh.md` §1.1）。没有结构体变化。
 

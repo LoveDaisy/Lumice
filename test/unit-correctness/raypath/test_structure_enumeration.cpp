@@ -30,6 +30,10 @@
 #include "raypath/detail/schema3/structure_enumeration.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::FamilySupport;
+using structure::MemberSupport;
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
@@ -223,8 +227,8 @@ TEST(StructureEnumeration, BetaEnumerationCarriesS2ChainsAndKind1) {
   const StructureObjectRecord* kind1 = FindKind(one.objects, ObjectKind::kKind1);
   ASSERT_NE(kind1, nullptr);
   EXPECT_EQ(kind1->existence, ExistenceState::kComputed);
-  EXPECT_TRUE(kind1->chromatic_assessed);
-  EXPECT_DOUBLE_EQ(kind1->chromatic_thresholds.edge_min_shift_rad, 0.5 * kDeg);
+  EXPECT_TRUE(kind1->ChromaticAssessed());
+  EXPECT_DOUBLE_EQ(kind1->Chromatic().thresholds.edge_min_shift_rad, 0.5 * kDeg);
   // No measure supplied: the visibility field ships its fail-closed default and the object
   // stays a candidate.
   EXPECT_EQ(kind1->visibility.state, VisibilityState::kUnproven);
@@ -248,23 +252,20 @@ TEST(StructureEnumeration, CoverageTablePartitionsTheRegistry) {
   for (const ObjectKind kind : core.coverage.produced) {
     seen.insert(static_cast<int>(kind));
   }
-  for (const ObjectKind kind : core.coverage.declared_not_produced) {
-    seen.insert(static_cast<int>(kind));
+  for (const schema3::DeclaredNotProduced& row : core.coverage.declared_not_produced) {
+    seen.insert(static_cast<int>(row.kind));
+    EXPECT_FALSE(row.reason.empty());
   }
   for (const ObjectKind kind : RegisteredObjectKinds()) {
     EXPECT_EQ(seen.count(static_cast<int>(kind)), 1u) << "kind not covered exactly once";
   }
-  ASSERT_EQ(core.coverage.declared_reasons.size(), core.coverage.declared_not_produced.size());
-  for (const std::string& reason : core.coverage.declared_reasons) {
-    EXPECT_FALSE(reason.empty());
-  }
   // The declared kinds never appear as objects; the produced ones do (this member produces all
   // five).
   for (const StructureObjectRecord& object : core.objects) {
-    EXPECT_EQ(
-        std::find(core.coverage.declared_not_produced.begin(), core.coverage.declared_not_produced.end(), object.kind),
-        core.coverage.declared_not_produced.end())
-        << "a declared-not-produced kind materialized an object";
+    const bool declared =
+        std::any_of(core.coverage.declared_not_produced.begin(), core.coverage.declared_not_produced.end(),
+                    [&object](const schema3::DeclaredNotProduced& row) { return row.kind == object.kind; });
+    EXPECT_FALSE(declared) << "a declared-not-produced kind materialized an object";
   }
   EXPECT_NE(FindKind(core.objects, ObjectKind::kKind1), nullptr);
   EXPECT_NE(FindKind(core.objects, ObjectKind::kKind2), nullptr);
@@ -466,8 +467,8 @@ TEST(StructureEnumeration, DeadlineProducesHonestTruncation) {
   in.normals = &t.normals;
   in.polygons = &t.polys;
   in.base_index = 1.307;
-  const Schema3DiscoveryCore core =
-      EnumerateLayer(in, { { 1, 4, 5, 2 }, { 3, 6, 4, 8 } }, std::chrono::steady_clock::time_point::min());
+  const analytic::DiscoveryStop fired{ std::chrono::steady_clock::time_point::min(), nullptr, nullptr };
+  const Schema3DiscoveryCore core = EnumerateLayer(in, { { 1, 4, 5, 2 }, { 3, 6, 4, 8 } }, fired);
   EXPECT_TRUE(core.budget.truncated);
   EXPECT_FALSE(core.budget.truncation_note.empty());
   EXPECT_EQ(core.budget.hang_cap_ms, 0);  // the layer reports cuts; the caller owns the cap value

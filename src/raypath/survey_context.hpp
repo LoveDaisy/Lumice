@@ -1,0 +1,80 @@
+#ifndef LUMICE_RAYPATH_SURVEY_CONTEXT_HPP_
+#define LUMICE_RAYPATH_SURVEY_CONTEXT_HPP_
+
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "raypath/domain/evidence.hpp"
+#include "raypath/domain/object_kind.hpp"
+#include "raypath/domain/result_identity.hpp"
+
+namespace lumice::raypath {
+
+enum class ContextSource { kWarm, kInline };
+enum class ContextEdgeBasis { kSupportIntervalEndpoint, kCausticEdgePosition };
+inline const char* ContextSourceName(ContextSource source) {
+  return source == ContextSource::kWarm ? "warm" : "inline";
+}
+inline const char* ContextEdgeBasisName(ContextEdgeBasis basis) {
+  return basis == ContextEdgeBasis::kSupportIntervalEndpoint ? "support_interval_endpoint" : "caustic_edge_position";
+}
+
+// A query retains the admitted structural projection it used, not a borrowed document.
+struct ContextStructureObject {
+  enum class Kind { kSupportInterval, kCausticEdge };
+  Kind kind = Kind::kSupportInterval;
+  double lower_deg = 0;
+  double upper_deg = 0;
+};
+using ContextStructure = StructureSnapshot<ContextStructureObject>;
+
+// One field of the survey context, in the four-state vocabulary (the evidence layer's; schema1
+// spells the states as strings). `state` is always serialized; the value fields exist exactly
+// when the state says something was read.
+struct SurveyContextField {
+  survey::EvidenceState state = survey::EvidenceState::kUnevaluated;
+  std::string reason;  // the unevaluated cause, named (never empty when unevaluated)
+};
+
+// The survey context block (schema1's top-level append): where the target sits in the survey's
+// structure. "Survey is the query's index" made concrete — with warm, the producing document's
+// facts; without, the same facts from a context-only (T0–T2) assembly run here. Every field
+// carries its own state; a band-sum reading only ever appears under the scope gate's pass.
+struct SurveyContextBlock {
+  std::optional<ContextStructure> structure;
+  std::optional<ObjectRef> object_ref;
+  std::optional<ObjectRef> edge_ref;
+  ContextSource source = ContextSource::kInline;
+  double reference_wavelength_nm = 0.0;  // probe context only: first requested wavelength
+  // True: a --warm schema-4 document was given but carried no (complete) warm_index — the
+  // documented degradation (no structural reuse, no seed consumption, inline context).
+  bool warm_index_absent = false;
+  // The target's deviation vs the delta-axis support: inside an interval, or the nearest card.
+  SurveyContextField object;
+  bool target_inside_support = false;
+  std::optional<survey::SurveyObjectKind> object_kind;
+  std::vector<int> object_members;   // the card's members (empty when the document carried none)
+  double object_distance_deg = 0.0;  // 0 when inside
+  // The angular distance to the nearest edge (a support endpoint or the certified edge position).
+  SurveyContextField edge;
+  double edge_distance_deg = 0.0;
+  ContextEdgeBasis edge_basis = ContextEdgeBasis::kSupportIntervalEndpoint;
+  // The band-sum reading at the nearest probe sample (warm documents only; the scope gate's
+  // exact-equality comparison on lambda and sun decides, with the two named failure causes).
+  SurveyContextField band_sum;
+  double band_sum_value = 0.0;
+  double band_sum_delta_deg = 0.0;  // the nearest sample's own deviation
+  double band_sum_bin_deg = 0.0;
+  std::string band_sum_caliber;  // both sides' lambda/sun identity, for the reading's declaration
+
+  // True when a cooperative stop cut the context's assembly short: the typed signal the
+  // outcome axis derives from (the fields' "stop_requested" reasons are the display form).
+  // Not serialized — an uncut context leaves it false.
+  bool cut_by_stop = false;
+};
+
+
+}  // namespace lumice::raypath
+
+#endif  // LUMICE_RAYPATH_SURVEY_CONTEXT_HPP_

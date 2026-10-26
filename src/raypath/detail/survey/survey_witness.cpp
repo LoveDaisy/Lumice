@@ -1,130 +1,37 @@
 #include "raypath/detail/survey/survey_witness.hpp"
 
-#include <algorithm>
-#include <cmath>
-#include <vector>
-
-#include "analytic/diagnostic_batch.hpp"
-#include "core/math.hpp"  // math::kRadToDegreeD — the deviation's unit conversion
-#include "util/logger.hpp"
+#include "util/fatal.hpp"
 
 namespace lumice::raypath::survey {
-namespace {
 
-constexpr const char* kWitnessRefusalMode = "no_declared_source_witness";
-
-// The declared source, spelled inside the document (the provenance the reader needs): what was
-// sampled, which event became the witness, and what the two positive readings each are.
-constexpr const char* kWitnessSourceNote =
-    "declared source: the antipodal Fibonacci lattice over SO(3) (the declared measure's own "
-    "sampler); witness = the max-weight kept event's pose; kept_count is an existence count, "
-    "weight the lattice's w = A*T, entry and interface_product the diagnostic batch's own "
-    "re-evaluation at that pose";
-
-void RefuseWitness(SurveyObject* card) {
-  SurveyObject::WitnessPayload& witness = card->witness.emplace();
-  witness.state = EvidenceState::kRefused;
-  witness.mode = kWitnessRefusalMode;
+void AssembleWitness(const quantity::WitnessInput& input, SurveyObject* card) {
+  // The witness hangs on a support card only; a wrong-kind card is an assembly invariant break,
+  // not a silently dropped evidence block.
+  if (!card->SetWitness(quantity::EvaluateWitness(input))) {
+    FatalAbort("witness attached to a non-support survey card");
+  }
 }
 
-}  // namespace
-
-void AssembleWitness(const WitnessInput& input, SurveyObject* card) {
-  std::vector<int> slots;
-  if (const Error slot_error = ResolveSingleLayerPath({ *input.representative }, *input.table, &slots);
-      !slot_error.Ok()) {
-    // Unreachable past the assembly's request-level resolution, but the refusal stays honest —
-    // the same discipline as the sibling legs (the tint's member_resolution mode).
-    SurveyObject::WitnessPayload& witness = card->witness.emplace();
-    witness.state = EvidenceState::kRefused;
-    witness.mode = "member_resolution";
-    return;
-  }
-
-  // The declared source's own existence sample: every kept event has w = A*T > 0. One
-  // streaming pass; the entry measure is evaluated only for kept events.
-  analytic::IceDiscovery discovery(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()),
-                                   input.refractive_index, input.incident);
-  const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count);
-  if (events.empty()) {
-    RefuseWitness(card);
-    return;
-  }
-  const analytic::SampleEvent& best = *std::max_element(
-      events.begin(), events.end(),
-      [](const analytic::SampleEvent& a, const analytic::SampleEvent& b) { return a.weight < b.weight; });
-
-  // The event's candidate pose (the declared source draws this pose), then the independent
-  // forward-chain read at that pose: the batch re-derives path validity, the entry measure and
-  // the interface product through a different code path than the lattice's own.
-  double pose[9];
-  analytic::CandidatePose(input.incident, best.event.phi, best.event, pose);
-  analytic::DiagnosticInputRow row;
-  row.crystal = *input.crystal;
-  for (int k = 0; k < 9; k++) {
-    row.pose[static_cast<size_t>(k)] = pose[k];
-  }
-  for (int k = 0; k < 3; k++) {
-    row.incident[static_cast<size_t>(k)] = input.incident[k];
-  }
-  row.refractive_index = input.refractive_index;
-  row.source_token = 0;
-  std::vector<analytic::DiagnosticOutputRow> values;
-  if (!analytic::EvaluateDiagnosticBatch(*input.representative, { row }, {}, &values) || values.size() != 1 ||
-      !values[0].path_valid || !values[0].entry_available || !(values[0].entry.value > 0.0) ||
-      !(values[0].interface_product > 0.0)) {
-    RefuseWitness(card);
-    return;
-  }
-
-  SurveyObject::WitnessPayload& witness = card->witness.emplace();
-  witness.state = EvidenceState::kFinite;
-  witness.coverage.members_evaluated = 1;  // the representative; the class reads xN
-  witness.coverage.geometry_basis =
-      "the declared-source lattice argmax pose, re-evaluated by the diagnostic batch on the "
-      "nominal crystal shape";
-  witness.coverage.wavelength_nm = input.wavelength_nm;
-  witness.kept_count = static_cast<long long>(events.size());
-  witness.sample_count = input.sample_count;
-  witness.lattice = "antipodal_fibonacci";
-  witness.deterministic = true;
-  witness.deviation_deg = best.event.deviation * math::kRadToDegreeD;
-  witness.weight = best.weight;
-  witness.entry = values[0].entry.value;
-  witness.interface_product = values[0].interface_product;
-  witness.source_note = kWitnessSourceNote;
-  // The argmax pose is the one the assembly actually held: retain it for the document's
-  // warm_index (the leg name is "witness_argmax"; the collector reads it from here).
-  witness.has_pose = true;
-  for (int k = 0; k < 9; k++) {
-    witness.pose[k] = pose[k];
-  }
-
-  ILOG_INFO(GetGlobalLogger(), "[raypath survey] witness: {} kept of {} lattice events, max w {:.6e}, entry {:.6e}",
-            events.size(), input.sample_count, best.weight, values[0].entry.value);
-}
-
-void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
+void AssembleRefusedSupport(const quantity::WitnessInput& witness_input, const std::vector<std::vector<int>>& members,
                             const std::string& refusal_mode, const std::string& chromatic_reason,
-                            const std::string& budget_note, RefusedSupportObjects objects_discipline,
-                            SurveyDocument* out) {
+                            const std::string& budget_note, RefusedSupportObjects objects_discipline, SurveyData* out) {
   SurveyObject card;
-  card.kind = SurveyObjectKind::kSupportSet;
+  card.SetKind(SurveyObjectKind::kSupportSet);
   card.members = members;
-  card.evidence.state = EvidenceState::kRefused;
-  card.evidence.mode = refusal_mode;
+  card.SetState(EvidenceState::kRefused);
+  card.Mode() = refusal_mode;
   if (!witness_input.context_only) {
     AssembleWitness(witness_input, &card);
   }
   // The argmax pose is a held pose: it joins the document's warm_index under its leg name (the
   // --warm contract's seed retention; a refused witness holds no pose and contributes none).
-  if (card.witness.has_value() && card.witness->state == EvidenceState::kFinite && card.witness->has_pose) {
+  if (card.Witness() != nullptr && card.Witness()->State() == EvidenceState::kFinite &&
+      card.Witness()->Value().has_pose) {
     std::array<double, 9> seed{};
     for (int k = 0; k < 9; k++) {
-      seed[static_cast<size_t>(k)] = card.witness->pose[k];
+      seed[static_cast<size_t>(k)] = card.Witness()->Value().pose[k];
     }
-    out->warm_index.seeds.push_back(std::move(seed));
-    out->warm_index.seed_sources.emplace_back("witness_argmax");
+    out->warm_index.seeds.push_back({ std::move(seed), "witness_argmax" });
   }
   if (objects_discipline == RefusedSupportObjects::kReplaceObjects) {
     out->objects.clear();
@@ -132,9 +39,9 @@ void AssembleRefusedSupport(const WitnessInput& witness_input, const std::vector
   out->objects.push_back(std::move(card));
   out->chromatic.state = EvidenceState::kUnevaluated;
   out->chromatic.reason = chromatic_reason;
-  out->weight_tint = SurveyWeightTint{};
-  out->weight_tint->evidence.state = EvidenceState::kUnevaluated;
-  out->weight_tint->evidence.reason = chromatic_reason;
+  out->weight_tint = WeightTintResult{};
+  out->weight_tint->SetState(EvidenceState::kUnevaluated);
+  out->weight_tint->Reason() = chromatic_reason;
   out->budget_note = budget_note;
 }
 

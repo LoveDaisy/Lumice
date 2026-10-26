@@ -20,8 +20,8 @@
 
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_family.hpp"
-#include "raypath/detail/survey/survey_json.hpp"
 #include "raypath/detail/survey/survey_tint.hpp"
+#include "raypath/survey_report.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {
@@ -51,11 +51,11 @@ const Distribution kUniformFull{ DistributionType::kUniform, 0.0f, 360.0f };
 // assembly is deterministic (diagnostic-batch lattice evaluation, no RNG), so the document's
 // three read-side faces — the ladder shape, the kill numbers, the JSON serialization — read the
 // same trace once instead of paying it three times.
-const SurveyDocument& SharedLowitzDocument() {
-  static const SurveyDocument document = [] {
-    SurveyDocument doc;
+const SurveyData& SharedLowitzDocument() {
+  static const SurveyData document = [] {
+    SurveyData doc;
     const ConfigManager config = LowitzMeasureScene(40.0, 0.3);
-    if (!AssembleSurvey(config, LiteralRequest({ 3, 5 }), &doc).Ok()) {
+    if (!AssembleSurveyData(config, LiteralRequest({ 3, 5 }), &doc).Ok()) {
       ADD_FAILURE() << "the shared Lowitz assembly failed";
     }
     return doc;
@@ -174,7 +174,7 @@ TEST(FamilyRouting, FreezeCandidatesSortTightestFirst) {
   const FamilyMeasureReading reading = ReadFamilyMeasure(
       AxisOf({ DistributionType::kGaussian, 90.0f, 40.0f }, kUniformFull, { DistributionType::kGaussian, 0.0f, 0.3f }));
   ASSERT_TRUE(reading.ok);
-  const std::vector<FamilyFreezeCandidate> candidates = FreezeCandidates(reading.measure);
+  const std::vector<structure::FamilyFreezeCandidate> candidates = structure::FreezeCandidates(reading.measure);
   ASSERT_EQ(candidates.size(), 2u);
   EXPECT_EQ(candidates[0].dim, analytic::FamilyDimension::kRoll);
   EXPECT_NEAR(candidates[0].width_deg, 0.3, 1e-6);
@@ -183,13 +183,13 @@ TEST(FamilyRouting, FreezeCandidatesSortTightestFirst) {
 
   const FamilyMeasureReading tie = ReadFamilyMeasure(
       AxisOf({ DistributionType::kGaussian, 90.0f, 5.0f }, kUniformFull, { DistributionType::kGaussian, 0.0f, 5.0f }));
-  const std::vector<FamilyFreezeCandidate> tie_candidates = FreezeCandidates(tie.measure);
+  const std::vector<structure::FamilyFreezeCandidate> tie_candidates = structure::FreezeCandidates(tie.measure);
   ASSERT_EQ(tie_candidates.size(), 2u);
   EXPECT_EQ(tie_candidates[0].dim, analytic::FamilyDimension::kZenith);
   EXPECT_EQ(tie_candidates[1].dim, analytic::FamilyDimension::kRoll);
 
   const FamilyMeasureReading none = ReadFamilyMeasure(AxisOf(kFixed90, kUniformFull, kUniformFull));
-  EXPECT_TRUE(FreezeCandidates(none.measure).empty());
+  EXPECT_TRUE(structure::FreezeCandidates(none.measure).empty());
 }
 
 // ---- the assembly: the corpus calibrations ----------------------------------------------------------
@@ -202,8 +202,8 @@ TEST(FamilyRouting, FreezeCandidatesSortTightestFirst) {
 // blur against the spot floor.
 TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
   const ConfigManager config = PlateScene(0.3, 0.3);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_TRUE(document.unevaluated.empty());
   ASSERT_TRUE(document.family_routing.has_value());
@@ -227,28 +227,28 @@ TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
   EXPECT_EQ(block.ladder[1].frozen_dims[0].dim, analytic::FamilyDimension::kZenith);
   EXPECT_NEAR(block.ladder[1].frozen_dims[0].width_deg, 0.3, 1e-6);
   EXPECT_EQ(block.ladder[1].generic_rank, 0);
-  EXPECT_EQ(block.ladder[1].grid, kFamilyLadderGrid);
+  EXPECT_EQ(block.ladder[1].grid, structure::kFamilyLadderGrid);
 
   // The cards: the level-0 support_set AND the level-1 collapse point (the reachability does
   // not collapse with the concentration — both are reported).
   const SurveyObject* support = nullptr;
   const SurveyObject* collapse = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kSupportSet) {
+    if (card.Kind() == SurveyObjectKind::kSupportSet) {
       support = &card;
     }
-    if (card.kind == SurveyObjectKind::kFamilyCollapsePoint) {
+    if (card.Kind() == SurveyObjectKind::kFamilyCollapsePoint) {
       collapse = &card;
     }
   }
   ASSERT_NE(support, nullptr);
   ASSERT_NE(collapse, nullptr);
-  EXPECT_TRUE(support->support_set.has_value());
+  EXPECT_TRUE(support->Support() != nullptr);
   ASSERT_TRUE(collapse->band.has_value());
   EXPECT_EQ(collapse->band->level, 1);
   EXPECT_NEAR(collapse->band->blur_deg, 0.6, 0.35);                // ~2x the frozen half-width (the mirror)
   EXPECT_LT(collapse->band->blur_deg, collapse->band->scale_deg);  // the survival verdict
-  EXPECT_DOUBLE_EQ(collapse->band->scale_deg, kSurvivalSpotFloorDeg);
+  EXPECT_DOUBLE_EQ(collapse->band->scale_deg, structure::kSurvivalSpotFloorDeg);
   ASSERT_EQ(collapse->band->frozen.size(), 1u);
   EXPECT_EQ(collapse->band->frozen[0].dim, "zenith");
   EXPECT_EQ(collapse->band->frozen[0].verdict, "narrow");
@@ -267,7 +267,7 @@ TEST(FamilyRouting, C10ShapeFreezesZenithIntoASpinCollapsePoint) {
 // candidate is killed and reported in the ladder level that proposed it (never a card), with
 // the wide verdict and the clamped one-sided probe on record.
 TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
-  const SurveyDocument& document = SharedLowitzDocument();
+  const SurveyData& document = SharedLowitzDocument();
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
 
@@ -287,10 +287,10 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   const SurveyObject* fold = nullptr;
   const SurveyObject* domain = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kCausticEdge && card.band.has_value() && card.band->level == 1) {
+    if (card.Kind() == SurveyObjectKind::kCausticEdge && card.band.has_value() && card.band->level == 1) {
       fold = &card;
     }
-    if (card.kind == SurveyObjectKind::kBrightDomain && card.band.has_value() && card.band->level == 1) {
+    if (card.Kind() == SurveyObjectKind::kBrightDomain && card.band.has_value() && card.band->level == 1) {
       domain = &card;
     }
   }
@@ -300,11 +300,11 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   EXPECT_EQ(fold->band->frozen[0].dim, "roll");
   EXPECT_EQ(fold->band->frozen[0].verdict, "narrow");
   EXPECT_LT(fold->band->blur_deg, fold->band->scale_deg);
-  EXPECT_DOUBLE_EQ(fold->band->scale_deg, kSurvivalSpotFloorDeg);  // the cross-section reading
+  EXPECT_DOUBLE_EQ(fold->band->scale_deg, structure::kSurvivalSpotFloorDeg);  // the cross-section reading
   ASSERT_TRUE(fold->family_origin.has_value());
   EXPECT_GT(fold->family_origin->crossing_count, 0);
   ASSERT_NE(domain, nullptr) << "the two-dimensional family's bright domain carries the band";
-  EXPECT_GT(domain->band->scale_deg, kSurvivalSpotFloorDeg);  // the domain keeps the extent reading
+  EXPECT_GT(domain->band->scale_deg, structure::kSurvivalSpotFloorDeg);  // the domain keeps the extent reading
 
   // Level 2 under the scale ruling (the design authority's decision on decision point 1: a
   // curve-like object's scale is its structural cross-section floor, never its overall extent
@@ -322,7 +322,7 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   }
   ASSERT_NE(killed, nullptr);
   ASSERT_EQ(survival_matches, 1);
-  EXPECT_EQ(killed->kind, "regular_image");
+  EXPECT_EQ(killed->kind, structure::FamilyImageKind::kRegularImage);
   for (const SurveyObject& card : document.objects) {
     EXPECT_FALSE(card.band.has_value() && card.band->level == 2);
   }
@@ -330,16 +330,16 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
   // own tail bound is a row).
   const SurveyObject* support = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kSupportSet) {
+    if (card.Kind() == SurveyObjectKind::kSupportSet) {
       support = &card;
     }
   }
   ASSERT_NE(support, nullptr);
-  ASSERT_TRUE(support->support_set.has_value());
-  ASSERT_EQ(support->support_set->density_tails.size(), 1u);
-  EXPECT_EQ(support->support_set->density_tails[0].dim, "zenith");
-  EXPECT_NEAR(support->support_set->density_tails[0].lower_deg, 0.0, 1e-9);
-  EXPECT_GT(support->support_set->density_tails[0].upper_deg, 100.0);  // the 12-sigma window
+  ASSERT_TRUE(support->Support() != nullptr);
+  ASSERT_EQ(support->Support()->density_tails.size(), 1u);
+  EXPECT_EQ(support->Support()->density_tails[0].dim, "zenith");
+  EXPECT_NEAR(support->Support()->density_tails[0].lower_deg, 0.0, 1e-9);
+  EXPECT_GT(support->Support()->density_tails[0].upper_deg, 100.0);  // the 12-sigma window
 }
 
 // The calibration ruler the design note spells for this shape, restored by the scale ruling
@@ -349,7 +349,7 @@ TEST(FamilyRouting, C16LowitzFoldSurvivesTheRollAndDiesUnderTheWideZenith) {
 // the same record stays narrow: the two frozen dimensions of one object read differently
 // (the narrow half of AC5's dimension-times-object property).
 TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
-  const SurveyDocument& document = SharedLowitzDocument();
+  const SurveyData& document = SharedLowitzDocument();
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
   ASSERT_FALSE(block.ladder[2].killed.empty());
@@ -363,11 +363,11 @@ TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
   }
   ASSERT_NE(killed, nullptr);
   ASSERT_EQ(survival_matches, 1);
-  EXPECT_EQ(killed->kind, "regular_image");
+  EXPECT_EQ(killed->kind, structure::FamilyImageKind::kRegularImage);
   EXPECT_NEAR(killed->blur_deg, 10.42, 0.30);
-  EXPECT_DOUBLE_EQ(killed->scale_deg, kSurvivalSpotFloorDeg);
-  EXPECT_GT(killed->blur_deg, 5.0 * kSurvivalSpotFloorDeg);  // the kill has room, not margin
-  EXPECT_TRUE(killed->clamped);                              // the zenith center 0 minus 20 clamps one-sided
+  EXPECT_DOUBLE_EQ(killed->scale_deg, structure::kSurvivalSpotFloorDeg);
+  EXPECT_GT(killed->blur_deg, 5.0 * structure::kSurvivalSpotFloorDeg);  // the kill has room, not margin
+  EXPECT_TRUE(killed->clamped);                                         // the zenith center 0 minus 20 clamps one-sided
   bool zenith_wide = false;
   bool roll_narrow = false;
   for (const FamilyBandVerdict& verdict : killed->verdicts) {
@@ -390,14 +390,14 @@ TEST(FamilyRouting, C16CalibrationKillUnderTheScaleEstimatorRuling) {
 // narrow freezes with the band at level 2.
 TEST(FamilyRouting, ParryShapeCarriesTheOneDimensionalImageAtLevelTwo) {
   const ConfigManager config = ParryMeasureScene(1.0, 0.3);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 3, 5 }), &document).Ok());
   ASSERT_TRUE(document.family_routing.has_value());
   ASSERT_EQ(document.family_routing->ladder.size(), 3u);
 
   const SurveyObject* regular = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kRegularImage && card.band.has_value() && card.band->level == 2) {
+    if (card.Kind() == SurveyObjectKind::kRegularImage && card.band.has_value() && card.band->level == 2) {
       regular = &card;
     }
   }
@@ -420,8 +420,8 @@ TEST(FamilyRouting, ParryShapeCarriesTheOneDimensionalImageAtLevelTwo) {
 // produced (the reachability stays on the support card; the object claim dies).
 TEST(FamilyRouting, WideWobbleKillsTheCollapseCandidateItProposed) {
   const ConfigManager config = PlateScene(1.0, 5.0);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
   ASSERT_EQ(block.ladder.size(), 2u);
@@ -429,16 +429,16 @@ TEST(FamilyRouting, WideWobbleKillsTheCollapseCandidateItProposed) {
   EXPECT_EQ(level.objects_proposed, 1);
   ASSERT_EQ(level.killed.size(), 1u);
   const FamilyKilledCandidate& killed = level.killed.front();
-  EXPECT_EQ(killed.kind, "family_collapse_point");
+  EXPECT_EQ(killed.kind, structure::FamilyImageKind::kCollapsePoint);
   EXPECT_EQ(killed.reason, "survival_filter");
   EXPECT_NEAR(killed.blur_deg, 5.0, 0.5);  // the mirror doubles the 2.5-degree half-width
-  EXPECT_DOUBLE_EQ(killed.scale_deg, kSurvivalSpotFloorDeg);
+  EXPECT_DOUBLE_EQ(killed.scale_deg, structure::kSurvivalSpotFloorDeg);
   EXPECT_TRUE(killed.clamped);
   ASSERT_EQ(killed.verdicts.size(), 1u);
   EXPECT_EQ(killed.verdicts[0].dim, "zenith");
   EXPECT_EQ(killed.verdicts[0].verdict, "wide");
   for (const SurveyObject& card : document.objects) {
-    EXPECT_NE(card.kind, SurveyObjectKind::kFamilyCollapsePoint);
+    EXPECT_NE(card.Kind(), SurveyObjectKind::kFamilyCollapsePoint);
   }
 }
 
@@ -448,10 +448,10 @@ TEST(FamilyRouting, WideWobbleKillsTheCollapseCandidateItProposed) {
 // honestly unevaluated.
 TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   const ConfigManager config = SinglePoseScene();
-  SurveyDocument document;
+  SurveyData document;
   // The pinned mirror 1-2-1: valid at the canonical pose (the 3-5 wedge is edge-on to the sun
   // there — its no_valid_image kill is the honest answer, not a failure of the arm).
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 1, 2, 1 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
@@ -464,10 +464,10 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   const SurveyObject* collapse = nullptr;
   const SurveyObject* support = nullptr;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kFamilyCollapsePoint) {
+    if (card.Kind() == SurveyObjectKind::kFamilyCollapsePoint) {
       collapse = &card;
     }
-    if (card.kind == SurveyObjectKind::kSupportSet) {
+    if (card.Kind() == SurveyObjectKind::kSupportSet) {
       support = &card;
     }
   }
@@ -485,8 +485,8 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
   // kernel-side corridor fact at every near-plate pose, not a pose accident), so the tint
   // refuses with its named mode rather than defaulting a number.
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(document.weight_tint->evidence.mode, "single_pose_weight_unavailable");
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.weight_tint->Mode(), "single_pose_weight_unavailable");
   EXPECT_EQ(document.chromatic.state, EvidenceState::kRefused);
   EXPECT_TRUE(document.probes.empty());
   ASSERT_TRUE(document.positional_dispersion.has_value());
@@ -494,36 +494,36 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
 
   // A chain whose corridor carries weight at the same pose (1-3: basal entry, side exit): the
   // single-pose read computes — the method slug named, both masses positive, never a band sum.
-  SurveyDocument wedge_document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 1, 3 }), &wedge_document).Ok());
+  SurveyData wedge_document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 1, 3 }), &wedge_document).Ok());
   ASSERT_TRUE(wedge_document.family_routing.has_value());
   const SurveyObject* wedge_collapse = nullptr;
   for (const SurveyObject& card : wedge_document.objects) {
-    if (card.kind == SurveyObjectKind::kFamilyCollapsePoint) {
+    if (card.Kind() == SurveyObjectKind::kFamilyCollapsePoint) {
       wedge_collapse = &card;
     }
   }
   ASSERT_NE(wedge_collapse, nullptr);
   EXPECT_TRUE(wedge_collapse->has_position);
   ASSERT_TRUE(wedge_document.weight_tint.has_value());
-  EXPECT_EQ(wedge_document.weight_tint->evidence.state, EvidenceState::kFinite);
-  EXPECT_EQ(wedge_document.weight_tint->method, std::string(kTintMethodSinglePoseDirect));
-  EXPECT_GT(wedge_document.weight_tint->m_red, 0.0);
-  EXPECT_GT(wedge_document.weight_tint->m_blue, 0.0);
-  EXPECT_GT(wedge_document.weight_tint->ratio, 0.0);
+  EXPECT_EQ(wedge_document.weight_tint->State(), EvidenceState::kFinite);
+  EXPECT_EQ(TintMethodName(wedge_document.weight_tint->Value().Method()), std::string(kTintMethodSinglePoseDirect));
+  EXPECT_GT(wedge_document.weight_tint->Value().Mass().red, 0.0);
+  EXPECT_GT(wedge_document.weight_tint->Value().Mass().blue, 0.0);
+  EXPECT_GT(wedge_document.weight_tint->Value().ratio, 0.0);
   EXPECT_EQ(wedge_document.chromatic.state, EvidenceState::kFinite);
 
   // The edge-on 3-5 chain kills with no numbers at all: a no_valid_image kill carries no
   // blur/scale/clamped "measurement" — the group is absent from the serialized record, not
   // zeroed (the 0D arm sets its scale floor before the pose evaluates; it must not leak).
-  SurveyDocument edge_document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &edge_document).Ok());
+  SurveyData edge_document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 3, 5 }), &edge_document).Ok());
   ASSERT_TRUE(edge_document.family_routing.has_value());
   ASSERT_EQ(edge_document.family_routing->ladder.size(), 1u);
   ASSERT_EQ(edge_document.family_routing->ladder[0].killed.size(), 1u);
   EXPECT_EQ(edge_document.family_routing->ladder[0].killed.front().reason, "no_valid_image");
   EXPECT_FALSE(edge_document.family_routing->ladder[0].killed.front().blur_measured);
-  const auto edge_parsed = nlohmann::json::parse(SurveyDocumentToJson(edge_document, "test"));
+  const auto edge_parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(edge_document), "test"));
   const auto& edge_killed = edge_parsed.at("family_routing").at("ladder").at(0).at("killed").at(0);
   EXPECT_FALSE(edge_killed.contains("blur_deg"));
   EXPECT_FALSE(edge_killed.contains("scale_deg"));
@@ -536,8 +536,8 @@ TEST(FamilyRouting, SinglePoseAxisComputesTheZeroDimensionalImageDirectly) {
 // while the ladder runs (the structure domain is wider than the density domain).
 TEST(FamilyRouting, FixedZenithAndRollAskTheRankAtLevelZeroWithoutTheDensityLegs) {
   const ConfigManager config = FixedPosePlateScene(1.5);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 3, 5 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   ASSERT_TRUE(document.family_routing.has_value());
   const FamilyRoutingBlock& block = *document.family_routing;
@@ -549,7 +549,7 @@ TEST(FamilyRouting, FixedZenithAndRollAskTheRankAtLevelZeroWithoutTheDensityLegs
 
   bool saw_regular = false;
   for (const SurveyObject& card : document.objects) {
-    if (card.kind == SurveyObjectKind::kRegularImage) {
+    if (card.Kind() == SurveyObjectKind::kRegularImage) {
       saw_regular = card.band.has_value() && card.band->level == 0;
     }
   }
@@ -557,30 +557,30 @@ TEST(FamilyRouting, FixedZenithAndRollAskTheRankAtLevelZeroWithoutTheDensityLegs
   EXPECT_TRUE(document.probes.empty());
   EXPECT_EQ(document.chromatic.state, EvidenceState::kUnevaluated);
   ASSERT_TRUE(document.weight_tint.has_value());
-  EXPECT_EQ(document.weight_tint->evidence.state, EvidenceState::kUnevaluated);
-  EXPECT_NE(document.weight_tint->evidence.reason.find("no pose density"), std::string::npos);
+  EXPECT_EQ(document.weight_tint->State(), EvidenceState::kUnevaluated);
+  EXPECT_NE(document.weight_tint->Reason().find("no pose density"), std::string::npos);
 }
 
 // The outside-domain refusal: one refused support card with the named mode and the witness's
 // positive fact, no family_routing key, no approximation into the domain.
 TEST(FamilyRouting, OutsideDomainShapeRefusesWithTheNamedModeAndAWitness) {
   const ConfigManager config = ZigzagRollScene();
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 5 }), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 3, 5 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
   EXPECT_FALSE(document.family_routing.has_value());
   ASSERT_EQ(document.objects.size(), 1u);
   const SurveyObject& card = document.objects.front();
-  EXPECT_EQ(card.kind, SurveyObjectKind::kSupportSet);
-  EXPECT_EQ(card.evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(card.evidence.mode, "measure_shape_outside_routing_domain: roll_zigzag");
-  ASSERT_TRUE(card.witness.has_value());
-  EXPECT_EQ(card.witness->state, EvidenceState::kFinite);
-  EXPECT_GT(card.witness->kept_count, 0);
+  EXPECT_EQ(card.Kind(), SurveyObjectKind::kSupportSet);
+  EXPECT_EQ(card.State(), EvidenceState::kRefused);
+  EXPECT_EQ(card.Mode(), "measure_shape_outside_routing_domain: roll_zigzag");
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kFinite);
+  EXPECT_GT(card.Witness()->Value().kept_count, 0);
   EXPECT_EQ(document.evidence.state, EvidenceState::kRefused);
   EXPECT_EQ(document.evidence.mode, "measure_shape_outside_routing_domain: roll_zigzag");
   EXPECT_TRUE(document.probes.empty());
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   EXPECT_FALSE(parsed.contains("family_routing"));
   EXPECT_FALSE(parsed.contains("probes"));
   EXPECT_EQ(parsed.at("objects")[0].at("evidence").at("mode"), "measure_shape_outside_routing_domain: roll_zigzag");
@@ -601,21 +601,21 @@ TEST(FamilyRouting, RefusedPartitionScopesToTheLevelZeroCardAndTheLadderStillRun
   for (auto& setting : config.scene_.ms_.front().setting_) {
     setting.crystal_.axis_.latitude_dist = crystal.axis_.latitude_dist;
   }
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 3, 1, 5, 7 }), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 3, 1, 5, 7 }), &document).Ok());
   EXPECT_FALSE(document.early_stopped);
 
   // The level-0 card: refused with the corpus's touching slug, the finite witness on it (the
   // coexistence the evidence layering asks for), and no fabricated support payload.
   ASSERT_EQ(document.objects.size(), 1u);
   const SurveyObject& card = document.objects.front();
-  EXPECT_EQ(card.kind, SurveyObjectKind::kSupportSet);
-  EXPECT_EQ(card.evidence.state, EvidenceState::kRefused);
-  EXPECT_EQ(card.evidence.mode, "slab_crease_touching");
-  EXPECT_FALSE(card.support_set.has_value());
-  ASSERT_TRUE(card.witness.has_value());
-  EXPECT_EQ(card.witness->state, EvidenceState::kFinite);
-  EXPECT_GT(card.witness->kept_count, 0);
+  EXPECT_EQ(card.Kind(), SurveyObjectKind::kSupportSet);
+  EXPECT_EQ(card.State(), EvidenceState::kRefused);
+  EXPECT_EQ(card.Mode(), "slab_crease_touching");
+  EXPECT_FALSE(card.Support() != nullptr);
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kFinite);
+  EXPECT_GT(card.Witness()->Value().kept_count, 0);
 
   // The block: the refusal echoed at block level, the ladder enumerated (level 1 asked the
   // rank and honestly recorded its empty outcome — no proposals, no kills, no valid samples),
@@ -647,12 +647,12 @@ TEST(FamilyRouting, RefusedPartitionScopesToTheLevelZeroCardAndTheLadderStillRun
 // The conditional-presence negative (AC7's mechanical form): the full-dimensional and the
 // early-stop documents carry no family_routing key at all.
 TEST(FamilyRouting, RandomAndEarlyStopDocumentsCarryNoFamilyRoutingKey) {
-  SurveyDocument random_document;
-  ASSERT_TRUE(AssembleSurvey(RandomPrismScene(), LiteralRequest({ 3, 5 }), &random_document).Ok());
+  SurveyData random_document;
+  ASSERT_TRUE(AssembleSurveyData(RandomPrismScene(), LiteralRequest({ 3, 5 }), &random_document).Ok());
   EXPECT_FALSE(random_document.family_routing.has_value());
   SurveyRequest early = LiteralRequest({ 1, 2 });
-  SurveyDocument early_document;
-  ASSERT_TRUE(AssembleSurvey(PlateScene(0.3, 0.3), early, &early_document).Ok());
+  SurveyData early_document;
+  ASSERT_TRUE(AssembleSurveyData(PlateScene(0.3, 0.3), early, &early_document).Ok());
   EXPECT_TRUE(early_document.early_stopped);
   EXPECT_FALSE(early_document.family_routing.has_value());
 }
@@ -660,8 +660,8 @@ TEST(FamilyRouting, RandomAndEarlyStopDocumentsCarryNoFamilyRoutingKey) {
 // The serialized family document's shape: the measure echo, the ladder with its rank coverage
 // and killed records, the band on the cards, and the conditional keys.
 TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
-  const SurveyDocument& document = SharedLowitzDocument();
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const SurveyData& document = SharedLowitzDocument();
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   ASSERT_TRUE(parsed.contains("family_routing"));
   const auto& family = parsed.at("family_routing");
   EXPECT_EQ(family.at("measure").at("zenith").at("kind"), "gauss");
@@ -674,7 +674,7 @@ TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
   const auto& level1 = family.at("ladder").at(1);
   ASSERT_TRUE(level1.contains("rank"));
   EXPECT_EQ(level1.at("rank").at("generic_rank"), 2);
-  EXPECT_EQ(level1.at("rank").at("grid"), kFamilyLadderGrid);
+  EXPECT_EQ(level1.at("rank").at("grid"), structure::kFamilyLadderGrid);
   ASSERT_EQ(level1.at("frozen_dims").size(), 1u);
   EXPECT_EQ(level1.at("frozen_dims").at(0).at("dim"), "roll");
   EXPECT_GT(level1.at("objects_proposed"), 0);
@@ -685,7 +685,7 @@ TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
   ASSERT_EQ(level2.at("killed").size(), 1u);
   EXPECT_EQ(level2.at("killed").at(0).at("kind"), "regular_image");
   EXPECT_NEAR(level2.at("killed").at(0).at("blur_deg").get<double>(), 10.42, 0.30);
-  EXPECT_DOUBLE_EQ(level2.at("killed").at(0).at("scale_deg").get<double>(), kSurvivalSpotFloorDeg);
+  EXPECT_DOUBLE_EQ(level2.at("killed").at(0).at("scale_deg").get<double>(), structure::kSurvivalSpotFloorDeg);
   EXPECT_EQ(level2.at("objects_proposed"), 1);
   EXPECT_EQ(family.at("evidence").at("state"), "finite");
   // The band lives on the surviving cards; the killed candidate's numbers live in the ladder.
@@ -706,8 +706,8 @@ TEST(FamilyRouting, FamilyDocumentSerializesTheLadderAndBands) {
 // pinned the serialized shape.
 TEST(FamilyRouting, LadderKillsTheUnprobeableImageWithNoMeasurementGroup) {
   const ConfigManager config = ParryMeasureScene(1.0, 0.3);
-  SurveyDocument document;
-  ASSERT_TRUE(AssembleSurvey(config, LiteralRequest({ 2, 5 }), &document).Ok());
+  SurveyData document;
+  ASSERT_TRUE(AssembleSurveyData(config, LiteralRequest({ 2, 5 }), &document).Ok());
   ASSERT_TRUE(document.family_routing.has_value());
   ASSERT_EQ(document.family_routing->ladder.size(), 3u);
   const FamilyLadderLevel& level = document.family_routing->ladder[2];
@@ -723,13 +723,13 @@ TEST(FamilyRouting, LadderKillsTheUnprobeableImageWithNoMeasurementGroup) {
   }
   ASSERT_NE(killed, nullptr);
   ASSERT_EQ(no_image_matches, 1);
-  EXPECT_EQ(killed->kind, "regular_image");
+  EXPECT_EQ(killed->kind, structure::FamilyImageKind::kRegularImage);
   EXPECT_FALSE(killed->has_position);
   EXPECT_FALSE(killed->blur_measured);
   EXPECT_TRUE(killed->verdicts.empty());
   // Serialized: kind and reason present, the position and the measurement group absent —
   // the same conditional-presence discipline the 0D edge-on kill pins.
-  const auto parsed = nlohmann::json::parse(SurveyDocumentToJson(document, "test"));
+  const auto parsed = nlohmann::json::parse(SurveyResultToJson(SurveyResult(document), "test"));
   const auto& level2 = parsed.at("family_routing").at("ladder").at(2);
   ASSERT_TRUE(level2.contains("killed"));
   const nlohmann::json* record = nullptr;

@@ -7,17 +7,21 @@
 #include <string>
 #include <utility>
 
+#include "analytic/discovery.hpp"
 #include "analytic/entry_measure.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_chain.hpp"
 #include "analytic/path_rank.hpp"
 #include "analytic/so3.hpp"
+#include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/fiber_quadrature.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
-#include "raypath/detail/survey/survey_document.hpp"
+#include "raypath/prepared_geometry.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_result.hpp"
 #include "util/sky_direction.hpp"
 
 namespace lumice::raypath {
@@ -27,44 +31,6 @@ const char* const kCompletenessNote =
     "closed or became an arc, never that every component of the fiber was found; a denser sample can "
     "lose a component a sparser one found, so pass earlier component seeds back as warm seeds to keep "
     "them (LI phase-1 contract sections 9.5.6-9.5.7)";
-
-const char* ErrorCodeName(ErrorCode code) {
-  switch (code) {
-    case ErrorCode::kOk:
-      return "ok";
-    case ErrorCode::kUnknownCrystalId:
-      return "unknown_crystal_id";
-    case ErrorCode::kMultiLayerUnsupported:
-      return "multi_layer_unsupported";
-    case ErrorCode::kInvalidPath:
-      return "invalid_path";
-    case ErrorCode::kFaceNotInCrystal:
-      return "face_not_in_crystal";
-    case ErrorCode::kWavelengthOutOfRange:
-      return "wavelength_out_of_range";
-    case ErrorCode::kInvalidTarget:
-      return "invalid_target";
-    case ErrorCode::kInvalidArgument:
-      return "invalid_argument";
-    case ErrorCode::kCrystalRejected:
-      return "crystal_rejected";
-    case ErrorCode::kPathInfeasible:
-      return "path_infeasible";
-  }
-  return "unknown";
-}
-
-const char* WavelengthSourceName(WavelengthSource source) {
-  switch (source) {
-    case WavelengthSource::kDefault:
-      return "default";
-    case WavelengthSource::kConfigSingle:
-      return "config";
-    case WavelengthSource::kUser:
-      return "user";
-  }
-  return "unknown";
-}
 
 const char* ComponentKindName(ComponentKind kind) {
   return kind == ComponentKind::kArc ? "arc" : "closed";
@@ -667,242 +633,52 @@ ReachSummary ProbeReach(const PathContext& ctx, double target_deviation, const a
 
 }  // namespace
 
-// ---- the survey context ---------------------------------------------------------------------------
-
-// The schema-4 value model's harvest: the facts the context reads, read once off the assembled
-// document (the warm reader's JSON arm mirrors this — the two must read the same blocks, the
-// dual-arm oracle test pins them field-for-field). Members are the card's first layer: the
-// support partition ran on the entry faces, and both arms read that same layer, so a future
-// multi-layer document changes the answer on both sides together or not at all. A support_set
-// with zero intervals harvests nothing — has_support stays false and the context answers
-// survey_carries_no_support, the same shape as a document without support at all.
-SurveyWarmSource HarvestSurveyDocument(const survey::SurveyDocument& doc) {
-  SurveyWarmSource out;
-  out.early_stopped = doc.early_stopped;
-  out.has_wavelength = std::isfinite(doc.wavelength_nm) && doc.wavelength_nm > 0.0;
-  out.wavelength_nm = doc.wavelength_nm;
-  out.wavelength_source = doc.wavelength_source;
-  out.has_sun_altitude = doc.sun_altitude_deg.has_value() && std::isfinite(*doc.sun_altitude_deg);
-  out.sun_altitude_deg = doc.sun_altitude_deg.value_or(0.0);
-  out.has_sun_azimuth = doc.sun_azimuth_deg.has_value() && std::isfinite(*doc.sun_azimuth_deg);
-  out.sun_azimuth_deg = doc.sun_azimuth_deg.value_or(0.0);
-  for (const survey::SurveyObject& card : doc.objects) {
-    if (card.support_set.has_value()) {
-      for (const survey::SurveyObject::Interval& interval : card.support_set->intervals) {
-        SurveyWarmSource::SupportInterval out_interval;
-        out_interval.lower_deg = interval.lower_deg;
-        out_interval.upper_deg = interval.upper_deg;
-        out_interval.members = card.members.empty() ? std::vector<int>{} : card.members.front();
-        out.intervals.push_back(std::move(out_interval));
-      }
-    }
-    if (card.caustic_edge.has_value()) {
-      out.has_edge = true;
-      out.edge_deg = card.caustic_edge->position_deg;
-    }
-  }
-  out.has_support = !out.intervals.empty();
-  if (!doc.probes.empty()) {
-    const survey::SurveyProbe& probe = doc.probes.front();
-    out.has_probe = true;
-    out.has_probe_azimuth = probe.spec.azimuth_deg.has_value() && std::isfinite(*probe.spec.azimuth_deg);
-    out.probe_azimuth_deg = probe.spec.azimuth_deg.value_or(0.0);
-    out.probe_bin_deg = probe.spec.bin_deg;
-    out.probe_sample_count = static_cast<int>(probe.spec.sample_count);
-    for (const survey::SurveyProbeSample& sample : probe.samples) {
-      out.probe_samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
-    }
-  }
-  out.has_measure_echo = doc.family_routing.has_value();
-  if (out.has_measure_echo) {
-    const auto read_dim = [](const survey::FamilyDimMeasure& dim, SurveyWarmSource::MeasureDimEcho* e) {
-      e->kind = survey::FamilyDimKindName(dim.kind);
-      e->center_deg = dim.center_deg;
-      e->width_deg = dim.width_deg;
-    };
-    read_dim(doc.family_routing->measure.zenith, &out.measure_zenith);
-    read_dim(doc.family_routing->measure.azimuth, &out.measure_azimuth);
-    read_dim(doc.family_routing->measure.roll, &out.measure_roll);
-  }
-  return out;
-}
-
-SurveyReuseDecision EvaluateSurveyReuse(const SurveyWarmSource& warm, double wavelength_nm, double sun_altitude_deg,
-                                        double sun_azimuth_deg) {
-  SurveyReuseDecision decision;
-  if (warm.early_stopped) {
-    decision.structure.reason = "survey_early_stopped_no_delta_axis";
-  } else if (!warm.has_support) {
-    decision.structure.reason = "survey_carries_no_support";
-  } else if (!warm.has_wavelength) {
-    decision.structure.reason = "scope_field_missing";
-  } else if (warm.wavelength_nm != wavelength_nm) {
-    decision.structure.reason = "scope_value_mismatch";
-  } else {
-    decision.structure.warm = &warm;
-  }
-  if (!warm.has_wavelength || !warm.has_sun_altitude || !warm.has_sun_azimuth) {
-    decision.reading_reason = "scope_field_missing";
-  } else if (warm.wavelength_nm != wavelength_nm || warm.sun_altitude_deg != sun_altitude_deg ||
-             warm.sun_azimuth_deg != sun_azimuth_deg) {
-    decision.reading_reason = "scope_value_mismatch";
-  }
-  return decision;
-}
-
-bool NearestStructureAnchor(const SurveyStructureView& structure, double deviation_deg, double* position_deg,
-                            const char** basis) {
-  if (!structure) {
-    return false;
-  }
-  const SurveyWarmSource& warm = *structure.warm;
-  bool has = false;
-  double best = 0.0;
-  const char* best_basis = "";
-  for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
-    for (const double end : { interval.lower_deg, interval.upper_deg }) {
-      if (!has || std::fabs(deviation_deg - end) < std::fabs(deviation_deg - best)) {
-        best = end;
-        best_basis = "support_interval_endpoint";
-        has = true;
-      }
-    }
-  }
-  if (warm.has_edge && (!has || std::fabs(deviation_deg - warm.edge_deg) < std::fabs(deviation_deg - best))) {
-    best = warm.edge_deg;
-    best_basis = "caustic_edge_position";
-    has = true;
-  }
-  if (has) {
-    *position_deg = best;
-    *basis = best_basis;
-  }
-  return has;
-}
-
-// The context's answers, read off a harvest (warm document or inline assembly — the same shape).
-void FillSurveyContext(const SurveyWarmSource& warm, double target_deviation_deg, double wavelength_nm,
-                       double sun_altitude_deg, double sun_azimuth_deg, SurveyContextBlock* out) {
-  const SurveyReuseDecision reuse = EvaluateSurveyReuse(warm, wavelength_nm, sun_altitude_deg, sun_azimuth_deg);
-  const double delta = target_deviation_deg;
-  const SurveyWarmSource::SupportInterval* containing = nullptr;
-  const SurveyWarmSource::SupportInterval* closest = nullptr;
-  double closest_distance = std::numeric_limits<double>::infinity();
-  if (reuse.structure) {
-    for (const SurveyWarmSource::SupportInterval& interval : warm.intervals) {
-      if (delta >= interval.lower_deg && delta <= interval.upper_deg) {
-        containing = &interval;
-        break;
-      }
-      const double d = delta < interval.lower_deg ? interval.lower_deg - delta : delta - interval.upper_deg;
-      if (d < closest_distance) {
-        closest_distance = d;
-        closest = &interval;
-      }
-    }
-  }
-  if (!reuse.structure) {
-    out->object.state = "unevaluated";
-    out->object.reason = reuse.structure.reason;
-    out->edge.state = "unevaluated";
-    out->edge.reason = reuse.structure.reason;
-  } else {
-    // The partition containment is a certified structural fact; the nearest reading inherits it.
-    const SurveyWarmSource::SupportInterval& hit = containing != nullptr ? *containing : *closest;
-    out->object.state = "certified";
-    out->target_inside_support = containing != nullptr;
-    out->object_kind = "support_set";
-    out->object_members = hit.members;
-    out->object_distance_deg = containing != nullptr ? 0.0 : closest_distance;
-    // A certified support carries endpoints, so the shared walk always names an anchor here.
-    double edge_position = 0.0;
-    const char* edge_basis = "";
-    NearestStructureAnchor(reuse.structure, delta, &edge_position, &edge_basis);
-    out->edge.state = "finite";
-    out->edge_distance_deg = std::fabs(delta - edge_position);
-    out->edge_basis = edge_basis;
-  }
-
-  // The band-sum reading: warm documents only, under the scope gate's exact-equality comparison
-  // (both sides resolved the same way, so equal configs give bit-equal doubles here).
-  if (out->source == "inline") {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = "inline_context_runs_no_probe";
-  } else if (out->warm_index_absent) {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = "warm_index_absent";
-  } else if (!warm.has_probe) {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = "warm_document_has_no_probe";
-  } else if (reuse.reading_reason != nullptr) {
-    out->band_sum.state = "unevaluated";
-    out->band_sum.reason = reuse.reading_reason;
-  } else {
-    const SurveyWarmSource::ProbeSample* best = nullptr;
-    double best_distance = std::numeric_limits<double>::infinity();
-    for (const SurveyWarmSource::ProbeSample& sample : warm.probe_samples) {
-      if (std::isnan(sample.value)) {
-        continue;  // an undefined reading is no reading: the pick spans the defined ones
-      }
-      const double d = std::fabs(delta - sample.delta_deg);
-      if (d < best_distance) {
-        best_distance = d;
-        best = &sample;
-      }
-    }
-    if (best == nullptr) {
-      out->band_sum.state = "unevaluated";
-      out->band_sum.reason = "warm_document_has_no_probe";
-    } else {
-      out->band_sum.state = "finite";
-      out->band_sum_value = best->value;
-      out->band_sum_delta_deg = best->delta_deg;
-      out->band_sum_bin_deg = warm.probe_bin_deg;
-      out->band_sum_caliber = "the warm document's solar-radial band-sum profile at wavelength " +
-                              std::to_string(warm.wavelength_nm) + " nm (" + warm.wavelength_source + "), sun at " +
-                              std::to_string(warm.sun_altitude_deg) + "/" + std::to_string(warm.sun_azimuth_deg) +
-                              ", survey line azimuth " +
-                              (warm.has_probe_azimuth ? std::to_string(warm.probe_azimuth_deg) : "unknown") +
-                              " — reference-line reading, not target-sky intensity";
-    }
-  }
-}
-
 namespace {
 
 // The survey context for this query: warm harvest when a schema-4 document passed the gates, the
 // context-only T0-T2 assembly otherwise (and also under the warm_index_absent degradation, which
 // still declares itself in the block).
 void BuildSurveyContext(const ConfigManager& config, const SinglePathRequest& request, const SinglePathMetadata& meta,
-                        SurveyContextBlock* out) {
-  if (request.warm_survey.has_value()) {
-    out->source = "warm";
-    out->warm_index_absent = !request.warm_survey->index_present;
-  } else {
-    out->source = "inline";
-  }
-  const SurveyWarmSource* warm =
-      request.warm_survey.has_value() && request.warm_survey->index_present ? &*request.warm_survey : nullptr;
-  SurveyWarmSource inline_harvest;
+                        const std::optional<AdmittedWarmSource>& admitted, SurveyContextBlock* out,
+                        const analytic::DiscoveryStop* stop) {
+  const AdmittedWarmSource* source =
+      admitted && admitted->Facts().family == WarmDocumentFamily::kSurvey ? &*admitted : nullptr;
+  out->source = source != nullptr ? ContextSource::kWarm : ContextSource::kInline;
+  out->warm_index_absent = source != nullptr && !source->Facts().index_present;
+  const AdmittedWarmSource* warm = source != nullptr && source->Facts().index_present ? source : nullptr;
+  std::optional<AdmittedWarmSource> inline_source;
   if (warm == nullptr) {
     SurveyRequest survey_request;
-    survey_request.crystal_id = request.crystal_id;
-    survey_request.path_layers = request.path_layers;
-    survey_request.symmetry_bits = survey::kDefaultSymmetryBits;
+    static_cast<PathSelection&>(survey_request) = request;
     survey_request.wavelength_nm = meta.wavelength_nm;
-    survey::SurveyDocument doc;
-    const Error e = survey::AssembleSurvey(config, survey_request, &doc, survey::SurveyAssemblyOptions{ true });
+    survey::SurveyResult doc;
+    survey::SurveyAssemblyOptions context_options;
+    context_options.context_only = true;
+    context_options.stop = stop;
+    Error e = survey::AssembleSurvey(config, survey_request, &doc, context_options);
+    if (stop != nullptr && stop->Stopped()) {
+      // The cut context claims nothing: the three fields refuse with the stop's own name.
+      out->cut_by_stop = true;
+      out->object.state = survey::EvidenceState::kUnevaluated;
+      out->object.reason = "stop_requested";
+      out->edge.state = survey::EvidenceState::kUnevaluated;
+      out->edge.reason = "stop_requested";
+      out->band_sum.state = survey::EvidenceState::kUnevaluated;
+      out->band_sum.reason = "stop_requested";
+      return;
+    }
+    if (e.Ok())
+      e = ValidateWarmCandidate(config, request, HarvestSurveyResult(doc), &inline_source);
     if (!e.Ok()) {
-      out->object.state = "unevaluated";
+      out->object.state = survey::EvidenceState::kUnevaluated;
       out->object.reason = "inline_survey_refused";
-      out->edge.state = "unevaluated";
+      out->edge.state = survey::EvidenceState::kUnevaluated;
       out->edge.reason = "inline_survey_refused";
-      out->band_sum.state = "unevaluated";
+      out->band_sum.state = survey::EvidenceState::kUnevaluated;
       out->band_sum.reason = "inline_survey_refused";
       return;
     }
-    inline_harvest = HarvestSurveyDocument(doc);
-    warm = &inline_harvest;
+    warm = &*inline_source;
   }
   FillSurveyContext(*warm, meta.target_deviation_deg, meta.wavelength_nm, meta.sun_altitude_deg, meta.sun_azimuth_deg,
                     out);
@@ -939,8 +715,21 @@ void SunSphereGridCellCentre(const SunSphereGrid& grid, int lat_index, int lon_i
   u[2] = std::sin(lat);
 }
 
-Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& request, SinglePathResult* out) {
-  *out = SinglePathResult{};
+namespace {
+
+// The execution body: discovery legs into a plain PointData, plus the admitted warm source for
+// a context the caller may declare (in-execution context production reads it; nothing is
+// retained in the result — the deferred envelope is gone).
+Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& input_request, PointData* out,
+                        std::optional<AdmittedWarmSource>* admitted_out, const PreparedGeometry* prepared) {
+  *out = PointData{};
+  SinglePathRequest request = input_request;
+  std::optional<AdmittedWarmSource> admitted;
+  if (request.warm_candidate) {
+    if (Error e = ValidateWarmCandidate(config, request, *request.warm_candidate, &admitted); !e.Ok())
+      return e;
+    request.warm_seeds.insert(request.warm_seeds.end(), admitted->Seeds().begin(), admitted->Seeds().end());
+  }
 
   // ---- inputs ----
   const auto crystal_it = config.crystals_.find(request.crystal_id);
@@ -971,7 +760,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     return { ErrorCode::kInvalidTarget, "the target altitude must be finite and in [-90, 90], the azimuth finite" };
   }
 
-  SinglePathResult result;
+  PointData result;
   SinglePathMetadata& meta = result.meta;
   meta.analytic_api_version = analytic::kApiVersion;
   meta.crystal_id = request.crystal_id;
@@ -982,19 +771,18 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     return e;
   }
 
-  const CrystalConversion crystal = ConvertCrystal(crystal_it->second.param_);
-  analytic::FaceNormalTable table;
-  analytic::FacePolygonTable polygons;
-  switch (analytic::BuildFaceNormals(crystal.shape, &table, &polygons)) {
-    case analytic::Status::kOk:
-      break;
-    case analytic::Status::kInvalidConfig:
-      return { ErrorCode::kCrystalRejected,
-               "the engine builds no crystal from entry " + std::to_string(request.crystal_id) + "'s nominal shape" };
-    case analytic::Status::kInvalidValue:
-      return { ErrorCode::kCrystalRejected, "crystal entry " + std::to_string(request.crystal_id) +
-                                                "'s nominal shape has a value the kernel cannot take" };
+  // The geometry: the caller's prepared tables when a workspace already built them (no
+  // rebuild, the workspace's own reuse read), else this query's own one build.
+  PreparedGeometry built;
+  const PreparedGeometry* geometry = prepared != nullptr ? prepared : &built;
+  if (prepared == nullptr) {
+    if (Error e = PrepareGeometry(crystal_it->second, &built); !e.Ok()) {
+      return e;
+    }
   }
+  const CrystalConversion& crystal = geometry->conversion;
+  const analytic::FaceNormalTable& table = geometry->table;
+  const analytic::FacePolygonTable& polygons = geometry->polygons;
 
   std::vector<int> slots;
   if (Error e = ResolveSingleLayerPath(request.path_layers, table, &slots); !e.Ok()) {
@@ -1007,6 +795,25 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   meta.lower_wedge_deg = crystal.lower_wedge_deg;
   meta.shape_is_nominal = crystal.shape_is_nominal;
   meta.faces = request.path_layers.front();
+  static_cast<ScopeLocation&>(result.members) = survey::ResolveSelectionLocation(config, request);
+  result.members.member_kind = MemberKind::kLiteral;
+  result.members.members = { meta.faces };
+  QuantityContext quantity_context;
+  quantity_context.members = result.members;
+  quantity_context.crystal = crystal_it->second;
+  quantity_context.light = light;
+  quantity_context.observation = { wavelength.wavelength_nm, light.param_.altitude_, light.param_.azimuth_ };
+  const auto quantity_input = std::make_shared<const QuantityContext>(std::move(quantity_context));
+  for (QuantitySpec* spec :
+       { &result.quantities.entry, &result.quantities.normalized_entry, &result.quantities.transmission,
+         &result.quantities.density, &result.quantities.jacobian, &result.quantities.coarea, &result.quantities.product,
+         &result.quantities.fiber_integral, &result.quantities.orbit_integral }) {
+    spec->context = quantity_input;
+    spec->observation = quantity_input->observation;
+    spec->wavelengths_nm = { wavelength.wavelength_nm };
+    spec->aggregation = MemberAggregation::kMember;
+  }
+  result.quantities.coarea.regularization_epsilon = kFactorsEpsilon;
   meta.sun_altitude_deg = light.param_.altitude_;
   meta.sun_azimuth_deg = light.param_.azimuth_;
   meta.sun_diameter_deg = light.param_.diameter_;
@@ -1020,14 +827,28 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   meta.wavelength_source = wavelength.source;
   meta.refractive_index = wavelength.refractive_index;
   const analytic::ContinuationParams params;
-  // The budget, resolved once at entry; polled at loop boundaries only. A stopped run serializes
-  // its partial document with meta.interrupted — an honest early exit, not a failure.
-  const analytic::DiscoveryStop stop{ request.budget_ms > 0 ? std::chrono::steady_clock::now() +
-                                                                  std::chrono::milliseconds(request.budget_ms) :
-                                                              std::chrono::steady_clock::time_point::max(),
-                                      request.interrupted };
-  const auto stopped = [&stop]() { return stop.Stopped(); };
-  meta.budget_ms = request.budget_ms > 0 ? request.budget_ms : 0;
+  // The budget, resolved once at entry by the one owner (query_control.hpp — the window's
+  // zero rule is point's own: no deadline); polled at loop boundaries only. A stopped run
+  // serializes its partial document with meta.interrupted — an honest early exit, not a failure.
+  LegControl budget;
+  if (request.query_deadline) {
+    budget.stop = request.query_deadline->LegStop();
+    budget.resolved_ms = request.query_deadline->resolved_ms;
+  } else {
+    BudgetRequest budget_request;
+    budget_request.budget_ms = request.budget_ms;
+    budget_request.interrupted = request.interrupted;
+    budget = ResolveLeg(BudgetWindow::kPointDiscovery, budget_request);
+  }
+  // The discovery legs' one stop: the resolved window with the query's cancel folded in.
+  const analytic::DiscoveryStop stop{ budget.stop.deadline, request.interrupted, request.cancel };
+  const auto stopped = [&stop]() {
+    if (stop.token != nullptr) {
+      stop.token->NotePoll(kPollPointLegs);
+    }
+    return stop.Stopped();
+  };
+  meta.budget_ms = budget.resolved_ms;
   meta.sample_count = request.sample_count;
   meta.band_half_width_rad = analytic::kDefaultBandHalfWidth;
   meta.cluster_radius_rad = analytic::kDefaultClusterRadius;
@@ -1040,7 +861,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
   // The declared measure: one u-marginal for the registration and (rank 0) the orbit integral.
   const double sun_hat[3] = { -meta.incident_direction[0], -meta.incident_direction[1], -meta.incident_direction[2] };
   const UMarginal marginal = MakeUMarginal(crystal_it->second.axis_, sun_hat);
-  result.measure_registration = RegisterMeasure(marginal, crystal_it->second.axis_);
+  result.Discovered().measure_registration = RegisterMeasure(marginal, crystal_it->second.axis_);
 
   // ---- rank 0, and whether the path is realisable at all ----
   const RankProbe rank = ProbeRank(ctx);
@@ -1060,36 +881,33 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
     }
   }
 
-  // The survey context defers (SurveyContextOf / EnsureSurveyContext): the inline branch's
-  // context-only T0-T2 assembly IS the delta partition — measured as the analysis's dominant
-  // cost — so it must not tax consumers that never read the context. The bridge's one-shot
-  // serialization computes and caches it; the deadline gate stays on the discovery legs only.
-  result.context_config = std::make_shared<const ConfigManager>(config);
-  result.context_request = request;
+  // The context, when the caller declares it, is produced by the entry from `admitted` after
+  // the legs return — in the execution, cancel-stoppable, never stored as deferred inputs.
+  *admitted_out = std::move(admitted);
 
   if (rank.rank_zero) {
-    result.outcome = Outcome::kPointMass;
+    result.payload = PointMass{};
     const double sun[3] = { sun_hat[0], sun_hat[1], sun_hat[2] };
     double pose[9];
     RotationTaking(rank.first_valid_u, sun, pose);
     const PointDetail probe = ctx.Detail(pose, 0.0);
     for (int i = 0; i < 3; i++) {
-      result.point_mass.direction[i] = probe.outgoing_direction[i];
+      result.Mass().direction[i] = probe.outgoing_direction[i];
     }
-    DirToAltAz(result.point_mass.direction, &result.point_mass.altitude_deg, &result.point_mass.azimuth_deg);
-    result.point_mass.target_separation_deg =
-        analytic::so3::AngleBetween(result.point_mass.direction, meta.target_direction) * math::kRadToDegreeD;
-    result.point_mass.orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat, &stop);
+    DirToAltAz(result.Mass().direction, &result.Mass().altitude_deg, &result.Mass().azimuth_deg);
+    result.Mass().target_separation_deg =
+        analytic::so3::AngleBetween(result.Mass().direction, meta.target_direction) * math::kRadToDegreeD;
+    result.Mass().orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat, &stop);
     if (stopped()) {
       meta.interrupted = true;
     }
+    meta.execution = OutcomeOf(stop);
     *out = std::move(result);
     return {};
   }
 
   // ---- discovery and the fibers ----
-  result.outcome = Outcome::kDiscovered;
-  result.reach = ProbeReach(ctx, delta, &stop);
+  result.Discovered().reach = ProbeReach(ctx, delta, &stop);
   if (stopped()) {
     meta.interrupted = true;
   }
@@ -1109,12 +927,14 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
       meta.interrupted = true;
       break;  // the unconverted components stay unconverted: the document is partial, marked so
     }
-    result.components.push_back(ToComponent(c, &ctx));
+    result.Discovered().components.push_back(ToComponent(c, &ctx));
   }
   for (const analytic::IncompleteCandidate& c : found.incomplete) {
-    result.incomplete.push_back(ToIncomplete(c));
+    result.Discovered().incomplete.push_back(ToIncomplete(c));
   }
-  DiscoverySummary& s = result.discovery;
+  meta.execution = OutcomeOf(stop);
+  meta.interrupted = meta.interrupted || stop.Stopped();
+  DiscoverySummary& s = result.Discovered().discovery;
   s.complete = found.Complete();
   s.pool_count = found.pool_count;
   s.extra_seed_count = found.extra_seed_count;
@@ -1131,25 +951,40 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
 }
 
 
-SurveyContextBlock SurveyContextOf(const SinglePathResult& result) {
-  if (result.survey_context_ready) {
-    return result.survey_context;
-  }
-  SurveyContextBlock out;
-  if (result.context_config != nullptr) {
-    BuildSurveyContext(*result.context_config, result.context_request, result.meta, &out);
-  }
-  return out;
-}
+}  // namespace
 
-void EnsureSurveyContext(SinglePathResult* result) {
-  if (result->survey_context_ready) {
-    return;
+Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest& request, bool include_context,
+                            PointResult* out, const PreparedGeometry* geometry) {
+  if (!out) {
+    return { ErrorCode::kInvalidArgument, "null point output" };
   }
-  result->survey_context = SurveyContextOf(*result);
-  result->survey_context_ready = true;
-  result->context_config.reset();
-  result->context_request = SinglePathRequest{};
+  *out = PointResult{};  // on error the caller's slot is left empty (the module's standing contract)
+  PointData execution;
+  std::optional<AdmittedWarmSource> admitted;
+  if (const Error error = RunPointExecution(config, request, &execution, &admitted, geometry); !error.Ok()) {
+    return error;
+  }
+  execution.context_requested = include_context;
+  if (include_context) {
+    // Context has no independent window. Unified queries carry their entry deadline through it;
+    // legacy callers retain the original cancel-only behavior.
+    const analytic::DiscoveryStop context_stop{ request.query_deadline ? request.query_deadline->at :
+                                                                         std::chrono::steady_clock::time_point::max(),
+                                                request.interrupted, request.cancel };
+    BuildSurveyContext(config, request, execution.meta, admitted, &execution.survey_context, &context_stop);
+    if (execution.survey_context.cut_by_stop) {
+      execution.meta.execution = OutcomeOf(context_stop);
+    }
+  } else {
+    execution.survey_context = {};
+    for (SurveyContextField* field :
+         { &execution.survey_context.object, &execution.survey_context.edge, &execution.survey_context.band_sum }) {
+      field->state = survey::EvidenceState::kUnevaluated;
+      field->reason = "not_requested";
+    }
+  }
+  *out = PointResult(FinalizePointData(std::move(execution)));
+  return {};
 }
 
 }  // namespace lumice::raypath

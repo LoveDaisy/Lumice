@@ -11,8 +11,8 @@
 #include <vector>
 
 #include "raypath/detail/measure/declared_density.hpp"
-#include "raypath/detail/measure/measure_geometry_contract.hpp"
 #include "raypath/detail/measure/weight_profile.hpp"
+#include "raypath/domain/measure_geometry.hpp"
 
 namespace lumice::raypath {
 namespace {

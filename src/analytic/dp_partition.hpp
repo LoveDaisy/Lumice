@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "analytic/dp_field.hpp"
+#include "analytic/support_types.hpp"
 
 namespace lumice::analytic {
 
@@ -269,13 +270,7 @@ bool SlabCreaseGates(const DeviationField& field, const DegenerateFoldSet& fold_
 
 // (lower, upper) in radians with the constant counts of {D_P = delta} for lower < delta < upper
 // (LI DeviationInterval). n_components = n_closed + n_open always.
-struct DeviationInterval {
-  double lower = 0.0;
-  double upper = 0.0;
-  int n_components = 0;
-  int n_closed = 0;
-  int n_open = 0;
-};
+
 
 // IntervalPartition's result: either the partition or the escape that refused it. The escape is
 // DATA, not an exception — a fail-closed answer the report side consumes explicitly. Mechanical

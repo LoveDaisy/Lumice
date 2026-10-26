@@ -446,7 +446,18 @@ ChromaticVerdict Diagnose(const FaceNormalTable& normals, const FacePolygonTable
                           int slot_count, double n_red, double n_blue, const ChromaticOptions& options) {
   const DeviationField red(normals, polygons, slots, slot_count, n_red);
   const DeviationField blue(normals, polygons, slots, slot_count, n_blue);
-  const KinkOptions kink_options{ options.lattice_n, options.step, options.max_walk_steps };
+  const KinkOptions kink_options{ options.lattice_n, options.step, options.max_walk_steps, options.stop };
+  const auto stopped = [&options] { return options.stop != nullptr && options.stop->Stopped(); };
+  const auto stopped_verdict = [&] {
+    ChromaticVerdict value;
+    value.n_red = n_red;
+    value.n_blue = n_blue;
+    value.coverage_complete = false;
+    value.notes.push_back("stop_requested");
+    return value;
+  };
+  if (stopped())
+    return stopped_verdict();
 
   std::vector<std::string> notes;
   std::vector<std::string> unresolved;
@@ -456,7 +467,11 @@ ChromaticVerdict Diagnose(const FaceNormalTable& normals, const FacePolygonTable
   // One feature per weight kink at both indices; a kink at one index only is the strongest colour
   // shape and is named unresolved, never dropped (LI diagnose's pairing loop).
   const std::vector<KinkCurve> kinks_red = WeightKinks(red, kink_options);
+  if (stopped())
+    return stopped_verdict();
   const std::vector<KinkCurve> kinks_blue = WeightKinks(blue, kink_options);
+  if (stopped())
+    return stopped_verdict();
   for (size_t k = 0; k < kinks_red.size() && k < kinks_blue.size(); k++) {
     const KinkCurve& kink_red = kinks_red[k];
     const KinkCurve& kink_blue = kinks_blue[k];
@@ -495,10 +510,15 @@ ChromaticVerdict Diagnose(const FaceNormalTable& normals, const FacePolygonTable
   walk_options.lattice_n = options.lattice_n;
   walk_options.step = options.step;
   walk_options.max_walk_steps = options.max_walk_steps;
+  walk_options.stop = options.stop;
   BoundaryWalkRecord red_record;
   BoundaryWalkRecord blue_record;
   const WalkResult red_walk = WalkBoundary(red, walk_options, &red_record);
+  if (stopped())
+    return stopped_verdict();
   const WalkResult blue_walk = WalkBoundary(blue, walk_options, &blue_record);
+  if (stopped())
+    return stopped_verdict();
   if (red_walk.status != WalkStatus::kOk || blue_walk.status != WalkStatus::kOk) {
     const WalkResult& refused = red_walk.status != WalkStatus::kOk ? red_walk : blue_walk;
     notes.push_back("gates not analysed: " + std::string(WalkStatusName(refused.status)) + ": " + refused.message);
@@ -511,6 +531,8 @@ ChromaticVerdict Diagnose(const FaceNormalTable& normals, const FacePolygonTable
     notes.insert(notes.end(), gate_skip_notes.begin(), gate_skip_notes.end());
   }
 
+  if (stopped())
+    return stopped_verdict();
   notes.insert(notes.end(), unresolved.begin(), unresolved.end());
   std::vector<int> faces(slots, slots + slot_count);
   return VerdictOf(std::move(faces), features, std::move(notes), n_red, n_blue, !unresolved.empty(), complete);

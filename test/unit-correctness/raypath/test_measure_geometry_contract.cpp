@@ -1,4 +1,4 @@
-// The geometry<->measure contract (src/raypath/detail/measure/measure_geometry_contract.hpp):
+// The geometry<->measure contract (src/raypath/domain/measure_geometry.hpp):
 // the frozen value types' shape, the schema1 pinned vocabulary, the registered open-enum tables
 // (a value appended without its table entry must fail here), and the mock producers the other
 // measure tests build on. No mathematical claim lives in this file — the densities are pinned in
@@ -14,8 +14,8 @@
 #include <cstring>
 #include <vector>
 
-#include "raypath/detail/measure/measure_geometry_contract.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
+#include "raypath/domain/measure_geometry.hpp"
 
 namespace lumice::raypath {
 namespace {

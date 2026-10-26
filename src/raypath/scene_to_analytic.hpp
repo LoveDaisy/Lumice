@@ -11,7 +11,9 @@
 #include "analytic/pose_density.hpp"
 #include "config/crystal_config.hpp"
 #include "config/light_config.hpp"
-#include "raypath/single_path_analysis.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/domain/input_metadata.hpp"
+#include "raypath/domain/scope.hpp"
 
 namespace lumice::raypath {
 
@@ -19,6 +21,7 @@ namespace lumice::raypath {
 // (the fixed value, the uniform midpoint, the gauss mean, the laplacian location). Heights are
 // passed as the config holds them; the kernel folds their sign as the simulator does.
 struct CrystalConversion {
+  GeometryScope geometry;
   analytic::CrystalShape shape;
   std::string kind;  // "prism" or "pyramid"
   std::vector<NominalShapeScalar> scalars;
@@ -60,6 +63,8 @@ Error ResolveSingleLayerPath(const std::vector<std::vector<int>>& layers, const 
 // column and plate (parry and lowitz) are the same density for the same numbers; it is named after
 // the nearer of the two presets' means (90 / 0 degrees).
 struct PoseDensityConversion {
+  // All analytic pose densities are relative to Haar, including non-uniform ones.
+  MeasureScope measure{ MeasureKind::kActualDeclared, ReferenceMeasure::kHaar };
   analytic::PoseDensitySpec spec;
   std::string unsupported;  // empty when `spec` is valid
   bool Ok() const { return unsupported.empty(); }

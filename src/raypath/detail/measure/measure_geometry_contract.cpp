@@ -1,4 +1,4 @@
-#include "raypath/detail/measure/measure_geometry_contract.hpp"
+#include "raypath/domain/measure_geometry.hpp"
 
 namespace lumice::raypath {
 

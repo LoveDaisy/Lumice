@@ -33,6 +33,8 @@ set(LUMICE_LAYER_foundation_FILES
   core/crystal.hpp
   core/crystal_kind.hpp
   core/crystal_param.cpp
+  core/distribution.hpp
+  core/scene_values.hpp
   core/crystal_param.hpp
   core/def.hpp
   core/exit_seam.hpp
@@ -84,6 +86,7 @@ set(LUMICE_LAYER_foundation_FILES
   util/fatal.hpp
   util/illuminant.cpp
   util/illuminant.hpp
+  util/illuminant_type.hpp
   util/illuminant_data.hpp
   util/ink_transfer.hpp
   util/label_viewport_clamp.hpp
@@ -113,6 +116,13 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/family_rank.cpp
   analytic/family_rank.hpp
   analytic/fiber_continuation.cpp
+  analytic/diagnostic_types.hpp
+  analytic/field_types.hpp
+  analytic/chromatic_types.hpp
+  analytic/stop.hpp
+  analytic/support_types.hpp
+  analytic/quantity_types.hpp
+  analytic/fiber_types.hpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp
   analytic/jet2.hpp
@@ -263,6 +273,57 @@ set(LUMICE_LAYER_engine_FILES
 
 set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
+  raypath/results/survey_records.hpp
+  raypath/results/probe_line.hpp
+  raypath/point_result.hpp
+  raypath/probe_result.hpp
+  raypath/survey_result.hpp
+  raypath/detail/quantity/probe_line.hpp
+  raypath/detail/quantity/probe_line.cpp
+  raypath/detail/quantity/tint.hpp
+  raypath/detail/quantity/tint.cpp
+  raypath/detail/quantity/tir_share.hpp
+  raypath/detail/quantity/tir_share.cpp
+  raypath/detail/quantity/mc_ess.hpp
+  raypath/detail/quantity/mc_ess.cpp
+  raypath/detail/quantity/witness.cpp
+  raypath/detail/quantity/witness.hpp
+  raypath/detail/structure/class_support.hpp
+  raypath/detail/structure/class_support.cpp
+  raypath/detail/structure/family.hpp
+  raypath/detail/structure/family.cpp
+  raypath/results/visibility.hpp
+  raypath/results/structure.hpp
+  raypath/results/report_structure.hpp
+  raypath/results/report_records.hpp
+  raypath/results/report_scope.hpp
+  raypath/results/report_enumeration.hpp
+  raypath/results/report_attribution.hpp
+  raypath/feature_report_result.hpp
+  raypath/results/quantity.hpp
+  raypath/domain/object_kind.hpp
+  raypath/domain/outcome.hpp
+  raypath/domain/claim.hpp
+  raypath/domain/result_identity.hpp
+  raypath/domain/scope.hpp
+  raypath/domain/measure.hpp
+  raypath/detail/input_scope.hpp
+  raypath/detail/input_scope.cpp
+  raypath/detail/measure_scope.hpp
+  raypath/detail/measure_scope.cpp
+  raypath/survey_context.hpp
+  raypath/survey_reuse.hpp
+  raypath/survey_reuse.cpp
+  raypath/query_control.hpp
+  raypath/query_control.cpp
+  raypath/prepared_geometry.hpp
+  raypath/prepared_geometry.cpp
+  raypath/workspace.hpp
+  raypath/workspace.cpp
+  raypath/domain/error.cpp
+  raypath/domain/error.hpp
+  raypath/domain/input_metadata.cpp
+  raypath/domain/input_metadata.hpp
   raypath/path_feature_report.cpp
   raypath/probe_analysis.cpp
   raypath/probe_analysis.hpp
@@ -277,18 +338,16 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/input_assembly.cpp
   raypath/detail/input_assembly.hpp
   raypath/detail/json_values.hpp
-  raypath/detail/survey/evidence.hpp
+  raypath/domain/evidence.hpp
   raypath/detail/survey/config_fingerprint.cpp
   raypath/detail/survey/config_fingerprint.hpp
   raypath/detail/survey/survey_assembly.cpp
   raypath/detail/survey/survey_assembly.hpp
   raypath/detail/survey/survey_mc_ess.cpp
   raypath/detail/survey/survey_mc_ess.hpp
-  raypath/detail/survey/survey_document.hpp
   raypath/detail/survey/survey_family.cpp
   raypath/detail/survey/survey_family.hpp
   raypath/detail/survey/survey_json.cpp
-  raypath/detail/survey/survey_json.hpp
   raypath/detail/survey/survey_probe.cpp
   raypath/detail/survey/survey_probe.hpp
   raypath/detail/survey/survey_t1.cpp
@@ -304,15 +363,15 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/measure/fiber_quadrature.cpp
   raypath/detail/measure/fiber_quadrature.hpp
   raypath/detail/measure/measure_geometry_contract.cpp
-  raypath/detail/measure/measure_geometry_contract.hpp
+  raypath/domain/measure_geometry.hpp
   raypath/detail/measure/visibility_certificate.cpp
   raypath/detail/measure/visibility_certificate.hpp
   raypath/detail/measure/weight_profile.cpp
   raypath/detail/measure/weight_profile.hpp
   raypath/detail/physical_member_scope.cpp
   raypath/detail/physical_member_scope.hpp
-  raypath/detail/schema3/geometry_source.cpp
-  raypath/detail/schema3/geometry_source.hpp
+  raypath/detail/structure/axis.cpp
+  raypath/detail/structure/axis.hpp
   raypath/detail/schema3/mc_attribution.cpp
   raypath/detail/schema3/mc_attribution.hpp
   raypath/detail/schema3/mc_evidence.cpp
@@ -322,15 +381,13 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/schema3/report_assembly.cpp
   raypath/detail/schema3/report_assembly.hpp
   raypath/detail/schema3/structure_object.cpp
-  raypath/detail/schema3/structure_object.hpp
   raypath/detail/schema3/structure_enumeration.cpp
   raypath/detail/schema3/structure_enumeration.hpp
-  raypath/detail/schema3/support_block.cpp
-  raypath/detail/schema3/support_block.hpp
+  raypath/detail/structure/support.cpp
+  raypath/detail/structure/support.hpp
   raypath/path_feature_report.hpp
   raypath/detail/path_feature_report.hpp
   raypath/detail/path_feature_report_json.cpp
-  raypath/detail/path_feature_report_json.hpp
   raypath/scene_to_analytic.cpp
   raypath/scene_to_analytic.hpp
   raypath/single_path_analysis.cpp

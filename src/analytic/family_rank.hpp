@@ -83,6 +83,7 @@
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
+#include "analytic/quantity_types.hpp"
 #include "analytic/so3.hpp"
 #include "core/math.hpp"
 
@@ -192,11 +193,6 @@ enum class FamilyRankStatus {
 };
 const char* FamilyRankStatusName(FamilyRankStatus status);
 
-enum class FamilyDimension {
-  kZenith,
-  kAzimuth,
-  kRoll,
-};
 
 // One located point of the fold locus (a two-dimensional family's rank-drop curve): the free
 // parameters, the refined pose, the sky position of -outgoing (altitude above the world

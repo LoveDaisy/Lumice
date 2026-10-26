@@ -15,16 +15,16 @@
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
-#include "raypath/detail/schema3/structure_object.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath {
 using schema3::AssembledSchema3Report;
 using schema3::AssembleSchema3Report;
-using schema3::ConstantDeltaCurve;
 using schema3::CorroborationState;
 using schema3::kMcObservationScopeNote;
-using schema3::MemberSupport;
 using schema3::ObjectKind;
+using structure::ConstantDeltaCurve;
+using structure::MemberSupport;
 namespace {
 
 // The Haar prism scene (the living tests' shape): crystal 1 (h = 1, all face distances 1),

@@ -1,64 +1,16 @@
-#ifndef LUMICE_RAYPATH_DETAIL_SCHEMA3_STRUCTURE_OBJECT_HPP_
-#define LUMICE_RAYPATH_DETAIL_SCHEMA3_STRUCTURE_OBJECT_HPP_
-
-// schema3 report core, object record (scrum 666.1, the pure data layer — no kernel, no measure
-// call): one structural object of the redesigned feature report. The contract is the owner's
-// schema2-redesign conclusions section 5 (2026-10-07) via scrum.md section 3, and it is quoted
-// here, not reinvented: an object carries FOUR typed sub-state-machines — existence /
-// visibility / chromatic / corroboration — and its report bucket is DERIVED from two of them,
-// never stored.
-//
-//   existence     computed | escaped(regime name) | walk_truncated | s4_declared. The enum is the
-//                 measure contract's ExistenceState (its registered table and names are the
-//                 single authority); `escaped` carries the kernel's regime slug as DATA (the
-//                 kernel EscapeRegimeName's string, open set, report side fail-closed on unknown
-//                 — the contract header's own words). G3 ruled (owner 2026-10-09): the contract's
-//                 typed escape_regime carries the kUnset sentinel by default and production never
-//                 writes it; the slug flows HERE, at the object layer, as the regime's datum.
-//   visibility    the measure layer's VisibilityCertificate verbatim (state + lit_fraction +
-//                 evidence form + jets_ok + the discriminated A/T flags + reason). One authority:
-//                 CertifyVisibility produces it, this record only carries it.
-//   chromatic     the kernel's ChromaticVerdict verbatim (the LI criterion shape) PLUS the
-//                 declared-threshold snapshot (ChromaticThresholds) — 0.5 deg / spread-per-shift
-//                 are declared parameters, not universal physics, so the record carries which
-//                 criterion produced the label (issue: "thresholds travel with the verdict").
-//                 `assessed` says whether a chromatic classification ran at all (kind-2 chains
-//                 can skip it; false keeps the default verdict and the snapshot).
-//   corroboration observed | consistent | not_observed_insufficient_ess |
-//                 not_observed_despite_sufficient_ess (the red flag) | unchecked. v1 (this task)
-//                 has NO derivation rule: every record ships `unchecked`, and the MC->state
-//                 derivation is 666.2's. The携带不变形 tests pin the default and the table.
-//
-// Bucket derivation (the ONLY rule this module owns): computed + certified -> actual;
-// computed + partial/unlit/unproven -> candidate; anything not computed -> unfinished. An UNKNOWN
-// enum value (a cast-constructed one) fails closed: it is not computed (existence) or not
-// certified (visibility), so it can never reach actual — the tests pin the routing, not a
-// promise. corroboration does NOT enter the derivation (not_observed_despite_sufficient_ess is a
-// red-flag annotation, not a bucket mover — scrum.md section 3).
-//
-// Identity: the object kind is an OPEN enum with a registered table (the S1-S6 vocabulary
-// landing); member is the physical face sequence (schema1's own spelling, unresolved-literal);
-// slot names the weight slot a kind-3 object belongs to (-1 otherwise); phi_class_note carries
-// the reflection-group orbit annotation the object shares with its class (empty = none).
-//
-// Geometry: the sky position and the u-space preimage are BOTH first-class explicit fields (the
-// design's own requirement — neither is derived from the other in this module).
+#ifndef LUMICE_RAYPATH_RESULTS_REPORT_STRUCTURE_HPP_
+#define LUMICE_RAYPATH_RESULTS_REPORT_STRUCTURE_HPP_
 
 #include <cmath>
 #include <string>
+#include <variant>
 #include <vector>
 
-#include "analytic/dp_chromatic.hpp"
-#include "raypath/detail/measure/measure_geometry_contract.hpp"
-#include "raypath/detail/measure/visibility_certificate.hpp"
-
+#include "analytic/chromatic_types.hpp"
+#include "raypath/domain/measure_geometry.hpp"
+#include "raypath/results/visibility.hpp"
 namespace lumice::raypath::schema3 {
 
-// ---------------------------------------------------------------------------
-// ObjectKind: the S1-S6 vocabulary as object kinds. Open: a new value is a new
-// registration row + the coverage test's extension, in the same change (a50,
-// the contract's registered-table mechanism).
-// ---------------------------------------------------------------------------
 enum class ObjectKind {
   kKind1,              // S1: D_P critical sets (caustics, ring edges; per-wavelength tables)
   kKind1Restricted,    // S1 restricted: family-pinned curves (the contract's canonical closed curve)
@@ -123,6 +75,15 @@ struct PairedCounterfactual {
 // StructureObjectRecord: one structural object. Field-group order follows the
 // contract: identity, the four machines, geometry, diagnostics.
 // ---------------------------------------------------------------------------
+struct ChromaticAssessment {
+  analytic::ChromaticVerdict verdict;
+  analytic::ChromaticThresholds thresholds;
+};
+// The unassessed wire shape carries declared defaults, not an evaluated colour claim.
+struct UnassessedChromatic {
+  ChromaticAssessment schema_defaults;
+};
+
 struct StructureObjectRecord {
   // -- identity
   ObjectKind kind = ObjectKind::kKind1;
@@ -140,9 +101,22 @@ struct StructureObjectRecord {
   // -- visibility (the certificate, verbatim; default = the fail-closed unproven)
   VisibilityCertificate visibility{};
   // -- chromatic (the verdict verbatim + the declared-parameter snapshot)
-  bool chromatic_assessed = false;
-  analytic::ChromaticVerdict chromatic{};
-  analytic::ChromaticThresholds chromatic_thresholds = analytic::ChromaticThresholdsSnapshot();
+  void ClearChromatic() { chromatic_ = UnassessedChromatic{}; }
+  bool ChromaticAssessed() const { return std::holds_alternative<ChromaticAssessment>(chromatic_); }
+  void SetChromatic(analytic::ChromaticVerdict verdict,
+                    analytic::ChromaticThresholds thresholds = analytic::ChromaticThresholds{}) {
+    chromatic_ = ChromaticAssessment{ std::move(verdict), thresholds };
+  }
+  // The unassessed arm exposes the declared defaults READ-ONLY: a serializer may project them,
+  // but no writable path may carry an assessed verdict while ChromaticAssessed() stays false.
+  const ChromaticAssessment& Chromatic() const {
+    if (const auto* value = std::get_if<ChromaticAssessment>(&chromatic_))
+      return *value;
+    return std::get<UnassessedChromatic>(chromatic_).schema_defaults;
+  }
+  // Filling a verdict's fields is legal only after the explicit SetChromatic transition; reading
+  // it before that throws std::bad_variant_access (the arm does not exist).
+  ChromaticAssessment& MutableChromatic() { return std::get<ChromaticAssessment>(chromatic_); }
   // -- corroboration (v1: constant unchecked)
   CorroborationState corroboration = CorroborationState::kUnchecked;
   // -- geometry: sky position and u preimage, both first-class
@@ -151,11 +125,15 @@ struct StructureObjectRecord {
   std::vector<double> u;                       // u-S^2 preimage, 3N packed (empty = none)
   // -- diagnostics
   PairedCounterfactual counterfactual{};
+
+ private:
+  std::variant<UnassessedChromatic, ChromaticAssessment> chromatic_;
 };
 
 // The record's own bucket: DeriveBucket on the two machines the record carries.
 FeatureBucket BucketOf(const StructureObjectRecord& record);
 
+
 }  // namespace lumice::raypath::schema3
 
-#endif  // LUMICE_RAYPATH_DETAIL_SCHEMA3_STRUCTURE_OBJECT_HPP_
+#endif  // LUMICE_RAYPATH_RESULTS_REPORT_STRUCTURE_HPP_

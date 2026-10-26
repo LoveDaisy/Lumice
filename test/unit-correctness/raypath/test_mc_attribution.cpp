@@ -33,6 +33,9 @@
 #include "raypath/scene_to_analytic.hpp"
 
 namespace lumice::raypath::schema3 {
+
+using structure::MemberSupport;
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
@@ -151,8 +154,7 @@ Kind1Core Kind1OnC05(const Tables& tables) {
   // The table cells run at tolerance = h: the real chromatic leg's dominant spread on this
   // member is tens of degrees and would swallow every no-match arm. Zero it here; the declared
   // width's behavior is pinned by its own test, which sets the features it needs.
-  out.kind1->chromatic_assessed = false;
-  out.kind1->chromatic.features.clear();
+  out.kind1->ClearChromatic();
   // ...and the cells run against THIS object only: the member's S2 chains and kinks have dense
   // delta images that would attribute the very records the no-match arms need. The multi-object
   // attribution behavior is the integration test's subject (below).
@@ -399,7 +401,7 @@ TEST(McAttribution, HMismatchRefusesFailVisible) {
 
 TEST(McAttribution, DeclaredWidthFollowsTheDominantRule) {
   StructureObjectRecord object;
-  object.chromatic_assessed = true;
+  object.SetChromatic({});
   // An invisible feature with a huge spread and a higher score must NOT win: the kernel's own
   // dominant rule is visible first, then score.
   analytic::ChromaticFeature invisible_wide;
@@ -410,11 +412,11 @@ TEST(McAttribution, DeclaredWidthFollowsTheDominantRule) {
   visible_narrow.visible = true;
   visible_narrow.spread = 5.0 * kDeg;
   visible_narrow.shift = 10.0 * kDeg;  // score 2
-  object.chromatic.features = { invisible_wide, visible_narrow };
+  object.MutableChromatic().verdict.features = { invisible_wide, visible_narrow };
   EXPECT_NEAR(DeclaredWidthOf(object) / kDeg, 5.0, 1e-12);
   // Unassessed chromatic: zero width (the tolerance is then h alone).
   StructureObjectRecord unassessed;
-  unassessed.chromatic_assessed = false;
+  unassessed.ClearChromatic();
   EXPECT_EQ(DeclaredWidthOf(unassessed), 0.0);
 }
 
@@ -424,11 +426,11 @@ TEST(McAttribution, ToleranceUsesTheDeclaredWidthWhenWider) {
   const ObjectDeltaImage image =
       ObjectDeltaImageOf(*fixture.kind1, fixture.core, InputOf(fixture.core, McEvidenceBlock{}, t).geometry, nullptr);
   ASSERT_TRUE(image.available);
-  fixture.kind1->chromatic_assessed = true;
+  fixture.kind1->SetChromatic({});
   analytic::ChromaticFeature wide;
   wide.visible = true;
   wide.spread = 5.0 * kDeg;  // the declared width exceeds h = 1 deg
-  fixture.kind1->chromatic.features = { wide };
+  fixture.kind1->MutableChromatic().verdict.features = { wide };
   // A record 3 deg off the critical value: outside h, inside the declared width -> observed.
   McEvidenceBlock mc = EvidenceOf({ ActualAt({ SkyAt(image.delta_rad.front() + 3.0 * kDeg) }, 1000.0) }, {});
   const CorroborationOutcome outcome = DeriveCorroboration(InputOf(fixture.core, mc, t));

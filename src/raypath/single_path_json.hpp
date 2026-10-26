@@ -1,31 +1,31 @@
 #ifndef LUMICE_RAYPATH_SINGLE_PATH_JSON_HPP_
 #define LUMICE_RAYPATH_SINGLE_PATH_JSON_HPP_
 
-// The JSON form of a SinglePathResult — the one serialization of it, which the `Lumice raypath`
-// subcommand writes and a GUI shell will read through the same lumice_raypath.h entry point — and its one
-// reader, ParseWarmSeeds, which takes an earlier output back as warm starts. Writer and reader sit
-// in one file so the keys they share cannot drift apart. The field-by-field description is
-// doc/raypath/raypath-cli-output.md.
+// The JSON form of a completed PointResult and the schema-1/4 warm candidate decoder.
+// The field-by-field description is doc/raypath/raypath-cli-output.md.
 //
 // Numbers: every value is written as the shortest decimal that reads back to the same double
 // (nlohmann's dump), so a seed round-trips bit-exactly; the three sun-grid arrays are first rounded
 // to 9 significant digits, which bounds their size (a 720-row grid is a million cells per array) at
 // a precision far below the kernel's own tolerances. NaN is written as null.
 
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
-#include "raypath/single_path_analysis.hpp"
+#include "core/distribution.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/point_result.hpp"
 
 namespace lumice::raypath {
+
+struct WarmCandidate;
 
 // Significant digits kept for the sun-grid arrays (deviation_rad, entry_measure).
 constexpr int kSunGridSignificantDigits = 9;
 
 // The whole result as one JSON document (a UTF-8 string, no trailing newline). `product_version`
 // is the Lumice version that produced it (generator.lumice).
-std::string ToJson(const SinglePathResult& result, const std::string& product_version);
+std::string ToJson(const PointResult& result, const std::string& product_version);
 
 // The warm seeds of an earlier output: every components[*].seed then every incomplete[*].seed,
 // 9 row-major doubles each, appended to `seeds`. kInvalidArgument (with a message naming what is
@@ -34,29 +34,8 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
 // reader's.
 Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds);
 
-// The two-family warm reader. A schema-1 document takes exactly ParseWarmSeeds's path (its seeds
-// and nothing else — a schema-1 file is not a survey index). A schema-4 survey document goes
-// through the consistency gates first — crystal id, path layers, and the config fingerprint are
-// compared here, and the family arm's measure echo is read here but compared by the caller (the
-// C API bridge, which owns the config: c_api_raypath.cpp's Analyze is the fourth gate's home) —
-// each refusal an `invalid_argument: warm index: ...` naming the gate; then the harvest fills
-// `survey` and the seeds from the document's warm_index block. A document whose warm_index block
-// is absent or missing any of its fields is NOT a refusal: `survey->index_present` stays false
-// (the documented warm_index_absent degradation — no structural reuse, no seed consumption) and
-// the query runs its context inline.
-struct WarmGateContext {
-  std::string config_fingerprint;  // RoutingConfigFingerprint's value for this request's config
-  long long crystal_id = 0;
-  std::vector<std::vector<int>> path_layers;
-};
-
-Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, std::vector<double>* seeds,
-                     SurveyWarmSource* survey);
-
-// The survey context block's one JSON spelling — the point document's `survey_context` and the
-// probe document's `context` are the same shape, and this is its one writer. Exported so the two
-// documents cannot drift; the value fields appear exactly when their state says something was read.
-nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& context);
+// Decode only: candidate identity and numeric facts are validated by survey_reuse.
+Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate);
 
 // The config's own spelling of a distribution ("fixed" / "uniform" / "gauss" / "zigzag" /
 // "laplacian" / "gauss_legacy"); a plain number in the config is "fixed". Shared by the point and

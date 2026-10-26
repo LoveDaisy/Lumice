@@ -284,6 +284,12 @@ add_executable(unit_correctness_test
   # lumice_raypath_obj OBJECT library linked below — the same objects liblumice carries.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp"
+  # The budget owner: the legacy windows' zero rules, the unified query deadline's resolve-once
+  # and clamp-forever, and the per-face runtime reads (one resolution per leg per query).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_query_control.cpp"
+  # The workspace: lazy creation, bounded slots, the typed survey->point/probe warm chain, the
+  # cancelled-block rejection, and results' independence from config/scene/workspace lifetime.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_workspace.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_c_api.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_input_assembly.cpp"

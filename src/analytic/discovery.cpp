@@ -176,8 +176,13 @@ std::vector<BandEvent> IceDiscovery::BuildBand(int sample_count, double delta, d
   // The stop probe is polled at the loop boundary only (every 1024th sample, the diagnostic
   // batch's own cadence) — never inside a sample's numerics.
   for (int i = 0; i < sample_count; i++) {
-    if (stop != nullptr && (i % 1024) == 1023 && stop->Stopped()) {
-      break;
+    if (stop != nullptr && (i % 1024) == 1023) {
+      if (stop->token != nullptr) {
+        stop->token->NotePoll(kPollBandLattice);
+      }
+      if (stop->Stopped()) {
+        break;
+      }
     }
     BandEvent event;
     double transmission = 0.0;
@@ -197,9 +202,19 @@ std::vector<BandEvent> IceDiscovery::BuildBand(int sample_count, double delta, d
   return band;
 }
 
-std::vector<SampleEvent> IceDiscovery::BuildEvents(int sample_count) {
+std::vector<SampleEvent> IceDiscovery::BuildEvents(int sample_count, const DiscoveryStop* stop, int* completed) {
   std::vector<SampleEvent> events;
+  int run = 0;
   for (int i = 0; i < sample_count; i++) {
+    if (stop != nullptr && (i % 1024) == 1023) {
+      if (stop->token != nullptr) {
+        stop->token->NotePoll(kPollEventsLattice);
+      }
+      if (stop->Stopped()) {
+        break;
+      }
+    }
+    run = i + 1;
     SampleEvent event;
     double transmission = 0.0;
     if (!EvaluateLatticePoint(sample_count, i, &event.event, &transmission)) {
@@ -212,6 +227,9 @@ std::vector<SampleEvent> IceDiscovery::BuildEvents(int sample_count) {
   }
   std::sort(events.begin(), events.end(),
             [](const SampleEvent& a, const SampleEvent& b) { return ByDeviationThenIndex(a.event, b.event); });
+  if (completed != nullptr) {
+    *completed = run;
+  }
   return events;
 }
 
@@ -236,7 +254,8 @@ bool IceDiscovery::Admit(const TargetChart& chart, const ContinuationParams& par
 
 DiscoveryOutput IceDiscovery::DiscoverOnBand(const double target_direction[3], const std::vector<BandEvent>& band,
                                              const double* extra_seeds, int extra_count, double cluster_radius,
-                                             double distance_threshold, const ContinuationParams& params) {
+                                             double distance_threshold, const ContinuationParams& params,
+                                             const DiscoveryStop* stop) {
   DiscoveryOutput out;
   out.pool_count = static_cast<int>(band.size());
   out.extra_seed_count = extra_count;
@@ -254,7 +273,7 @@ DiscoveryOutput IceDiscovery::DiscoverOnBand(const double target_direction[3], c
   const TargetChart chart = MakeTargetChart(target_direction);
   auto admit = [this, &chart, &params](const double raw[9], double seed[9]) { return Admit(chart, params, raw, seed); };
   DiscoverOnPool(map_, chart, params, poses.data(), static_cast<int>(pool_size), extra_count, offsets.data(),
-                 cluster_radius, distance_threshold, admit, &out);
+                 cluster_radius, distance_threshold, admit, &out, stop);
   return out;
 }
 
@@ -264,7 +283,8 @@ DiscoveryOutput IceDiscovery::Discover(const double target_direction[3], int sam
                                        const DiscoveryStop* stop) {
   const std::vector<BandEvent> band =
       BuildBand(sample_count, TargetDeviation(incident_, target_direction), band_half_width, stop);
-  return DiscoverOnBand(target_direction, band, extra_seeds, extra_count, cluster_radius, distance_threshold, params);
+  return DiscoverOnBand(target_direction, band, extra_seeds, extra_count, cluster_radius, distance_threshold, params,
+                        stop);
 }
 
 }  // namespace lumice::analytic

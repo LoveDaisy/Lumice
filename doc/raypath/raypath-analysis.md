@@ -544,11 +544,12 @@ Simulation；详情列文字最多、最需要宽度，且要能用 app 字号�
 确定性单光路图（「解析结果」）、临界点分类、机制卡片、除「最亮点」之外的预设点、波长临界。
 Analyze 窗口正式排期即满足 §5.1.6 移植触发的第一个条件（「面板功能真正排期」）。
 
-> 一期「选定光路之后」的计算已由 `Lumice raypath` 子命令与其背后的单光路分析模块
-> （`src/raypath/`，C API `LUMICE_AnalyzeSinglePath`）提供，界面复用同一模块与同一份 JSON
-> （字段见 `doc/raypath/raypath-cli-output.md`，用法见 `doc/user-manual/03-cli-quickstart.md`）。
+> 一期「选定光路之后」的计算已由 `Lumice raypath` 子命令与 `src/raypath/` 的 typed 分析模块
+> 提供。CLI 经 Workspace query 得到冻结结果，再调用同一 JSON codec；GUI 可经 C typed getter
+> 读取同一结果，无须解析 JSON（字段合同见 `doc/raypath/raypath-cli-output.md`，用法见
+> `doc/user-manual/03-cli-quickstart.md`）。
 
-`Lumice raypath --report` 与 `LUMICE_AnalyzePathFeatureReport` 提供不带target的有界单晶体诊断。
+`Lumice raypath report` 与 `LUMICE_AnalyzePathFeatureReport` 提供不带 target 的有界单晶体诊断。
 当前**schema 3**已经取代固定path/参考形状detector（schema 2 的 MC 发现层曾完成这步取代，现被
 schema 3 降级为佐证腿并原样携带其记录）：报告分两层证据——**几何层**在取向约化球面上枚举链的
 结构对象（`D_P` 临界集、可行域边界、透射权重折线、受限族像），附精确证书（δ 轴 partition、

@@ -136,6 +136,11 @@ fails the check.
   prevent. So: a rule BOTH renderers must obey, expressible without a core or config type, belongs
   in `src/util/`. Anything that needs to see a `RenderConfig`, a `SimData` or a crystal does not,
   and still goes through the C API.
+- Raypath typed dependency boundary: `scripts/check_policies.py`'s `raypath-typed-boundary`
+  checks public value and query-facade include closures (quoted and angle-bracket in-tree),
+  the bridge's direct `detail/` includes, and codec-to-query header dependencies. Its
+  narrow scope and runtime proof limits are in `doc/raypath/typed-results.md` (Dependency
+  boundary); module ownership lives in `src/raypath/AGENTS.md`.
 - Environment variables: before adding any new `std::getenv`, apply the decision gate in
   `doc/env-var-policy.md`. User-facing behavior switches must go through CLI/config/API,
   not env vars (env causes silent per-machine drift). Env is fine for dev/experiment knobs
@@ -362,6 +367,7 @@ Valuable design/architecture docs live in `doc/` (tracked); most have a `_zh`/`.
   - `cases/raypath-analysis-cases.md` — the census of canonical test scenes (append-only numbering). Take test scenes from here, not ad hoc.
   - `raypath-cli-output.md` — the `Lumice raypath` subcommand's JSON field reference (target schema1 / report schema3). Read before output fields / subcommand options / that C entry.
   - `raypath-schema3-layered-design.md` — the schema3 layered-design record. Read before schema3 report semantics / geometry-layer enums / MC evidence / `src/analytic/` module-C surface.
+  - `typed-results.md` — typed result ownership, shared structure/quantity services, identity-bound references and the field migration ledger. Read before modifying result types / claim payloads / typed completion / result-to-JSON assembly.
   - `gap1-family-routing.md` — the measure-to-family routing (label-free routing, the fixed/narrow/wide concentration trichotomy, the freezing ladder with the per-object survival filter, the Lumice-born restricted-family rank primitive `src/analytic/family_rank.hpp`). Read before family routing / ladder levels / freeze decisions / restricted-family rank or fold semantics / widening the routing's v1 refusal domain.
 - **print mode**: `print-mode-subtractive-ink.md` — the single design authority for the print display mode. Read before print-mode field chain / operator / colour-channel exclusivity / headroom warnings.
 - **C API**: `c_api.md`; `capi-lifecycle-architecture.md` §9 — result lifetime and ownership invariants (read before result lifetime / `DoSnapshot` publishing / C API borrow contracts); `api-layering-and-product-lines.md` (read before shipping dynamic libraries / new product lines / adding or moving C API functions across headers / re-raising a repo split); `analytic-api.md` (read before new library targets / export lists / log takeover / packaging / the first parsing module).

@@ -1,12 +1,17 @@
 #include "raypath/single_path_json.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "raypath/detail/json_values.hpp"
+#include "raypath/survey_result.hpp"
+#include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
 
@@ -314,35 +319,36 @@ nlohmann::ordered_json SunGridJson(const SunSphereGrid& g) {
 // only under "finite" (so an unevaluated distance can never be misread as the certified 0 that
 // means "inside the support").
 nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& c) {
-  nlohmann::ordered_json j = { { "source", c.source }, { "warm_index_absent", c.warm_index_absent } };
+  nlohmann::ordered_json j = { { "source", ContextSourceName(c.source) },
+                               { "warm_index_absent", c.warm_index_absent } };
   if (c.reference_wavelength_nm > 0.0) {
     j["reference_wavelength_nm"] = Num(c.reference_wavelength_nm);
   }
-  nlohmann::ordered_json object = { { "state", c.object.state } };
+  nlohmann::ordered_json object = { { "state", survey::EvidenceStateName(c.object.state) } };
   if (!c.object.reason.empty()) {
     object["reason"] = c.object.reason;
   }
-  if (c.object.state == "certified") {
+  if (c.object.state == survey::EvidenceState::kCertified) {
     object["target_inside_support"] = c.target_inside_support;
-    object["kind"] = c.object_kind;
+    object["kind"] = c.object_kind ? survey::SurveyObjectKindName(*c.object_kind) : "";
     object["members"] = c.object_members;
     object["distance_deg"] = Num(c.object_distance_deg);
   }
   j["object"] = std::move(object);
-  nlohmann::ordered_json edge = { { "state", c.edge.state } };
+  nlohmann::ordered_json edge = { { "state", survey::EvidenceStateName(c.edge.state) } };
   if (!c.edge.reason.empty()) {
     edge["reason"] = c.edge.reason;
   }
-  if (c.edge.state == "finite") {
+  if (c.edge.state == survey::EvidenceState::kFinite) {
     edge["distance_deg"] = Num(c.edge_distance_deg);
-    edge["basis"] = c.edge_basis;
+    edge["basis"] = ContextEdgeBasisName(c.edge_basis);
   }
   j["edge"] = std::move(edge);
-  nlohmann::ordered_json band = { { "state", c.band_sum.state } };
+  nlohmann::ordered_json band = { { "state", survey::EvidenceStateName(c.band_sum.state) } };
   if (!c.band_sum.reason.empty()) {
     band["reason"] = c.band_sum.reason;
   }
-  if (c.band_sum.state == "finite") {
+  if (c.band_sum.state == survey::EvidenceState::kFinite) {
     band["value"] = Num(c.band_sum_value);
     band["delta_deg"] = Num(c.band_sum_delta_deg);
     band["bin_deg"] = Num(c.band_sum_bin_deg);
@@ -366,18 +372,28 @@ Error Invalid(const std::string& what) {
   return { ErrorCode::kInvalidArgument, "warm seeds: " + what };
 }
 
+bool IntInRange(const nlohmann::json& value) {
+  if (!value.is_number_integer())
+    return false;
+  if (value.is_number_unsigned())
+    return value.get<std::uint64_t>() <= static_cast<std::uint64_t>(std::numeric_limits<int>::max());
+  const std::int64_t n = value.get<std::int64_t>();
+  return n >= std::numeric_limits<int>::min() && n <= std::numeric_limits<int>::max();
+}
+
 }  // namespace
 
-std::string ToJson(const SinglePathResult& result, const std::string& product_version) {
+static std::string EncodePoint(const PointData& result, const SurveyContextBlock& context,
+                               const std::string& product_version) {
   nlohmann::ordered_json doc;
   doc[kKeySchemaVersion] = result.meta.schema_version;
   doc["generator"] = { { "lumice", product_version }, { "analytic_api_version", result.meta.analytic_api_version } };
   doc["conventions"] = Conventions();
   doc["meta"] = MetaJson(result.meta);
-  if (result.outcome == Outcome::kPointMass) {
+  if (result.OutcomeValue() == Outcome::kPointMass) {
     // Rank 0: no fiber is traced, so there are no components and no discovery.
     doc["outcome"] = "point_mass";
-    const PointMass& pm = result.point_mass;
+    const PointMass& pm = result.Mass();
     nlohmann::ordered_json pm_json = { { "direction", Array(pm.direction, 3) },
                                        { "altitude_deg", Num(pm.altitude_deg) },
                                        { "azimuth_deg", Num(pm.azimuth_deg) },
@@ -386,39 +402,46 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
     doc["point_mass"] = std::move(pm_json);
   } else {
     doc["outcome"] = "discovered";
-    doc["measure_registration"] = MeasureRegistrationJson(result.measure_registration);
+    doc["measure_registration"] = MeasureRegistrationJson(result.Discovered().measure_registration);
     nlohmann::ordered_json components = nlohmann::ordered_json::array();
-    for (const auto& c : result.components) {
+    for (const auto& c : result.Discovered().components) {
       components.push_back(ComponentJson(c));
     }
     doc[kKeyComponents] = std::move(components);
     nlohmann::ordered_json incomplete = nlohmann::ordered_json::array();
-    for (const auto& c : result.incomplete) {
+    for (const auto& c : result.Discovered().incomplete) {
       incomplete.push_back(IncompleteJson(c));
     }
     doc[kKeyIncomplete] = std::move(incomplete);
-    doc["discovery"] = DiscoveryJson(result.discovery);
-    doc["reach"] = ReachJson(result.reach);
+    doc["discovery"] = DiscoveryJson(result.Discovered().discovery);
+    doc["reach"] = ReachJson(result.Discovered().reach);
   }
   // Absent when the grid was not asked for (--grid 0).
   if (result.sun_grid.lat_count > 0) {
     doc["sun_grid"] = SunGridJson(result.sun_grid);
   }
   // The survey context: where the target sits in the survey's structure (always written; every
-  // field carries its own state, so absence can never read as answered).
-  // Cost contract: on a deferred result SurveyContextOf runs the context-only T0-T2 assembly
-  // (seconds); callers that serialize more than once materialize first via EnsureSurveyContext.
-  doc["survey_context"] = SurveyContextJson(SurveyContextOf(result));
+  // field carries its own state, so absence can never read as answered). The encoder reads the
+  // completed value's own context block — encoding never computes anything.
+  doc["survey_context"] = SurveyContextJson(context);
   return doc.dump();
 }
 
-Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
-  nlohmann::json doc = nlohmann::json::parse(json_text, nullptr, /*allow_exceptions=*/false);
-  if (doc.is_discarded()) {
-    return Invalid("not a JSON document");
+std::string ToJson(const PointResult& result, const std::string& product_version) {
+  if (!result.Data().Completed()) {
+    throw std::invalid_argument("point: an uncompleted value has no publication");
   }
+  detail::g_json_encode_calls.fetch_add(1, std::memory_order_relaxed);
+  return EncodePoint(result.Data(), result.Data().survey_context, product_version);
+}
+
+namespace {
+Error DecodePointSeeds(const nlohmann::json& doc, std::vector<double>* seeds) {
   if (!doc.is_object() || !doc.contains(kKeySchemaVersion) || !doc[kKeySchemaVersion].is_number_integer()) {
     return Invalid("not a `Lumice raypath` output (no integer schema_version)");
+  }
+  if (!IntInRange(doc[kKeySchemaVersion])) {
+    return Invalid("schema_version is outside the supported integer range");
   }
   const int version = doc[kKeySchemaVersion].get<int>();
   if (version != kSchemaVersion) {
@@ -454,9 +477,19 @@ Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
   seeds->insert(seeds->end(), found.begin(), found.end());
   return {};
 }
+}  // namespace
 
-Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, std::vector<double>* seeds,
-                     SurveyWarmSource* survey) {
+Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
+  nlohmann::json doc = nlohmann::json::parse(json_text, nullptr, /*allow_exceptions=*/false);
+  return doc.is_discarded() ? Invalid("not a JSON document") : DecodePointSeeds(doc, seeds);
+}
+
+Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate) {
+  detail::g_json_decode_calls.fetch_add(1, std::memory_order_relaxed);
+  *candidate = {};
+  candidate->origin = WarmOrigin::kImportedJson;
+  auto* seeds = &candidate->seeds;
+  auto* survey = &candidate->facts;
   nlohmann::json doc = nlohmann::json::parse(json_text, nullptr, /*allow_exceptions=*/false);
   if (doc.is_discarded()) {
     return Invalid("not a JSON document");
@@ -464,50 +497,65 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
   if (!doc.is_object()) {
     return Invalid("not a warm document (not an object)");
   }
-  // The schema-4 arm first (a survey document also carries an integer schema_version — the
-  // family name is the discriminator): a schema-4 document through the consistency gates, then
-  // the harvest.
-  const bool is_survey =
-      doc.contains("schema") && doc["schema"].is_string() && doc["schema"].get<std::string>() == "lumice.path-survey";
-  if (!is_survey) {
-    // The schema-1 arm, spelled exactly as ParseWarmSeeds's: a target-fiber output is a seed
-    // sheet, not a survey index — the survey context stays unset and the query computes it
-    // inline (from_survey_document stays false: the bridge hands the query nothing here).
-    return ParseWarmSeeds(json_text, seeds);
+  if (doc.contains("schema") && doc["schema"] != "lumice.path-survey") {
+    return Invalid("unknown warm document schema");
   }
-  survey->from_survey_document = true;
+  const bool is_survey = doc.contains("schema");
+  if (!is_survey) {
+    return DecodePointSeeds(doc, seeds);
+  }
+  survey->family = WarmDocumentFamily::kSurvey;
   const auto refuse = [](const std::string& why) { return Error{ ErrorCode::kInvalidArgument, "warm index: " + why }; };
-  // Gate 1-2: the crystal and the path, against the request echo.
+  if (!doc.contains(kKeySchemaVersion) || !doc[kKeySchemaVersion].is_number_integer() ||
+      doc[kKeySchemaVersion] != kSurveySchemaVersion) {
+    return refuse("unsupported survey schema_version");
+  }
+  // Decode the request echo; the product owner compares its physical identity.
   if (!doc.contains("request") || !doc["request"].is_object()) {
     return refuse("the document carries no request echo");
   }
   const auto& request = doc["request"];
-  if (!request.contains("crystal_id") || !request["crystal_id"].is_number_integer() ||
-      request["crystal_id"].get<long long>() != gate.crystal_id) {
+  if (!request.contains("crystal_id") || !request["crystal_id"].is_number_integer()) {
     return refuse("crystal gate: the document's request.crystal_id does not match this query");
   }
+  candidate->crystal_id = request["crystal_id"].get<long long>();
+  candidate->decode_stage = WarmDecodeStage::kPath;
   if (!request.contains("path_layers") || !request["path_layers"].is_array()) {
     return refuse("path gate: the document's request carries no path_layers");
   }
-  if (request["path_layers"].size() != gate.path_layers.size()) {
-    return refuse("path gate: the document's request.path_layers does not match this query");
-  }
-  for (size_t i = 0; i < gate.path_layers.size(); i++) {
-    const auto& layer = request["path_layers"][i];
-    if (!layer.is_array() || layer.size() != gate.path_layers[i].size()) {
+  for (const auto& layer : request["path_layers"]) {
+    if (!layer.is_array())
       return refuse("path gate: the document's request.path_layers does not match this query");
-    }
-    for (size_t j = 0; j < gate.path_layers[i].size(); j++) {
-      if (!layer[j].is_number_integer() || layer[j].get<int>() != gate.path_layers[i][j]) {
+    std::vector<int> faces;
+    for (const auto& face : layer) {
+      if (!IntInRange(face))
         return refuse("path gate: the document's request.path_layers does not match this query");
-      }
+      faces.push_back(face.get<int>());
+    }
+    candidate->path_layers.push_back(std::move(faces));
+  }
+  candidate->decode_stage = WarmDecodeStage::kMeasure;
+  if (doc.contains("scope") && !doc["scope"].is_object()) {
+    return refuse("corrupt warm document: scope is not an object");
+  }
+  if (doc.contains("scope") && doc["scope"].contains("scene_layer")) {
+    const auto& layer = doc["scope"]["scene_layer"];
+    if (layer.is_null()) {
+      candidate->location = ScopeLocation{ SelectionLocation::kStandalone, 0 };
+    } else if (layer.is_number_integer() && layer.get<long long>() >= 0) {
+      candidate->location =
+          ScopeLocation{ SelectionLocation::kSceneLayer, static_cast<size_t>(layer.get<long long>()) };
+    } else {
+      return refuse("corrupt warm document: scope.scene_layer is not a nonnegative layer or null");
     }
   }
-  // Gate 4 (declared-skip): the family arm's measure echo. Only the family-arm documents carry
+  // Measure echo extraction: the family arm's measure echo. Only the family-arm documents carry
   // family_routing; its absence is data (the arm did not run), so the gate skips with the
   // declaration carried in the survey source — the caller compares the echo when it is present.
-  if (doc.contains("family_routing") && doc["family_routing"].is_object() &&
-      doc["family_routing"].contains("measure")) {
+  if (doc.contains("family_routing") && !doc["family_routing"].is_object()) {
+    return refuse("corrupt warm document: family_routing is not an object");
+  }
+  if (doc.contains("family_routing") && doc["family_routing"].contains("measure")) {
     const auto read_dim = [](const nlohmann::json& dim, SurveyWarmSource::MeasureDimEcho* out) {
       if (!dim.is_object() || !dim.contains("kind") || !dim["kind"].is_string() || !dim.contains("center_deg") ||
           !dim["center_deg"].is_number() || !dim.contains("width_deg") || !dim["width_deg"].is_number()) {
@@ -527,9 +575,24 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
         !read_dim(measure["azimuth"], &survey->measure_azimuth) || !read_dim(measure["roll"], &survey->measure_roll)) {
       return refuse("corrupt warm document: family_routing.measure is present but malformed");
     }
+    if (measure.contains("measure_kind")) {
+      if (measure["measure_kind"] != "ideal_frozen")
+        return refuse("corrupt warm document: unknown family measure kind");
+      survey->quantity.measure = MeasureKind::kIdealFrozen;
+    }
     survey->has_measure_echo = true;
   }
-  // Gate 3: the config fingerprint — the one comparison input with no pre-existing echo.
+  // Decode the index receipt; no fingerprint is compared at this boundary.
+  if (doc.contains("warm_index")) {
+    const auto& index = doc["warm_index"];
+    if (!index.is_object() || (index.contains("seeds") && !index["seeds"].is_array()) ||
+        (index.contains("seed_sources") && !index["seed_sources"].is_array()) ||
+        (index.contains("reuse_scope") && !index["reuse_scope"].is_string()) ||
+        (index.contains("produced_for") && !index["produced_for"].is_string()) ||
+        (index.contains("config_fingerprint") && !index["config_fingerprint"].is_string())) {
+      return refuse("corrupt warm document: malformed warm_index");
+    }
+  }
   const bool index_block =
       doc.contains("warm_index") && doc["warm_index"].is_object() && doc["warm_index"].contains("seeds") &&
       doc["warm_index"]["seeds"].is_array() && doc["warm_index"].contains("seed_sources") &&
@@ -538,23 +601,21 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
       doc["warm_index"]["produced_for"].is_string() && doc["warm_index"].contains("config_fingerprint") &&
       doc["warm_index"]["config_fingerprint"].is_string();
   if (!index_block) {
-    // The D2 degradation: a pre-warm document (every schema-4 document written before this build)
-    // or a truncated one. Not a refusal — the query degrades, visibly, to its own inline context.
     survey->index_present = false;
     return {};
   }
-  if (doc["warm_index"]["config_fingerprint"].get<std::string>() != gate.config_fingerprint) {
-    return refuse(
-        "config fingerprint gate: the document's warm_index.config_fingerprint does not "
-        "match this query's config (a config field in the routing projection changed)");
-  }
+  candidate->config_fingerprint = doc["warm_index"]["config_fingerprint"].get<std::string>();
   survey->index_present = true;
+  candidate->decode_stage = WarmDecodeStage::kPayload;
 
   // The harvest: the seeds...
   const auto& doc_seeds = doc["warm_index"]["seeds"];
   const auto& doc_sources = doc["warm_index"]["seed_sources"];
   if (doc_seeds.size() != doc_sources.size()) {
     return refuse("the document's warm_index seeds and seed_sources disagree in length");
+  }
+  if (!std::all_of(doc_sources.begin(), doc_sources.end(), [](const auto& source) { return source.is_string(); })) {
+    return refuse("corrupt warm document: seed_sources must be strings");
   }
   for (size_t i = 0; i < doc_seeds.size(); i++) {
     const auto& seed = doc_seeds[i];
@@ -572,12 +633,20 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
     }
   }
   // ...the routing verdict...
-  if (doc.contains("routing") && doc["routing"].is_object() && doc["routing"].contains("early_stopped") &&
-      doc["routing"]["early_stopped"].is_boolean()) {
+  if (doc.contains("routing") && !doc["routing"].is_object()) {
+    return refuse("corrupt warm document: routing is not an object");
+  }
+  if (doc.contains("routing") && doc["routing"].contains("early_stopped")) {
+    if (!doc["routing"]["early_stopped"].is_boolean())
+      return refuse("corrupt warm document: routing.early_stopped is not a boolean");
     survey->early_stopped = doc["routing"]["early_stopped"].get<bool>();
   }
-  if (doc.contains("scope") && doc["scope"].is_object()) {
+  if (doc.contains("scope")) {
     const auto& scope = doc["scope"];
+    for (const char* key : { "wavelength_nm", "sun_altitude_deg", "sun_azimuth_deg" }) {
+      if (scope.contains(key) && !scope[key].is_number() && !scope[key].is_null())
+        return refuse(std::string("corrupt warm document: invalid scope.") + key);
+    }
     if (scope.contains("wavelength_nm") && scope["wavelength_nm"].is_number()) {
       survey->wavelength_nm = scope["wavelength_nm"].get<double>();
       survey->has_wavelength = std::isfinite(survey->wavelength_nm) && survey->wavelength_nm > 0.0;
@@ -585,6 +654,14 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
     survey->wavelength_source = scope.contains("wavelength_source") && scope["wavelength_source"].is_string() ?
                                     scope["wavelength_source"].get<std::string>() :
                                     "";
+    if (scope.contains("geometry_kind")) {
+      if (scope["geometry_kind"] == "realized")
+        survey->geometry.kind = GeometryKind::kRealized;
+      else if (scope["geometry_kind"] == "declared_population")
+        survey->geometry.kind = GeometryKind::kDeclaredPopulation;
+      else
+        return refuse("corrupt warm document: unknown geometry kind");
+    }
     if (scope.contains("sun_altitude_deg") && scope["sun_altitude_deg"].is_number()) {
       survey->sun_altitude_deg = scope["sun_altitude_deg"].get<double>();
       survey->has_sun_altitude = std::isfinite(survey->sun_altitude_deg);
@@ -599,31 +676,40 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
   // harvest arm spells, so the two arms answer identically on any document (the dual-arm oracle
   // test pins it). A support_set whose interval list harvests nothing reads as no support: the
   // flag is set once after the loop, from what actually landed.
-  if (doc.contains("objects") && doc["objects"].is_array()) {
+  if (doc.contains("objects") && !doc["objects"].is_array()) {
+    return refuse("corrupt warm document: objects is not an array");
+  }
+  if (doc.contains("objects")) {
     for (const auto& card : doc["objects"]) {
       if (!card.is_object()) {
-        continue;
+        return refuse("corrupt warm document: object is not an object");
       }
-      if (card.contains("support_set") && card["support_set"].is_object() &&
-          card["support_set"].contains("intervals") && card["support_set"]["intervals"].is_array()) {
-        std::vector<int> members;
-        if (card.contains("members") && card["members"].is_array() && !card["members"].empty() &&
-            card["members"][0].is_array()) {
-          for (const auto& face : card["members"][0]) {
-            if (face.is_number_integer()) {
-              members.push_back(face.get<int>());
-            }
-          }
+      std::vector<std::vector<int>> source_members;
+      if (card.contains("members")) {
+        if (!card["members"].is_array())
+          return refuse("corrupt warm document: invalid object members");
+        for (const auto& member : card["members"]) {
+          if (!member.is_array() || !std::all_of(member.begin(), member.end(), IntInRange))
+            return refuse("corrupt warm document: invalid object members");
+          source_members.push_back(member.get<std::vector<int>>());
         }
+      }
+      if (card.contains("support_set") &&
+          (!card["support_set"].is_object() || !card["support_set"].contains("intervals") ||
+           !card["support_set"]["intervals"].is_array())) {
+        return refuse("corrupt warm document: invalid support_set intervals");
+      }
+      if (card.contains("support_set")) {
         for (const auto& interval : card["support_set"]["intervals"]) {
           if (!interval.is_object() || !interval.contains("lower_deg") || !interval["lower_deg"].is_number() ||
               !interval.contains("upper_deg") || !interval["upper_deg"].is_number()) {
-            continue;
+            return refuse("corrupt warm document: invalid support interval");
           }
           SurveyWarmSource::SupportInterval out;
           out.lower_deg = interval["lower_deg"].get<double>();
           out.upper_deg = interval["upper_deg"].get<double>();
-          out.members = members;
+          out.members = source_members.empty() ? std::vector<int>{} : source_members.front();
+          out.source_members = source_members;
           survey->intervals.push_back(std::move(out));
         }
       }
@@ -631,17 +717,35 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
           card["caustic_edge"].contains("position_deg") && card["caustic_edge"]["position_deg"].is_number()) {
         survey->has_edge = true;
         survey->edge_deg = card["caustic_edge"]["position_deg"].get<double>();
+        survey->edge_members = source_members;
       }
     }
     survey->has_support = !survey->intervals.empty();
   }
   // ...the probe's radial profile.
-  if (doc.contains("probes") && doc["probes"].is_array() && !doc["probes"].empty() && doc["probes"][0].is_object() &&
-      doc["probes"][0].contains("samples") && doc["probes"][0]["samples"].is_array()) {
+  if (doc.contains("probes") && !doc["probes"].is_array()) {
+    return refuse("corrupt warm document: probes is not an array");
+  }
+  if (doc.contains("probes") && !doc["probes"].empty() &&
+      (!doc["probes"][0].is_object() ||
+       (doc["probes"][0].contains("samples") && !doc["probes"][0]["samples"].is_array()))) {
+    return refuse("corrupt warm document: invalid probe");
+  }
+  if (doc.contains("probes") && !doc["probes"].empty() && doc["probes"][0].contains("samples")) {
     const auto& probe = doc["probes"][0];
     survey->has_probe = true;
     if (probe.contains("spec") && probe["spec"].is_object()) {
       const auto& spec = probe["spec"];
+      if (spec.contains("member_aggregation")) {
+        if (spec["member_aggregation"] != "physical_class")
+          return refuse("corrupt warm document: unknown member aggregation");
+        survey->quantity.aggregation = MemberAggregation::kPhysicalClass;
+      }
+      if (spec.contains("measure_kind")) {
+        if (spec["measure_kind"] != "ideal_frozen")
+          return refuse("corrupt warm document: unknown probe measure kind");
+        survey->quantity.measure = MeasureKind::kIdealFrozen;
+      }
       if (spec.contains("azimuth_deg") && spec["azimuth_deg"].is_number()) {
         survey->probe_azimuth_deg = spec["azimuth_deg"].get<double>();
         survey->has_probe_azimuth = std::isfinite(survey->probe_azimuth_deg);
@@ -659,27 +763,31 @@ Error ParseWarmStart(const std::string& json_text, const WarmGateContext& gate, 
         probe["spec"]["bin_deg"].is_number()) {
       survey->probe_bin_deg = probe["spec"]["bin_deg"].get<double>();
     }
-    if (probe.contains("spec") && probe["spec"].is_object() && probe["spec"].contains("sample_count") &&
-        probe["spec"]["sample_count"].is_number_integer()) {
-      survey->probe_sample_count = static_cast<int>(probe["spec"]["sample_count"].get<long long>());
+    if (probe.contains("spec") && probe["spec"].is_object() && probe["spec"].contains("sample_count")) {
+      if (!IntInRange(probe["spec"]["sample_count"]))
+        return refuse("corrupt warm document: invalid probe sample_count");
+      survey->probe_sample_count = probe["spec"]["sample_count"].get<int>();
     }
     // Every row with a delta_deg lands in the harvest, the grid's shape preserved: a value the
     // writer spelled null (an undefined number) parses as NaN — the row exists in the document,
     // and a reader that dropped it would hand the next query a silently shorter grid. (The
     // in-memory harvest arm reads the same rows verbatim; this is the two arms agreeing.)
     for (const auto& sample : probe["samples"]) {
-      if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number()) {
-        continue;
+      if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number() ||
+          !sample.contains("value") || (!sample["value"].is_number() && !sample["value"].is_null()) ||
+          !sample.contains("k") || !IntInRange(sample["k"]) || !sample.contains("k_eff") ||
+          (!sample["k_eff"].is_number() && !sample["k_eff"].is_null())) {
+        return refuse("corrupt warm document: invalid probe sample");
       }
       SurveyWarmSource::ProbeSample out;
       out.delta_deg = sample["delta_deg"].get<double>();
       constexpr double nan = std::numeric_limits<double>::quiet_NaN();
-      out.value = sample.contains("value") && sample["value"].is_number() ? sample["value"].get<double>() : nan;
-      if (sample.contains("k") && sample["k"].is_number_integer()) {
-        out.k = sample["k"].get<int>();
-      }
-      if (sample.contains("k_eff") && sample["k_eff"].is_number()) {
+      out.value = sample["value"].is_number() ? sample["value"].get<double>() : nan;
+      out.k = sample["k"].get<int>();
+      if (sample["k_eff"].is_number()) {
         out.k_eff = sample["k_eff"].get<double>();
+      } else if (out.k != 0) {
+        return refuse("corrupt warm document: nonempty probe sample has null k_eff");
       }
       survey->probe_samples.push_back(std::move(out));
     }

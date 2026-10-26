@@ -688,6 +688,15 @@ gives back explicitly (`LUMICE_ReleaseResultFrame`). Everything else in this sec
 evidence for why the invariant is necessary or a record of a direction that looked like it
 would satisfy the invariant and did not.
 
+Raypath result handles apply the same ownership rule to a different product: each handle owns
+its frozen typed value rather than borrowing storage from its Scene or Workspace. Borrowed
+scalar arrays and UTF-8 strings remain valid until that result's Destroy, including across
+Scene/Workspace destruction and later queries. Read-only getters and optional `ToJson` calls may
+overlap, but the caller must finish both getter calls and borrowed-pointer uses before Destroy.
+A `LUMICE_PathWarmData` extracted from a result owns its own candidate after the source result
+is destroyed. A workspace cache may share frozen storage, but its replacement or destruction
+does not govern the lifetime of a result already returned to the caller.
+
 Before v4.15, the API's result-retrieval surface was six server-taking getters
 (`LUMICE_GetRenderResults`, `LUMICE_GetCompositeResults`, `LUMICE_GetRawXyzResults`,
 `LUMICE_GetRawXyzAndCompositeResults`, `LUMICE_GetStatsResults`, `LUMICE_GetCachedStats`). Each

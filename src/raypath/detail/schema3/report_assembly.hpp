@@ -27,11 +27,13 @@
 #include <string>
 #include <vector>
 
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/schema3/mc_attribution.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/no_related_feature.hpp"
 #include "raypath/detail/schema3/structure_enumeration.hpp"
+#include "raypath/feature_report_result.hpp"
 
 namespace lumice::raypath::schema3 {
 
@@ -60,7 +62,12 @@ struct AssembledSchema3Report {
 
 AssembledSchema3Report AssembleSchema3Report(
     PathFeatureReport&& report, uint64_t max_optical_evaluations,
-    std::chrono::steady_clock::time_point enumeration_deadline = std::chrono::steady_clock::time_point::max());
+    const analytic::DiscoveryStop& enumeration_stop = analytic::DiscoveryStop{});
+
+// Capture the pure scope and budget settings before execution storage is moved.
+FeatureReportData PrepareFeatureReportResult(const PathFeatureReport& report);
+// Complete the sole result value, including source replay, coverage and work accounting.
+FeatureReportResult CompleteFeatureReportResult(FeatureReportData result, AssembledSchema3Report assembled);
 
 }  // namespace lumice::raypath::schema3
 #endif  // LUMICE_RAYPATH_DETAIL_SCHEMA3_REPORT_ASSEMBLY_HPP_

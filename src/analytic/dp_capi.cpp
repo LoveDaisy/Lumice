@@ -128,6 +128,11 @@ int WalkStatusOf(an::WalkStatus status) {
       return LUMICE_ANALYTIC_WALK_NOT_FINITE;
     case an::WalkStatus::kBadOrientation:
       return LUMICE_ANALYTIC_WALK_BAD_ORIENTATION;
+    case an::WalkStatus::kStopRequested:
+      // Unreachable through this surface: the C entry has no stop input, so no caller can make a
+      // walk stop cooperatively here. The case exists for -Wswitch; the fail-closed default
+      // below never runs.
+      return LUMICE_ANALYTIC_WALK_NOT_CLOSED;
   }
   return LUMICE_ANALYTIC_WALK_NOT_FINITE;  // -Wswitch keeps this unreachable as the kernel grows;
                                            // the default is a refusal, never a success

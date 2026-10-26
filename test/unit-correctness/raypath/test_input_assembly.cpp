@@ -1,13 +1,24 @@
 #include <cmath>
 #include <limits>
 #include <set>
+#include <type_traits>
 
 #include "core/color_util.hpp"
 #include "core/geo3d.hpp"
 #include "core/wl_stratifier.hpp"
 #include "gtest/gtest.h"
 #include "raypath/detail/input_assembly.hpp"
+#include "raypath/detail/input_scope.hpp"
+#include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/physical_member_scope.hpp"
+#include "raypath/domain/claim.hpp"
+#include "raypath/domain/result_identity.hpp"
+#include "raypath/feature_report_result.hpp"
+#include "raypath/point_result.hpp"
+#include "raypath/probe_result.hpp"
+#include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_result.hpp"
+#include "survey_test_fixtures.hpp"
 #include "util/illuminant.hpp"
 
 namespace {
@@ -168,4 +179,324 @@ TEST(AssembledInputMembers, SnapshotBitsAndEnsembleGateDoNotReadLiveState) {
   EXPECT_FALSE(rp::ResolvePhysicalMemberScope(request, &none).Ok());
 }
 
+TEST(TypedResultValues, ClaimsSeparateMissingFromFiniteZero) {
+  rp::Claim<double> claim;
+  EXPECT_TRUE(std::holds_alternative<rp::Unevaluated>(claim));
+  EXPECT_EQ(rp::ClaimValue(claim), nullptr);
+  claim = rp::Refused{ "outside_domain", {} };
+  EXPECT_EQ(rp::ClaimValue(claim), nullptr);
+  claim = rp::Finite<double>{ 0.0, {}, {} };
+  ASSERT_NE(rp::ClaimValue(claim), nullptr);
+  EXPECT_EQ(*rp::ClaimValue(claim), 0.0);
+  claim = rp::Certified<double>{ 1.0, "closed_form", {} };
+  ASSERT_NE(rp::ClaimValue(claim), nullptr);
+  EXPECT_EQ(*rp::ClaimValue(claim), 1.0);
+}
+
+TEST(TypedResultValues, ReferencesBelongToFrozenSnapshots) {
+  rp::MemberScope members;
+  members.member_kind = rp::MemberKind::kPhysicalL2;
+  members.members = { { 3, 5 }, { 4, 6 } };
+  using Snapshot = rp::StructureSnapshot<int>;
+  auto original = Snapshot::Finalize(members, { 42 }, { { rp::MemberId{ 0 } } });
+  ASSERT_TRUE(original);
+  const auto ref = original->Reference(rp::ObjectId{ 0 });
+  const auto member = original->Reference(rp::MemberId{ 1 });
+  ASSERT_TRUE(ref);
+  ASSERT_TRUE(member);
+  EXPECT_EQ(original->Reference(rp::ObjectId{ 1 }), std::nullopt);
+  EXPECT_EQ(original->Reference(rp::MemberId{ 2 }), std::nullopt);
+  auto copy = *original;
+  auto moved = std::move(*original);
+  original.reset();
+  EXPECT_EQ(copy.Resolve(*ref), moved.Resolve(*ref));
+  EXPECT_EQ(*copy.Resolve(*ref), 42);
+  EXPECT_EQ(*copy.Resolve(*member), members.members[1]);
+  static_assert(std::is_const_v<std::remove_reference_t<decltype(copy.Objects())>>);
+  static_assert(std::is_const_v<std::remove_reference_t<decltype(copy.Members())>>);
+  auto other = Snapshot::Finalize(members, { 43 }, { { rp::MemberId{ 0 } } });
+  ASSERT_TRUE(other);
+  EXPECT_EQ(other->Resolve(*ref), nullptr);
+  EXPECT_EQ(other->Resolve(*member), nullptr);
+  EXPECT_FALSE(Snapshot::Finalize(members, { 42 }, {}));
+  EXPECT_FALSE(Snapshot::Finalize(members, { 42 }, { { rp::MemberId{ 2 } } }));
+}
+
+TEST(TypedResultValues, CompletedProductsFreezeTheirOwnedTables) {
+  rp::survey::SurveyData data;
+  data.members = { { 3, 5 } };
+  rp::survey::SurveyObject object;
+  object.members = data.members;
+  data.objects.push_back(object);
+  const rp::survey::SurveyResult first(data);
+  const auto ref = first.Reference(rp::ObjectId{ 0 });
+  const auto member = first.Reference(rp::MemberId{ 0 });
+  ASSERT_TRUE(ref);
+  ASSERT_TRUE(member);
+  const auto copy = first;
+  EXPECT_EQ(copy.Resolve(*ref), first.Resolve(*ref));
+  static_assert(std::is_const_v<std::remove_reference_t<decltype(first.Data())>>);
+  data.members[0] = { 1, 2 };
+  data.objects[0].members = data.members;
+  const rp::survey::SurveyResult revised(std::move(data));
+  EXPECT_EQ(revised.Resolve(*ref), nullptr);
+  EXPECT_EQ(revised.Resolve(*member), nullptr);
+  EXPECT_EQ(*first.Resolve(*member), (std::vector<int>{ 3, 5 }));
+}
+
+rp::FeatureReportData CompletedReportFixture() {
+  rp::FeatureReportData data;
+  data.outcome = rp::ReportOutcome::kCompleted;
+  data.coverage.push_back(
+      { rp::CoverageRole::kBaseInput, "synthetic input", rp::CoverageStatus::kSupported, "test", {} });
+  data.coverage.push_back(
+      { rp::CoverageRole::kBoundedDiscovery, "synthetic discovery", rp::CoverageStatus::kSupported, "test", {} });
+  return data;
+}
+
+TEST(TypedResultValues, ReportAssociationsAreResultBoundAndRangeChecked) {
+  rp::FeatureReportData data;
+  data.outcome = rp::ReportOutcome::kCompleted;
+  data.coverage.push_back(
+      { rp::CoverageRole::kBaseInput, "synthetic input", rp::CoverageStatus::kSupported, "test", {} });
+  data.coverage.push_back(
+      { rp::CoverageRole::kBoundedDiscovery, "synthetic discovery", rp::CoverageStatus::kSupported, "test", {} });
+  data.scope.physical_members = { { 3, 5 } };
+  data.core.objects.resize(1);
+  data.core.objects[0].member = { 3, 5 };
+  data.annotations.resize(1);
+  data.annotations[0].matched_record = 0;
+  data.mc.discovery.features.resize(1);
+  data.mc.discovery.features[0].source_token = 0;
+  data.mc.discovery.measure.sources.push_back({ 7, 0, 0 });
+  const rp::FeatureReportResult report(data);
+  const auto object = report.Reference(rp::ObjectId{ 0 });
+  ASSERT_TRUE(object);
+  EXPECT_TRUE(report.ObjectMember(*object));
+  const auto record = report.MatchedRecord(*object);
+  ASSERT_TRUE(record);
+  const auto source = report.SourceOf(*record);
+  ASSERT_TRUE(source);
+  ASSERT_NE(report.Resolve(*source), nullptr);
+  EXPECT_EQ(report.Resolve(*source)->sample_index, 7u);
+  EXPECT_TRUE(report.SourceMember(*source));
+  const rp::FeatureReportResult other(data);
+  EXPECT_EQ(other.Resolve(*object), nullptr);
+  EXPECT_EQ(other.Resolve(*record), nullptr);
+  EXPECT_EQ(other.Resolve(*source), nullptr);
+  EXPECT_FALSE(other.Reference(rp::RecordId{ 1 }));
+  data.annotations[0].matched_record = 2;  // beyond features: the boundary refuses, not a silent miss
+  EXPECT_THROW(rp::FeatureReportResult{ data }, std::invalid_argument);
+}
+
+TEST(TypedResultValues, ConstructionSlotsAreNotPublishableValues) {
+  // Point: the default construction slot asserts kDiscovered; only a completion may freeze it.
+  EXPECT_THROW(rp::PointResult(rp::PointData{}), std::invalid_argument);
+  rp::PointData completed;
+  EXPECT_NO_THROW(rp::PointResult(rp::FinalizePointData(std::move(completed))));
+
+  // Probe: a successful profile's claim carries its declared scope, or it is not a value.
+  rp::ProbeData unscoped;
+  rp::ProbeProfile profile;
+  profile.BeginFinite().samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
+  unscoped.profiles.push_back(std::move(profile));
+  EXPECT_THROW(rp::ProbeResult(std::move(unscoped)), std::invalid_argument);
+  rp::ProbeData scoped;
+  rp::ProbeProfile scoped_profile;
+  scoped_profile.wavelength_nm = 550.0;
+  scoped_profile.quantity.wavelengths_nm = { 550.0 };
+  scoped_profile.representative = { 3, 5 };
+  scoped_profile.BeginFinite().samples.push_back({ 20.0, 0.0, 0.0, 0, 0.0 });
+  rp::ClaimScope scope;
+  scope.quantity = scoped_profile.quantity;
+  scope.members.members = { scoped_profile.representative };
+  scoped_profile.BindScope(scope);
+  scoped.profiles.push_back(std::move(scoped_profile));
+  EXPECT_NO_THROW(rp::ProbeResult(rp::FinalizeProbeData(std::move(scoped))));
+
+  // Chromatic: the unassessed arm has no writable payload; the transition comes first.
+  rp::schema3::StructureObjectRecord object;
+  EXPECT_THROW(object.MutableChromatic(), std::bad_variant_access);
+  object.SetChromatic({});
+  EXPECT_NO_THROW(object.MutableChromatic());
+  object.ClearChromatic();
+  EXPECT_THROW(object.MutableChromatic(), std::bad_variant_access);
+}
+
+
+TEST(TypedResultValues, ReportCompletionRejectsDanglingInternalAssociations) {
+  // The public serializer indexes annotations by the object's ordinal: the freeze must refuse a
+  // value whose tables disagree before any reader can walk off the end.
+  rp::FeatureReportData uneven = CompletedReportFixture();
+  uneven.core.objects.resize(2);
+  uneven.annotations.resize(1);
+  EXPECT_THROW(rp::FeatureReportResult{ uneven }, std::invalid_argument);
+
+  rp::FeatureReportData bad_record = CompletedReportFixture();
+  bad_record.core.objects.resize(1);
+  bad_record.annotations.resize(1);
+  bad_record.mc.discovery.features.resize(1);
+  bad_record.annotations[0].matched_record = 5;
+  EXPECT_THROW(rp::FeatureReportResult{ bad_record }, std::invalid_argument);
+
+  rp::FeatureReportData bad_token = CompletedReportFixture();
+  bad_token.core.objects.resize(1);
+  bad_token.annotations.resize(1);
+  bad_token.mc.discovery.features.resize(1);
+  bad_token.mc.discovery.features[0].source_token = 7;
+  EXPECT_THROW(rp::FeatureReportResult{ bad_token }, std::invalid_argument);
+
+  rp::FeatureReportData bad_unattributed = CompletedReportFixture();
+  bad_unattributed.core.objects.resize(1);
+  bad_unattributed.annotations.resize(1);
+  bad_unattributed.unattributed.structures.emplace_back();
+  bad_unattributed.unattributed.structures[0].record_index = 9;
+  EXPECT_THROW(rp::FeatureReportResult{ bad_unattributed }, std::invalid_argument);
+
+  // The unsupported arm's refusal row is part of its published contract.
+  rp::FeatureReportData unsupported;
+  unsupported.outcome = rp::ReportOutcome::kUnsupportedMulticrystal;
+  EXPECT_THROW(rp::FeatureReportResult{ unsupported }, std::invalid_argument);
+}
+
+TEST(TypedResultValues, PointCompletionRejectsAnInconsistentSunGrid) {
+  rp::PointData data;
+  data.sun_grid.lat_count = 2;
+  data.sun_grid.lon_count = 3;
+  data.sun_grid.deviation_rad = { 1.0, 2.0, 3.0 };
+  data.sun_grid.valid = { 1, 1 };  // shorter than the deviation column it is read with
+  data.sun_grid.entry_measure = { 1.0, 2.0, 3.0 };
+  EXPECT_THROW(rp::PointResult(rp::FinalizePointData(std::move(data))), std::invalid_argument);
+}
+
+TEST(TypedResultValues, ProbeCompletionRejectsAContradictoryRedEdgeWidth) {
+  rp::ProbeData data;
+  data.has_red_edge_width = true;  // contracted with nothing: no profiles carry the two edges
+  EXPECT_THROW(rp::ProbeResult(rp::FinalizeProbeData(std::move(data))), std::invalid_argument);
+  // The bare construction slot is not publishable either.
+  EXPECT_THROW(rp::ProbeResult(rp::ProbeData{}), std::invalid_argument);
+}
+
+TEST(TypedResultValues, SurveyObjectClaimsExcludeContradictoryPayloads) {
+  rp::survey::SurveyObject object;
+  EXPECT_EQ(object.State(), rp::survey::EvidenceState::kUnevaluated);
+  EXPECT_FALSE(object.SetKind(static_cast<rp::survey::SurveyObjectKind>(999)));
+  ASSERT_TRUE(object.SetKind(rp::survey::SurveyObjectKind::kSupportSet));
+  EXPECT_FALSE(object.SetSupport({}));
+  ASSERT_TRUE(object.SetState(rp::survey::EvidenceState::kFinite));
+  ASSERT_TRUE(object.SetSupport({}));
+  EXPECT_NE(object.Support(), nullptr);
+  EXPECT_EQ(object.Edge(), nullptr);
+  EXPECT_FALSE(object.SetEdge({}));
+  ASSERT_TRUE(object.SetState(rp::survey::EvidenceState::kRefused));
+  object.Mode() = "partition_refused";
+  EXPECT_EQ(object.Support(), nullptr);
+  object.SetWitness(rp::WitnessResult{});
+  ASSERT_TRUE(object.Witness()->SetState(rp::survey::EvidenceState::kFinite));
+  object.Witness()->Value().weight = 1.0;
+  EXPECT_EQ(object.State(), rp::survey::EvidenceState::kRefused);
+  EXPECT_GT(object.Witness()->Value().weight, 0.0);
+  EXPECT_FALSE(object.SetState(static_cast<rp::survey::EvidenceState>(999)));
+  EXPECT_EQ(object.State(), rp::survey::EvidenceState::kRefused);
+}
+
+TEST(TypedResultValues, RefusalRemovesNumbersButRetainsTheAskedScope) {
+  rp::WeightTintResult tint;
+  EXPECT_EQ(tint.ValueOrNull(), nullptr);
+  EXPECT_EQ(tint.State(), rp::survey::EvidenceState::kUnevaluated);
+  rp::ClaimScope scope;
+  scope.members.members = { { 3, 5 } };
+  scope.observation.wavelength_nm = 550;
+  tint.BindScope(scope);
+  ASSERT_TRUE(tint.SetState(rp::survey::EvidenceState::kFinite));
+  tint.Value().ratio = 0.0;
+  EXPECT_DOUBLE_EQ(tint.Value().ratio, 0.0);
+  tint.Value().reading = rp::TintClassPowerReading{ 1.0, 0.0 };
+  EXPECT_TRUE(tint.Value().IsClassPower());
+  EXPECT_EQ(tint.Value().Method(), rp::QuantityMethod::kClassLatticePowerSum);
+  EXPECT_THROW(tint.Value().Mass(), std::bad_variant_access);
+  ASSERT_TRUE(tint.SetState(rp::survey::EvidenceState::kRefused));
+  tint.Mode() = "zero_band_weight";
+  EXPECT_EQ(tint.ValueOrNull(), nullptr);
+  EXPECT_THROW(tint.Value(), std::bad_variant_access);
+  EXPECT_EQ(tint.Scope().members.members, scope.members.members);
+  EXPECT_EQ(tint.Scope().observation.wavelength_nm, 550);
+}
+
+TEST(TypedResultValues, PointAndProbeHaveExclusiveOutcomePayloads) {
+  rp::PointData point;
+  point.Discovered().incomplete.emplace_back();
+  EXPECT_EQ(point.Discovered().incomplete.size(), 1u);
+  point.payload = rp::PointMass{};
+  EXPECT_EQ(point.OutcomeValue(), rp::Outcome::kPointMass);
+  EXPECT_EQ(std::get_if<rp::DiscoveredPoint>(&point.payload), nullptr);
+  rp::ProbeProfile profile;
+  EXPECT_EQ(profile.State(), rp::survey::EvidenceState::kUnevaluated);
+  profile.BeginFinite().samples.push_back({ 22, 0, 0, 0, 0 });
+  EXPECT_DOUBLE_EQ(profile.Reading().samples.front().value, 0.0);
+  EXPECT_EQ(profile.State(), rp::survey::EvidenceState::kFinite);
+  profile.Refuse("no_edge");
+  EXPECT_EQ(rp::ClaimValue(profile.Claim()), nullptr);
+  EXPECT_THROW(profile.Reading(), std::bad_variant_access);
+  rp::schema3::StructureObjectRecord object;
+  EXPECT_FALSE(object.ChromaticAssessed());
+  object.SetChromatic({});
+  EXPECT_TRUE(object.ChromaticAssessed());
+  object.ClearChromatic();
+  EXPECT_FALSE(object.ChromaticAssessed());
+}
+
+TEST(TypedResultValues, QuantityMeasuresDoNotConflateTheTwoDensities) {
+  rp::PointFactorQuantities point;
+  EXPECT_EQ(point.density.reference, rp::ReferenceMeasure::kAngleLebesgue);
+  EXPECT_EQ(point.density.density, rp::DensityWeighting::kDeclaredPoseDensity);
+  EXPECT_EQ(point.orbit_integral.reference, rp::ReferenceMeasure::kOrbitParameter);
+  EXPECT_EQ(point.orbit_integral.unit, rp::QuantityUnit::kMass);
+  rp::QuantitySpec band_sum;
+  EXPECT_EQ(band_sum.reference, rp::ReferenceMeasure::kHaar);
+  EXPECT_EQ(band_sum.density, rp::DensityWeighting::kPoseDensity);
+  EXPECT_EQ(band_sum.unit, rp::QuantityUnit::kPerSteradian);
+}
+
 }  // namespace
+
+TEST(AssembledInputMembers, TypedSelectionKeepsLiteralAndLocationDistinct) {
+  auto config = rp::survey::RandomPrismScene();
+  rp::PathSelection selected;
+  selected.crystal_id = 1;
+  selected.path_layers = { { 3, 5 } };
+  rp::survey::CrystalSceneScope physical;
+  ASSERT_TRUE(rp::survey::ResolveCrystalSceneScope(config, selected, &physical).Ok());
+  EXPECT_EQ(physical.member_kind, rp::MemberKind::kPhysicalL2);
+  EXPECT_GT(physical.members.size(), 1u);
+  selected.symmetry_bits = 0;
+  selected.scene_layer = 0;
+  rp::survey::CrystalSceneScope literal;
+  ASSERT_TRUE(rp::survey::ResolveCrystalSceneScope(config, selected, &literal).Ok());
+  EXPECT_EQ(literal.member_kind, rp::MemberKind::kLiteral);
+  EXPECT_EQ(literal.location, rp::SelectionLocation::kSceneLayer);
+  EXPECT_EQ(literal.members, selected.path_layers);
+  config.scene_.ms_.clear();
+  selected.scene_layer.reset();
+  rp::InputSnapshot snapshot;
+  ASSERT_TRUE(rp::survey::ResolveCrystalSceneScope(config, selected, &literal, &snapshot).Ok());
+  EXPECT_EQ(literal.location, rp::SelectionLocation::kStandalone);
+  EXPECT_EQ(snapshot.layers.front().location, rp::SelectionLocation::kStandalone);
+  selected.scene_layer = 0;
+  EXPECT_FALSE(rp::survey::ResolveCrystalSceneScope(config, selected, &literal).Ok());
+}
+
+TEST(AssembledInputMembers, NominalGeometryAndActualMeasureHaveExplicitScopes) {
+  auto config = rp::survey::PlateScene(1.5, 0.3);
+  const auto& crystal = config.crystals_.at(1);
+  EXPECT_EQ(rp::ConvertCrystal(crystal.param_).geometry.kind, rp::GeometryKind::kNominal);
+  EXPECT_EQ(rp::AssembledLayer{}.geometry.kind, rp::GeometryKind::kRealized);
+  const auto measure = rp::survey::ReadFamilyMeasure(crystal.axis_);
+  ASSERT_TRUE(measure.ok);
+  EXPECT_EQ(measure.measure.kind, rp::MeasureKind::kActualDeclared);
+  EXPECT_EQ(measure.measure.zenith.kind, rp::survey::FamilyDimKind::kGauss);
+  EXPECT_GT(measure.measure.zenith.width_deg, 0.0);
+  EXPECT_EQ(rp::ConvertAxisToPoseDensity(crystal.axis_).measure.reference, rp::ReferenceMeasure::kHaar);
+  const auto haar = rp::survey::RandomPrismScene();
+  EXPECT_EQ(rp::ConvertAxisToPoseDensity(haar.crystals_.at(1).axis_).measure.reference, rp::ReferenceMeasure::kHaar);
+}

@@ -1,6 +1,6 @@
-#include "raypath/detail/schema3/geometry_source.hpp"
+#include "raypath/detail/structure/axis.hpp"
 
-namespace lumice::raypath::schema3 {
+namespace lumice::raypath::structure {
 
 ExistenceState ExistenceOf(analytic::CurveExistence existence) {
   switch (existence) {
@@ -70,10 +70,12 @@ FiberSampleStream StreamOf(const analytic::OrbitFiberStream& stream) {
   return out;
 }
 
-AxisAssembly AssembleAxis(const analytic::DeviationField& field) {
+AxisAssembly AssembleAxis(const analytic::DeviationField& field, const analytic::DiscoveryStop* stop) {
   AxisAssembly out;
   analytic::BoundaryWalkRecord record;
-  const analytic::WalkResult walk = analytic::WalkBoundary(field, analytic::BoundaryWalkOptions{}, &record);
+  analytic::BoundaryWalkOptions walk_options;
+  walk_options.stop = stop;
+  const analytic::WalkResult walk = analytic::WalkBoundary(field, walk_options, &record);
   out.axis.walk_status = walk.status;
   out.axis.walk_closed = walk.status == analytic::WalkStatus::kOk;
   if (!out.axis.walk_closed) {
@@ -136,4 +138,4 @@ bool ContractRegimeOfSlug(const std::string& slug, EscapeRegime* out) {
   return false;
 }
 
-}  // namespace lumice::raypath::schema3
+}  // namespace lumice::raypath::structure

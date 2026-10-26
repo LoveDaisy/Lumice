@@ -9,11 +9,12 @@
 #include "analytic/dp_field.hpp"
 #include "analytic/dp_focus.hpp"
 #include "analytic/dp_partition.hpp"
-#include "core/math.hpp"                                         // math::kPiD family — single authority
-#include "core/optics.hpp"                                       // IceRefractiveIndex: the engine's dispersion table
-#include "raypath/detail/measure/measure_geometry_contract.hpp"  // PartitionContext
-#include "raypath/detail/schema3/geometry_source.hpp"
-#include "raypath/detail/schema3/support_block.hpp"
+#include "core/math.hpp"    // math::kPiD family — single authority
+#include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table
+#include "raypath/detail/structure/axis.hpp"
+#include "raypath/detail/structure/support.hpp"
+#include "raypath/domain/measure_geometry.hpp"  // PartitionContext
+#include "raypath/query_control.hpp"
 #include "raypath/scene_to_analytic.hpp"  // ResolveSingleLayerPath
 #include "util/logger.hpp"
 
@@ -83,67 +84,25 @@ const analytic::CriticalOnset* ExtremumFoldOnset(const std::vector<analytic::Cri
 
 }  // namespace
 
-ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
-                                  const std::vector<std::vector<int>>& members, double refractive_index,
-                                  double wavelength_nm, SurveyDocument* out) {
-  // One axis assembly per member; the support row is the schema3 machine's own (the same
-  // assembly feeds the objects and the row — no second partition anywhere).
-  ClassSupport support;
-  support.assemblies.reserve(members.size());
-  support.rows.reserve(members.size());
-  for (const std::vector<int>& member : members) {
-    std::vector<int> slots;
-    if (const Error slot_error = ResolveSingleLayerPath({ member }, table, &slots); !slot_error.Ok()) {
-      support.refusal_mode = "member_resolution";
-      return support;
-    }
-    const analytic::DeviationField field(table, polygons, slots.data(), static_cast<int>(slots.size()),
-                                         refractive_index);
-    support.assemblies.emplace_back(schema3::AssembleAxis(field));
-    support.rows.push_back(schema3::SupportRowOf(support.assemblies.back(), table, polygons, slots.data(),
-                                                 static_cast<int>(slots.size()), refractive_index, member, {}, {}));
-  }
-  // Fail closed: a walk refusal or a partition escape leaves the class support unknown.
-  for (const schema3::MemberSupport& row : support.rows) {
-    if (row.axis.walk_closed && row.axis.context.coverage == PartitionContext::Coverage::kComplete) {
-      continue;
-    }
-    const char* mode =
-        row.axis.walk_closed ? row.axis.regime_slug.c_str() : analytic::WalkStatusName(row.axis.walk_status);
-    support.refusal_mode = mode == nullptr ? "walk_truncated" : mode;
-    return support;
-  }
-  // The class-level support: the members are relabelings of one physical class, so their
-  // partitions must sit on the same delta axis (SameSupport — the one ruler; a disagreement is
-  // not a union to fabricate but a refusal).
-  support.intervals = support.rows.front().axis.intervals;
-  for (const schema3::MemberSupport& row : support.rows) {
-    if (!schema3::SameSupport(support.intervals, row.axis.intervals)) {
-      support.refusal_mode = "member_supports_disagree";
-      return support;
-    }
-  }
-
-  // The support_set card: the class's delta-axis support with the endpoint mechanism labels
-  // (the first member's onsets at an interval endpoint — the members share the axis) and the
-  // caliber the partition ran on.
+SurveyObject SupportCardOf(const structure::ClassSupport& support, const std::vector<std::vector<int>>& members,
+                           double wavelength_nm, unsigned symmetry_bits) {
   SurveyObject card;
-  card.kind = SurveyObjectKind::kSupportSet;
+  card.SetKind(SurveyObjectKind::kSupportSet);
   card.members = members;
-  card.evidence.state = EvidenceState::kFinite;
-  card.evidence.coverage.members_evaluated = static_cast<int>(members.size());
-  card.evidence.coverage.wavelength_nm = wavelength_nm;
+  card.SetState(EvidenceState::kFinite);
+  card.Coverage().members_evaluated = static_cast<int>(members.size());
+  card.Coverage().wavelength_nm = wavelength_nm;
   SurveyObject::SupportSetPayload payload;
-  payload.symmetry_bits = out->request.symmetry_bits;
+  payload.symmetry_bits = symmetry_bits;
   payload.member_count = static_cast<int>(members.size());
   for (const analytic::DeviationInterval& interval : support.intervals) {
-    SurveyObject::Interval out_interval;
-    out_interval.lower_deg = DegOf(interval.lower);
-    out_interval.upper_deg = DegOf(interval.upper);
-    out_interval.n_components = interval.n_components;
-    out_interval.n_closed = interval.n_closed;
-    out_interval.n_open = interval.n_open;
-    payload.intervals.push_back(out_interval);
+    SurveyObject::Interval row;
+    row.lower_deg = DegOf(interval.lower);
+    row.upper_deg = DegOf(interval.upper);
+    row.n_components = interval.n_components;
+    row.n_closed = interval.n_closed;
+    row.n_open = interval.n_open;
+    payload.intervals.push_back(row);
   }
   for (const analytic::CriticalOnset& onset : support.rows.front().endpoint_onsets) {
     SurveyObject::EndpointLabel label;
@@ -153,21 +112,21 @@ ClassSupport AssembleClassSupport(const analytic::FaceNormalTable& table, const 
     label.multiplicity = onset.multiplicity;
     payload.endpoints.push_back(std::move(label));
   }
-  card.support_set = std::move(payload);
-  out->objects.push_back(std::move(card));
-  support.ok = true;
-  return support;
+  card.SetSupport(std::move(payload));
+  return card;
 }
 
 T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<std::vector<int>>& members, const std::vector<int>& representative,
-                            double refractive_index, double wavelength_nm, SurveyDocument* out) {
-  const ClassSupport support = AssembleClassSupport(table, polygons, members, refractive_index, wavelength_nm, out);
+                            double refractive_index, double wavelength_nm, SurveyData* out,
+                            const analytic::DiscoveryStop* stop) {
+  const structure::ClassSupport support =
+      structure::AssembleClassSupport(table, polygons, members, refractive_index, stop);
   if (!support.ok) {
     return { false, support.refusal_mode };
   }
-  const std::vector<schema3::AxisAssembly>& assemblies = support.assemblies;
-  const std::vector<schema3::MemberSupport>& rows = support.rows;
+  out->objects.push_back(SupportCardOf(support, members, wavelength_nm, out->request.symmetry_bits));
+  const std::vector<structure::AxisAssembly>& assemblies = support.assemblies;
   const std::vector<analytic::DeviationInterval>& class_support = support.intervals;
 
   // The caustic_edge card: the support's extremum fold. On a two-face chain the MINIMUM's
@@ -177,7 +136,7 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
   const analytic::CriticalOnset* onset = ExtremumFoldOnset(assemblies.front().onsets);
   if (onset != nullptr) {
     SurveyObject edge;
-    edge.kind = SurveyObjectKind::kCausticEdge;
+    edge.SetKind(SurveyObjectKind::kCausticEdge);
     edge.members = members;
     const bool is_minimum_fold = onset->source == analytic::OnsetSource::kInteriorMinimum;
     double apex_deg = 0.0;
@@ -186,12 +145,12 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
         is_minimum_fold && ClosedFormMinDeviation(table, representative, refractive_index, &apex_deg, &closed_form_deg);
     if (closed_form && std::fabs(DegOf(onset->value) - closed_form_deg) > DegOf(kClosedFormToleranceRad)) {
       // The two readings of one quantity disagree beyond the restatement's own error: refuse.
-      edge.evidence.state = EvidenceState::kRefused;
-      edge.evidence.mode = "closed_form_mismatch";
+      edge.SetState(EvidenceState::kRefused);
+      edge.Mode() = "closed_form_mismatch";
     } else {
-      edge.evidence.state = EvidenceState::kFinite;
-      edge.evidence.coverage.members_evaluated = static_cast<int>(members.size());
-      edge.evidence.coverage.wavelength_nm = wavelength_nm;
+      edge.SetState(EvidenceState::kFinite);
+      edge.Coverage().members_evaluated = static_cast<int>(members.size());
+      edge.Coverage().wavelength_nm = wavelength_nm;
       SurveyObject::CausticEdgePayload payload;
       payload.position_deg = DegOf(onset->value);
       payload.profile = analytic::OnsetProfileName(onset->profile);
@@ -201,8 +160,8 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
           std::fabs(onset->value - class_support.front().lower) <= analytic::kExtremumAtol ||
           std::fabs(onset->value - class_support.back().upper) <= analytic::kExtremumAtol;
       if (closed_form) {
-        edge.evidence.state = EvidenceState::kCertified;
-        edge.evidence.method = kCertifiedMethodSlabMinDeviationClosedForm;
+        edge.SetState(EvidenceState::kCertified);
+        edge.Method() = kCertifiedMethodSlabMinDeviationClosedForm;
         SurveyObject::EdgeCertificate certificate;
         certificate.formula = "2*asin(n*sin(A/2)) - A";
         certificate.apex_angle_deg = apex_deg;
@@ -210,7 +169,7 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
         certificate.tolerance_deg = DegOf(kClosedFormToleranceRad);
         payload.certificate = std::move(certificate);
       }
-      edge.caustic_edge = std::move(payload);
+      edge.SetEdge(std::move(payload));
     }
     out->objects.push_back(std::move(edge));
   }
@@ -219,15 +178,15 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
   // leg fills the peak/edge readings (the sharp edge lives on the caustic card, certified;
   // the brightness peak lives here, finite — different quantities, different states).
   SurveyObject domain;
-  domain.kind = SurveyObjectKind::kBrightDomain;
+  domain.SetKind(SurveyObjectKind::kBrightDomain);
   domain.members = members;
-  domain.evidence.state = EvidenceState::kFinite;
-  domain.evidence.coverage.members_evaluated = static_cast<int>(members.size());
-  domain.evidence.coverage.wavelength_nm = wavelength_nm;
+  domain.SetState(EvidenceState::kFinite);
+  domain.Coverage().members_evaluated = static_cast<int>(members.size());
+  domain.Coverage().wavelength_nm = wavelength_nm;
   SurveyObject::BrightDomainPayload domain_payload;
   domain_payload.domain_lower_deg = DegOf(class_support.front().lower);
   domain_payload.domain_upper_deg = DegOf(class_support.back().upper);
-  domain.bright_domain = std::move(domain_payload);
+  domain.SetBright(std::move(domain_payload));
   out->objects.push_back(std::move(domain));
 
   return { true, {} };
@@ -235,7 +194,19 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
 
 void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
-                            int class_size, SurveyDocument* out) {
+                            int class_size, SurveyData* out, const analytic::DiscoveryStop* stop) {
+  if (stop != nullptr && stop->token != nullptr)
+    stop->token->NotePoll(kPollSurveyChromatic);
+  const auto stopped = [&] {
+    if (stop == nullptr || !stop->Stopped())
+      return false;
+    out->chromatic.state = EvidenceState::kRefused;
+    out->chromatic.mode = "stop_requested";
+    out->chromatic.reason.clear();
+    return true;
+  };
+  if (stopped())
+    return;
   std::vector<int> slots;
   if (const Error slot_error = ResolveSingleLayerPath({ representative }, table, &slots); !slot_error.Ok()) {
     // Unreachable past the T1 arm (it resolved the same sequence), but the refusal stays honest.
@@ -251,8 +222,12 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
                                      IceRefractiveIndex::Get(kChromaticBlueNm) };
 
   // Leg 1: the positional dispersion — the min-deviation edge followed across the pair.
+  analytic::FocusingOptions focusing_options;
+  focusing_options.walk.stop = stop;
   const analytic::WavelengthCriticalTable critical = analytic::WavelengthCriticalTableOf(
-      table, polygons, slots.data(), static_cast<int>(slots.size()), density, labels, indices);
+      table, polygons, slots.data(), static_cast<int>(slots.size()), density, labels, indices, focusing_options);
+  if (stopped())
+    return;
   if (critical.escaped) {
     out->chromatic.state = EvidenceState::kRefused;
     out->chromatic.mode = "wavelength_critical_table";
@@ -314,11 +289,17 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
   dispersion.evidence.coverage.geometry_basis =
       "the kernel's wavelength-critical table at the " + ChromaticPairProseRedFirst() + " index pair";
   dispersion.evidence.coverage.wavelength_nm = kChromaticBlueNm;
+  if (stopped())
+    return;
 
   // Leg 2: the diagnose — the weight-kink and gate-edge features as their own sub-block (a
   // different kernel path than the dispersion table; the two mechanisms never merge fields).
-  const analytic::ChromaticVerdict verdict =
-      analytic::Diagnose(table, polygons, slots.data(), static_cast<int>(slots.size()), indices[0], indices[1]);
+  analytic::ChromaticOptions chromatic_options;
+  chromatic_options.stop = stop;
+  const analytic::ChromaticVerdict verdict = analytic::Diagnose(
+      table, polygons, slots.data(), static_cast<int>(slots.size()), indices[0], indices[1], chromatic_options);
+  if (stopped())
+    return;
   SurveyDiagnoseBlock& block = out->diagnose.emplace();
   block.verdict_kind = analytic::ChromaticVerdictKindName(verdict.kind);
   block.color = analytic::ChromaticColorName(verdict.color);
@@ -349,6 +330,10 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
   // The weight-tint leg is the caller's (the T1 arm's class power-sum); this layer leaves it
   // unwired so each arm assembles exactly its own legs.
 
+  if (stopped()) {
+    out->diagnose.reset();
+    return;
+  }
   out->chromatic.state = EvidenceState::kFinite;
   out->chromatic.coverage.members_evaluated = class_size;
   out->chromatic.coverage.wavelength_nm = kChromaticBlueNm;

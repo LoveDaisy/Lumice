@@ -15,6 +15,7 @@
 #include <cmath>
 #include <type_traits>
 
+#include "analytic/diagnostic_types.hpp"
 #include "analytic/jet.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/so3.hpp"
@@ -40,12 +41,7 @@ enum class ChainEvaluation {
 
 // Which validity gate failed first, in LI's gate order — the event kind the continuation reports
 // (LI TerminationReason values of the same names).
-enum class ChainFailure {
-  kNone,
-  kPathInfeasible,  // an incidence cosine <= 0: the ray does not enter / reach / leave the face
-  kTirBoundary,     // an entry or exit Snell discriminant <= 0
-  kNonFinite,       // a margin is not finite
-};
+
 
 // Validity margins and first failure, as LI's _path_domain reports them. `margins` must hold
 // slot_count + 2 doubles; it is filled in LI's validity_margin_names order (entry incidence cosine,

@@ -1,36 +1,36 @@
 # `Lumice raypath` output contracts
 
-`Lumice raypath` analyses **one single-layer raypath of one crystal entry over one sky point**:
-the components of the fiber of crystal poses that send the sun into that point, each component's
-poses with per-pose detail, and the path's deviation over the whole sun-direction sphere
-(`doc/raypath/raypath-analysis.md` §5.1.8). `analyze` lists the raypaths that light the sky; `raypath` is
-what you ask about one of them.
+`Lumice raypath` asks about one selected single-layer raypath of one crystal entry.
+`point` studies fibers of poses reaching a specified sky target, including per-pose detail
+and deviation over the sun-direction sphere; `probe` samples a line through a sky point.
+`survey` and `report` are target-free structural and diagnostic questions about that path.
+`analyze` instead lists raypaths that light the sky.
 
-It writes one JSON document. This page is that document's field reference, and the one place a
-reader (the Analyze-workspace prototype, a script, the GUI later) should learn it from.
+It writes one JSON document per query. This page is the wire field reference; C consumers
+can instead read the completed result through the typed getters in `lumice_raypath.h`.
 
-There are three deliberately separate documents. `raypath point` writes the target-fiber
-document (`schema_version: 1`, sections 1–6); its keys, ordering, and `--warm` behavior are
-supersets of the original `--target` form — fields are only ever appended. `raypath report`
-writes the target-free `lumice.path-feature-report` document in section 7. `raypath survey`
-writes the census document (`lumice.path-survey`, schema_version 4) in section 9. Neither mode
-silently substitutes for another.
+There are four deliberately separate documents: `raypath point` writes schema 1,
+`raypath report` schema 3, `raypath survey` schema 4, and `raypath probe` schema 5.
+Neither mode silently substitutes for another.
 
 ## 1. Where the document comes from
 
-The CLI is a thin shell. The computation and the serialization both live in the engine:
+The CLI creates a typed workspace, imports `--warm` through `LUMICE_PathWarmDataFromJson`
+when requested, runs a `LUMICE_PathWorkspaceQuery*` call, then writes the result's `*ToJson`
+representation. The legacy `LUMICE_Analyze*` calls are still published and delegate to the
+same typed analysis entries, retaining their legacy budget and request-extent contracts.
 
 | Piece | Where |
 |---|---|
-| The analysis | `lumice::raypath::AnalyzeSinglePath` (`src/raypath/single_path_analysis.hpp`) over the analytic kernel (`src/analytic/`) |
-| The JSON form and the `--warm` reader | `lumice::raypath::ToJson` / `ParseWarmSeeds` (`src/raypath/single_path_json.hpp`) — one file, shared key names |
-| The public entry point | `LUMICE_AnalyzeSinglePath` → opaque `LUMICE_SinglePathResult` → `LUMICE_SinglePathResultToJson` (`lumice_raypath.h`, v4.50) |
-| The subcommand | `src/main.cpp` (`ParsePointOptions` / `RunPoint`; family dispatch in `main`) |
+| The analysis | `AnalyzePathPointValue`, `AnalyzePathProbe`, `AnalyzePathSurveyValue`, `AnalyzePathFeatureReportValue` (`src/raypath/`) |
+| JSON projection and warm decoding | `single_path_json.cpp`, `probe_json.cpp`, `detail/survey/survey_json.cpp`, `detail/path_feature_report_json.cpp`; `DecodeWarmCandidate` for schema 1/4 |
+| The C interface | `LUMICE_PathWorkspaceQuery*` → immutable result handle → typed getters or optional `*ToJson` (`lumice_raypath.h`) |
+| The subcommands | `src/main.cpp` (`RunPoint`, `RunProbe`, `RunSurvey`, `RunReport`) |
 
-So the GUI, when it grows an Analyze workspace, reads **the same document** through the same
-`lumice_raypath.h` call; there is no second serializer to drift from this one. The result is exposed as
-JSON rather than as a C struct mirror on purpose: it holds variable-length nested lists whose
-fields an interface will keep adding to. Typed readers can be appended to `lumice_raypath.h` later.
+A GUI consumer need not read JSON: the typed C getters borrow from the same completed result
+that the encoders project. Encoding does not execute a query. Warm text is an untrusted input:
+decoding checks representation, then the shared reuse owner checks scene identity, scope and
+individual facts; a fingerprint is not an authenticity certificate.
 
 ## 2. Command line
 
@@ -55,7 +55,7 @@ Lumice raypath report -f <config> --crystal <id> --path <faces> [--events N] ...
 | `--lambda <nm>[,<nm>...]` | `probe` only: one or more wavelengths in [350, 900], comma-separated or the flag repeated — the chromatic lambda grid lives on the line (one profile per wavelength, each with its own refractive index), never a multi-wavelength map. Default: the config's single wavelength or 550. |
 | `--wavelength <nm>` | In [350, 900]. Default: the config's, when its spectrum is exactly one wavelength; else 550. The choice is recorded in `meta.wavelength.source`. (`report` without it uses the actual scene spectrum.) |
 | `--events <N>` | Seed events of the component search — poses sampled to locate the fiber, **not** traced rays. K/M suffix; at most 100M (`LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`). Default 1M. (`report`: even outer samples, its own range. `probe`: the band-sum lattice n, default 2000000 — the survey probe's ruler.) |
-| `--budget-ms <N>` | `point`, `probe` and `report`: the numerical deadline in milliseconds (default 15000; max 120000; `probe` checks it at the per-wavelength boundaries). Checked at the computation's loop boundaries: a stopped run serializes what it has and reports `meta.interrupted` — an honest early exit, exit code 0. Two legs are deliberately outside the polling: the inline context-only survey assembly (T0–T2, cheap and bounded by design) and the fiber continuation's inner steps (bounded by the `--max-evaluations` family instead) — a heavy case can overshoot the declared value by their cost |
+| `--budget-ms <N>` | `point`, `probe` and `report`: one whole-query deadline in milliseconds (default 15000; max 120000). Point/probe poll at their leg boundaries and carry the one deadline into context assembly; report discovery and enumeration share it. A stopped run publishes its honest partial result, not fabricated completion. The old C Analyze entries retain their own per-leg windows (§1). |
 | `--grid <rows>` | Latitude rows of the sun-direction grid; longitude is twice that. [0, 720]; 0 leaves `sun_grid` out. Default 90. |
 | `--warm <file>` | What a previous output is worth (§5): a schema-1 `point` document's seeds start the search; a schema-4 `survey` document is the index the query consumes (§5, the `survey_context` block). |
 | `-o <path>` | Write the document here instead of stdout (never both). |
@@ -67,13 +67,13 @@ one of `unknown_crystal_id`, `multi_layer_unsupported`, `invalid_path`, `face_no
 `wavelength_out_of_range`, `invalid_target`, `invalid_argument`, `crystal_rejected`,
 `path_infeasible`, `invalid_scene`.
 
-**Progress and Ctrl-C differ from `analyze`, deliberately.** The engine call has no cancellation
-point and no progress callback, so stderr gets one line when the analysis starts and one when it
-ends, and Ctrl-C ends the process without writing anything (there is no partial result to write).
+**Progress and Ctrl-C differ from `analyze`, deliberately.** The synchronous query has no
+progress callback, so stderr gets a start and completion line. Point and probe install a
+one-way SIGINT flag: a stopped run writes its honestly marked partial result and exits 0.
+Survey and report keep the default SIGINT disposition and write no result on interruption.
 With `-o`, the document goes to `<path>.tmp` first and is renamed over `<path>`, so `<path>` is
-never half a document; an interrupted run may leave the `.tmp` behind. Measured cost (arm64 mac,
-`3-5`, grid 90): 1M events 0.03 s, 10M 0.28 s, 100M 2.8 s at 155 MB peak; a 720-row grid is a
-13 MB document.
+never half a document. Measured cost (arm64 mac, `3-5`, grid 90): 1M events 0.03 s,
+10M 0.28 s, 100M 2.8 s at 155 MB peak; a 720-row grid is a 13 MB document.
 
 ## 3. The document
 
@@ -267,7 +267,7 @@ computed reading), `unevaluated` with a named reason — so absence can never re
 | Key | Meaning |
 |---|---|
 | `source` | `"warm"` (the given schema-4 document's facts) or `"inline"` (the context-only assembly) |
-| `warm_index_absent` | True: a `--warm` schema-4 document was given but carried no (complete) `warm_index` block — the documented degradation (§5); the context still answers, inline |
+| `warm_index_absent` | True: a `--warm` schema-4 document lacked a complete `warm_index` receipt — legacy degradation (§5); a present wrongly typed field is refused |
 | `object.state` (+ `reason`) | The target's deviation against the delta-axis support at the query wavelength: `certified` (inside an interval, distance 0, or the nearest card's distance) or `unevaluated`. The value fields `target_inside_support`, `kind`, `members`, `distance_deg` exist exactly when the state is `certified` — an unevaluated object carries no distance and never means certified outside. Missing/different producing wavelength yields `scope_field_missing`/`scope_value_mismatch`; an absent support or early stop keeps its own reason first. |
 | `edge.state` (+ `reason`) | The angular distance to the nearest edge at the query wavelength. The value fields `distance_deg`, `basis` (`support_interval_endpoint` or `caustic_edge_position`) exist exactly when the state is `finite`; missing/different producing wavelength uses the object's same named reason. |
 | `band_sum.state` (+ `value`, `delta_deg`, `bin_deg`, `caliber`, or `reason`) | The warm document's **survey reference line**, not the target point's sky intensity: nearest probe sample, with producing wavelength, sun and line azimuth in `caliber` (unknown if not established). Consumed only when wavelength and sun match the `scope` receipt exactly. `scope_field_missing` (receipt incomplete) and `scope_value_mismatch` (value differs) name failures; inline/absent probe have their own reasons. A target change chooses a different nearest sample on the same line, not a different line. |
@@ -379,6 +379,22 @@ when any of these fails:
    `measure` echo (kind/center/width per dimension) must equal the query config's own reading.
    Its absence is data (that arm did not run) and skips the gate with a declaration. (The
    fingerprint already carries the axis; this gate is the echo's independent chain.)
+5. **Resolved location** — the document's `scope.scene_layer` (null = standalone) must equal the
+   query's resolved scene allocation, including the explicit layer index. The fingerprint deliberately
+   excludes allocation; equal crystal/path/fingerprint across two layers cannot certify the same
+   warm facts. A legacy document without this field keeps its validated seeds for solver revalidation
+   but degrades its numeric index to inline context (`warm_index_absent: true`).
+
+**Implementation ownership.** `survey_reuse.hpp` is the product owner of these gates,
+`EvaluateSurveyReuse`, and `CanReuseSurveyProfile`. JSON decoding (`DecodeWarmCandidate`)
+and typed harvesting (`HarvestSurveyResult`) produce the same untrusted candidate shape;
+neither grants reuse. Point and probe admit it with `ValidateWarmCandidate`, whose private
+admission token separates a decoded payload from usable input. The context and profile reuse
+interfaces accept only that token, including inline assemblies. `survey_context.hpp` carries the
+shared context value. The C bridge decodes
+boundary text and maps errors; it does not compute fingerprints or compare measures.
+Decode failures retain their stage so unknown-crystal and request-identity errors keep their
+precedence over later malformed payloads. Missing scope is never a physical zero.
 
 *The seed harvest.* The document's `warm_index.seeds` (each 9 numbers, with `seed_sources`
 naming the leg that held the pose — `witness_argmax`, `family_collapse_anchor`,
@@ -406,11 +422,13 @@ these dependencies (a family object's sky position is not the delta-axis body's 
 An unavailable numeric field does not force a fresh T0–T2 partition or invalidate revalidated
 seeds. A schema-4 document with `warm_index` missing still takes the documented inline path.
 
-**Degradation, not refusal.** A schema-4 document whose `warm_index` block is absent — every
-survey document written before the block existed — or missing any of its fields is not refused
-and never partially consumed: the query degrades visibly to the inline context (no structural
-reuse, no seed consumption), and the document's `survey_context` declares it
-(`warm_index_absent: true`, the band-sum reading `unevaluated` with that reason).
+**Degradation, not refusal.** A schema-4 document with no complete `warm_index` receipt
+(written before all receipt fields existed) degrades visibly to inline context, with no
+structural reuse or seed consumption: `warm_index_absent: true`, and band sum `unevaluated`
+for that reason. A **present but wrongly typed** receipt field is corrupt and refused.
+A complete index with no `scope.scene_layer` also takes the inline path, but retains its
+validated seed starts: location-unknown numeric facts cannot certify this allocation,
+whereas seeds are re-solved against current input rather than accepted as certificates.
 
 **The probe's consumption.** `raypath probe` reads the same index with the same gates. The
 harvest's structure answers where the at point sits (the context block of §10), and the document's
@@ -434,11 +452,10 @@ comparison — a knobbed ruler silently reuses values computed on a different ru
 azimuth exemption holds only under uniform density; otherwise even an identical grid at a different
 azimuth is a different weighted integral.
 
-**Versions.** The schema-4 arm does not compare `schema_version` (the schema-1 arm above does):
-the family name is the discriminator, `warm_index.produced_for` records what produced the
-document, and append-only growth freezes the semantics of the keys this reader consumes. A
-future change to a consumed key's meaning is the one thing that must gate on `schema_version`
-here — that is this contract's version discipline.
+**Versions.** Schema 1 requires version 1 and schema 4 requires version 4. The family name
+selects the decoder; a foreign family or version is refused before the candidate reaches the
+reuse owner. Append-only keys that this reader does not consume remain harmless, but edits to
+consumed values are merely untrusted candidates, never certified by `produced_for` or a hash.
 
 A warm seed is a starting point, not a certificate. The engine's builds for different CPU tiers
 (the release's baseline and x86-64-v3 engines) are compiled with different floating-point
@@ -502,18 +519,20 @@ count. When omitted, a dyadic prefix up to 65536 is selected from the member/spe
 and optical work available for the main estimate, independent repeat and spectral refinement.
 The numerical defaults are 15000 ms, 4000000 optical evaluations and 250000000 weighted-component
 field evaluations. `--budget-ms` permits up to 120000 ms; `--max-evaluations` up to 16777216;
-`--max-field-evaluations` up to 1000000000. These bounds are checked inside numerical work, not
-only after it finishes. Bounded serialization follows the numerical deadline. The MC and
-attribution legs are deadline-bounded by that quality budget. The geometry layer's
-**enumeration leg** carries two different kinds of bound, and the difference is the contract:
+`--max-field-evaluations` up to 1000000000. These numerical bounds are checked during execution.
+Encoding starts only after the result freezes and is not bounded by the query deadline. The
+MC and attribution legs remain deadline-bounded. The geometry layer's **enumeration leg**
+carries two distinct bounds:
 
-- Its **quality budgets are report-only** — the leg's cost is measured and reported
-  (`timing.enumeration`, `budgets.enumeration`), never clamped by `--budget-ms`.
-- A fixed **anti-hang cap is enforced** (`budgets.enumeration.hang_cap_ms`, 300000 ms): a
-  member or leg the cap cuts ships the honest truncated face (`walk_truncated`, `walk_s` 0.0,
-  no curve body) and `budgets.enumeration.truncated` plus `truncation_note` name what was cut.
-  The cap is a robustness floor against pathological inputs, not a quality knob, and is
-  deliberately not coupled to `--budget-ms`.
+- Its own **quality budget is report-only** — the leg's cost is measured and reported
+  (`timing.enumeration`, `budgets.enumeration`). On the legacy C Analyze entry, the request's
+  `budget_ms` does not clamp this leg.
+- An enforced **anti-hang cap** (`budgets.enumeration.hang_cap_ms`, 300000 ms) cuts pathological
+  walks. On Workspace/CLI queries, the already-resolved whole-query deadline is also in force;
+  the earlier of it and the anti-hang cap stops enumeration. A cut member or leg ships an honest
+  truncated face (`walk_truncated`, `walk_s` 0.0, no curve body), with
+  `budgets.enumeration.truncated` and `truncation_note` recording the cut. A zero Workspace
+  deadline leaves the anti-hang cap in force.
 
 Two declared refusal bounds ride beside it, same honesty shape: an object whose curve body is
 denser than the carry bound ships truncated with no body (real kernel output the report leg
@@ -768,46 +787,64 @@ a document. The GUI workspace is not added by this interface.
 
 ## 8. Module boundary and surface
 
-The raypath module under `src/raypath/` exposes exactly four public headers to the engine:
+The query surfaces compiled by the C bridge are:
 
-- `src/raypath/path_feature_report.hpp` — the feature-report entry point, narrowed to
-  `PathFeatureReportRequest` + its constants + `AnalyzePathFeatureReport(config, request,
-  product_version, std::string* json_out)`: the module runs the analysis, assembles the report and
-  serializes it internally, so the caller never compiles the report types.
-- `src/raypath/survey_report.hpp` — the survey entry point on the same shape:
-  `SurveyRequest` + its constants + `AnalyzePathSurvey(config, request, product_version,
-  std::string* json_out)` (v4.54; §9).
-- `src/raypath/single_path_analysis.hpp` — `AnalyzeSinglePath` over the analytic kernel.
-- `src/raypath/single_path_json.hpp` — `ToJson` / `ParseWarmSeeds` (`kSunGridSignificantDigits`
-  included, as a published constant).
+- `path_feature_report.hpp` and `survey_report.hpp`: requests, budgets and typed
+  execution entries; their completed results and JSON projections have separate owners.
+- `single_path_analysis.hpp` / `single_path_json.hpp`: point request/execution and
+  completed-result serialization plus warm-candidate decoding, respectively.
+- `probe_analysis.hpp` / `probe_json.hpp`: the draw-a-line request/typed result and JSON projection.
 
-The bridge (`src/server/c_api_raypath.cpp`) compiles exactly these four (plus its own
-server/config includes) — this minimal set *is* the module's surface to the engine, by
-construction rather than by convention. Everything else under `src/raypath/` is module-internal
-in one of two shapes: headers in `detail/` are internal by location and may be included only by
-the module itself and its own tests (`test/unit-correctness/raypath/`,
-`test/composition-correctness/raypath/`, which deliberately reach into `detail/` as the module's
-own white-box oracle); the one legacy exception is `src/raypath/scene_to_analytic.{hpp,cpp}`,
-internal by consumer fact though not relocated — its only includes are `single_path_analysis.cpp`,
-`detail/input_assembly.cpp` and the module's own test — and a candidate for a future `detail/`
-move in its own change. `detail/path_feature_report_json.{hpp,cpp}` is internal on the same
-grounds: the bridge takes a JSON string now, and the only other consumer of the report types ever
-was that same composition test.
+Shared error and input metadata no longer come from the point result header. Their narrow
+owners are `domain/error.hpp`, `domain/input_metadata.hpp`, `domain/scope.hpp`, and
+`domain/measure.hpp`. `survey_reuse.hpp` owns typed warm admission and numeric compatibility;
+`survey_context.hpp` owns the context value shared by point and probe. There is no umbrella
+header. Input preparation (`detail/input_scope.*`, `detail/measure_scope.*`) is internal to
+raypath; member expansion continues through the existing physical-symmetry owner.
 
-The boundary is cheap to re-verify mechanically — the include closure of the four public
-headers must contain no `raypath/detail` file and no `analytic/diagnostic_batch`:
+The value-only public result headers are `point_result.hpp`, `probe_result.hpp`,
+`survey_result.hpp`, and `feature_report_result.hpp`. They own immutable snapshots with
+identity-bound, range-checked references; their include closures contain no detail, config,
+or JSON headers. Their complete field-group ledger and quantity/claim contracts are in
+[Typed raypath results](typed-results.md). Numerical formulas and normal-path wire fields
+are unchanged; an uncomputed typed declaration now defaults to unevaluated rather than
+claiming a finite result. Report serialization consumes one completed value and never
+replays a source or derives budgets/outcome.
 
-```bash
-printf '#include "raypath/path_feature_report.hpp"
-#include "raypath/survey_report.hpp"
-#include "raypath/single_path_analysis.hpp"
-#include "raypath/single_path_json.hpp"
-' | g++ -H -fsyntax-only -x c++ - -std=c++17 -I src 2>&1 | grep -cE "analytic/diagnostic_batch|feature_discovery|raypath/detail"
-```
+Headers under `detail/` remain internal to the module and its white-box tests. Shared
+structure/quantity producers live in `detail/structure/` and `detail/quantity/`; query
+adapters choose and mount their returned values. The bridge's raypath includes are public
+query/value headers; a compile-time equality check ties its MC-ESS draw limit to the published C value
+without importing a `detail/` header. `scene_to_analytic.*` is an internal input-conversion
+seam despite its legacy placement. The old point execution envelope and deferred context
+materialization have been removed: context is completed before `PointResult` freezes.
+The narrow include-closure rule and its limits are recorded in
+[Typed raypath results](typed-results.md#dependency-boundary).
 
-`0` is the expected answer. This is the probe that pinned the boundary when the bridge surface
-was narrowed (its baseline counted 6 hits — four internal headers plus the analytic kernel
-surface — before the narrowing landed).
+The earlier shared-input ownership migration remains in force:
+
+| Former owner | Current owner | Consumers / removed authority |
+|---|---|---|
+| Point result header: Error, wavelength/nominal-shape metadata | `domain/error.*`, `domain/input_metadata.*` | Input conversion and all requests include the leaves; old definitions deleted |
+| Physical/scene scope member lists | `domain/scope.hpp::MemberScope`, `detail/input_scope.*` | Capture, survey, probe and report retain one resolved list; physical expansion unchanged |
+| Survey document measure values / family router's measure reader | `domain/measure.hpp`, `detail/measure_scope.*` | Family ladder and warm admission; actual measure is separate from `IdealFamilyScope` |
+| Bridge's warm gate / decoder's physical comparisons | `survey_reuse.cpp::ValidateWarmCandidate` | Both query entries and inline typed harvest; no bridge fingerprint or measure comparisons |
+| Point's context helpers / probe's local profile gate | `survey_reuse.*`, `survey_context.hpp` | Point/probe share numerical qualification and context projection; old branches deleted |
+| Routing fingerprint implementation | `detail/survey/config_fingerprint.*` (unchanged) | Survey producer and admission service share the same digest and axis set |
+
+Geometry scope distinguishes nominal survey facts from realized report draws. Observation
+scope projects only the dependencies a fact reads (body support: wavelength; readings: wavelength
+and both solar coordinates). Quantity scope distinguishes representative, actual-measure
+band-sum per-steradian readings from class aggregates or ideal-frozen facts. These tags do not
+replace or recalculate the numerical kernels.
+
+The public domain/result values and query facades are guarded by `raypath-typed-boundary`
+in `scripts/check_policies.py`: value closures cannot acquire query execution or codec
+headers, while facade closures may retain declarations but not raypath implementation or
+codec headers. Both quoted and angle-bracket in-tree includes are resolved. The same rule
+rejects `detail/` from the bridge and execution entry headers from codecs. Its isolated
+positive and negative controls live in
+`test/unit-correctness/scripts/test_check_policies_raypath_boundary.py`.
 
 ## 9. `Lumice raypath survey` output (schema 4)
 
@@ -884,7 +921,7 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `schema`, `schema_version` | `lumice.path-survey`, 4 — a new document family; it shares no fields with the schema-1/3 documents, and a reader of one must reject the others |
 | `generator` | Lumice version and the analytic kernel's `analytic_api_version` |
 | `request` | The echo: `crystal_id`, `path_layers`, `symmetry_bits` (7 = physical P\|B\|D, 0 = literal), `wavelength_nm` (null when unset) and `budget_ms` as resolved |
-| `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg` |
+| `scope` | `scene_identity`, `scene_layer` (null for a standalone configured crystal), `members` (the expanded class), `wavelength_nm` + `wavelength_source` + `refractive_index`, `sun_altitude_deg` / `sun_azimuth_deg`; `geometry_kind: "realized"` appears only for a non-nominal typed geometry |
 | `routing` | The T0 leg: `early_stopped`, and per-member `members[]` records (`member`, `rank_zero`, `mechanism` — the kernel's roll-up slug, null when not computable, with `mechanism_unavailable` naming why — and the member's own `evidence` block) |
 | `objects` | The object cards (§9.2): one `source_image` on an early stop; on the full-dimensional route the `support_set` (always), the `caustic_edge` (when the class has an extremum fold — the position needs a fold to sit on; the minimum-deviation fold when the class has one, else the interior maximum at the support's upper edge), and the `bright_domain` skeleton (the corpus shapes produce all three); one refused `support_set` when that route fails closed — and on that refused card, the declared-source `witness` sub-block (§9.2); the family route's own cards (the band-labelled survivors and the level-0 `support_set`, §9.2's family-form paragraph) |
 | `family_routing` | present only on the family arm's documents (§9.7): the measure echo, the freezing ladder with every level's rank coverage and killed candidates, and the block's own evidence. An early stop, a full-dimensional route and an outside-domain refusal carry no `family_routing` key at all |
@@ -897,6 +934,12 @@ writes nothing; `-o` is atomic, and the analysis runs after the output directory
 | `warm_index` | The `--warm` contract's survey side (always written; §9.9) |
 | `budget` | `requested_ms`, `enforced` (false) and the honesty note (the note names the legs the producing arm ran). `enforced` stays the enumeration legs' field — the one survey leg that really consumes a deadline is `mc_region_ess`, whose budget reading lives in its own leg block (§9.8), not here |
 | `timing` | `total_seconds` — the wall clock of the analysis **up to the end of assembly, excluding serialization**; each routing leg's cost rolls into this one figure |
+
+Non-default typed scope receipts append only the necessary discriminator: `scope.geometry_kind:
+"realized"`, `probes[].spec.member_aggregation: "physical_class"`, or
+`probes[].spec.measure_kind` / `family_routing.measure.measure_kind: "ideal_frozen"`.
+Their absence means nominal geometry, representative quantity and actual declared measure,
+respectively. Normal survey output emits none of these optional fields.
 
 ### 9.2 Object kinds (the registry)
 

@@ -32,9 +32,9 @@
 #include "core/crystal_param.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/fiber_quadrature.hpp"
-#include "raypath/detail/measure/measure_geometry_contract.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
 #include "raypath/detail/measure/weight_profile.hpp"
+#include "raypath/domain/measure_geometry.hpp"
 
 namespace lumice::raypath {
 namespace {
@@ -291,7 +291,7 @@ TEST(ContourDocking, PlaceholderUStarvesTheCertificateEverywhere) {
   }
   const VisibilityCertificate dark = CertifyVisibility(PlateMeasure(), contract, nullptr, nullptr, 1e-9);
   EXPECT_EQ(dark.state, VisibilityState::kUnproven);
-  EXPECT_STREQ(dark.reason, "no_in_support_samples");
+  EXPECT_EQ(dark.reason, "no_in_support_samples");
   EXPECT_TRUE(std::isnan(dark.lit_fraction));
 }
 

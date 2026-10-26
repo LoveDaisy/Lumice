@@ -92,28 +92,28 @@ TEST(SurveyProbe, SmallSampleRealAssemblyEdgeBinContainsTheClosedForm) {
   input.member_count = 12;
   input.sample_count = 100000;  // the seconds-scale smoke; the bench runs the full caliber
 
-  SurveyDocument document;
+  SurveyData document;
   RunSolarRadialProbe(input, &document);
   ASSERT_EQ(document.probes.size(), 1u);
   const SurveyProbe& probe = document.probes.front();
-  EXPECT_GT(probe.kept_count, 0);
-  EXPECT_TRUE(probe.has_edge);
-  EXPECT_TRUE(probe.has_peak);
-  EXPECT_GT(probe.peak_value, 0.0);
+  EXPECT_GT(probe.Value().kept_count, 0);
+  EXPECT_TRUE(probe.Value().has_edge);
+  EXPECT_TRUE(probe.Value().has_peak);
+  EXPECT_GT(probe.Value().peak_value, 0.0);
   // The edge bin contains the closed-form delta_min: no event lies below it.
   const double half_bin = 0.05;
-  EXPECT_GE(probe.edge_delta_deg + half_bin, closed_form_deg - 1e-9);
-  EXPECT_LE(probe.edge_delta_deg - half_bin, closed_form_deg + 1e-9);
+  EXPECT_GE(probe.Value().edge_delta_deg + half_bin, closed_form_deg - 1e-9);
+  EXPECT_LE(probe.Value().edge_delta_deg - half_bin, closed_form_deg + 1e-9);
   // The profile rows carry positive effective counts where events landed.
-  EXPECT_GT(probe.samples[static_cast<size_t>(probe.edge_bin)].k_eff, 0.0);
+  EXPECT_GT(probe.Value().samples[static_cast<size_t>(probe.Value().edge_bin)].k_eff, 0.0);
   // The spec echo is the caliber. The window is the whole delta axis (the C06/C09 supports sit
   // outside the original [15, 60] slice; one ruler for every class), so the row count follows:
   // 1800 bins at 0.1 degrees, the per-bin lattice size unchanged.
   EXPECT_DOUBLE_EQ(probe.spec.delta_min_deg, 0.0);
   EXPECT_DOUBLE_EQ(probe.spec.delta_max_deg, 180.0);
-  EXPECT_EQ(probe.samples.size(), 1800u);
-  EXPECT_DOUBLE_EQ(probe.samples.front().delta_deg, 0.05);
-  EXPECT_DOUBLE_EQ(probe.samples.back().delta_deg, 179.95);
+  EXPECT_EQ(probe.Value().samples.size(), 1800u);
+  EXPECT_DOUBLE_EQ(probe.Value().samples.front().delta_deg, 0.05);
+  EXPECT_DOUBLE_EQ(probe.Value().samples.back().delta_deg, 179.95);
   EXPECT_DOUBLE_EQ(probe.spec.bin_deg, kProbeBinDeg);
   EXPECT_DOUBLE_EQ(probe.spec.wedge_half_width_deg, kProbeWedgeHalfWidthDeg);
   EXPECT_EQ(probe.spec.sample_count, static_cast<long long>(input.sample_count));

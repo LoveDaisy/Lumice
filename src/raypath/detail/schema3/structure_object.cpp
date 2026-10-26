@@ -1,4 +1,4 @@
-#include "raypath/detail/schema3/structure_object.hpp"
+#include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath::schema3 {
 

@@ -9,6 +9,7 @@
 #include "raypath/detail/feature_discovery.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/path_feature_report.hpp"
+#include "raypath/query_control.hpp"  // ExecutionOutcome
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
@@ -20,6 +21,9 @@ struct PathFeatureReport {
   DiscoveryResult discovery;
   uint32_t seed = 0;
   bool no_related_signal = false;
+  // The discovery legs' observed execution outcome (from their single stop): carried so the
+  // value layer can derive the report's outcome axis without re-deriving a second verdict.
+  ExecutionOutcome discovery_execution = ExecutionOutcome::kCompleted;
   bool standalone_crystal = false;
   bool unsupported_multicrystal = false;
   std::vector<std::vector<int>> requested_path_layers;

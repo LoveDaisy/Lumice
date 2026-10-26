@@ -3,20 +3,14 @@
 
 #include <nlohmann/json.hpp>
 
+#include "util/illuminant_type.hpp"
+
 namespace lumice {
 
 // ============================================================================
 // CIE Standard Illuminant data
 // ============================================================================
 
-enum class IlluminantType {
-  kD50,
-  kD55,
-  kD65,
-  kD75,
-  kA,
-  kE,
-};
 
 NLOHMANN_JSON_SERIALIZE_ENUM(IlluminantType, {
                                                  { IlluminantType::kD50, "D50" },

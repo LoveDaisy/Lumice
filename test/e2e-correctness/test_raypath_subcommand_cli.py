@@ -229,6 +229,15 @@ def test_warm_seeds_come_back_as_component_seeds(tmp_path, halo):
         assert any(max(abs(a - b) for a, b in zip(seed, s)) < 1e-9 for s in found), seed
 
 
+def test_invalid_warm_document_fails_before_query(tmp_path):
+    warm = tmp_path / "warm.json"
+    warm.write_text('{"schema": "lumice.path-survey", "schema_version": 99}')
+    result = _raypath(*_REQUEST, "--warm", str(warm))
+    assert result.returncode == 1
+    assert "unsupported survey schema_version" in result.stderr
+    assert result.stdout == ""
+
+
 def test_an_empty_warm_file_is_refused_not_run_cold(tmp_path):
     empty = tmp_path / "empty.json"
     empty.write_text("")
