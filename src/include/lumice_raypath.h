@@ -942,6 +942,7 @@ typedef struct LUMICE_PathReportInfo {
   uint64_t optical_evaluations;
   int budget_ms;
   int absence_issued;
+  size_t requested_layer_count;
 } LUMICE_PathReportInfo;
 
 typedef struct LUMICE_PathReportObject {
@@ -1665,6 +1666,7 @@ typedef struct LUMICE_PathReportBudgets {
   int exhausted;
   uint64_t attribution_dp_evaluations;
   uint64_t attribution_presence_ess_queries;
+  uint64_t enumeration_max_optical_evaluations;
   int64_t enumeration_sampling_evaluations;
   int64_t enumeration_hang_cap_ms;
   int enumeration_truncated;
@@ -2045,6 +2047,9 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetMcComponent(const LUMICE_Pa
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetPositiveSource(const LUMICE_PathFeatureReport* result,
                                                                     size_t index, LUMICE_PathPositiveSource* out);
 
+// The requested layers remain readable when an unsupported multi-crystal report has no scope.
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetRequestedLayer(const LUMICE_PathFeatureReport* result,
+                                                                    size_t index, LUMICE_PathFaceSequence* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetScope(const LUMICE_PathFeatureReport* result,
                                                            LUMICE_PathReportScope* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetMember(const LUMICE_PathFeatureReport* result, size_t index,

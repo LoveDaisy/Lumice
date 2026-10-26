@@ -228,6 +228,8 @@ TEST(PathFeatureReportCApi, TypedReadersExposeObjectsEvidenceAndAbsenceWithoutPa
   }
   ASSERT_EQ(LUMICE_PathReportGetBudgets(outcome.report.get(), &budgets), LUMICE_PATH_READ_OK);
   EXPECT_EQ(budgets.completed_outer_samples, info.completed_outer_samples);
+  const auto budget_wire = nlohmann::json::parse(Json(outcome.report.get())).at("budgets");
+  EXPECT_EQ(budgets.enumeration_max_optical_evaluations, budget_wire.at("enumeration").at("max_optical_evaluations"));
   LUMICE_PathReportMcEvidence mc{};
   mc.struct_size = sizeof(mc);
   ASSERT_EQ(LUMICE_PathReportGetMcEvidence(outcome.report.get(), &mc), LUMICE_PATH_READ_OK);
@@ -540,6 +542,28 @@ TEST(PathFeatureReportCApi, UnsupportedMultiCrystalStillRejectsInvalidInput) {
   const auto document = nlohmann::json::parse(Json(outcome.report.get()));
   EXPECT_EQ(document["outcome"], "unsupported_multicrystal");
   EXPECT_EQ(document["budgets"]["optical_evaluations"], 0);
+  LUMICE_PathReportInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathReportGetInfo(outcome.report.get(), &info), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(info.requested_layer_count, 2u);
+  LUMICE_PathFaceSequence first{};
+  first.struct_size = sizeof(first);
+  ASSERT_EQ(LUMICE_PathReportGetRequestedLayer(outcome.report.get(), 0, &first), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(first.face_count, 2u);
+  EXPECT_EQ((std::vector<int>{ first.faces[0], first.faces[1] }),
+            document["requested_path_layers"][0].get<std::vector<int>>());
+  LUMICE_PathFaceSequence second{};
+  second.struct_size = sizeof(second);
+  ASSERT_EQ(LUMICE_PathReportGetRequestedLayer(outcome.report.get(), 1, &second), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(second.face_count, 2u);
+  EXPECT_EQ((std::vector<int>{ second.faces[0], second.faces[1] }),
+            document["requested_path_layers"][1].get<std::vector<int>>());
+  EXPECT_EQ(LUMICE_PathReportGetRequestedLayer(outcome.report.get(), 2, &second), LUMICE_PATH_READ_INVALID_INDEX);
+  EXPECT_EQ(second.face_count, 0u);
+  LUMICE_PathReportScope scope{};
+  scope.struct_size = sizeof(scope);
+  EXPECT_EQ(LUMICE_PathReportGetScope(outcome.report.get(), &scope), LUMICE_PATH_READ_NOT_AVAILABLE);
+  EXPECT_EQ(scope.scene_identity.data, nullptr);
 
   request.c.crystal_id = 99;
   outcome = Analyse(scene.get(), &request.c);

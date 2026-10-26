@@ -3714,10 +3714,24 @@ LUMICE_PathReadStatus LUMICE_PathReportGetPositiveSource(const LUMICE_PathFeatur
   return LUMICE_PATH_READ_OK;
 }
 
+LUMICE_PathReadStatus LUMICE_PathReportGetRequestedLayer(const LUMICE_PathFeatureReport* result, size_t index,
+                                                         LUMICE_PathFaceSequence* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK)
+    return status;
+  const auto& layers = result->result.Data().requested_path_layers;
+  if (index >= layers.size())
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  out->faces = layers[index].data();
+  out->face_count = layers[index].size();
+  return LUMICE_PATH_READ_OK;
+}
+
 LUMICE_PathReadStatus LUMICE_PathReportGetScope(const LUMICE_PathFeatureReport* result, LUMICE_PathReportScope* out) {
   if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
     return status;
   }
+  if (result->result.Data().outcome == lumice::raypath::ReportOutcome::kUnsupportedMulticrystal)
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
   const auto& scope = result->result.Data().scope;
   out->scene_identity = Text(scope.scene_identity);
   out->spectrum_scope = Text(scope.spectrum_scope);
@@ -4081,6 +4095,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetBudgets(const LUMICE_PathFeatureReport
   out->exhausted = b.exhausted;
   out->attribution_dp_evaluations = b.attribution_dp_evaluations;
   out->attribution_presence_ess_queries = b.attribution_presence_ess_queries;
+  out->enumeration_max_optical_evaluations = d.core.budget.max_optical_evaluations;
   out->enumeration_sampling_evaluations = d.core.budget.sampling_evaluations;
   out->enumeration_hang_cap_ms = d.core.budget.hang_cap_ms;
   out->enumeration_truncated = d.core.budget.truncated;
@@ -4266,6 +4281,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetInfo(const LUMICE_PathFeatureReport* r
   out->optical_evaluations = d.budgets.optical_evaluations;
   out->budget_ms = d.scope.budget_ms;
   out->absence_issued = d.ruling.issued;
+  out->requested_layer_count = d.requested_path_layers.size();
   return LUMICE_PATH_READ_OK;
 }
 
