@@ -326,6 +326,39 @@ TEST_F(SurveyCApi, WorkspaceAndLegacyQueriesAgreeOnAllFourFaces) {
   LUMICE_PathFeatureReportDestroy(workspace_report);
 }
 
+TEST_F(SurveyCApi, WorkspacePointHonorsRequestInterruptionFlag) {
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw_workspace, nullptr, 0), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathWorkspace, void (*)(LUMICE_PathWorkspace*)> workspace(raw_workspace,
+                                                                                   LUMICE_PathWorkspaceDestroy);
+  static int faces[] = { 3, 5 };
+  static int counts[] = { 2 };
+  volatile int interrupted = 1;
+  LUMICE_SinglePathRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = faces;
+  request.face_count = 2;
+  request.layer_face_counts = counts;
+  request.layer_count = 1;
+  request.target_altitude_deg = 20;
+  request.target_azimuth_deg = 25;
+  request.sample_count = 1000000;
+  request.interrupted = &interrupted;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = 15000;
+  options.include_context = 0;
+  LUMICE_SinglePathResult* raw_result = nullptr;
+  char err[256] = {};
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &request, &options, &raw_result, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
+  std::unique_ptr<LUMICE_SinglePathResult, void (*)(LUMICE_SinglePathResult*)> result(raw_result,
+                                                                                      LUMICE_SinglePathResultDestroy);
+  EXPECT_TRUE(ResultDocument(result.get(), LUMICE_SinglePathResultToJson)["meta"]["interrupted"].get<bool>());
+}
+
 TEST_F(SurveyCApi, CCancelTokenStopsAnEnteredQuery) {
   LUMICE_PathWorkspace* raw_workspace = nullptr;
   ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw_workspace, nullptr, 0), LUMICE_OK);

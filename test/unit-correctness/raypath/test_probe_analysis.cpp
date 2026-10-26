@@ -389,9 +389,10 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   EXPECT_NE(ValidateWarmCandidate(config, request, decoded, &admitted).message.find("crystal gate"), std::string::npos);
   request.crystal_id = 999;
   EXPECT_EQ(ValidateWarmCandidate(config, request, decoded, &admitted).code, ErrorCode::kUnknownCrystalId);
-  // Schema-4 keys are append-only; its version is not an admission gate.
+  // An unknown version is not a supported schema-4 candidate.
   document.schema_version = 999;
-  EXPECT_TRUE(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).Ok());
+  EXPECT_EQ(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).code,
+            ErrorCode::kInvalidArgument);
 }
 
 // The reuse arm: the scope matches, the grid is the warm grid, and the values (and the counts the

@@ -1,24 +1,24 @@
 #ifndef LUMICE_RAYPATH_SINGLE_PATH_JSON_HPP_
 #define LUMICE_RAYPATH_SINGLE_PATH_JSON_HPP_
 
-// The JSON form of a SinglePathResult — the one serialization of it, which the `Lumice raypath`
-// subcommand writes and a GUI shell will read through the same lumice_raypath.h entry point — and its one
-// reader, ParseWarmSeeds, which takes an earlier output back as warm starts. Writer and reader sit
-// in one file so the keys they share cannot drift apart. The field-by-field description is
-// doc/raypath/raypath-cli-output.md.
+// The JSON form of a completed PointResult and the schema-1/4 warm candidate decoder.
+// The field-by-field description is doc/raypath/raypath-cli-output.md.
 //
 // Numbers: every value is written as the shortest decimal that reads back to the same double
 // (nlohmann's dump), so a seed round-trips bit-exactly; the three sun-grid arrays are first rounded
 // to 9 significant digits, which bounds their size (a 720-row grid is a million cells per array) at
 // a precision far below the kernel's own tolerances. NaN is written as null.
 
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
-#include "raypath/single_path_analysis.hpp"
+#include "core/distribution.hpp"
+#include "raypath/domain/error.hpp"
+#include "raypath/point_result.hpp"
 
 namespace lumice::raypath {
+
+struct WarmCandidate;
 
 // Significant digits kept for the sun-grid arrays (deviation_rad, entry_measure).
 constexpr int kSunGridSignificantDigits = 9;
@@ -36,11 +36,6 @@ Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds);
 
 // Decode only: candidate identity and numeric facts are validated by survey_reuse.
 Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate);
-
-// The survey context block's one JSON spelling — the point document's `survey_context` and the
-// probe document's `context` are the same shape, and this is its one writer. Exported so the two
-// documents cannot drift; the value fields appear exactly when their state says something was read.
-nlohmann::ordered_json SurveyContextJson(const SurveyContextBlock& context);
 
 // The config's own spelling of a distribution ("fixed" / "uniform" / "gauss" / "zigzag" /
 // "laplacian" / "gauss_legacy"); a plain number in the config is "fixed". Shared by the point and

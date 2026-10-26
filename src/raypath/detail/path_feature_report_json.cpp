@@ -3,12 +3,11 @@
 #include <utility>
 
 #include "analytic/dp_boundary.hpp"
+#include "analytic/dp_chromatic.hpp"
 #include "analytic/dp_focus.hpp"
 #include "config/crystal_config.hpp"
 #include "config/light_config.hpp"
 #include "raypath/detail/json_values.hpp"
-#include "raypath/detail/measure/visibility_certificate.hpp"
-#include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/no_related_feature.hpp"
 #include "raypath/domain/measure_geometry.hpp"
 #include "raypath/path_feature_report.hpp"

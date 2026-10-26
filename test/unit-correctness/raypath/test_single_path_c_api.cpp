@@ -26,6 +26,7 @@
 #include "include/lumice_scene.h"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/single_path_json.hpp"
+#include "raypath/survey_reuse.hpp"
 #include "server/c_api_scene_internal.hpp"  // SceneRoot (test-only exposure)
 #include "server/server.hpp"                // ParseConfigManager
 #include "util/logger.hpp"

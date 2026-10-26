@@ -1,27 +1,24 @@
 #ifndef LUMICE_RAYPATH_SURVEY_REPORT_HPP_
 #define LUMICE_RAYPATH_SURVEY_REPORT_HPP_
 
-// Public request surface of the path survey: the constants and request struct the C API bridge
-// needs, plus the one entry point that returns the survey as its JSON form. The document model,
-// its assembly and its serializer are module internals (raypath/detail/survey/). The survey is
-// the L1 census face of the diagnostic pipeline: one single-layer raypath class, routed at T0
-// (the identity certificate early-stops the configurational analysis for a rank-0 class).
+// Request and completed-result encoding for the path survey.
 
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "config/config_manager.hpp"
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
 #include "raypath/query_control.hpp"
 #include "raypath/survey_result.hpp"
 
+namespace lumice {
+struct ConfigManager;
+}
+
 namespace lumice::raypath::survey {
-// The schema-4 serializer (schema "lumice.path-survey"), declared here since the typed-view C
-// surface derives the document from a completed typed result through this header (the
-// implementation stays engine-side, in this module's detail/).
+// The schema-4 serializer projects a completed result.
 std::string SurveyResultToJson(const SurveyResult& document, const char* lumice_version);
 }  // namespace lumice::raypath::survey
 
@@ -38,14 +35,11 @@ struct SurveyRequest : PathSelection {
   std::optional<double> wavelength_nm;
   int budget_ms = kDefaultSurveyBudgetMs;
   // 0 (the default) = the opt-in MC region ESS leg does not run; positive = its requested
-  // draw count, at most survey::kSurveyMcEssMaxDraws (enforced in AssembleSurvey).
+  // draw count, at most quantity::kSurveyMcEssMaxDraws (enforced in AssembleSurvey).
   int mc_ess_draws = 0;
   std::optional<QueryDeadline> query_deadline;
 };
 
-// Runs the routing and serializes the document: `json_out` receives the schema-4 document.
-Error AnalyzePathSurvey(const ConfigManager& config, const SurveyRequest& request, const std::string& product_version,
-                        std::string* json_out);
 Error AnalyzePathSurveyValue(const ConfigManager& config, const SurveyRequest& request, survey::SurveyResult* out);
 
 }  // namespace lumice::raypath

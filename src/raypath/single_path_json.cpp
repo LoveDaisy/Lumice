@@ -1,5 +1,6 @@
 #include "raypath/single_path_json.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -8,6 +9,8 @@
 #include <vector>
 
 #include "raypath/detail/json_values.hpp"
+#include "raypath/survey_report.hpp"
+#include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
 
@@ -422,11 +425,8 @@ std::string ToJson(const PointResult& result, const std::string& product_version
   return EncodePoint(result.Data(), result.Data().survey_context, product_version);
 }
 
-Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
-  nlohmann::json doc = nlohmann::json::parse(json_text, nullptr, /*allow_exceptions=*/false);
-  if (doc.is_discarded()) {
-    return Invalid("not a JSON document");
-  }
+namespace {
+Error DecodePointSeeds(const nlohmann::json& doc, std::vector<double>* seeds) {
   if (!doc.is_object() || !doc.contains(kKeySchemaVersion) || !doc[kKeySchemaVersion].is_number_integer()) {
     return Invalid("not a `Lumice raypath` output (no integer schema_version)");
   }
@@ -464,10 +464,17 @@ Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
   seeds->insert(seeds->end(), found.begin(), found.end());
   return {};
 }
+}  // namespace
+
+Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
+  nlohmann::json doc = nlohmann::json::parse(json_text, nullptr, /*allow_exceptions=*/false);
+  return doc.is_discarded() ? Invalid("not a JSON document") : DecodePointSeeds(doc, seeds);
+}
 
 Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate) {
   detail::g_json_decode_calls.fetch_add(1, std::memory_order_relaxed);
   *candidate = {};
+  candidate->origin = WarmOrigin::kImportedJson;
   auto* seeds = &candidate->seeds;
   auto* survey = &candidate->facts;
   nlohmann::json doc = nlohmann::json::parse(json_text, nullptr, /*allow_exceptions=*/false);
@@ -477,19 +484,19 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
   if (!doc.is_object()) {
     return Invalid("not a warm document (not an object)");
   }
-  // The schema-4 arm first (a survey document also carries an integer schema_version — the
-  // family name is the discriminator): a schema-4 document through the consistency gates, then
-  // the harvest.
-  const bool is_survey =
-      doc.contains("schema") && doc["schema"].is_string() && doc["schema"].get<std::string>() == "lumice.path-survey";
+  if (doc.contains("schema") && doc["schema"] != "lumice.path-survey") {
+    return Invalid("unknown warm document schema");
+  }
+  const bool is_survey = doc.contains("schema");
   if (!is_survey) {
-    // The schema-1 arm, spelled exactly as ParseWarmSeeds's: a target-fiber output is a seed
-    // sheet, not a survey index — the survey context stays unset and the query computes it
-    // inline (the product owner sees a seed sheet, not a survey index).
-    return ParseWarmSeeds(json_text, seeds);
+    return DecodePointSeeds(doc, seeds);
   }
   survey->family = WarmDocumentFamily::kSurvey;
   const auto refuse = [](const std::string& why) { return Error{ ErrorCode::kInvalidArgument, "warm index: " + why }; };
+  if (!doc.contains(kKeySchemaVersion) || !doc[kKeySchemaVersion].is_number_integer() ||
+      doc[kKeySchemaVersion] != kSurveySchemaVersion) {
+    return refuse("unsupported survey schema_version");
+  }
   // Decode the request echo; the product owner compares its physical identity.
   if (!doc.contains("request") || !doc["request"].is_object()) {
     return refuse("the document carries no request echo");
@@ -515,7 +522,10 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     candidate->path_layers.push_back(std::move(faces));
   }
   candidate->decode_stage = WarmDecodeStage::kMeasure;
-  if (doc.contains("scope") && doc["scope"].is_object() && doc["scope"].contains("scene_layer")) {
+  if (doc.contains("scope") && !doc["scope"].is_object()) {
+    return refuse("corrupt warm document: scope is not an object");
+  }
+  if (doc.contains("scope") && doc["scope"].contains("scene_layer")) {
     const auto& layer = doc["scope"]["scene_layer"];
     if (layer.is_null()) {
       candidate->location = ScopeLocation{ SelectionLocation::kStandalone, 0 };
@@ -529,8 +539,10 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
   // Measure echo extraction: the family arm's measure echo. Only the family-arm documents carry
   // family_routing; its absence is data (the arm did not run), so the gate skips with the
   // declaration carried in the survey source — the caller compares the echo when it is present.
-  if (doc.contains("family_routing") && doc["family_routing"].is_object() &&
-      doc["family_routing"].contains("measure")) {
+  if (doc.contains("family_routing") && !doc["family_routing"].is_object()) {
+    return refuse("corrupt warm document: family_routing is not an object");
+  }
+  if (doc.contains("family_routing") && doc["family_routing"].contains("measure")) {
     const auto read_dim = [](const nlohmann::json& dim, SurveyWarmSource::MeasureDimEcho* out) {
       if (!dim.is_object() || !dim.contains("kind") || !dim["kind"].is_string() || !dim.contains("center_deg") ||
           !dim["center_deg"].is_number() || !dim.contains("width_deg") || !dim["width_deg"].is_number()) {
@@ -558,6 +570,16 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     survey->has_measure_echo = true;
   }
   // Decode the index receipt; no fingerprint is compared at this boundary.
+  if (doc.contains("warm_index")) {
+    const auto& index = doc["warm_index"];
+    if (!index.is_object() || (index.contains("seeds") && !index["seeds"].is_array()) ||
+        (index.contains("seed_sources") && !index["seed_sources"].is_array()) ||
+        (index.contains("reuse_scope") && !index["reuse_scope"].is_string()) ||
+        (index.contains("produced_for") && !index["produced_for"].is_string()) ||
+        (index.contains("config_fingerprint") && !index["config_fingerprint"].is_string())) {
+      return refuse("corrupt warm document: malformed warm_index");
+    }
+  }
   const bool index_block =
       doc.contains("warm_index") && doc["warm_index"].is_object() && doc["warm_index"].contains("seeds") &&
       doc["warm_index"]["seeds"].is_array() && doc["warm_index"].contains("seed_sources") &&
@@ -566,8 +588,6 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
       doc["warm_index"]["produced_for"].is_string() && doc["warm_index"].contains("config_fingerprint") &&
       doc["warm_index"]["config_fingerprint"].is_string();
   if (!index_block) {
-    // The D2 degradation: a pre-warm document (every schema-4 document written before this build)
-    // or a truncated one. Not a refusal — the query degrades, visibly, to its own inline context.
     survey->index_present = false;
     return {};
   }
@@ -580,6 +600,9 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
   const auto& doc_sources = doc["warm_index"]["seed_sources"];
   if (doc_seeds.size() != doc_sources.size()) {
     return refuse("the document's warm_index seeds and seed_sources disagree in length");
+  }
+  if (!std::all_of(doc_sources.begin(), doc_sources.end(), [](const auto& source) { return source.is_string(); })) {
+    return refuse("corrupt warm document: seed_sources must be strings");
   }
   for (size_t i = 0; i < doc_seeds.size(); i++) {
     const auto& seed = doc_seeds[i];
@@ -597,12 +620,20 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     }
   }
   // ...the routing verdict...
-  if (doc.contains("routing") && doc["routing"].is_object() && doc["routing"].contains("early_stopped") &&
-      doc["routing"]["early_stopped"].is_boolean()) {
+  if (doc.contains("routing") && !doc["routing"].is_object()) {
+    return refuse("corrupt warm document: routing is not an object");
+  }
+  if (doc.contains("routing") && doc["routing"].contains("early_stopped")) {
+    if (!doc["routing"]["early_stopped"].is_boolean())
+      return refuse("corrupt warm document: routing.early_stopped is not a boolean");
     survey->early_stopped = doc["routing"]["early_stopped"].get<bool>();
   }
-  if (doc.contains("scope") && doc["scope"].is_object()) {
+  if (doc.contains("scope")) {
     const auto& scope = doc["scope"];
+    for (const char* key : { "wavelength_nm", "sun_altitude_deg", "sun_azimuth_deg" }) {
+      if (scope.contains(key) && !scope[key].is_number() && !scope[key].is_null())
+        return refuse(std::string("corrupt warm document: invalid scope.") + key);
+    }
     if (scope.contains("wavelength_nm") && scope["wavelength_nm"].is_number()) {
       survey->wavelength_nm = scope["wavelength_nm"].get<double>();
       survey->has_wavelength = std::isfinite(survey->wavelength_nm) && survey->wavelength_nm > 0.0;
@@ -632,13 +663,20 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
   // harvest arm spells, so the two arms answer identically on any document (the dual-arm oracle
   // test pins it). A support_set whose interval list harvests nothing reads as no support: the
   // flag is set once after the loop, from what actually landed.
-  if (doc.contains("objects") && doc["objects"].is_array()) {
+  if (doc.contains("objects") && !doc["objects"].is_array()) {
+    return refuse("corrupt warm document: objects is not an array");
+  }
+  if (doc.contains("objects")) {
     for (const auto& card : doc["objects"]) {
       if (!card.is_object()) {
-        continue;
+        return refuse("corrupt warm document: object is not an object");
       }
-      if (card.contains("support_set") && card["support_set"].is_object() &&
-          card["support_set"].contains("intervals") && card["support_set"]["intervals"].is_array()) {
+      if (card.contains("support_set") &&
+          (!card["support_set"].is_object() || !card["support_set"].contains("intervals") ||
+           !card["support_set"]["intervals"].is_array())) {
+        return refuse("corrupt warm document: invalid support_set intervals");
+      }
+      if (card.contains("support_set")) {
         std::vector<int> members;
         if (card.contains("members") && card["members"].is_array() && !card["members"].empty() &&
             card["members"][0].is_array()) {
@@ -651,7 +689,7 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
         for (const auto& interval : card["support_set"]["intervals"]) {
           if (!interval.is_object() || !interval.contains("lower_deg") || !interval["lower_deg"].is_number() ||
               !interval.contains("upper_deg") || !interval["upper_deg"].is_number()) {
-            continue;
+            return refuse("corrupt warm document: invalid support interval");
           }
           SurveyWarmSource::SupportInterval out;
           out.lower_deg = interval["lower_deg"].get<double>();
@@ -685,8 +723,15 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     survey->has_support = !survey->intervals.empty();
   }
   // ...the probe's radial profile.
-  if (doc.contains("probes") && doc["probes"].is_array() && !doc["probes"].empty() && doc["probes"][0].is_object() &&
-      doc["probes"][0].contains("samples") && doc["probes"][0]["samples"].is_array()) {
+  if (doc.contains("probes") && !doc["probes"].is_array()) {
+    return refuse("corrupt warm document: probes is not an array");
+  }
+  if (doc.contains("probes") && !doc["probes"].empty() &&
+      (!doc["probes"][0].is_object() ||
+       (doc["probes"][0].contains("samples") && !doc["probes"][0]["samples"].is_array()))) {
+    return refuse("corrupt warm document: invalid probe");
+  }
+  if (doc.contains("probes") && !doc["probes"].empty() && doc["probes"][0].contains("samples")) {
     const auto& probe = doc["probes"][0];
     survey->has_probe = true;
     if (probe.contains("spec") && probe["spec"].is_object()) {
@@ -727,18 +772,21 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     // and a reader that dropped it would hand the next query a silently shorter grid. (The
     // in-memory harvest arm reads the same rows verbatim; this is the two arms agreeing.)
     for (const auto& sample : probe["samples"]) {
-      if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number()) {
-        continue;
+      if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number() ||
+          !sample.contains("value") || (!sample["value"].is_number() && !sample["value"].is_null()) ||
+          !sample.contains("k") || !sample["k"].is_number_integer() || !sample.contains("k_eff") ||
+          (!sample["k_eff"].is_number() && !sample["k_eff"].is_null())) {
+        return refuse("corrupt warm document: invalid probe sample");
       }
       SurveyWarmSource::ProbeSample out;
       out.delta_deg = sample["delta_deg"].get<double>();
       constexpr double nan = std::numeric_limits<double>::quiet_NaN();
-      out.value = sample.contains("value") && sample["value"].is_number() ? sample["value"].get<double>() : nan;
-      if (sample.contains("k") && sample["k"].is_number_integer()) {
-        out.k = sample["k"].get<int>();
-      }
-      if (sample.contains("k_eff") && sample["k_eff"].is_number()) {
+      out.value = sample["value"].is_number() ? sample["value"].get<double>() : nan;
+      out.k = sample["k"].get<int>();
+      if (sample["k_eff"].is_number()) {
         out.k_eff = sample["k_eff"].get<double>();
+      } else if (out.k != 0) {
+        return refuse("corrupt warm document: nonempty probe sample has null k_eff");
       }
       survey->probe_samples.push_back(std::move(out));
     }

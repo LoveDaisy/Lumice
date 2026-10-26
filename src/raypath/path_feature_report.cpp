@@ -5,6 +5,7 @@
 #include <limits>
 
 #include "analytic/so3.hpp"
+#include "config/config_manager.hpp"
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
 #include "raypath/query_control.hpp"
@@ -211,19 +212,6 @@ Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatu
   result.execution =
       OutcomeOf(enumeration_stop) != ExecutionOutcome::kCompleted ? OutcomeOf(enumeration_stop) : discovery_execution;
   *out = schema3::CompleteFeatureReportResult(std::move(result), std::move(assembled));
-  return {};
-}
-
-Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
-                               const std::string& product_version, std::string* json_out) {
-  if (!json_out) {
-    return { ErrorCode::kInvalidArgument, "null report output" };
-  }
-  FeatureReportResult result;
-  if (const Error error = AnalyzePathFeatureReportValue(config, request, &result); !error.Ok()) {
-    return error;
-  }
-  *json_out = PathFeatureReportV3ToJson(result, product_version.c_str());
   return {};
 }
 

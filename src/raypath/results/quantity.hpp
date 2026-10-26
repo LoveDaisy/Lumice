@@ -11,6 +11,10 @@
 
 namespace lumice::raypath {
 
+namespace quantity {
+inline constexpr long long kSurveyMcEssMaxDraws = 200000;
+}
+
 // The actual inputs, owned by the completed result. Geometry/probability metadata is never
 // reconstructed from a display label or a member count. A quantity selects its projection
 // through its spec; this is not a universal cache key.

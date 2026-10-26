@@ -43,13 +43,10 @@ struct DiscoveryStop;  // the shared stop judgment (analytic/stop.hpp, via disco
 
 namespace lumice::raypath::quantity {
 
-// The leg's schema constants (the serialized block echoes them all): the fixed seed, the band
-// grid, and the draw cap (the engine refuses more; the C API mirrors it as a shell-facing
-// macro). Small draws are cheap — the C18 bench runs 2e4; the cap exists so a runaway request
-// fails at validation instead of at the deadline.
+// The leg's schema constants: the fixed seed and band grid. The public draw cap is shared
+// with the C bridge through results/quantity.hpp.
 inline constexpr long long kSurveyMcEssSeed = 20261022;
 inline constexpr double kSurveyMcEssBandDeg = 5.0;
-inline constexpr long long kSurveyMcEssMaxDraws = 200000;
 inline constexpr int kSurveyMcEssBandCount = 36;  // 5-degree bands over [0, 180]
 
 struct McRegionEssInput {

@@ -1,10 +1,7 @@
 #ifndef LUMICE_RAYPATH_PATH_FEATURE_REPORT_HPP_
 #define LUMICE_RAYPATH_PATH_FEATURE_REPORT_HPP_
 
-// Public request surface of the feature report: the constants and request
-// struct the C API bridge needs, plus the one entry point that returns the
-// report as its JSON form. The report struct itself, its assembly and its
-// serializer are module internals (raypath/detail/).
+// Request, completed result and serializer for the path feature report.
 
 #include <chrono>
 #include <cstdint>
@@ -13,12 +10,15 @@
 #include <vector>
 
 #include "analytic/stop.hpp"
-#include "config/config_manager.hpp"
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
 #include "raypath/feature_report_result.hpp"
 #include "raypath/query_control.hpp"
+
+namespace lumice {
+struct ConfigManager;
+}
 
 namespace lumice::raypath {
 constexpr int kFeatureReportSchemaVersion = 3;
@@ -49,14 +49,6 @@ struct PathFeatureReportRequest : PathSelection {
 Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatureReportRequest& request,
                                     FeatureReportResult* out);
 
-// The v3 report serializer (schema "lumice.path-feature-report"), declared here since the
-// typed-view C surface derives the document from a completed typed result through this header;
-// the implementation stays engine-side, in this module's detail/.
 std::string PathFeatureReportV3ToJson(const FeatureReportResult& result, const char* lumice_version);
-
-// Runs the analysis and serializes the report: `json_out` receives the same
-// bytes PathFeatureReportToJson would produce for the assembled report.
-Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
-                               const std::string& product_version, std::string* json_out);
 }  // namespace lumice::raypath
 #endif  // LUMICE_RAYPATH_PATH_FEATURE_REPORT_HPP_

@@ -87,9 +87,12 @@ struct SurveyWarmSource {
 
 // Decode stages preserve refusal precedence without giving a codec the query.
 enum class WarmDecodeStage { kEnvelope, kPath, kMeasure, kPayload };
+// Origin is provenance, not an admission or authenticity claim.
+enum class WarmOrigin { kUnspecified, kCompletedResult, kImportedJson };
 
 struct WarmCandidate {
   SurveyWarmSource facts;
+  WarmOrigin origin = WarmOrigin::kUnspecified;
   long long crystal_id = 0;
   std::vector<std::vector<int>> path_layers;
   std::optional<ScopeLocation> location;
@@ -107,12 +110,14 @@ class AdmittedWarmSource {
   const std::vector<double>& Seeds() const { return seeds_; }
   const ScopeLocation& Location() const { return location_; }
   MemberKind MembersKind() const { return member_kind_; }
+  WarmOrigin Origin() const { return origin_; }
 
  private:
-  AdmittedWarmSource(SurveyWarmSource facts, std::vector<double> seeds)
-      : facts_(std::move(facts)), seeds_(std::move(seeds)) {}
+  AdmittedWarmSource(SurveyWarmSource facts, std::vector<double> seeds, WarmOrigin origin)
+      : facts_(std::move(facts)), seeds_(std::move(seeds)), origin_(origin) {}
   SurveyWarmSource facts_;
   std::vector<double> seeds_;
+  WarmOrigin origin_ = WarmOrigin::kUnspecified;
   ScopeLocation location_;
   MemberKind member_kind_ = MemberKind::kLiteral;
   friend Error ValidateWarmCandidate(const ConfigManager&, const PathSelection&, const WarmCandidate&,

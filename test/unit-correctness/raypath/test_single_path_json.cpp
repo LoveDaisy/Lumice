@@ -21,6 +21,8 @@
 #include "config/config_manager.hpp"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
+#include "raypath/survey_report.hpp"
+#include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
 namespace {
@@ -408,6 +410,72 @@ TEST(SinglePathJson, WarmSeedReaderRejectsWhatIsNotThisFormat) {
   nlohmann::json no_seed = doc;
   no_seed["components"][0].erase("seed");
   EXPECT_EQ(code_of(no_seed.dump()), ErrorCode::kInvalidArgument);
+}
+
+TEST(SinglePathJson, WarmCandidateDecoderPreservesNullRowsAndRejectsUnknownSchema) {
+  nlohmann::json doc = {
+    { "schema", "lumice.path-survey" },
+    { "schema_version", kSurveySchemaVersion },
+    { "request", { { "crystal_id", 1 }, { "path_layers", { { 3, 5 } } } } },
+    { "scope", { { "scene_layer", nullptr } } },
+    { "warm_index",
+      { { "seeds", nlohmann::json::array() },
+        { "seed_sources", nlohmann::json::array() },
+        { "reuse_scope", "edited" },
+        { "produced_for", "edited" },
+        { "config_fingerprint", "edited" } } },
+    { "probes",
+      { { { "samples",
+            { { { "delta_deg", 22.0 }, { "value", nullptr }, { "k", 0 }, { "k_eff", nullptr } },
+              { { "delta_deg", 22.1 }, { "value", 0.0 }, { "k", 2 }, { "k_eff", 1.0 } } } } } } }
+  };
+  WarmCandidate candidate;
+  ASSERT_TRUE(DecodeWarmCandidate(doc.dump(), &candidate).Ok());
+  EXPECT_EQ(candidate.origin, WarmOrigin::kImportedJson);
+  ASSERT_EQ(candidate.facts.probe_samples.size(), 2u);
+  EXPECT_TRUE(std::isnan(candidate.facts.probe_samples[0].value));
+  EXPECT_DOUBLE_EQ(candidate.facts.probe_samples[0].k_eff, 0.0);
+  EXPECT_DOUBLE_EQ(candidate.facts.probe_samples[1].value, 0.0);
+
+  doc["probes"][0]["samples"][0]["delta_deg"] = "bad";
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc["probes"][0]["samples"][0]["delta_deg"] = 22.0;
+  doc["schema_version"] = kSurveySchemaVersion + 1;
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc["schema_version"] = kSurveySchemaVersion;
+  doc["schema"] = "unknown";
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc["schema"] = "lumice.path-survey";
+  doc["scope"]["geometry_kind"] = "unknown";
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc["scope"].erase("geometry_kind");
+  doc["scope"]["wavelength_nm"] = "bad";
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc["scope"].erase("wavelength_nm");
+  doc.erase("warm_index");
+  ASSERT_TRUE(DecodeWarmCandidate(doc.dump(), &candidate).Ok());
+  EXPECT_FALSE(candidate.facts.index_present);
+  PathSelection selection;
+  selection.crystal_id = 1;
+  selection.path_layers = { { 3, 5 } };
+  std::optional<AdmittedWarmSource> admitted;
+  ASSERT_TRUE(ValidateWarmCandidate(PrismScene(), selection, candidate, &admitted).Ok());
+  ASSERT_TRUE(admitted.has_value());
+  EXPECT_EQ(admitted->Origin(), WarmOrigin::kImportedJson);
+  doc["warm_index"] = { { "seeds", nlohmann::json::array() } };
+  ASSERT_TRUE(DecodeWarmCandidate(doc.dump(), &candidate).Ok());
+  EXPECT_FALSE(candidate.facts.index_present);
+  ASSERT_TRUE(ValidateWarmCandidate(PrismScene(), selection, candidate, &admitted).Ok());
+  ASSERT_TRUE(admitted.has_value());
+  EXPECT_FALSE(admitted->Facts().index_present);
+  EXPECT_TRUE(admitted->Seeds().empty());
+  doc["warm_index"]["seeds"] = "bad";
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+
+  WarmCandidate typed;
+  typed.seeds.assign(9, 0.0);
+  typed.seeds[0] = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_EQ(ValidateWarmCandidate(PrismScene(), selection, typed, &admitted).code, ErrorCode::kInvalidArgument);
 }
 
 TEST(SinglePathJson, TheConstructionSlotIsNotPublishable) {

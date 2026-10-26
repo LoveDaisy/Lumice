@@ -8,7 +8,7 @@
 
 #include <string>
 
-#include "raypath/probe_analysis.hpp"
+#include "raypath/probe_result.hpp"
 
 namespace lumice::raypath {
 

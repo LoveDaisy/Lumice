@@ -24,6 +24,7 @@ namespace lumice::raypath {
 WarmCandidate HarvestSurveyResult(const survey::SurveyResult& result) {
   const survey::SurveyData& doc = result.Data();
   WarmCandidate candidate;
+  candidate.origin = WarmOrigin::kCompletedResult;
   candidate.crystal_id = doc.request.crystal_id;
   candidate.path_layers = doc.request.path_layers;
   candidate.location = doc.scene_layer ?
@@ -329,7 +330,11 @@ Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& se
     if (facts.index_present || facts.has_support || facts.has_edge || facts.has_probe || facts.has_measure_echo) {
       return refuse("a seed sheet cannot carry survey facts");
     }
-    *out = AdmittedWarmSource({}, candidate.seeds);
+    if (candidate.seeds.size() % 9 != 0 ||
+        !std::all_of(candidate.seeds.begin(), candidate.seeds.end(), [](double x) { return std::isfinite(x); })) {
+      return refuse("seeds must be finite row-major matrices of nine numbers");
+    }
+    *out = AdmittedWarmSource({}, candidate.seeds, candidate.origin);
     return {};
   }
   if (candidate.crystal_id != selection.crystal_id) {
@@ -373,7 +378,7 @@ Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& se
   if (!facts.index_present) {
     SurveyWarmSource absent;
     absent.family = WarmDocumentFamily::kSurvey;
-    *out = AdmittedWarmSource(std::move(absent), {});
+    *out = AdmittedWarmSource(std::move(absent), {}, candidate.origin);
     return {};
   }
   // The same presence rule applies to typed producers and JSON numbers. In particular,
@@ -410,12 +415,10 @@ Error ValidateWarmCandidate(const ConfigManager& config, const PathSelection& se
   if (!candidate.location) {
     SurveyWarmSource absent;
     absent.family = WarmDocumentFamily::kSurvey;
-    *out = AdmittedWarmSource(std::move(absent), candidate.seeds);
+    *out = AdmittedWarmSource(std::move(absent), candidate.seeds, candidate.origin);
     return {};
   }
-  // A missing index is still a survey provenance marker, but carries neither seeds
-  // nor numeric facts. The query assembles its own context under the existing rule.
-  *out = AdmittedWarmSource(std::move(facts), candidate.facts.index_present ? candidate.seeds : std::vector<double>{});
+  *out = AdmittedWarmSource(std::move(facts), candidate.seeds, candidate.origin);
   (*out)->location_ = survey::ResolveSelectionLocation(config, selection);
   (*out)->member_kind_ = selection.symmetry_bits == 0 ? MemberKind::kLiteral : MemberKind::kPhysicalL2;
   return {};

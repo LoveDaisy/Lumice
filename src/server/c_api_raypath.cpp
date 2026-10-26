@@ -18,7 +18,6 @@
 #include "config/config_manager.hpp"
 #include "config/crystal_config.hpp"
 #include "include/lumice_raypath.h"
-#include "raypath/detail/survey/survey_mc_ess.hpp"
 #include "raypath/path_feature_report.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/probe_json.hpp"
@@ -217,6 +216,9 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   req.sun_grid_lat_count = request.sun_grid_lat_count;
   if (workspace != nullptr) {
     req.budget_ms = options != nullptr ? options->deadline_ms : 0;
+    if (request.struct_size >= kRequestSizeV452) {
+      req.interrupted = request.interrupted;
+    }
     if (options != nullptr && options->warm != nullptr) {
       req.warm_candidate = options->warm->candidate;
     }
@@ -870,6 +872,7 @@ LUMICE_ErrorCode LUMICE_PathWarmDataFromPoint(const LUMICE_SinglePathResult* res
   }
   try {
     auto handle = std::make_unique<LUMICE_PathWarmData_>();
+    handle->candidate.origin = lumice::raypath::WarmOrigin::kCompletedResult;
     const auto& data = result->result.Data();
     if (data.OutcomeValue() == lumice::raypath::Outcome::kDiscovered) {
       for (const auto& component : data.Discovered().components) {

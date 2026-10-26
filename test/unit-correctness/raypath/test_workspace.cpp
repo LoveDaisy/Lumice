@@ -337,6 +337,7 @@ TEST(Workspace, ExplicitTypedWarmOutlivesItsSourceAndIsNotOverwritten) {
   ASSERT_TRUE(producer->QuerySurvey(SurveyOf({ 1, 2 }), &source_result).Ok());
   SinglePathRequest request = PointOf({ 1, 2 });
   request.warm_candidate = HarvestSurveyResult(source_result);
+  EXPECT_EQ(request.warm_candidate->origin, WarmOrigin::kCompletedResult);
   producer.reset();
   source_result = survey::SurveyResult{};
 
