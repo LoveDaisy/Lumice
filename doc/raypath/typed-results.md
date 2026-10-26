@@ -348,7 +348,7 @@ semantics, C10 independent ladder routing, C16 survival/representatives, C17 ref
 support plus witness, C06 support circles, and the existing unavailable-density cases.
 This is a value/ownership migration, not a new uniform test census over the full corpus.
 
-## Remaining execution adapters
+## Completed execution and compatibility
 
 The legacy point execution envelope (`SinglePathResult` with its deferred-context inputs
 `context_config`/`context_request`/`context_warm`/`survey_context_ready`, and the
