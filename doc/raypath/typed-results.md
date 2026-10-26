@@ -239,6 +239,74 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | attribution/ruling | annotations/unattributed/counts/ruling/outcome/basis | completed report with checked local references | `PathReportGetAnnotation/Unattributed/UnattributedSummary/Ruling/Info` | report `features[].attribution`, `unattributed_structures`, `no_related_feature` |
 | former report serializer assembly | coverage/budgets/timing, unsupported multi-crystal path | `FeatureReportData` completion; serializer takes one frozen result | `PathReportGetCoverage/DeclaredSkip/Budgets/Info/RequestedLayer`; timing remains observational | report `coverage`, `budgets`, `timing`, unsupported outcome |
 
+## Typed C baseline replay and coverage audit
+
+The pre-migration wire baseline was captured from `618ba8798afef641e0e8058d142c895b6b3e8388` on macOS arm64. Its four scene inputs are `test/e2e/configs/raypath_analysis_halo_22.json` (point), `test/e2e/configs/raypath_feature_plate_gauss.json` (probe and family survey), `test/e2e/configs/raypath_feature_plate_target.json` (report), and `test/e2e/configs/raypath_typed_capi_c01.json` (full-dimensional survey, MC ESS and TIR). The C01 file is the exact semantic input used for the baseline. The output documents are intentionally not tracked; the replay recipe and their normalized SHA-256 values are.
+
+From the repository root, with a freshly built static CLI for the revision being checked:
+
+```bash
+set -euo pipefail
+B=./build/Release/static/bin/Lumice
+O=$(mktemp -d)
+$B raypath point -f test/e2e/configs/raypath_analysis_halo_22.json --crystal 1 --path 3-5 --target 20,25 --events 50k --grid 12 --budget-ms 120000 -o "$O/point.json"
+$B raypath point -f test/e2e/configs/raypath_analysis_halo_22.json --crystal 1 --path 3-5 --target 20,25 --events 50k --grid 12 --budget-ms 120000 --warm "$O/point.json" -o "$O/point-warm.json"
+$B raypath probe -f test/e2e/configs/raypath_feature_plate_gauss.json --crystal 1 --path 3-5 --along radial --at 20,25 --lambda 450,550,650 --budget-ms 120000 -o "$O/probe.json"
+$B raypath survey -f test/e2e/configs/raypath_feature_plate_gauss.json --crystal 1 --path 3-5 --lambda 550 --budget 120s -o "$O/survey-family.json"
+$B raypath survey -f test/e2e/configs/raypath_typed_capi_c01.json --crystal 1 --path 3-5 --lambda 550 --budget 120s --mc-ess 200 -o "$O/survey-fulldim.json"
+$B raypath report -f test/e2e/configs/raypath_feature_plate_target.json --crystal 1 --path 3-1-5 --budget-ms 120000 -o "$O/report.json"
+$B raypath probe -f test/e2e/configs/raypath_feature_plate_gauss.json --crystal 1 --path 3-5 --along radial --at 20,25 --lambda 550 --budget-ms 120000 --warm "$O/survey-family.json" -o "$O/probe-warm.json"
+python3 -I -c 'import json,pathlib,sys
+for name in sys.argv[1:]:
+    path=pathlib.Path(name)
+    value=json.loads(path.read_text())
+    value.pop("timing",None)
+    path.with_name(path.name+".norm").write_text(json.dumps(value,sort_keys=True,separators=(",",":")))' "$O"/*.json
+shasum -a 256 "$O"/*.json.norm
+```
+
+Only a **top-level** `timing` block is removed; nested numbers, absent keys and nulls remain comparison targets. The pinned hashes below name the seven pre-migration files (not a claim that a future revision's wall-clock or physics must match them). Point and report were independently replayed twice byte-identically under this normalization. To reconstruct rather than trust a hash, build the pinned commit in a separate checkout and use these commands with the tracked C01 input from this revision. The original engine/analytic export counts were 122/31 (macOS `nm -gU`, last-column symbol names sorted lexicographically). The corresponding name-list SHA-256 values were `1d29a64dac96246c4838153a237ef758f4b5b39bfee5ac73af9047a79a4c365c` and `841771b0a2a5d1968155fab0bb9945c544cd524309e069c84880b8d6b6fef2d0`; the analytic set is separately checked against the published shared library after the migration.
+
+The C-level refusal and repeated-read baseline is distinct from successful wire replay. Each refusal returned code 5; these reason strings were captured before the typed migration, and corresponding existing C API tests exercise the inputs. A valid multi-crystal report returns an `unsupported_multicrystal` result instead — the rejected report row here uses malformed layer counts.
+
+| Input | Captured reason text |
+|---|---|
+| point unknown crystal | `unknown_crystal_id: no crystal entry with id 99 in the config` |
+| point two scattering layers | `multi_layer_unsupported: the raypath spans 2 scattering layers; only single-layer raypaths can be analysed` |
+| point struct_size 8 | `invalid_argument: struct_size 8 is smaller than this version's LUMICE_SinglePathRequest (96); set it to sizeof(LUMICE_SinglePathRequest)` |
+| point invalid warm JSON | `invalid_argument: warm seeds: not a JSON document` |
+| report malformed layers | `invalid_path: non-empty layers with 2..64 positive face numbers are required` |
+| survey wavelength 1000 nm | `wavelength_out_of_range: wavelength 1000.000000 nm is outside the ice refractive-index table [350, 900] nm` |
+| probe invalid along | `invalid_argument: unknown along form` |
+
+All four successful result handles had two identical length queries and two identical fetches before migration (`len_consistent=1`, `fetch_consistent=1` each); current C tests retain the repeatability contract.
+
+| Normalized file | SHA-256 at pre-migration base |
+|---|---|
+| `point.json.norm` | `12a937047c2ae076643729753b041b90bce6fcc2f223e2c56f3f2b9dd89e7c14` |
+| `point-warm.json.norm` | `36fe674cb9ed5d0cb1b2ace3c4c67b241f7c54595d5faab2f58479a73de6e03a` |
+| `probe.json.norm` | `db96cfc3a4aa9f5a55ced556a4f15a27d76b322a479a019c5e3d77fc12a003b3` |
+| `probe-warm.json.norm` | `22b14da592298376b0c0704c025b5629ad3c261fe344415804210e7f79add4a8` |
+| `report.json.norm` | `24be2c3e478a2a04b668bc02fb859e8a7bdd44837c9d43c03a37d0991bb763f1` |
+| `survey-family.json.norm` | `dfbfb23c0d6d1d6da28266d251bcabc297f0ae6bbf254ff9a861d6c3cd41088c` |
+| `survey-fulldim.json.norm` | `44ea006446becebfbffb005e3270a69dc9ba6cd0e37320c04fa5617d9f3614ec` |
+
+The fixed top-level metadata-key exclusion is `schema`, `schema_version`, `generator`, `conventions`, and `timing` (only where present). These are static family/version/prose or wall-clock observations, not machine-data groups; no nested key with the same spelling is exempt. The seven baseline documents' top-level key sets each have zero unaccounted keys after the exclusions and the group mapping below. This probe does **not** establish nested-field completeness: a separate typed-vs-wire review also recovered report record equation/contributor fraction, enumeration's optical cap and the unsupported multi-crystal requested layers.
+
+| Face | Baseline machine-data group → C view |
+|---|---|
+| Point | meta → `PathPointGetInfo/Shape`; outcome/point_mass → `GetInfo/Mass/OrbitPoint`; components → `GetComponent/Sample`; incomplete → `GetIncomplete` |
+| Point | discovery → `GetDiscovery`; reach → `GetReach`; sun_grid → `GetSunGrid`; measure_registration → `GetMeasureRegistration`; context → `GetContext` |
+| Probe | meta → `PathProbeGetInfo/Shape/Wavelength`; context → `GetContext`; profiles → `GetProfile/Sample/DarkRegion/Quantity/Evidence`; derived → `GetInfo` |
+| Survey | request/scope → `PathSurveyGetInfo/Scope/RequestLayer/Member`; routing → `GetInfo/MemberVerdict/Evidence`; objects → `GetObject/ObjectMember/Support/Edge/Bright/Witness/Quantity/Evidence` |
+| Survey | unevaluated → `GetUnevaluated/UnevaluatedKind`; family_routing → `GetFamily/FamilyDimension/FamilyLevel/FamilyFrozenDim/FamilyKilled/Evidence`; chromatic → `GetChromatic/Dispersion/FollowedOnset/Diagnose/DiagnoseFeature/Evidence` |
+| Survey | tint/TIR/ESS/witness → `GetTint/TirShare/TirInterface/McEss/McEssBand/Witness/Quantity/Evidence`; warm admission → `GetScope/WarmSeed`; probes → `GetProbe/ProbeSample/ProbeQuantity/Evidence`; evidence/budget → `GetInfo/Scope/Evidence` |
+| Report | scope → `PathReportGetScope/RequestedLayer/Layer/LayerAxis/LayerShape/RawSpectrumRow/SpectralRow`; support → `GetSupportMember/SupportInterval/SupportOnset/ConstantCurve/SupportFamily/Orbit` |
+| Report | features/enumeration → `GetObject/Visibility/Chromatic/ChromaticFeature/ProducedKind`; unattributed → `GetUnattributed/UnattributedSummary`; MC evidence → `GetMcEvidence/Record/RecordAdjuncts/FieldPoint/FieldBand/DiagnosticSource/DiagnosticValue/InterfaceCurve/Corridor` and their indexed children |
+| Report | source replay → `GetSource/PositiveSource`; attribution/ruling → `GetAnnotation/Ruling`; coverage/absence → `GetCoverage/CoverageLimitation/DeclaredSkip/ProducedKind/Budgets/Ruling`; execution → `GetInfo.execution` |
+
+The group inventory is frozen from the pre-migration ledger at the base commit. The table is a per-group coverage audit, not a claim that seven examples enumerate every optional arm; root and nested negative statuses, absent payloads, concurrent reads, lifetime and actual C linking have separate tests. Public enum domains are specified in `lumice_raypath.h` rather than inferred from this table.
+
 The maximal MC-record fixture and existing literal JSON key/null/absence pins retain
 the `kMcMigrationLedger` as their reference. The tests also exercise C01 edge/probe
 semantics, C10 independent ladder routing, C16 survival/representatives, C17 refused
