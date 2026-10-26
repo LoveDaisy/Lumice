@@ -88,7 +88,8 @@ Destroy 为止；字符串以 NUL 结尾，长度不含终止符。活结果上�
 显式标记；非法索引与 variant kind 返回具名读取状态，不把默认零当结果。
 有语义的整数字段均使用能力头内具名的 `LUMICE_PATH_*` 常量：0 表示未识别或不可用；
 `along` 与 field-equation 是以 0 起始的既有值域，未识别值用 -1。bridge 将内部枚举
-逐项映射到公开数值，内部枚举调序不得静默改变 C 合同。
+逐项映射到公开数值，内部枚举调序不得静默改变 C 合同。`PathSurveyGetScope.member_kind`
+只读取已完成结果的 quantity context；若该事实缺席，则返回 unknown tag（0），不从请求位推断物理成员范围。
 
 **v4.54** 是纯追加。新增光路 survey——带 `struct_size` 头的 `LUMICE_PathSurveyRequest`、不透明的
 `LUMICE_PathSurvey`、`LUMICE_AnalyzePathSurvey`、`LUMICE_PathSurveyToJson`（与

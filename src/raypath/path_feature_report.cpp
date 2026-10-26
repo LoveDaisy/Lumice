@@ -188,14 +188,8 @@ Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatu
     return error;
   }
   FeatureReportData result = schema3::PrepareFeatureReportResult(report);
-  // The multicrystal early path never ran the discovery; the assembly's precondition excludes
-  // it and the v3 early shape ignores the assembled side. The enumeration leg's anti-hang
-  // deadline starts here: the enforced robustness floor (kEnumerationHangCapMs), independent
-  // of the request's quality budget (--budget-ms bounds the discovery legs, report-only by
-  // A4 for the enumeration's own cost vocabulary). Resolved by the one owner, like every
-  // window (query_control.hpp).
-  // The enumeration leg's one stop: the anti-hang cap's window with the query's cancel
-  // folded in (the window resolved by the one owner, like every window).
+  // The legacy enumeration window is an independent anti-hang cap; a workspace query also
+  // carries its resolved whole-query deadline into this leg. The earlier deadline wins.
   const auto enumeration_deadline =
       request.query_deadline ?
           std::min(std::chrono::steady_clock::now() + std::chrono::milliseconds(schema3::kEnumerationHangCapMs),

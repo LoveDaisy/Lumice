@@ -519,18 +519,20 @@ count. When omitted, a dyadic prefix up to 65536 is selected from the member/spe
 and optical work available for the main estimate, independent repeat and spectral refinement.
 The numerical defaults are 15000 ms, 4000000 optical evaluations and 250000000 weighted-component
 field evaluations. `--budget-ms` permits up to 120000 ms; `--max-evaluations` up to 16777216;
-`--max-field-evaluations` up to 1000000000. These bounds are checked inside numerical work, not
-only after it finishes. Bounded serialization follows the numerical deadline. The MC and
-attribution legs are deadline-bounded by that quality budget. The geometry layer's
-**enumeration leg** carries two different kinds of bound, and the difference is the contract:
+`--max-field-evaluations` up to 1000000000. These numerical bounds are checked during execution.
+Encoding starts only after the result freezes and is not bounded by the query deadline. The
+MC and attribution legs remain deadline-bounded. The geometry layer's **enumeration leg**
+carries two distinct bounds:
 
-- Its **quality budgets are report-only** — the leg's cost is measured and reported
-  (`timing.enumeration`, `budgets.enumeration`), never clamped by `--budget-ms`.
-- A fixed **anti-hang cap is enforced** (`budgets.enumeration.hang_cap_ms`, 300000 ms): a
-  member or leg the cap cuts ships the honest truncated face (`walk_truncated`, `walk_s` 0.0,
-  no curve body) and `budgets.enumeration.truncated` plus `truncation_note` name what was cut.
-  The cap is a robustness floor against pathological inputs, not a quality knob, and is
-  deliberately not coupled to `--budget-ms`.
+- Its own **quality budget is report-only** — the leg's cost is measured and reported
+  (`timing.enumeration`, `budgets.enumeration`). On the legacy C Analyze entry, the request's
+  `budget_ms` does not clamp this leg.
+- An enforced **anti-hang cap** (`budgets.enumeration.hang_cap_ms`, 300000 ms) cuts pathological
+  walks. On Workspace/CLI queries, the already-resolved whole-query deadline is also in force;
+  the earlier of it and the anti-hang cap stops enumeration. A cut member or leg ships an honest
+  truncated face (`walk_truncated`, `walk_s` 0.0, no curve body), with
+  `budgets.enumeration.truncated` and `truncation_note` recording the cut. A zero Workspace
+  deadline leaves the anti-hang cap in force.
 
 Two declared refusal bounds ride beside it, same honesty shape: an object whose curve body is
 denser than the carry bound ships truncated with no body (real kernel output the report leg
@@ -787,11 +789,11 @@ a document. The GUI workspace is not added by this interface.
 
 The query surfaces compiled by the C bridge are:
 
-- `path_feature_report.hpp` and `survey_report.hpp`: requests, budgets, typed completion,
-  and the legacy analysis-to-JSON adapters for each document family.
-- `single_path_analysis.hpp` / `single_path_json.hpp`: point requests, execution envelope,
-  explicit typed completion, serialization and boundary warm decoding.
-- `probe_analysis.hpp` / `probe_json.hpp`: the draw-a-line request/result and serialization.
+- `path_feature_report.hpp` and `survey_report.hpp`: requests, budgets and typed
+  execution entries; their completed results and JSON projections have separate owners.
+- `single_path_analysis.hpp` / `single_path_json.hpp`: point request/execution and
+  completed-result serialization plus warm-candidate decoding, respectively.
+- `probe_analysis.hpp` / `probe_json.hpp`: the draw-a-line request/typed result and JSON projection.
 
 Shared error and input metadata no longer come from the point result header. Their narrow
 owners are `domain/error.hpp`, `domain/input_metadata.hpp`, `domain/scope.hpp`, and
@@ -811,11 +813,13 @@ replays a source or derives budgets/outcome.
 
 Headers under `detail/` remain internal to the module and its white-box tests. Shared
 structure/quantity producers live in `detail/structure/` and `detail/quantity/`; query
-adapters choose and mount their returned values. The bridge's MC-ESS budget-bound include
-from `detail/survey/survey_mc_ess.hpp` remains a legacy exception outside the clean result
-closure. `scene_to_analytic.*` is an internal input-conversion seam despite its legacy
-placement. The legacy point envelope's deferred context is an execution adapter, never part
-of `PointResult`.
+adapters choose and mount their returned values. The bridge's raypath includes are public
+query/value headers; a compile-time equality check ties its MC-ESS draw limit to the published C value
+without importing a `detail/` header. `scene_to_analytic.*` is an internal input-conversion
+seam despite its legacy placement. The old point execution envelope and deferred context
+materialization have been removed: context is completed before `PointResult` freezes.
+The narrow include-closure rule and its limits are recorded in
+[Typed raypath results](typed-results.md#dependency-boundary).
 
 The earlier shared-input ownership migration remains in force:
 
@@ -834,17 +838,11 @@ and both solar coordinates). Quantity scope distinguishes representative, actual
 band-sum per-steradian readings from class aggregates or ideal-frozen facts. These tags do not
 replace or recalculate the numerical kernels.
 
-The shared inputs and report/survey requests can be checked independently of point:
-
-```bash
-grep -n 'include "raypath/single_path_analysis.hpp"' \
-  src/raypath/scene_to_analytic.hpp src/raypath/detail/input_assembly.hpp \
-  src/raypath/detail/physical_member_scope.hpp src/raypath/path_feature_report.hpp \
-  src/raypath/survey_report.hpp src/raypath/probe_analysis.hpp
-```
-
-No matches is the expected result. This checks the specific dependency removal, not the
-complete future module boundary.
+The public domain and result value headers are guarded by `raypath-typed-boundary` in
+`scripts/check_policies.py`: their resolved in-tree include closure cannot acquire
+query execution or codec dependencies. The same check rejects `detail/` from the bridge and
+execution entry headers from codecs. Its isolated positive and negative controls live in
+`test/unit-correctness/scripts/test_check_policies_raypath_boundary.py`.
 
 ## 9. `Lumice raypath survey` output (schema 4)
 

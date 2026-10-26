@@ -100,7 +100,9 @@ state; invalid indices and variant kinds have named read statuses rather than a 
 Semantic integer fields use named `LUMICE_PATH_*` constants in the capability header: zero means
 unrecognized or unavailable, except the zero-based `along` and field-equation domains, whose
 unrecognized value is -1. The bridge maps each internal enum explicitly, so reordering an
-internal enum cannot silently change the published C number.
+internal enum cannot silently change the published C number. `PathSurveyGetScope.member_kind`
+reads the completed result's quantity context; if that context is absent, it returns the
+unknown tag (0), not a physical member scope inferred from request bits.
 
 **v4.54** is a pure append. Added the path survey — `LUMICE_PathSurveyRequest` (with a
 `struct_size` head), the opaque `LUMICE_PathSurvey`, `LUMICE_AnalyzePathSurvey`,
