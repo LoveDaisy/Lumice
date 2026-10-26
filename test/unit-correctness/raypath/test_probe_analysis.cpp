@@ -391,8 +391,11 @@ TEST(ProbeAnalysis, TypedHarvestAndJsonShareAdmissionAndRefusalOrder) {
   EXPECT_EQ(ValidateWarmCandidate(config, request, decoded, &admitted).code, ErrorCode::kUnknownCrystalId);
   // An unknown version is not a supported schema-4 candidate.
   document.schema_version = 999;
-  EXPECT_EQ(DecodeWarmCandidate(survey::SurveyResultToJson(survey::SurveyResult(document), "test"), &decoded).code,
-            ErrorCode::kInvalidArgument);
+  EXPECT_THROW((void)survey::SurveyResult{ document }, std::invalid_argument);
+  document.schema_version = kSurveySchemaVersion;
+  auto version_wire = nlohmann::json::parse(survey::SurveyResultToJson(survey::SurveyResult(document), "test"));
+  version_wire["schema_version"] = 999;
+  EXPECT_EQ(DecodeWarmCandidate(version_wire.dump(), &decoded).code, ErrorCode::kInvalidArgument);
 }
 
 // The reuse arm: the scope matches, the grid is the warm grid, and the values (and the counts the

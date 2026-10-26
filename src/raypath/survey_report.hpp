@@ -25,7 +25,6 @@ std::string SurveyResultToJson(const SurveyResult& document, const char* lumice_
 namespace lumice::raypath {
 // The survey document family is its own schema (schema 4); it shares nothing field-wise with the
 // target-fiber schema 1 or the feature-report schema 3 documents.
-constexpr int kSurveySchemaVersion = 4;
 constexpr int kDefaultSurveyBudgetMs = 15000;
 constexpr int kMaxSurveyBudgetMs = 120000;
 

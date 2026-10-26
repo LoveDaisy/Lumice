@@ -379,6 +379,9 @@ class PointResult : public FrozenValue<PointData> {
     if (!data.Completed()) {
       throw std::invalid_argument("point: the construction slot was frozen without a completion");
     }
+    if (data.meta.schema_version != kSchemaVersion) {
+      throw std::invalid_argument("point: unsupported schema version");
+    }
     return data;
   }
 };

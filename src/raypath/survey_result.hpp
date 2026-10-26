@@ -8,12 +8,17 @@
 #include "raypath/domain/result_identity.hpp"
 #include "raypath/results/quantity.hpp"
 #include "raypath/results/survey_records.hpp"
+
+namespace lumice::raypath {
+inline constexpr int kSurveySchemaVersion = 4;
+}
+
 namespace lumice::raypath::survey {
 
 struct SurveyData {
   std::shared_ptr<const QuantityContext> quantity_context;
   GeometryScope geometry;
-  int schema_version = 4;
+  int schema_version = kSurveySchemaVersion;
 
   SurveyRequestEcho request;
 
@@ -217,6 +222,9 @@ class SurveyResult : public FrozenValue<SurveyData> {
     return data;
   }
   static SurveyData Validated(SurveyData data) {
+    if (data.schema_version != kSurveySchemaVersion) {
+      throw std::invalid_argument("survey: unsupported schema version");
+    }
     for (const SurveyObject& object : data.objects) {
       if (!object.AdjunctsValid()) {
         throw std::invalid_argument("inconsistent survey object adjuncts");

@@ -478,6 +478,12 @@ TEST(SinglePathJson, WarmCandidateDecoderPreservesNullRowsAndRejectsUnknownSchem
   EXPECT_EQ(ValidateWarmCandidate(PrismScene(), selection, typed, &admitted).code, ErrorCode::kInvalidArgument);
 }
 
+TEST(SinglePathJson, UnknownTypedSchemaCannotFreeze) {
+  PointData data;
+  data.meta.schema_version = kSchemaVersion + 1;
+  EXPECT_THROW(PointResult(FinalizePointData(std::move(data))), std::invalid_argument);
+}
+
 TEST(SinglePathJson, TheConstructionSlotIsNotPublishable) {
   EXPECT_THROW(ToJson(PointResult{}, "test"), std::invalid_argument);
 }
