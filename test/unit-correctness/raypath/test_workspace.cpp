@@ -139,8 +139,10 @@ TEST(Workspace, SurveyDeadlineIsFrozenAsAnExecutionOutcome) {
   request.symmetry_bits = 0;
   request.mc_ess_draws = 64;
   request.budget_ms = 1;
+  analytic::StopToken token;
   survey::SurveyResult result;
-  ASSERT_TRUE(workspace->QuerySurvey(request, &result).Ok());
+  ASSERT_TRUE(workspace->QuerySurvey(request, &result, &token).Ok());
+  EXPECT_GT(token.PollCount(kPollSurveyT0), 0);
   EXPECT_EQ(result.Data().execution, ExecutionOutcome::kDeadlineExceeded);
 }
 
@@ -402,13 +404,11 @@ TEST(Workspace, ACancelledSurveyNeverFillsTheWarmSlot) {
   while (token.PollCount(kPollSurveyT0) == 0 && std::chrono::steady_clock::now() < bound) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
-  ASSERT_GT(token.PollCount(kPollSurveyT0), 0) << "the survey's structure leg never polled";
+  const bool entered = token.PollCount(kPollSurveyT0) > 0;
   token.RequestCancel();
-  while (!done && std::chrono::steady_clock::now() < bound) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-  }
-  ASSERT_TRUE(done) << "the workspace survey ignored the cancel";
   worker.join();
+  ASSERT_TRUE(entered) << "the survey's structure leg never polled";
+  EXPECT_EQ(cut.Data().execution, ExecutionOutcome::kCancelled);
   EXPECT_EQ(workspace->OccupiedSlotCount(), 1);  // the geometry slot only — no warm, no result
 
   // The refused slot shows behaviorally: the next point runs an inline context.
@@ -417,6 +417,18 @@ TEST(Workspace, ACancelledSurveyNeverFillsTheWarmSlot) {
   ASSERT_TRUE(workspace->QueryPoint(PointOf({ 1, 2 }), true, &point).Ok());
   EXPECT_GT(workspace->StructureRunCount(), runs);
   EXPECT_EQ(point.Data().survey_context.source, ContextSource::kInline);
+
+  const long before_complete = workspace->StructureRunCount();
+  survey::SurveyResult complete;
+  ASSERT_TRUE(workspace->QuerySurvey(request, &complete).Ok());
+  EXPECT_EQ(complete.Data().execution, ExecutionOutcome::kCompleted);
+  EXPECT_GT(workspace->StructureRunCount(), before_complete);
+  const long after_complete = workspace->StructureRunCount();
+  survey::SurveyResult cached;
+  ASSERT_TRUE(workspace->QuerySurvey(request, &cached).Ok());
+  EXPECT_EQ(workspace->StructureRunCount(), after_complete);
+  EXPECT_EQ(cached.Identity(), complete.Identity());
+  EXPECT_EQ(cut.Data().execution, ExecutionOutcome::kCancelled);
 }
 
 TEST(Workspace, ResultsAndWarmOutliveTheConfigTheSceneAndTheWorkspace) {

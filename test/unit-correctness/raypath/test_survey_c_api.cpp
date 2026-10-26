@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <memory>
@@ -177,6 +178,10 @@ TEST_F(SurveyCApi, LiteralSymmetryAndNullArgContracts) {
   const auto document = nlohmann::json::parse(text);
   EXPECT_EQ(document.at("request").at("symmetry_bits"), 0);
   ASSERT_EQ(document.at("objects")[0].at("members").size(), 1u);
+  LUMICE_PathSurveyScope scope{};
+  scope.struct_size = sizeof(scope);
+  ASSERT_EQ(LUMICE_PathSurveyGetScope(result.get(), &scope), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(scope.member_kind, LUMICE_PATH_MEMBER_LITERAL);
 
   EXPECT_EQ(LUMICE_PathSurveyToJson(nullptr, nullptr, 0, nullptr), LUMICE_ERR_NULL_ARG);
   LUMICE_PathSurveyDestroy(nullptr);  // a no-op, not a crash
@@ -539,8 +544,46 @@ TEST_F(SurveyCApi, WorkspaceQueriesOwnResultsAndTypedWarmOutlivesSurvey) {
   EXPECT_EQ(detail::JsonEncodeCalls(), before_encode);
   EXPECT_EQ(detail::JsonDecodeCalls(), before_decode);
 
+  LUMICE_PathSurvey* raw_concurrent_survey = nullptr;
+  ASSERT_EQ(
+      LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &survey, &options, &raw_concurrent_survey, err, sizeof(err)),
+      LUMICE_OK)
+      << err;
+  std::unique_ptr<LUMICE_PathSurvey, void (*)(LUMICE_PathSurvey*)> concurrent_survey(raw_concurrent_survey,
+                                                                                     LUMICE_PathSurveyDestroy);
   workspace.reset();
   warm.reset();
+  const long before_concurrent_encode = detail::JsonEncodeCalls();
+  std::array<bool, 8> read_ok{};
+  std::vector<std::thread> readers;
+  for (size_t i = 0; i < read_ok.size(); ++i) {
+    readers.emplace_back([&, i] {
+      LUMICE_PathPointInfo point_info{};
+      point_info.struct_size = sizeof(point_info);
+      LUMICE_PathProbeInfo probe_info{};
+      probe_info.struct_size = sizeof(probe_info);
+      LUMICE_PathSurveyInfo survey_info{};
+      survey_info.struct_size = sizeof(survey_info);
+      LUMICE_PathReportInfo report_info{};
+      report_info.struct_size = sizeof(report_info);
+      size_t length = 0;
+      read_ok[i] = LUMICE_PathPointGetInfo(point_result.get(), &point_info) == LUMICE_PATH_READ_OK &&
+                   LUMICE_PathProbeGetInfo(probe_result.get(), &probe_info) == LUMICE_PATH_READ_OK &&
+                   LUMICE_PathSurveyGetInfo(concurrent_survey.get(), &survey_info) == LUMICE_PATH_READ_OK &&
+                   LUMICE_PathReportGetInfo(report_result.get(), &report_info) == LUMICE_PATH_READ_OK &&
+                   LUMICE_SinglePathResultToJson(point_result.get(), nullptr, 0, &length) == LUMICE_OK && length > 0 &&
+                   LUMICE_PathProbeToJson(probe_result.get(), nullptr, 0, &length) == LUMICE_OK && length > 0 &&
+                   LUMICE_PathSurveyToJson(concurrent_survey.get(), nullptr, 0, &length) == LUMICE_OK && length > 0 &&
+                   LUMICE_PathFeatureReportToJson(report_result.get(), nullptr, 0, &length) == LUMICE_OK && length > 0;
+    });
+  }
+  for (auto& reader : readers) {
+    reader.join();
+  }
+  for (bool ok : read_ok) {
+    EXPECT_TRUE(ok);
+  }
+  EXPECT_EQ(detail::JsonEncodeCalls(), before_concurrent_encode + 4);
   size_t length = 0;
   ASSERT_EQ(LUMICE_SinglePathResultToJson(point_result.get(), nullptr, 0, &length), LUMICE_OK);
   EXPECT_GT(length, 0u);

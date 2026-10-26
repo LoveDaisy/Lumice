@@ -336,6 +336,8 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
         #include <lumice_scene.h>
         #include <lumice_raypath.h>
         #include <stddef.h>
+        #include <stdlib.h>
+        #include <string.h>
 
         int main(int argc, char** argv) {
           if (argc != 2) return 1;
@@ -371,9 +373,15 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           if (LUMICE_PathSurveyGetEvidence(survey_result, LUMICE_PATH_EVIDENCE_DOCUMENT, 0,
                                            &survey_evidence) != LUMICE_PATH_READ_OK ||
               survey_evidence.state == 0) return 17;
+          LUMICE_PathSurveyScope survey_scope = {0};
+          survey_scope.struct_size = sizeof(survey_scope);
+          if (LUMICE_PathSurveyGetScope(survey_result, &survey_scope) != LUMICE_PATH_READ_OK ||
+              !survey_scope.scene_identity.data || survey_scope.scene_identity.length == 0) return 25;
+          char* identity_copy = malloc(survey_scope.scene_identity.length);
+          if (!identity_copy) return 31;
+          memcpy(identity_copy, survey_scope.scene_identity.data, survey_scope.scene_identity.length);
           LUMICE_PathWarmData* warm = NULL;
           if (LUMICE_PathWarmDataFromSurvey(survey_result, &warm) != LUMICE_OK) return 5;
-          LUMICE_PathSurveyDestroy(survey_result);
           options.warm = warm;
           LUMICE_SinglePathRequest point = {0};
           point.struct_size = sizeof(point);
@@ -401,6 +409,9 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           while (valid_cell < grid.cell_count && !grid.valid[valid_cell]) valid_cell++;
           if (valid_cell == grid.cell_count) return 12;
           const double borrowed_deviation = grid.deviation_rad[valid_cell];
+          double* grid_copy = malloc(grid.cell_count * sizeof(double));
+          if (!grid_copy) return 32;
+          memcpy(grid_copy, grid.deviation_rad, grid.cell_count * sizeof(double));
           if (!(borrowed_deviation >= 0.0) || sizeof(grid.deviation_rad[0]) != 8 ||
               sizeof(grid.valid[0]) != 1) return 13;
           LUMICE_PathProbeRequest probe = {0};
@@ -423,7 +434,11 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           LUMICE_PathProbeProfile profile = {0};
           profile.struct_size = sizeof(profile);
           if (LUMICE_PathProbeGetProfile(probe_result, 0, &profile) != LUMICE_PATH_READ_OK ||
-              profile.state == 0 || profile.along != LUMICE_PATH_PROBE_ALONG_RADIAL) return 18;
+              profile.state == 0 || profile.along != LUMICE_PATH_PROBE_ALONG_RADIAL ||
+              !profile.semantics.data || profile.semantics.length == 0) return 18;
+          char* semantics_copy = malloc(profile.semantics.length);
+          if (!semantics_copy) return 33;
+          memcpy(semantics_copy, profile.semantics.data, profile.semantics.length);
           LUMICE_PathQuantitySpec quantity = {0};
           quantity.struct_size = sizeof(quantity);
           if (LUMICE_PathProbeGetQuantity(probe_result, 0, &quantity) != LUMICE_PATH_READ_OK ||
@@ -452,6 +467,9 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
               coverage.subject.length == 0 ||
               coverage.role != LUMICE_PATH_COVERAGE_BASE_INPUT ||
               coverage.status != LUMICE_PATH_COVERAGE_SUPPORTED) return 19;
+          char* subject_copy = malloc(coverage.subject.length);
+          if (!subject_copy) return 34;
+          memcpy(subject_copy, coverage.subject.data, coverage.subject.length);
           const int multi_faces[] = {3, 5, 1, 3};
           const int multi_counts[] = {2, 2};
           report.faces = multi_faces;
@@ -474,16 +492,48 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           missing_scope.struct_size = sizeof(missing_scope);
           if (LUMICE_PathReportGetScope(unsupported, &missing_scope) != LUMICE_PATH_READ_NOT_AVAILABLE)
             return 23;
-          LUMICE_PathWarmDataDestroy(warm);
+          const int other_faces[] = {1, 2};
+          survey.faces = other_faces;
+          survey.wavelength_nm = 550;
+          LUMICE_PathSurvey* replacement = NULL;
+          if (LUMICE_PathWorkspaceQuerySurvey(workspace, &survey, &options, &replacement, NULL, 0) != LUMICE_OK)
+            return 26;
+          LUMICE_PathSurveyDestroy(replacement);
           LUMICE_PathWorkspaceDestroy(workspace);
-          if (grid.deviation_rad[valid_cell] != borrowed_deviation || requested.faces[0] != 3 ||
+          if (memcmp(grid.deviation_rad, grid_copy, grid.cell_count * sizeof(double)) != 0 ||
+              requested.face_count != 2 || requested.faces[0] != 3 || requested.faces[1] != 5 ||
+              memcmp(survey_scope.scene_identity.data, identity_copy, survey_scope.scene_identity.length) != 0 ||
+              memcmp(profile.semantics.data, semantics_copy, profile.semantics.length) != 0 ||
+              memcmp(coverage.subject.data, subject_copy, coverage.subject.length) != 0 ||
+              LUMICE_PathSurveyGetScope(survey_result, &survey_scope) != LUMICE_PATH_READ_OK ||
               LUMICE_PathPointGetInfo(point_result, &point_info) != LUMICE_PATH_READ_OK ||
               LUMICE_PathProbeGetInfo(probe_result, &probe_info) != LUMICE_PATH_READ_OK ||
               LUMICE_PathReportGetInfo(report_result, &report_info) != LUMICE_PATH_READ_OK) return 16;
+          LUMICE_PathSurveyDestroy(survey_result);
+          LUMICE_Scene* second_scene = NULL;
+          if (LUMICE_SceneFromJsonFile(argv[1], &second_scene) != LUMICE_OK) return 27;
+          LUMICE_PathWorkspace* second_workspace = NULL;
+          if (LUMICE_PathWorkspaceCreate(second_scene, &second_workspace, NULL, 0) != LUMICE_OK) return 28;
+          LUMICE_SceneDestroy(second_scene);
+          options.warm = warm;
+          LUMICE_SinglePathResult* warm_point = NULL;
+          if (LUMICE_PathWorkspaceQueryPoint(second_workspace, &point, &options, &warm_point, NULL, 0) != LUMICE_OK)
+            return 29;
+          LUMICE_PathContext warm_context = {0};
+          warm_context.struct_size = sizeof(warm_context);
+          if (LUMICE_PathPointGetContext(warm_point, &warm_context) != LUMICE_PATH_READ_OK ||
+              warm_context.source != LUMICE_PATH_CONTEXT_WARM) return 30;
+          LUMICE_SinglePathResultDestroy(warm_point);
+          LUMICE_PathWorkspaceDestroy(second_workspace);
+          LUMICE_PathWarmDataDestroy(warm);
           LUMICE_PathFeatureReportDestroy(unsupported);
           LUMICE_SinglePathResultDestroy(point_result);
           LUMICE_PathProbeDestroy(probe_result);
           LUMICE_PathFeatureReportDestroy(report_result);
+          free(identity_copy);
+          free(grid_copy);
+          free(semantics_copy);
+          free(subject_copy);
           return 0;
         }
     """), encoding="utf-8")
