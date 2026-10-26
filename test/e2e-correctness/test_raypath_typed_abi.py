@@ -99,7 +99,10 @@ def _product_library_path():
     if not matches:
         pytest.skip("product shared library needs ./scripts/build.sh -sj release")
     assert len(matches) == 1, matches
-    return matches[0]
+    install = ROOT / "build" / "cmake_install" / "shared"
+    product = install / name if sys.platform.startswith("win") else install / "lib" / name
+    assert product.is_file(), f"product library was built but not installed: {product}"
+    return product
 
 
 def _check_published_request_extents_and_future_tail_keep_borrowed_result_alive():
@@ -436,12 +439,35 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           coverage.struct_size = sizeof(coverage);
           if (LUMICE_PathReportGetCoverage(report_result, 0, &coverage) != LUMICE_PATH_READ_OK ||
               coverage.subject.length == 0) return 19;
+          const int multi_faces[] = {3, 5, 1, 3};
+          const int multi_counts[] = {2, 2};
+          report.faces = multi_faces;
+          report.face_count = 4;
+          report.layer_face_counts = multi_counts;
+          report.layer_count = 2;
+          LUMICE_PathFeatureReport* unsupported = NULL;
+          if (LUMICE_PathWorkspaceQueryReport(workspace, &report, &options, &unsupported, NULL, 0) != LUMICE_OK)
+            return 20;
+          LUMICE_PathReportInfo unsupported_info = {0};
+          unsupported_info.struct_size = sizeof(unsupported_info);
+          if (LUMICE_PathReportGetInfo(unsupported, &unsupported_info) != LUMICE_PATH_READ_OK ||
+              unsupported_info.outcome != LUMICE_PATH_REPORT_UNSUPPORTED_MULTICRYSTAL ||
+              unsupported_info.requested_layer_count != 2) return 21;
+          LUMICE_PathFaceSequence requested = {0};
+          requested.struct_size = sizeof(requested);
+          if (LUMICE_PathReportGetRequestedLayer(unsupported, 0, &requested) != LUMICE_PATH_READ_OK ||
+              requested.face_count != 2 || requested.faces[0] != 3 || requested.faces[1] != 5) return 22;
+          LUMICE_PathReportScope missing_scope = {0};
+          missing_scope.struct_size = sizeof(missing_scope);
+          if (LUMICE_PathReportGetScope(unsupported, &missing_scope) != LUMICE_PATH_READ_NOT_AVAILABLE)
+            return 23;
           LUMICE_PathWarmDataDestroy(warm);
           LUMICE_PathWorkspaceDestroy(workspace);
-          if (grid.deviation_rad[valid_cell] != borrowed_deviation ||
+          if (grid.deviation_rad[valid_cell] != borrowed_deviation || requested.faces[0] != 3 ||
               LUMICE_PathPointGetInfo(point_result, &point_info) != LUMICE_PATH_READ_OK ||
               LUMICE_PathProbeGetInfo(probe_result, &probe_info) != LUMICE_PATH_READ_OK ||
               LUMICE_PathReportGetInfo(report_result, &report_info) != LUMICE_PATH_READ_OK) return 16;
+          LUMICE_PathFeatureReportDestroy(unsupported);
           LUMICE_SinglePathResultDestroy(point_result);
           LUMICE_PathProbeDestroy(probe_result);
           LUMICE_PathFeatureReportDestroy(report_result);
