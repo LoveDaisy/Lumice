@@ -393,7 +393,8 @@ TEST(PathFeatureReportCApi, TypedReadersExposeObjectsEvidenceAndAbsenceWithoutPa
 TEST(PathFeatureReportCApi, TypedRecordsMatchPopulatedReportAndRejectAbsentNestedPayloads) {
   const ScenePtr scene = MakeScene();
   Request request;
-  request.c.symmetry_bits_plus_one = 0;
+  // B-only keeps populated records without the unused full P/B/D expansion.
+  request.c.symmetry_bits_plus_one = 3;
   const double wavelength = 550.0;
   request.c.wavelengths_nm = &wavelength;
   request.c.wavelength_count = 1;

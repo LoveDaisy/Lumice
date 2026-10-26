@@ -453,6 +453,7 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           report.layer_face_counts = counts;
           report.layer_count = 1;
           report.sample_count = 64;
+          report.symmetry_bits_plus_one = 1;  /* Literal path: no unused symmetry expansion. */
           LUMICE_PathFeatureReport* report_result = NULL;
           if (LUMICE_PathWorkspaceQueryReport(workspace, &report, &options, &report_result, NULL, 0) != LUMICE_OK)
             return 8;
