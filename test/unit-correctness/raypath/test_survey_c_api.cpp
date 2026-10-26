@@ -424,13 +424,18 @@ TEST_F(SurveyCApi, WorkspaceQueriesOwnResultsAndTypedWarmOutlivesSurvey) {
             LUMICE_OK)
       << err;
   std::unique_ptr<LUMICE_PathSurvey, void (*)(LUMICE_PathSurvey*)> result(raw_survey, LUMICE_PathSurveyDestroy);
+  const long encode_before_export = detail::JsonEncodeCalls();
   size_t survey_length = 0;
   ASSERT_EQ(LUMICE_PathSurveyToJson(result.get(), nullptr, 0, &survey_length), LUMICE_OK);
+  EXPECT_EQ(detail::JsonEncodeCalls(), encode_before_export + 1);
   std::string survey_text(survey_length + 1, '\0');
   ASSERT_EQ(LUMICE_PathSurveyToJson(result.get(), survey_text.data(), survey_text.size(), nullptr), LUMICE_OK);
+  EXPECT_EQ(detail::JsonEncodeCalls(), encode_before_export + 1);
+  const long decode_before_import = detail::JsonDecodeCalls();
   LUMICE_PathWarmData* imported = nullptr;
   ASSERT_EQ(LUMICE_PathWarmDataFromJson(survey_text.data(), survey_length, &imported, err, sizeof(err)), LUMICE_OK)
       << err;
+  EXPECT_EQ(detail::JsonDecodeCalls(), decode_before_import + 1);
   LUMICE_PathWarmData* raw_warm = nullptr;
   ASSERT_EQ(LUMICE_PathWarmDataFromSurvey(result.get(), &raw_warm), LUMICE_OK);
   std::unique_ptr<LUMICE_PathWarmData, void (*)(LUMICE_PathWarmData*)> warm(raw_warm, LUMICE_PathWarmDataDestroy);
@@ -510,6 +515,65 @@ TEST_F(SurveyCApi, WorkspaceQueriesOwnResultsAndTypedWarmOutlivesSurvey) {
   EXPECT_GT(length, 0u);
   ASSERT_EQ(LUMICE_PathFeatureReportToJson(report_result.get(), nullptr, 0, &length), LUMICE_OK);
   EXPECT_GT(length, 0u);
+}
+
+TEST_F(SurveyCApi, TypedBorrowedReadsSurviveWorkspaceAndConcurrentJson) {
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  char err[256] = {};
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw_workspace, err, sizeof(err)), LUMICE_OK) << err;
+  std::unique_ptr<LUMICE_PathWorkspace, void (*)(LUMICE_PathWorkspace*)> workspace(raw_workspace,
+                                                                                   LUMICE_PathWorkspaceDestroy);
+  static int faces[] = { 1, 2 };
+  static int counts[] = { 2 };
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = faces;
+  request.face_count = 2;
+  request.layer_face_counts = counts;
+  request.layer_count = 1;
+  request.wavelength_nm = 550;
+  LUMICE_PathSurvey* raw_result = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &request, nullptr, &raw_result, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
+  std::unique_ptr<LUMICE_PathSurvey, void (*)(LUMICE_PathSurvey*)> result(raw_result, LUMICE_PathSurveyDestroy);
+  LUMICE_PathSurveyInfo original{};
+  original.struct_size = sizeof(original);
+  ASSERT_EQ(LUMICE_PathSurveyGetInfo(result.get(), &original), LUMICE_PATH_READ_OK);
+  ASSERT_GT(original.object_count, 0u);
+  LUMICE_PathSurveyObject object{};
+  object.struct_size = sizeof(object);
+  ASSERT_EQ(LUMICE_PathSurveyGetObject(result.get(), 0, &object), LUMICE_PATH_READ_OK);
+  ASSERT_NE(object.method.data, nullptr);
+  ASSERT_GT(object.method.length, 0u);
+  const std::string method(object.method.data, object.method.length);
+  size_t json_length = 0;
+  ASSERT_EQ(LUMICE_PathSurveyToJson(result.get(), nullptr, 0, &json_length), LUMICE_OK);
+  scene_.reset();
+  workspace.reset();
+
+  std::vector<LUMICE_PathSurveyInfo> reads(8);
+  std::vector<LUMICE_PathReadStatus> statuses(reads.size());
+  std::vector<size_t> lengths(reads.size());
+  std::vector<std::thread> threads;
+  for (size_t i = 0; i < reads.size(); ++i) {
+    reads[i].struct_size = sizeof(reads[i]);
+    threads.emplace_back([&, i] {
+      statuses[i] = LUMICE_PathSurveyGetInfo(result.get(), &reads[i]);
+      (void)LUMICE_PathSurveyToJson(result.get(), nullptr, 0, &lengths[i]);
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  for (size_t i = 0; i < reads.size(); ++i) {
+    EXPECT_EQ(statuses[i], LUMICE_PATH_READ_OK);
+    EXPECT_EQ(reads[i].object_count, original.object_count);
+    EXPECT_EQ(reads[i].execution, original.execution);
+    EXPECT_EQ(lengths[i], json_length);
+  }
+  EXPECT_EQ(std::string(object.method.data, object.method.length), method);
 }
 
 }  // namespace
