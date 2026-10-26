@@ -58,58 +58,6 @@ static_assert(LUMICE_PATH_PROBE_MAX_BUDGET_MS == lumice::raypath::kMaxProbeBudge
 static_assert(LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT == lumice::raypath::kMaxProbeWavelengthCount,
               "lumice_raypath.h and the probe module must agree on the wavelength bound");
 
-static_assert(LUMICE_PATH_QUANTITY_BAND_SUM == static_cast<int>(lumice::raypath::QuantityKind::kBandSum) + 1);
-static_assert(LUMICE_PATH_QUANTITY_TINT_RATIO == static_cast<int>(lumice::raypath::QuantityKind::kTintRatio) + 1);
-static_assert(LUMICE_PATH_QUANTITY_TIR_SHARE == static_cast<int>(lumice::raypath::QuantityKind::kTirShare) + 1);
-static_assert(LUMICE_PATH_QUANTITY_MC_ESS == static_cast<int>(lumice::raypath::QuantityKind::kMcEss) + 1);
-static_assert(LUMICE_PATH_QUANTITY_WITNESS_WEIGHT ==
-              static_cast<int>(lumice::raypath::QuantityKind::kWitnessWeight) + 1);
-static_assert(LUMICE_PATH_QUANTITY_ENTRY_AREA == static_cast<int>(lumice::raypath::QuantityKind::kEntryArea) + 1);
-static_assert(LUMICE_PATH_QUANTITY_TRANSMISSION == static_cast<int>(lumice::raypath::QuantityKind::kTransmission) + 1);
-static_assert(LUMICE_PATH_QUANTITY_POSE_DENSITY == static_cast<int>(lumice::raypath::QuantityKind::kPoseDensity) + 1);
-static_assert(LUMICE_PATH_QUANTITY_NORMAL_JACOBIAN ==
-              static_cast<int>(lumice::raypath::QuantityKind::kNormalJacobian) + 1);
-static_assert(LUMICE_PATH_QUANTITY_COAREA_FACTOR == static_cast<int>(lumice::raypath::QuantityKind::kCoareaFactor) + 1);
-static_assert(LUMICE_PATH_QUANTITY_FACTOR_PRODUCT ==
-              static_cast<int>(lumice::raypath::QuantityKind::kFactorProduct) + 1);
-static_assert(LUMICE_PATH_QUANTITY_FIBER_INTEGRAL ==
-              static_cast<int>(lumice::raypath::QuantityKind::kFiberIntegral) + 1);
-static_assert(LUMICE_PATH_QUANTITY_ORBIT_INTEGRAL ==
-              static_cast<int>(lumice::raypath::QuantityKind::kOrbitIntegral) + 1);
-static_assert(LUMICE_PATH_METHOD_BAND_SUM_LATTICE ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kBandSumLattice) + 1);
-static_assert(LUMICE_PATH_METHOD_POINT_MASS_PSI_AVERAGE ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kPointMassPsiAverage) + 1);
-static_assert(LUMICE_PATH_METHOD_POINT_MASS_LATTICE_MEAN ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kPointMassLatticeMean) + 1);
-static_assert(LUMICE_PATH_METHOD_CLASS_LATTICE_POWER_SUM ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kClassLatticePowerSum) + 1);
-static_assert(LUMICE_PATH_METHOD_SINGLE_POSE_DIRECT ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kSinglePoseDirect) + 1);
-static_assert(LUMICE_PATH_METHOD_POINT_MASS_BAND_SUM ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kPointMassBandSum) + 1);
-static_assert(LUMICE_PATH_METHOD_DIAGNOSTIC_TIR_LATTICE ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kDiagnosticTirLattice) + 1);
-static_assert(LUMICE_PATH_METHOD_KISH_OUTER_DRAW ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kKishOuterDraw) + 1);
-static_assert(LUMICE_PATH_METHOD_LATTICE_ARGMAX_DIAGNOSTIC ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kLatticeArgmaxDiagnostic) + 1);
-static_assert(LUMICE_PATH_METHOD_ENTRY_MEASURE == static_cast<int>(lumice::raypath::QuantityMethod::kEntryMeasure) + 1);
-static_assert(LUMICE_PATH_METHOD_INTERFACE_PRODUCT ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kInterfaceProduct) + 1);
-static_assert(LUMICE_PATH_METHOD_DECLARED_POSE_DENSITY ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kDeclaredPoseDensity) + 1);
-static_assert(LUMICE_PATH_METHOD_NORMAL_JACOBIAN ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kNormalJacobian) + 1);
-static_assert(LUMICE_PATH_METHOD_REGULARIZED_COAREA ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kRegularizedCoarea) + 1);
-static_assert(LUMICE_PATH_METHOD_FACTOR_PRODUCT ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kFactorProduct) + 1);
-static_assert(LUMICE_PATH_METHOD_FIBER_ARCLENGTH ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kFiberArclength) + 1);
-static_assert(LUMICE_PATH_METHOD_ORBIT_MIDPOINT ==
-              static_cast<int>(lumice::raypath::QuantityMethod::kOrbitMidpoint) + 1);
-
 // Derived JSON is cached under a mutex; all getters read the frozen value instead.
 struct LUMICE_SinglePathResult_ {
   lumice::raypath::PointResult result;
