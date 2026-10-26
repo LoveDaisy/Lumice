@@ -1,10 +1,10 @@
 # `Lumice raypath` output contracts
 
-`Lumice raypath` analyses **one single-layer raypath of one crystal entry over one sky point**:
-the components of the fiber of crystal poses that send the sun into that point, each component's
-poses with per-pose detail, and the path's deviation over the whole sun-direction sphere
-(`doc/raypath/raypath-analysis.md` §5.1.8). `analyze` lists the raypaths that light the sky; `raypath` is
-what you ask about one of them.
+`Lumice raypath` asks about one selected single-layer raypath of one crystal entry.
+`point` studies fibers of poses reaching a specified sky target, including per-pose detail
+and deviation over the sun-direction sphere; `probe` samples a line through a sky point.
+`survey` and `report` are target-free structural and diagnostic questions about that path.
+`analyze` instead lists raypaths that light the sky.
 
 It writes one JSON document per query. This page is the wire field reference; C consumers
 can instead read the completed result through the typed getters in `lumice_raypath.h`.
