@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "analytic/dp_chromatic.hpp"
@@ -1166,6 +1167,324 @@ int FamilyKindTag(lumice::raypath::structure::FamilyImageKind kind) {
 
 namespace {
 
+namespace rp = lumice::raypath;
+namespace an = lumice::analytic;
+namespace sc = lumice::raypath::schema3;
+
+template <typename E, size_t N>
+int MapTag(E value, const std::pair<E, int> (&tags)[N], int unknown = LUMICE_PATH_TAG_UNKNOWN) {
+  for (const auto& tag : tags) {
+    if (tag.first == value)
+      return tag.second;
+  }
+  return unknown;
+}
+
+constexpr std::pair<rp::QuantityKind, int> kQuantityKindTags[] = {
+  { rp::QuantityKind::kBandSum, LUMICE_PATH_QUANTITY_BAND_SUM },
+  { rp::QuantityKind::kTintRatio, LUMICE_PATH_QUANTITY_TINT_RATIO },
+  { rp::QuantityKind::kTirShare, LUMICE_PATH_QUANTITY_TIR_SHARE },
+  { rp::QuantityKind::kMcEss, LUMICE_PATH_QUANTITY_MC_ESS },
+  { rp::QuantityKind::kWitnessWeight, LUMICE_PATH_QUANTITY_WITNESS_WEIGHT },
+  { rp::QuantityKind::kEntryArea, LUMICE_PATH_QUANTITY_ENTRY_AREA },
+  { rp::QuantityKind::kTransmission, LUMICE_PATH_QUANTITY_TRANSMISSION },
+  { rp::QuantityKind::kPoseDensity, LUMICE_PATH_QUANTITY_POSE_DENSITY },
+  { rp::QuantityKind::kNormalJacobian, LUMICE_PATH_QUANTITY_NORMAL_JACOBIAN },
+  { rp::QuantityKind::kCoareaFactor, LUMICE_PATH_QUANTITY_COAREA_FACTOR },
+  { rp::QuantityKind::kFactorProduct, LUMICE_PATH_QUANTITY_FACTOR_PRODUCT },
+  { rp::QuantityKind::kFiberIntegral, LUMICE_PATH_QUANTITY_FIBER_INTEGRAL },
+  { rp::QuantityKind::kOrbitIntegral, LUMICE_PATH_QUANTITY_ORBIT_INTEGRAL },
+};
+constexpr std::pair<rp::QuantityMethod, int> kQuantityMethodTags[] = {
+  { rp::QuantityMethod::kBandSumLattice, LUMICE_PATH_METHOD_BAND_SUM_LATTICE },
+  { rp::QuantityMethod::kPointMassPsiAverage, LUMICE_PATH_METHOD_POINT_MASS_PSI_AVERAGE },
+  { rp::QuantityMethod::kPointMassLatticeMean, LUMICE_PATH_METHOD_POINT_MASS_LATTICE_MEAN },
+  { rp::QuantityMethod::kClassLatticePowerSum, LUMICE_PATH_METHOD_CLASS_LATTICE_POWER_SUM },
+  { rp::QuantityMethod::kSinglePoseDirect, LUMICE_PATH_METHOD_SINGLE_POSE_DIRECT },
+  { rp::QuantityMethod::kPointMassBandSum, LUMICE_PATH_METHOD_POINT_MASS_BAND_SUM },
+  { rp::QuantityMethod::kDiagnosticTirLattice, LUMICE_PATH_METHOD_DIAGNOSTIC_TIR_LATTICE },
+  { rp::QuantityMethod::kKishOuterDraw, LUMICE_PATH_METHOD_KISH_OUTER_DRAW },
+  { rp::QuantityMethod::kLatticeArgmaxDiagnostic, LUMICE_PATH_METHOD_LATTICE_ARGMAX_DIAGNOSTIC },
+  { rp::QuantityMethod::kEntryMeasure, LUMICE_PATH_METHOD_ENTRY_MEASURE },
+  { rp::QuantityMethod::kInterfaceProduct, LUMICE_PATH_METHOD_INTERFACE_PRODUCT },
+  { rp::QuantityMethod::kDeclaredPoseDensity, LUMICE_PATH_METHOD_DECLARED_POSE_DENSITY },
+  { rp::QuantityMethod::kNormalJacobian, LUMICE_PATH_METHOD_NORMAL_JACOBIAN },
+  { rp::QuantityMethod::kRegularizedCoarea, LUMICE_PATH_METHOD_REGULARIZED_COAREA },
+  { rp::QuantityMethod::kFactorProduct, LUMICE_PATH_METHOD_FACTOR_PRODUCT },
+  { rp::QuantityMethod::kFiberArclength, LUMICE_PATH_METHOD_FIBER_ARCLENGTH },
+  { rp::QuantityMethod::kOrbitMidpoint, LUMICE_PATH_METHOD_ORBIT_MIDPOINT },
+};
+constexpr std::pair<rp::QuantityUnit, int> kUnitTags[] = {
+  { rp::QuantityUnit::kPerSteradian, LUMICE_PATH_UNIT_PER_SR },
+  { rp::QuantityUnit::kDimensionless, LUMICE_PATH_UNIT_DIMENSIONLESS },
+  { rp::QuantityUnit::kArea, LUMICE_PATH_UNIT_AREA },
+  { rp::QuantityUnit::kMass, LUMICE_PATH_UNIT_MASS },
+  { rp::QuantityUnit::kPerRadianCubed, LUMICE_PATH_UNIT_PER_RAD_CUBED },
+  { rp::QuantityUnit::kPerRadianSquared, LUMICE_PATH_UNIT_PER_RAD_SQUARED },
+};
+constexpr std::pair<rp::MemberAggregation, int> kAggregationTags[] = {
+  { rp::MemberAggregation::kRepresentative, LUMICE_PATH_AGGREGATION_REPRESENTATIVE },
+  { rp::MemberAggregation::kPhysicalClass, LUMICE_PATH_AGGREGATION_PHYSICAL_CLASS },
+  { rp::MemberAggregation::kMember, LUMICE_PATH_AGGREGATION_MEMBER },
+};
+constexpr std::pair<rp::MeasureKind, int> kMeasureTags[] = {
+  { rp::MeasureKind::kActualDeclared, LUMICE_PATH_MEASURE_ACTUAL_DECLARED },
+  { rp::MeasureKind::kIdealFrozen, LUMICE_PATH_MEASURE_IDEAL_FROZEN },
+};
+constexpr std::pair<rp::ReferenceMeasure, int> kReferenceTags[] = {
+  { rp::ReferenceMeasure::kHaar, LUMICE_PATH_REFERENCE_HAAR },
+  { rp::ReferenceMeasure::kAngleLebesgue, LUMICE_PATH_REFERENCE_ANGLE_LEBESGUE },
+  { rp::ReferenceMeasure::kOrbitParameter, LUMICE_PATH_REFERENCE_ORBIT_PARAMETER },
+  { rp::ReferenceMeasure::kActualProduct, LUMICE_PATH_REFERENCE_ACTUAL_PRODUCT },
+  { rp::ReferenceMeasure::kNone, LUMICE_PATH_REFERENCE_NONE },
+};
+constexpr std::pair<rp::DensityWeighting, int> kDensityTags[] = {
+  { rp::DensityWeighting::kPoseDensity, LUMICE_PATH_DENSITY_POSE },
+  { rp::DensityWeighting::kNone, LUMICE_PATH_DENSITY_NONE },
+  { rp::DensityWeighting::kDeclaredPoseDensity, LUMICE_PATH_DENSITY_DECLARED_POSE },
+  { rp::DensityWeighting::kActualSamplingWeights, LUMICE_PATH_DENSITY_ACTUAL_SAMPLING_WEIGHTS },
+};
+constexpr std::pair<rp::SpectralObservation, int> kSpectrumTags[] = {
+  { rp::SpectralObservation::kReferenceWavelength, LUMICE_PATH_SPECTRUM_REFERENCE_WAVELENGTH },
+  { rp::SpectralObservation::kFixedChromaticPair, LUMICE_PATH_SPECTRUM_FIXED_PAIR },
+  { rp::SpectralObservation::kDiscreteSpectrum, LUMICE_PATH_SPECTRUM_DISCRETE },
+  { rp::SpectralObservation::kQuadrature, LUMICE_PATH_SPECTRUM_QUADRATURE },
+};
+constexpr std::pair<rp::SourceObservation, int> kSourceTags[] = {
+  { rp::SourceObservation::kSolarCenter, LUMICE_PATH_SOURCE_SOLAR_CENTER },
+  { rp::SourceObservation::kSolarDisk, LUMICE_PATH_SOURCE_SOLAR_DISK },
+};
+constexpr std::pair<rp::GeometryKind, int> kGeometryTags[] = {
+  { rp::GeometryKind::kNominal, LUMICE_PATH_GEOMETRY_NOMINAL },
+  { rp::GeometryKind::kRealized, LUMICE_PATH_GEOMETRY_REALIZED },
+  { rp::GeometryKind::kDeclaredPopulation, LUMICE_PATH_GEOMETRY_DECLARED_POPULATION },
+};
+constexpr std::pair<rp::MemberKind, int> kMemberTags[] = {
+  { rp::MemberKind::kLiteral, LUMICE_PATH_MEMBER_LITERAL },
+  { rp::MemberKind::kPhysicalL2, LUMICE_PATH_MEMBER_PHYSICAL_L2 },
+};
+constexpr std::pair<rp::SelectionLocation, int> kLocationTags[] = {
+  { rp::SelectionLocation::kStandalone, LUMICE_PATH_LOCATION_STANDALONE },
+  { rp::SelectionLocation::kSceneLayer, LUMICE_PATH_LOCATION_SCENE_LAYER },
+};
+constexpr std::pair<rp::ProbeAlong, int> kAlongTags[] = {
+  { rp::ProbeAlong::kRadial, LUMICE_PATH_PROBE_ALONG_RADIAL },
+  { rp::ProbeAlong::kEdgeNormal, LUMICE_PATH_PROBE_ALONG_EDGE_NORMAL },
+  { rp::ProbeAlong::kArc, LUMICE_PATH_PROBE_ALONG_ARC },
+  { rp::ProbeAlong::kTangential, LUMICE_PATH_PROBE_ALONG_TANGENTIAL },
+};
+constexpr std::pair<rp::ContextSource, int> kContextSourceTags[] = {
+  { rp::ContextSource::kWarm, LUMICE_PATH_CONTEXT_WARM },
+  { rp::ContextSource::kInline, LUMICE_PATH_CONTEXT_INLINE },
+};
+constexpr std::pair<rp::ContextEdgeBasis, int> kEdgeBasisTags[] = {
+  { rp::ContextEdgeBasis::kSupportIntervalEndpoint, LUMICE_PATH_ANCHOR_SUPPORT_ENDPOINT },
+  { rp::ContextEdgeBasis::kCausticEdgePosition, LUMICE_PATH_ANCHOR_EDGE_POSITION },
+};
+
+constexpr std::pair<rp::Outcome, int> kPointOutcomeTags[] = {
+  { rp::Outcome::kPointMass, LUMICE_PATH_POINT_MASS },
+  { rp::Outcome::kDiscovered, LUMICE_PATH_POINT_DISCOVERED },
+};
+constexpr std::pair<rp::ProbeProfileSource, int> kProbeSourceTags[] = {
+  { rp::ProbeProfileSource::kWarmReused, LUMICE_PATH_PROBE_WARM_REUSED },
+  { rp::ProbeProfileSource::kRecomputed, LUMICE_PATH_PROBE_RECOMPUTED },
+};
+
+constexpr std::pair<lumice::DistributionType, int> kDistributionTags[] = {
+  { lumice::DistributionType::kNoRandom, LUMICE_PATH_DISTRIBUTION_FIXED },
+  { lumice::DistributionType::kUniform, LUMICE_PATH_DISTRIBUTION_UNIFORM },
+  { lumice::DistributionType::kGaussian, LUMICE_PATH_DISTRIBUTION_GAUSSIAN },
+  { lumice::DistributionType::kZigzag, LUMICE_PATH_DISTRIBUTION_ZIGZAG },
+  { lumice::DistributionType::kLaplacian, LUMICE_PATH_DISTRIBUTION_LAPLACIAN },
+  { lumice::DistributionType::kGaussianLegacy, LUMICE_PATH_DISTRIBUTION_LEGACY_GAUSSIAN },
+};
+constexpr std::pair<lumice::IlluminantType, int> kIlluminantTags[] = {
+  { lumice::IlluminantType::kD50, LUMICE_PATH_ILLUMINANT_D50 },
+  { lumice::IlluminantType::kD55, LUMICE_PATH_ILLUMINANT_D55 },
+  { lumice::IlluminantType::kD65, LUMICE_PATH_ILLUMINANT_D65 },
+  { lumice::IlluminantType::kD75, LUMICE_PATH_ILLUMINANT_D75 },
+  { lumice::IlluminantType::kA, LUMICE_PATH_ILLUMINANT_A },
+  { lumice::IlluminantType::kE, LUMICE_PATH_ILLUMINANT_E },
+};
+constexpr std::pair<rp::SpectrumOrigin, int> kSpectrumOriginTags[] = {
+  { rp::SpectrumOrigin::kDiscreteSum, LUMICE_PATH_SPECTRUM_ORIGIN_DISCRETE_SUM },
+  { rp::SpectrumOrigin::kSampled, LUMICE_PATH_SPECTRUM_ORIGIN_SAMPLED },
+  { rp::SpectrumOrigin::kQuadrature, LUMICE_PATH_SPECTRUM_ORIGIN_QUADRATURE },
+};
+constexpr std::pair<an::FieldEquation, int> kFieldEquationTags[] = {
+  { an::FieldEquation::kLogYPeak, LUMICE_PATH_FIELD_EQUATION_LOG_Y_PEAK },
+  { an::FieldEquation::kLogYRidge, LUMICE_PATH_FIELD_EQUATION_LOG_Y_RIDGE },
+  { an::FieldEquation::kChromaticityX, LUMICE_PATH_FIELD_EQUATION_CHROMATICITY_X },
+  { an::FieldEquation::kChromaticityY, LUMICE_PATH_FIELD_EQUATION_CHROMATICITY_Y },
+};
+constexpr std::pair<an::FieldSolveStatus, int> kFieldSolveTags[] = {
+  { an::FieldSolveStatus::kConverged, LUMICE_PATH_FIELD_SOLVE_CONVERGED },
+  { an::FieldSolveStatus::kInvalidInput, LUMICE_PATH_FIELD_SOLVE_INVALID_INPUT },
+  { an::FieldSolveStatus::kNoSignal, LUMICE_PATH_FIELD_SOLVE_NO_SIGNAL },
+  { an::FieldSolveStatus::kDegenerate, LUMICE_PATH_FIELD_SOLVE_DEGENERATE },
+  { an::FieldSolveStatus::kIterationLimit, LUMICE_PATH_FIELD_SOLVE_ITERATION_LIMIT },
+  { an::FieldSolveStatus::kBudgetExceeded, LUMICE_PATH_FIELD_SOLVE_BUDGET_EXCEEDED },
+};
+constexpr std::pair<an::FieldWalkStop, int> kFieldWalkTags[] = {
+  { an::FieldWalkStop::kClosed, LUMICE_PATH_FIELD_WALK_CLOSED },
+  { an::FieldWalkStop::kObservationCensored, LUMICE_PATH_FIELD_WALK_OBSERVATION_CENSORED },
+  { an::FieldWalkStop::kCorrectorFailed, LUMICE_PATH_FIELD_WALK_CORRECTOR_FAILED },
+  { an::FieldWalkStop::kPointLimit, LUMICE_PATH_FIELD_WALK_POINT_LIMIT },
+  { an::FieldWalkStop::kInvalidInput, LUMICE_PATH_FIELD_WALK_INVALID_INPUT },
+};
+constexpr std::pair<rp::DiagnosticEvidence, int> kDiagnosticEvidenceTags[] = {
+  { rp::DiagnosticEvidence::kActual, LUMICE_PATH_MC_ACTUAL },
+  { rp::DiagnosticEvidence::kCandidate, LUMICE_PATH_MC_CANDIDATE },
+  { rp::DiagnosticEvidence::kUnfinished, LUMICE_PATH_MC_UNFINISHED },
+};
+constexpr std::pair<rp::DiagnosticGeometry, int> kDiagnosticGeometryTags[] = {
+  { rp::DiagnosticGeometry::kPoint, LUMICE_PATH_DIAGNOSTIC_POINT },
+  { rp::DiagnosticGeometry::kPolyline, LUMICE_PATH_DIAGNOSTIC_POLYLINE },
+  { rp::DiagnosticGeometry::kAtom, LUMICE_PATH_DIAGNOSTIC_ATOM },
+  { rp::DiagnosticGeometry::kSourceRange, LUMICE_PATH_DIAGNOSTIC_SOURCE_RANGE },
+  { rp::DiagnosticGeometry::kBand, LUMICE_PATH_DIAGNOSTIC_BAND },
+};
+constexpr std::pair<rp::CoverageRole, int> kCoverageRoleTags[] = {
+  { rp::CoverageRole::kBaseInput, LUMICE_PATH_COVERAGE_BASE_INPUT },
+  { rp::CoverageRole::kBoundedDiscovery, LUMICE_PATH_COVERAGE_BOUNDED_DISCOVERY },
+  { rp::CoverageRole::kDeclaredSkip, LUMICE_PATH_COVERAGE_DECLARED_SKIP },
+};
+constexpr std::pair<rp::CoverageStatus, int> kCoverageStatusTags[] = {
+  { rp::CoverageStatus::kSupported, LUMICE_PATH_COVERAGE_SUPPORTED },
+  { rp::CoverageStatus::kNumericalIncomplete, LUMICE_PATH_COVERAGE_NUMERICAL_INCOMPLETE },
+  { rp::CoverageStatus::kNotSupported, LUMICE_PATH_COVERAGE_NOT_SUPPORTED },
+};
+constexpr std::pair<an::CrystalShapeKind, int> kCrystalKindTags[] = {
+  { an::CrystalShapeKind::kPrism, LUMICE_PATH_CRYSTAL_PRISM },
+  { an::CrystalShapeKind::kPyramid, LUMICE_PATH_CRYSTAL_PYRAMID },
+};
+constexpr std::pair<an::Status, int> kInputStatusTags[] = {
+  { an::Status::kOk, LUMICE_PATH_INPUT_OK },
+  { an::Status::kInvalidValue, LUMICE_PATH_INPUT_INVALID_VALUE },
+  { an::Status::kInvalidConfig, LUMICE_PATH_INPUT_INVALID_CONFIG },
+};
+constexpr std::pair<an::ChainFailure, int> kChainFailureTags[] = {
+  { an::ChainFailure::kNone, LUMICE_PATH_CHAIN_NONE },
+  { an::ChainFailure::kPathInfeasible, LUMICE_PATH_CHAIN_PATH_INFEASIBLE },
+  { an::ChainFailure::kTirBoundary, LUMICE_PATH_CHAIN_TIR_BOUNDARY },
+  { an::ChainFailure::kNonFinite, LUMICE_PATH_CHAIN_NON_FINITE },
+};
+constexpr std::pair<an::EntryMeasureStatus, int> kEntryStatusTags[] = {
+  { an::EntryMeasureStatus::kOk, LUMICE_PATH_ENTRY_OK },
+  { an::EntryMeasureStatus::kEntryBackface, LUMICE_PATH_ENTRY_BACKFACE },
+  { an::EntryMeasureStatus::kExitCriticalAngle, LUMICE_PATH_ENTRY_EXIT_CRITICAL_ANGLE },
+  { an::EntryMeasureStatus::kCorridorEmpty, LUMICE_PATH_ENTRY_CORRIDOR_EMPTY },
+};
+constexpr std::pair<an::InterfaceSolveStatus, int> kInterfaceSolveTags[] = {
+  { an::InterfaceSolveStatus::kConverged, LUMICE_PATH_INTERFACE_SOLVE_CONVERGED },
+  { an::InterfaceSolveStatus::kInvalidInput, LUMICE_PATH_INTERFACE_SOLVE_INVALID_INPUT },
+  { an::InterfaceSolveStatus::kUnavailable, LUMICE_PATH_INTERFACE_SOLVE_UNAVAILABLE },
+  { an::InterfaceSolveStatus::kNoSupport, LUMICE_PATH_INTERFACE_SOLVE_NO_SUPPORT },
+  { an::InterfaceSolveStatus::kDegenerate, LUMICE_PATH_INTERFACE_SOLVE_DEGENERATE },
+  { an::InterfaceSolveStatus::kIterationLimit, LUMICE_PATH_INTERFACE_SOLVE_ITERATION_LIMIT },
+  { an::InterfaceSolveStatus::kBudgetExceeded, LUMICE_PATH_INTERFACE_SOLVE_BUDGET_EXCEEDED },
+};
+constexpr std::pair<an::InterfaceWalkStop, int> kInterfaceWalkTags[] = {
+  { an::InterfaceWalkStop::kClosed, LUMICE_PATH_INTERFACE_WALK_CLOSED },
+  { an::InterfaceWalkStop::kAreaThreshold, LUMICE_PATH_INTERFACE_WALK_AREA_THRESHOLD },
+  { an::InterfaceWalkStop::kGeometricContact, LUMICE_PATH_INTERFACE_WALK_GEOMETRIC_CONTACT },
+  { an::InterfaceWalkStop::kOpticalGate, LUMICE_PATH_INTERFACE_WALK_OPTICAL_GATE },
+  { an::InterfaceWalkStop::kCorrectorFailed, LUMICE_PATH_INTERFACE_WALK_CORRECTOR_FAILED },
+  { an::InterfaceWalkStop::kPointLimit, LUMICE_PATH_INTERFACE_WALK_POINT_LIMIT },
+  { an::InterfaceWalkStop::kBudgetExceeded, LUMICE_PATH_INTERFACE_WALK_BUDGET_EXCEEDED },
+  { an::InterfaceWalkStop::kInvalidInput, LUMICE_PATH_INTERFACE_WALK_INVALID_INPUT },
+};
+
+constexpr std::pair<rp::PartitionContext::Coverage, int> kSupportCoverageTags[] = {
+  { rp::PartitionContext::Coverage::kComplete, LUMICE_PATH_SUPPORT_COMPLETE },
+  { rp::PartitionContext::Coverage::kIncomplete, LUMICE_PATH_SUPPORT_INCOMPLETE },
+  { rp::PartitionContext::Coverage::kUnknown, LUMICE_PATH_SUPPORT_UNKNOWN },
+};
+constexpr std::pair<rp::EscapeRegime, int> kEscapeTags[] = {
+  { rp::EscapeRegime::kSlabCrease, LUMICE_PATH_ESCAPE_SLAB_CREASE },
+  { rp::EscapeRegime::kUnset, LUMICE_PATH_TAG_UNKNOWN },
+};
+constexpr std::pair<an::WalkStatus, int> kWalkTags[] = {
+  { an::WalkStatus::kOk, LUMICE_PATH_WALK_OK },
+  { an::WalkStatus::kStepsExhausted, LUMICE_PATH_WALK_STEPS_EXHAUSTED },
+  { an::WalkStatus::kStartNoPoint, LUMICE_PATH_WALK_START_NO_POINT },
+  { an::WalkStatus::kStartCoversAll, LUMICE_PATH_WALK_START_COVERS_ALL },
+  { an::WalkStatus::kStartNoEdge, LUMICE_PATH_WALK_START_NO_EDGE },
+  { an::WalkStatus::kCornerNotSimple, LUMICE_PATH_WALK_CORNER_NOT_SIMPLE },
+  { an::WalkStatus::kNotClosed, LUMICE_PATH_WALK_NOT_CLOSED },
+  { an::WalkStatus::kNotFinite, LUMICE_PATH_WALK_NOT_FINITE },
+  { an::WalkStatus::kBadOrientation, LUMICE_PATH_WALK_BAD_ORIENTATION },
+  { an::WalkStatus::kStopRequested, LUMICE_PATH_WALK_STOP_REQUESTED },
+};
+constexpr std::pair<an::FiberMeasureBinding, int> kOrbitBindingTags[] = {
+  { an::FiberMeasureBinding::kSolidAngle, LUMICE_PATH_ORBIT_SOLID_ANGLE },
+  { an::FiberMeasureBinding::kFiberParameter, LUMICE_PATH_ORBIT_FIBER_PARAMETER },
+};
+constexpr std::pair<an::FiberEvidenceForm, int> kOrbitEvidenceTags[] = {
+  { an::FiberEvidenceForm::kStructural, LUMICE_PATH_ORBIT_STRUCTURAL },
+  { an::FiberEvidenceForm::kSampledExhaustive, LUMICE_PATH_ORBIT_SAMPLED_EXHAUSTIVE },
+  { an::FiberEvidenceForm::kSampledPartial, LUMICE_PATH_ORBIT_SAMPLED_PARTIAL },
+};
+constexpr std::pair<an::OnsetLocation, int> kOnsetLocationTags[] = {
+  { an::OnsetLocation::kInterior, LUMICE_PATH_ONSET_INTERIOR },
+  { an::OnsetLocation::kBoundary, LUMICE_PATH_ONSET_BOUNDARY },
+};
+constexpr std::pair<an::OnsetSource, int> kOnsetSourceTags[] = {
+  { an::OnsetSource::kInteriorMinimum, LUMICE_PATH_ONSET_INTERIOR_MINIMUM },
+  { an::OnsetSource::kInteriorMaximum, LUMICE_PATH_ONSET_INTERIOR_MAXIMUM },
+  { an::OnsetSource::kInteriorSaddle, LUMICE_PATH_ONSET_INTERIOR_SADDLE },
+  { an::OnsetSource::kInteriorDegenerate, LUMICE_PATH_ONSET_INTERIOR_DEGENERATE },
+  { an::OnsetSource::kSlabAxis, LUMICE_PATH_ONSET_SLAB_AXIS },
+  { an::OnsetSource::kSlabCircle, LUMICE_PATH_ONSET_SLAB_CIRCLE },
+  { an::OnsetSource::kBoundaryExtremum, LUMICE_PATH_ONSET_BOUNDARY_EXTREMUM },
+  { an::OnsetSource::kCorner, LUMICE_PATH_ONSET_CORNER },
+};
+constexpr std::pair<an::OnsetProfile, int> kOnsetProfileTags[] = {
+  { an::OnsetProfile::kFiniteJump, LUMICE_PATH_ONSET_PROFILE_FINITE_JUMP },
+  { an::OnsetProfile::kLogDivergence, LUMICE_PATH_ONSET_PROFILE_LOG_DIVERGENCE },
+  { an::OnsetProfile::kInverseSqrtDivergence, LUMICE_PATH_ONSET_PROFILE_INVERSE_SQRT_DIVERGENCE },
+  { an::OnsetProfile::kConePoint, LUMICE_PATH_ONSET_PROFILE_CONE_POINT },
+  { an::OnsetProfile::kCrease, LUMICE_PATH_ONSET_PROFILE_CREASE },
+  { an::OnsetProfile::kBoundaryOnset, LUMICE_PATH_ONSET_PROFILE_BOUNDARY_ONSET },
+  { an::OnsetProfile::kDegenerate, LUMICE_PATH_ONSET_PROFILE_DEGENERATE },
+};
+constexpr std::pair<sc::CorroborationState, int> kCorroborationTags[] = {
+  { sc::CorroborationState::kObserved, LUMICE_PATH_CORROBORATION_OBSERVED },
+  { sc::CorroborationState::kConsistent, LUMICE_PATH_CORROBORATION_CONSISTENT },
+  { sc::CorroborationState::kNotObservedInsufficientEss, LUMICE_PATH_CORROBORATION_NOT_OBSERVED_INSUFFICIENT_ESS },
+  { sc::CorroborationState::kNotObservedDespiteSufficientEss, LUMICE_PATH_CORROBORATION_NOT_OBSERVED_SUFFICIENT_ESS },
+  { sc::CorroborationState::kUnchecked, LUMICE_PATH_CORROBORATION_UNCHECKED },
+};
+constexpr std::pair<sc::NoRelatedBasis, int> kAbsenceBasisTags[] = {
+  { sc::NoRelatedBasis::kZeroSpectralSignal, LUMICE_PATH_ABSENCE_ZERO_SPECTRAL_SIGNAL },
+  { sc::NoRelatedBasis::kCertifiedSmoothRadiance, LUMICE_PATH_ABSENCE_CERTIFIED_SMOOTH_RADIANCE },
+};
+constexpr std::pair<rp::ReportOutcome, int> kReportOutcomeTags[] = {
+  { rp::ReportOutcome::kNotCompleted, LUMICE_PATH_TAG_UNKNOWN },
+  { rp::ReportOutcome::kCompleted, LUMICE_PATH_REPORT_COMPLETED },
+  { rp::ReportOutcome::kPartial, LUMICE_PATH_REPORT_PARTIAL },
+  { rp::ReportOutcome::kNoRelatedFeature, LUMICE_PATH_REPORT_NO_RELATED_FEATURE },
+  { rp::ReportOutcome::kUnsupportedMulticrystal, LUMICE_PATH_REPORT_UNSUPPORTED_MULTICRYSTAL },
+};
+constexpr std::pair<sc::FeatureBucket, int> kBucketTags[] = {
+  { sc::FeatureBucket::kActual, LUMICE_PATH_BUCKET_ACTUAL },
+  { sc::FeatureBucket::kCandidate, LUMICE_PATH_BUCKET_CANDIDATE },
+  { sc::FeatureBucket::kUnfinished, LUMICE_PATH_BUCKET_UNFINISHED },
+};
+constexpr std::pair<rp::ExistenceState, int> kExistenceTags[] = {
+  { rp::ExistenceState::kComputed, LUMICE_PATH_EXISTENCE_COMPUTED },
+  { rp::ExistenceState::kEscaped, LUMICE_PATH_EXISTENCE_ESCAPED },
+  { rp::ExistenceState::kWalkTruncated, LUMICE_PATH_EXISTENCE_WALK_TRUNCATED },
+  { rp::ExistenceState::kS4Declared, LUMICE_PATH_EXISTENCE_DECLARED },
+};
+constexpr std::pair<rp::VisibilityState, int> kVisibilityTags[] = {
+  { rp::VisibilityState::kCertified, LUMICE_PATH_VISIBILITY_CERTIFIED },
+  { rp::VisibilityState::kPartial, LUMICE_PATH_VISIBILITY_PARTIAL },
+  { rp::VisibilityState::kUnlit, LUMICE_PATH_VISIBILITY_UNLIT },
+  { rp::VisibilityState::kUnproven, LUMICE_PATH_VISIBILITY_UNPROVEN },
+};
+
 void FillShape(const lumice::raypath::NominalShapeScalar& shape, LUMICE_PathShapeScalar* out) {
   out->name = Text(shape.name);
   out->value = shape.value;
@@ -1174,7 +1493,7 @@ void FillShape(const lumice::raypath::NominalShapeScalar& shape, LUMICE_PathShap
 }
 
 void FillContext(const lumice::raypath::SurveyContextBlock& context, LUMICE_PathContext* out) {
-  out->source = context.source == lumice::raypath::ContextSource::kWarm ? 1 : 2;
+  out->source = MapTag(context.source, kContextSourceTags);
   out->warm_index_absent = context.warm_index_absent;
   out->reference_wavelength_nm = context.reference_wavelength_nm;
   out->object_state = EvidenceTag(context.object.state);
@@ -1197,7 +1516,7 @@ void FillContext(const lumice::raypath::SurveyContextBlock& context, LUMICE_Path
   }
   if (out->edge_state == LUMICE_PATH_STATE_FINITE || out->edge_state == LUMICE_PATH_STATE_CERTIFIED) {
     out->edge_distance_deg = context.edge_distance_deg;
-    out->edge_basis = context.edge_basis == lumice::raypath::ContextEdgeBasis::kSupportIntervalEndpoint ? 1 : 2;
+    out->edge_basis = MapTag(context.edge_basis, kEdgeBasisTags);
   }
   out->band_sum_state = EvidenceTag(context.band_sum.state);
   if (out->band_sum_state == LUMICE_PATH_STATE_REFUSED || out->band_sum_state == LUMICE_PATH_STATE_UNEVALUATED) {
@@ -1213,16 +1532,16 @@ void FillContext(const lumice::raypath::SurveyContextBlock& context, LUMICE_Path
 
 void FillQuantity(const lumice::raypath::QuantitySpec& spec, const lumice::raypath::ClaimScope* scope,
                   LUMICE_PathQuantitySpec* out) {
-  out->kind = static_cast<int>(spec.kind) + 1;
-  out->method = static_cast<int>(spec.method) + 1;
-  out->unit = static_cast<int>(spec.unit) + 1;
-  out->aggregation = static_cast<int>(spec.aggregation) + 1;
-  out->measure = static_cast<int>(spec.measure) + 1;
-  out->reference = static_cast<int>(spec.reference) + 1;
-  out->density = static_cast<int>(spec.density) + 1;
-  out->spectrum = static_cast<int>(spec.spectrum) + 1;
-  out->source = static_cast<int>(spec.source) + 1;
-  out->shape = static_cast<int>(spec.shape) + 1;
+  out->kind = MapTag(spec.kind, kQuantityKindTags);
+  out->method = MapTag(spec.method, kQuantityMethodTags);
+  out->unit = MapTag(spec.unit, kUnitTags);
+  out->aggregation = MapTag(spec.aggregation, kAggregationTags);
+  out->measure = MapTag(spec.measure, kMeasureTags);
+  out->reference = MapTag(spec.reference, kReferenceTags);
+  out->density = MapTag(spec.density, kDensityTags);
+  out->spectrum = MapTag(spec.spectrum, kSpectrumTags);
+  out->source = MapTag(spec.source, kSourceTags);
+  out->shape = MapTag(spec.shape, kGeometryTags);
   out->wavelength_available = spec.observation.wavelength_nm.has_value();
   if (spec.observation.wavelength_nm)
     out->wavelength_nm = *spec.observation.wavelength_nm;
@@ -1237,15 +1556,15 @@ void FillQuantity(const lumice::raypath::QuantitySpec& spec, const lumice::raypa
   out->regularization_epsilon = spec.regularization_epsilon;
   if (scope) {
     out->scope_available = 1;
-    out->scope_member_kind = static_cast<int>(scope->members.member_kind) + 1;
-    out->scope_location = static_cast<int>(scope->members.location) + 1;
+    out->scope_member_kind = MapTag(scope->members.member_kind, kMemberTags);
+    out->scope_location = MapTag(scope->members.location, kLocationTags);
     if (scope->members.location == lumice::raypath::SelectionLocation::kSceneLayer) {
       out->scope_layer_index = scope->members.layer_index;
     }
     out->scope_member_count = scope->members.members.size();
-    out->scope_geometry = static_cast<int>(scope->geometry.kind) + 1;
-    out->scope_measure = static_cast<int>(scope->measure.kind) + 1;
-    out->scope_reference = static_cast<int>(scope->measure.reference) + 1;
+    out->scope_geometry = MapTag(scope->geometry.kind, kGeometryTags);
+    out->scope_measure = MapTag(scope->measure.kind, kMeasureTags);
+    out->scope_reference = MapTag(scope->measure.reference, kReferenceTags);
   }
 }
 
@@ -1537,8 +1856,7 @@ LUMICE_PathReadStatus LUMICE_PathPointGetInfo(const LUMICE_SinglePathResult* res
   const auto& data = result->result.Data();
   const auto& m = data.meta;
   out->schema_version = m.schema_version;
-  out->outcome = data.OutcomeValue() == lumice::raypath::Outcome::kPointMass ? LUMICE_PATH_POINT_MASS :
-                                                                               LUMICE_PATH_POINT_DISCOVERED;
+  out->outcome = MapTag(data.OutcomeValue(), kPointOutcomeTags);
   out->execution = ExecutionTag(m.execution);
   out->crystal_id = static_cast<int>(m.crystal_id);
   out->analytic_api_version = m.analytic_api_version;
@@ -1714,7 +2032,7 @@ LUMICE_PathReadStatus LUMICE_PathProbeGetProfile(const LUMICE_PathProbe* result,
     return LUMICE_PATH_READ_INVALID_INDEX;
   }
   const auto& profile = profiles[index];
-  out->along = static_cast<int>(profile.along);
+  out->along = MapTag(profile.along, kAlongTags, LUMICE_PATH_RAW_TAG_UNKNOWN);
   out->state = EvidenceTag(profile.State());
   if (const auto* refused = std::get_if<lumice::raypath::Refused>(&profile.Claim())) {
     out->reason = Text(refused->reason);
@@ -1731,9 +2049,7 @@ LUMICE_PathReadStatus LUMICE_PathProbeGetProfile(const LUMICE_PathProbe* result,
   out->wedge_half_width_deg = profile.wedge_half_width_deg;
   out->anchor_available = profile.anchor_basis.has_value();
   if (profile.anchor_basis) {
-    out->anchor_basis = *profile.anchor_basis == lumice::raypath::ContextEdgeBasis::kSupportIntervalEndpoint ?
-                            LUMICE_PATH_ANCHOR_SUPPORT_ENDPOINT :
-                            LUMICE_PATH_ANCHOR_EDGE_POSITION;
+    out->anchor_basis = MapTag(*profile.anchor_basis, kEdgeBasisTags);
     out->anchor_deg = profile.anchor_deg;
     out->anchor_wavelength_nm = profile.anchor_wavelength_nm;
   }
@@ -1747,8 +2063,7 @@ LUMICE_PathReadStatus LUMICE_PathProbeGetProfile(const LUMICE_PathProbe* result,
   const auto* reading = lumice::raypath::ClaimValue(profile.Claim());
   if (reading != nullptr) {
     out->source_available = 1;
-    out->source = reading->source == lumice::raypath::ProbeProfileSource::kWarmReused ? LUMICE_PATH_PROBE_WARM_REUSED :
-                                                                                        LUMICE_PATH_PROBE_RECOMPUTED;
+    out->source = MapTag(reading->source, kProbeSourceTags);
     out->members_evaluated = reading->members_evaluated;
     out->sample_row_count = reading->samples.size();
     out->dark_region_count = reading->dark_regions.size();
@@ -2021,7 +2336,7 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetFamily(const LUMICE_PathSurvey* result
     return LUMICE_PATH_READ_NOT_AVAILABLE;
   }
   out->state = EvidenceTag(family->evidence.state);
-  out->measure_kind = static_cast<int>(family->measure.kind) + 1;
+  out->measure_kind = MapTag(family->measure.kind, kMeasureTags);
   if (family->level0_refusal_mode) {
     out->level0_refusal_mode = Text(*family->level0_refusal_mode);
   }
@@ -2078,7 +2393,7 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetTint(const LUMICE_PathSurvey* result, 
   }
   out->reading_available = 1;
   out->class_power = value->IsClassPower();
-  out->reading_unit = static_cast<int>(value->reading_unit) + 1;
+  out->reading_unit = MapTag(value->reading_unit, kUnitTags);
   out->red_label = Text(value->red_label);
   out->blue_label = Text(value->blue_label);
   out->n_red = value->n_red;
@@ -2520,9 +2835,10 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetScope(const LUMICE_PathSurvey* result,
   if (d.request.wavelength_given) {
     out->request_wavelength_nm = d.request.wavelength_nm;
   }
-  out->member_kind = d.quantity_context ? static_cast<int>(d.quantity_context->members.member_kind) + 1 :
-                                          (d.request.symmetry_bits == 0 ? 1 : 2);
-  out->geometry_kind = static_cast<int>(d.geometry.kind) + 1;
+  out->member_kind = d.quantity_context ?
+                         MapTag(d.quantity_context->members.member_kind, kMemberTags) :
+                         (d.request.symmetry_bits == 0 ? LUMICE_PATH_MEMBER_LITERAL : LUMICE_PATH_MEMBER_PHYSICAL_L2);
+  out->geometry_kind = MapTag(d.geometry.kind, kGeometryTags);
   out->wavelength_source = Text(d.wavelength_source);
   out->refractive_index = d.refractive_index;
   out->sun_altitude_available = d.sun_altitude_deg.has_value();
@@ -3058,8 +3374,8 @@ LUMICE_PathReadStatus LUMICE_PathReportGetRecordAdjuncts(const LUMICE_PathFeatur
   out->observation_contrast_error = row.observation_contrast_error;
   out->transverse_contrast = row.transverse_contrast;
   out->prefix_movement_rad = row.prefix_movement_rad;
-  out->scale_status = static_cast<int>(row.scale_status) + 1;
-  out->walk_stop = static_cast<int>(row.walk_stop) + 1;
+  out->scale_status = MapTag(row.scale_status, kFieldSolveTags);
+  out->walk_stop = MapTag(row.walk_stop, kFieldWalkTags);
   out->internal_slot = row.internal_slot;
   return LUMICE_PATH_READ_OK;
 }
@@ -3067,7 +3383,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetRecordAdjuncts(const LUMICE_PathFeatur
 namespace {
 
 void FillFieldPoint(const lumice::analytic::FieldStationaryPoint& point, LUMICE_PathFieldPoint* out) {
-  out->status = static_cast<int>(point.status) + 1;
+  out->status = MapTag(point.status, kFieldSolveTags);
   std::copy(point.query.direction.begin(), point.query.direction.end(), out->direction);
   for (int i = 0; i < 2; ++i) {
     std::copy(point.query.basis[i].begin(), point.query.basis[i].end(), out->basis + 3 * i);
@@ -3135,7 +3451,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetFieldBand(const LUMICE_PathFeatureRepo
   if (!rows[record].band)
     return LUMICE_PATH_READ_NOT_AVAILABLE;
   const auto& band = *rows[record].band;
-  out->status = static_cast<int>(band.status) + 1;
+  out->status = MapTag(band.status, kFieldSolveTags);
   std::copy(band.levels.begin(), band.levels.end(), out->levels);
   for (size_t i = 0; i < 2; ++i)
     out->boundary_count[i] = band.boundaries[i].size();
@@ -3181,7 +3497,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetBandJet(const LUMICE_PathFeatureReport
 namespace {
 
 void FillDiagnosticSource(const lumice::analytic::DiagnosticInputRow& source, LUMICE_PathDiagnosticSource* out) {
-  out->crystal_kind = static_cast<int>(source.crystal.kind) + 1;
+  out->crystal_kind = MapTag(source.crystal.kind, kCrystalKindTags);
   out->height = source.crystal.height;
   std::copy_n(source.crystal.face_distance, 6, out->face_distance);
   out->upper_h = source.crystal.upper_h;
@@ -3196,9 +3512,9 @@ void FillDiagnosticSource(const lumice::analytic::DiagnosticInputRow& source, LU
 
 void FillDiagnosticValue(const lumice::analytic::DiagnosticOutputRow& value, LUMICE_PathDiagnosticValue* out) {
   out->source_token = value.source_token;
-  out->input_status = static_cast<int>(value.input_status) + 1;
+  out->input_status = MapTag(value.input_status, kInputStatusTags);
   out->path_evaluations = value.path_evaluations;
-  out->optical_failure = static_cast<int>(value.optical_failure) + 1;
+  out->optical_failure = MapTag(value.optical_failure, kChainFailureTags);
   out->path_valid = value.path_valid;
   if (value.path_valid)
     std::copy(value.outgoing.begin(), value.outgoing.end(), out->outgoing);
@@ -3218,7 +3534,7 @@ void FillDiagnosticValue(const lumice::analytic::DiagnosticOutputRow& value, LUM
   out->interface_product = value.interface_product;
   out->entry_available = value.entry_available;
   if (value.entry_available) {
-    out->entry_status = static_cast<int>(value.entry.status) + 1;
+    out->entry_status = MapTag(value.entry.status, kEntryStatusTags);
     if (value.entry.status == lumice::analytic::EntryMeasureStatus::kOk) {
       out->entry_measure = value.entry.value;
       out->entry_area_perp_internal = value.entry.area_perp_internal;
@@ -3251,17 +3567,17 @@ void FillDiagnosticInterface(const lumice::analytic::DiagnosticInterface& row, L
 }
 
 void FillInterfacePoint(const lumice::analytic::InterfaceStationaryPoint& point, LUMICE_PathInterfacePoint* out) {
-  out->status = static_cast<int>(point.status) + 1;
+  out->status = MapTag(point.status, kInterfaceSolveTags);
   out->travelled_rad = point.travelled_rad;
   out->path_evaluations = point.path_evaluations;
   out->accepted_pose_count = point.accepted_poses.size();
 }
 
 void FillEventBracket(const lumice::analytic::InterfaceEventBracket& event, LUMICE_PathEventBracket* out) {
-  out->kind = static_cast<int>(event.kind) + 1;
+  out->kind = MapTag(event.kind, kInterfaceWalkTags);
   out->source_width_rad = event.source_width_rad;
-  out->positive_status = static_cast<int>(event.positive.status) + 1;
-  out->nonpositive_status = static_cast<int>(event.nonpositive.status) + 1;
+  out->positive_status = MapTag(event.positive.status, kInterfaceSolveTags);
+  out->nonpositive_status = MapTag(event.nonpositive.status, kInterfaceSolveTags);
 }
 
 struct DiagnosticSelection {
@@ -3344,7 +3660,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetInterfaceCurve(const LUMICE_PathFeatur
   if (record >= rows.size() || curve >= rows[record].interface_curves.size())
     return LUMICE_PATH_READ_INVALID_INDEX;
   const auto& path = rows[record].interface_curves[curve];
-  out->stop = static_cast<int>(path.stop) + 1;
+  out->stop = MapTag(path.stop, kInterfaceWalkTags);
   out->path_evaluations = path.path_evaluations;
   out->point_count = path.points.size();
   out->event_count = path.events.size();
@@ -3402,7 +3718,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetDeviationMinimum(const LUMICE_PathFeat
   if (!rows[record].deviation_minimum)
     return LUMICE_PATH_READ_NOT_AVAILABLE;
   const auto& point = *rows[record].deviation_minimum;
-  out->status = static_cast<int>(point.status) + 1;
+  out->status = MapTag(point.status, kInterfaceSolveTags);
   out->deviation_available = point.deviation_available;
   if (point.deviation_available) {
     out->deviation_rad = point.deviation_rad;
@@ -3700,7 +4016,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetPositiveSource(const LUMICE_PathFeatur
   out->coordinates_available = row.coordinates.has_value();
   if (row.coordinates) {
     const auto& crystal = row.coordinates->crystal;
-    out->crystal_kind = static_cast<int>(crystal.kind) + 1;
+    out->crystal_kind = MapTag(crystal.kind, kCrystalKindTags);
     out->height = crystal.height;
     std::copy_n(crystal.face_distance, 6, out->face_distance);
     out->upper_h = crystal.upper_h;
@@ -3736,17 +4052,17 @@ LUMICE_PathReadStatus LUMICE_PathReportGetScope(const LUMICE_PathFeatureReport* 
   out->scene_identity = Text(scope.scene_identity);
   out->spectrum_scope = Text(scope.spectrum_scope);
   out->seed = scope.seed;
-  out->member_kind = static_cast<int>(scope.member_kind) + 1;
-  out->location = static_cast<int>(scope.location.location) + 1;
+  out->member_kind = MapTag(scope.member_kind, kMemberTags);
+  out->location = MapTag(scope.location.location, kLocationTags);
   if (scope.location.location == lumice::raypath::SelectionLocation::kSceneLayer) {
     out->layer_index = scope.location.layer_index;
   }
   if (const auto* discrete = std::get_if<std::vector<lumice::WlParam>>(&scope.light.spectrum_)) {
-    out->raw_spectrum_kind = 1;
+    out->raw_spectrum_kind = LUMICE_PATH_RAW_SPECTRUM_DISCRETE;
     out->raw_spectrum_count = discrete->size();
   } else {
-    out->raw_spectrum_kind = 2;
-    out->raw_illuminant = static_cast<int>(std::get<lumice::IlluminantType>(scope.light.spectrum_)) + 1;
+    out->raw_spectrum_kind = LUMICE_PATH_RAW_SPECTRUM_ILLUMINANT;
+    out->raw_illuminant = MapTag(std::get<lumice::IlluminantType>(scope.light.spectrum_), kIlluminantTags);
   }
   out->sun_altitude_deg = scope.light.param_.altitude_;
   out->sun_azimuth_deg = scope.light.param_.azimuth_;
@@ -3774,7 +4090,9 @@ LUMICE_PathReadStatus LUMICE_PathReportGetLayer(const LUMICE_PathFeatureReport* 
   if (layer.scene_layer)
     out->scene_layer = *layer.scene_layer;
   out->crystal_id = layer.crystal.id_;
-  out->crystal_kind = std::holds_alternative<lumice::PrismCrystalParam>(layer.crystal.param_) ? 1 : 2;
+  out->crystal_kind = std::holds_alternative<lumice::PrismCrystalParam>(layer.crystal.param_) ?
+                          LUMICE_PATH_CRYSTAL_PRISM :
+                          LUMICE_PATH_CRYSTAL_PYRAMID;
   out->symmetry_bits = layer.symmetry_bits;
   out->representative_faces = layer.representative_faces.data();
   out->representative_face_count = layer.representative_faces.size();
@@ -3798,7 +4116,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetLayerAxis(const LUMICE_PathFeatureRepo
   const auto& value = axis == 0 ? orientation.azimuth_dist :
                       axis == 1 ? orientation.latitude_dist :
                                   orientation.roll_dist;
-  out->distribution = static_cast<int>(value.type) + 1;
+  out->distribution = MapTag(value.type, kDistributionTags);
   out->center = value.center;
   out->spread = value.spread;
   return LUMICE_PATH_READ_OK;
@@ -3822,7 +4140,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetLayerShape(const LUMICE_PathFeatureRep
         auto shape = original;
         const auto slots = lumice::GetShapeScalarSlots(shape);
         const auto* dist = slots[slot];
-        out->distribution = static_cast<int>(dist->type) + 1;
+        out->distribution = MapTag(dist->type, kDistributionTags);
         out->center = dist->center;
         out->spread = dist->spread;
         out->sync_group = shape.sync_group_[slot];
@@ -3875,7 +4193,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetSpectralRow(const LUMICE_PathFeatureRe
   out->refractive_index = row.refractive_index;
   std::copy(row.xyz_basis.begin(), row.xyz_basis.end(), out->xyz_basis);
   std::copy(row.coefficient.begin(), row.coefficient.end(), out->coefficient);
-  out->origin = static_cast<int>(row.origin) + 1;
+  out->origin = MapTag(row.origin, kSpectrumOriginTags);
   out->provenance = Text(row.provenance);
   return LUMICE_PATH_READ_OK;
 }
@@ -3894,14 +4212,14 @@ LUMICE_PathReadStatus LUMICE_PathReportGetSupportMember(const LUMICE_PathFeature
   out->face_count = row.member.size();
   out->regime_slug = Text(row.axis.regime_slug);
   out->message = Text(row.axis.message);
-  out->coverage = static_cast<int>(row.axis.context.coverage) + 1;
+  out->coverage = MapTag(row.axis.context.coverage, kSupportCoverageTags);
   out->escape_regime_available =
       row.axis.context.coverage == lumice::raypath::PartitionContext::Coverage::kIncomplete &&
       row.axis.context.escape_regime != lumice::raypath::EscapeRegime::kUnset;
   if (out->escape_regime_available) {
-    out->escape_regime = static_cast<int>(row.axis.context.escape_regime) + 1;
+    out->escape_regime = MapTag(row.axis.context.escape_regime, kEscapeTags);
   }
-  out->walk_status = static_cast<int>(row.axis.walk_status) + 1;
+  out->walk_status = MapTag(row.axis.walk_status, kWalkTags);
   out->walk_closed = row.axis.walk_closed;
   out->interval_count = row.axis.intervals.size();
   out->onset_count = row.endpoint_onsets.size();
@@ -3935,8 +4253,8 @@ LUMICE_PathReadStatus LUMICE_PathReportGetOrbit(const LUMICE_PathFeatureReport* 
   if (index >= rows.size())
     return LUMICE_PATH_READ_INVALID_INDEX;
   const auto& orbit = rows[index];
-  out->binding = static_cast<int>(orbit.binding) + 1;
-  out->evidence = static_cast<int>(orbit.evidence) + 1;
+  out->binding = MapTag(orbit.binding, kOrbitBindingTags);
+  out->evidence = MapTag(orbit.evidence, kOrbitEvidenceTags);
   out->grid = orbit.grid;
   out->spin_degenerate = orbit.spin_degenerate;
   out->note = Text(orbit.note);
@@ -3975,9 +4293,9 @@ LUMICE_PathReadStatus LUMICE_PathReportGetSupportOnset(const LUMICE_PathFeatureR
   }
   const auto& onset = rows[member].endpoint_onsets[index];
   out->value = onset.value;
-  out->location = static_cast<int>(onset.location) + 1;
-  out->source = static_cast<int>(onset.source) + 1;
-  out->profile = static_cast<int>(onset.profile) + 1;
+  out->location = MapTag(onset.location, kOnsetLocationTags);
+  out->source = MapTag(onset.source, kOnsetSourceTags);
+  out->profile = MapTag(onset.profile, kOnsetProfileTags);
   out->gradient_norm = onset.gradient_norm;
   out->measure_limit_available = onset.has_measure_limit;
   if (onset.has_measure_limit) {
@@ -4113,7 +4431,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetAnnotation(const LUMICE_PathFeatureRep
     return LUMICE_PATH_READ_INVALID_INDEX;
   }
   const auto& row = rows[object];
-  out->state = static_cast<int>(row.state) + 1;
+  out->state = MapTag(row.state, kCorroborationTags);
   out->presence_ess_available = std::isfinite(row.presence_ess);
   if (out->presence_ess_available) {
     out->presence_ess = row.presence_ess;
@@ -4243,7 +4561,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetRuling(const LUMICE_PathFeatureReport*
   out->issued = ruling.issued;
   out->basis_available = ruling.issued;
   if (ruling.issued) {
-    out->basis = static_cast<int>(ruling.basis) + 1;
+    out->basis = MapTag(ruling.basis, kAbsenceBasisTags);
   }
   out->partition_complete_no_escape = ruling.partition_complete_no_escape;
   out->partition_failure = Text(ruling.partition_failure);
@@ -4265,7 +4583,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetInfo(const LUMICE_PathFeatureReport* r
   }
   const auto& d = result->result.Data();
   out->execution = ExecutionTag(d.execution);
-  out->outcome = static_cast<int>(d.outcome);
+  out->outcome = MapTag(d.outcome, kReportOutcomeTags);
   out->object_count = d.core.objects.size();
   out->record_count = d.mc.discovery.features.size();
   out->source_count = d.mc.discovery.measure.sources.size();
@@ -4303,11 +4621,11 @@ LUMICE_PathReadStatus LUMICE_PathReportGetObject(const LUMICE_PathFeatureReport*
   if (object.existence == lumice::raypath::ExistenceState::kEscaped) {
     out->escape_regime_slug = Text(object.escape_regime_slug);
   }
-  out->bucket = static_cast<int>(lumice::raypath::schema3::BucketOf(object)) + 1;
-  out->existence = static_cast<int>(object.existence) + 1;
-  out->visibility = static_cast<int>(object.visibility.state) + 1;
+  out->bucket = MapTag(lumice::raypath::schema3::BucketOf(object), kBucketTags);
+  out->existence = MapTag(object.existence, kExistenceTags);
+  out->visibility = MapTag(object.visibility.state, kVisibilityTags);
   out->chromatic_assessed = object.ChromaticAssessed();
-  out->corroboration = static_cast<int>(object.corroboration) + 1;
+  out->corroboration = MapTag(object.corroboration, kCorroborationTags);
   out->sky_position_available = object.has_sky_position;
   if (object.has_sky_position) {
     std::copy_n(object.sky_position, 3, out->sky_position);
@@ -4331,7 +4649,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetVisibility(const LUMICE_PathFeatureRep
   if (object >= rows.size())
     return LUMICE_PATH_READ_INVALID_INDEX;
   const auto& visibility = rows[object].visibility;
-  out->state = static_cast<int>(visibility.state) + 1;
+  out->state = MapTag(visibility.state, kVisibilityTags);
   out->state_name = Text(lumice::raypath::VisibilityStateName(visibility.state));
   out->lit_fraction_available = std::isfinite(visibility.lit_fraction);
   if (out->lit_fraction_available)
@@ -4449,8 +4767,8 @@ LUMICE_PathReadStatus LUMICE_PathReportGetRecord(const LUMICE_PathFeatureReport*
     return LUMICE_PATH_READ_INVALID_INDEX;
   }
   const auto& record = records[index];
-  out->evidence = static_cast<int>(record.evidence) + 1;
-  out->geometry = static_cast<int>(record.geometry) + 1;
+  out->evidence = MapTag(record.evidence, kDiagnosticEvidenceTags);
+  out->geometry = MapTag(record.geometry, kDiagnosticGeometryTags);
   out->kind = Text(record.kind);
   out->reason = Text(record.reason);
   out->sky_point_count = record.sky_points.size();
@@ -4476,7 +4794,7 @@ LUMICE_PathReadStatus LUMICE_PathReportGetRecord(const LUMICE_PathFeatureReport*
     out->scale_movement_rad = *record.scale_movement_rad;
   }
   out->minimum_effective_samples = record.minimum_effective_samples;
-  out->equation = static_cast<int>(record.equation);
+  out->equation = MapTag(record.equation, kFieldEquationTags, LUMICE_PATH_RAW_TAG_UNKNOWN);
   out->contributor_fraction_available = record.contributor_fraction_of_estimated_y.has_value();
   if (record.contributor_fraction_of_estimated_y) {
     out->contributor_fraction_of_estimated_y = *record.contributor_fraction_of_estimated_y;
@@ -4494,8 +4812,8 @@ LUMICE_PathReadStatus LUMICE_PathReportGetCoverage(const LUMICE_PathFeatureRepor
     return LUMICE_PATH_READ_INVALID_INDEX;
   }
   const auto& row = rows[index];
-  out->role = static_cast<int>(row.role) + 1;
-  out->status = static_cast<int>(row.status) + 1;
+  out->role = MapTag(row.role, kCoverageRoleTags);
+  out->status = MapTag(row.status, kCoverageStatusTags);
   out->subject = Text(row.subject);
   out->reason = Text(row.reason);
   out->limitation_count = row.limitations.size();

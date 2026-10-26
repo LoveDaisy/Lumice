@@ -411,6 +411,16 @@ TEST(PathFeatureReportCApi, TypedRecordsMatchPopulatedReportAndRejectAbsentNeste
     record.struct_size = sizeof(record);
     ASSERT_EQ(LUMICE_PathReportGetRecord(outcome.report.get(), index, &record), LUMICE_PATH_READ_OK);
     EXPECT_EQ(std::string(record.kind.data, record.kind.length), records[index].at("kind"));
+    const std::string evidence = records[index].at("evidence").get<std::string>();
+    if (evidence == "actual") {
+      EXPECT_EQ(record.evidence, LUMICE_PATH_MC_ACTUAL);
+    } else if (evidence == "candidate") {
+      EXPECT_EQ(record.evidence, LUMICE_PATH_MC_CANDIDATE);
+    } else if (evidence == "unfinished") {
+      EXPECT_EQ(record.evidence, LUMICE_PATH_MC_UNFINISHED);
+    } else {
+      ADD_FAILURE() << "unrecognized record evidence: " << evidence;
+    }
     EXPECT_EQ(record.equation, records[index].at("fixed_observation").at("equation"));
     EXPECT_EQ(record.contributor_fraction_available, records[index].contains("contributor_fraction_of_estimated_Y"));
     if (record.contributor_fraction_available) {

@@ -83,6 +83,9 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 Destroy 为止；字符串以 NUL 结尾，长度不含终止符。活结果上的只读 getter/`ToJson`
 可以并发，但 Destroy 必须等待所有读取与借用指针使用结束。缺失值由 available/evidence
 显式标记；非法索引与 variant kind 返回具名读取状态，不把默认零当结果。
+有语义的整数字段均使用能力头内具名的 `LUMICE_PATH_*` 常量：0 表示未识别或不可用；
+`along` 与 field-equation 是以 0 起始的既有值域，未识别值用 -1。bridge 将内部枚举
+逐项映射到公开数值，内部枚举调序不得静默改变 C 合同。
 
 **v4.54** 是纯追加。新增光路 survey——带 `struct_size` 头的 `LUMICE_PathSurveyRequest`、不透明的
 `LUMICE_PathSurvey`、`LUMICE_AnalyzePathSurvey`、`LUMICE_PathSurveyToJson`（与

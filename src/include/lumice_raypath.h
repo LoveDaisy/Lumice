@@ -458,6 +458,164 @@ typedef enum LUMICE_PathReadStatus {
 #define LUMICE_PATH_MC_CANDIDATE 2
 #define LUMICE_PATH_MC_UNFINISHED 3
 
+// Semantic int fields use the named domain below. Zero is unrecognized/unavailable unless a
+// domain explicitly starts at zero; raw zero-based domains use -1 for an unrecognized value.
+#define LUMICE_PATH_TAG_UNKNOWN 0
+#define LUMICE_PATH_RAW_TAG_UNKNOWN -1
+#define LUMICE_PATH_UNIT_PER_SR 1
+#define LUMICE_PATH_UNIT_DIMENSIONLESS 2
+#define LUMICE_PATH_UNIT_AREA 3
+#define LUMICE_PATH_UNIT_MASS 4
+#define LUMICE_PATH_UNIT_PER_RAD_CUBED 5
+#define LUMICE_PATH_UNIT_PER_RAD_SQUARED 6
+#define LUMICE_PATH_AGGREGATION_REPRESENTATIVE 1
+#define LUMICE_PATH_AGGREGATION_PHYSICAL_CLASS 2
+#define LUMICE_PATH_AGGREGATION_MEMBER 3
+#define LUMICE_PATH_MEASURE_ACTUAL_DECLARED 1
+#define LUMICE_PATH_MEASURE_IDEAL_FROZEN 2
+#define LUMICE_PATH_REFERENCE_HAAR 1
+#define LUMICE_PATH_REFERENCE_ANGLE_LEBESGUE 2
+#define LUMICE_PATH_REFERENCE_ORBIT_PARAMETER 3
+#define LUMICE_PATH_REFERENCE_ACTUAL_PRODUCT 4
+#define LUMICE_PATH_REFERENCE_NONE 5
+#define LUMICE_PATH_DENSITY_POSE 1
+#define LUMICE_PATH_DENSITY_NONE 2
+#define LUMICE_PATH_DENSITY_DECLARED_POSE 3
+#define LUMICE_PATH_DENSITY_ACTUAL_SAMPLING_WEIGHTS 4
+#define LUMICE_PATH_SPECTRUM_REFERENCE_WAVELENGTH 1
+#define LUMICE_PATH_SPECTRUM_FIXED_PAIR 2
+#define LUMICE_PATH_SPECTRUM_DISCRETE 3
+#define LUMICE_PATH_SPECTRUM_QUADRATURE 4
+#define LUMICE_PATH_SOURCE_SOLAR_CENTER 1
+#define LUMICE_PATH_SOURCE_SOLAR_DISK 2
+#define LUMICE_PATH_GEOMETRY_NOMINAL 1
+#define LUMICE_PATH_GEOMETRY_REALIZED 2
+#define LUMICE_PATH_GEOMETRY_DECLARED_POPULATION 3
+#define LUMICE_PATH_MEMBER_LITERAL 1
+#define LUMICE_PATH_MEMBER_PHYSICAL_L2 2
+#define LUMICE_PATH_LOCATION_STANDALONE 1
+#define LUMICE_PATH_LOCATION_SCENE_LAYER 2
+#define LUMICE_PATH_CONTEXT_WARM 1
+#define LUMICE_PATH_CONTEXT_INLINE 2
+#define LUMICE_PATH_RAW_SPECTRUM_DISCRETE 1
+#define LUMICE_PATH_RAW_SPECTRUM_ILLUMINANT 2
+#define LUMICE_PATH_CRYSTAL_PRISM 1
+#define LUMICE_PATH_CRYSTAL_PYRAMID 2
+#define LUMICE_PATH_DISTRIBUTION_FIXED 1
+#define LUMICE_PATH_DISTRIBUTION_UNIFORM 2
+#define LUMICE_PATH_DISTRIBUTION_GAUSSIAN 3
+#define LUMICE_PATH_DISTRIBUTION_ZIGZAG 4
+#define LUMICE_PATH_DISTRIBUTION_LAPLACIAN 5
+#define LUMICE_PATH_DISTRIBUTION_LEGACY_GAUSSIAN 6
+#define LUMICE_PATH_ILLUMINANT_D50 1
+#define LUMICE_PATH_ILLUMINANT_D55 2
+#define LUMICE_PATH_ILLUMINANT_D65 3
+#define LUMICE_PATH_ILLUMINANT_D75 4
+#define LUMICE_PATH_ILLUMINANT_A 5
+#define LUMICE_PATH_ILLUMINANT_E 6
+#define LUMICE_PATH_SPECTRUM_ORIGIN_DISCRETE_SUM 1
+#define LUMICE_PATH_SPECTRUM_ORIGIN_SAMPLED 2
+#define LUMICE_PATH_SPECTRUM_ORIGIN_QUADRATURE 3
+#define LUMICE_PATH_FIELD_EQUATION_LOG_Y_PEAK 0
+#define LUMICE_PATH_FIELD_EQUATION_LOG_Y_RIDGE 1
+#define LUMICE_PATH_FIELD_EQUATION_CHROMATICITY_X 2
+#define LUMICE_PATH_FIELD_EQUATION_CHROMATICITY_Y 3
+#define LUMICE_PATH_FIELD_SOLVE_CONVERGED 1
+#define LUMICE_PATH_FIELD_SOLVE_INVALID_INPUT 2
+#define LUMICE_PATH_FIELD_SOLVE_NO_SIGNAL 3
+#define LUMICE_PATH_FIELD_SOLVE_DEGENERATE 4
+#define LUMICE_PATH_FIELD_SOLVE_ITERATION_LIMIT 5
+#define LUMICE_PATH_FIELD_SOLVE_BUDGET_EXCEEDED 6
+#define LUMICE_PATH_FIELD_WALK_CLOSED 1
+#define LUMICE_PATH_FIELD_WALK_OBSERVATION_CENSORED 2
+#define LUMICE_PATH_FIELD_WALK_CORRECTOR_FAILED 3
+#define LUMICE_PATH_FIELD_WALK_POINT_LIMIT 4
+#define LUMICE_PATH_FIELD_WALK_INVALID_INPUT 5
+#define LUMICE_PATH_DIAGNOSTIC_POINT 1
+#define LUMICE_PATH_DIAGNOSTIC_POLYLINE 2
+#define LUMICE_PATH_DIAGNOSTIC_ATOM 3
+#define LUMICE_PATH_DIAGNOSTIC_SOURCE_RANGE 4
+#define LUMICE_PATH_DIAGNOSTIC_BAND 5
+#define LUMICE_PATH_COVERAGE_BASE_INPUT 1
+#define LUMICE_PATH_COVERAGE_BOUNDED_DISCOVERY 2
+#define LUMICE_PATH_COVERAGE_DECLARED_SKIP 3
+#define LUMICE_PATH_COVERAGE_SUPPORTED 1
+#define LUMICE_PATH_COVERAGE_NUMERICAL_INCOMPLETE 2
+#define LUMICE_PATH_COVERAGE_NOT_SUPPORTED 3
+#define LUMICE_PATH_INPUT_OK 1
+#define LUMICE_PATH_INPUT_INVALID_VALUE 2
+#define LUMICE_PATH_INPUT_INVALID_CONFIG 3
+#define LUMICE_PATH_CHAIN_NONE 1
+#define LUMICE_PATH_CHAIN_PATH_INFEASIBLE 2
+#define LUMICE_PATH_CHAIN_TIR_BOUNDARY 3
+#define LUMICE_PATH_CHAIN_NON_FINITE 4
+#define LUMICE_PATH_ENTRY_OK 1
+#define LUMICE_PATH_ENTRY_BACKFACE 2
+#define LUMICE_PATH_ENTRY_EXIT_CRITICAL_ANGLE 3
+#define LUMICE_PATH_ENTRY_CORRIDOR_EMPTY 4
+#define LUMICE_PATH_INTERFACE_SOLVE_CONVERGED 1
+#define LUMICE_PATH_INTERFACE_SOLVE_INVALID_INPUT 2
+#define LUMICE_PATH_INTERFACE_SOLVE_UNAVAILABLE 3
+#define LUMICE_PATH_INTERFACE_SOLVE_NO_SUPPORT 4
+#define LUMICE_PATH_INTERFACE_SOLVE_DEGENERATE 5
+#define LUMICE_PATH_INTERFACE_SOLVE_ITERATION_LIMIT 6
+#define LUMICE_PATH_INTERFACE_SOLVE_BUDGET_EXCEEDED 7
+#define LUMICE_PATH_INTERFACE_WALK_CLOSED 1
+#define LUMICE_PATH_INTERFACE_WALK_AREA_THRESHOLD 2
+#define LUMICE_PATH_INTERFACE_WALK_GEOMETRIC_CONTACT 3
+#define LUMICE_PATH_INTERFACE_WALK_OPTICAL_GATE 4
+#define LUMICE_PATH_INTERFACE_WALK_CORRECTOR_FAILED 5
+#define LUMICE_PATH_INTERFACE_WALK_POINT_LIMIT 6
+#define LUMICE_PATH_INTERFACE_WALK_BUDGET_EXCEEDED 7
+#define LUMICE_PATH_INTERFACE_WALK_INVALID_INPUT 8
+#define LUMICE_PATH_SUPPORT_COMPLETE 1
+#define LUMICE_PATH_SUPPORT_INCOMPLETE 2
+#define LUMICE_PATH_SUPPORT_UNKNOWN 3
+#define LUMICE_PATH_ESCAPE_SLAB_CREASE 1
+#define LUMICE_PATH_WALK_OK 1
+#define LUMICE_PATH_WALK_STEPS_EXHAUSTED 2
+#define LUMICE_PATH_WALK_START_NO_POINT 3
+#define LUMICE_PATH_WALK_START_COVERS_ALL 4
+#define LUMICE_PATH_WALK_START_NO_EDGE 5
+#define LUMICE_PATH_WALK_CORNER_NOT_SIMPLE 6
+#define LUMICE_PATH_WALK_NOT_CLOSED 7
+#define LUMICE_PATH_WALK_NOT_FINITE 8
+#define LUMICE_PATH_WALK_BAD_ORIENTATION 9
+#define LUMICE_PATH_WALK_STOP_REQUESTED 10
+#define LUMICE_PATH_ORBIT_SOLID_ANGLE 1
+#define LUMICE_PATH_ORBIT_FIBER_PARAMETER 2
+#define LUMICE_PATH_ORBIT_STRUCTURAL 1
+#define LUMICE_PATH_ORBIT_SAMPLED_EXHAUSTIVE 2
+#define LUMICE_PATH_ORBIT_SAMPLED_PARTIAL 3
+#define LUMICE_PATH_ONSET_INTERIOR 1
+#define LUMICE_PATH_ONSET_BOUNDARY 2
+#define LUMICE_PATH_ONSET_INTERIOR_MINIMUM 1
+#define LUMICE_PATH_ONSET_INTERIOR_MAXIMUM 2
+#define LUMICE_PATH_ONSET_INTERIOR_SADDLE 3
+#define LUMICE_PATH_ONSET_INTERIOR_DEGENERATE 4
+#define LUMICE_PATH_ONSET_SLAB_AXIS 5
+#define LUMICE_PATH_ONSET_SLAB_CIRCLE 6
+#define LUMICE_PATH_ONSET_BOUNDARY_EXTREMUM 7
+#define LUMICE_PATH_ONSET_CORNER 8
+#define LUMICE_PATH_ONSET_PROFILE_FINITE_JUMP 1
+#define LUMICE_PATH_ONSET_PROFILE_LOG_DIVERGENCE 2
+#define LUMICE_PATH_ONSET_PROFILE_INVERSE_SQRT_DIVERGENCE 3
+#define LUMICE_PATH_ONSET_PROFILE_CONE_POINT 4
+#define LUMICE_PATH_ONSET_PROFILE_CREASE 5
+#define LUMICE_PATH_ONSET_PROFILE_BOUNDARY_ONSET 6
+#define LUMICE_PATH_ONSET_PROFILE_DEGENERATE 7
+#define LUMICE_PATH_CORROBORATION_OBSERVED 1
+#define LUMICE_PATH_CORROBORATION_CONSISTENT 2
+#define LUMICE_PATH_CORROBORATION_NOT_OBSERVED_INSUFFICIENT_ESS 3
+#define LUMICE_PATH_CORROBORATION_NOT_OBSERVED_SUFFICIENT_ESS 4
+#define LUMICE_PATH_CORROBORATION_UNCHECKED 5
+#define LUMICE_PATH_ABSENCE_ZERO_SPECTRAL_SIGNAL 1
+#define LUMICE_PATH_ABSENCE_CERTIFIED_SMOOTH_RADIANCE 2
+#define LUMICE_PATH_BUCKET_ACTUAL 1
+#define LUMICE_PATH_BUCKET_CANDIDATE 2
+#define LUMICE_PATH_BUCKET_UNFINISHED 3
+#define LUMICE_PATH_MC_UNKNOWN 0
+
 typedef enum LUMICE_PathQuantityKind {
   LUMICE_PATH_QUANTITY_BAND_SUM = 1,
   LUMICE_PATH_QUANTITY_TINT_RATIO = 2,
@@ -496,16 +654,16 @@ typedef enum LUMICE_PathQuantityMethod {
 
 typedef struct LUMICE_PathQuantitySpec {
   size_t struct_size;
-  int kind;         // LUMICE_PathQuantityKind
-  int method;       // LUMICE_PathQuantityMethod
-  int unit;         // 1 per_sr, 2 dimensionless, 3 area, 4 mass, 5 per_rad^3, 6 per_rad^2
-  int aggregation;  // 1 representative, 2 physical_class, 3 member
-  int measure;      // 1 actual_declared, 2 ideal_frozen
-  int reference;    // 1 Haar, 2 angle_Lebesgue, 3 orbit_parameter, 4 actual_product, 5 none
-  int density;      // 1 pose_density, 2 none, 3 declared_pose_density, 4 actual_sampling_weights
-  int spectrum;     // 1 reference_lambda, 2 fixed_pair, 3 discrete, 4 quadrature
-  int source;       // 1 solar_center, 2 solar_disk
-  int shape;        // 1 nominal, 2 realized, 3 declared_population
+  int kind;         // LUMICE_PATH_QUANTITY_*
+  int method;       // LUMICE_PATH_METHOD_*
+  int unit;         // LUMICE_PATH_UNIT_*
+  int aggregation;  // LUMICE_PATH_AGGREGATION_*
+  int measure;      // LUMICE_PATH_MEASURE_*
+  int reference;    // LUMICE_PATH_REFERENCE_*
+  int density;      // LUMICE_PATH_DENSITY_*
+  int spectrum;     // LUMICE_PATH_SPECTRUM_*
+  int source;       // LUMICE_PATH_SOURCE_*
+  int shape;        // LUMICE_PATH_GEOMETRY_*
   int wavelength_available;
   double wavelength_nm;
   int sun_altitude_available;
@@ -516,13 +674,13 @@ typedef struct LUMICE_PathQuantitySpec {
   size_t wavelength_count;
   double regularization_epsilon;
   int scope_available;
-  int scope_member_kind;  // 1 literal, 2 physical L2
-  int scope_location;     // 1 standalone, 2 scene_layer
+  int scope_member_kind;  // LUMICE_PATH_MEMBER_*
+  int scope_location;     // LUMICE_PATH_LOCATION_*
   size_t scope_layer_index;
   size_t scope_member_count;
-  int scope_geometry;
-  int scope_measure;
-  int scope_reference;
+  int scope_geometry;   // LUMICE_PATH_GEOMETRY_*
+  int scope_measure;    // LUMICE_PATH_MEASURE_*
+  int scope_reference;  // LUMICE_PATH_REFERENCE_*
 } LUMICE_PathQuantitySpec;
 
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathProbeGetQuantity(const LUMICE_PathProbe* result, size_t profile,
@@ -559,7 +717,7 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetWitnessQuantity(const LUMIC
 
 typedef struct LUMICE_PathSurveyEvidence {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_STATE_*
   LUMICE_PathText method;
   LUMICE_PathText mode;
   LUMICE_PathText reason;
@@ -579,8 +737,8 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetEvidence(const LUMICE_PathS
 typedef struct LUMICE_PathPointInfo {
   size_t struct_size;
   int schema_version;
-  int outcome;
-  int execution;
+  int outcome;    // LUMICE_PATH_POINT_*
+  int execution;  // LUMICE_PATH_OUTCOME_*
   int crystal_id;
   int analytic_api_version;
   LUMICE_PathText crystal_kind;
@@ -673,7 +831,7 @@ typedef struct LUMICE_PathSunGrid {
 // Probe profiles are indexed by wavelength; an unavailable claim has no samples to index.
 typedef struct LUMICE_PathProbeInfo {
   size_t struct_size;
-  int execution;
+  int execution;  // LUMICE_PATH_OUTCOME_*
   int crystal_id;
   int analytic_api_version;
   LUMICE_PathText crystal_kind;
@@ -702,8 +860,8 @@ typedef struct LUMICE_PathProbeInfo {
 
 typedef struct LUMICE_PathProbeProfile {
   size_t struct_size;
-  int along;
-  int state;
+  int along;  // LUMICE_PATH_PROBE_ALONG_* (0..3); -1 if unrecognized
+  int state;  // LUMICE_PATH_STATE_*
   LUMICE_PathText reason;
   double wavelength_nm;
   double refractive_index;
@@ -714,7 +872,7 @@ typedef struct LUMICE_PathProbeProfile {
   double bin_deg;
   double wedge_half_width_deg;
   int anchor_available;
-  int anchor_basis;
+  int anchor_basis;  // LUMICE_PATH_ANCHOR_* when anchor_available
   double anchor_deg;
   double anchor_wavelength_nm;
   LUMICE_PathText semantics;
@@ -723,7 +881,7 @@ typedef struct LUMICE_PathProbeProfile {
   int member_count;
   int sample_count;
   int source_available;
-  int source;
+  int source;  // LUMICE_PATH_PROBE_WARM_REUSED / LUMICE_PATH_PROBE_RECOMPUTED when available
   int members_evaluated;
   const int* representative;
   size_t representative_count;
@@ -740,7 +898,7 @@ typedef struct LUMICE_PathProbeProfile {
 
 typedef struct LUMICE_PathProbeDarkRegion {
   size_t struct_size;
-  int kind;
+  int kind;  // LUMICE_PATH_DARK_*
   double lo_deg;
   double hi_deg;
   int bin_count;
@@ -764,14 +922,14 @@ typedef struct LUMICE_PathProbeSample {
 // and successful evidence state; absent values use availability flags, never defaulted zero.
 typedef struct LUMICE_PathSurveyInfo {
   size_t struct_size;
-  int execution;
+  int execution;  // LUMICE_PATH_OUTCOME_*
   int schema_version;
   int64_t crystal_id;
   unsigned symmetry_bits;
   double wavelength_nm;
   int budget_ms;
   int early_stopped;
-  int evidence_state;
+  int evidence_state;  // LUMICE_PATH_STATE_*
   size_t member_count;
   size_t object_count;
   size_t unevaluated_count;
@@ -785,8 +943,8 @@ typedef struct LUMICE_PathSurveyInfo {
 
 typedef struct LUMICE_PathSurveyObject {
   size_t struct_size;
-  int kind;
-  int state;
+  int kind;   // LUMICE_PATH_SURVEY_*
+  int state;  // LUMICE_PATH_STATE_*
   LUMICE_PathText method;
   LUMICE_PathText mode;
   LUMICE_PathText reason;
@@ -804,8 +962,8 @@ typedef struct LUMICE_PathSurveyObject {
 
 typedef struct LUMICE_PathFamilyInfo {
   size_t struct_size;
-  int state;
-  int measure_kind;  // 1 actual declared, 2 ideal frozen
+  int state;         // LUMICE_PATH_STATE_*         // LUMICE_PATH_STATE_*
+  int measure_kind;  // LUMICE_PATH_MEASURE_*
   LUMICE_PathText level0_refusal_mode;
   size_t ladder_count;
 } LUMICE_PathFamilyInfo;
@@ -829,10 +987,10 @@ typedef struct LUMICE_PathFamilyLevel {
 
 typedef struct LUMICE_PathTint {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_STATE_*
   int reading_available;
   int class_power;
-  int reading_unit;  // LUMICE_PathQuantitySpec.unit vocabulary
+  int reading_unit;  // LUMICE_PATH_UNIT_* when reading_available
   LUMICE_PathText red_label;
   LUMICE_PathText blue_label;
   double n_red;
@@ -858,7 +1016,7 @@ typedef struct LUMICE_PathTint {
 
 typedef struct LUMICE_PathTirShare {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_STATE_*
   int value_available;
   double n_red;
   double n_blue;
@@ -894,7 +1052,7 @@ typedef struct LUMICE_PathTirInterface {
 
 typedef struct LUMICE_PathMcEss {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_STATE_*
   int value_available;
   int64_t seed;
   int64_t draws;
@@ -925,8 +1083,8 @@ typedef struct LUMICE_PathWarmSeed {
 // local to that result, never a persistent ID. The absence/ruling state is separate from execution.
 typedef struct LUMICE_PathReportInfo {
   size_t struct_size;
-  int execution;
-  int outcome;
+  int execution;  // LUMICE_PATH_OUTCOME_*
+  int outcome;    // LUMICE_PATH_REPORT_*
   size_t object_count;
   size_t record_count;
   size_t source_count;
@@ -953,11 +1111,11 @@ typedef struct LUMICE_PathReportObject {
   int slot;
   LUMICE_PathText phi_class_note;
   LUMICE_PathText escape_regime_slug;
-  int bucket;  // 1 actual, 2 candidate, 3 unfinished
-  int existence;
-  int visibility;
+  int bucket;      // LUMICE_PATH_BUCKET_*
+  int existence;   // LUMICE_PATH_EXISTENCE_*
+  int visibility;  // LUMICE_PATH_VISIBILITY_*
   int chromatic_assessed;
-  int corroboration;
+  int corroboration;  // LUMICE_PATH_CORROBORATION_*
   int sky_position_available;
   double sky_position[3];
   const double* u;
@@ -970,7 +1128,7 @@ typedef struct LUMICE_PathReportObject {
 
 typedef struct LUMICE_PathReportVisibility {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_VISIBILITY_*
   LUMICE_PathText state_name;
   int lit_fraction_available;
   double lit_fraction;
@@ -1042,8 +1200,8 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetProducedKind(const LUMICE_P
 
 typedef struct LUMICE_PathReportRecord {
   size_t struct_size;
-  int evidence;
-  int geometry;
+  int evidence;  // LUMICE_PATH_MC_*
+  int geometry;  // LUMICE_PATH_DIAGNOSTIC_*
   LUMICE_PathText kind;
   LUMICE_PathText reason;
   size_t sky_point_count;
@@ -1061,15 +1219,15 @@ typedef struct LUMICE_PathReportRecord {
   int scale_movement_available;
   double scale_movement_rad;
   double minimum_effective_samples;
-  int equation;
+  int equation;  // LUMICE_PATH_FIELD_EQUATION_* (0..3); -1 if unrecognized
   int contributor_fraction_available;
   double contributor_fraction_of_estimated_y;
 } LUMICE_PathReportRecord;
 
 typedef struct LUMICE_PathReportCoverage {
   size_t struct_size;
-  int role;
-  int status;
+  int role;    // LUMICE_PATH_COVERAGE_BASE_INPUT / BOUNDED_DISCOVERY / DECLARED_SKIP
+  int status;  // LUMICE_PATH_COVERAGE_SUPPORTED / NUMERICAL_INCOMPLETE / NOT_SUPPORTED
   LUMICE_PathText subject;
   LUMICE_PathText reason;
   size_t limitation_count;
@@ -1164,7 +1322,7 @@ typedef struct LUMICE_PathIncomplete {
 
 typedef struct LUMICE_PathContext {
   size_t struct_size;
-  int source;
+  int source;  // LUMICE_PATH_CONTEXT_*
   int warm_index_absent;
   double reference_wavelength_nm;
   int object_state;
@@ -1178,7 +1336,7 @@ typedef struct LUMICE_PathContext {
   int edge_state;
   LUMICE_PathText edge_reason;
   double edge_distance_deg;
-  int edge_basis;
+  int edge_basis;  // LUMICE_PATH_ANCHOR_* if edge is available
   int band_sum_state;
   LUMICE_PathText band_sum_reason;
   double band_sum_value;
@@ -1216,7 +1374,7 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathProbeGetWavelength(const LUMICE_Path
 
 typedef struct LUMICE_PathChromatic {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_STATE_*
   LUMICE_PathText method;
   LUMICE_PathText mode;
   LUMICE_PathText reason;
@@ -1236,7 +1394,7 @@ typedef struct LUMICE_PathDispersion {
   double displacement_deg;
   LUMICE_PathText direction;
   size_t followed_count;
-  int evidence_state;
+  int evidence_state;  // LUMICE_PATH_STATE_*
 } LUMICE_PathDispersion;
 
 typedef struct LUMICE_PathFollowedOnset {
@@ -1261,7 +1419,7 @@ typedef struct LUMICE_PathDiagnose {
   double n_blue;
   size_t feature_count;
   size_t note_count;
-  int evidence_state;
+  int evidence_state;  // LUMICE_PATH_STATE_*
 } LUMICE_PathDiagnose;
 
 typedef struct LUMICE_PathDiagnoseFeature {
@@ -1277,7 +1435,7 @@ typedef struct LUMICE_PathDiagnoseFeature {
 
 typedef struct LUMICE_PathSurveyProbe {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_STATE_*
   double wavelength_nm;
   double delta_min_deg;
   double delta_max_deg;
@@ -1307,7 +1465,7 @@ typedef struct LUMICE_PathSurveyProbe {
 
 typedef struct LUMICE_PathWitness {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_STATE_*
   int value_available;
   int64_t kept_count;
   int64_t sample_count;
@@ -1325,7 +1483,7 @@ typedef struct LUMICE_PathReportRuling {
   size_t struct_size;
   int issued;
   int basis_available;
-  int basis;
+  int basis;  // LUMICE_PATH_ABSENCE_* when issued
   int partition_complete_no_escape;
   LUMICE_PathText partition_failure;
   int all_objects_unlit_or_none;
@@ -1347,8 +1505,8 @@ typedef struct LUMICE_PathSurveyScope {
   double wavelength_nm;
   int request_wavelength_given;
   double request_wavelength_nm;
-  int member_kind;    // 1 literal, 2 physical L2
-  int geometry_kind;  // 1 nominal, 2 realized, 3 declared population
+  int member_kind;    // LUMICE_PATH_MEMBER_*
+  int geometry_kind;  // LUMICE_PATH_GEOMETRY_*
   LUMICE_PathText wavelength_source;
   double refractive_index;
   int sun_altitude_available;
@@ -1376,7 +1534,7 @@ typedef struct LUMICE_PathSurveyMemberVerdict {
   int rank_zero;
   LUMICE_PathText mechanism;
   LUMICE_PathText mechanism_unavailable;
-  int evidence_state;
+  int evidence_state;  // LUMICE_PATH_STATE_*
 } LUMICE_PathSurveyMemberVerdict;
 
 typedef struct LUMICE_PathSurveyUnevaluated {
@@ -1403,7 +1561,7 @@ typedef struct LUMICE_PathFamilyKilled {
   size_t struct_size;
   const int* member;
   size_t member_face_count;
-  int kind;
+  int kind;  // LUMICE_PATH_SURVEY_* family-image kind
   int position_available;
   double position_altitude_deg;
   double position_azimuth_deg;
@@ -1549,12 +1707,12 @@ typedef struct LUMICE_PathReportScope {
   LUMICE_PathText scene_identity;
   LUMICE_PathText spectrum_scope;
   uint32_t seed;
-  int member_kind;            // 1 literal, 2 physical L2
-  int location;               // 1 standalone, 2 scene layer
-  size_t layer_index;         // only when location == 2
-  int raw_spectrum_kind;      // 1 discrete, 2 standard illuminant
-  int raw_illuminant;         // for kind 2: 1 D50, 2 D55, 3 D65, 4 D75, 5 A, 6 E
-  size_t raw_spectrum_count;  // for kind 1
+  int member_kind;            // LUMICE_PATH_MEMBER_*
+  int location;               // LUMICE_PATH_LOCATION_*
+  size_t layer_index;         // only when location == LUMICE_PATH_LOCATION_SCENE_LAYER
+  int raw_spectrum_kind;      // LUMICE_PATH_RAW_SPECTRUM_*
+  int raw_illuminant;         // LUMICE_PATH_ILLUMINANT_* when raw_spectrum_kind is ILLUMINANT
+  size_t raw_spectrum_count;  // when raw_spectrum_kind is DISCRETE
   double sun_altitude_deg;
   double sun_azimuth_deg;
   double sun_diameter_deg;
@@ -1573,7 +1731,7 @@ typedef struct LUMICE_PathReportLayer {
   int scene_layer_available;
   size_t scene_layer;
   int64_t crystal_id;
-  int crystal_kind;  // 1 prism, 2 pyramid
+  int crystal_kind;  // LUMICE_PATH_CRYSTAL_*
   unsigned symmetry_bits;
   const int* representative_faces;
   size_t representative_face_count;
@@ -1585,7 +1743,7 @@ typedef struct LUMICE_PathReportLayer {
 
 typedef struct LUMICE_PathReportAxis {
   size_t struct_size;
-  int distribution;  // 1 fixed, 2 uniform, 3 Gaussian, 4 zigzag, 5 Laplacian, 6 legacy Gaussian
+  int distribution;  // LUMICE_PATH_DISTRIBUTION_*
   double center;
   double spread;
 } LUMICE_PathReportAxis;
@@ -1593,7 +1751,7 @@ typedef struct LUMICE_PathReportAxis {
 typedef struct LUMICE_PathReportShapeScalar {
   size_t struct_size;
   LUMICE_PathText name;
-  int distribution;
+  int distribution;  // LUMICE_PATH_DISTRIBUTION_*
   double center;
   double spread;
   int sync_group;
@@ -1624,7 +1782,7 @@ typedef struct LUMICE_PathSpectralRow {
   double refractive_index;
   double xyz_basis[3];
   double coefficient[3];
-  int origin;
+  int origin;  // LUMICE_PATH_SPECTRUM_ORIGIN_*
   LUMICE_PathText provenance;
 } LUMICE_PathSpectralRow;
 
@@ -1634,10 +1792,10 @@ typedef struct LUMICE_PathReportSupportMember {
   size_t face_count;
   LUMICE_PathText regime_slug;
   LUMICE_PathText message;
-  int coverage;  // 1 complete, 2 incomplete, 3 unknown
+  int coverage;  // LUMICE_PATH_SUPPORT_*
   int escape_regime_available;
-  int escape_regime;
-  int walk_status;
+  int escape_regime;  // LUMICE_PATH_ESCAPE_* when available
+  int walk_status;    // LUMICE_PATH_WALK_*
   int walk_closed;
   size_t interval_count;
   size_t onset_count;
@@ -1675,7 +1833,7 @@ typedef struct LUMICE_PathReportBudgets {
 
 typedef struct LUMICE_PathReportAnnotation {
   size_t struct_size;
-  int state;
+  int state;  // LUMICE_PATH_CORROBORATION_*
   int presence_ess_available;
   double presence_ess;
   int match_distance_available;
@@ -1773,7 +1931,7 @@ typedef struct LUMICE_PathPositiveSource {
   size_t member_index;
   size_t spectral_row;
   int coordinates_available;
-  int crystal_kind;
+  int crystal_kind;  // LUMICE_PATH_CRYSTAL_*
   double height;
   double face_distance[6];
   double upper_h;
@@ -1804,14 +1962,14 @@ typedef struct LUMICE_PathRecordAdjuncts {
   double atom_xyz_mass[3];
   double transverse_contrast;
   double prefix_movement_rad;
-  int scale_status;
-  int walk_stop;
+  int scale_status;  // LUMICE_PATH_FIELD_SOLVE_*
+  int walk_stop;     // LUMICE_PATH_FIELD_WALK_*
   int internal_slot;
 } LUMICE_PathRecordAdjuncts;
 
 typedef struct LUMICE_PathFieldPoint {
   size_t struct_size;
-  int status;
+  int status;  // LUMICE_PATH_FIELD_SOLVE_*
   double direction[3];
   double basis[6];
   double bandwidth_rad;
@@ -1834,14 +1992,14 @@ typedef struct LUMICE_PathFieldJet {
 
 typedef struct LUMICE_PathFieldBand {
   size_t struct_size;
-  int status;
+  int status;  // LUMICE_PATH_FIELD_SOLVE_*
   double levels[2];
   size_t boundary_count[2];
 } LUMICE_PathFieldBand;
 
 typedef struct LUMICE_PathInterfacePoint {
   size_t struct_size;
-  int status;
+  int status;  // LUMICE_PATH_INTERFACE_SOLVE_*
   double travelled_rad;
   uint64_t path_evaluations;
   size_t accepted_pose_count;
@@ -1849,7 +2007,7 @@ typedef struct LUMICE_PathInterfacePoint {
 
 typedef struct LUMICE_PathInterfaceCurve {
   size_t struct_size;
-  int stop;
+  int stop;  // LUMICE_PATH_INTERFACE_WALK_*
   uint64_t path_evaluations;
   size_t point_count;
   size_t event_count;
@@ -1857,15 +2015,15 @@ typedef struct LUMICE_PathInterfaceCurve {
 
 typedef struct LUMICE_PathEventBracket {
   size_t struct_size;
-  int kind;
+  int kind;  // LUMICE_PATH_INTERFACE_WALK_*
   double source_width_rad;
-  int positive_status;
-  int nonpositive_status;
+  int positive_status;     // LUMICE_PATH_INTERFACE_SOLVE_*
+  int nonpositive_status;  // LUMICE_PATH_INTERFACE_SOLVE_*
 } LUMICE_PathEventBracket;
 
 typedef struct LUMICE_PathDeviationMinimum {
   size_t struct_size;
-  int status;
+  int status;  // LUMICE_PATH_INTERFACE_SOLVE_*
   int deviation_available;
   double deviation_rad;
   double objective_curvatures[2];
@@ -1960,7 +2118,7 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetCorridorEdge(const LUMICE_P
 
 typedef struct LUMICE_PathDiagnosticSource {
   size_t struct_size;
-  int crystal_kind;
+  int crystal_kind;  // LUMICE_PATH_CRYSTAL_*
   double height;
   double face_distance[6];
   double upper_h;
@@ -1976,9 +2134,9 @@ typedef struct LUMICE_PathDiagnosticSource {
 typedef struct LUMICE_PathDiagnosticValue {
   size_t struct_size;
   uint64_t source_token;
-  int input_status;
+  int input_status;  // LUMICE_PATH_INPUT_*
   uint64_t path_evaluations;
-  int optical_failure;
+  int optical_failure;  // LUMICE_PATH_CHAIN_*
   int path_valid;
   double outgoing[3];
   int direction_jacobian_available;
@@ -1988,7 +2146,7 @@ typedef struct LUMICE_PathDiagnosticValue {
   double direction_index_error;
   double interface_product;
   int entry_available;
-  int entry_status;
+  int entry_status;  // LUMICE_PATH_ENTRY_* when entry_available
   double entry_measure;
   double entry_area_perp_internal;
   size_t interface_count;
@@ -2063,8 +2221,8 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetSupportInterval(const LUMIC
                                                                      LUMICE_PathReportInterval* out);
 typedef struct LUMICE_PathReportOrbit {
   size_t struct_size;
-  int binding;   // 1 solid angle, 2 fiber parameter
-  int evidence;  // 1 structural, 2 sampled exhaustive, 3 sampled partial
+  int binding;   // LUMICE_PATH_ORBIT_SOLID_ANGLE / FIBER_PARAMETER
+  int evidence;  // LUMICE_PATH_ORBIT_STRUCTURAL / SAMPLED_EXHAUSTIVE / SAMPLED_PARTIAL
   int grid;
   int spin_degenerate;
   LUMICE_PathText note;
@@ -2092,9 +2250,9 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathReportGetOrbitSample(const LUMICE_Pa
 typedef struct LUMICE_PathReportOnset {
   size_t struct_size;
   double value;
-  int location;
-  int source;
-  int profile;
+  int location;  // LUMICE_PATH_ONSET_INTERIOR / BOUNDARY
+  int source;    // LUMICE_PATH_ONSET_* source vocabulary
+  int profile;   // LUMICE_PATH_ONSET_PROFILE_*
   double gradient_norm;
   int measure_limit_available;
   double measure_limit;
