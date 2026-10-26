@@ -20,11 +20,11 @@
 #include "raypath/detail/quantity/probe_line.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
-#include "raypath/detail/survey/survey_json.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/probe_json.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_json.hpp"
+#include "raypath/survey_report.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath {

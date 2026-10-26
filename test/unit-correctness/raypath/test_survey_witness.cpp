@@ -8,9 +8,9 @@
 
 #include "core/optics.hpp"  // IceRefractiveIndex: the dispersion table the fixture reads
 #include "raypath/detail/survey/survey_assembly.hpp"
-#include "raypath/detail/survey/survey_json.hpp"
 #include "raypath/detail/survey/survey_witness.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_report.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {

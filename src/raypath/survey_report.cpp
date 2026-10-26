@@ -1,7 +1,6 @@
 #include "raypath/survey_report.hpp"
 
 #include "raypath/detail/survey/survey_assembly.hpp"
-#include "raypath/detail/survey/survey_json.hpp"
 
 namespace lumice::raypath {
 

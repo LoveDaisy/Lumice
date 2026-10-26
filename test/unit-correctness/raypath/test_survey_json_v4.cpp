@@ -4,8 +4,8 @@
 #include <string>
 
 #include "raypath/detail/survey/survey_family.hpp"  // the declared constants the echo asserts
-#include "raypath/detail/survey/survey_json.hpp"
-#include "raypath/detail/survey/survey_probe.hpp"  // kProbeWedgeHalfWidthDeg: the spec echo's source
+#include "raypath/detail/survey/survey_probe.hpp"   // kProbeWedgeHalfWidthDeg: the spec echo's source
+#include "raypath/survey_report.hpp"
 #include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {

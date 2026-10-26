@@ -348,7 +348,6 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/survey/survey_family.cpp
   raypath/detail/survey/survey_family.hpp
   raypath/detail/survey/survey_json.cpp
-  raypath/detail/survey/survey_json.hpp
   raypath/detail/survey/survey_probe.cpp
   raypath/detail/survey/survey_probe.hpp
   raypath/detail/survey/survey_t1.cpp
@@ -389,7 +388,6 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/path_feature_report.hpp
   raypath/detail/path_feature_report.hpp
   raypath/detail/path_feature_report_json.cpp
-  raypath/detail/path_feature_report_json.hpp
   raypath/scene_to_analytic.cpp
   raypath/scene_to_analytic.hpp
   raypath/single_path_analysis.cpp

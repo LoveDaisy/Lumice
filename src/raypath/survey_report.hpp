@@ -17,6 +17,13 @@
 #include "raypath/domain/scope.hpp"
 #include "raypath/survey_result.hpp"
 
+namespace lumice::raypath::survey {
+// The schema-4 serializer (schema "lumice.path-survey"), declared here since the typed-view C
+// surface derives the document from a completed typed result through this header (the
+// implementation stays engine-side, in this module's detail/).
+std::string SurveyResultToJson(const SurveyResult& document, const char* lumice_version);
+}  // namespace lumice::raypath::survey
+
 namespace lumice::raypath {
 // The survey document family is its own schema (schema 4); it shares nothing field-wise with the
 // target-fiber schema 1 or the feature-report schema 3 documents.

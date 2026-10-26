@@ -1,5 +1,3 @@
-#include "raypath/detail/path_feature_report_json.hpp"
-
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <utility>

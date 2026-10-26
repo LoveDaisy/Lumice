@@ -6,9 +6,9 @@
 
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
-#include "raypath/detail/survey/survey_json.hpp"
 #include "raypath/detail/survey/survey_mc_ess.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "raypath/survey_report.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {

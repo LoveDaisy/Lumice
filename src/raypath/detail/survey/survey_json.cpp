@@ -1,11 +1,10 @@
-#include "raypath/detail/survey/survey_json.hpp"
-
 #include <nlohmann/json.hpp>
 
 #include "analytic/path_evaluation.hpp"
 #include "raypath/detail/json_values.hpp"
 #include "raypath/domain/evidence.hpp"
 #include "raypath/single_path_analysis.hpp"  // WavelengthSourceName
+#include "raypath/survey_report.hpp"
 
 namespace lumice::raypath::survey {
 namespace {

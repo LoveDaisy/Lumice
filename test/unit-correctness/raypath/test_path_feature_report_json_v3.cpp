@@ -28,12 +28,12 @@
 #include <vector>
 
 #include "raypath/detail/path_feature_report.hpp"
-#include "raypath/detail/path_feature_report_json.hpp"
 #include "raypath/detail/schema3/mc_attribution.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
 #include "raypath/detail/schema3/no_related_feature.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
 #include "raypath/detail/structure/support.hpp"
+#include "raypath/path_feature_report.hpp"
 #include "raypath/results/report_structure.hpp"
 
 namespace lumice::raypath {

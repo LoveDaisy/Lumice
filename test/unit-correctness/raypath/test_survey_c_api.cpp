@@ -4,6 +4,8 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
@@ -112,6 +114,25 @@ TEST_F(SurveyCApi, HappyPathReturnsTheSchema4Document) {
   // The echo records the request's wavelength, given, and the symmetry bits after encoding.
   EXPECT_DOUBLE_EQ(document.at("request").at("wavelength_nm").get<double>(), 550.0);
   EXPECT_EQ(document.at("request").at("symmetry_bits"), 7);
+
+  std::vector<std::thread> readers;
+  std::vector<std::string> copies(8);
+  for (auto& copy : copies) {
+    readers.emplace_back([&result, &copy, len] {
+      size_t full_length = 0;
+      std::string buffer(len + 1, '\0');
+      if (LUMICE_PathSurveyToJson(result.get(), buffer.data(), buffer.size(), &full_length) == LUMICE_OK &&
+          full_length == len) {
+        copy.assign(buffer.data(), full_length);
+      }
+    });
+  }
+  for (auto& reader : readers) {
+    reader.join();
+  }
+  for (const auto& copy : copies) {
+    EXPECT_EQ(copy, text);
+  }
 }
 
 TEST_F(SurveyCApi, LiteralSymmetryAndNullArgContracts) {

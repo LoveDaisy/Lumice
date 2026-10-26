@@ -1,14 +1,12 @@
-// C API bridge for lumice_raypath.h, the single-path analysis entry point: a LUMICE_Scene and a C
-// request in, the module's result (src/raypath/single_path_analysis.hpp) out as an opaque handle
-// holding its one JSON form (src/raypath/single_path_json.hpp). Registered at the raypath layer,
-// and compiled into the lumice_raypath_obj OBJECT library rather than lumice_obj: liblumice and
-// liblumice_testapi link that library, and liblumice_analytic links neither.
+// C API bridge for lumice_raypath.h. Opaque handles own completed raypath values; JSON is
+// derived from those values and never feeds the query or a typed reader.
 
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -53,23 +51,67 @@ static_assert(LUMICE_PATH_PROBE_MAX_BUDGET_MS == lumice::raypath::kMaxProbeBudge
 static_assert(LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT == lumice::raypath::kMaxProbeWavelengthCount,
               "lumice_raypath.h and the probe module must agree on the wavelength bound");
 
+// Derived JSON is cached under a mutex; all getters read the frozen value instead.
 struct LUMICE_SinglePathResult_ {
-  std::string json;  // produced once in LUMICE_AnalyzeSinglePath, never changed afterwards
+  lumice::raypath::PointResult result;
+  mutable std::mutex derived_mutex;
+  mutable std::string derived_json;
 };
 
 struct LUMICE_PathFeatureReport_ {
-  std::string json;  // produced once in LUMICE_AnalyzePathFeatureReport, immutable afterwards
+  lumice::raypath::FeatureReportResult result;
+  mutable std::mutex derived_mutex;
+  mutable std::string derived_json;
 };
 
 struct LUMICE_PathSurvey_ {
-  std::string json;  // produced once in LUMICE_AnalyzePathSurvey, immutable afterwards
+  lumice::raypath::survey::SurveyResult result;
+  mutable std::mutex derived_mutex;
+  mutable std::string derived_json;
 };
 
 struct LUMICE_PathProbe_ {
-  std::string json;  // produced once in LUMICE_AnalyzePathProbe, immutable afterwards
+  lumice::raypath::ProbeResult result;
+  mutable std::mutex derived_mutex;
+  mutable std::string derived_json;
 };
 
 namespace {
+
+template <typename Handle, typename Serialize>
+LUMICE_ErrorCode CopyDerivedJson(const Handle* handle, Serialize serialize, char* out_buf, size_t buf_size,
+                                 size_t* out_len) {
+  if (handle == nullptr) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  try {
+    std::lock_guard<std::mutex> lock(handle->derived_mutex);
+    if (handle->derived_json.empty()) {
+      handle->derived_json = serialize(handle->result);
+    }
+    const std::string& json = handle->derived_json;
+    if (out_len != nullptr) {
+      *out_len = json.size();
+    }
+    if (out_buf != nullptr && buf_size > 0) {
+      const size_t n = std::min(json.size(), buf_size - 1);
+      std::memcpy(out_buf, json.data(), n);
+      out_buf[n] = '\0';
+    }
+    return LUMICE_OK;
+  } catch (const std::exception& e) {
+    LOG_ERROR("raypath ToJson: {}", e.what());
+  } catch (...) {
+    LOG_ERROR("raypath ToJson: unknown exception");
+  }
+  if (out_len != nullptr) {
+    *out_len = 0;
+  }
+  if (out_buf != nullptr && buf_size > 0) {
+    out_buf[0] = '\0';
+  }
+  return LUMICE_ERR_UNKNOWN;
+}
 
 // The v4.50 request, the smallest `struct_size` this build reads: through its last v4.50 field, so
 // that a field appended later does not raise it. The v4.52 append adds the budget/stop group,
@@ -158,13 +200,12 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
         rp::DecodeWarmCandidate(std::string(request.warm_json, request.warm_json_len), &*req.warm_candidate);
   }
 
-  rp::PointResult result;
+  lumice::raypath::PointResult result;
   if (const rp::Error e = rp::AnalyzePathPointValue(config, req, true, &result); !e.Ok()) {
     return Refuse(e, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_SinglePathResult_>();
-  // Completion materializes the requested context once; encoding only reads the owned value.
-  handle->json = rp::ToJson(result, LUMICE_GetVersionString());
+  handle->result = std::move(result);
   *out = handle.release();
   return LUMICE_OK;
 }
@@ -252,12 +293,12 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
     return lumice::capi::ToCApiErrorCode(err.code);
   }
   req.deadline = request_begin + std::chrono::milliseconds(req.budget_ms);
-  std::string report_json;
-  if (const rp::Error e = rp::AnalyzePathFeatureReport(config, req, LUMICE_GetVersionString(), &report_json); !e.Ok()) {
+  rp::FeatureReportResult result;
+  if (const rp::Error e = rp::AnalyzePathFeatureReportValue(config, req, &result); !e.Ok()) {
     return Refuse(e, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_PathFeatureReport_>();
-  handle->json = std::move(report_json);
+  handle->result = std::move(result);
   *out = handle.release();
   return LUMICE_OK;
 }
@@ -310,12 +351,12 @@ LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurve
     WriteError(err_buf, err_size, "invalid_scene: " + err.message);
     return lumice::capi::ToCApiErrorCode(err.code);
   }
-  std::string survey_json;
-  if (const rp::Error e = rp::AnalyzePathSurvey(config, req, LUMICE_GetVersionString(), &survey_json); !e.Ok()) {
+  rp::survey::SurveyResult result;
+  if (const rp::Error e = rp::AnalyzePathSurveyValue(config, req, &result); !e.Ok()) {
     return Refuse(e, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_PathSurvey_>();
-  handle->json = std::move(survey_json);
+  handle->result = std::move(result);
   *out = handle.release();
   return LUMICE_OK;
 }
@@ -404,12 +445,12 @@ LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeR
         rp::DecodeWarmCandidate(std::string(request.warm_json, request.warm_json_len), &*req.warm_candidate);
   }
 
-  rp::ProbeResult result;
+  lumice::raypath::ProbeResult result;
   if (const rp::Error e = rp::AnalyzePathProbe(config, req, &result); !e.Ok()) {
     return Refuse(e, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_PathProbe_>();
-  handle->json = rp::ProbeToJson(result, LUMICE_GetVersionString());
+  handle->result = std::move(result);
   *out = handle.release();
   return LUMICE_OK;
 }
@@ -455,18 +496,9 @@ LUMICE_ErrorCode LUMICE_AnalyzeSinglePath(const LUMICE_Scene* scene, const LUMIC
 
 LUMICE_ErrorCode LUMICE_SinglePathResultToJson(const LUMICE_SinglePathResult* result, char* out_buf, size_t buf_size,
                                                size_t* out_len) {
-  if (result == nullptr) {
-    return LUMICE_ERR_NULL_ARG;
-  }
-  if (out_len != nullptr) {
-    *out_len = result->json.size();
-  }
-  if (out_buf != nullptr && buf_size > 0) {
-    const size_t n = std::min(result->json.size(), buf_size - 1);
-    std::memcpy(out_buf, result->json.data(), n);
-    out_buf[n] = '\0';
-  }
-  return LUMICE_OK;
+  return CopyDerivedJson(
+      result, [](const auto& value) { return lumice::raypath::ToJson(value, LUMICE_GetVersionString()); }, out_buf,
+      buf_size, out_len);
 }
 
 void LUMICE_SinglePathResultDestroy(LUMICE_SinglePathResult* result) {
@@ -515,18 +547,10 @@ LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* scene,
 
 LUMICE_ErrorCode LUMICE_PathFeatureReportToJson(const LUMICE_PathFeatureReport* result, char* out_buf, size_t buf_size,
                                                 size_t* out_len) {
-  if (result == nullptr) {
-    return LUMICE_ERR_NULL_ARG;
-  }
-  if (out_len != nullptr) {
-    *out_len = result->json.size();
-  }
-  if (out_buf != nullptr && buf_size > 0) {
-    const size_t n = std::min(result->json.size(), buf_size - 1);
-    std::memcpy(out_buf, result->json.data(), n);
-    out_buf[n] = '\0';
-  }
-  return LUMICE_OK;
+  return CopyDerivedJson(
+      result,
+      [](const auto& value) { return lumice::raypath::PathFeatureReportV3ToJson(value, LUMICE_GetVersionString()); },
+      out_buf, buf_size, out_len);
 }
 
 void LUMICE_PathFeatureReportDestroy(LUMICE_PathFeatureReport* result) {
@@ -575,18 +599,10 @@ LUMICE_ErrorCode LUMICE_AnalyzePathSurvey(const LUMICE_Scene* scene, const LUMIC
 
 LUMICE_ErrorCode LUMICE_PathSurveyToJson(const LUMICE_PathSurvey* result, char* out_buf, size_t buf_size,
                                          size_t* out_len) {
-  if (result == nullptr) {
-    return LUMICE_ERR_NULL_ARG;
-  }
-  if (out_len != nullptr) {
-    *out_len = result->json.size();
-  }
-  if (out_buf != nullptr && buf_size > 0) {
-    const size_t n = std::min(result->json.size(), buf_size - 1);
-    std::memcpy(out_buf, result->json.data(), n);
-    out_buf[n] = '\0';
-  }
-  return LUMICE_OK;
+  return CopyDerivedJson(
+      result,
+      [](const auto& value) { return lumice::raypath::survey::SurveyResultToJson(value, LUMICE_GetVersionString()); },
+      out_buf, buf_size, out_len);
 }
 
 void LUMICE_PathSurveyDestroy(LUMICE_PathSurvey* result) {
@@ -633,18 +649,9 @@ LUMICE_ErrorCode LUMICE_AnalyzePathProbe(const LUMICE_Scene* scene, const LUMICE
 
 LUMICE_ErrorCode LUMICE_PathProbeToJson(const LUMICE_PathProbe* result, char* out_buf, size_t buf_size,
                                         size_t* out_len) {
-  if (result == nullptr) {
-    return LUMICE_ERR_NULL_ARG;
-  }
-  if (out_len != nullptr) {
-    *out_len = result->json.size();
-  }
-  if (out_buf != nullptr && buf_size > 0) {
-    const size_t n = std::min(result->json.size(), buf_size - 1);
-    std::memcpy(out_buf, result->json.data(), n);
-    out_buf[n] = '\0';
-  }
-  return LUMICE_OK;
+  return CopyDerivedJson(
+      result, [](const auto& value) { return lumice::raypath::ProbeToJson(value, LUMICE_GetVersionString()); }, out_buf,
+      buf_size, out_len);
 }
 
 void LUMICE_PathProbeDestroy(LUMICE_PathProbe* result) {

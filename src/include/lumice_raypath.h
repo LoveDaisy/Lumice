@@ -20,14 +20,10 @@ extern "C" {
 // request give the same result); it runs on the calling thread, is independent of any
 // LUMICE_Server, and cannot be cancelled — sample_count bounds its cost.
 //
-// The result is an OPAQUE handle read through its JSON form (LUMICE_SinglePathResultToJson; the
-// fields are documented in doc/raypath/raypath-cli-output.md), not a C struct mirror. Deliberate: the result
-// holds variable-length nested lists (components -> points -> per-face arrays) whose fields a user
-// interface will keep adding to, and the engine is the one place it is serialized, so the CLI and
-// the GUI cannot each grow a copy. Typed readers may be appended later without changing this
-// handle. The JSON is produced once, inside LUMICE_AnalyzeSinglePath, and the handle is immutable
-// afterwards: ToJson only copies it, so concurrent reads are safe and the two calls of a
-// length-query-then-fetch always agree.
+// The opaque result owns a completed, immutable typed value. ToJson derives an optional UTF-8
+// representation on first request and caches it for the result's lifetime; later calls copy the
+// same bytes. Concurrent reads and length-query-then-fetch return identical data. The result is
+// independent of its Scene after Analyze returns; Destroy must not overlap a read.
 
 // The largest sample_count a request may ask for: the call cannot be cancelled, so its cost is
 // bounded here instead.
@@ -220,8 +216,8 @@ typedef struct LUMICE_PathSurveyRequest {
 
 typedef struct LUMICE_PathSurvey_ LUMICE_PathSurvey;
 
-// Analyse and serialize. On LUMICE_OK *out is a new handle the caller owns (release with
-// LUMICE_PathSurveyDestroy) whose JSON is produced once and never changes. On failure *out is
+// Analyse. On LUMICE_OK *out owns an immutable typed result; ToJson derives its stable JSON
+// representation on demand. On failure *out is
 // NULL and err_buf holds "<reason>: <detail>" as LUMICE_AnalyzeSinglePath spells it; the request
 // refusals are the report's: unknown_crystal_id, invalid_path, multi_layer_unsupported,
 // face_not_in_crystal, wavelength_out_of_range, plus invalid_argument (symmetry bits or budget
@@ -322,8 +318,8 @@ typedef struct LUMICE_PathProbeRequest {
 
 typedef struct LUMICE_PathProbe_ LUMICE_PathProbe;
 
-// Analyse and serialize. On LUMICE_OK *out is a new handle the caller owns (release with
-// LUMICE_PathProbeDestroy) whose JSON is produced once and never changes. On failure *out is
+// Analyse. On LUMICE_OK *out owns an immutable typed result; ToJson derives its stable JSON
+// representation on demand. On failure *out is
 // NULL and err_buf holds "<reason>: <detail>" as LUMICE_AnalyzeSinglePath spells it; the request
 // refusals are the point query's: unknown_crystal_id, invalid_path, multi_layer_unsupported,
 // face_not_in_crystal, wavelength_out_of_range, invalid_target (the at point), invalid_argument

@@ -4,8 +4,8 @@
 #include <nlohmann/json.hpp>
 
 #include "raypath/detail/path_feature_report.hpp"
-#include "raypath/detail/path_feature_report_json.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
+#include "raypath/path_feature_report.hpp"
 
 namespace lumice::raypath {
 namespace {

@@ -6,7 +6,6 @@
 
 #include "analytic/so3.hpp"
 #include "raypath/detail/path_feature_report.hpp"
-#include "raypath/detail/path_feature_report_json.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
 #include "raypath/query_control.hpp"
 #include "util/logger.hpp"

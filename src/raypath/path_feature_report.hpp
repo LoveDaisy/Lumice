@@ -47,6 +47,11 @@ struct PathFeatureReportRequest : PathSelection {
 Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatureReportRequest& request,
                                     FeatureReportResult* out);
 
+// The v3 report serializer (schema "lumice.path-feature-report"), declared here since the
+// typed-view C surface derives the document from a completed typed result through this header;
+// the implementation stays engine-side, in this module's detail/.
+std::string PathFeatureReportV3ToJson(const FeatureReportResult& result, const char* lumice_version);
+
 // Runs the analysis and serializes the report: `json_out` receives the same
 // bytes PathFeatureReportToJson would produce for the assembled report.
 Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
