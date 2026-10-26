@@ -193,6 +193,10 @@ struct ProbeData;
 // private, so a bare ProbeData cannot be published as a completed result.
 ProbeData FinalizeProbeData(ProbeData data);
 
+inline constexpr char kRedEdgeWidthRule[] =
+    "the 650 nm profile's edge reading minus the reference (the first requested "
+    "wavelength) profile's edge reading, both present";
+
 struct ProbeData {
   MemberScope members;
   ProbeMetadata meta;

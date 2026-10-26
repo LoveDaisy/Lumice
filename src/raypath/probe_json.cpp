@@ -206,10 +206,7 @@ std::string ProbeToJson(const ProbeResult& value, const std::string& product_ver
   }
   doc["profiles"] = std::move(profiles);
   if (result.has_red_edge_width) {
-    doc["derived"] = { { "red_edge_width_deg", Num(result.red_edge_width_deg) },
-                       { "rule",
-                         "the 650 nm profile's edge reading minus the reference (the first requested "
-                         "wavelength) profile's edge reading, both present" } };
+    doc["derived"] = { { "red_edge_width_deg", Num(result.red_edge_width_deg) }, { "rule", kRedEdgeWidthRule } };
   }
   return doc.dump();
 }
