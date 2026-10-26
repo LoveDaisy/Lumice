@@ -516,6 +516,18 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           if (LUMICE_PathWorkspaceCreate(second_scene, &second_workspace, NULL, 0) != LUMICE_OK) return 28;
           LUMICE_SceneDestroy(second_scene);
           options.warm = warm;
+          LUMICE_PathProbe* warm_probe = NULL;
+          if (LUMICE_PathWorkspaceQueryProbe(second_workspace, &probe, &options, &warm_probe, NULL, 0) != LUMICE_OK)
+            return 35;
+          LUMICE_PathProbeInfo warm_probe_info = {0};
+          warm_probe_info.struct_size = sizeof(warm_probe_info);
+          LUMICE_PathContext warm_probe_context = {0};
+          warm_probe_context.struct_size = sizeof(warm_probe_context);
+          if (LUMICE_PathProbeGetInfo(warm_probe, &warm_probe_info) != LUMICE_PATH_READ_OK ||
+              warm_probe_info.profile_count == 0 ||
+              LUMICE_PathProbeGetContext(warm_probe, &warm_probe_context) != LUMICE_PATH_READ_OK ||
+              warm_probe_context.source != LUMICE_PATH_CONTEXT_WARM) return 36;
+          LUMICE_PathProbeDestroy(warm_probe);
           LUMICE_SinglePathResult* warm_point = NULL;
           if (LUMICE_PathWorkspaceQueryPoint(second_workspace, &point, &options, &warm_point, NULL, 0) != LUMICE_OK)
             return 29;

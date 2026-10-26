@@ -2423,13 +2423,17 @@ def check_raypath_typed_boundary() -> list[Violation]:
             if not path.is_file():
                 continue
             for lineno, _orig, code in code_lines(path):
-                if (reject_json and (not raypath_json_only or rel.startswith("raypath/")) and
-                        re.match(r'^\s*#\s*include\s*[<\"]nlohmann/json.hpp[>\"]', code)):
-                    out.append(Violation(path, lineno, rule, f"{chain} includes JSON"))
                 match = _RAYPATH_INCLUDE.match(code)
                 if not match:
                     continue
-                target = _resolve_include(rel, match.group(1) or match.group(2), angled=match.group(2) is not None)
+                included = match.group(1) or match.group(2)
+                if (
+                    reject_json
+                    and (not raypath_json_only or rel.startswith("raypath/"))
+                    and included.startswith("nlohmann/")
+                ):
+                    out.append(Violation(path, lineno, rule, f"{chain} includes JSON"))
+                target = _resolve_include(rel, included, angled=match.group(2) is not None)
                 if target is None:
                     continue
                 if forbidden(target):

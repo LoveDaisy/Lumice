@@ -54,11 +54,18 @@ def test_public_values_reject_direct_execution_or_codec(tree: Path, includer: st
     assert any(v.path == path and target in v.message for v in _violations())
 
 
-def test_public_closure_rejects_intermediate_include_and_json(tree: Path) -> None:
+@pytest.mark.parametrize("header", ["json.hpp", "json_fwd.hpp", "ordered_map.hpp"])
+@pytest.mark.parametrize("opening, closing", [('"', '"'), ('<', '>')])
+def test_public_closure_rejects_intermediate_include_and_json(tree: Path, header: str,
+                                                              opening: str, closing: str) -> None:
+    value = tree / "raypath" / "domain" / "scope.hpp"
+    value.write_text(f'#include {opening}nlohmann/{header}{closing}\n', encoding="utf-8")
+    assert any(v.path == value and "includes JSON" in v.message for v in _violations())
+    value.write_text('#include "raypath/results/quantity.hpp"\n', encoding="utf-8")
     intermediate = tree / "core" / "def.hpp"
     intermediate.write_text('#include "raypath/survey_report.hpp"\n', encoding="utf-8")
     assert any(v.path == intermediate and "raypath/domain/scope.hpp" in v.message for v in _violations())
-    intermediate.write_text("#include <nlohmann/json.hpp>\n", encoding="utf-8")
+    intermediate.write_text(f'#include {opening}nlohmann/{header}{closing}\n', encoding="utf-8")
     assert any(v.path == intermediate and "includes JSON" in v.message for v in _violations())
 
 
@@ -75,13 +82,18 @@ def test_facade_rejects_direct_and_transitive_implementation(tree: Path) -> None
     assert any(v.path == intermediate and "survey_report.hpp" in v.message for v in _violations())
 
 
-def test_facade_json_is_forbidden_only_through_raypath_headers(tree: Path) -> None:
+@pytest.mark.parametrize("header", ["json.hpp", "json_fwd.hpp", "ordered_map.hpp"])
+@pytest.mark.parametrize("opening, closing", [('"', '"'), ('<', '>')])
+def test_facade_json_is_forbidden_only_through_raypath_headers(tree: Path, header: str,
+                                                              opening: str, closing: str) -> None:
     facade = tree / "raypath" / "survey_report.hpp"
+    config = tree / "config" / "config_manager.hpp"
+    config.write_text(f'#include <nlohmann/{header}>\n', encoding="utf-8")
     assert _violations() == []  # config declarations may bring their own JSON dependency
-    facade.write_text('#include <nlohmann/json.hpp>\n', encoding="utf-8")
+    facade.write_text(f'#include {opening}nlohmann/{header}{closing}\n', encoding="utf-8")
     assert any(v.path == facade and "includes JSON" in v.message for v in _violations())
     intermediate = tree / "raypath" / "prepared_geometry.hpp"
-    intermediate.write_text('#include <nlohmann/json.hpp>\n', encoding="utf-8")
+    intermediate.write_text(f'#include {opening}nlohmann/{header}{closing}\n', encoding="utf-8")
     facade.write_text('#include "raypath/prepared_geometry.hpp"\n', encoding="utf-8")
     assert any(v.path == intermediate and "includes JSON" in v.message for v in _violations())
 

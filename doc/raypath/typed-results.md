@@ -368,7 +368,8 @@ populate the survey/warm slots. A result handle owns its frozen value independen
 Scene and Workspace. Strings and arrays returned by typed getters are borrowed from that
 handle until its Destroy, not from the current workspace slot or a `ToJson` buffer. Typed
 `PathWarmDataFromSurvey`/`PathWarmDataFromPoint` harvest independent candidates: destroying
-the source result and workspace does not revoke admission by a compatible new workspace.
+the source result and workspace does not revoke point or probe admission by a compatible
+new workspace.
 Read-only getters and optional serialization can run concurrently on a finished result;
 querying the same workspace concurrently or destroying a handle during borrowed reads is
 outside the contract. Explicit cancel and whole-query deadline stop execution at cooperative
@@ -380,8 +381,9 @@ query deadline.
 
 `scripts/check_policies.py` enforces `raypath-typed-boundary` over public `domain/`,
 `results/`, the four result roots and the context value: their resolved in-tree header
-closure cannot include an execution entry, `detail/`, a codec or JSON. Query facades
-may include other query declarations, value headers and configuration types, but their
+closure cannot include an execution entry, `detail/`, a codec or any `nlohmann/` JSON
+header. Query facades may include other query declarations, value headers and
+configuration types, but their
 in-tree closure cannot include raypath `detail/` or codec headers; raypath headers in that
 closure cannot directly import JSON. Configuration headers' existing JSON type dependency
 is not a query implementation edge. Both quoted and angle-bracket includes are resolved
