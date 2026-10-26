@@ -609,11 +609,22 @@ WavelengthCriticalTable WavelengthCriticalTableOf(const FaceNormalTable& normals
     table.message = "labels and indices differ";
     return table;
   }
+  const auto stopped = [&options] { return options.walk.stop != nullptr && options.walk.stop->Stopped(); };
   std::vector<FocusingClassification> classifications;
   classifications.reserve(labels.size());
   for (size_t k = 0; k < labels.size(); k++) {
+    if (stopped()) {
+      table.escaped = true;
+      table.message = "stop_requested";
+      return table;
+    }
     FocusingClassification classification =
         Classify(normals, polygons, slots, slot_count, density, indices[k], options);
+    if (stopped()) {
+      table.escaped = true;
+      table.message = "stop_requested";
+      return table;
+    }
     if (classification.escaped) {
       // The walk refused at one index: no onset table exists to align (LI's walk error propagates
       // out of classify before the alignment ever runs).

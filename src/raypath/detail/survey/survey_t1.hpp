@@ -49,8 +49,8 @@ T1Outcome AssembleT1Objects(const analytic::FaceNormalTable& table, const analyt
 // carried, plus the min-deviation row's own scalars when the class has one) and the diagnose
 // sub-block (the kernel's Diagnose — a separate kernel path, its own sub-block, never merged
 // into the dispersion fields). The weight-tint leg is the caller's (the T1 arm's class
-// power-sum). Refusals keep their leg's own evidence; the block-level evidence turns finite
-// once any leg ran.
+// power-sum). Refusals keep their leg's own evidence. A cooperative stop leaves a finished
+// dispersion intact but refuses the chromatic root and publishes no incomplete diagnose.
 void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                             const std::vector<int>& representative, const analytic::PoseDensitySpec& density,
                             int class_size, SurveyData* out, const analytic::DiscoveryStop* stop);

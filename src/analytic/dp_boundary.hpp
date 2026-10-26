@@ -231,7 +231,7 @@ struct BoundaryWalkOptions {
   int max_walk_steps = kMaxWalkSteps;
   // Cooperative stop, polled at the march's step boundaries (never inside a step's numerics):
   // when it fires the walk fails closed with kStopRequested — no loop data, no partition — and
-  // the caller says why. Null (the default, and every C-surface caller) walks exactly as before.
+  // the caller says why. Null retains the original walk for legacy callers.
   const DiscoveryStop* stop = nullptr;
 };
 

@@ -112,6 +112,7 @@ struct ChromaticOptions {
   int lattice_n = 20000;
   double step = kWalkStepRad;
   int max_walk_steps = kMaxWalkSteps;
+  const DiscoveryStop* stop = nullptr;
 };
 
 // The random-orientation colour verdict of one face sequence: every weight kink and every moving

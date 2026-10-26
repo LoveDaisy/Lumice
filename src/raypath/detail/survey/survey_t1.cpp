@@ -197,6 +197,16 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
                             int class_size, SurveyData* out, const analytic::DiscoveryStop* stop) {
   if (stop != nullptr && stop->token != nullptr)
     stop->token->NotePoll(kPollSurveyChromatic);
+  const auto stopped = [&] {
+    if (stop == nullptr || !stop->Stopped())
+      return false;
+    out->chromatic.state = EvidenceState::kRefused;
+    out->chromatic.mode = "stop_requested";
+    out->chromatic.reason.clear();
+    return true;
+  };
+  if (stopped())
+    return;
   std::vector<int> slots;
   if (const Error slot_error = ResolveSingleLayerPath({ representative }, table, &slots); !slot_error.Ok()) {
     // Unreachable past the T1 arm (it resolved the same sequence), but the refusal stays honest.
@@ -212,8 +222,12 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
                                      IceRefractiveIndex::Get(kChromaticBlueNm) };
 
   // Leg 1: the positional dispersion — the min-deviation edge followed across the pair.
+  analytic::FocusingOptions focusing_options;
+  focusing_options.walk.stop = stop;
   const analytic::WavelengthCriticalTable critical = analytic::WavelengthCriticalTableOf(
-      table, polygons, slots.data(), static_cast<int>(slots.size()), density, labels, indices);
+      table, polygons, slots.data(), static_cast<int>(slots.size()), density, labels, indices, focusing_options);
+  if (stopped())
+    return;
   if (critical.escaped) {
     out->chromatic.state = EvidenceState::kRefused;
     out->chromatic.mode = "wavelength_critical_table";
@@ -275,11 +289,17 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
   dispersion.evidence.coverage.geometry_basis =
       "the kernel's wavelength-critical table at the " + ChromaticPairProseRedFirst() + " index pair";
   dispersion.evidence.coverage.wavelength_nm = kChromaticBlueNm;
+  if (stopped())
+    return;
 
   // Leg 2: the diagnose — the weight-kink and gate-edge features as their own sub-block (a
   // different kernel path than the dispersion table; the two mechanisms never merge fields).
-  const analytic::ChromaticVerdict verdict =
-      analytic::Diagnose(table, polygons, slots.data(), static_cast<int>(slots.size()), indices[0], indices[1]);
+  analytic::ChromaticOptions chromatic_options;
+  chromatic_options.stop = stop;
+  const analytic::ChromaticVerdict verdict = analytic::Diagnose(
+      table, polygons, slots.data(), static_cast<int>(slots.size()), indices[0], indices[1], chromatic_options);
+  if (stopped())
+    return;
   SurveyDiagnoseBlock& block = out->diagnose.emplace();
   block.verdict_kind = analytic::ChromaticVerdictKindName(verdict.kind);
   block.color = analytic::ChromaticColorName(verdict.color);
@@ -310,6 +330,10 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
   // The weight-tint leg is the caller's (the T1 arm's class power-sum); this layer leaves it
   // unwired so each arm assembles exactly its own legs.
 
+  if (stopped()) {
+    out->diagnose.reset();
+    return;
+  }
   out->chromatic.state = EvidenceState::kFinite;
   out->chromatic.coverage.members_evaluated = class_size;
   out->chromatic.coverage.wavelength_nm = kChromaticBlueNm;

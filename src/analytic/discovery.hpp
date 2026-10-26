@@ -197,6 +197,7 @@ inline constexpr int kPollPoolClusters = 1;   // DiscoverOnPool, per cluster (th
 // dp_boundary's walk (the structure assembly's dominant loop): march steps and piece rounds.
 inline constexpr int kPollWalkSteps = 3;
 inline constexpr int kPollWalkPieces = 4;
+inline constexpr int kPollKinkLattice = 5;  // weight-kink seed scans, every 1024 samples
 
 // Section 9.5.5 (LI _trace_and_classify): the forward trace with `params`, then — on an arc event —
 // the backward trace with initial_tangent_sign negated; appends a component or an incomplete
