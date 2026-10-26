@@ -378,15 +378,20 @@ query deadline.
 
 ## Dependency boundary
 
-`scripts/check_policies.py` enforces `raypath-typed-boundary` over the public `domain/`,
-`results/`, four result roots and context value. Their resolved in-tree header closure cannot
-include an execution entry, `detail/`, a codec or JSON. The C bridge cannot directly include
-`raypath/detail/`, and each codec implementation's in-tree header closure cannot reach an
-execution entry. Public declarations may depend on other public values, and codec warm decoding
-may depend on the shared candidate value; include checks do not prove the absence of computation.
-Completed-result construction, per-fact reuse admission and zero computation on repeated reads
-are therefore tested at their respective owners. The bridge's only MC draw-limit coupling is a
-compile-time equality check against the published limit; it imports no implementation header.
+`scripts/check_policies.py` enforces `raypath-typed-boundary` over public `domain/`,
+`results/`, the four result roots and the context value: their resolved in-tree header
+closure cannot include an execution entry, `detail/`, a codec or JSON. Query facades
+may include other query declarations, value headers and configuration types, but their
+in-tree closure cannot include raypath `detail/` or codec headers; raypath headers in that
+closure cannot directly import JSON. Configuration headers' existing JSON type dependency
+is not a query implementation edge. Both quoted and angle-bracket includes are resolved
+through the compiler's in-tree search paths. The C bridge cannot directly include
+`raypath/detail/`, and each codec implementation's in-tree header closure cannot reach
+an execution entry. Codec warm decoding may include the shared candidate value declaration.
+Include checks do not prove the absence of computation: completed-result
+construction, per-fact reuse admission and zero computation on repeated reads are tested at
+their respective owners. The bridge's only MC draw-limit coupling is a compile-time
+equality check against the published limit; it imports no implementation header.
 
 `AssembleSurveyData` is construction-time staging used by query policy and focused
 fixtures, not a second public result model or a second computation path. The old

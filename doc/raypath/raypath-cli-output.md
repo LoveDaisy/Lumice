@@ -838,10 +838,12 @@ and both solar coordinates). Quantity scope distinguishes representative, actual
 band-sum per-steradian readings from class aggregates or ideal-frozen facts. These tags do not
 replace or recalculate the numerical kernels.
 
-The public domain and result value headers are guarded by `raypath-typed-boundary` in
-`scripts/check_policies.py`: their resolved in-tree include closure cannot acquire
-query execution or codec dependencies. The same check rejects `detail/` from the bridge and
-execution entry headers from codecs. Its isolated positive and negative controls live in
+The public domain/result values and query facades are guarded by `raypath-typed-boundary`
+in `scripts/check_policies.py`: value closures cannot acquire query execution or codec
+headers, while facade closures may retain declarations but not raypath implementation or
+codec headers. Both quoted and angle-bracket in-tree includes are resolved. The same rule
+rejects `detail/` from the bridge and execution entry headers from codecs. Its isolated
+positive and negative controls live in
 `test/unit-correctness/scripts/test_check_policies_raypath_boundary.py`.
 
 ## 9. `Lumice raypath survey` output (schema 4)

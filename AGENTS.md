@@ -137,10 +137,10 @@ fails the check.
   in `src/util/`. Anything that needs to see a `RenderConfig`, a `SimData` or a crystal does not,
   and still goes through the C API.
 - Raypath typed dependency boundary: `scripts/check_policies.py`'s `raypath-typed-boundary`
-  checks the public value-header include closure, the bridge's direct `detail/` includes, and
-  codec-to-query header dependencies. Its narrow scope and runtime proof limits are in
-  `doc/raypath/typed-results.md` (Dependency boundary); module ownership lives in
-  `src/raypath/AGENTS.md`.
+  checks public value and query-facade include closures (quoted and angle-bracket in-tree),
+  the bridge's direct `detail/` includes, and codec-to-query header dependencies. Its
+  narrow scope and runtime proof limits are in `doc/raypath/typed-results.md` (Dependency
+  boundary); module ownership lives in `src/raypath/AGENTS.md`.
 - Environment variables: before adding any new `std::getenv`, apply the decision gate in
   `doc/env-var-policy.md`. User-facing behavior switches must go through CLI/config/API,
   not env vars (env causes silent per-machine drift). Env is fine for dev/experiment knobs

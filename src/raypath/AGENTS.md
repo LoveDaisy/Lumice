@@ -27,7 +27,9 @@ schema authority is `doc/raypath/raypath-cli-output.md`; the layered
   Their include closures contain no detail/config/JSON headers. Value leaves live in `results/`
   and `domain/`; shared numerical producers live in `detail/structure/` and `detail/quantity/`
   and do not write query documents. See `doc/raypath/typed-results.md` for the field ledger,
-  claim/quantity contracts and retained compatibility adapters.
+  claim/quantity contracts and retained compatibility adapters. The `raypath-typed-boundary`
+  policy scans both quote and angle-bracket in-tree includes: query facades may include
+  declarations, public values and config types, but not `detail/` or codec implementations.
 - Everything under `src/raypath/detail/` is internal implementation:
   includable only by the module itself and its own tests (the boundary and
   its rationale: `doc/raypath/raypath-cli-output.md` §8).

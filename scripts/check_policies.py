@@ -173,9 +173,11 @@ Checks:
      layered file including a shell file is an inversion too.
 
   20. raypath-typed-boundary — public raypath values and their transitive in-tree
-      header closure never include query execution, codecs, detail or JSON; the
-      C bridge does not include raypath/detail, and codec implementations do not
-      include query entry headers. Declaration/value dependencies stay legal.
+      header closure never include query execution, codecs, detail or JSON; public
+      query facades may include declarations but not detail/codec implementations
+      (or JSON directly through a raypath header). The C bridge does not include
+      raypath/detail, and codec implementations do not include query entry headers.
+      Both quoted and angle-bracket in-tree includes are checked.
 
 Add a new check as a function returning a list of Violation and append it to
 CHECKS, and add a numbered entry above. Keep each check deterministic and
@@ -2239,19 +2241,15 @@ def _is_layer_shell(rel: str) -> bool:
     return rel.split("/")[0] in LAYER_SHELL_DIRS or rel in LAYER_SHELL_FILES
 
 
-def _resolve_include(rel_from: str, target: str) -> str | None:
-    """The src-relative path an #include "target" names, in the compiler's search order.
+def _resolve_include(rel_from: str, target: str, *, angled: bool = False) -> str | None:
+    """The src-relative path an in-tree include names in the compiler's search order.
 
-    Quote includes search the including file's directory first, then the include
-    path, which for engine sources is src/ and src/include/ (lumice_obj's
-    target_include_directories). Returns None for a header outside src/
-    (a dependency's, or a generated one).
+    Quoted includes search the includer's directory first. Both forms then search
+    src/include/ and src/; angle brackets never search the includer's directory.
+    Returns None for a header outside src/ (a dependency's, or a generated one).
     """
-    candidates = [
-        (SRC / rel_from).parent / target,
-        SRC / target,
-        SRC / "include" / target,
-    ]
+    candidates = [] if angled else [(SRC / rel_from).parent / target]
+    candidates.extend((SRC / "include" / target, SRC / target))
     for c in candidates:
         if c.is_file():
             try:
@@ -2365,6 +2363,7 @@ def check_layer_inversion() -> list[Violation]:
 
 
 # --- raypath-typed-boundary ---------------------------------------------------
+_RAYPATH_INCLUDE = re.compile(r'^\s*#\s*include\s*(?:"([^"]+)"|<([^>]+)>)')
 RAYPATH_QUERY_HEADERS = frozenset(
     {
         "raypath/single_path_analysis.hpp",
@@ -2393,9 +2392,10 @@ RAYPATH_CODEC_SOURCES = (
 def check_raypath_typed_boundary() -> list[Violation]:
     """Check the promised dependency edges, not semantic purity of the computations.
 
-    Public value closures follow resolved in-tree quote includes recursively. Bridge and
-    codec checks inspect their direct includes; an execution header cannot hide behind
-    a codec's in-tree includes because the closure is checked from each codec source.
+    Public value and facade closures follow resolved in-tree quoted and angle includes.
+    Facades retain their legal declaration dependencies, including config headers that
+    themselves import JSON; JSON introduced through a raypath header is forbidden.
+    The bridge checks direct edges, while codec sources follow their header closure.
     """
     rule = "raypath-typed-boundary"
     out: list[Violation] = []
@@ -2408,7 +2408,10 @@ def check_raypath_typed_boundary() -> list[Violation]:
         return (target in RAYPATH_QUERY_HEADERS or target.startswith("raypath/detail/") or
                 target.startswith("raypath/") and "json" in Path(target).stem)
 
-    def walk(root: str, forbidden, reject_json: bool = False) -> None:
+    def forbidden_facade(target: str) -> bool:
+        return target.startswith("raypath/detail/") or target.startswith("raypath/") and "json" in Path(target).stem
+
+    def walk(root: str, forbidden, reject_json: bool = False, raypath_json_only: bool = False) -> None:
         visited: set[str] = set()
         pending = [(root, root)]
         while pending:
@@ -2420,12 +2423,13 @@ def check_raypath_typed_boundary() -> list[Violation]:
             if not path.is_file():
                 continue
             for lineno, _orig, code in code_lines(path):
-                if reject_json and re.match(r'^\s*#\s*include\s*[<\"]nlohmann/json.hpp[>\"]', code):
+                if (reject_json and (not raypath_json_only or rel.startswith("raypath/")) and
+                        re.match(r'^\s*#\s*include\s*[<\"]nlohmann/json.hpp[>\"]', code)):
                     out.append(Violation(path, lineno, rule, f"{chain} includes JSON"))
-                match = _QUOTED_INCLUDE.match(code)
+                match = _RAYPATH_INCLUDE.match(code)
                 if not match:
                     continue
-                target = _resolve_include(rel, match.group(1))
+                target = _resolve_include(rel, match.group(1) or match.group(2), angled=match.group(2) is not None)
                 if target is None:
                     continue
                 if forbidden(target):
@@ -2435,13 +2439,16 @@ def check_raypath_typed_boundary() -> list[Violation]:
 
     for root in value_roots:
         walk(root, forbidden_value, reject_json=True)
+    for root in sorted(RAYPATH_QUERY_HEADERS):
+        walk(root, forbidden_facade, reject_json=True, raypath_json_only=True)
     for rel in RAYPATH_CODEC_SOURCES:
         walk(rel, lambda target: target in RAYPATH_QUERY_HEADERS)
     bridge = SRC / "server" / "c_api_raypath.cpp"
     if bridge.is_file():
         for lineno, _orig, code in code_lines(bridge):
-            match = _QUOTED_INCLUDE.match(code)
-            if match and (target := _resolve_include("server/c_api_raypath.cpp", match.group(1))):
+            match = _RAYPATH_INCLUDE.match(code)
+            if match and (target := _resolve_include("server/c_api_raypath.cpp", match.group(1) or match.group(2),
+                                                     angled=match.group(2) is not None)):
                 if target.startswith("raypath/detail/"):
                     out.append(Violation(bridge, lineno, rule, f"bridge includes {target}"))
     return out
