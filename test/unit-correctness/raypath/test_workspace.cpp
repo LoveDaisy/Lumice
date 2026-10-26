@@ -76,6 +76,7 @@ TEST(Workspace, QueryDeadlinesResolveOnceWithoutChangingLegacyWindows) {
   survey_request.budget_ms = 0;
   survey::SurveyResult survey;
   ASSERT_TRUE(workspace->QuerySurvey(survey_request, &survey).Ok());
+  EXPECT_EQ(survey.Data().execution, ExecutionOutcome::kCompleted);
   EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 2);
   EXPECT_EQ(BudgetResolutionCount(BudgetWindow::kLegGuardrail), survey_windows);
 
@@ -84,6 +85,7 @@ TEST(Workspace, QueryDeadlinesResolveOnceWithoutChangingLegacyWindows) {
   survey::SurveyResult cut;
   const long before_cut = workspace->StructureRunCount();
   ASSERT_TRUE(workspace->QuerySurvey(survey_request, &cut, &token).Ok());
+  EXPECT_EQ(cut.Data().execution, ExecutionOutcome::kCancelled);
   EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 3);
   EXPECT_GT(workspace->StructureRunCount(), before_cut);
 
@@ -128,6 +130,82 @@ TEST(Workspace, McEssInUnifiedQueryUsesEntryDeadlineNotLegacyGuardrail) {
   EXPECT_EQ(result.Data().mc_region_ess->State(), survey::EvidenceState::kFinite);
   EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 1);
   EXPECT_EQ(BudgetResolutionCount(BudgetWindow::kLegGuardrail), guardrails);
+}
+
+TEST(Workspace, SurveyDeadlineIsFrozenAsAnExecutionOutcome) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &workspace).Ok());
+  SurveyRequest request = SurveyOf({ 3, 5 }, 550.0);
+  request.symmetry_bits = 0;
+  request.mc_ess_draws = 64;
+  request.budget_ms = 1;
+  survey::SurveyResult result;
+  ASSERT_TRUE(workspace->QuerySurvey(request, &result).Ok());
+  EXPECT_EQ(result.Data().execution, ExecutionOutcome::kDeadlineExceeded);
+}
+
+TEST(Workspace, SurveyWitnessObservesQueryCancelBeforeCompletingItsLattice) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(survey::RegularPrismSceneWithSun(15.0), &workspace).Ok());
+  SurveyRequest request = SurveyOf({ 3, 1, 5, 7 }, 550.0);
+  request.symmetry_bits = 0;
+  request.budget_ms = 0;
+  analytic::StopToken token;
+  survey::SurveyResult result;
+  Error error;
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    error = workspace->QuerySurvey(request, &result, &token);
+    done = true;
+  });
+  const auto bound = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (token.PollCount(analytic::kPollEventsLattice) == 0 && !done && std::chrono::steady_clock::now() < bound) {
+    std::this_thread::yield();
+  }
+  const bool entered_witness = token.PollCount(analytic::kPollEventsLattice) > 0;
+  token.RequestCancel();
+  worker.join();
+  ASSERT_TRUE(error.Ok());
+  ASSERT_TRUE(entered_witness) << "the survey witness never entered its lattice";
+  EXPECT_EQ(result.Data().execution, ExecutionOutcome::kCancelled);
+  bool found_witness = false;
+  for (const auto& object : result.Data().objects) {
+    if (const auto* witness = object.Witness()) {
+      found_witness = true;
+      EXPECT_EQ(witness->State(), survey::EvidenceState::kRefused);
+      EXPECT_EQ(witness->Mode(), "stop_requested");
+    }
+  }
+  EXPECT_TRUE(found_witness);
+}
+
+TEST(Workspace, SurveyClassTintObservesQueryCancelBeforeCompletingItsLattice) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &workspace).Ok());
+  SurveyRequest request = SurveyOf({ 3, 5 }, 550.0);
+  request.symmetry_bits = 0;
+  request.budget_ms = 0;
+  analytic::StopToken token;
+  survey::SurveyResult result;
+  Error error;
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    error = workspace->QuerySurvey(request, &result, &token);
+    done = true;
+  });
+  const auto bound = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (token.PollCount(analytic::kPollEventsLattice) == 0 && !done && std::chrono::steady_clock::now() < bound) {
+    std::this_thread::yield();
+  }
+  const bool entered_tint = token.PollCount(analytic::kPollEventsLattice) > 0;
+  token.RequestCancel();
+  worker.join();
+  ASSERT_TRUE(error.Ok());
+  ASSERT_TRUE(entered_tint) << "the full-dimensional tint never entered its lattice";
+  ASSERT_TRUE(result.Data().weight_tint.has_value());
+  EXPECT_EQ(result.Data().weight_tint->State(), survey::EvidenceState::kRefused);
+  EXPECT_EQ(result.Data().weight_tint->Mode(), "stop_requested");
+  EXPECT_EQ(result.Data().execution, ExecutionOutcome::kCancelled);
 }
 
 TEST(Workspace, CreationIsLazyAndOwnsNothingButTheSnapshot) {

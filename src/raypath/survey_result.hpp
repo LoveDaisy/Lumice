@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "raypath/domain/outcome.hpp"
 #include "raypath/domain/result_identity.hpp"
 #include "raypath/results/quantity.hpp"
 #include "raypath/results/survey_records.hpp"
@@ -68,6 +69,9 @@ struct SurveyData {
 
   // The document-level evidence: the T0 routing verdict's own state.
   SurveyEvidence evidence;
+
+  // The query's execution outcome is independent of the structural evidence verdict.
+  ExecutionOutcome execution = ExecutionOutcome::kCompleted;
 
   // Meta.
   int budget_ms = 0;  // as resolved

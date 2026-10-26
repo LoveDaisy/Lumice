@@ -38,7 +38,8 @@ bool ValidPathLayers(const std::vector<std::vector<int>>& layers) {
 // it, so the certificate arm runs either way and only the mechanism roll-up depends on it.
 SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, const analytic::FacePolygonTable& polygons,
                                     const std::vector<int>& member, const PoseDensityConversion& density,
-                                    double refractive_index, bool* any_escaped, std::string* escape_mode) {
+                                    double refractive_index, const analytic::DiscoveryStop* stop, bool* any_escaped,
+                                    std::string* escape_mode) {
   SurveyMemberVerdict verdict;
   verdict.member = member;
   std::vector<int> slots;
@@ -57,8 +58,11 @@ SurveyMemberVerdict MemberVerdictOf(const analytic::FaceNormalTable& table, cons
     return verdict;
   }
   if (density.Ok()) {
-    const analytic::FocusingClassification classification = analytic::Classify(
-        table, polygons, slots.data(), static_cast<int>(slots.size()), density.spec, refractive_index);
+    analytic::FocusingOptions focusing_options;
+    focusing_options.walk.stop = stop;
+    const analytic::FocusingClassification classification =
+        analytic::Classify(table, polygons, slots.data(), static_cast<int>(slots.size()), density.spec,
+                           refractive_index, focusing_options);
     verdict.rank_zero = !classification.escaped && classification.halo_map_rank == 0;
     if (verdict.rank_zero) {
       verdict.mechanism = classification.Mechanism();
@@ -251,15 +255,29 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
       if (options.stop->token != nullptr) {
         options.stop->token->NotePoll(raypath::kPollSurveyT0);
       }
-      if (options.stop->Stopped()) {
-        out->budget_note +=
-            " The T0 routing leg stopped at a cooperative poll (explicit cancel); "
-            "the members past the cut carry no verdict.";
+      const analytic::StopReason reason = options.stop->Why();
+      if (reason != analytic::StopReason::kNone) {
+        out->execution = reason == analytic::StopReason::kDeadline ? ExecutionOutcome::kDeadlineExceeded :
+                                                                     ExecutionOutcome::kCancelled;
+        // Legacy interrupted documents retain their published early-stop budget/timing echo.
+        if (request.query_deadline) {
+          out->budget_ms = request.budget_ms;
+          out->total_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+        }
+        if (reason == analytic::StopReason::kDeadline) {
+          out->budget_note =
+              "the query's unified deadline stopped the T0 routing leg; "
+              "members past the cut carry no verdict";
+        } else {
+          out->budget_note +=
+              " The T0 routing leg stopped at a cooperative poll (explicit cancel); "
+              "the members past the cut carry no verdict.";
+        }
         return {};  // the document holds what the cut left: honest, never fabricated
       }
     }
-    SurveyMemberVerdict verdict =
-        MemberVerdictOf(table, polygons, member, density, wavelength.refractive_index, &any_escaped, &escape_mode);
+    SurveyMemberVerdict verdict = MemberVerdictOf(table, polygons, member, density, wavelength.refractive_index,
+                                                  options.stop, &any_escaped, &escape_mode);
     all_rank_zero = all_rank_zero && verdict.rank_zero;
     if (verdict.evidence.state == EvidenceState::kFinite) {
       verdict.evidence.coverage.members_evaluated = 1;
@@ -338,6 +356,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
         witness_input.wavelength_nm = wavelength.wavelength_nm;
         witness_input.member_count = static_cast<int>(scope_members.size());
         witness_input.context_only = options.context_only;
+        witness_input.stop = options.stop;
         AssembleRefusedSupport(witness_input, scope_members, outcome.refusal_mode,
                                "chromatic legs not run: the delta axis refused (" + outcome.refusal_mode +
                                    "), and the chromatic legs sit downstream of it",
@@ -414,6 +433,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
           class_tint_input.representative = &request.path_layers[0];
           SunIncidentDirection(config.scene_.light_source_.param_, class_tint_input.incident);
           class_tint_input.member_count = static_cast<int>(scope_members.size());
+          class_tint_input.stop = options.stop;
           AssembleClassTint(class_tint_input, out);
           // The exception evidence leg: the TIR share over the same declared lattice (a
           // document-level block of its own, beside family_routing; its refusals never touch the
@@ -444,6 +464,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
         witness_input.wavelength_nm = wavelength.wavelength_nm;
         witness_input.member_count = static_cast<int>(scope_members.size());
         witness_input.context_only = options.context_only;
+        witness_input.stop = options.stop;
         AssembleRefusedSupport(witness_input, scope_members, measure.refusal_mode,
                                "chromatic legs not run: the measure shape is outside the routing v1 domain, and "
                                "the legs sit downstream of the routing",
@@ -500,6 +521,9 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
       RoutingConfigFingerprint(config, request.crystal_id, request.path_layers, request.symmetry_bits);
 
   out->budget_ms = request.budget_ms;
+  if (options.stop != nullptr) {
+    out->execution = OutcomeOf(*options.stop);
+  }
   out->total_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] crystal {}, path class routed: {} member(s), early stop {}",
             request.crystal_id, scope_members.size(), out->early_stopped ? "taken" : "not taken");
