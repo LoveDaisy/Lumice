@@ -474,7 +474,8 @@ TEST(ProbeAnalysis, ScopeMismatchRecomputesAndNamesTheCause) {
 }
 
 TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
-  const ConfigManager config = survey::PlateScene(1.5, 0.3);
+  // Keep both azimuths numerically populated: a narrow density underflows on this small lattice.
+  const ConfigManager config = survey::PlateScene(1.5, 10.0);
   ProbeRequest request = RadialRequest(config, -10.0, 90.0);
   request.wavelengths_nm = { 550.0 };
   SurveyWarmSource warm = CraftedWarm(550.0, 20000);
@@ -495,19 +496,34 @@ TEST(ProbeAnalysis, NonUniformProfileDoesNotReuseAnotherAzimuth) {
       survey::EvaluateProbeLine(table, polygons, request.path_layers[0], scope.density, frame, producer_layout, 550.0,
                                 wavelength.refractive_index, incident, 20000);
   ASSERT_EQ(producer.samples.size(), warm.probe_samples.size());
-  for (size_t k = 0; k < producer.samples.size(); k++) {
-    warm.probe_samples[k] = { producer.samples[k].delta_deg, producer.samples[k].value, producer.samples[k].k,
-                              producer.samples[k].k_eff };
+  survey::SurveyData document;
+  survey::SurveyProbe probe;
+  probe.SetState(survey::EvidenceState::kFinite);
+  for (const auto& sample : producer.samples) {
+    probe.Value().samples.push_back({ sample.delta_deg, sample.value, sample.k, sample.k_eff });
   }
+  // A pole-touching bin can be singular on any ISA. Exercise that producer shape explicitly,
+  // then use the production harvest rather than copying raw BandSum values into warm input.
+  auto& singular = probe.Value().samples.front();
+  singular.value = std::numeric_limits<double>::quiet_NaN();
+  singular.k = 0;
+  singular.k_eff = std::numeric_limits<double>::quiet_NaN();
+  document.probes.push_back(std::move(probe));
+  warm.probe_samples = HarvestSurveyResult(survey::SurveyResult(document)).facts.probe_samples;
+  ASSERT_TRUE(std::isnan(warm.probe_samples.front().value));
+  ASSERT_DOUBLE_EQ(warm.probe_samples.front().k_eff, 0.0);
   request.warm_candidate = Candidate(config, warm);
   ProbeData result;
-  ASSERT_TRUE(AnalyzeProbeFixture(config, request, &result).Ok());
+  const Error error = AnalyzeProbeFixture(config, request, &result);
+  ASSERT_TRUE(error.Ok()) << error.message;
   ASSERT_EQ(result.profiles.size(), 1u);
   EXPECT_NE(result.meta.at_azimuth_about_sun_deg, 0.0);
   EXPECT_EQ(result.profiles.front().Reading().source, ProbeProfileSource::kRecomputed);
   size_t different_bins = 0;
   for (size_t k = 0; k < producer.samples.size(); k++) {
-    different_bins += result.profiles.front().Reading().samples[k].value != producer.samples[k].value;
+    const double actual = result.profiles.front().Reading().samples[k].value;
+    const double expected = producer.samples[k].value;
+    different_bins += std::isfinite(actual) && std::isfinite(expected) && actual != expected;
   }
   EXPECT_GT(different_bins, 0u);
 
