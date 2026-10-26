@@ -1366,6 +1366,7 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetMeasureRegistration(const LU
                                                                         LUMICE_PathMeasureRegistration* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetIncomplete(const LUMICE_SinglePathResult* result, size_t index,
                                                                LUMICE_PathIncomplete* out);
+// include_context=0 leaves this block unavailable; ToJson still reports "not_requested" fields.
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetContext(const LUMICE_SinglePathResult* result,
                                                             LUMICE_PathContext* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathProbeGetContext(const LUMICE_PathProbe* result, LUMICE_PathContext* out);

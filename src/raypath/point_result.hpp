@@ -337,6 +337,7 @@ struct PointData {
   // The declared measure's registration (kDiscovered only; the point-mass branch carries its own
   // face inside OrbitFactors). A rho consumer reads this before treating a rho of 0 as dark.
   // Explicitly materialized context. Reading a value never starts a computation.
+  bool context_requested = false;
   SurveyContextBlock survey_context;
 
   bool Completed() const { return completion_ == CompletionState::kCompleted; }

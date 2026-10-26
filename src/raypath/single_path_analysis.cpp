@@ -964,6 +964,7 @@ Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest
   if (const Error error = RunPointExecution(config, request, &execution, &admitted, geometry); !error.Ok()) {
     return error;
   }
+  execution.context_requested = include_context;
   if (include_context) {
     // Context has no independent window. Unified queries carry their entry deadline through it;
     // legacy callers retain the original cancel-only behavior.

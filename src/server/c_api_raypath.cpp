@@ -1822,7 +1822,10 @@ LUMICE_PathReadStatus LUMICE_PathPointGetContext(const LUMICE_SinglePathResult* 
   if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
     return status;
   }
-  FillContext(result->result.Data().survey_context, out);
+  const auto& data = result->result.Data();
+  if (!data.context_requested)
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  FillContext(data.survey_context, out);
   return LUMICE_PATH_READ_OK;
 }
 
