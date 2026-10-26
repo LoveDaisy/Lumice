@@ -135,7 +135,7 @@ struct ProbeProfile {
   // The arm is private: a writable reading exists only as the return of BeginFinite, a certified
   // arm only through BeginCertified, and a refusal's mode is set together with its arm by Refuse.
  private:
-  Claim<ProbeFiniteReading> claim_;
+  lumice::raypath::Claim<ProbeFiniteReading> claim_;
 
  public:
   // The explicit transitions: a writable reading exists only as the result of BeginFinite, and a
@@ -155,7 +155,7 @@ struct ProbeProfile {
   void Refuse(std::string reason) { claim_ = Refused{ std::move(reason), {} }; }
   const ProbeFiniteReading& Reading() const { return std::get<Finite<ProbeFiniteReading>>(claim_).value; }
   const std::string& RefusalReason() const { return std::get<Refused>(claim_).reason; }
-  const Claim<ProbeFiniteReading>& Claim() const { return claim_; }
+  const lumice::raypath::Claim<ProbeFiniteReading>& Claim() const { return claim_; }
   // The one scope-binding entry: the arm that holds the declaration is chosen by its kind.
   void BindScope(const ClaimScope& scope) {
     std::visit(
