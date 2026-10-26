@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -371,6 +372,15 @@ Error Invalid(const std::string& what) {
   return { ErrorCode::kInvalidArgument, "warm seeds: " + what };
 }
 
+bool IntInRange(const nlohmann::json& value) {
+  if (!value.is_number_integer())
+    return false;
+  if (value.is_number_unsigned())
+    return value.get<std::uint64_t>() <= static_cast<std::uint64_t>(std::numeric_limits<int>::max());
+  const std::int64_t n = value.get<std::int64_t>();
+  return n >= std::numeric_limits<int>::min() && n <= std::numeric_limits<int>::max();
+}
+
 }  // namespace
 
 static std::string EncodePoint(const PointData& result, const SurveyContextBlock& context,
@@ -429,6 +439,9 @@ namespace {
 Error DecodePointSeeds(const nlohmann::json& doc, std::vector<double>* seeds) {
   if (!doc.is_object() || !doc.contains(kKeySchemaVersion) || !doc[kKeySchemaVersion].is_number_integer()) {
     return Invalid("not a `Lumice raypath` output (no integer schema_version)");
+  }
+  if (!IntInRange(doc[kKeySchemaVersion])) {
+    return Invalid("schema_version is outside the supported integer range");
   }
   const int version = doc[kKeySchemaVersion].get<int>();
   if (version != kSchemaVersion) {
@@ -515,7 +528,7 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
       return refuse("path gate: the document's request.path_layers does not match this query");
     std::vector<int> faces;
     for (const auto& face : layer) {
-      if (!face.is_number_integer())
+      if (!IntInRange(face))
         return refuse("path gate: the document's request.path_layers does not match this query");
       faces.push_back(face.get<int>());
     }
@@ -671,21 +684,22 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
       if (!card.is_object()) {
         return refuse("corrupt warm document: object is not an object");
       }
+      std::vector<std::vector<int>> source_members;
+      if (card.contains("members")) {
+        if (!card["members"].is_array())
+          return refuse("corrupt warm document: invalid object members");
+        for (const auto& member : card["members"]) {
+          if (!member.is_array() || !std::all_of(member.begin(), member.end(), IntInRange))
+            return refuse("corrupt warm document: invalid object members");
+          source_members.push_back(member.get<std::vector<int>>());
+        }
+      }
       if (card.contains("support_set") &&
           (!card["support_set"].is_object() || !card["support_set"].contains("intervals") ||
            !card["support_set"]["intervals"].is_array())) {
         return refuse("corrupt warm document: invalid support_set intervals");
       }
       if (card.contains("support_set")) {
-        std::vector<int> members;
-        if (card.contains("members") && card["members"].is_array() && !card["members"].empty() &&
-            card["members"][0].is_array()) {
-          for (const auto& face : card["members"][0]) {
-            if (face.is_number_integer()) {
-              members.push_back(face.get<int>());
-            }
-          }
-        }
         for (const auto& interval : card["support_set"]["intervals"]) {
           if (!interval.is_object() || !interval.contains("lower_deg") || !interval["lower_deg"].is_number() ||
               !interval.contains("upper_deg") || !interval["upper_deg"].is_number()) {
@@ -694,15 +708,8 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
           SurveyWarmSource::SupportInterval out;
           out.lower_deg = interval["lower_deg"].get<double>();
           out.upper_deg = interval["upper_deg"].get<double>();
-          out.members = members;
-          if (card.contains("members") && card["members"].is_array()) {
-            for (const auto& member : card["members"]) {
-              if (member.is_array() && std::all_of(member.begin(), member.end(),
-                                                   [](const auto& face) { return face.is_number_integer(); })) {
-                out.source_members.push_back(member.get<std::vector<int>>());
-              }
-            }
-          }
+          out.members = source_members.empty() ? std::vector<int>{} : source_members.front();
+          out.source_members = source_members;
           survey->intervals.push_back(std::move(out));
         }
       }
@@ -710,14 +717,7 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
           card["caustic_edge"].contains("position_deg") && card["caustic_edge"]["position_deg"].is_number()) {
         survey->has_edge = true;
         survey->edge_deg = card["caustic_edge"]["position_deg"].get<double>();
-        if (card.contains("members") && card["members"].is_array()) {
-          for (const auto& member : card["members"]) {
-            if (member.is_array() &&
-                std::all_of(member.begin(), member.end(), [](const auto& face) { return face.is_number_integer(); })) {
-              survey->edge_members.push_back(member.get<std::vector<int>>());
-            }
-          }
-        }
+        survey->edge_members = source_members;
       }
     }
     survey->has_support = !survey->intervals.empty();
@@ -763,9 +763,10 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
         probe["spec"]["bin_deg"].is_number()) {
       survey->probe_bin_deg = probe["spec"]["bin_deg"].get<double>();
     }
-    if (probe.contains("spec") && probe["spec"].is_object() && probe["spec"].contains("sample_count") &&
-        probe["spec"]["sample_count"].is_number_integer()) {
-      survey->probe_sample_count = static_cast<int>(probe["spec"]["sample_count"].get<long long>());
+    if (probe.contains("spec") && probe["spec"].is_object() && probe["spec"].contains("sample_count")) {
+      if (!IntInRange(probe["spec"]["sample_count"]))
+        return refuse("corrupt warm document: invalid probe sample_count");
+      survey->probe_sample_count = probe["spec"]["sample_count"].get<int>();
     }
     // Every row with a delta_deg lands in the harvest, the grid's shape preserved: a value the
     // writer spelled null (an undefined number) parses as NaN — the row exists in the document,
@@ -774,7 +775,7 @@ Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate
     for (const auto& sample : probe["samples"]) {
       if (!sample.is_object() || !sample.contains("delta_deg") || !sample["delta_deg"].is_number() ||
           !sample.contains("value") || (!sample["value"].is_number() && !sample["value"].is_null()) ||
-          !sample.contains("k") || !sample["k"].is_number_integer() || !sample.contains("k_eff") ||
+          !sample.contains("k") || !IntInRange(sample["k"]) || !sample.contains("k_eff") ||
           (!sample["k_eff"].is_number() && !sample["k_eff"].is_null())) {
         return refuse("corrupt warm document: invalid probe sample");
       }

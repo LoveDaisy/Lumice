@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -437,6 +438,22 @@ TEST(SinglePathJson, WarmCandidateDecoderPreservesNullRowsAndRejectsUnknownSchem
   EXPECT_DOUBLE_EQ(candidate.facts.probe_samples[0].k_eff, 0.0);
   EXPECT_DOUBLE_EQ(candidate.facts.probe_samples[1].value, 0.0);
 
+  WarmCandidate seed_sheet;
+  EXPECT_EQ(DecodeWarmCandidate(R"({"schema_version":4294967297,"components":[]})", &seed_sheet).code,
+            ErrorCode::kInvalidArgument);
+  doc["request"]["path_layers"][0][0] = std::uint64_t{ 4294967299ULL };
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc["request"]["path_layers"][0][0] = 3;
+  doc["objects"] = nlohmann::json::array({ nlohmann::json::object() });
+  doc["objects"][0]["members"] = nlohmann::json::array({ nlohmann::json::array({ std::uint64_t{ 4294967299ULL } }) });
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc.erase("objects");
+  doc["probes"][0]["spec"] = { { "sample_count", std::uint64_t{ 4294967298ULL } } };
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc["probes"][0].erase("spec");
+  doc["probes"][0]["samples"][1]["k"] = std::uint64_t{ 4294967298ULL };
+  EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
+  doc["probes"][0]["samples"][1]["k"] = 2;
   doc["probes"][0]["samples"][0]["delta_deg"] = "bad";
   EXPECT_EQ(DecodeWarmCandidate(doc.dump(), &candidate).code, ErrorCode::kInvalidArgument);
   doc["probes"][0]["samples"][0]["delta_deg"] = 22.0;
