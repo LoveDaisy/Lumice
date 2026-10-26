@@ -261,6 +261,19 @@ TEST(Workspace, FirstQueryBuildsOnlyTheSelectedAndRequeriesReuse) {
   EXPECT_EQ(workspace->GeometryBuildCount(), 1);                // same selection: nothing rebuilt
   EXPECT_EQ(workspace->StructureRunCount(), runs_after_first);  // the cached result answered
 
+  analytic::StopToken cancelled_token;
+  cancelled_token.RequestCancel();
+  survey::SurveyResult cut;
+  ASSERT_TRUE(workspace->QuerySurvey(SurveyOf({ 1, 2 }, 550.0), &cut, &cancelled_token).Ok());
+  EXPECT_EQ(cut.Data().execution, ExecutionOutcome::kCancelled);
+  EXPECT_NE(cut.Identity(), first.Identity());
+  const long runs_after_cut = workspace->StructureRunCount();
+  EXPECT_GT(runs_after_cut, runs_after_first);
+  survey::SurveyResult retained;
+  ASSERT_TRUE(workspace->QuerySurvey(SurveyOf({ 1, 2 }, 550.0), &retained).Ok());
+  EXPECT_EQ(retained.Identity(), first.Identity());
+  EXPECT_EQ(workspace->StructureRunCount(), runs_after_cut);
+
   // A point on the same selection reuses the geometry slot too.
   PointResult point;
   const Error point_error = workspace->QueryPoint(PointOf({ 1, 2 }), true, &point);
