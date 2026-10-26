@@ -1654,6 +1654,7 @@ jobs:
           -DBUILD_GUI=OFF
           -DBUILD_SHARED_LIBS=ON
           -DLUMICE_ISA_LEVEL=baseline
+          -DCMAKE_INSTALL_PREFIX="$PWD/build/cmake_install/shared"
 
       - name: Build
         run: cmake --build build --parallel

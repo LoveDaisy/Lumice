@@ -373,7 +373,9 @@ TEST_F(SurveyCApi, CCancelTokenStopsAnEnteredQuery) {
   ASSERT_EQ(LUMICE_PathCancelTokenCreate(&raw_cancel), LUMICE_OK);
   std::unique_ptr<LUMICE_PathCancelToken, void (*)(LUMICE_PathCancelToken*)> cancel(raw_cancel,
                                                                                     LUMICE_PathCancelTokenDestroy);
-  static int faces[] = { 1, 2 };
+  // The identity path {1, 2} can finish before the cancelling thread is scheduled.
+  // Use the real discovery lattice, without the context's early-refusal shortcut.
+  static int faces[] = { 3, 5 };
   static int counts[] = { 2 };
   LUMICE_SinglePathRequest request{};
   request.struct_size = sizeof(request);
@@ -389,7 +391,7 @@ TEST_F(SurveyCApi, CCancelTokenStopsAnEnteredQuery) {
   options.struct_size = sizeof(options);
   options.deadline_ms = 2000;
   options.cancel = cancel.get();
-  options.include_context = 1;
+  options.include_context = 0;
   const auto before = QueryDeadlineResolutionCount();
   LUMICE_SinglePathResult* raw_result = nullptr;
   LUMICE_ErrorCode code = LUMICE_ERR_UNKNOWN;
