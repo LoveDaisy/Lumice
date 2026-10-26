@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -10,6 +11,8 @@
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
+#include "raypath/detail/json_values.hpp"
+#include "raypath/query_control.hpp"
 
 namespace lumice::raypath::survey {
 namespace {
@@ -43,6 +46,22 @@ class SurveyCApi : public ::testing::Test {
   }
   ScenePtr scene_;
 };
+
+template <typename Result>
+nlohmann::json ResultDocument(const Result* result,
+                              LUMICE_ErrorCode (*to_json)(const Result*, char*, size_t, size_t*)) {
+  size_t length = 0;
+  EXPECT_EQ(to_json(result, nullptr, 0, &length), LUMICE_OK);
+  std::string text(length + 1, '\0');
+  EXPECT_EQ(to_json(result, text.data(), text.size(), nullptr), LUMICE_OK);
+  text.resize(length);
+  auto document = nlohmann::json::parse(text);
+  document.erase("timing");
+  if (document.contains("mc_evidence") && document["mc_evidence"].contains("spectral_verification")) {
+    document["mc_evidence"]["spectral_verification"].erase("seconds");
+  }
+  return document;
+}
 
 TEST_F(SurveyCApi, StructSizeTooSmallIsRefused) {
   LUMICE_PathSurveyRequest request{};
@@ -203,6 +222,294 @@ TEST_F(SurveyCApi, McEssDrawsReadThroughTheStructSizeGate) {
   ASSERT_EQ(LUMICE_PathSurveyToJson(result.get(), text.data(), text.size(), &len), LUMICE_OK);
   const auto document = nlohmann::json::parse(text);
   EXPECT_FALSE(document.contains("mc_region_ess"));
+}
+
+TEST_F(SurveyCApi, WorkspaceAndLegacyQueriesAgreeOnAllFourFaces) {
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  char err[512] = {};
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw_workspace, err, sizeof(err)), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathWorkspace, void (*)(LUMICE_PathWorkspace*)> workspace(raw_workspace,
+                                                                                   LUMICE_PathWorkspaceDestroy);
+  static int faces[] = { 1, 2 };
+  static int counts[] = { 2 };
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = 15000;
+  options.include_context = 1;
+
+  LUMICE_PathSurveyRequest survey{};
+  survey.struct_size = sizeof(survey);
+  survey.crystal_id = 1;
+  survey.faces = faces;
+  survey.face_count = 2;
+  survey.layer_face_counts = counts;
+  survey.layer_count = 1;
+  survey.budget_ms = 15000;
+  LUMICE_PathSurvey* legacy_survey = nullptr;
+  LUMICE_PathSurvey* workspace_survey = nullptr;
+  ASSERT_EQ(LUMICE_AnalyzePathSurvey(scene_.get(), &survey, &legacy_survey, err, sizeof(err)), LUMICE_OK) << err;
+  ASSERT_EQ(LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &survey, &options, &workspace_survey, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
+  EXPECT_EQ(ResultDocument(legacy_survey, LUMICE_PathSurveyToJson),
+            ResultDocument(workspace_survey, LUMICE_PathSurveyToJson));
+  LUMICE_PathSurveyDestroy(legacy_survey);
+  LUMICE_PathSurveyDestroy(workspace_survey);
+  workspace.reset();
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw_workspace, err, sizeof(err)), LUMICE_OK);
+  workspace.reset(raw_workspace);
+
+  LUMICE_SinglePathRequest point{};
+  point.struct_size = sizeof(point);
+  point.crystal_id = 1;
+  point.faces = faces;
+  point.face_count = 2;
+  point.layer_face_counts = counts;
+  point.layer_count = 1;
+  point.target_altitude_deg = 20;
+  point.target_azimuth_deg = 25;
+  point.sample_count = 100;
+  point.deadline_ms = 15000;
+  LUMICE_SinglePathResult* legacy_point = nullptr;
+  LUMICE_SinglePathResult* workspace_point = nullptr;
+  ASSERT_EQ(LUMICE_AnalyzeSinglePath(scene_.get(), &point, &legacy_point, err, sizeof(err)), LUMICE_OK) << err;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &workspace_point, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
+  EXPECT_EQ(ResultDocument(legacy_point, LUMICE_SinglePathResultToJson),
+            ResultDocument(workspace_point, LUMICE_SinglePathResultToJson));
+  LUMICE_SinglePathResultDestroy(legacy_point);
+  LUMICE_SinglePathResultDestroy(workspace_point);
+
+  LUMICE_PathProbeRequest probe{};
+  probe.struct_size = sizeof(probe);
+  probe.crystal_id = 1;
+  probe.faces = faces;
+  probe.face_count = 2;
+  probe.layer_face_counts = counts;
+  probe.layer_count = 1;
+  probe.at_altitude_deg = 20;
+  probe.at_azimuth_deg = 25;
+  probe.sample_count = 100;
+  probe.budget_ms = 15000;
+  LUMICE_PathProbe* legacy_probe = nullptr;
+  LUMICE_PathProbe* workspace_probe = nullptr;
+  ASSERT_EQ(LUMICE_AnalyzePathProbe(scene_.get(), &probe, &legacy_probe, err, sizeof(err)), LUMICE_OK) << err;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &workspace_probe, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
+  EXPECT_EQ(ResultDocument(legacy_probe, LUMICE_PathProbeToJson),
+            ResultDocument(workspace_probe, LUMICE_PathProbeToJson));
+  LUMICE_PathProbeDestroy(legacy_probe);
+  LUMICE_PathProbeDestroy(workspace_probe);
+
+  LUMICE_PathFeatureReportRequest report{};
+  report.struct_size = sizeof(report);
+  report.crystal_id = 1;
+  report.faces = faces;
+  report.face_count = 2;
+  report.layer_face_counts = counts;
+  report.layer_count = 1;
+  report.sample_count = 64;
+  report.budget_ms = 15000;
+  LUMICE_PathFeatureReport* legacy_report = nullptr;
+  LUMICE_PathFeatureReport* workspace_report = nullptr;
+  ASSERT_EQ(LUMICE_AnalyzePathFeatureReport(scene_.get(), &report, &legacy_report, err, sizeof(err)), LUMICE_OK) << err;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryReport(workspace.get(), &report, &options, &workspace_report, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
+  const auto legacy_report_doc = ResultDocument(legacy_report, LUMICE_PathFeatureReportToJson);
+  const auto workspace_report_doc = ResultDocument(workspace_report, LUMICE_PathFeatureReportToJson);
+  EXPECT_TRUE(legacy_report_doc == workspace_report_doc)
+      << nlohmann::json::diff(legacy_report_doc, workspace_report_doc).dump().substr(0, 1600);
+  LUMICE_PathFeatureReportDestroy(legacy_report);
+  LUMICE_PathFeatureReportDestroy(workspace_report);
+}
+
+TEST_F(SurveyCApi, CCancelTokenStopsAnEnteredQuery) {
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw_workspace, nullptr, 0), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathWorkspace, void (*)(LUMICE_PathWorkspace*)> workspace(raw_workspace,
+                                                                                   LUMICE_PathWorkspaceDestroy);
+  LUMICE_PathCancelToken* raw_cancel = nullptr;
+  ASSERT_EQ(LUMICE_PathCancelTokenCreate(&raw_cancel), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathCancelToken, void (*)(LUMICE_PathCancelToken*)> cancel(raw_cancel,
+                                                                                    LUMICE_PathCancelTokenDestroy);
+  static int faces[] = { 1, 2 };
+  static int counts[] = { 2 };
+  LUMICE_SinglePathRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = faces;
+  request.face_count = 2;
+  request.layer_face_counts = counts;
+  request.layer_count = 1;
+  request.target_altitude_deg = 20;
+  request.target_azimuth_deg = 25;
+  request.sample_count = 100000000;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = 2000;
+  options.cancel = cancel.get();
+  options.include_context = 1;
+  const auto before = QueryDeadlineResolutionCount();
+  LUMICE_SinglePathResult* raw_result = nullptr;
+  LUMICE_ErrorCode code = LUMICE_ERR_UNKNOWN;
+  std::thread worker([&] {
+    char err[256] = {};
+    code = LUMICE_PathWorkspaceQueryPoint(workspace.get(), &request, &options, &raw_result, err, sizeof(err));
+  });
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (QueryDeadlineResolutionCount() == before && std::chrono::steady_clock::now() < until) {
+    std::this_thread::yield();
+  }
+  const bool entered = QueryDeadlineResolutionCount() > before;
+  LUMICE_PathCancelTokenRequest(cancel.get());
+  worker.join();
+  ASSERT_TRUE(entered);
+  ASSERT_EQ(code, LUMICE_OK);
+  std::unique_ptr<LUMICE_SinglePathResult, void (*)(LUMICE_SinglePathResult*)> result(raw_result,
+                                                                                      LUMICE_SinglePathResultDestroy);
+  size_t length = 0;
+  ASSERT_EQ(LUMICE_SinglePathResultToJson(result.get(), nullptr, 0, &length), LUMICE_OK);
+  std::string text(length + 1, '\0');
+  ASSERT_EQ(LUMICE_SinglePathResultToJson(result.get(), text.data(), text.size(), nullptr), LUMICE_OK);
+  const auto document = nlohmann::json::parse(text);
+  EXPECT_TRUE(document.at("meta").at("interrupted").get<bool>());
+}
+
+TEST_F(SurveyCApi, WorkspaceRejectsUnpublishedRequestExtentsAndConflictingWarm) {
+  LUMICE_PathWorkspace* raw = nullptr;
+  char err[256] = {};
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw, err, sizeof(err)), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathWorkspace, void (*)(LUMICE_PathWorkspace*)> workspace(raw, LUMICE_PathWorkspaceDestroy);
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = 68;
+  LUMICE_PathSurvey* result = reinterpret_cast<LUMICE_PathSurvey*>(0x1);
+  EXPECT_EQ(LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(result, nullptr);
+  EXPECT_NE(std::string(err).find("published complete extent"), std::string::npos);
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options) - 1;
+  request.struct_size = sizeof(request);
+  EXPECT_EQ(LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &request, &options, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+}
+
+TEST_F(SurveyCApi, WorkspaceQueriesOwnResultsAndTypedWarmOutlivesSurvey) {
+  static int faces[] = { 1, 2 };
+  static int counts[] = { 2 };
+  char err[512] = {};
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw_workspace, err, sizeof(err)), LUMICE_OK) << err;
+  std::unique_ptr<LUMICE_PathWorkspace, void (*)(LUMICE_PathWorkspace*)> workspace(raw_workspace,
+                                                                                   LUMICE_PathWorkspaceDestroy);
+  scene_.reset();
+
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = 15000;
+  options.include_context = 1;
+  LUMICE_PathSurveyRequest survey{};
+  survey.struct_size = sizeof(survey);
+  survey.crystal_id = 1;
+  survey.faces = faces;
+  survey.face_count = 2;
+  survey.layer_face_counts = counts;
+  survey.layer_count = 1;
+  survey.wavelength_nm = 550;
+  LUMICE_PathSurvey* raw_survey = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &survey, &options, &raw_survey, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
+  std::unique_ptr<LUMICE_PathSurvey, void (*)(LUMICE_PathSurvey*)> result(raw_survey, LUMICE_PathSurveyDestroy);
+  size_t survey_length = 0;
+  ASSERT_EQ(LUMICE_PathSurveyToJson(result.get(), nullptr, 0, &survey_length), LUMICE_OK);
+  std::string survey_text(survey_length + 1, '\0');
+  ASSERT_EQ(LUMICE_PathSurveyToJson(result.get(), survey_text.data(), survey_text.size(), nullptr), LUMICE_OK);
+  LUMICE_PathWarmData* imported = nullptr;
+  ASSERT_EQ(LUMICE_PathWarmDataFromJson(survey_text.data(), survey_length, &imported, err, sizeof(err)), LUMICE_OK)
+      << err;
+  LUMICE_PathWarmData* raw_warm = nullptr;
+  ASSERT_EQ(LUMICE_PathWarmDataFromSurvey(result.get(), &raw_warm), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathWarmData, void (*)(LUMICE_PathWarmData*)> warm(raw_warm, LUMICE_PathWarmDataDestroy);
+  result.reset();
+  const long before_encode = detail::JsonEncodeCalls();
+  const long before_decode = detail::JsonDecodeCalls();
+  options.warm = warm.get();
+
+  LUMICE_SinglePathRequest point{};
+  point.struct_size = sizeof(point);
+  point.crystal_id = 1;
+  point.faces = faces;
+  point.face_count = 2;
+  point.layer_face_counts = counts;
+  point.layer_count = 1;
+  point.target_altitude_deg = 20;
+  point.target_azimuth_deg = 25;
+  point.sample_count = 100;
+  LUMICE_SinglePathResult* raw_point = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &raw_point, err, sizeof(err)), LUMICE_OK)
+      << err;
+  std::unique_ptr<LUMICE_SinglePathResult, void (*)(LUMICE_SinglePathResult*)> point_result(
+      raw_point, LUMICE_SinglePathResultDestroy);
+  point.warm_json = "{}";
+  point.warm_json_len = 2;
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &raw_point, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(std::string(err).find("both typed warm and warm_json"), std::string::npos);
+  point.warm_json = nullptr;
+  point.warm_json_len = 0;
+
+  LUMICE_PathProbeRequest probe{};
+  probe.struct_size = sizeof(probe);
+  probe.crystal_id = 1;
+  probe.faces = faces;
+  probe.face_count = 2;
+  probe.layer_face_counts = counts;
+  probe.layer_count = 1;
+  probe.at_altitude_deg = 20;
+  probe.at_azimuth_deg = 25;
+  probe.sample_count = 100;
+  LUMICE_PathProbe* raw_probe = nullptr;
+  options.warm = imported;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &raw_probe, err, sizeof(err)), LUMICE_OK)
+      << err;
+  LUMICE_PathProbeDestroy(raw_probe);
+  LUMICE_PathWarmDataDestroy(imported);
+  options.warm = warm.get();
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &raw_probe, err, sizeof(err)), LUMICE_OK)
+      << err;
+  std::unique_ptr<LUMICE_PathProbe, void (*)(LUMICE_PathProbe*)> probe_result(raw_probe, LUMICE_PathProbeDestroy);
+  options.warm = nullptr;
+
+  LUMICE_PathFeatureReportRequest report{};
+  report.struct_size = sizeof(report);
+  report.crystal_id = 1;
+  report.faces = faces;
+  report.face_count = 2;
+  report.layer_face_counts = counts;
+  report.layer_count = 1;
+  report.sample_count = 64;
+  LUMICE_PathFeatureReport* raw_report = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryReport(workspace.get(), &report, &options, &raw_report, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
+  std::unique_ptr<LUMICE_PathFeatureReport, void (*)(LUMICE_PathFeatureReport*)> report_result(
+      raw_report, LUMICE_PathFeatureReportDestroy);
+  EXPECT_EQ(detail::JsonEncodeCalls(), before_encode);
+  EXPECT_EQ(detail::JsonDecodeCalls(), before_decode);
+
+  workspace.reset();
+  warm.reset();
+  size_t length = 0;
+  ASSERT_EQ(LUMICE_SinglePathResultToJson(point_result.get(), nullptr, 0, &length), LUMICE_OK);
+  EXPECT_GT(length, 0u);
+  ASSERT_EQ(LUMICE_PathProbeToJson(probe_result.get(), nullptr, 0, &length), LUMICE_OK);
+  EXPECT_GT(length, 0u);
+  ASSERT_EQ(LUMICE_PathFeatureReportToJson(report_result.get(), nullptr, 0, &length), LUMICE_OK);
+  EXPECT_GT(length, 0u);
 }
 
 }  // namespace

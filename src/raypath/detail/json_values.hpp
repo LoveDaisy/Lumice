@@ -8,6 +8,7 @@
 // serializers must not hand-roll their own copies — the contract statement
 // lives in doc/raypath/raypath-cli-output.md.
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,16 @@
 #include "raypath/single_path_json.hpp"
 
 namespace lumice::raypath::detail {
+
+inline std::atomic<long> g_json_encode_calls{ 0 };
+inline std::atomic<long> g_json_decode_calls{ 0 };
+
+inline long JsonEncodeCalls() {
+  return g_json_encode_calls.load(std::memory_order_relaxed);
+}
+inline long JsonDecodeCalls() {
+  return g_json_decode_calls.load(std::memory_order_relaxed);
+}
 
 // A double as a JSON value: NaN and the infinities (which JSON cannot spell) become null.
 inline nlohmann::ordered_json Num(double x) {

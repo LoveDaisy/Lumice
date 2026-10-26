@@ -27,7 +27,8 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
   }
   if ((request.sample_count != 0 && (request.sample_count < 64 || request.sample_count > kMaxFeatureReportSampleCount ||
                                      request.sample_count % 2)) ||
-      request.budget_ms <= 0 || request.budget_ms > kMaxFeatureReportBudgetMs || request.max_optical_evaluations == 0 ||
+      (request.budget_ms < 0 || (request.budget_ms == 0 && !request.query_deadline)) ||
+      request.budget_ms > kMaxFeatureReportBudgetMs || request.max_optical_evaluations == 0 ||
       request.max_optical_evaluations > kMaxFeatureReportSampleEvaluations || request.max_field_evaluations == 0 ||
       request.max_field_evaluations > 1000000000 || !(request.bandwidth_rad > 0) || request.bandwidth_rad >= 1 ||
       !std::isfinite(request.bandwidth_rad) || !(request.location_resolution_rad > 0) ||
@@ -135,15 +136,21 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
   }
   // The discovery quality window, resolved by the one owner: the C entry pins the absolute
   // deadline at its own start; an internal caller gets begin + budget (query_control.hpp).
-  BudgetRequest quality_request;
-  quality_request.budget_ms = request.budget_ms;
-  quality_request.absolute_deadline = request.deadline;
-  quality_request.start = begin;
-  const LegControl quality = ResolveLeg(BudgetWindow::kQualityDeadline, quality_request);
+  LegControl quality;
+  if (request.query_deadline) {
+    quality.stop = request.query_deadline->LegStop();
+    quality.resolved_ms = request.query_deadline->resolved_ms;
+  } else {
+    BudgetRequest quality_request;
+    quality_request.budget_ms = request.budget_ms;
+    quality_request.absolute_deadline = request.deadline;
+    quality_request.start = begin;
+    quality = ResolveLeg(BudgetWindow::kQualityDeadline, quality_request);
+  }
   // The discovery legs' one stop: the quality window with the query's cancel folded in.
   const analytic::DiscoveryStop quality_stop{ quality.stop.deadline, nullptr, request.cancel };
   DiscoveryOptions options{ { samples, request.max_optical_evaluations, quality.stop.deadline,
-                              request.cancel != nullptr ? &quality_stop : nullptr },
+                              (request.cancel != nullptr || request.query_deadline) ? &quality_stop : nullptr },
                             request.bandwidth_rad,
                             request.location_resolution_rad,
                             request.max_field_evaluations,
@@ -152,7 +159,7 @@ Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureRe
                             4,
                             6 };
   error = BuildPathFeatureReport(scene, identity, selection, spectrum, 1497, options, out);
-  if (error.Ok() && request.cancel != nullptr) {
+  if (error.Ok() && (request.cancel != nullptr || request.query_deadline)) {
     out->discovery_execution = OutcomeOf(quality_stop);
   }
   if (!error.Ok()) {
@@ -188,8 +195,12 @@ Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatu
   // window (query_control.hpp).
   // The enumeration leg's one stop: the anti-hang cap's window with the query's cancel
   // folded in (the window resolved by the one owner, like every window).
-  const analytic::DiscoveryStop enumeration_stop{ ResolveLeg(BudgetWindow::kHangCap, {}).stop.deadline, nullptr,
-                                                  request.cancel };
+  const auto enumeration_deadline =
+      request.query_deadline ?
+          std::min(std::chrono::steady_clock::now() + std::chrono::milliseconds(schema3::kEnumerationHangCapMs),
+                   request.query_deadline->at) :
+          ResolveLeg(BudgetWindow::kHangCap, {}).stop.deadline;
+  const analytic::DiscoveryStop enumeration_stop{ enumeration_deadline, nullptr, request.cancel };
   // Captured before the move below: the discovery legs' observed outcome rides the detail
   // struct, and whichever single stop saw a reason wins (both fold the same cancel token).
   const ExecutionOutcome discovery_execution = report.discovery_execution;

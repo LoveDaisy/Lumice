@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
@@ -63,10 +64,17 @@ Error AnalysisWorkspace::QueryPoint(const SinglePathRequest& request, bool inclu
                                     const analytic::StopToken* cancel) {
   SinglePathRequest effective = request;
   effective.cancel = cancel;
-  const bool warm_hit = WarmFor(request, &effective.warm_candidate.emplace());
-  if (!warm_hit) {
-    effective.warm_candidate.reset();
+  BudgetRequest deadline_request;
+  deadline_request.budget_ms = request.budget_ms;
+  deadline_request.interrupted = request.interrupted;
+  effective.query_deadline = ResolveQueryDeadline(deadline_request);
+  if (!effective.warm_candidate) {
+    WarmCandidate cached;
+    if (WarmFor(request, &cached)) {
+      effective.warm_candidate = std::move(cached);
+    }
   }
+  const bool warm_hit = effective.warm_candidate.has_value();
   const PreparedGeometry* geometry = GeometryFor(request);
   // The ledger counts the workspace's no-warm decisions — the queries that had to run a
   // structure. A fed slot is zero by this read; the behavioral proof that the context really
@@ -80,10 +88,17 @@ Error AnalysisWorkspace::QueryPoint(const SinglePathRequest& request, bool inclu
 Error AnalysisWorkspace::QueryProbe(const ProbeRequest& request, ProbeResult* out, const analytic::StopToken* cancel) {
   ProbeRequest effective = request;
   effective.cancel = cancel;
-  const bool warm_hit = WarmFor(request, &effective.warm_candidate.emplace());
-  if (!warm_hit) {
-    effective.warm_candidate.reset();
+  BudgetRequest deadline_request;
+  deadline_request.budget_ms = request.budget_ms;
+  deadline_request.interrupted = request.interrupted;
+  effective.query_deadline = ResolveQueryDeadline(deadline_request);
+  if (!effective.warm_candidate) {
+    WarmCandidate cached;
+    if (WarmFor(request, &cached)) {
+      effective.warm_candidate = std::move(cached);
+    }
   }
+  const bool warm_hit = effective.warm_candidate.has_value();
   const PreparedGeometry* geometry = GeometryFor(request);
   if (!warm_hit) {
     ++structure_runs_;
@@ -93,6 +108,11 @@ Error AnalysisWorkspace::QueryProbe(const ProbeRequest& request, ProbeResult* ou
 
 Error AnalysisWorkspace::QuerySurvey(const SurveyRequest& request, survey::SurveyResult* out,
                                      const analytic::StopToken* cancel) {
+  SurveyRequest effective = request;
+  BudgetRequest deadline_request;
+  deadline_request.budget_ms = request.budget_ms;
+  effective.query_deadline = ResolveQueryDeadline(deadline_request);
+  const analytic::DiscoveryStop query_stop{ effective.query_deadline->at, nullptr, cancel };
   const long long layer = request.scene_layer.has_value() ? static_cast<long long>(*request.scene_layer) :
                                                             -2LL;  // unset (the standalone shape writes -1)
   const bool cached = survey_slot_.crystal_id == request.crystal_id &&
@@ -101,17 +121,15 @@ Error AnalysisWorkspace::QuerySurvey(const SurveyRequest& request, survey::Surve
                       survey_slot_.wavelength_nm == request.wavelength_nm.value_or(0.0) &&
                       survey_slot_.mc_ess_draws == request.mc_ess_draws &&
                       survey_slot_.budget_ms == request.budget_ms && survey_slot_.scene_layer == layer;
-  if (cached) {
+  if (cached && !query_stop.Stopped()) {
     *out = survey_slot_.result;  // the frozen value's shared storage: zero recomputation
     return {};
   }
   const PreparedGeometry* geometry = GeometryFor(request);
   survey::SurveyAssemblyOptions options;
   options.geometry = geometry;
-  const analytic::DiscoveryStop assembly_stop{ std::chrono::steady_clock::time_point::max(), nullptr,
-                                               cancel };  // cancel-only: the legs stay unenforced
-  options.stop = cancel != nullptr ? &assembly_stop : nullptr;
-  const Error error = survey::AssembleSurvey(snapshot_, request, out, options);
+  options.stop = &query_stop;
+  const Error error = survey::AssembleSurvey(snapshot_, effective, out, options);
   if (!error.Ok()) {
     return error;
   }
@@ -127,7 +145,7 @@ Error AnalysisWorkspace::QuerySurvey(const SurveyRequest& request, survey::Surve
       (data.mc_region_ess.has_value() && data.mc_region_ess->State() == survey::EvidenceState::kFinite);
   const bool complete = (data.evidence.state == survey::EvidenceState::kCertified ||
                          data.evidence.state == survey::EvidenceState::kFinite) &&
-                        ess_complete && !(cancel != nullptr && cancel->CancelRequested());
+                        ess_complete && !query_stop.Stopped();
   if (complete) {
     survey_slot_.crystal_id = request.crystal_id;
     survey_slot_.path_layers = request.path_layers;
@@ -152,9 +170,10 @@ Error AnalysisWorkspace::QueryReport(const PathFeatureReportRequest& request, Fe
   // its own input assembly (the diagnostic sampler's capture), which the report face owns.
   PathFeatureReportRequest effective = request;
   effective.cancel = cancel;
-  if (cancel == nullptr) {
-    return AnalyzePathFeatureReportValue(snapshot_, request, out);
-  }
+  BudgetRequest deadline_request;
+  deadline_request.budget_ms = request.budget_ms;
+  deadline_request.absolute_deadline = request.deadline;
+  effective.query_deadline = ResolveQueryDeadline(deadline_request);
   return AnalyzePathFeatureReportValue(snapshot_, effective, out);
 }
 

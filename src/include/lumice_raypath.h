@@ -341,6 +341,61 @@ LUMICE_API LUMICE_ErrorCode LUMICE_PathProbeToJson(const LUMICE_PathProbe* resul
 // Release a probe result. NULL is a no-op.
 LUMICE_API void LUMICE_PathProbeDestroy(LUMICE_PathProbe* result);
 
+// =============== Typed query workspace ===============
+// One workspace captures a parsed Scene when created. The caller may destroy the Scene after
+// creation. Queries on the same workspace must not overlap; distinct workspaces may run in
+// parallel. Returned results own their data and outlive both Scene and workspace.
+// NULL Destroy is a no-op. A live handle must be destroyed exactly once, after all reads and
+// borrowed-pointer uses finish; Destroy must not overlap a read.
+
+typedef struct LUMICE_PathWorkspace_ LUMICE_PathWorkspace;
+typedef struct LUMICE_PathWarmData_ LUMICE_PathWarmData;
+typedef struct LUMICE_PathCancelToken_ LUMICE_PathCancelToken;
+
+typedef struct LUMICE_PathQueryOptions {
+  size_t struct_size;
+  int deadline_ms;  // 0 = no deadline; positive = one absolute query deadline, at most 120000
+  const LUMICE_PathCancelToken* cancel;
+  const LUMICE_PathWarmData* warm;  // only point and probe; NULL means workspace reuse or inline
+  int include_context;              // point only: 0 = skip context, 1 = include; other values invalid
+} LUMICE_PathQueryOptions;
+
+// A query request must use a published complete struct_size extent or a larger future tail.
+// A new point/probe query refuses nonempty request.warm_json when options.warm is present;
+// warm_json alone is refused: import it explicitly with LUMICE_PathWarmDataFromJson.
+// Query request buffers need only remain valid until the synchronous call returns. The options
+// may be NULL for unbounded, uncancelled queries with no external warm data (point context on).
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceCreate(const LUMICE_Scene* scene, LUMICE_PathWorkspace** out,
+                                                       char* err_buf, size_t err_size);
+LUMICE_API void LUMICE_PathWorkspaceDestroy(LUMICE_PathWorkspace* workspace);
+LUMICE_API LUMICE_ErrorCode LUMICE_PathCancelTokenCreate(LUMICE_PathCancelToken** out);
+LUMICE_API void LUMICE_PathCancelTokenRequest(LUMICE_PathCancelToken* token);
+LUMICE_API void LUMICE_PathCancelTokenDestroy(LUMICE_PathCancelToken* token);
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWarmDataFromSurvey(const LUMICE_PathSurvey* result, LUMICE_PathWarmData** out);
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWarmDataFromPoint(const LUMICE_SinglePathResult* result,
+                                                         LUMICE_PathWarmData** out);
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWarmDataFromJson(const char* utf8, size_t length, LUMICE_PathWarmData** out,
+                                                        char* err_buf, size_t err_size);
+LUMICE_API void LUMICE_PathWarmDataDestroy(LUMICE_PathWarmData* warm);
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryPoint(LUMICE_PathWorkspace* workspace,
+                                                           const LUMICE_SinglePathRequest* request,
+                                                           const LUMICE_PathQueryOptions* options,
+                                                           LUMICE_SinglePathResult** out, char* err_buf,
+                                                           size_t err_size);
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryProbe(LUMICE_PathWorkspace* workspace,
+                                                           const LUMICE_PathProbeRequest* request,
+                                                           const LUMICE_PathQueryOptions* options,
+                                                           LUMICE_PathProbe** out, char* err_buf, size_t err_size);
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQuerySurvey(LUMICE_PathWorkspace* workspace,
+                                                            const LUMICE_PathSurveyRequest* request,
+                                                            const LUMICE_PathQueryOptions* options,
+                                                            LUMICE_PathSurvey** out, char* err_buf, size_t err_size);
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryReport(LUMICE_PathWorkspace* workspace,
+                                                            const LUMICE_PathFeatureReportRequest* request,
+                                                            const LUMICE_PathQueryOptions* options,
+                                                            LUMICE_PathFeatureReport** out, char* err_buf,
+                                                            size_t err_size);
+
 #ifdef __cplusplus
 }
 #endif

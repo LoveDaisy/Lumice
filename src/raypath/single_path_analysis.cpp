@@ -830,10 +830,16 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
   // The budget, resolved once at entry by the one owner (query_control.hpp — the window's
   // zero rule is point's own: no deadline); polled at loop boundaries only. A stopped run
   // serializes its partial document with meta.interrupted — an honest early exit, not a failure.
-  BudgetRequest budget_request;
-  budget_request.budget_ms = request.budget_ms;
-  budget_request.interrupted = request.interrupted;
-  const LegControl budget = ResolveLeg(BudgetWindow::kPointDiscovery, budget_request);
+  LegControl budget;
+  if (request.query_deadline) {
+    budget.stop = request.query_deadline->LegStop();
+    budget.resolved_ms = request.query_deadline->resolved_ms;
+  } else {
+    BudgetRequest budget_request;
+    budget_request.budget_ms = request.budget_ms;
+    budget_request.interrupted = request.interrupted;
+    budget = ResolveLeg(BudgetWindow::kPointDiscovery, budget_request);
+  }
   // The discovery legs' one stop: the resolved window with the query's cancel folded in.
   const analytic::DiscoveryStop stop{ budget.stop.deadline, request.interrupted, request.cancel };
   const auto stopped = [&stop]() {
@@ -959,13 +965,14 @@ Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest
     return error;
   }
   if (include_context) {
-    // The context cost is part of the execution (ruling 4): cancel-stoppable through the same
-    // one-way token, never bounded by the discovery legs' window, never deferred to a reader.
-    const analytic::DiscoveryStop context_stop{ std::chrono::steady_clock::time_point::max(), request.interrupted,
-                                                request.cancel };
+    // Context has no independent window. Unified queries carry their entry deadline through it;
+    // legacy callers retain the original cancel-only behavior.
+    const analytic::DiscoveryStop context_stop{ request.query_deadline ? request.query_deadline->at :
+                                                                         std::chrono::steady_clock::time_point::max(),
+                                                request.interrupted, request.cancel };
     BuildSurveyContext(config, request, execution.meta, admitted, &execution.survey_context, &context_stop);
     if (execution.survey_context.cut_by_stop) {
-      execution.meta.execution = ExecutionOutcome::kCancelled;  // the typed cut signal
+      execution.meta.execution = OutcomeOf(context_stop);
     }
   } else {
     execution.survey_context = {};

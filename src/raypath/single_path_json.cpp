@@ -418,6 +418,7 @@ std::string ToJson(const PointResult& result, const std::string& product_version
   if (!result.Data().Completed()) {
     throw std::invalid_argument("point: an uncompleted value has no publication");
   }
+  detail::g_json_encode_calls.fetch_add(1, std::memory_order_relaxed);
   return EncodePoint(result.Data(), result.Data().survey_context, product_version);
 }
 
@@ -465,6 +466,7 @@ Error ParseWarmSeeds(const std::string& json_text, std::vector<double>* seeds) {
 }
 
 Error DecodeWarmCandidate(const std::string& json_text, WarmCandidate* candidate) {
+  detail::g_json_decode_calls.fetch_add(1, std::memory_order_relaxed);
   *candidate = {};
   auto* seeds = &candidate->seeds;
   auto* survey = &candidate->facts;

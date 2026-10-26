@@ -35,6 +35,7 @@
 #include "raypath/domain/scope.hpp"
 #include "raypath/point_result.hpp"
 #include "raypath/prepared_geometry.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
@@ -79,6 +80,7 @@ struct SinglePathRequest : PathSelection {
   // The query's one-way cancel token (the new contract's cancel core): folded into the
   // discovery legs' single stop and into the context's cancel-only stop.
   const analytic::StopToken* cancel = nullptr;
+  std::optional<QueryDeadline> query_deadline;
 };
 
 // The whole analysis, one typed entry: the execution runs the discovery legs and — when

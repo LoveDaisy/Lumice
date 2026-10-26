@@ -57,6 +57,79 @@ ConfigManager TwoCrystalScene() {
   return config;
 }
 
+TEST(Workspace, QueryDeadlinesResolveOnceWithoutChangingLegacyWindows) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &workspace).Ok());
+  const long queries = QueryDeadlineResolutionCount();
+  const long point_windows = BudgetResolutionCount(BudgetWindow::kPointDiscovery);
+  const long survey_windows = BudgetResolutionCount(BudgetWindow::kLegGuardrail);
+
+  SinglePathRequest point_request = PointOf({ 1, 2 });
+  point_request.budget_ms = 0;
+  PointResult point;
+  ASSERT_TRUE(workspace->QueryPoint(point_request, false, &point).Ok());
+  EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 1);
+  EXPECT_EQ(BudgetResolutionCount(BudgetWindow::kPointDiscovery), point_windows);
+  EXPECT_EQ(point.Data().meta.budget_ms, 0);
+
+  SurveyRequest survey_request = SurveyOf({ 1, 2 });
+  survey_request.budget_ms = 0;
+  survey::SurveyResult survey;
+  ASSERT_TRUE(workspace->QuerySurvey(survey_request, &survey).Ok());
+  EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 2);
+  EXPECT_EQ(BudgetResolutionCount(BudgetWindow::kLegGuardrail), survey_windows);
+
+  analytic::StopToken token;
+  token.RequestCancel();
+  survey::SurveyResult cut;
+  const long before_cut = workspace->StructureRunCount();
+  ASSERT_TRUE(workspace->QuerySurvey(survey_request, &cut, &token).Ok());
+  EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 3);
+  EXPECT_GT(workspace->StructureRunCount(), before_cut);
+
+  ProbeRequest probe_request;
+  probe_request.crystal_id = 1;
+  probe_request.path_layers = { { 1, 2 } };
+  probe_request.at_altitude_deg = -30.0;
+  probe_request.sample_count = 100;
+  probe_request.budget_ms = 0;
+  const long probe_windows = BudgetResolutionCount(BudgetWindow::kProbeLambdas);
+  ProbeResult probe;
+  ASSERT_TRUE(workspace->QueryProbe(probe_request, &probe).Ok());
+  EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 4);
+  EXPECT_EQ(BudgetResolutionCount(BudgetWindow::kProbeLambdas), probe_windows);
+
+  PathFeatureReportRequest report_request;
+  report_request.crystal_id = 1;
+  report_request.path_layers = { { 1, 2 } };
+  report_request.sample_count = 64;
+  report_request.budget_ms = 0;
+  const long quality_windows = BudgetResolutionCount(BudgetWindow::kQualityDeadline);
+  const long hang_windows = BudgetResolutionCount(BudgetWindow::kHangCap);
+  FeatureReportResult report;
+  ASSERT_TRUE(workspace->QueryReport(report_request, &report).Ok());
+  EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 5);
+  EXPECT_EQ(BudgetResolutionCount(BudgetWindow::kQualityDeadline), quality_windows);
+  EXPECT_EQ(BudgetResolutionCount(BudgetWindow::kHangCap), hang_windows);
+}
+
+TEST(Workspace, McEssInUnifiedQueryUsesEntryDeadlineNotLegacyGuardrail) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &workspace).Ok());
+  SurveyRequest request = SurveyOf({ 3, 5 }, 550.0);
+  request.symmetry_bits = 0;
+  request.mc_ess_draws = 64;
+  request.budget_ms = 0;
+  const long queries = QueryDeadlineResolutionCount();
+  const long guardrails = BudgetResolutionCount(BudgetWindow::kLegGuardrail);
+  survey::SurveyResult result;
+  ASSERT_TRUE(workspace->QuerySurvey(request, &result).Ok());
+  ASSERT_TRUE(result.Data().mc_region_ess.has_value());
+  EXPECT_EQ(result.Data().mc_region_ess->State(), survey::EvidenceState::kFinite);
+  EXPECT_EQ(QueryDeadlineResolutionCount(), queries + 1);
+  EXPECT_EQ(BudgetResolutionCount(BudgetWindow::kLegGuardrail), guardrails);
+}
+
 TEST(Workspace, CreationIsLazyAndOwnsNothingButTheSnapshot) {
   std::unique_ptr<AnalysisWorkspace> workspace;
   ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &workspace).Ok());
@@ -148,6 +221,24 @@ TEST(Workspace, SurveyToPointIsTheTypedWarmChainWithNoRecompute) {
   ASSERT_TRUE(workspace->QueryProbe(probe_request, &probe).Ok());
   EXPECT_EQ(probe.Data().context.source, ContextSource::kWarm);
   EXPECT_EQ(workspace->StructureRunCount(), runs);
+}
+
+TEST(Workspace, ExplicitTypedWarmOutlivesItsSourceAndIsNotOverwritten) {
+  std::unique_ptr<AnalysisWorkspace> producer;
+  ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &producer).Ok());
+  survey::SurveyResult source_result;
+  ASSERT_TRUE(producer->QuerySurvey(SurveyOf({ 1, 2 }), &source_result).Ok());
+  SinglePathRequest request = PointOf({ 1, 2 });
+  request.warm_candidate = HarvestSurveyResult(source_result);
+  producer.reset();
+  source_result = survey::SurveyResult{};
+
+  std::unique_ptr<AnalysisWorkspace> consumer;
+  ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &consumer).Ok());
+  PointResult result;
+  ASSERT_TRUE(consumer->QueryPoint(request, true, &result).Ok());
+  EXPECT_EQ(consumer->StructureRunCount(), 0);
+  EXPECT_EQ(result.Data().survey_context.source, ContextSource::kWarm);
 }
 
 TEST(Workspace, CrossShapeRequestsNeverHitTheSurveySlot) {

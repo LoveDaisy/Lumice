@@ -191,6 +191,7 @@ std::string ProbeToJson(const ProbeResult& value, const std::string& product_ver
   if (!value.Data().Completed()) {
     throw std::invalid_argument("probe: an uncompleted value has no publication");
   }
+  detail::g_json_encode_calls.fetch_add(1, std::memory_order_relaxed);
   const ProbeData& result = value.Data();
   nlohmann::ordered_json doc;
   doc["schema"] = "lumice.path-probe";

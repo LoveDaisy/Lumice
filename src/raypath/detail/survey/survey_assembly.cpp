@@ -131,6 +131,9 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
   ess_input.member_count = member_count;
   ess_input.draws = request.mc_ess_draws;
   ess_input.budget_ms = request.budget_ms;
+  if (request.query_deadline) {
+    ess_input.query_deadline = request.query_deadline->at;
+  }
   ess_input.stop = stop;
   AssembleMcRegionEss(ess_input, out);
   const McRegionEssResult& ess = *out->mc_region_ess;
@@ -159,7 +162,8 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
   if (!ValidPathLayers(request.path_layers)) {
     return { ErrorCode::kInvalidPath, "non-empty layers with 2..64 positive face numbers are required" };
   }
-  if (request.symmetry_bits > 7 || request.budget_ms <= 0 || request.budget_ms > kMaxSurveyBudgetMs) {
+  if (request.symmetry_bits > 7 || request.budget_ms < 0 || (request.budget_ms == 0 && !request.query_deadline) ||
+      request.budget_ms > kMaxSurveyBudgetMs) {
     return { ErrorCode::kInvalidArgument, "invalid survey symmetry bits or budget request" };
   }
   if (request.mc_ess_draws < 0 || request.mc_ess_draws > quantity::kSurveyMcEssMaxDraws) {

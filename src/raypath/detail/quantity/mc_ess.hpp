@@ -29,6 +29,8 @@
 // one always does; a partial measure's band coverage would vary with machine speed, breaking
 // the seeded reproducibility the coverage declares).
 
+#include <chrono>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,6 +62,7 @@ struct McRegionEssInput {
   // Cooperative stop riding into the sampler's draw loop beside the guardrail deadline (the
   // single judgment: the stop carries both the deadline and any cancel token).
   const analytic::DiscoveryStop* stop = nullptr;
+  std::optional<std::chrono::steady_clock::time_point> query_deadline;
 };
 
 // Runs the sampler, the measure and the band aggregation, and returns the MC ESS record —

@@ -18,6 +18,7 @@
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
 #include "raypath/feature_report_result.hpp"
+#include "raypath/query_control.hpp"
 
 namespace lumice::raypath {
 constexpr int kFeatureReportSchemaVersion = 3;
@@ -42,6 +43,7 @@ struct PathFeatureReportRequest : PathSelection {
   // The query's one-way cancel token (the new contract's cancel core). Every stop the report
   // installs folds it in; the C surface's legacy flag entry keeps its own documented path.
   const analytic::StopToken* cancel = nullptr;
+  std::optional<QueryDeadline> query_deadline;
 };
 
 Error AnalyzePathFeatureReportValue(const ConfigManager& config, const PathFeatureReportRequest& request,

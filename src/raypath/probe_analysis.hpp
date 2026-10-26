@@ -35,6 +35,7 @@
 #include "raypath/domain/scope.hpp"
 #include "raypath/prepared_geometry.hpp"
 #include "raypath/probe_result.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
@@ -73,6 +74,7 @@ struct ProbeRequest : PathSelection {
   // The query's one-way cancel token (the new contract's cancel core): folded into the same
   // single stop the per-lambda boundaries poll, and into the context's cancel-only stop.
   const analytic::StopToken* cancel = nullptr;
+  std::optional<QueryDeadline> query_deadline;
 };
 
 // The whole analysis. On error `out` is left default-constructed.

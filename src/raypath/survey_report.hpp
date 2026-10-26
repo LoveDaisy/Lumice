@@ -15,6 +15,7 @@
 #include "raypath/domain/error.hpp"
 #include "raypath/domain/input_metadata.hpp"
 #include "raypath/domain/scope.hpp"
+#include "raypath/query_control.hpp"
 #include "raypath/survey_result.hpp"
 
 namespace lumice::raypath::survey {
@@ -39,6 +40,7 @@ struct SurveyRequest : PathSelection {
   // 0 (the default) = the opt-in MC region ESS leg does not run; positive = its requested
   // draw count, at most survey::kSurveyMcEssMaxDraws (enforced in AssembleSurvey).
   int mc_ess_draws = 0;
+  std::optional<QueryDeadline> query_deadline;
 };
 
 // Runs the routing and serializes the document: `json_out` receives the schema-4 document.

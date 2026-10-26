@@ -27,10 +27,8 @@ struct SurveyAssemblyOptions {
   // no T3 quantification (the probe, the chromatic legs, the tint, the witness lattice). The
   // budget note says so instead of claiming legs that did not run.
   bool context_only = false;
-  // Cooperative stop for the assembly's real loops (T0 verdicts, the structure walks, the
-  // sampling legs, the MC ESS draws). The survey's legs stay deadline-unenforced by their own
-  // contract — a stop here is an explicit cancel, and every cut leg fails closed with its own
-  // named refusal (never a fabricated partition, tint or band). Null: exactly today's run.
+  // Legacy callers pass only an explicit cancel; a workspace query additionally carries the
+  // entry's absolute deadline into every assembly leg.
   const analytic::DiscoveryStop* stop = nullptr;
   // Prepared tables for the selection's crystal (a workspace's own build): the assembly then
   // builds no tables of its own. Null: the assembly's own one build, exactly as before.

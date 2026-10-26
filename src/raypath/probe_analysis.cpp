@@ -309,10 +309,16 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
   // the call, a direct caller passes 0 and gets the identical semantics, and meta echoes the
   // resolved value). Polled at the per-lambda BandSum boundaries; a stopped run serializes the
   // profiles it has — meta.interrupted, an honest early exit, never a failure.
-  BudgetRequest budget_request;
-  budget_request.budget_ms = request.budget_ms;
-  budget_request.interrupted = request.interrupted;
-  const LegControl budget = ResolveLeg(BudgetWindow::kProbeLambdas, budget_request);
+  LegControl budget;
+  if (request.query_deadline) {
+    budget.stop = request.query_deadline->LegStop();
+    budget.resolved_ms = request.query_deadline->resolved_ms;
+  } else {
+    BudgetRequest budget_request;
+    budget_request.budget_ms = request.budget_ms;
+    budget_request.interrupted = request.interrupted;
+    budget = ResolveLeg(BudgetWindow::kProbeLambdas, budget_request);
+  }
   meta.budget_ms = budget.resolved_ms;
   // The lambda boundaries' one stop: the resolved window with the query's cancel folded in.
   const analytic::DiscoveryStop stop{ budget.stop.deadline, request.interrupted, request.cancel };
@@ -322,10 +328,11 @@ Error AnalyzePathProbeData(const ConfigManager& config, const ProbeRequest& requ
     }
     return stop.Stopped();
   };
-  // The context's own stop is CANCEL-ONLY (ruling 4): the context cost is stoppable by an
-  // explicit cancel, never by the lambda window — a leg cut does not interrupt it.
-  const analytic::DiscoveryStop context_stop{ std::chrono::steady_clock::time_point::max(), request.interrupted,
-                                              request.cancel };
+  // A unified query carries its entry deadline through context assembly; legacy retains the
+  // cancel-only context, independent of its lambda window.
+  const analytic::DiscoveryStop context_stop{ request.query_deadline ? request.query_deadline->at :
+                                                                       std::chrono::steady_clock::time_point::max(),
+                                              request.interrupted, request.cancel };
 
   // ---- the context (the point query's block, read at the at point) ----
   SurveyContextBlock& context = result.context;

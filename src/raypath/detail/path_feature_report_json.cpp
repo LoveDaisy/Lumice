@@ -524,6 +524,7 @@ std::string PathFeatureReportV3ToJson(const FeatureReportResult& value, const ch
     // The construction slot is not a product; a completed value never carries this outcome.
     throw std::invalid_argument("feature report: an uncompleted value has no publication");
   }
+  detail::g_json_encode_calls.fetch_add(1, std::memory_order_relaxed);
   if (result.outcome == ReportOutcome::kUnsupportedMulticrystal) {
     // The early path in the v3 shape: the segments and blocks it names, empty; the refusal row.
     Json coverage = Json::array();

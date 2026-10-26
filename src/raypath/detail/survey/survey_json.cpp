@@ -336,6 +336,7 @@ Json DiagnoseJson(const SurveyDiagnoseBlock& block) {
 }  // namespace
 
 std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_version) {
+  detail::g_json_encode_calls.fetch_add(1, std::memory_order_relaxed);
   const SurveyData& document = result.Data();
   Json doc = { { "schema", "lumice.path-survey" },
                { "schema_version", document.schema_version },

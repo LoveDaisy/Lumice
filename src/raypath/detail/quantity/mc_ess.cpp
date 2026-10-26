@@ -96,20 +96,23 @@ McRegionEssResult EvaluateMcRegionEss(const McRegionEssInput& input) {
                             SpectrumRequest{ std::move(sample) });
   SamplingBudget budget;
   budget.requested_samples = static_cast<uint64_t>(input.draws);
-  // The deadline is the survey budget guardrail (resolved by the one owner, query_control.hpp
-  // — this leg's own start plus the survey budget, verbatim); the draw count is capped at the
-  // request boundary, so the optical-evaluation ceiling adds nothing the deadline does not
-  // already enforce and stays out of the way.
+  // In a unified query the pre-resolved deadline wins even if this leg starts later;
+  // the legacy leg keeps its own budget window.
   budget.max_optical_evaluations = ~uint64_t{ 0 };
-  BudgetRequest guardrail_request;
-  guardrail_request.budget_ms = input.budget_ms;
-  const LegControl guardrail = ResolveLeg(BudgetWindow::kLegGuardrail, guardrail_request);
-  budget.deadline = guardrail.stop.deadline;
-  // The single judgment the draw loops poll: this leg's own guardrail deadline merged with the
-  // caller's cancel token (and legacy signal) — one stop object, no second verdict anywhere.
+  if (input.query_deadline) {
+    budget.deadline = *input.query_deadline;
+    if (input.budget_ms > 0) {
+      budget.deadline =
+          std::min(budget.deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(input.budget_ms));
+    }
+  } else {
+    BudgetRequest guardrail_request;
+    guardrail_request.budget_ms = input.budget_ms;
+    budget.deadline = ResolveLeg(BudgetWindow::kLegGuardrail, guardrail_request).stop.deadline;
+  }
   analytic::DiscoveryStop merged_stop;
   if (input.stop != nullptr) {
-    merged_stop.deadline = guardrail.stop.deadline;
+    merged_stop.deadline = budget.deadline;
     merged_stop.interrupted = input.stop->interrupted;
     merged_stop.token = input.stop->token;
     budget.stop = &merged_stop;

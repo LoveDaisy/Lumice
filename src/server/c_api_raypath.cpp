@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstring>
 #include <exception>
+#include <initializer_list>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -19,6 +21,7 @@
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
 #include "raypath/survey_report.hpp"
+#include "raypath/workspace.hpp"
 #include "server/c_api_engine_internal.hpp"  // lumice::capi::ToCApiErrorCode
 #include "server/c_api_scene_internal.hpp"   // SceneRoot
 #include "server/server.hpp"
@@ -74,6 +77,18 @@ struct LUMICE_PathProbe_ {
   lumice::raypath::ProbeResult result;
   mutable std::mutex derived_mutex;
   mutable std::string derived_json;
+};
+
+struct LUMICE_PathWorkspace_ {
+  std::unique_ptr<lumice::raypath::AnalysisWorkspace> workspace;
+};
+
+struct LUMICE_PathWarmData_ {
+  lumice::raypath::WarmCandidate candidate;
+};
+
+struct LUMICE_PathCancelToken_ {
+  lumice::analytic::StopToken token;
 };
 
 namespace {
@@ -135,7 +150,34 @@ LUMICE_ErrorCode Refuse(const lumice::raypath::Error& e, char* err_buf, size_t e
   return LUMICE_ERR_INVALID_VALUE;
 }
 
+LUMICE_ErrorCode ValidateQueryOptions(const LUMICE_PathQueryOptions* options, bool accepts_warm, char* err_buf,
+                                      size_t err_size) {
+  if (options == nullptr) {
+    return LUMICE_OK;
+  }
+  if (options->struct_size < sizeof(LUMICE_PathQueryOptions) || options->deadline_ms < 0 ||
+      options->deadline_ms > LUMICE_SINGLE_PATH_MAX_BUDGET_MS || (!accepts_warm && options->warm != nullptr) ||
+      (options->include_context != 0 && options->include_context != 1)) {
+    WriteError(err_buf, err_size, "invalid_argument: invalid query options");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  return LUMICE_OK;
+}
+
+LUMICE_ErrorCode ValidateWarm(const char* text, size_t length, const LUMICE_PathQueryOptions* options, char* err_buf,
+                              size_t err_size) {
+  if (text != nullptr && length > 0) {
+    WriteError(err_buf, err_size,
+               options != nullptr && options->warm != nullptr ?
+                   "invalid_argument: both typed warm and warm_json were supplied" :
+                   "invalid_argument: import warm_json with LUMICE_PathWarmDataFromJson");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  return LUMICE_OK;
+}
+
 LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathRequest& request,
+                         lumice::raypath::AnalysisWorkspace* workspace, const LUMICE_PathQueryOptions* options,
                          LUMICE_SinglePathResult** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
 
@@ -169,7 +211,12 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   }
   req.sample_count = request.sample_count == 0 ? rp::kDefaultSampleCount : request.sample_count;
   req.sun_grid_lat_count = request.sun_grid_lat_count;
-  if (request.struct_size >= kRequestSizeV452) {
+  if (workspace != nullptr) {
+    req.budget_ms = options != nullptr ? options->deadline_ms : 0;
+    if (options != nullptr && options->warm != nullptr) {
+      req.warm_candidate = options->warm->candidate;
+    }
+  } else if (request.struct_size >= kRequestSizeV452) {
     if (request.deadline_ms < 0) {  // a negative is not the default: refuse as the contract is
       // written, not silently remap it (the CLI never sends one; a direct caller might)
       return Refuse({ rp::ErrorCode::kInvalidArgument,
@@ -188,21 +235,28 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   // The scene document LUMICE_CommitScene would hand the server, through the same parser. Parsed
   // before the warm text so the schema-4 gates can compare it.
   lumice::ConfigManager config;
-  if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzeSinglePath",
-                                                           lumice::GetGlobalLogger(), nullptr, &config)) {
-    WriteError(err_buf, err_size, "invalid_scene: " + err.message);
-    return lumice::capi::ToCApiErrorCode(err.code);
+  if (workspace == nullptr) {
+    if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzeSinglePath",
+                                                             lumice::GetGlobalLogger(), nullptr, &config)) {
+      WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+      return lumice::capi::ToCApiErrorCode(err.code);
+    }
   }
 
-  if (request.warm_json != nullptr && request.warm_json_len > 0) {
+  if (workspace == nullptr && request.warm_json != nullptr && request.warm_json_len > 0) {
     req.warm_candidate.emplace();
     req.warm_candidate->decode_error =
         rp::DecodeWarmCandidate(std::string(request.warm_json, request.warm_json_len), &*req.warm_candidate);
   }
 
-  lumice::raypath::PointResult result;
-  if (const rp::Error e = rp::AnalyzePathPointValue(config, req, true, &result); !e.Ok()) {
-    return Refuse(e, err_buf, err_size);
+  rp::PointResult result;
+  const rp::Error error =
+      workspace != nullptr ?
+          workspace->QueryPoint(req, options == nullptr || options->include_context != 0, &result,
+                                options != nullptr && options->cancel != nullptr ? &options->cancel->token : nullptr) :
+          rp::AnalyzePathPointValue(config, req, true, &result);
+  if (!error.Ok()) {
+    return Refuse(error, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_SinglePathResult_>();
   handle->result = std::move(result);
@@ -211,6 +265,7 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
 }
 
 LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatureReportRequest& request,
+                               lumice::raypath::AnalysisWorkspace* workspace, const LUMICE_PathQueryOptions* options,
                                LUMICE_PathFeatureReport** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
   const auto request_begin = std::chrono::steady_clock::now();
@@ -287,15 +342,24 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   }
 
   lumice::ConfigManager config;
-  if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathFeatureReport",
-                                                           lumice::GetGlobalLogger(), nullptr, &config)) {
-    WriteError(err_buf, err_size, "invalid_scene: " + err.message);
-    return lumice::capi::ToCApiErrorCode(err.code);
+  if (workspace == nullptr) {
+    if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathFeatureReport",
+                                                             lumice::GetGlobalLogger(), nullptr, &config)) {
+      WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+      return lumice::capi::ToCApiErrorCode(err.code);
+    }
+    req.deadline = request_begin + std::chrono::milliseconds(req.budget_ms);
+  } else {
+    req.budget_ms = options != nullptr ? options->deadline_ms : 0;
   }
-  req.deadline = request_begin + std::chrono::milliseconds(req.budget_ms);
   rp::FeatureReportResult result;
-  if (const rp::Error e = rp::AnalyzePathFeatureReportValue(config, req, &result); !e.Ok()) {
-    return Refuse(e, err_buf, err_size);
+  const rp::Error error =
+      workspace != nullptr ?
+          workspace->QueryReport(req, &result,
+                                 options != nullptr && options->cancel != nullptr ? &options->cancel->token : nullptr) :
+          rp::AnalyzePathFeatureReportValue(config, req, &result);
+  if (!error.Ok()) {
+    return Refuse(error, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_PathFeatureReport_>();
   handle->result = std::move(result);
@@ -304,6 +368,7 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
 }
 
 LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurveyRequest& request, int mc_ess_draws,
+                               lumice::raypath::AnalysisWorkspace* workspace, const LUMICE_PathQueryOptions* options,
                                LUMICE_PathSurvey** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
 
@@ -333,9 +398,8 @@ LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurve
   if (request.wavelength_nm > 0.0) {  // false for NaN too: unset
     req.wavelength_nm = request.wavelength_nm;
   }
-  if (request.budget_ms != 0) {
-    req.budget_ms = request.budget_ms;
-  }
+  req.budget_ms = workspace != nullptr ? (options != nullptr ? options->deadline_ms : 0) :
+                                         (request.budget_ms != 0 ? request.budget_ms : req.budget_ms);
   if (request.symmetry_bits_plus_one < 0 || request.symmetry_bits_plus_one > 1) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "invalid physical symmetry bits" }, err_buf, err_size);
   }
@@ -346,14 +410,21 @@ LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurve
 
   // The scene document LUMICE_CommitScene would hand the server, through the same parser.
   lumice::ConfigManager config;
-  if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathSurvey",
-                                                           lumice::GetGlobalLogger(), nullptr, &config)) {
-    WriteError(err_buf, err_size, "invalid_scene: " + err.message);
-    return lumice::capi::ToCApiErrorCode(err.code);
+  if (workspace == nullptr) {
+    if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathSurvey",
+                                                             lumice::GetGlobalLogger(), nullptr, &config)) {
+      WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+      return lumice::capi::ToCApiErrorCode(err.code);
+    }
   }
   rp::survey::SurveyResult result;
-  if (const rp::Error e = rp::AnalyzePathSurveyValue(config, req, &result); !e.Ok()) {
-    return Refuse(e, err_buf, err_size);
+  const rp::Error error =
+      workspace != nullptr ?
+          workspace->QuerySurvey(req, &result,
+                                 options != nullptr && options->cancel != nullptr ? &options->cancel->token : nullptr) :
+          rp::AnalyzePathSurveyValue(config, req, &result);
+  if (!error.Ok()) {
+    return Refuse(error, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_PathSurvey_>();
   handle->result = std::move(result);
@@ -361,8 +432,9 @@ LUMICE_ErrorCode AnalyzeSurvey(const LUMICE_Scene* scene, const LUMICE_PathSurve
   return LUMICE_OK;
 }
 
-LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeRequest& request, LUMICE_PathProbe** out,
-                              char* err_buf, size_t err_size) {
+LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeRequest& request,
+                              lumice::raypath::AnalysisWorkspace* workspace, const LUMICE_PathQueryOptions* options,
+                              LUMICE_PathProbe** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
 
   rp::ProbeRequest req;
@@ -418,13 +490,14 @@ LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeR
     req.wavelengths_nm.assign(request.wavelengths_nm, request.wavelengths_nm + request.wavelength_count);
   }
   req.sample_count = request.sample_count;
-  if (request.budget_ms < 0) {  // a negative is not the default: refuse as the contract is written
+  if (workspace == nullptr && request.budget_ms < 0) {
     return Refuse({ rp::ErrorCode::kInvalidArgument,
                     "budget_ms must be 0 (the default) or at most " + std::to_string(rp::kMaxProbeBudgetMs) },
                   err_buf, err_size);
   }
-  req.budget_ms = request.budget_ms > 0 ? request.budget_ms : rp::kDefaultProbeBudgetMs;
-  if (req.budget_ms > rp::kMaxProbeBudgetMs) {
+  req.budget_ms = workspace != nullptr ? (options != nullptr ? options->deadline_ms : 0) :
+                                         (request.budget_ms > 0 ? request.budget_ms : rp::kDefaultProbeBudgetMs);
+  if (workspace == nullptr && req.budget_ms > rp::kMaxProbeBudgetMs) {
     return Refuse({ rp::ErrorCode::kInvalidArgument,
                     "budget_ms must be 0 (the default) or at most " + std::to_string(rp::kMaxProbeBudgetMs) },
                   err_buf, err_size);
@@ -433,26 +506,75 @@ LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeR
 
   // The scene document LUMICE_CommitScene would hand the server, through the same parser.
   lumice::ConfigManager config;
-  if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathProbe",
-                                                           lumice::GetGlobalLogger(), nullptr, &config)) {
-    WriteError(err_buf, err_size, "invalid_scene: " + err.message);
-    return lumice::capi::ToCApiErrorCode(err.code);
+  if (workspace == nullptr) {
+    if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathProbe",
+                                                             lumice::GetGlobalLogger(), nullptr, &config)) {
+      WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+      return lumice::capi::ToCApiErrorCode(err.code);
+    }
   }
 
-  if (request.warm_json != nullptr && request.warm_json_len > 0) {
+  if (workspace == nullptr && request.warm_json != nullptr && request.warm_json_len > 0) {
     req.warm_candidate.emplace();
     req.warm_candidate->decode_error =
         rp::DecodeWarmCandidate(std::string(request.warm_json, request.warm_json_len), &*req.warm_candidate);
+  } else if (workspace != nullptr && options != nullptr && options->warm != nullptr) {
+    req.warm_candidate = options->warm->candidate;
   }
 
-  lumice::raypath::ProbeResult result;
-  if (const rp::Error e = rp::AnalyzePathProbe(config, req, &result); !e.Ok()) {
-    return Refuse(e, err_buf, err_size);
+  rp::ProbeResult result;
+  const rp::Error error =
+      workspace != nullptr ?
+          workspace->QueryProbe(req, &result,
+                                options != nullptr && options->cancel != nullptr ? &options->cancel->token : nullptr) :
+          rp::AnalyzePathProbe(config, req, &result);
+  if (!error.Ok()) {
+    return Refuse(error, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_PathProbe_>();
   handle->result = std::move(result);
   *out = handle.release();
   return LUMICE_OK;
+}
+
+template <typename Request, typename Result, typename Query>
+LUMICE_ErrorCode RunWorkspaceQuery(LUMICE_PathWorkspace* workspace, const Request* request,
+                                   const LUMICE_PathQueryOptions* options, Result** out, char* err_buf, size_t err_size,
+                                   std::initializer_list<size_t> extents, bool accepts_warm, Query query) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (err_buf != nullptr && err_size > 0) {
+    err_buf[0] = '\0';
+  }
+  if (workspace == nullptr || request == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: workspace, request and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  const size_t current = *std::max_element(extents.begin(), extents.end());
+  if (request->struct_size < current &&
+      std::find(extents.begin(), extents.end(), request->struct_size) == extents.end()) {
+    WriteError(err_buf, err_size, "invalid_argument: request struct_size is not a published complete extent");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if ((request->faces == nullptr && request->face_count > 0) ||
+      (request->layer_face_counts == nullptr && request->layer_count > 0)) {
+    WriteError(err_buf, err_size, "null_arg: path arrays must not be NULL with non-zero counts");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (const auto error = ValidateQueryOptions(options, accepts_warm, err_buf, err_size); error != LUMICE_OK) {
+    return error;
+  }
+  try {
+    return query();
+  } catch (const std::exception& e) {
+    LOG_ERROR("LUMICE_PathWorkspaceQuery: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+  } catch (...) {
+    LOG_ERROR("LUMICE_PathWorkspaceQuery: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+  }
+  return LUMICE_ERR_UNKNOWN;
 }
 
 }  // namespace
@@ -483,7 +605,7 @@ LUMICE_ErrorCode LUMICE_AnalyzeSinglePath(const LUMICE_Scene* scene, const LUMIC
   }
   // No exception crosses the C ABI.
   try {
-    return Analyze(scene, *request, out, err_buf, err_size);
+    return Analyze(scene, *request, nullptr, nullptr, out, err_buf, err_size);
   } catch (const std::exception& e) {
     LOG_ERROR("LUMICE_AnalyzeSinglePath: {}", e.what());
     WriteError(err_buf, err_size, std::string("internal: ") + e.what());
@@ -534,7 +656,7 @@ LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* scene,
     return LUMICE_ERR_NULL_ARG;
   }
   try {
-    return AnalyzeReport(scene, *request, out, err_buf, err_size);
+    return AnalyzeReport(scene, *request, nullptr, nullptr, out, err_buf, err_size);
   } catch (const std::exception& e) {
     LOG_ERROR("LUMICE_AnalyzePathFeatureReport: {}", e.what());
     WriteError(err_buf, err_size, std::string("internal: ") + e.what());
@@ -586,7 +708,7 @@ LUMICE_ErrorCode LUMICE_AnalyzePathSurvey(const LUMICE_Scene* scene, const LUMIC
     // v4.54-or-older struct_size means the field does not exist there, and the zero default
     // (the leg does not run) is the caller's intent.
     const int mc_ess_draws = request->struct_size >= sizeof(LUMICE_PathSurveyRequest) ? request->mc_ess_draws : 0;
-    return AnalyzeSurvey(scene, *request, mc_ess_draws, out, err_buf, err_size);
+    return AnalyzeSurvey(scene, *request, mc_ess_draws, nullptr, nullptr, out, err_buf, err_size);
   } catch (const std::exception& e) {
     LOG_ERROR("LUMICE_AnalyzePathSurvey: {}", e.what());
     WriteError(err_buf, err_size, std::string("internal: ") + e.what());
@@ -636,7 +758,7 @@ LUMICE_ErrorCode LUMICE_AnalyzePathProbe(const LUMICE_Scene* scene, const LUMICE
     return LUMICE_ERR_NULL_ARG;
   }
   try {
-    return AnalyzeProbe(scene, *request, out, err_buf, err_size);
+    return AnalyzeProbe(scene, *request, nullptr, nullptr, out, err_buf, err_size);
   } catch (const std::exception& e) {
     LOG_ERROR("LUMICE_AnalyzePathProbe: {}", e.what());
     WriteError(err_buf, err_size, std::string("internal: ") + e.what());
@@ -656,4 +778,198 @@ LUMICE_ErrorCode LUMICE_PathProbeToJson(const LUMICE_PathProbe* result, char* ou
 
 void LUMICE_PathProbeDestroy(LUMICE_PathProbe* result) {
   std::unique_ptr<LUMICE_PathProbe_> owned(result);
+}
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceCreate(const LUMICE_Scene* scene, LUMICE_PathWorkspace** out, char* err_buf,
+                                            size_t err_size) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (scene == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: scene and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  try {
+    lumice::ConfigManager config;
+    if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_PathWorkspaceCreate",
+                                                             lumice::GetGlobalLogger(), nullptr, &config)) {
+      WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+      return lumice::capi::ToCApiErrorCode(err.code);
+    }
+    auto handle = std::make_unique<LUMICE_PathWorkspace_>();
+    if (const auto error = lumice::raypath::AnalysisWorkspace::Create(config, &handle->workspace); !error.Ok()) {
+      return Refuse(error, err_buf, err_size);
+    }
+    *out = handle.release();
+    return LUMICE_OK;
+  } catch (const std::exception& e) {
+    LOG_ERROR("LUMICE_PathWorkspaceCreate: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+    return LUMICE_ERR_UNKNOWN;
+  } catch (...) {
+    LOG_ERROR("LUMICE_PathWorkspaceCreate: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+    return LUMICE_ERR_UNKNOWN;
+  }
+}
+
+void LUMICE_PathWorkspaceDestroy(LUMICE_PathWorkspace* workspace) {
+  std::unique_ptr<LUMICE_PathWorkspace_> owned(workspace);
+}
+
+LUMICE_ErrorCode LUMICE_PathCancelTokenCreate(LUMICE_PathCancelToken** out) {
+  if (out == nullptr) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  *out = nullptr;
+  try {
+    *out = std::make_unique<LUMICE_PathCancelToken_>().release();
+    return LUMICE_OK;
+  } catch (...) {
+    return LUMICE_ERR_UNKNOWN;
+  }
+}
+
+void LUMICE_PathCancelTokenRequest(LUMICE_PathCancelToken* token) {
+  if (token != nullptr) {
+    token->token.RequestCancel();
+  }
+}
+
+void LUMICE_PathCancelTokenDestroy(LUMICE_PathCancelToken* token) {
+  std::unique_ptr<LUMICE_PathCancelToken_> owned(token);
+}
+
+LUMICE_ErrorCode LUMICE_PathWarmDataFromSurvey(const LUMICE_PathSurvey* result, LUMICE_PathWarmData** out) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (result == nullptr || out == nullptr) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  try {
+    auto handle = std::make_unique<LUMICE_PathWarmData_>();
+    handle->candidate = lumice::raypath::HarvestSurveyResult(result->result);
+    *out = handle.release();
+    return LUMICE_OK;
+  } catch (...) {
+    return LUMICE_ERR_UNKNOWN;
+  }
+}
+
+LUMICE_ErrorCode LUMICE_PathWarmDataFromPoint(const LUMICE_SinglePathResult* result, LUMICE_PathWarmData** out) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (result == nullptr || out == nullptr) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  try {
+    auto handle = std::make_unique<LUMICE_PathWarmData_>();
+    const auto& data = result->result.Data();
+    if (data.OutcomeValue() == lumice::raypath::Outcome::kDiscovered) {
+      for (const auto& component : data.Discovered().components) {
+        handle->candidate.seeds.insert(handle->candidate.seeds.end(), std::begin(component.seed),
+                                       std::end(component.seed));
+      }
+      for (const auto& incomplete : data.Discovered().incomplete) {
+        handle->candidate.seeds.insert(handle->candidate.seeds.end(), std::begin(incomplete.seed),
+                                       std::end(incomplete.seed));
+      }
+    }
+    *out = handle.release();
+    return LUMICE_OK;
+  } catch (...) {
+    return LUMICE_ERR_UNKNOWN;
+  }
+}
+
+LUMICE_ErrorCode LUMICE_PathWarmDataFromJson(const char* utf8, size_t length, LUMICE_PathWarmData** out, char* err_buf,
+                                             size_t err_size) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (utf8 == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: document and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  try {
+    auto handle = std::make_unique<LUMICE_PathWarmData_>();
+    if (const auto error = lumice::raypath::DecodeWarmCandidate(std::string(utf8, length), &handle->candidate);
+        !error.Ok()) {
+      return Refuse(error, err_buf, err_size);
+    }
+    *out = handle.release();
+    return LUMICE_OK;
+  } catch (const std::exception& e) {
+    LOG_ERROR("LUMICE_PathWarmDataFromJson: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+    return LUMICE_ERR_UNKNOWN;
+  } catch (...) {
+    LOG_ERROR("LUMICE_PathWarmDataFromJson: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+    return LUMICE_ERR_UNKNOWN;
+  }
+}
+
+void LUMICE_PathWarmDataDestroy(LUMICE_PathWarmData* warm) {
+  std::unique_ptr<LUMICE_PathWarmData_> owned(warm);
+}
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceQueryPoint(LUMICE_PathWorkspace* workspace,
+                                                const LUMICE_SinglePathRequest* request,
+                                                const LUMICE_PathQueryOptions* options, LUMICE_SinglePathResult** out,
+                                                char* err_buf, size_t err_size) {
+  return RunWorkspaceQuery(
+      workspace, request, options, out, err_buf, err_size, { kRequestSizeV450, kRequestSizeV452 }, true, [&] {
+        if (const auto error = ValidateWarm(request->warm_json, request->warm_json_len, options, err_buf, err_size);
+            error != LUMICE_OK) {
+          return error;
+        }
+        return Analyze(nullptr, *request, workspace->workspace.get(), options, out, err_buf, err_size);
+      });
+}
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceQueryProbe(LUMICE_PathWorkspace* workspace, const LUMICE_PathProbeRequest* request,
+                                                const LUMICE_PathQueryOptions* options, LUMICE_PathProbe** out,
+                                                char* err_buf, size_t err_size) {
+  return RunWorkspaceQuery(
+      workspace, request, options, out, err_buf, err_size, { sizeof(LUMICE_PathProbeRequest) }, true, [&] {
+        if ((request->wavelengths_nm == nullptr && request->wavelength_count > 0)) {
+          WriteError(err_buf, err_size, "null_arg: wavelengths_nm is NULL with non-zero count");
+          return LUMICE_ERR_NULL_ARG;
+        }
+        if (const auto error = ValidateWarm(request->warm_json, request->warm_json_len, options, err_buf, err_size);
+            error != LUMICE_OK) {
+          return error;
+        }
+        return AnalyzeProbe(nullptr, *request, workspace->workspace.get(), options, out, err_buf, err_size);
+      });
+}
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceQuerySurvey(LUMICE_PathWorkspace* workspace,
+                                                 const LUMICE_PathSurveyRequest* request,
+                                                 const LUMICE_PathQueryOptions* options, LUMICE_PathSurvey** out,
+                                                 char* err_buf, size_t err_size) {
+  return RunWorkspaceQuery(
+      workspace, request, options, out, err_buf, err_size, { kSurveyRequestSizeV1, sizeof(LUMICE_PathSurveyRequest) },
+      false, [&] {
+        const int draws = request->struct_size >= sizeof(LUMICE_PathSurveyRequest) ? request->mc_ess_draws : 0;
+        return AnalyzeSurvey(nullptr, *request, draws, workspace->workspace.get(), options, out, err_buf, err_size);
+      });
+}
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceQueryReport(LUMICE_PathWorkspace* workspace,
+                                                 const LUMICE_PathFeatureReportRequest* request,
+                                                 const LUMICE_PathQueryOptions* options, LUMICE_PathFeatureReport** out,
+                                                 char* err_buf, size_t err_size) {
+  return RunWorkspaceQuery(workspace, request, options, out, err_buf, err_size,
+                           { kFeatureReportRequestSizeV1, sizeof(LUMICE_PathFeatureReportRequest) }, false, [&] {
+                             if (request->wavelengths_nm == nullptr && request->wavelength_count > 0) {
+                               WriteError(err_buf, err_size, "null_arg: wavelengths_nm is NULL with non-zero count");
+                               return LUMICE_ERR_NULL_ARG;
+                             }
+                             return AnalyzeReport(nullptr, *request, workspace->workspace.get(), options, out, err_buf,
+                                                  err_size);
+                           });
 }
