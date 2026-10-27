@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793112026378,
+  "lastUpdate": 1793112028951,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "25b83e949546f15f97e44007554cd6d5a4ddd1e3",
-          "message": "Merge pull request #433 from LoveDaisy/chore/repo-roles-and-shared-lib-docs\n\ndocs: repository roles for Lumice / Lumice Integral, and the shared library's first consumer",
-          "timestamp": "2026-09-28T01:28:05+08:00",
-          "tree_id": "035c8e3864a2fee8909f0af50fb76aaff2835c1a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/25b83e949546f15f97e44007554cd6d5a4ddd1e3"
-        },
-        "date": 1790530893275,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 85.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 100.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "26ab6a18e6455817e83e95ad76594539cffc24d6",
           "message": "Merge pull request #434 from LoveDaisy/chore/ray-allocation-settings-combo\n\ngui: sim.ray_allocation Settings editor becomes an adaptive/proportional combo",
           "timestamp": "2026-09-28T01:59:27+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.7,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "696685bc25d5ef49575143b12f37744b2519944d",
+          "message": "Merge pull request #548 from LoveDaisy/feat/crystal-card-text-hit-overlap\n\nFix crystal card text probes stealing button clicks",
+          "timestamp": "2026-10-27T22:36:07+08:00",
+          "tree_id": "e128f7f0b209745c23eb487980fd9d05b97eff32",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/696685bc25d5ef49575143b12f37744b2519944d"
+        },
+        "date": 1793112028061,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 75.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.5,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.2,
             "unit": "%"
           }
         ]
