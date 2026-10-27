@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793112021070,
+  "lastUpdate": 1793112026378,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "25b83e949546f15f97e44007554cd6d5a4ddd1e3",
-          "message": "Merge pull request #433 from LoveDaisy/chore/repo-roles-and-shared-lib-docs\n\ndocs: repository roles for Lumice / Lumice Integral, and the shared library's first consumer",
-          "timestamp": "2026-09-28T01:28:05+08:00",
-          "tree_id": "035c8e3864a2fee8909f0af50fb76aaff2835c1a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/25b83e949546f15f97e44007554cd6d5a4ddd1e3"
-        },
-        "date": 1790530891167,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 833015.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1024976.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 727625.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 700986.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "26ab6a18e6455817e83e95ad76594539cffc24d6",
           "message": "Merge pull request #434 from LoveDaisy/chore/ray-allocation-settings-combo\n\ngui: sim.ray_allocation Settings editor becomes an adaptive/proportional combo",
           "timestamp": "2026-09-28T01:59:27+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 581417.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "696685bc25d5ef49575143b12f37744b2519944d",
+          "message": "Merge pull request #548 from LoveDaisy/feat/crystal-card-text-hit-overlap\n\nFix crystal card text probes stealing button clicks",
+          "timestamp": "2026-10-27T22:36:07+08:00",
+          "tree_id": "e128f7f0b209745c23eb487980fd9d05b97eff32",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/696685bc25d5ef49575143b12f37744b2519944d"
+        },
+        "date": 1793112025721,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 845490.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1005593.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 723906.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 583131.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
