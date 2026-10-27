@@ -39,6 +39,7 @@
 // still passes none on.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -47,7 +48,8 @@
 #include "IconsFontAwesome6.h"
 #include "gui/edit_modals.hpp"  // IsEditModalOpen / OpenEditModal / GetEditModalTarget — the toggle must not also trip the card's click handler, and the delete cases below read the editor's binding
 #include "gui/gui_state.hpp"
-#include "imgui_internal.h"  // ImGuiWindow — a card's widgets are not addressable by path; see CardWindow
+#include "gui/raypath_segments.hpp"  // ParseSummandText — the filter row below is built the way the loader builds it
+#include "imgui_internal.h"          // ImGuiWindow — a card's widgets are not addressable by path; see CardWindow
 #include "test_gui_shared.hpp"
 
 namespace {
@@ -147,6 +149,53 @@ std::vector<int> LayerCrystalOrder(int layer_idx) {
     ids.push_back(e.crystal_id);
   }
   return ids;
+}
+
+// A click at a caller-chosen point: the same press/release pair ItemClick drives, with the point
+// taken from a rect instead of from its centre. Where on the rect the click lands is the whole
+// subject of the row-probe cases at the end of this suite — a centre click can land past the end
+// of a value that is too wide and never touch the overlap at all.
+//
+// The tail is four frames, not one: a press that reaches the card body only becomes an open editor
+// on a later frame (the click sets an EditRequest that the next frame's app_panels pass turns into
+// a modal), and a case that asks "did this press open the editor?" has to give that pass the
+// frames it needs before its answer means anything.
+void ClickAt(ImGuiTestContext* ctx, const ImVec2& pos) {
+  ctx->MouseMoveToPos(pos);
+  ctx->MouseDown(0);
+  ctx->MouseUp(0);
+  ctx->Yield(4);
+}
+
+// The filter of the 4.7.5 document that reported a dead left half on the card's Duplicate button,
+// reduced to the public behaviour that made the row overflow: two sum-of-products rows, the first
+// of them a ';' OR pair, filter_out, all three symmetries on — the file's own filter object, not a
+// shortened paraphrase of it (name, rows, action and flags are the document's; the rest of the
+// document is not needed to reproduce the layout, and its private path stays out of the tree).
+//
+// Its summary reads "3-4-5; 3-5-7 (+1 more) Out PBD", wider than the card's value column — which is
+// what puts text under the icon rail.
+void GiveEntry0TheReportedFilter(ImGuiTestContext* ctx) {
+  gui::FilterConfig f;
+  f.name = "Exclude 1-3-2-5-1";
+  f.action = 1;  // filter_out
+  f.sym_p = true;
+  f.sym_b = true;
+  f.sym_d = true;
+  for (const char* row : { "3-4-5; 3-5-7", "3-1-6" }) {
+    f.param.push_back(gui::SummandText{ row, gui::ParseSummandText(row) });
+  }
+  gui::SetFilter(gui::g_state, gui::g_state.layers[0].entries[0], f);
+  ctx->Yield(3);
+}
+
+// The three positions across a rect that a click is aimed at: just inside its left edge, its
+// centre, just inside its right edge. Inside by two pixels rather than exactly on the edge, so
+// rounding of the rect and the pointer cannot put a sample one pixel outside the widget.
+std::array<ImVec2, 3> PointsAcross(const ImRect& rect) {
+  const float mid_y = (rect.Min.y + rect.Max.y) * 0.5f;
+  const float mid_x = (rect.Min.x + rect.Max.x) * 0.5f;
+  return { ImVec2(rect.Min.x + 2.0f, mid_y), ImVec2(mid_x, mid_y), ImVec2(rect.Max.x - 2.0f, mid_y) };
 }
 
 // The Colors window one case parks over the cards, closed on every exit path.
@@ -1309,8 +1358,8 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
   // boundaries is exactly as strong as those two computations agreeing, which nothing else checks.
   //
   // Measured from real frames on both ends (label probe and value probe are pixel-neutral
-  // InvisibleButtons over the text; see TextWithLabelProbe / the value probe in panels.cpp), not
-  // derived from the layout constants — deriving either edge from kLabelColWidth +
+  // measurement items over the text — no widget, so they take no pointer; see ItemProbe in
+  // panels.cpp), not derived from the layout constants — deriving either edge from kLabelColWidth +
   // LabelColumnGapX() would compare the layout code against itself.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "a_cards_four_rows_share_their_column_boundaries");
@@ -1605,6 +1654,224 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       DragMouse(ctx, dup.RectFull.GetCenter(), CardDropSpot(2, /*lower_half=*/true));
       IM_CHECK(LayerCrystalOrder(0) == layer0);
       IM_CHECK(!gui::IsEditModalOpen());
+    };
+  }
+
+  // ===================================================================================
+  // A row's value and label are TEXT: they may not take the pointer away from what is drawn
+  // beside and after them.
+  //
+  // The 4.7.5 report behind this section: on a card whose filter summary is wider than its value
+  // column, the Duplicate button answered only on its right-hand part — pressing its left part
+  // did nothing at all. The mechanism was in RenderEntryCard's emit_row, and it is the reason the
+  // clip rect alone never fixed this: the row submits an addressable item over the value text so a
+  // test can read where the column starts, and while that item was an InvisibleButton it also
+  // called ButtonBehavior. ButtonBehavior claims HoveredId for the text's FULL, unclipped extent;
+  // ImGui then refuses hover to every later item whose rect overlaps it, and the four rail buttons
+  // are submitted after all three text rows. The rail is drawn clear of the text, so nothing on
+  // screen disagrees with the dead click.
+  //
+  // The cases below accordingly click where a rect ends rather than at its centre — the centre of
+  // the Duplicate button can sit past the text's right end, and a centre-only test measures
+  // nothing — and they cover every consumer of the same mechanism: the value probe (three rows),
+  // the label probe shared by every labelled row in the panel (TextWithLabelProbe), and the hover
+  // tooltip the row owns.
+  // ===================================================================================
+
+  // AC1/AC3. The report itself: with the reported filter on the only card, the Duplicate button
+  // answers at its left, centre and right, once each, from the same one-card document — and none
+  // of the three clicks opens the editor the card body would otherwise open.
+  //
+  // Three samples through one callback rather than a loop over positions: a failure at one
+  // position must not hide what the other two did, which is exactly the evidence that says
+  // whether the overlap reaches the whole button or only its left part.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "the_duplicate_button_answers_across_its_whole_width");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      struct Sample {
+        int entries_after;
+        bool editor_open;
+      };
+      // `which` selects the position across the button: 0 = just inside its left edge, 1 = centre,
+      // 2 = just inside its right edge. Each sample starts from a freshly reset one-card document,
+      // because a successful duplicate adds a card and the next sample is about the same press on
+      // the same card, not about a two-card panel.
+      auto sample = [ctx](int which) -> Sample {
+        ResetTestState();
+        ctx->Yield(3);
+        GiveEntry0TheReportedFilter(ctx);
+
+        const ImGuiTestItemInfo dup = ctx->ItemInfo("**/" ICON_FA_COPY "##dup_0_0");
+        const ImGuiTestItemInfo value = ctx->ItemInfo("**/##card_0_0_row_2_value");
+        IM_CHECK_RETV(dup.ID != 0, (Sample{ -1, false }));
+        IM_CHECK_RETV(value.ID != 0, (Sample{ -1, false }));
+        // The precondition that makes the three samples mean something: the value text really
+        // does reach into the button. Without it this case would pass just as well on a card
+        // whose column is wide enough for the summary — i.e. on every card that never had the
+        // defect — while measuring nothing.
+        IM_CHECK_RETV(value.RectFull.Max.x >= dup.RectFull.Min.x + 2.0f, (Sample{ -1, false }));
+
+        ClickAt(ctx, PointsAcross(dup.RectFull)[which]);
+        return Sample{ static_cast<int>(gui::g_state.layers[0].entries.size()), gui::IsEditModalOpen() };
+      };
+
+      const Sample left = sample(0);
+      const Sample middle = sample(1);
+      const Sample right = sample(2);
+
+      // The copy is the whole claim: the press reached the button and the button did its one job.
+      // The editor must stay closed — that is the card body's click, which a rail press must not
+      // start.
+      //
+      // Reported per position and non-fatally, so one dead position cannot hide what the others
+      // did: which of the three disagree is the difference between "the overlap covers the whole
+      // button" and "it covers its left part", and that is the first question a red run has to
+      // answer.
+      auto report = [](const char* where, const Sample& s) {
+        if (s.entries_after != 2) {
+          IM_ERRORF("%s of the duplicate button left %d entries, expected 2 (the card and one copy)", where,
+                    s.entries_after);
+        }
+        if (s.editor_open) {
+          IM_ERRORF("%s of the duplicate button also opened the card editor", where);
+        }
+      };
+      report("the left edge", left);
+      report("the centre", middle);
+      report("the right edge", right);
+    };
+  }
+
+  // AC2. The same text is still part of the card: pressing it opens the editor, which is what
+  // "click anywhere on the card" has always meant for the part of the card that is words.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "a_press_on_a_row_value_or_label_opens_the_editor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(3);
+      const ScopedPopups popup_guard(ctx);
+      GiveEntry0TheReportedFilter(ctx);
+
+      const ImGuiTestItemInfo value = ctx->ItemInfo("**/##card_0_0_row_2_value");
+      const ImGuiTestItemInfo label = ctx->ItemInfo("**/##card_0_0_row_2_label");
+      IM_CHECK(value.ID != 0);
+      IM_CHECK(label.ID != 0);
+
+      // The value text's own left end, clear of the rail: the part of the text the user reads.
+      ClickAt(ctx, ImVec2(value.RectFull.Min.x + 2.0f, (value.RectFull.Min.y + value.RectFull.Max.y) * 0.5f));
+      IM_CHECK(gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);
+
+      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->Yield(2);
+      IM_CHECK(!gui::IsEditModalOpen());
+
+      // The label column, drawn by TextWithLabelProbe rather than by emit_row's own probe — the
+      // same defect one layer down, and the reason the fix is stated once for both.
+      ClickAt(ctx, ImVec2(label.RectFull.Min.x + 2.0f, (label.RectFull.Min.y + label.RectFull.Max.y) * 0.5f));
+      IM_CHECK(gui::IsEditModalOpen());
+    };
+  }
+
+  // AC2. The other two rows the same emit_row draws. A long crystal identity runs under the rail's
+  // top slot, so the participation toggle is the button the text would otherwise swallow; and the
+  // Axis row's longest legal label sits beside the Link button.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "the_rail_stays_clickable_beside_a_row_that_runs_long");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      // A name long enough to run the identity ("#N · name · Prism") past the rail. The name is a
+      // state the product accepts, not a constructed string: nothing caps it.
+      gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].name =
+          "a crystal name long enough to run under the icon rail";
+      ctx->Yield(3);
+
+      const ImGuiTestItemInfo toggle = ctx->ItemInfo("**/###enabled_0_0");
+      const ImGuiTestItemInfo identity = ctx->ItemInfo("**/##card_0_0_row_0_value");
+      IM_CHECK(toggle.ID != 0);
+      IM_CHECK(identity.ID != 0);
+      IM_CHECK(identity.RectFull.Max.x >= toggle.RectFull.Min.x + 2.0f);
+      IM_CHECK(gui::g_state.layers[0].entries[0].enabled);
+
+      const std::array<ImVec2, 3> toggle_points = PointsAcross(toggle.RectFull);
+      ClickAt(ctx, toggle_points[0]);
+      IM_CHECK(!gui::g_state.layers[0].entries[0].enabled);
+      IM_CHECK(!gui::IsEditModalOpen());
+
+      // The Axis row: "Custom" is as long as AxisPresetLabel ever gets (the presets are Column /
+      // Plate / Parry / Lowitz / Random / Custom, four of them six characters), so this is the
+      // row's own worst case rather than a constructed string. The Link button beside it must arm
+      // pick mode from its left edge.
+      gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].axis_preset = gui::AxisPreset::kCustom;
+      ctx->Yield(3);
+      const ImGuiTestItemInfo link = ctx->ItemInfo("**/" ICON_FA_LINK "##link_0_0");
+      IM_CHECK(link.ID != 0);
+      const std::array<ImVec2, 3> link_points = PointsAcross(link.RectFull);
+      ClickAt(ctx, link_points[0]);
+      IM_CHECK(gui::g_state.pick_link_source.has_value());
+      IM_CHECK_EQ(gui::g_state.pick_link_source->layer_idx, 0);
+      IM_CHECK_EQ(gui::g_state.pick_link_source->entry_idx, 0);
+      // Leave pick mode through its own exit, so the state does not depend on the guard.
+      ctx->KeyPress(ImGuiKey_Escape);
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.pick_link_source.has_value());
+    };
+  }
+
+  // AC2. The full-predicate tooltip keeps its gate under a real hover. The tooltip's TEXT is not
+  // addressable — ImGui::SetTooltip draws through TextUnformatted, id 0, so the item registry
+  // cannot see it — but the tooltip WINDOW is, and whether it was drawn on the frame the pointer
+  // rested on is exactly the condition this asks about. The string itself is
+  // FormatSopExpansionPreview's, which round-trips in the filter-editor suite; what a card frame
+  // owns is the decision to show it.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "the_filter_row_tooltip_keeps_its_gate_under_a_hover");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      // `Active` is cleared at the top of the next frame, so it still says what the last completed
+      // frame drew — which is the frame the pointer has been resting on.
+      auto tooltip_drawn_last_frame = [] {
+        ImGuiWindow* tooltip = ImGui::FindWindowByName("##Tooltip_00");
+        return tooltip != nullptr && tooltip->Active;
+      };
+
+      ResetTestState();
+      ctx->Yield(3);
+      GiveEntry0TheReportedFilter(ctx);
+      gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].name =
+          "a crystal name long enough to run under the icon rail";
+      ctx->Yield(3);
+
+      const ImGuiTestItemInfo value = ctx->ItemInfo("**/##card_0_0_row_2_value");
+      const ImGuiTestItemInfo identity = ctx->ItemInfo("**/##card_0_0_row_0_value");
+      IM_CHECK(value.ID != 0);
+      IM_CHECK(identity.ID != 0);
+      const ImVec2 on_value(value.RectFull.Min.x + 2.0f, (value.RectFull.Min.y + value.RectFull.Max.y) * 0.5f);
+
+      // A clipped identity always explains itself — that tooltip has no gate, because a name long
+      // enough to clip is exactly when the full one is wanted.
+      ctx->MouseMoveToPos(
+          ImVec2(identity.RectFull.Min.x + 2.0f, (identity.RectFull.Min.y + identity.RectFull.Max.y) * 0.5f));
+      IM_CHECK(tooltip_drawn_last_frame());
+      ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+      ctx->Yield(2);
+
+      // Non-degenerate filter: the row explains the whole predicate.
+      ctx->MouseMoveToPos(on_value);
+      IM_CHECK(tooltip_drawn_last_frame());
+
+      // Degenerate one: the same hover, the same row, no tooltip — the gate is
+      // IsDegenerateSingleFactor, and a fix that made every row a tooltip would pass the arm
+      // above and fail this one.
+      ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+      ctx->Yield(2);
+      gui::FilterConfig single;
+      single.SetRaypath(gui::RaypathParams{ "3-4-5" });
+      gui::SetFilter(gui::g_state, gui::g_state.layers[0].entries[0], single);
+      ctx->Yield(3);
+      ctx->MouseMoveToPos(on_value);
+      IM_CHECK(!tooltip_drawn_last_frame());
     };
   }
 }

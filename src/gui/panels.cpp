@@ -27,10 +27,12 @@
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"  // DescribeAxisPresetDomain — the badge tooltip's second line
 #include "imgui.h"
-// imgui_internal.h for ReloadInputTextIfActive only: GetActiveID / GetInputTextState /
+// imgui_internal.h for two things. ReloadInputTextIfActive: GetActiveID / GetInputTextState /
 // ReloadUserBufAndSelectAll have no public-header spelling (the reload is ImGui's own WIP remedy,
-// imgui_internal.h "Reload user buf (WIP #2890)"). An ImGui upgrade that promotes or renames it
-// must update that one function.
+// imgui_internal.h "Reload user buf (WIP #2890)"). ItemProbe: ItemSize / ItemAdd /
+// IMGUI_TEST_ENGINE_ITEM_INFO are the same three internals InvisibleButton is built from, and the
+// probe needs exactly those three without the ButtonBehavior that comes with them. An ImGui
+// upgrade that promotes or renames any of these must update those call sites.
 #include "imgui_internal.h"
 #include "lumice_editor.h"
 #include "lumice_engine.h"
@@ -449,17 +451,52 @@ static float PrepareSliderLayout(const char* label, char* display_label_out, siz
   return slider_w;
 }
 
-// Draw a row-trailing label that the GUI test engine can locate, without changing a single pixel.
+// Submit a MEASUREMENT item: the layout advance, the item rect and the test-engine registration an
+// InvisibleButton of this size would produce, without the button behaviour.
 //
-// The three-column rows draw their trailing label with TextUnformatted, which submits its item
-// under id 0 — so a test cannot ask where it is. That position is exactly the quantity the
-// label-column alignment invariant is about, and deriving it from the preceding widget's
-// rectangle plus a spacing constant would compare the layout code against itself. So an
-// InvisibleButton of the label's own size is submitted at the label's own position first: it
-// draws nothing, and the IMGUI_TEST_ENGINE_ITEM_INFO in its body is what makes the rectangle
-// readable. Its horizontal extent is the text's, exactly — same cursor x, same CalcTextSize —
-// which is the axis the invariant is stated on; vertically it sits on the line box rather than on
-// the glyph box, because the text's baseline offset is only applied inside TextEx.
+// Why not simply InvisibleButton. "Invisible" is a statement about drawing, not about the pointer:
+// ButtonBehavior claims HoveredId for the item's whole rect, and ImGui then refuses hover to every
+// later item whose rect overlaps a hovered one (ItemHoverable, imgui.cpp). A probe sitting over a
+// row's text therefore took the pointer from whatever is drawn after that text, silently. On the
+// entry card that is the icon rail, which is submitted after all three text rows: a value wider
+// than its column — the clip rect shortens the picture and nothing else — left the Duplicate button
+// dead under the part the text had run into, with nothing on screen to explain it. The same
+// HoveredId also made the card's own click handler, which asks IsAnyItemHovered() before treating a
+// press as "the card was clicked", read bare text as a widget, so pressing a row's text stopped
+// opening the editor.
+//
+// What the probe is FOR is its rect: text is submitted under id 0, so a test cannot ask where a
+// row's label or value sits, and that position is exactly what the label-column and value-column
+// invariants are about (deriving it from a neighbouring widget plus a spacing constant would
+// compare the layout code against itself). ItemAdd supplies that rect and takes no pointer state
+// at all — it is the one of InvisibleButton's three internals that the test engine reads.
+//
+// The layout is submitted identically (CalcItemSize, then ItemSize, then ItemAdd), because these
+// probes are pixel-neutral by contract: a row must not change height depending on whether it
+// carries one. ImGuiItemFlags_NoNav is what InvisibleButton passes by default, so the probe also
+// takes no Tab stop and no nav focus, and the keyboard traversal order of every panel built from
+// these rows is unchanged.
+static void ItemProbe(const char* probe_id, const ImVec2& size) {
+  if (size.x <= 0.0f || size.y <= 0.0f) {  // nothing to measure (and no useful rect to register)
+    return;
+  }
+  ImGuiContext& g = *ImGui::GetCurrentContext();
+  ImGuiWindow* window = g.CurrentWindow;
+  const ImVec2 item_size = ImGui::CalcItemSize(size, 0.0f, 0.0f);
+  const ImVec2 item_min = window->DC.CursorPos;
+  const ImRect bb(item_min, ImVec2(item_min.x + item_size.x, item_min.y + item_size.y));
+  ImGui::ItemSize(item_size);
+  if (!ImGui::ItemAdd(bb, window->GetID(probe_id), nullptr, ImGuiItemFlags_NoNav)) {
+    return;  // clipped: InvisibleButton also reported nothing for this frame
+  }
+  IMGUI_TEST_ENGINE_ITEM_INFO(g.LastItemData.ID, probe_id, g.LastItemData.StatusFlags);
+}
+
+// Draw a row's label at its own position, with a probe over it so the GUI test engine can locate it.
+//
+// The probe's horizontal extent is the text's, exactly — same cursor x, same CalcTextSize — which
+// is the axis the label-column invariant is stated on; vertically it sits on the line box rather
+// than on the glyph box, because the text's baseline offset is only applied inside TextEx.
 //
 // Order matters and is not interchangeable. ImGui derives a line's height from the LAST item
 // submitted on it (ItemSize reads DC.CurrLineSize, which the previous ItemSize zeroed), so a
@@ -468,16 +505,11 @@ static float PrepareSliderLayout(const char* label, char* display_label_out, siz
 // Submitting the probe first and then handing the line back (SameLine restores CurrLineSize and
 // the baseline offset from the probe's PrevLine values; SetCursorScreenPos puts x back) leaves
 // TextUnformatted as the item that closes the line, exactly as before.
-//
-// Why it does not perturb navigation: without ImGuiButtonFlags_EnableNav, ImGui 1.91's
-// InvisibleButton adds its item with ImGuiItemFlags_NoNav (imgui_widgets.cpp), so it takes no Tab
-// stop and no nav focus — the keyboard traversal order of every panel built from these rows is
-// unchanged, and the nav cursor it would otherwise render can never be drawn.
 static void TextWithLabelProbe(const char* display_label, const char* probe_id) {
   const ImVec2 size = ImGui::CalcTextSize(display_label);
-  if (size.x > 0.0f && size.y > 0.0f) {  // InvisibleButton asserts on a zero extent
+  if (size.x > 0.0f && size.y > 0.0f) {  // nothing to probe for an empty label
     const ImVec2 pos = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton(probe_id, size);
+    ItemProbe(probe_id, size);
     ImGui::SameLine(0.0f, 0.0f);
     ImGui::SetCursorScreenPos(pos);
   }
@@ -1518,17 +1550,22 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
     TextWithLabelProbe(row_label, label_probe_id);
     ImGui::SetCursorScreenPos(ImVec2(value_x, line_start.y));
     ImGui::AlignTextToFramePadding();
-    // The value column gets a probe for the same reason the label column does. Its x is computed
-    // HERE (value_x), while the Weight row below reaches the same column through
+    // The value column gets a probe for the same reason the label column does, and by the same
+    // mechanism (ItemProbe): a measurement item, not a widget, so an over-long value cannot take
+    // the pointer from the rail buttons drawn after it — see ItemProbe. Its x is computed HERE
+    // (value_x), while the Weight row below reaches the same column through
     // BeginLeadingLabelLayout's own advance — two copies of one formula, which is exactly the
     // shape the card's column invariant exists to catch.
     char value_probe_id[64];
     snprintf(value_probe_id, sizeof(value_probe_id), "##card_%d_%d_row_%d_value", layer_idx, entry_idx, row_idx);
     {
+      // The FULL text's width, not the clipped one: the invariant is about the column's left edge,
+      // which is where the text starts, and a probe that shrank with the clip would stop meaning
+      // anything about the drawn text.
       const ImVec2 probe_size = ImGui::CalcTextSize(text_content);
       if (probe_size.x > 0.0f && probe_size.y > 0.0f) {
         const ImVec2 probe_pos = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton(value_probe_id, probe_size);
+        ItemProbe(value_probe_id, probe_size);
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::SetCursorScreenPos(probe_pos);
       }

@@ -435,8 +435,8 @@ struct LabelColumnRow {
 };
 
 // A hand-built row: the InputFloat/InputInt reports its own frame, and the trailing label is
-// addressable because panels.cpp submits an InvisibleButton of the label's exact horizontal
-// extent over it (see TextWithLabelProbe there).
+// addressable because panels.cpp submits a measurement item of the label's exact horizontal extent
+// over it (see ItemProbe / TextWithLabelProbe there).
 inline LabelColumnRow MeasureWidgetRow(ImGuiTestContext* ctx, const char* name, const char* input_ref,
                                        const char* label_probe_ref) {
   LabelColumnRow row;
@@ -465,7 +465,7 @@ inline LabelColumnRow MeasureWidgetRow(ImGuiTestContext* ctx, const char* name, 
 // geometry ImGui reports about the item it drew, not a position this test recomputed.
 //
 // The two families' `label_left` therefore mean slightly different things — a hand-built row
-// reports the text's layout origin (CalcTextSize's box, via the InvisibleButton probe), a combo
+// reports the text's layout origin (CalcTextSize's box, via the ItemProbe item), a combo
 // row reports the leftmost inked pixel of the first glyph. They differ by that glyph's left side
 // bearing, which varies per letter, so it is taken back out below from the font's own metrics
 // rather than absorbed into a wider tolerance — a tolerance wide enough to swallow a per-letter
