@@ -2606,13 +2606,13 @@ checkers and format check; ranges are all six runs, not the fastest run.
 |---|---|---|
 | raypath (`query_control.cpp`, implementation `cbe878815`) | unit-gtest + composition-gtest + checkers + format → same | **755.984s** (123.601–128.707s); unit 975 cases (974 sharded/K4 + one isolated timing case), composition 27/K8 |
 | core (`math.cpp`, same implementation) | ctest + checkers + format → same | **1191.254s** (193.764–206.270s); nine CTest registrations, including the two heavy targets |
-| mixed (`math.cpp`, `query_control.cpp`, `main.cpp`, implementation `4077e2d3c`) | ctest + fast-e2e + ctest-unit-correctness + unit-gtest + composition-gtest + checkers + format → ctest + fast-e2e + checkers + format | **1754.824s** (279.435–299.734s); 9/9 CTest and 274/274 fast E2E on every round |
+| mixed (`math.cpp`, `query_control.cpp`, `main.cpp`, implementation `1d617afd`) | ctest + fast-e2e + ctest-unit-correctness + unit-gtest + composition-gtest + checkers + format → ctest + fast-e2e + checkers + format | **1766.199s** (276.726–306.410s); 9/9 CTest and 274/274 fast E2E on every round |
 
 The mixed run used `LUMICE_BIN` to identify the freshly rebuilt CLI in this
 build-only tree; the ISA-vs-CMake-cache cross-check still ran. It did not use
 `--files`, exclude a layer, or reuse a previous pass. The three local budgets
 (1200/1200/1800s for six loops) were met, but core's **8.746s** and mixed's
-**45.176s** headroom are not a cross-machine speed guarantee. A small unit TU
+**33.801s** headroom are not a cross-machine speed guarantee. A small unit TU
 edit gave a 30.787s inner run (8 selected cases, K1); three paired native versus
 wrapped runs of that same binary cost 0.392–0.398s versus 0.514–0.525s,
 about 0.12–0.13s absolute overhead, not a new full-binary run. Separately, on
