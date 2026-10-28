@@ -11,10 +11,9 @@ Three subcommands, one per consumer:
             diff_verdict() seam — the same functions their own main() calls — and
             reports one aggregate verdict. Untracked files are counted and their
             invisibility to these gates stated (same scope as the pre-commit hook).
-  gtest     runs one direct gtest binary with a --gtest_filter derived by faces,
-            behind the two no-silent-green guards: per-suite reconciliation against
-            --gtest_list_tests (a parsed suite must contribute at least one selected
-            case), and the passed-count parse ([  PASSED  ] N tests, N=0 fails).
+  gtest     selects one gtest target through the shared native-sharding entry;
+            per-suite reconciliation catches partial misses, and the runner's
+            native listing/XML accounting rejects empty or incomplete execution.
 
 inner is the iteration-time fast path only; quick remains the closing gate. The
 faces are deliberately coarse — a face can miss, and whatever it misses is caught
@@ -28,9 +27,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -193,18 +195,33 @@ def suites_of(
 
 
 def selected_suite_headers(binary: Path, filter_str: str) -> set[str]:
-    proc = subprocess.run(
-        [str(binary), "--gtest_list_tests", f"--gtest_filter={filter_str}"],
-        cwd=REPO,
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"--gtest_list_tests failed (exit {proc.returncode}): "
-            f"{proc.stderr.decode('utf-8', errors='replace').strip()}"
-        )
+    from gtest_parallel import Children
+
+    children = Children()
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    for sig in previous:
+        signal.signal(sig, children.cancel)
+    try:
+        with tempfile.TemporaryFile() as output:
+            listing_env = dict(os.environ)
+            listing_env.pop("GTEST_OUTPUT", None)
+            child = children.start(
+                [str(binary), "--gtest_list_tests", f"--gtest_filter={filter_str}"],
+                listing_env, output, cwd=REPO / BUILD_TREE / "test",
+            )
+            rc = children.wait(child)
+            output.seek(0)
+            listing = output.read().decode("utf-8", errors="replace")
+        if rc != 0:
+            raise RuntimeError(f"--gtest_list_tests failed (exit {rc}): {listing.strip()}")
+    finally:
+        children.stop_all()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    if children.cancelled:
+        raise RuntimeError("--gtest_list_tests cancelled before execution")
     headers = set()
-    for line in proc.stdout.decode("utf-8", errors="replace").splitlines():
+    for line in listing.splitlines():
         if line and not line[:1].isspace() and line.rstrip().endswith("."):
             headers.add(line.strip())
     return headers
@@ -223,7 +240,7 @@ def reconcile(
     param: dict[str, set[str]],
 ) -> list[str]:
     """Suites from the parse that contributed zero selected cases — a partial
-    miss the N=0 guard is structurally blind to."""
+    miss the whole-run accounting is structurally blind to."""
     headers = selected_suite_headers(binary, filter_str)
     missing = []
     for suite in sorted(plain):
@@ -354,10 +371,26 @@ def derive(files: list[str], base: str, from_diff: bool) -> tuple[dict, list[tup
     # every inner invocation, whatever the diff is.
     add_layers(["checkers", "format"])
 
+    requested_layers = layers.copy()
+    covered: dict[str, str] = {}
+    if "ctest" in layers:
+        for child in ("ctest-unit-correctness", "composition-gtest", "parity", "composition-gui", "golden-analytic"):
+            if child in layers:
+                covered[child] = "ctest (same registered test, selection and environment)"
+    if "ctest" in layers or "ctest-unit-correctness" in layers:
+        # The direct unit command supplies its own filter. A CTest invocation
+        # inheriting GTEST_FILTER could therefore select a different set.
+        if "unit-gtest" in layers and not any(
+            key.startswith("GTEST_") and key != "GTEST_COLOR" for key in os.environ
+        ):
+            covered["unit-gtest"] = (
+                "ctest" if "ctest" in layers else "ctest-unit-correctness"
+            ) + " (whole unit binary includes the selected suites)"
+    layers = [layer for layer in layers if layer not in covered]
     build_needed = any(layer in COMPILED_LAYERS for layer in layers)
     filter_str = None
     suites_payload = None
-    if "unit-gtest" in layers:
+    if "unit-gtest" in requested_layers:
         raypath_face = any(face == "raypath" for _, _, face in per_file)
         tu_face = any(face == "test-unit-tu" for _, _, face in per_file)
         tus: list[str] = []
@@ -387,6 +420,8 @@ def derive(files: list[str], base: str, from_diff: bool) -> tuple[dict, list[tup
     plan = {
         "base": base,
         "layers": layers,
+        "requested_layers": requested_layers,
+        "covered": covered,
         "gtest_filter": filter_str,
         "gtest_suites": suites_payload,
         "build_needed": build_needed,
@@ -423,7 +458,10 @@ def print_chain(per_file: list[tuple[str, str, str]], plan: dict, from_diff: boo
             "the last configure's map; the next build reconfigures and self-heals)",
             file=sys.stderr,
         )
-    print(f"  faces -> layers: {' '.join(plan['layers'])}", file=sys.stderr)
+    print(f"  faces -> requested layers: {' '.join(plan['requested_layers'])}", file=sys.stderr)
+    for child, parent in plan["covered"].items():
+        print(f"  covered: {child} -> {parent}", file=sys.stderr)
+    print(f"  executed layers: {' '.join(plan['layers'])}", file=sys.stderr)
 
 
 def normalize_rel(raw: str) -> str:
@@ -434,6 +472,76 @@ def normalize_rel(raw: str) -> str:
         except ValueError:
             raise DerivationError(f"{raw} is outside the repository") from None
     return PurePosixPath(raw).as_posix()
+
+
+def validate_coverage(plan: dict) -> None:
+    """Check the current CTest registration, after the build reconfigured it."""
+    covered = plan["covered"]
+    if not covered:
+        return
+
+    def metadata(*selection: str) -> dict[str, dict]:
+        proc = subprocess.run(
+            ["ctest", "--test-dir", BUILD_TREE, "--show-only=json-v1", *selection],
+            cwd=REPO, capture_output=True, text=True,
+        )
+        if proc.returncode:
+            raise RuntimeError(f"CTest metadata failed: {proc.stderr}")
+        return {test["name"]: test for test in json.loads(proc.stdout)["tests"]}
+
+    full = metadata("-L", "unit-correctness|composition-correctness|parity|golden-analytic")
+    subsets = {
+        "ctest-unit-correctness": metadata("-L", "unit-correctness"),
+        "unit-gtest": metadata("-R", "^LumiceUnitCorrectnessTest$"),
+        "composition-gtest": metadata("-R", "^LumiceRaypathCompositionTest$"),
+        "parity": metadata("-R", "LumiceParityTest"),
+        "composition-gui": metadata("-R", "LumiceCompositionCorrectnessTest"),
+        "golden-analytic": metadata("-R", "LumiceGoldenAnalyticTest"),
+    }
+    for child in covered:
+        parent = full if "ctest" in plan["layers"] else subsets["ctest-unit-correctness"]
+        subset = subsets[child]
+        if not subset or not subset.keys() <= parent.keys():
+            raise RuntimeError(f"{child}: CTest registration no longer contained in its parent")
+        for name, test in subset.items():
+            if test["command"] != parent[name]["command"] or test["properties"] != parent[name]["properties"]:
+                raise RuntimeError(f"{child}: CTest execution differs for {name}")
+            if child in ("unit-gtest", "composition-gtest"):
+                props = {p["name"]: p["value"] for p in test["properties"]}
+                if props.keys() & {"ENVIRONMENT", "ENVIRONMENT_MODIFICATION", "WILL_FAIL", "DISABLED"}:
+                    raise RuntimeError(f"{child}: CTest overrides direct gTest semantics for {name}")
+                if Path(props.get("WORKING_DIRECTORY", str(REPO / BUILD_TREE / "test"))).resolve() != (
+                    REPO / BUILD_TREE / "test"
+                ).resolve():
+                    raise RuntimeError(f"{child}: CTest working directory differs for {name}")
+                argv = test["command"]
+                expected = (
+                    [REPO / "test/fixtures/v3_config.json", REPO / BUILD_TREE / "test", REPO]
+                    if child == "unit-gtest" else []
+                )
+                binary_name = "unit_correctness_test" if child == "unit-gtest" else "raypath_composition_test"
+                target_name = "unit" if child == "unit-gtest" else "composition"
+                if (
+                    len(argv) != len(expected) + 4
+                    or Path(argv[1]).resolve() != (REPO / "scripts/gtest_parallel.py").resolve()
+                    or argv[2] != target_name
+                    or Path(argv[3]).stem != binary_name
+                    or [str(Path(a).resolve()) for a in argv[4:]] != [str(p.resolve()) for p in expected]
+                ):
+                    raise RuntimeError(f"{child}: direct gTest argv no longer matches CTest for {name}")
+    # A parent run contains the selected cases, but only the removed direct
+    # layer knew which suites the changed TUs declared. Keep that guard even
+    # when its second test execution has been eliminated.
+    if "unit-gtest" in covered and plan["gtest_filter"]:
+        suites = plan["gtest_suites"]
+        binary = Path(subsets["unit-gtest"]["LumiceUnitCorrectnessTest"]["command"][3])
+        missing = reconcile(
+            binary, plan["gtest_filter"], set(suites["plain"]),
+            {suite: set(prefixes) for suite, prefixes in suites["param"].items()},
+        )
+        if missing:
+            raise RuntimeError(f"unit-gtest: declared suites absent from the parent binary: {', '.join(missing)}")
+    print(f"test_inner: verified CTest containment for {', '.join(covered)}")
 
 
 # --- subcommands -------------------------------------------------------------------
@@ -535,10 +643,14 @@ def build_type() -> str:
     raise RuntimeError(f"CMAKE_BUILD_TYPE missing from {cache}")
 
 
-PASSED_RE = re.compile(r"\[\s*PASSED\s*\]\s*(\d+) tests?")
-
 
 def cmd_gtest(args: argparse.Namespace) -> int:
+    from gtest_parallel import begin_report
+
+    # A failed plan read or suite reconciliation must not leave the last green
+    # report behind. Publication remains exclusively the shared runner's job.
+    stem = "unit_correctness_test" if args.target == "unit" else "raypath_composition_test"
+    begin_report(Path(stem), dict(os.environ), cwd=REPO / BUILD_TREE / "test")
     plan = json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
     build_type_value = build_type()
     bin_dir = REPO / "build" / build_type_value / "static" / "bin"
@@ -588,37 +700,18 @@ def cmd_gtest(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        print(f"test_inner: reconciliation ok ({len(plain) + len(param)} parsed suites all selected)")
-
-    # One run, streamed live and parsed as it goes: gtest exits 0 when a filter
-    # matches nothing, so the PASSED count is the only thing that separates a real
-    # pass from a silent empty selection.
-    proc = subprocess.Popen(
-        argv,
-        cwd=REPO,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        errors="replace",
-    )
-    passed_n: int | None = None
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        sys.stdout.write(line)
-        m = PASSED_RE.search(line)
-        if m:
-            passed_n = int(m.group(1))
-    proc.wait()
-    if proc.returncode != 0:
-        return proc.returncode
-    if passed_n is None or passed_n == 0:
         print(
-            "test_inner: the run reported 0 passed tests — treating as FAIL (an empty "
-            "selection must never read as green)",
-            file=sys.stderr,
+            f"test_inner: reconciliation ok ({len(plain) + len(param)} parsed suites all selected)",
+            flush=True,
         )
-        return 1
-    return 0
+
+    # Reconciliation is this entry's only added guard. Replace this process with
+    # the shared runner: it owns case accounting, cancellation and the report,
+    # with no intermediate Python process to leave a child behind on SIGTERM.
+    os.chdir(REPO / BUILD_TREE / "test")
+    os.execv(sys.executable, [
+        sys.executable, str(REPO / "scripts/gtest_parallel.py"), args.target, *argv,
+    ])
 
 
 def selfcheck() -> int:
@@ -696,11 +789,17 @@ def main() -> int:
     )
     faces.set_defaults(func=cmd_faces)
 
+    coverage = sub.add_parser("coverage", help="validate CTest containment after the build")
+    coverage.add_argument("--plan-file", required=True)
+    coverage.set_defaults(func=lambda args: validate_coverage(
+        json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
+    ) or 0)
+
     checkers = sub.add_parser("checkers", help="run the four diff-scoped gates")
     checkers.add_argument("--base", default=None, help="diff base (default: merge-base HEAD main)")
     checkers.set_defaults(func=cmd_checkers)
 
-    gtest = sub.add_parser("gtest", help="run one direct gtest binary behind the guards")
+    gtest = sub.add_parser("gtest", help="select suites for the shared native-sharding runner")
     gtest.add_argument("--plan-file", required=True)
     gtest.add_argument("--target", choices=["unit", "composition"], required=True)
     gtest.set_defaults(func=cmd_gtest)

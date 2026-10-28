@@ -2482,7 +2482,7 @@ path refuses the whole run (exit 2, nothing executed) naming `quick` as the mini
 | Face | Trigger | Test layers |
 |---|---|---|
 | gui | `src/gui/**`, `test/gui/**` | ctest four labels + gui_test correctness pool |
-| raypath | layer `raypath`/`analytic` (map) | `unit_correctness_test` direct, `--gtest_filter` = the raypath+analytic suites + `raypath_composition_test` direct |
+| raypath | layer `raypath`/`analytic` (map) | selected `unit_correctness_test` suites (raypath+analytic) + `raypath_composition_test`, through the shared native-sharding entry |
 | core | other `src/**` (map) | ctest four labels |
 | shell | `src/main.cpp`, `src/launcher/**` | fast e2e + `ctest -L unit-correctness` |
 | build-system | root `CMakeLists.txt`, `cmake/**` | ctest four labels (more, never less) |
@@ -2496,14 +2496,60 @@ Deletions select nothing (they map to no face; the always-on checkers still run)
 files join the derivation but stay invisible to the diff-scoped checkers until `git add` — the
 same scope the pre-commit hook sees, with the same answer: the commit gate covers them.
 
+**Within one inner invocation, covered executions run once.** The derivation prints both
+requested and executed layers, including each removed child and its parent. The four-label
+CTest run contains the unit-label selection, the raypath composition target, and the named
+parity/GUI-composition/golden targets; the unit-label run contains the direct unit suites.
+Only matching CTest registrations qualify: after the incremental build, inner checks the
+current selected names, commands, working directory and properties against the plan and
+refuses a changed registration rather than reporting a false pass. A covered direct unit
+layer also keeps its per-suite source-to-binary reconciliation before the parent CTest run:
+removing the second execution does not remove the only guard for a changed but unregistered
+suite. A caller-supplied `GTEST_FILTER`, sharding variable or output setting prevents pruning the direct unit subset
+when it might differ from its parent's selection. This is same-invocation containment, not
+a cache across edits. The full task diff still drives the face table and `quick` still closes
+what inner intentionally does not select.
+
+**Heavy gTest targets share one execution entry.** Both CTest and the direct inner path run
+`scripts/gtest_parallel.py` for `unit_correctness_test` and `raypath_composition_test`.
+GoogleTest itself handles filtering and native `GTEST_TOTAL_SHARDS`/`GTEST_SHARD_INDEX`; the
+runner reconciles the case listing with every child's XML, then atomically publishes one
+report under the original binary name for `collect_ctest_durations.py`. Incomplete, duplicate,
+empty, cancelled or failed child runs never publish a green report; even a local invocation
+without external XML performs the same accounting. The direct entry invalidates a prior XML
+before its own suite preflight, and neither its listing nor the runner's listing inherits
+`GTEST_OUTPUT`; only the shared runner publishes a completed report. On this Mac's supported arm64 capacity
+(8 performance cores), the bounds are four unit and eight composition processes; fewer than
+20 selected cases, unavailable performance-core information and other platforms use one
+process. Other gTest selection flags and external shards fall back to native execution without
+an internal second split; unsupported report destinations refuse explicitly. Colorized native
+output is kept for display; ANSI escapes are removed only from the completion-count parse
+used to check the XML. Two known wall-clock-sensitive unit assertions (`ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`,
+`DiagnosticCapi.DeviationStopsBeforeMaterializingTheUnprocessedTail`) run only after all
+shards have exited. Both heavy CTest registrations use `RUN_SERIAL` so another CTest target
+cannot compete with that interval. GUI real-timing and slow pytest performance pools remain
+separate as before; no test was removed from quick/full/pr or CI.
+
+For the standing `-gtj release` tree, an edit followed by
+`cmake --build build/cmake_build/static` and `./scripts/test.sh quick` builds once and runs
+the quick layers once. `./scripts/build.sh -gtj release` still builds **and** runs CTest plus
+both GUI pools by default; calling quick immediately after it reruns CTest and the correctness
+pool, while quick does not include the GUI real-timing pool. This is an observed chain, not a
+hypothetical shortcut: a build, an extra same-label CTest call and then quick without an
+intervening edit ran the nine CTest registrations three times and the GUI correctness pool
+twice (2026-10-28 local execution record). The existing build-only command is sufficient;
+use it when quick is the intended acceptance run, but do not mistake build→quick for a
+replacement for `full` when real-timing coverage is required.
+
 **Two guards stand between a filter and a green.** gtest exits 0 when a filter matches nothing,
 and so does ctest for a label that matches nothing — the silent-empty-selection shape is the one
 failure a fast path must never produce. So: every ctest selection runs `ctest -N` first and
-refuses to execute an empty selection (the layer is judged FAIL); every direct gtest run is
-parsed for `[  PASSED  ] N tests` with N=0 judged FAIL; and between the two, per-suite
-reconciliation asserts every parsed suite contributed at least one selected case — parameterized
+refuses to execute an empty selection (the layer is judged FAIL); every selected gTest
+run uses the shared runner's native listing and complete XML reconciliation to reject
+an empty or partially missing execution, counting passed and skipped cases separately;
+and before handoff, per-suite reconciliation asserts every parsed suite contributed at least one selected case — parameterized
 suites included, matched in their registered `Prefix/Suite.` form, because a bare `Suite.*` arm
-selects nothing for a `TEST_P` suite and the N=0 guard is structurally blind to that partial
+selects nothing for a `TEST_P` suite and whole-run accounting is structurally blind to that partial
 miss. A TU that yields no suite falls back to the whole binary — running more, never less.
 `--selfcheck` proves the parser's detection power against every `test/unit-correctness`
 raypath/analytic TU and, against the built binary, that `test_li_parity.cpp`'s ten `TEST_P`
@@ -2544,4 +2590,37 @@ the ctest four-label layer includes `ServerAnalysisRunGpuPool.PoolIsUsedUnderGpu
 which was observed to fail once under concurrent-machine load and to pass in an isolated rerun
 minutes later — an environment-sensitive test sitting in a coarse layer inner did not choose,
 recorded here because anyone reading an inner red on that suite should rerun it in isolation
-before diagnosing.
+before diagnosing. These figures predate same-invocation containment and native sharding;
+they are not current inner costs or a reason to prune tests.
+
+**Current local iteration evidence (2026-10-28).** On the M2 Max with a warm
+`BUILD_TEST=ON`, `BUILD_GUI=ON` Release tree and no competing heavy job, six
+successive source edits per face were each followed by unqualified
+`./scripts/test.sh inner`. Each edit added a distinct compile-time contract to
+an existing source file, forced compilation/relinking and left the *entire*
+scenario diff in place. The temporary edits were confined to a disposable local
+clone whose `main` pointed at the implementation being measured; they are not
+product changes. Every row includes the build, selected tests, diff-scoped
+checkers and format check; ranges are all six runs, not the fastest run.
+
+| Face / changed source | Original layers → executed layers | Six-run total (range per run) |
+|---|---|---|
+| raypath (`query_control.cpp`, implementation `cbe878815`) | unit-gtest + composition-gtest + checkers + format → same | **755.984s** (123.601–128.707s); unit 975 cases (974 sharded/K4 + one isolated timing case), composition 27/K8 |
+| core (`math.cpp`, same implementation) | ctest + checkers + format → same | **1191.254s** (193.764–206.270s); nine CTest registrations, including the two heavy targets |
+| mixed (`math.cpp`, `query_control.cpp`, `main.cpp`, implementation `1d617afd`) | ctest + fast-e2e + ctest-unit-correctness + unit-gtest + composition-gtest + checkers + format → ctest + fast-e2e + checkers + format | **1766.199s** (276.726–306.410s); 9/9 CTest and 274/274 fast E2E on every round |
+
+The mixed run used `LUMICE_BIN` to identify the freshly rebuilt CLI in this
+build-only tree; the ISA-vs-CMake-cache cross-check still ran. It did not use
+`--files`, exclude a layer, or reuse a previous pass. The three local budgets
+(1200/1200/1800s for six loops) were met, but core's **8.746s** and mixed's
+**33.801s** headroom are not a cross-machine speed guarantee. A small unit TU
+edit gave a 30.787s inner run (8 selected cases, K1); three paired native versus
+wrapped runs of that same binary cost 0.392–0.398s versus 0.514–0.525s,
+about 0.12–0.13s absolute overhead, not a new full-binary run. Separately, on
+identical current binaries and selected case/status sets, whole-unit native K1
+198.043s became K4 63.604s (2919 executed + 6 disabled), and raypath
+composition K1 71.609s became K8 19.497s (27/27). These paired target savings
+are a different term from *eliminating duplicate executions* in the mixed plan;
+adding them twice would overstate the benefit. The earlier 920s mixed observation
+included a script-test layer absent from this scenario, so it is not a matched
+before/after arm.

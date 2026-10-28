@@ -75,6 +75,10 @@ def _ctest_metadata(path: Path, report_dir: Path) -> tuple[set[str], dict[str, P
             continue
 
         executable = Path(command[0]).stem
+        if len(command) >= 4 and Path(command[1]).name == "gtest_parallel.py":
+            if command[2] not in ("unit", "composition"):
+                raise ReportError(f"{where}: unknown gTest parallel target {command[2]}")
+            executable = Path(command[3]).stem
         report = report_dir / f"{executable}.xml"
         if report in report_owners:
             raise ReportError(

@@ -115,6 +115,15 @@ containing `build` — never excuses test runtime or correctness, and a PR
 whole-run/job rerun cannot consume it again; its single authority is
 testing-architecture.md §7.8.
 
+`unit_correctness_test` and `raypath_composition_test` keep their CTest names and
+`gtest-duration` labels while both CTest and the direct inner path use the same
+native-sharding entry (`scripts/gtest_parallel.py`). CTest marks both `RUN_SERIAL`;
+the XML it publishes retains the binary's original filename, and
+`collect_ctest_durations.py` resolves that name from the registered command so
+existing duration ids and the seven-ruler subset do not change. A one-process
+fallback still accounts for its real cases before publishing XML. Execution and
+failure/isolation details are in `doc/testing/testing-architecture.md` §7.10.
+
 ## Shared libraries the pytest layers load
 
 The shared-lib build (`./scripts/build.sh -sj release`; `-g`/`-t` alone never
