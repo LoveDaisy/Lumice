@@ -1250,7 +1250,8 @@ cmake/**）→ctest 四标签（多跑不少跑）；scripts→仅恒跑层；te
 外部 XML 也做相同对账。直调入口在套件预检前就撤销上一轮 XML，两处原生枚举均不继承
 `GTEST_OUTPUT`，只有共享 runner 能发布完整新报告。本机 arm64 八性能核的界为 unit 四进程、composition 八进程；选中少于
 20 例、查不到性能核或其他平台走单进程。其他选择开关或外部分片保守交还原生执行，无法保持的
-报告目的地明确拒绝。两个墙钟敏感单测（`ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`、
+报告目的地明确拒绝；彩色原生输出原样展示，只有用来与 XML 对账的完成计数副本去除 ANSI 控制符。
+两个墙钟敏感单测（`ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`、
 `DiagnosticCapi.DeviationStopsBeforeMaterializingTheUnprocessedTail`）待所有 shard 退出后独占执行；
 两个 CTest 重目标还标记 `RUN_SERIAL`。GUI real-timing 与 pytest performance 既有隔离不变。
 

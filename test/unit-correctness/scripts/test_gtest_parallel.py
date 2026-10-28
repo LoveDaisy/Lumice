@@ -117,6 +117,60 @@ def test_failed_run_cannot_publish_listing_xml(tmp_path: Path, external_filter: 
     assert not output.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shebang stand-in executable")
+@pytest.mark.parametrize("count", [1, 0])
+def test_colorized_native_summary_keeps_xml_and_empty_guards(tmp_path: Path, count: int) -> None:
+    binary = tmp_path / "color_gtest"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "count = " + str(count) + "\n"
+        "cases = '<testcase classname=\"Sample\" name=\"Case\" status=\"run\" result=\"completed\" time=\"0.001\"/>' if count else ''\n"
+        "Path(os.environ['GTEST_OUTPUT'][4:]).write_text(f'<testsuites tests=\"{count}\"><testsuite name=\"Sample\" tests=\"{count}\">{cases}</testsuite></testsuites>')\n"
+        "print(f'\\x1b[0;32m[==========] \\x1b[m{count} test from 1 test suite ran.')\n"
+    )
+    binary.chmod(0o755)
+    output = tmp_path / "report.xml"
+    env = dict(os.environ, GTEST_COLOR="yes", GTEST_FILTER="Sample.Case", GTEST_OUTPUT=f"xml:{output}")
+    proc = subprocess.run(
+        [sys.executable, str(Path(parallel.__file__)), "unit", str(binary)],
+        env=env, capture_output=True, text=True,
+    )
+    assert "\x1b[" in proc.stdout  # The displayed output is unchanged; only the count parser strips color.
+    assert (proc.returncode == 0) == (count == 1)
+    if count:
+        assert [f"{case.get('classname')}.{case.get('name')}" for case in ET.parse(output).iter("testcase")] == [
+            "Sample.Case"
+        ]
+    else:
+        assert not output.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="real binary uses the local static build")
+def test_real_gtest_color_and_external_filter_match_native(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[3]
+    binary = repo / "build/Release/static/bin/unit_correctness_test"
+    if not binary.exists():
+        pytest.skip("static unit binary not built on this machine")
+    argv = [str(binary), str(repo / "test/fixtures/v3_config.json"),
+            str(repo / "build/cmake_build/static/test"), str(repo)]
+    names = []
+    for name, command in (
+        ("native", argv),
+        ("wrapped", [sys.executable, str(Path(parallel.__file__)), "unit", *argv]),
+    ):
+        report = tmp_path / f"{name}.xml"
+        env = dict(os.environ, GTEST_COLOR="yes",
+                   GTEST_FILTER="BandSum.EmptyBandIsZeroAndDoesNotDivide", GTEST_OUTPUT=f"xml:{report}")
+        proc = subprocess.run(command, cwd=repo / "build/cmake_build/static/test", env=env,
+                              capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+        names.append([(c.get("classname"), c.get("name"), c.get("result"))
+                      for c in ET.parse(report).iter("testcase") if c.get("status") != "notrun"])
+    assert names == [[("BandSum", "EmptyBandIsZeroAndDoesNotDivide", "completed")]] * 2
+
+
 def test_cancellation_during_publish_removes_new_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     output = tmp_path / "published.xml"
     report_root = ET.Element("testsuites")

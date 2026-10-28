@@ -22,6 +22,7 @@ SENSITIVE = {
     "ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference",
     "DiagnosticCapi.DeviationStopsBeforeMaterializingTheUnprocessedTail",
 }
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class RunError(Exception):
@@ -269,7 +270,11 @@ def run(target: str, argv: list[str]) -> int:
                 text = stdout.read_text(errors="replace")
                 sys.stdout.write(text)
                 sys.stdout.flush()
-                ran = re.findall(r"\[==========\] (\d+) tests? from .* ran\.", text)
+                # GoogleTest may colorize the count line even with stdout in a
+                # file. Keep the original text for display; normalize only the
+                # copy whose completed-run count we compare against XML.
+                summary = ANSI_ESCAPE_RE.sub("", text)
+                ran = re.findall(r"\[==========\] (\d+) tests? from .* ran\.", summary)
                 if rc or children.cancelled or not ran or int(ran[-1]) == 0:
                     raise RunError(f"native gTest did not complete a nonempty selection (exit {rc})")
                 try:

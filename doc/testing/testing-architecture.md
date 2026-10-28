@@ -2522,8 +2522,9 @@ before its own suite preflight, and neither its listing nor the runner's listing
 (8 performance cores), the bounds are four unit and eight composition processes; fewer than
 20 selected cases, unavailable performance-core information and other platforms use one
 process. Other gTest selection flags and external shards fall back to native execution without
-an internal second split; unsupported report destinations refuse explicitly. Two known
-wall-clock-sensitive unit assertions (`ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`,
+an internal second split; unsupported report destinations refuse explicitly. Colorized native
+output is kept for display; ANSI escapes are removed only from the completion-count parse
+used to check the XML. Two known wall-clock-sensitive unit assertions (`ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`,
 `DiagnosticCapi.DeviationStopsBeforeMaterializingTheUnprocessedTail`) run only after all
 shards have exited. Both heavy CTest registrations use `RUN_SERIAL` so another CTest target
 cannot compete with that interval. GUI real-timing and slow pytest performance pools remain
