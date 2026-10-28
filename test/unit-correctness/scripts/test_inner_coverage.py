@@ -175,6 +175,65 @@ def test_direct_preflight_failure_clears_old_xml_and_cannot_publish_listing(
     assert not report.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX SIGTERM and PID liveness probe")
+def test_direct_preflight_cancel_removes_old_xml_and_reaps_listing(tmp_path: Path) -> None:
+    build_dir = tmp_path / test_inner.BUILD_TREE
+    (build_dir / "test").mkdir(parents=True)
+    (build_dir / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\n")
+    binary = tmp_path / "build/Release/static/bin/unit_correctness_test"
+    binary.parent.mkdir(parents=True)
+    marker = tmp_path / "child.pid"
+    report = tmp_path / "previous.xml"
+    report.write_text("<old-green/>")
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, time\n"
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        "if 'GTEST_OUTPUT' in os.environ:\n"
+        "    Path(os.environ['GTEST_OUTPUT'][4:]).write_text('<listing-only/>')\n"
+        "time.sleep(30)\n"
+    )
+    binary.chmod(0o755)
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text(json.dumps({
+        "gtest_filter": "Sample.*", "gtest_suites": {"plain": ["Sample"], "param": {}},
+    }))
+    script = (
+        "import sys; from pathlib import Path; "
+        f"sys.path.insert(0, {str(Path(test_inner.__file__).parent)!r}); "
+        "import test_inner; "
+        f"test_inner.REPO = Path({str(tmp_path)!r}); "
+        f"test_inner.cmd_gtest(type('Args', (), {{'plan_file': {str(plan_file)!r}, 'target': 'unit'}})())"
+    )
+    outer = subprocess.Popen(
+        [sys.executable, "-c", script], env=dict(os.environ, GTEST_OUTPUT=f"xml:{report}"),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    child_pid = None
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not marker.exists() and outer.poll() is None:
+            time.sleep(0.01)
+        assert marker.exists(), outer.communicate(timeout=2)
+        child_pid = int(marker.read_text())
+        outer.send_signal(signal.SIGTERM)
+        _, stderr = outer.communicate(timeout=8)
+        assert outer.returncode != 0, stderr
+        assert not report.exists()
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    finally:
+        if outer.poll() is None:
+            outer.kill()
+            outer.wait()
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def test_runtime_containment_checks_the_original_unanchored_selector(monkeypatch: pytest.MonkeyPatch) -> None:
     with patch.object(test_inner, "load_layer_map", return_value={"src/core/shared/kernel.hpp": "sim"}):
         result = plan("src/core/shared/kernel.hpp")
