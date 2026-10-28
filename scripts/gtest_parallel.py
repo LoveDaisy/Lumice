@@ -7,6 +7,7 @@ accounts for the resulting XML before publishing one complete report.
 """
 from __future__ import annotations
 
+import math
 import os
 import platform
 import re
@@ -118,16 +119,34 @@ def merge_reports(paths: list[Path], expected: set[str]) -> ET.Element:
             raise RunError(f"missing or malformed shard report {path}: {error}") from error
         if root.tag != "testsuites":
             raise RunError(f"{path}: expected gTest testsuites root")
+        cases = list(root.iter("testcase"))
+        if root.get("tests") != str(len(cases)) or root.get("failures", "0") != "0":
+            raise RunError(f"{path}: declared test/failure count differs from successful XML cases")
         executed_in_shard = 0
         for source in root.findall("testsuite"):
             name = source.get("name", "")
             if not name:
                 raise RunError(f"{path}: unnamed testsuite")
+            suite_cases = source.findall("testcase")
+            if source.get("tests") != str(len(suite_cases)):
+                raise RunError(f"{path}: {name} declared test count differs from XML cases")
             suite = suites.setdefault(name, ET.Element("testsuite", dict(source.attrib)))
-            for case in source.findall("testcase"):
-                identity = f"{case.get('classname', name)}.{case.get('name', '')}"
-                if not case.get("name"):
-                    raise RunError(f"{path}: unnamed testcase")
+            for case in suite_cases:
+                identity = f"{case.get('classname', '')}.{case.get('name', '')}"
+                if not case.get("classname") or not case.get("name"):
+                    raise RunError(f"{path}: testcase lacks classname or name")
+                if case.get("status") not in ("run", "notrun") or case.get("result") not in (
+                    "completed", "skipped", "suppressed"
+                ):
+                    raise RunError(f"{path}: {identity} lacks a native gTest status")
+                try:
+                    seconds = float(case.get("time", ""))
+                except ValueError as error:
+                    raise RunError(f"{path}: {identity} lacks a valid time") from error
+                if not math.isfinite(seconds) or seconds < 0:
+                    raise RunError(f"{path}: {identity} has a non-finite or negative time")
+                if case.find("failure") is not None:
+                    raise RunError(f"{path}: {identity} has a failure despite successful child exit")
                 if case.get("status") == "notrun":
                     if not any(c.get("name") == case.get("name") for c in suite):
                         suite.append(case)

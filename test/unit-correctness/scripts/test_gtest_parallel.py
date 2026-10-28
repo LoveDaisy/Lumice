@@ -16,10 +16,12 @@ import gtest_parallel as parallel  # noqa: E402
 
 
 def report(path: Path, names: list[str]) -> None:
-    root = ET.Element("testsuites")
-    suite = ET.SubElement(root, "testsuite", {"name": "Sample"})
+    root = ET.Element("testsuites", {"tests": str(len(names))})
+    suite = ET.SubElement(root, "testsuite", {"name": "Sample", "tests": str(len(names))})
     for name in names:
-        ET.SubElement(suite, "testcase", {"classname": "Sample", "name": name, "status": "run"})
+        ET.SubElement(suite, "testcase", {
+            "classname": "Sample", "name": name, "status": "run", "result": "completed", "time": "0.0",
+        })
     ET.ElementTree(root).write(path)
 
 
@@ -46,6 +48,33 @@ def test_missing_case_fails_even_when_all_reports_exist(tmp_path: Path) -> None:
     report(first, ["One"])
     with pytest.raises(parallel.RunError, match="missing=.*Sample.Two"):
         parallel.merge_reports([first], {"Sample.One", "Sample.Two"})
+
+
+@pytest.mark.parametrize("damage", ["root-count", "root-failure", "suite-count", "missing-time", "missing-status", "truncated"])
+def test_malformed_report_is_not_publishable(tmp_path: Path, damage: str) -> None:
+    path = tmp_path / "damaged.xml"
+    report(path, ["One"])
+    if damage == "truncated":
+        path.write_text("<testsuites>")
+    else:
+        root = ET.parse(path).getroot()
+        suite = root.find("testsuite")
+        assert suite is not None
+        case = suite.find("testcase")
+        assert case is not None
+        if damage == "root-count":
+            root.set("tests", "2")
+        elif damage == "root-failure":
+            root.set("failures", "1")
+        elif damage == "suite-count":
+            suite.set("tests", "2")
+        elif damage == "missing-time":
+            case.attrib.pop("time")
+        else:
+            case.attrib.pop("status")
+        ET.ElementTree(root).write(path)
+    with pytest.raises(parallel.RunError):
+        parallel.merge_reports([path], {"Sample.One"})
 
 
 def test_duplicate_execution_refused(tmp_path: Path) -> None:
