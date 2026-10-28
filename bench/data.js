@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793112028951,
+  "lastUpdate": 1793186901424,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a7dc7af83f8475e1465a1e0705a2c6437b0e04dc",
-          "message": "Merge pull request #435 from LoveDaisy/task/adopt-relative-floor-ray-allocation\n\ncore: relative floor in adaptive ray allocation stops starving a filtered arc",
-          "timestamp": "2026-09-28T09:32:31+08:00",
-          "tree_id": "e682da94016f1a73dff66ec1f11396547391e218",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/a7dc7af83f8475e1465a1e0705a2c6437b0e04dc"
-        },
-        "date": 1790559875518,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 306207.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 512177.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 372161.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 503497.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4792,6 +4744,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 309396.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4457f2a77b4c98815d730e5d030e079f192487d0",
+          "message": "Merge pull request #549 from LoveDaisy/feat/test-iteration-speed\n\nperf(test): shorten iteration feedback with dedup and sharding",
+          "timestamp": "2026-10-28T19:24:30+08:00",
+          "tree_id": "65aaff66a0a607a3199b30ac098be2cec79ab778",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/4457f2a77b4c98815d730e5d030e079f192487d0"
+        },
+        "date": 1793186899773,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 312986.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 503617.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 366343.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 308729.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
