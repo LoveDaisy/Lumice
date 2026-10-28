@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -58,6 +59,26 @@ def test_kernel_parity_is_not_repeated_after_full_ctest() -> None:
         result = plan("src/core/shared/kernel.hpp")
     assert "parity" in result["requested_layers"]
     assert "parity" not in result["layers"]
+
+
+def test_runtime_containment_checks_the_original_unanchored_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    with patch.object(test_inner, "load_layer_map", return_value={"src/core/shared/kernel.hpp": "sim"}):
+        result = plan("src/core/shared/kernel.hpp")
+    registered = [
+        {"name": "LumiceParityTest", "command": ["bin"], "properties": []},
+        {"name": "ExtraLumiceParityTest", "command": ["other"], "properties": []},
+    ]
+
+    def ctest(argv: list[str], **_kwargs: object):
+        if "-R" in argv:
+            selected = [test for test in registered if re.search(argv[-1], test["name"])]
+        else:
+            selected = registered[:1]  # the second registration has no parity label
+        return type("Result", (), {"returncode": 0, "stderr": "", "stdout": json.dumps({"tests": selected})})()
+
+    monkeypatch.setattr(test_inner.subprocess, "run", ctest)
+    with pytest.raises(RuntimeError, match="parity: CTest registration no longer contained"):
+        test_inner.validate_coverage(result)
 
 
 def test_registration_change_refuses_containment(monkeypatch: pytest.MonkeyPatch) -> None:

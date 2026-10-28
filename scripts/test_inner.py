@@ -477,9 +477,9 @@ def validate_coverage(plan: dict) -> None:
         "ctest-unit-correctness": metadata("-L", "unit-correctness"),
         "unit-gtest": metadata("-R", "^LumiceUnitCorrectnessTest$"),
         "composition-gtest": metadata("-R", "^LumiceRaypathCompositionTest$"),
-        "parity": metadata("-R", "^LumiceParityTest$"),
-        "composition-gui": metadata("-R", "^LumiceCompositionCorrectnessTest$"),
-        "golden-analytic": metadata("-R", "^LumiceGoldenAnalyticTest$"),
+        "parity": metadata("-R", "LumiceParityTest"),
+        "composition-gui": metadata("-R", "LumiceCompositionCorrectnessTest"),
+        "golden-analytic": metadata("-R", "LumiceGoldenAnalyticTest"),
     }
     for child in covered:
         parent = full if "ctest" in plan["layers"] else subsets["ctest-unit-correctness"]
