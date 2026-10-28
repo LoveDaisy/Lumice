@@ -401,11 +401,12 @@ set_target_properties(unit_correctness_test PROPERTIES
 # 3rd argv = repository root. test_json_parser_parity.cpp enumerates the on-disk config corpora
 # (examples/, test/e2e/configs/, test/fixtures/) from it, so newly added corpus files are covered
 # automatically without editing a hard-coded file list.
-add_test(NAME "LumiceUnitCorrectnessTest" COMMAND unit_correctness_test
+add_test(NAME "LumiceUnitCorrectnessTest" COMMAND ${Python3_EXECUTABLE}
+  "${CMAKE_SOURCE_DIR}/scripts/gtest_parallel.py" unit $<TARGET_FILE:unit_correctness_test>
   "${PROJ_TEST_DIR}/fixtures/v3_config.json"
   "${CMAKE_CURRENT_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}")
-set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness;gtest-duration")
+set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness;gtest-duration" RUN_SERIAL TRUE)
 
 # Headless raypath composition has no GUI link dependency and runs in every test build.
 add_executable(raypath_composition_test
@@ -416,8 +417,9 @@ target_link_libraries(raypath_composition_test PRIVATE GTest::gtest ${CMAKE_THRE
   lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
 target_compile_definitions(raypath_composition_test PRIVATE
   LUMICE_DIAGNOSTIC_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-diagnostics")
-add_test(NAME LumiceRaypathCompositionTest COMMAND raypath_composition_test)
-set_tests_properties(LumiceRaypathCompositionTest PROPERTIES LABELS "composition-correctness;gtest-duration")
+add_test(NAME LumiceRaypathCompositionTest COMMAND ${Python3_EXECUTABLE}
+  "${CMAKE_SOURCE_DIR}/scripts/gtest_parallel.py" composition $<TARGET_FILE:raypath_composition_test>)
+set_tests_properties(LumiceRaypathCompositionTest PROPERTIES LABELS "composition-correctness;gtest-duration" RUN_SERIAL TRUE)
 
 # --------------------------------------------------------------------------------------------------
 # capi_header_self_containment_test (unit-correctness): every engine surface header compiles when it

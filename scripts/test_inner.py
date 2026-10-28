@@ -503,9 +503,15 @@ def validate_coverage(plan: dict) -> None:
                     [REPO / "test/fixtures/v3_config.json", REPO / BUILD_TREE / "test", REPO]
                     if child == "unit-gtest" else []
                 )
-                if Path(argv[0]).stem != (
-                    "unit_correctness_test" if child == "unit-gtest" else "raypath_composition_test"
-                ) or [str(Path(a).resolve()) for a in argv[1:]] != [str(p.resolve()) for p in expected]:
+                binary_name = "unit_correctness_test" if child == "unit-gtest" else "raypath_composition_test"
+                target_name = "unit" if child == "unit-gtest" else "composition"
+                if (
+                    len(argv) != len(expected) + 4
+                    or Path(argv[1]).resolve() != (REPO / "scripts/gtest_parallel.py").resolve()
+                    or argv[2] != target_name
+                    or Path(argv[3]).stem != binary_name
+                    or [str(Path(a).resolve()) for a in argv[4:]] != [str(p.resolve()) for p in expected]
+                ):
                     raise RuntimeError(f"{child}: direct gTest argv no longer matches CTest for {name}")
     print(f"test_inner: verified CTest containment for {', '.join(covered)}")
 
@@ -668,7 +674,7 @@ def cmd_gtest(args: argparse.Namespace) -> int:
     # matches nothing, so the PASSED count is the only thing that separates a real
     # pass from a silent empty selection.
     proc = subprocess.Popen(
-        argv,
+        [sys.executable, str(REPO / "scripts/gtest_parallel.py"), args.target, *argv],
         cwd=REPO / BUILD_TREE / "test",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

@@ -76,6 +76,21 @@ def test_collects_parameterized_gtest_cases_and_plain_ctest_cases(tmp_path):
     }
 
 
+def test_wrapper_command_keeps_the_original_gtest_report_identity(tmp_path):
+    metadata = write_metadata(
+        tmp_path / "metadata.json", [("LumiceUnitCorrectnessTest", "unit_correctness_test", True)]
+    )
+    payload = json.loads(metadata.read_text())
+    payload["tests"][0]["command"] = [
+        "/usr/bin/python3", "/repo/scripts/gtest_parallel.py", "unit", "/bin/unit_correctness_test",
+        "/repo/test/fixtures/v3_config.json", "/repo/build/test", "/repo",
+    ]
+    metadata.write_text(json.dumps(payload))
+    names, specs = collector._ctest_metadata(metadata, tmp_path)
+    assert names == {"LumiceUnitCorrectnessTest"}
+    assert specs["LumiceUnitCorrectnessTest"] == tmp_path / "unit_correctness_test.xml"
+
+
 @pytest.mark.parametrize(
     "kind",
     [
