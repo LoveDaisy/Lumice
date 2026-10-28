@@ -86,6 +86,7 @@ def test_duplicate_execution_refused(tmp_path: Path) -> None:
         parallel.merge_reports([first, second], {"Sample.One"})
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shebang stand-in executable")
 @pytest.mark.parametrize("external_filter", [False, True])
 def test_failed_run_cannot_publish_listing_xml(tmp_path: Path, external_filter: bool) -> None:
     binary = tmp_path / "fake_gtest"
