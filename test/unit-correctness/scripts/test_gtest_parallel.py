@@ -57,6 +57,30 @@ def test_duplicate_execution_refused(tmp_path: Path) -> None:
         parallel.merge_reports([first, second], {"Sample.One"})
 
 
+def test_failed_run_cannot_publish_listing_xml(tmp_path: Path) -> None:
+    binary = tmp_path / "fake_gtest"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "if '--gtest_list_tests' in sys.argv:\n"
+        "    if 'GTEST_OUTPUT' in os.environ:\n"
+        "        Path(os.environ['GTEST_OUTPUT'][4:]).write_text('<listing-only/>')\n"
+        "    print('Sample.\\n  Case')\n"
+        "else:\n"
+        "    sys.exit(3)\n"
+    )
+    binary.chmod(0o755)
+    output = tmp_path / "report.xml"
+    output.write_text("old green")
+    proc = subprocess.run(
+        [sys.executable, str(Path(parallel.__file__)), "unit", str(binary)],
+        env=dict(os.environ, GTEST_OUTPUT=f"xml:{output}"), capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert not output.exists()
+
+
 def test_unknown_capacity_and_small_selection_stay_serial(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(parallel.platform, "system", lambda: "Linux")
     assert parallel.capacity("unit", 1000) == 1

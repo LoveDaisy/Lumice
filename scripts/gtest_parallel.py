@@ -228,8 +228,10 @@ def run(target: str, argv: list[str]) -> int:
                         raise RunError("native gTest produced no complete XML report")
                 return 0
             listing_output = base / "listing.txt"
+            listing_env = dict(env)
+            listing_env.pop("GTEST_OUTPUT", None)
             with listing_output.open("wb") as sink:
-                child = children.start([*argv, "--gtest_list_tests"], env, sink)
+                child = children.start([*argv, "--gtest_list_tests"], listing_env, sink)
                 rc = children.wait(child)
             if rc:
                 raise RunError(f"gTest listing exited {rc}")
