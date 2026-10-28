@@ -1040,13 +1040,12 @@ class TestBenchmarkIsaField(LumiceTestCase):
     def _find_cmake_cache(self) -> Path | None:
         """Locate the CMakeCache.txt belonging to the binary under test.
 
-        Two layouts exist in this repo and both are covered: `scripts/build.sh`
-        installs to `build/cmake_install/<flavor>/` and configures in
-        `build/cmake_build/<flavor>/`; CI configures with `cmake -S . -B build` and
-        (for the shared-lib leg) points $LUMICE_BIN into the build tree. The
-        flavor-derived candidate is tried FIRST on purpose — walking up from an
-        installed binary would otherwise reach a `build/CMakeCache.txt` left behind
-        by an unrelated plain-cmake configure and cross-check against the wrong one.
+        Three layouts exist in this repo: `scripts/build.sh` installs to
+        `build/cmake_install/<flavor>/`, a standing tree's build-only path writes
+        `build/<BUILD_TYPE>/<flavor>/bin/Lumice`, and CI may configure directly
+        with `cmake -S . -B build`. The first two share the configure record at
+        `build/cmake_build/<flavor>/`; derive that candidate before walking up
+        from the executable, where an unrelated plain-cmake cache may live.
         """
         binary = Path(self.lumice_bin).resolve()
         root = get_project_root().resolve()
@@ -1056,6 +1055,18 @@ class TestBenchmarkIsaField(LumiceTestCase):
         if "cmake_install" in parts:
             flavor = parts[parts.index("cmake_install") + 1]
             candidates.append(root / "build" / "cmake_build" / flavor / "CMakeCache.txt")
+        else:
+            try:
+                built = binary.relative_to(root / "build").parts
+            except ValueError:
+                built = ()
+            if (
+                len(built) == 4
+                and built[0] in {"Debug", "Release", "MinSizeRel", "RelWithDebInfo"}
+                and built[1] in {"static", "shared"}
+                and built[2] == "bin"
+            ):
+                candidates.append(root / "build" / "cmake_build" / built[1] / "CMakeCache.txt")
         candidates.extend(parent / "CMakeCache.txt" for parent in binary.parents)
         candidates.append(root / "build" / "CMakeCache.txt")
 
