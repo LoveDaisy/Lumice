@@ -170,6 +170,25 @@ def merge_reports(paths: list[Path], expected: set[str]) -> ET.Element:
     return result
 
 
+def publish_report(result: ET.Element, output: Path | None, children: Children) -> None:
+    if children.cancelled:
+        raise RunError("cancelled before report publication")
+    if output is None:
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp_output = output.parent / f".{output.name}.{os.getpid()}.tmp"
+    try:
+        ET.ElementTree(result).write(temp_output, encoding="utf-8", xml_declaration=True)
+        if children.cancelled:
+            raise RunError("cancelled during report publication")
+        temp_output.replace(output)
+        if children.cancelled:
+            output.unlink(missing_ok=True)
+            raise RunError("cancelled during report publication")
+    finally:
+        temp_output.unlink(missing_ok=True)
+
+
 def capacity(target: str, count: int) -> int:
     # Unknown hosts keep the original one-process behavior. The supported Mac
     # bounds leave capacity for the test's own worker threads and the OS.
@@ -214,8 +233,9 @@ def run(target: str, argv: list[str]) -> int:
             base = Path(tmp)
             if unsupported:
                 stdout = base / "native.txt"
+                report = base / "native.xml"
                 with stdout.open("wb") as sink:
-                    child = children.start(argv, env, sink)
+                    child = children.start(argv, dict(env, GTEST_OUTPUT=f"xml:{report}"), sink)
                     rc = children.wait(child)
                 text = stdout.read_text(errors="replace")
                 sys.stdout.write(text)
@@ -223,9 +243,17 @@ def run(target: str, argv: list[str]) -> int:
                 ran = re.findall(r"\[==========\] (\d+) tests? from .* ran\.", text)
                 if rc or children.cancelled or not ran or int(ran[-1]) == 0:
                     raise RunError(f"native gTest did not complete a nonempty selection (exit {rc})")
-                if output is not None:
-                    if not output.exists() or not list(ET.parse(output).iter("testcase")):
-                        raise RunError("native gTest produced no complete XML report")
+                try:
+                    root = ET.parse(report).getroot()
+                except (OSError, ET.ParseError) as error:
+                    raise RunError(f"native gTest report incomplete: {error}") from error
+                expected = {
+                    f"{case.get('classname', '')}.{case.get('name', '')}"
+                    for case in root.iter("testcase") if case.get("status") != "notrun"
+                }
+                if len(expected) != int(ran[-1]):
+                    raise RunError("native gTest report does not match its completed run count")
+                publish_report(merge_reports([report], expected), output, children)
                 return 0
             listing_output = base / "listing.txt"
             listing_env = dict(env)
@@ -282,21 +310,7 @@ def run(target: str, argv: list[str]) -> int:
                     raise RunError(f"isolated gTest exited {rc}")
                 reports.append(report)
             result = merge_reports(reports, expected)
-            if children.cancelled:
-                raise RunError("cancelled before report publication")
-            if output is not None:
-                output.parent.mkdir(parents=True, exist_ok=True)
-                temp_output = output.parent / f".{output.name}.{os.getpid()}.tmp"
-                try:
-                    ET.ElementTree(result).write(temp_output, encoding="utf-8", xml_declaration=True)
-                    if children.cancelled:
-                        raise RunError("cancelled during report publication")
-                    temp_output.replace(output)
-                    if children.cancelled:
-                        output.unlink(missing_ok=True)
-                        raise RunError("cancelled during report publication")
-                finally:
-                    temp_output.unlink(missing_ok=True)
+            publish_report(result, output, children)
             return 0
     finally:
         children.stop_all()

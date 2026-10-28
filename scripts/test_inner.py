@@ -11,10 +11,9 @@ Three subcommands, one per consumer:
             diff_verdict() seam — the same functions their own main() calls — and
             reports one aggregate verdict. Untracked files are counted and their
             invisibility to these gates stated (same scope as the pre-commit hook).
-  gtest     runs one direct gtest binary with a --gtest_filter derived by faces,
-            behind the two no-silent-green guards: per-suite reconciliation against
-            --gtest_list_tests (a parsed suite must contribute at least one selected
-            case), and the passed-count parse ([  PASSED  ] N tests, N=0 fails).
+  gtest     runs one selected gtest target through the shared native-sharding
+            entry, behind per-suite reconciliation against --gtest_list_tests
+            and a nonempty passed-count guard (gtest exits 0 on an empty filter).
 
 inner is the iteration-time fast path only; quick remains the closing gate. The
 faces are deliberately coarse — a face can miss, and whatever it misses is caught

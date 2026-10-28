@@ -57,7 +57,8 @@ def test_duplicate_execution_refused(tmp_path: Path) -> None:
         parallel.merge_reports([first, second], {"Sample.One"})
 
 
-def test_failed_run_cannot_publish_listing_xml(tmp_path: Path) -> None:
+@pytest.mark.parametrize("external_filter", [False, True])
+def test_failed_run_cannot_publish_listing_xml(tmp_path: Path, external_filter: bool) -> None:
     binary = tmp_path / "fake_gtest"
     binary.write_text(
         "#!/usr/bin/env python3\n"
@@ -68,16 +69,38 @@ def test_failed_run_cannot_publish_listing_xml(tmp_path: Path) -> None:
         "        Path(os.environ['GTEST_OUTPUT'][4:]).write_text('<listing-only/>')\n"
         "    print('Sample.\\n  Case')\n"
         "else:\n"
+        "    if 'GTEST_OUTPUT' in os.environ:\n"
+        "        Path(os.environ['GTEST_OUTPUT'][4:]).write_text('<partial/>')\n"
         "    sys.exit(3)\n"
     )
     binary.chmod(0o755)
     output = tmp_path / "report.xml"
     output.write_text("old green")
+    env = dict(os.environ, GTEST_OUTPUT=f"xml:{output}")
+    if external_filter:
+        env["GTEST_FILTER"] = "Sample.Case"
     proc = subprocess.run(
         [sys.executable, str(Path(parallel.__file__)), "unit", str(binary)],
-        env=dict(os.environ, GTEST_OUTPUT=f"xml:{output}"), capture_output=True, text=True,
+        env=env, capture_output=True, text=True,
     )
     assert proc.returncode != 0
+    assert not output.exists()
+
+
+def test_cancellation_during_publish_removes_new_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    output = tmp_path / "published.xml"
+    report_root = ET.Element("testsuites")
+    children = parallel.Children()
+    original_replace = Path.replace
+
+    def interrupt_after_replace(source: Path, destination: Path) -> Path:
+        moved = original_replace(source, destination)
+        children.cancelled = True
+        return moved
+
+    monkeypatch.setattr(Path, "replace", interrupt_after_replace)
+    with pytest.raises(parallel.RunError, match="cancelled during report publication"):
+        parallel.publish_report(report_root, output, children)
     assert not output.exists()
 
 
@@ -90,13 +113,17 @@ def test_unknown_capacity_and_small_selection_stay_serial(monkeypatch: pytest.Mo
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX SIGTERM and process liveness probe")
-def test_cancel_during_listing_reaps_owned_child(tmp_path: Path) -> None:
+@pytest.mark.parametrize("during_listing", [True, False])
+def test_cancel_reaps_owned_child(tmp_path: Path, during_listing: bool) -> None:
     marker = tmp_path / "child.pid"
     binary = tmp_path / "fake_gtest"
     binary.write_text(
         "#!/usr/bin/env python3\n"
-        "import os, time\n"
+        "import os, sys, time\n"
         "from pathlib import Path\n"
+        f"if ('--gtest_list_tests' in sys.argv) != {during_listing!r}:\n"
+        "    print('Sample.\\n  Case')\n"
+        "    sys.exit(0)\n"
         f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
         "time.sleep(30)\n"
     )
