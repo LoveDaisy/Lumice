@@ -1254,8 +1254,10 @@ cmake/**）→ctest 四标签（多跑不少跑）；scripts→仅恒跑层；te
 
 任务期先用 `-gtj release` 建立站立树，后续纯构建用 `cmake --build build/cmake_build/static`，
 然后只让 `./scripts/test.sh quick` 做完整收口。`./scripts/build.sh -gtj release` 默认仍兼跑
-ctest 与 GUI 两池，紧接 quick 会重跑 ctest/GUI 正确性池；但 quick 本来不含 GUI real-timing，
-需要该池时用 full，不能把构建→quick 冒称为 full。
+ctest 与 GUI 两池，紧接 quick 会重跑 ctest/GUI 正确性池；这是已有真实调用链：2026-10-28
+本机一次默认 build 后、没有任何源码改动，却又调用了相同标签 ctest 和 quick，9 个 CTest 目标
+累计跑了三遍、GUI correctness 池两遍。现成的只构建命令已足够，无需新增开关；但 quick 本来
+不含 GUI real-timing，需要该池时用 full，不能把构建→quick 冒称为 full。
 
 **两道守护挡在过滤器和绿色之间。** gtest 对零命中的 filter 返回 0，ctest 对零命中的标签选择同样
 返回 0——静默空选是快路径绝不允许产生的失败形态。故：ctest 选择先 `ctest -N` 断言选中数 >0；
@@ -1278,4 +1280,19 @@ core 面测试层 572s（ctest 559s + parity 13s）；docs-only <15s；整二进
 AC3 预算（raypath ≤2min、core ≤6min）在参照机契约口径下可达、在本样本超线——主因是套件本身的
 增长（§7.1 重测同证），裁量权在 owner（§7.3），不是 inner 能动的杠杆。另：ctest 四标签层含环境
 敏感用例 `ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`，曾观测到并发负载下红、隔离复跑
-绿——粗粒度层里的行业余波，先隔离复跑再诊断。
+绿——粗粒度层里的行业余波，先隔离复跑再诊断。上述旧数字发生在同次消重及原生分片之前，
+不是当前内环成本，也不构成删测试的理由。
+
+**2026-10-28 当前本机六轮**（M2 Max、Release `-gtj` 热树、无并发重负载）：隔离 clone 的
+本地 main 指向被测实现；每轮在同一场景累积不同的源码编译期断言，确实编译/重链接，以无参
+`./scripts/test.sh inner` 跑完必要构建、测试、四 checker 和格式门，不能拿最快一轮代替总和。
+raypath 单面六轮 **755.984s**（每轮 123.601–128.707s，unit 975 例含独占敏感用例、
+composition 27 例，自动 K4/K8）；core 单面六轮 **1191.254s**（193.764–206.270s，
+完整九个 CTest 注册）；真实混合 core+raypath+main 六轮 **1754.824s**
+（279.435–299.734s，每轮 CTest 9/9、fast E2E 274/274）。混合原请求层同时含 ctest、
+unit 标签、定向 unit、定向 composition 与 fast-e2e；执行层只含 ctest、fast-e2e 和恒跑检查，
+原并集不变，绝非只测最后改过的文件。build-only clone 的 `LUMICE_BIN` 指当轮重建的 CLI，
+ISA 与 CMakeCache 的交叉核验也实际入选，未以 skip 换预算。core 仅余 **8.746s**、混合余
+**45.176s**，均不是跨机保障；英文版 §7.10 记有逐层、原/执行选择与两目标同二进制配对数字。
+小 TU 的真实编辑一轮 30.787s、选中 8 例回退 K1；同二进制原生/包装三组配对仅多
+约 0.12–0.13s。旧 920s 混合样本含本场景未选的脚本测试层，不把跨场景数字相减当 A/B。

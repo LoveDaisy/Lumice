@@ -2525,13 +2525,16 @@ shards have exited. Both heavy CTest registrations use `RUN_SERIAL` so another C
 cannot compete with that interval. GUI real-timing and slow pytest performance pools remain
 separate as before; no test was removed from quick/full/pr or CI.
 
-For the standing `-gtj release` tree, an edit followed by `cmake --build
-build/cmake_build/static` and `./scripts/test.sh quick` builds once and runs the quick
-layers once. `./scripts/build.sh -gtj release` still builds **and** runs CTest plus both
-GUI pools by default; calling quick immediately after it reruns CTest and the correctness
-pool, while quick does not include the GUI real-timing pool. Use the build-only command when
-quick is the intended acceptance run; do not mistake it for a replacement for `full` when
-real-timing coverage is required.
+For the standing `-gtj release` tree, an edit followed by
+`cmake --build build/cmake_build/static` and `./scripts/test.sh quick` builds once and runs
+the quick layers once. `./scripts/build.sh -gtj release` still builds **and** runs CTest plus
+both GUI pools by default; calling quick immediately after it reruns CTest and the correctness
+pool, while quick does not include the GUI real-timing pool. This is an observed chain, not a
+hypothetical shortcut: a build, an extra same-label CTest call and then quick without an
+intervening edit ran the nine CTest registrations three times and the GUI correctness pool
+twice (2026-10-28 local execution record). The existing build-only command is sufficient;
+use it when quick is the intended acceptance run, but do not mistake build→quick for a
+replacement for `full` when real-timing coverage is required.
 
 **Two guards stand between a filter and a green.** gtest exits 0 when a filter matches nothing,
 and so does ctest for a label that matches nothing — the silent-empty-selection shape is the one
@@ -2582,4 +2585,37 @@ the ctest four-label layer includes `ServerAnalysisRunGpuPool.PoolIsUsedUnderGpu
 which was observed to fail once under concurrent-machine load and to pass in an isolated rerun
 minutes later — an environment-sensitive test sitting in a coarse layer inner did not choose,
 recorded here because anyone reading an inner red on that suite should rerun it in isolation
-before diagnosing.
+before diagnosing. These figures predate same-invocation containment and native sharding;
+they are not current inner costs or a reason to prune tests.
+
+**Current local iteration evidence (2026-10-28).** On the M2 Max with a warm
+`BUILD_TEST=ON`, `BUILD_GUI=ON` Release tree and no competing heavy job, six
+successive source edits per face were each followed by unqualified
+`./scripts/test.sh inner`. Each edit added a distinct compile-time contract to
+an existing source file, forced compilation/relinking and left the *entire*
+scenario diff in place. The temporary edits were confined to a disposable local
+clone whose `main` pointed at the implementation being measured; they are not
+product changes. Every row includes the build, selected tests, diff-scoped
+checkers and format check; ranges are all six runs, not the fastest run.
+
+| Face / changed source | Original layers → executed layers | Six-run total (range per run) |
+|---|---|---|
+| raypath (`query_control.cpp`, implementation `cbe878815`) | unit-gtest + composition-gtest + checkers + format → same | **755.984s** (123.601–128.707s); unit 975 cases (974 sharded/K4 + one isolated timing case), composition 27/K8 |
+| core (`math.cpp`, same implementation) | ctest + checkers + format → same | **1191.254s** (193.764–206.270s); nine CTest registrations, including the two heavy targets |
+| mixed (`math.cpp`, `query_control.cpp`, `main.cpp`, implementation `4077e2d3c`) | ctest + fast-e2e + ctest-unit-correctness + unit-gtest + composition-gtest + checkers + format → ctest + fast-e2e + checkers + format | **1754.824s** (279.435–299.734s); 9/9 CTest and 274/274 fast E2E on every round |
+
+The mixed run used `LUMICE_BIN` to identify the freshly rebuilt CLI in this
+build-only tree; the ISA-vs-CMake-cache cross-check still ran. It did not use
+`--files`, exclude a layer, or reuse a previous pass. The three local budgets
+(1200/1200/1800s for six loops) were met, but core's **8.746s** and mixed's
+**45.176s** headroom are not a cross-machine speed guarantee. A small unit TU
+edit gave a 30.787s inner run (8 selected cases, K1); three paired native versus
+wrapped runs of that same binary cost 0.392–0.398s versus 0.514–0.525s,
+about 0.12–0.13s absolute overhead, not a new full-binary run. Separately, on
+identical current binaries and selected case/status sets, whole-unit native K1
+198.043s became K4 63.604s (2919 executed + 6 disabled), and raypath
+composition K1 71.609s became K8 19.497s (27/27). These paired target savings
+are a different term from *eliminating duplicate executions* in the mixed plan;
+adding them twice would overstate the benefit. The earlier 920s mixed observation
+included a script-test layer absent from this scenario, so it is not a matched
+before/after arm.

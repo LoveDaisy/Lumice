@@ -779,7 +779,7 @@ def main() -> int:
     checkers.add_argument("--base", default=None, help="diff base (default: merge-base HEAD main)")
     checkers.set_defaults(func=cmd_checkers)
 
-    gtest = sub.add_parser("gtest", help="run one direct gtest binary behind the guards")
+    gtest = sub.add_parser("gtest", help="select suites for the shared native-sharding runner")
     gtest.add_argument("--plan-file", required=True)
     gtest.add_argument("--target", choices=["unit", "composition"], required=True)
     gtest.set_defaults(func=cmd_gtest)
