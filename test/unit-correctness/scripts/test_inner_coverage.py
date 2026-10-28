@@ -44,6 +44,35 @@ def test_unit_label_contains_direct_unit_but_does_not_remove_e2e() -> None:
     assert "fast-e2e" in result["layers"]
 
 
+def test_removed_unit_execution_keeps_its_per_suite_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = plan("src/main.cpp", "test/unit-correctness/analytic/test_band_sum.cpp")
+    repo = test_inner.REPO
+    working = repo / test_inner.BUILD_TREE / "test"
+    unit = {
+        "name": "LumiceUnitCorrectnessTest",
+        "command": [
+            sys.executable, str(repo / "scripts/gtest_parallel.py"), "unit",
+            str(repo / "build/Release/static/bin/unit_correctness_test"),
+            str(repo / "test/fixtures/v3_config.json"), str(working), str(repo),
+        ],
+        "properties": [
+            {"name": "LABELS", "value": ["unit-correctness", "gtest-duration"]},
+            {"name": "WORKING_DIRECTORY", "value": str(working)},
+        ],
+    }
+
+    def ctest(argv: list[str], **_kwargs: object):
+        selected = [unit] if "-L" in argv or argv[-1] == "^LumiceUnitCorrectnessTest$" else []
+        return type("Result", (), {"returncode": 0, "stderr": "", "stdout": json.dumps({"tests": selected})})()
+
+    monkeypatch.setattr(test_inner.subprocess, "run", ctest)
+    monkeypatch.setattr(test_inner, "reconcile", lambda *_args: ["ReviewUnregisteredSuite"])
+    with pytest.raises(RuntimeError, match="declared suites absent.*ReviewUnregisteredSuite"):
+        test_inner.validate_coverage(result)
+    monkeypatch.setattr(test_inner, "reconcile", lambda *_args: [])
+    test_inner.validate_coverage(result)
+
+
 def test_gtest_environment_filter_prevents_unit_containment() -> None:
     with patch.dict(test_inner.os.environ, {"GTEST_FILTER": "OtherSuite.*"}):
         result = plan("src/main.cpp", "test/unit-correctness/analytic/test_band_sum.cpp")
@@ -108,6 +137,42 @@ def test_cancel_during_suite_reconciliation_reaps_listing_child(tmp_path: Path) 
                 os.kill(child_pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shebang stand-in executable")
+@pytest.mark.parametrize("listing_fails", [False, True])
+def test_direct_preflight_failure_clears_old_xml_and_cannot_publish_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, listing_fails: bool,
+) -> None:
+    monkeypatch.setattr(test_inner, "REPO", tmp_path)
+    build_dir = tmp_path / test_inner.BUILD_TREE
+    (build_dir / "test").mkdir(parents=True)
+    (build_dir / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\n")
+    binary = tmp_path / "build/Release/static/bin/unit_correctness_test"
+    binary.parent.mkdir(parents=True)
+    report = tmp_path / "previous.xml"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "if 'GTEST_OUTPUT' in os.environ:\n"
+        "    Path(os.environ['GTEST_OUTPUT'][4:]).write_text('<listing-only/>')\n"
+        f"print('Known.\\n  Case')\n"
+        f"sys.exit({7 if listing_fails else 0})\n"
+    )
+    binary.chmod(0o755)
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text(json.dumps({
+        "gtest_filter": "Missing.*", "gtest_suites": {"plain": ["Missing"], "param": {}},
+    }))
+    report.write_text("<old-green/>")
+    with patch.dict(os.environ, {"GTEST_OUTPUT": f"xml:{report}"}):
+        if listing_fails:
+            with pytest.raises(RuntimeError, match="--gtest_list_tests failed"):
+                test_inner.cmd_gtest(type("Args", (), {"plan_file": str(plan_file), "target": "unit"})())
+        else:
+            assert test_inner.cmd_gtest(type("Args", (), {"plan_file": str(plan_file), "target": "unit"})()) == 1
+    assert not report.exists()
 
 
 def test_runtime_containment_checks_the_original_unanchored_selector(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2502,8 +2502,10 @@ CTest run contains the unit-label selection, the raypath composition target, and
 parity/GUI-composition/golden targets; the unit-label run contains the direct unit suites.
 Only matching CTest registrations qualify: after the incremental build, inner checks the
 current selected names, commands, working directory and properties against the plan and
-refuses a changed registration rather than reporting a false pass. A caller-supplied
-`GTEST_FILTER`, sharding variable or output setting prevents pruning the direct unit subset
+refuses a changed registration rather than reporting a false pass. A covered direct unit
+layer also keeps its per-suite source-to-binary reconciliation before the parent CTest run:
+removing the second execution does not remove the only guard for a changed but unregistered
+suite. A caller-supplied `GTEST_FILTER`, sharding variable or output setting prevents pruning the direct unit subset
 when it might differ from its parent's selection. This is same-invocation containment, not
 a cache across edits. The full task diff still drives the face table and `quick` still closes
 what inner intentionally does not select.
@@ -2514,7 +2516,9 @@ GoogleTest itself handles filtering and native `GTEST_TOTAL_SHARDS`/`GTEST_SHARD
 runner reconciles the case listing with every child's XML, then atomically publishes one
 report under the original binary name for `collect_ctest_durations.py`. Incomplete, duplicate,
 empty, cancelled or failed child runs never publish a green report; even a local invocation
-without external XML performs the same accounting. On this Mac's supported arm64 capacity
+without external XML performs the same accounting. The direct entry invalidates a prior XML
+before its own suite preflight, and neither its listing nor the runner's listing inherits
+`GTEST_OUTPUT`; only the shared runner publishes a completed report. On this Mac's supported arm64 capacity
 (8 performance cores), the bounds are four unit and eight composition processes; fewer than
 20 selected cases, unavailable performance-core information and other platforms use one
 process. Other gTest selection flags and external shards fall back to native execution without

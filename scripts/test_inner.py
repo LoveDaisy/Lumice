@@ -203,9 +203,11 @@ def selected_suite_headers(binary: Path, filter_str: str) -> set[str]:
         signal.signal(sig, children.cancel)
     try:
         with tempfile.TemporaryFile() as output:
+            listing_env = dict(os.environ)
+            listing_env.pop("GTEST_OUTPUT", None)
             child = children.start(
                 [str(binary), "--gtest_list_tests", f"--gtest_filter={filter_str}"],
-                dict(os.environ), output, cwd=REPO / BUILD_TREE / "test",
+                listing_env, output, cwd=REPO / BUILD_TREE / "test",
             )
             rc = children.wait(child)
             output.seek(0)
@@ -527,6 +529,18 @@ def validate_coverage(plan: dict) -> None:
                     or [str(Path(a).resolve()) for a in argv[4:]] != [str(p.resolve()) for p in expected]
                 ):
                     raise RuntimeError(f"{child}: direct gTest argv no longer matches CTest for {name}")
+    # A parent run contains the selected cases, but only the removed direct
+    # layer knew which suites the changed TUs declared. Keep that guard even
+    # when its second test execution has been eliminated.
+    if "unit-gtest" in covered and plan["gtest_filter"]:
+        suites = plan["gtest_suites"]
+        binary = Path(subsets["unit-gtest"]["LumiceUnitCorrectnessTest"]["command"][3])
+        missing = reconcile(
+            binary, plan["gtest_filter"], set(suites["plain"]),
+            {suite: set(prefixes) for suite, prefixes in suites["param"].items()},
+        )
+        if missing:
+            raise RuntimeError(f"unit-gtest: declared suites absent from the parent binary: {', '.join(missing)}")
     print(f"test_inner: verified CTest containment for {', '.join(covered)}")
 
 
@@ -631,6 +645,12 @@ def build_type() -> str:
 
 
 def cmd_gtest(args: argparse.Namespace) -> int:
+    from gtest_parallel import begin_report
+
+    # A failed plan read or suite reconciliation must not leave the last green
+    # report behind. Publication remains exclusively the shared runner's job.
+    stem = "unit_correctness_test" if args.target == "unit" else "raypath_composition_test"
+    begin_report(Path(stem), dict(os.environ), cwd=REPO / BUILD_TREE / "test")
     plan = json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
     build_type_value = build_type()
     bin_dir = REPO / "build" / build_type_value / "static" / "bin"

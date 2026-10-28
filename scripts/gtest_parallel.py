@@ -111,6 +111,17 @@ def report_destination(binary: Path, env: dict[str, str]) -> Path | None:
     return Path(path)
 
 
+def begin_report(binary: Path, env: dict[str, str], cwd: Path | None = None) -> Path | None:
+    output = report_destination(binary, env)
+    if "GTEST_OUTPUT" in env and output is None:
+        raise RunError("nonstandard gTest report destination is unsupported; use GTEST_OUTPUT=xml:<path>")
+    if output is not None:
+        if cwd is not None and not output.is_absolute():
+            output = cwd / output
+        output.unlink(missing_ok=True)
+    return output
+
+
 def merge_reports(paths: list[Path], expected: set[str]) -> ET.Element:
     suites: dict[str, ET.Element] = {}
     measured: set[str] = set()
@@ -232,18 +243,15 @@ def run(target: str, argv: list[str]) -> int:
         raise RunError("usage: gtest_parallel.py <unit|composition> <binary> [gTest/fixture arguments]")
     binary = Path(argv[0]).resolve()
     env = dict(os.environ)
-    output = report_destination(binary, env)
-    if any(a.startswith("--gtest_output") for a in argv[1:]) or ("GTEST_OUTPUT" in env and output is None):
-        raise RunError("nonstandard gTest report destination is unsupported; use GTEST_OUTPUT=xml:<path>")
-    if output is not None:
-        output.unlink(missing_ok=True)
+    if any(a.startswith("--gtest_output") for a in argv[1:]):
+        raise RunError("CLI gTest report destination is unsupported; use GTEST_OUTPUT=xml:<path>")
+    output = begin_report(binary, env)
     # Do not duplicate GoogleTest's CLI/env parser. Non-default selection or
     # external sharding is delegated to one original process, not reinterpreted.
     filters = [a.split("=", 1)[1] for a in argv[1:] if a.startswith("--gtest_filter=")]
     unsupported = (
         len(filters) > 1 or any(a.startswith("--gtest_") and not a.startswith("--gtest_filter=") for a in argv[1:])
         or any(key.startswith("GTEST_") and key not in {"GTEST_OUTPUT", "GTEST_COLOR"} for key in env)
-        or ("GTEST_OUTPUT" in env and output is None)
     )
     children = Children()
     old_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}

@@ -1240,13 +1240,15 @@ cmake/**）→ctest 四标签（多跑不少跑）；scripts→仅恒跑层；te
 **同次包含消重。** 推导链同时展示原请求层与实际执行层，标注被哪层包含。完整四标签 ctest
 包含 unit 标签与 composition/parity/golden 的已注册目标，unit 标签包含默认选择下的定向 unit
 套件；构建后按真实 CTest 注册的名字、命令、工作目录及 properties 复核，注册变化就拒绝假绿。
-外部 `GTEST_FILTER`、分片或输出设置可能改变定向 unit 与父层的关系，此时保留两份执行。
-消重不跨编辑轮缓存；完整任务 diff 与最终 quick 的责任不变。
+被父层覆盖的定向 unit 仍在父层运行前逐套件核对源码要求与二进制注册；只省第二次执行，
+不删它独有的漏选守卫。外部 `GTEST_FILTER`、分片或输出设置可能改变定向 unit 与父层的关系，
+此时保留两份执行。消重不跨编辑轮缓存；完整任务 diff 与最终 quick 的责任不变。
 
 **重目标共用原生执行。** CTest 与 inner 直调的 unit/composition 都走 `scripts/gtest_parallel.py`；
 选择和分片由 gTest 原生处理，runner 只限制进程数、隔离敏感断言、逐例对账 XML 并在全部成功后
 原子发布原二进制名的报告。取消、漏例、空选、子进程异常或损坏报告均不交出绿报告；本地不请求
-外部 XML 也做相同对账。本机 arm64 八性能核的界为 unit 四进程、composition 八进程；选中少于
+外部 XML 也做相同对账。直调入口在套件预检前就撤销上一轮 XML，两处原生枚举均不继承
+`GTEST_OUTPUT`，只有共享 runner 能发布完整新报告。本机 arm64 八性能核的界为 unit 四进程、composition 八进程；选中少于
 20 例、查不到性能核或其他平台走单进程。其他选择开关或外部分片保守交还原生执行，无法保持的
 报告目的地明确拒绝。两个墙钟敏感单测（`ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`、
 `DiagnosticCapi.DeviationStopsBeforeMaterializingTheUnprocessedTail`）待所有 shard 退出后独占执行；
