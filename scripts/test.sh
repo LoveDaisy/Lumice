@@ -446,9 +446,8 @@ run_inner() {
   if has_inner_layer ctest-unit-correctness; then
     guarded_ctest_layer ctest-unit-correctness -L unit-correctness
   fi
-  # The direct gtest layers carry their own guards in test_inner.py: per-suite
-  # reconciliation against --gtest_list_tests before the run, and the PASSED
-  # count parse after it (gtest exits 0 on an empty filter match).
+  # The selected gTest layers reconcile parsed suites against the native list;
+  # the shared runner then accounts for nonempty execution and complete XML.
   if has_inner_layer unit-gtest; then
     run_layer unit-gtest python3 scripts/test_inner.py gtest --plan-file "${plan}" --target unit
   fi

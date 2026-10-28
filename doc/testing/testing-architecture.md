@@ -2536,11 +2536,12 @@ real-timing coverage is required.
 **Two guards stand between a filter and a green.** gtest exits 0 when a filter matches nothing,
 and so does ctest for a label that matches nothing — the silent-empty-selection shape is the one
 failure a fast path must never produce. So: every ctest selection runs `ctest -N` first and
-refuses to execute an empty selection (the layer is judged FAIL); every direct gtest run is
-parsed for `[  PASSED  ] N tests` with N=0 judged FAIL; and between the two, per-suite
-reconciliation asserts every parsed suite contributed at least one selected case — parameterized
+refuses to execute an empty selection (the layer is judged FAIL); every selected gTest
+run uses the shared runner's native listing and complete XML reconciliation to reject
+an empty or partially missing execution, counting passed and skipped cases separately;
+and before handoff, per-suite reconciliation asserts every parsed suite contributed at least one selected case — parameterized
 suites included, matched in their registered `Prefix/Suite.` form, because a bare `Suite.*` arm
-selects nothing for a `TEST_P` suite and the N=0 guard is structurally blind to that partial
+selects nothing for a `TEST_P` suite and whole-run accounting is structurally blind to that partial
 miss. A TU that yields no suite falls back to the whole binary — running more, never less.
 `--selfcheck` proves the parser's detection power against every `test/unit-correctness`
 raypath/analytic TU and, against the built binary, that `test_li_parity.cpp`'s ten `TEST_P`

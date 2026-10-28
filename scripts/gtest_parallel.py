@@ -36,10 +36,12 @@ class Children:
     def cancel(self, _signum: int, _frame: object) -> None:
         self.cancelled = True
 
-    def start(self, argv: list[str], env: dict[str, str], output) -> subprocess.Popen:
+    def start(
+        self, argv: list[str], env: dict[str, str], output, cwd: Path | None = None
+    ) -> subprocess.Popen:
         if self.cancelled:
             raise RunError("cancelled before starting a test process")
-        child = subprocess.Popen(argv, env=env, stdout=output, stderr=subprocess.STDOUT)
+        child = subprocess.Popen(argv, env=env, cwd=cwd, stdout=output, stderr=subprocess.STDOUT)
         self.active.append(child)
         if self.cancelled:
             self.stop_all()

@@ -1259,8 +1259,9 @@ ctest 与 GUI 两池，紧接 quick 会重跑 ctest/GUI 正确性池；但 quick
 
 **两道守护挡在过滤器和绿色之间。** gtest 对零命中的 filter 返回 0，ctest 对零命中的标签选择同样
 返回 0——静默空选是快路径绝不允许产生的失败形态。故：ctest 选择先 `ctest -N` 断言选中数 >0；
-直调 gtest 解析 `[  PASSED  ] N tests`，N=0 判 FAIL；两者之间逐套件对账（参数化套件按注册的
-`Prefix/Suite.` 形态匹配——裸 `Suite.*` 臂对 `TEST_P` 套件选不中任何实例，N=0 守护对这种部分漏选
+gTest 共用入口以原生枚举和完整 XML 对账拒绝空选、漏例（passed 与 skipped 分列）；交接前还做
+逐套件对账（参数化套件按注册的
+`Prefix/Suite.` 形态匹配——裸 `Suite.*` 臂对 `TEST_P` 套件选不中任何实例，总数守护对这种部分漏选
 结构性失明）。解析不出套件的 TU 回退整二进制——多跑不少跑。`--selfcheck` 对
 `test/unit-correctness` 全部 raypath/analytic TU 断言解析非空，并对实机构证 `test_li_parity.cpp`
 的十个 `TEST_P` 套件以 `Prefix/Suite.` 形态入选。

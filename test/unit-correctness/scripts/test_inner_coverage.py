@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -59,6 +63,51 @@ def test_kernel_parity_is_not_repeated_after_full_ctest() -> None:
         result = plan("src/core/shared/kernel.hpp")
     assert "parity" in result["requested_layers"]
     assert "parity" not in result["layers"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX SIGTERM and PID liveness probe")
+def test_cancel_during_suite_reconciliation_reaps_listing_child(tmp_path: Path) -> None:
+    working_dir = tmp_path / "build/cmake_build/static/test"
+    working_dir.mkdir(parents=True)
+    marker = tmp_path / "listing.pid"
+    binary = tmp_path / "slow_gtest"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, time\n"
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        "time.sleep(30)\n"
+    )
+    binary.chmod(0o755)
+    script = (
+        "import sys; from pathlib import Path; "
+        f"sys.path.insert(0, {str(Path(test_inner.__file__).parent)!r}); "
+        "import test_inner; "
+        f"test_inner.REPO = Path({str(tmp_path)!r}); "
+        f"test_inner.selected_suite_headers(Path({str(binary)!r}), 'Sample.*')"
+    )
+    outer = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    child_pid = None
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not marker.exists() and outer.poll() is None:
+            time.sleep(0.01)
+        assert marker.exists(), outer.communicate(timeout=2)
+        child_pid = int(marker.read_text())
+        outer.send_signal(signal.SIGTERM)
+        _, stderr = outer.communicate(timeout=8)
+        assert outer.returncode != 0, stderr
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    finally:
+        if outer.poll() is None:
+            outer.kill()
+            outer.wait()
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_runtime_containment_checks_the_original_unanchored_selector(monkeypatch: pytest.MonkeyPatch) -> None:

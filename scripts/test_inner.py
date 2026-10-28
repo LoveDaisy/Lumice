@@ -11,9 +11,9 @@ Three subcommands, one per consumer:
             diff_verdict() seam — the same functions their own main() calls — and
             reports one aggregate verdict. Untracked files are counted and their
             invisibility to these gates stated (same scope as the pre-commit hook).
-  gtest     runs one selected gtest target through the shared native-sharding
-            entry, behind per-suite reconciliation against --gtest_list_tests
-            and a nonempty passed-count guard (gtest exits 0 on an empty filter).
+  gtest     selects one gtest target through the shared native-sharding entry;
+            per-suite reconciliation catches partial misses, and the runner's
+            native listing/XML accounting rejects empty or incomplete execution.
 
 inner is the iteration-time fast path only; quick remains the closing gate. The
 faces are deliberately coarse — a face can miss, and whatever it misses is caught
@@ -29,8 +29,10 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -193,18 +195,31 @@ def suites_of(
 
 
 def selected_suite_headers(binary: Path, filter_str: str) -> set[str]:
-    proc = subprocess.run(
-        [str(binary), "--gtest_list_tests", f"--gtest_filter={filter_str}"],
-        cwd=REPO / BUILD_TREE / "test",
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"--gtest_list_tests failed (exit {proc.returncode}): "
-            f"{proc.stderr.decode('utf-8', errors='replace').strip()}"
-        )
+    from gtest_parallel import Children
+
+    children = Children()
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    for sig in previous:
+        signal.signal(sig, children.cancel)
+    try:
+        with tempfile.TemporaryFile() as output:
+            child = children.start(
+                [str(binary), "--gtest_list_tests", f"--gtest_filter={filter_str}"],
+                dict(os.environ), output, cwd=REPO / BUILD_TREE / "test",
+            )
+            rc = children.wait(child)
+            output.seek(0)
+            listing = output.read().decode("utf-8", errors="replace")
+        if rc != 0:
+            raise RuntimeError(f"--gtest_list_tests failed (exit {rc}): {listing.strip()}")
+    finally:
+        children.stop_all()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    if children.cancelled:
+        raise RuntimeError("--gtest_list_tests cancelled before execution")
     headers = set()
-    for line in proc.stdout.decode("utf-8", errors="replace").splitlines():
+    for line in listing.splitlines():
         if line and not line[:1].isspace() and line.rstrip().endswith("."):
             headers.add(line.strip())
     return headers
@@ -223,7 +238,7 @@ def reconcile(
     param: dict[str, set[str]],
 ) -> list[str]:
     """Suites from the parse that contributed zero selected cases — a partial
-    miss the N=0 guard is structurally blind to."""
+    miss the whole-run accounting is structurally blind to."""
     headers = selected_suite_headers(binary, filter_str)
     missing = []
     for suite in sorted(plain):
@@ -614,8 +629,6 @@ def build_type() -> str:
     raise RuntimeError(f"CMAKE_BUILD_TYPE missing from {cache}")
 
 
-PASSED_RE = re.compile(r"\[\s*PASSED\s*\]\s*(\d+) tests?")
-
 
 def cmd_gtest(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
@@ -667,37 +680,18 @@ def cmd_gtest(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        print(f"test_inner: reconciliation ok ({len(plain) + len(param)} parsed suites all selected)")
-
-    # One run, streamed live and parsed as it goes: gtest exits 0 when a filter
-    # matches nothing, so the PASSED count is the only thing that separates a real
-    # pass from a silent empty selection.
-    proc = subprocess.Popen(
-        [sys.executable, str(REPO / "scripts/gtest_parallel.py"), args.target, *argv],
-        cwd=REPO / BUILD_TREE / "test",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        errors="replace",
-    )
-    passed_n: int | None = None
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        sys.stdout.write(line)
-        m = PASSED_RE.search(line)
-        if m:
-            passed_n = int(m.group(1))
-    proc.wait()
-    if proc.returncode != 0:
-        return proc.returncode
-    if passed_n is None or passed_n == 0:
         print(
-            "test_inner: the run reported 0 passed tests — treating as FAIL (an empty "
-            "selection must never read as green)",
-            file=sys.stderr,
+            f"test_inner: reconciliation ok ({len(plain) + len(param)} parsed suites all selected)",
+            flush=True,
         )
-        return 1
-    return 0
+
+    # Reconciliation is this entry's only added guard. Replace this process with
+    # the shared runner: it owns case accounting, cancellation and the report,
+    # with no intermediate Python process to leave a child behind on SIGTERM.
+    os.chdir(REPO / BUILD_TREE / "test")
+    os.execv(sys.executable, [
+        sys.executable, str(REPO / "scripts/gtest_parallel.py"), args.target, *argv,
+    ])
 
 
 def selfcheck() -> int:
