@@ -2482,7 +2482,7 @@ path refuses the whole run (exit 2, nothing executed) naming `quick` as the mini
 | Face | Trigger | Test layers |
 |---|---|---|
 | gui | `src/gui/**`, `test/gui/**` | ctest four labels + gui_test correctness pool |
-| raypath | layer `raypath`/`analytic` (map) | `unit_correctness_test` direct, `--gtest_filter` = the raypath+analytic suites + `raypath_composition_test` direct |
+| raypath | layer `raypath`/`analytic` (map) | selected `unit_correctness_test` suites (raypath+analytic) + `raypath_composition_test`, through the shared native-sharding entry |
 | core | other `src/**` (map) | ctest four labels |
 | shell | `src/main.cpp`, `src/launcher/**` | fast e2e + `ctest -L unit-correctness` |
 | build-system | root `CMakeLists.txt`, `cmake/**` | ctest four labels (more, never less) |
@@ -2495,6 +2495,43 @@ path refuses the whole run (exit 2, nothing executed) naming `quick` as the mini
 Deletions select nothing (they map to no face; the always-on checkers still run) and untracked
 files join the derivation but stay invisible to the diff-scoped checkers until `git add` — the
 same scope the pre-commit hook sees, with the same answer: the commit gate covers them.
+
+**Within one inner invocation, covered executions run once.** The derivation prints both
+requested and executed layers, including each removed child and its parent. The four-label
+CTest run contains the unit-label selection, the raypath composition target, and the named
+parity/GUI-composition/golden targets; the unit-label run contains the direct unit suites.
+Only matching CTest registrations qualify: after the incremental build, inner checks the
+current selected names, commands, working directory and properties against the plan and
+refuses a changed registration rather than reporting a false pass. A caller-supplied
+`GTEST_FILTER`, sharding variable or output setting prevents pruning the direct unit subset
+when it might differ from its parent's selection. This is same-invocation containment, not
+a cache across edits. The full task diff still drives the face table and `quick` still closes
+what inner intentionally does not select.
+
+**Heavy gTest targets share one execution entry.** Both CTest and the direct inner path run
+`scripts/gtest_parallel.py` for `unit_correctness_test` and `raypath_composition_test`.
+GoogleTest itself handles filtering and native `GTEST_TOTAL_SHARDS`/`GTEST_SHARD_INDEX`; the
+runner reconciles the case listing with every child's XML, then atomically publishes one
+report under the original binary name for `collect_ctest_durations.py`. Incomplete, duplicate,
+empty, cancelled or failed child runs never publish a green report; even a local invocation
+without external XML performs the same accounting. On this Mac's supported arm64 capacity
+(8 performance cores), the bounds are four unit and eight composition processes; fewer than
+20 selected cases, unavailable performance-core information and other platforms use one
+process. Other gTest selection flags and external shards fall back to native execution without
+an internal second split; unsupported report destinations refuse explicitly. Two known
+wall-clock-sensitive unit assertions (`ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`,
+`DiagnosticCapi.DeviationStopsBeforeMaterializingTheUnprocessedTail`) run only after all
+shards have exited. Both heavy CTest registrations use `RUN_SERIAL` so another CTest target
+cannot compete with that interval. GUI real-timing and slow pytest performance pools remain
+separate as before; no test was removed from quick/full/pr or CI.
+
+For the standing `-gtj release` tree, an edit followed by `cmake --build
+build/cmake_build/static` and `./scripts/test.sh quick` builds once and runs the quick
+layers once. `./scripts/build.sh -gtj release` still builds **and** runs CTest plus both
+GUI pools by default; calling quick immediately after it reruns CTest and the correctness
+pool, while quick does not include the GUI real-timing pool. Use the build-only command when
+quick is the intended acceptance run; do not mistake it for a replacement for `full` when
+real-timing coverage is required.
 
 **Two guards stand between a filter and a green.** gtest exits 0 when a filter matches nothing,
 and so does ctest for a label that matches nothing — the silent-empty-selection shape is the one

@@ -1230,12 +1230,32 @@ budget** 的一次性冷构建授权；它不改变本段的单测试规则。�
 的 `src/` 文件 fail-loud（先补 manifest 再重建，重建即自愈）；无法归类的路径整个拒绝（exit 2），
 指名 `quick` 是最小可跑集。推导链逐文件打印（`路径 → 规则 → 面`），错误推导当场可见。
 
-**面表 v1（粗粒度）**：gui→ctest 四标签+gui correctness 池；raypath/analytic→直调
-`unit_correctness_test`（raypath+analytic 套件过滤）+`raypath_composition_test`；core→ctest 四
+**面表 v1（粗粒度）**：gui→ctest 四标签+gui correctness 池；raypath/analytic→经共用原生入口
+选择 `unit_correctness_test`（raypath+analytic 套件过滤）+`raypath_composition_test`；core→ctest 四
 标签；shell（main/launcher）→fast e2e+`ctest -L unit-correctness`；构建系统（根 CMakeLists、
 cmake/**）→ctest 四标签（多跑不少跑）；scripts→仅恒跑层；test-only 按根目录子表；docs→无构建层
 仅恒跑层；kernel 模式（`*.cu`/`*.metal`/`src/core/shared/**`）独立于面追加 parity 层；未知→exit 2。
 恒跑层 = 四 diff-scoped checker + `format.sh --check`，每次必跑。
+
+**同次包含消重。** 推导链同时展示原请求层与实际执行层，标注被哪层包含。完整四标签 ctest
+包含 unit 标签与 composition/parity/golden 的已注册目标，unit 标签包含默认选择下的定向 unit
+套件；构建后按真实 CTest 注册的名字、命令、工作目录及 properties 复核，注册变化就拒绝假绿。
+外部 `GTEST_FILTER`、分片或输出设置可能改变定向 unit 与父层的关系，此时保留两份执行。
+消重不跨编辑轮缓存；完整任务 diff 与最终 quick 的责任不变。
+
+**重目标共用原生执行。** CTest 与 inner 直调的 unit/composition 都走 `scripts/gtest_parallel.py`；
+选择和分片由 gTest 原生处理，runner 只限制进程数、隔离敏感断言、逐例对账 XML 并在全部成功后
+原子发布原二进制名的报告。取消、漏例、空选、子进程异常或损坏报告均不交出绿报告；本地不请求
+外部 XML 也做相同对账。本机 arm64 八性能核的界为 unit 四进程、composition 八进程；选中少于
+20 例、查不到性能核或其他平台走单进程。其他选择开关或外部分片保守交还原生执行，无法保持的
+报告目的地明确拒绝。两个墙钟敏感单测（`ServerAnalysisRunGpuPool.PoolIsUsedUnderGpuPreference`、
+`DiagnosticCapi.DeviationStopsBeforeMaterializingTheUnprocessedTail`）待所有 shard 退出后独占执行；
+两个 CTest 重目标还标记 `RUN_SERIAL`。GUI real-timing 与 pytest performance 既有隔离不变。
+
+任务期先用 `-gtj release` 建立站立树，后续纯构建用 `cmake --build build/cmake_build/static`，
+然后只让 `./scripts/test.sh quick` 做完整收口。`./scripts/build.sh -gtj release` 默认仍兼跑
+ctest 与 GUI 两池，紧接 quick 会重跑 ctest/GUI 正确性池；但 quick 本来不含 GUI real-timing，
+需要该池时用 full，不能把构建→quick 冒称为 full。
 
 **两道守护挡在过滤器和绿色之间。** gtest 对零命中的 filter 返回 0，ctest 对零命中的标签选择同样
 返回 0——静默空选是快路径绝不允许产生的失败形态。故：ctest 选择先 `ctest -N` 断言选中数 >0；

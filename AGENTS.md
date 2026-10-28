@@ -232,14 +232,16 @@ fails the check.
   `--files <paths>`): changed `src/` files go through the configure-time layer map (generated
   from `cmake/lumice_layers.cmake` — the one manifest, no second path→layer table), and the
   mapped faces pick the test layers (a raypath edit runs the raypath/analytic gtest suites
-  through a direct binary call; a docs-only diff runs no build at all), plus the four
+  through the same native-sharding entry as CTest; a docs-only diff runs no build at all), plus the four
   diff-scoped checkers and `format.sh --check` on every run. It is deliberately coarse and
   prints its derivation chain — **iteration = inner, closing = quick**: whatever a face misses
   is caught by the quick gate before anything merges, so an inner `RESULT: PASS` never closes
   a task. `inner` builds with plain `cmake --build`, never `build.sh` — build.sh passes
   `-DBUILD_TEST` back unconditionally, so a flagless call would reconfigure the hot `-gtj`
   tree and tear its test targets out. Keep `-gtj` standing for the task's duration and neither
-  `inner` nor the closing `quick` pays a flavor-switch rebuild.
+  `inner` nor the closing `quick` pays a flavor-switch rebuild. For a manual build followed
+  by `quick`, use `cmake --build build/cmake_build/static` on that standing tree: `build.sh -gtj`
+  also runs CTest and GUI tests, which quick would partly repeat.
 
   What each row **costs** in measured seconds, what each scope catches that the cheaper one
   structurally cannot, the budget rule naming who answers for the spend, and where each test runs
