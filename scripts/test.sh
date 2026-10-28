@@ -429,6 +429,17 @@ run_inner() {
     run_layer build cmake --build build/cmake_build/static
   fi
 
+  # The build may have regenerated CTest registrations; refuse a coverage
+  # shortcut unless its actual command/properties still match the parent run.
+  if [[ $(plan_field "${plan}" build_needed) == True ]]; then
+    if ! python3 scripts/test_inner.py coverage --plan-file "${plan}"; then
+      record_layer coverage FAIL 0 "CTest containment could not be verified"
+      rm -f "${plan}"
+      print_summary inner
+      return 1
+    fi
+  fi
+
   if has_inner_layer ctest; then
     guarded_ctest_layer ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"
   fi

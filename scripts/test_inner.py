@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -195,7 +196,7 @@ def suites_of(
 def selected_suite_headers(binary: Path, filter_str: str) -> set[str]:
     proc = subprocess.run(
         [str(binary), "--gtest_list_tests", f"--gtest_filter={filter_str}"],
-        cwd=REPO,
+        cwd=REPO / BUILD_TREE / "test",
         capture_output=True,
     )
     if proc.returncode != 0:
@@ -354,10 +355,26 @@ def derive(files: list[str], base: str, from_diff: bool) -> tuple[dict, list[tup
     # every inner invocation, whatever the diff is.
     add_layers(["checkers", "format"])
 
+    requested_layers = layers.copy()
+    covered: dict[str, str] = {}
+    if "ctest" in layers:
+        for child in ("ctest-unit-correctness", "composition-gtest", "parity", "composition-gui", "golden-analytic"):
+            if child in layers:
+                covered[child] = "ctest (same registered test, selection and environment)"
+    if "ctest" in layers or "ctest-unit-correctness" in layers:
+        # The direct unit command supplies its own filter. A CTest invocation
+        # inheriting GTEST_FILTER could therefore select a different set.
+        if "unit-gtest" in layers and not any(
+            key.startswith("GTEST_") and key != "GTEST_COLOR" for key in os.environ
+        ):
+            covered["unit-gtest"] = (
+                "ctest" if "ctest" in layers else "ctest-unit-correctness"
+            ) + " (whole unit binary includes the selected suites)"
+    layers = [layer for layer in layers if layer not in covered]
     build_needed = any(layer in COMPILED_LAYERS for layer in layers)
     filter_str = None
     suites_payload = None
-    if "unit-gtest" in layers:
+    if "unit-gtest" in requested_layers:
         raypath_face = any(face == "raypath" for _, _, face in per_file)
         tu_face = any(face == "test-unit-tu" for _, _, face in per_file)
         tus: list[str] = []
@@ -387,6 +404,8 @@ def derive(files: list[str], base: str, from_diff: bool) -> tuple[dict, list[tup
     plan = {
         "base": base,
         "layers": layers,
+        "requested_layers": requested_layers,
+        "covered": covered,
         "gtest_filter": filter_str,
         "gtest_suites": suites_payload,
         "build_needed": build_needed,
@@ -423,7 +442,10 @@ def print_chain(per_file: list[tuple[str, str, str]], plan: dict, from_diff: boo
             "the last configure's map; the next build reconfigures and self-heals)",
             file=sys.stderr,
         )
-    print(f"  faces -> layers: {' '.join(plan['layers'])}", file=sys.stderr)
+    print(f"  faces -> requested layers: {' '.join(plan['requested_layers'])}", file=sys.stderr)
+    for child, parent in plan["covered"].items():
+        print(f"  covered: {child} -> {parent}", file=sys.stderr)
+    print(f"  executed layers: {' '.join(plan['layers'])}", file=sys.stderr)
 
 
 def normalize_rel(raw: str) -> str:
@@ -434,6 +456,58 @@ def normalize_rel(raw: str) -> str:
         except ValueError:
             raise DerivationError(f"{raw} is outside the repository") from None
     return PurePosixPath(raw).as_posix()
+
+
+def validate_coverage(plan: dict) -> None:
+    """Check the current CTest registration, after the build reconfigured it."""
+    covered = plan["covered"]
+    if not covered:
+        return
+
+    def metadata(*selection: str) -> dict[str, dict]:
+        proc = subprocess.run(
+            ["ctest", "--test-dir", BUILD_TREE, "--show-only=json-v1", *selection],
+            cwd=REPO, capture_output=True, text=True,
+        )
+        if proc.returncode:
+            raise RuntimeError(f"CTest metadata failed: {proc.stderr}")
+        return {test["name"]: test for test in json.loads(proc.stdout)["tests"]}
+
+    full = metadata("-L", "unit-correctness|composition-correctness|parity|golden-analytic")
+    subsets = {
+        "ctest-unit-correctness": metadata("-L", "unit-correctness"),
+        "unit-gtest": metadata("-R", "^LumiceUnitCorrectnessTest$"),
+        "composition-gtest": metadata("-R", "^LumiceRaypathCompositionTest$"),
+        "parity": metadata("-R", "^LumiceParityTest$"),
+        "composition-gui": metadata("-R", "^LumiceCompositionCorrectnessTest$"),
+        "golden-analytic": metadata("-R", "^LumiceGoldenAnalyticTest$"),
+    }
+    for child in covered:
+        parent = full if "ctest" in plan["layers"] else subsets["ctest-unit-correctness"]
+        subset = subsets[child]
+        if not subset or not subset.keys() <= parent.keys():
+            raise RuntimeError(f"{child}: CTest registration no longer contained in its parent")
+        for name, test in subset.items():
+            if test["command"] != parent[name]["command"] or test["properties"] != parent[name]["properties"]:
+                raise RuntimeError(f"{child}: CTest execution differs for {name}")
+            if child in ("unit-gtest", "composition-gtest"):
+                props = {p["name"]: p["value"] for p in test["properties"]}
+                if props.keys() & {"ENVIRONMENT", "ENVIRONMENT_MODIFICATION", "WILL_FAIL", "DISABLED"}:
+                    raise RuntimeError(f"{child}: CTest overrides direct gTest semantics for {name}")
+                if Path(props.get("WORKING_DIRECTORY", str(REPO / BUILD_TREE / "test"))).resolve() != (
+                    REPO / BUILD_TREE / "test"
+                ).resolve():
+                    raise RuntimeError(f"{child}: CTest working directory differs for {name}")
+                argv = test["command"]
+                expected = (
+                    [REPO / "test/fixtures/v3_config.json", REPO / BUILD_TREE / "test", REPO]
+                    if child == "unit-gtest" else []
+                )
+                if Path(argv[0]).stem != (
+                    "unit_correctness_test" if child == "unit-gtest" else "raypath_composition_test"
+                ) or [str(Path(a).resolve()) for a in argv[1:]] != [str(p.resolve()) for p in expected]:
+                    raise RuntimeError(f"{child}: direct gTest argv no longer matches CTest for {name}")
+    print(f"test_inner: verified CTest containment for {', '.join(covered)}")
 
 
 # --- subcommands -------------------------------------------------------------------
@@ -595,7 +669,7 @@ def cmd_gtest(args: argparse.Namespace) -> int:
     # pass from a silent empty selection.
     proc = subprocess.Popen(
         argv,
-        cwd=REPO,
+        cwd=REPO / BUILD_TREE / "test",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -695,6 +769,12 @@ def main() -> int:
         help="assert the suite parser's detection power instead of deriving",
     )
     faces.set_defaults(func=cmd_faces)
+
+    coverage = sub.add_parser("coverage", help="validate CTest containment after the build")
+    coverage.add_argument("--plan-file", required=True)
+    coverage.set_defaults(func=lambda args: validate_coverage(
+        json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
+    ) or 0)
 
     checkers = sub.add_parser("checkers", help="run the four diff-scoped gates")
     checkers.add_argument("--base", default=None, help="diff base (default: merge-base HEAD main)")
