@@ -20,7 +20,7 @@
 | 某个 CLI 输出字段什么意思（schema1/3/4/5） | [`raypath-cli-output.md`](raypath-cli-output.md) |
 | typed 结果、查询执行、C ABI 边界 | [`typed-results.md`](typed-results.md)（as-built） |
 | 测度→族路由语义、冻结阶梯、rank 原语 | [`gap1-family-routing.md`](gap1-family-routing.md) |
-| 对称口径（L1 标号 / L2 物理、逐元素子群） | [`raypath-symmetry.md`](raypath-symmetry.md) |
+| 对称口径（标号 / 物理两种等价、逐元素子群） | [`raypath-symmetry.md`](raypath-symmetry.md) |
 | C01–C18 各 case 的定义、配置与人工终态 | [`doc/cases/raypath-analysis-cases.md`](../cases/raypath-analysis-cases.md) |
 | schema3 几何层 / MC 佐证层分层设计 | [`raypath-schema3-layered-design.md`](raypath-schema3-layered-design.md) |
 | L0 分析面板（链 id、能量份额）机制记录 | [`raypath-analysis-panel.md`](raypath-analysis-panel.md) |
@@ -92,8 +92,12 @@
 与既有机器的衔接：schema3 报告的支撑 δ 轴块是该对象在一维（δ 轴）上的特例（旋转对称测度下
 够用）；对象设计把它推广到二维支撑集，恰好覆盖受限族（C10/C16）区域。
 
-支撑集（及一切口径敏感的对象）须带**口径字段**（字面成员 / L1 / L2 / filter 并集）——C12
-兄弟链 tint 的口径分歧是先例；口径词汇见 [`raypath-symmetry.md`](raypath-symmetry.md) §1。
+支撑集（及一切口径敏感的对象）须带**口径字段**（字面成员 / L1 / L2 / filter 并集，记号承
+[`raypath-analysis.md`](raypath-analysis.md) §5.1.6：L1 = 标号等价、L2 = 物理等价；区分的概念
+权威 = [`raypath-symmetry.md`](raypath-symmetry.md) §1.1「Two Meanings of One Bit Set」）——C12
+兄弟链 tint 的口径分歧是先例；`--literal` 的字面收窄语义见
+[`raypath-cli-output.md`](raypath-cli-output.md) §2。注意本篇 §4 的 L0/L1/L2 是**交互层**编号
+（列表/普查/查询），与对称口径的 L1/L2 记号无关。
 
 ### 2.3 语料覆盖对照
 
@@ -109,6 +113,7 @@
 | C05 | 支撑集（120° 硬边）+ 二维亮域 | —— | 二阶聚集 |
 | C06 | 支撑集（TIR 圆） | 边缘色/色散+权重 | 双机制同挂载点 |
 | C07 | （负对照） | —— | 溯源勘误：证据层问题，非对象缺口 |
+| C08 | 同 C05（归属负对照） | —— | 四面族 P3 变体的归组勘误，非对象缺口 |
 | C09 | 支撑集（洞+max 偏折边） | 边缘色/色散 | 有限 A 可全零 |
 | C10 | 族坍缩点 + 支撑集退化 | —— | 纬线/临界圆 partition（已关，见 §6） |
 | C11 | 族坍缩点 | —— | 120° 幻日组变体 |
@@ -134,7 +139,7 @@ C07 是唯一不被对象分类覆盖的 case——它缺的是证据层/来源�
    一维姿态族常规像；切弧/Lowitz 的二维受限族焦散。用户概念可以统一（都是「亮线」），机制
    归属必须分别可检索——这正是 §2.1 五对象 + 统一焦散判据（§3.3）的设计动机。
 3. **真实亮弧弧长剖面与局部法向截面列中期**：当前需求是识别/定位/展示亮弧（沿弧长剖面作为
-   规范探针的一种已在 §4.2），高级剖面工具不列为第一版前置。
+   规范探针的一种已在 §4.1），高级剖面工具不列为第一版前置。
 
 ## 3. 分支路由级联
 
@@ -331,8 +336,8 @@ partition=refused(touching) 与 declared-source A>0=finite 见证**并存**，�
 ### 6.1 消费映射（as-built）
 
 设计期的判据大多已算得出，缺的是编排与装配——「计算交付 ≠ 消费交付」。设计期识别的三个
-真缺口现已全部关闭；消费映射表按 as-built 状态重录（原语符号见
-`src/include/lumice_analytic_core.h`；api 登记见
+真缺口现已全部关闭；消费映射表按 as-built 状态重录（分析侧原语符号见
+`src/include/lumice_analytic_core.h`，引擎侧原语在行内另行标注落点；api 登记见
 [`analytic-api.md`](../interfaces/analytic-api.md)）：
 
 | 管线需要 | 原语 / 实现 | as-built 状态 |
@@ -347,7 +352,7 @@ partition=refused(touching) 与 declared-source A>0=finite 见证**并存**，�
 | 色度-权重 tint | `DiagnoseClassTint`（plate 族蓝红比判） | survey weight_tint 腿（#512） |
 | L2 因子曲线 / 加权场 | `TraceFiber[Batch]` + EvaluatePath 逐姿态诊断、`TraceWeightedSkyField` | `point`（#538）/ `probe`（#539） |
 | 走廊 A | 有限晶体走廊（引擎） | 生产消费 |
-| 实际测度对称核验（口径） | `DeriveSymmetryGating` 的逐元素保留旋转集（`PRotationSet`） | **缺口② 已关**（#540）；权威 = `raypath-symmetry.md` |
+| 实际测度对称核验（口径） | `DeriveSymmetryGating` 的逐元素保留旋转集（`PRotationSet`，`src/core/crystal.hpp`） | **缺口② 已关**（#540）；权威 = `raypath-symmetry.md` |
 | TIR 份额 / MC ESS 探针 | report TIR 腿 + survey `--mc-ess`（opt-in，固定种子） | **缺口③ 已关**（#537） |
 | 对象卡片装配 + 证据态 | survey/point/probe 文档装配（`src/raypath`） | 已交付（§7） |
 
@@ -482,6 +487,6 @@ survey 默认 15s ≈ 2 分钟+ 串行，叠加 point/probe 与能量对照 MC�
   物、命名可再定。
 - **断言台进 CI 的 Tier 迁移**：逐台实测 + 预算申报后移动（§8.4 纪律）。
 - **C02–C05 广度回归**：可选，未做。
-- **GUI 工作区接线**：进行中（截至 2026-10-29 未合 main）；范围以产品范围文档的 owner 确认
-  版为准，本文不代述其范围。
+- **GUI 工作区接线**：进行中（截至 2026-10-29 未合 main）；范围以 GUI 接线轮 owner 确认的
+  v1 范围为准，本文不代述其范围。
 - **真实弧长剖面与局部法向截面**：owner 裁定列中期（§2.4 裁定 3）。
