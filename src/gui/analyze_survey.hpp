@@ -151,9 +151,15 @@ class SurveyExecutor {
   // necessarily superseded before a newer query could run (see the class comment). GUI thread.
   std::optional<Finished> TakeFinished();
 
-  // Whether a query is between issue and finish. Test/observability face — the GUI never
+  // Whether a query is COMPUTING (picked up, not yet finished — the worker's own registration;
+  // a queued-but-unpicked query reads false). Test/observability face — the GUI never
   // branches on it (the display state is intent + outcome, not machinery).
   bool InFlight() const;
+
+  // Whether any issued query is still owed an answer — computing or queued. The teardown
+  // decisions (the Revert row's "cancel what is out") branch on this, not on InFlight: a
+  // queued query withdrawn by a reset must take its latch with it, exactly like a running one.
+  bool QueryOutstanding() const;
 
   // Cancels in-flight, drops queued, and joins the worker (which destroys the binding on its own
   // thread). The app's teardown calls this before the LUMICE global cleanup; every later call is

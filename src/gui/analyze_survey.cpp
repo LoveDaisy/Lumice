@@ -68,10 +68,20 @@ struct SurveyExecutor::Impl {
   // never waits behind the swap and never runs without it.
   std::optional<Job> pending_binding;  // kSetScene / kReleaseScene / kShutdown (latest wins)
   std::optional<Job> pending_query;    // kQuery (latest wins)
-  TokenPtr inflight_token;             // non-null exactly while a query is between issue and finish
+  TokenPtr inflight_token;             // the RUNNING query's cancel handle; the worker owns it
+                                       // entirely — registered at pickup, cleared at finish —
+                                       // so it is non-null exactly while a query computes. A
+                                       // QUEUED job keeps its token inside itself; it registers
+                                       // at its own pickup, and dropping it from the queue
+                                       // (CancelInFlight) needs no cleanup.
   std::optional<Finished> finished;    // single slot: the newest finish overwrites an older one
   unsigned long long next_serial = 0;
   bool joined = false;
+  // Worker-thread-only (written in the binding branch, read in the query's else arm, both on
+  // the worker): why the workspace is missing, when it is missing because the create failed —
+  // empty otherwise, so the query's refusal can name the real cause (R7) instead of blaming a
+  // release that never happened.
+  std::string binding_note;
 
   // -- worker thread only (destroyed there, never under the GUI) --
   std::unique_ptr<LUMICE_Scene, SceneDeleter> scene;
@@ -100,14 +110,21 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
         if (binding.kind == Impl::Job::Kind::kSetScene) {
           // The submitter cancelled any in-flight query before queuing this, so nothing reads
           // the old binding here — the destroy-on-worker guarantee the class comment states.
+          // Held under the lock deliberately: the swap is host-side scene binding only
+          // (LUMICE_PathWorkspaceCreate builds an index, no tracing — the M1-0 probe measured
+          // it instant even against a built scene), so the GUI's blocked SetScene/TakeFinished
+          // window is sub-millisecond. If a future scene scale ever makes it measurable, the
+          // fix is the query's own shape: take the job out, unlock, swap, relock, write back.
           impl->workspace.reset();
           impl->scene = std::move(binding.scene);
+          impl->binding_note.clear();
           if (impl->scene) {
             LUMICE_PathWorkspace* raw = nullptr;
             char err[256] = {};
             if (LUMICE_PathWorkspaceCreate(impl->scene.get(), &raw, err, sizeof(err)) == LUMICE_OK) {
               impl->workspace.reset(raw);
             } else {
+              impl->binding_note = err;
               GUI_LOG_WARNING("[SurveyExecutor] workspace create failed: {} — queries refuse until the next Analyze",
                               err);
             }
@@ -115,6 +132,7 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
         } else {  // kReleaseScene
           impl->workspace.reset();
           impl->scene.reset();
+          impl->binding_note.clear();
         }
       }
 
@@ -123,6 +141,10 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
       }
       Impl::Job job = std::move(*impl->pending_query);
       impl->pending_query.reset();
+      // (Re-)register this job's token as THE running handle before running it. The worker is
+      // the member's only writer: an unconditional assignment here is the registration, and
+      // the finish below clears it only while it still names this job.
+      impl->inflight_token = job.token;
       // kQuery. Run off the lock — the loop's unique_lock is released around the compute (it is
       // the one long-running section; every other branch stays under the lock) and retaken to
       // post the finish. Releasing is not optional hygiene: the post below would lock the
@@ -141,15 +163,25 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
       if (impl->workspace) {
         err_code = LUMICE_PathWorkspaceQuerySurvey(impl->workspace.get(), &request, &options, &raw, err, sizeof(err));
       } else {
-        // The binding was released or its workspace build failed under this query: name it
-        // honestly instead of a fabricated engine refusal (R7). The gate drops it anyway
-        // whenever the caller also reset the intent, which is every document-switch path.
+        // The binding is unusable under this query. Name WHICH failure honestly (R7): a
+        // released scene, or a workspace whose build failed at SetScene — the scene still
+        // being alive in the latter case, its real error sitting in binding_note. The gate
+        // drops it anyway whenever the caller also reset the intent, which is every
+        // document-switch path.
         err_code = LUMICE_ERR_UNKNOWN;
-        std::snprintf(err, sizeof(err), "scene_released: the analysis scene binding is gone");
+        if (!impl->binding_note.empty()) {
+          std::snprintf(err, sizeof(err), "workspace_unavailable: %s", impl->binding_note.c_str());
+        } else {
+          std::snprintf(err, sizeof(err), "scene_released: the analysis scene binding is gone");
+        }
       }
       lock.lock();
       {
-        impl->inflight_token.reset();
+        // Clear the member only while it still names THIS job's token — the worker wrote it at
+        // this job's pickup, and nothing else writes it, so this is the matching unregister.
+        if (impl->inflight_token == job.token) {
+          impl->inflight_token.reset();
+        }
         impl->finished =
             Finished{ job.id, err_code == LUMICE_OK, std::string(err), SurveyHandle(raw, SurveyDeleter{}) };
       }
@@ -200,10 +232,13 @@ void SurveyExecutor::IssueQuery(SurveyQueryId id, const LUMICE_PathSurveyRequest
     // (options.cancel is then null — the engine treats it as uncancellable, not as an error).
   }
   std::lock_guard<std::mutex> lock(impl_->mu);
+  // R6: the new intent supersedes whatever is RUNNING. A queued job (if one is waiting) keeps
+  // its own token inside itself — it never registered, so replacing it needs no cancel and no
+  // cleanup; its successor relationship is enforced when it is eventually picked up (its
+  // intent is the newest the pump issued, and the pump's gate judges outcomes by id).
   if (impl_->inflight_token) {
-    LUMICE_PathCancelTokenRequest(impl_->inflight_token.get());  // R6: the new intent supersedes the old
+    LUMICE_PathCancelTokenRequest(impl_->inflight_token.get());
   }
-  impl_->inflight_token = job.token;
   impl_->pending_query = std::move(job);
   impl_->cv.notify_one();
 }
@@ -240,6 +275,11 @@ std::optional<SurveyExecutor::Finished> SurveyExecutor::TakeFinished() {
 bool SurveyExecutor::InFlight() const {
   std::lock_guard<std::mutex> lock(impl_->mu);
   return impl_->inflight_token != nullptr;
+}
+
+bool SurveyExecutor::QueryOutstanding() const {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  return impl_->inflight_token != nullptr || impl_->pending_query.has_value();
 }
 
 void SurveyExecutor::ShutdownAndJoin() {

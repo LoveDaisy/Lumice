@@ -599,11 +599,8 @@ void RenderTopBar(float window_width) {
   // The second occupant of the feature-button group: the Render/Analyze workspace switch — the
   // Analysis button's replacement and the analysis's new entry (the Analyze workspace is where
   // the analysis lives). One slot whose label names the DESTINATION, the bar's own Run/Stop
-  // idiom: from Render it reads [route " Analyze] (click: switch, and open the Raypath Analysis
-  // window — during the list's migration the floating window is the analysis UI, so the mode's
-  // entry opens it; re-entering re-opens a manually closed one, and this bridge write retires
-  // with the window in the migration that moves the list into the workspace); from Analyze it
-  // reads [Render]. The two-mode segmented pair this slot was first drawn as measured +32 px
+  // idiom: from Render it reads [route " Analyze], from Analyze it reads [Render]. The
+  // two-mode segmented pair this slot was first drawn as measured +32 px
   // over the bar's 20 px narrow-window headroom (required 1036 vs 1024,
   // the_top_bar_fits_at_the_minimum_window_width) — the label-shortening rung of the switch
   // plan's degradation ladder, and the slot keeps the width of the wider of its two labels
@@ -2348,15 +2345,9 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
 
   float preview_height = panel_height;
 
-  g_preview_vp.active = false;
-  // Same statement, same reason: both halves of the publication are level-triggered, so the frame
-  // that does not republish them is the frame that has neither. See PreviewViewport in app.hpp.
-  g_preview_vp.curve_labels.clear();
-  // And the Analyze workspace's panorama is the other mode's publication: the frame that draws
-  // the Render preview clears it, exactly as the workspace's frame clears g_preview_vp. Without
-  // this, a stale true from the last Analyze frame would blit the panorama over every Render
-  // frame.
-  g_panorama_vp.active = false;
+  // The frame's viewport publications (both modes') are cleared once at the dispatch point,
+  // RenderWorkspacePanels — the statement that used to live here moved there, so a stale
+  // publication from the other workspace can never reach either region.
 
   if (PreviewShowsPicture()) {
     // Compute viewport in framebuffer pixels (for HiDPI)

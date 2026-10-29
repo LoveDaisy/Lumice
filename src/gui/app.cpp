@@ -910,9 +910,16 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
     g_server_poller.InvalidateAnalysisResult();
   } else {
     // Revert keeps the analysis state (the committed scene is the same one), so the frozen
-    // binding stays with the kept selection and result; only an in-flight query is withdrawn —
-    // R6's Revert row (no latch, no outcome drop: the intent keeps its bookkeeping).
-    g_survey_executor.CancelInFlight();
+    // binding stays with the kept selection and result; only an outstanding query is withdrawn
+    // — R6's Revert row. The withdrawal carries the same latch the cancel button sets (the
+    // engine answers a cancel with an OK-carrying partial document, and the gate must drop
+    // it), but only when something is actually outstanding (computing or queued —
+    // QueryOutstanding, not InFlight): latching unconditionally would turn an already-adopted,
+    // intact overview into "cancelled" for nothing.
+    if (g_survey_executor.QueryOutstanding()) {
+      g_survey_executor.CancelInFlight();
+      state.analysis.survey.cancelled_for_key = true;
+    }
   }
 
   // crystal_mesh_hash reset — as-built: only DoNew clears it (Open branches don't touch it;

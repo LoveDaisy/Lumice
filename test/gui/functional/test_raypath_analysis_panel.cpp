@@ -1369,8 +1369,44 @@ bool SurveySurvivesAWorkspaceSwitch(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
   IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
 
-  // Revert: rebuild the analysis state, adopt a survey, then revert — the bookkeeping survives
-  // with the kept selection (same committed scene), nothing re-issues under it.
+  // Revert with a query IN FLIGHT: the withdrawal carries the cancel latch (the engine answers
+  // a cancel with an OK-carrying partial document, and that answer must not land as this
+  // selection's completed digest). Selecting and reverting back-to-back, with no Yield between,
+  // means the query cannot have finished yet — the latch is what the overview then shows.
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  const std::string in_flight_display = TopChainDisplay();
+  ctx->ItemClick((std::string("**/") + in_flight_display).c_str());
+  gui::DoRevert();
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 20), false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kCancelled,
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.empty(), false);
+  ctx->LogInfo("[survey switch] Revert withdrew an in-flight query under the cancel latch");
+  // The kept selection is not re-issued under the latch; a DIFFERENT selection clears the latch
+  // with its new intent and answers (the top row again would be the same key — the latch holds).
+  const auto& kept_view = gui::g_state.analysis_result;
+  const std::string other_display = kept_view.payload->entries[static_cast<size_t>(kept_view.display_order[1])].display;
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + other_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  ctx->LogInfo("[survey switch] a changed selection re-armed after the reverted query");
+
+  // Revert after adoption: rebuild the analysis state, adopt a survey, then revert — the
+  // bookkeeping survives with the kept selection (same committed scene), nothing re-issues
+  // under it, and the adopted digest stays on show (no latch was set — nothing was withdrawn).
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
@@ -1674,7 +1710,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
   // The radius slider is live BEFORE any result: in Point mode with the default centre and no
   // Analyze pressed, it is enabled, setting it changes the session's radius and the ring drawn on
-  // the preview (the pixel radius DrawAnalysisRoiRing draws from), and nothing runs — no result
+  // the panorama (the pixel radius DrawPanoramaRoiRing draws from), and nothing runs — no result
   // appears, the intent flag stays clear, the lifecycle is the render's, the sim state is Done.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "radius_slider_drags_before_any_result");

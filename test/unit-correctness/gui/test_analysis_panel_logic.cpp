@@ -1374,6 +1374,44 @@ bool PumpUntil(GuiState& state, SurveyExecutor& executor, Pred pred, int timeout
   return true;
 }
 
+// The executor-level issuing helper shared by the lifecycle tests: a P|B|D class request for
+// `faces` on crystal 1, buffers copied in (the executor takes them by value — masters here are
+// never moved from).
+void IssueClassQuery(SurveyExecutor& executor, const SurveyQueryId& id, const std::vector<int>& faces) {
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.face_count = static_cast<int>(faces.size());
+  request.layer_count = 1;
+  request.symmetry_bits_plus_one = 0;
+  request.budget_ms = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS;
+  executor.IssueQuery(id, request, faces, std::vector<int>(1, static_cast<int>(faces.size())));
+}
+
+// A bounded quiescence wait at the executor level (no GuiState): returns false on timeout.
+bool WaitForQuiescent(SurveyExecutor& executor, int timeout_ms) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (executor.InFlight()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return true;
+}
+
+// The issue-side twin: wait until the executor has a query between issue and finish.
+bool WaitForInFlight(SurveyExecutor& executor, int timeout_ms) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (!executor.InFlight()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return true;
+}
+
 }  // namespace
 
 // The full arc on a real scene: a selection issues a query; the worker answers it; the gate
@@ -1576,6 +1614,64 @@ TEST(AnalysisPanelLogic, SurveyExecutorSupersedesRefusesOnReleaseAndJoins) {
   // Shutdown joins a possibly-still-working executor and leaves nothing running.
   executor.ShutdownAndJoin();
   EXPECT_FALSE(executor.InFlight());
+}
+
+// The review's Major pin (r1): a successor issued while its predecessor still runs must stay
+// cancellable. The broken ordering was: IssueQuery(B) swapped the member to B's token, A's
+// finish then cleared it, and B ran to its deadline with every cancel path silently no-op'ing —
+// reachable exactly on the design's fast A→B path. The pin: cancel a running successor and
+// require quiescence in a fraction of the budget (with the bug this wait runs the full 15 s).
+TEST(AnalysisPanelLogic, SurveyExecutorCancelReachesASupersededSuccessor) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  const std::vector<int> faces_class{ 1, 2 };
+  const std::vector<int> faces_chain{ 1, 3, 2 };
+  const SurveyQueryId id_a = executor.NextId(1);
+  IssueClassQuery(executor, id_a, faces_class);
+  // A picked up and computing (its token registered at pickup).
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+
+  // B supersedes A mid-run. Wait for A's finish to become visible: the worker's finish-post →
+  // B-pickup pair is one critical section, so once A's outcome is in the mailbox, B is
+  // registered and computing.
+  const SurveyQueryId id_b = executor.NextId(1);
+  IssueClassQuery(executor, id_b, faces_chain);
+  std::optional<SurveyExecutor::Finished> a_finish;
+  const auto a_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (!(a_finish = executor.TakeFinished())) {
+    ASSERT_LT(std::chrono::steady_clock::now(), a_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_EQ(a_finish->id, id_a);
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+
+  // Cancel the RUNNING successor: quiescence must come from the cooperative poll cutting B
+  // short, not from B's budget running out.
+  executor.CancelInFlight();
+  ASSERT_TRUE(WaitForQuiescent(executor, 8000));
+
+  // Whatever finished, the ids are the two issued and the newest is B's.
+  std::optional<SurveyExecutor::Finished> last;
+  const auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < drain_deadline) {
+    if (auto finished = executor.TakeFinished()) {
+      EXPECT_TRUE(finished->id == id_a || finished->id == id_b);
+      last = std::move(*finished);
+      continue;
+    }
+    if (!executor.InFlight()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_TRUE(last.has_value());
+  EXPECT_EQ(last->id, id_b);
+  executor.ShutdownAndJoin();
 }
 
 }  // namespace

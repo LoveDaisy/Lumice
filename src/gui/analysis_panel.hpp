@@ -158,6 +158,11 @@ struct SelectedClassIdentity {
 // The selection's identity, or nullopt when nothing — or a row no longer on show — is selected.
 std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& state);
 
+// The survey pump's comparison key: the identity (the same derivation the request builder
+// consumes — one chain, so change detection and issued request cannot drift) plus the
+// generation it belongs to.
+SurveySelectionKey SurveySelectionKeyFor(const SelectedClassIdentity& identity, unsigned long long generation);
+
 // The mechanical construction the M1-0 probe proved engine-acceptable: identity + caller-owned
 // buffers -> the survey request (the C request holds pointers, so the buffers outlive it). A
 // multi-layer bundle still constructs and the engine answers with the named
@@ -465,13 +470,6 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server);
 // above the picture: Point mode's gestures aim at THAT picture. The default-centre and pick
 // branches read the panorama's viewport publication.
 void RenderPanoramaRoiControls(GuiState& state);
-
-// The ROI marker and ring on the preview, drawn by RenderPreviewPanel after its interaction
-// button: CONE mode with a valid centre that projects onto this frame's picture draws the centre
-// dot and the ring of the slider's radius around it (ProjectConeCenterMarker); every other state
-// draws nothing. `origin` is the preview window's top-left in screen points.
-void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
-                         float dpi_scale_x, float dpi_scale_y);
 
 // The marker and ring over the Analyze workspace's panorama: CONE mode with a projectable centre
 // draws through the one DrawRoiRingImpl. (The preview-side twin retired with the analysis

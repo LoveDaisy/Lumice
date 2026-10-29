@@ -301,19 +301,25 @@ LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentit
   return request;
 }
 
+SurveySelectionKey SurveySelectionKeyFor(const SelectedClassIdentity& identity, unsigned long long generation) {
+  SurveySelectionKey key;
+  key.generation = generation;
+  key.crystal_id = identity.core_crystal_id;
+  key.faces = identity.faces;
+  key.layer_face_counts = identity.layer_face_counts;
+  key.symmetry_bits_plus_one = identity.symmetry_bits_plus_one;
+  return key;
+}
+
 namespace {
 
-// The issuing half of the pump: build the request for the CURRENT selection (the row the key was
-// derived from) and hand it to the executor with the id the pump already assigned. Buffers move
-// into the executor's job — the C request only borrows them for the call.
-void IssueSurveyQuery(const GuiState& state, SurveyExecutor& executor, const SurveyQueryId& id) {
-  const std::optional<SelectedClassIdentity> identity = SelectedClassIdentityFor(state);
-  if (!identity.has_value()) {
-    return;  // the row vanished between the key derivation and here; the next pump re-derives
-  }
+// The issuing half of the pump: build the request for the CURRENT selection (the identity the
+// key was derived from) and hand it to the executor with the id the pump already assigned.
+// Buffers move into the executor's job — the C request only borrows them for the call.
+void IssueSurveyQuery(SurveyExecutor& executor, const SurveyQueryId& id, const SelectedClassIdentity& identity) {
   std::vector<int> faces;
   std::vector<int> counts;
-  const LUMICE_PathSurveyRequest request = MakeSurveyRequestForIdentity(*identity, &faces, &counts);
+  const LUMICE_PathSurveyRequest request = MakeSurveyRequestForIdentity(identity, &faces, &counts);
   executor.IssueQuery(id, request, std::move(faces), std::move(counts));
 }
 
@@ -337,10 +343,12 @@ void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
     }
   }
 
-  // 2. The live selection as the key an intent is issued for. No row on show (cleared, or merged
-  //    away by a symmetry re-read) — no key.
-  const LUMICE_RaypathHistogramEntry* row = SelectedAnalysisEntry(state);
-  if (row == nullptr || !state.analysis_result.payload) {
+  // 2. The live selection as the key an intent is issued for, derived through the ONE identity
+  //    chain (a56 — the request builder below consumes the same SelectedClassIdentityFor, so
+  //    the pump's change detection and the issued request cannot drift apart). No row on show
+  //    (cleared, or merged away by a symmetry re-read) — no key.
+  const std::optional<SelectedClassIdentity> identity = SelectedClassIdentityFor(state);
+  if (!identity.has_value() || !state.analysis_result.payload) {
     if (survey.intent_valid) {
       // The selection died: R6 — the intent dies with it, adopted outcome included.
       executor.CancelInFlight();
@@ -348,14 +356,7 @@ void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
     }
     return;
   }
-  SurveySelectionKey key;
-  key.generation = state.analysis_result.payload->snapshot_generation;
-  key.crystal_id = row->chain[0].crystal_id;
-  for (int l = 0; l < row->chain_len; ++l) {
-    key.faces.insert(key.faces.end(), row->chain[l].segment, row->chain[l].segment + row->chain[l].segment_len);
-    key.layer_face_counts.push_back(row->chain[l].segment_len);
-  }
-  key.symmetry_bits_plus_one = AnalysisSymmetryBits(state) == 7 ? 0 : 1;
+  SurveySelectionKey key = SurveySelectionKeyFor(*identity, state.analysis_result.payload->snapshot_generation);
 
   if (!survey.intent_valid || survey.key != key) {
     // A new or changed selection: withdraw whatever is out (R6 — the new intent supersedes; the
@@ -365,7 +366,7 @@ void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
     survey.intent_valid = true;
     survey.key = key;
     survey.intent_id = executor.NextId(key.generation);
-    IssueSurveyQuery(state, executor, survey.intent_id);
+    IssueSurveyQuery(executor, survey.intent_id, *identity);
     return;
   }
   // The same selection stands, with the intent valid and the id issued. If it has no outcome
@@ -1455,9 +1456,9 @@ void RenderRadiusSlider(GuiState& state) {
   const int rings = cone_result ? payload->cone_ring_count : kAnalysisConeRingCount;
   const float min_deg = cone_deg / static_cast<float>(std::max(rings, 1));
   // Never disabled: the radius is display-time state whether or not a result exists yet. Before
-  // one, it sizes the ring on the preview (DrawAnalysisRoiRing reads it every frame) so the
-  // user sees the region the list will be summed over; after one, it re-sums the rings on hand.
-  // Either way the request is the full cone and nothing here starts a run.
+  // one, it sizes the ring on the panorama (DrawPanoramaRoiRing's ring reads it every frame) so
+  // the user sees the region the list will be summed over; after one, it re-sums the rings on
+  // hand. Either way the request is the full cone and nothing here starts a run.
   ImGui::SetNextItemWidth(UiPx(220.0f));
   if (ImGui::SliderFloat("Radius", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
     // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
@@ -1880,9 +1881,8 @@ void RenderPanoramaRoiControls(GuiState& state) {
 
 namespace {
 
-// The marker-and-ring draw itself — the two wrappers below each bring their own gate (the
-// preview's also requires the floating window; the panorama's runs whenever the workspace shows
-// the picture region and the mode is Point).
+// The marker-and-ring draw itself. Its one wrapper is DrawPanoramaRoiRing, whose gate runs
+// whenever the Analyze workspace shows the panorama region and the mode is Point.
 void DrawRoiRingImpl(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin, float dpi_scale_x,
                      float dpi_scale_y) {
   const auto& a = state.analysis;
@@ -1900,11 +1900,10 @@ void DrawRoiRingImpl(const GuiState& state, const LUMICE_AnnotationView& view, c
   float cy = 0.0f;
   CanvasPixelToPreviewPoint(marker->px, marker->py, dpi_scale_x, dpi_scale_y, &cx, &cy);
   const ImVec2 centre(origin.x + cx, origin.y + cy);
-  // The preview window's own list, not the foreground one: the marker belongs to the picture, so
-  // it is clipped to the preview's rectangle and sits UNDER whatever is drawn after the preview
-  // panel — the analysis window itself, an edit modal — rather than over every window on screen.
-  // The caller draws inside the preview panel's Begin/End (app_panels.cpp), which is what makes
-  // "the current window" that one.
+  // The panorama region window's own list, not the foreground one: the marker belongs to the
+  // picture, so it is clipped to the panorama's rectangle and sits UNDER whatever is drawn after
+  // it rather than over every window on screen. The caller draws inside the panorama region's
+  // Begin/End (analyze_workspace.cpp), which is what makes "the current window" that one.
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
   // The centre mark is always drawn; the ring only when the local scale could be measured. A drag

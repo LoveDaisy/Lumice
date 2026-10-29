@@ -120,7 +120,8 @@ void RenderCrystalList(GuiState& state) {
 // empty state, and the preview's own two-branch notice (AnalysisPictureNotice — the same
 // predicate, never a second freshness judgment).
 void RenderScenePanorama(GLFWwindow* window, float window_height) {
-  g_panorama_vp.active = false;  // level-triggered, like the preview viewport's own publication
+  // The publication is cleared once per frame at the dispatch point; this function publishes
+  // by assignment below.
 
   ImGui::SeparatorText("Scene panorama");
   // The ROI controls sit ABOVE the picture: Point mode's gestures aim at the picture below them.
@@ -458,13 +459,8 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // and its outcome waits in the single slot for the return.
   PumpSurveyQuery(g_state, g_survey_executor);
 
-  // Level-triggered publication, the same statement RenderPreviewPanel makes every frame: the
-  // frame that does not draw the preview publishes neither the viewport nor the curve labels, so
-  // every consumer reads "no picture on screen" (DoAnalyze's IN_FRAME canvas falls back to the
-  // document's own resolution, the deferred blit skips, the export gates stay closed).
-  g_panorama_vp.active = false;
-  g_preview_vp.active = false;
-  g_preview_vp.curve_labels.clear();
+  // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);
+  // this region publishes by assignment below.
 
   // Pick-mode Esc cancel — read before any ImGui::Begin so the key event is not consumed by
   // inner widgets first (RenderLeftPanel's own rule; an armed pick is session state, not a
@@ -597,6 +593,16 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
 }
 
 void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_height) {
+  // The frame's viewport publications, cleared once at the ONE dispatch point. Both halves of
+  // each publication are level-triggered (PreviewViewport in app.hpp), so the frame that does
+  // not draw a region is the frame that publishes neither its viewport nor its curve labels —
+  // stated here, once, instead of as a copy of "clear the other mode's publication" in every
+  // region entry. That scatter is what let a stale panorama `true` blit over Render frames
+  // once already (M2-4's six red cases).
+  g_preview_vp.active = false;
+  g_preview_vp.curve_labels.clear();
+  g_panorama_vp.active = false;
+
   if (g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze) {
     RenderAnalyzeWorkspace(window, window_width, window_height);
   } else {
