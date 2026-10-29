@@ -31,6 +31,7 @@
 #include "gui/gui_state.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
+#include "include/lumice_raypath.h"
 #include "include/lumice_render.h"
 #include "util/raypath_analysis_display.hpp"
 
@@ -138,6 +139,31 @@ bool RefreshAnalysisEntries(GuiState& state, LUMICE_Server* server);
 // analysis.selected_entry — or nullptr when nothing is selected or no row carries that text
 // (the chain was merged away by a symmetry change, or the result is a new one).
 const LUMICE_RaypathHistogramEntry* SelectedAnalysisEntry(const GuiState& state);
+
+// R5 (742.3): the selected class's identity inside its Analyze-time snapshot, spelled in the
+// typed survey face's own vocabulary (LUMICE_PathSurveyRequest) so "build the request for the
+// selection" is a fill-in, not a re-derivation. The row's display text stays the selection's one
+// key (the row is a view); this bundle is DERIVED from it and the current symmetry on demand and
+// never stored — a symmetry toggle re-reads it exactly when the row it names survives the
+// re-read, and no second copy of the selection exists to govern.
+struct SelectedClassIdentity {
+  int core_crystal_id = 0;
+  std::vector<int> faces;  // the per-layer face sequences, concatenated in chain order
+  std::vector<int> layer_face_counts;
+  int symmetry_bits_plus_one = 0;  // the survey face's binary spelling (M1-0 probe): 0 = the
+                                   // physical P|B|D class, 1 = the literal sequence
+};
+
+// The selection's identity, or nullopt when nothing — or a row no longer on show — is selected.
+std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& state);
+
+// The mechanical construction the M1-0 probe proved engine-acceptable: identity + caller-owned
+// buffers -> the survey request (the C request holds pointers, so the buffers outlive it). A
+// multi-layer bundle still constructs and the engine answers with the named
+// multi_layer_unsupported refusal. Budget = the survey face's default constant; deadline and
+// cancel token come from the query options at issue time, not from here.
+LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentity& identity, std::vector<int>* faces,
+                                                      std::vector<int>* counts);
 
 // ---- ROI: the click on the preview ---------------------------------------------------------------
 

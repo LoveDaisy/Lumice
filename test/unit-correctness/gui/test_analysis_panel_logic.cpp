@@ -200,6 +200,109 @@ TEST(AnalysisPanelLogic, OtherRowLabelNamesNoEntryAndExcludeReadsNoSelection) {
   EXPECT_NE(std::string(kAnalysisOtherRowLabel).find_first_not_of("0123456789-() >C"), std::string::npos);
 }
 
+// ---- The selection's survey identity (742.3 M3-1) ------------------------------------------------
+
+// The mechanical bridge M1-0 probed, now in product code: the selection's row + the current
+// symmetry read position derive the survey request's four fields. The default read position (all
+// three checked) IS the physical P|B|D class (plus_one 0); all-unchecked IS the literal chain
+// (plus_one 1); an intermediate reduction has no survey class and requests the literal sequence
+// with the scope to be labelled at display time. Multi-layer rows derive the full per-layer
+// bundle, which the engine answers with the named multi_layer_unsupported refusal.
+TEST(AnalysisPanelLogic, SelectionIdentityDerivesTheSurveyRequestFields) {
+  GuiState state;
+  auto p = MakePayload(3, LUMICE_RAYPATH_ROI_FULL_SKY, { 5.0, 3.0 });  // rows "1-2" and "2-3"
+  ASSERT_TRUE(AdoptAnalysisPayloadIfNew(state, p));
+
+  // Nothing selected: no identity.
+  EXPECT_FALSE(SelectedClassIdentityFor(state).has_value());
+
+  // The default read position: P|B|D -> the physical class spelling.
+  state.analysis.selected_entry = std::string("2-3");
+  const auto default_bits = SelectedClassIdentityFor(state);
+  ASSERT_TRUE(default_bits.has_value());
+  EXPECT_EQ(default_bits->core_crystal_id, 0);
+  EXPECT_EQ(default_bits->symmetry_bits_plus_one, 0);
+  EXPECT_EQ(default_bits->faces, (std::vector<int>{ 2, 3 }));
+  EXPECT_EQ(default_bits->layer_face_counts, (std::vector<int>{ 2 }));
+
+  // All-unchecked: the literal chain.
+  state.analysis.symmetry_p = false;
+  state.analysis.symmetry_b = false;
+  state.analysis.symmetry_d = false;
+  const auto literal = SelectedClassIdentityFor(state);
+  ASSERT_TRUE(literal.has_value());
+  EXPECT_EQ(literal->symmetry_bits_plus_one, 1);
+
+  // An intermediate reduction (P only): no survey class exists for it — the literal sequence is
+  // what gets requested (the row's own representative; the overview labels the scope).
+  state.analysis.symmetry_p = true;
+  const auto intermediate = SelectedClassIdentityFor(state);
+  ASSERT_TRUE(intermediate.has_value());
+  EXPECT_EQ(intermediate->symmetry_bits_plus_one, 1);
+
+  // The request: every field echoes the identity, into caller-owned storage (the C request holds
+  // pointers), with the survey face's default budget.
+  std::vector<int> faces;
+  std::vector<int> counts;
+  const LUMICE_PathSurveyRequest request = MakeSurveyRequestForIdentity(*intermediate, &faces, &counts);
+  EXPECT_EQ(request.struct_size, sizeof(request));
+  EXPECT_EQ(request.crystal_id, 0);
+  EXPECT_EQ(request.face_count, 2);
+  EXPECT_EQ(request.layer_count, 1);
+  EXPECT_EQ(request.layer_face_counts[0], 2);
+  EXPECT_EQ(request.symmetry_bits_plus_one, 1);
+  EXPECT_EQ(request.budget_ms, LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS);
+  ASSERT_EQ(faces.size(), 2u);
+  EXPECT_EQ(faces[0], 2);
+  EXPECT_EQ(faces[1], 3);
+  EXPECT_EQ(request.faces, faces.data());
+  EXPECT_EQ(request.layer_face_counts, counts.data());
+
+  // A row the current result no longer carries (the selection cleared by adoption, or a chain
+  // merged away): no identity, the same "no selection" verdict the Exclude path reads.
+  state.analysis.selected_entry = std::string("9-9");
+  EXPECT_FALSE(SelectedClassIdentityFor(state).has_value());
+}
+
+// The multi-layer shape: the bundle carries every layer's faces and counts (crystal ids beyond
+// the first are the survey face's refusal domain — it binds one crystal and answers
+// multi_layer_unsupported before resolving any of them).
+TEST(AnalysisPanelLogic, MultiLayerSelectionIdentityCarriesEveryLayer) {
+  GuiState state;
+  auto p = std::make_shared<AnalysisPayload>();
+  p->snapshot_generation = 5;
+  p->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
+  LUMICE_RaypathHistogramEntry e{};
+  e.chain[0].crystal_id = 1;
+  e.chain[0].segment[0] = 1;
+  e.chain[0].segment[1] = 2;
+  e.chain[0].segment_len = 2;
+  e.chain[1].crystal_id = 2;
+  e.chain[1].segment[0] = 3;
+  e.chain[1].segment[1] = 4;
+  e.chain[1].segment[2] = 5;
+  e.chain[1].segment_len = 3;
+  e.chain_len = 2;
+  snprintf(e.display, sizeof(e.display), "cross-layer");
+  e.energy = 1.0;
+  e.count = 100;
+  p->entries.push_back(e);
+  ASSERT_TRUE(AdoptAnalysisPayloadIfNew(state, p));
+  state.analysis.selected_entry = std::string("cross-layer");
+
+  const auto identity = SelectedClassIdentityFor(state);
+  ASSERT_TRUE(identity.has_value());
+  EXPECT_EQ(identity->core_crystal_id, 1);
+  EXPECT_EQ(identity->faces, (std::vector<int>{ 1, 2, 3, 4, 5 }));
+  EXPECT_EQ(identity->layer_face_counts, (std::vector<int>{ 2, 3 }));
+
+  std::vector<int> faces;
+  std::vector<int> counts;
+  const LUMICE_PathSurveyRequest request = MakeSurveyRequestForIdentity(*identity, &faces, &counts);
+  EXPECT_EQ(request.layer_count, 2);
+  EXPECT_EQ(request.face_count, 5);
+}
+
 // ---- Export CSV ----
 
 // The CSV is the list as shown, byte for byte. Three propositions, each against a hand-written

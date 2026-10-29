@@ -265,6 +265,42 @@ const LUMICE_RaypathHistogramEntry* SelectedAnalysisEntry(const GuiState& state)
   return nullptr;
 }
 
+std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& state) {
+  const LUMICE_RaypathHistogramEntry* e = SelectedAnalysisEntry(state);
+  if (e == nullptr) {
+    return std::nullopt;
+  }
+  SelectedClassIdentity identity;
+  identity.core_crystal_id = e->chain[0].crystal_id;
+  for (int l = 0; l < e->chain_len; ++l) {
+    identity.faces.insert(identity.faces.end(), e->chain[l].segment, e->chain[l].segment + e->chain[l].segment_len);
+    identity.layer_face_counts.push_back(e->chain[l].segment_len);
+  }
+  // The survey face's binary spelling (the M1-0 probe pinned both ends): the default all-three
+  // read position IS the physical P|B|D class; the all-unchecked position IS the literal chain;
+  // an intermediate reduction has NO survey class — the literal sequence (the row's own
+  // representative) is requested, and the overview labels that scope (R7), never a fabricated
+  // class summary. The face refuses the intermediate subgroup encodings outright.
+  identity.symmetry_bits_plus_one = AnalysisSymmetryBits(state) == 7 ? 0 : 1;
+  return identity;
+}
+
+LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentity& identity, std::vector<int>* faces,
+                                                      std::vector<int>* counts) {
+  *faces = identity.faces;
+  *counts = identity.layer_face_counts;
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = identity.core_crystal_id;
+  request.faces = faces->data();
+  request.face_count = static_cast<int>(faces->size());
+  request.layer_face_counts = counts->data();
+  request.layer_count = static_cast<int>(counts->size());
+  request.symmetry_bits_plus_one = identity.symmetry_bits_plus_one;
+  request.budget_ms = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS;
+  return request;
+}
+
 // ---- ROI: the click on the preview ---------------------------------------------------------------
 
 std::optional<CanvasPixel> PreviewPointToCanvasPixel(float rel_x_pt, float rel_y_pt, float dpi_scale_x,

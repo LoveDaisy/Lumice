@@ -387,8 +387,27 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                       "Not wired up yet. Will show the sun direction in the selected crystal's frame.",
                       ImVec2(0, globe_h));
     ImGui::Spacing();
-    PlaceholderRegion("##AnalyzeDetails", "Selection details",
-                      "Select a class in the list region; the class overview takes this region.", ImVec2(0, 0));
+    if (const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(g_state);
+        identity.has_value()) {
+      // R5/R7 (742.3 M3-1): the selection's identity facts — the row's own text, the snapshot's
+      // crystal, the layer/face shape — and, for a multi-layer class, the survey face's
+      // documented answer, named. The engine-answered overview lands with the survey query
+      // itself; until then nothing here claims a result.
+      ImGui::BeginChild("##AnalyzeDetails", ImVec2(0, 0), ImGuiChildFlags_Borders);
+      ImGui::TextUnformatted("Selection details");
+      ImGui::BulletText("%s", g_state.analysis.selected_entry->c_str());
+      ImGui::BulletText("snapshot crystal %d · %d layer(s) · %d faces", identity->core_crystal_id,
+                        static_cast<int>(identity->layer_face_counts.size()), static_cast<int>(identity->faces.size()));
+      if (identity->layer_face_counts.size() > 1) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("The typed survey refuses multi-layer classes: multi_layer_unsupported.");
+        ImGui::PopStyleColor();
+      }
+      ImGui::EndChild();
+    } else {
+      PlaceholderRegion("##AnalyzeDetails", "Selection details",
+                        "Select a class in the list region; the class overview takes this region.", ImVec2(0, 0));
+    }
   }
   ImGui::End();
 }

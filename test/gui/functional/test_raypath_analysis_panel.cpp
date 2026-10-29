@@ -1082,6 +1082,9 @@ bool C01ChainAnalyzeSelectExcludeRerun(ImGuiTestContext* ctx) {
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
   ctx->Yield(2);
   IM_CHECK_RETV(SaveWindowPng(ctx, kWindowRef, GuiTestTempPath("analysis_c01_chain_list.png").string()), false);
+  // The right column's selection card (the identity facts the row names), on file too.
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_c01_chain_details.png").string()),
+                false);
 
   // Exclude it: one Out filter on the document, bound to the entry.
   SetListRef(ctx);
