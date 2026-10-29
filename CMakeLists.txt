@@ -1131,6 +1131,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/single_path_json.cpp"
   "${PROJ_SRC_DIR}/raypath/probe_analysis.cpp"
   "${PROJ_SRC_DIR}/raypath/map_analysis.cpp"
+  "${PROJ_SRC_DIR}/raypath/representative_ray.cpp"
   "${PROJ_SRC_DIR}/raypath/probe_json.cpp"
   "${PROJ_SRC_DIR}/raypath/survey_report.cpp"
   "${PROJ_SRC_DIR}/server/c_api_raypath.cpp")

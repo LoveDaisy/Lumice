@@ -136,6 +136,10 @@ bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count
 int BranchMarginCount(int face_count);
 std::string BranchMarginName(int index, int face_count);
 
+// Lower-case reason names of the chain's failure kinds (the refusal vocabulary of a path the
+// chain refuses): none / path_infeasible / tir_boundary / non_finite.
+const char* ChainFailureName(ChainFailure failure);
+
 }  // namespace lumice::analytic
 
 #endif  // LUMICE_ANALYTIC_PATH_EVALUATION_HPP_

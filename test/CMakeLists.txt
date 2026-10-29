@@ -284,6 +284,10 @@ add_executable(unit_correctness_test
   # lumice_raypath_obj OBJECT library linked below — the same objects liblumice carries.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp"
+  # The representative-ray face: the typed assembly over the corridor and chain, its refusal
+  # matrix (on the analytic suite's own pin poses), the point-result pose source, the request
+  # refusals and the completion boundary.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_representative_ray.cpp"
   # The budget owner: the legacy windows' zero rules, the unified query deadline's resolve-once
   # and clamp-forever, and the per-face runtime reads (one resolution per leg per query).
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_query_control.cpp"

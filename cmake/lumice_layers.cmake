@@ -281,6 +281,9 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/map_result.hpp
   raypath/map_analysis.hpp
   raypath/map_analysis.cpp
+  raypath/representative_ray.hpp
+  raypath/representative_ray.cpp
+  raypath/representative_ray_result.hpp
   raypath/survey_result.hpp
   raypath/detail/quantity/probe_line.hpp
   raypath/detail/quantity/probe_line.cpp
