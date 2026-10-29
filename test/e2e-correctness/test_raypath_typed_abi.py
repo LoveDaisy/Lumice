@@ -75,6 +75,60 @@ class QueryOptions(C.Structure):
     ]
 
 
+class PathText(C.Structure):
+    _fields_ = [("data", C.c_char_p), ("length", C.c_size_t)]
+
+
+class MapRequest(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("crystal_id", C.c_int),
+        ("faces", C.POINTER(C.c_int)), ("face_count", C.c_int),
+        ("layer_face_counts", C.POINTER(C.c_int)), ("layer_count", C.c_int),
+        ("full_sky", C.c_int), ("centre_altitude_deg", C.c_double),
+        ("centre_azimuth_deg", C.c_double), ("delta_span_deg", C.c_double),
+        ("azimuth_span_deg", C.c_double), ("view_rows", C.c_int), ("view_cols", C.c_int),
+        ("wavelengths_nm", C.POINTER(C.c_double)), ("wavelength_count", C.c_int),
+        ("sample_count", C.c_int), ("budget_ms", C.c_int), ("interrupted", C.c_void_p),
+    ]
+
+
+class MapInfo(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("execution", C.c_int), ("state", C.c_int),
+        ("reason", PathText), ("crystal_id", C.c_int), ("analytic_api_version", C.c_int),
+        ("crystal_kind", PathText), ("faces", C.POINTER(C.c_int)), ("face_count", C.c_size_t),
+        ("shape_count", C.c_size_t), ("shape_is_nominal", C.c_int),
+        ("sun_altitude_deg", C.c_double), ("sun_azimuth_deg", C.c_double),
+        ("incident_direction", C.c_double * 3), ("wavelength_nm", C.c_double),
+        ("wavelength_source", PathText), ("refractive_index", C.c_double),
+        ("sample_count", C.c_int), ("budget_ms", C.c_int), ("interrupted", C.c_int),
+        ("member_count", C.c_int), ("members_evaluated", C.c_int), ("truncated", C.c_int),
+        ("kept_count", C.c_longlong), ("view_full_sky", C.c_int),
+        ("view_delta_min_deg", C.c_double), ("view_delta_max_deg", C.c_double),
+        ("view_az_min_deg", C.c_double), ("view_az_max_deg", C.c_double),
+        ("view_rows", C.c_int), ("view_cols", C.c_int),
+        ("view_incident", C.c_double * 3), ("view_e1", C.c_double * 3), ("view_e2", C.c_double * 3),
+        ("pixel_count", C.c_size_t), ("point_mass_available", C.c_int),
+    ]
+
+
+class MapPixels(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("delta_deg", C.POINTER(C.c_double)),
+        ("azimuth_deg", C.POINTER(C.c_double)), ("values", C.POINTER(C.c_double)),
+        ("counts", C.POINTER(C.c_int)), ("status", C.POINTER(C.c_uint8)),
+        ("pixel_count", C.c_size_t),
+    ]
+
+
+class MapPointMass(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("m", C.c_double), ("m_error", C.c_double),
+        ("methods", C.POINTER(C.c_char_p)), ("method_count", C.c_size_t),
+        ("pixel", C.c_longlong),
+    ]
+
+
 class SunGrid(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("lat_count", C.c_int), ("lon_count", C.c_int),
@@ -300,6 +354,111 @@ def _check_other_request_families_accept_published_extents_and_preserve_future_t
         lib.LUMICE_PathWorkspaceDestroy(workspace)
 
 
+def _check_map_family_published_extents_and_cross_destroy_reads():
+    """The map family against the installed product library: standalone and workspace entries,
+    the reader contracts, the future-tail acceptance, and reads that survive the workspace."""
+    assert C.sizeof(MapRequest) == 120
+    assert (MapRequest.wavelengths_nm.offset, MapRequest.sample_count.offset,
+            MapRequest.interrupted.offset) == (88, 100, 112)
+    lib = _product_library()
+    lib.LUMICE_SceneFromJsonFile.argtypes = [C.c_char_p, C.POINTER(C.c_void_p)]
+    lib.LUMICE_SceneFromJsonFile.restype = C.c_int
+    lib.LUMICE_SceneDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_PathWorkspaceCreate.argtypes = [C.c_void_p, C.POINTER(C.c_void_p), C.c_void_p, C.c_size_t]
+    lib.LUMICE_PathWorkspaceCreate.restype = C.c_int
+    lib.LUMICE_PathWorkspaceDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_AnalyzePathMap.argtypes = [C.c_void_p, C.c_void_p, C.POINTER(C.c_void_p), C.c_void_p, C.c_size_t]
+    lib.LUMICE_AnalyzePathMap.restype = C.c_int
+    lib.LUMICE_PathWorkspaceQueryMap.argtypes = [C.c_void_p, C.c_void_p, C.c_void_p,
+                                                 C.POINTER(C.c_void_p), C.c_void_p, C.c_size_t]
+    lib.LUMICE_PathWorkspaceQueryMap.restype = C.c_int
+    lib.LUMICE_PathMapDestroy.argtypes = [C.c_void_p]
+    for getter in ("LUMICE_PathMapGetInfo", "LUMICE_PathMapGetPixels", "LUMICE_PathMapGetPointMass"):
+        getattr(lib, getter).argtypes = [C.c_void_p, C.c_void_p]
+        getattr(lib, getter).restype = C.c_int
+
+    faces = (C.c_int * 2)(3, 5)
+    counts = (C.c_int * 1)(2)
+    # The C01 corpus shape: the full-sphere uniform axis the map's random family reads.
+    config = ROOT / "test" / "e2e" / "configs" / "raypath_feature_random_regular.json"
+
+    def make_request():
+        request = MapRequest()
+        request.crystal_id = 1
+        request.faces = faces
+        request.face_count = 2
+        request.layer_face_counts = counts
+        request.layer_count = 1
+        request.full_sky = 0
+        request.centre_altitude_deg = -20.0
+        request.centre_azimuth_deg = 25.0
+        request.delta_span_deg = 6.0
+        request.azimuth_span_deg = 12.0
+        request.view_rows = 8
+        request.view_cols = 16
+        request.sample_count = 50000
+        return request
+
+    # The standalone entry on a scene the caller owns.
+    scene = C.c_void_p()
+    assert lib.LUMICE_SceneFromJsonFile(str(config).encode(), C.byref(scene)) == 0
+    err = C.create_string_buffer(256)
+    request = make_request()
+    request.struct_size = C.sizeof(request)
+    standalone = C.c_void_p()
+    assert lib.LUMICE_AnalyzePathMap(scene, C.byref(request), C.byref(standalone), err, len(err)) == 0, err.value
+    info = MapInfo()
+    info.struct_size = C.sizeof(info)
+    assert lib.LUMICE_PathMapGetInfo(standalone, C.byref(info)) == 0
+    assert info.state == 2  # LUMICE_PATH_STATE_FINITE
+    assert info.member_count == 12 and info.members_evaluated == 12 and info.truncated == 0
+    assert info.pixel_count == 8 * 16
+    frame_norm = math.sqrt(sum(axis * axis for axis in info.view_incident))
+    assert abs(frame_norm - 1.0) < 1e-12
+    pixels = MapPixels()
+    pixels.struct_size = C.sizeof(pixels)
+    assert lib.LUMICE_PathMapGetPixels(standalone, C.byref(pixels)) == 0
+    assert pixels.pixel_count == info.pixel_count
+    ok_cells = sum(1 for p in range(pixels.pixel_count) if pixels.status[p] == 1)
+    assert ok_cells > 0
+    lib.LUMICE_PathMapDestroy(standalone)
+
+    # The workspace entry, then reads that survive the workspace (and the scene).
+    workspace = C.c_void_p()
+    assert lib.LUMICE_PathWorkspaceCreate(scene, C.byref(workspace), err, len(err)) == 0, err.value
+    lib.LUMICE_SceneDestroy(scene)
+    request = make_request()
+    request.struct_size = C.sizeof(request)
+    owned = C.c_void_p()
+    assert lib.LUMICE_PathWorkspaceQueryMap(workspace, C.byref(request), None, C.byref(owned), err, len(err)) == 0, \
+        err.value
+    class FutureMapRequest(C.Structure):
+        _fields_ = [("base", MapRequest), ("tail", C.c_ubyte * 32)]
+
+    future = FutureMapRequest()
+    future.base = make_request()
+    C.memset(C.addressof(future) + C.sizeof(MapRequest), 0xA5, 32)
+    future.base.struct_size = C.sizeof(MapRequest) + 16
+    tail_result = C.c_void_p()
+    assert lib.LUMICE_PathWorkspaceQueryMap(workspace, C.byref(future), None, C.byref(tail_result), err,
+                                            len(err)) == 0, err.value
+    assert C.string_at(C.addressof(future) + C.sizeof(MapRequest), 32) == bytes([0xA5] * 32)
+    lib.LUMICE_PathMapDestroy(tail_result)
+    lib.LUMICE_PathWorkspaceDestroy(workspace)
+    info = MapInfo()
+    info.struct_size = C.sizeof(info)
+    assert lib.LUMICE_PathMapGetInfo(owned, C.byref(info)) == 0
+    assert info.state == 2 and info.member_count == 12
+    pixels = MapPixels()
+    pixels.struct_size = C.sizeof(pixels)
+    assert lib.LUMICE_PathMapGetPixels(owned, C.byref(pixels)) == 0
+    assert bool(pixels.values) and bool(pixels.status)
+    mass = MapPointMass()
+    mass.struct_size = C.sizeof(mass)
+    assert lib.LUMICE_PathMapGetPointMass(owned, C.byref(mass)) == 5  # NOT_AVAILABLE: no rank-0 member
+    lib.LUMICE_PathMapDestroy(owned)
+
+
 def _run_independent_client(check):
     _product_library_path()
     run = subprocess.run([sys.executable, "-I", str(Path(__file__).resolve()), check],
@@ -321,6 +480,10 @@ def test_other_request_families_accept_published_extents_and_preserve_future_tai
     _run_independent_client("other")
 
 
+def test_map_family_published_extents_and_cross_destroy_reads():
+    _run_independent_client("map")
+
+
 def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
     if sys.platform.startswith("win"):
         pytest.skip("the independent Windows shared-export leg uses its own compiler smoke")
@@ -339,8 +502,10 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
         #include <stdlib.h>
         #include <string.h>
 
+        #define MAP_SCENE_ARGV2 argv[2]
+
         int main(int argc, char** argv) {
-          if (argc != 2) return 1;
+          if (argc != 3) return 1;
           LUMICE_Scene* scene = NULL;
           if (LUMICE_SceneFromJsonFile(argv[1], &scene) != LUMICE_OK) return 2;
           LUMICE_PathWorkspace* workspace = NULL;
@@ -444,6 +609,45 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           if (LUMICE_PathProbeGetQuantity(probe_result, 0, &quantity) != LUMICE_PATH_READ_OK ||
               quantity.kind != LUMICE_PATH_QUANTITY_BAND_SUM ||
               quantity.unit != LUMICE_PATH_UNIT_PER_SR) return 24;
+          LUMICE_PathMapRequest map_request = {0};
+          map_request.struct_size = sizeof(map_request);
+          map_request.crystal_id = 1;
+          map_request.faces = faces;
+          map_request.face_count = 2;
+          map_request.layer_face_counts = counts;
+          map_request.layer_count = 1;
+          map_request.full_sky = 0;
+          map_request.centre_altitude_deg = -20;
+          map_request.centre_azimuth_deg = 25;
+          map_request.delta_span_deg = 6;
+          map_request.azimuth_span_deg = 12;
+          map_request.view_rows = 8;
+          map_request.view_cols = 16;
+          map_request.sample_count = 2000;
+          LUMICE_PathMap* map_result = NULL;
+          options.warm = NULL;  /* the map face takes no warm data */
+          /* The map leg needs a full-sphere uniform axis (the random family): the C01 corpus
+             scene, its own workspace — the client's other legs stay on argv[1]. */
+          LUMICE_Scene* map_scene = NULL;
+          if (LUMICE_SceneFromJsonFile(MAP_SCENE_ARGV2, &map_scene) != LUMICE_OK) return 41;
+          LUMICE_PathWorkspace* map_workspace = NULL;
+          if (LUMICE_PathWorkspaceCreate(map_scene, &map_workspace, NULL, 0) != LUMICE_OK) return 42;
+          LUMICE_SceneDestroy(map_scene);
+          if (LUMICE_PathWorkspaceQueryMap(map_workspace, &map_request, &options, &map_result, NULL, 0) != LUMICE_OK)
+            return 37;
+          LUMICE_PathWorkspaceDestroy(map_workspace);
+          LUMICE_PathMapInfo map_info = {0};
+          map_info.struct_size = sizeof(map_info);
+          if (LUMICE_PathMapGetInfo(map_result, &map_info) != LUMICE_PATH_READ_OK ||
+              map_info.state != LUMICE_PATH_STATE_FINITE || map_info.member_count == 0 ||
+              map_info.pixel_count == 0 || map_info.pixel_count != 128) return 38;
+          LUMICE_PathMapPixels map_pixels = {0};
+          map_pixels.struct_size = sizeof(map_pixels);
+          if (LUMICE_PathMapGetPixels(map_result, &map_pixels) != LUMICE_PATH_READ_OK || !map_pixels.values ||
+              !map_pixels.status || map_pixels.pixel_count != map_info.pixel_count) return 39;
+          double* map_values_copy = malloc(map_pixels.pixel_count * sizeof(double));
+          if (!map_values_copy) return 40;
+          memcpy(map_values_copy, map_pixels.values, map_pixels.pixel_count * sizeof(double));
           options.warm = NULL;
           LUMICE_PathFeatureReportRequest report = {0};
           report.struct_size = sizeof(report);
@@ -509,7 +713,11 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
               LUMICE_PathSurveyGetScope(survey_result, &survey_scope) != LUMICE_PATH_READ_OK ||
               LUMICE_PathPointGetInfo(point_result, &point_info) != LUMICE_PATH_READ_OK ||
               LUMICE_PathProbeGetInfo(probe_result, &probe_info) != LUMICE_PATH_READ_OK ||
-              LUMICE_PathReportGetInfo(report_result, &report_info) != LUMICE_PATH_READ_OK) return 16;
+              LUMICE_PathReportGetInfo(report_result, &report_info) != LUMICE_PATH_READ_OK ||
+              LUMICE_PathMapGetInfo(map_result, &map_info) != LUMICE_PATH_READ_OK ||
+              map_info.state != LUMICE_PATH_STATE_FINITE ||
+              LUMICE_PathMapGetPixels(map_result, &map_pixels) != LUMICE_PATH_READ_OK ||
+              memcmp(map_pixels.values, map_values_copy, map_pixels.pixel_count * sizeof(double)) != 0) return 16;
           LUMICE_PathSurveyDestroy(survey_result);
           LUMICE_Scene* second_scene = NULL;
           if (LUMICE_SceneFromJsonFile(argv[1], &second_scene) != LUMICE_OK) return 27;
@@ -543,6 +751,8 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
           LUMICE_SinglePathResultDestroy(point_result);
           LUMICE_PathProbeDestroy(probe_result);
           LUMICE_PathFeatureReportDestroy(report_result);
+          LUMICE_PathMapDestroy(map_result);
+          free(map_values_copy);
           free(identity_copy);
           free(grid_copy);
           free(semantics_copy);
@@ -560,10 +770,13 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
     assert str(include) in header_dependencies
     assert str(ROOT / "src") not in header_dependencies
     config = ROOT / "test" / "e2e" / "configs" / "raypath_analysis_halo_22.json"
-    run = subprocess.run([str(executable), str(config)], capture_output=True, text=True, check=False)
+    map_config = ROOT / "test" / "e2e" / "configs" / "raypath_feature_random_regular.json"
+    run = subprocess.run([str(executable), str(config), str(map_config)], capture_output=True, text=True,
+                         check=False)
     assert run.returncode == 0, f"C consumer exited {run.returncode}\n{run.stdout}\n{run.stderr}"
 
 
 if __name__ == "__main__":
     {"point": _check_published_request_extents_and_future_tail_keep_borrowed_result_alive,
-     "other": _check_other_request_families_accept_published_extents_and_preserve_future_tails}[sys.argv[1]]()
+     "other": _check_other_request_families_accept_published_extents_and_preserve_future_tails,
+     "map": _check_map_family_published_extents_and_cross_destroy_reads}[sys.argv[1]]()

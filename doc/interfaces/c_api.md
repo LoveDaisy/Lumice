@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 458        // ABI version, encoded major*100 + minor (v4.58)
+#define LUMICE_API_VERSION 459        // ABI version, encoded major*100 + minor (v4.59)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -103,6 +103,21 @@ unrecognized value is -1. The bridge maps each internal enum explicitly, so reor
 internal enum cannot silently change the published C number. `PathSurveyGetScope.member_kind`
 reads the completed result's quantity context; if that context is absent, it returns the
 unknown tag (0), not a physical member scope inferred from request bits.
+
+**v4.59** is a pure append, read-only by construction. Added the class reference map —
+`LUMICE_PathMapRequest`, the opaque `LUMICE_PathMap`, `LUMICE_AnalyzePathMap`,
+`LUMICE_PathWorkspaceQueryMap` and `LUMICE_PathMapDestroy`, plus
+`LUMICE_PATH_MAP_{DEFAULT,MAX}_BUDGET_MS`, `LUMICE_PATH_MAP_MAX_PIXELS` and the
+`LUMICE_PATH_MAP_PIXEL_*` status domain. The map is the whole physical class's
+single-reference-lambda band-sum grid over an explicit view (a named all-sky window or one
+centred on a sky point): every resolved member is evaluated on one lattice, band members' per-sr
+values sum member-by-member, and rank-0 members sum into a point-mass arm — never a
+representative's map times the member count. Five typed readers (`LUMICE_PathMapGetInfo` /
+`GetQuantity` / `GetEvidence` / `GetPixels` / `GetPointMass`) borrow handle-owned storage
+(`GetPixels` projects its columns once, so every read returns the same pointers); there is no
+`ToJson` face. A stop keeps the completed member prefix and reports `truncated`;
+`measure_not_expressible` rides the result as a named refusal, never a zero map. The workspace
+entry takes no warm data. No existing symbol or struct layout changed.
 
 **v4.54** is a pure append. Added the path survey — `LUMICE_PathSurveyRequest` (with a
 `struct_size` head), the opaque `LUMICE_PathSurvey`, `LUMICE_AnalyzePathSurvey`,
