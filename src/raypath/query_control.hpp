@@ -32,6 +32,7 @@ namespace lumice::raypath {
 enum class BudgetWindow {
   kPointDiscovery,   // point's discovery stop: 0 = no deadline (echoed 0); >0 = start + budget
   kProbeLambdas,     // probe's per-lambda boundary stop: 0 = the documented default, echoed resolved
+  kMapMembers,       // map's per-member boundary stop: 0 = the documented default, echoed resolved
   kQualityDeadline,  // report's discovery quality window: the caller's absolute deadline, else start + budget
   kHangCap,          // report enumeration's anti-hang floor: start + the fixed cap, independent of any budget
   kLegGuardrail,     // survey's opt-in MC ESS leg: start + the survey request's budget, verbatim
@@ -97,6 +98,7 @@ inline constexpr int kPollEnumerationMember = 21;  // report enumeration, per me
 inline constexpr int kPollSurveyChromatic = 22;    // survey chromatic pair, at leg entry
 inline constexpr int kPollSamplerDraws = 23;       // the diagnostic sampler's draw loops (survey MC ESS
                                                    // and report discovery — never both in one query)
+inline constexpr int kPollMapMembers = 24;         // map query, per member
 
 // The outcome a face records from its stop: completed unless its authority observed a reason.
 // (The stop argument is the LAST thing the face polled; a cancel racing the final poll reads

@@ -1111,6 +1111,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_mc_ess.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/survey/survey_json.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/quantity/probe_line.cpp"
+  "${PROJ_SRC_DIR}/raypath/detail/quantity/reference_map.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/quantity/tint.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/quantity/tir_share.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/quantity/mc_ess.cpp"
@@ -1129,6 +1130,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"
   "${PROJ_SRC_DIR}/raypath/single_path_json.cpp"
   "${PROJ_SRC_DIR}/raypath/probe_analysis.cpp"
+  "${PROJ_SRC_DIR}/raypath/map_analysis.cpp"
   "${PROJ_SRC_DIR}/raypath/probe_json.cpp"
   "${PROJ_SRC_DIR}/raypath/survey_report.cpp"
   "${PROJ_SRC_DIR}/server/c_api_raypath.cpp")

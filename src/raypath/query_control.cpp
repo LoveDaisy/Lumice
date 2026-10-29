@@ -3,13 +3,14 @@
 #include <atomic>
 
 #include "raypath/detail/schema3/report_assembly.hpp"
+#include "raypath/map_analysis.hpp"
 #include "raypath/probe_analysis.hpp"
 
 namespace lumice::raypath {
 
 namespace {
 
-constexpr int kWindowCount = 5;
+constexpr int kWindowCount = 6;
 std::atomic<long> g_window_counts[kWindowCount]{};
 std::atomic<long> g_query_count{ 0 };
 
@@ -25,6 +26,8 @@ int WindowIndex(BudgetWindow window) {
       return 3;
     case BudgetWindow::kLegGuardrail:
       return 4;
+    case BudgetWindow::kMapMembers:
+      return 5;
   }
   return -1;
 }
@@ -46,6 +49,14 @@ LegControl ResolveLeg(BudgetWindow window, const BudgetRequest& request) {
     // Probe's documented zero: the default applies and the document echoes the resolved value.
     case BudgetWindow::kProbeLambdas: {
       control.resolved_ms = request.budget_ms > 0 ? request.budget_ms : kDefaultProbeBudgetMs;
+      control.stop.deadline = start + std::chrono::milliseconds(control.resolved_ms);
+      control.stop.interrupted = request.interrupted;
+      break;
+    }
+    // The map's documented zero: the same shape as the probe's — the default applies and the
+    // document echoes the resolved value; polled at the per-member boundaries.
+    case BudgetWindow::kMapMembers: {
+      control.resolved_ms = request.budget_ms > 0 ? request.budget_ms : kDefaultMapBudgetMs;
       control.stop.deadline = start + std::chrono::milliseconds(control.resolved_ms);
       control.stop.interrupted = request.interrupted;
       break;

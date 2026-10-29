@@ -177,4 +177,15 @@ Error AnalysisWorkspace::QueryReport(const PathFeatureReportRequest& request, Fe
   return AnalyzePathFeatureReportValue(snapshot_, effective, out);
 }
 
+Error AnalysisWorkspace::QueryMap(const MapRequest& request, MapResult* out, const analytic::StopToken* cancel) {
+  MapRequest effective = request;
+  effective.cancel = cancel;
+  BudgetRequest deadline_request;
+  deadline_request.budget_ms = request.budget_ms;
+  deadline_request.interrupted = request.interrupted;
+  effective.query_deadline = ResolveQueryDeadline(deadline_request);
+  const PreparedGeometry* geometry = GeometryFor(request);
+  return AnalyzePathMap(snapshot_, effective, out, geometry);
+}
+
 }  // namespace lumice::raypath
