@@ -1,6 +1,10 @@
 # 光路分析 —— 功能总篇与路线图
 
-> Status：**路线图**（2026-10-14 更新：§1 状态表、§5.1.2/§5.1.6/§5.1.7、§5.1.8 报告段与 §6 对齐
+> Status：**路线图**（2026-10-29 更新：§1 状态表、§5.1.8 报告段与交互层段、§6 对齐当前生产状态——
+> 诊断 CLI 五命令面全落地（`analyze` 既有 + `raypath survey`/`point`/`probe`/`report`）、三个设计
+> 缺口全部关闭、typed 结果架构已合入（PR #547，[`typed-results.md`](typed-results.md)）、4.7.5 已
+> 发布（PR #544）；诊断管线的设计权威已提升为
+> [`diagnostic-pipeline.md`](diagnostic-pipeline.md)；GUI 工作区消费进行中。此前 2026-10-14 更新：§1 状态表、§5.1.2/§5.1.6/§5.1.7、§5.1.8 报告段与 §6 对齐
 > 当前生产状态——schema 3 报告已取代 schema 2 的发现层、`liblumice_analytic` 三波模块 A/B/C 已
 > as-built（API v2–v8）而 GUI 工作区消费未接线、LI 切换未发生；此前 2026-09-28 更新 §5.1.6 仓库
 > 定位、§5.1.8 两期划分修订，同日追加 §5.1.6「两仓计算用的对称性口径」一段，并给 `fn_period_` 实证
@@ -34,7 +38,7 @@
 |---|---|---|---|
 | **(i) 识别**：列出一个区域里各光路成分与占比 | ✅ 已交付（PR #347） | 完整链 id、专用分析运行、CPU 路 | §3；[`raypath-analysis-panel.md`](raypath-analysis-panel.md) |
 | **(ii) 剥离**：在渲染图上即时开关某个桶 | ⏸ 搁置（owner 2026-08-26 裁定） | 每桶真实辐射量（内存墙所在） | §4 |
-| **选定光路后的三功能**：① 光路详情（fiber） ② 单光路全天图（产品形态见 §5.1.8） ③ 预设点 | 🟡 计算接口部分交付：①已有目标点 C API/CLI；③已有有界target-free产品 report（schema 3，几何层证据 + MC 降级佐证）；②与③的共享数值原语已进 `liblumice_analytic`（模块 B 带求和 API v6、模块 C u-S² 场层 API v8）；GUI、全天图工作区和全域完备枚举仍未交付 | 已交付部分：Lumice C++ 单光路反解 / fiber、实际产品输入/物理 L2、几何层枚举与共享数值 API；后续：工作区联动与超出当前有界范围的检测 | §5.1 |
+| **选定光路后的三功能**：① 光路详情（fiber） ② 单光路全天图（产品形态见 §5.1.8） ③ 预设点 | 🟡 计算面与 CLI 消费面已全交付（2026-10-29 状态）：诊断 CLI 五命令面承载 ①–③ 的计算与查询——`raypath survey`（PR #508 起，对象卡片 + band-sum 地图）/ `point`（PR #538，fiber 因素分解）/ `probe`（PR #539，剖面）/ `report`（schema 3）；typed 结果架构已合入（PR #547，[`typed-results.md`](typed-results.md)）；**GUI 工作区消费进行中**（未合 main），全天图工作区与全域完备枚举仍未交付；设计权威见 [`diagnostic-pipeline.md`](diagnostic-pipeline.md) | 已交付部分：Lumice C++ 单光路反解 / fiber、实际产品输入/物理 L2、几何层枚举与共享数值 API、CLI 五命令面；后续：工作区联动 | §5.1 |
 | (i) 面板的四个机制级升级点 | 🔜 各有触发条件，未触发 | 同 (i) | §5.2；[`raypath-analysis-panel.md`](raypath-analysis-panel.md) §8 |
 
 ## 2. 拆分决策：(i) 识别 vs (ii) 剥离
@@ -566,13 +570,26 @@ analytic API 7/8 让独立安装树客户端消费相同数值（§4.7 诊断数
 范围、字段与迁移以 [`raypath-cli-output.md`](raypath-cli-output.md) §7 为准；分层决策见
 [`raypath-schema3-layered-design.md`](raypath-schema3-layered-design.md)。
 
+**五命令消费面（2026-10-29 as-built）**：`report`（schema 3）之外，`raypath survey`（PR #508 起，
+schema 4 对象卡片 + 证据态 + 规范探针）、`raypath point`（PR #538，schema 1 只追加的天空点因素
+分解 + `--warm` 索引契约）与 `raypath probe`（PR #539，schema 5 四 `--along` 剖面 + 暗区分解）
+把「点选光路普查 / 点选天空点分解 / 画线剖面」三类查询做成了命令面；`analyze` 维持 L0 既有形态。
+命令族与三层交互的设计权威 = [`diagnostic-pipeline.md`](diagnostic-pipeline.md)；字段合同见
+[`raypath-cli-output.md`](raypath-cli-output.md) §2/§5/§9/§10。warm 查询的正确性前置：跨 λ
+warm 曾沿旧 δ 支撑给当前点误发 `certified` 包含关系，已由 PR #545 修复（结构包含与读数检查分离
+判定）。
+
 **历史固定案例验收（2026-10-01）**保存在
 [`raypath-feature-diagnostic-acceptance.md`](raypath-feature-diagnostic-acceptance.md)。它的物理观察有明确输入，
 但旧schema-1 detector的功能表与无条件visibility声明不再是当前产品合同，不能据旧报告推断一般场景。
 
-**尚未交付的交互层**：当前 GUI 不消费 feature report，也没有把「亮度分布 + 多个位置化特征 +
-对应机制」联动到 Analyze 工作区。布局、选择语义和退化交互仍是设计问题；不得以 HTML 原型或目标点
-fiber 查询冒充这一 GUI 能力。未来界面应显示报告的scope/evidence/coverage与unfinished原因，用户选择具体sky direction后再调用旧目标点接口获取fiber详情。
+**GUI 工作区消费（进行中，2026-10-29 状态）**：分层诊断交互的第一版范围已由 owner 确认
+（2026-10-28），消费实现在独立分支推进、尚未合入 main；在此之前 GUI 仍不消费 feature report，
+也不得把「亮度分布 + 多个位置化特征 + 对应机制」的联动以 HTML 原型或目标点 fiber 查询冒充交付。
+三层交互映射（L0 列表 / L1 普查 / L2 查询）与探针共享库的设计权威见
+[`diagnostic-pipeline.md`](diagnostic-pipeline.md) §4；CLI 侧的对应消费面（survey / point /
+probe）已交付（见上）。界面应显示报告的 scope/evidence/coverage 与 unfinished 原因，用户选择
+具体 sky direction 后获取 fiber 详情——该查询语义现由 `point` / `probe` 承载。
 
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 
@@ -629,9 +646,11 @@ parity，是多子任务量级。单核时代（GPU 偏好 server 上分析曾�
 - **CPU 路**：分析运行显式只走 CPU，所以在它上面加 per-ray 数据不必同步改 Metal / CUDA。
 
 选定光路后的三功能（§5.1）另需一块新地基：按晶体 × 光路 × 波长的 S² `D_P` 场（与光源无关，
-可缓存）——**这块地基的计算侧已存在**（2026-10 状态）：带求和（模块 B，API v6）与 u-S² 场层
-（模块 C 的已发布半集，API v8）都已在 `liblumice_analytic` as-built；尚未到位的是 GUI 工作区的
-消费接线（§5.1.8「尚未交付的交互层」），以及模块 C 未发布的那一半（ Jet2 双曲对偶与等值线
+可缓存）——**这块地基的计算侧与 CLI 消费面均已存在**（2026-10-29 状态）：带求和（模块 B，
+API v6）与 u-S² 场层（模块 C 的已发布半集，API v8）都已在 `liblumice_analytic` as-built；其上
+的 CLI 消费面全落地（survey / point / probe / report，§5.1.8），typed 结果与 C typed getter 已
+合入（PR #547，[`typed-results.md`](typed-results.md)）。尚未到位的是 GUI 工作区的消费接线
+（进行中，§5.1.8），以及模块 C 未发布的那一半（ Jet2 双曲对偶与等值线
 求积/轨道产线的进程内半集，`analytic-api.md` §9 条目 16）。计算落点按模块成熟度决定移植时机，
 以及两仓按角色划分、共享判据见 §5.1.6。
 
