@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -438,6 +439,34 @@ TEST(ReferenceMap, RefusalMatrixNamesEveryMode) {
   EXPECT_EQ(AnalyzePathMap(fix.config, bad, &result).code, ErrorCode::kInvalidArgument);
   bad.wavelengths_nm = { 200.0 };  // outside the index table
   EXPECT_EQ(AnalyzePathMap(fix.config, bad, &result).code, ErrorCode::kWavelengthOutOfRange);
+}
+
+// The full-sky view's documented zero: both grid dims at 0 take the default 180 x 360 grid
+// (the M1 ruling, the same zero-means-default shape as budget_ms/sample_count); a one-sided
+// zero has no reading and is refused.
+TEST(ReferenceMap, FullSkyZeroGridTakesTheDefault) {
+  const ClassFixture fix = ClassFixture::Make();
+  MapResult result;
+  MapRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 5 } };
+  request.symmetry_bits = 7;
+  request.full_sky = true;
+  request.view_rows = 0;
+  request.view_cols = 0;
+  request.sample_count = 100000;
+  ASSERT_TRUE(AnalyzePathMap(fix.config, request, &result).Ok());
+  const auto& map = std::get<Finite<MapValues>>(result.Data().claim).value.map;
+  EXPECT_EQ(map.view.rows, kMapFullSkyRows);
+  EXPECT_EQ(map.view.cols, kMapFullSkyCols);
+  EXPECT_EQ(static_cast<int>(map.pixels.size()), kMapFullSkyRows * kMapFullSkyCols);
+  const int nonempty = static_cast<int>(
+      std::count_if(map.pixels.begin(), map.pixels.end(), [](const survey::MapPixelSample& p) { return p.k > 0; }));
+  EXPECT_GT(nonempty, 0) << "the default full-sky grid must read the real class, not a placeholder";
+
+  MapRequest one_sided = request;
+  one_sided.view_cols = 36;  // rows stay 0 on a full-sky request: no reading
+  EXPECT_EQ(AnalyzePathMap(fix.config, one_sided, &result).code, ErrorCode::kInvalidArgument);
 }
 
 // INV8 (AC5): a cell covering the sun direction or its antipode is singular — NaN with an

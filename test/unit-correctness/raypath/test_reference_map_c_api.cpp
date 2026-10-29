@@ -202,6 +202,50 @@ TEST(MapCApi, RankZeroClassReadsThePointMass) {
   EXPECT_LT(mass.pixel, static_cast<long long>(info.pixel_count));
 }
 
+// The natural rank-0 read order — Info (point_mass_available) then PointMass then Pixels —
+// must hand out filled pixel columns however the caller orders the reads: each reader owns
+// its projection and fills it once.
+TEST(MapCApi, PointMassFirstReadOrderStillFillsThePixelColumns) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kPlateScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  LUMICE_PathMapRequest request{};
+  request.struct_size = sizeof(LUMICE_PathMapRequest);
+  request.crystal_id = 1;
+  static const int faces[] = { 1, 3, 6, 2 };
+  request.faces = faces;
+  request.face_count = 4;
+  static const int layer_counts[] = { 4 };
+  request.layer_face_counts = layer_counts;
+  request.layer_count = 1;
+  request.full_sky = 1;
+  request.view_rows = 18;
+  request.view_cols = 36;
+  request.sample_count = 100000;
+  LUMICE_PathMap* raw_map = nullptr;
+  ASSERT_EQ(LUMICE_AnalyzePathMap(scene.get(), &request, &raw_map, g_err, sizeof(g_err)), LUMICE_OK) << g_err;
+  MapPtr map(raw_map);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathMapGetInfo(map.get(), &info), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(info.point_mass_available, 1);
+  LUMICE_PathMapPointMass mass{};
+  mass.struct_size = sizeof(mass);
+  ASSERT_EQ(LUMICE_PathMapGetPointMass(map.get(), &mass), LUMICE_PATH_READ_OK);
+  LUMICE_PathMapPixels pixels{};
+  pixels.struct_size = sizeof(pixels);
+  ASSERT_EQ(LUMICE_PathMapGetPixels(map.get(), &pixels), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(pixels.pixel_count, info.pixel_count);
+  EXPECT_NE(pixels.delta_deg, nullptr);
+  EXPECT_NE(pixels.azimuth_deg, nullptr);
+  EXPECT_NE(pixels.values, nullptr);
+  EXPECT_NE(pixels.counts, nullptr);
+  EXPECT_NE(pixels.status, nullptr);
+}
+
 // The named measure refusal rides the result: state refused + the mode; the numeric readers
 // answer NOT_AVAILABLE (never a zero map).
 TEST(MapCApi, MeasureRefusalRidesTheDocument) {

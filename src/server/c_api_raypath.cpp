@@ -89,23 +89,25 @@ struct LUMICE_PathProbe_ {
   mutable std::string derived_json;
 };
 
-// The map ships typed readers only (no ToJson face): no derived cache to guard. The bulk
-// readers project their C-facing column/pointer arrays once from the frozen value on first
-// read (the mutable/mutex shape of the derived-JSON caches) so every read hands out the same
-// pointers into handle-owned storage, valid until Destroy.
-struct LUMICE_PathMapReaderCache {
+// The map ships typed readers only (no ToJson face): no derived cache to guard. Each reader
+// owns its C-facing projection and fills it once, lazily, under the handle's mutex (the
+// mutable/mutex shape of the derived-JSON caches), so every read hands out the same pointers
+// into handle-owned storage, valid until Destroy — whatever order the caller reads in.
+struct LUMICE_PathMapPixelColumns {
   std::vector<double> delta_deg;
   std::vector<double> azimuth_deg;
   std::vector<double> values;
   std::vector<int> counts;
   std::vector<uint8_t> status;
-  std::vector<const char*> method_pointers;  // into the frozen result's method strings
 };
 
 struct LUMICE_PathMap_ {
   lumice::raypath::MapResult result;
   mutable std::mutex cache_mutex;
-  mutable std::unique_ptr<LUMICE_PathMapReaderCache> cache;
+  mutable std::unique_ptr<LUMICE_PathMapPixelColumns> pixels;         // GetPixels' own projection
+  mutable std::unique_ptr<std::vector<const char*>> method_pointers;  // GetPointMass' own
+                                                                      // projection (into the
+                                                                      // frozen result's strings)
 };
 
 struct LUMICE_PathWorkspace_ {
@@ -2380,30 +2382,30 @@ LUMICE_PathReadStatus LUMICE_PathMapGetPixels(const LUMICE_PathMap* result, LUMI
   // the one-time fill).
   {
     std::lock_guard<std::mutex> lock(result->cache_mutex);
-    if (result->cache == nullptr) {
-      auto cache = std::make_unique<LUMICE_PathMapReaderCache>();
-      cache->delta_deg.resize(pixels.size());
-      cache->azimuth_deg.resize(pixels.size());
-      cache->values.resize(pixels.size());
-      cache->counts.resize(pixels.size());
-      cache->status.resize(pixels.size());
+    if (result->pixels == nullptr) {
+      auto columns = std::make_unique<LUMICE_PathMapPixelColumns>();
+      columns->delta_deg.resize(pixels.size());
+      columns->azimuth_deg.resize(pixels.size());
+      columns->values.resize(pixels.size());
+      columns->counts.resize(pixels.size());
+      columns->status.resize(pixels.size());
       for (size_t p = 0; p < pixels.size(); p++) {
-        cache->delta_deg[p] = pixels[p].delta_deg;
-        cache->azimuth_deg[p] = pixels[p].azimuth_deg;
-        cache->values[p] = pixels[p].value;
-        cache->counts[p] = pixels[p].k;
-        cache->status[p] =
+        columns->delta_deg[p] = pixels[p].delta_deg;
+        columns->azimuth_deg[p] = pixels[p].azimuth_deg;
+        columns->values[p] = pixels[p].value;
+        columns->counts[p] = pixels[p].k;
+        columns->status[p] =
             pixels[p].status == srv::MapPixelSample::Status::kSingular  ? LUMICE_PATH_MAP_PIXEL_SINGULAR :
             pixels[p].status == srv::MapPixelSample::Status::kPointMass ? LUMICE_PATH_MAP_PIXEL_POINT_MASS :
                                                                           LUMICE_PATH_MAP_PIXEL_OK;
       }
-      result->cache = std::move(cache);
+      result->pixels = std::move(columns);
     }
-    out->delta_deg = result->cache->delta_deg.data();
-    out->azimuth_deg = result->cache->azimuth_deg.data();
-    out->values = result->cache->values.data();
-    out->counts = result->cache->counts.data();
-    out->status = result->cache->status.data();
+    out->delta_deg = result->pixels->delta_deg.data();
+    out->azimuth_deg = result->pixels->azimuth_deg.data();
+    out->values = result->pixels->values.data();
+    out->counts = result->pixels->counts.data();
+    out->status = result->pixels->status.data();
   }
   return LUMICE_PATH_READ_OK;
 }
@@ -2420,19 +2422,21 @@ LUMICE_PathReadStatus LUMICE_PathMapGetPointMass(const LUMICE_PathMap* result, L
   out->m = mass.m;
   out->m_error = mass.m_error;
   {
-    // The method-name pointers project into the same handle-owned cache (the strings live in
-    // the frozen result; the pointer array is the C-facing shape of that vector).
+    // The method-name pointers project into their own handle-owned member (the strings live
+    // in the frozen result; the pointer array is the C-facing shape of that vector). This
+    // projection never touches the pixel columns — the readers' fill protocols are
+    // independent, so the read order cannot hand out an unfilled array.
     std::lock_guard<std::mutex> lock(result->cache_mutex);
-    if (result->cache == nullptr) {
-      result->cache = std::make_unique<LUMICE_PathMapReaderCache>();
+    if (result->method_pointers == nullptr) {
+      auto pointers = std::make_unique<std::vector<const char*>>();
+      pointers->reserve(mass.methods.size());
+      for (const std::string& method : mass.methods) {
+        pointers->push_back(method.c_str());
+      }
+      result->method_pointers = std::move(pointers);
     }
-    result->cache->method_pointers.clear();
-    result->cache->method_pointers.reserve(mass.methods.size());
-    for (const std::string& method : mass.methods) {
-      result->cache->method_pointers.push_back(method.c_str());
-    }
-    out->methods = result->cache->method_pointers.data();
-    out->method_count = result->cache->method_pointers.size();
+    out->methods = result->method_pointers->data();
+    out->method_count = result->method_pointers->size();
   }
   out->pixel = mass.pixel;
   return LUMICE_PATH_READ_OK;

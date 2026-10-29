@@ -32,7 +32,8 @@ A view is a (deviation x azimuth-about-sun) grid in the probe frame — the line
 request either names the all-sky view (`full_sky`: delta [0, 180], azimuth [0, 360)) or an
 explicit window centred on a sky point (altitude/azimuth in the probe's at-point convention)
 with degree spans, plus the grid's rows (delta) and columns (azimuth), row-major, at most
-`LUMICE_PATH_MAP_MAX_PIXELS` (262,144) cells.
+`LUMICE_PATH_MAP_MAX_PIXELS` (262,144) cells. A full-sky request with both grid dims at 0 takes
+the default grid (180 x 360); any other sub-1 dim is refused.
 
 `LUMICE_PathMapGetInfo` carries the mapping description: the window's delta/azimuth bounds, the
 grid dims, and the frame's `incident`/`e1`/`e2` axes. A cell centre's sky direction is

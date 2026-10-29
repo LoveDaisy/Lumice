@@ -398,8 +398,9 @@ typedef struct LUMICE_PathMapRequest {
   double centre_azimuth_deg;
   double delta_span_deg;
   double azimuth_span_deg;
-  // The sampling scale: the grid's rows (delta) and columns (azimuth), row-major; at least 1
-  // x 1, at most LUMICE_PATH_MAP_MAX_PIXELS cells in total.
+  // The sampling scale: the grid's rows (delta) and columns (azimuth), row-major; a full-sky
+  // request with both at 0 takes the default grid (180 x 360); otherwise at least 1 x 1, at
+  // most LUMICE_PATH_MAP_MAX_PIXELS cells in total.
   int view_rows;
   int view_cols;
   // NULL or wavelength_count 0 selects the reference wavelength (the probe resolution's

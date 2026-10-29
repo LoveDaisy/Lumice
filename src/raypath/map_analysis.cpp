@@ -34,10 +34,11 @@ double FrameAzimuthOf(const survey::ProbeFrame& frame, const double direction[3]
 }
 
 survey::MapViewDescription BuildView(const MapRequest& request, const survey::ProbeFrame& frame,
-                                     double at_deviation_deg, double at_azimuth_about_sun_deg) {
+                                     double at_deviation_deg, double at_azimuth_about_sun_deg, int view_rows,
+                                     int view_cols) {
   survey::MapViewDescription view;
-  view.rows = request.view_rows;
-  view.cols = request.view_cols;
+  view.rows = view_rows;
+  view.cols = view_cols;
   for (int k = 0; k < 3; k++) {
     view.incident[k] = frame.incident[k];
     view.e1[k] = frame.e1[k];
@@ -105,10 +106,17 @@ Error AnalyzePathMapData(const ConfigManager& config, const MapRequest& request,
     return { ErrorCode::kInvalidArgument,
              "budget_ms must be 0 (the default) or at most " + std::to_string(kMaxMapBudgetMs) };
   }
-  if (request.view_rows < 1 || request.view_cols < 1) {
+  // The view grid's documented zero: a full-sky request with both dims at 0 takes the default
+  // grid (the M1 ruling, same shape as budget_ms/sample_count's zero-means-default); a
+  // one-sided zero has no reading and is refused with the rest of the grid checks.
+  const int default_rows =
+      request.full_sky && request.view_rows == 0 && request.view_cols == 0 ? kMapFullSkyRows : request.view_rows;
+  const int default_cols =
+      request.full_sky && request.view_rows == 0 && request.view_cols == 0 ? kMapFullSkyCols : request.view_cols;
+  if (default_rows < 1 || default_cols < 1) {
     return { ErrorCode::kInvalidArgument, "the view grid must be at least 1 x 1 cells" };
   }
-  if (static_cast<long long>(request.view_rows) * static_cast<long long>(request.view_cols) > kMaxMapPixels) {
+  if (static_cast<long long>(default_rows) * static_cast<long long>(default_cols) > kMaxMapPixels) {
     return { ErrorCode::kInvalidArgument,
              "the view grid may carry at most " + std::to_string(kMaxMapPixels) + " cells" };
   }
@@ -207,7 +215,8 @@ Error AnalyzePathMapData(const ConfigManager& config, const MapRequest& request,
   const double at_deviation_deg =
       analytic::TargetDeviation(meta.incident_direction, at_direction) * math::kRadToDegreeD;
   const double at_azimuth_about_sun_deg = FrameAzimuthOf(frame, at_direction);
-  const survey::MapViewDescription view = BuildView(request, frame, at_deviation_deg, at_azimuth_about_sun_deg);
+  const survey::MapViewDescription view =
+      BuildView(request, frame, at_deviation_deg, at_azimuth_about_sun_deg, default_rows, default_cols);
   if (view.delta_max_deg - view.delta_min_deg <= 0.0) {
     return { ErrorCode::kInvalidArgument, "the view's delta window is empty after clamping to [0, 180]" };
   }

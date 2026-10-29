@@ -59,7 +59,9 @@ struct MapRequest : PathSelection {
   double centre_azimuth_deg = 0.0;
   double delta_span_deg = 0.0;
   double azimuth_span_deg = 0.0;
-  // The sampling scale: the grid's rows (delta) and cols (azimuth); cells/row-major.
+  // The sampling scale: the grid's rows (delta) and cols (azimuth); cells/row-major. A
+  // full-sky request with both at 0 takes the default grid (kMapFullSkyRows x kMapFullSkyCols,
+  // the M1 ruling); any other sub-1 dim is refused.
   int view_rows = 0;
   int view_cols = 0;
   // Empty: the scene's single discrete wavelength, else 550 (the point resolution). At most
