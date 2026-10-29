@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <optional>
 #include <string>
 
 #include "gui/app.hpp"
@@ -58,12 +59,15 @@ void MiddleRowsSplitter(const char* id, float width, float* ratio) {
                                       line_col, 1.0f);
 }
 
-// The left column's compact crystal list: one row per entry across the scattering layers, each
-// opening the SAME entry editor the cards open (RequestEntryCardEdit -> ProcessEditRequest, the
-// cards' own path). No thumbnails and no per-row delete here — those are the cards' affordances,
-// still in the Render workspace; this list is the Analyze workspace's way into the same editors.
-// The rows render inline in the panel's one scrolling column: a child that fills the remaining
-// height would push the Scene controls (rendered after this) out of a NoScrollbar panel.
+// The left column's compact crystal list: one row per entry across the scattering layers. Two
+// click semantics, the cards' own: with a pick-link armed, a valid row completes the share
+// (CompletePickLinkAtRow) and a self/already-shared row is disabled (PickLinkRowStateFor, the
+// cards' one predicate); without one, the row opens the SAME entry editor the cards open
+// (RequestEntryCardEdit -> ProcessEditRequest, the cards' own path). No thumbnails and no
+// per-row delete here — those are the cards' affordances, still in the Render workspace; this
+// list is the Analyze workspace's way into the same editors. The rows render inline in the
+// panel's one scrolling column: a child that fills the remaining height would push the Scene
+// controls (rendered after this) out of view.
 void RenderCrystalList(GuiState& state) {
   ImGui::SeparatorText("Crystals");
   for (int layer_idx = 0; layer_idx < static_cast<int>(state.layers.size()); ++layer_idx) {
@@ -71,15 +75,25 @@ void RenderCrystalList(GuiState& state) {
     for (int entry_idx = 0; entry_idx < static_cast<int>(layer.entries.size()); ++entry_idx) {
       const EntryCard& entry = layer.entries[entry_idx];
       const CrystalConfig& crystal = state.crystals[entry.crystal_id];
-      char row[160];
+      char row[192];
       // The row's identity is the entry's position in the display numbering the pick-mode hint
       // uses (1-based; spelled with a comma — a slash would read as a range) plus the crystal's
       // name as the editor will show it.
       std::snprintf(row, sizeof(row), "Layer %d, entry %d: %s##crys_%d_%d", DisplayLayerNumber(layer_idx),
                     DisplayEntryNumber(entry_idx), crystal.name.empty() ? "Crystal" : crystal.name.c_str(), layer_idx,
                     entry_idx);
-      if (ImGui::Selectable(row)) {
-        RequestEntryCardEdit(layer_idx, entry_idx);
+      const bool pick_target = state.pick_link_source.has_value();
+      const bool disabled =
+          pick_target && PickLinkRowStateFor(state, layer_idx, entry_idx) == PickLinkRowState::kDisabledSelfOrShared;
+      ImGui::BeginDisabled(disabled);
+      const bool clicked = ImGui::Selectable(row);
+      ImGui::EndDisabled();
+      if (clicked && !disabled) {
+        if (pick_target) {
+          CompletePickLinkAtRow(state, layer_idx, entry_idx);
+        } else {
+          RequestEntryCardEdit(layer_idx, entry_idx);
+        }
       }
     }
   }
@@ -108,6 +122,18 @@ void RenderAnalyzeWorkspace(GLFWwindow* /*window*/, float window_width, float wi
   g_preview_vp.active = false;
   g_preview_vp.curve_labels.clear();
 
+  // Pick-mode Esc cancel — read before any ImGui::Begin so the key event is not consumed by
+  // inner widgets first (RenderLeftPanel's own rule; an armed pick is session state, not a
+  // Render-panel property, and the mode switch must not orphan it).
+  const bool pick_active_at_entry = g_state.pick_link_source.has_value();
+  if (pick_active_at_entry && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    g_state.pick_link_source.reset();
+  }
+  // Blank-area cancel: if the pick survived the frame's rows (no row consumed the click), a
+  // left click anywhere this frame cancels it — the cards' host behavior, mirrored.
+  std::optional<GuiState::EntryRef> pick_source_at_entry =
+      pick_active_at_entry ? g_state.pick_link_source : std::nullopt;
+
   const float panel_height = window_height - UiPx(kTopBarHeight) - UiPx(kStatusBarHeight);
   const float top = UiPx(kTopBarHeight);
   const float left_w = UiPx(kAnalyzeLeftPanelWidth);
@@ -134,6 +160,8 @@ void RenderAnalyzeWorkspace(GLFWwindow* /*window*/, float window_width, float wi
     }
     RenderCrystalList(g_state);
     ProcessEditRequest(g_state);
+    // Pick completion reopens the editor on the pick's source — the cards' host post-pass.
+    ReopenEditorOnPickCompletion(g_state, pick_source_at_entry);
     ImGui::SeparatorText("Scene");
     RenderSceneControls(g_state);
   }

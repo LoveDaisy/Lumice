@@ -513,4 +513,88 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_LT(gui::g_state.workspace.middle_rows_ratio, 0.66f);
     };
   }
+
+  // Pick-link in the Analyze workspace: the list rows complete the share with the cards' own
+  // predicate (one PickLinkRowStateFor, two hosts), and the completion reopens the editor on the
+  // pick's source — the Render flow's shape, not a second semantics.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_pick_link_completes_from_list_rows");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      // A second entry on its own pool slot, the share's target.
+      ctx->ItemClick("**/+ Layer");
+      ctx->Yield(3);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers.size()), 2);
+
+      // Open the editor from the list, change a visible field, arm the pick from the modal.
+      ctx->ItemClick("**/Layer 1, entry 1: Crystal##crys_0_0");
+      ctx->Yield(4);
+      IM_CHECK_EQ(gui::IsEditModalOpen(), true);
+      const int source_crystal_before = gui::g_state.layers[0].entries[0].crystal_id;
+      const float orig_h = gui::g_state.crystals[source_crystal_before].height.center;
+      ctx->ItemInputValue("**/##Height##modal_cr_input", orig_h + 2.0f);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Link to...##share");
+      ctx->Yield(4);
+      IM_CHECK(gui::g_state.pick_link_source.has_value());
+      IM_CHECK_EQ(gui::g_state.pick_link_source->layer_idx, 0);
+      IM_CHECK_EQ(gui::IsEditModalOpen(), false);
+
+      // Completing on the second layer's row rebinds the ARMED entry to the clicked row's ids
+      // ("A adopts B": the armed source adopts the model's crystal/filter) and reopens the
+      // editor on the source entry, with the armed edit committed on the way out — onto the
+      // crystal the source referenced before the rebind.
+      const int model_crystal = gui::g_state.layers[1].entries[0].crystal_id;
+      ctx->ItemClick("**/Layer 2, entry 1: Crystal##crys_1_0");
+      ctx->Yield(4);
+      IM_CHECK(!gui::g_state.pick_link_source.has_value());
+      IM_CHECK_EQ(gui::g_state.layers[0].entries[0].crystal_id, model_crystal);
+      IM_CHECK_EQ(gui::IsEditModalOpen(), true);
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::g_state.crystals[source_crystal_before].height, orig_h + 2.0f);
+      ctx->WindowClose("Edit Entry");
+      ctx->Yield(2);
+
+      // Esc cancels a pick armed in this workspace, as it does beside the cards.
+      ctx->ItemClick("**/Layer 1, entry 1: Crystal##crys_0_0");
+      ctx->Yield(4);
+      ctx->ItemClick("**/Link to...##share");
+      ctx->Yield(4);
+      IM_CHECK(gui::g_state.pick_link_source.has_value());
+      ctx->KeyPress(ImGuiKey_Escape);
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.pick_link_source.has_value());
+    };
+  }
+
+  // Document switch inside the Analyze workspace behaves as in Render: the open editor closes
+  // with the frontend reset (one ResetFrontendState, both modes), the fresh document's single
+  // entry shows up in the list. DoNew resets the workspace selection along with the whole
+  // GuiState (every session field's clean-slate rule — the analysis window closes the same way),
+  // so the fresh document starts in Render and the case re-enters Analyze to check the list.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_document_switch_closes_the_editor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      ctx->ItemClick("**/+ Layer");
+      ctx->Yield(3);
+      ctx->ItemClick("**/Layer 1, entry 1: Crystal##crys_0_0");
+      ctx->Yield(4);
+      IM_CHECK_EQ(gui::IsEditModalOpen(), true);
+
+      gui::DoNew();
+      ctx->Yield(4);
+      IM_CHECK_EQ(gui::IsEditModalOpen(), false);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers.size()), 1);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      const ImGuiTestItemInfo fresh = ctx->ItemInfo("**/Layer 1, entry 1: Crystal##crys_0_0", ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(fresh.ID, 0u);
+    };
+  }
 }
