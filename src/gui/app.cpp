@@ -64,6 +64,7 @@ void SetUiScaleMultiplierImmediate(float multiplier) {
   g_ui_scale_dirty = true;
 }
 PreviewViewport g_preview_vp;
+PanoramaViewport g_panorama_vp;
 BgColorPickState g_bg_pick;
 
 // Async Stop plumbing (blueprint §5/§8, 1.6). DoStop offloads the blocking teardown sequence

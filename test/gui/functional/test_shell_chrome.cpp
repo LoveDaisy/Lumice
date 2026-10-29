@@ -18,11 +18,16 @@
 // collapsed panel they cannot get back, or a log panel that vanishes behind the side panels as soon
 // as they touch anything.
 
+#include <chrono>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <sstream>
 #include <string>
 
 #include "IconsFontAwesome6.h"
 #include "gui/edit_modals.hpp"
+#include "gui/file_io.hpp"  // DeserializeFromJson — the panorama case loads a scene like the GUI does
 #include "gui/gui_constants.hpp"
 #include "gui/log_sink.hpp"     // ImGuiLogSink — the panel's second gate
 #include "test_screenshot.hpp"  // SavePng / StripAlpha — the archived skeleton capture
@@ -664,12 +669,14 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
           }
         }
       }
-      // The six not-wired regions are child WINDOWS holding plain text — no items for the item
+      // The five not-wired regions are child WINDOWS holding plain text — no items for the item
       // registry. Their reachability is "submitted this frame", checked over the window list
       // (child names embed the hash suffix; the substring is the stable part).
+      // The panorama is the sixth region and deliberately absent here: without a render it
+      // shows the empty state and publishes no picture region (its own case pins the render
+      // side).
       const char* kRegions[] = {
-        "##AnalyzePanorama",  "##AnalyzeShareList", "##AnalyzeRaypathView",
-        "##AnalyzeRaypath3D", "##AnalyzeSunGlobe",  "##AnalyzeDetails",
+        "##AnalyzeShareList", "##AnalyzeRaypathView", "##AnalyzeRaypath3D", "##AnalyzeSunGlobe", "##AnalyzeDetails",
       };
       int regions_found = 0;
       for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
@@ -682,10 +689,98 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
           }
         }
       }
-      IM_CHECK_EQ(regions_found, 6);
+      IM_CHECK_EQ(regions_found, 5);
+      IM_CHECK_EQ(gui::g_panorama_vp.active, false);
 
       // Archive the exact state this case verified (the pointer is already parked off-frame).
       capture_to("workspace_skeleton_1280x800.png");
+    };
+  }
+
+  // The panorama is the committed texture's second view: after a real render, the Analyze
+  // workspace publishes the panorama's region to the deferred pass (g_panorama_vp), the
+  // hemisphere switch flips the view's session state and the published uniform with it; without
+  // a render the empty state publishes nothing (the skeleton case pins that side).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_panorama_publishes_after_a_render");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      // The case before this one resized the shared window (the 1280 acceptance check);
+      // ResetTestState queued the basis restore, which lands as an async OS resize a few frames
+      // from now. Wait it out BEFORE the run: a resize that lands after DoRun's commit writes a
+      // view field and dirties the document, and kModified then masks the run's completion.
+      for (int i = 0; i < 40 && ImGui::GetIO().DisplaySize.x != static_cast<float>(gui::kInitWindowWidth); ++i) {
+        ctx->Yield(1);
+      }
+      ctx->Yield(3);
+      // A server of our own, torn down before the case returns (the sim-smoke cases' rule: the
+      // harness's shared server pointer must not outlive the case that made it).
+      gui::g_server = LUMICE_CreateServer();
+      LUMICE_SetLogLevel(gui::g_server, static_cast<LUMICE_LogLevel>(g_core_log_level));
+
+      // The smallest render this suite does: a tiny halo scene, lowest resolution, a sliver of a
+      // budget. The panorama's contract is about the published region, not picture quality.
+      {
+        constexpr const char* kScene = R"({
+          "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.2},
+                       "axis": {"zenith": {"type": "uniform", "mean": 90, "std": 360},
+                                "azimuth": {"type": "uniform", "mean": 0, "std": 360}}}],
+          "filter": [],
+          "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+                    "ray_num": 100000, "max_hits": 7,
+                    "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+          "render": [{"id": 1, "lens": {"type": "linear", "fov": 60},
+                      "resolution": [64, 64], "view": {"elevation": 42}}]
+        })";
+        std::istringstream in(kScene);
+        std::string json_str((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        IM_CHECK(gui::DeserializeFromJson(json_str, gui::g_state));
+      }
+      gui::g_state.renderer.sim_resolution_index = 0;
+      gui::g_state.sim.infinite = false;
+      // The registry's slider domain floors the budget at kRayNumMinMillions (0.1M) — a smaller
+      // value would be clamped back by the Render right panel's slider every frame and dirty the
+      // document over the run, masking kDone with kModified.
+      gui::g_state.sim.ray_num_millions = 0.1f;
+
+      gui::DoRun(/*user_initiated=*/true);
+      const auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+      while (gui::g_state.sim_state != gui::GuiState::SimState::kDone &&
+             std::chrono::steady_clock::now() < wait_deadline) {
+        ctx->Yield(1);
+      }
+      IM_CHECK_EQ((int)gui::g_state.sim_state, (int)gui::GuiState::SimState::kDone);
+      IM_CHECK(gui::g_preview.HasTexture());
+
+      // Entering Analyze now publishes the picture region (the empty case before the run
+      // published nothing — ResetTestState's fresh document guarantees that ordering).
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(4);
+      IM_CHECK_EQ(gui::g_panorama_vp.active, true);
+      IM_CHECK_GT(gui::g_panorama_vp.vp_w, 0);
+      IM_CHECK_GT(gui::g_panorama_vp.vp_h, 0);
+      // The view is the panorama's own: single-disk equal area, full 180, the upper hemisphere,
+      // the document's lens untouched.
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.lens_type, gui::kLensTypeFisheyeEqualArea);
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.fov, 180.0f);
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.visible, gui::kVisibleUpper);
+      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeLinear);
+
+      // The hemisphere switch is a view state: it flips the session bit and the uniform the
+      // deferred pass reads, and never touches the document.
+      ctx->ItemClick("**/Lower##panorama_hemisphere");
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, false);
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.visible, gui::kVisibleLower);
+      ctx->ItemClick("**/Upper##panorama_hemisphere");
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, true);
+
+      LUMICE_StopServer(gui::g_server);
+      LUMICE_DestroyServer(gui::g_server);
+      gui::g_server = nullptr;
+      gui::g_state.run_intent = gui::RunIntent::kNone;
     };
   }
 }

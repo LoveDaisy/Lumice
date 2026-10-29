@@ -1854,6 +1854,9 @@ struct GuiState {
     // arrangement, not document state); 0.45 puts the near-square panorama the prototype pins
     // within reach at both acceptance sizes — near-exact at 1600×980, slightly tall at 1280×800.
     float middle_rows_ratio = 0.45f;
+    // The panorama's hemisphere — a view state of the panorama (the committed texture is always
+    // the full sky; the switch is the display-time `visible` uniform), not document state.
+    bool panorama_upper = true;
   };
   AnalyzeWorkspaceSession workspace;
 

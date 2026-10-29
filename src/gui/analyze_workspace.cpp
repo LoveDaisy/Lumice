@@ -3,16 +3,20 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <optional>
 #include <string>
 
 #include "gui/app.hpp"
 #include "gui/gui_constants.hpp"
+#include "gui/mono_exposure_scale.hpp"
 #include "gui/panels.hpp"
 #include "gui/semantic_colors.hpp"
+#include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
+#include "util/color_space.hpp"
 
 namespace lumice::gui {
 namespace {
@@ -104,17 +108,95 @@ void RenderCrystalList(GuiState& state) {
 
 }  // namespace
 
-void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_height) {
-  if (g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze) {
-    RenderAnalyzeWorkspace(window, window_width, window_height);
-  } else {
-    RenderLeftPanel(window_height);
-    RenderRightPanel(window, window_width, window_height);
-    RenderPreviewPanel(window, window_width, window_height);
+// The scene panorama: the committed texture — always dual equal-area full-sky,
+// gui-state-governance.md §9.1 — through the existing reprojection family at Fisheye Equal Area
+// / 180°, hemisphere per the view state. The params are composed fresh each frame from the same
+// supply functions the Render preview's come from (ComputeMonoExposure, SrgbToLinearRgb, the
+// kDualFisheyeOverlap source constants) with only the view overridden; the photo overlay and the
+// auxiliary lines stay off — Render-workspace affordances the panorama does not inherit. The
+// picture itself is drawn by the deferred pass (RenderPreviewFrameAndBlit into the region this
+// publishes to g_panorama_vp); this side draws the state around it: the hemisphere switch, the
+// empty state, and the preview's own two-branch notice (AnalysisPictureNotice — the same
+// predicate, never a second freshness judgment).
+void RenderScenePanorama(GLFWwindow* window, float window_height) {
+  g_panorama_vp.active = false;  // level-triggered, like the preview viewport's own publication
+
+  ImGui::SeparatorText("Scene panorama");
+  int upper = g_state.workspace.panorama_upper ? 0 : 1;
+  ImGui::RadioButton("Upper##panorama_hemisphere", &upper, 0);
+  ImGui::SameLine();
+  ImGui::RadioButton("Lower##panorama_hemisphere", &upper, 1);
+  g_state.workspace.panorama_upper = upper == 0;
+
+  if (!g_preview.HasTexture()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped(
+        "No rendered image for this document yet — press Run once in the Render workspace; the "
+        "panorama shows the traced sky here.");
+    ImGui::PopStyleColor();
+    return;
+  }
+
+  // The picture region: transparent, because the deferred pass blits the reprojected texture
+  // under ImGui exactly as it does for the Render preview panel.
+  const ImVec2 size = ImGui::GetContentRegionAvail();
+  ImGui::BeginChild("##AnalyzePanorama", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoBackground);
+  const ImVec2 region_min = ImGui::GetWindowPos();
+  ImGui::EndChild();
+
+  int fb_w = 0;
+  int fb_h = 0;
+  glfwGetFramebufferSize(window, &fb_w, &fb_h);
+  const float dpi_x = static_cast<float>(fb_w) / ImGui::GetIO().DisplaySize.x;
+  const float dpi_y = static_cast<float>(fb_h) / ImGui::GetIO().DisplaySize.y;
+  g_panorama_vp.active = true;
+  g_panorama_vp.vp_x = static_cast<int>(region_min.x * dpi_x);
+  // OpenGL Y is bottom-up (the preview panel's own comment): the region's bottom edge measured
+  // from the window's bottom.
+  g_panorama_vp.vp_y = static_cast<int>((ImGui::GetIO().DisplaySize.y - (region_min.y + size.y)) * dpi_y);
+  g_panorama_vp.vp_w = static_cast<int>(size.x * dpi_x);
+  g_panorama_vp.vp_h = static_cast<int>(size.y * dpi_y);
+  g_panorama_vp.dpi_scale_x = dpi_x;
+  g_panorama_vp.dpi_scale_y = dpi_y;
+
+  PreviewParams& pp = g_panorama_vp.params;
+  auto& rc = g_state.renderer;
+  pp.source.max_abs_dz = kDualFisheyeOverlap;
+  pp.source.r_scale = 1.0f / std::sqrt(1.0f + kDualFisheyeOverlap);
+  lumice::SrgbToLinearRgb(rc.background, pp.background_color_linear);
+  lumice::SrgbToLinearRgb(rc.paper, pp.paper_color_linear);
+  pp.tone = rc.tone;
+  pp.display_mode = rc.display_mode;
+  // The same mono exposure the preview computes per frame, so the EV controls act on the
+  // panorama on the very next frame too — one supply, two views.
+  lumice::gui::MonoExposureInput mono_ev_in;
+  mono_ev_in.exposure_offset = rc.exposure_offset;
+  mono_ev_in.ev_auto = g_state.ev_auto;
+  mono_ev_in.snapshot_intensity = g_state.snapshot_intensity;
+  mono_ev_in.snapshot_emitted_energy = g_state.snapshot_emitted_energy;
+  mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
+  const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
+  pp.exposure.intensity_factor = mono_ev.intensity_factor;
+  pp.exposure.intensity_scale = mono_ev.intensity_scale;
+  pp.view_proj = ViewProjection{ kLensTypeFisheyeEqualArea,
+                                 180.0f,
+                                 0.0f,
+                                 0.0f,
+                                 0.0f,
+                                 g_state.workspace.panorama_upper ? kVisibleUpper : kVisibleLower,
+                                 false };
+
+  // The preview's own two-branch notice, below the picture: kNone (nothing ever rendered) cannot
+  // reach here (the texture gate above), so this is the kModified branch — the picture is of the
+  // configuration before the edit.
+  if (const char* notice = AnalysisPictureNotice(g_state.run_intent, g_state.sim_state)) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", notice);
+    ImGui::PopStyleColor();
   }
 }
 
-void RenderAnalyzeWorkspace(GLFWwindow* /*window*/, float window_width, float window_height) {
+void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height) {
   // Level-triggered publication, the same statement RenderPreviewPanel makes every frame: the
   // frame that does not draw the preview publishes neither the viewport nor the curve labels, so
   // every consumer reads "no picture on screen" (DoAnalyze's IN_FRAME canvas falls back to the
@@ -178,10 +260,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* /*window*/, float window_width, float wi
     float lower_h = std::max(0.0f, panel_height - upper_h - UiPx(8.0f));
 
     // Upper row: scene panorama | raypath share list.
-    PlaceholderRegion("##AnalyzePanorama", "Scene panorama",
-                      "Not wired up yet. Will show the committed scene as a single-disk equal-area view "
-                      "(upper/lower hemisphere) and take the cone ROI.",
-                      ImVec2(col_w, upper_h));
+    RenderScenePanorama(window, window_height);
     ImGui::SameLine();
     PlaceholderRegion("##AnalyzeShareList", "Raypath share list",
                       "Lives in the Raypath Analysis window during the migration; this region takes it over.",
@@ -218,6 +297,16 @@ void RenderAnalyzeWorkspace(GLFWwindow* /*window*/, float window_width, float wi
                       ImVec2(0, 0));
   }
   ImGui::End();
+}
+
+void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_height) {
+  if (g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze) {
+    RenderAnalyzeWorkspace(window, window_width, window_height);
+  } else {
+    RenderLeftPanel(window_height);
+    RenderRightPanel(window, window_width, window_height);
+    RenderPreviewPanel(window, window_width, window_height);
+  }
 }
 
 }  // namespace lumice::gui

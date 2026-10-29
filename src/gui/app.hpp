@@ -52,6 +52,30 @@ struct PreviewViewport {
   std::vector<CurveLabelSet> curve_labels;
 };
 
+// The Analyze workspace's scene panorama: a second VIEW of the same committed texture the Render
+// preview shows — the texture is always dual equal-area full-sky (gui-state-governance.md §9.1),
+// so the panorama is that data through the existing reprojection family with the view fixed at
+// Fisheye Equal Area / 180° and the hemisphere switch as the `visible` uniform. No second
+// projection implementation: the deferred pass renders it through the very
+// RenderPreviewFrameAndBlit the preview uses, into the region RenderAnalyzeWorkspace publishes
+// here each frame. `params` is refreshed per frame from the same supply the preview's comes from
+// (mono exposure, tone, source format) with only `view_proj` overridden; `bg` stays disabled —
+// the photo-compare overlay is a Render-workspace affordance.
+//
+// LEVEL-TRIGGERED like PreviewViewport: the frame that draws the workspace publishes the
+// panorama's rect (or nothing, when there is no texture to show), the frame that does not
+// publishes neither — RenderAnalyzeWorkspace clears `active` at entry.
+struct PanoramaViewport {
+  bool active = false;
+  int vp_x = 0;
+  int vp_y = 0;
+  int vp_w = 0;
+  int vp_h = 0;
+  PreviewParams params;
+  float dpi_scale_x = 1.0f;
+  float dpi_scale_y = 1.0f;
+};
+
 // Sky-Color eyedropper mode: while active, the preview shows the background photo alone and a
 // click on it samples that photo's pixel into renderer.background.
 //
@@ -91,6 +115,7 @@ extern ThumbnailCache g_thumbnail_cache;
 extern LUMICE_Server* g_server;
 extern ServerPoller g_server_poller;
 extern PreviewViewport g_preview_vp;
+extern PanoramaViewport g_panorama_vp;
 extern BgColorPickState g_bg_pick;
 
 // "There is a background photo on screen to act on" — a photo is loaded AND it is being shown AND
