@@ -478,10 +478,6 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->ItemClick(kWorkspaceToAnalyzeBtn);
       ctx->Yield(3);
-      // The bridge opens the Raypath Analysis window on entering Analyze; this case is about the
-      // splitter, so park the floating window out of the middle area first.
-      gui::g_state.analysis.window_open = false;
-      ctx->Yield(2);
       const float before = gui::g_state.workspace.middle_rows_ratio;
       const ImGuiTestItemInfo splitter = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
       IM_CHECK_NE(splitter.ID, 0u);
@@ -790,10 +786,8 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, true);
 
       // ---- The cone pick over the panorama ----
-      // Arm CONE + the pick directly (the arm button lives in the migration-period floating
-      // window; this case is about the panorama's half of the flow), park the floating window
-      // out of the way, and click inside the picture disk at half its radius.
-      gui::g_state.analysis.window_open = false;
+      // Arm CONE + the pick directly (this case is about the panorama's half of the flow), and
+      // click inside the picture disk at half its radius.
       gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
       gui::g_state.analysis.pick_armed = true;
       ctx->Yield(2);

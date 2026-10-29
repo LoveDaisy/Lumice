@@ -123,6 +123,8 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
   g_panorama_vp.active = false;  // level-triggered, like the preview viewport's own publication
 
   ImGui::SeparatorText("Scene panorama");
+  // The ROI controls sit ABOVE the picture: Point mode's gestures aim at the picture below them.
+  RenderPanoramaRoiControls(g_state);
   int upper = g_state.workspace.panorama_upper ? 0 : 1;
   ImGui::RadioButton("Upper##panorama_hemisphere", &upper, 0);
   ImGui::SameLine();
@@ -279,6 +281,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // frame that does not draw the preview publishes neither the viewport nor the curve labels, so
   // every consumer reads "no picture on screen" (DoAnalyze's IN_FRAME canvas falls back to the
   // document's own resolution, the deferred blit skips, the export gates stay closed).
+  g_panorama_vp.active = false;
   g_preview_vp.active = false;
   g_preview_vp.curve_labels.clear();
 
@@ -289,8 +292,6 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   if (pick_active_at_entry && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
     g_state.pick_link_source.reset();
   }
-  // Blank-area cancel: if the pick survived the frame's rows (no row consumed the click), a
-  // left click anywhere this frame cancels it — the cards' host behavior, mirrored.
   std::optional<GuiState::EntryRef> pick_source_at_entry =
       pick_active_at_entry ? g_state.pick_link_source : std::nullopt;
 
@@ -301,15 +302,12 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   const float mid_w = std::max(0.0f, window_width - left_w - right_w);
 
   // ---- Left column: crystal list + Sun + Simulation (the Render right panel's Scene controls,
-  // the very same function). One scrolling column, like the prototype stacks them — a long
-  // crystal list scrolls the Scene group below it rather than hiding it. ----
+  // the very same function). One scrolling column, like the prototype stacks them. ----
   SetNextPanelGeometry(0.0f, top, left_w, panel_height);
   ImGui::Begin("##AnalyzeLeftPanel", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
   {
-    // An armed pick-link keeps its hint bar and its Esc cancel in this column too — the pick is
-    // armed session state, not a Render-panel property, and a mode switch must not orphan it.
     if (g_state.pick_link_source.has_value()) {
       const auto& src = *g_state.pick_link_source;
       ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
@@ -320,42 +318,57 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     }
     RenderCrystalList(g_state);
     ProcessEditRequest(g_state);
-    // Pick completion reopens the editor on the pick's source — the cards' host post-pass.
     ReopenEditorOnPickCompletion(g_state, pick_source_at_entry);
     ImGui::SeparatorText("Scene");
     RenderSceneControls(g_state);
   }
   ImGui::End();
 
-  // ---- Middle: two columns x two rows and the divider between the rows ----
-  SetNextPanelGeometry(left_w, top, mid_w, panel_height);
-  ImGui::Begin("##AnalyzeMiddle", nullptr,
+  // ---- Middle: four regions as TOP-LEVEL chrome windows (the shell's own addressing convention
+  // — ##LeftPanel, ##PreviewPanel) rather than children of a coordinator window: the regions
+  // host interactive tools whose items are addressed per window. Two columns x two rows, the
+  // divider between the rows a thin strip across both columns. ----
+  const float row_w = std::max(0.0f, mid_w - ImGui::GetStyle().ItemSpacing.x);
+  const float col_w = row_w * 0.5f;
+  const float list_w = row_w - col_w;
+  const float upper_h = panel_height * g_state.workspace.middle_rows_ratio;
+  const float lower_y = top + upper_h + UiPx(8.0f);
+  const float lower_h = std::max(0.0f, panel_height - upper_h - UiPx(8.0f));
+
+  SetNextPanelGeometry(left_w, top, col_w, upper_h);
+  ImGui::Begin("##AnalyzePanorama", nullptr,
+               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
+  RenderScenePanorama(window, window_height);
+  ImGui::End();
+
+  SetNextPanelGeometry(left_w + col_w + ImGui::GetStyle().ItemSpacing.x, top, list_w, upper_h);
+  ImGui::Begin("##AnalyzeShareList", nullptr,
+               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
+  RenderAnalysisPanelBody(g_state, g_server);
+  ImGui::End();
+
+  // The divider: a thin strip across both columns, dragging the row ratio (its line is the only
+  // affordance — dim normally, themed on hover/grab).
+  SetNextPanelGeometry(left_w, top + upper_h, mid_w, UiPx(8.0f));
+  ImGui::Begin("##AnalyzeRowsDivider", nullptr,
+               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
+  MiddleRowsSplitter("##AnalyzeRowsSplitter", mid_w, &g_state.workspace.middle_rows_ratio);
+  ImGui::End();
+
+  SetNextPanelGeometry(left_w, lower_y, mid_w, lower_h);
+  ImGui::Begin("##AnalyzeLowerRow", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus);
-  {
-    const float col_w = (std::max(0.0f, ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x)) * 0.5f;
-    float upper_h = panel_height * g_state.workspace.middle_rows_ratio;
-    float lower_h = std::max(0.0f, panel_height - upper_h - UiPx(8.0f));
-
-    // Upper row: scene panorama | raypath share list.
-    RenderScenePanorama(window, window_height);
-    ImGui::SameLine();
-    PlaceholderRegion("##AnalyzeShareList", "Raypath share list",
-                      "Lives in the Raypath Analysis window during the migration; this region takes it over.",
-                      ImVec2(0, upper_h));
-
-    MiddleRowsSplitter("##AnalyzeRowsSplitter", ImGui::GetContentRegionAvail().x, &g_state.workspace.middle_rows_ratio);
-
-    // Lower row: raypath view | raypath 3D.
-    PlaceholderRegion("##AnalyzeRaypathView", "Raypath view",
-                      "Not wired up yet. Will show one raypath class's sky picture with pan, zoom and the sky-point "
-                      "pick.",
-                      ImVec2(col_w, lower_h));
-    ImGui::SameLine();
-    PlaceholderRegion("##AnalyzeRaypath3D", "Raypath 3D",
-                      "Not wired up yet. Will show the selected path's crystal and its 3D geometry.",
-                      ImVec2(0, lower_h));
-  }
+  PlaceholderRegion("##AnalyzeRaypathView", "Raypath view",
+                    "Not wired up yet. Will show one raypath class's sky picture with pan, zoom and the sky-point "
+                    "pick.",
+                    ImVec2(col_w, ImGui::GetContentRegionAvail().y));
+  ImGui::SameLine();
+  PlaceholderRegion("##AnalyzeRaypath3D", "Raypath 3D",
+                    "Not wired up yet. Will show the selected path's crystal and its 3D geometry.", ImVec2(0, 0));
   ImGui::End();
 
   // ---- Right column: sun-direction globe above the selection details ----
@@ -371,8 +384,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                       ImVec2(0, globe_h));
     ImGui::Spacing();
     PlaceholderRegion("##AnalyzeDetails", "Selection details",
-                      "Select a class in the Raypath Analysis window; the class overview takes this region.",
-                      ImVec2(0, 0));
+                      "Select a class in the list region; the class overview takes this region.", ImVec2(0, 0));
   }
   ImGui::End();
 }

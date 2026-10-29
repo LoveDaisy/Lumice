@@ -1180,90 +1180,6 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 
 namespace {
 
-void RenderRoiControls(GuiState& state) {
-  auto& a = state.analysis;
-  ImGui::TextUnformatted("Region");
-  ImGui::SameLine();
-  const int prev_mode = a.roi_mode;
-  ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-  ImGui::SameLine();
-  // "In frame" and "Point" are choices made against a picture of the document, so both radios
-  // wait for the document to have shown one — the same predicate the Analyze button reads
-  // (CanStartAnalysis), so the three cannot disagree on what "no picture yet" means. Not the
-  // preview's own "texture bound" flag: a background photograph alone raises that too, and a
-  // photograph is not a picture of the document. A mode already selected still analyses without
-  // a live preview — DoAnalyze sizes the frame at the document's own resolution then — so this
-  // gates the radio, not the button.
-  const bool has_picture = HasEverShownPicture(state.run_intent);
-  ImGui::BeginDisabled(!has_picture);
-  ImGui::RadioButton("In frame", &a.roi_mode, LUMICE_RAYPATH_ROI_IN_FRAME);
-  ImGui::EndDisabled();
-  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Needs a picture of this document: press Run once first.");
-  }
-  ImGui::SameLine();
-  ImGui::BeginDisabled(!has_picture);
-  ImGui::RadioButton("Point", &a.roi_mode, LUMICE_RAYPATH_ROI_CONE);
-  ImGui::EndDisabled();
-  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Needs a picture of this document to pick a point on: press Run once first.");
-  }
-  if (a.roi_mode != LUMICE_RAYPATH_ROI_CONE && prev_mode == LUMICE_RAYPATH_ROI_CONE) {
-    a.pick_armed = false;  // never leave a click armed for a mode that does not read it
-    a.cone_marker_dragging = false;
-  }
-
-  if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
-    // A centre from the moment the mode is entered, so the marker is on screen to be dragged
-    // before any pick. Level-triggered: "no valid centre and a preview to project on", not "the
-    // frame the radio was clicked" — a switch made before the first picture arrives is served the
-    // frame the picture does. This window renders after the preview panel, so the viewport read
-    // here is this frame's.
-    if (!a.cone_center_valid && g_preview_vp.active) {
-      EnsureDefaultConeCenter(state, PreviewAnnotationView(state, g_preview_vp.vp_w, g_preview_vp.vp_h),
-                              g_preview_vp.vp_w, g_preview_vp.vp_h);
-    }
-    // Same predicate as the radio above, not the viewport flag: a background photograph must not
-    // arm a pick on a document that has never been rendered.
-    const bool can_pick = has_picture;
-    ImGui::BeginDisabled(!can_pick);
-    // Read once: the button below flips pick_armed, and the pop must match the push made
-    // for the value the frame STARTED with, not the one the click just wrote.
-    const bool armed_style = a.pick_armed;
-    if (armed_style) {
-      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.55f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.75f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.40f));
-    }
-    if (ImGui::Button(ICON_FA_CROSSHAIRS " Pick on preview")) {
-      a.pick_armed = !a.pick_armed;
-      if (a.pick_armed) {
-        // One click-taking mode at a time with the Angular Distance picker
-        // (GuiState::AngularDistPicker). The eyedropper/pick pairing is left as it was: in the
-        // preview the eyedropper's branch already takes precedence over this one.
-        state.angular_dist_picker.armed = false;
-      }
-    }
-    if (armed_style) {
-      ImGui::PopStyleColor(3);
-    }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip(can_pick ? "Then click a point on the preview. Esc cancels.\n"
-                                   "Or drag the marker on the preview directly." :
-                                   "Needs a picture of this document to click on: press Run once first.");
-    }
-    ImGui::SameLine();
-    if (a.cone_center_valid) {
-      float alt = 0.0f;
-      float az = 0.0f;
-      DirToAltAz(a.cone_center_dir, &alt, &az);
-      ImGui::Text("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
-    } else {
-      ImGui::TextDisabled("No centre yet");
-    }
-  }
-}
 
 // The request's parameters that are not the region: the ray budget. Session state, sent with the
 // next Analyze — editing it starts nothing, like the region.
@@ -1749,32 +1665,13 @@ void RenderActionButtons(GuiState& state) {
 
 }  // namespace
 
-void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server) {
-  if (!state.analysis.window_open) {
-    return;
-  }
-  // Tall and narrow on purpose: the window is a list of raypaths, and rows are what it runs out
-  // of first — a wide default only stretches the table's five columns across empty space.
-  //
-  // Re-applied, not just on appearance, on the frame the UI scale changes: this window is
-  // non-modal and can stay open through Settings (see WindowResizeCondForScale, theme.hpp), so a
-  // FirstUseEver cond alone would leave it pinned at the old pixel size while its UiPx()-derived
-  // content grows.
-  static float s_sized_for_scale = 0.0f;
-  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSize(ImVec2(UiPx(520.0f), UiPx(640.0f)), size_cond);
-  // size_cond is only ever FirstUseEver or Always, so one call covers both: the ordinary first
-  // appearance centres once, and a scale change re-centres alongside the resize (ImGui grows a
-  // window from its top-left, so leaving the position alone would run a larger panel off-screen).
-  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), size_cond, ImVec2(0.5f, 0.5f));
-  if (!ImGui::Begin(ICON_FA_ROUTE " Raypath Analysis", &state.analysis.window_open,
-                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
-    ImGui::End();
-    return;
-  }
-  RenderListFreshnessBanner(state);
+void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
+  // The analysis tool's sections, hosted by the Analyze workspace's share-list region — no
+  // window of its own any more. The ROI controls live on the panorama side
+  // (RenderPanoramaRoiControls, analyze_workspace.cpp); everything that reads and shapes the
+  // RESULT is here.
   RenderPickBanner(state);
-  RenderRoiControls(state);
+  RenderListFreshnessBanner(state);
   RenderRequestParamsControls(state);
   RenderRunControls(state, server);
   RenderRadiusSlider(state);
@@ -1783,7 +1680,91 @@ void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server) {
   RenderResultSearchBox();
   RenderResultList(state);
   RenderActionButtons(state);
-  ImGui::End();
+}
+
+void RenderPanoramaRoiControls(GuiState& state) {
+  auto& a = state.analysis;
+  ImGui::TextUnformatted("Region");
+  ImGui::SameLine();
+  const int prev_mode = a.roi_mode;
+  ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
+  ImGui::SameLine();
+  // "In frame" and "Point" are choices made against a picture of the document, so both radios
+  // wait for the document to have shown one — the same predicate the Analyze button reads
+  // (CanStartAnalysis), so the three cannot disagree on what "no picture yet" means. Not the
+  // preview's own "texture bound" flag: a background photograph alone raises that too, and a
+  // photograph is not a picture of the document. A mode already selected still analyses without
+  // a live preview — DoAnalyze sizes the frame at the document's own resolution then — so this
+  // gates the radio, not the button.
+  const bool has_picture = HasEverShownPicture(state.run_intent);
+  ImGui::BeginDisabled(!has_picture);
+  ImGui::RadioButton("In frame", &a.roi_mode, LUMICE_RAYPATH_ROI_IN_FRAME);
+  ImGui::EndDisabled();
+  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("Needs a picture of this document: press Run once first.");
+  }
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!has_picture);
+  ImGui::RadioButton("Point", &a.roi_mode, LUMICE_RAYPATH_ROI_CONE);
+  ImGui::EndDisabled();
+  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("Needs a picture of this document to pick a point on: press Run once first.");
+  }
+  if (a.roi_mode != LUMICE_RAYPATH_ROI_CONE && prev_mode == LUMICE_RAYPATH_ROI_CONE) {
+    a.pick_armed = false;  // never leave a click armed for a mode that does not read it
+    a.cone_marker_dragging = false;
+  }
+
+  if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
+    // A centre from the moment the mode is entered, so the marker is on screen to be dragged
+    // before any pick. Level-triggered: "no valid centre and a preview to project on", not "the
+    // frame the radio was clicked" — a switch made before the first picture arrives is served the
+    // frame the picture does. This window renders after the preview panel, so the viewport read
+    // here is this frame's.
+    if (!a.cone_center_valid && g_panorama_vp.active) {
+      EnsureDefaultConeCenter(state, PanoramaAnnotationView(state, g_panorama_vp.vp_w, g_panorama_vp.vp_h),
+                              g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+    }
+    // Same predicate as the radio above, not the viewport flag: a background photograph must not
+    // arm a pick on a document that has never been rendered.
+    const bool can_pick = has_picture;
+    ImGui::BeginDisabled(!can_pick);
+    // Read once: the button below flips pick_armed, and the pop must match the push made
+    // for the value the frame STARTED with, not the one the click just wrote.
+    const bool armed_style = a.pick_armed;
+    if (armed_style) {
+      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.55f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.75f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.40f));
+    }
+    if (ImGui::Button(ICON_FA_CROSSHAIRS " Pick on the panorama")) {
+      a.pick_armed = !a.pick_armed;
+      if (a.pick_armed) {
+        // One click-taking mode at a time with the Angular Distance picker
+        // (GuiState::AngularDistPicker). The eyedropper/pick pairing is left as it was: in the
+        // preview the eyedropper's branch already takes precedence over this one.
+        state.angular_dist_picker.armed = false;
+      }
+    }
+    if (armed_style) {
+      ImGui::PopStyleColor(3);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip(can_pick ? "Then click a point on the panorama. Esc cancels.\n"
+                                   "Or drag the marker on the panorama directly." :
+                                   "Needs a picture of this document to click on: press Run once first.");
+    }
+    ImGui::SameLine();
+    if (a.cone_center_valid) {
+      float alt = 0.0f;
+      float az = 0.0f;
+      DirToAltAz(a.cone_center_dir, &alt, &az);
+      ImGui::Text("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+    } else {
+      ImGui::TextDisabled("No centre yet");
+    }
+  }
 }
 
 namespace {
@@ -1825,15 +1806,6 @@ void DrawRoiRingImpl(const GuiState& state, const LUMICE_AnnotationView& view, c
 }
 
 }  // namespace
-
-void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
-                         float dpi_scale_x, float dpi_scale_y) {
-  const auto& a = state.analysis;
-  if (!a.window_open || a.roi_mode != LUMICE_RAYPATH_ROI_CONE) {
-    return;
-  }
-  DrawRoiRingImpl(state, view, origin, dpi_scale_x, dpi_scale_y);
-}
 
 void DrawPanoramaRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
                          float dpi_scale_x, float dpi_scale_y) {

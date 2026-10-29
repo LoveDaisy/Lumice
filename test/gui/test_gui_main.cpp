@@ -945,11 +945,10 @@ int main(int argc, char** argv) {
     // early-returns when color_window_open is false, so cost for existing
     // tests is negligible.
     gui::RenderColorWindow(gui::g_state, gui::g_server);
-    // The Raypath Analysis window, mirrored from src/gui/main.cpp for the same reason as the
-    // Colors window above; a no-op while analysis.window_open is false.
-    gui::RenderAnalysisPanel(gui::g_state, gui::g_server);
-    // The Summary window, mirrored from src/gui/main.cpp like the two above; a no-op while
-    // config_summary_window_open is false.
+    // (The Raypath Analysis floating window is retired: its sections are the Analyze workspace's
+    // share-list region, drawn through RenderWorkspacePanels above.)
+    // The Summary window, mirrored from src/gui/main.cpp like the Colors window above; a no-op
+    // while config_summary_window_open is false.
     gui::RenderConfigSummaryWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);
     // Intentional deviation from plan (which suggested nullptr): the test

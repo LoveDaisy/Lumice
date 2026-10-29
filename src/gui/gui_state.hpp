@@ -1729,7 +1729,7 @@ struct GuiState {
   bool defaults_panel_open = false;
 
   // The read-only "Summary" window (config_summary_window.cpp): one page of the current document
-  // for a screenshot. Session-only like the two above. Unlike analysis.window_open, which stays
+  // for a screenshot. Session-only like the two above. Unlike the analysis tool's selection, which stays
   // open across a Revert, this one is closed by EVERY FrontendResetReason (app.cpp
   // ResetFrontendState) — the window is a picture of one document, and a reset replaces or
   // restores that document under it.
@@ -1742,7 +1742,6 @@ struct GuiState {
   // the sim commit. The analysis REQUEST is built from these at the moment Analyze is pressed;
   // the RESULT lives in `analysis_result` below, which is derived (poller-fed), not session.
   struct RaypathAnalysisSession {
-    bool window_open = false;
     // LUMICE_RAYPATH_ROI_* verbatim — the wire values are the GUI values, no second enum to keep
     // aligned (the RadioButton row indexes this int directly, exactly as AxisDistType's does).
     int roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;

@@ -420,8 +420,15 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 
 // ---- Rendering -----------------------------------------------------------------------------------
 
-// The window. No-op while state.analysis.window_open is false.
-void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server);
+// The analysis tool's sections as the Analyze workspace's share-list region hosts them — called
+// from inside that region's child (analyze_workspace.cpp). No window of its own; the ROI controls
+// are the panorama's (RenderPanoramaRoiControls below).
+void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server);
+
+// The ROI controls — region radios, cone radius, the pick arming — hosted by the panorama region
+// above the picture: Point mode's gestures aim at THAT picture. The default-centre and pick
+// branches read the panorama's viewport publication.
+void RenderPanoramaRoiControls(GuiState& state);
 
 // The ROI marker and ring on the preview, drawn by RenderPreviewPanel after its interaction
 // button: CONE mode with a valid centre that projects onto this frame's picture draws the centre
@@ -430,8 +437,9 @@ void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server);
 void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
                          float dpi_scale_x, float dpi_scale_y);
 
-// The same marker and ring over the Analyze workspace's panorama: the gate drops the floating
-// window's (the panorama lives in the workspace), the draw is the one implementation.
+// The marker and ring over the Analyze workspace's panorama: CONE mode with a projectable centre
+// draws through the one DrawRoiRingImpl. (The preview-side twin retired with the analysis
+// window — the panorama is the picture that mode aims at.)
 void DrawPanoramaRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
                          float dpi_scale_x, float dpi_scale_y);
 

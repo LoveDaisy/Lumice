@@ -892,12 +892,10 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   }
 
   // The analysis tool's state is about the scene that was on screen: its picked centre, its
-  // selection and its list mean nothing for another document. The window stays open — which
-  // panels are open is not document state. Revert keeps all of it: the scene is the same one.
+  // selection and its list mean nothing for another document. Revert keeps all of it: the scene
+  // is the same one.
   if (reason != FrontendResetReason::kRevert) {
-    const bool window_open = state.analysis.window_open;
     state.analysis = GuiState::RaypathAnalysisSession{};
-    state.analysis.window_open = window_open;
     // The list's search text has this struct's lifetime but is not a member of it (an ImGui type
     // cannot enter gui_state.hpp), so the whole-struct reset above does not reach it.
     ClearAnalysisSearchFilter();

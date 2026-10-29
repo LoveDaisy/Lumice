@@ -486,7 +486,6 @@ int main(int argc, char** argv) {
     gui::RenderWorkspacePanels(window, layout_width, layout_height);
     gui::RenderLogPanel(layout_width, layout_height);
     gui::RenderColorWindow(gui::g_state, gui::g_server);
-    gui::RenderAnalysisPanel(gui::g_state, gui::g_server);
     gui::RenderConfigSummaryWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);
     gui::RenderEditModals(gui::g_state, window);
