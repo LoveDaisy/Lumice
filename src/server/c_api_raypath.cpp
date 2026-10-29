@@ -18,6 +18,7 @@
 #include "config/config_manager.hpp"
 #include "config/crystal_config.hpp"
 #include "include/lumice_raypath.h"
+#include "raypath/map_analysis.hpp"  // kMaxMapPixels — the cell bound the map request echoes
 #include "raypath/path_feature_report.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/probe_json.hpp"
@@ -56,6 +57,12 @@ static_assert(LUMICE_PATH_PROBE_MAX_BUDGET_MS == lumice::raypath::kMaxProbeBudge
               "lumice_raypath.h and the probe module must agree on the budget bound");
 static_assert(LUMICE_PATH_PROBE_MAX_WAVELENGTH_COUNT == lumice::raypath::kMaxProbeWavelengthCount,
               "lumice_raypath.h and the probe module must agree on the wavelength bound");
+static_assert(LUMICE_PATH_MAP_DEFAULT_BUDGET_MS == lumice::raypath::kDefaultMapBudgetMs,
+              "lumice_raypath.h and the map module must agree on the budget default");
+static_assert(LUMICE_PATH_MAP_MAX_BUDGET_MS == lumice::raypath::kMaxMapBudgetMs,
+              "lumice_raypath.h and the map module must agree on the budget bound");
+static_assert(LUMICE_PATH_MAP_MAX_PIXELS == lumice::raypath::kMaxMapPixels,
+              "lumice_raypath.h and the map module must agree on the view cell bound");
 
 // Derived JSON is cached under a mutex; all getters read the frozen value instead.
 struct LUMICE_SinglePathResult_ {
@@ -80,6 +87,25 @@ struct LUMICE_PathProbe_ {
   lumice::raypath::ProbeResult result;
   mutable std::mutex derived_mutex;
   mutable std::string derived_json;
+};
+
+// The map ships typed readers only (no ToJson face): no derived cache to guard. The bulk
+// readers project their C-facing column/pointer arrays once from the frozen value on first
+// read (the mutable/mutex shape of the derived-JSON caches) so every read hands out the same
+// pointers into handle-owned storage, valid until Destroy.
+struct LUMICE_PathMapReaderCache {
+  std::vector<double> delta_deg;
+  std::vector<double> azimuth_deg;
+  std::vector<double> values;
+  std::vector<int> counts;
+  std::vector<uint8_t> status;
+  std::vector<const char*> method_pointers;  // into the frozen result's method strings
+};
+
+struct LUMICE_PathMap_ {
+  lumice::raypath::MapResult result;
+  mutable std::mutex cache_mutex;
+  mutable std::unique_ptr<LUMICE_PathMapReaderCache> cache;
 };
 
 struct LUMICE_PathWorkspace_ {
@@ -543,6 +569,92 @@ LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeR
   return LUMICE_OK;
 }
 
+LUMICE_ErrorCode AnalyzeMap(const LUMICE_Scene* scene, const LUMICE_PathMapRequest& request,
+                            lumice::raypath::AnalysisWorkspace* workspace, const LUMICE_PathQueryOptions* options,
+                            LUMICE_PathMap** out, char* err_buf, size_t err_size) {
+  namespace rp = lumice::raypath;
+
+  rp::MapRequest req;
+  req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
+  if (request.crystal_id < 0 || request.crystal_id != static_cast<int>(req.crystal_id)) {
+    return Refuse(
+        { rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(request.crystal_id) }, err_buf,
+        err_size);
+  }
+  if (request.face_count < 0 || request.layer_count < 0) {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "negative face or layer count" }, err_buf, err_size);
+  }
+  int consumed = 0;
+  for (int i = 0; i < request.layer_count; i++) {
+    const int n = request.layer_face_counts[i];
+    if (n < 0 || n > request.face_count - consumed) {
+      return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf,
+                    err_size);
+    }
+    req.path_layers.emplace_back(request.faces + consumed, request.faces + consumed + n);
+    consumed += n;
+  }
+  if (consumed != request.face_count) {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf, err_size);
+  }
+  req.full_sky = request.full_sky != 0;
+  req.centre_altitude_deg = request.centre_altitude_deg;
+  req.centre_azimuth_deg = request.centre_azimuth_deg;
+  req.delta_span_deg = request.delta_span_deg;
+  req.azimuth_span_deg = request.azimuth_span_deg;
+  req.view_rows = request.view_rows;
+  req.view_cols = request.view_cols;
+  if (request.wavelength_count < 0) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument, "negative wavelength count" }, err_buf, err_size);
+  }
+  if (request.wavelength_count > 1) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument,
+                    "at most one reference wavelength may be requested; the per-lambda map family is a later face" },
+                  err_buf, err_size);
+  }
+  if (request.wavelength_count > 0) {
+    req.wavelengths_nm.assign(request.wavelengths_nm, request.wavelengths_nm + request.wavelength_count);
+  }
+  req.sample_count = request.sample_count;
+  if (workspace == nullptr && request.budget_ms < 0) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument,
+                    "budget_ms must be 0 (the default) or at most " + std::to_string(rp::kMaxMapBudgetMs) },
+                  err_buf, err_size);
+  }
+  req.budget_ms = workspace != nullptr ? (options != nullptr ? options->deadline_ms : 0) :
+                                         (request.budget_ms > 0 ? request.budget_ms : rp::kDefaultMapBudgetMs);
+  if (workspace == nullptr && req.budget_ms > rp::kMaxMapBudgetMs) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument,
+                    "budget_ms must be 0 (the default) or at most " + std::to_string(rp::kMaxMapBudgetMs) },
+                  err_buf, err_size);
+  }
+  req.interrupted = request.interrupted;
+
+  // The scene document LUMICE_CommitScene would hand the server, through the same parser.
+  lumice::ConfigManager config;
+  if (workspace == nullptr) {
+    if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathMap",
+                                                             lumice::GetGlobalLogger(), nullptr, &config)) {
+      WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+      return lumice::capi::ToCApiErrorCode(err.code);
+    }
+  }
+
+  rp::MapResult result;
+  const rp::Error error =
+      workspace != nullptr ?
+          workspace->QueryMap(req, &result,
+                              options != nullptr && options->cancel != nullptr ? &options->cancel->token : nullptr) :
+          rp::AnalyzePathMap(config, req, &result);
+  if (!error.Ok()) {
+    return Refuse(error, err_buf, err_size);
+  }
+  auto handle = std::make_unique<LUMICE_PathMap_>();
+  handle->result = std::move(result);
+  *out = handle.release();
+  return LUMICE_OK;
+}
+
 template <typename Request, typename Result, typename Query>
 LUMICE_ErrorCode RunWorkspaceQuery(LUMICE_PathWorkspace* workspace, const Request* request,
                                    const LUMICE_PathQueryOptions* options, Result** out, char* err_buf, size_t err_size,
@@ -786,6 +898,48 @@ void LUMICE_PathProbeDestroy(LUMICE_PathProbe* result) {
   std::unique_ptr<LUMICE_PathProbe_> owned(result);
 }
 
+LUMICE_ErrorCode LUMICE_AnalyzePathMap(const LUMICE_Scene* scene, const LUMICE_PathMapRequest* request,
+                                       LUMICE_PathMap** out, char* err_buf, size_t err_size) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (err_buf != nullptr && err_size > 0) {
+    err_buf[0] = '\0';
+  }
+  if (scene == nullptr || request == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: scene, request and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (request->struct_size < sizeof(LUMICE_PathMapRequest)) {
+    WriteError(err_buf, err_size,
+               "invalid_argument: struct_size " + std::to_string(request->struct_size) +
+                   " is smaller than this version's LUMICE_PathMapRequest (" +
+                   std::to_string(sizeof(LUMICE_PathMapRequest)) + "); set it to sizeof(LUMICE_PathMapRequest)");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if ((request->faces == nullptr && request->face_count > 0) ||
+      (request->layer_face_counts == nullptr && request->layer_count > 0) ||
+      (request->wavelengths_nm == nullptr && request->wavelength_count > 0)) {
+    WriteError(err_buf, err_size, "null_arg: path / wavelength arrays must not be NULL with a non-zero count");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  // No exception crosses the C ABI.
+  try {
+    return AnalyzeMap(scene, *request, nullptr, nullptr, out, err_buf, err_size);
+  } catch (const std::exception& e) {
+    LOG_ERROR("LUMICE_AnalyzePathMap: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+  } catch (...) {
+    LOG_ERROR("LUMICE_AnalyzePathMap: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+  }
+  return LUMICE_ERR_UNKNOWN;
+}
+
+void LUMICE_PathMapDestroy(LUMICE_PathMap* result) {
+  std::unique_ptr<LUMICE_PathMap_> owned(result);
+}
+
 LUMICE_ErrorCode LUMICE_PathWorkspaceCreate(const LUMICE_Scene* scene, LUMICE_PathWorkspace** out, char* err_buf,
                                             size_t err_size) {
   if (out != nullptr) {
@@ -979,6 +1133,19 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryReport(LUMICE_PathWorkspace* workspace
                              return AnalyzeReport(nullptr, *request, workspace->workspace.get(), options, out, err_buf,
                                                   err_size);
                            });
+}
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceQueryMap(LUMICE_PathWorkspace* workspace, const LUMICE_PathMapRequest* request,
+                                              const LUMICE_PathQueryOptions* options, LUMICE_PathMap** out,
+                                              char* err_buf, size_t err_size) {
+  return RunWorkspaceQuery(
+      workspace, request, options, out, err_buf, err_size, { sizeof(LUMICE_PathMapRequest) }, false, [&] {
+        if (request->wavelengths_nm == nullptr && request->wavelength_count > 0) {
+          WriteError(err_buf, err_size, "null_arg: wavelengths_nm is NULL with non-zero count");
+          return LUMICE_ERR_NULL_ARG;
+        }
+        return AnalyzeMap(nullptr, *request, workspace->workspace.get(), options, out, err_buf, err_size);
+      });
 }
 
 namespace {
@@ -2102,6 +2269,172 @@ LUMICE_PathReadStatus LUMICE_PathProbeGetDarkRegion(const LUMICE_PathProbe* resu
   out->hi_deg = region.hi_deg;
   out->bin_count = region.bin_count;
   out->reason = Text(region.reason);
+  return LUMICE_PATH_READ_OK;
+}
+
+// ---- the class reference map's readers -------------------------------------------
+
+// File-local aliases (the no-using-namespace rule): the readers spell the raypath types
+// through them.
+namespace rp = lumice::raypath;
+namespace srv = lumice::raypath::survey;
+
+LUMICE_PathReadStatus LUMICE_PathMapGetInfo(const LUMICE_PathMap* result, LUMICE_PathMapInfo* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const rp::MapData& data = result->result.Data();
+  const rp::MapMetadata& m = data.meta;
+  out->execution = ExecutionTag(m.execution);
+  out->state = EvidenceTag(ClaimState(data.claim));
+  if (const auto* refused = std::get_if<rp::Refused>(&data.claim)) {
+    out->reason = Text(refused->reason);
+  } else if (const auto* unevaluated = std::get_if<rp::Unevaluated>(&data.claim)) {
+    out->reason = Text(unevaluated->reason);
+  }
+  out->crystal_id = static_cast<int>(m.crystal_id);
+  out->analytic_api_version = m.analytic_api_version;
+  out->crystal_kind = Text(m.crystal_kind);
+  out->faces = m.faces.data();
+  out->face_count = m.faces.size();
+  out->shape_count = m.shape.size();
+  out->shape_is_nominal = m.shape_is_nominal;
+  out->sun_altitude_deg = m.sun_altitude_deg;
+  out->sun_azimuth_deg = m.sun_azimuth_deg;
+  std::copy_n(m.incident_direction, 3, out->incident_direction);
+  out->wavelength_nm = m.wavelength.nm;
+  out->wavelength_source = Text(WavelengthSourceName(m.wavelength.source));
+  out->refractive_index = m.wavelength.refractive_index;
+  out->sample_count = m.sample_count;
+  out->budget_ms = m.budget_ms;
+  out->interrupted = m.interrupted;
+  if (const auto* finite = std::get_if<rp::Finite<rp::MapValues>>(&data.claim)) {
+    const srv::ReferenceMapData& map = finite->value.map;
+    out->member_count = map.member_count;
+    out->members_evaluated = map.members_evaluated;
+    out->truncated = map.truncated;
+    out->kept_count = map.kept_count;
+    out->view_full_sky = map.view.full_sky;
+    out->view_delta_min_deg = map.view.delta_min_deg;
+    out->view_delta_max_deg = map.view.delta_max_deg;
+    out->view_az_min_deg = map.view.az_min_deg;
+    out->view_az_max_deg = map.view.az_max_deg;
+    out->view_rows = map.view.rows;
+    out->view_cols = map.view.cols;
+    std::copy_n(map.view.incident, 3, out->view_incident);
+    std::copy_n(map.view.e1, 3, out->view_e1);
+    std::copy_n(map.view.e2, 3, out->view_e2);
+    out->pixel_count = map.pixels.size();
+    out->point_mass_available = map.point_mass.has_value();
+  }
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathMapGetQuantity(const LUMICE_PathMap* result, LUMICE_PathQuantitySpec* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK)
+    return status;
+  const auto* finite = std::get_if<rp::Finite<rp::MapValues>>(&result->result.Data().claim);
+  if (finite == nullptr) {
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  }
+  FillQuantity(finite->value.quantity, &finite->scope, out);
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathMapGetEvidence(const LUMICE_PathMap* result, LUMICE_PathSurveyEvidence* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const rp::MapData& data = result->result.Data();
+  out->state = EvidenceTag(ClaimState(data.claim));
+  if (const auto* finite = std::get_if<rp::Finite<rp::MapValues>>(&data.claim)) {
+    const srv::SurveyCoverage& coverage = finite->coverage;
+    out->coverage_available = 1;
+    out->members_evaluated = coverage.members_evaluated;
+    out->sample_count = coverage.sample_count;
+    out->geometry_basis = Text(coverage.geometry_basis);
+    out->wavelength_nm = coverage.wavelength_nm;
+  } else if (const auto* refused = std::get_if<rp::Refused>(&data.claim)) {
+    out->mode = Text(refused->reason);
+  } else if (const auto* unevaluated = std::get_if<rp::Unevaluated>(&data.claim)) {
+    out->reason = Text(unevaluated->reason);
+  }
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathMapGetPixels(const LUMICE_PathMap* result, LUMICE_PathMapPixels* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto* finite = std::get_if<rp::Finite<rp::MapValues>>(&result->result.Data().claim);
+  if (finite == nullptr) {
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  }
+  const std::vector<srv::MapPixelSample>& pixels = finite->value.map.pixels;
+  out->pixel_count = pixels.size();
+  if (pixels.empty()) {
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  }
+  // The projection runs once; the columns live in the handle, so every read hands out the
+  // same borrowed pointers (read-only calls may overlap one another — the mutex guards only
+  // the one-time fill).
+  {
+    std::lock_guard<std::mutex> lock(result->cache_mutex);
+    if (result->cache == nullptr) {
+      auto cache = std::make_unique<LUMICE_PathMapReaderCache>();
+      cache->delta_deg.resize(pixels.size());
+      cache->azimuth_deg.resize(pixels.size());
+      cache->values.resize(pixels.size());
+      cache->counts.resize(pixels.size());
+      cache->status.resize(pixels.size());
+      for (size_t p = 0; p < pixels.size(); p++) {
+        cache->delta_deg[p] = pixels[p].delta_deg;
+        cache->azimuth_deg[p] = pixels[p].azimuth_deg;
+        cache->values[p] = pixels[p].value;
+        cache->counts[p] = pixels[p].k;
+        cache->status[p] =
+            pixels[p].status == srv::MapPixelSample::Status::kSingular  ? LUMICE_PATH_MAP_PIXEL_SINGULAR :
+            pixels[p].status == srv::MapPixelSample::Status::kPointMass ? LUMICE_PATH_MAP_PIXEL_POINT_MASS :
+                                                                          LUMICE_PATH_MAP_PIXEL_OK;
+      }
+      result->cache = std::move(cache);
+    }
+    out->delta_deg = result->cache->delta_deg.data();
+    out->azimuth_deg = result->cache->azimuth_deg.data();
+    out->values = result->cache->values.data();
+    out->counts = result->cache->counts.data();
+    out->status = result->cache->status.data();
+  }
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathMapGetPointMass(const LUMICE_PathMap* result, LUMICE_PathMapPointMass* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto* finite = std::get_if<rp::Finite<rp::MapValues>>(&result->result.Data().claim);
+  if (finite == nullptr || !finite->value.map.point_mass.has_value()) {
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  }
+  const srv::MapPointMass& mass = *finite->value.map.point_mass;
+  out->m = mass.m;
+  out->m_error = mass.m_error;
+  {
+    // The method-name pointers project into the same handle-owned cache (the strings live in
+    // the frozen result; the pointer array is the C-facing shape of that vector).
+    std::lock_guard<std::mutex> lock(result->cache_mutex);
+    if (result->cache == nullptr) {
+      result->cache = std::make_unique<LUMICE_PathMapReaderCache>();
+    }
+    result->cache->method_pointers.clear();
+    result->cache->method_pointers.reserve(mass.methods.size());
+    for (const std::string& method : mass.methods) {
+      result->cache->method_pointers.push_back(method.c_str());
+    }
+    out->methods = result->cache->method_pointers.data();
+    out->method_count = result->cache->method_pointers.size();
+  }
+  out->pixel = mass.pixel;
   return LUMICE_PATH_READ_OK;
 }
 

@@ -548,6 +548,14 @@
 // warm-data import/harvest and one-way cancellation handles; four synchronous queries with one
 // absolute deadline. Existing Analyze symbols, request layouts and JSON schemas are unchanged.
 // Typed getters borrow immutable result storage with indexed record extents; ToJson is optional.
-#define LUMICE_API_VERSION 458
+// ADDED (v4.59): the class reference map, a pure append — LUMICE_PathMapRequest, LUMICE_PathMap
+// (opaque), LUMICE_AnalyzePathMap, LUMICE_PathWorkspaceQueryMap and LUMICE_PathMapDestroy, plus
+// the LUMICE_PATH_MAP_{DEFAULT,MAX}_BUDGET_MS, LUMICE_PATH_MAP_MAX_PIXELS and
+// LUMICE_PATH_MAP_PIXEL_* constants and five typed readers (Info / Quantity / Evidence / bulk
+// Pixels / PointMass). The map is the whole physical class's single-reference-lambda band-sum
+// grid over an explicit view: band members' per-sr values summed member-by-member on one
+// lattice, rank-0 members into a point-mass arm — never a representative times a member count.
+// No ToJson face (typed readers only); no existing symbol or struct layout changed.
+#define LUMICE_API_VERSION 459
 
 #endif  // LUMICE_API_VERSION_H_
