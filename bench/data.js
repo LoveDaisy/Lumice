@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793294730491,
+  "lastUpdate": 1793294736018,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "a7dc7af83f8475e1465a1e0705a2c6437b0e04dc",
-          "message": "Merge pull request #435 from LoveDaisy/task/adopt-relative-floor-ray-allocation\n\ncore: relative floor in adaptive ray allocation stops starving a filtered arc",
-          "timestamp": "2026-09-28T09:32:31+08:00",
-          "tree_id": "e682da94016f1a73dff66ec1f11396547391e218",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/a7dc7af83f8475e1465a1e0705a2c6437b0e04dc"
-        },
-        "date": 1790559880231,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 897619.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1026009.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 734400.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 926714.4,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "1b0a0361b3465b124b87fc0680bff113b21524d4",
           "message": "Merge pull request #436 from LoveDaisy/task/restore-pb-label-equivalence\n\ncore: a filter's P/B/D is a label equivalence again; the analysis list keeps physical symmetry",
           "timestamp": "2026-09-28T10:02:45+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 580904.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "82acb1c7506066de7efea14f2991f45b483e0e0a",
+          "message": "Merge pull request #550 from LoveDaisy/feat/raypath-docs-promotion\n\ndocs(raypath): promote diagnostic pipeline design and refresh the roadmap",
+          "timestamp": "2026-10-30T01:21:16+08:00",
+          "tree_id": "f2649338d9f7df1cc633beb6c3fe07372356de44",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/82acb1c7506066de7efea14f2991f45b483e0e0a"
+        },
+        "date": 1793294734407,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 887887.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1005530.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1142912.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 580794.7,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
