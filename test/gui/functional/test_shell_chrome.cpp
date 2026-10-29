@@ -24,7 +24,8 @@
 #include "IconsFontAwesome6.h"
 #include "gui/edit_modals.hpp"
 #include "gui/gui_constants.hpp"
-#include "gui/log_sink.hpp"  // ImGuiLogSink — the panel's second gate
+#include "gui/log_sink.hpp"     // ImGuiLogSink — the panel's second gate
+#include "test_screenshot.hpp"  // SavePng / StripAlpha — the archived skeleton capture
 // imgui_internal.h is normally an anti-pattern. Z-order has no public reading: it is the ORDER of
 // ImGuiContext::Windows, and the two rules relied on here (BringWindowToDisplayFront splices to the
 // back; a window created with NoBringToFrontOnFocus is pushed to the front, i.e. the bottom) are
@@ -595,6 +596,96 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       const ImGuiTestItemInfo fresh = ctx->ItemInfo("**/Layer 1, entry 1: Crystal##crys_0_0", ImGuiTestOpFlags_NoError);
       IM_CHECK_NE(fresh.ID, 0u);
+    };
+  }
+
+  // The skeleton's core controls stay reachable at the 1280x800 acceptance size (the plan's R9):
+  // every interactive element of the Analyze shell submits with a real rect at the smaller
+  // window, and a fullframe capture of this exact state is archived for the record. The window
+  // basis audit restores the shared window at the next ResetTestState, so the resize is
+  // pool-safe.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_skeleton_reachable_at_1280x800");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(4);
+      // Archive the default-size (1600x980) skeleton first, then repeat at the 1280x800
+      // acceptance size.
+      ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+      ctx->Yield(2);
+      auto capture_to = [&](const char* filename) {
+        g_fullframe_capture.Reset();
+        g_fullframe_capture.requested.store(true);
+        for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK(g_fullframe_capture.done.load());
+        if (g_fullframe_capture.done.load()) {
+          const std::string path = GuiTestTempPath(filename).string();
+          auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                              g_fullframe_capture.height);
+          IM_CHECK(lumice::test::SavePng(path.c_str(), rgb.data(), g_fullframe_capture.width,
+                                         g_fullframe_capture.height, 3));
+          ctx->LogInfo("archived: %s (%dx%d)", path.c_str(), g_fullframe_capture.width, g_fullframe_capture.height);
+        }
+      };
+      capture_to("workspace_skeleton_1600x980.png");
+
+      g_window_size_test.width = 1280;
+      g_window_size_test.height = 800;
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+
+      const char* kReachable[] = {
+        kWorkspaceToRenderBtn,                     // the way back (the slot now reads Render)
+        "**/Layer 1, entry 1: Crystal##crys_0_0",  // the list row
+        "**/+ Layer",                              // the shared add primitive
+        "**/##Altitude_slider",                    // the Sun editor
+        "**/##AnalyzeRowsSplitter",                // the divider
+      };
+      for (const char* ref : kReachable) {
+        const ImGuiTestItemInfo info = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
+        if (info.ID == 0u) {
+          IM_ERRORF("not reachable at 1280x800: %s", ref);
+          if (ctx->IsError()) {
+            break;
+          }
+          continue;
+        }
+        if (!(info.RectFull.GetWidth() > 1.0f && info.RectFull.GetHeight() > 1.0f)) {
+          IM_ERRORF("zero-area at 1280x800: %s", ref);
+          if (ctx->IsError()) {
+            break;
+          }
+        }
+      }
+      // The six not-wired regions are child WINDOWS holding plain text — no items for the item
+      // registry. Their reachability is "submitted this frame", checked over the window list
+      // (child names embed the hash suffix; the substring is the stable part).
+      const char* kRegions[] = {
+        "##AnalyzePanorama",  "##AnalyzeShareList", "##AnalyzeRaypathView",
+        "##AnalyzeRaypath3D", "##AnalyzeSunGlobe",  "##AnalyzeDetails",
+      };
+      int regions_found = 0;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w == nullptr || !w->Active) {
+          continue;
+        }
+        for (const char* region : kRegions) {
+          if (std::strstr(w->Name, region) != nullptr) {
+            regions_found++;
+          }
+        }
+      }
+      IM_CHECK_EQ(regions_found, 6);
+
+      // Archive the exact state this case verified (the pointer is already parked off-frame).
+      capture_to("workspace_skeleton_1280x800.png");
     };
   }
 }
