@@ -642,11 +642,24 @@ std::string FormatSamplingTooltip(LUMICE_RayCount crystals, LUMICE_RayCount orie
 // their display state — see 345.4 read/write split contract).
 void ToggleCompositePreview(GuiState& state);
 
+// The frame's main-area panels — the Render-mode trio, or the Analyze workspace's four columns,
+// by GuiState::workspace. ONE implementation for the app's frame loop (main.cpp) and the gui_test
+// harness's frame loop (test_gui_main.cpp) alike: the panel sequence used to live as two copies,
+// and the workspace branch is exactly the kind of change a second copy silently never sees.
+void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_height);
+
 // Panel rendering
 void RenderTopBar(float window_width);
 void RenderLeftPanel(float window_height);
 void RenderRightPanel(GLFWwindow* window, float window_width, float window_height);
 void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_height);
+// The Analyze workspace's four-column shell (analyze_workspace.cpp): the frame's layout when
+// GuiState::workspace says Analyze, drawn instead of the three Render-mode panels. Same scene
+// document, same editors — a different arrangement of them. Called only through
+// RenderWorkspacePanels.
+void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height);
+// Pin a chrome panel to the main viewport (the definition in app_panels.cpp carries the why).
+void SetNextPanelGeometry(float x, float y, float w, float h);
 void RenderStatusBar(float window_width, float window_height);
 void RenderUnsavedPopup(GLFWwindow* window);
 // task-cleanup-hardening AC4: Save-modified prompt. Rendered once per frame

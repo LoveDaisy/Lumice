@@ -480,9 +480,10 @@ int main(int argc, char** argv) {
     auto layout_height = static_cast<float>(win_h);
 
     gui::RenderTopBar(layout_width);
-    gui::RenderLeftPanel(layout_height);
-    gui::RenderRightPanel(window, layout_width, layout_height);
-    gui::RenderPreviewPanel(window, layout_width, layout_height);
+    // The frame's main-area panels: the Render-mode trio, or the Analyze workspace's four
+    // columns (the branch lives in the one shared function the test harness calls too).
+    // Everything below — log panel, tool windows, status bar, modals — is shared by both.
+    gui::RenderWorkspacePanels(window, layout_width, layout_height);
     gui::RenderLogPanel(layout_width, layout_height);
     gui::RenderColorWindow(gui::g_state, gui::g_server);
     gui::RenderAnalysisPanel(gui::g_state, gui::g_server);

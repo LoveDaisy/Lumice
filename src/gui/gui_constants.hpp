@@ -48,6 +48,11 @@ constexpr float kLeftPanelWidth = 400.0f;
 constexpr float kRightPanelWidth = 300.0f;
 constexpr float kTopBarHeight = 40.0f;
 constexpr float kStatusBarHeight = 28.0f;
+// The Analyze workspace's outer columns (analyze_workspace.cpp; the plan's four-column skeleton:
+// left 300 / right 400, the middle taking what remains). The Render workspace keeps
+// kLeftPanelWidth/kRightPanelWidth above — the two workspaces' layouts are independent.
+constexpr float kAnalyzeLeftPanelWidth = 300.0f;
+constexpr float kAnalyzeRightPanelWidth = 400.0f;
 
 // Display brightness baseline, mirroring lumice::kNormScale (core/color_util.hpp). The GUI needs
 // it because absolute exposure mode is computed client-side (mono_exposure_scale.hpp) rather than

@@ -45,12 +45,6 @@ namespace {
 using SimState = gui::GuiState::SimState;
 
 const char* const kWindowRef = "//" ICON_FA_ROUTE " Raypath Analysis";
-// The top bar's Render/Analyze workspace switch — the Analysis button's replacement, a
-// destination-labelled slot: from Render it reads [route " Analyze] and clicking it enters the
-// Analyze workspace and opens this window (the migration bridge); from Analyze it reads
-// "Render".
-const char* const kTopBarAnalyzeSegment = "##TopBar/" ICON_FA_ROUTE " Analyze";
-const char* const kTopBarRenderSegment = "##TopBar/Render";
 const char* const kAnalyzeButton = ICON_FA_PLAY " Analyze";
 const char* const kPickButton = ICON_FA_CROSSHAIRS " Pick on preview";
 const char* const kPickBanner = "//" ICON_FA_ROUTE " Raypath Analysis/##pick_banner";
@@ -225,15 +219,15 @@ ImGuiID FindListRowScrolling(ImGuiTestContext* ctx, const std::string& label) {
 }
 
 void OpenWindow(ImGuiTestContext* ctx) {
+  // Directly open the floating window instead of driving the top bar's workspace switch. The
+  // switch's Analyze click enters the Analyze workspace, whose frame has no preview panel — and
+  // most of this suite exercises the window's preview-dependent flows (pick, cone centre, ROI
+  // ring) beside that preview. During the list's migration the floating window is a
+  // Render-workspace tool, so the helper arranges exactly that. The switch's entry affordance
+  // (click Analyze -> workspace + this window) is pinned by shell_chrome's workspace cases; the
+  // window's own migration into the workspace is M2-1's.
   if (!gui::g_state.analysis.window_open) {
-    // The switch is destination-labelled: from the Analyze workspace the slot reads "Render", so
-    // a window closed while in Analyze first steps back to Render, then enters Analyze — whose
-    // entry opens the window.
-    if (gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kAnalyze) {
-      ctx->ItemClick(kTopBarRenderSegment);
-      ctx->Yield(2);
-    }
-    ctx->ItemClick(kTopBarAnalyzeSegment);
+    gui::g_state.analysis.window_open = true;
     ctx->Yield(2);
   }
   ctx->WindowMove(kWindowRef, ImVec2(60, 60));

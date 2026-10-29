@@ -1847,6 +1847,11 @@ struct GuiState {
   enum class WorkspaceMode { kRender, kAnalyze };
   struct AnalyzeWorkspaceSession {
     WorkspaceMode mode = WorkspaceMode::kRender;
+    // The middle area's horizontal divider: the upper row's (panorama + share list) share of the
+    // middle height, clamped to [0.15, 0.85] when dragged. Session memory (this session's own
+    // arrangement, not document state); 0.45 puts the near-square panorama the prototype pins
+    // within reach at both acceptance sizes — near-exact at 1600×980, slightly tall at 1280×800.
+    float middle_rows_ratio = 0.45f;
   };
   AnalyzeWorkspaceSession workspace;
 

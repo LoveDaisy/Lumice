@@ -2063,6 +2063,51 @@ void RenderScatteringSection(GuiState& state) {
   }
 }
 
+void AddScatteringLayer(GuiState& state) {
+  // Bind the new layer's seed entry to a fresh pool slot — see the "+ Crystal"
+  // handler for the same rationale (avoid implicit link to slot 0).
+  EntryCard new_entry;
+  new_entry.crystal_id = static_cast<int>(state.crystals.size());
+  state.crystals.emplace_back();
+  Layer new_layer;
+  new_layer.entries.push_back(new_entry);
+  // Footgun #2 guard: the layer that WAS the last layer is about to become
+  // an intermediate layer. If its prob is (near-)zero, no rays will reach the
+  // new layer — the newly added layer would be silently dead. Promote to a
+  // sensible continuation default so the user sees rays in the new layer by
+  // default. This is a user-initiated state transition (not a load), so it
+  // is not covered by the "don't silently rewrite loaded values" rule.
+  // Zero-detection MUST use IsProbZero — a raw == 0.0f would let a
+  // slider-dragged 1e-7 sneak past this promotion.
+  if (!state.layers.empty() && IsProbZero(state.layers.back().probability)) {
+    state.layers.back().probability = kDefaultContinuationProb;
+  }
+  state.layers.push_back(std::move(new_layer));
+  g_thumbnail_cache.OnLayerStructureChanged();
+}
+
+void ProcessEditRequest(GuiState& state) {
+  if (GetEditRequest().target == EditTarget::kNone) {
+    return;
+  }
+  const EditRequest& req = GetEditRequest();
+  if (req.target == EditTarget::kCard) {
+    const EditModalTarget modal_tgt = GetEditModalTarget();
+    if (!IsEditModalOpen() || modal_tgt.layer_idx != req.layer_idx || modal_tgt.entry_idx != req.entry_idx) {
+      EditRequest resolved = req;
+      resolved.target = IsEditModalOpen() ? GetActiveTabAsEditTarget() : EditTarget::kCrystal;
+      OpenEditModal(resolved, state);
+    }
+  } else {
+    OpenEditModal(req, state);
+  }
+  ResetEditRequest();
+}
+
+void RequestEntryCardEdit(int layer_idx, int entry_idx) {
+  g_edit_request = { EditTarget::kCard, layer_idx, entry_idx };
+}
+
 
 // ========== Scene Controls (rendered in the right panel Scene group) ==========
 

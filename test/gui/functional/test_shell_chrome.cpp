@@ -22,6 +22,7 @@
 #include <string>
 
 #include "IconsFontAwesome6.h"
+#include "gui/edit_modals.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/log_sink.hpp"  // ImGuiLogSink — the panel's second gate
 // imgui_internal.h is normally an anti-pattern. Z-order has no public reading: it is the ORDER of
@@ -40,6 +41,10 @@ const char* const kStopBtn = "##TopBar/" ICON_FA_STOP " Stop";
 const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
 const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
 const char* const kSettingsBtn = "##TopBar/" ICON_FA_GEAR " Settings";
+// The workspace switch's two labels — the slot shows the DESTINATION, so which one exists this
+// frame depends on the mode (from Render it reads Analyze; from Analyze it reads Render).
+const char* const kWorkspaceToAnalyzeBtn = "##TopBar/" ICON_FA_ROUTE " Analyze";
+const char* const kWorkspaceToRenderBtn = "##TopBar/Render";
 const char* const kRightToggleBtn = "##TopBar/" ICON_FA_CHEVRON_RIGHT "##right_panel_toggle";
 const char* const kRevertBtn = "##TopBar/Revert";
 
@@ -372,6 +377,140 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->LogInfo("required=%.1f min_window=%.1f headroom=%.1f", static_cast<double>(required),
                    static_cast<double>(floor_width), static_cast<double>(floor_width - required));
       IM_CHECK_LE(required, floor_width);
+    };
+  }
+
+  // ---- The Analyze workspace (the switch's other half, analyze_workspace.cpp) ----
+
+  // Switching workspaces swaps the frame's layout and touches nothing else: the Analyze branch
+  // replaces the three Render-mode panels with the workspace's windows and switches back; the
+  // document neither dirties nor changes its simulation state (the switch is session view state),
+  // and the frame with no preview publishes no preview viewport (level-triggered, so DoAnalyze's
+  // IN_FRAME canvas falls back to the document resolution and the deferred blit skips).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_switch_swaps_layout_and_stays_clean");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+      ImGuiWindow* left = ctx->GetWindowByRef("##LeftPanel");
+      IM_CHECK(left != nullptr && left->Active);
+
+      const bool dirty_before = gui::g_state.dirty;
+      const auto sim_state_before = gui::g_state.sim_state;
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK(left != nullptr && !left->Active);  // not submitted this frame
+      ImGuiWindow* middle = ctx->GetWindowByRef("##AnalyzeMiddle");
+      IM_CHECK(middle != nullptr && middle->Active);
+      IM_CHECK_EQ(gui::g_preview_vp.active, false);
+      IM_CHECK_EQ(gui::g_state.dirty, dirty_before);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.sim_state), static_cast<int>(sim_state_before));
+
+      ctx->ItemClick(kWorkspaceToRenderBtn);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+      IM_CHECK(left != nullptr && left->Active);
+      IM_CHECK(middle != nullptr && !middle->Active);
+    };
+  }
+
+  // The Analyze left column hosts the scene editors through the Render workspace's own functions:
+  // one row per entry (click opens the SAME entry editor modal a card opens), the shared +Layer
+  // primitive, and the Sun/Simulation controls (RenderSceneControls). A row of the compact list
+  // and the cards are two hosts for one editing semantics — this case pins that the host swap
+  // keeps the editor reachable and the structure primitives live.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_left_column_hosts_the_scene_editors");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers.size()), 1);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 1);
+
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+
+      // The default document's one entry, as a row (** = any host window).
+      const ImGuiTestItemInfo row = ctx->ItemInfo("**/Layer 1, entry 1: Crystal##crys_0_0", ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(row.ID, 0u);
+      // The Sun controls are the Render right panel's own widgets, now hosted in this column —
+      // SliderWithInput names its slider "##<label>_slider". The slider stays interactive at the
+      // 300px column (its rect has real interactive width; PrepareSliderLayout's 40px floor is
+      // the readability bound, and the measured width is recorded for the risk-9 ledger).
+      const ImGuiTestItemInfo altitude = ctx->ItemInfo("**/##Altitude_slider", ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(altitude.ID, 0u);
+      ctx->LogInfo("analyze left column @%.0f px: Altitude slider w=%.1f",
+                   static_cast<double>(gui::kAnalyzeLeftPanelWidth), static_cast<double>(altitude.RectFull.GetWidth()));
+      IM_CHECK_GT(altitude.RectFull.GetWidth(), 40.0f);
+
+      // A row click opens the entry editor — the modal the cards open, not a second editor.
+      ctx->ItemClick("**/Layer 1, entry 1: Crystal##crys_0_0");
+      ctx->Yield(4);
+      IM_CHECK_EQ(gui::IsEditModalOpen(), true);
+      ctx->WindowClose("Edit Entry");
+      ctx->Yield(4);
+      IM_CHECK_EQ(gui::IsEditModalOpen(), false);
+
+      // +Layer is the shared primitive: the new layer's seed entry appears as a row of the list.
+      ctx->ItemClick("**/+ Layer");
+      ctx->Yield(3);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers.size()), 2);
+      const ImGuiTestItemInfo seeded =
+          ctx->ItemInfo("**/Layer 2, entry 1: Crystal##crys_1_0", ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(seeded.ID, 0u);
+    };
+  }
+
+  // The middle area's divider: dragging it moves the row ratio (session memory) and the clamp
+  // holds at both ends — the four-column skeleton's "上下比例可调" contract.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_splitter_drag_moves_the_ratio");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      // The bridge opens the Raypath Analysis window on entering Analyze; this case is about the
+      // splitter, so park the floating window out of the middle area first.
+      gui::g_state.analysis.window_open = false;
+      ctx->Yield(2);
+      const float before = gui::g_state.workspace.middle_rows_ratio;
+      const ImGuiTestItemInfo splitter = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(splitter.ID, 0u);
+      const ImVec2 grab((splitter.RectFull.Min.x + splitter.RectFull.Max.x) * 0.5f,
+                        (splitter.RectFull.Min.y + splitter.RectFull.Max.y) * 0.5f);
+      ctx->MouseMoveToPos(grab);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(grab.x, grab.y + 120.0f));
+      ctx->Yield(4);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      IM_CHECK_GT(gui::g_state.workspace.middle_rows_ratio, before);
+      IM_CHECK_LE(gui::g_state.workspace.middle_rows_ratio, 0.85f);
+
+      // Past the top edge the clamp pins at 0.15 — the ratio never leaves its band. The first
+      // drag moved the splitter (the ratio re-laid-out the rows), so re-query where it sits now.
+      const ImGuiTestItemInfo splitter2 = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(splitter2.ID, 0u);
+      const ImVec2 grab2((splitter2.RectFull.Min.x + splitter2.RectFull.Max.x) * 0.5f,
+                         (splitter2.RectFull.Min.y + splitter2.RectFull.Max.y) * 0.5f);
+      ctx->MouseMoveToPos(grab2);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(grab2.x, grab2.y - 2000.0f));
+      ctx->Yield(4);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      // The ratio stays inside its band and moved the drag's way. (The harness's pointer cannot
+      // leave the OS window, so the drag cannot push the pivot all the way to the 0.15 pin — the
+      // band, not the exact pin, is the product contract a pointer-driven test can reach.)
+      IM_CHECK_GE(gui::g_state.workspace.middle_rows_ratio, 0.15f);
+      IM_CHECK_LT(gui::g_state.workspace.middle_rows_ratio, 0.66f);
     };
   }
 }

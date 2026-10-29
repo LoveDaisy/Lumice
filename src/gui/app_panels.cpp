@@ -362,23 +362,6 @@ inline ImVec2 MainVpPos(float x, float y) {
   return ImVec2(vp->Pos.x + x, vp->Pos.y + y);
 }
 
-// Pin a chrome panel to the main viewport so ImGui never promotes it to an
-// independent OS viewport. Without SetNextWindowViewport, panels that sit at
-// the viewport edge (e.g. status bar at the bottom row) may be promoted,
-// which makes them appear covered by the host window or float outside it.
-//
-// Exempt from the WindowResizeCondForScale (theme.hpp) audit: every caller below invokes this
-// unconditionally on every frame of the main render loop (never behind an "if just opened" gate),
-// with w/h freshly computed from UiPx() each time — the no-Cond SetNextWindowSize call this makes
-// is ImGuiCond_Always by ImGui's own default, so there is no stale frame for a scale change to
-// land on.
-inline void SetNextPanelGeometry(float x, float y, float w, float h) {
-  const ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + x, vp->Pos.y + y));
-  ImGui::SetNextWindowSize(ImVec2(w, h));
-  ImGui::SetNextWindowViewport(vp->ID);
-}
-
 // The top bar's one boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
 // follows the palette) with the ordinary item spacing on each side, so the gap between two groups
 // is twice the gap inside one plus the rule — the bar's rhythm is the theme's ItemSpacing.x and
@@ -405,6 +388,24 @@ float ToolbarGroupButtonWidth(std::initializer_list<const char*> labels) {
   return widest + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 }  // namespace
+
+// Pin a chrome panel to the main viewport so ImGui never promotes it to an
+// independent OS viewport. Without SetNextWindowViewport, panels that sit at
+// the viewport edge (e.g. status bar at the bottom row) may be promoted,
+// which makes them appear covered by the host window or float outside it.
+//
+// Exempt from the WindowResizeCondForScale (theme.hpp) audit: every caller below invokes this
+// unconditionally on every frame of the main render loop (never behind an "if just opened" gate),
+// with w/h freshly computed from UiPx() each time — the no-Cond SetNextWindowSize call this makes
+// is ImGuiCond_Always by ImGui's own default, so there is no stale frame for a scale change to
+// land on. Declared in app.hpp beside the Render*Panel family: the Analyze workspace's panels
+// (analyze_workspace.cpp) pin their geometry through the same helper.
+void SetNextPanelGeometry(float x, float y, float w, float h) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + x, vp->Pos.y + y));
+  ImGui::SetNextWindowSize(ImVec2(w, h));
+  ImGui::SetNextWindowViewport(vp->ID);
+}
 
 void RenderTopBar(float window_width) {
   SetNextPanelGeometry(0, 0, window_width, UiPx(kTopBarHeight));
@@ -963,43 +964,11 @@ void RenderLeftPanel(float window_height) {
   // ---- Bottom toolbar: add layer only (per-layer delete lives on the header row) ----
   ImGui::Spacing();
   if (ImGui::SmallButton("+ Layer")) {
-    // Bind the new layer's seed entry to a fresh pool slot — see panels.cpp's
-    // "+ Crystal" handler for the same rationale (avoid implicit link to slot 0).
-    EntryCard new_entry;
-    new_entry.crystal_id = static_cast<int>(g_state.crystals.size());
-    g_state.crystals.emplace_back();
-    Layer new_layer;
-    new_layer.entries.push_back(new_entry);
-    // Footgun #2 guard: the layer that WAS the last layer is about to become
-    // an intermediate layer. If its prob is (near-)zero, no rays will reach the
-    // new layer — the newly added layer would be silently dead. Promote to a
-    // sensible continuation default so the user sees rays in the new layer by
-    // default. This is a user-initiated state transition (not a load), so it
-    // is not covered by the "don't silently rewrite loaded values" rule.
-    // Zero-detection MUST use IsProbZero (same helper as panels.cpp) — a raw
-    // == 0.0f would let a slider-dragged 1e-7 sneak past this promotion.
-    if (!g_state.layers.empty() && IsProbZero(g_state.layers.back().probability)) {
-      g_state.layers.back().probability = kDefaultContinuationProb;
-    }
-    g_state.layers.push_back(std::move(new_layer));
-    g_thumbnail_cache.OnLayerStructureChanged();
+    AddScatteringLayer(g_state);
   }
 
   // Process edit request: open modal if an edit button or card area was clicked
-  if (GetEditRequest().target != EditTarget::kNone) {
-    const auto& req = GetEditRequest();
-    if (req.target == EditTarget::kCard) {
-      const auto modal_tgt = GetEditModalTarget();
-      if (!IsEditModalOpen() || modal_tgt.layer_idx != req.layer_idx || modal_tgt.entry_idx != req.entry_idx) {
-        EditRequest resolved = req;
-        resolved.target = IsEditModalOpen() ? GetActiveTabAsEditTarget() : EditTarget::kCrystal;
-        OpenEditModal(resolved, g_state);
-      }
-    } else {
-      OpenEditModal(req, g_state);
-    }
-    ResetEditRequest();
-  }
+  ProcessEditRequest(g_state);
 
   // Pick-mode cancel: blank area / panel-switch click.
   // If pick is still active after cards are rendered (no card's InvisibleButton consumed

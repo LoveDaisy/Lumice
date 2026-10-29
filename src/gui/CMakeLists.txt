@@ -59,6 +59,7 @@ add_custom_command(
 # OBJECT library: shared between LumiceGUI and gui_test
 add_library(lumice_gui_obj OBJECT
     ${PROJ_SRC_DIR}/gui/app.cpp
+    ${PROJ_SRC_DIR}/gui/analyze_workspace.cpp
     ${PROJ_SRC_DIR}/gui/annotation_anchors.cpp
     ${PROJ_SRC_DIR}/gui/analysis_panel.cpp
     ${PROJ_SRC_DIR}/gui/angular_dist_picker.cpp

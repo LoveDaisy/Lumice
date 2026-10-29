@@ -276,6 +276,23 @@ void RenderLayer(GuiState& state, int layer_idx);
 // Scattering section (layer management, rendered inside left panel scroll area).
 void RenderScatteringSection(GuiState& state);
 
+// The "+ Layer" primitive: one new scattering layer with a fresh-pool seed entry, promoting a
+// near-zero last layer to the continuation default (the footgun #2 guard). The cards' toolbar
+// (RenderLeftPanel) and the Analyze workspace's crystal list (analyze_workspace.cpp) are the two
+// callers — one implementation, so the two columns cannot drift.
+void AddScatteringLayer(GuiState& state);
+
+// Consume a pending EditRequest (a card or button queued it): open the entry editor modal on it,
+// resolving a kCard request against an already-open modal (the active tab wins, so a second click
+// while editing does not snap the modal back to the Crystal tab), then clear the request. The one
+// processing point for both card hosts.
+void ProcessEditRequest(GuiState& state);
+
+// Queue the entry editor for one entry's card — the click a compact list row (analyze_workspace)
+// turns into, the same request a card body click queues, processed by the same
+// ProcessEditRequest at the host's end of frame.
+void RequestEntryCardEdit(int layer_idx, int entry_idx);
+
 // Scene controls (Sun + Simulation) rendered in the right panel Scene group.
 void RenderSceneControls(GuiState& state);
 

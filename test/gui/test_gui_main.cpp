@@ -933,9 +933,9 @@ int main(int argc, char** argv) {
     auto layout_height = static_cast<float>(win_h);
 
     gui::RenderTopBar(layout_width);
-    gui::RenderLeftPanel(layout_height);
-    gui::RenderRightPanel(window, layout_width, layout_height);
-    gui::RenderPreviewPanel(window, layout_width, layout_height);
+    // One implementation with the app's frame loop (main.cpp): the Render-mode trio or the
+    // Analyze workspace's four columns, by GuiState::workspace.
+    gui::RenderWorkspacePanels(window, layout_width, layout_height);
     if (g_enable_log_panel) {
       gui::RenderLogPanel(layout_width, layout_height);
     }
