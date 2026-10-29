@@ -565,8 +565,11 @@ set_tests_properties("LumiceGoldenAnalyticTest" PROPERTIES LABELS "golden-analyt
 # Links lumice_gui_obj the way gui_test does, but with NO GLFW window, NO GL context and NO ImGui
 # test engine: a windowless home for the gui subsystem's pure-logic cases. Its sources sit in the
 # same test/unit-correctness/gui/ directory as unit_correctness_test's, and it carries the same
-# LABEL — the split is a LINK boundary (these cases call into file_io.cpp / user_defaults.cpp),
-# not a layer or subsystem boundary. Sharing the label is what lets the existing
+# LABEL — the split is a LINK boundary (these cases call into file_io.cpp / user_defaults.cpp,
+# and — since the background survey query's lifecycle tests, 742.3 — into the engine's raypath
+# face through lumice_analytic_kernel + lumice_raypath_obj, which is what makes those tests
+# drive real queries headlessly instead of a mock), not a layer or subsystem boundary. Sharing
+# the label is what lets the existing
 # `ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"` selector in CI and scripts/test.sh pick it
 # up with no change. See doc/testing/testing-architecture.md §5 for why this is a second target rather
 # than a second layer, and for the naming rule that lets it keep a link-derived name.
@@ -702,7 +705,8 @@ if(BUILD_GUI)
   #
   # gui_test does NOT need this exemption — it links plain `lumice` (see test/gui/CMakeLists.txt).
   target_link_libraries(gui_unit_test
-    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj)
+    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj
+            lumice_analytic_kernel lumice_raypath_obj)
   set_target_properties(gui_unit_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 

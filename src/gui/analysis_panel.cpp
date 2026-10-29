@@ -301,6 +301,81 @@ LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentit
   return request;
 }
 
+namespace {
+
+// The issuing half of the pump: build the request for the CURRENT selection (the row the key was
+// derived from) and hand it to the executor with the id the pump already assigned. Buffers move
+// into the executor's job — the C request only borrows them for the call.
+void IssueSurveyQuery(const GuiState& state, SurveyExecutor& executor, const SurveyQueryId& id) {
+  const std::optional<SelectedClassIdentity> identity = SelectedClassIdentityFor(state);
+  if (!identity.has_value()) {
+    return;  // the row vanished between the key derivation and here; the next pump re-derives
+  }
+  std::vector<int> faces;
+  std::vector<int> counts;
+  const LUMICE_PathSurveyRequest request = MakeSurveyRequestForIdentity(*identity, &faces, &counts);
+  executor.IssueQuery(id, request, std::move(faces), std::move(counts));
+}
+
+}  // namespace
+
+void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
+  SurveyQuerySession& survey = state.analysis.survey;
+
+  // 1. Drain: adopt the finished query iff it still answers the CURRENT intent and the intent
+  //    stands (R6's gate — a late A never lands under B, and a CANCELLED intent accepts no
+  //    outcome at all: the engine answers a cancel with an OK-carrying partial document, not an
+  //    error, so the id match alone would adopt the very result the user just withdrew). A
+  //    refusal is an answer for a standing intent: it is what the engine names for a multi-layer
+  //    class (R5), and the overview shows it rather than a fabricated summary. Everything else
+  //    in the slot is a superseded zombie (cancelled or replaced intent) and is dropped here,
+  //    never shown.
+  while (std::optional<SurveyExecutor::Finished> finished = executor.TakeFinished()) {
+    if (survey.intent_valid && !survey.cancelled_for_key && finished->id == survey.intent_id) {
+      survey.adopted_result = finished->ok ? finished->result : nullptr;
+      survey.adopted_error = finished->ok ? std::string() : std::move(finished->error);
+    }
+  }
+
+  // 2. The live selection as the key an intent is issued for. No row on show (cleared, or merged
+  //    away by a symmetry re-read) — no key.
+  const LUMICE_RaypathHistogramEntry* row = SelectedAnalysisEntry(state);
+  if (row == nullptr || !state.analysis_result.payload) {
+    if (survey.intent_valid) {
+      // The selection died: R6 — the intent dies with it, adopted outcome included.
+      executor.CancelInFlight();
+      survey = SurveyQuerySession{};
+    }
+    return;
+  }
+  SurveySelectionKey key;
+  key.generation = state.analysis_result.payload->snapshot_generation;
+  key.crystal_id = row->chain[0].crystal_id;
+  for (int l = 0; l < row->chain_len; ++l) {
+    key.faces.insert(key.faces.end(), row->chain[l].segment, row->chain[l].segment + row->chain[l].segment_len);
+    key.layer_face_counts.push_back(row->chain[l].segment_len);
+  }
+  key.symmetry_bits_plus_one = AnalysisSymmetryBits(state) == 7 ? 0 : 1;
+
+  if (!survey.intent_valid || survey.key != key) {
+    // A new or changed selection: withdraw whatever is out (R6 — the new intent supersedes; the
+    // previous outcome belongs to a key that is gone) and issue the fresh one.
+    executor.CancelInFlight();
+    survey = SurveyQuerySession{};
+    survey.intent_valid = true;
+    survey.key = key;
+    survey.intent_id = executor.NextId(key.generation);
+    IssueSurveyQuery(state, executor, survey.intent_id);
+    return;
+  }
+  // The same selection stands, with the intent valid and the id issued. If it has no outcome
+  // yet, the query is queued or in flight — the overview shows waiting; when the outcome
+  // arrives the drain above adopts it this frame or the next. A re-issue is neither needed nor
+  // possible here: the executor runs at most one query, only ever one issued for the standing
+  // intent. `cancelled_for_key` is the one state that keeps this branch from re-issuing — the
+  // cancel button set it against this very key, and a re-issue would make it mean nothing.
+}
+
 // ---- ROI: the click on the preview ---------------------------------------------------------------
 
 std::optional<CanvasPixel> PreviewPointToCanvasPixel(float rel_x_pt, float rel_y_pt, float dpi_scale_x,

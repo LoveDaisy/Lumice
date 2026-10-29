@@ -276,7 +276,188 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
   }
 }
 
+// ---- The class overview (742.3 R8) -----------------------------------------------------------------
+
+// The typed readers' texts are length-delimited, not null-terminated.
+std::string PathTextString(const LUMICE_PathText& text) {
+  if (text.data == nullptr || text.length == 0) {
+    return {};
+  }
+  return std::string(text.data, text.length);
+}
+
+const char* SurveyStateName(int state) {
+  switch (state) {
+    case LUMICE_PATH_STATE_CERTIFIED:
+      return "certified";
+    case LUMICE_PATH_STATE_FINITE:
+      return "finite";
+    case LUMICE_PATH_STATE_REFUSED:
+      return "refused";
+    case LUMICE_PATH_STATE_UNEVALUATED:
+      return "unevaluated";
+    default:
+      return "unknown state";
+  }
+}
+
+const char* SurveyOutcomeName(int execution) {
+  switch (execution) {
+    case LUMICE_PATH_OUTCOME_COMPLETED:
+      return "completed";
+    case LUMICE_PATH_OUTCOME_CANCELLED:
+      return "cancelled";
+    case LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED:
+      return "deadline exceeded";
+    default:
+      return "unknown outcome";
+  }
+}
+
+const char* SurveyObjectKindName(int kind) {
+  switch (kind) {
+    case LUMICE_PATH_SURVEY_SOURCE_IMAGE:
+      return "source image";
+    case LUMICE_PATH_SURVEY_SUPPORT_SET:
+      return "support set";
+    case LUMICE_PATH_SURVEY_CAUSTIC_EDGE:
+      return "caustic edge";
+    case LUMICE_PATH_SURVEY_BRIGHT_DOMAIN:
+      return "bright domain";
+    case LUMICE_PATH_SURVEY_FAMILY_COLLAPSE:
+      return "family collapse";
+    case LUMICE_PATH_SURVEY_REGULAR_IMAGE:
+      return "regular image";
+    default:
+      return "object";
+  }
+}
+
+// The overview digest's per-object cap: the region is a summary, not the document. Objects past
+// the cap are counted, not hidden silently (R7) — the "+N more" line names them.
+constexpr size_t kSurveyDigestMaxObjects = 8;
+
+// The completed face: the survey document's class-level facts read back through the typed
+// readers — outcome and counts, the scope's sun, each object's kind/state/position and its
+// named reason. Nothing is computed here (R8; the zero-recomputation rule) and nothing is
+// fabricated: a refused or unevaluated object shows its reason verbatim, and a survey that
+// stopped inside its budget says so instead of passing its numbers off as complete.
+void RenderSurveyDigest(const LUMICE_PathSurvey& result, const SelectedClassIdentity& identity) {
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathSurveyGetInfo(&result, &info) != LUMICE_PATH_READ_OK) {
+    ImGui::TextUnformatted("Survey document unreadable.");
+    return;
+  }
+  ImGui::BulletText("%s — %zu member(s), %zu object(s), budget %d ms%s", SurveyOutcomeName(info.execution),
+                    info.member_count, info.object_count, info.budget_ms, info.early_stopped ? ", early-stopped" : "");
+  {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    if (info.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED || info.early_stopped) {
+      ImGui::TextWrapped("The survey stopped inside its budget — the facts on show are partial.");
+    }
+    if (info.unevaluated_count > 0) {
+      ImGui::TextWrapped("%zu object(s) unevaluated.", info.unevaluated_count);
+    }
+    LUMICE_PathSurveyScope scope{};
+    scope.struct_size = sizeof(scope);
+    if (LUMICE_PathSurveyGetScope(&result, &scope) == LUMICE_PATH_READ_OK && scope.sun_altitude_available) {
+      ImGui::TextWrapped("Sun at altitude %.1f°, azimuth %.1f°.", scope.sun_altitude_deg, scope.sun_azimuth_deg);
+    }
+    ImGui::PopStyleColor();
+  }
+  const size_t shown = std::min<size_t>(info.object_count, kSurveyDigestMaxObjects);
+  for (size_t i = 0; i < shown; ++i) {
+    LUMICE_PathSurveyObject obj{};
+    obj.struct_size = sizeof(obj);
+    if (LUMICE_PathSurveyGetObject(&result, i, &obj) != LUMICE_PATH_READ_OK) {
+      continue;
+    }
+    if (obj.position_available) {
+      ImGui::BulletText("%s at %.1f°/%.1f° — %s", SurveyObjectKindName(obj.kind), obj.position_altitude_deg,
+                        obj.position_azimuth_deg, SurveyStateName(obj.state));
+    } else {
+      ImGui::BulletText("%s — %s", SurveyObjectKindName(obj.kind), SurveyStateName(obj.state));
+    }
+    const std::string reason = PathTextString(obj.reason);
+    if (!reason.empty()) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("%s", reason.c_str());
+      ImGui::PopStyleColor();
+    }
+  }
+  if (info.object_count > shown) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("+ %zu more object(s) — beyond this summary.", info.object_count - shown);
+    ImGui::PopStyleColor();
+  }
+  // The M1-0 disposition's honesty label: an intermediate P/B/D read position has NO survey
+  // class, so a literal-sequence answer describes the selected row's own representative member,
+  // never a class summary. The all-three and all-unchecked positions are exact and unlabelled.
+  if (identity.symmetry_bits_plus_one == 1) {
+    const uint8_t bits = AnalysisSymmetryBits(g_state);
+    if (bits != 0 && bits != 7) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped(
+          "Literal-sequence scope: the checked P/B/D reduction has no survey class, so these are the selected "
+          "row's own representative member, not a class summary.");
+      ImGui::PopStyleColor();
+    }
+  }
+}
+
+// The overview's four visible states (R7): waiting, cancelled, the engine's named refusal, and
+// the completed digest. Called only with a selection on show, which — after this frame's pump —
+// means the intent is valid, so kNoSelection cannot appear here.
+void RenderSurveyOverview(const SelectedClassIdentity& identity) {
+  SurveyQuerySession& survey = g_state.analysis.survey;
+  switch (SurveyOverviewStateFor(survey)) {
+    case SurveyOverviewState::kNoSelection:
+      break;  // unreachable with a selection on show — the pump reconciled before any render
+    case SurveyOverviewState::kWaiting:
+      ImGui::TextUnformatted("Survey: querying in the background…");
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("An engine-typed summary of this class is computed off the interface thread.");
+      ImGui::PopStyleColor();
+      ImGui::Spacing();
+      if (ImGui::SmallButton("Cancel survey")) {
+        // R6's cancel row: request the cancel and withdraw the intent — no re-issue while this
+        // selection stands (that is what SurveyOverviewStateFor turns into kCancelled next
+        // frame). A result that already returned is dropped by the gate: the intent it would
+        // have to answer no longer exists.
+        g_survey_executor.CancelInFlight();
+        survey.cancelled_for_key = true;
+        survey.adopted_result.reset();
+        survey.adopted_error.clear();
+      }
+      break;
+    case SurveyOverviewState::kCancelled:
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped(
+          "Survey cancelled for this selection. Selecting another class — or re-Analyze and select again — "
+          "asks anew.");
+      ImGui::PopStyleColor();
+      break;
+    case SurveyOverviewState::kRefused:
+      ImGui::TextUnformatted("Survey refused:");
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("%s", survey.adopted_error.c_str());
+      ImGui::PopStyleColor();
+      break;
+    case SurveyOverviewState::kCompleted:
+      RenderSurveyDigest(*survey.adopted_result, identity);
+      break;
+  }
+}
+
 void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height) {
+  // The background survey query's frame pump (742.3 R6): drain finished outcomes through the
+  // adoption gate, then reconcile the intent against the live selection — before any region
+  // reads the session, so the overview on screen is always this frame's state. Render mode does
+  // not pump: an in-flight query keeps running (R6 — switching away neither cancels nor cleans)
+  // and its outcome waits in the single slot for the return.
+  PumpSurveyQuery(g_state, g_survey_executor);
+
   // Level-triggered publication, the same statement RenderPreviewPanel makes every frame: the
   // frame that does not draw the preview publishes neither the viewport nor the curve labels, so
   // every consumer reads "no picture on screen" (DoAnalyze's IN_FRAME canvas falls back to the
@@ -391,8 +572,9 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
         identity.has_value()) {
       // R5/R7 (742.3 M3-1): the selection's identity facts — the row's own text, the snapshot's
       // crystal, the layer/face shape — and, for a multi-layer class, the survey face's
-      // documented answer, named. The engine-answered overview lands with the survey query
-      // itself; until then nothing here claims a result.
+      // documented answer, named. Below them, the survey query's four visible states (R7): the
+      // engine-answered digest when one was adopted, the named refusal where the engine says
+      // no, waiting and cancelled spelled as such.
       ImGui::BeginChild("##AnalyzeDetails", ImVec2(0, 0), ImGuiChildFlags_Borders);
       ImGui::TextUnformatted("Selection details");
       ImGui::BulletText("%s", g_state.analysis.selected_entry->c_str());
@@ -403,6 +585,8 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
         ImGui::TextWrapped("The typed survey refuses multi-layer classes: multi_layer_unsupported.");
         ImGui::PopStyleColor();
       }
+      ImGui::Separator();
+      RenderSurveyOverview(*identity);
       ImGui::EndChild();
     } else {
       PlaceholderRegion("##AnalyzeDetails", "Selection details",

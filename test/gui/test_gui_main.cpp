@@ -1119,6 +1119,8 @@ int main(int argc, char** argv) {
   // static g_server_poller dtor's worker-join hangs at process exit — gui_test runs every test,
   // prints the summary, then never returns.
   gui::JoinPendingStop();
+  gui::g_survey_executor.ShutdownAndJoin();  // same reason as the app's exit path: the worker
+                                             // joins before the engine-side cleanup below
   gui::g_server_poller.Stop();
 
   ImGuiTestEngine_Stop(engine);

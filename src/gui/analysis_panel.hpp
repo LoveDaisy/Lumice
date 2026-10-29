@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "gui/analysis_result.hpp"
+#include "gui/analyze_survey.hpp"
 #include "gui/gui_state.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
@@ -164,6 +165,15 @@ std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& st
 // cancel token come from the query options at issue time, not from here.
 LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentity& identity, std::vector<int>* faces,
                                                       std::vector<int>* counts);
+
+// The frame-side survey pump (742.3 R6, called once per Analyze-workspace frame): drains the
+// executor's finished slot through the adoption gate — a finished query is adopted iff it still
+// answers the CURRENT intent (the engine's named refusal is an answer too, R5) — then keeps the
+// intent level-triggered against the live selection: a new or changed selection supersedes
+// whatever is out, a vanished selection kills the intent (its adopted outcome goes with it), a
+// standing selection with an outcome or a cancel latch is left alone. Reads and writes only the
+// session's SurveyQuerySession and the executor; no widget, no document field, no recomputation.
+void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor);
 
 // ---- ROI: the click on the preview ---------------------------------------------------------------
 

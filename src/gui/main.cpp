@@ -550,9 +550,11 @@ int main(int argc, char** argv) {
   }
 
   // Cleanup
-  gui::JoinPendingCalibration();  // R1: a calibration still running (quit within its first ~200ms)
-  gui::JoinPendingStop();         // R1: drain any in-flight async Stop before tearing down the server
-  gui::g_server_poller.Stop();    // Stop poller before destroying server
+  gui::JoinPendingCalibration();             // R1: a calibration still running (quit within its first ~200ms)
+  gui::JoinPendingStop();                    // R1: drain any in-flight async Stop before tearing down the server
+  gui::g_survey_executor.ShutdownAndJoin();  // the worker destroys its scene binding before the
+                                             // engine-side global cleanup below
+  gui::g_server_poller.Stop();               // Stop poller before destroying server
   gui::g_crystal_renderer.Destroy();
   gui::g_preview.Destroy();
   gui::DestroyPreviewFrameFbo();  // the preview path's persistent FBO, owned by export_fbo_renderer.cpp

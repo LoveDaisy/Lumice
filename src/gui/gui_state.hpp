@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "gui/analysis_result.hpp"
+#include "gui/analyze_survey.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/view_look_at_types.hpp"
 #include "include/lumice_base.h"    // LUMICE_RayCount (64-bit ray-count type)
@@ -1828,6 +1829,13 @@ struct GuiState {
     // the click, and the memory is about the chain, which does not change.
     std::map<std::pair<int, std::string>, ExcludedRaypathMemory> excluded_memory;
     uint64_t excluded_seq = 0;
+    // The background survey query's session state (742.3 R6): the current intent (the request id
+    // the executor owes an answer for), the selection it was issued for, the cancel latch, and
+    // the gate-passed outcome (a completed typed result or the engine's named refusal). All of
+    // it is the tool's own bookkeeping about one background query of THIS scene — the same tier
+    // rule as every field above, and the whole-struct reset above clears it exactly where the
+    // selection it belongs to dies (document switches; Revert keeps it with the kept selection).
+    SurveyQuerySession survey;
   };
   RaypathAnalysisSession analysis;
 

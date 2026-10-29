@@ -1122,6 +1122,280 @@ bool C01ChainAnalyzeSelectExcludeRerun(ImGuiTestContext* ctx) {
   return true;
 }
 
+// ---- M3's survey-query evidence cases (742.3 M3-5) --------------------------------------------------
+
+// The completed digest on the halo fixture: a selection issues the background query, the
+// worker's answer is adopted under its key, and the typed document carries the class's real
+// facts — read back here through the same readers the region draws with, so the screenshot a
+// human reads and the assertions below cannot both be mock. The re-Analyze half pins R6's
+// generation gate: the bookkeeping dies with the selection, the next generation re-arms.
+bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::string top_display = TopChainDisplay();
+  const unsigned long long generation = gui::g_state.analysis_result.payload->snapshot_generation;
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  const gui::SurveyQuerySession& survey = gui::g_state.analysis.survey;
+  IM_CHECK_RETV(survey.key.generation == generation, false);
+  IM_CHECK_RETV(survey.cancelled_for_key == false, false);
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathSurveyGetInfo(survey.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(
+      info.execution == LUMICE_PATH_OUTCOME_COMPLETED || info.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED,
+      false);
+  // The engine echoes the request's crystal back — the adopted document answers THIS key. (The
+  // core id here is 0: the fixture's pool crystal maps to core id 0, and 0 is a valid echo.)
+  IM_CHECK_RETV(static_cast<long long>(info.crystal_id) == survey.key.crystal_id, false);
+  ctx->LogInfo("[survey digest] generation %llu, echo crystal %lld, members %zu, objects %zu, budget %d ms", generation,
+               static_cast<long long>(info.crystal_id), info.member_count, info.object_count, info.budget_ms);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_digest.png").string()),
+                false);
+
+  // Re-Analyze: the selection clears, the survey bookkeeping dies with it (R6 — no adopted
+  // outcome survives into the next generation's region), and a straggler of the old generation
+  // would find no intent to land under.
+  SetListRef(ctx);
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
+  ctx->ItemClick(kAnalyzeButton);
+  ctx->SetRef("");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.empty(), false);
+  ctx->LogInfo("[survey digest] re-analyze voided the old generation's intent and outcome");
+
+  // The next generation answers again, under the new generation's id.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::g_state.analysis_result.payload != nullptr &&
+                             gui::g_state.sim_state != SimState::kSimulating;
+                    },
+                    60),
+                false);
+  const std::string next_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + next_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(
+      gui::g_state.analysis.survey.key.generation == gui::g_state.analysis_result.payload->snapshot_generation, false);
+  ctx->LogInfo("[survey digest] re-armed under generation %llu", gui::g_state.analysis.survey.key.generation);
+  return true;
+}
+
+// The engine's named refusal, on the two-layer scene: a multi-layer class is a legitimate
+// selection and the survey answers it with multi_layer_unsupported — shown, not fabricated
+// around (R5/R7; the multi-layer evidence the plan's M3-5 asks to be on file).
+bool SurveyRefusesMultilayerClassByName(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kPcTwoLayerJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // A row whose chain crosses layers: the display holds the joiner (this scene's reason to be
+  // in the suite — its comment says so).
+  std::string multi_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strstr(e.display, " -> ") != nullptr) {
+      multi_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!multi_display.empty(), false);
+  // The on-screen label is not the raw display: multi-layer rows are drawn through
+  // AnalysisRowLabel over the Analyze-time core-to-pool map (the row_menu case's pattern), and
+  // on this scene the first multi-layer row sits below the first page of the ScrollY table —
+  // pan the table's child to it before clicking (FindListRowScrolling; a clipped row reports no
+  // label at all). Selecting by the drawn label records the raw text.
+  const std::string multi_label = gui::AnalysisRowLabel(multi_display, gui::AnalysisCoreToPoolMap(gui::g_state));
+  SetListRef(ctx);
+  const ImGuiID multi_row = FindListRowScrolling(ctx, multi_label);
+  IM_CHECK_RETV(multi_row != 0, false);
+  ctx->ItemClick(multi_row);
+  ctx->SetRef("");
+  ctx->Yield(3);
+  {
+    // Diagnostic, kept: the case exists to pin a named refusal, and these four lines tell a
+    // fresh reader which link of issue→refuse→adopt broke if it ever reds again.
+    const auto& s = gui::g_state.analysis.survey;
+    ctx->LogInfo("[survey refusal] after issue: intent=%d in_flight=%d state=%d err='%s'", s.intent_valid ? 1 : 0,
+                 gui::g_survey_executor.InFlight() ? 1 : 0, static_cast<int>(gui::SurveyOverviewStateFor(s)),
+                 s.adopted_error.c_str());
+  }
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kRefused;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.find("multi_layer_unsupported") != std::string::npos, false);
+  ctx->LogInfo("[survey refusal] %s", gui::g_state.analysis.survey.adopted_error.c_str());
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_refusal.png").string()),
+                false);
+  return true;
+}
+
+// R6's concurrency stance, both directions, on the real server: a survey computing in the
+// background neither blocks nor is blocked by a render run — the run starts and finishes under
+// an in-flight survey with the survey state intact, and a selection made under a running run
+// still gets its answer. No mutex story: both observations are the states themselves.
+bool SurveyAndRenderRunAreOrthogonal(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Direction 1 — survey first, run under it.
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  const gui::SurveyHandle adopted_before = gui::g_state.analysis.survey.adopted_result;
+  gui::g_state.sim.infinite = false;
+  gui::g_state.sim.ray_num_millions = 0.1f;
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
+  gui::g_state.dirty = false;  // the real loop's commit tick clears it (the c01 chain's note)
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kDone; }, 60), false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == adopted_before, false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kCompleted,
+                false);
+  ctx->LogInfo("[survey orthogonal] a full render run passed under an intact adopted survey");
+
+  // Direction 2 — run first (unbounded), selection under it. The list is the kept analysis
+  // result (a render commit keeps it on show, flagged stale); the survey answers anyway,
+  // because it is bound to the frozen Analyze-time scene and never touches the server session.
+  gui::g_state.sim.infinite = true;
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
+  const std::string other_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + other_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                                 gui::SurveyOverviewState::kCompleted &&
+                             gui::g_state.sim_state == SimState::kSimulating;
+                    },
+                    30),
+                false);
+  ctx->LogInfo("[survey orthogonal] a selection's survey completed under a running render");
+  // The top-bar Stop ends the render run (the list window's own Stop belongs to the analysis
+  // run and sits disabled under the render's Run↔Analyze mutual exclusion).
+  ctx->ItemClick("##TopBar/" ICON_FA_STOP " Stop");
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_state.analysis.started; }, 10), false);
+  return true;
+}
+
+// R6's teardown matrix, the rows the frame paths own: switching to the Render workspace cancels
+// nothing and clears nothing (the query finishes into the mailbox; coming back adopts it), New
+// clears the session and releases the executor's binding, Revert keeps the session with the
+// kept selection and only withdraws an in-flight query.
+bool SurveySurvivesAWorkspaceSwitch(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  // Switch away before the answer lands: the query keeps running (the Render frame pumps
+  // nothing), and the switch itself is pure view — no dirty, no sim-state write.
+  // The toggle is single-slot: from Analyze it reads bare "Render" (no icon prefix — the
+  // product's kToRenderLabel), naming the destination.
+  ctx->ItemClick("##TopBar/Render");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kRender, false);
+  IM_CHECK_RETV(gui::g_state.dirty == false, false);
+
+  // Back in the Analyze workspace: the pump adopts whatever finished while away.
+  ctx->ItemClick("##TopBar/" ICON_FA_ROUTE " Analyze");
+  ctx->Yield(2);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  ctx->LogInfo("[survey switch] the query finished across a workspace switch and was adopted");
+
+  // New: the whole analysis session dies with the document — survey bookkeeping included — and
+  // the executor's binding is released on the worker thread.
+  ResetTestState();
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+
+  // Revert: rebuild the analysis state, adopt a survey, then revert — the bookkeeping survives
+  // with the kept selection (same committed scene), nothing re-issues under it.
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  const std::string revert_display = TopChainDisplay();
+  ctx->ItemClick((std::string("**/") + revert_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  const gui::SurveyHandle adopted_before_revert = gui::g_state.analysis.survey.adopted_result;
+  gui::DoRevert();
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == true, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == adopted_before_revert, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+  ctx->LogInfo("[survey switch] Revert kept the session and the adopted outcome");
+  return true;
+}
+
 }  // namespace
 
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
@@ -2641,5 +2915,25 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "c01_chain_analyze_select_exclude_rerun");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(C01ChainAnalyzeSelectExcludeRerun(ctx)); };
+  }
+
+  // M3-5's survey-query evidence: the digest answers with real class facts (and re-Analyze
+  // re-arms under the next generation), the multi-layer refusal names itself, and the
+  // background query is orthogonal to a render run in both directions.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_digest_answers_with_real_class_facts");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyDigestAnswersWithRealClassFacts(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyRefusesMultilayerClassByName(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_and_render_run_are_orthogonal");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyAndRenderRunAreOrthogonal(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_survives_a_workspace_switch");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveySurvivesAWorkspaceSwitch(ctx)); };
   }
 }

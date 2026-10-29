@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/analyze_survey.hpp"
 #include "gui/annotation_anchors.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/crystal_renderer.hpp"
@@ -116,6 +117,7 @@ extern LUMICE_Server* g_server;
 extern ServerPoller g_server_poller;
 extern PreviewViewport g_preview_vp;
 extern PanoramaViewport g_panorama_vp;
+extern SurveyExecutor g_survey_executor;
 extern BgColorPickState g_bg_pick;
 
 // "There is a background photo on screen to act on" — a photo is loaded AND it is being shown AND

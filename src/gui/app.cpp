@@ -65,6 +65,7 @@ void SetUiScaleMultiplierImmediate(float multiplier) {
 }
 PreviewViewport g_preview_vp;
 PanoramaViewport g_panorama_vp;
+SurveyExecutor g_survey_executor;
 BgColorPickState g_bg_pick;
 
 // Async Stop plumbing (blueprint §5/§8, 1.6). DoStop offloads the blocking teardown sequence
@@ -895,6 +896,10 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   // selection and its list mean nothing for another document. Revert keeps all of it: the scene
   // is the same one.
   if (reason != FrontendResetReason::kRevert) {
+    // The executor's frozen scene binding goes with the document: the worker destroys it on its
+    // own thread — never under a query, because any in-flight one is cancelled first and its
+    // outcome dies with the intent the reset below clears.
+    g_survey_executor.ReleaseScene();
     state.analysis = GuiState::RaypathAnalysisSession{};
     // The list's search text has this struct's lifetime but is not a member of it (an ImGui type
     // cannot enter gui_state.hpp), so the whole-struct reset above does not reach it.
@@ -903,6 +908,11 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
     state.analysis_run_in_progress = false;
     // And the poller's carried copy, or the cleared view would adopt it back next frame.
     g_server_poller.InvalidateAnalysisResult();
+  } else {
+    // Revert keeps the analysis state (the committed scene is the same one), so the frozen
+    // binding stays with the kept selection and result; only an in-flight query is withdrawn —
+    // R6's Revert row (no latch, no outcome drop: the intent keeps its bookkeeping).
+    g_survey_executor.CancelInFlight();
   }
 
   // crystal_mesh_hash reset — as-built: only DoNew clears it (Open branches don't touch it;
@@ -1804,6 +1814,13 @@ bool DoAnalyze() {
   // counter only grows), so the first result is adopted without any reset of the cursor.
   g_state.analysis.started = true;
   g_state.analysis.selected_entry.reset();
+  // The survey query's bookkeeping dies with the selection it was issued for (R6's re-Analyze
+  // row: cancel what is out, void the old generation's attribution — a late result of the old
+  // generation fails the gate because the intent no longer exists — and drop the adopted
+  // outcome with the cleared selection). The executor's frozen scene is replaced below, so no
+  // new query can bind to the old one either.
+  g_state.analysis.survey = SurveyQuerySession{};
+  g_survey_executor.SetScene(std::move(scene));
   // What this run was asked about, for the "centre has moved" hint: the request's own copy, so
   // it is the value the server received and not a re-read of the session field.
   std::copy(req.cone_center, req.cone_center + 3, g_state.analysis.analyzed_cone_center_dir);
