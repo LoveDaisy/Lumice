@@ -209,7 +209,7 @@ not_carried）由此从纪律变成结构：拒答是一个记录，不是「无
 
 两个互补的结构保证，都来自 owner 裁定：
 
-- **分层证据态**（§5.6）：同一对象上，partition 拒答（refused）与正 A 见证（finite）
+- **分层证据态**（§5.5）：同一对象上，partition 拒答（refused）与正 A 见证（finite）
   **并存不互斥**（C17 touching、C18 not_carried）——拒答住在它自己的声明层上，不覆盖别的层
   的独立依据。
 - **拒答作用域**（owner 裁定 2026-10-21，survey as-built）：δ 轴 partition（几何事实）与
