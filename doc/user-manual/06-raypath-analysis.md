@@ -8,7 +8,7 @@ The Raypath Analysis window answers "which raypaths make the light in this regio
 
 ## 1. Where it is
 
-Click the **Analysis** button (route icon) in the Top Bar, next to **Colors**. It opens an independent, non-modal "Raypath Analysis" window that you can leave open alongside the main preview — it does not replace or dock into any existing panel.
+The analysis tool lives in the **Analyze workspace**: click the workspace toggle in the Top Bar (from the Render workspace it reads **Analyze**, with a route icon; the same slot reads **Render** to switch back). The window then shows the Analyze layout instead of the render layout — the scene editors on the left, and the analysis on the right and in the middle: the **scene panorama** (the committed picture as an equal-area full-sky disk, with the region controls and the cone pick on it) above the **share list** this chapter describes, with a class overview in the bottom-right. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
 
 ## 2. Choosing a region (ROI)
 
@@ -18,7 +18,7 @@ The **Region** row offers three modes:
 |------|-------------------|
 | **Whole sky** | Every ray that leaves the scene, in any direction. No spatial filtering. |
 | **In frame** | Only rays that land inside the picture as currently framed (same lens / view / visible / front settings the preview uses). The choice needs the document to have been rendered once (a background photograph alone does not count); with the mode already selected and no live preview, the frame is the document's own view at its simulation resolution. |
-| **Point** | A cone around a direction, shown on the preview as a marker. Like In frame, the choice waits for the document's first picture. |
+| **Point** | A cone around a direction, shown on the scene panorama as a marker (and on the render preview in the Render workspace, projected from the same direction). Like In frame, the choice waits for the document's first picture. |
 
 **The Point marker**: switching to Point mode places the marker at the centre of the current view by default (if there is a preview to place it on, and no earlier pick to keep). It moves with the view every frame — projected from the direction it represents, not fixed to a screen position — so rotating or panning the view never leaves it behind. The marker, its ring and the pick crosshair are drawn on the preview itself, so any window over the preview — the analysis window, an entry editor — covers them rather than being drawn through. Hover over the marker for a hand cursor and drag it to a new spot to set the centre directly; the altitude/azimuth reading next to **Pick on preview** updates as you drag. Press **Pick on preview** instead for a banner across the top of the window ("Click on the preview to set the centre — Esc to cancel") and a crosshair cursor: click anywhere on the preview to move the marker there, or press Esc to cancel.
 

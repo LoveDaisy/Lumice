@@ -3,6 +3,17 @@
 > Status：**as-built**（2026-09-11，五个子任务全部落地：子任务 1 本文 + backlog 拆分 / 子任务 2
 > core 链 id 携带 / 子任务 3 server 直方图 consumer / 子任务 4 C API v4.29 / 子任务 5 GUI 面板，
 > C API 追加到 v4.30），已随 PR #347 合入 `main`。
+>
+> **2026-10-30 迁移（742.3，scrum analyze-gui-v1）**：本文描述的**浮窗已退役**——全部功能迁入
+> Analyze 工作区（`analyze_workspace.cpp`，同窗 Render/Analyze 切换、四列布局、场景全景）：
+> 列表/搜索/对称位/Exclude/CSV/预算与 Stop 由工作区列表区承载，ROI 控件与锥形 pick 由场景全景
+> 承载，窗口开关 `window_open` 字段随浮窗删除。本文 §1–§8 的机制记录（链 id、consumer、C API
+> 合同、新鲜度与 Exclude 循环）**全部仍是现状**——迁移没有改任何引擎侧或采纳语义；本文的新家
+> 是工作区的类级概览：选中一行后，`SurveyExecutor`（`analyze_survey.cpp`）在后台以该行的
+> Analyze 时快照身份发起 engine typed survey（R6 生命周期：冻结场景绑定、单 worker、取消、
+> 期限、按 (代，序号) 采纳），右列显示 waiting / cancelled / 具名拒答 / 完成摘要四态。
+> 「光路分析」整体路线见 [`raypath-analysis.md`](raypath-analysis.md)。
+>
 > 本文是 (i)「识别」已交付形态的机制记录；「光路分析」整体为什么拆成 (i)/(ii)、(ii) 为什么搁置、
 > (i) 路线接下来往哪走，见功能总篇 [`raypath-analysis.md`](raypath-analysis.md)。
 > 本文档结构与 §1/§2 的裁决叙事保持设计阶段原文，§3–§5、§7 的机制描述、§6 诚实边界、§8 开放

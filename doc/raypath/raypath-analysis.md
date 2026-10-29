@@ -591,6 +591,24 @@ warm 曾沿旧 δ 支撑给当前点误发 `certified` 包含关系，已由 PR 
 probe）已交付（见上）。界面应显示报告的 scope/evidence/coverage 与 unfinished 原因，用户选择
 具体 sky direction 后获取 fiber 详情——该查询语义现由 `point` / `probe` 承载。
 
+**交互层交付状态（2026-10-30，742.3 as-built）**：工作区壳与类级 survey 摘要已交付——Render/Analyze
+同窗切换（四列布局，D1/D5）、场景全景（同纹理单圆盘等面积重投影 + 半球切换 + 锥形 ROI 手势，D2）、
+份额列表整体迁入（浮窗退役）、选择身份（行→Analyze 时快照内的稳定键，非行号）与类级概览（engine
+typed survey 的类级事实逐字消费：路由/计数/对象与状态/拒答词与证据）。**仍未交付**（即本段上文
+的 feature-report 联动）：光路视图、太阳方向球、光路 3D、点级详情、色散与多波长——工作区以诚实
+占位文案标注（R7），不塞演示数据。后续各片的接入点，全部复用 742.3 落下的三件机制、不另建生命周期：
+
+- **选择身份**（`SelectedClassIdentityFor` / `MakeSurveyRequestForIdentity`，`analysis_panel.hpp`）：
+  由选中行 + 当前对称位机械派生的稳定键，可直接拼写 survey 请求。742.4 的概览组织、742.5 的
+  天空点意图、742.6 的点/分量查询都应以此为选择的唯一表示，不引入第二份选择状态。
+- **后台查询机制**（`SurveyExecutor`，`analyze_survey.hpp`）：唯一 worker、冻结场景绑定（DoAnalyze
+  保留场景对象）、取消 token、有限期限、按 `(分析快照代，代内序号)` 采纳、单槽 mailbox。任何新的
+  查询面（点/probe/map/representative ray——workspace 同一绑定的兄弟入口）挂同一执行器扩展，不建
+  通用调度器、不经 `LUMICE_Server`。
+- **结果归属**（`SurveyQuerySession`，GuiState analysis 档）：意图/键/取消 latch/采纳结果随
+  `analysis` 的 per-reason 规则走（文档切换清、Revert 保留、再 Analyze 作废旧代归属）。概览类
+  UI 的「这份结果属于哪次分析/哪个选择」语义以它为单一权威。
+
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 
 - **Render / Analyze 是同一窗口下的两个工作区**，顶部标签切换（不是两个独立系统窗口）：共享同一份
