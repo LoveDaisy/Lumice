@@ -162,6 +162,16 @@ void CanvasPixelToPreviewPoint(int px, int py, float dpi_scale_x, float dpi_scal
 // the picture under it was drawn with.
 LUMICE_AnnotationView PreviewAnnotationView(const GuiState& state, int canvas_w, int canvas_h);
 
+// The Analyze workspace panorama's view: the up-looking equal-area fisheye (lens 1, fov 180,
+// view pitched to +90) — the same framing the panorama's display params carry, so the pick family
+// below runs against exactly the projection the picture was drawn with.
+LUMICE_AnnotationView PanoramaAnnotationView(const GuiState& state, int canvas_w, int canvas_h);
+
+// Whether the pixel is on the panorama's sky: inside the viewed fisheye's DISK (the square
+// canvas outcorners it, and the lens inverse answers behind-the-hemisphere directions there).
+// The panorama's pick and drag gate their writes on this.
+bool PanoramaPickHitsSky(const GuiState& state, const LUMICE_AnnotationView& view, int px, int py);
+
 // Turn the click at canvas pixel (px, py) into the cone centre: LUMICE_UnprojectPixel through
 // `view`. On sky, writes cone_center_dir / cone_center_valid and disarms the pick; off sky
 // (letterbox, outside the lens's image circle, the clipped hemisphere) writes nothing and leaves
@@ -418,6 +428,11 @@ void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server);
 // dot and the ring of the slider's radius around it (ProjectConeCenterMarker); every other state
 // draws nothing. `origin` is the preview window's top-left in screen points.
 void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
+                         float dpi_scale_x, float dpi_scale_y);
+
+// The same marker and ring over the Analyze workspace's panorama: the gate drops the floating
+// window's (the panorama lives in the workspace), the draw is the one implementation.
+void DrawPanoramaRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
                          float dpi_scale_x, float dpi_scale_y);
 
 }  // namespace lumice::gui

@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 
+#include "gui/analysis_panel.hpp"
 #include "gui/app.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/mono_exposure_scale.hpp"
@@ -178,13 +179,90 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
   const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
   pp.exposure.intensity_factor = mono_ev.intensity_factor;
   pp.exposure.intensity_scale = mono_ev.intensity_scale;
+  // The up- (or down-) looking equal-area fisheye: the same framing PanoramaAnnotationView gives
+  // the pick, so the picture and the click agree by construction. visible=Full — the fisheye's
+  // own behind-camera bound is the clip; the hemisphere is the camera pitch.
   pp.view_proj = ViewProjection{ kLensTypeFisheyeEqualArea,
                                  180.0f,
+                                 g_state.workspace.panorama_upper ? 90.0f : -90.0f,
                                  0.0f,
                                  0.0f,
-                                 0.0f,
-                                 g_state.workspace.panorama_upper ? kVisibleUpper : kVisibleLower,
+                                 kVisibleFull,
                                  false };
+
+  // ---- The cone ROI's gestures, over this region and this view ----
+  // The same gesture family the preview panel hosts (marker drag > armed pick), through
+  // PanoramaAnnotationView — the view the picture under the cursor was drawn with. No camera
+  // branch: the panorama's surface has no orbit, so the arbiter runs with its two analysis arms
+  // only, and the angular-distance picker cannot reach here — that pick lives in the Render
+  // workspace's panels.
+  auto& a = g_state.analysis;
+  if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
+    const LUMICE_AnnotationView view = PanoramaAnnotationView(g_state, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+    // A centre when there is none — level-triggered, the preview panel's own rule, so the mode
+    // gets its default as soon as the picture region exists.
+    if (!a.cone_center_valid) {
+      EnsureDefaultConeCenter(g_state, view, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool region_hovered =
+        ImGui::IsMouseHoveringRect(region_min, ImVec2(region_min.x + size.x, region_min.y + size.y));
+    bool marker_hover = false;
+    if (region_hovered) {
+      if (const std::optional<CanvasPixel> marker = ProjectConeCenterMarker(g_state, view); marker.has_value()) {
+        float mx = 0.0f;
+        float my = 0.0f;
+        CanvasPixelToPreviewPoint(marker->px, marker->py, g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y, &mx,
+                                  &my);
+        const float dx = io.MousePos.x - region_min.x - mx;
+        const float dy = io.MousePos.y - region_min.y - my;
+        const float hit_r = UiPx(kAnalysisConeMarkerHitRadiusPt);
+        marker_hover = dx * dx + dy * dy <= hit_r * hit_r;
+      }
+    }
+    const ConeInputOwner owner = ArbitrateConeInput(marker_hover || a.cone_marker_dragging, a.pick_armed);
+    if (owner == ConeInputOwner::kMarkerDrag) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+      if (region_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        a.cone_marker_dragging = true;
+        a.pick_armed = false;
+      }
+      if (a.cone_marker_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
+                io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
+                g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+            px.has_value() && PanoramaPickHitsSky(g_state, view, px->px, px->py)) {
+          DragAnalysisConeCenter(g_state, view, px->px, px->py);
+        }
+      }
+      if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        a.cone_marker_dragging = false;
+      }
+    }
+    if (owner == ConeInputOwner::kPickClick && region_hovered) {
+      // The armed crosshair, drawn on this window's list like the ring below.
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
+      const ImVec2 m = io.MousePos;
+      const float arm = UiPx(kAnalysisPickCrosshairArmPt);
+      dl->AddLine(ImVec2(m.x - arm, m.y), ImVec2(m.x + arm, m.y), colour, 1.5f);
+      dl->AddLine(ImVec2(m.x, m.y - arm), ImVec2(m.x, m.y + arm), colour, 1.5f);
+      if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
+                io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
+                g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+            px.has_value() && PanoramaPickHitsSky(g_state, view, px->px, px->py)) {
+          PickAnalysisConeCenter(g_state, view, px->px, px->py);
+        }
+      }
+    }
+    DrawPanoramaRoiRing(g_state, view, region_min, g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y);
+  }
+  // Esc disarms an armed pick — the preview panel's rule, hosted here while the workspace owns
+  // the picture an armed pick aims at.
+  if (a.pick_armed && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    a.pick_armed = false;
+  }
 
   // The preview's own two-branch notice, below the picture: kNone (nothing ever rendered) cannot
   // reach here (the texture gate above), so this is the kModified branch — the picture is of the

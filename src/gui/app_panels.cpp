@@ -853,8 +853,6 @@ constexpr float kCollapseBtnSize = 20.0f;
 // glyph does not sit on top of the colour it is reporting.
 constexpr float kBgPickSwatchOffsetPt = 16.0f;
 constexpr float kBgPickSwatchSizePt = 24.0f;
-// The analysis pick's crosshair at the cursor: half-length of each arm, in ImGui points.
-constexpr float kAnalysisPickCrosshairArmPt = 10.0f;
 // The Angular Distance picker's readout: offset from the cursor to the number's top-left, in ImGui
 // points. Further right than the eyedropper swatch's 16 pt: text starting at 16 pt put its first
 // digit under the arrow cursor's body (seen in a capture), where a swatch's larger square still
@@ -2353,6 +2351,11 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // Same statement, same reason: both halves of the publication are level-triggered, so the frame
   // that does not republish them is the frame that has neither. See PreviewViewport in app.hpp.
   g_preview_vp.curve_labels.clear();
+  // And the Analyze workspace's panorama is the other mode's publication: the frame that draws
+  // the Render preview clears it, exactly as the workspace's frame clears g_preview_vp. Without
+  // this, a stale true from the last Analyze frame would blit the panorama over every Render
+  // frame.
+  g_panorama_vp.active = false;
 
   if (PreviewShowsPicture()) {
     // Compute viewport in framebuffer pixels (for HiDPI)

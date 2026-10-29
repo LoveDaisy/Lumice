@@ -291,6 +291,44 @@ LUMICE_AnnotationView PreviewAnnotationView(const GuiState& state, int canvas_w,
   return BuildAnnotationView(MakeAnnotationViewKey(AnnotationViewInputFor(state, state.renderer), canvas_w, canvas_h));
 }
 
+LUMICE_AnnotationView PanoramaAnnotationView(const GuiState& state, int canvas_w, int canvas_h) {
+  // The Analyze workspace's panorama: the up-looking equal-area fisheye — lens 1 at fov 180 with
+  // the view pitched to +90 (straight up), so the disk centre is the zenith and the rim the
+  // horizon, both sides (shader display and this pick view) camera-framed by the same view
+  // angles. visible=Full on purpose: the lens's own behind-camera sentinel already bounds the
+  // disk, and the half-sky visible values route the annotation projector through a different
+  // domain the panorama does not want. No overlay circles or markers: the key carries only what
+  // will be read.
+  AnnotationViewInput in;
+  in.lens_type = kLensTypeFisheyeEqualArea;
+  in.fov = 180.0f;
+  in.azimuth = 0.0f;
+  // The hemisphere switch pitches the camera: +90 reads the upper sky (zenith at the disk
+  // centre), -90 the lower (nadir at the centre).
+  in.elevation = state.workspace.panorama_upper ? 90.0f : -90.0f;
+  in.roll = 0.0f;
+  in.visible = kVisibleFull;
+  in.front = false;
+  in.sun_altitude_deg = state.sun.altitude;
+  return BuildAnnotationView(MakeAnnotationViewKey(in, canvas_w, canvas_h));
+}
+
+bool PanoramaPickHitsSky(const GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
+  // The up-looking fisheye's square canvas outcorners its disk: outside the rim
+  // LUMICE_UnprojectPixel still answers (the lens inverse carries no rim rejection at fov 180),
+  // with a direction below the horizon. The panorama's pick and drag accept upper-sky directions
+  // only — the disk, not the square.
+  float dir[3] = { 0.0f, 0.0f, 0.0f };
+  int valid = 0;
+  if (LUMICE_UnprojectPixel(&view, px, py, dir, &valid) != LUMICE_OK || valid == 0) {
+    return false;
+  }
+  // Travel convention: sky light travels away from the viewed hemisphere's centre — looking up
+  // (+90), upper-sky light travels downward (z < 0); looking down (-90), lower-sky light travels
+  // upward (z > 0). The slack spans the rim's horizon band (rim pixels sit at |z| <= 0.005).
+  return state.workspace.panorama_upper ? dir[2] < 0.05f : dir[2] > -0.05f;
+}
+
 bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
   float dir[3] = { 0.0f, 0.0f, 0.0f };
   int valid = 0;
@@ -1748,12 +1786,14 @@ void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server) {
   ImGui::End();
 }
 
-void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
-                         float dpi_scale_x, float dpi_scale_y) {
+namespace {
+
+// The marker-and-ring draw itself — the two wrappers below each bring their own gate (the
+// preview's also requires the floating window; the panorama's runs whenever the workspace shows
+// the picture region and the mode is Point).
+void DrawRoiRingImpl(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin, float dpi_scale_x,
+                     float dpi_scale_y) {
   const auto& a = state.analysis;
-  if (!a.window_open || a.roi_mode != LUMICE_RAYPATH_ROI_CONE) {
-    return;
-  }
   // This frame's projection of the direction: off the picture (behind the camera, outside the
   // lens's circle, the clipped hemisphere) means no marker and no ring — the direction is still
   // the request's, and the list is unaffected.
@@ -1782,6 +1822,25 @@ void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& vie
   if (radius_px.has_value()) {
     dl->AddCircle(centre, *radius_px / dpi_scale_x, colour, kRoiRingSegments, UiPx(kRoiRingThicknessPt));
   }
+}
+
+}  // namespace
+
+void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
+                         float dpi_scale_x, float dpi_scale_y) {
+  const auto& a = state.analysis;
+  if (!a.window_open || a.roi_mode != LUMICE_RAYPATH_ROI_CONE) {
+    return;
+  }
+  DrawRoiRingImpl(state, view, origin, dpi_scale_x, dpi_scale_y);
+}
+
+void DrawPanoramaRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
+                         float dpi_scale_x, float dpi_scale_y) {
+  if (state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE) {
+    return;
+  }
+  DrawRoiRingImpl(state, view, origin, dpi_scale_x, dpi_scale_y);
 }
 
 }  // namespace lumice::gui

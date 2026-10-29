@@ -6,9 +6,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -1047,6 +1049,100 @@ TEST(AnalysisPanelLogic, ExcludeWritesOneFilterOutFilterBoundToEveryEntryOfTheCr
   EXPECT_EQ(*state.layers[0].entries[1].filter_id, 0);
   EXPECT_EQ(*state.layers[1].entries[0].filter_id, 0);
   EXPECT_FALSE(state.layers[0].entries[0].filter_id.has_value());
+}
+
+// ---- The panorama's pixel->direction mapping: the equal-area closure ----
+//
+// The panorama is an equal-area azimuthal view of one hemisphere, and the pick family reads
+// directions back through LUMICE_UnprojectPixel under PanoramaAnnotationView. The independent
+// anchor is the AREA PROPERTY, not the projection's own formula: pixels scattered uniformly over
+// the picture disk must be uniform in solid angle — the fraction within a half-angle theta of the
+// axis is (1 - cos theta) — and the azimuth uniform over the circle. Verifying the property, with
+// the axis anchored physically (the disk centre's own direction), is what keeps this from
+// certifying a self-consistent but wrong mapping: a round trip through the projection's maths
+// would pass both if they shared the same mistake.
+TEST(AnalysisPanelLogic, PanoramaUnprojectIsEqualAreaOverTheDisk) {
+  // The panorama's mapping: the up-looking equal-area fisheye. Over the picture DISK (centre of
+  // the square canvas, radius = short edge / 2), uniform pixel area must map to uniform solid
+  // angle. The engine's rim sits at theta = fov/2 = 90 deg with r = sin(theta/2)/sin(45 deg), so
+  // the closed-form equal-area anchor is P(theta <= t) = r^2 = 1 - cos t — r^2 equal to the
+  // solid-angle fraction is the equal-area property itself. Measured about the sample-mean axis
+  // (the distribution's symmetry axis, up to sampling noise), against the closed form and not a
+  // round trip of the inverse under test.
+  constexpr int kSize = 400;
+  constexpr float kRadius = kSize * 0.5f;
+  GuiState state;  // default workspace: the upper hemisphere (camera pitched +90)
+  const LUMICE_AnnotationView view = PanoramaAnnotationView(state, kSize, kSize);
+
+  std::mt19937 rng(7);  // fixed seed: a property test, not a distribution history
+  std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+  constexpr int kTargetSamples = 20000;
+  std::vector<std::array<float, 3>> dirs;
+  dirs.reserve(static_cast<size_t>(kTargetSamples));
+  int unproject_failures = 0;
+  int below_sky = 0;
+  for (int i = 0; i < kTargetSamples * 6 && static_cast<int>(dirs.size()) < kTargetSamples; ++i) {
+    const float x = uniform(rng) * kSize;
+    const float y = uniform(rng) * kSize;
+    const float dx = x - kRadius;
+    const float dy = y - kRadius;
+    if (dx * dx + dy * dy > kRadius * kRadius) {
+      continue;  // outside the picture disk: the square's corners
+    }
+    float dir[3] = { 0.0f, 0.0f, 0.0f };
+    int valid = 0;
+    if (LUMICE_UnprojectPixel(&view, static_cast<int>(x), static_cast<int>(y), dir, &valid) != LUMICE_OK) {
+      unproject_failures++;
+      continue;
+    }
+    if (valid == 0) {
+      continue;
+    }
+    if (dir[2] >= 0.05f) {
+      below_sky++;  // beyond the guard's horizon slack: every disk pixel is upper-sky light
+    }
+    dirs.push_back({ dir[0], dir[1], dir[2] });
+  }
+  EXPECT_EQ(unproject_failures, 0);
+  EXPECT_EQ(below_sky, 0);
+  ASSERT_EQ(static_cast<int>(dirs.size()), kTargetSamples);
+
+  float axis[3] = { 0.0f, 0.0f, 0.0f };
+  for (const auto& d : dirs) {
+    axis[0] += d[0];
+    axis[1] += d[1];
+    axis[2] += d[2];
+  }
+  const float mean_norm = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+  // Uniform over the solid-angle hemisphere: the resultant length is exactly 1/2.
+  EXPECT_NEAR(mean_norm / static_cast<double>(dirs.size()), 0.5, 0.02);
+  axis[0] /= mean_norm;
+  axis[1] /= mean_norm;
+  axis[2] /= mean_norm;
+
+  const double n = static_cast<double>(dirs.size());
+  const float kPi = 3.14159265358979323846f;
+  int in_cap30 = 0;
+  int in_cap60 = 0;
+  int in_cap85 = 0;
+  for (const auto& d : dirs) {
+    const float cos_theta = std::clamp(axis[0] * d[0] + axis[1] * d[1] + axis[2] * d[2], -1.0f, 1.0f);
+    const float theta_deg = std::acos(cos_theta) * 180.0f / kPi;
+    if (theta_deg <= 30.0f) {
+      in_cap30++;
+    }
+    if (theta_deg <= 60.0f) {
+      in_cap60++;
+    }
+    if (theta_deg <= 85.0f) {
+      in_cap85++;
+    }
+  }
+  const auto closed_form = [kPi](float theta_deg) { return 1.0 - std::cos(theta_deg * kPi / 180.0); };
+  // Tolerances: binomial sigma ~0.003 at n=20000, so 0.01 is >3 sigma, plus the pixel lattice.
+  EXPECT_NEAR(static_cast<double>(in_cap30) / n, closed_form(30.0f), 0.01);
+  EXPECT_NEAR(static_cast<double>(in_cap60) / n, closed_form(60.0f), 0.01);
+  EXPECT_NEAR(static_cast<double>(in_cap85) / n, closed_form(85.0f), 0.01);
 }
 
 }  // namespace

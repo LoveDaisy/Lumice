@@ -694,6 +694,17 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
 
       // Archive the exact state this case verified (the pointer is already parked off-frame).
       capture_to("workspace_skeleton_1280x800.png");
+
+      // Restore the shared window's basis HERE: a resize the next case's entry audit has to
+      // undo counts as a window-basis leak and fails the run's exit code by design.
+      g_window_size_test.width = gui::kInitWindowWidth;
+      g_window_size_test.height = gui::kInitWindowHeight;
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(2);
     };
   }
 
@@ -760,11 +771,12 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_panorama_vp.active, true);
       IM_CHECK_GT(gui::g_panorama_vp.vp_w, 0);
       IM_CHECK_GT(gui::g_panorama_vp.vp_h, 0);
-      // The view is the panorama's own: single-disk equal area, full 180, the upper hemisphere,
-      // the document's lens untouched.
+      // The view is the panorama's own: the equal-area fisheye pitched straight up (the upper
+      // hemisphere), the document's lens untouched.
       IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.lens_type, gui::kLensTypeFisheyeEqualArea);
       IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.fov, 180.0f);
-      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.visible, gui::kVisibleUpper);
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.elevation, 90.0f);
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.visible, gui::kVisibleFull);
       IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeLinear);
 
       // The hemisphere switch is a view state: it flips the session bit and the uniform the
@@ -772,10 +784,45 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/Lower##panorama_hemisphere");
       ctx->Yield(3);
       IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, false);
-      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.visible, gui::kVisibleLower);
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.elevation, -90.0f);
       ctx->ItemClick("**/Upper##panorama_hemisphere");
       ctx->Yield(3);
       IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, true);
+
+      // ---- The cone pick over the panorama ----
+      // Arm CONE + the pick directly (the arm button lives in the migration-period floating
+      // window; this case is about the panorama's half of the flow), park the floating window
+      // out of the way, and click inside the picture disk at half its radius.
+      gui::g_state.analysis.window_open = false;
+      gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
+      gui::g_state.analysis.pick_armed = true;
+      ctx->Yield(2);
+      // The picture region, by name, over the window list (a child window, no items).
+      ImGuiWindow* pano = nullptr;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzePanorama") != nullptr) {
+          pano = w;
+        }
+      }
+      IM_CHECK(pano != nullptr);
+      const ImVec2 disk_centre((pano->Pos.x + pano->Size.x * 0.5f), (pano->Pos.y + pano->Size.y * 0.5f));
+      const float disk_radius = std::min(pano->Size.x, pano->Size.y) * 0.5f;
+      ctx->MouseMoveToPos(ImVec2(disk_centre.x + disk_radius * 0.5f, disk_centre.y));
+      ctx->Yield(2);
+      ctx->MouseClick(0);
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      IM_CHECK(!gui::g_state.analysis.pick_armed);
+      // The closed-form anchor: a click at half the disk's radius sits at
+      // theta = 2*asin(r_norm * sin(45 deg)) from the zenith — derived from the equal-area rim
+      // at theta = fov/2, NOT from the inverse under test.
+      const float cz = gui::g_state.analysis.cone_center_dir[2];
+      const float theta_from_zenith = std::acos(std::clamp(-cz, -1.0f, 1.0f)) * 180.0f / 3.14159265358979323846f;
+      const float expected_theta = 2.0f * std::asin(0.5f * 0.70710678118654752440f) * 180.0f / 3.14159265358979323846f;
+      ctx->LogInfo("picked theta=%.2f expected=%.2f", static_cast<double>(theta_from_zenith),
+                   static_cast<double>(expected_theta));
+      IM_CHECK(std::abs(theta_from_zenith - expected_theta) < 2.0f);
+      IM_CHECK_LT(gui::g_state.analysis.cone_center_dir[2], 0.0f);  // upper-sky travel direction
 
       LUMICE_StopServer(gui::g_server);
       LUMICE_DestroyServer(gui::g_server);
