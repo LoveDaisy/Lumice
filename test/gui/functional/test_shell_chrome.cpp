@@ -54,7 +54,7 @@ const char* const kTopBarButtons[] = {
   "##TopBar/Open",
   "##TopBar/Save",
   "##TopBar/" ICON_FA_PALETTE " Colors",
-  "##TopBar/" ICON_FA_ROUTE " Analysis",
+  "##TopBar/" ICON_FA_ROUTE " Analyze",
   "##TopBar/" ICON_FA_FILE_LINES " Summary",
   kSettingsBtn,
   kRevertBtn,

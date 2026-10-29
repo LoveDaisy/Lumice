@@ -595,15 +595,43 @@ void RenderTopBar(float window_width) {
   if (tint_colors_button) {
     ImGui::PopStyleColor(3);
   }
-  // The second occupant of the feature-button group: the Raypath Analysis window
-  // (analysis_panel.cpp). A plain toggle — the window has no "default on open" rule the way
-  // Colors does; what it shows is decided by its own controls once open.
-  ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_ROUTE " Analysis")) {
-    g_state.analysis.window_open = !g_state.analysis.window_open;
-  }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Which raypaths make the light in a region of the sky. Opens the Raypath Analysis window.");
+  // The second occupant of the feature-button group: the Render/Analyze workspace switch — the
+  // Analysis button's replacement and the analysis's new entry (the Analyze workspace is where
+  // the analysis lives). One slot whose label names the DESTINATION, the bar's own Run/Stop
+  // idiom: from Render it reads [route " Analyze] (click: switch, and open the Raypath Analysis
+  // window — during the list's migration the floating window is the analysis UI, so the mode's
+  // entry opens it; re-entering re-opens a manually closed one, and this bridge write retires
+  // with the window in the migration that moves the list into the workspace); from Analyze it
+  // reads [Render]. The two-mode segmented pair this slot was first drawn as measured +32 px
+  // over the bar's 20 px narrow-window headroom (required 1036 vs 1024,
+  // the_top_bar_fits_at_the_minimum_window_width) — the label-shortening rung of the switch
+  // plan's degradation ladder, and the slot keeps the width of the wider of its two labels
+  // (ToolbarGroupButtonWidth) so the toggle can never shift its neighbours. The mode itself is
+  // on screen (four columns vs the render layout); the tooltips say where the click goes.
+  // Switching is session state: it never dirties, never commits, never cancels or starts a run.
+  {
+    const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
+    const char* kToAnalyzeLabel = ICON_FA_ROUTE " Analyze";
+    const char* kToRenderLabel = "Render";
+    ImGui::SameLine();
+    if (analyze) {
+      if (ImGui::Button(kToRenderLabel, ImVec2(ToolbarGroupButtonWidth({ kToAnalyzeLabel, kToRenderLabel }), 0))) {
+        g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Switch back to the Render workspace.");
+      }
+    } else {
+      if (ImGui::Button(kToAnalyzeLabel, ImVec2(ToolbarGroupButtonWidth({ kToAnalyzeLabel, kToRenderLabel }), 0))) {
+        g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
+        g_state.analysis.window_open = true;
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Which raypaths make the light in a region of the sky. Switches to the Analyze workspace "
+            "and opens the Raypath Analysis window.");
+      }
+    }
   }
   // The third occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
   // like Analysis — the window has no state of its own to set on open.

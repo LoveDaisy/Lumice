@@ -1832,6 +1832,24 @@ struct GuiState {
   };
   RaypathAnalysisSession analysis;
 
+  // Which of the shell's two workspaces the frame shows — the Render|Analyze top-bar switch's
+  // state (the Analyze workspace shell, analyze_workspace.cpp). Session tier: a layout choice of
+  // this session, never persisted, never in the document, never in ConfigSnapshot, and it does
+  // not reset on a document switch (which panels are on screen is not document state — the same
+  // rule that keeps analysis.window_open across ResetFrontendState). Switching workspaces is
+  // pure view: it never dirties, never commits or cancels anything, and shares the one scene
+  // document with the Render workspace — the same editors write the same fields in both.
+  //
+  // The workspace's own session state (the middle columns' split ratio, the panorama's view
+  // state, later the background query bookkeeping) grows inside AnalyzeWorkspaceSession rather
+  // than beside it, so the tier table stays at one row for the workspace the way `analysis` is
+  // one row for the analysis tool.
+  enum class WorkspaceMode { kRender, kAnalyze };
+  struct AnalyzeWorkspaceSession {
+    WorkspaceMode mode = WorkspaceMode::kRender;
+  };
+  AnalyzeWorkspaceSession workspace;
+
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the
   // background gestures and the analysis window's point pick are all locked out — and the cursor
