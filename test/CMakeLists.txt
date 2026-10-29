@@ -350,6 +350,16 @@ add_executable(unit_correctness_test
   # refusal, the arc's azimuth sweep and its degenerate pole, the named refusal shapes, and the
   # online lambda grid with the red-edge width.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_probe_analysis.cpp"
+  # The class reference map (the map face): the class-vs-member reconciliation and the
+  # representative-xN negative control, the rank-0 mass arm (C15) and the constructed mixed
+  # class, determinism and view recomputation, the stop prefix and the refusal matrix, the
+  # singular-cell honesty, the caliber/coverage document, the closed-form inner-edge anchor
+  # with the probe-consistency leg, and the workspace face's slot reuse and cancel.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_reference_map.cpp"
+  # The map's C bridge (v4.59): the request/readers happy path, the rank-0 mass arm over the C
+  # surface, the document-level measure refusal, the request refusals and reader size
+  # contracts, and the workspace face with the cross-destroy lifetime.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_reference_map_c_api.cpp"
   # The survey's weight-tint leg: the kernel's point-mass-at-empty-pixel-table contract, the
   # leg's blue-over-red mechanism pin, its determinism, the fixed-pose refusal, and the
   # identity document's negative assertions (no positional dispersion, no diagnose, no probes).
