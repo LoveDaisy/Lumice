@@ -409,7 +409,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
 
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
       IM_CHECK(left != nullptr && !left->Active);  // not submitted this frame
-      ImGuiWindow* middle = ctx->GetWindowByRef("##AnalyzeMiddle");
+      // The middle area is four top-level chrome windows since the migration; the share list is
+      // the one this switch's contract reads through.
+      ImGuiWindow* middle = ctx->GetWindowByRef("##AnalyzeShareList");
       IM_CHECK(middle != nullptr && middle->Active);
       IM_CHECK_EQ(gui::g_preview_vp.active, false);
       IM_CHECK_EQ(gui::g_state.dirty, dirty_before);
