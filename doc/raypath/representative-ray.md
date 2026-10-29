@@ -85,6 +85,13 @@ corridor's and the chain's own:
 | `exit_critical_angle` | the corridor's exit gate | status name; no geometry |
 | `corridor_empty` | the corridor's area gate | status name, measured area ≤ threshold, geometry evaluated |
 | `path_infeasible` / `tir_boundary` / `non_finite` | the chain's validity gates | the chain failure name, the corridor's own evidence |
+
+Reachability: the corridor's entry and exit gates encode the same Snell physics as the chain's
+first and last gates, so on ordinary inputs a chain-failure name should never surface — the arm
+is defensive vocabulary for the gate pair's one remaining seam (the corridor judges the
+body-frame optics it derived at the centroid, the chain judges the pose's own direction chain),
+and no query-level test constructs a pose that reaches it. The three names exist so the refusal
+is never unnamed if that seam ever opens.
 | `degenerate_corridor` | the recovery's containment | status name, the corridor's evidence |
 
 A refusal carries the measured corridor quantities (area, threshold, the status names) so a
@@ -97,8 +104,10 @@ pose that is no rotation, a wavelength outside the table, more than one layer) a
 
 `LUMICE_AnalyzeRepresentativeRay` (standalone) and `LUMICE_PathWorkspaceQueryRepresentativeRay`
 (workspace; shares the prepared-geometry slot, refuses a warm option like the map's) produce the
-opaque `LUMICE_RepresentativeRay`; `LUMICE_RepresentativeRayGetInfo` always answers,
-`GetContacts` / `GetLegs` answer NOT_AVAILABLE on a refusal. Readers borrow handle-owned
+opaque `LUMICE_RepresentativeRay`; `LUMICE_RepresentativeRayGetInfo` always answers —
+`entry_status` spelled on BOTH arms (`"ok"` on the produced one), `geometry_evaluated` 1 and
+both measured corridor quantities (`area_perp_internal`, `area_threshold`) carried on both arms
+— and `GetContacts` / `GetLegs` answer NOT_AVAILABLE on a refusal. Readers borrow handle-owned
 storage; the bulk readers project once and hand out the same pointers on every read; results
 outlive scene and workspace. No budget field, no cancel: the query is one synchronous
 single-shot evaluation. The C contract tests pin the two-reads-same-pointers rule, the
@@ -119,6 +128,15 @@ Both arms are microseconds: the slider/consumption cost that 742.6 worried about
 of magnitude under any interactive budget, and the prepared-geometry reuse saves roughly half
 the standalone cost (the per-query scene-document parse dominates it). There is no hard latency
 contract — the honest number is here, and the workspace form is the one a GUI should call.
+
+The recovery's construction-time record is paid by every corridor consumer, not only this face —
+measured, not assumed: constructing the corridor (asymmetric pyramid, four faces) went from
+~0.29 µs before the record to ~1.20 µs with it (+0.9 µs per construction, the original corner
+copies and the per-polygon/crystal plane loops). The other corridor consumers are diagnostic
+paths that construct one corridor per row or per call and then run far heavier work behind it —
+a `Jet<3>` derivative chain in the diagnostic batch, a multi-pose contour scan in dp_contour —
+so the one-time +0.9 µs is noise at their granularity; no lazy-record machinery is warranted at
+this number.
 
 ## Test anchors
 

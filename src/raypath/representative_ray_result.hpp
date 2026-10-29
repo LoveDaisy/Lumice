@@ -53,6 +53,7 @@ struct RayLeg {
 struct RepresentativeRayValues {
   double entry_measure = 0.0;        // A_P at this pose, the corridor's own value
   double area_perp_internal = 0.0;   // the raw corridor footprint the gate judged
+  double area_threshold = 0.0;       // the corridor's own area gate (evidence, both arms)
   double total_transmission = 0.0;   // the product of the interface transmittances
   std::vector<RayContact> contacts;  // face_count rows: entry, internal..., exit
   std::vector<RayLeg> legs;          // face_count + 1 rows: incident, after each interface, outgoing

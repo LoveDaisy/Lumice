@@ -92,6 +92,12 @@ TEST(RepresentativeRayCApi, RequestEvaluatesAndReadersCarryThePath) {
   EXPECT_EQ(std::string(info.wavelength_source.data, info.wavelength_source.length), "default");
   EXPECT_GT(info.refractive_index, 1.0);
   EXPECT_GT(info.entry_measure, 0.0);
+  // The evidence fields, spelled on the produced arm too: the corridor evaluated, passed its
+  // own gate, and both measured quantities travel together.
+  EXPECT_EQ(std::string(info.entry_status.data, info.entry_status.length), "ok");
+  EXPECT_EQ(info.geometry_evaluated, 1);
+  EXPECT_GT(info.area_perp_internal, info.area_threshold);
+  EXPECT_GT(info.area_threshold, 0.0);
   EXPECT_EQ(std::string(info.reason.data == nullptr ? "" : info.reason.data, info.reason.length), "");
 
   // The bulk readers: row counts, unit legs, finite contacts, borrowed storage.

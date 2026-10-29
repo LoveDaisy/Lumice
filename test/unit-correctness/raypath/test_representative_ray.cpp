@@ -188,6 +188,66 @@ TEST(RepresentativeRay, ProducesTheBoundPathFromAPointQueryPose) {
   EXPECT_EQ(again.legs.data(), path.legs.data());
 }
 
+// The internal-reflection produced arm at the typed layer (the plan's Step-2 test point): the
+// rhombic plate's thin four-face corridor (faces 1-3-4-2, the analytic suite's known pose)
+// produces a bound path with four contacts and five legs. The kernel's own I0–I3 hold by the
+// analytic suite; here the row counts, the evidence fields and the frame anchors are pinned on
+// a face_count > 2 production.
+// The internal-reflection produced arm at the typed layer (the plan's Step-2 test point): the
+// C03 corpus's strongest legal pin pose (3-5-6-7, corridor area 0.36 at the pins' n = 1.31)
+// produces a bound path with four contacts and five legs. The request pins the wavelength to
+// 580 nm, whose n is within ~2e-4 of the pins' 1.31 — comfortably inside the healthy pose's
+// margins (the rhombic plate's diagnostic pose, corridor 0.0015, is NOT: its legal-n window is
+// narrow, which is why the analytic suite values it as a snapshot). The kernel's own I0–I3 hold
+// by the analytic suite; here the row counts, the evidence fields and the frame anchors are
+// pinned on a face_count > 2 production.
+TEST(RepresentativeRay, ProducesTheFourFaceInternalReflectionPath) {
+  const ConfigManager scene = Scene(15.0f);
+  const double pose[9] = { 0.9777657700649336,   -0.07101251752593112, 0.19731021576177132,
+                           -0.16976474081015924, 0.28430024017676436,  0.9435853465442825,
+                           -0.12310171268908844, -0.9561017706238513,  0.26592362163401295 };
+  RepresentativeRayRequest request = RayRequest({ 3, 5, 6, 7 }, pose);
+  request.wavelength_nm = 580.0;
+  RepresentativeRayResult ray;
+  const Error ray_error = AnalyzeRepresentativeRay(scene, request, &ray);
+  ASSERT_TRUE(ray_error.Ok()) << "on the ray query: " << ray_error.message;
+  ASSERT_TRUE(ray.Data().Produced()) << "refused as: " << ray.Data().Refusal().reason;
+  const RepresentativeRayValues& path = ray.Data().Path();
+  EXPECT_EQ(path.contacts.size(), 4u);
+  EXPECT_EQ(path.legs.size(), 5u);
+  EXPECT_EQ(ray.Data().meta.faces, (std::vector<int>{ 3, 5, 6, 7 }));
+  EXPECT_DOUBLE_EQ(ray.Data().meta.wavelength_nm, 580.0);
+  // The evidence fields, on the produced arm: the corridor evaluated and passed its gate.
+  EXPECT_GT(path.area_perp_internal, path.area_threshold);
+  EXPECT_GT(path.area_threshold, 0.0);
+  EXPECT_GT(path.entry_measure, 0.0);
+  for (int k = 0; k < 4; k++) {
+    EXPECT_GT(path.contacts[k].transmittance, 0.0);
+  }
+  // The frame anchors: the entry contact upstream of the incident direction, the exit contact
+  // on the outgoing side, and every leg parallel to its own chord.
+  double entry_dot = 0.0;
+  double exit_dot = 0.0;
+  for (int i = 0; i < 3; i++) {
+    entry_dot += path.contacts[0].point[i] * path.legs[0].direction[i];
+    exit_dot += path.contacts[3].point[i] * path.legs[4].direction[i];
+  }
+  EXPECT_LT(entry_dot, 0.0);
+  EXPECT_GT(exit_dot, 0.0);
+  for (int k = 0; k + 1 < 4; k++) {
+    double chord_dot_leg = 0.0;
+    double chord_norm = 0.0;
+    double leg_norm = 0.0;
+    for (int i = 0; i < 3; i++) {
+      const double c = path.contacts[k + 1].point[i] - path.contacts[k].point[i];
+      chord_dot_leg += c * path.legs[k + 1].direction[i];
+      chord_norm += c * c;
+      leg_norm += path.legs[k + 1].direction[i] * path.legs[k + 1].direction[i];
+    }
+    EXPECT_NEAR(chord_dot_leg / (std::sqrt(chord_norm) * std::sqrt(leg_norm)), 1.0, 1e-12) << "leg " << k + 1;
+  }
+}
+
 // One refusal-matrix row, per call: the asserts live here so one row's early failure returns
 // from the row, not out of the test past the other rows.
 void RunRefusalRow(const ConfigManager& scene, const std::vector<int>& faces, const double* pose, const char* reason) {

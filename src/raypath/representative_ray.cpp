@@ -65,12 +65,10 @@ Error AnalyzeRepresentativeRay(const ConfigManager& config, const Representative
 
   const int face_count = static_cast<int>(slots.size());
   const double refractive_index = choice.refractive_index;
-  // The incident propagation direction in the body frame: s_body = R^T s (row-major pose).
+  // The incident propagation direction in the body frame: s_body = R^T s (the kernel's own
+  // WorldToBody).
   double s_body[3];
-  for (int i = 0; i < 3; i++) {
-    s_body[i] = meta.pose[0 * 3 + i] * meta.incident_direction[0] + meta.pose[1 * 3 + i] * meta.incident_direction[1] +
-                meta.pose[2 * 3 + i] * meta.incident_direction[2];
-  }
+  analytic::WorldToBody(meta.pose, meta.incident_direction, s_body);
 
   // The chain: values, world outgoing and the failure's name, from the one implementation.
   std::vector<double> segments(3 * (face_count + 1));
@@ -125,16 +123,13 @@ Error AnalyzeRepresentativeRay(const ConfigManager& config, const Representative
   RepresentativeRayValues values;
   values.entry_measure = measure.value;
   values.area_perp_internal = measure.area_perp_internal;
+  values.area_threshold = corridor.Eps();
   values.total_transmission = outputs.fresnel_transmission;
   values.contacts.resize(face_count);
   for (int k = 0; k < face_count; k++) {
-    // Body -> world (path_chain.hpp BodyToWorld's convention, out_i = sum_j pose[3i+j] v_j): the
-    // recovered contact sits on the original finite face.
-    for (int i = 0; i < 3; i++) {
-      values.contacts[k].point[i] = meta.pose[3 * i + 0] * contacts.contacts[k][0] +
-                                    meta.pose[3 * i + 1] * contacts.contacts[k][1] +
-                                    meta.pose[3 * i + 2] * contacts.contacts[k][2];
-    }
+    // Body -> world by the kernel's own BodyToWorld: the recovered contact sits on the original
+    // finite face.
+    analytic::BodyToWorld(meta.pose, contacts.contacts[k], values.contacts[k].point);
     values.contacts[k].transmittance = transmittances[k];
   }
   values.legs.resize(face_count + 1);
@@ -143,11 +138,7 @@ Error AnalyzeRepresentativeRay(const ConfigManager& config, const Representative
   }
   for (int k = 1; k < face_count; k++) {
     // The internal legs: the chain's body-frame segments, rotated to world the same way.
-    for (int i = 0; i < 3; i++) {
-      values.legs[k].direction[i] = meta.pose[3 * i + 0] * segments[3 * k + 0] +
-                                    meta.pose[3 * i + 1] * segments[3 * k + 1] +
-                                    meta.pose[3 * i + 2] * segments[3 * k + 2];
-    }
+    analytic::BodyToWorld(meta.pose, &segments[3 * k], values.legs[k].direction);
   }
   for (int i = 0; i < 3; i++) {
     values.legs[face_count].direction[i] = outgoing[i];

@@ -2612,8 +2612,12 @@ LUMICE_PathReadStatus LUMICE_RepresentativeRayGetInfo(const LUMICE_Representativ
     out->area_perp_internal = data.Refusal().area_perp_internal;
     out->area_threshold = data.Refusal().area_threshold;
   } else {
+    // The produced arm carries the same evidence fields, spelled: the corridor evaluated and
+    // passed (entry_status "ok"), and both measured quantities travel together.
+    out->entry_status = Text(an::EntryMeasureStatusName(an::EntryMeasureStatus::kOk));
+    out->geometry_evaluated = 1;
     out->area_perp_internal = data.Path().area_perp_internal;
-    out->area_threshold = 0.0;
+    out->area_threshold = data.Path().area_threshold;
     out->entry_measure = data.Path().entry_measure;
   }
   out->crystal_id = static_cast<int>(m.crystal_id);

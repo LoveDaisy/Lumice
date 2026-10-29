@@ -78,20 +78,10 @@ struct ChainInterfaceDiagnostics {
 
 namespace chain_detail {
 
-// v_W = R v_B with R row-major.
-template <class S, class T>
-void BodyToWorld(const S r[9], const T v[3], S out[3]) {
-  for (int i = 0; i < 3; i++) {
-    out[i] = r[i * 3 + 0] * v[0] + r[i * 3 + 1] * v[1] + r[i * 3 + 2] * v[2];
-  }
-}
-
-// v_B = R^T v_W.
-inline void WorldToBody(const double r[9], const double v[3], double out[3]) {
-  for (int i = 0; i < 3; i++) {
-    out[i] = r[0 * 3 + i] * v[0] + r[1 * 3 + i] * v[1] + r[2 * 3 + i] * v[2];
-  }
-}
+// The frame transforms live once, in path_evaluation.hpp (lumice::analytic); the chain reads
+// them under its historical detail name.
+using lumice::analytic::BodyToWorld;
+using lumice::analytic::WorldToBody;
 
 // Unpolarised reflectance of an interface in HitSurface's variables: `cos_i` the incidence cosine
 // (> 0), `rr` the relative index along the ray (n_incident / n_transmitted) and `discriminant` =
