@@ -233,7 +233,8 @@ Error AnalyzePathMapData(const ConfigManager& config, const MapRequest& request,
   Finite<MapValues> finite;
   finite.value = std::move(values);
   finite.coverage.members_evaluated = finite.value.map.members_evaluated;
-  finite.coverage.sample_count = finite.value.map.kept_count;
+  finite.coverage.sample_count = meta.sample_count;  // the lattice n each member ran (the witness
+                                                     // leg's coverage semantics)
   finite.coverage.wavelength_nm = meta.wavelength.nm;
   finite.coverage.geometry_basis = "nominal crystal shape at the distribution centres";
   ClaimScope scope;
