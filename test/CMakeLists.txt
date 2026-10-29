@@ -805,8 +805,14 @@ if(BUILD_GUI)
   # `lumice_obj`, not `lumice` — the same named exemption gui_unit_test documents above: a
   # composition chain that cross-checks the GUI against core's own primitives needs the internal
   # symbols that liblumice.dylib's -fvisibility=hidden does not export.
+  # `lumice_raypath_obj` + `lumice_analytic_kernel` for the same reason: the survey executor and
+  # the document-reset paths in the GUI call the raypath C API (LUMICE_PathWorkspace*/
+  # PathCancelToken*) whose definitions live in the raypath layer's object library, and the
+  # raypath layer's own assembly pulls in analytic-kernel symbols — object libraries propagate
+  # neither, so gui_unit_test has carried both explicitly for the same visibility reason.
   target_link_libraries(composition_correctness_test
-    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj)
+    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj
+            lumice_analytic_kernel lumice_raypath_obj)
   set_target_properties(composition_correctness_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
