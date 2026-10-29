@@ -37,19 +37,19 @@ void PlaceholderRegion(const char* name, const char* title, const char* note, co
 // The middle area's horizontal divider: a full-width grab strip with the resize-NS cursor, the
 // classic ImGui splitter shape (invisible button + hover/active line drawn over it), writing
 // GuiState::AnalyzeWorkspaceSession::middle_rows_ratio. Level-triggered like every other drag:
-// only a frame with a drag in flight writes the ratio.
-void MiddleRowsSplitter(const char* id, float width, float* ratio) {
+// only a frame with a drag in flight writes the ratio. The strip lives in its own thin window,
+// so the ratio's reference frame — the middle area's top and height — is passed in; measuring
+// against the strip's own window would make the ratio a function of the last mouse delta alone.
+void MiddleRowsSplitter(const char* id, float width, float* ratio, float area_top, float area_h) {
   const float height = UiPx(8.0f);
   ImGui::InvisibleButton(id, ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
   const bool active = ImGui::IsItemActive();
   if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
     // The splitter sits between the rows, so its centre is the ratio's pivot: move the mouse,
-    // move the pivot. Parent-local y via GetCursorStartPos — the item's own start is the strip.
+    // move the pivot. Screen-space y against the middle area's frame.
     const float pivot_y = ImGui::GetItemRectMin().y + height * 0.5f;
-    const float window_top = ImGui::GetWindowPos().y;
-    const float window_h = ImGui::GetWindowHeight();
-    *ratio = (pivot_y + ImGui::GetIO().MouseDelta.y - window_top) / window_h;
+    *ratio = (pivot_y + ImGui::GetIO().MouseDelta.y - area_top) / area_h;
     *ratio = std::clamp(*ratio, 0.15f, 0.85f);
   }
   if (hovered || active) {
@@ -355,7 +355,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   ImGui::Begin("##AnalyzeRowsDivider", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
-  MiddleRowsSplitter("##AnalyzeRowsSplitter", mid_w, &g_state.workspace.middle_rows_ratio);
+  MiddleRowsSplitter("##AnalyzeRowsSplitter", mid_w, &g_state.workspace.middle_rows_ratio, top, panel_height);
   ImGui::End();
 
   SetNextPanelGeometry(left_w, lower_y, mid_w, lower_h);
