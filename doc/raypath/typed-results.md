@@ -106,6 +106,11 @@ the census, checked against the four serializers and their typed readers:
 
 Adding a reader that pairs two containers means adding its row here and giving it a guard (a
 single row type where possible); the census is the checklist that replaces per-round discovery.
+The representative ray deliberately carries its per-contact transmittance inside the contact row
+(`RayContact`) and its direction inside the leg row (`RayLeg`) — single row types, so a
+points-to-quantities mismatch is unrepresentable and no census row is needed; the completion
+boundary instead guards the row counts against the face sequence (contacts = face_count, legs =
+face_count + 1) and the total transmission against its contact rows' product.
 
 ## Encoding cost and output-scale boundary
 
@@ -238,6 +243,7 @@ comparison targets. Static wire prose and enum spelling remain codec responsibil
 | report source replay | positive-source witness and source-token rows | completion materializes `PositiveSourceWitness`; codec never replays | `PathReportGetSource/PositiveSource` | report `sources`, record witnesses | published source-evidence compatibility; no replay at read time |
 | attribution/ruling | annotations/unattributed/counts/ruling/outcome/basis | completed report with checked local references | `PathReportGetAnnotation/Unattributed/UnattributedSummary/Ruling/Info` | report `features[].attribution`, `unattributed_structures`, `no_related_feature` | published attribution and absence-verdict compatibility |
 | former report serializer assembly | coverage/budgets/timing, unsupported multi-crystal path | `FeatureReportData` completion; serializer takes one frozen result | `PathReportGetCoverage/DeclaredSkip/Budgets/Info/RequestedLayer`; timing remains observational | report `coverage`, `budgets`, `timing`, unsupported outcome | C client reads coverage/outcome; remaining budgets and limitations remain published |
+| `representative_ray.hpp` | identity echo (member/pose/wavelength/incident), payload = path (contacts with per-interface transmittances, legs) or named refusal with measured corridor evidence | `representative_ray_result.hpp`; ray execution and completion | `LUMICE_RepresentativeRayGetInfo/GetContacts/GetLegs` (v4.60) | none (typed readers only, the map's precedent) | C/GUI consumers read the frozen path; the refusal carries no trajectory numbers |
 
 ## Codec and CLI cutover
 

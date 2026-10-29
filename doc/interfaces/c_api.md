@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 459        // ABI version, encoded major*100 + minor (v4.59)
+#define LUMICE_API_VERSION 460        // ABI version, encoded major*100 + minor (v4.60)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -103,6 +103,23 @@ unrecognized value is -1. The bridge maps each internal enum explicitly, so reor
 internal enum cannot silently change the published C number. `PathSurveyGetScope.member_kind`
 reads the completed result's quantity context; if that context is absent, it returns the
 unknown tag (0), not a physical member scope inferred from request bits.
+
+**v4.60** is a pure append, read-only by construction. Added the representative ray —
+`LUMICE_RepresentativeRayRequest`, the opaque `LUMICE_RepresentativeRay`,
+`LUMICE_AnalyzeRepresentativeRay`, `LUMICE_PathWorkspaceQueryRepresentativeRay` and
+`LUMICE_RepresentativeRayDestroy`, plus the `LUMICE_PathRayContact` / `LUMICE_PathRayLeg` row
+types and three typed readers (`LUMICE_RepresentativeRayGetInfo` / `GetContacts` / `GetLegs`).
+One concrete member's (crystal + face sequence) legal corridor at one explicit pose and
+wavelength, recovered as a drawable path: the entry point, every internal reflection point, the
+exit point, and the world-frame direction of every leg, with per-interface transmittances —
+bound to the request's member/pose/wavelength, never a class-total path. A pose the corridor's
+gates, the optical chain or the recovery's containment refuses is a named refusal riding the
+result (state refused, `Info`'s reason, the measured corridor quantities as evidence), never an
+error and never an approximate trajectory; the trajectory readers answer NOT_AVAILABLE then.
+There is no budget field and nothing to cancel: the query is one synchronous single-shot
+evaluation (one corridor evaluation, one chain evaluation, O(faces x corners) of geometry). The
+workspace entry accepts the shared options shape and polls none of it; a non-null warm option is
+refused like the map's. No `ToJson` face; no existing symbol or struct layout changed.
 
 **v4.59** is a pure append, read-only by construction. Added the class reference map —
 `LUMICE_PathMapRequest`, the opaque `LUMICE_PathMap`, `LUMICE_AnalyzePathMap`,

@@ -45,7 +45,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ```c
 // lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
 //（lumice_base.h 刻意不包含它，原因见下）
-#define LUMICE_API_VERSION 458        // ABI 版本，编码为 major*100 + minor（v4.58）
+#define LUMICE_API_VERSION 460        // ABI 版本，编码为 major*100 + minor（v4.60）
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
@@ -90,6 +90,30 @@ Destroy 为止；字符串以 NUL 结尾，长度不含终止符。活结果上�
 `along` 与 field-equation 是以 0 起始的既有值域，未识别值用 -1。bridge 将内部枚举
 逐项映射到公开数值，内部枚举调序不得静默改变 C 合同。`PathSurveyGetScope.member_kind`
 只读取已完成结果的 quantity context；若该事实缺席，则返回 unknown tag（0），不从请求位推断物理成员范围。
+
+**v4.60** 是纯追加、构造上只读。新增代表光线——`LUMICE_RepresentativeRayRequest`、不透明的
+`LUMICE_RepresentativeRay`、`LUMICE_AnalyzeRepresentativeRay`、
+`LUMICE_PathWorkspaceQueryRepresentativeRay`、`LUMICE_RepresentativeRayDestroy`，以及
+`LUMICE_PathRayContact` / `LUMICE_PathRayLeg` 行类型与三个 typed reader
+（`LUMICE_RepresentativeRayGetInfo` / `GetContacts` / `GetLegs`）。一个具体成员（晶体+面序）
+在显式姿态与波长上的合法走廊，恢复成一条可绘制路径：入口点、逐个内部反射点、出口点、
+每段的世界系方向与逐接口透射率——绑定请求的成员/姿态/波长，不是类总路径。姿态被走廊门、
+光学链或恢复 containment 拒绝时，具名拒答随结果携带（refused 态、`Info` 的 reason、
+实测走廊量作证据），不是错误、更不是近似轨迹；此时轨迹 reader 返回 NOT_AVAILABLE。
+无预算字段、无可取消：查询是一次同步单发求值（一次走廊求值 + 一次链求值 +
+O(面数×角点) 几何）。workspace 入口接受共享 options 形状但不轮询其中任何字段；
+非空 warm 选项与地图面同样被拒。无 `ToJson` 面；既有符号与结构体零变化。
+
+**v4.59** 是纯追加、构造上只读。新增类参考图——`LUMICE_PathMapRequest`、不透明的
+`LUMICE_PathMap`、`LUMICE_AnalyzePathMap`、`LUMICE_PathWorkspaceQueryMap`、
+`LUMICE_PathMapDestroy`，以及 `LUMICE_PATH_MAP_{DEFAULT,MAX}_BUDGET_MS`、
+`LUMICE_PATH_MAP_MAX_PIXELS`、`LUMICE_PATH_MAP_PIXEL_*` 状态域与五个 typed reader
+（Info / Quantity / Evidence / 批量 Pixels / PointMass）。图是整个物理类在单一参考波长下的
+band-sum 网格（命名的全天窗口或以天空点为中心的窗口）：每个解析出的成员在同一格点上求值，
+band 成员的 per-sr 值逐成员累加，rank-0 成员进入点质量臂——不是代表成员图乘成员数。
+无 `ToJson` 面。停止时保留已完成成员前缀并报告 `truncated`；`measure_not_expressible`
+作为具名拒答随结果携带，绝不以零图替代。workspace 入口不接受 warm 数据。
+既有符号与结构体零变化。
 
 **v4.54** 是纯追加。新增光路 survey——带 `struct_size` 头的 `LUMICE_PathSurveyRequest`、不透明的
 `LUMICE_PathSurvey`、`LUMICE_AnalyzePathSurvey`、`LUMICE_PathSurveyToJson`（与

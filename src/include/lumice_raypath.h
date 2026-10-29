@@ -435,6 +435,52 @@ LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathMap(const LUMICE_Scene* scene, con
 // Release a map result. NULL is a no-op.
 LUMICE_API void LUMICE_PathMapDestroy(LUMICE_PathMap* result);
 
+// =============== Representative ray ===============
+// One concrete member's (crystal + face sequence) legal corridor at one explicit pose and
+// wavelength, recovered as a drawable path: the entry point, every internal reflection point,
+// the exit point, and the world-frame direction of every leg. The result binds to the request's
+// member/pose/wavelength — never a class-total path. A pose the corridor's gates, the optical
+// chain or the recovery's containment refuses is a named refusal riding the result, carrying the
+// measured corridor quantities as evidence and no trajectory numbers.
+
+// Request. `struct_size` MUST be set to sizeof(LUMICE_RepresentativeRayRequest) of the header
+// the caller compiled against: fields are only ever appended, and a size smaller than this
+// version's is rejected (LUMICE_ERR_INVALID_VALUE). The raypath/layer encoding is
+// LUMICE_SinglePathRequest's; exactly one layer is requested, more than one is refused as
+// multi_layer_unsupported.
+typedef struct LUMICE_RepresentativeRayRequest {
+  size_t struct_size;
+  int crystal_id;  // a crystal entry of the scene
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  const double* pose;  // 9 doubles, row-major body -> world, a rotation
+  // NULL or wavelength_count 0 selects the reference wavelength (the probe resolution's rule:
+  // the scene's single discrete wavelength, else 550); exactly one entry selects it explicitly
+  // (in [350, 900]). More than one is refused.
+  const double* wavelengths_nm;
+  int wavelength_count;
+} LUMICE_RepresentativeRayRequest;
+
+typedef struct LUMICE_RepresentativeRay_ LUMICE_RepresentativeRay;
+
+// Analyse. On LUMICE_OK *out owns an immutable typed result read through the getters below. On
+// failure *out is NULL and err_buf holds "<reason>: <detail>" as LUMICE_AnalyzePathMap spells
+// it; the request refusals are the map's: unknown_crystal_id, invalid_path,
+// multi_layer_unsupported, face_not_in_crystal, wavelength_out_of_range, invalid_argument (a
+// pose that is no rotation), crystal_rejected, plus null_arg and internal. The
+// corridor/chain/recovery refusals ride the RESULT (state refused, Info's reason), never an
+// error. The query is one synchronous single-shot evaluation — microseconds, no sampling loop —
+// so there is no budget field and nothing to cancel.
+LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzeRepresentativeRay(const LUMICE_Scene* scene,
+                                                            const LUMICE_RepresentativeRayRequest* request,
+                                                            LUMICE_RepresentativeRay** out, char* err_buf,
+                                                            size_t err_size);
+
+// Release a representative-ray result. NULL is a no-op.
+LUMICE_API void LUMICE_RepresentativeRayDestroy(LUMICE_RepresentativeRay* result);
+
 // =============== Typed query workspace ===============
 // One workspace captures a parsed Scene when created. The caller may destroy the Scene after
 // creation. Queries on the same workspace must not overlap; distinct workspaces may run in
@@ -496,6 +542,15 @@ LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryMap(LUMICE_PathWorkspace* w
                                                          const LUMICE_PathMapRequest* request,
                                                          const LUMICE_PathQueryOptions* options, LUMICE_PathMap** out,
                                                          char* err_buf, size_t err_size);
+// The representative-ray face on the workspace: same snapshot and shared geometry slot; no warm
+// data (a non-null warm option is refused, the map's rule), no deadline and no cancel poll — the
+// query is one single-shot evaluation and declares no interruptible boundary, so the options'
+// fields are accepted for shape uniformity and never polled.
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryRepresentativeRay(LUMICE_PathWorkspace* workspace,
+                                                                       const LUMICE_RepresentativeRayRequest* request,
+                                                                       const LUMICE_PathQueryOptions* options,
+                                                                       LUMICE_RepresentativeRay** out, char* err_buf,
+                                                                       size_t err_size);
 
 // =============== Typed result readers ===============
 // Every returned pointer is borrowed from the immutable result and remains valid until Destroy.
@@ -2524,6 +2579,70 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathMapGetEvidence(const LUMICE_PathMap*
                                                            LUMICE_PathSurveyEvidence* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathMapGetPixels(const LUMICE_PathMap* result, LUMICE_PathMapPixels* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathMapGetPointMass(const LUMICE_PathMap* result, LUMICE_PathMapPointMass* out);
+
+// ---- the representative ray's readers --------------------------------------------
+// The info reader always answers; the contacts/legs readers answer LUMICE_PATH_READ_OK on the
+// produced arm and LUMICE_PATH_READ_NOT_AVAILABLE on a refusal (a refusal carries no trajectory).
+// Every pointer is borrowed from the immutable result, valid until Destroy.
+
+typedef struct LUMICE_RepresentativeRayInfo {
+  size_t struct_size;
+  int produced;                   // 1 = the path arm (the contacts/legs readers answer); 0 = refused
+  LUMICE_PathText reason;         // the refusal's named cause; empty when produced
+  LUMICE_PathText entry_status;   // the corridor gate's status name, always spelled
+  LUMICE_PathText chain_failure;  // the chain's failure name when it refused; empty otherwise
+  int geometry_evaluated;         // whether the corridor cut an intersection at all
+  double area_perp_internal;      // the measured corridor area
+  double area_threshold;          // the corridor's own area gate
+  double entry_measure;           // A_P at the pose; 0 on a refusal
+  int crystal_id;
+  int analytic_api_version;
+  LUMICE_PathText crystal_kind;
+  const double* pose;  // 9 doubles, row-major body -> world (the request's own input)
+  double sun_altitude_deg;
+  double sun_azimuth_deg;
+  const double* incident_direction;  // 3 doubles, world, propagation sun -> crystal
+  double wavelength_nm;
+  LUMICE_PathText wavelength_source;
+  double refractive_index;
+  const int* faces;  // the request's face sequence
+  int face_count;
+  int shape_count;       // the shape scalars' count (identity echo; the crystal the
+  int shape_is_nominal;  // point face's own shape getter describes)
+} LUMICE_RepresentativeRayInfo;
+
+// One collision point: the world-frame point on its original finite face and the Fresnel factor
+// of the interface it sits on (T at entry and exit, R at internal faces).
+typedef struct LUMICE_PathRayContact {
+  double point[3];
+  double transmittance;
+} LUMICE_PathRayContact;
+
+// One leg's world-frame propagation direction: row k runs from contact k to contact k + 1
+// (k in [0, face_count - 1]); row 0 is the incident direction, row face_count the outgoing one.
+typedef struct LUMICE_PathRayLeg {
+  double direction[3];
+} LUMICE_PathRayLeg;
+
+typedef struct LUMICE_PathRayContacts {
+  size_t struct_size;
+  size_t contact_count;                   // face_count rows: entry, internal..., exit
+  const LUMICE_PathRayContact* contacts;  // borrowed, valid until Destroy
+} LUMICE_PathRayContacts;
+
+typedef struct LUMICE_PathRayLegs {
+  size_t struct_size;
+  size_t leg_count;               // face_count + 1 rows: incident, after each interface, outgoing
+  const LUMICE_PathRayLeg* legs;  // borrowed, valid until Destroy
+} LUMICE_PathRayLegs;
+
+LUMICE_API LUMICE_PathReadStatus LUMICE_RepresentativeRayGetInfo(const LUMICE_RepresentativeRay* result,
+                                                                 LUMICE_RepresentativeRayInfo* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_RepresentativeRayGetContacts(const LUMICE_RepresentativeRay* result,
+                                                                     LUMICE_PathRayContacts* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_RepresentativeRayGetLegs(const LUMICE_RepresentativeRay* result,
+                                                                 LUMICE_PathRayLegs* out);
+
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetInfo(const LUMICE_PathSurvey* result, LUMICE_PathSurveyInfo* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetObject(const LUMICE_PathSurvey* result, size_t index,
                                                             LUMICE_PathSurveyObject* out);

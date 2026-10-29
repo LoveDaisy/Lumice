@@ -556,6 +556,15 @@
 // grid over an explicit view: band members' per-sr values summed member-by-member on one
 // lattice, rank-0 members into a point-mass arm — never a representative times a member count.
 // No ToJson face (typed readers only); no existing symbol or struct layout changed.
-#define LUMICE_API_VERSION 459
+// ADDED (v4.60): the representative ray, a pure append — LUMICE_RepresentativeRayRequest,
+// LUMICE_RepresentativeRay (opaque), LUMICE_AnalyzeRepresentativeRay,
+// LUMICE_PathWorkspaceQueryRepresentativeRay, LUMICE_RepresentativeRayDestroy and three typed
+// readers (Info / bulk Contacts / bulk Legs) with the LUMICE_PathRayContact / LUMICE_PathRayLeg
+// row types. One concrete member's corridor at one explicit pose and wavelength, recovered as a
+// drawable path — entry, internal reflections, exit, world-frame leg directions — or a named
+// refusal riding the result with the measured corridor evidence. No budget and no cancel: the
+// query is one synchronous single-shot evaluation. No ToJson face; no existing symbol or struct
+// layout changed.
+#define LUMICE_API_VERSION 460
 
 #endif  // LUMICE_API_VERSION_H_

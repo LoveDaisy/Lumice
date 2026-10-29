@@ -364,6 +364,10 @@ add_executable(unit_correctness_test
   # surface, the document-level measure refusal, the request refusals and reader size
   # contracts, and the workspace face with the cross-destroy lifetime.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_reference_map_c_api.cpp"
+  # The representative ray's C bridge (v4.60): the request/readers happy path on a pinned legal
+  # pose, the named refusal riding the result, the request refusals and reader size contracts,
+  # and the workspace face with the cross-destroy lifetime and the standalone agreement.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_representative_ray_c_api.cpp"
   # The survey's weight-tint leg: the kernel's point-mass-at-empty-pixel-table contract, the
   # leg's blue-over-red mechanism pin, its determinism, the fixed-pose refusal, and the
   # identity document's negative assertions (no positional dispersion, no diagnose, no probes).

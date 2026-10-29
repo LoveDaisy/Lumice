@@ -188,4 +188,9 @@ Error AnalysisWorkspace::QueryMap(const MapRequest& request, MapResult* out, con
   return AnalyzePathMap(snapshot_, effective, out, geometry);
 }
 
+Error AnalysisWorkspace::QueryRepresentativeRay(const RepresentativeRayRequest& request, RepresentativeRayResult* out) {
+  const PreparedGeometry* geometry = GeometryFor(request);
+  return AnalyzeRepresentativeRay(snapshot_, request, out, geometry);
+}
+
 }  // namespace lumice::raypath

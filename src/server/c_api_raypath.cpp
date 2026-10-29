@@ -110,6 +110,22 @@ struct LUMICE_PathMap_ {
                                                                       // frozen result's strings)
 };
 
+// The ray ships typed readers only (the map's shape): the two bulk readers own one C-facing
+// projection each, filled once, lazily, under the handle's mutex.
+struct LUMICE_PathRayContactColumns {
+  std::vector<LUMICE_PathRayContact> contacts;
+};
+struct LUMICE_PathRayLegColumns {
+  std::vector<LUMICE_PathRayLeg> legs;
+};
+
+struct LUMICE_RepresentativeRay_ {
+  lumice::raypath::RepresentativeRayResult result;
+  mutable std::mutex cache_mutex;
+  mutable std::unique_ptr<LUMICE_PathRayContactColumns> contacts;  // GetContacts' own projection
+  mutable std::unique_ptr<LUMICE_PathRayLegColumns> legs;          // GetLegs' own projection
+};
+
 struct LUMICE_PathWorkspace_ {
   std::unique_ptr<lumice::raypath::AnalysisWorkspace> workspace;
 };
@@ -942,6 +958,125 @@ void LUMICE_PathMapDestroy(LUMICE_PathMap* result) {
   std::unique_ptr<LUMICE_PathMap_> owned(result);
 }
 
+LUMICE_ErrorCode AnalyzeRepresentativeRay(const LUMICE_Scene* scene, const LUMICE_RepresentativeRayRequest& request,
+                                          lumice::raypath::AnalysisWorkspace* workspace, LUMICE_RepresentativeRay** out,
+                                          char* err_buf, size_t err_size) {
+  namespace rp = lumice::raypath;
+
+  rp::RepresentativeRayRequest req;
+  req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
+  if (request.crystal_id < 0 || request.crystal_id != static_cast<int>(req.crystal_id)) {
+    return Refuse(
+        { rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(request.crystal_id) }, err_buf,
+        err_size);
+  }
+  if (request.face_count < 0 || request.layer_count < 0) {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "negative face or layer count" }, err_buf, err_size);
+  }
+  int consumed = 0;
+  for (int i = 0; i < request.layer_count; i++) {
+    const int n = request.layer_face_counts[i];
+    if (n < 0 || n > request.face_count - consumed) {
+      return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf,
+                    err_size);
+    }
+    req.path_layers.emplace_back(request.faces + consumed, request.faces + consumed + n);
+    consumed += n;
+  }
+  if (consumed != request.face_count) {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf, err_size);
+  }
+  if (request.pose == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: pose must be 9 doubles, row-major body -> world");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  for (int i = 0; i < 9; i++) {
+    req.pose[i] = request.pose[i];
+  }
+  if (request.wavelength_count < 0) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument, "negative wavelength count" }, err_buf, err_size);
+  }
+  if (request.wavelength_count > 1) {
+    return Refuse({ rp::ErrorCode::kInvalidArgument,
+                    "at most one reference wavelength may be requested; the per-lambda ray family is a later face" },
+                  err_buf, err_size);
+  }
+  if (request.wavelength_count > 0) {
+    req.wavelength_nm = request.wavelengths_nm[0];
+  }
+
+  // The scene document LUMICE_CommitScene would hand the server, through the same parser.
+  lumice::ConfigManager config;
+  if (workspace == nullptr) {
+    if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzeRepresentativeRay",
+                                                             lumice::GetGlobalLogger(), nullptr, &config)) {
+      WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+      return lumice::capi::ToCApiErrorCode(err.code);
+    }
+  }
+
+  rp::RepresentativeRayResult result;
+  const rp::Error error = workspace != nullptr ? workspace->QueryRepresentativeRay(req, &result) :
+                                                 rp::AnalyzeRepresentativeRay(config, req, &result);
+  if (!error.Ok()) {
+    return Refuse(error, err_buf, err_size);
+  }
+  auto handle = std::make_unique<LUMICE_RepresentativeRay_>();
+  handle->result = std::move(result);
+  *out = handle.release();
+  return LUMICE_OK;
+}
+
+LUMICE_ErrorCode LUMICE_AnalyzeRepresentativeRay(const LUMICE_Scene* scene,
+                                                 const LUMICE_RepresentativeRayRequest* request,
+                                                 LUMICE_RepresentativeRay** out, char* err_buf, size_t err_size) {
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (err_buf != nullptr && err_size > 0) {
+    err_buf[0] = '\0';
+  }
+  if (scene == nullptr || request == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: scene, request and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (request->struct_size < sizeof(LUMICE_RepresentativeRayRequest)) {
+    WriteError(err_buf, err_size,
+               "invalid_argument: struct_size " + std::to_string(request->struct_size) +
+                   " is smaller than this version's LUMICE_RepresentativeRayRequest (" +
+                   std::to_string(sizeof(LUMICE_RepresentativeRayRequest)) +
+                   "); set it to sizeof(LUMICE_RepresentativeRayRequest)");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if ((request->faces == nullptr && request->face_count > 0) ||
+      (request->layer_face_counts == nullptr && request->layer_count > 0) ||
+      (request->wavelengths_nm == nullptr && request->wavelength_count > 0)) {
+    WriteError(err_buf, err_size, "null_arg: path / wavelength arrays must not be NULL with a non-zero count");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  try {
+    return AnalyzeRepresentativeRay(scene, *request, nullptr, out, err_buf, err_size);
+  } catch (const std::exception& e) {
+    if (out != nullptr) {
+      *out = nullptr;
+    }
+    LOG_ERROR("LUMICE_AnalyzeRepresentativeRay: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+    return LUMICE_ERR_UNKNOWN;
+  } catch (...) {
+    if (out != nullptr) {
+      *out = nullptr;
+    }
+    LOG_ERROR("LUMICE_AnalyzeRepresentativeRay: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+    return LUMICE_ERR_UNKNOWN;
+  }
+}
+
+void LUMICE_RepresentativeRayDestroy(LUMICE_RepresentativeRay* result) {
+  std::unique_ptr<LUMICE_RepresentativeRay_> owned(result);
+}
+
 LUMICE_ErrorCode LUMICE_PathWorkspaceCreate(const LUMICE_Scene* scene, LUMICE_PathWorkspace** out, char* err_buf,
                                             size_t err_size) {
   if (out != nullptr) {
@@ -1147,6 +1282,23 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryMap(LUMICE_PathWorkspace* workspace, c
           return LUMICE_ERR_NULL_ARG;
         }
         return AnalyzeMap(nullptr, *request, workspace->workspace.get(), options, out, err_buf, err_size);
+      });
+}
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceQueryRepresentativeRay(LUMICE_PathWorkspace* workspace,
+                                                            const LUMICE_RepresentativeRayRequest* request,
+                                                            const LUMICE_PathQueryOptions* options,
+                                                            LUMICE_RepresentativeRay** out, char* err_buf,
+                                                            size_t err_size) {
+  return RunWorkspaceQuery(
+      workspace, request, options, out, err_buf, err_size, { sizeof(LUMICE_RepresentativeRayRequest) }, false, [&] {
+        if (request->wavelengths_nm == nullptr && request->wavelength_count > 0) {
+          WriteError(err_buf, err_size, "null_arg: wavelengths_nm is NULL with non-zero count");
+          return LUMICE_ERR_NULL_ARG;
+        }
+        // No deadline and no cancel poll: the query is one single-shot evaluation and declares
+        // no interruptible boundary (representative_ray.hpp).
+        return AnalyzeRepresentativeRay(nullptr, *request, workspace->workspace.get(), out, err_buf, err_size);
       });
 }
 
@@ -2439,6 +2591,107 @@ LUMICE_PathReadStatus LUMICE_PathMapGetPointMass(const LUMICE_PathMap* result, L
     out->method_count = result->method_pointers->size();
   }
   out->pixel = mass.pixel;
+  return LUMICE_PATH_READ_OK;
+}
+
+// ---- the representative ray's readers -------------------------------------------
+
+LUMICE_PathReadStatus LUMICE_RepresentativeRayGetInfo(const LUMICE_RepresentativeRay* result,
+                                                      LUMICE_RepresentativeRayInfo* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const rp::RepresentativeRayData& data = result->result.Data();
+  const rp::RepresentativeRayMetadata& m = data.meta;
+  out->produced = data.Produced() ? 1 : 0;
+  if (!data.Produced()) {
+    out->reason = Text(data.Refusal().reason);
+    out->entry_status = Text(data.Refusal().entry_status);
+    out->chain_failure = Text(data.Refusal().chain_failure);
+    out->geometry_evaluated = data.Refusal().geometry_evaluated ? 1 : 0;
+    out->area_perp_internal = data.Refusal().area_perp_internal;
+    out->area_threshold = data.Refusal().area_threshold;
+  } else {
+    out->area_perp_internal = data.Path().area_perp_internal;
+    out->area_threshold = 0.0;
+    out->entry_measure = data.Path().entry_measure;
+  }
+  out->crystal_id = static_cast<int>(m.crystal_id);
+  out->analytic_api_version = m.analytic_api_version;
+  out->crystal_kind = Text(m.crystal_kind);
+  out->pose = m.pose;
+  out->sun_altitude_deg = m.sun_altitude_deg;
+  out->sun_azimuth_deg = m.sun_azimuth_deg;
+  out->incident_direction = m.incident_direction;
+  out->wavelength_nm = m.wavelength_nm;
+  out->wavelength_source = Text(WavelengthSourceName(m.wavelength_source));
+  out->refractive_index = m.refractive_index;
+  out->faces = m.faces.data();
+  out->face_count = static_cast<int>(m.faces.size());
+  out->shape_count = static_cast<int>(m.shape.size());
+  out->shape_is_nominal = m.shape_is_nominal ? 1 : 0;
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_RepresentativeRayGetContacts(const LUMICE_RepresentativeRay* result,
+                                                          LUMICE_PathRayContacts* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  if (!result->result.Data().Produced()) {
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  }
+  const std::vector<rp::RayContact>& contacts = result->result.Data().Path().contacts;
+  out->contact_count = contacts.size();
+  if (contacts.empty()) {
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  }
+  // The projection runs once; the rows live in the handle, so every read hands out the same
+  // borrowed pointer (the map readers' one-time fill shape).
+  {
+    std::lock_guard<std::mutex> lock(result->cache_mutex);
+    if (result->contacts == nullptr) {
+      auto columns = std::make_unique<LUMICE_PathRayContactColumns>();
+      columns->contacts.resize(contacts.size());
+      for (size_t k = 0; k < contacts.size(); k++) {
+        for (int i = 0; i < 3; i++) {
+          columns->contacts[k].point[i] = contacts[k].point[i];
+        }
+        columns->contacts[k].transmittance = contacts[k].transmittance;
+      }
+      result->contacts = std::move(columns);
+    }
+    out->contacts = result->contacts->contacts.data();
+  }
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_RepresentativeRayGetLegs(const LUMICE_RepresentativeRay* result, LUMICE_PathRayLegs* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  if (!result->result.Data().Produced()) {
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  }
+  const std::vector<rp::RayLeg>& legs = result->result.Data().Path().legs;
+  out->leg_count = legs.size();
+  if (legs.empty()) {
+    return LUMICE_PATH_READ_NOT_AVAILABLE;
+  }
+  {
+    std::lock_guard<std::mutex> lock(result->cache_mutex);
+    if (result->legs == nullptr) {
+      auto columns = std::make_unique<LUMICE_PathRayLegColumns>();
+      columns->legs.resize(legs.size());
+      for (size_t k = 0; k < legs.size(); k++) {
+        for (int i = 0; i < 3; i++) {
+          columns->legs[k].direction[i] = legs[k].direction[i];
+        }
+      }
+      result->legs = std::move(columns);
+    }
+    out->legs = result->legs->legs.data();
+  }
   return LUMICE_PATH_READ_OK;
 }
 
