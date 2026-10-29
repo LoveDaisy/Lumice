@@ -336,9 +336,13 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   const float lower_h = std::max(0.0f, panel_height - upper_h - UiPx(8.0f));
 
   SetNextPanelGeometry(left_w, top, col_w, upper_h);
+  // NoBackground: the deferred pass blits the reprojected sky into this window's rect BEFORE the
+  // ImGui draw data renders (RunSharedFrameRenderPass) — the chrome window's own background fill
+  // would paint straight over it. The same flag ##PreviewPanel carries for the same reason.
   ImGui::Begin("##AnalyzePanorama", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground |
+                   ImGuiWindowFlags_NoBringToFrontOnFocus);
   RenderScenePanorama(window, window_height);
   ImGui::End();
 
