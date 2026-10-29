@@ -1058,6 +1058,67 @@ bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
   return true;
 }
 
+// The owner's chain on the C01 scene (the 22-degree halo fixture this suite shares with the
+// e2e layer): Analyze, pick a row, Exclude it, and Run again — driven through real frames and
+// real clicks, with the two captures a human reads: the list holding the selection, the
+// exclusion, and the rerun's sky on the panorama. The rerun commits the document WITH the
+// filter, so the picture after it is the excluded sky.
+bool C01ChainAnalyzeSelectExcludeRerun(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Select the top row of the list, and keep the evidence of the selection on file.
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value(), false);
+  IM_CHECK_RETV(*gui::g_state.analysis.selected_entry == top_display, false);
+  ctx->LogInfo("[c01 chain] analyzed %zu rows; selected top row '%s'",
+               gui::g_state.analysis_result.payload->entries.size(), top_display.c_str());
+  ctx->SetRef("");
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(SaveWindowPng(ctx, kWindowRef, GuiTestTempPath("analysis_c01_chain_list.png").string()), false);
+
+  // Exclude it: one Out filter on the document, bound to the entry.
+  SetListRef(ctx);
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
+  ctx->MouseMove(ICON_FA_BAN " Exclude this raypath");
+  ctx->Yield(2);
+  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+  ctx->SetRef("");
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);
+  IM_CHECK_RETV(gui::g_state.filters[0].action == 1, false);
+  IM_CHECK_RETV(gui::g_state.layers[0].entries[0].filter_id.has_value(), false);
+  ctx->LogInfo("[c01 chain] excluded '%s' (filters=%d)", top_display.c_str(),
+               static_cast<int>(gui::g_state.filters.size()));
+
+  // Run again, from the top bar, on a finite budget: it renders the excluded sky.
+  gui::g_state.sim.infinite = false;
+  gui::g_state.sim.ray_num_millions = 0.1f;
+  const unsigned long long uploads_before = gui::g_state.texture_upload_count;
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
+  // A dirty document's finished run reads kModified; the real loop's commit tick clears it —
+  // cleared by hand here, the moment the app would (RunAfterAnalysisRenders's reasoning).
+  gui::g_state.dirty = false;
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kDone; }, 60), false);
+  IM_CHECK_RETV(
+      DriveUntil(ctx, [uploads_before] { return gui::g_state.texture_upload_count > uploads_before; }, 10), false);
+  ctx->LogInfo("[c01 chain] rerendered after exclusion: uploads %llu -> %llu", uploads_before,
+               gui::g_state.texture_upload_count);
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(SaveWindowPng(ctx, PanoramaRegionRef(), GuiTestTempPath("analysis_c01_chain_rerender.png").string()),
+                false);
+  return true;
+}
+
 }  // namespace
 
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
@@ -2571,5 +2632,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(IncludeAgainWhileTheImmediateEditorIsOpen(ctx));
     };
+  }
+
+  // M2-5's real-app evidence: the full chain, on file.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "c01_chain_analyze_select_exclude_rerun");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(C01ChainAnalyzeSelectExcludeRerun(ctx)); };
   }
 }
