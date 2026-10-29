@@ -123,12 +123,39 @@ TEST(RepresentativeRay, ProducesTheBoundPathFromAPointQueryPose) {
   for (int i = 0; i < 3; i++) {
     EXPECT_DOUBLE_EQ(path.legs[0].direction[i], incident[i]);
     EXPECT_DOUBLE_EQ(path.legs[2].direction[i], source.detail.outgoing_direction[i]);
-    // The internal leg is the point detail's own body-frame segment, rotated to world.
-    const double expected = source.detail.pose[0 * 3 + i] * source.detail.segment_directions[3 + 0] +
-                            source.detail.pose[1 * 3 + i] * source.detail.segment_directions[3 + 1] +
-                            source.detail.pose[2 * 3 + i] * source.detail.segment_directions[3 + 2];
+    // The internal leg is the point detail's own body-frame segment, rotated to world — here by
+    // the test's own body->world (out_i = sum_j pose[3i+j] v_j, path_chain.hpp BodyToWorld's
+    // convention), not by anything the ray assembly shares.
+    const double expected = source.detail.pose[3 * i + 0] * source.detail.segment_directions[3 + 0] +
+                            source.detail.pose[3 * i + 1] * source.detail.segment_directions[3 + 1] +
+                            source.detail.pose[3 * i + 2] * source.detail.segment_directions[3 + 2];
     EXPECT_DOUBLE_EQ(path.legs[1].direction[i], expected);
   }
+  // The physical anchors in the true world frame — the checks that do not care which way any
+  // helper spells its matrix: the sun side of the entry point is upstream of the incident
+  // direction, and the exit point lies on the outgoing side. A rotation-direction error (R vs
+  // R^T) keeps every same-frame check green and fails exactly here.
+  double entry_dot_incident = 0.0;
+  double exit_dot_outgoing = 0.0;
+  for (int i = 0; i < 3; i++) {
+    entry_dot_incident += path.contacts[0].point[i] * incident[i];
+    exit_dot_outgoing += path.contacts[1].point[i] * path.legs[2].direction[i];
+  }
+  EXPECT_LT(entry_dot_incident, 0.0);
+  EXPECT_GT(exit_dot_outgoing, 0.0);
+  // And the internal leg connects its own contacts: the chord is parallel to it.
+  double chord[3] = { path.contacts[1].point[0] - path.contacts[0].point[0],
+                      path.contacts[1].point[1] - path.contacts[0].point[1],
+                      path.contacts[1].point[2] - path.contacts[0].point[2] };
+  double chord_norm = 0.0;
+  double leg_norm = 0.0;
+  double chord_dot_leg = 0.0;
+  for (int i = 0; i < 3; i++) {
+    chord_norm += chord[i] * chord[i];
+    leg_norm += path.legs[1].direction[i] * path.legs[1].direction[i];
+    chord_dot_leg += chord[i] * path.legs[1].direction[i];
+  }
+  EXPECT_NEAR(chord_dot_leg / (std::sqrt(chord_norm) * std::sqrt(leg_norm)), 1.0, 1e-12);
 
   // The geometry, in the world frame: the entry contact sits on the entry face's plane (the
   // kernel's own containment is pinned by the analytic suite; this pins the frame transform).
@@ -138,9 +165,9 @@ TEST(RepresentativeRay, ProducesTheBoundPathFromAPointQueryPose) {
   ASSERT_GE(entry_slot, 0);
   double n_world[3];
   for (int i = 0; i < 3; i++) {
-    n_world[i] = source.pose[0 * 3 + i] * geometry.table.normal[entry_slot][0] +
-                 source.pose[1 * 3 + i] * geometry.table.normal[entry_slot][1] +
-                 source.pose[2 * 3 + i] * geometry.table.normal[entry_slot][2];
+    n_world[i] = source.pose[3 * i + 0] * geometry.table.normal[entry_slot][0] +
+                 source.pose[3 * i + 1] * geometry.table.normal[entry_slot][1] +
+                 source.pose[3 * i + 2] * geometry.table.normal[entry_slot][2];
   }
   double offset = 0.0;
   for (int v = 0; v < geometry.polygons.corner_cnt[entry_slot]; v++) {

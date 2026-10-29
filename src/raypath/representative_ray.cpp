@@ -128,11 +128,12 @@ Error AnalyzeRepresentativeRay(const ConfigManager& config, const Representative
   values.total_transmission = outputs.fresnel_transmission;
   values.contacts.resize(face_count);
   for (int k = 0; k < face_count; k++) {
-    // Body -> world: the recovered contact sits on the original finite face.
+    // Body -> world (path_chain.hpp BodyToWorld's convention, out_i = sum_j pose[3i+j] v_j): the
+    // recovered contact sits on the original finite face.
     for (int i = 0; i < 3; i++) {
-      values.contacts[k].point[i] = meta.pose[0 * 3 + i] * contacts.contacts[k][0] +
-                                    meta.pose[1 * 3 + i] * contacts.contacts[k][1] +
-                                    meta.pose[2 * 3 + i] * contacts.contacts[k][2];
+      values.contacts[k].point[i] = meta.pose[3 * i + 0] * contacts.contacts[k][0] +
+                                    meta.pose[3 * i + 1] * contacts.contacts[k][1] +
+                                    meta.pose[3 * i + 2] * contacts.contacts[k][2];
     }
     values.contacts[k].transmittance = transmittances[k];
   }
@@ -141,11 +142,11 @@ Error AnalyzeRepresentativeRay(const ConfigManager& config, const Representative
     values.legs[0].direction[i] = meta.incident_direction[i];
   }
   for (int k = 1; k < face_count; k++) {
-    // The internal legs, body -> world from the chain's own body-frame segments.
+    // The internal legs: the chain's body-frame segments, rotated to world the same way.
     for (int i = 0; i < 3; i++) {
-      values.legs[k].direction[i] = meta.pose[0 * 3 + i] * segments[3 * k + 0] +
-                                    meta.pose[1 * 3 + i] * segments[3 * k + 1] +
-                                    meta.pose[2 * 3 + i] * segments[3 * k + 2];
+      values.legs[k].direction[i] = meta.pose[3 * i + 0] * segments[3 * k + 0] +
+                                    meta.pose[3 * i + 1] * segments[3 * k + 1] +
+                                    meta.pose[3 * i + 2] * segments[3 * k + 2];
     }
   }
   for (int i = 0; i < 3; i++) {

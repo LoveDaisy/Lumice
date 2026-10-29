@@ -141,6 +141,98 @@ class FuturePointRequest(C.Structure):
     _fields_ = [("base", PointRequest), ("tail", C.c_ubyte * 32)]
 
 
+class RepresentativeRayRequest(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("crystal_id", C.c_int),
+        ("faces", C.POINTER(C.c_int)), ("face_count", C.c_int),
+        ("layer_face_counts", C.POINTER(C.c_int)), ("layer_count", C.c_int),
+        ("pose", C.POINTER(C.c_double)),
+        ("wavelengths_nm", C.POINTER(C.c_double)), ("wavelength_count", C.c_int),
+    ]
+
+
+class RepresentativeRayInfo(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("produced", C.c_int),
+        ("reason", PathText), ("entry_status", PathText), ("chain_failure", PathText),
+        ("geometry_evaluated", C.c_int),
+        ("area_perp_internal", C.c_double), ("area_threshold", C.c_double), ("entry_measure", C.c_double),
+        ("crystal_id", C.c_int), ("analytic_api_version", C.c_int),
+        ("crystal_kind", PathText),
+        ("pose", C.POINTER(C.c_double)),
+        ("sun_altitude_deg", C.c_double), ("sun_azimuth_deg", C.c_double),
+        ("incident_direction", C.POINTER(C.c_double)),
+        ("wavelength_nm", C.c_double), ("wavelength_source", PathText), ("refractive_index", C.c_double),
+        ("faces", C.POINTER(C.c_int)), ("face_count", C.c_int),
+        ("shape_count", C.c_int), ("shape_is_nominal", C.c_int),
+    ]
+
+
+class RayContact(C.Structure):
+    _fields_ = [("point", C.c_double * 3), ("transmittance", C.c_double)]
+
+
+class RayLeg(C.Structure):
+    _fields_ = [("direction", C.c_double * 3)]
+
+
+class RayContacts(C.Structure):
+    _fields_ = [("struct_size", C.c_size_t), ("contact_count", C.c_size_t), ("contacts", C.POINTER(RayContact))]
+
+
+class RayLegs(C.Structure):
+    _fields_ = [("struct_size", C.c_size_t), ("leg_count", C.c_size_t), ("legs", C.POINTER(RayLeg))]
+
+
+# The point-side structs the ray leg reads a pose from (LUMICE_PathPointInfo / PointComponent /
+# PointSample, field for field).
+class PointInfo(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("schema_version", C.c_int), ("outcome", C.c_int),
+        ("execution", C.c_int), ("crystal_id", C.c_int), ("analytic_api_version", C.c_int),
+        ("crystal_kind", PathText), ("faces", C.POINTER(C.c_int)),
+        ("face_count", C.c_size_t), ("shape_count", C.c_size_t), ("shape_is_nominal", C.c_int),
+        ("upper_wedge_deg", C.c_double), ("lower_wedge_deg", C.c_double),
+        ("sun_altitude_deg", C.c_double), ("sun_azimuth_deg", C.c_double), ("sun_diameter_deg", C.c_double),
+        ("incident_direction", C.c_double * 3),
+        ("target_altitude_deg", C.c_double), ("target_azimuth_deg", C.c_double),
+        ("target_direction", C.c_double * 3), ("target_deviation_deg", C.c_double),
+        ("wavelength_nm", C.c_double), ("wavelength_source", PathText), ("refractive_index", C.c_double),
+        ("sample_count", C.c_int), ("band_half_width_rad", C.c_double), ("cluster_radius_rad", C.c_double),
+        ("distance_threshold_rad", C.c_double),
+        ("warm_seed_count", C.c_int), ("budget_ms", C.c_int), ("interrupted", C.c_int),
+        ("component_count", C.c_size_t), ("incomplete_count", C.c_size_t),
+        ("grid_lat_count", C.c_int), ("grid_lon_count", C.c_int),
+    ]
+
+
+class PointComponent(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("kind", PathText), ("seed", C.c_double * 9),
+        ("forward_status", PathText), ("forward_reason", PathText), ("forward_pose_count", C.c_int),
+        ("backward_status", PathText), ("backward_reason", PathText), ("backward_pose_count", C.c_int),
+        ("point_count", C.c_size_t), ("seed_index", C.c_int),
+        ("arclength_increments", C.POINTER(C.c_double)), ("arclength_count", C.c_size_t),
+        ("integral_available", C.c_int), ("fiber_integral", C.c_double),
+        ("available_points", C.c_int), ("total_points", C.c_int),
+    ]
+
+
+class PointSample(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("pose", C.c_double * 9),
+        ("zenith_deg", C.c_double), ("azimuth_deg", C.c_double), ("roll_deg", C.c_double),
+        ("angles_degenerate", C.c_int), ("sun_in_crystal", C.c_double * 3),
+        ("outgoing_direction", C.c_double * 3), ("residual_norm", C.c_double), ("valid", C.c_int),
+        ("total_transmission", C.c_double), ("entry_measure", C.c_double),
+        ("rho", C.c_double), ("entry_measure_a2", C.c_double),
+        ("jacobian_available", C.c_int), ("jacobian", C.c_double), ("singular_values", C.c_double * 2),
+        ("k_carea", C.c_double), ("factor_product", C.c_double),
+        ("segment_directions", C.POINTER(C.c_double)), ("segment_direction_count", C.c_size_t),
+        ("interface_transmittances", C.POINTER(C.c_double)), ("interface_count", C.c_size_t),
+    ]
+
+
 def _product_library():
     return C.CDLL(str(_product_library_path()))
 
@@ -459,6 +551,170 @@ def _check_map_family_published_extents_and_cross_destroy_reads():
     lib.LUMICE_PathMapDestroy(owned)
 
 
+def _check_representative_ray_published_extents_and_cross_destroy_reads():
+    # The I4 consumer leg: the pose comes from the point query's own output (no fabricated
+    # poses), the ray's readers are read back through ctypes, and the leg directions are checked
+    # against the point sample's own segment directions — then the workspace and scene die and
+    # the ray keeps answering.
+    lib = _product_library()
+    lib.LUMICE_SceneFromJsonFile.argtypes = [C.c_char_p, C.POINTER(C.c_void_p)]
+    lib.LUMICE_SceneFromJsonFile.restype = C.c_int
+    lib.LUMICE_SceneDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_PathWorkspaceCreate.argtypes = [C.c_void_p, C.POINTER(C.c_void_p), C.c_void_p, C.c_size_t]
+    lib.LUMICE_PathWorkspaceCreate.restype = C.c_int
+    lib.LUMICE_PathWorkspaceDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_PathWorkspaceQueryPoint.argtypes = [C.c_void_p, C.c_void_p, C.c_void_p,
+                                                   C.POINTER(C.c_void_p), C.c_void_p, C.c_size_t]
+    lib.LUMICE_PathWorkspaceQueryPoint.restype = C.c_int
+    lib.LUMICE_PathPointGetInfo.argtypes = [C.c_void_p, C.c_void_p]
+    lib.LUMICE_PathPointGetInfo.restype = C.c_int
+    lib.LUMICE_PathPointGetComponent.argtypes = [C.c_void_p, C.c_size_t, C.c_void_p]
+    lib.LUMICE_PathPointGetComponent.restype = C.c_int
+    lib.LUMICE_PathPointGetSample.argtypes = [C.c_void_p, C.c_size_t, C.c_size_t, C.c_void_p]
+    lib.LUMICE_PathPointGetSample.restype = C.c_int
+    lib.LUMICE_SinglePathResultDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_PathWorkspaceQueryRepresentativeRay.argtypes = [C.c_void_p, C.c_void_p, C.c_void_p,
+                                                               C.POINTER(C.c_void_p), C.c_void_p, C.c_size_t]
+    lib.LUMICE_PathWorkspaceQueryRepresentativeRay.restype = C.c_int
+    lib.LUMICE_AnalyzeRepresentativeRay.argtypes = [C.c_void_p, C.c_void_p, C.POINTER(C.c_void_p), C.c_void_p,
+                                                    C.c_size_t]
+    lib.LUMICE_AnalyzeRepresentativeRay.restype = C.c_int
+    lib.LUMICE_RepresentativeRayDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_RepresentativeRayGetInfo.argtypes = [C.c_void_p, C.c_void_p]
+    lib.LUMICE_RepresentativeRayGetInfo.restype = C.c_int
+    lib.LUMICE_RepresentativeRayGetContacts.argtypes = [C.c_void_p, C.c_void_p]
+    lib.LUMICE_RepresentativeRayGetContacts.restype = C.c_int
+    lib.LUMICE_RepresentativeRayGetLegs.argtypes = [C.c_void_p, C.c_void_p]
+    lib.LUMICE_RepresentativeRayGetLegs.restype = C.c_int
+
+    scene = C.c_void_p()
+    config = ROOT / "test" / "e2e" / "configs" / "raypath_analysis_halo_22.json"
+    assert lib.LUMICE_SceneFromJsonFile(str(config).encode(), C.byref(scene)) == 0
+    workspace = C.c_void_p()
+    err = C.create_string_buffer(256)
+    assert lib.LUMICE_PathWorkspaceCreate(scene, C.byref(workspace), err, len(err)) == 0, err.value
+
+    # A valid pose from the discovered fiber: iterate the first component's samples.
+    faces = (C.c_int * 2)(3, 5)
+    counts = (C.c_int * 1)(2)
+    point_request = PointRequest()
+    point_request.struct_size = C.sizeof(PointRequest)
+    point_request.crystal_id = 1
+    point_request.faces = faces
+    point_request.face_count = 2
+    point_request.layer_face_counts = counts
+    point_request.layer_count = 1
+    point_request.target_altitude_deg = 20
+    point_request.target_azimuth_deg = 25
+    point_request.sample_count = 100000
+    point_request.sun_grid_lat_count = 0
+    options = QueryOptions()
+    options.struct_size = C.sizeof(options)
+    options.deadline_ms = 30000
+    options.include_context = 0
+    point = C.c_void_p()
+    assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(point_request), C.byref(options),
+                                              C.byref(point), err, len(err)) == 0, err.value
+    info = PointInfo()
+    info.struct_size = C.sizeof(info)
+    assert lib.LUMICE_PathPointGetInfo(point, C.byref(info)) == 0
+    assert info.component_count >= 1
+    component = PointComponent()
+    component.struct_size = C.sizeof(component)
+    assert lib.LUMICE_PathPointGetComponent(point, 0, C.byref(component)) == 0
+    sample = PointSample()
+    sample.struct_size = C.sizeof(sample)
+    pose = None
+    for index in range(component.point_count):
+        assert lib.LUMICE_PathPointGetSample(point, 0, index, C.byref(sample)) == 0
+        if sample.valid and sample.entry_measure > 0.0:
+            pose = list(sample.pose)
+            break
+    assert pose is not None, "the fiber carried no valid pose"
+    sample_segments = list(C.cast(sample.segment_directions, C.POINTER(C.c_double))[3:6])
+    sample_outgoing = list(sample.outgoing_direction)
+    sample_transmissions = [sample.interface_transmittances[0], sample.interface_transmittances[1]]
+    lib.LUMICE_SinglePathResultDestroy(point)
+
+    # The ray query at that pose, on the workspace face.
+    pose_buf = (C.c_double * 9)(*pose)
+    ray_request = RepresentativeRayRequest()
+    ray_request.struct_size = C.sizeof(RepresentativeRayRequest)
+    ray_request.crystal_id = 1
+    ray_request.faces = faces
+    ray_request.face_count = 2
+    ray_request.layer_face_counts = counts
+    ray_request.layer_count = 1
+    ray_request.pose = pose_buf
+    ray = C.c_void_p()
+    assert lib.LUMICE_PathWorkspaceQueryRepresentativeRay(workspace, C.byref(ray_request), None, C.byref(ray), err,
+                                                          len(err)) == 0, err.value
+
+    ray_info = RepresentativeRayInfo()
+    ray_info.struct_size = C.sizeof(ray_info)
+    assert lib.LUMICE_RepresentativeRayGetInfo(ray, C.byref(ray_info)) == 0
+    assert ray_info.produced == 1
+    assert ray_info.face_count == 2
+    assert ray_info.entry_measure > 0.0
+
+    contacts = RayContacts()
+    contacts.struct_size = C.sizeof(contacts)
+    assert lib.LUMICE_RepresentativeRayGetContacts(ray, C.byref(contacts)) == 0
+    assert contacts.contact_count == 2
+    legs = RayLegs()
+    legs.struct_size = C.sizeof(legs)
+    assert lib.LUMICE_RepresentativeRayGetLegs(ray, C.byref(legs)) == 0
+    assert legs.leg_count == 3
+
+    # The optics, number for number against the point sample: the outgoing leg, the internal
+    # leg (the sample's body-frame segment rotated to world), the interface transmittances.
+    for i in range(3):
+        assert legs.legs[0].direction[i] == ray_info.incident_direction[i]
+        assert legs.legs[2].direction[i] == sample_outgoing[i]
+        expected = sum(pose[3 * i + j] * sample_segments[j] for j in range(3))
+        # The C++ side may contract to FMA, so the independently computed product may differ in
+        # the last bit (the recorded 1-ULP FMA contraction): compare at 1e-14, not bit-equality.
+        assert abs(legs.legs[1].direction[i] - expected) <= 1e-14
+    for k in range(2):
+        assert contacts.contacts[k].transmittance == sample_transmissions[k]
+        assert all(math.isfinite(contacts.contacts[k].point[i]) for i in range(3))
+    # The second read hands out the same borrowed pointers.
+    again = RayContacts()
+    again.struct_size = C.sizeof(again)
+    assert lib.LUMICE_RepresentativeRayGetContacts(ray, C.byref(again)) == 0
+    assert C.cast(again.contacts, C.c_void_p).value == C.cast(contacts.contacts, C.c_void_p).value
+
+    # Cross-destroy: the workspace and scene die; the ray keeps answering.
+    lib.LUMICE_PathWorkspaceDestroy(workspace)
+    lib.LUMICE_SceneDestroy(scene)
+    ray_info2 = RepresentativeRayInfo()
+    ray_info2.struct_size = C.sizeof(ray_info2)
+    assert lib.LUMICE_RepresentativeRayGetInfo(ray, C.byref(ray_info2)) == 0
+    assert ray_info2.produced == 1
+    after = RayLegs()
+    after.struct_size = C.sizeof(after)
+    assert lib.LUMICE_RepresentativeRayGetLegs(ray, C.byref(after)) == 0
+    assert C.cast(after.legs, C.c_void_p).value == C.cast(legs.legs, C.c_void_p).value
+
+    # The standalone form agrees with the workspace form on the same request.
+    standalone_scene = C.c_void_p()
+    assert lib.LUMICE_SceneFromJsonFile(str(config).encode(), C.byref(standalone_scene)) == 0
+    standalone = C.c_void_p()
+    assert lib.LUMICE_AnalyzeRepresentativeRay(standalone_scene, C.byref(ray_request), C.byref(standalone), err,
+                                               len(err)) == 0, err.value
+    lib.LUMICE_SceneDestroy(standalone_scene)
+    standalone_contacts = RayContacts()
+    standalone_contacts.struct_size = C.sizeof(standalone_contacts)
+    assert lib.LUMICE_RepresentativeRayGetContacts(standalone, C.byref(standalone_contacts)) == 0
+    assert standalone_contacts.contact_count == contacts.contact_count
+    for k in range(contacts.contact_count):
+        for i in range(3):
+            assert standalone_contacts.contacts[k].point[i] == contacts.contacts[k].point[i]
+        assert standalone_contacts.contacts[k].transmittance == contacts.contacts[k].transmittance
+    lib.LUMICE_RepresentativeRayDestroy(standalone)
+    lib.LUMICE_RepresentativeRayDestroy(ray)
+
+
 def _run_independent_client(check):
     _product_library_path()
     run = subprocess.run([sys.executable, "-I", str(Path(__file__).resolve()), check],
@@ -482,6 +738,10 @@ def test_other_request_families_accept_published_extents_and_preserve_future_tai
 
 def test_map_family_published_extents_and_cross_destroy_reads():
     _run_independent_client("map")
+
+
+def test_representative_ray_published_extents_and_cross_destroy_reads():
+    _run_independent_client("ray")
 
 
 def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
@@ -779,4 +1039,5 @@ def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
 if __name__ == "__main__":
     {"point": _check_published_request_extents_and_future_tail_keep_borrowed_result_alive,
      "other": _check_other_request_families_accept_published_extents_and_preserve_future_tails,
-     "map": _check_map_family_published_extents_and_cross_destroy_reads}[sys.argv[1]]()
+     "map": _check_map_family_published_extents_and_cross_destroy_reads,
+     "ray": _check_representative_ray_published_extents_and_cross_destroy_reads}[sys.argv[1]]()
