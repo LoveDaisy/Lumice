@@ -29,6 +29,7 @@
 #include <string>
 #include <vector>
 
+#include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table, independent of any document echo
 #include "gui/analyze_overview.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
@@ -110,14 +111,36 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
     EXPECT_EQ(row.direction, std::string("red_inner_blue_outer"));
   }
 
-  // The anchor: the closed form restated from the certificate's apex and the dispersion's own
-  // index echo. The kernel's two-face interior minimum IS the closed form, so the restatement's
-  // only error source is the acos of the apex itself — a 1e-4° band keeps decades of margin.
+  // The anchor (AC6), in two independent legs:
+  //
+  // 1. The corpus leg — pure arithmetic, no engine in the loop. The cases census registers the
+  //    C01 two-face anchor as n=1.307/1.317 → δ=21.612°/22.371° through the same closed form.
+  //    Those registered values reproduce to their own rounding granularity (three decimals of
+  //    degrees), which is what the band below holds — the formula itself is pinned to the
+  //    corpus, so a wrong relation cannot pass by agreeing with a wrong table.
+  {
+    const double deg = 180.0 / M_PI;
+    const double closed_1307 = (2.0 * std::asin(1.307 * 0.5) - M_PI / 3.0) * deg;
+    const double closed_1317 = (2.0 * std::asin(1.317 * 0.5) - M_PI / 3.0) * deg;
+    EXPECT_NEAR(closed_1307, 21.612, 5e-4);
+    EXPECT_NEAR(closed_1317, 22.371, 5e-4);
+  }
+  //
+  // 2. The engine leg — the indices come from the engine's own dispersion table
+  //    (IceRefractiveIndex), NOT from the document's echo, so a wrong table entry cannot
+  //    certify itself: the closed form is restated from the certificate's apex and the table's
+  //    n, and the echo is separately required to equal the table. The kernel's two-face interior
+  //    minimum IS the closed form, so the restatement's only error source is the acos of the
+  //    apex itself — a 1e-4° band keeps decades of margin.
+  const double table_n_red = IceRefractiveIndex::Get(650.0);
+  const double table_n_blue = IceRefractiveIndex::Get(450.0);
+  EXPECT_NEAR(model.dispersion.n_red, table_n_red, 1e-12);
+  EXPECT_NEAR(model.dispersion.n_blue, table_n_blue, 1e-12);
   if (model.dispersion.certificate_available) {
     const double a_rad = model.dispersion.certificate_apex_deg * M_PI / 180.0;
     const double deg = 180.0 / M_PI;
-    const double closed_red = (2.0 * std::asin(model.dispersion.n_red * std::sin(0.5 * a_rad)) - a_rad) * deg;
-    const double closed_blue = (2.0 * std::asin(model.dispersion.n_blue * std::sin(0.5 * a_rad)) - a_rad) * deg;
+    const double closed_red = (2.0 * std::asin(table_n_red * std::sin(0.5 * a_rad)) - a_rad) * deg;
+    const double closed_blue = (2.0 * std::asin(table_n_blue * std::sin(0.5 * a_rad)) - a_rad) * deg;
     EXPECT_NEAR(closed_red, model.dispersion.value_red_deg, 1e-4);
     EXPECT_NEAR(closed_blue, model.dispersion.value_blue_deg, 1e-4);
     // The certificate itself is honest: its cross-check sits inside its own tolerance.
