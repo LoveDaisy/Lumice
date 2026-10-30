@@ -166,7 +166,47 @@ naming a target. The sky point is independent of the scene ROI: clicking the map
 the cone centre or the share list, and pointing the cone on the panorama never moves your sky
 point.
 
-## 8. From the command line
+## 8. The point inspector (sun-direction globe, raypath 3D, point detail)
+
+Where §7 answered "what does this class look like over the whole sky", the three regions fed by
+the **sky point** answer "what is happening at this one direction" — and they keep the three
+spaces apart: the map is directions, the **sun direction globe** is the crystal's poses (the
+directions the sun sits in *the crystal's own frame* — a projection of the pose space, not the
+whole of it), and the **Raypath 3D** region is one concrete light path through one crystal.
+
+**Point detail** (right column, under the class overview) is the anchor. Once a class is
+selected and a sky point is set, the engine is asked about that exact direction in the
+background (a couple-of-seconds tier; the point queues behind the survey and map on the same
+worker, and the block says so while it waits, with a **Cancel point** button). The answer opens
+with the engine's own echo — the target labels and deviation, the member face sequence, the
+crystal, the wavelength and its source, the refractive index, the sampling tier — then the
+components: the closed loops or arcs of crystal poses that send light to your point, each with
+its end statuses and its fiber integral with its coverage (48/48 points, say). Pick a component
+and the other two regions follow it. A **point mass** answer (a direction-invariant path — the
+sun's own image) is presented as the mass it is: position, target separation, the orbit
+integral and its measure support — no fiber, no playback, no forced curve. A refusal names
+itself; a multi-layer chain names `multi_layer_unsupported` and points at the existing retreat
+(keep only this chain in the filters and re-run).
+
+**The sun direction globe** draws the selected component's fiber: each valid sample is one pose
+where the sun sits somewhere in the crystal (the `u` arrow), the polyline walks them in order,
+and the highlighted marker is the current sample. The deviation grid (toggleable) colours the
+sphere by where each sun direction deflected the light — drawn only when the document carries
+the grid, absent otherwise, never painted as zero. Under the disk: the weight bar (each
+sample's ρ·A/a²·T·K — the very quantity the fiber integral sums), the sample slider and
+**Play**. Dragging the slider or playing moves through the poses that already came back in the
+document; the sky point itself never moves — playing changes the pose you are looking at, not
+the direction you asked about.
+
+**Raypath 3D** draws the current sample's real path: the crystal's wireframe (its analysis
+shape — distributions flattened to the values the engine used) with the entry leg, every
+internal reflection and the exit leg from the engine's representative-ray recovery, colour-coded
+with a legend, contacts marked. **World** and **Crystal** are the same physical path in two
+frames (drag orbits, wheel zooms). While the path for a fresh pose is computing the region says
+so; a pose with no legal path names why (the corridor's refusal and its measured area); a
+rank-0 point mass has no path and says that instead of drawing one.
+
+## 9. From the command line
 
 The same analysis is a CLI subcommand, `Lumice analyze`, and it writes the same CSV — byte for byte the file **Export CSV** saves for the same run, produced by one shared formatter rather than two. The config is the scene; the question is asked with options, never read from the config, which is what makes it scriptable and reproducible:
 
@@ -196,7 +236,7 @@ def repeats(name):  # any layer whose face sequence repeats a face consecutively
 clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])]
 ```
 
-## 9. Path feature reports from the CLI
+## 10. Path feature reports from the CLI
 
 The GUI analysis list still ranks complete raypaths in an ROI. It does not yet display the
 new path-feature document or make its records clickable in the preview.
