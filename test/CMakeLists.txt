@@ -652,6 +652,11 @@ if(BUILD_GUI)
     # the window spans derived by hand, the Fit/norm/colour statuses, and the lifecycle over a
     # real executor (742.5).
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_map_view.cpp"
+    # The point view's pure rules and its two pumps (742.6): the request derivation through the
+    # one named conversion, the u-globe projection on hand-derived anchors, the factor lines'
+    # named-unavailable states, and the point/trace lifecycle over a real executor (the C01 halo
+    # point is the live anchor; the trace follows the sample and dies with the point).
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_point_view.cpp"
     # The class overview's model rules (742.4): the identity arm's read-back on a real survey
     # document, and the shared text/state vocabulary.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_overview_model.cpp"

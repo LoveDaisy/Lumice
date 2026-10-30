@@ -924,6 +924,14 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
       g_survey_executor.CancelInFlight(QueryFace::kMap);
       state.analysis.map.cancelled_for_key = true;
     }
+    if (g_survey_executor.QueryOutstanding(QueryFace::kPoint)) {
+      g_survey_executor.CancelInFlight(QueryFace::kPoint);
+      state.analysis.point.cancelled_for_key = true;
+    }
+    if (g_survey_executor.QueryOutstanding(QueryFace::kRay)) {
+      g_survey_executor.CancelInFlight(QueryFace::kRay);
+      state.analysis.trace.cancelled_for_key = true;
+    }
   }
 
   // crystal_mesh_hash reset — as-built: only DoNew clears it (Open branches don't touch it;

@@ -1850,6 +1850,17 @@ struct GuiState {
     MapViewState map_view;
     SkyPointIntent sky_point;
     double map_wavelength_nm = 0.0;
+    // The point face's session state (742.6): the same tier and the same per-reason rules as the
+    // survey/map sessions above, over the sky-point query — intent/key (selection + sky point +
+    // the shared λ), the cancel latch, and the adopted outcome (DROPPED when the key changes: a
+    // newer sky point's answer must not linger under the new target). The ray face's session
+    // rides beside it: one representative-ray query for the CURRENT point sample, keyed by the
+    // point adoption + component + sample (a stale pose's polyline never draws — AC4). The
+    // display cursor (component/sample/playback/camera) is the point view's own state; playback
+    // writes the sample index and nothing else (AC3).
+    PointQuerySession point;
+    RayTraceSession trace;
+    PointViewState point_view;
     // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
     // always due north). The map request's window geometry derives from the sun the ENGINE will
     // evaluate against — the executor's frozen scene, not the live document, which the user may

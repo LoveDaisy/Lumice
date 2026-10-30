@@ -51,6 +51,22 @@ struct MapDeleter {
 };
 using MapHandle = std::shared_ptr<const LUMICE_PathMap>;
 
+// The point face's handle (742.6): a finished LUMICE_SinglePathResult — the engine's typed point
+// document (components, samples, factors, sun grid, or the rank-0 point mass) — as a GUI-owned
+// read-only handle under the same one-holder rule.
+struct PointDeleter {
+  void operator()(LUMICE_SinglePathResult* result) const { LUMICE_SinglePathResultDestroy(result); }
+};
+using PointHandle = std::shared_ptr<const LUMICE_SinglePathResult>;
+
+// The ray face's handle (742.6): a finished LUMICE_RepresentativeRay. Both arms live behind one
+// handle — a refusal is a produced-answer-shaped result whose Info spells `produced` 0 and the
+// named reason — so the session holds one handle either way and the display maps the vocabulary.
+struct RepresentativeRayDeleter {
+  void operator()(LUMICE_RepresentativeRay* ray) const { LUMICE_RepresentativeRayDestroy(ray); }
+};
+using RepresentativeRayHandle = std::shared_ptr<const LUMICE_RepresentativeRay>;
+
 // R6's request id: the analysis generation the selected row belongs to (the payload's
 // snapshot_generation — a server counter that only grows, so generations never repeat) and a
 // serial the executor assigns monotonically as intents are issued. Equality is the whole gate.
@@ -107,13 +123,29 @@ struct SurveyQuerySession {
 enum class SurveyOverviewState { kNoSelection, kWaiting, kCompleted, kRefused, kCancelled };
 SurveyOverviewState SurveyOverviewStateFor(const SurveyQuerySession& survey);
 
-// The two query faces the executor runs. ONE worker runs at most one query of EITHER face (the
-// workspace contract: queries on one workspace never overlap), but each face keeps its own
-// pending slot and its own finished slot: an issue supersedes only its OWN face — a newer map
-// view replaces an older map query and never cancels a standing survey (and vice versa; a
-// cross-face cancel would starve the other face's valid intent, whose pump re-issues only on a
-// key change). Cross-face the queries simply queue on the worker, survey slot first.
-enum class QueryFace { kSurvey, kMap };
+// The two query faces the executor ran through 742.5, and the two 742.6 added. ONE worker runs at
+// most one query of EITHER face (the workspace contract: queries on one workspace never overlap),
+// but each face keeps its own pending slot and its own finished slot: an issue supersedes only its
+// OWN face — a newer map view replaces an older map query and never cancels a standing survey (and
+// vice versa; a cross-face cancel would starve the other face's valid intent, whose pump re-issues
+// only on a key change). Cross-face the queries simply queue on the worker, survey slot first.
+//
+// The 742.6 faces, same split: kPoint is the sky-point query (a new sky point supersedes the
+// older point query, never the standing survey/map), and kRay is the representative-ray query for
+// the CURRENT point sample — a slider or playback step supersedes only the ray face, which is
+// what keeps playback from churning the point query. A ray query costs microseconds (742.2
+// measured 1.9–2.2 µs through the workspace) and carries no cancel in the engine (one synchronous
+// single-shot evaluation, no deadline polling), so its supersession is queue replacement: the
+// worker finishes the running one within a frame and the adoption gate drops the loser.
+enum class QueryFace { kSurvey, kMap, kPoint, kRay };
+
+// The point face's budget/deadline, one spelling for the request body and the executor's query
+// options (742.6's M0 ruling, measured on the corpus at HEAD b7f0aea51: the point document
+// converges within ~1–2 s — C01 is byte-identical at a 1 s and a 15 s budget — while larger
+// budgets only polish past convergence, 13.2 s at the engine's 15 s default). 2 s buys the
+// converged document with headroom and keeps the honest deadline-exceeded partial for genuinely
+// heavier classes.
+inline constexpr int kPointQueryBudgetMs = 2000;
 
 // The map face's session state — the survey session's sibling (same tier, same per-reason
 // rules), with two deltas 742.5 owns. The key adds the view and the wavelength: a view or
@@ -171,6 +203,120 @@ MapQueryState MapQueryStateFor(const MapQuerySession& map);
 // anchored on the sky with a "refining" note — never as the newest answer (AC2).
 bool MapRefiningFor(const MapQuerySession& map);
 
+// ---- The point face's session (742.6) --------------------------------------------------------------
+
+// What an outstanding point intent was issued for: the selection key (the ONE identity chain —
+// the point query binds the selected row's literal face sequence, R1) plus the sky-point intent's
+// travel direction and the reference wavelength. The engine target labels are derived from
+// `target_dir` by the request builder (the map coordinate input's own named conversion), so the
+// key holds the intent verbatim. Equality is exact and bitwise: a moved point, a re-selection or
+// a wavelength change is a new intent.
+struct PointIntentKey {
+  SurveySelectionKey selection;
+  float target_dir[3] = { 0.0f, 0.0f, 0.0f };
+  double wavelength_nm = 0.0;  // 0 = the engine's reference resolution (the map's shared knob)
+  bool operator==(const PointIntentKey& other) const {
+    return selection == other.selection && target_dir[0] == other.target_dir[0] &&
+           target_dir[1] == other.target_dir[1] && target_dir[2] == other.target_dir[2] &&
+           wavelength_nm == other.wavelength_nm;
+  }
+  bool operator!=(const PointIntentKey& other) const { return !(*this == other); }
+};
+
+struct PointQuerySession {
+  // An intent is outstanding: a point query was issued and neither cancelled nor answered yet.
+  bool intent_valid = false;
+  SurveyQueryId intent_id;  // meaningful only while intent_valid
+  // The key the intent was issued for; the pump compares it against the live selection + point.
+  PointIntentKey key;
+  // The point block's cancel latch (the survey's own shape): the intent was withdrawn on
+  // purpose, and the pump must not re-issue while the same key stands. Cleared with the intent.
+  bool cancelled_for_key = false;
+  // The newest gate-passed outcome: a completed point document (either arm — the rank-0 mass is
+  // a completed OUTCOME inside the handle, not an error), or the engine's named refusal text.
+  // DROPPED when the key changes (a newer sky point's answer must not linger under the new
+  // target — AC5's display-side elimination; unlike the map there is no "older picture anchored
+  // on the sky" claim a point result could honestly make), and with the whole session on a
+  // selection change.
+  PointHandle adopted_result;
+  std::string adopted_error;
+};
+
+// The point block's five visible states — the survey vocabulary, over the point session. kNoIntent
+// covers both "no selection" and "no sky point yet" (the block says which); kCompleted covers both
+// outcome arms of a completed document.
+enum class PointQueryState { kNoIntent, kWaiting, kCompleted, kRefused, kCancelled };
+PointQueryState PointQueryStateFor(const PointQuerySession& point);
+
+// ---- The ray face's session (742.6) ----------------------------------------------------------------
+
+// What an outstanding ray intent was issued for: WHICH point document (by its adoption id — a new
+// point adoption invalidates every trace of the older one), and which component/sample within it.
+// The pose and wavelength ride in the issued request; the key is the identity the display gates
+// on (AC4: a trace is drawn only while its key IS the current sample — a stale pose's polyline
+// never masquerades as the answer).
+struct RayTraceKey {
+  SurveyQueryId point_id;
+  int component = 0;
+  int sample = 0;
+  bool operator==(const RayTraceKey& other) const {
+    return point_id == other.point_id && component == other.component && sample == other.sample;
+  }
+  bool operator!=(const RayTraceKey& other) const { return !(*this == other); }
+};
+
+struct RayTraceSession {
+  // An intent is outstanding: a ray query was issued for `key` and has not been adopted or
+  // superseded. The display reads this as the named "computing" state (AC4's 待计算).
+  bool intent_valid = false;
+  SurveyQueryId intent_id;
+  RayTraceKey key;
+  // The Revert row's latch, the other faces' shape (the ray face has no cancel button —
+  // microsecond queries; a withdrawn ray intent comes only from a reset). Cleared with the intent.
+  bool cancelled_for_key = false;
+  // The newest gate-passed outcome: the representative-ray handle (either arm — refusals are
+  // inside the handle's Info), or the engine's named refusal text for a request-level error.
+  // Bounded at one handle: the newest adoption replaces the older, and a key change drops it
+  // (the display shows the named pending state, never the previous pose's polyline).
+  RepresentativeRayHandle adopted_result;
+  std::string adopted_error;
+};
+
+// The point inspector's display state (742.6): which component and which of its valid samples are
+// on show, whether playback is running, the globe's backdrop toggle and the 3D view's frame +
+// orbit camera. Session tier beside the sessions it reads (this header — the analysis struct's
+// per-reason rules clear it with them). It lives here rather than in analyze_point_view.hpp
+// because GuiState holds it by value and that header sits above gui_state.hpp's include chain.
+//
+// The sample index is an index into the SELECTED COMPONENT's VALID samples (the slider's
+// contract, AC3); the readers map it to the stored row. Playback writes the sample index and
+// nothing else — the sky point intent is untouched by construction (AC3).
+struct PointViewState {
+  int component_index = 0;  // the selected component of the adopted document (clamped on adoption)
+  int sample_index = 0;     // index into that component's VALID samples
+  bool playing = false;     // playback advances sample_index; never any other state (AC3)
+  double last_play_step_s = 0.0;
+  bool show_deviation_grid = true;  // the sun grid's backdrop: drawn only when the result carries one
+  bool crystal_frame = false;       // the 3D view's frame: false = world, true = crystal (AC4's one
+                                    // physical state, two views — a display transform, nothing else)
+  float orbit_yaw_deg = 35.0f;      // the 3D orbit camera (drag to rotate, wheel to zoom)
+  float orbit_pitch_deg = 22.0f;
+  float orbit_zoom = 1.0f;  // 1 = the fit-to-content default
+};
+
+// Resets the display cursor for a NEW adoption: the component/sample selection belongs to the
+// document it was read from. Playback stops — a new document must not inherit a running cursor.
+// The toggles and the camera survive: they are the user's display preferences for THIS session,
+// not per-document state. (Defined in analyze_point_view.cpp.)
+void ResetPointViewStateForNewAdoption(PointViewState* view);
+
+// Playback tick: advances sample_index by one valid sample per step while playing, restarting a
+// stale cursor and wrapping at the component's valid count. `now_s` is the frame clock; returns
+// true when the index moved. Pure (defined in analyze_point_view.cpp).
+bool AdvancePointPlayback(PointViewState* view, int valid_count, double now_s);
+// The playback step interval in seconds (one valid sample per step).
+inline constexpr double kPointPlaybackStepSeconds = 0.12;
+
 // ---- The executor ---------------------------------------------------------------------------------
 
 class SurveyExecutor {
@@ -179,15 +325,20 @@ class SurveyExecutor {
   // false, in which case `error` carries the engine's "<reason>: <detail>" text (a refusal the
   // gate may still adopt — it is a legitimate answer for a multi-layer selection); `map_result`
   // is then null too. On the MAP face the same holds with `map_result` carrying the map and
-  // `result` always null. `face` says which query face finished; each face drains its own
-  // outcomes through its own slot.
+  // `result` always null. The 742.6 faces mirror the shape: `point_result` set iff
+  // `face == kPoint && ok` (either outcome arm rides the handle; refusals are the error text),
+  // `ray_result` set iff `face == kRay && ok` (a rep-ray refusal is INSIDE the handle's Info, so
+  // ok implies a handle and the display maps the vocabulary). `face` says which query face
+  // finished; each face drains its own outcomes through its own slot.
   struct Finished {
     SurveyQueryId id;
     QueryFace face = QueryFace::kSurvey;
     bool ok = false;
     std::string error;
     SurveyHandle result;
-    MapHandle map_result;  // set iff face == kMap && ok
+    MapHandle map_result;                // set iff face == kMap && ok
+    PointHandle point_result;            // set iff face == kPoint && ok
+    RepresentativeRayHandle ray_result;  // set iff face == kRay && ok
   };
 
   SurveyExecutor();
@@ -221,6 +372,20 @@ class SurveyExecutor {
   // whatever map is queued; a survey query running or queued is left alone.
   void IssueMapQuery(SurveyQueryId id, const LUMICE_PathMapRequest& request, std::vector<int> faces,
                      std::vector<int> counts, std::vector<double> wavelengths);
+
+  // The point face's issue (742.6): the sky-point query against the current binding.
+  // `faces`/`counts` move into the job (the C struct holds raw pointers). Supersedes any
+  // in-flight POINT and replaces whatever point query is queued; the other faces are untouched.
+  void IssuePointQuery(SurveyQueryId id, const LUMICE_SinglePathRequest& request, std::vector<int> faces,
+                       std::vector<int> counts);
+
+  // The ray face's issue (742.6): one representative-ray query for the current point sample.
+  // Same buffer ownership. The engine's rep-ray face has no cancel and no deadline (one
+  // synchronous single-shot, microseconds — 742.2's measured cost), so the query runs with a
+  // cancel-less options struct and supersession is queue replacement: the running one finishes
+  // within a frame and the adoption gate drops it.
+  void IssueRayQuery(SurveyQueryId id, const LUMICE_RepresentativeRayRequest& request, std::vector<int> faces,
+                     std::vector<int> counts);
 
   // Cancels the in-flight query OF THIS FACE (if it is the one running) and drops its queued
   // job (if any). The other face's query is untouched. The finished outcome of a cancelled query

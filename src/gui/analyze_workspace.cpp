@@ -11,6 +11,7 @@
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
+#include "gui/analyze_point_view.hpp"
 #include "gui/app.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/mono_exposure_scale.hpp"
@@ -349,6 +350,10 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // away neither cancels nor cleans) and their outcomes wait in the single slots for the return.
   PumpSurveyQuery(g_state, g_survey_executor);
   PumpMapQuery(g_state, g_survey_executor, ImGui::GetTime());
+  // The point face's pumps (742.6), in dependency order: the point query first, then the ray
+  // trace it feeds (the ray intent reads the adopted point document and the display cursor).
+  PumpPointQuery(g_state, g_survey_executor);
+  PumpRayTrace(g_state, g_survey_executor);
 
   // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);
   // this region publishes by assignment below.
@@ -434,13 +439,11 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   ImGui::Begin("##AnalyzeLowerRow", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus);
-  // The raypath view (742.5): the adopted class map as a single equal-area disk with pan, zoom,
-  // Fit and the sky-point pick — the placeholder's replacement. The 3D region stays the shell's
-  // honest placeholder (742.6's face).
+  // The raypath view (742.5) and the raypath 3D region (742.6): the adopted class map with the
+  // sky-point pick, and the current sample's crystal + representative path.
   RenderAnalyzeMapRegion(g_state, ImVec2(col_w, ImGui::GetContentRegionAvail().y));
   ImGui::SameLine();
-  PlaceholderRegion("##AnalyzeRaypath3D", "Raypath 3D",
-                    "Not wired up yet. Will show the selected path's crystal and its 3D geometry.", ImVec2(0, 0));
+  RenderAnalyzeRay3DRegion(g_state, ImVec2(0, 0));
   ImGui::End();
 
   // ---- Right column: sun-direction globe above the selection details ----
@@ -451,9 +454,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
   {
     const float globe_h = panel_height * 0.4f;
-    PlaceholderRegion("##AnalyzeSunGlobe", "Sun direction globe",
-                      "Not wired up yet. Will show the sun direction in the selected crystal's frame.",
-                      ImVec2(0, globe_h));
+    RenderAnalyzeSunGlobeRegion(g_state, ImVec2(0, globe_h));
     ImGui::Spacing();
     if (const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(g_state);
         identity.has_value()) {
@@ -461,7 +462,8 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
       // crystal, the layer/face shape — and, for a multi-layer class, the survey face's
       // documented answer, named. Below them, the survey query's four visible states (R7): the
       // engine-answered digest when one was adopted, the named refusal where the engine says
-      // no, waiting and cancelled spelled as such.
+      // no, waiting and cancelled spelled as such. The point-level block (742.6) follows as the
+      // second level of the two-level information contract (D6).
       ImGui::BeginChild("##AnalyzeDetails", ImVec2(0, 0), ImGuiChildFlags_Borders);
       ImGui::TextUnformatted("Selection details");
       ImGui::BulletText("%s", g_state.analysis.selected_entry->c_str());
@@ -474,6 +476,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
       }
       ImGui::Separator();
       RenderSurveyOverview(*identity);
+      RenderPointDetailsBlock(g_state, *identity);
       ImGui::EndChild();
     } else {
       PlaceholderRegion("##AnalyzeDetails", "Selection details",
