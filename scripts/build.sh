@@ -76,11 +76,11 @@ build() {
         # contract in the diff where a reviewer sees it, and it survives someone changing that
         # default. Keep it AFTER --filter — check_policies.py's gui-test-suite-args-sync reads the
         # filter value with a regex anchored on `--fixed-dt --filter "..."`.
-        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,-map_region_shows_the_class_map_and_takes_the_pick" --no-user-config
+        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,-map_region_shows_the_class_map_and_takes_the_pick,-point_inspector_shows_the_point_fiber_and_the_path" --no-user-config
         ret=$?
         if [[ $ret == 0 ]]; then
           echo "Running GUI real-timing tests (perf + wall-clock-dependent, isolated)..."
-          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu,survey_overview_shows_dispersion_and_profile,map_region_shows_the_class_map_and_takes_the_pick" --no-user-config
+          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu,survey_overview_shows_dispersion_and_profile,map_region_shows_the_class_map_and_takes_the_pick,point_inspector_shows_the_point_fiber_and_the_path" --no-user-config
           ret=$?
         fi
       else

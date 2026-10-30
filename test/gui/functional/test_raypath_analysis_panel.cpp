@@ -26,6 +26,7 @@
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
+#include "gui/analyze_point_view.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_constants.hpp"
@@ -1348,6 +1349,197 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_map_region_full_sky.png").string()),
                 false);
+  return true;
+}
+
+// The point inspector (742.6, AC7): the real chain from the map pick through the point document,
+// the component, the slider/playback, the factors and the 3D path — on the fully random prism,
+// whose 22-degree halo fiber the (42, 0) target sits on (the M0 probe's verified anchor for this
+// scene geometry: one closed component, ~48 samples). Real-timing pool: the point queues behind
+// the selection's survey on the one worker, the same wall-clock shape as the map leg above.
+bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  // No sky point yet: the point block asks for one and nothing is outstanding (the honest
+  // no-intent state, in the real app's frame).
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+
+  // The real pick on the map canvas: whatever sky position the refined view centres on, the pick
+  // must arm the point intent (the pick-to-point chain through the real mouse path).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
+                    },
+                    60),
+                false);
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kNoIntent, false);
+
+  // The verified on-fiber anchor (the pick above proved the mouse path; this state write pins the
+  // document the rest of the chain asserts on — the 742.5 leg's "the same write the button
+  // performs" shape): (42, 0) sits on this scene's halo fiber.
+  {
+    const double pos[3] = { std::cos(42.0f * lumice::kDeg2Rad), 0.0, std::sin(42.0f * lumice::kDeg2Rad) };
+    for (int k = 0; k < 3; ++k) {
+      gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+    }
+  }
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  const gui::PointQuerySession& point = gui::g_state.analysis.point;
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+  IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+  IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+  IM_CHECK_RETV(info.execution == LUMICE_PATH_OUTCOME_COMPLETED, false);
+  // The target echo names the anchor's own labels (the one named conversion, verified on the
+  // engine's echo — not the request's copy).
+  IM_CHECK_RETV(std::fabs(info.target_altitude_deg - 42.0) < 1e-3, false);
+  std::vector<gui::PointComponentRow> rows;
+  const int components = gui::PointComponentRows(*point.adopted_result, &rows);
+  IM_CHECK_RETV(components >= 1, false);
+  const int valid_count = gui::PointValidSampleCount(*point.adopted_result, 0);
+  IM_CHECK_RETV(valid_count > 1, false);
+  ctx->LogInfo("[point view] components %d, samples %d, target (alt %.2f, az %.2f, dev %.2f), lambda %.1f", components,
+               valid_count, info.target_altitude_deg, info.target_azimuth_deg, info.target_deviation_deg,
+               info.wavelength_nm);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_point_detail.png").string()),
+                false);
+
+  // The fiber on the globe and the trace in the 3D region follow the cursor: step the slider to
+  // the second valid sample (the slider drag path is the fixed-dt leg's; this leg pins the chain)
+  // and the trace re-keys — the drawn polyline's key IS the current sample (AC4).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      return t.adopted_result != nullptr && t.intent_valid &&
+                             t.key.sample ==
+                                 gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 0);
+                    },
+                    30),
+                false);
+  gui::g_state.analysis.point_view.sample_index = 1;
+  gui::g_state.analysis.point_view.playing = false;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      if (!t.adopted_result || !t.intent_valid) {
+                        return false;
+                      }
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 1);
+                      return t.key.sample == stored && gui::RayTraceDisplayStateFor(t, { t.key.point_id, 0, stored }) ==
+                                                           gui::RayTraceDisplayState::kDrawn;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_raypath_3d.png").string()), false);
+
+  // Playback writes the sample index and NOTHING else (AC3, pinned on the real app's frame loop):
+  // the sky point and the ROI state are bitwise what they were, the selection untouched.
+  const float sky_before[3] = { gui::g_state.analysis.sky_point.dir[0], gui::g_state.analysis.sky_point.dir[1],
+                                gui::g_state.analysis.sky_point.dir[2] };
+  const int roi_before = gui::g_state.analysis.roi_mode;
+  const std::string selected_before_str = gui::g_state.analysis.selected_entry.value_or("");
+  gui::g_state.analysis.point_view.playing = true;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::g_state.analysis.point_view.sample_index != 1;  // the cursor moved (wrap included)
+                    },
+                    30),
+                false);
+  gui::g_state.analysis.point_view.playing = false;
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.dir[0] == sky_before[0] &&
+                    gui::g_state.analysis.sky_point.dir[1] == sky_before[1] &&
+                    gui::g_state.analysis.sky_point.dir[2] == sky_before[2],
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.roi_mode == roi_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before_str, false);
+  ctx->LogInfo("[point view] playback stepped to sample %d; sky point and ROI untouched",
+               gui::g_state.analysis.point_view.sample_index);
+  return true;
+}
+
+// The rank-0 arm (AC5) on the corpus plate scene (C14's shape: the horizontal plate whose 1-2
+// chain sends the sun's image straight through — the point at the sun itself is a point mass,
+// not a fiber). Fixed-dt pool: the mass arm answers in milliseconds.
+bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
+  static const char* const kPlateJson = R"({
+    "crystal": [ { "id": 1, "type": "prism",
+                   "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                   "axis": { "zenith": 0, "azimuth": {"type": "uniform", "mean": 0, "std": 360}, "roll": 0 } } ],
+    "filter": [],
+    "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
+                                 "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
+               "ray_num": 1000, "max_hits": 7,
+               "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+    "render": []
+  })";
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kPlateJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // The plate scene's basal row: the chain spelled 1-2 in the list (the sun's direct image).
+  SetListRef(ctx);
+  ctx->ItemClick("**/1-2");
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::SelectedClassIdentityFor(gui::g_state).has_value(); }, 10), false);
+  // The point at the sun's own position: rank 0 — the direction-identity path.
+  {
+    const double pos[3] = { std::cos(20.0f * lumice::kDeg2Rad), 0.0, std::sin(20.0f * lumice::kDeg2Rad) };
+    gui::g_state.analysis.sky_point.valid = true;
+    for (int k = 0; k < 3; ++k) {
+      gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+    }
+  }
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          30),
+      false);
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+                false);
+  IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_MASS, false);
+  // No fiber is forced: no component rows, no ray intent, the trace stays hidden (AC5).
+  std::vector<gui::PointComponentRow> rows;
+  IM_CHECK_RETV(gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &rows) == 0, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  LUMICE_PathPointMass mass{};
+  mass.struct_size = sizeof(mass);
+  IM_CHECK_RETV(LUMICE_PathPointGetMass(gui::g_state.analysis.point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK,
+                false);
+  // The mass IS the sun's image: the separation is the float intent roundtrip's own error (the
+  // GUI's sky-point dir is float; the CLI's double path measures 4.5e-12 on the same scene).
+  IM_CHECK_RETV(std::fabs(mass.target_separation_deg) < 1e-3, false);
+  ctx->LogInfo("[point view] rank-0 mass at (alt %.3f, az %.3f), separation %.2e deg", mass.altitude_deg,
+               mass.azimuth_deg, mass.target_separation_deg);
+  ctx->LogInfo("[point view] rank-0 mass at (alt %.3f, az %.3f), separation %.2e deg", mass.altitude_deg,
+               mass.azimuth_deg, mass.target_separation_deg);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_point_mass.png").string()), false);
   return true;
 }
 
@@ -3188,6 +3380,17 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_region_shows_the_class_map_and_takes_the_pick");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MapRegionShowsTheClassMapAndTakesThePick(ctx)); };
+  }
+  // The point inspector (742.6): the real chain pick → point → component → slider/trace →
+  // playback invariance. Real-timing pool: the point queues behind the selection's survey on the
+  // one worker (the mass arm below is the fixed-dt pool's — it answers in milliseconds).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "point_inspector_shows_the_point_fiber_and_the_path");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PointInspectorShowsThePointFiberAndThePath(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "point_mass_arm_is_honest_and_forces_no_fiber");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PointMassArmIsHonestAndForcesNoFiber(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_and_render_run_are_orthogonal");
