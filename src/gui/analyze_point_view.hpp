@@ -45,6 +45,7 @@ namespace lumice::gui {
 
 struct GuiState;  // gui/gui_state.hpp — the pumps and renderers take it; this header stays off
                   // its include chain so GuiState can hold the types below.
+struct CrystalConfig;
 
 // ---- Request-side constants (the M0 tier; the reasoning lives next to the executor's deadline) ----
 
@@ -102,6 +103,11 @@ int PointComponentRows(const LUMICE_SinglePathResult& result, std::vector<PointC
 // range). The samples are read in the component's own arclength order — no reordering here.
 int PointValidSampleCount(const LUMICE_SinglePathResult& result, int component);
 int PointValidSampleIndexAt(const LUMICE_SinglePathResult& result, int component, int valid_position);
+
+// The same map in ONE pass — out[v] is the stored row index of the v-th valid sample — for the
+// render paths that used to pay a full scan per sample per frame. The document is immutable
+// behind the adoption gate, so a per-frame build is consistent; anything hotter caches it above.
+std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result, int component);
 
 // The per-sample factor lines (R4's vocabulary): the current sample's orientation angles, rho,
 // A_P and A/a^2, T (total), J with its named-unavailable state, K = 1/(J+eps), the product
@@ -205,6 +211,13 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size);
 // trace polyline, the world/crystal frame switch, the orbit camera, and the named
 // computing/refused/empty states.
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size);
+
+// The crystal config the frozen scene binding was built from, by the snapshot's own pool slot —
+// the 3D region's mesh source: the geometry the trace ran against, so a post-Analyze edit of the
+// live document cannot rebuild the mesh into a shape the polyline no longer lies inside (AC4's
+// one physical state). Null when nothing was analyzed or the slot is out of the snapshot's
+// range — the caller renders the honest note instead of a wrong mesh.
+const CrystalConfig* FrozenCrystalForPool(const GuiState& state, int pool);
 
 }  // namespace lumice::gui
 

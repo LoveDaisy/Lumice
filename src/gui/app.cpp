@@ -1840,9 +1840,12 @@ bool DoAnalyze() {
   // new query can bind to the old one either.
   g_state.analysis.survey = SurveyQuerySession{};
   // The sun the scene being frozen carries (BuildCommitSceneOrWarn just read it from this same
-  // state): the map window geometry's anchor of last resort — same source as the binding.
+  // state): the map window geometry's anchor of last resort — same source as the binding. The
+  // crystal configs ride along for the same reason: the point inspector's 3D mesh is the
+  // geometry the trace ran against, not the live document's.
   g_state.analysis.frozen_sun_valid = true;
   g_state.analysis.frozen_sun_altitude = g_state.sun.altitude;
+  g_state.analysis.frozen_crystals = g_state.crystals;
   g_survey_executor.SetScene(std::move(scene));
   // What this run was asked about, for the "centre has moved" hint: the request's own copy, so
   // it is the value the server received and not a re-read of the session field.

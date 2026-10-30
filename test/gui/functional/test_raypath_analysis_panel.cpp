@@ -1537,8 +1537,6 @@ bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(std::fabs(mass.target_separation_deg) < 1e-3, false);
   ctx->LogInfo("[point view] rank-0 mass at (alt %.3f, az %.3f), separation %.2e deg", mass.altitude_deg,
                mass.azimuth_deg, mass.target_separation_deg);
-  ctx->LogInfo("[point view] rank-0 mass at (alt %.3f, az %.3f), separation %.2e deg", mass.altitude_deg,
-               mass.azimuth_deg, mass.target_separation_deg);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_point_mass.png").string()), false);
   return true;
 }

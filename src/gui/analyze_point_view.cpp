@@ -231,6 +231,31 @@ int PointValidSampleIndexAt(const LUMICE_SinglePathResult& result, int component
   return -1;
 }
 
+std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result, int component) {
+  std::vector<int> indices;
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathPointGetInfo(&result, &info) != LUMICE_PATH_READ_OK || info.outcome != LUMICE_PATH_POINT_DISCOVERED ||
+      component < 0 || component >= static_cast<int>(info.component_count)) {
+    return indices;
+  }
+  LUMICE_PathPointComponent head{};
+  head.struct_size = sizeof(head);
+  if (LUMICE_PathPointGetComponent(&result, static_cast<size_t>(component), &head) != LUMICE_PATH_READ_OK) {
+    return indices;
+  }
+  indices.reserve(head.point_count);
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  for (size_t i = 0; i < head.point_count; ++i) {
+    if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), i, &sample) == LUMICE_PATH_READ_OK &&
+        sample.valid != 0) {
+      indices.push_back(static_cast<int>(i));
+    }
+  }
+  return indices;
+}
+
 std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample) {
   std::vector<std::string> lines;
   char buf[192];
@@ -332,8 +357,9 @@ bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component,
   for (int k = 0; k < 3; ++k) {
     out->centre[k] = sample.sun_in_crystal[k];
   }
-  const double ref[3] = { 0.0, 0.0, 1.0 };
-  const double* reference = std::abs(out->centre[2]) < 0.999 ? ref : (const double[3]){ 1.0, 0.0, 0.0 };
+  static constexpr double kRefZ[3] = { 0.0, 0.0, 1.0 };
+  static constexpr double kRefX[3] = { 1.0, 0.0, 0.0 };
+  const double* reference = std::abs(out->centre[2]) < 0.999 ? kRefZ : kRefX;
   double up[3];
   const double dot = out->centre[0] * reference[0] + out->centre[1] * reference[1] + out->centre[2] * reference[2];
   for (int k = 0; k < 3; ++k) {
@@ -648,21 +674,20 @@ struct CurrentSample {
   LUMICE_PathPointSample sample{};
 };
 
-std::optional<CurrentSample> CurrentSampleOf(const LUMICE_SinglePathResult& result, const PointViewState& view) {
+// The sample the display currently points at: (component, stored index, the sample itself, the
+// component's valid count). nullopt outside the discovered arm with a usable selection. Takes
+// the component's valid-index map (CollectValidSampleIndices) — built once per renderer frame.
+std::optional<CurrentSample> CurrentSampleOf(const LUMICE_SinglePathResult& result, const PointViewState& view,
+                                             const std::vector<int>& valid_indices) {
   const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(result);
-  if (!info.has_value() || info->outcome != LUMICE_PATH_POINT_DISCOVERED || info->component_count == 0) {
+  if (!info.has_value() || info->outcome != LUMICE_PATH_POINT_DISCOVERED || info->component_count == 0 ||
+      valid_indices.empty()) {
     return std::nullopt;
   }
   CurrentSample out;
   out.component = std::clamp(view.component_index, 0, static_cast<int>(info->component_count) - 1);
-  out.valid_count = PointValidSampleCount(result, out.component);
-  if (out.valid_count == 0) {
-    return std::nullopt;
-  }
-  out.stored = PointValidSampleIndexAt(result, out.component, std::clamp(view.sample_index, 0, out.valid_count - 1));
-  if (out.stored < 0) {
-    return std::nullopt;
-  }
+  out.valid_count = static_cast<int>(valid_indices.size());
+  out.stored = valid_indices[static_cast<size_t>(std::clamp(view.sample_index, 0, out.valid_count - 1))];
   out.sample.struct_size = sizeof(out.sample);
   if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(out.component), static_cast<size_t>(out.stored),
                                 &out.sample) != LUMICE_PATH_READ_OK) {
@@ -672,8 +697,11 @@ std::optional<CurrentSample> CurrentSampleOf(const LUMICE_SinglePathResult& resu
 }
 
 // The mesh cache: one crystal's wireframe, rebuilt when the pool slot or the config's param hash
-// moves. The mesh is TRUE-SCALE crystal frame — no AABB normalization, no axis swap: the trace's
-// contacts are true-scale world/crystal quantities and the two must overlay (AC4).
+// moves. LUMICE_CrystalMesh owns its storage by value (lumice_editor.h: fixed-size caller
+// arrays, no destroy) — the by-value cache is the whole ownership story; overwriting sheds the
+// old copy with the struct. The mesh is TRUE-SCALE crystal frame — no AABB normalization, no
+// axis swap: the trace's contacts are true-scale world/crystal quantities and the two must
+// overlay (AC4).
 struct CachedCrystalMesh {
   int pool = -1;
   int hash = 0;
@@ -714,18 +742,27 @@ bool BuildPointCrystalMesh(const CrystalConfig& cr, LUMICE_CrystalMesh* out) {
 }
 
 // The orbit camera's screen basis: yaw about the display frame's vertical (+z), pitch from the
-// horizontal, orthographic. Pitch clamps short of the pole so the right axis never degenerates.
+// horizontal, orthographic. Pitch clamps short of the pole; the right axis's own singularity is
+// handled at the normalization below.
 void OrbitBasis(float yaw_deg, float pitch_deg, double right[3], double up[3]) {
   const double yaw = static_cast<double>(yaw_deg) * (3.14159265358979323846 / 180.0);
   const double pitch = std::clamp(static_cast<double>(pitch_deg), -88.0, 88.0) * (3.14159265358979323846 / 180.0);
   const double fwd[3] = { std::cos(pitch) * std::cos(yaw), std::sin(pitch), std::cos(pitch) * std::sin(yaw) };
-  // right = fwd x worldUp (+z the crystal's c-axis display convention), up = right x fwd.
+  // right = fwd x worldUp (+z the crystal's c-axis display convention), up = right x fwd. The
+  // normalizer's floor keeps the horizontal look (pitch 0 at yaw ±90°, fwd parallel to +z — the
+  // one real singularity of this cross product) defined instead of trusting the double-rounded
+  // cosine to stay off zero.
   right[0] = fwd[1] * 1.0 - fwd[2] * 0.0;
   right[1] = fwd[2] * 0.0 - fwd[0] * 1.0;
   right[2] = 0.0;
   const double n = std::sqrt(right[0] * right[0] + right[1] * right[1]);
-  right[0] /= n;
-  right[1] /= n;
+  if (n < 1e-12) {
+    right[0] = 1.0;
+    right[1] = 0.0;
+  } else {
+    right[0] /= n;
+    right[1] /= n;
+  }
   up[0] = right[1] * fwd[2] - right[2] * fwd[1];
   up[1] = right[2] * fwd[0] - right[0] * fwd[2];
   up[2] = right[0] * fwd[1] - right[1] * fwd[0];
@@ -749,6 +786,13 @@ ImU32 SegmentColor(int kind, float alpha) {
 }
 
 }  // namespace
+
+const CrystalConfig* FrozenCrystalForPool(const GuiState& state, int pool) {
+  if (pool < 0 || pool >= static_cast<int>(state.analysis.frozen_crystals.size())) {
+    return nullptr;
+  }
+  return &state.analysis.frozen_crystals[static_cast<size_t>(pool)];
+}
 
 // ---- The sun-direction globe -------------------------------------------------------------------------
 
@@ -858,7 +902,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     }
   }
   const int component = std::clamp(view.component_index, 0, component_total - 1);
-  const int valid_count = PointValidSampleCount(*point.adopted_result, component);
+  // The frame's one valid-index scan: the fiber, the weight bar and the cursor reads all share it.
+  const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
+  const int valid_count = static_cast<int>(valid_indices.size());
   if (valid_count == 0) {
     ImGui::TextDisabled("This component carries no valid sample — nothing to project.");
     ImGui::EndChild();
@@ -922,7 +968,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   // broken where an invalid sample sits (AC2: this component's own valid samples, nothing joined).
   if (have_projector) {
     std::vector<ImVec2> run;
-    int run_start = -1;
     auto flush_run = [&]() {
       if (run.size() >= 2) {
         dl->AddPolyline(run.data(), static_cast<int>(run.size()), ImGui::ColorConvertFloat4ToU32(AccentColor()), 0,
@@ -932,27 +977,16 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     };
     LUMICE_PathPointSample probe{};
     probe.struct_size = sizeof(probe);
-    const int total_points = [this_result = std::cref(*point.adopted_result), component] {
-      LUMICE_PathPointComponent head{};
-      head.struct_size = sizeof(head);
-      if (LUMICE_PathPointGetComponent(&this_result.get(), static_cast<size_t>(component), &head) !=
-          LUMICE_PATH_READ_OK) {
-        return 0;
-      }
-      return static_cast<int>(head.point_count);
-    }();
-    for (int i = 0; i < total_points; ++i) {
-      if (LUMICE_PathPointGetSample(point.adopted_result.get(), static_cast<size_t>(component), static_cast<size_t>(i),
-                                    &probe) != LUMICE_PATH_READ_OK ||
-          probe.valid == 0) {
+    for (size_t v = 0; v < valid_indices.size(); ++v) {
+      // A gap in stored indices means an invalid sample sat between: the run breaks there.
+      if (v > 0 && valid_indices[v] != valid_indices[v - 1] + 1) {
         flush_run();
-        run_start = -1;
+      }
+      if (LUMICE_PathPointGetSample(point.adopted_result.get(), static_cast<size_t>(component),
+                                    static_cast<size_t>(valid_indices[v]), &probe) != LUMICE_PATH_READ_OK) {
+        flush_run();
         continue;
       }
-      if (run_start >= 0 && i != run_start + 1) {
-        flush_run();  // a gap in stored indices (should not happen — validity is the only break)
-      }
-      run_start = i;
       double gx = 0.0;
       double gy = 0.0;
       SunGlobeProject(projector, probe.sun_in_crystal, &gx, &gy);
@@ -964,7 +998,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   // The current sample marker (inside the disk; outside means a stale projector — the marker
   // simply sits at the rim, still honest about the direction it names).
   if (have_projector) {
-    if (const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view);
+    if (const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
         current.has_value()) {
       double gx = 0.0;
       double gy = 0.0;
@@ -989,9 +1023,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     LUMICE_PathPointSample probe{};
     probe.struct_size = sizeof(probe);
     for (int v = 0; v < valid_count; ++v) {
-      const int stored = PointValidSampleIndexAt(*point.adopted_result, component, v);
-      if (stored < 0 || LUMICE_PathPointGetSample(point.adopted_result.get(), static_cast<size_t>(component),
-                                                  static_cast<size_t>(stored), &probe) != LUMICE_PATH_READ_OK) {
+      const int stored = valid_indices[static_cast<size_t>(v)];
+      if (LUMICE_PathPointGetSample(point.adopted_result.get(), static_cast<size_t>(component),
+                                    static_cast<size_t>(stored), &probe) != LUMICE_PATH_READ_OK) {
         continue;
       }
       const double w = probe.factor_product;
@@ -1040,7 +1074,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     view.playing = !view.playing;
     view.last_play_step_s = ImGui::GetTime();
   }
-  if (const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view); current.has_value()) {
+  if (const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
+      current.has_value()) {
     ImGui::SameLine();
     ImGui::TextDisabled("sample %d/%d — zenith %.1f, az %.1f, roll %.1f%s",
                         std::clamp(view.sample_index, 0, valid_count - 1) + 1, valid_count, current->sample.zenith_deg,
@@ -1112,7 +1147,9 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     return;
   }
 
-  const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view);
+  const std::vector<int> valid_indices = CollectValidSampleIndices(
+      *point.adopted_result, std::clamp(view.component_index, 0, static_cast<int>(info->component_count) - 1));
+  const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
   if (!current.has_value()) {
     ImGui::TextDisabled("No valid sample on show — nothing to draw.");
     ImGui::EndChild();
@@ -1157,24 +1194,30 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       break;
   }
 
-  // The crystal's mesh, in the analysis geometry's nominal caliber, true scale. The pool slot
-  // comes from the snapshot's own core->pool map (the list's freshness rule — the numbers do not
-  // move under a stale banner).
+  // The crystal's mesh: the FROZEN binding's config (captured at DoAnalyze), in the analysis
+  // geometry's nominal caliber, true scale. The pool slot comes from the snapshot's own
+  // core->pool map; the mesh source is the frozen copy, so an edit of the live document after
+  // Analyze cannot rebuild the mesh into a shape the trace no longer lies inside (AC4).
   const std::map<int, int> core_to_pool = AnalysisCoreToPoolMap(state);
   const auto pool_it = core_to_pool.find(info->crystal_id);
-  if (pool_it == core_to_pool.end() || pool_it->second < 0 ||
-      pool_it->second >= static_cast<int>(state.crystals.size())) {
-    ImGui::TextDisabled("The analyzed crystal is not in the current document — no mesh to draw it with.");
+  if (pool_it == core_to_pool.end() || pool_it->second < 0) {
+    ImGui::TextDisabled("The analyzed crystal is not in the snapshot's pool map — no mesh to draw it with.");
     ImGui::EndChild();
     return;
   }
   const int pool = pool_it->second;
+  const CrystalConfig* frozen = FrozenCrystalForPool(state, pool);
+  if (frozen == nullptr) {
+    ImGui::TextDisabled("The frozen binding carries no crystal for this pool slot — no mesh to draw it with.");
+    ImGui::EndChild();
+    return;
+  }
   CachedCrystalMesh& cache = PointMeshCache();
-  const int hash = CrystalParamHash(state.crystals[static_cast<size_t>(pool)]);
+  const int hash = CrystalParamHash(*frozen);
   if (!cache.valid || cache.pool != pool || cache.hash != hash) {
     cache.pool = pool;
     cache.hash = hash;
-    cache.valid = BuildPointCrystalMesh(state.crystals[static_cast<size_t>(pool)], &cache.mesh);
+    cache.valid = BuildPointCrystalMesh(*frozen, &cache.mesh);
   }
   if (!cache.valid || cache.mesh.vertex_count <= 0) {
     ImGui::TextDisabled("The crystal mesh came back empty for this configuration.");
@@ -1319,9 +1362,11 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     point_to_display(p1, d1);
     dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
   }
-  // The contacts: small markers on the faces the sequence touches.
-  for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
-    const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
+  // The contacts: one marker per REAL contact of the recovery (polyline index 2j+1 — the
+  // entry/exit extension endpoints are this TU's display synthesis, not faces, and get none).
+  for (size_t c = 0; c * 2 + 1 < line.points.size() / 3; ++c) {
+    const size_t idx = (c * 2 + 1) * 3;
+    const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
     float d[3];
     point_to_display(p, d);
     dl->AddCircle(project(d), UiPx(2.5f), IM_COL32(240, 240, 240, 190), 0, 1.0f);
@@ -1348,11 +1393,11 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   ImGui::TextDisabled("exit");
   ImGui::SameLine();
   dl->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
-  ImGui::SameLine();
-  ImGui::TextDisabled(
-      "face transmittance: entry %.3f, exit %.3f", current->sample.interface_transmittances[0],
-      current->sample
-          .interface_transmittances[current->sample.interface_count > 1 ? current->sample.interface_count - 1 : 0]);
+  if (current->sample.interface_count >= 2) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("face transmittance: entry %.3f, exit %.3f", current->sample.interface_transmittances[0],
+                        current->sample.interface_transmittances[current->sample.interface_count - 1]);
+  }
   ImGui::EndChild();
 }
 
@@ -1479,7 +1524,14 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
     return;
   }
 
-  // The component list (AC2: rows with kind, ends, coverage, integral; selectable).
+  // The component list (AC2: rows with kind, ends, coverage, integral; selectable). The render
+  // cap names itself when a document carries more components than the list shows.
+  LUMICE_PathPointInfo count_info{};
+  count_info.struct_size = sizeof(count_info);
+  const size_t true_component_count =
+      LUMICE_PathPointGetInfo(point.adopted_result.get(), &count_info) == LUMICE_PATH_READ_OK ?
+          count_info.component_count :
+          component_total;
   ImGui::TextUnformatted("Components (select one):");
   for (int i = 0; i < component_total; ++i) {
     const PointComponentRow& row = rows[static_cast<size_t>(i)];
@@ -1504,11 +1556,16 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
     } else {
       ImGui::TextWrapped("fiber integral: unavailable (%d/%d points usable)", row.available_points, row.total_points);
     }
+    if (static_cast<int>(true_component_count) > component_total) {
+      ImGui::TextWrapped("showing %d of %zu components (the list's render cap).", component_total,
+                         true_component_count);
+    }
     ImGui::PopStyleColor();
   }
 
   // The current sample's factors (AC3's vocabulary, the engine's names and units).
-  const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view);
+  const std::vector<int> detail_valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
+  const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, detail_valid_indices);
   if (!current.has_value()) {
     ImGui::TextDisabled("No valid sample on show for this component.");
     return;

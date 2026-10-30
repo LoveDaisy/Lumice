@@ -1867,6 +1867,13 @@ struct GuiState {
     // have edited since. The anchor chain's last resort reads this, never the live sun.
     bool frozen_sun_valid = false;
     float frozen_sun_altitude = 20.0f;
+    // The crystal configs the frozen scene binding was built from, captured at DoAnalyze — the
+    // same freeze as the sun above, for the same reason: the point inspector's 3D mesh must be
+    // the geometry the trace ran against, and a post-Analyze edit of the live document must not
+    // rebuild it into a shape the polyline no longer lies inside (AC4). Indexed by the pool slot
+    // the snapshot's own core->pool map names (both sides captured at DoAnalyze, so the
+    // numbering is one system's). Cleared with the session by the same per-reason rules.
+    std::vector<CrystalConfig> frozen_crystals;
   };
   RaypathAnalysisSession analysis;
 

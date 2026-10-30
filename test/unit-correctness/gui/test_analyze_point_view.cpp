@@ -632,5 +632,234 @@ TEST(AnalyzePointView, PointCancelLatchHoldsAgainstThePump) {
   executor.ShutdownAndJoin();
 }
 
+// ---- The r1 revision's legs: the physics pin, the refusal mapping, the named refusals, and the
+// partial document — the plan's Step 5/7 verification points over real engine documents. ----------
+
+// C03's internal-reflection chain (3-5-6-7) at the M0-verified on-fiber target: the polyline's
+// multi-segment assembly is pinned to the 742.2 recovery's own shape — four contacts, the
+// entry/internal/internal/internal/exit kinds, one leg more than contacts — the oracle the plan
+// names (742.2's verified pins), not a screenshot.
+TEST(AnalyzePointView, InternalReflectionPolylineCarriesThePinShape) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kPointSceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  state.analysis_result.payload = Rows(7, { "3-5-6-7" }, { { 3, 5, 6, 7 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "3-5-6-7";
+  SetSkyPoint(state, 38.0, 180.0);  // the C03 fiber anchor the M0 probe verified live
+  const double now = 100.0;
+  ASSERT_TRUE(
+      PumpAllUntil(state, executor, now, [&] { return state.analysis.point.adopted_result != nullptr; }, 60000));
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathPointGetInfo(state.analysis.point.adopted_result.get(), &info), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(info.outcome, LUMICE_PATH_POINT_DISCOVERED);
+  ASSERT_EQ(info.face_count, 4);
+  ASSERT_GE(info.component_count, 1U);
+  ASSERT_GT(PointValidSampleCount(*state.analysis.point.adopted_result, 0), 0);
+  ASSERT_TRUE(
+      PumpAllUntil(state, executor, now, [&] { return state.analysis.trace.adopted_result != nullptr; }, 30000));
+  RayTraceKey current;
+  current.point_id = state.analysis.point.intent_id;
+  current.component = 0;
+  current.sample = state.analysis.trace.key.sample;
+  EXPECT_EQ(RayTraceDisplayStateFor(state.analysis.trace, current), RayTraceDisplayState::kDrawn);
+  // The pin shape: 4 contacts -> 5 polyline segments (entry + 3 internal + exit), kinds in the
+  // recovery's own order, contacts = faces.
+  RayTracePolyline line;
+  ASSERT_TRUE(BuildRayTracePolyline(*state.analysis.trace.adopted_result, 1.1f, &line));
+  EXPECT_EQ(line.seg_kinds.size(), 5U);
+  EXPECT_EQ(line.points.size(), 30U);
+  EXPECT_EQ(line.seg_kinds[0], 0);
+  EXPECT_EQ(line.seg_kinds[1], 1);
+  EXPECT_EQ(line.seg_kinds[2], 1);
+  EXPECT_EQ(line.seg_kinds[3], 1);
+  EXPECT_EQ(line.seg_kinds[4], 2);
+  // The source readers agree: one contact per face of the sequence, legs one more.
+  LUMICE_PathRayContacts contacts{};
+  contacts.struct_size = sizeof(contacts);
+  LUMICE_PathRayLegs legs{};
+  legs.struct_size = sizeof(legs);
+  ASSERT_EQ(LUMICE_RepresentativeRayGetContacts(state.analysis.trace.adopted_result.get(), &contacts),
+            LUMICE_PATH_READ_OK);
+  ASSERT_EQ(LUMICE_RepresentativeRayGetLegs(state.analysis.trace.adopted_result.get(), &legs), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(contacts.contact_count, 4U);
+  EXPECT_EQ(legs.leg_count, 5U);
+  executor.ShutdownAndJoin();
+}
+
+// The refusal mapping: the corridor's own named refusal (the analytic suite's entry_backface pin
+// pose, on the pin scene's sun) maps to the kRefused display state, and the polyline builder
+// refuses to synthesize a curve from a refusal arm.
+TEST(AnalyzePointView, RefusalPoseMapsToTheNamedRefusedState) {
+  // The pin scene's own incident direction: sun at altitude 15, azimuth 0 (the analytic pins').
+  constexpr const char* kRefusalSceneJson = R"({
+    "crystal": [ { "id": 1, "type": "prism",
+                   "shape": { "height": 1.0, "face_distance": [1,1,1,1,1,1] },
+                   "axis": { "zenith": {"type": "uniform", "mean": 0, "std": 360},
+                             "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                             "roll": {"type": "uniform", "mean": 0, "std": 360} } } ],
+    "filter": [],
+    "scene": { "light_source": { "type": "sun", "altitude": 15, "azimuth": 0, "spectrum": "D65" },
+               "ray_num": 1000, "max_hits": 7,
+               "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+    "render": []
+  })";
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kRefusalSceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  // The corpus's entry_backface pin pose (test_representative_ray.cpp's kBackface, the analytic
+  // suite's own refusal matrix row).
+  static const double kBackface[9] = { -0.5108181656453654, -0.8569178335521683,  -0.06896831291950242,
+                                       0.6557541851097652,  -0.3365085527995817,  -0.6758316673578998,
+                                       0.5559237810687107,  -0.39045335244173474, 0.7338221373120865 };
+  static const int kFaces[2] = { 3, 5 };
+  static const int kLayerCounts[1] = { 2 };
+  LUMICE_RepresentativeRayRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = kFaces;
+  request.face_count = 2;
+  request.layer_face_counts = kLayerCounts;
+  request.layer_count = 1;
+  request.pose = kBackface;
+  LUMICE_RepresentativeRay* raw_ray = nullptr;
+  char err[256] = {};
+  ASSERT_EQ(LUMICE_AnalyzeRepresentativeRay(scene.get(), &request, &raw_ray, err, sizeof(err)), LUMICE_OK)
+      << err;  // a corridor refusal rides the RESULT, not an error
+  RepresentativeRayHandle ray(raw_ray, RepresentativeRayDeleter{});
+  LUMICE_RepresentativeRayInfo rinfo{};
+  rinfo.struct_size = sizeof(rinfo);
+  ASSERT_EQ(LUMICE_RepresentativeRayGetInfo(ray.get(), &rinfo), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(rinfo.produced, 0);
+  EXPECT_EQ(std::string(rinfo.reason.data, rinfo.reason.length), "entry_backface");
+  // The display mapping: the session holding this handle reads kRefused, and the display
+  // polyline builder refuses to synthesize anything from the refusal arm.
+  RayTraceSession trace;
+  trace.intent_valid = true;
+  trace.key = RayTraceKey{ SurveyQueryId{ 1, 1 }, 0, 0 };
+  trace.adopted_result = ray;
+  const RayTraceKey same = trace.key;
+  EXPECT_EQ(RayTraceDisplayStateFor(trace, same), RayTraceDisplayState::kRefused);
+  RayTracePolyline line;
+  EXPECT_FALSE(BuildRayTracePolyline(*ray, 1.1f, &line));
+  EXPECT_TRUE(line.points.empty());
+}
+
+// The multi-layer selection: the point face's request-level refusal IS the answer (AC5), named
+// like the survey face's, and the session holds it as a refusal — not a fabricated empty result.
+TEST(AnalyzePointView, MultiLayerSelectionRefusesByName) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kPointSceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  // The row's chain is ONE two-layer chain, spelled directly (the Rows helper writes single-layer
+  // rows and the payload shares as const): identity faces {3,5} + {1,2}, counts {2,2}.
+  {
+    auto payload = std::make_shared<AnalysisPayload>();
+    payload->snapshot_generation = 7;
+    LUMICE_RaypathHistogramEntry row;
+    std::memset(&row, 0, sizeof(row));
+    row.chain[0].crystal_id = 1;
+    row.chain[0].segment[0] = 3;
+    row.chain[0].segment[1] = 5;
+    row.chain[0].segment_len = 2;
+    row.chain[1].crystal_id = 1;
+    row.chain[1].segment[0] = 1;
+    row.chain[1].segment[1] = 2;
+    row.chain[1].segment_len = 2;
+    row.chain_len = 2;
+    std::snprintf(row.display, sizeof(row.display), "3-5 -> 1-2");
+    payload->entries.push_back(row);
+    state.analysis_result.payload = payload;
+  }
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "3-5 -> 1-2";
+  SetSkyPoint(state, 22.0, 0.0);
+  const double now = 100.0;
+  ASSERT_TRUE(PumpAllUntil(state, executor, now, [&] { return !state.analysis.point.adopted_error.empty(); }, 30000));
+  EXPECT_EQ(PointQueryStateFor(state.analysis.point), PointQueryState::kRefused);
+  EXPECT_NE(state.analysis.point.adopted_error.find("multi_layer"), std::string::npos);
+  EXPECT_EQ(state.analysis.point.adopted_result, nullptr);
+  // No trace follows a refusal: the ray pump drops its session without an adopted point.
+  EXPECT_FALSE(state.analysis.trace.intent_valid);
+  executor.ShutdownAndJoin();
+}
+
+// The partial document (the C17 shape: what arrived is kept and readable AS partial): a
+// 1 ms-budget point query stops honestly — the document adopts (a partial IS an answer), its
+// execution tag reads not-completed, and the caliber lines spell it.
+TEST(AnalyzePointView, PartialDocumentAdoptsAndReadsAsPartial) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kPointSceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  static const int kFaces[2] = { 3, 5 };
+  static const int kLayerCounts[1] = { 2 };
+  LUMICE_SinglePathRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = kFaces;
+  request.face_count = 2;
+  request.layer_face_counts = kLayerCounts;
+  request.layer_count = 1;
+  request.target_altitude_deg = 22.0;
+  request.target_azimuth_deg = 0.0;
+  request.sample_count = kPointQuerySampleCount;
+  request.sun_grid_lat_count = kPointSunGridLatCount;
+  request.deadline_ms = 1;  // the stop is the point: what arrives is the partial document
+  LUMICE_SinglePathResult* raw_result = nullptr;
+  char err[256] = {};
+  ASSERT_EQ(LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw_result, err, sizeof(err)), LUMICE_OK) << err;
+  PointHandle result(raw_result, PointDeleter{});
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathPointGetInfo(result.get(), &info), LUMICE_PATH_READ_OK);
+  EXPECT_NE(info.execution, LUMICE_PATH_OUTCOME_COMPLETED);
+  // The session accepts a partial as its adopted answer (the honest four-state machinery reads
+  // the document, whatever completeness it names), and the caliber lines say partial out loud.
+  PointQuerySession point;
+  point.intent_valid = true;
+  point.intent_id = SurveyQueryId{ 1, 1 };
+  point.adopted_result = result;
+  EXPECT_EQ(PointQueryStateFor(point), PointQueryState::kCompleted);
+  const std::vector<std::string> lines = PointCaliberLines(info);
+  std::string joined;
+  for (const std::string& l : lines) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("(partial)"), std::string::npos);
+}
+
+// The frozen mesh source: the 3D region reads the DoAnalyze-captured crystal configs, never the
+// live document — an edit after Analyze does not rebuild the mesh into a shape the trace no
+// longer lies inside (AC4, the plan's risk 7).
+TEST(AnalyzePointView, FrozenMeshSourceSurvivesADocumentEdit) {
+  GuiState state;
+  CrystalConfig config{};
+  config.height.center = 1.25f;
+  state.crystals.push_back(config);
+  state.analysis.frozen_crystals = state.crystals;
+  const CrystalConfig* frozen = FrozenCrystalForPool(state, 0);
+  ASSERT_NE(frozen, nullptr);
+  // An edit of the live document leaves the frozen copy exactly what the binding captured.
+  state.crystals[0].height.center = 1.25f + 3.0f;
+  const CrystalConfig* after_edit = FrozenCrystalForPool(state, 0);
+  ASSERT_NE(after_edit, nullptr);
+  EXPECT_EQ(after_edit->height.center, 1.25f);
+  // Out-of-range slots and an empty snapshot read null — the renderer's honest note, not a
+  // wrong mesh.
+  EXPECT_EQ(FrozenCrystalForPool(state, static_cast<int>(state.crystals.size())), nullptr);
+  EXPECT_EQ(FrozenCrystalForPool(state, -1), nullptr);
+  GuiState empty;
+  EXPECT_EQ(FrozenCrystalForPool(empty, 0), nullptr);
+}
+
 }  // namespace
 }  // namespace lumice::gui

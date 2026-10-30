@@ -197,10 +197,11 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
         }
       }
 
-      // One query at a time, whichever face queued first among the four slots (the survey slot
-      // first: it is usually the older intent, and the selection's digest should not wait behind
-      // a view refinement that queued behind it; the point face next, then the ray face — a
-      // microsecond query the slider is already superseding waits for nobody).
+      // One query at a time, whichever face owns the first non-empty slot in a FIXED priority
+      // order — survey, map, point, ray — not a fair FIFO queue: the selection's digest should
+      // not wait behind a view refinement that queued behind it, the point behind the digest,
+      // and the ray face's microsecond queries queue last (the slider is already superseding
+      // them; starving them for a frame costs nothing).
       std::optional<Impl::Job> job_slot;
       if (impl->pending_survey.has_value()) {
         job_slot = std::move(*impl->pending_survey);
