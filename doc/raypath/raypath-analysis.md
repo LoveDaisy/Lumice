@@ -623,18 +623,37 @@ tint 块（引擎 caliber 串原文呈现）+ 参考剖面块（内嵌 solar rad
 （1e-4° 带内，实测 1e-14 级）；真实上屏证据在 gui_test real-timing 池（色散腿的两次 λ 功率和
 约 14 s，fixed-dt 池的看门狗装不下它——`run_after_analysis_renders_gpu` 同型先例）。
 
-**742.5 的消费合同（参考图地图交互层）**：地图叠加与天空点意图消费以下 typed 直读面——不经
-JSON 第二拼装、不建第二份结果缓存、不复制概览的组织逻辑：
+**742.5 as-built（参考图地图交互层，2026-10-30）**：`##AnalyzeRaypathView` 占位替换为真实参考图
+区域（`src/gui/analyze_map_view.{hpp,cpp}`）——采纳 map 以单圆盘等面积投影上屏（原型 `makeView`
+合同：屏幕上=天顶投影，`ρ=2sin(θ/2)`；格心方向经 Info 帧公式换算、位置=−travel 的 §12 取反在拾取
+与显示两处各一次具名转换），拖移平移、光标锚点滚轮缩放、Fit（采纳图自身的质量加权范围：值加权
+质心 + 95% 质量半径 ×1.4）、全景、λ 控制（显式 [350,900] 或引擎参考解析，回显来源）全部接真实
+重求值：视图键 = 选择身份 + 视图（中心+角半径）+ λ，settle 0.3 s 合并手势突发，请求走
+`SurveyExecutor` map 面（同 worker、按 face 排队不互取消、采纳门键含视图+λ）。默认视图链 = 选类 →
+full_sky（n=500k 交互档，M1 实测全天 0.88 s）→ 到达自动 Fit 一次 → 细化窗口请求；细化到达前旧图
+锚定天空显示并标注（`MapRefiningFor` 具名），迟到旧视图结果由 id 门丢弃。口径行逐字读取器直读
+（λ+来源、成员 x/y、n、视图界、kept 数、quantity spec、geometry_basis），截断/拒答/取消/有限零/
+rank-0（点质量臂 m±err+方法+零格注记）状态分立。天空点意图（`SkyPointIntent`，travel 语义与
+`cone_center` 同约定）由图上点击/拖标记或无图坐标输入两条路径写入，随 `analysis` 档 per-reason
+规则走；map 代码不引用 ROI 状态、ROI 手势不写点意图（结构隔离，state 级与真实鼠标路径双钉）。
+叠加消费 `BuildSurveyOverviewModel` 同源载荷（概览组织规则单源，不写第二份「文档→事实」映射，
+不经 JSON 第二拼装，不建第二份结果缓存）：位置对象标记（survey 文档
+`LUMICE_PathSurveyGetObject` 的 `position_available` alt/az）+ 色散 min 行双 λ 等 δ 曲线
+（`LUMICE_PathSurveyGetDispersion`/`GetFollowedOnset` 的 δ 值，红内蓝外，标注引擎 λ 标签），
+缺载荷如实空缺，拒答图上仍可画有载荷的结构。真实上屏证据在 gui_test real-timing 池
+（`map_region_shows_the_class_map_and_takes_the_pick`：真实链 + 真实点击 + ROI 不变量），组合/纯
+规则在 `test/unit-correctness/gui/test_analyze_map_view.cpp`（投影对独立天空锚、窗口 span 手推导、
+Fit/归一化/颜色状态、真实 executor 泵）。v1 未交付（后续 face，非本片欠账）：per-λ 彩色底图族、
+分离亮斑智能 Fit、交互中连续细化、点查询消费（见下）。
 
-- **同一份采纳文档**：`SurveyQuerySession::adopted_result`（结果归属以它为单一权威）的位置
-  载荷经既有 C getter 直读——`LUMICE_PathSurveyGetObject`（source_image / caustic_edge /
-  bright_domain 的 altitude/azimuth）、`LUMICE_PathSurveyGetEdge`（边位）、
-  `LUMICE_PathSurveyGetSupportInterval`（支撑区间）、`LUMICE_PathSurveyGetFollowedOnset`
-  （各行两 λ δ 值）。
-- **概览组织规则单源**：同一事实的臂分类/格式化在 `BuildSurveyOverviewModel`；742.5 需要
-  概览没有的载荷时直接读同一 C getter 或扩展该模型，不写第二份「文档→事实」映射。
-- **map 结果另有查询面**：与参考图的叠加按 742.1 的 `LUMICE_PathMap*` 面经同一
-  `SurveyExecutor` 兄弟入口发起（上文的后台查询机制），survey 文档不冒充 map 结果。
+**742.6 的交接合同（点意图与选择状态，无需重建）**：选择身份 = `SelectedClassIdentityFor` /
+`SurveySelectionKey`（742.3，map 与 survey 同源派生）；点意图 =
+`GuiState::analysis.sky_point`（`SkyPointIntent`：`valid` + `dir`（travel 语义，`AltAzToDir`
+约定，点查询 target 可逐字填充）+ `from_map_pick`（表达来源：图上拾取/坐标输入）），随 `analysis`
+档规则走（文档切换清、Revert 保留、再 Analyze 归新代）；采纳 map 句柄 =
+`analysis.map.adopted_result`（GUI 线程独占，742.3 所有权规则），其 Info 携带视图帧与口径回显；
+λ 意图 = `analysis.map_wavelength_nm`（0 = 引擎参考）。暗处/弱尾/未知处可停留（设点无强度判断），
+点查询失败不移动点（742.6 消费规则），概览/survey/map 任一拒答不封锁点意图。
 
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 

@@ -125,7 +125,49 @@ The header always names the reference wavelength and where it came from, the sun
 read, and whether the survey stopped inside its budget (a partial document says so). Selecting
 another class re-asks; the card never mixes two answers.
 
-## 7. From the command line
+## 7. The raypath view (the class reference map)
+
+Select a row and the **Raypath view** region (bottom-left) draws that class's own sky picture —
+the engine's physical class reference map, one single-wavelength brightness disk computed from
+every member of the class (not a representative scaled up). The picture arrives in the
+background like the overview does, and the region states honestly where it stands: waiting,
+cancelled, the engine's named refusal, or the picture — plus a *coarse* note while a newer view
+is still computing (the old picture stays on screen, anchored to the sky, and never passes for
+the newest answer), and a note when the picture belongs to a previous analysis of an edited
+scene.
+
+**Reading it.** The disk is centred where you last looked; the yellow dot is the sun (the map's
+zero of deviation), the thin cross is the zenith, the faint arc is the horizon. Brightness is a
+diagnostic ramp over the class's per-steradian power at the reference wavelength — it is not
+scene colour, and the line under the picture spells the exact caliber: the wavelength and its
+source, how many of the class's members were evaluated (a budget-stopped map says *truncated*
+and shows its completed prefix), the sampling count, the view's own bounds, and the engine's
+geometry basis. A rank-0 class (a direction-invariant one) has no ring to draw: its sky image
+is the point mass at the sun, shown as the amber cell, with its measured mass readable in
+place — the dark cells around it are not "no light".
+
+**Operating it.** Drag pans (the sky follows the cursor), the wheel zooms anchored at the
+cursor, **Fit** frames the distribution the map itself carries, **Full sky** returns to the
+whole sky. Every view change re-asks the engine for that view — zooming is a real
+re-evaluation at the sampled tier, never an upscale of an older raster — and requests settle
+briefly so a wheel burst is one ask. The λ slider names an explicit wavelength (a new
+evaluation per wavelength; the engine keeps no warm map); *reference* returns to the document's
+own choice. **Overlays** toggles the survey's located conclusions on the picture: the positional
+objects as diamonds, and the chromatic dispersion's two inner edges as the red-inside-blue-outside
+pair of circles about the sun, labelled with their own wavelengths — the curves are the survey
+document's values, drawn where they belong; a survey without positional payload draws nothing
+and invents no curve.
+
+**Pointing.** A click on the picture (a press that does not move) sets the **sky point** —
+where you are asking about — marked with a white crosshair you can drag anywhere on the disk,
+dark regions included: the pick is a coordinate, never a brightness threshold. The altitude and
+azimuth fields under the picture do the same without any map at all (type the angles of the sky
+point, azimuth measured as the sun's), so a refused or still-computing map never blocks
+naming a target. The sky point is independent of the scene ROI: clicking the map never changes
+the cone centre or the share list, and pointing the cone on the panorama never moves your sky
+point.
+
+## 8. From the command line
 
 The same analysis is a CLI subcommand, `Lumice analyze`, and it writes the same CSV — byte for byte the file **Export CSV** saves for the same run, produced by one shared formatter rather than two. The config is the scene; the question is asked with options, never read from the config, which is what makes it scriptable and reproducible:
 
@@ -155,7 +197,7 @@ def repeats(name):  # any layer whose face sequence repeats a face consecutively
 clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])]
 ```
 
-## 8. Path feature reports from the CLI
+## 9. Path feature reports from the CLI
 
 The GUI analysis list still ranks complete raypaths in an ROI. It does not yet display the
 new path-feature document or make its records clickable in the preview.

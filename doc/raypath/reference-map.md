@@ -95,3 +95,19 @@ recomputation; the stop prefix; the refusal matrix; singular-cell NaN honesty; a
 closed-form minimum-deviation edge (`2*asin(n/2) - 60`) contained in the first non-empty cell,
 with the probe-consistency leg on the same kernel. The typed ABI e2e adds the independent C
 consumer leg (installed headers, product library, cross-destroy reads).
+
+## The GUI consumer (742.5)
+
+The Analyze workspace's raypath view is the first GUI consumer, and its shape is the reference
+for later ones. It derives no second convention: the picture and every pick convert through the
+Info-echoed frame alone (cell direction -> sky position by the §12 display rule, position ->
+travel for a pick), the view's window requests are the disk's bounding rectangle in the
+(delta, azimuth-about-sun) plane — the tangent-cone azimuth bound off the poles, the full
+circle with a quasi-uniform grid when the disk contains a pole, where the azimuth's reference
+deviation no longer exists — and the display tier samples every request at n = 500k (the
+measured interaction arm: full sky ~0.9 s, windows sub-second), with the caliber line echoing
+the Info's own count. Requests ride the workspace entry on the GUI's one background worker,
+queued per face behind the survey; a view change supersedes only the map face, and an outcome
+that fails the intent's id is dropped, never shown. The consumer-side rules live in
+`raypath-analysis.md` §5.1.8 (the 742.5 as-built and the 742.6 handover); this file stays the
+map's own contract.
