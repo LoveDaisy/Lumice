@@ -1836,6 +1836,700 @@ bool SurveySurvivesAWorkspaceSwitch(ImGuiTestContext* ctx) {
   return true;
 }
 
+// ---- 742.7's integration legs: the cross-slice combination evidence the per-slice legs leave
+// out — one session driving the whole C01 chain, the internal-reflection path seen from its real
+// consumer, and the new faces' lifecycle across row switches and document actions. The claims are
+// session-level (one selection feeding every face coherently), not per-face re-pins: each face's
+// own contract stays with the leg that introduced it.
+
+// The continuous chain (v1-scope §4 C01): ONE selection, ONE session — the class overview (which
+// must not grab a sky point for the user), the refined reference map, a real pick on the canvas,
+// the point document, the fiber, the factors and the representative path — every echo naming the
+// same selected class. Real-timing pool, the per-face legs' shape: the survey's chromatic legs,
+// then the map refinement and the point queue behind it on the one worker.
+bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Before any selection every face sits in its honest no-intent state — the baseline the
+  // "the default chain never grabs a point" claim is read against.
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+  // The overview settles (the chromatic legs are the wait), and the settled chain has STILL
+  // written no sky point: the default overview never picks for the user (v1-scope B).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  // The session-level dispersion readings (the 742.4 leg owns the full pin; the chain carries
+  // them here): the dual-lambda inner edges, red inside blue, from the one real survey. Under
+  // pool co-tenancy the survey's chromatic legs can honestly hit the 15 s budget — the partial
+  // keeps the routing facts and drops the dispersion row; the leg pins the dispersion on the
+  // survey's own terms (completed → the readings must be there) and names the partial otherwise.
+  {
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFullDimensional, false);
+    ctx->LogInfo("[v1 chain] survey execution %d, budget %d ms, early-stopped %d, dispersion available %d",
+                 model.execution, model.budget_ms, model.early_stopped ? 1 : 0, model.dispersion.available ? 1 : 0);
+    if (model.dispersion.available) {
+      IM_CHECK_RETV(model.dispersion.min_row_available, false);
+      IM_CHECK_RETV(model.dispersion.value_red_deg < model.dispersion.value_blue_deg, false);
+      IM_CHECK_RETV(model.dispersion.direction == "red_inner_blue_outer", false);
+      IM_CHECK_RETV(model.tint.available, false);
+      ctx->LogInfo("[v1 chain] dispersion %.3f/%.3f (delta %.3f deg, %s)", model.dispersion.value_red_deg,
+                   model.dispersion.value_blue_deg, model.dispersion.displacement_deg,
+                   model.dispersion.direction.c_str());
+    } else {
+      IM_CHECK_RETV(model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED, false);
+      ctx->LogInfo("[v1 chain] the survey stopped inside its budget — the dispersion row is the honest partial");
+    }
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_v1_chain_overview.png").string()),
+                false);
+
+  // The map window answers behind the survey on the one worker (default chain: full sky, then
+  // the auto-Fit, then the refinement), and its echo names the SAME class the overview
+  // summarized — one identity feeding both faces.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  {
+    const gui::MapQuerySession& map = gui::g_state.analysis.map;
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.kept_count > 0, false);
+    ctx->LogInfo("[v1 chain] map lambda %.1f, kept %lld, window delta[%.1f,%.1f]", info.wavelength_nm, info.kept_count,
+                 info.view_delta_min_deg, info.view_delta_max_deg);
+  }
+  // One zoom-in view change (the gesture writes' shape — the 742.5 leg's precedent): the map
+  // re-asks under the new window and the refinement lands while the session stays coherent.
+  gui::g_state.analysis.map_view.radius_deg = 10.0f;
+  gui::g_state.analysis.map_view.user_moved = true;
+  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0 && i.view_delta_max_deg < 12.0;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_v1_chain_map.png").string()), false);
+
+  // The real pick on the canvas centre: the point intent arms through the real mouse path (the
+  // pick's outcome is the discovery arm's own honest answer at whatever spot the class's mass
+  // centroid is — off-fiber spots answer an empty discovered document, which is the display's
+  // named-empty state, not a failure). The document the chain then asserts on is pinned by the
+  // anchor write below — the 742.6 leg's verified on-fiber target for this scene's halo fiber,
+  // written through the same state the pick path writes ("the same write the button performs").
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  {
+    const double pos[3] = { std::cos(42.0f * lumice::kDeg2Rad), 0.0, std::sin(42.0f * lumice::kDeg2Rad) };
+    for (int k = 0; k < 3; ++k) {
+      gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+    }
+  }
+  ctx->Yield(2);  // the pump re-arms under the new key before the wait reads the state
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  {
+    const gui::PointQuerySession& point = gui::g_state.analysis.point;
+    LUMICE_PathPointInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+    const gui::MapQuerySession& map = gui::g_state.analysis.map;
+    LUMICE_PathMapInfo map_info{};
+    map_info.struct_size = sizeof(map_info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(map.adopted_result.get(), &map_info) == LUMICE_PATH_READ_OK, false);
+    // One wavelength knob feeds both faces (the engine's reference echo, read back from each).
+    IM_CHECK_RETV(info.wavelength_nm == map_info.wavelength_nm, false);
+    // The caliber lines are the engine's own echo (the D65-vs-reference caliber the user reads).
+    const std::vector<std::string> caliber = gui::PointCaliberLines(info);
+    IM_CHECK_RETV(!caliber.empty(), false);
+    std::vector<gui::PointComponentRow> rows;
+    const int components = gui::PointComponentRows(*point.adopted_result, &rows);
+    IM_CHECK_RETV(components >= 1, false);
+    const int valid_count = gui::PointValidSampleCount(*point.adopted_result, 0);
+    IM_CHECK_RETV(valid_count > 1, false);
+    LUMICE_PathPointSample sample{};
+    sample.struct_size = sizeof(sample);
+    const int stored = gui::PointValidSampleIndexAt(*point.adopted_result, 0, 0);
+    IM_CHECK_RETV(LUMICE_PathPointGetSample(point.adopted_result.get(), 0, static_cast<size_t>(stored), &sample) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    const std::vector<std::string> factors = gui::PointFactorLines(sample);
+    IM_CHECK_RETV(!factors.empty(), false);
+    ctx->LogInfo("[v1 chain] point alt %.2f az %.2f dev %.2f, lambda %.1f, %d component(s), %d valid samples",
+                 info.target_altitude_deg, info.target_azimuth_deg, info.target_deviation_deg, info.wavelength_nm,
+                 components, valid_count);
+    for (const std::string& line : caliber) {
+      ctx->LogInfo("[v1 chain] caliber: %s", line.c_str());
+    }
+  }
+
+  // The representative path follows the same session's cursor: sample 0 drawn, a slider step
+  // re-keys it, and the C01 chain's own shape comes back through the C readers (2 contacts —
+  // entry face, exit face — 3 segments: the entry/internal/exit polyline).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      return t.adopted_result != nullptr && t.intent_valid &&
+                             t.key.sample ==
+                                 gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 0);
+                    },
+                    30),
+                false);
+  gui::g_state.analysis.point_view.sample_index = 1;
+  gui::g_state.analysis.point_view.playing = false;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      if (!t.adopted_result || !t.intent_valid) {
+                        return false;
+                      }
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 1);
+                      return t.key.sample == stored && gui::RayTraceDisplayStateFor(t, { t.key.point_id, 0, stored }) ==
+                                                           gui::RayTraceDisplayState::kDrawn;
+                    },
+                    30),
+                false);
+  {
+    LUMICE_PathRayContacts contacts{};
+    contacts.struct_size = sizeof(contacts);
+    LUMICE_PathRayLegs legs{};
+    legs.struct_size = sizeof(legs);
+    IM_CHECK_RETV(LUMICE_RepresentativeRayGetContacts(gui::g_state.analysis.trace.adopted_result.get(), &contacts) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(
+        LUMICE_RepresentativeRayGetLegs(gui::g_state.analysis.trace.adopted_result.get(), &legs) == LUMICE_PATH_READ_OK,
+        false);
+    IM_CHECK_RETV(contacts.contact_count == 2, false);
+    IM_CHECK_RETV(legs.leg_count == 3, false);
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_v1_chain_trace.png").string()),
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, PanoramaRegionRef(), GuiTestTempPath("analyze_v1_chain_panorama.png").string()),
+                false);
+  ctx->LogInfo("[v1 chain] one session: overview, map, pick, point, fiber, factors, trace — identity %u",
+               static_cast<unsigned>(identity->core_crystal_id));
+  return true;
+}
+
+// The internal-reflection path from its real consumer (v1-scope §4: beyond C01's two-face
+// transmission): the corpus's C03 chain `3-5-6-7` — the same scene's L0 list — selected as a
+// real row, its own reference map refined, a real pick on the canvas, and the 3D region drawing
+// the recovered polyline. The pin shape is the engine document's (4 contacts, 5 segments —
+// entry, three internal, exit), read back through the C readers, not a screenshot's looks.
+// Real-timing pool: the class survey's chromatic legs queue the map and the point on the one
+// worker, the standing shape.
+bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // The C03 chain in this scene's L0 list (the corpus's internal-reflection representative; the
+  // scene was chosen so this row exists — a red here means the scene choice broke, and says so).
+  std::string c03_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strcmp(e.display, "3-5-6-7") == 0) {
+      c03_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!c03_display.empty(), false);
+  const std::string c03_label = gui::AnalysisRowLabel(c03_display, gui::AnalysisCoreToPoolMap(gui::g_state));
+  SetListRef(ctx);
+  const ImGuiID c03_row = FindListRowScrolling(ctx, c03_label);
+  IM_CHECK_RETV(c03_row != 0, false);
+  ctx->ItemClick(c03_row);
+  ctx->SetRef("");
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+
+  // The class's own map refines (behind its survey on the one worker) and echoes the class.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  // A real pick on the canvas centre — the real mouse path arms the intent (its own outcome is
+  // the discovery arm's honest answer at the centroid spot). The document the leg asserts on is
+  // then pinned to the (38, 180) anchor: the M0 probe's verified on-fiber target for this
+  // scene's 3-5-6-7 fiber (two components, ~120 deg from the sun — the corpus's antisolar
+  // concentration band; CLI probe on this exact geometry), written through the same state the
+  // pick path writes. Not (-20, 180): that point IS the sun's antipode, where the engine
+  // honestly refuses the target (kInvalidTarget) instead of answering.
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  {
+    const double alt = 38.0, az = 180.0;
+    const double pos[3] = { std::cos(alt * lumice::kDeg2Rad) * std::cos(az * lumice::kDeg2Rad),
+                            std::cos(alt * lumice::kDeg2Rad) * std::sin(az * lumice::kDeg2Rad),
+                            std::sin(alt * lumice::kDeg2Rad) };
+    for (int k = 0; k < 3; ++k) {
+      gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+    }
+  }
+  ctx->Yield(2);  // the pump re-arms under the new key before the wait reads the state
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  const gui::PointQuerySession& point = gui::g_state.analysis.point;
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+  IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+  std::vector<gui::PointComponentRow> rows;
+  const int components = gui::PointComponentRows(*point.adopted_result, &rows);
+  IM_CHECK_RETV(components >= 1, false);
+  IM_CHECK_RETV(gui::PointValidSampleCount(*point.adopted_result, 0) > 0, false);
+  ctx->LogInfo("[v1 c03] target (alt %.2f, az %.2f, dev %.2f), %d component(s)", info.target_altitude_deg,
+               info.target_azimuth_deg, info.target_deviation_deg, components);
+
+  // The 3D region draws the recovered path for the current sample; the document's shape is the
+  // recovery's own pin: four contacts, five segments, kinds in the recovery's order.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      if (!t.adopted_result || !t.intent_valid) {
+                        return false;
+                      }
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 0);
+                      return t.key.sample == stored && gui::RayTraceDisplayStateFor(t, { t.key.point_id, 0, stored }) ==
+                                                           gui::RayTraceDisplayState::kDrawn;
+                    },
+                    30),
+                false);
+  {
+    LUMICE_PathRayContacts contacts{};
+    contacts.struct_size = sizeof(contacts);
+    LUMICE_PathRayLegs legs{};
+    legs.struct_size = sizeof(legs);
+    IM_CHECK_RETV(LUMICE_RepresentativeRayGetContacts(gui::g_state.analysis.trace.adopted_result.get(), &contacts) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(
+        LUMICE_RepresentativeRayGetLegs(gui::g_state.analysis.trace.adopted_result.get(), &legs) == LUMICE_PATH_READ_OK,
+        false);
+    IM_CHECK_RETV(contacts.contact_count == 4, false);
+    IM_CHECK_RETV(legs.leg_count == 5, false);
+    gui::RayTracePolyline line;
+    IM_CHECK_RETV(BuildRayTracePolyline(*gui::g_state.analysis.trace.adopted_result, 1.1f, &line), false);
+    IM_CHECK_RETV(line.seg_kinds.size() == 5, false);
+    IM_CHECK_RETV(line.seg_kinds[0] == 0 && line.seg_kinds[1] == 1 && line.seg_kinds[2] == 1 &&
+                      line.seg_kinds[3] == 1 && line.seg_kinds[4] == 2,
+                  false);
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_v1_c03_trace.png").string()), false);
+  ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
+  return true;
+}
+
+// The new faces' lifecycle across row switches (v1-scope E): select A, switch to B while A's
+// queries are still in flight, and every face re-keys to B — the adopted outcomes name B, the
+// lambda knob re-asks the map and the point under the same session rules. The halo scene keeps
+// the worker costs inside the correctness pool's fixed-dt window (the workspace-switch leg's
+// precedent); the claim is the rekeying, not the physics.
+bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // A sky point intent, so the point face (and through it the ray face) participates in the
+  // switch: an arbitrary named direction — the claim is the session, not the physics.
+  {
+    const double pos[3] = { std::cos(40.0 * lumice::kDeg2Rad), 0.0, std::sin(40.0 * lumice::kDeg2Rad) };
+    gui::g_state.analysis.sky_point.valid = true;
+    for (int k = 0; k < 3; ++k) {
+      gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+    }
+  }
+  const auto& view = gui::g_state.analysis_result;
+  const std::string a_display = view.payload->entries[static_cast<size_t>(view.display_order[0])].display;
+  const std::string b_display = view.payload->entries[static_cast<size_t>(view.display_order[1])].display;
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + a_display).c_str());
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::SelectedClassIdentityFor(gui::g_state).has_value(), false);
+  // B lands while A's faces are still working — no wait for A.
+  ctx->ItemClick((std::string("**/") + b_display).c_str());
+  ctx->SetRef("");
+  const std::optional<gui::SelectedClassIdentity> identity_b = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity_b.has_value(), false);
+
+  // B's survey and map adopt; the gates answer B's keys (A's outcomes structurally cannot pass).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(info.crystal_id == identity_b->core_crystal_id, false);
+  }
+  // The point face settles terminal under B and names B in its echo.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      return st == gui::PointQueryState::kCompleted || st == gui::PointQueryState::kRefused;
+                    },
+                    60),
+                false);
+  if (gui::g_state.analysis.point.adopted_result != nullptr) {
+    LUMICE_PathPointInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity_b->core_crystal_id, false);
+  }
+  ctx->LogInfo("[v1 rekey] B's survey, map and point adopted under B's identity; A's era dropped");
+
+  // The lambda knob re-asks the map (and the point, the same shared knob) in flight; the echo
+  // carries 450, and resetting back re-asks again under the engine reference.
+  gui::g_state.analysis.map_wavelength_nm = 450.0f;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0 && i.wavelength_nm == 450.0f;
+                    },
+                    60),
+                false);
+  gui::g_state.analysis.map_wavelength_nm = 0.0f;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0 && i.wavelength_nm != 450.0f;
+                    },
+                    60),
+                false);
+  ctx->LogInfo("[v1 rekey] the lambda knob re-asked and answered 450, then the reference again");
+  return true;
+}
+
+// The new faces die and survive with the document (v1-scope E, the cross-face claim the
+// workspace-switch leg predates): New clears every analysis session — survey, map, point, ray,
+// the sky-point intent with them, the executor left idle; Revert keeps the adopted outcomes and
+// the intent, re-issuing nothing. The halo scene, fixed-dt pool — same reasons as the rekey leg.
+bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Arm every face: a selection (survey + map), a sky point (point), and let the ray follow.
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  {
+    const double pos[3] = { std::cos(40.0 * lumice::kDeg2Rad), 0.0, std::sin(40.0 * lumice::kDeg2Rad) };
+    gui::g_state.analysis.sky_point.valid = true;
+    for (int k = 0; k < 3; ++k) {
+      gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+    }
+  }
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      return st == gui::PointQueryState::kCompleted || st == gui::PointQueryState::kRefused;
+                    },
+                    60),
+                false);
+  const gui::SurveyHandle survey_before = gui::g_state.analysis.survey.adopted_result;
+  const gui::MapHandle map_before = gui::g_state.analysis.map.adopted_result;
+  const gui::PointHandle point_before = gui::g_state.analysis.point.adopted_result;
+  IM_CHECK_RETV(survey_before != nullptr && map_before != nullptr, false);
+  IM_CHECK_RETV(point_before != nullptr || !gui::g_state.analysis.point.adopted_error.empty(), false);
+
+  // New: the whole analysis session dies with the document — every face's bookkeeping included —
+  // and the executor's binding is released on the worker thread.
+  gui::DoNew();
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+  ctx->LogInfo("[v1 new] New cleared survey, map, point, ray and the sky point; the executor is idle");
+
+  // Revert keeps: rebuild the faces, then revert — every adopted outcome and the intent stay,
+  // nothing re-issues (the analysis-tired per-reason rules, now across all four faces).
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  gui::g_state.analysis.sky_point.valid = true;
+  {
+    const double pos[3] = { std::cos(40.0 * lumice::kDeg2Rad), 0.0, std::sin(40.0 * lumice::kDeg2Rad) };
+    for (int k = 0; k < 3; ++k) {
+      gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+    }
+  }
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      return st == gui::PointQueryState::kCompleted || st == gui::PointQueryState::kRefused;
+                    },
+                    60),
+                false);
+  const gui::SurveyHandle survey_kept = gui::g_state.analysis.survey.adopted_result;
+  const gui::MapHandle map_kept = gui::g_state.analysis.map.adopted_result;
+  const gui::PointHandle point_kept = gui::g_state.analysis.point.adopted_result;
+  const gui::RayTraceSession& trace_kept = gui::g_state.analysis.trace;
+  IM_CHECK_RETV(survey_kept != nullptr && map_kept != nullptr, false);
+  gui::DoRevert();
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == true, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == survey_kept, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result == map_kept, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == point_kept, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == trace_kept.intent_valid, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == trace_kept.adopted_result, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+  ctx->LogInfo("[v1 revert] Revert kept every face's adopted outcome and the sky point; nothing re-issued");
+  return true;
+}
+
+// The identity class (C15's `1-3-6-2`, every member rank-0) across all faces at once: the
+// overview routes the identity arm's honest statement, the map still answers (the rank-0
+// point-mass arm, m±err — not a refused or empty picture), and the point query at the sun's own
+// image answers the MASS arm — no component rows, no ray intent, no fabricated fiber. The one
+// session where "direction identity" is the answer, nothing else degrades with it (AC2's
+// 不整页封锁 on this scene's own identity family). Fixed-dt pool: the rank-0 survey
+// early-stops (certified, no chromatic legs) and the mass arm answers in milliseconds.
+bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  std::string c15_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strcmp(e.display, "1-3-6-2") == 0) {
+      c15_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!c15_display.empty(), false);
+  const std::string c15_label = gui::AnalysisRowLabel(c15_display, gui::AnalysisCoreToPoolMap(gui::g_state));
+  SetListRef(ctx);
+  const ImGuiID c15_row = FindListRowScrolling(ctx, c15_label);
+  IM_CHECK_RETV(c15_row != 0, false);
+  ctx->ItemClick(c15_row);
+  ctx->SetRef("");
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+
+  // The overview's identity arm (all twelve members rank-0, certified) — the honest "direction
+  // identity" statement, not a fabricated dispersion or fiber story.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  {
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kIdentity, false);
+    ctx->LogInfo("[v1 c15] overview arm identity, valid %d", model.valid ? 1 : 0);
+  }
+  // The map answers under the same selection (the rank-0 point-mass arm) and names the class.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
+                    },
+                    60),
+                false);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.kept_count > 0, false);
+    ctx->LogInfo("[v1 c15] map answered: kept %lld, lambda %.1f", info.kept_count, info.wavelength_nm);
+  }
+  // The point query at the sun's own image (the rank-0 point): the MASS arm's named lines, no
+  // component rows — and the ray face stays silent (the pump's guard never issues a trace for
+  // the mass document; nothing fabricated replaces the fiber).
+  {
+    const double pos[3] = { std::cos(20.0 * lumice::kDeg2Rad), 0.0, std::sin(20.0 * lumice::kDeg2Rad) };
+    gui::g_state.analysis.sky_point.valid = true;
+    for (int k = 0; k < 3; ++k) {
+      gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+    }
+  }
+  ctx->Yield(2);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  {
+    LUMICE_PathPointInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_MASS, false);
+    std::vector<gui::PointComponentRow> rows;
+    IM_CHECK_RETV(gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &rows) == 0, false);
+    LUMICE_PathPointMass mass{};
+    mass.struct_size = sizeof(mass);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetMass(gui::g_state.analysis.point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK, false);
+    const std::vector<std::string> mass_lines = gui::PointMassLines(mass);
+    IM_CHECK_RETV(!mass_lines.empty(), false);
+    IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+    IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == nullptr, false);
+    ctx->LogInfo("[v1 c15] point MASS at the sun image: %zu named line(s), no component, no trace intent",
+                 mass_lines.size());
+  }
+  return true;
+}
+
 }  // namespace
 
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
@@ -3397,5 +4091,30 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_survives_a_workspace_switch");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveySurvivesAWorkspaceSwitch(ctx)); };
+  }
+  // 742.7's integration legs. The two real-timing entries carry the standing wall-clock shape
+  // (one worker: the class survey's chromatic legs, then the map refinement, then the point);
+  // the two lifecycle entries rekey/clear on the halo scene's fast queries and stay in the
+  // correctness pool.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_full_chain_one_session");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(AnalyzeFullChainOneSession(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "internal_reflection_trace_from_the_real_consumer");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(InternalReflectionTraceFromTheRealConsumer(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_faces_rekey_on_row_switch");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(AnalyzeFacesRekeyOnRowSwitch(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "new_document_clears_every_analyze_face");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(NewDocumentClearsEveryAnalyzeFace(ctx)); };
+  }
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "identity_class_shows_the_mass_arm_and_the_map_answers");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(IdentityClassShowsTheMassArmAndTheMapAnswers(ctx)); };
   }
 }

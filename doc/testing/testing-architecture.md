@@ -1620,9 +1620,11 @@ of their layers inside this `pr` run, not separately timed invocations.
 | `quick` | `ctest -L "unit-correctness\|composition-correctness\|parity\|golden-analytic"` (8/8 passed) | 67s | ctest default |
 | `quick` | fast e2e (`-m "not slow"` via `pyproject.toml` `addopts`, 219 passed) | 88s | `-n auto` → 12 workers |
 | `quick` | `gui_test` correctness pool (`--fixed-dt`, 513/513 passed) | 151s | single process |
+| | (742.7 adds three fixed-dt lifecycle/identity legs: the pool re-measured 544/544; the wall-clock re-derivation rides the next fresh `quick`) | | |
 | | **`quick` layer subtotal** | **306s** | |
 | `full` | `gui_test` real-timing pool (no `--fixed-dt`, 6/6 passed) | +11s | single process |
 | `full` | + 742.6's point-inspector real-timing leg (the pool's 7th case) | +~55s | measured 2026-10-30, the analyze-gui-v1 machine: the point queues behind the selection's survey and the map refinement on the one worker; the row above is that leg's predecessor measurement, kept as recorded |
+| `full` | + 742.7's two integration real-timing legs (the pool's 8th/9th cases: the one-session C01 chain, the internal-reflection consumer) | pool measured 11/11 in 121.6s total | measured 2026-10-31, the analyze-gui-v1 machine, `385fbd2c1`: the whole pool in one run — the chain leg re-drives the survey→map→pick→point→trace queue end to end (~4s on a warm machine, frame-derived), the internal-reflection leg adds the C03 class's own survey+map+point queue (~4.7s); the predecessor rows above are kept as recorded |
 | | **`full` layer subtotal** | **~372s** (317s + the point leg's ~55s) | |
 | `pr` | shared-lib cold configure + build + install | +21s | 12-way build |
 | `pr` | slow correctness: configured roots minus `test/performance`, `-m slow` | 183s | `-n 3` |

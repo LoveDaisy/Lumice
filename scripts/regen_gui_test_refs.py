@@ -323,7 +323,8 @@ SUITE_FILTER_EXPR = (
     "-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,"
     "-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,"
     "-map_region_shows_the_class_map_and_takes_the_pick,"
-    "-point_inspector_shows_the_point_fiber_and_the_path"
+    "-point_inspector_shows_the_point_fiber_and_the_path,"
+    "-analyze_full_chain_one_session,-internal_reflection_trace_from_the_real_consumer"
 )
 # --no-user-config trails SUITE_FILTER_EXPR, matching scripts/build.sh. A reference image is the
 # one artifact where reading the generating machine's personal defaults would be permanent: the
