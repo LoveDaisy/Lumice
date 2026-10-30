@@ -119,9 +119,12 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
   //    degrees), which is what the band below holds — the formula itself is pinned to the
   //    corpus, so a wrong relation cannot pass by agreeing with a wrong table.
   {
-    const double deg = 180.0 / M_PI;
-    const double closed_1307 = (2.0 * std::asin(1.307 * 0.5) - M_PI / 3.0) * deg;
-    const double closed_1317 = (2.0 * std::asin(1.317 * 0.5) - M_PI / 3.0) * deg;
+    // Not `M_PI`: that one is a POSIX extension, and MSVC only defines it behind
+    // _USE_MATH_DEFINES (same shape as test_preview_projection_chain.cpp's kPiF).
+    constexpr double kPi = 3.14159265358979323846;
+    const double deg = 180.0 / kPi;
+    const double closed_1307 = (2.0 * std::asin(1.307 * 0.5) - kPi / 3.0) * deg;
+    const double closed_1317 = (2.0 * std::asin(1.317 * 0.5) - kPi / 3.0) * deg;
     EXPECT_NEAR(closed_1307, 21.612, 5e-4);
     EXPECT_NEAR(closed_1317, 22.371, 5e-4);
   }
@@ -137,8 +140,9 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
   EXPECT_NEAR(model.dispersion.n_red, table_n_red, 1e-12);
   EXPECT_NEAR(model.dispersion.n_blue, table_n_blue, 1e-12);
   if (model.dispersion.certificate_available) {
-    const double a_rad = model.dispersion.certificate_apex_deg * M_PI / 180.0;
-    const double deg = 180.0 / M_PI;
+    constexpr double kPi = 3.14159265358979323846;
+    const double a_rad = model.dispersion.certificate_apex_deg * kPi / 180.0;
+    const double deg = 180.0 / kPi;
     const double closed_red = (2.0 * std::asin(table_n_red * std::sin(0.5 * a_rad)) - a_rad) * deg;
     const double closed_blue = (2.0 * std::asin(table_n_blue * std::sin(0.5 * a_rad)) - a_rad) * deg;
     EXPECT_NEAR(closed_red, model.dispersion.value_red_deg, 1e-4);
