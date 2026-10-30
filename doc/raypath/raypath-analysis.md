@@ -591,8 +591,8 @@ warm 曾沿旧 δ 支撑给当前点误发 `certified` 包含关系，已由 PR 
 probe）已交付（见上）。界面应显示报告的 scope/evidence/coverage 与 unfinished 原因，用户选择
 具体 sky direction 后获取 fiber 详情——该查询语义现由 `point` / `probe` 承载。
 
-**交互层交付状态（2026-10-30，742.3–742.6 as-built）**：工作区壳、类级概览、参考图地图交互、
-点检视器（太阳方向球 / 光路 3D / 点级详情 / 代表轨迹）均已交付——Render/Analyze
+**交互层交付状态（2026-10-31，742.3–742.7 as-built）**：工作区壳、类级概览、参考图地图交互、
+点检视器（太阳方向球 / 光路 3D / 点级详情 / 代表轨迹）与跨片组合验收均已交付——Render/Analyze
 同窗切换（四列布局，D1/D5）、场景全景（同纹理单圆盘等面积重投影 + 半球切换 + 锥形 ROI 手势，D2）、
 份额列表整体迁入（浮窗退役）、选择身份（行→Analyze 时快照内的稳定键，非行号）与类级概览（engine
 typed survey 的类级事实逐字消费）、地图交互与点意图（742.5）、点文档三区联动（742.6，见下方
@@ -691,9 +691,28 @@ survey context 与预算成比例的抛光，GUI 不请求 context）。
 （`analyze_point_view.hpp`）；阅读器 = `PointComponentRows` / `PointValidSampleCount|IndexAt` /
 `PointFactorLines` / `PointCaliberLines` / `PointMassLines`（纯函数、C reader 之上）；u 球投影 =
 `MakeSunGlobeProjector` / `SunGlobeProject`；轨迹折线 = `BuildRayTracePolyline`（只读 742.2 的
-contacts/legs，延伸是展示约定）；帧变换 = `RayTracePointToCrystalFrame`。742.7 的组合验收直接
-驱动这些面与 `gui_test` 两腿（`point_inspector_shows_the_point_fiber_and_the_path`
-real-timing 池 / `point_mass_arm_is_honest_and_forces_no_fiber` fixed-dt 池），不重建生命周期。
+contacts/legs，延伸是展示约定）；帧变换 = `RayTracePointToCrystalFrame`。
+
+**742.7 as-built（跨片组合验收，2026-10-31）**：组合证据由五条集成腿承载
+（`test/gui/functional/test_raypath_analysis_panel.cpp`，前四片零重建、零新增 TU）——
+`analyze_full_chain_one_session`（一会话连续主链：选类→概览无抢点→双 λ 色散读数→图细化→真
+画布拾取→锚定点文档→滑杆→轨迹重键，C readers 钉 2 contacts/3 legs）、
+`internal_reflection_trace_from_the_real_consumer`（语料 C03 型 `3-5-6-7` 从真实消费者（点检视
+器 3D 区）看见完整合法折线：4 contacts/5 segments，kinds 入射+3 内部+出射；锚点 (38,180)=太阳
+偏差 122°，语料反日聚集带，CLI 探针在案）、`analyze_faces_rekey_on_row_switch`（A→B 在飞切换
+survey/map/point 全部重键至 B 身份 + λ 旋钮在飞重问）、`new_document_clears_every_analyze_face`
+（New 清四会话与天空点、executor 闲置；Revert 全保留零重发）、
+`identity_class_shows_the_mass_arm_and_the_map_answers`（C15 `1-3-6-2` 恒等类跨面：概览恒等臂、
+rank-0 图回答、太阳像点查询 MASS 臂零分量无轨迹意图——恒等不造 fiber）。池归属：前两条
+real-timing（池实测 11/11 @ 121.6 s，`testing-architecture.md` §7），后三条 fixed-dt 正确性池
+（544/544）。组合级测量（本机 M1 Max、`385fbd2c1`、kFullyRandomJson、550 参考 λ、16 ms vsync
+帧折算）：选类→概览含色散 ~2.3 s、图细化 ~0.5 s、拾取+点查询 ~0.45 s、轨迹 ~0.05 s、全会话
+~4 s（C03 类 ~4.7 s、C15 ~1.1 s）；A→B 全落定 ~7.4 s；Revert 撤回在飞查询 ≤13 帧。诚实边界
+（同批钉住）：`kDiscovered` 允许零分量（离 fiber 目标的空发现是具名空态非缺陷）；太阳对跖点
+目标是请求级 `kInvalidTarget` 拒答；池共租下 survey 色散腿可诚实触 15 s 预算（partial 按
+execution 分派呈现，概览横幅不变）。GUI 边界审计复核随片完成：五个 analyze TU 零 JSON 拼装、
+概览模型单源双消费、具名空态是唯一占位形态（`check_policies.py` 全绿）。用户操作与首版能力
+边界的耐久表述在 `doc/user-manual/06-raypath-analysis{,_zh}.md` §6–§8 与「首版已知限制」节。
 
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 

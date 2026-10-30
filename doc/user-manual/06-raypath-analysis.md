@@ -273,6 +273,25 @@ be combined with `--report`. The full definitions, limitations and the version-2
 migration are in
 [the report field reference](../raypath/raypath-cli-output.md#7-target-free-path-feature-report-schema-3).
 
+## Known limits of this first version
+
+- The diagnostic map and point queries run at a **reference wavelength, nominal geometry and a
+  point sun** — they are deliberately not the D65 scene picture, and every caliber line says so.
+  The dispersion pair is the engine's fixed 650/450 nm comparison.
+- Each query face carries its own budget (survey 15 s, point 2 s, the map its own default); a
+  budget-stopped answer keeps the facts it established and says it is partial — it never pads
+  with zeros or invents the missing part.
+- Direction-invariant (rank-0) classes answer with the **point mass** arm — no fiber, no
+  playback, no curve forced where the physics has none. Near-pole and exact-antisolar targets
+  keep their existing named refusals.
+- Deferred by the confirmed first-version scope, not regressions: per-wavelength colour map
+  families, smart Fit for detached bright patches, continuous refinement during a gesture,
+  full-sky curves (Parry/Lowitz), full-spectrum / solar-disk images, energy cross-checks,
+  backward pose dragging, interpolation between arbitrary pose samples, and multi-layer
+  inversion (the existing keep-one-chain retreat applies).
+- The map is a single-disk equal-area projection; the sun-direction globe is a projection of the
+  crystal's pose space, not the whole of it.
+
 ## Further reading
 
 - Full panel reference → [`../gui-guide.md`](../gui/gui-guide.md)
