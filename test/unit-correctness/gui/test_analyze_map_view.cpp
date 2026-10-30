@@ -698,6 +698,58 @@ TEST(AnalyzeMapView, SelectionChangeKillsTheWholeMapSession) {
   executor.ShutdownAndJoin();
 }
 
+// A hand on the view disarms the default chain: the first adopted map must not yank a view the
+// user is already driving (r2 Major: auto-Fit used to fire on the first adoption whatever the
+// user had done in the queueing window).
+TEST(AnalyzeMapView, UserSteeredViewDisarmsTheAutoFit) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "1-2";
+  // The user pans and zooms while the first map is still in flight.
+  MapViewState& view = state.analysis.map_view;
+  double centre[3];
+  SkyPositionOf(40.0, 30.0, centre);
+  for (int k = 0; k < 3; ++k) {
+    view.centre_pos[k] = static_cast<float>(centre[k]);
+  }
+  view.radius_deg = 30.0f;
+  view.user_moved = true;
+  ASSERT_TRUE(
+      PumpBothUntil(state, executor, 100.0, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  // The arrival changed nothing: the view stands where the user put it, and no refinement
+  // intent superseded it.
+  double got[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
+  EXPECT_NEAR(AngleBetween(got, centre), 0.0, 1e-6);
+  EXPECT_NEAR(view.radius_deg, 30.0f, 1e-5);
+  executor.ShutdownAndJoin();
+}
+
+// The window geometry's sun anchor of last resort is the FROZEN scene's sun, never the live
+// document's: the engine evaluates the request against the binding it was issued for, and an
+// edited-but-not-re-analyzed sun must not steer the window (r2 Major).
+TEST(AnalyzeMapView, SunAnchorFallsBackToTheFrozenSunNotTheLiveOne) {
+  GuiState state;
+  state.sun.altitude = 10.0f;  // the live document: edited since
+  state.analysis.frozen_sun_valid = true;
+  state.analysis.frozen_sun_altitude = 35.0f;
+  SkySunAnchor anchor;
+  ASSERT_TRUE(SkySunAnchorFor(state, &anchor));
+  EXPECT_NEAR(anchor.altitude_deg, 35.0, 1e-6);
+  EXPECT_NEAR(anchor.azimuth_deg, 0.0, 1e-6);
+  // Without the capture (a session from before the field existed), the live sun remains the
+  // honest fallback.
+  state.analysis.frozen_sun_valid = false;
+  ASSERT_TRUE(SkySunAnchorFor(state, &anchor));
+  EXPECT_NEAR(anchor.altitude_deg, 10.0, 1e-6);
+}
+
 // The click-semantics isolation (AC3), at the state level: the map pump and a map pick write
 // the map's own session and the sky-point intent — never the panorama's ROI state. The
 // gesture-level pin (a real click changes nothing on the panorama) lives in gui_test.

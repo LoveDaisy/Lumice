@@ -1831,6 +1831,10 @@ bool DoAnalyze() {
   // outcome with the cleared selection). The executor's frozen scene is replaced below, so no
   // new query can bind to the old one either.
   g_state.analysis.survey = SurveyQuerySession{};
+  // The sun the scene being frozen carries (BuildCommitSceneOrWarn just read it from this same
+  // state): the map window geometry's anchor of last resort — same source as the binding.
+  g_state.analysis.frozen_sun_valid = true;
+  g_state.analysis.frozen_sun_altitude = g_state.sun.altitude;
   g_survey_executor.SetScene(std::move(scene));
   // What this run was asked about, for the "centre has moved" hint: the request's own copy, so
   // it is the value the server received and not a re-read of the session field.

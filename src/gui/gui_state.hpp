@@ -1848,6 +1848,12 @@ struct GuiState {
     MapViewState map_view;
     SkyPointIntent sky_point;
     double map_wavelength_nm = 0.0;
+    // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
+    // always due north). The map request's window geometry derives from the sun the ENGINE will
+    // evaluate against — the executor's frozen scene, not the live document, which the user may
+    // have edited since. The anchor chain's last resort reads this, never the live sun.
+    bool frozen_sun_valid = false;
+    float frozen_sun_altitude = 20.0f;
   };
   RaypathAnalysisSession analysis;
 

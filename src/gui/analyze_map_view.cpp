@@ -400,7 +400,10 @@ bool SkySunAnchorFor(const GuiState& state, SkySunAnchor* out) {
       return true;
     }
   }
-  out->altitude_deg = state.sun.altitude;
+  // Last resort: the sun the frozen scene binding was built with — the engine evaluates the
+  // request against ITS sun, never the live document's (an edited-but-not-re-analyzed sun must
+  // not steer the window geometry). Same source as the binding, captured at DoAnalyze.
+  out->altitude_deg = state.analysis.frozen_sun_valid ? state.analysis.frozen_sun_altitude : state.sun.altitude;
   out->azimuth_deg = 0.0;  // the GUI's sun is always due north
   return true;
 }
@@ -580,6 +583,7 @@ void ResetMapViewForNewSelection(MapViewState* view) {
   view->centre_pos[2] = 1.0f;
   view->radius_deg = kMapFullSkyRadiusDeg;
   view->auto_fit_done = false;
+  view->user_moved = false;
 }
 
 // The issuing half of the pump (the survey pump's IssueSurveyQuery shape): build the request for
@@ -615,8 +619,10 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
 
   // 2. The default view chain's auto-Fit: the first adopted map of this selection fits the
   //    picture once (the fitted view then asks its refinement through the settle gate below).
-  //    Latched per selection — a failed Fit (an honest all-zero map) must not loop.
-  if (!view.auto_fit_done && map.adopted_result != nullptr) {
+  //    Latched per selection — a failed Fit (an honest all-zero map) must not loop — and it
+  //    stands down the moment the user has steered the view by hand: the chain serves a passive
+  //    selection, never a yank of navigation the user has already begun.
+  if (!view.auto_fit_done && !view.user_moved && map.adopted_result != nullptr) {
     view.auto_fit_done = true;
     LUMICE_PathMapInfo info{};
     info.struct_size = sizeof(info);
@@ -722,6 +728,7 @@ struct MapRasterCache {
   bool valid = false;
   MapDisplayNorm norm;
   unsigned int texture = 0;
+  int texture_size = 0;  // the allocation the GL object currently holds — the realloc's own record
   std::vector<uint8_t> rgba;
 };
 
@@ -735,20 +742,23 @@ void DestroyMapRasterTexture() {
   g_map_raster = MapRasterCache{};
 }
 
-void RasterizeMapDisk(const LUMICE_PathMap& map, const SurveyQueryId& adopted_id, const MapViewState& view) {
+void RasterizeMapDisk(const LUMICE_PathMap& map, const SurveyQueryId& adopted_id, const MapViewState& view,
+                      int target_size) {
   LUMICE_PathMapInfo info{};
   info.struct_size = sizeof(info);
   LUMICE_PathMapPixels pixels{};
   pixels.struct_size = sizeof(pixels);
   if (LUMICE_PathMapGetInfo(&map, &info) != LUMICE_PATH_READ_OK ||
       LUMICE_PathMapGetPixels(&map, &pixels) != LUMICE_PATH_READ_OK) {
-    return;
+    return;  // the cache stays untouched — no "sized without a raster" half-state
   }
-  const int size = std::clamp(g_map_raster.size, 64, kMapRasterMaxSize);
+  const int size = std::clamp(target_size, 64, kMapRasterMaxSize);
   // The texture is (re)allocated at the raster's own size, not a fixed maximum: the quad draws
-  // the texture's full [0,1] uv range, so an oversized allocation would show uninitialized
-  // storage beside the picture.
-  if (g_map_raster.texture == 0 || g_map_raster.size != size) {
+  // the texture's full [0,1] uv range, so a stale allocation would either clip the upload (an
+  // out-of-bounds glTexSubImage2D is silently dropped — the picture would freeze on the old
+  // texture) or show uninitialized storage beside the picture. The allocation size is the
+  // cache's OWN record, compared against itself — never a field the caller pre-writes.
+  if (g_map_raster.texture == 0 || g_map_raster.texture_size != size) {
     if (g_map_raster.texture == 0) {
       glGenTextures(1, &g_map_raster.texture);
     }
@@ -757,6 +767,7 @@ void RasterizeMapDisk(const LUMICE_PathMap& map, const SurveyQueryId& adopted_id
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
+    g_map_raster.texture_size = size;
   }
   g_map_raster.rgba.resize(static_cast<size_t>(size) * static_cast<size_t>(size) * 4u);
   const MapDiskProjector proj = MakeMapDiskProjector(view.centre_pos, view.radius_deg);
@@ -1114,6 +1125,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
           }
           view.radius_deg = fit.radius_deg;
           MapViewChanged(&view, now_s, false);
+          view.user_moved = true;  // a hand on the wheel: the chain's auto-Fit stands down
         }
       }
     }
@@ -1125,6 +1137,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     view.centre_pos[2] = 1.0f;
     view.radius_deg = kMapFullSkyRadiusDeg;
     MapViewChanged(&view, now_s, false);
+    view.user_moved = true;
   }
 
   // The state line (the four visible states + the two supersession notes).
@@ -1146,8 +1159,18 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     ImGui::TextWrapped("%s", map.adopted_error.c_str());
     ImGui::PopStyleColor();
   } else if (st == MapQueryState::kWaiting && map.adopted_result == nullptr) {
+    // The queue is the truth the wait names (plan risk 4): the selection's survey — whose
+    // chromatic legs run ~15 s on a full-dimensional class — goes first on the one worker, and
+    // this map rides behind it. Only a map asked in that window can honestly say so.
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("Computing the class map in the background (sub-second at the interaction tier)…");
+    if (g_survey_executor.QueryOutstanding(QueryFace::kSurvey)) {
+      ImGui::TextWrapped(
+          "Computing the class map in the background — it queues behind this class's survey, whose "
+          "chromatic legs take ~15 s. What arrives first is the all-sky map; the view refines for you "
+          "after that.");
+    } else {
+      ImGui::TextWrapped("Computing the class map in the background (sub-second at the interaction tier)…");
+    }
     ImGui::PopStyleColor();
   } else if (refining) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
@@ -1161,7 +1184,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // gestures, the raster drawn first, the anchors and overlays over it.
   const float avail_w = ImGui::GetContentRegionAvail().x;
   const float avail_h = ImGui::GetContentRegionAvail().y;
-  const float pic_px = std::max(64.0f, std::min(avail_w, std::max(64.0f, avail_h * 0.62f)));
+  // The picture takes a bounded share of the region so the header, the state line, the readout,
+  // the caliber block and the point input all stay on the region's own budget even at the
+  // acceptance-minimum window — a scrolled-out header is an unreachable one.
+  const float pic_px = std::max(64.0f, std::min(avail_w, std::max(64.0f, avail_h * 0.52f)));
   const ImVec2 pic_min = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##map_canvas", ImVec2(pic_px, pic_px));
   const bool canvas_hovered = ImGui::IsItemHovered();
@@ -1171,14 +1197,18 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (map.adopted_result != nullptr) {
     const int target_size = static_cast<int>(std::min(pic_px, static_cast<float>(kMapRasterMaxSize)));
     if (!MapRasterFresh(map.adopted_id, view, target_size)) {
-      g_map_raster.size = target_size;
-      RasterizeMapDisk(*map.adopted_result, map.adopted_id, view);
+      RasterizeMapDisk(*map.adopted_result, map.adopted_id, view, target_size);
     }
     if (g_map_raster.valid) {
       // The quad stretches to the canvas the gestures measure against — the texture's own
-      // resolution is display detail, never a second geometry.
+      // resolution is display detail, never a second geometry. NO uv flip: the raster is
+      // CPU-authored top-down (buffer row 0 is the disk's top, the y convention the projection
+      // unit tests pin), and glTexSubImage2D lands row 0 at v=0 — so quad top must sample v=0.
+      // (The flip here was the thumbnail blit's convention, whose content is GPU-authored
+      // bottom-up; a CPU buffer under it displays mirrored, invisible on the az-symmetric
+      // fitted view but opposite to every anchor on a full-sky one.)
       dl->AddImage(static_cast<ImTextureID>(static_cast<uintptr_t>(g_map_raster.texture)), pic_min,
-                   ImVec2(pic_min.x + pic_px, pic_min.y + pic_px), ImVec2(0, 1), ImVec2(1, 0));
+                   ImVec2(pic_min.x + pic_px, pic_min.y + pic_px), ImVec2(0, 0), ImVec2(1, 1));
     }
   }
   // The disk frame: the view's own boundary (the picture's clip circle), plus the honest
@@ -1212,6 +1242,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         const float factor = io.MouseWheel > 0.0f ? 1.0f / kMapZoomWheelFactor : kMapZoomWheelFactor;
         MapZoomViewAtPoint(&view, pos, factor);
         MapViewChanged(&view, now_s, true);
+        view.user_moved = true;
         gesture_this_frame = true;
       }
     }
@@ -1247,6 +1278,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       MapPanViewByDiskCoords(&view, static_cast<double>(io.MouseDelta.x) / pic_px,
                              static_cast<double>(io.MouseDelta.y) / pic_px);
       MapViewChanged(&view, now_s, true);
+      view.user_moved = true;
       gesture_this_frame = true;
     }
   } else {
@@ -1318,11 +1350,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     in.completed = MapQueryStateFor(map) == MapQueryState::kCompleted;
+    // The block scrolls within what the region can still give it (the point input below keeps
+    // its own row) — the caliber never pushes the header out of reach.
+    const float input_row_reserve = UiPx(30.0f);
+    const float caliber_h = std::max(UiPx(20.0f), ImGui::GetContentRegionAvail().y - input_row_reserve);
+    ImGui::BeginChild("##map_caliber", ImVec2(0, caliber_h), ImGuiChildFlags_None);
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     for (const std::string& line : MapCaliberLines(in)) {
       ImGui::TextWrapped("%s", line.c_str());
     }
     ImGui::PopStyleColor();
+    ImGui::EndChild();
   }
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------

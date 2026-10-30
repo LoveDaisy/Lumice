@@ -1318,6 +1318,36 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.cone_center_dir[2] == roi_dir_before[2], false);
   IM_CHECK_RETV(gui::g_state.analysis.pick_armed == pick_armed_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before, false);
+
+  // The flip falsifier: a full-sky view puts the sun far off the disk's centre, so the halo
+  // ring surrounds the sun MARKER only when the raster's row order and the anchors agree — the
+  // one view where a vertical mirror of the picture is visible to the eye. Screenshot on file.
+  // (The view arrives by the same write the Full sky button performs — the gesture click paths
+  // are already covered by the pick above; the test engine's hover on this chrome layout is
+  // addressed separately.)
+  for (int k = 0; k < 3; ++k) {
+    gui::g_state.analysis.map_view.centre_pos[k] = k == 2 ? 1.0f : 0.0f;
+  }
+  gui::g_state.analysis.map_view.radius_deg = gui::kMapFullSkyRadiusDeg;
+  gui::g_state.analysis.map_view.user_moved = true;
+  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 1;
+                    },
+                    30),
+                false);
+  ctx->Yield(2);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_map_region_full_sky.png").string()),
+                false);
   return true;
 }
 

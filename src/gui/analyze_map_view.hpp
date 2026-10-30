@@ -86,6 +86,10 @@ struct MapViewState {
   bool point_dragging = false;  // the press grabbed the sky-point marker, not the view
   double last_view_change_s = 0.0;
   bool auto_fit_done = false;
+  // The user has steered this view by hand since the selection (pan, zoom, Fit, full sky): the
+  // default view chain's auto-Fit stands down — the first arrival must not yank a view the
+  // user is already driving.
+  bool user_moved = false;
 };
 
 // ---- Pure view math -------------------------------------------------------------------------------
