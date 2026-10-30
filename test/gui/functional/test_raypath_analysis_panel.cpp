@@ -1330,7 +1330,7 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   }
   gui::g_state.analysis.map_view.radius_deg = gui::kMapFullSkyRadiusDeg;
   gui::g_state.analysis.map_view.user_moved = true;
-  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false);
+  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {

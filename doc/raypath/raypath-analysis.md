@@ -650,7 +650,8 @@ Fit/归一化/颜色状态、真实 executor 泵）。v1 未交付（后续 face
 `SurveySelectionKey`（742.3，map 与 survey 同源派生）；点意图 =
 `GuiState::analysis.sky_point`（`SkyPointIntent`：`valid` + `dir`（travel 语义，`AltAzToDir`
 约定，点查询 target 可逐字填充）+ `from_map_pick`（表达来源：图上拾取/坐标输入）），随 `analysis`
-档规则走（文档切换清、Revert 保留、再 Analyze 归新代）；采纳 map 句柄 =
+档规则走（文档切换清、Revert 保留；**再 Analyze 保留**——点意图是用户指名的天空方向，不携带
+归属代，跨代保留语义自洽；map/survey 会话才由选择键的 generation 分量杀死）；采纳 map 句柄 =
 `analysis.map.adopted_result`（GUI 线程独占，742.3 所有权规则），其 Info 携带视图帧与口径回显；
 λ 意图 = `analysis.map_wavelength_nm`（0 = 引擎参考）。暗处/弱尾/未知处可停留（设点无强度判断），
 点查询失败不移动点（742.6 消费规则），概览/survey/map 任一拒答不封锁点意图。

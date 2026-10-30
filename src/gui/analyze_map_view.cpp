@@ -321,9 +321,12 @@ void MapZoomViewAtPoint(MapViewState* view, const double cursor_pos[3], float fa
   }
 }
 
-void MapViewChanged(MapViewState* view, double now_s, bool gesture_active) {
+void MapViewChanged(MapViewState* view, double now_s, bool gesture_active, bool user_steered) {
   view->last_view_change_s = now_s;
   view->gesture_active = gesture_active;
+  if (user_steered) {
+    view->user_moved = true;
+  }
 }
 
 // ---- View -> request derivation --------------------------------------------------------------------
@@ -636,7 +639,7 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
           view.centre_pos[k] = fit.centre_pos[k];
         }
         view.radius_deg = fit.radius_deg;
-        MapViewChanged(&view, now_s, false);
+        MapViewChanged(&view, now_s, false, /*user_steered=*/false);
         GUI_LOG_VERBOSE("[MapView] auto-Fit: radius {:.1f} deg", view.radius_deg);
       }
     }
@@ -1108,6 +1111,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   if (state.analysis.map_wavelength_nm > 0.0 && ImGui::SmallButton("reference##map_lambda")) {
     state.analysis.map_wavelength_nm = 0.0;
+  } else if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
+    ImGui::TextDisabled("(the engine-chosen reference until a map echoes it)");
   }
   ImGui::SameLine();
   if (ImGui::SmallButton("Fit##map")) {
@@ -1124,8 +1129,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
             view.centre_pos[k] = fit.centre_pos[k];
           }
           view.radius_deg = fit.radius_deg;
-          MapViewChanged(&view, now_s, false);
-          view.user_moved = true;  // a hand on the wheel: the chain's auto-Fit stands down
+          MapViewChanged(&view, now_s, false, /*user_steered=*/true);
         }
       }
     }
@@ -1136,8 +1140,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     view.centre_pos[1] = 0.0f;
     view.centre_pos[2] = 1.0f;
     view.radius_deg = kMapFullSkyRadiusDeg;
-    MapViewChanged(&view, now_s, false);
-    view.user_moved = true;
+    MapViewChanged(&view, now_s, false, /*user_steered=*/true);
   }
 
   // The state line (the four visible states + the two supersession notes).
@@ -1164,10 +1167,18 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // this map rides behind it. Only a map asked in that window can honestly say so.
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     if (g_survey_executor.QueryOutstanding(QueryFace::kSurvey)) {
-      ImGui::TextWrapped(
-          "Computing the class map in the background — it queues behind this class's survey, whose "
-          "chromatic legs take ~15 s. What arrives first is the all-sky map; the view refines for you "
-          "after that.");
+      // The prediction says only what the standing intent will deliver: a hand on the view has
+      // superseded the default chain's all-sky request with the view you asked for.
+      if (view.user_moved) {
+        ImGui::TextWrapped(
+            "Computing the class map in the background — it queues behind this class's survey, whose "
+            "chromatic legs take ~15 s. The map for the view you asked for answers after it.");
+      } else {
+        ImGui::TextWrapped(
+            "Computing the class map in the background — it queues behind this class's survey, whose "
+            "chromatic legs take ~15 s. What arrives first is the all-sky map; the view refines for you "
+            "after that.");
+      }
     } else {
       ImGui::TextWrapped("Computing the class map in the background (sub-second at the interaction tier)…");
     }
@@ -1241,8 +1252,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       if (MapPickPositionAtDiskCoords(view, cx, cy, pos)) {
         const float factor = io.MouseWheel > 0.0f ? 1.0f / kMapZoomWheelFactor : kMapZoomWheelFactor;
         MapZoomViewAtPoint(&view, pos, factor);
-        MapViewChanged(&view, now_s, true);
-        view.user_moved = true;
+        MapViewChanged(&view, now_s, true, /*user_steered=*/true);
         gesture_this_frame = true;
       }
     }
@@ -1277,8 +1287,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     } else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
       MapPanViewByDiskCoords(&view, static_cast<double>(io.MouseDelta.x) / pic_px,
                              static_cast<double>(io.MouseDelta.y) / pic_px);
-      MapViewChanged(&view, now_s, true);
-      view.user_moved = true;
+      MapViewChanged(&view, now_s, true, /*user_steered=*/true);
       gesture_this_frame = true;
     }
   } else {
@@ -1365,13 +1374,20 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
   ImGui::Separator();
-  static float input_alt = 0.0f;
-  static float input_az = 0.0f;
+  ImGuiStorage* sky_storage = ImGui::GetStateStorage();
+  const ImGuiID alt_key = ImGui::GetID("sky_input_alt");
+  const ImGuiID az_key = ImGui::GetID("sky_input_az");
+  float input_alt = sky_storage->GetFloat(alt_key, 0.0f);
+  float input_az = sky_storage->GetFloat(az_key, 0.0f);
   ImGui::SetNextItemWidth(UiPx(90.0f));
-  ImGui::InputFloat("alt°##sky", &input_alt, 0.0f, 0.0f, "%.1f");
+  if (ImGui::InputFloat("alt°##sky", &input_alt, 0.0f, 0.0f, "%.1f")) {
+    sky_storage->SetFloat(alt_key, input_alt);
+  }
   ImGui::SameLine();
   ImGui::SetNextItemWidth(UiPx(90.0f));
-  ImGui::InputFloat("az°##sky", &input_az, 0.0f, 0.0f, "%.1f");
+  if (ImGui::InputFloat("az°##sky", &input_az, 0.0f, 0.0f, "%.1f")) {
+    sky_storage->SetFloat(az_key, input_az);
+  }
   ImGui::SameLine();
   if (ImGui::SmallButton("Set sky point")) {
     float dir[3];

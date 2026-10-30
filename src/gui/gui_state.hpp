@@ -1843,7 +1843,9 @@ struct GuiState {
     // selection). The display view, the sky-point intent and the explicit wavelength are the
     // session's other three members: the view is the display's own disk state driving the
     // requests, the intent is the user's sky target (independent of any class or ROI state),
-    // and the wavelength is the user's explicit-λ choice (0 = the engine's reference).
+    // and the wavelength is the user's explicit-λ choice (0 = the engine's reference). The
+    // intent and the wavelength survive a re-Analyze — a named sky direction and a chosen
+    // wavelength carry no analysis generation; only the sessions do.
     MapQuerySession map;
     MapViewState map_view;
     SkyPointIntent sky_point;

@@ -105,8 +105,8 @@ travel for a pick), the view's window requests are the disk's bounding rectangle
 (delta, azimuth-about-sun) plane — the tangent-cone azimuth bound off the poles, the full
 circle with a quasi-uniform grid when the disk contains a pole, where the azimuth's reference
 deviation no longer exists — and the display tier samples every request at n = 500k (the
-measured interaction arm: full sky ~0.9 s, windows sub-second), with the caliber line echoing
-the Info's own count. Requests ride the workspace entry on the GUI's one background worker,
+measured interaction arm: full sky ~0.9 s, narrow windows sub-second, the pole-containing
+refinement shape ~2 s), with the caliber line echoing the Info's own count. Requests ride the workspace entry on the GUI's one background worker,
 queued per face behind the survey; a view change supersedes only the map face, and an outcome
 that fails the intent's id is dropped, never shown. The consumer-side rules live in
 `raypath-analysis.md` §5.1.8 (the 742.5 as-built and the 742.6 handover); this file stays the

@@ -659,10 +659,10 @@ TEST(AnalyzeMapView, PumpWaitsForTheSettleBeforeIssuing) {
   // settle window holds, and the burst ends as ONE request for the final view.
   double zoom_target[3] = { 0.0, 0.0, 1.0 };
   MapZoomViewAtPoint(&view, zoom_target, 1.0f / kMapZoomWheelFactor);
-  MapViewChanged(&view, gesture_time, true);
+  MapViewChanged(&view, gesture_time, true, /*user_steered=*/true);
   PumpMapQuery(state, executor, gesture_time);
-  EXPECT_FALSE(state.analysis.map.intent_valid);  // mid-gesture: nothing issued
-  MapViewChanged(&view, gesture_time, false);     // the gesture ends
+  EXPECT_FALSE(state.analysis.map.intent_valid);                       // mid-gesture: nothing issued
+  MapViewChanged(&view, gesture_time, false, /*user_steered=*/false);  // the gesture ends
   PumpMapQuery(state, executor, gesture_time);
   EXPECT_FALSE(state.analysis.map.intent_valid);  // still inside the settle window
   PumpMapQuery(state, executor, gesture_time + kMapSettleSeconds + 0.01);

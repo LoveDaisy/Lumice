@@ -130,8 +130,11 @@ void MapPanViewByDiskCoords(MapViewState* view, double dx, double dy);
 // the centre moves nothing but the radius.
 void MapZoomViewAtPoint(MapViewState* view, const double cursor_pos[3], float factor);
 
-// Marks a view change for the settle gate (gesture bookkeeping: the caller stamps its own clock).
-void MapViewChanged(MapViewState* view, double now_s, bool gesture_active);
+// Marks a view change for the settle gate (gesture bookkeeping: the caller stamps its own
+// clock). `user_steered` is the ONE channel a hand-driven change declares itself through — it
+// disarms the default view chain's auto-Fit, so a gesture site that forgets it cannot silently
+// re-arm the yank r2's review caught.
+void MapViewChanged(MapViewState* view, double now_s, bool gesture_active, bool user_steered);
 
 // ---- View -> request derivation --------------------------------------------------------------------
 
