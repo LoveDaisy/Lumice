@@ -133,8 +133,7 @@ every member of the class (not a representative scaled up). The picture arrives 
 background like the overview does, and the region states honestly where it stands: waiting,
 cancelled, the engine's named refusal, or the picture — plus a *coarse* note while a newer view
 is still computing (the old picture stays on screen, anchored to the sky, and never passes for
-the newest answer), and a note when the picture belongs to a previous analysis of an edited
-scene.
+the newest answer).
 
 **Reading it.** The disk is centred where you last looked; the yellow dot is the sun (the map's
 zero of deviation), the thin cross is the zenith, the faint arc is the horizon. Brightness is a

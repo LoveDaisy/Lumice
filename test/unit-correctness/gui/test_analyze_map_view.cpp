@@ -387,6 +387,131 @@ TEST(AnalyzeMapView, CellColorHonorsTheStatuses) {
       700);  // the maximum sits near white
 }
 
+// ---- The caliber composer (the readback the region draws, held field by field) ---------------------
+
+TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
+  MapCaliberInput in;
+  in.info.struct_size = sizeof(in.info);
+  in.info.wavelength_nm = 550.0;
+  in.info.members_evaluated = 9;
+  in.info.member_count = 12;
+  in.info.sample_count = 500000;
+  in.info.kept_count = 12345;
+  in.info.view_full_sky = 0;
+  in.info.view_delta_min_deg = 3.5;
+  in.info.view_delta_max_deg = 48.5;
+  in.info.view_az_min_deg = -100.0;
+  in.info.view_az_max_deg = 260.0;
+  in.info.view_rows = 182;
+  in.info.view_cols = 1440;
+  in.info.sun_altitude_deg = 20.0;
+  in.info.sun_azimuth_deg = 0.0;
+  in.info.shape_is_nominal = 0;
+  in.have_quantity = true;
+  in.quantity.kind = LUMICE_PATH_QUANTITY_BAND_SUM;
+  in.quantity.aggregation = LUMICE_PATH_AGGREGATION_PHYSICAL_CLASS;
+  in.quantity.unit = LUMICE_PATH_UNIT_PER_SR;
+  in.have_evidence = true;
+  static const char kBasis[] = "nominal crystal shape at the distribution centres";
+  in.evidence.geometry_basis = LUMICE_PathText{ kBasis, sizeof(kBasis) - 1 };
+  in.completed = true;
+
+  const std::vector<std::string> lines = MapCaliberLines(in);
+  ASSERT_GE(lines.size(), 3u);
+  EXPECT_NE(lines[0].find("550.0 nm"), std::string::npos);
+  EXPECT_NE(lines[0].find("9/12 members"), std::string::npos);
+  EXPECT_NE(lines[0].find("n=500000"), std::string::npos);
+  EXPECT_NE(lines[0].find("12345 events"), std::string::npos);
+  EXPECT_NE(lines[0].find("[3.5, 48.5]"), std::string::npos);
+  EXPECT_NE(lines[0].find("[-100.0, 260.0]"), std::string::npos);
+  EXPECT_NE(lines[0].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
+  EXPECT_NE(lines[1].find("band-sum"), std::string::npos);
+  EXPECT_NE(lines[1].find("physical class"), std::string::npos);
+  EXPECT_NE(lines[1].find("per sr"), std::string::npos);
+  EXPECT_NE(lines[1].find("scene geometry"), std::string::npos);
+  EXPECT_EQ(lines[2], kBasis);  // the engine's geometry string, byte for byte
+
+  // A nominal shape says so; a full-sky view names the all-sky grid.
+  in.info.shape_is_nominal = 1;
+  in.info.view_full_sky = 1;
+  in.info.view_rows = 180;
+  in.info.view_cols = 360;
+  const std::vector<std::string> full = MapCaliberLines(in);
+  EXPECT_NE(full[0].find("full sky 180\u00d7360"), std::string::npos);
+  EXPECT_NE(full[1].find("nominal geometry"), std::string::npos);
+}
+
+TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
+  MapCaliberInput in;
+  in.info.struct_size = sizeof(in.info);
+  in.info.wavelength_nm = 550.0;
+  in.info.member_count = 12;
+  in.info.members_evaluated = 5;
+  in.info.sample_count = 500000;
+  in.info.kept_count = 42;
+  in.info.truncated = 1;
+  in.completed = true;
+  std::vector<std::string> lines = MapCaliberLines(in);
+  ASSERT_GE(lines.size(), 1u);
+  // Truncation is named and counts its prefix — never passed off as the whole class.
+  bool truncated_line = false;
+  for (const std::string& l : lines) {
+    truncated_line = truncated_line || l.find("completed prefix of 5 of 12") != std::string::npos;
+  }
+  EXPECT_TRUE(truncated_line);
+  // A finite zero needs a completed, untruncated zero-kept map: not this one.
+  bool zero_line = false;
+  for (const std::string& l : lines) {
+    zero_line = zero_line || l.find("finite zero") != std::string::npos;
+  }
+  EXPECT_FALSE(zero_line);
+
+  in.info.truncated = 0;
+  in.info.kept_count = 0;
+  lines = MapCaliberLines(in);
+  zero_line = false;
+  for (const std::string& l : lines) {
+    zero_line = zero_line || l.find("finite zero") != std::string::npos;
+  }
+  EXPECT_TRUE(zero_line);
+  // The same document before its intent is answered draws no finite-zero claim.
+  in.completed = false;
+  lines = MapCaliberLines(in);
+  zero_line = false;
+  for (const std::string& l : lines) {
+    zero_line = zero_line || l.find("finite zero") != std::string::npos;
+  }
+  EXPECT_FALSE(zero_line);
+  in.completed = true;
+
+  // The rank-0 arm: the mass, its error, the method names and the zero-cells honesty, with the
+  // out-of-view case named instead of hidden.
+  in.have_mass = true;
+  in.mass.m = 3.14159;
+  in.mass.m_error = 0.012;
+  in.mass.pixel = 7;
+  static const char* kMethods[] = { "psi_average", "lattice_mean" };
+  in.methods[0] = kMethods[0];
+  in.methods[1] = kMethods[1];
+  lines = MapCaliberLines(in);
+  bool mass_line = false;
+  for (const std::string& l : lines) {
+    mass_line = mass_line ||
+                (l.find("Rank-0 arm") != std::string::npos && l.find("3.14159") != std::string::npos &&
+                 l.find("0.012") != std::string::npos && l.find("psi_average, lattice_mean") != std::string::npos &&
+                 l.find("not no-light") != std::string::npos);
+  }
+  EXPECT_TRUE(mass_line);
+  in.mass.pixel = -1;
+  lines = MapCaliberLines(in);
+  bool outside_line = false;
+  for (const std::string& l : lines) {
+    outside_line =
+        outside_line || (l.find("Rank-0 arm") != std::string::npos && l.find("outside this view") != std::string::npos);
+  }
+  EXPECT_TRUE(outside_line);
+}
+
 // ---- The session-state rules -----------------------------------------------------------------------
 
 TEST(AnalyzeMapView, MapSessionStateTruthTable) {
@@ -420,18 +545,6 @@ TEST(AnalyzeMapView, MapSessionStateTruthTable) {
   map.cancelled_for_key = false;
   map.adopted_result.reset();
   EXPECT_FALSE(MapRefiningFor(map));
-
-  // Stale generation: the adopted outcome belongs to a previous analysis generation.
-  MapQuerySession stale;
-  stale.intent_valid = true;
-  stale.intent_id = SurveyQueryId{ 5, 1 };
-  stale.adopted_id = SurveyQueryId{ 4, 1 };
-  stale.adopted_result = map_double();
-  EXPECT_TRUE(MapStaleGenerationFor(stale, 5));
-  EXPECT_FALSE(MapStaleGenerationFor(stale, 4));
-  stale.adopted_error = "measure_not_expressible: x";  // a refusal is an outcome too
-  stale.adopted_result.reset();
-  EXPECT_TRUE(MapStaleGenerationFor(stale, 5));
 }
 
 // ---- The pump, over a real executor and a real scene -----------------------------------------------

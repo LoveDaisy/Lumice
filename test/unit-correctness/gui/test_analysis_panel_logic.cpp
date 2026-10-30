@@ -1734,6 +1734,47 @@ TEST(AnalysisPanelLogic, MapIssueQueuesBehindSurveyAndLeavesItRunning) {
   executor.ShutdownAndJoin();
 }
 
+// The per-face outstanding query (the Revert row's predicate): each face reports only its own
+// in-flight or queued job — latching a face whose answer already arrived would turn an intact,
+// adopted result into a false "cancelled".
+TEST(AnalysisPanelLogic, QueryOutstandingIsPerFace) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+  EXPECT_FALSE(executor.QueryOutstanding());
+  EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kSurvey));
+  EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kMap));
+
+  // A survey in flight: the survey face answers true, the map face false.
+  IssueClassQuery(executor, executor.NextId(1), { 1, 2 });
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+  EXPECT_TRUE(executor.QueryOutstanding(QueryFace::kSurvey));
+  EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kMap));
+  EXPECT_TRUE(executor.QueryOutstanding());
+
+  // A map query queued behind it: both faces now outstanding.
+  LUMICE_PathMapRequest map_request{};
+  map_request.struct_size = sizeof(map_request);
+  map_request.crystal_id = 1;
+  static const int map_faces[] = { 1, 2 };
+  map_request.faces = map_faces;
+  map_request.face_count = 2;
+  static const int map_counts[] = { 2 };
+  map_request.layer_face_counts = map_counts;
+  map_request.layer_count = 1;
+  map_request.full_sky = 1;
+  map_request.sample_count = 100000;
+  executor.IssueMapQuery(executor.NextId(1), map_request, { map_faces, map_faces + 2 }, { map_counts, map_counts + 1 },
+                         {});
+  EXPECT_TRUE(executor.QueryOutstanding(QueryFace::kMap));
+
+  executor.ShutdownAndJoin();
+  EXPECT_FALSE(executor.QueryOutstanding());
+}
+
 // The per-face mailboxes and cancels: a survey-face cancel is a no-op while a MAP query is the
 // one running (the map answers; nothing lands in the survey's slot), and the reverse holds.
 TEST(AnalysisPanelLogic, FaceCancelTouchesOnlyItsOwnFace) {

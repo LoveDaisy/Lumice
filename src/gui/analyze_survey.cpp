@@ -65,11 +65,6 @@ bool MapRefiningFor(const MapQuerySession& map) {
          !(map.adopted_id == map.intent_id);
 }
 
-bool MapStaleGenerationFor(const MapQuerySession& map, unsigned long long current_generation) {
-  return (map.adopted_result != nullptr || !map.adopted_error.empty()) &&
-         map.adopted_id.generation != current_generation;
-}
-
 // ---- The worker ------------------------------------------------------------------------------------
 
 struct SurveyExecutor::Impl {
@@ -388,6 +383,14 @@ bool SurveyExecutor::InFlight(QueryFace face) const {
 bool SurveyExecutor::QueryOutstanding() const {
   std::lock_guard<std::mutex> lock(impl_->mu);
   return impl_->inflight_token != nullptr || impl_->pending_survey.has_value() || impl_->pending_map.has_value();
+}
+
+bool SurveyExecutor::QueryOutstanding(QueryFace face) const {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  if (impl_->inflight_token != nullptr && impl_->inflight_face == face) {
+    return true;
+  }
+  return face == QueryFace::kSurvey ? impl_->pending_survey.has_value() : impl_->pending_map.has_value();
 }
 
 void SurveyExecutor::ShutdownAndJoin() {

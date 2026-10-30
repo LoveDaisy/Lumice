@@ -197,6 +197,25 @@ MapDisplayNorm MapDisplayNormFor(const LUMICE_PathMapPixels& pixels);
 // shows data, never a written zero where nothing was computed.
 uint32_t MapCellColorRgba(double value, uint8_t status, const MapDisplayNorm& norm);
 
+// ---- The caliber composer (pure; the unit layer holds it to the readback) --------------------------
+
+// The map region's caliber block: every fact the reader calls handed in, the lines spelled here.
+// The renderer fills the input from the adopted result's own readers; the unit layer pins each
+// line's fields to the input structs — the engine's words, never a hard-coded claim (AC1).
+inline constexpr size_t kMapCaliberMaxMethods = 8;
+struct MapCaliberInput {
+  LUMICE_PathMapInfo info{};
+  bool have_evidence = false;
+  LUMICE_PathSurveyEvidence evidence{};
+  bool have_quantity = false;
+  LUMICE_PathQuantitySpec quantity{};
+  bool have_mass = false;
+  LUMICE_PathMapPointMass mass{};
+  const char* methods[kMapCaliberMaxMethods] = {};  // the mass arm's deduplicated method names
+  bool completed = false;                           // the standing intent answered (gates the finite-zero line)
+};
+std::vector<std::string> MapCaliberLines(const MapCaliberInput& in);
+
 // ---- The pump and the renderer (GuiState-dependent, defined in the .cpp) ---------------------------
 
 // The map face's frame pump — the survey pump's sibling (analysis_panel.hpp PumpSurveyQuery):

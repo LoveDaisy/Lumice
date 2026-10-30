@@ -171,19 +171,16 @@ MapQueryState MapQueryStateFor(const MapQuerySession& map);
 // anchored on the sky with a "refining" note — never as the newest answer (AC2).
 bool MapRefiningFor(const MapQuerySession& map);
 
-// Whether the adopted outcome describes a previous analysis generation: a re-Analyze has since
-// been adopted into the share list, so the map on show is of the previous scene version and is
-// labelled as such until its replacement arrives (AC5's stale-baseline rule).
-bool MapStaleGenerationFor(const MapQuerySession& map, unsigned long long current_generation);
-
 // ---- The executor ---------------------------------------------------------------------------------
 
 class SurveyExecutor {
  public:
-  // A finished query, drained by the GUI. `result` is null iff `ok` is false, in which case
-  // `error` carries the engine's "<reason>: <detail>" text (a refusal the gate may still adopt —
-  // it is a legitimate answer for a multi-layer selection). `face` says which query face
-  // finished; each face drains its own outcomes through its own slot.
+  // A finished query, drained by the GUI. On the SURVEY face `result` is null iff `ok` is
+  // false, in which case `error` carries the engine's "<reason>: <detail>" text (a refusal the
+  // gate may still adopt — it is a legitimate answer for a multi-layer selection); `map_result`
+  // is then null too. On the MAP face the same holds with `map_result` carrying the map and
+  // `result` always null. `face` says which query face finished; each face drains its own
+  // outcomes through its own slot.
   struct Finished {
     SurveyQueryId id;
     QueryFace face = QueryFace::kSurvey;
@@ -252,9 +249,12 @@ class SurveyExecutor {
   bool InFlight(QueryFace face) const;
 
   // Whether ANY issued query is still owed an answer — computing or queued, either face. The
-  // teardown decisions (the Revert row's "cancel what is out") branch on this, not on InFlight:
-  // a queued query withdrawn by a reset must take its latch with it, exactly like a running one.
+  // no-arg form is the teardown sweep's "is anything out at all"; the face form is what a
+  // per-face decision consumes (the Revert row latches a face's session only when THAT face has
+  // something out — latching an intact, already-adopted other face would turn its completed
+  // answer into a false "cancelled").
   bool QueryOutstanding() const;
+  bool QueryOutstanding(QueryFace face) const;
 
   // Cancels in-flight, drops queued, and joins the worker (which destroys the binding on its own
   // thread). The app's teardown calls this before the LUMICE global cleanup; every later call is

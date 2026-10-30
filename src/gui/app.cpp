@@ -910,16 +910,18 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
     g_server_poller.InvalidateAnalysisResult();
   } else {
     // Revert keeps the analysis state (the committed scene is the same one), so the frozen
-    // binding stays with the kept selection and result; only an outstanding query is withdrawn
-    // — R6's Revert row. The withdrawal carries the same latch the cancel button sets (the
-    // engine answers a cancel with an OK-carrying partial document, and the gate must drop
-    // it), but only when something is actually outstanding (computing or queued —
-    // QueryOutstanding, not InFlight): latching unconditionally would turn an already-adopted,
-    // intact overview into "cancelled" for nothing.
-    if (g_survey_executor.QueryOutstanding()) {
+    // binding stays with the kept selection and result; only an OUTSTANDING query is withdrawn
+    // — R6's Revert row, now per face (the executor's slots split). The withdrawal carries the
+    // same latch the cancel button sets (the engine answers a cancel with a partial-but-OK
+    // document, and the gate must drop it), but each face latches only when THAT face has
+    // something out (computing or queued): latching a face whose answer already arrived would
+    // turn an intact, adopted result into a false "cancelled".
+    if (g_survey_executor.QueryOutstanding(QueryFace::kSurvey)) {
       g_survey_executor.CancelInFlight(QueryFace::kSurvey);
-      g_survey_executor.CancelInFlight(QueryFace::kMap);
       state.analysis.survey.cancelled_for_key = true;
+    }
+    if (g_survey_executor.QueryOutstanding(QueryFace::kMap)) {
+      g_survey_executor.CancelInFlight(QueryFace::kMap);
       state.analysis.map.cancelled_for_key = true;
     }
   }

@@ -144,6 +144,65 @@ const char* UnitName(int unit) {
 
 }  // namespace
 
+// ---- The caliber composer (pure; the unit layer holds it to the readback) -------------------------
+
+std::vector<std::string> MapCaliberLines(const MapCaliberInput& in) {
+  std::vector<std::string> lines;
+  char line[512];
+  const LUMICE_PathMapInfo& info = in.info;
+  if (info.view_full_sky != 0) {
+    std::snprintf(line, sizeof(line),
+                  "λ %.1f nm · %d/%d members · n=%d lattice · view: full sky %d×%d · kept %lld events",
+                  info.wavelength_nm, info.members_evaluated, info.member_count, info.sample_count, info.view_rows,
+                  info.view_cols, info.kept_count);
+  } else {
+    std::snprintf(line, sizeof(line),
+                  "λ %.1f nm · %d/%d members · n=%d lattice · view: δ [%.1f, %.1f]° az [%.1f, %.1f]° %d×%d · kept %lld "
+                  "events",
+                  info.wavelength_nm, info.members_evaluated, info.member_count, info.sample_count,
+                  info.view_delta_min_deg, info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg,
+                  info.view_rows, info.view_cols, info.kept_count);
+  }
+  lines.emplace_back(line);
+  if (in.have_quantity) {
+    std::snprintf(line, sizeof(line), "%s, %s, %s · sun %.1f°/%.1f° · %s", QuantityKindName(in.quantity.kind),
+                  AggregationName(in.quantity.aggregation), UnitName(in.quantity.unit), info.sun_altitude_deg,
+                  info.sun_azimuth_deg, info.shape_is_nominal != 0 ? "nominal geometry" : "scene geometry");
+    lines.emplace_back(line);
+  }
+  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
+    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
+  }
+  if (info.truncated != 0) {
+    std::snprintf(line, sizeof(line),
+                  "Truncated at the budget: the picture is the completed prefix of %d of %d members — not the whole "
+                  "class.",
+                  info.members_evaluated, info.member_count);
+    lines.emplace_back(line);
+  }
+  if (info.kept_count == 0 && info.truncated == 0 && in.completed) {
+    lines.emplace_back("No events in this view — a finite zero, not a refusal and not missing data.");
+  }
+  if (in.have_mass) {
+    std::string methods;
+    for (size_t i = 0; i < kMapCaliberMaxMethods; ++i) {
+      if (in.methods[i] == nullptr) {
+        break;
+      }
+      if (i > 0) {
+        methods += ", ";
+      }
+      methods += in.methods[i];
+    }
+    std::snprintf(line, sizeof(line),
+                  "Rank-0 arm: m = %.6g ± %.2g (%s) at the sun's cell%s — this class's sky image IS the mass; the "
+                  "zero cells are not no-light.",
+                  in.mass.m, in.mass.m_error, methods.c_str(), in.mass.pixel < 0 ? " (outside this view)" : "");
+    lines.emplace_back(line);
+  }
+  return lines;
+}
+
 // ---- Pure view math -------------------------------------------------------------------------------
 
 bool MapViewSettled(double now_s, const MapViewState& view) {
@@ -511,6 +570,33 @@ uint32_t MapCellColorRgba(double value, uint8_t status, const MapDisplayNorm& no
 
 // ---- The pump --------------------------------------------------------------------------------------
 
+namespace {
+
+// The default view chain's starting view (zenith-centred full sky): what a fresh selection's
+// first request asks for, and what the view returns to when the selection changes.
+void ResetMapViewForNewSelection(MapViewState* view) {
+  view->centre_pos[0] = 0.0f;
+  view->centre_pos[1] = 0.0f;
+  view->centre_pos[2] = 1.0f;
+  view->radius_deg = kMapFullSkyRadiusDeg;
+  view->auto_fit_done = false;
+}
+
+// The issuing half of the pump (the survey pump's IssueSurveyQuery shape): build the request for
+// `key` and hand it to the executor with the id the pump already assigned. Buffers move into the
+// executor's job.
+void IssueMapIntent(GuiState& state, SurveyExecutor& executor, const SurveyQueryId& id, const MapIntentKey& key) {
+  SkySunAnchor sun;
+  SkySunAnchorFor(state, &sun);
+  std::vector<int> faces;
+  std::vector<int> counts;
+  std::vector<double> wavelengths;
+  const LUMICE_PathMapRequest request = MakeMapRequestForKey(key, sun, &faces, &counts, &wavelengths);
+  executor.IssueMapQuery(id, request, std::move(faces), std::move(counts), std::move(wavelengths));
+}
+
+}  // namespace
+
 void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
   MapQuerySession& map = state.analysis.map;
   MapViewState& view = state.analysis.map_view;
@@ -560,18 +646,21 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
       executor.CancelInFlight(QueryFace::kMap);
       map = MapQuerySession{};
     }
-    view.auto_fit_done = false;
+    ResetMapViewForNewSelection(&view);
     return;
   }
   const SurveySelectionKey selection =
       SurveySelectionKeyFor(*identity, state.analysis_result.payload->snapshot_generation);
 
   // 4. A selection change (identity or analysis generation) kills the whole map session —
-  //    picture included. A view/wavelength change only supersedes the intent.
+  //    picture included — and the view returns to the default chain's full sky: the default
+  //    view chain is per selection, so the next class's first picture is its own whole-sky
+  //    view, not the previous class's framing (whose auto-Fit would be a window map fitting
+  //    itself). A view/wavelength change within one selection only supersedes the intent.
   if (map.intent_valid && !(map.key.selection == selection)) {
     executor.CancelInFlight(QueryFace::kMap);
     map = MapQuerySession{};
-    view.auto_fit_done = false;
+    ResetMapViewForNewSelection(&view);
   }
 
   MapIntentKey key;
@@ -592,13 +681,7 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
     map.intent_valid = true;
     map.key = key;
     map.intent_id = executor.NextId(selection.generation);
-    SkySunAnchor sun;
-    SkySunAnchorFor(state, &sun);
-    std::vector<int> faces;
-    std::vector<int> counts;
-    std::vector<double> wavelengths;
-    const LUMICE_PathMapRequest request = MakeMapRequestForKey(key, sun, &faces, &counts, &wavelengths);
-    executor.IssueMapQuery(map.intent_id, request, std::move(faces), std::move(counts), std::move(wavelengths));
+    IssueMapIntent(state, executor, map.intent_id, key);
     return;
   }
   if (map.key != key) {
@@ -612,13 +695,7 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
     map.cancelled_for_key = false;
     map.key = key;
     map.intent_id = executor.NextId(selection.generation);
-    SkySunAnchor sun;
-    SkySunAnchorFor(state, &sun);
-    std::vector<int> faces;
-    std::vector<int> counts;
-    std::vector<double> wavelengths;
-    const LUMICE_PathMapRequest request = MakeMapRequestForKey(key, sun, &faces, &counts, &wavelengths);
-    executor.IssueMapQuery(map.intent_id, request, std::move(faces), std::move(counts), std::move(wavelengths));
+    IssueMapIntent(state, executor, map.intent_id, key);
   }
 }
 
@@ -632,7 +709,13 @@ constexpr int kMapRasterMaxSize = 512;
 // Derived display state (never session semantics): invalidated by the map pointer or the view,
 // regenerated at most once per frame. The GL texture is created once and re-uploaded in place.
 struct MapRasterCache {
-  const LUMICE_PathMap* map = nullptr;
+  // The rastered result's identity — the session's own adopted_id (the executor's serial is
+  // monotonic and never reused), never the result's heap address: a replaced or reset session
+  // frees the old map, and a same-sized new allocation can land on the same address, which
+  // would pass an address key and show the previous class's raster under the new class's
+  // caliber.
+  SurveyQueryId adopted_id{};
+  bool has_map = false;
   float centre[3] = { 0.0f, 0.0f, 0.0f };
   float radius_deg = 0.0f;
   int size = 0;
@@ -652,7 +735,7 @@ void DestroyMapRasterTexture() {
   g_map_raster = MapRasterCache{};
 }
 
-void RasterizeMapDisk(const LUMICE_PathMap& map, const MapViewState& view) {
+void RasterizeMapDisk(const LUMICE_PathMap& map, const SurveyQueryId& adopted_id, const MapViewState& view) {
   LUMICE_PathMapInfo info{};
   info.struct_size = sizeof(info);
   LUMICE_PathMapPixels pixels{};
@@ -677,7 +760,7 @@ void RasterizeMapDisk(const LUMICE_PathMap& map, const MapViewState& view) {
   }
   g_map_raster.rgba.resize(static_cast<size_t>(size) * static_cast<size_t>(size) * 4u);
   const MapDiskProjector proj = MakeMapDiskProjector(view.centre_pos, view.radius_deg);
-  if (!g_map_raster.norm.valid || g_map_raster.map != &map) {
+  if (!g_map_raster.norm.valid || !(g_map_raster.adopted_id == adopted_id)) {
     g_map_raster.norm = MapDisplayNormFor(pixels);
   }
   const double delta_min = info.view_delta_min_deg;
@@ -728,7 +811,8 @@ void RasterizeMapDisk(const LUMICE_PathMap& map, const MapViewState& view) {
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size, size, GL_RGBA, GL_UNSIGNED_BYTE, out);
   glBindTexture(GL_TEXTURE_2D, 0);
-  g_map_raster.map = &map;
+  g_map_raster.adopted_id = adopted_id;
+  g_map_raster.has_map = true;
   g_map_raster.centre[0] = view.centre_pos[0];
   g_map_raster.centre[1] = view.centre_pos[1];
   g_map_raster.centre[2] = view.centre_pos[2];
@@ -737,8 +821,9 @@ void RasterizeMapDisk(const LUMICE_PathMap& map, const MapViewState& view) {
   g_map_raster.valid = true;
 }
 
-bool MapRasterFresh(const LUMICE_PathMap& map, const MapViewState& view) {
-  return g_map_raster.valid && g_map_raster.map == &map && g_map_raster.radius_deg == view.radius_deg &&
+bool MapRasterFresh(const SurveyQueryId& adopted_id, const MapViewState& view, int target_size) {
+  return g_map_raster.valid && g_map_raster.has_map && g_map_raster.adopted_id == adopted_id &&
+         g_map_raster.size == target_size && g_map_raster.radius_deg == view.radius_deg &&
          g_map_raster.centre[0] == view.centre_pos[0] && g_map_raster.centre[1] == view.centre_pos[1] &&
          g_map_raster.centre[2] == view.centre_pos[2];
 }
@@ -769,10 +854,20 @@ bool ProjectToRect(const MapViewState& view, const double pos[3], const ImVec2& 
   return true;
 }
 
-// The iso-deviation circle about the sun (the survey dispersion's curve geometry): sampled,
-// projected, split where the disk leaves the view. Returns the drawn point count.
-int DrawIsoDeltaCircle(ImDrawList* dl, const MapViewState& view, const ImVec2& pic_min, float pic_px,
-                       const double sun_pos[3], double delta_deg, ImU32 colour, float thickness) {
+// One drawn segment of the iso-deviation circle's walk: whether any point landed in the disk,
+// and the topmost (smallest screen y) of them — the label anchor the curve's readout sits at.
+struct IsoDeltaWalk {
+  int drawn = 0;
+  bool have_top = false;
+  double top_x = 0.0;
+  double top_y = 0.0;
+};
+
+// The iso-deviation circle about the sun (the survey dispersion's curve geometry): the circle's
+// one parameterization — orthogonal basis about the sun, kOverlaySegments samples — sampled,
+// projected, split where the disk leaves the view.
+IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapViewState& view, const ImVec2& pic_min, float pic_px,
+                                const double sun_pos[3], double delta_deg, ImU32 colour, float thickness) {
   double u[3] = { 0.0, 0.0, 1.0 };
   double dot = Dot3(u, sun_pos);
   if (std::fabs(dot) > 0.9) {
@@ -790,7 +885,7 @@ int DrawIsoDeltaCircle(ImDrawList* dl, const MapViewState& view, const ImVec2& p
   const double delta = delta_deg * kDeg2RadD;
   const double cos_d = std::cos(delta);
   const double sin_d = std::sin(delta);
-  int drawn = 0;
+  IsoDeltaWalk walk;
   double last_x = 0.0;
   double last_y = 0.0;
   for (int s = 0; s <= kOverlaySegments; ++s) {
@@ -801,18 +896,23 @@ int DrawIsoDeltaCircle(ImDrawList* dl, const MapViewState& view, const ImVec2& p
     double x = 0.0;
     double y = 0.0;
     if (!ProjectToRect(view, p, pic_min, pic_px, &x, &y)) {
-      drawn = 0;  // the run broke; the next in-disk point starts a fresh polyline
+      walk.drawn = 0;  // the run broke; the next in-disk point starts a fresh polyline
       continue;
     }
-    if (drawn > 0) {
+    if (walk.drawn > 0) {
       dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
                   ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
     }
     last_x = x;
     last_y = y;
-    ++drawn;
+    ++walk.drawn;
+    if (!walk.have_top || y < walk.top_y) {
+      walk.have_top = true;
+      walk.top_x = x;
+      walk.top_y = y;
+    }
   }
-  return drawn;
+  return walk;
 }
 
 void DrawFrameAnchors(ImDrawList* dl, const MapViewState& view, const LUMICE_PathMapInfo& info, const ImVec2& pic_min,
@@ -857,8 +957,8 @@ void DrawFrameAnchors(ImDrawList* dl, const MapViewState& view, const LUMICE_Pat
   }
 }
 
-void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& view, const ImVec2& pic_min, float pic_px,
-                        std::string* label_top) {
+void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& view, const ImVec2& pic_min,
+                        float pic_px) {
   SurveyQuerySession& survey = state.analysis.survey;
   if (survey.adopted_result == nullptr) {
     return;
@@ -912,53 +1012,20 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& vie
       { model.dispersion.value_blue_deg, IM_COL32(96, 145, 240, 235), &model.dispersion.blue_label },
     };
     for (const Curve& curve : curves) {
-      // Find the circle's topmost drawn point for the label anchor (the readout the eye meets).
-      double best_y = 1e30;
-      double best_x = 0.0;
-      bool have = false;
-      // Re-walk cheaply: the draw call splits internally; this pass only hunts the label spot.
-      double u[3] = { 0.0, 0.0, 1.0 };
-      double dot = Dot3(u, sun_pos);
-      if (std::fabs(dot) > 0.9) {
-        u[0] = 1.0;
-        u[1] = 0.0;
-        u[2] = 0.0;
-        dot = Dot3(u, sun_pos);
-      }
-      for (int k = 0; k < 3; ++k) {
-        u[k] -= dot * sun_pos[k];
-      }
-      Normalize3(u);
-      double vv[3];
-      Cross3(sun_pos, u, vv);
-      const double delta = curve.delta_deg * kDeg2RadD;
-      for (int s = 0; s <= kOverlaySegments; ++s) {
-        const double phi = 2.0 * kPiD * s / kOverlaySegments;
-        const double p[3] = {
-          std::cos(delta) * sun_pos[0] + std::sin(delta) * (std::cos(phi) * u[0] + std::sin(phi) * vv[0]),
-          std::cos(delta) * sun_pos[1] + std::sin(delta) * (std::cos(phi) * u[1] + std::sin(phi) * vv[1]),
-          std::cos(delta) * sun_pos[2] + std::sin(delta) * (std::cos(phi) * u[2] + std::sin(phi) * vv[2])
-        };
-        double x = 0.0;
-        double y = 0.0;
-        if (ProjectToRect(view, p, pic_min, pic_px, &x, &y) && y < best_y) {
-          best_y = y;
-          best_x = x;
-          have = true;
-        }
-      }
-      const int drawn = DrawIsoDeltaCircle(dl, view, pic_min, pic_px, sun_pos, curve.delta_deg, curve.colour, 1.4f);
-      if (have && drawn > 0 && label_top != nullptr) {
+      // One walk draws the circle and reports its topmost drawn point — the label anchor (the
+      // readout the eye meets).
+      const IsoDeltaWalk walk =
+          WalkIsoDeltaCircle(dl, view, pic_min, pic_px, sun_pos, curve.delta_deg, curve.colour, 1.4f);
+      if (walk.have_top && walk.drawn > 0) {
         char line[96];
         std::snprintf(line, sizeof(line), "%s · %.3f°", curve.label->c_str(), curve.delta_deg);
         const ImVec2 ts = ImGui::CalcTextSize(line);
-        dl->AddRectFilled(ImVec2(static_cast<float>(best_x) - ts.x * 0.5f - 3.0f, static_cast<float>(best_y) - ts.y),
-                          ImVec2(static_cast<float>(best_x) + ts.x * 0.5f + 3.0f, static_cast<float>(best_y)),
-                          IM_COL32(16, 17, 20, 170));
-        dl->AddText(ImVec2(static_cast<float>(best_x) - ts.x * 0.5f, static_cast<float>(best_y) - ts.y), curve.colour,
-                    line);
-        *label_top += line;
-        *label_top += "  ";
+        dl->AddRectFilled(
+            ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
+            ImVec2(static_cast<float>(walk.top_x) + ts.x * 0.5f + 3.0f, static_cast<float>(walk.top_y)),
+            IM_COL32(16, 17, 20, 170));
+        dl->AddText(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y),
+                    curve.colour, line);
       }
     }
   }
@@ -1063,8 +1130,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The state line (the four visible states + the two supersession notes).
   const MapQueryState st = MapQueryStateFor(map);
   const bool refining = MapRefiningFor(map);
-  const bool stale_generation = MapStaleGenerationFor(
-      map, state.analysis_result.payload ? state.analysis_result.payload->snapshot_generation : 0);
   if (st == MapQueryState::kNoSelection) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
@@ -1091,11 +1156,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         "the sky, not upscaled.");
     ImGui::PopStyleColor();
   }
-  if (stale_generation && !refining) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("This map is of the previous analysis generation — re-Analyze to refresh it.");
-    ImGui::PopStyleColor();
-  }
 
   // The picture: a square that fits the region, an invisible button over it carrying the
   // gestures, the raster drawn first, the anchors and overlays over it.
@@ -1109,15 +1169,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
 
   if (map.adopted_result != nullptr) {
-    if (!MapRasterFresh(*map.adopted_result, view)) {
-      g_map_raster.size = static_cast<int>(std::min(pic_px, static_cast<float>(kMapRasterMaxSize)));
-      RasterizeMapDisk(*map.adopted_result, view);
+    const int target_size = static_cast<int>(std::min(pic_px, static_cast<float>(kMapRasterMaxSize)));
+    if (!MapRasterFresh(map.adopted_id, view, target_size)) {
+      g_map_raster.size = target_size;
+      RasterizeMapDisk(*map.adopted_result, map.adopted_id, view);
     }
     if (g_map_raster.valid) {
-      const float draw_px = static_cast<float>(g_map_raster.size);
-      // The raster's row 0 is the top; GL textures want the flip.
+      // The quad stretches to the canvas the gestures measure against — the texture's own
+      // resolution is display detail, never a second geometry.
       dl->AddImage(static_cast<ImTextureID>(static_cast<uintptr_t>(g_map_raster.texture)), pic_min,
-                   ImVec2(pic_min.x + draw_px, pic_min.y + draw_px), ImVec2(0, 1), ImVec2(1, 0));
+                   ImVec2(pic_min.x + pic_px, pic_min.y + pic_px), ImVec2(0, 1), ImVec2(1, 0));
     }
   }
   // The disk frame: the view's own boundary (the picture's clip circle), plus the honest
@@ -1134,9 +1195,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     DrawFrameAnchors(dl, view, anchor_info, pic_min, pic_px);
   }
   if (overlays) {
-    std::string overlay_labels;
-    DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &overlay_labels);
-    (void)overlay_labels;
+    DrawSurveyOverlays(dl, state, view, pic_min, pic_px);
   }
   float marker_px = -1.0f;
   float marker_py = -1.0f;
@@ -1236,73 +1295,34 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
 
-  // The caliber line: every fact read back through the result's own readers — the engine's
-  // words, never a hard-coded claim (AC1).
+  // The caliber block: every fact read back through the result's own readers into the pure
+  // composer (the unit layer holds it to the readback), then drawn (AC1).
   if (map.adopted_result != nullptr && have_anchor_info) {
+    MapCaliberInput in;
+    in.info = anchor_info;
     LUMICE_PathSurveyEvidence evidence{};
     evidence.struct_size = sizeof(evidence);
-    const bool have_evidence = LUMICE_PathMapGetEvidence(map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK;
+    in.have_evidence = LUMICE_PathMapGetEvidence(map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK;
+    in.evidence = evidence;
     LUMICE_PathQuantitySpec quantity{};
     quantity.struct_size = sizeof(quantity);
-    const bool have_quantity = LUMICE_PathMapGetQuantity(map.adopted_result.get(), &quantity) == LUMICE_PATH_READ_OK;
-    char line[512];
-    if (anchor_info.view_full_sky != 0) {
-      std::snprintf(line, sizeof(line),
-                    "λ %.1f nm · %d/%d members · n=%d lattice · view: full sky %d×%d · kept %lld events",
-                    anchor_info.wavelength_nm, anchor_info.members_evaluated, anchor_info.member_count,
-                    anchor_info.sample_count, anchor_info.view_rows, anchor_info.view_cols, anchor_info.kept_count);
-    } else {
-      std::snprintf(
-          line, sizeof(line),
-          "λ %.1f nm · %d/%d members · n=%d lattice · view: δ [%.1f, %.1f]° az [%.1f, %.1f]° %d×%d · kept %lld events",
-          anchor_info.wavelength_nm, anchor_info.members_evaluated, anchor_info.member_count, anchor_info.sample_count,
-          anchor_info.view_delta_min_deg, anchor_info.view_delta_max_deg, anchor_info.view_az_min_deg,
-          anchor_info.view_az_max_deg, anchor_info.view_rows, anchor_info.view_cols, anchor_info.kept_count);
-    }
-    ImGui::TextDisabled("%s", line);
-    if (have_quantity) {
-      std::snprintf(line, sizeof(line), "%s, %s, %s · sun %.1f°/%.1f° · %s", QuantityKindName(quantity.kind),
-                    AggregationName(quantity.aggregation), UnitName(quantity.unit), anchor_info.sun_altitude_deg,
-                    anchor_info.sun_azimuth_deg,
-                    anchor_info.shape_is_nominal != 0 ? "nominal geometry" : "scene geometry");
-      ImGui::TextDisabled("%s", line);
-    }
-    if (have_evidence && evidence.geometry_basis.length > 0) {
-      ImGui::TextDisabled("%.*s", static_cast<int>(evidence.geometry_basis.length), evidence.geometry_basis.data);
-    }
-    if (anchor_info.truncated != 0) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped(
-          "Truncated at the budget: the picture is the completed prefix of %d of %d members — not the "
-          "whole class.",
-          anchor_info.members_evaluated, anchor_info.member_count);
-      ImGui::PopStyleColor();
-    }
-    if (anchor_info.kept_count == 0 && anchor_info.truncated == 0 &&
-        MapQueryStateFor(map) == MapQueryState::kCompleted) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("No events in this view — a finite zero, not a refusal and not missing data.");
-      ImGui::PopStyleColor();
-    }
+    in.have_quantity = LUMICE_PathMapGetQuantity(map.adopted_result.get(), &quantity) == LUMICE_PATH_READ_OK;
+    in.quantity = quantity;
     if (anchor_info.point_mass_available != 0) {
       LUMICE_PathMapPointMass mass{};
       mass.struct_size = sizeof(mass);
-      if (LUMICE_PathMapGetPointMass(map.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK) {
-        std::string methods;
-        for (size_t i = 0; i < mass.method_count; ++i) {
-          if (i > 0) {
-            methods += ", ";
-          }
-          methods += mass.methods[i];
-        }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped(
-            "Rank-0 arm: m = %.6g ± %.2g (%s) at the sun's cell%s — this class's sky image IS the mass; the zero "
-            "cells are not no-light.",
-            mass.m, mass.m_error, methods.c_str(), mass.pixel < 0 ? " (outside this view)" : "");
-        ImGui::PopStyleColor();
+      in.have_mass = LUMICE_PathMapGetPointMass(map.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK;
+      in.mass = mass;
+      for (size_t i = 0; i < mass.method_count && i < kMapCaliberMaxMethods; ++i) {
+        in.methods[i] = mass.methods[i];
       }
     }
+    in.completed = MapQueryStateFor(map) == MapQueryState::kCompleted;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    for (const std::string& line : MapCaliberLines(in)) {
+      ImGui::TextWrapped("%s", line.c_str());
+    }
+    ImGui::PopStyleColor();
   }
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
