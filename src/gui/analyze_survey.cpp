@@ -375,6 +375,11 @@ std::optional<SurveyExecutor::Finished> SurveyExecutor::TakeFinished(QueryFace f
   return out;
 }
 
+bool SurveyExecutor::InFlight() const {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  return impl_->inflight_token != nullptr;
+}
+
 bool SurveyExecutor::InFlight(QueryFace face) const {
   std::lock_guard<std::mutex> lock(impl_->mu);
   return impl_->inflight_token != nullptr && impl_->inflight_face == face;

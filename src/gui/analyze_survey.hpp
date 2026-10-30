@@ -245,8 +245,10 @@ class SurveyExecutor {
   std::optional<Finished> TakeFinished(QueryFace face);
 
   // Whether a query is COMPUTING on `face` (picked up, not yet finished — the worker's own
-  // registration; a queued-but-unpicked query reads false). Test/observability face — the GUI
-  // never branches on it (the display state is intent + outcome, not machinery).
+  // registration; a queued-but-unpicked query reads false). The no-arg form asks about EITHER
+  // face. Test/observability faces — the GUI never branches on them (the display state is
+  // intent + outcome, not machinery).
+  bool InFlight() const;
   bool InFlight(QueryFace face) const;
 
   // Whether ANY issued query is still owed an answer — computing or queued, either face. The

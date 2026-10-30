@@ -648,6 +648,10 @@ if(BUILD_GUI)
     # The Raypath Analysis panel's logic: adoption gate, ring sums, click arithmetic, the exclude
     # closure — every proposition the panel makes that is not an ImGui call.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_analysis_panel_logic.cpp"
+    # The map view's pure rules and its pump: the projection held to independent sky anchors,
+    # the window spans derived by hand, the Fit/norm/colour statuses, and the lifecycle over a
+    # real executor (742.5).
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_map_view.cpp"
     # The class overview's model rules (742.4): the identity arm's read-back on a real survey
     # document, and the shared text/state vocabulary.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_overview_model.cpp"

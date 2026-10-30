@@ -1476,7 +1476,7 @@ TEST(AnalysisPanelLogic, SurveyCancelLatchHoldsUntilTheSelectionChanges) {
   // Wait only for ISSUE (not completion): the test cancels the moment the query is out, however
   // fast the engine answers afterwards.
   ASSERT_TRUE(PumpUntil(state, executor, [&] { return executor.InFlight(); }, 15000));
-  executor.CancelInFlight();                       // the button's machinery half
+  executor.CancelInFlight(QueryFace::kSurvey);     // the button's machinery half
   state.analysis.survey.cancelled_for_key = true;  // the button's latch half
   // The engine answers a cancel with an OK-carrying partial document at its next cooperative
   // poll — an outcome by id, and exactly the one the user withdrew. The gate's latch check is
@@ -1547,7 +1547,7 @@ TEST(AnalysisPanelLogic, SurveyExecutorSupersedesRefusesOnReleaseAndJoins) {
   std::optional<SurveyExecutor::Finished> last;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
   while (std::chrono::steady_clock::now() < deadline) {
-    if (auto finished = executor.TakeFinished()) {
+    if (auto finished = executor.TakeFinished(QueryFace::kSurvey)) {
       drained_ids.push_back(finished->id);
       last = std::move(*finished);
       continue;
@@ -1558,7 +1558,7 @@ TEST(AnalysisPanelLogic, SurveyExecutorSupersedesRefusesOnReleaseAndJoins) {
       bool settled = true;
       for (int i = 0; i < 200; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        if (auto finished = executor.TakeFinished()) {
+        if (auto finished = executor.TakeFinished(QueryFace::kSurvey)) {
           drained_ids.push_back(finished->id);
           last = std::move(*finished);
           settled = false;
@@ -1591,7 +1591,7 @@ TEST(AnalysisPanelLogic, SurveyExecutorSupersedesRefusesOnReleaseAndJoins) {
   issue(executor.NextId(1), faces_class, counts_class);
   std::optional<SurveyExecutor::Finished> released;
   const auto release_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-  while (!(released = executor.TakeFinished())) {
+  while (!(released = executor.TakeFinished(QueryFace::kSurvey))) {
     ASSERT_LT(std::chrono::steady_clock::now(), release_deadline);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
@@ -1608,7 +1608,7 @@ TEST(AnalysisPanelLogic, SurveyExecutorSupersedesRefusesOnReleaseAndJoins) {
   issue(executor.NextId(1), faces_class, counts_class);
   std::optional<SurveyExecutor::Finished> rearmed;
   const auto rearm_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-  while (!(rearmed = executor.TakeFinished())) {
+  while (!(rearmed = executor.TakeFinished(QueryFace::kSurvey))) {
     ASSERT_LT(std::chrono::steady_clock::now(), rearm_deadline);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
@@ -1646,7 +1646,7 @@ TEST(AnalysisPanelLogic, SurveyExecutorCancelReachesASupersededSuccessor) {
   IssueClassQuery(executor, id_b, faces_chain);
   std::optional<SurveyExecutor::Finished> a_finish;
   const auto a_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-  while (!(a_finish = executor.TakeFinished())) {
+  while (!(a_finish = executor.TakeFinished(QueryFace::kSurvey))) {
     ASSERT_LT(std::chrono::steady_clock::now(), a_deadline);
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
@@ -1655,14 +1655,14 @@ TEST(AnalysisPanelLogic, SurveyExecutorCancelReachesASupersededSuccessor) {
 
   // Cancel the RUNNING successor: quiescence must come from the cooperative poll cutting B
   // short, not from B's budget running out.
-  executor.CancelInFlight();
+  executor.CancelInFlight(QueryFace::kSurvey);
   ASSERT_TRUE(WaitForQuiescent(executor, 8000));
 
   // Whatever finished, the ids are the two issued and the newest is B's.
   std::optional<SurveyExecutor::Finished> last;
   const auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (std::chrono::steady_clock::now() < drain_deadline) {
-    if (auto finished = executor.TakeFinished()) {
+    if (auto finished = executor.TakeFinished(QueryFace::kSurvey)) {
       EXPECT_TRUE(finished->id == id_a || finished->id == id_b);
       last = std::move(*finished);
       continue;
@@ -1674,6 +1674,105 @@ TEST(AnalysisPanelLogic, SurveyExecutorCancelReachesASupersededSuccessor) {
   }
   ASSERT_TRUE(last.has_value());
   EXPECT_EQ(last->id, id_b);
+  executor.ShutdownAndJoin();
+}
+
+// The map face's queueing semantics (742.5): a map issue NEVER cancels a standing survey — the
+// survey's intent would starve (its pump re-issues only on a key change) — it queues behind it
+// on the one worker, and each face drains its own mailbox. (The broken shape, one shared slot
+// with unconditional in-flight cancel, would cut the survey short right here.)
+TEST(AnalysisPanelLogic, MapIssueQueuesBehindSurveyAndLeavesItRunning) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  const std::vector<int> faces_class{ 1, 2 };
+  const SurveyQueryId survey_id = executor.NextId(1);
+  IssueClassQuery(executor, survey_id, faces_class);
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+  EXPECT_TRUE(executor.InFlight(QueryFace::kSurvey));
+
+  // The map issue lands while the survey computes: the survey stays the running query.
+  LUMICE_PathMapRequest map_request{};
+  map_request.struct_size = sizeof(map_request);
+  map_request.crystal_id = 1;
+  static const int map_faces[] = { 1, 2 };
+  map_request.faces = map_faces;
+  map_request.face_count = 2;
+  static const int map_counts[] = { 2 };
+  map_request.layer_face_counts = map_counts;
+  map_request.layer_count = 1;
+  map_request.full_sky = 1;
+  map_request.view_rows = 0;
+  map_request.view_cols = 0;
+  map_request.sample_count = 100000;
+  executor.IssueMapQuery(executor.NextId(1), map_request, { map_faces, map_faces + 2 }, { map_counts, map_counts + 1 },
+                         {});
+
+  std::optional<SurveyExecutor::Finished> survey_finish;
+  const auto survey_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!(survey_finish = executor.TakeFinished(QueryFace::kSurvey))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), survey_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_EQ(survey_finish->id, survey_id);
+  EXPECT_TRUE(survey_finish->ok);  // the survey ran to its answer, untouched by the map issue
+
+  // The map then runs on the same worker and answers into its own slot.
+  std::optional<SurveyExecutor::Finished> map_finish;
+  const auto map_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!(map_finish = executor.TakeFinished(QueryFace::kMap))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), map_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_TRUE(map_finish->ok);
+  EXPECT_TRUE(map_finish->map_result != nullptr);
+  EXPECT_FALSE(executor.InFlight());
+  executor.ShutdownAndJoin();
+}
+
+// The per-face mailboxes and cancels: a survey-face cancel is a no-op while a MAP query is the
+// one running (the map answers; nothing lands in the survey's slot), and the reverse holds.
+TEST(AnalysisPanelLogic, FaceCancelTouchesOnlyItsOwnFace) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  LUMICE_PathMapRequest map_request{};
+  map_request.struct_size = sizeof(map_request);
+  map_request.crystal_id = 1;
+  static const int map_faces[] = { 1, 2 };
+  map_request.faces = map_faces;
+  map_request.face_count = 2;
+  static const int map_counts[] = { 2 };
+  map_request.layer_face_counts = map_counts;
+  map_request.layer_count = 1;
+  map_request.full_sky = 1;
+  map_request.view_rows = 0;
+  map_request.view_cols = 0;
+  map_request.sample_count = 100000;
+  const SurveyQueryId map_id = executor.NextId(1);
+  executor.IssueMapQuery(map_id, map_request, { map_faces, map_faces + 2 }, { map_counts, map_counts + 1 }, {});
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+
+  executor.CancelInFlight(QueryFace::kSurvey);  // the wrong face: nothing to cancel
+  EXPECT_TRUE(executor.InFlight(QueryFace::kMap));
+
+  std::optional<SurveyExecutor::Finished> map_finish;
+  const auto map_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!(map_finish = executor.TakeFinished(QueryFace::kMap))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), map_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_EQ(map_finish->id, map_id);
+  EXPECT_TRUE(map_finish->ok);  // the map never saw the survey-face cancel
+  EXPECT_FALSE(executor.TakeFinished(QueryFace::kSurvey).has_value());
   executor.ShutdownAndJoin();
 }
 
