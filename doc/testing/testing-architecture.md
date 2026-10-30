@@ -1575,9 +1575,10 @@ cost distribution and states the tail it did not look at:
   `bench-compile`, `isa-v4-compile`, `shared-gui-test-build`), plus `Ubuntu ARM64`, the cheapest leg
   of the build matrix, and the MSVC leg of `windows-shared-export`. Both proportions are recomputable
   from that table.
-- **Not enumerated at all**: the individual cases inside a scope. `gui_test` runs 344 cases across
-  38 categories (338 in its correctness pool, 6 in the real-timing pool, per the binary's own run
-  summary); the fast e2e set collects 105; neither was gone through case by case. One
+- **Not enumerated at all**: the individual cases inside a scope. `gui_test` runs 346 cases across
+  38 categories (338 in its correctness pool, 7 in the real-timing pool plus the one perf
+  category's own cases, per the binary's own run summary); the fast e2e set collects 105; neither
+  was gone through case by case. One
   measured statement about that distribution is worth carrying, because it bounds what scheduling
   can achieve — and the shape of that bound is itself worth knowing. It used to be a single case:
   `test_smoke.py` ran every showcase config inside one `test_all_configs_run_successfully` item,
@@ -1622,6 +1623,7 @@ of their layers inside this `pr` run, not separately timed invocations.
 | `quick` | `gui_test` correctness pool (`--fixed-dt`, 513/513 passed) | 151s | single process |
 | | **`quick` layer subtotal** | **306s** | |
 | `full` | `gui_test` real-timing pool (no `--fixed-dt`, 6/6 passed) | +11s | single process |
+| `full` | + 742.6's point-inspector real-timing leg (the pool's 7th case) | +~55s | measured 2026-10-30, the analyze-gui-v1 machine: the point queues behind the selection's survey and the map refinement on the one worker; the row above is that leg's predecessor measurement, kept as recorded |
 | | **`full` layer subtotal** | **317s** | |
 | `pr` | shared-lib cold configure + build + install | +21s | 12-way build |
 | `pr` | slow correctness: configured roots minus `test/performance`, `-m slow` | 183s | `-n 3` |
