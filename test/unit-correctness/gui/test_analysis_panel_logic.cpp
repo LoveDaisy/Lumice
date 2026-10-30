@@ -255,6 +255,9 @@ TEST(AnalysisPanelLogic, SelectionIdentityDerivesTheSurveyRequestFields) {
   EXPECT_EQ(request.layer_face_counts[0], 2);
   EXPECT_EQ(request.symmetry_bits_plus_one, 1);
   EXPECT_EQ(request.budget_ms, LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS);
+  // The wavelength stays unset: the engine resolves the reference lambda itself (the overview's
+  // scope line names its source), and the request never dark-edits the scene's spectrum or sun.
+  EXPECT_EQ(request.wavelength_nm, 0.0);
   ASSERT_EQ(faces.size(), 2u);
   EXPECT_EQ(faces[0], 2);
   EXPECT_EQ(faces[1], 3);

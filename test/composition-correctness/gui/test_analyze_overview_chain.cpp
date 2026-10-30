@@ -254,4 +254,51 @@ TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
   EXPECT_TRUE(model.tint.reading_available);
 }
 
+// The wide-diffusion shape (C04): the open-arc class carries a support and a bright domain but
+// NO caustic edge — and its dispersion table has no minimum-deviation fold, only followed
+// onsets. The overview renders exactly that: no sharp-edge conclusion, no certificate, and a
+// dispersion block that says the followed onsets are the positional facts. The probe's peak
+// stays a finite-resolution reading, never a fabricated "brightest point".
+TEST(AnalyzeOverviewChain, WideDiffusionClassNeedsNoSharpStructure) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
+  const auto survey = RunSurvey(scene.get(), { 3, 1, 4, 5 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  ASSERT_TRUE(model.valid);
+  ASSERT_EQ(model.arm, SurveyArm::kFullDimensional);
+  EXPECT_EQ(model.evidence_state, LUMICE_PATH_STATE_FINITE);
+
+  // No edge card came through, and the conclusions never invent one.
+  bool saw_edge_card = false;
+  for (const SurveyObjectRow& row : model.objects) {
+    if (row.kind_name == "caustic edge") {
+      saw_edge_card = true;
+    }
+  }
+  EXPECT_FALSE(saw_edge_card);
+  EXPECT_FALSE(HasLine(model.conclusions, "Sharp edge"));
+  EXPECT_FALSE(model.dispersion.certificate_available);
+  EXPECT_TRUE(HasLine(model.conclusions, "Support:"));
+  // The probe reading is a reading: quoted as finite-resolution, not as the answer.
+  EXPECT_TRUE(HasLine(model.conclusions, "Brightness peaks near"));
+
+  // The dispersion: no minimum-deviation fold — the followed onsets are the positional facts.
+  // Their direction is the engine's per-row fact (this open-arc class moves blue inside red —
+  // the opposite of C01's two-face minimum), so the assertion is the label agreeing with the
+  // values it labels, not a specific side.
+  ASSERT_TRUE(model.dispersion.available);
+  EXPECT_FALSE(model.dispersion.min_row_available);
+  ASSERT_GE(model.dispersion.followed.size(), 1u);
+  for (const SurveyFollowedOnsetView& row : model.dispersion.followed) {
+    if (row.value_red_deg < row.value_blue_deg) {
+      EXPECT_EQ(row.direction, std::string("red_inner_blue_outer"));
+    } else if (row.value_blue_deg < row.value_red_deg) {
+      EXPECT_EQ(row.direction, std::string("blue_inner_red_outer"));
+    }
+    // else: a degenerate onset (both lambdas at one corner — this class's TIR corner sits at
+    // 120.000° for both) carries either name and the equal values speak for themselves.
+  }
+}
+
 }  // namespace lumice::gui
