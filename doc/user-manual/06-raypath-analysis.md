@@ -85,7 +85,47 @@ If the crystal already has an **Out** filter instead, the button does not disabl
 
 **Export CSV**, beside it, saves the list **as shown** — under the radius and the P / B / D symmetry currently on display, in the display order — to a `.csv` file through a save dialog. The file opens with `#`-prefixed lines that record the export time, the region, the cone centre / radius / rings summed for a Point result, the symmetry, the total ray count, the total energy the percentages are shares of, and the record-full hit count, so it describes itself without the window. Then one column-header row (`Raypath,Energy,Cumulative %,+/-`, matching the table above one for one) and the rows: the raypath name, its share of the total energy, the cumulative share, and the 1/√N noise together with the takeover bound the **+/-** column shows in parentheses (empty when none), and finally the **other** row when there is one. Numbers are written plain — no `%` sign, no thousands grouping — so a spreadsheet or script reads them directly. The button is disabled while there is no result.
 
-## 6. From the command line
+## 6. The class overview
+
+Select a row and the **Selection details** card in the bottom-right asks the engine about that
+class while you keep working: the query runs in the background (a **Cancel survey** button is
+there while it does), and the card shows one of four honest states — waiting, cancelled, the
+engine's named refusal (a class crossing several crystals answers `multi_layer_unsupported`,
+which is the answer, not an error), or the completed overview. Nothing is computed on the
+interface thread, and nothing is invented: a refused or unevaluated part shows the engine's own
+words.
+
+The completed overview is organized by the class's routing arm, a few main conclusions first
+with the details behind expanders:
+
+- **A direction-invariant class** (every pose sends its light back to the sun's own direction)
+  shows the certified **source image** at the sun, the **weight tint** reading (e.g.
+  "blue-tinted") with the exact measurement caliber spelled out, and the statement that
+  wavelength moves no edge here — the colour question is the tint, not a shift.
+- **A full-dimensional class** shows the **support** (the deviation range the class covers), the
+  **sharp edge** with its closed-form certificate when the geometry certifies one, the
+  brightness peak as a **finite-resolution probe reading** (distinct from the geometric edge),
+  and the **chromatic dispersion** block: the inner edge at 650 nm and at 450 nm, how far apart
+  they sit and which way (for the classic two-face halo, red inner and blue outer), followed by
+  every other onset the table carried, and the basis — the engine's own geometry string and the
+  certificate's formula, apex angle and cross-check — readable in place. The **weight colour
+  reading**, the **weight tint** and the **reference profile** (the class's brightness along the
+  solar radial line at the document's reference wavelength, drawn with empty bins as gaps, not
+  zeros) sit behind their own expanders. A class without a sharp structure renders exactly that:
+  a support and a probe reading, no fabricated "brightest point".
+- **A family-restricted class** (a directed crystal) shows the **freezing ladder**: which
+  orientation dimension each level froze, at what centre and width, how many candidate images
+  each level proposed and how many the survival filter killed.
+- **A refused class** says so in the engine's words — the delta axis could not partition this
+  geometry, which is a statement about the partition, not that the class carries no light — and
+  keeps the independent facts readable beside it: the **independent witness** (the declared
+  source's own positive events on this class) and the **internal-reflection share**.
+
+The header always names the reference wavelength and where it came from, the sun the positions
+read, and whether the survey stopped inside its budget (a partial document says so). Selecting
+another class re-asks; the card never mixes two answers.
+
+## 7. From the command line
 
 The same analysis is a CLI subcommand, `Lumice analyze`, and it writes the same CSV — byte for byte the file **Export CSV** saves for the same run, produced by one shared formatter rather than two. The config is the scene; the question is asked with options, never read from the config, which is what makes it scriptable and reproducible:
 
@@ -115,7 +155,7 @@ def repeats(name):  # any layer whose face sequence repeats a face consecutively
 clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])]
 ```
 
-## 7. Path feature reports from the CLI
+## 8. Path feature reports from the CLI
 
 The GUI analysis list still ranks complete raypaths in an ROI. It does not yet display the
 new path-feature document or make its records clickable in the preview.

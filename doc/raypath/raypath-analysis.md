@@ -591,12 +591,12 @@ warm 曾沿旧 δ 支撑给当前点误发 `certified` 包含关系，已由 PR 
 probe）已交付（见上）。界面应显示报告的 scope/evidence/coverage 与 unfinished 原因，用户选择
 具体 sky direction 后获取 fiber 详情——该查询语义现由 `point` / `probe` 承载。
 
-**交互层交付状态（2026-10-30，742.3 as-built）**：工作区壳与类级 survey 摘要已交付——Render/Analyze
+**交互层交付状态（2026-10-30，742.3 + 742.4 as-built）**：工作区壳与类级概览已交付——Render/Analyze
 同窗切换（四列布局，D1/D5）、场景全景（同纹理单圆盘等面积重投影 + 半球切换 + 锥形 ROI 手势，D2）、
 份额列表整体迁入（浮窗退役）、选择身份（行→Analyze 时快照内的稳定键，非行号）与类级概览（engine
-typed survey 的类级事实逐字消费：路由/计数/对象与状态/拒答词与证据）。**仍未交付**（即本段上文
-的 feature-report 联动）：光路视图、太阳方向球、光路 3D、点级详情、色散与多波长——工作区以诚实
-占位文案标注（R7），不塞演示数据。后续各片的接入点，全部复用 742.3 落下的三件机制、不另建生命周期：
+typed survey 的类级事实逐字消费）。**仍未交付**（即本段上文的 feature-report 联动）：参考图地图式
+交互与定位叠加、光路视图、太阳方向球、光路 3D、点级详情与代表轨迹——工作区以诚实占位文案标注
+（R7），不塞演示数据。后续各片的接入点，全部复用 742.3 落下的三件机制、不另建生命周期：
 
 - **选择身份**（`SelectedClassIdentityFor` / `MakeSurveyRequestForIdentity`，`analysis_panel.hpp`）：
   由选中行 + 当前对称位机械派生的稳定键，可直接拼写 survey 请求。742.4 的概览组织、742.5 的
@@ -608,6 +608,33 @@ typed survey 的类级事实逐字消费：路由/计数/对象与状态/拒答�
 - **结果归属**（`SurveyQuerySession`，GuiState analysis 档）：意图/键/取消 latch/采纳结果随
   `analysis` 的 per-reason 规则走（文档切换清、Revert 保留、再 Analyze 作废旧代归属）。概览类
   UI 的「这份结果属于哪次分析/哪个选择」语义以它为单一权威。
+
+**742.4 as-built（类级概览的分层呈现）**：右列详情卡的 survey 摘要升级为按路由臂组织的分层概览
+（`src/gui/analyze_overview.{hpp,cpp}`）——纯模型 `BuildSurveyOverviewModel` 把采纳的 survey
+文档读成「臂分类 + 少量主结论 + 可展开块」，零重算、零 fabricated 读数；渲染侧不进 GuiState
+台账（展开态走 ImGui 控件态）。臂与块的对应：恒等臂（全成员 rank-0）= 源像证书 + 权重 tint +
+「方向恒等无位置色散」的如实陈述；全维臂 = 支撑区间 + 闭式认证锐边 + 有限分辨率亮域峰 +
+**色散块**（引擎固定 650/450 对、min 偏发行红内蓝外、followed onsets、n echo、geometry_basis
+与 edge 闭式证书就地可查）+ diagnose 块（权重色偏，与位置色散分列，独立 kernel 路径）+
+tint 块（引擎 caliber 串原文呈现）+ 参考剖面块（内嵌 solar radial probe 的读数与样本曲线，
+空 bin 是 NaN 间隙、不画零）；家族臂 = 冻结阶梯（逐级冻结维/自由维/采样与生存过滤否决）；
+拒答臂 = 具名拒答 + 独立 witness/TIR 并存（拒答说支撑未知，不说无光）。composition 锚：C01
+类的色散 min 行 = 闭式 `2*asin(n*sin(A/2)) - A` 在 edge 证书 apex 与 n echo 下的独立重述
+（1e-4° 带内，实测 1e-14 级）；真实上屏证据在 gui_test real-timing 池（色散腿的两次 λ 功率和
+约 14 s，fixed-dt 池的看门狗装不下它——`run_after_analysis_renders_gpu` 同型先例）。
+
+**742.5 的消费合同（参考图地图交互层）**：地图叠加与天空点意图消费以下 typed 直读面——不经
+JSON 第二拼装、不建第二份结果缓存、不复制概览的组织逻辑：
+
+- **同一份采纳文档**：`SurveyQuerySession::adopted_result`（结果归属以它为单一权威）的位置
+  载荷经既有 C getter 直读——`LUMICE_PathSurveyGetObject`（source_image / caustic_edge /
+  bright_domain 的 altitude/azimuth）、`LUMICE_PathSurveyGetEdge`（边位）、
+  `LUMICE_PathSurveyGetSupportInterval`（支撑区间）、`LUMICE_PathSurveyGetFollowedOnset`
+  （各行两 λ δ 值）。
+- **概览组织规则单源**：同一事实的臂分类/格式化在 `BuildSurveyOverviewModel`；742.5 需要
+  概览没有的载荷时直接读同一 C getter 或扩展该模型，不写第二份「文档→事实」映射。
+- **map 结果另有查询面**：与参考图的叠加按 742.1 的 `LUMICE_PathMap*` 面经同一
+  `SurveyExecutor` 兄弟入口发起（上文的后台查询机制），survey 文档不冒充 map 结果。
 
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 
