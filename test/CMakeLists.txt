@@ -648,6 +648,9 @@ if(BUILD_GUI)
     # The Raypath Analysis panel's logic: adoption gate, ring sums, click arithmetic, the exclude
     # closure — every proposition the panel makes that is not an ImGui call.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_analysis_panel_logic.cpp"
+    # The class overview's model rules (742.4): the identity arm's read-back on a real survey
+    # document, and the shared text/state vocabulary.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_overview_model.cpp"
     # The Angular Distance picker's radius at a pixel (against closed-form lens formulas and core's
     # inverse), which pixels are not pickable, and the list/overlay writes a pick makes.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_angular_dist_picker.cpp"
@@ -788,6 +791,11 @@ if(BUILD_GUI)
     # a ref must still name the same physical layer (or read as deleted), pinned on the index AND
     # the layer's identity, because the panel's own two checks pass on the wrong layer.
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_color_ref_layer_delete_chain.cpp"
+    # The survey engine's arms -> the typed readers -> the class overview's model (742.4): the
+    # C01 dispersion anchored to the closed-form minimum from the document's own quantities, the
+    # refused-support document's coexisting independent facts, and the family ladder's levels —
+    # the arms whose documents cost real engine legs, hence this tier.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_analyze_overview_chain.cpp"
     # Startup server construction -> the calibration run on a background thread -> the first Run
     # and the poller: the server the calibration warmed up is the one the Run uses, and the run
     # stays off the screen because every wake/destroy path joins it first.

@@ -321,7 +321,7 @@ def _run_plan(groups: list[ReferenceGroup], explicit: int | None) -> dict[str, i
 SUITE_FILTER_EXPR = (
     "-perf_test,-revert_repushes_server_display_state,"
     "-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,"
-    "-run_after_analysis_renders_gpu"
+    "-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile"
 )
 # --no-user-config trails SUITE_FILTER_EXPR, matching scripts/build.sh. A reference image is the
 # one artifact where reading the generating machine's personal defaults would be permanent: the

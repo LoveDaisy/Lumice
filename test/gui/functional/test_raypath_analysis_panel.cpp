@@ -24,6 +24,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_overview.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_constants.hpp"
@@ -71,6 +72,24 @@ const char* const kHalo22Json = R"({
   "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.2},
                "axis": {"zenith": {"type": "uniform", "mean": 90, "std": 360},
                         "azimuth": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+            "ray_num": 100000, "max_hits": 7,
+            "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+  "render": [{"id": 1, "lens": {"type": "linear", "fov": 60},
+              "resolution": [64, 64], "view": {"elevation": 42}}]
+})";
+
+// The fully random prism — the C01 shape (raypath_feature_random_regular.json's crystal, the
+// same physics as kHalo22Json with the zenith axis written the one way the survey's routing v1
+// domain reads as the full-sphere random family: uniform, centred at the pole). This scene's
+// dominant class routes to the full-dimensional arm, so its survey carries the chromatic legs
+// the halo scene above is honestly refused — the dispersion-on-screen fixture.
+const char* const kFullyRandomJson = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.2},
+               "axis": {"zenith": {"type": "uniform", "mean": 0, "std": 360},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
   "filter": [],
   "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
             "ray_num": 100000, "max_hits": 7,
@@ -1162,6 +1181,27 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(static_cast<long long>(info.crystal_id) == survey.key.crystal_id, false);
   ctx->LogInfo("[survey digest] generation %llu, echo crystal %lld, members %zu, objects %zu, budget %d ms", generation,
                static_cast<long long>(info.crystal_id), info.member_count, info.object_count, info.budget_ms);
+  // 742.4: the same document read into the overview model the region now draws. The halo
+  // fixture's zenith axis is a uniform centred at 90° — the one spelling the survey's routing v1
+  // domain does NOT read as the full-sphere random family — so its dominant class is honestly
+  // REFUSED (measure_shape_outside_routing_domain), and the overview's refusal arm is what the
+  // region shows: the named refusal, the witness's positive event, and the chromatic layer's
+  // engine-worded absence. (The dispersion-on-screen face is the kFullyRandomJson case below.)
+  {
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*survey.adopted_result);
+    IM_CHECK_RETV(model.valid, false);
+    IM_CHECK_RETV(model.arm == gui::SurveyArm::kRefused, false);
+    IM_CHECK_RETV(model.evidence_state == LUMICE_PATH_STATE_REFUSED, false);
+    IM_CHECK_RETV(model.evidence_mode.find("measure_shape_outside_routing_domain") != std::string::npos, false);
+    IM_CHECK_RETV(model.witness.available && model.witness.value_available, false);
+    IM_CHECK_RETV(model.witness.kept_count > 0, false);
+    IM_CHECK_RETV(!model.dispersion.available && !model.diagnose.available, false);
+    IM_CHECK_RETV(model.chromatic_note.find("routing v1 domain") != std::string::npos, false);
+    IM_CHECK_RETV(!model.conclusions.empty(), false);
+    ctx->LogInfo("[survey digest] overview model: refused arm, mode '%s', witness kept %lld/%lld, conclusions %d",
+                 model.evidence_mode.c_str(), static_cast<long long>(model.witness.kept_count),
+                 static_cast<long long>(model.witness.sample_count), static_cast<int>(model.conclusions.size()));
+  }
   IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_digest.png").string()),
                 false);
 
@@ -1202,6 +1242,74 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       gui::g_state.analysis.survey.key.generation == gui::g_state.analysis_result.payload->snapshot_generation, false);
   ctx->LogInfo("[survey digest] re-armed under generation %llu", gui::g_state.analysis.survey.key.generation);
+  return true;
+}
+
+// The dispersion-on-screen face (742.4, AC2): on the fully random prism — the C01 shape written
+// the way the routing v1 domain reads as the full-sphere random family — the dominant class's
+// overview carries the layered full-dimensional facts, and the chromatic block on screen holds
+// the two-lambda min-deviation row with red inside blue and the closed-form certificate behind
+// it. The assertions read the same model the region draws, so the screenshot a human reads and
+// the checks below cannot both be mock; the picture is the evidence of the block being VISIBLE.
+bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  // The survey's chromatic legs (the two-lambda tint power sums) are the cost here — give the
+  // background query its minute.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  const gui::SurveyQuerySession& survey = gui::g_state.analysis.survey;
+  IM_CHECK_RETV(survey.adopted_result != nullptr, false);
+
+  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*survey.adopted_result);
+  IM_CHECK_RETV(model.valid, false);
+  IM_CHECK_RETV(model.arm == gui::SurveyArm::kFullDimensional, false);
+  IM_CHECK_RETV(model.dispersion.available, false);
+  IM_CHECK_RETV(model.dispersion.min_row_available, false);
+  // The red-inside-blue fact itself: the 650nm inner edge sits at a SMALLER deviation than the
+  // 450nm one, and the displacement is the row's own spread.
+  IM_CHECK_RETV(model.dispersion.value_red_deg < model.dispersion.value_blue_deg, false);
+  IM_CHECK_RETV(model.dispersion.direction == "red_inner_blue_outer", false);
+  IM_CHECK_RETV(std::fabs(model.dispersion.displacement_deg -
+                          (model.dispersion.value_blue_deg - model.dispersion.value_red_deg)) < 1e-9,
+                false);
+  IM_CHECK_RETV(model.dispersion.certificate_available, false);
+  IM_CHECK_RETV(model.probe.available && model.probe.peak_available, false);
+  IM_CHECK_RETV(model.tint.available, false);
+  ctx->LogInfo("[survey overview] dispersion %.3f/%.3f (Δ%.3f°, %s), probe %d rows, apex %.1f°",
+               model.dispersion.value_red_deg, model.dispersion.value_blue_deg, model.dispersion.displacement_deg,
+               model.dispersion.direction.c_str(), static_cast<int>(model.probe.sample_value.size()),
+               model.dispersion.certificate_apex_deg);
+  IM_CHECK_RETV(
+      SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_overview_dispersion.png").string()),
+      false);
+  // The profile block, expanded: the reference curve on screen is the human-readable half of
+  // the probe block's evidence (the samples and their gap rule are the model test's). The
+  // header lives inside the details child, so the item is addressed through the child wildcard
+  // (the GUI test engine-addressing rule for items inside a named child).
+  ctx->ItemClick("**/Reference profile — 550 nm##ov_prof");
+  ctx->Yield(2);
+  // Bring the curve into the frame: the readings sit above it, and the panel's own height ends
+  // right at them (the block ordering is readings first, curve behind). ScrollToItemY — the
+  // programmatic scroll, not the wheel: the right panel declines user-wheel scrolling.
+  ctx->ScrollToItemY("**/Internal-reflection share##ov_tir");
+  ctx->Yield(2);
+  IM_CHECK_RETV(
+      SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_overview_profile.png").string()),
+      false);
   return true;
 }
 
@@ -2959,6 +3067,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_digest_answers_with_real_class_facts");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyDigestAnswersWithRealClassFacts(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_overview_shows_dispersion_and_profile");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyOverviewShowsDispersionAndProfile(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");
