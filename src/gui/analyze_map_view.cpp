@@ -291,12 +291,17 @@ MapWindowSpec MapWindowSpecForView(const MapViewState& view, double sun_altitude
   } else {
     spec.azimuth_span_deg = 2.0 * std::asin(std::min(1.0, std::sin(rad) / std::sin(delta_c))) * kRad2DegD;
   }
-  // The grid: kMapTargetCellsAcross across the delta span; the azimuth columns matched to the
-  // sky spacing at the centre's deviation (an az degree near the sun is a small sky distance).
+  // The grid: kMapTargetCellsAcross across the delta span. Off the poles the azimuth columns
+  // match the sky spacing at the centre's deviation (an az degree near the sun is a small sky
+  // distance); a disk that contains a pole of the sun frame has no such reference deviation —
+  // its azimuths span the full circle about the degenerate point — so its columns size like the
+  // full sky's, one azimuth cell per delta cell (the quasi-uniform grid the all-sky default
+  // takes).
   const double delta_cell_rad = 2.0 * rad / static_cast<double>(kMapTargetCellsAcross);
-  int rows = static_cast<int>(std::ceil(2.0 * rad / delta_cell_rad));
+  int rows = std::max(1, static_cast<int>(std::ceil(2.0 * rad / delta_cell_rad)));
+  const bool pole_inside = delta_c - rad <= 0.0 || delta_c + rad >= kPiD;
   double az_cell_sky_rad = delta_cell_rad;
-  if (std::sin(delta_c) > 1e-6) {
+  if (!pole_inside && std::sin(delta_c) > 1e-6) {
     az_cell_sky_rad = delta_cell_rad / std::sin(delta_c);
   }
   int cols = static_cast<int>(std::ceil(spec.azimuth_span_deg * kDeg2RadD / az_cell_sky_rad));
@@ -657,11 +662,15 @@ void RasterizeMapDisk(const LUMICE_PathMap& map, const MapViewState& view) {
     return;
   }
   const int size = std::clamp(g_map_raster.size, 64, kMapRasterMaxSize);
-  if (g_map_raster.texture == 0) {
-    glGenTextures(1, &g_map_raster.texture);
+  // The texture is (re)allocated at the raster's own size, not a fixed maximum: the quad draws
+  // the texture's full [0,1] uv range, so an oversized allocation would show uninitialized
+  // storage beside the picture.
+  if (g_map_raster.texture == 0 || g_map_raster.size != size) {
+    if (g_map_raster.texture == 0) {
+      glGenTextures(1, &g_map_raster.texture);
+    }
     glBindTexture(GL_TEXTURE_2D, g_map_raster.texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kMapRasterMaxSize, kMapRasterMaxSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -694,12 +703,11 @@ void RasterizeMapDisk(const LUMICE_PathMap& map, const MapViewState& view) {
         const double e2 = Dot3(v, info.view_e2);
         const double az = Wrap360(std::atan2(e2, e1) * kRad2DegD);
         if (delta >= delta_min - 1e-9 && delta <= delta_max + 1e-9) {
-          // The azimuth wrapped into the window's own linear range (a 360-degree window's cells
-          // may spell azimuths outside [0, 360)).
-          double az_lin = az_min + Wrap360(az - az_min);
-          if (az_max - az_min >= 360.0 - 1e-9) {
-            az_lin = az;  // the full circle: the wrap already answered
-          }
+          // The azimuth wrapped into the window's own linear range — the bounds may start
+          // anywhere (a 360-degree window centred on the pole spells azimuths about its own
+          // at-point azimuth, not about 0), so the pixel's wrapped azimuth is re-anchored to
+          // the window's az_min before the column lookup.
+          const double az_lin = az_min + Wrap360(az - az_min);
           if (az_lin <= az_max + 1e-9) {
             const int row = std::clamp(static_cast<int>((delta - delta_min) / delta_cell), 0, info.view_rows - 1);
             const int col = std::clamp(static_cast<int>((az_lin - az_min) / az_cell), 0, info.view_cols - 1);

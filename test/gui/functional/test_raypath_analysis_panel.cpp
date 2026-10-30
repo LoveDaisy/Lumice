@@ -24,6 +24,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"
@@ -1242,6 +1243,81 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       gui::g_state.analysis.survey.key.generation == gui::g_state.analysis_result.payload->snapshot_generation, false);
   ctx->LogInfo("[survey digest] re-armed under generation %llu", gui::g_state.analysis.survey.key.generation);
+  return true;
+}
+
+
+// The map region's face (742.5, AC1/AC3/AC6): on the fully random prism, the selected class's
+// reference map arrives through the real chain — share list selection -> survey and map queued
+// on the one worker -> the full-sky map -> the auto-Fit -> the refinement window — and the
+// region takes a real click as the sky point while the panorama's ROI state stands untouched.
+// The assertions read the adopted result the picture is drawn from, so the screenshot a human
+// reads and the checks below cannot both be mock.
+bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // The no-data state before any selection: the region asks for a class and keeps its pick
+  // input available (the honest empty state, R7).
+  IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  // The map answers behind the survey's chromatic legs (one worker, queue by face), then the
+  // default view chain runs: the full-sky map auto-Fits and the refinement window answers —
+  // the test waits for the WINDOW map specifically.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  const gui::MapQuerySession& map = gui::g_state.analysis.map;
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+  IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+  IM_CHECK_RETV(info.kept_count > 0, false);  // the picture carries real events, not an empty echo
+  ctx->LogInfo("[map view] window delta[%.1f,%.1f] az[%.1f,%.1f] %dx%d, members %d/%d, lambda %.1f, kept %lld",
+               info.view_delta_min_deg, info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg,
+               info.view_rows, info.view_cols, info.members_evaluated, info.member_count, info.wavelength_nm,
+               info.kept_count);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_map_region.png").string()), false);
+
+  // The pick on the real mouse path: a click on the canvas centre sets the sky point, and the
+  // panorama's ROI state and the share list's selection stay exactly what they were (AC3 — the
+  // two click semantics never share a write).
+  const int roi_mode_before = gui::g_state.analysis.roi_mode;
+  const bool roi_valid_before = gui::g_state.analysis.cone_center_valid;
+  const float roi_dir_before[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
+                                    gui::g_state.analysis.cone_center_dir[2] };
+  const bool pick_armed_before = gui::g_state.analysis.pick_armed;
+  const std::string selected_before = gui::g_state.analysis.selected_entry.value_or("");
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
+  IM_CHECK_RETV(gui::g_state.analysis.roi_mode == roi_mode_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.cone_center_valid == roi_valid_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.cone_center_dir[0] == roi_dir_before[0], false);
+  IM_CHECK_RETV(gui::g_state.analysis.cone_center_dir[1] == roi_dir_before[1], false);
+  IM_CHECK_RETV(gui::g_state.analysis.cone_center_dir[2] == roi_dir_before[2], false);
+  IM_CHECK_RETV(gui::g_state.analysis.pick_armed == pick_armed_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before, false);
   return true;
 }
 
@@ -3075,6 +3151,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyRefusesMultilayerClassByName(ctx)); };
+  }
+  // The map region (742.5): real chain, real click, real isolation — see the function's comment.
+  // Real-timing pool: the map answers behind the survey's chromatic legs on the one worker, the
+  // same wall-clock shape that put the survey overview case there.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_region_shows_the_class_map_and_takes_the_pick");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MapRegionShowsTheClassMapAndTakesThePick(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_and_render_run_are_orthogonal");
