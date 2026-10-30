@@ -689,6 +689,15 @@ TEST(AnalyzePointView, InternalReflectionPolylineCarriesThePinShape) {
   ASSERT_EQ(LUMICE_RepresentativeRayGetLegs(state.analysis.trace.adopted_result.get(), &legs), LUMICE_PATH_READ_OK);
   EXPECT_EQ(contacts.contact_count, 4U);
   EXPECT_EQ(legs.leg_count, 5U);
+  // The polyline's own pairing — the invariant the 3D view's contact markers draw from: the odd
+  // vertices ARE the recovery's contacts (index 0 and the last are the display extensions, which
+  // must not masquerade as face contacts).
+  for (size_t c = 0; c < contacts.contact_count; ++c) {
+    const size_t idx = (c * 2 + 1) * 3;
+    for (int k = 0; k < 3; ++k) {
+      EXPECT_NEAR(line.points[idx + k], static_cast<float>(contacts.contacts[c].point[k]), 1e-3f);
+    }
+  }
   executor.ShutdownAndJoin();
 }
 

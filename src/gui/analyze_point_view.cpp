@@ -611,8 +611,9 @@ void PumpRayTrace(GuiState& state, SurveyExecutor& executor) {
     return;
   }
   const int component = std::clamp(view.component_index, 0, static_cast<int>(info.component_count) - 1);
-  const int valid_count = PointValidSampleCount(*point.adopted_result, component);
-  if (valid_count == 0) {
+  // One scan for both the count and the cursor's stored row (the map the renderers share too).
+  const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
+  if (valid_indices.empty()) {
     if (trace.intent_valid) {
       executor.CancelInFlight(QueryFace::kRay);
       trace = RayTraceSession{};
@@ -620,11 +621,11 @@ void PumpRayTrace(GuiState& state, SurveyExecutor& executor) {
     return;
   }
   const int stored =
-      PointValidSampleIndexAt(*point.adopted_result, component, std::clamp(view.sample_index, 0, valid_count - 1));
+      valid_indices[static_cast<size_t>(std::clamp(view.sample_index, 0, static_cast<int>(valid_indices.size()) - 1))];
   LUMICE_PathPointSample sample{};
   sample.struct_size = sizeof(sample);
-  if (stored < 0 || LUMICE_PathPointGetSample(point.adopted_result.get(), static_cast<size_t>(component),
-                                              static_cast<size_t>(stored), &sample) != LUMICE_PATH_READ_OK) {
+  if (LUMICE_PathPointGetSample(point.adopted_result.get(), static_cast<size_t>(component), static_cast<size_t>(stored),
+                                &sample) != LUMICE_PATH_READ_OK) {
     if (trace.intent_valid) {
       executor.CancelInFlight(QueryFace::kRay);
       trace = RayTraceSession{};
@@ -1214,7 +1215,9 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   }
   CachedCrystalMesh& cache = PointMeshCache();
   const int hash = CrystalParamHash(*frozen);
-  if (!cache.valid || cache.pool != pool || cache.hash != hash) {
+  // The key moves even on a failed build: a persistently-unbuildable config is one failed
+  // attempt per key change, not one LUMICE_GetCrystalMesh call per frame.
+  if (cache.pool != pool || cache.hash != hash) {
     cache.pool = pool;
     cache.hash = hash;
     cache.valid = BuildPointCrystalMesh(*frozen, &cache.mesh);
@@ -1279,6 +1282,34 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     to_display(&cache.mesh.vertices[v * 3], d);
     accumulate(d);
   }
+  // The crystal's own centre, in the same display frame: the sun arrow's anchor (the crystal-frame
+  // view's u direction radiates from the CRYSTAL, not from a content box the display extensions
+  // inflate).
+  float mesh_lo[3] = { 0.0f, 0.0f, 0.0f };
+  float mesh_hi[3] = { 0.0f, 0.0f, 0.0f };
+  for (int k = 0; k < 3; ++k) {
+    mesh_lo[k] = mesh_hi[k] = lo[k];
+  }
+  {
+    bool have_mesh_bounds = false;
+    for (int v = 0; v < cache.mesh.vertex_count; ++v) {
+      float d[3];
+      to_display(&cache.mesh.vertices[v * 3], d);
+      if (!have_mesh_bounds) {
+        for (int k = 0; k < 3; ++k) {
+          mesh_lo[k] = mesh_hi[k] = d[k];
+        }
+        have_mesh_bounds = true;
+        continue;
+      }
+      for (int k = 0; k < 3; ++k) {
+        mesh_lo[k] = std::min(mesh_lo[k], d[k]);
+        mesh_hi[k] = std::max(mesh_hi[k], d[k]);
+      }
+    }
+  }
+  const float mesh_centre[3] = { (mesh_lo[0] + mesh_hi[0]) * 0.5f, (mesh_lo[1] + mesh_hi[1]) * 0.5f,
+                                 (mesh_lo[2] + mesh_hi[2]) * 0.5f };
   for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
     const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
     float d[3];
@@ -1314,7 +1345,10 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   // The canvas + gestures: drag orbits (yaw/pitch), wheel zooms. Pure display state.
   const ImVec2 avail = ImGui::GetContentRegionAvail();
   const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
-  const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + std::max(UiPx(40.0f), avail.y));
+  // The canvas reserves the legend's own line below it — a scrolled-out legend is an unreachable
+  // one (the map region's rule), and the legend is AC4's colour key.
+  const float legend_px = UiPx(22.0f);
+  const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + std::max(UiPx(40.0f), avail.y - legend_px));
   ImGui::InvisibleButton("##r3d_canvas", ImVec2(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y),
                          ImGuiButtonFlags_MouseButtonLeft);
   const bool active = ImGui::IsItemActive();
@@ -1362,24 +1396,26 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     point_to_display(p1, d1);
     dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
   }
-  // The contacts: one marker per REAL contact of the recovery (polyline index 2j+1 — the
-  // entry/exit extension endpoints are this TU's display synthesis, not faces, and get none).
-  for (size_t c = 0; c * 2 + 1 < line.points.size() / 3; ++c) {
-    const size_t idx = (c * 2 + 1) * 3;
+  // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
+  // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
+  // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
+  // display synthesis and marked by nothing.
+  for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
     const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
     float d[3];
     point_to_display(p, d);
     dl->AddCircle(project(d), UiPx(2.5f), IM_COL32(240, 240, 240, 190), 0, 1.0f);
   }
-  // The crystal-frame sun direction: one short arrow along u from the crystal's centre (the
-  // crystal view's own anchor; the world view's entry leg already carries the incident).
+  // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
+  // centre (the crystal view's own anchor; the world view's entry leg already carries the
+  // incident). The tip rides the content fit's scale, the anchor does not.
   if (view.crystal_frame) {
     const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
                          static_cast<float>(current->sample.sun_in_crystal[1]),
                          static_cast<float>(current->sample.sun_in_crystal[2]) };
-    float fit_dir = fit;
-    const float tip[3] = { u[0] * fit_dir * 0.6f, u[1] * fit_dir * 0.6f, u[2] * fit_dir * 0.6f };
-    dl->AddLine(project(centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+    const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
+                           mesh_centre[2] + u[2] * fit * 0.6f };
+    dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
   }
   // The legend.
   ImGui::TextDisabled("entry");
