@@ -1620,7 +1620,7 @@ of their layers inside this `pr` run, not separately timed invocations.
 | `quick` | `ctest -L "unit-correctness\|composition-correctness\|parity\|golden-analytic"` (8/8 passed) | 67s | ctest default |
 | `quick` | fast e2e (`-m "not slow"` via `pyproject.toml` `addopts`, 219 passed) | 88s | `-n auto` → 12 workers |
 | `quick` | `gui_test` correctness pool (`--fixed-dt`, 513/513 passed) | 151s | single process |
-| | (742.7 adds three fixed-dt lifecycle/identity legs: the pool re-measured 544/544; the wall-clock re-derivation rides the next fresh `quick`) | | |
+| | (742.7 adds three fixed-dt lifecycle/identity legs: the pool re-measured 544/544, 236s in the closing `pr` run of 2026-10-31) | | |
 | | **`quick` layer subtotal** | **306s** | |
 | `full` | `gui_test` real-timing pool (no `--fixed-dt`, 6/6 passed) | +11s | single process |
 | `full` | + 742.6's point-inspector real-timing leg (the pool's 7th case) | +~55s | measured 2026-10-30, the analyze-gui-v1 machine: the point queues behind the selection's survey and the map refinement on the one worker; the row above is that leg's predecessor measurement, kept as recorded |
