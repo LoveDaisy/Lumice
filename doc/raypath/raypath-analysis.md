@@ -693,26 +693,44 @@ survey context 与预算成比例的抛光，GUI 不请求 context）。
 `MakeSunGlobeProjector` / `SunGlobeProject`；轨迹折线 = `BuildRayTracePolyline`（只读 742.2 的
 contacts/legs，延伸是展示约定）；帧变换 = `RayTracePointToCrystalFrame`。
 
-**742.7 as-built（跨片组合验收，2026-10-31）**：组合证据由五条集成腿承载
+**742.7 as-built（跨片组合验收，2026-10-31，R1 评审后收口）**：组合证据由八条集成腿承载
 （`test/gui/functional/test_raypath_analysis_panel.cpp`，前四片零重建、零新增 TU）——
-`analyze_full_chain_one_session`（一会话连续主链：选类→概览无抢点→双 λ 色散读数→图细化→真
-画布拾取→锚定点文档→滑杆→轨迹重键，C readers 钉 2 contacts/3 legs）、
+`analyze_full_chain_one_session`（一会话连续主链：选类→概览无抢点→双 λ 色散读数→图平移+细化→真
+画布拾取（拾取自身文档诚实读回）→锚定点文档→滑杆→轨迹重键，C readers 钉 2 contacts/3 legs）、
 `internal_reflection_trace_from_the_real_consumer`（语料 C03 型 `3-5-6-7` 从真实消费者（点检视
 器 3D 区）看见完整合法折线：4 contacts/5 segments，kinds 入射+3 内部+出射；锚点 (38,180)=太阳
 偏差 122°，语料反日聚集带，CLI 探针在案）、`analyze_faces_rekey_on_row_switch`（A→B 在飞切换
-survey/map/point 全部重键至 B 身份 + λ 旋钮在飞重问）、`new_document_clears_every_analyze_face`
-（New 清四会话与天空点、executor 闲置；Revert 全保留零重发）、
+survey/map/point 全部重键至 B 身份 + λ 旋钮在飞重问 map **和 point**（回参考以读回值为准））、
+`new_document_clears_every_analyze_face`（New 清四会话与天空点、executor 闲置；Revert 全保留
+零重发——ray 面按值捕获后验证，非引用别名恒真）、
 `identity_class_shows_the_mass_arm_and_the_map_answers`（C15 `1-3-6-2` 恒等类跨面：概览恒等臂、
-rank-0 图回答、太阳像点查询 MASS 臂零分量无轨迹意图——恒等不造 fiber）。池归属：前两条
-real-timing（池实测 11/11 @ 121.6 s，`testing-architecture.md` §7），后三条 fixed-dt 正确性池
-（544/544）。组合级测量（本机 M1 Max、`385fbd2c1`、kFullyRandomJson、550 参考 λ、16 ms vsync
-帧折算）：选类→概览含色散 ~2.3 s、图细化 ~0.5 s、拾取+点查询 ~0.45 s、轨迹 ~0.05 s、全会话
-~4 s（C03 类 ~4.7 s、C15 ~1.1 s）；A→B 全落定 ~7.4 s；Revert 撤回在飞查询 ≤13 帧。诚实边界
-（同批钉住）：`kDiscovered` 允许零分量（离 fiber 目标的空发现是具名空态非缺陷）；太阳对跖点
-目标是请求级 `kInvalidTarget` 拒答；池共租下 survey 色散腿可诚实触 15 s 预算（partial 按
-execution 分派呈现，概览横幅不变）。GUI 边界审计复核随片完成：五个 analyze TU 零 JSON 拼装、
-概览模型单源双消费、具名空态是唯一占位形态（`check_policies.py` 全绿）。用户操作与首版能力
-边界的耐久表述在 `doc/user-manual/06-raypath-analysis{,_zh}.md` §6–§8 与「首版已知限制」节。
+rank-0 图回答、太阳像点查询 MASS 臂零分量无轨迹意图——恒等不造 fiber）、
+`refused_class_names_the_refusal_and_keeps_the_witness` / `refused_class_blockades_nothing`
+（AC2 首句的 C17 形状，拆两腿以守住池内 60s 墙钟看门狗：`3-1-5-7` 在本场景的 survey 成员路由
+有限而 δ 轴结构对象拒答 `slab_crease_touching`——概览拒答臂具名呈现、独立 witness（正贡献事件
+在档）与 TIR 份额并存、chromatic 块以引擎原话具名缺席（只影响该项）；独立会话中图回答（kept
+993862）、点查询独立发现（反日带锚点 1 分量）——拒答不封锁任何其他面）、
+`scene_edit_follows_the_explicit_accept_contract`（编辑在飞：冻结快照上的查询照常采纳；编辑已
+采纳：结果原样保留（显式接受语义）；再 Analyze：选择清空、旧代归属作废（digest 腿的 R6 成文
+形状），重选按新 archive 一代回答）、`cancel_survey_button_reaches_the_named_state` /
+`cancel_point_and_document_open_follow_the_rules`（Cancel survey 按钮在 δ 相取消快速回报、具名
+kCancelled+latch、变更选择清 latch 再答（经滚动选行——折叠行的直点是静默失败，`SelectRowByDisplay`
+助手由此而来）；Cancel point 在排队态撤销（排在前一 survey 之后，窗口确定）且 survey 面不被
+株连；文档切换（open 路径的 deserialize 机制）清全部面与意图）。池归属：前两条 real-timing
+（池实测 11/11 @ 121.6 s，`testing-architecture.md` §7），后八条 fixed-dt 正确性池。组合级测量（本机 M1 Max、`385fbd2c1`、
+kFullyRandomJson、550 参考 λ、16 ms vsync 帧折算）：选类→概览含色散 ~2.3 s、图细化 ~0.5 s、
+拾取+点查询 ~0.45 s、轨迹 ~0.05 s、全会话 ~4 s（C03 类 ~4.7 s、C15 ~1.1 s）；A→B 全落定
+~7.4 s；Cancel survey 撤回在 δ 相数秒回报。诚实边界（同批钉住）：`kDiscovered` 允许零分量
+（离 fiber 目标的空发现是具名空态非缺陷）；太阳对跖点目标是请求级 `kInvalidTarget` 拒答；
+池共租下 survey 色散腿可诚实触 15 s 预算（partial 按 execution 分派呈现，概览横幅不变）；
+halo 场景（zenith 均布 mean 90）主类路由为快速拒答臂——其 kWaiting 窗口是点击竞态，取消/等待
+类腿须选全维场景。**引擎侧观测（本片上抛，不在零 src 约束内修）**：`3-1-5-7`（24 成员）的
+GUI survey 墙钟不受其 15 s 期限约束（观测 40–100 s，随机器负载漂移）——survey 的 stop 装置
+（`detail/quantity/witness.hpp` 的 DiscoveryStop 装置）只覆盖 lattice pass，witness/TIR 相的
+循环不轮询取消令牌，协作式期限对它失效；两条 C17 腿因此归 real-timing 池（负载敏感本性），
+候选修复=相边界与循环内补 stop 轮询，待 owner 裁定。GUI 边界审计复核随片完成：五个 analyze TU 零 JSON 拼装、概览模型单源双消费、
+具名空态是唯一占位形态（`check_policies.py` 全绿）。用户操作与首版能力边界的耐久表述在
+`doc/user-manual/06-raypath-analysis{,_zh}.md` §6–§8 与「首版已知限制」节。
 
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 
