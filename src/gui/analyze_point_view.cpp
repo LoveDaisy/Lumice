@@ -871,8 +871,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   SunGlobeProjector projector;
   const bool have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
 
-  // The canvas: a square disk sized to the child's remaining height above the control rows.
-  const float controls_px = UiPx(76.0f);
+  // The canvas: a square disk sized to the child's remaining height above the control rows
+  // (weight bar + its label + the slider/playback row).
+  const float controls_px = UiPx(96.0f);
   const ImVec2 avail = ImGui::GetContentRegionAvail();
   const float side = std::max(UiPx(60.0f), std::min(avail.x, avail.y - controls_px));
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1016,8 +1017,14 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
                           is_current ? ImGui::ColorConvertFloat4ToU32(AccentColor()) : IM_COL32(120, 126, 138, 190));
       }
     }
-    ImGui::TextDisabled("weight per sample: rho*A/a^2*T*K (the integrand of this component's fiber integral)%s",
-                        vmax > 0.0 ? "" : " — all zero here");
+    // The bar renders at absolute coordinates in the strip right below the canvas; the cursor
+    // has not crossed that strip yet, so cross it first — the label and the slider row each own
+    // their line.
+    ImGui::Dummy(ImVec2(side, bar_h + UiPx(4.0f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("weight per sample: rho*A/a^2*T*K (the integrand of this component's fiber integral)%s",
+                       vmax > 0.0 ? "" : " — all zero here");
+    ImGui::PopStyleColor();
   }
 
   // The slider + playback row: the slider indexes the component's VALID samples (AC3); touching
