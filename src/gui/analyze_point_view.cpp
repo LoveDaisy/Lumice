@@ -174,61 +174,22 @@ int PointComponentRows(const LUMICE_SinglePathResult& result, std::vector<PointC
   return static_cast<int>(rows->size());
 }
 
+std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result, int component);
+
+// The two point queries above the one map build: the count and the cursor mapping are the
+// valid-index map's own size and lookup (ONE authority for the valid->stored walk — the
+// renderers and the pump hold the map itself; these wrappers are the tests' and the
+// 742.7 handover's per-call shape).
 int PointValidSampleCount(const LUMICE_SinglePathResult& result, int component) {
-  LUMICE_PathPointInfo info{};
-  info.struct_size = sizeof(info);
-  if (LUMICE_PathPointGetInfo(&result, &info) != LUMICE_PATH_READ_OK || info.outcome != LUMICE_PATH_POINT_DISCOVERED ||
-      component < 0 || component >= static_cast<int>(info.component_count)) {
-    return 0;
-  }
-  LUMICE_PathPointComponent head{};
-  head.struct_size = sizeof(head);
-  if (LUMICE_PathPointGetComponent(&result, static_cast<size_t>(component), &head) != LUMICE_PATH_READ_OK) {
-    return 0;
-  }
-  const int count = static_cast<int>(head.point_count);
-  int valid = 0;
-  LUMICE_PathPointSample sample{};
-  sample.struct_size = sizeof(sample);
-  for (int i = 0; i < count; ++i) {
-    if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), static_cast<size_t>(i), &sample) ==
-            LUMICE_PATH_READ_OK &&
-        sample.valid != 0) {
-      ++valid;
-    }
-  }
-  return valid;
+  return static_cast<int>(CollectValidSampleIndices(result, component).size());
 }
 
 int PointValidSampleIndexAt(const LUMICE_SinglePathResult& result, int component, int valid_position) {
-  LUMICE_PathPointInfo info{};
-  info.struct_size = sizeof(info);
-  if (LUMICE_PathPointGetInfo(&result, &info) != LUMICE_PATH_READ_OK || info.outcome != LUMICE_PATH_POINT_DISCOVERED ||
-      component < 0 || component >= static_cast<int>(info.component_count) || valid_position < 0) {
+  if (valid_position < 0) {
     return -1;
   }
-  LUMICE_PathPointComponent head{};
-  head.struct_size = sizeof(head);
-  if (LUMICE_PathPointGetComponent(&result, static_cast<size_t>(component), &head) != LUMICE_PATH_READ_OK) {
-    return -1;
-  }
-  const int count = static_cast<int>(head.point_count);
-  int seen = 0;
-  LUMICE_PathPointSample sample{};
-  sample.struct_size = sizeof(sample);
-  for (int i = 0; i < count; ++i) {
-    if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), static_cast<size_t>(i), &sample) !=
-        LUMICE_PATH_READ_OK) {
-      continue;
-    }
-    if (sample.valid != 0) {
-      if (seen == valid_position) {
-        return i;
-      }
-      ++seen;
-    }
-  }
-  return -1;
+  const std::vector<int> indices = CollectValidSampleIndices(result, component);
+  return valid_position < static_cast<int>(indices.size()) ? indices[static_cast<size_t>(valid_position)] : -1;
 }
 
 std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result, int component) {
@@ -859,6 +820,14 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     return;
   }
 
+  // The partial-document note, wherever the document is drawn: a deadline-stopped point keeps
+  // what arrived, and the regions that draw it say so (AC5's 如实呈现, the details banner's
+  // siblings).
+  if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    ImGui::TextWrapped("Partial document (%s) — the fiber on show is what arrived.", ExecutionText(info->execution));
+    ImGui::PopStyleColor();
+  }
   // The discovered arm: the selected component's fiber, the current sample marker, the weight
   // bar, the slider and playback.
   std::vector<PointComponentRow> rows;
@@ -1148,6 +1117,13 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     return;
   }
 
+  // The partial-document note, the globe's sibling: the path on show is what a stopped run
+  // delivered.
+  if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    ImGui::TextWrapped("Partial document (%s) — the path on show is what arrived.", ExecutionText(info->execution));
+    ImGui::PopStyleColor();
+  }
   const std::vector<int> valid_indices = CollectValidSampleIndices(
       *point.adopted_result, std::clamp(view.component_index, 0, static_cast<int>(info->component_count) - 1));
   const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);

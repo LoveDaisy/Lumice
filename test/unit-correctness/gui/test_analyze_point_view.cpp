@@ -846,6 +846,40 @@ TEST(AnalyzePointView, PartialDocumentAdoptsAndReadsAsPartial) {
   EXPECT_NE(joined.find("(partial)"), std::string::npos);
 }
 
+// Bounded churn (AC6's resource bound, the session-level leg): five point moves pumped back to
+// back leave exactly ONE standing intent — the last key's — and the answer that arrives is the
+// last move's. The executor's single slot per face is the structural half; this pins the
+// session's half.
+TEST(AnalyzePointView, RapidPointMovesStayBoundedAtOneIntent) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kPointSceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  state.analysis_result.payload = Rows(7, { "3-5" }, { { 3, 5 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "3-5";
+  for (int i = 0; i < 5; ++i) {
+    SetSkyPoint(state, 21.5 + static_cast<double>(i), 0.0);
+    PumpPointQuery(state, executor);
+  }
+  EXPECT_TRUE(state.analysis.point.intent_valid);
+  // The standing intent names the LAST move: its labels round-trip to altitude 21.5 + 4.
+  std::vector<int> probe_faces;
+  std::vector<int> probe_counts;
+  const LUMICE_SinglePathRequest probe = MakePointRequestForKey(state.analysis.point.key, &probe_faces, &probe_counts);
+  EXPECT_NEAR(probe.target_altitude_deg, 25.5, 1e-3);
+  const double now = 100.0;
+  ASSERT_TRUE(
+      PumpAllUntil(state, executor, now, [&] { return state.analysis.point.adopted_result != nullptr; }, 60000));
+  EXPECT_EQ(PointQueryStateFor(state.analysis.point), PointQueryState::kCompleted);
+  // The mailbox is drained: the pump took the one finish there was.
+  EXPECT_EQ(executor.TakeFinished(QueryFace::kPoint), std::nullopt);
+  executor.ShutdownAndJoin();
+}
+
 // The frozen mesh source: the 3D region reads the DoAnalyze-captured crystal configs, never the
 // live document — an edit after Analyze does not rebuild the mesh into a shape the trace no
 // longer lies inside (AC4, the plan's risk 7).
