@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "gui/analysis_result.hpp"
+#include "gui/analyze_map_view.hpp"
 #include "gui/analyze_survey.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/view_look_at_types.hpp"
@@ -1836,6 +1837,17 @@ struct GuiState {
     // rule as every field above, and the whole-struct reset above clears it exactly where the
     // selection it belongs to dies (document switches; Revert keeps it with the kept selection).
     SurveyQuerySession survey;
+    // The map face's session state (742.5): the same tier and the same per-reason rules, over
+    // the reference-map query — intent/key (selection + view + wavelength), the Revert latch,
+    // and the adopted outcome (a picture kept across view supersession, dropped with the
+    // selection). The display view, the sky-point intent and the explicit wavelength are the
+    // session's other three members: the view is the display's own disk state driving the
+    // requests, the intent is the user's sky target (independent of any class or ROI state),
+    // and the wavelength is the user's explicit-λ choice (0 = the engine's reference).
+    MapQuerySession map;
+    MapViewState map_view;
+    SkyPointIntent sky_point;
+    double map_wavelength_nm = 0.0;
   };
   RaypathAnalysisSession analysis;
 

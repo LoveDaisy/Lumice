@@ -917,8 +917,10 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
     // QueryOutstanding, not InFlight): latching unconditionally would turn an already-adopted,
     // intact overview into "cancelled" for nothing.
     if (g_survey_executor.QueryOutstanding()) {
-      g_survey_executor.CancelInFlight();
+      g_survey_executor.CancelInFlight(QueryFace::kSurvey);
+      g_survey_executor.CancelInFlight(QueryFace::kMap);
       state.analysis.survey.cancelled_for_key = true;
+      state.analysis.map.cancelled_for_key = true;
     }
   }
 

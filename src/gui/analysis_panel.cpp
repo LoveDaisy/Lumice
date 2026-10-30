@@ -336,7 +336,7 @@ void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
   //    class (R5), and the overview shows it rather than a fabricated summary. Everything else
   //    in the slot is a superseded zombie (cancelled or replaced intent) and is dropped here,
   //    never shown.
-  while (std::optional<SurveyExecutor::Finished> finished = executor.TakeFinished()) {
+  while (std::optional<SurveyExecutor::Finished> finished = executor.TakeFinished(QueryFace::kSurvey)) {
     if (survey.intent_valid && !survey.cancelled_for_key && finished->id == survey.intent_id) {
       survey.adopted_result = finished->ok ? finished->result : nullptr;
       survey.adopted_error = finished->ok ? std::string() : std::move(finished->error);
@@ -351,7 +351,7 @@ void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
   if (!identity.has_value() || !state.analysis_result.payload) {
     if (survey.intent_valid) {
       // The selection died: R6 — the intent dies with it, adopted outcome included.
-      executor.CancelInFlight();
+      executor.CancelInFlight(QueryFace::kSurvey);
       survey = SurveyQuerySession{};
     }
     return;
@@ -361,7 +361,7 @@ void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
   if (!survey.intent_valid || survey.key != key) {
     // A new or changed selection: withdraw whatever is out (R6 — the new intent supersedes; the
     // previous outcome belongs to a key that is gone) and issue the fresh one.
-    executor.CancelInFlight();
+    executor.CancelInFlight(QueryFace::kSurvey);
     survey = SurveyQuerySession{};
     survey.intent_valid = true;
     survey.key = key;

@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_view.hpp"
 #include "gui/app.hpp"
 #include "gui/color_window.hpp"
 #include "gui/config_summary_window.hpp"
@@ -557,6 +558,7 @@ int main(int argc, char** argv) {
   gui::g_server_poller.Stop();               // Stop poller before destroying server
   gui::g_crystal_renderer.Destroy();
   gui::g_preview.Destroy();
+  gui::ShutdownMapView();         // the map region's GL texture, while the context lives
   gui::DestroyPreviewFrameFbo();  // the preview path's persistent FBO, owned by export_fbo_renderer.cpp
   LUMICE_DestroyServer(gui::g_server);
   gui::g_server = nullptr;

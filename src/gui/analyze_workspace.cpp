@@ -9,6 +9,7 @@
 #include <string>
 
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
 #include "gui/app.hpp"
 #include "gui/gui_constants.hpp"
@@ -301,7 +302,7 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
         // selection stands (that is what SurveyOverviewStateFor turns into kCancelled next
         // frame). A result that already returned is dropped by the gate: the intent it would
         // have to answer no longer exists.
-        g_survey_executor.CancelInFlight();
+        g_survey_executor.CancelInFlight(QueryFace::kSurvey);
         survey.cancelled_for_key = true;
         survey.adopted_result.reset();
         survey.adopted_error.clear();
@@ -341,12 +342,13 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
 }
 
 void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height) {
-  // The background survey query's frame pump (742.3 R6): drain finished outcomes through the
-  // adoption gate, then reconcile the intent against the live selection — before any region
-  // reads the session, so the overview on screen is always this frame's state. Render mode does
-  // not pump: an in-flight query keeps running (R6 — switching away neither cancels nor cleans)
-  // and its outcome waits in the single slot for the return.
+  // The background queries' frame pumps (742.3 R6, the map face added by 742.5): drain finished
+  // outcomes through the adoption gates, then reconcile each intent against its live inputs —
+  // before any region reads the sessions, so the overview and the map on screen are always this
+  // frame's state. Render mode does not pump: in-flight queries keep running (R6 — switching
+  // away neither cancels nor cleans) and their outcomes wait in the single slots for the return.
   PumpSurveyQuery(g_state, g_survey_executor);
+  PumpMapQuery(g_state, g_survey_executor, ImGui::GetTime());
 
   // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);
   // this region publishes by assignment below.
@@ -432,10 +434,10 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   ImGui::Begin("##AnalyzeLowerRow", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus);
-  PlaceholderRegion("##AnalyzeRaypathView", "Raypath view",
-                    "Not wired up yet. Will show one raypath class's sky picture with pan, zoom and the sky-point "
-                    "pick.",
-                    ImVec2(col_w, ImGui::GetContentRegionAvail().y));
+  // The raypath view (742.5): the adopted class map as a single equal-area disk with pan, zoom,
+  // Fit and the sky-point pick — the placeholder's replacement. The 3D region stays the shell's
+  // honest placeholder (742.6's face).
+  RenderAnalyzeMapRegion(g_state, ImVec2(col_w, ImGui::GetContentRegionAvail().y));
   ImGui::SameLine();
   PlaceholderRegion("##AnalyzeRaypath3D", "Raypath 3D",
                     "Not wired up yet. Will show the selected path's crystal and its 3D geometry.", ImVec2(0, 0));
