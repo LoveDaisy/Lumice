@@ -324,4 +324,68 @@ TEST(AnalyzeOverviewChain, WideDiffusionClassNeedsNoSharpStructure) {
   }
 }
 
+// The deadline document (plan Step 2's "a partial document still shows its produced legs"):
+// a one-millisecond query deadline cuts the survey in the T0 routing leg, so the document
+// carries the deadline outcome and no produced quantities. The cut rides the workspace query
+// face — the same face the GUI's executor wraps, and the one where a deadline actually wires
+// into the query's stop (the direct LUMICE_AnalyzePathSurvey entry echoes budget_ms without
+// enforcing it; its budget is the workspace/options callers' contract). Two invariants, both
+// cheap and machine-speed-independent (they hang on flags, not on which legs beat the clock):
+//   * the arm classification does NOT read a timed-out document as the identity arm —
+//     early_stopped is the identity fast path's own flag, and a deadline document has it false
+//     whatever any later leg managed (the engine-side half of that invariant is asserted here
+//     on the document itself, the GUI-side half in the model);
+//   * the model stays honest about the partial: the deadline outcome, no tint block, and no
+//     conclusion line claiming a physical fact about the class.
+TEST(AnalyzeOverviewChain, DeadlineDocumentKeepsItsArmAndItsProducedLegs) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  char err[512] = {};
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &raw_workspace, err, sizeof(err)), LUMICE_OK) << err;
+  std::unique_ptr<LUMICE_PathWorkspace, void (*)(LUMICE_PathWorkspace*)> workspace(raw_workspace,
+                                                                                   LUMICE_PathWorkspaceDestroy);
+
+  std::vector<int> faces{ 3, 5 };
+  std::vector<int> counts(1, 2);
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = faces.data();
+  request.face_count = static_cast<int>(faces.size());
+  request.layer_face_counts = counts.data();
+  request.layer_count = 1;
+  request.symmetry_bits_plus_one = 0;
+  request.budget_ms = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = 1;
+  LUMICE_PathSurvey* raw = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &request, &options, &raw, err, sizeof(err)), LUMICE_OK)
+      << err;
+  std::unique_ptr<LUMICE_PathSurvey, SurveyDeleter> survey(raw);
+  ASSERT_NE(survey.get(), nullptr);
+
+  // The engine-side invariant: the deadline document does not carry the identity fast path's
+  // early-stop flag.
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathSurveyGetInfo(survey.get(), &info), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(info.execution, LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED);
+  EXPECT_EQ(info.early_stopped, 0);
+
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  ASSERT_TRUE(model.valid);
+  EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED);
+  EXPECT_FALSE(model.early_stopped);
+  EXPECT_NE(model.arm, SurveyArm::kIdentity);
+
+  // The partial is stated, not papered over: no tint block (the leg never ran to a reading),
+  // and no conclusion line claims anything physical about the class.
+  EXPECT_FALSE(model.tint.available);
+  for (const std::string& line : model.conclusions) {
+    EXPECT_EQ(line.find("Source image"), std::string::npos) << line;
+    EXPECT_EQ(line.find("certified"), std::string::npos) << line;
+  }
+}
+
 }  // namespace lumice::gui

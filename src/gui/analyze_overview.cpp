@@ -457,6 +457,14 @@ SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result) {
 
   // The arm, most-specific flag first: a family document also carries support/edge/domain
   // cards, and a refused document carries produced quantities beside the refusal.
+  //
+  // The early_stopped half of the identity test is the identity fast path's OWN flag, not a
+  // generic "partial" signal: the engine sets it only on the all-rank-zero branch (survey
+  // assembly), a query cut by its deadline returns before that branch with the flag false, and
+  // a cut inside a later leg leaves it false too — the execution outcome carries the deadline.
+  // So "early_stopped && tint" cannot read a timed-out full-dimensional document as identity:
+  // a deadline document has the flag false whatever its tint leg managed to produce. Pinned
+  // from the GUI side by AnalyzeOverviewChain.DeadlineDocumentKeepsItsArmAndItsProducedLegs.
   if (info.family_available != 0) {
     model.arm = SurveyArm::kFamily;
   } else if (info.early_stopped != 0 && info.tint_available != 0) {
