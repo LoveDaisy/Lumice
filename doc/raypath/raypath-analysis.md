@@ -693,7 +693,7 @@ survey context 与预算成比例的抛光，GUI 不请求 context）。
 `MakeSunGlobeProjector` / `SunGlobeProject`；轨迹折线 = `BuildRayTracePolyline`（只读 742.2 的
 contacts/legs，延伸是展示约定）；帧变换 = `RayTracePointToCrystalFrame`。
 
-**742.7 as-built（跨片组合验收，2026-10-31，R1 评审后收口）**：组合证据由八条集成腿承载
+**742.7 as-built（跨片组合验收，2026-10-31，R2 评审后收口）**：组合证据由十一条集成腿承载
 （`test/gui/functional/test_raypath_analysis_panel.cpp`，前四片零重建、零新增 TU）——
 `analyze_full_chain_one_session`（一会话连续主链：选类→概览无抢点→双 λ 色散读数→图平移+细化→真
 画布拾取（拾取自身文档诚实读回）→锚定点文档→滑杆→轨迹重键，C readers 钉 2 contacts/3 legs）、
@@ -706,18 +706,27 @@ survey/map/point 全部重键至 B 身份 + λ 旋钮在飞重问 map **和 poin
 `identity_class_shows_the_mass_arm_and_the_map_answers`（C15 `1-3-6-2` 恒等类跨面：概览恒等臂、
 rank-0 图回答、太阳像点查询 MASS 臂零分量无轨迹意图——恒等不造 fiber）、
 `refused_class_names_the_refusal_and_keeps_the_witness` / `refused_class_blockades_nothing`
-（AC2 首句的 C17 形状，拆两腿以守住池内 60s 墙钟看门狗：`3-1-5-7` 在本场景的 survey 成员路由
-有限而 δ 轴结构对象拒答 `slab_crease_touching`——概览拒答臂具名呈现、独立 witness（正贡献事件
-在档）与 TIR 份额并存、chromatic 块以引擎原话具名缺席（只影响该项）；独立会话中图回答（kept
-993862）、点查询独立发现（反日带锚点 1 分量）——拒答不封锁任何其他面）、
+（AC2 首句的 C17 形状，两腿各守一半：`3-1-5-7` 在本场景的 survey 成员路由有限而 δ 轴结构对象
+拒答 `slab_crease_touching`——概览拒答臂具名呈现、独立 witness（正贡献事件在档）与 TIR 份额
+并存、chromatic 块以引擎原话具名缺席（只影响该项）；独立会话中图回答（kept 993862）、点查询
+独立发现（反日带锚点 1 分量）——拒答不封锁任何其他面）、
 `scene_edit_follows_the_explicit_accept_contract`（编辑在飞：冻结快照上的查询照常采纳；编辑已
 采纳：结果原样保留（显式接受语义）；再 Analyze：选择清空、旧代归属作废（digest 腿的 R6 成文
 形状），重选按新 archive 一代回答）、`cancel_survey_button_reaches_the_named_state` /
-`cancel_point_and_document_open_follow_the_rules`（Cancel survey 按钮在 δ 相取消快速回报、具名
+`cancel_point_button_reaches_the_named_state`（Cancel survey 按钮在 δ 相取消快速回报、具名
 kCancelled+latch、变更选择清 latch 再答（经滚动选行——折叠行的直点是静默失败，`SelectRowByDisplay`
 助手由此而来）；Cancel point 在排队态撤销（排在前一 survey 之后，窗口确定）且 survey 面不被
-株连；文档切换（open 路径的 deserialize 机制）清全部面与意图）。池归属：前两条 real-timing
-（池实测 11/11 @ 121.6 s，`testing-architecture.md` §7），后八条 fixed-dt 正确性池。组合级测量（本机 M1 Max、`385fbd2c1`、
+株连）、`document_open_clears_every_analyze_face`（文档切换——open 路径的 deserialize 机制——
+清全部面与意图，executor 闲置；查询在飞时的撤回尾段是协作式期限形状，不属本腿主张）。池归属
+（与 `scripts/build.sh` 两 filter 一致）：real-timing 四条（chain pair + C17 pair——前者排
+per-face 队列、后者 survey 尾段不受协作期限约束，池实测 13/13），fixed-dt 七条（rekey、
+new、identity、scene_edit、cancel_survey、cancel_point、document_open，池实测 548/548）。
+「关闭」触发器的处置：独立分析浮窗已随 742.3 退役，Analyze 工作区无独立关闭动作（离开分析
+上下文=切工作区，covered by 既有 switch 腿 + 本片 rekey 腿的面归属规则），应用级关闭在
+gui_test 证据形态之外。「切工作区跨新面」与「会话内 Save/Open」的 covered-by：前者=采纳门键
+含 generation + 工作区切换为纯视图不写状态（742.3 as-built 成文）+ rekey 腿的面归属规则，
+后者=quick 池 file_ops 既有回归 + 本片 open 腿的 deserialize 机制（Save 的原生对话框与
+Full sky/Fit 真实点击同属 hands-on 交接项）。组合级测量（本机 M1 Max、`385fbd2c1`、
 kFullyRandomJson、550 参考 λ、16 ms vsync 帧折算）：选类→概览含色散 ~2.3 s、图细化 ~0.5 s、
 拾取+点查询 ~0.45 s、轨迹 ~0.05 s、全会话 ~4 s（C03 类 ~4.7 s、C15 ~1.1 s）；A→B 全落定
 ~7.4 s；Cancel survey 撤回在 δ 相数秒回报。诚实边界（同批钉住）：`kDiscovered` 允许零分量

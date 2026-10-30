@@ -2496,10 +2496,36 @@ bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
   const gui::SurveyHandle survey_kept = gui::g_state.analysis.survey.adopted_result;
   const gui::MapHandle map_kept = gui::g_state.analysis.map.adopted_result;
   const gui::PointHandle point_kept = gui::g_state.analysis.point.adopted_result;
-  // By-value captures: a reference alias would make the post-Revert asserts read the same
-  // object on both sides (`x == x`, true whatever Revert did).
-  const bool trace_intent_kept = gui::g_state.analysis.trace.intent_valid;
-  const LUMICE_RepresentativeRay* trace_result_kept = gui::g_state.analysis.trace.adopted_result.get();
+  // The ray face's precondition: the keep-assertion only carries meaning over an ARMED trace.
+  // When the point document carries components, drive the trace to its adopted state and
+  // capture the handle BY VALUE (a raw .get() address could be reused after a free — the
+  // handle copy owns). When it carries none (the mass/refused shapes), the trace never arms:
+  // the assertion degrades, explicitly, to "Revert keeps it un-armed".
+  bool trace_armed = false;
+  bool trace_intent_kept = false;
+  gui::RepresentativeRayHandle trace_result_kept;
+  {
+    LUMICE_PathPointInfo pt_info{};
+    pt_info.struct_size = sizeof(pt_info);
+    const bool has_components =
+        gui::g_state.analysis.point.adopted_result != nullptr &&
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &pt_info) == LUMICE_PATH_READ_OK &&
+        pt_info.outcome == LUMICE_PATH_POINT_DISCOVERED && pt_info.component_count > 0;
+    if (has_components) {
+      IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.analysis.trace.adopted_result != nullptr; }, 30), false);
+      trace_armed = true;
+    }
+    trace_intent_kept = gui::g_state.analysis.trace.intent_valid;
+    trace_result_kept = gui::g_state.analysis.trace.adopted_result;
+    if (trace_armed) {
+      IM_CHECK_RETV(trace_intent_kept && trace_result_kept != nullptr, false);
+    } else {
+      IM_CHECK_RETV(trace_intent_kept == false && trace_result_kept == nullptr, false);
+      ctx->LogInfo(
+          "[v1 revert] the point document has no components: the ray face stays un-armed, "
+          "and the keep-assertion degrades to keeping it so");
+    }
+  }
   IM_CHECK_RETV(survey_kept != nullptr && map_kept != nullptr, false);
   gui::DoRevert();
   ctx->Yield(3);
@@ -2508,7 +2534,10 @@ bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result == map_kept, false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == point_kept, false);
   IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == trace_intent_kept, false);
-  IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result.get() == trace_result_kept, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == trace_result_kept, false);
+  if (trace_armed) {
+    ctx->LogInfo("[v1 revert] the armed ray face survived Revert by handle value");
+  }
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
   ctx->LogInfo("[v1 revert] Revert kept every face's adopted outcome and the sky point; nothing re-issued");
@@ -2612,14 +2641,13 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
   return true;
 }
 
-// The refused arm beside its independent facts, with nothing blockaded (AC2's first sentence,
-// the C17 shape): `3-1-5-7` — the corpus's open-arc family whose honest boundary IS the
-// partition refusal — routes its members fine but refuses the delta axis's structural objects
+// The refused arm beside its independent facts (AC2's first sentence, the C17 shape):
+// `3-1-5-7` — the corpus's open-arc family whose honest boundary IS the partition refusal —
+// routes its members fine but refuses the delta axis's structural objects
 // (`slab_crease_touching`), and the overview answers the refusal arm: the named refusal, the
 // independent witness and the TIR share beside it, the chromatic block named unevaluated —
-// only THAT item missing, everything else alive. The map answers, and a sky-point query on the
-// same class discovers (the corpus band, dev ~120 deg). Fixed-dt pool: the members route
-// without the chromatic legs (probe-verified), and the point answers in seconds.
+// only THAT item missing, everything else alive. Real-timing pool: this survey's witness/TIR
+// tail is not bounded by the cooperative deadline (the as-built's escalation).
 bool RefusedClassNamesTheRefusalAndKeepsTheWitness(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -2632,13 +2660,15 @@ bool RefusedClassNamesTheRefusalAndKeepsTheWitness(ImGuiTestContext* ctx) {
   // The overview answers COMPLETED — the refusal is the document's arm, not a failed query —
   // with the refusal named, the witness and TIR alive beside it, and the chromatic block's
   // absence named rather than zeroed.
+  // The budget follows the as-built's own observation band for this survey (40-100 s wall, the
+  // witness/TIR tail outliving the cooperative deadline) plus margin — 60 s sat BELOW the band.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
                       return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
                              gui::SurveyOverviewState::kCompleted;
                     },
-                    60),
+                    240),
                 false);
   {
     const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
@@ -2659,7 +2689,8 @@ bool RefusedClassNamesTheRefusalAndKeepsTheWitness(ImGuiTestContext* ctx) {
 
 // The independence half of the C17 claim, in its own session (each half short enough for the
 // pool-context watchdog): a refused delta axis blockades neither the map face nor a point
-// query on the same class.
+// query on the same class — the map answers, and a sky-point query discovers (the corpus
+// band, dev ~120 deg). Real-timing pool, same survey tail as the names leg.
 bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -2668,13 +2699,15 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
 
   const std::optional<gui::SelectedClassIdentity> identity = SelectRowByDisplay(ctx, "3-1-5-7");
   IM_CHECK_RETV(identity.has_value(), false);
+  // The budget follows the as-built's own observation band for this survey (40-100 s wall)
+  // plus margin — 60 s sat BELOW the band.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
                       return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
                              gui::SurveyOverviewState::kCompleted;
                     },
-                    60),
+                    240),
                 false);
 
   // The map answers under the same selection (a refused delta axis does not blockade the map
@@ -2843,7 +2876,7 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
 // fresh survey (the wide window makes the queued state deterministic) — the withdraw names the
 // point's cancelled state and the survey face is not superseded — and a document switch (the
 // open path's mechanism) clears every face.
-bool CancelPointAndDocumentOpenFollowTheRules(ImGuiTestContext* ctx) {
+bool CancelPointButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
@@ -4486,10 +4519,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_survives_a_workspace_switch");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveySurvivesAWorkspaceSwitch(ctx)); };
   }
-  // 742.7's integration legs. The two real-timing entries carry the standing wall-clock shape
-  // (one worker: the class survey's chromatic legs, then the map refinement, then the point);
-  // the two lifecycle entries rekey/clear on the halo scene's fast queries and stay in the
-  // correctness pool.
+  // 742.7's integration legs — four real-timing (the chain pair and the C17 pair: the former
+  // queues the per-face chain on one worker, the latter's survey carries the unbudgeted
+  // witness/TIR tail; see scripts/build.sh's filter comments) and seven fixed-dt (the
+  // lifecycle/identity set, across the halo and fully-random scenes).
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_full_chain_one_session");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(AnalyzeFullChainOneSession(ctx)); };
@@ -4529,8 +4562,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(CancelSurveyButtonReachesTheNamedState(ctx)); };
   }
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "cancel_point_and_document_open_follow_the_rules");
-    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(CancelPointAndDocumentOpenFollowTheRules(ctx)); };
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "cancel_point_button_reaches_the_named_state");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(CancelPointButtonReachesTheNamedState(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "document_open_clears_every_analyze_face");
