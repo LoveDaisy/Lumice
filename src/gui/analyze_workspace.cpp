@@ -452,18 +452,22 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // The divider: a thin strip across both columns, dragging the row ratio (its line is the only
   // affordance — dim normally, themed on hover/grab).
   SetNextPanelGeometry(left_w, top + upper_h, mid_w, UiPx(8.0f));
-  // Zero padding: the strip is exactly as tall as its grab bar, so the bar IS the strip's whole
-  // rect — with the inherited (8,6) padding the bar rode below the strip's own rectangle (a
-  // free-floating line, and a press on the bar's centre landing in the lower row's hover
-  // territory). No scrollbar: an 8pt strip with nothing to scroll has no business offering one.
+  // Zero padding AND zero minimum size: the strip is exactly as tall as its grab bar. With the
+  // inherited (8,6) padding the bar rode below the strip's own rectangle (a free-floating line,
+  // and a press on the bar's centre landing in the lower row's hover territory); with the
+  // style's WindowMinSize (32pt, which ImGui applies to every top-level window regardless of a
+  // SetNextWindowSize) the strip came out 32pt tall and its opaque background covered the first
+  // rows of both regions below it — the cut-off header row — while stealing their hover. No
+  // scrollbar: an 8pt strip with nothing to scroll has no business offering one.
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.0f, 0.0f));
   ImGui::Begin("##AnalyzeRowsDivider", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
   MiddleRowsSplitter("##AnalyzeRowsSplitter", mid_w, &g_state.workspace.middle_rows_ratio, top, panel_height);
   ImGui::End();
-  ImGui::PopStyleVar();
+  ImGui::PopStyleVar(2);
 
   SetNextPanelGeometry(left_w, lower_y, mid_w, lower_h);
   ImGui::Begin("##AnalyzeLowerRow", nullptr,

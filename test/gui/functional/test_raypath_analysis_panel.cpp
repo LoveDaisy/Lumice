@@ -1465,12 +1465,21 @@ bool WorkspaceScrollRegionsAreStructurallyFixed(ImGuiTestContext* ctx) {
     ImGuiWindow* r3d = LowerRowRegionWindow("##AnalyzeRaypath3D");
     ImGuiWindow* divider = ctx->GetWindowByRef("//##AnalyzeRowsDivider");
     ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
-    if (map != nullptr && r3d != nullptr && divider != nullptr && share != nullptr) {
-      // The values first: a red assert prints its expression, this line pins the numbers.
+    ImGuiWindow* lower = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+    if (map != nullptr && r3d != nullptr && divider != nullptr && share != nullptr && lower != nullptr) {
+      // The values first: a red assert prints its expression, this line pins the numbers. The
+      // LOWER ROW's own scroll rides along: NoScrollbar only hides the bar, so a nonzero scroll
+      // there would shift both children up while every child-side reading stays zero.
       ctx->LogInfo(
-          "[scroll pins] map SM %.1f SC %.1f | 3d SM %.1f SC %.1f | divider SM %.1f/%.1f | share SM %.1f SC %.1f",
+          "[scroll pins] map SM %.1f SC %.1f | 3d SM %.1f SC %.1f | divider SM %.1f/%.1f | share SM %.1f SC %.1f | "
+          "lower SM %.1f SC %.1f",
           map->ScrollMax.y, map->Scroll.y, r3d->ScrollMax.y, r3d->Scroll.y, divider->ScrollMax.x, divider->ScrollMax.y,
-          share->ScrollMax.y, share->Scroll.y);
+          share->ScrollMax.y, share->Scroll.y, lower->ScrollMax.y, lower->Scroll.y);
+      const ImGuiTestItemInfo title = ctx->ItemInfo("**/Raypath view", ImGuiTestOpFlags_NoError);
+      if (title.ID != 0) {
+        ctx->LogInfo("[scroll pins] header title rect top %.1f, region clip top %.1f", title.RectFull.Min.y,
+                     map->InnerClipRect.Min.y);
+      }
     }
     // The map and 3D regions: no scroll range, no scroll position — the header row and the
     // input block are reachable by construction, at every basis.
@@ -1488,10 +1497,17 @@ bool WorkspaceScrollRegionsAreStructurallyFixed(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(divider != nullptr, false);
     IM_CHECK_RETV(divider->ScrollMax.x == 0.0f, false);
     IM_CHECK_RETV(divider->ScrollMax.y == 0.0f, false);
+    // The strip is EXACTLY the 8pt its grab bar needs (the harness runs at UI scale 1.0):
+    // ImGui clamps a top-level window's SetNextWindowSize up to style.WindowMinSize (32pt with
+    // the default style), and a clamped strip's opaque background would cover the first rows of
+    // both regions below it while every scroll reading above stays zero.
+    IM_CHECK_RETV(divider->Rect().GetHeight() <= 8.5f, false);
     const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(grab.ID != 0, false);
     IM_CHECK_RETV(grab.RectFull.Min.y >= divider->Rect().Min.y - 0.5f, false);
     IM_CHECK_RETV(grab.RectFull.Max.y <= divider->Rect().Max.y + 0.5f, false);
+    IM_CHECK_RETV(grab.RectFull.Min.x >= divider->Rect().Min.x - 0.5f, false);
+    IM_CHECK_RETV(grab.RectFull.Max.x <= divider->Rect().Max.x + 0.5f, false);
     // The share list: the window itself never scrolls (its one scrolling region — the result
     // table's own — is pinned in the point_pick_analyze_lists_chains leg with a result in).
     IM_CHECK_RETV(share != nullptr, false);
