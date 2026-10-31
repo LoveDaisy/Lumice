@@ -64,6 +64,8 @@ void SetUiScaleMultiplierImmediate(float multiplier) {
   g_ui_scale_dirty = true;
 }
 PreviewViewport g_preview_vp;
+PanoramaViewport g_panorama_vp;
+SurveyExecutor g_survey_executor;
 BgColorPickState g_bg_pick;
 
 // Async Stop plumbing (blueprint §5/§8, 1.6). DoStop offloads the blocking teardown sequence
@@ -891,12 +893,14 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   }
 
   // The analysis tool's state is about the scene that was on screen: its picked centre, its
-  // selection and its list mean nothing for another document. The window stays open — which
-  // panels are open is not document state. Revert keeps all of it: the scene is the same one.
+  // selection and its list mean nothing for another document. Revert keeps all of it: the scene
+  // is the same one.
   if (reason != FrontendResetReason::kRevert) {
-    const bool window_open = state.analysis.window_open;
+    // The executor's frozen scene binding goes with the document: the worker destroys it on its
+    // own thread — never under a query, because any in-flight one is cancelled first and its
+    // outcome dies with the intent the reset below clears.
+    g_survey_executor.ReleaseScene();
     state.analysis = GuiState::RaypathAnalysisSession{};
-    state.analysis.window_open = window_open;
     // The list's search text has this struct's lifetime but is not a member of it (an ImGui type
     // cannot enter gui_state.hpp), so the whole-struct reset above does not reach it.
     ClearAnalysisSearchFilter();
@@ -904,6 +908,30 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
     state.analysis_run_in_progress = false;
     // And the poller's carried copy, or the cleared view would adopt it back next frame.
     g_server_poller.InvalidateAnalysisResult();
+  } else {
+    // Revert keeps the analysis state (the committed scene is the same one), so the frozen
+    // binding stays with the kept selection and result; only an OUTSTANDING query is withdrawn
+    // — R6's Revert row, now per face (the executor's slots split). The withdrawal carries the
+    // same latch the cancel button sets (the engine answers a cancel with a partial-but-OK
+    // document, and the gate must drop it), but each face latches only when THAT face has
+    // something out (computing or queued): latching a face whose answer already arrived would
+    // turn an intact, adopted result into a false "cancelled".
+    if (g_survey_executor.QueryOutstanding(QueryFace::kSurvey)) {
+      g_survey_executor.CancelInFlight(QueryFace::kSurvey);
+      state.analysis.survey.cancelled_for_key = true;
+    }
+    if (g_survey_executor.QueryOutstanding(QueryFace::kMap)) {
+      g_survey_executor.CancelInFlight(QueryFace::kMap);
+      state.analysis.map.cancelled_for_key = true;
+    }
+    if (g_survey_executor.QueryOutstanding(QueryFace::kPoint)) {
+      g_survey_executor.CancelInFlight(QueryFace::kPoint);
+      state.analysis.point.cancelled_for_key = true;
+    }
+    if (g_survey_executor.QueryOutstanding(QueryFace::kRay)) {
+      g_survey_executor.CancelInFlight(QueryFace::kRay);
+      state.analysis.trace.cancelled_for_key = true;
+    }
   }
 
   // crystal_mesh_hash reset — as-built: only DoNew clears it (Open branches don't touch it;
@@ -1805,6 +1833,20 @@ bool DoAnalyze() {
   // counter only grows), so the first result is adopted without any reset of the cursor.
   g_state.analysis.started = true;
   g_state.analysis.selected_entry.reset();
+  // The survey query's bookkeeping dies with the selection it was issued for (R6's re-Analyze
+  // row: cancel what is out, void the old generation's attribution — a late result of the old
+  // generation fails the gate because the intent no longer exists — and drop the adopted
+  // outcome with the cleared selection). The executor's frozen scene is replaced below, so no
+  // new query can bind to the old one either.
+  g_state.analysis.survey = SurveyQuerySession{};
+  // The sun the scene being frozen carries (BuildCommitSceneOrWarn just read it from this same
+  // state): the map window geometry's anchor of last resort — same source as the binding. The
+  // crystal configs ride along for the same reason: the point inspector's 3D mesh is the
+  // geometry the trace ran against, not the live document's.
+  g_state.analysis.frozen_sun_valid = true;
+  g_state.analysis.frozen_sun_altitude = g_state.sun.altitude;
+  g_state.analysis.frozen_crystals = g_state.crystals;
+  g_survey_executor.SetScene(std::move(scene));
   // What this run was asked about, for the "centre has moved" hint: the request's own copy, so
   // it is the value the server received and not a re-read of the session field.
   std::copy(req.cone_center, req.cone_center + 3, g_state.analysis.analyzed_cone_center_dir);

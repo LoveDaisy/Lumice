@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_view.hpp"
 #include "gui/app.hpp"
 #include "gui/color_window.hpp"
 #include "gui/config_summary_window.hpp"
@@ -480,12 +481,12 @@ int main(int argc, char** argv) {
     auto layout_height = static_cast<float>(win_h);
 
     gui::RenderTopBar(layout_width);
-    gui::RenderLeftPanel(layout_height);
-    gui::RenderRightPanel(window, layout_width, layout_height);
-    gui::RenderPreviewPanel(window, layout_width, layout_height);
+    // The frame's main-area panels: the Render-mode trio, or the Analyze workspace's four
+    // columns (the branch lives in the one shared function the test harness calls too).
+    // Everything below — log panel, tool windows, status bar, modals — is shared by both.
+    gui::RenderWorkspacePanels(window, layout_width, layout_height);
     gui::RenderLogPanel(layout_width, layout_height);
     gui::RenderColorWindow(gui::g_state, gui::g_server);
-    gui::RenderAnalysisPanel(gui::g_state, gui::g_server);
     gui::RenderConfigSummaryWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);
     gui::RenderEditModals(gui::g_state, window);
@@ -550,11 +551,14 @@ int main(int argc, char** argv) {
   }
 
   // Cleanup
-  gui::JoinPendingCalibration();  // R1: a calibration still running (quit within its first ~200ms)
-  gui::JoinPendingStop();         // R1: drain any in-flight async Stop before tearing down the server
-  gui::g_server_poller.Stop();    // Stop poller before destroying server
+  gui::JoinPendingCalibration();             // R1: a calibration still running (quit within its first ~200ms)
+  gui::JoinPendingStop();                    // R1: drain any in-flight async Stop before tearing down the server
+  gui::g_survey_executor.ShutdownAndJoin();  // the worker destroys its scene binding before the
+                                             // engine-side global cleanup below
+  gui::g_server_poller.Stop();               // Stop poller before destroying server
   gui::g_crystal_renderer.Destroy();
   gui::g_preview.Destroy();
+  gui::ShutdownMapView();         // the map region's GL texture, while the context lives
   gui::DestroyPreviewFrameFbo();  // the preview path's persistent FBO, owned by export_fbo_renderer.cpp
   LUMICE_DestroyServer(gui::g_server);
   gui::g_server = nullptr;

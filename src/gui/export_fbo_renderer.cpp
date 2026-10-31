@@ -260,6 +260,15 @@ void RunSharedFrameRenderPass(int display_w, int display_h) {
                               g_preview_vp.vp_h, g_preview_vp.curve_labels, g_preview_vp.dpi_scale_x,
                               g_preview_vp.dpi_scale_y);
   }
+  // The Analyze workspace's panorama: the same committed texture through the second view
+  // RenderAnalyzeWorkspace publishes (app.hpp's PanoramaViewport — the how and the why there).
+  // The two never draw in one mode: the panorama's frame has no preview and vice versa, so the
+  // persistent FBO below is still one sequential resource.
+  if (g_panorama_vp.active) {
+    RenderPreviewFrameAndBlit(g_preview, g_panorama_vp.params, g_panorama_vp.vp_x, g_panorama_vp.vp_y,
+                              g_panorama_vp.vp_w, g_panorama_vp.vp_h, {}, g_panorama_vp.dpi_scale_x,
+                              g_panorama_vp.dpi_scale_y);
+  }
 
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }

@@ -28,9 +28,11 @@
 #include <vector>
 
 #include "gui/analysis_result.hpp"
+#include "gui/analyze_survey.hpp"
 #include "gui/gui_state.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
+#include "include/lumice_raypath.h"
 #include "include/lumice_render.h"
 #include "util/raypath_analysis_display.hpp"
 
@@ -139,6 +141,45 @@ bool RefreshAnalysisEntries(GuiState& state, LUMICE_Server* server);
 // (the chain was merged away by a symmetry change, or the result is a new one).
 const LUMICE_RaypathHistogramEntry* SelectedAnalysisEntry(const GuiState& state);
 
+// R5 (742.3): the selected class's identity inside its Analyze-time snapshot, spelled in the
+// typed survey face's own vocabulary (LUMICE_PathSurveyRequest) so "build the request for the
+// selection" is a fill-in, not a re-derivation. The row's display text stays the selection's one
+// key (the row is a view); this bundle is DERIVED from it and the current symmetry on demand and
+// never stored — a symmetry toggle re-reads it exactly when the row it names survives the
+// re-read, and no second copy of the selection exists to govern.
+struct SelectedClassIdentity {
+  int core_crystal_id = 0;
+  std::vector<int> faces;  // the per-layer face sequences, concatenated in chain order
+  std::vector<int> layer_face_counts;
+  int symmetry_bits_plus_one = 0;  // the survey face's binary spelling (M1-0 probe): 0 = the
+                                   // physical P|B|D class, 1 = the literal sequence
+};
+
+// The selection's identity, or nullopt when nothing — or a row no longer on show — is selected.
+std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& state);
+
+// The survey pump's comparison key: the identity (the same derivation the request builder
+// consumes — one chain, so change detection and issued request cannot drift) plus the
+// generation it belongs to.
+SurveySelectionKey SurveySelectionKeyFor(const SelectedClassIdentity& identity, unsigned long long generation);
+
+// The mechanical construction the M1-0 probe proved engine-acceptable: identity + caller-owned
+// buffers -> the survey request (the C request holds pointers, so the buffers outlive it). A
+// multi-layer bundle still constructs and the engine answers with the named
+// multi_layer_unsupported refusal. Budget = the survey face's default constant; deadline and
+// cancel token come from the query options at issue time, not from here.
+LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentity& identity, std::vector<int>* faces,
+                                                      std::vector<int>* counts);
+
+// The frame-side survey pump (742.3 R6, called once per Analyze-workspace frame): drains the
+// executor's finished slot through the adoption gate — a finished query is adopted iff it still
+// answers the CURRENT intent (the engine's named refusal is an answer too, R5) — then keeps the
+// intent level-triggered against the live selection: a new or changed selection supersedes
+// whatever is out, a vanished selection kills the intent (its adopted outcome goes with it), a
+// standing selection with an outcome or a cancel latch is left alone. Reads and writes only the
+// session's SurveyQuerySession and the executor; no widget, no document field, no recomputation.
+void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor);
+
 // ---- ROI: the click on the preview ---------------------------------------------------------------
 
 // A point on the preview panel, in logical points relative to the panel window's origin, to the
@@ -161,6 +202,16 @@ void CanvasPixelToPreviewPoint(int px, int py, float dpi_scale_x, float dpi_scal
 // MakeAnnotationViewKey -> BuildAnnotationView), so a click is unprojected through the projection
 // the picture under it was drawn with.
 LUMICE_AnnotationView PreviewAnnotationView(const GuiState& state, int canvas_w, int canvas_h);
+
+// The Analyze workspace panorama's view: the up-looking equal-area fisheye (lens 1, fov 180,
+// view pitched to +90) — the same framing the panorama's display params carry, so the pick family
+// below runs against exactly the projection the picture was drawn with.
+LUMICE_AnnotationView PanoramaAnnotationView(const GuiState& state, int canvas_w, int canvas_h);
+
+// Whether the pixel is on the panorama's sky: inside the viewed fisheye's DISK (the square
+// canvas outcorners it, and the lens inverse answers behind-the-hemisphere directions there).
+// The panorama's pick and drag gate their writes on this.
+bool PanoramaPickHitsSky(const GuiState& state, const LUMICE_AnnotationView& view, int px, int py);
 
 // Turn the click at canvas pixel (px, py) into the cone centre: LUMICE_UnprojectPixel through
 // `view`. On sky, writes cone_center_dir / cone_center_valid and disarms the pick; off sky
@@ -410,14 +461,20 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 
 // ---- Rendering -----------------------------------------------------------------------------------
 
-// The window. No-op while state.analysis.window_open is false.
-void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server);
+// The analysis tool's sections as the Analyze workspace's share-list region hosts them — called
+// from inside that region's child (analyze_workspace.cpp). No window of its own; the ROI controls
+// are the panorama's (RenderPanoramaRoiControls below).
+void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server);
 
-// The ROI marker and ring on the preview, drawn by RenderPreviewPanel after its interaction
-// button: CONE mode with a valid centre that projects onto this frame's picture draws the centre
-// dot and the ring of the slider's radius around it (ProjectConeCenterMarker); every other state
-// draws nothing. `origin` is the preview window's top-left in screen points.
-void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
+// The ROI controls — region radios, cone radius, the pick arming — hosted by the panorama region
+// above the picture: Point mode's gestures aim at THAT picture. The default-centre and pick
+// branches read the panorama's viewport publication.
+void RenderPanoramaRoiControls(GuiState& state);
+
+// The marker and ring over the Analyze workspace's panorama: CONE mode with a projectable centre
+// draws through the one DrawRoiRingImpl. (The preview-side twin retired with the analysis
+// window — the panorama is the picture that mode aims at.)
+void DrawPanoramaRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
                          float dpi_scale_x, float dpi_scale_y);
 
 }  // namespace lumice::gui

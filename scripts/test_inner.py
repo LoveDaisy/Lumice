@@ -194,6 +194,41 @@ def suites_of(
     return filter_arms(plain, param), empty, plain, param
 
 
+def _gui_unit_only_tus() -> set[str]:
+    """TUs registered ONLY in the gui_unit_test target of test/CMakeLists.txt.
+
+    Parsed from the two add_executable source lists (quoted ${PROJ_TEST_DIR} entries);
+    a TU in both targets (or in neither) is not gui-unit-only and stays in the
+    unit-gtest derivation.
+    """
+    cmakelists = (REPO / "test" / "CMakeLists.txt").read_text(encoding="utf-8")
+
+    def target_sources(target_name: str) -> set[str]:
+        begin = cmakelists.index(f"add_executable({target_name}")
+        # Depth scan to the block's real closing paren: the lists carry comments whose
+        # parentheses would truncate a naive first-")" cut.
+        depth = 0
+        end = begin
+        for pos in range(begin, len(cmakelists)):
+            if cmakelists[pos] == "(":
+                depth += 1
+            elif cmakelists[pos] == ")":
+                depth -= 1
+                if depth == 0:
+                    end = pos
+                    break
+        return {
+            rel[len("unit-correctness/"):] if rel.startswith("unit-correctness/") else rel
+            for rel in re.findall(r'"\$\{PROJ_TEST_DIR\}/([^"]+\.cpp)"', cmakelists[begin:end])
+        }
+
+    unit = target_sources("unit_correctness_test")
+    gui_unit = target_sources("gui_unit_test")
+    # PROJ_TEST_DIR is test/unit-correctness (the CMakeLists's own relative root), so the
+    # listed relpaths already continue UNIT_TU_PREFIX.
+    return {UNIT_TU_PREFIX + rel for rel in gui_unit - unit}
+
+
 def selected_suite_headers(binary: Path, filter_str: str) -> set[str]:
     from gtest_parallel import Children
 
@@ -401,10 +436,16 @@ def derive(files: list[str], base: str, from_diff: bool) -> tuple[dict, list[tup
                     for p in (REPO / UNIT_TU_PREFIX / sub).glob("*.cpp")
                 )
         if tu_face:
-            tus += sorted(
+            candidates = {
                 f for f in files
                 if f.startswith(UNIT_TU_PREFIX) and PurePosixPath(f).suffix in CXX_SUFFIXES
-            )
+            }
+            # Only TUs the unit_correctness_test target compiles feed the unit-gtest
+            # filter: a changed TU registered solely in gui_unit_test runs through the
+            # ctest layer's whole-binary selection (same LABEL), and naming its suites
+            # here would send the reconciliation looking for them in the wrong binary.
+            candidates -= _gui_unit_only_tus()
+            tus += sorted(candidates)
         arms, empty, plain, param = suites_of(tus)
         for rel in empty:
             print(f"note: {rel} declares no TEST/TEST_F/TEST_P suite", file=sys.stderr)

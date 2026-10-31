@@ -275,11 +275,20 @@ set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
   raypath/results/survey_records.hpp
   raypath/results/probe_line.hpp
+  raypath/results/reference_map.hpp
   raypath/point_result.hpp
   raypath/probe_result.hpp
+  raypath/map_result.hpp
+  raypath/map_analysis.hpp
+  raypath/map_analysis.cpp
+  raypath/representative_ray.hpp
+  raypath/representative_ray.cpp
+  raypath/representative_ray_result.hpp
   raypath/survey_result.hpp
   raypath/detail/quantity/probe_line.hpp
   raypath/detail/quantity/probe_line.cpp
+  raypath/detail/quantity/reference_map.hpp
+  raypath/detail/quantity/reference_map.cpp
   raypath/detail/quantity/tint.hpp
   raypath/detail/quantity/tint.cpp
   raypath/detail/quantity/tir_share.hpp

@@ -6,10 +6,15 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <memory>
+#include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "IconsFontAwesome6.h"
@@ -196,6 +201,112 @@ TEST(AnalysisPanelLogic, OtherRowLabelNamesNoEntryAndExcludeReadsNoSelection) {
   EXPECT_EQ(EvaluateExcludeEligibility(state, &why), ExcludeEligibility::kNoSelection);
   // And no chain text could collide with it: the label carries characters no display ever does.
   EXPECT_NE(std::string(kAnalysisOtherRowLabel).find_first_not_of("0123456789-() >C"), std::string::npos);
+}
+
+// ---- The selection's survey identity (742.3 M3-1) ------------------------------------------------
+
+// The mechanical bridge M1-0 probed, now in product code: the selection's row + the current
+// symmetry read position derive the survey request's four fields. The default read position (all
+// three checked) IS the physical P|B|D class (plus_one 0); all-unchecked IS the literal chain
+// (plus_one 1); an intermediate reduction has no survey class and requests the literal sequence
+// with the scope to be labelled at display time. Multi-layer rows derive the full per-layer
+// bundle, which the engine answers with the named multi_layer_unsupported refusal.
+TEST(AnalysisPanelLogic, SelectionIdentityDerivesTheSurveyRequestFields) {
+  GuiState state;
+  auto p = MakePayload(3, LUMICE_RAYPATH_ROI_FULL_SKY, { 5.0, 3.0 });  // rows "1-2" and "2-3"
+  ASSERT_TRUE(AdoptAnalysisPayloadIfNew(state, p));
+
+  // Nothing selected: no identity.
+  EXPECT_FALSE(SelectedClassIdentityFor(state).has_value());
+
+  // The default read position: P|B|D -> the physical class spelling.
+  state.analysis.selected_entry = std::string("2-3");
+  const auto default_bits = SelectedClassIdentityFor(state);
+  ASSERT_TRUE(default_bits.has_value());
+  EXPECT_EQ(default_bits->core_crystal_id, 0);
+  EXPECT_EQ(default_bits->symmetry_bits_plus_one, 0);
+  EXPECT_EQ(default_bits->faces, (std::vector<int>{ 2, 3 }));
+  EXPECT_EQ(default_bits->layer_face_counts, (std::vector<int>{ 2 }));
+
+  // All-unchecked: the literal chain.
+  state.analysis.symmetry_p = false;
+  state.analysis.symmetry_b = false;
+  state.analysis.symmetry_d = false;
+  const auto literal = SelectedClassIdentityFor(state);
+  ASSERT_TRUE(literal.has_value());
+  EXPECT_EQ(literal->symmetry_bits_plus_one, 1);
+
+  // An intermediate reduction (P only): no survey class exists for it — the literal sequence is
+  // what gets requested (the row's own representative; the overview labels the scope).
+  state.analysis.symmetry_p = true;
+  const auto intermediate = SelectedClassIdentityFor(state);
+  ASSERT_TRUE(intermediate.has_value());
+  EXPECT_EQ(intermediate->symmetry_bits_plus_one, 1);
+
+  // The request: every field echoes the identity, into caller-owned storage (the C request holds
+  // pointers), with the survey face's default budget.
+  std::vector<int> faces;
+  std::vector<int> counts;
+  const LUMICE_PathSurveyRequest request = MakeSurveyRequestForIdentity(*intermediate, &faces, &counts);
+  EXPECT_EQ(request.struct_size, sizeof(request));
+  EXPECT_EQ(request.crystal_id, 0);
+  EXPECT_EQ(request.face_count, 2);
+  EXPECT_EQ(request.layer_count, 1);
+  EXPECT_EQ(request.layer_face_counts[0], 2);
+  EXPECT_EQ(request.symmetry_bits_plus_one, 1);
+  EXPECT_EQ(request.budget_ms, LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS);
+  // The wavelength stays unset: the engine resolves the reference lambda itself (the overview's
+  // scope line names its source), and the request never dark-edits the scene's spectrum or sun.
+  EXPECT_EQ(request.wavelength_nm, 0.0);
+  ASSERT_EQ(faces.size(), 2u);
+  EXPECT_EQ(faces[0], 2);
+  EXPECT_EQ(faces[1], 3);
+  EXPECT_EQ(request.faces, faces.data());
+  EXPECT_EQ(request.layer_face_counts, counts.data());
+
+  // A row the current result no longer carries (the selection cleared by adoption, or a chain
+  // merged away): no identity, the same "no selection" verdict the Exclude path reads.
+  state.analysis.selected_entry = std::string("9-9");
+  EXPECT_FALSE(SelectedClassIdentityFor(state).has_value());
+}
+
+// The multi-layer shape: the bundle carries every layer's faces and counts (crystal ids beyond
+// the first are the survey face's refusal domain — it binds one crystal and answers
+// multi_layer_unsupported before resolving any of them).
+TEST(AnalysisPanelLogic, MultiLayerSelectionIdentityCarriesEveryLayer) {
+  GuiState state;
+  auto p = std::make_shared<AnalysisPayload>();
+  p->snapshot_generation = 5;
+  p->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
+  LUMICE_RaypathHistogramEntry e{};
+  e.chain[0].crystal_id = 1;
+  e.chain[0].segment[0] = 1;
+  e.chain[0].segment[1] = 2;
+  e.chain[0].segment_len = 2;
+  e.chain[1].crystal_id = 2;
+  e.chain[1].segment[0] = 3;
+  e.chain[1].segment[1] = 4;
+  e.chain[1].segment[2] = 5;
+  e.chain[1].segment_len = 3;
+  e.chain_len = 2;
+  snprintf(e.display, sizeof(e.display), "cross-layer");
+  e.energy = 1.0;
+  e.count = 100;
+  p->entries.push_back(e);
+  ASSERT_TRUE(AdoptAnalysisPayloadIfNew(state, p));
+  state.analysis.selected_entry = std::string("cross-layer");
+
+  const auto identity = SelectedClassIdentityFor(state);
+  ASSERT_TRUE(identity.has_value());
+  EXPECT_EQ(identity->core_crystal_id, 1);
+  EXPECT_EQ(identity->faces, (std::vector<int>{ 1, 2, 3, 4, 5 }));
+  EXPECT_EQ(identity->layer_face_counts, (std::vector<int>{ 2, 3 }));
+
+  std::vector<int> faces;
+  std::vector<int> counts;
+  const LUMICE_PathSurveyRequest request = MakeSurveyRequestForIdentity(*identity, &faces, &counts);
+  EXPECT_EQ(request.layer_count, 2);
+  EXPECT_EQ(request.face_count, 5);
 }
 
 // ---- Export CSV ----
@@ -1047,6 +1158,663 @@ TEST(AnalysisPanelLogic, ExcludeWritesOneFilterOutFilterBoundToEveryEntryOfTheCr
   EXPECT_EQ(*state.layers[0].entries[1].filter_id, 0);
   EXPECT_EQ(*state.layers[1].entries[0].filter_id, 0);
   EXPECT_FALSE(state.layers[0].entries[0].filter_id.has_value());
+}
+
+// ---- The panorama's pixel->direction mapping: the equal-area closure ----
+//
+// The panorama is an equal-area azimuthal view of one hemisphere, and the pick family reads
+// directions back through LUMICE_UnprojectPixel under PanoramaAnnotationView. The independent
+// anchor is the AREA PROPERTY, not the projection's own formula: pixels scattered uniformly over
+// the picture disk must be uniform in solid angle — the fraction within a half-angle theta of the
+// axis is (1 - cos theta) — and the azimuth uniform over the circle. Verifying the property, with
+// the axis anchored physically (the disk centre's own direction), is what keeps this from
+// certifying a self-consistent but wrong mapping: a round trip through the projection's maths
+// would pass both if they shared the same mistake.
+TEST(AnalysisPanelLogic, PanoramaUnprojectIsEqualAreaOverTheDisk) {
+  // The panorama's mapping: the up-looking equal-area fisheye. Over the picture DISK (centre of
+  // the square canvas, radius = short edge / 2), uniform pixel area must map to uniform solid
+  // angle. The engine's rim sits at theta = fov/2 = 90 deg with r = sin(theta/2)/sin(45 deg), so
+  // the closed-form equal-area anchor is P(theta <= t) = r^2 = 1 - cos t — r^2 equal to the
+  // solid-angle fraction is the equal-area property itself. Measured about the sample-mean axis
+  // (the distribution's symmetry axis, up to sampling noise), against the closed form and not a
+  // round trip of the inverse under test.
+  constexpr int kSize = 400;
+  constexpr float kRadius = kSize * 0.5f;
+  GuiState state;  // default workspace: the upper hemisphere (camera pitched +90)
+  const LUMICE_AnnotationView view = PanoramaAnnotationView(state, kSize, kSize);
+
+  std::mt19937 rng(7);  // fixed seed: a property test, not a distribution history
+  std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+  constexpr int kTargetSamples = 20000;
+  std::vector<std::array<float, 3>> dirs;
+  dirs.reserve(static_cast<size_t>(kTargetSamples));
+  int unproject_failures = 0;
+  int below_sky = 0;
+  for (int i = 0; i < kTargetSamples * 6 && static_cast<int>(dirs.size()) < kTargetSamples; ++i) {
+    const float x = uniform(rng) * kSize;
+    const float y = uniform(rng) * kSize;
+    const float dx = x - kRadius;
+    const float dy = y - kRadius;
+    if (dx * dx + dy * dy > kRadius * kRadius) {
+      continue;  // outside the picture disk: the square's corners
+    }
+    float dir[3] = { 0.0f, 0.0f, 0.0f };
+    int valid = 0;
+    if (LUMICE_UnprojectPixel(&view, static_cast<int>(x), static_cast<int>(y), dir, &valid) != LUMICE_OK) {
+      unproject_failures++;
+      continue;
+    }
+    if (valid == 0) {
+      continue;
+    }
+    if (dir[2] >= 0.05f) {
+      below_sky++;  // beyond the guard's horizon slack: every disk pixel is upper-sky light
+    }
+    dirs.push_back({ dir[0], dir[1], dir[2] });
+  }
+  EXPECT_EQ(unproject_failures, 0);
+  EXPECT_EQ(below_sky, 0);
+  ASSERT_EQ(static_cast<int>(dirs.size()), kTargetSamples);
+
+  float axis[3] = { 0.0f, 0.0f, 0.0f };
+  for (const auto& d : dirs) {
+    axis[0] += d[0];
+    axis[1] += d[1];
+    axis[2] += d[2];
+  }
+  const float mean_norm = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+  // Uniform over the solid-angle hemisphere: the resultant length is exactly 1/2.
+  EXPECT_NEAR(mean_norm / static_cast<double>(dirs.size()), 0.5, 0.02);
+  axis[0] /= mean_norm;
+  axis[1] /= mean_norm;
+  axis[2] /= mean_norm;
+
+  const double n = static_cast<double>(dirs.size());
+  const float kPi = 3.14159265358979323846f;
+  int in_cap30 = 0;
+  int in_cap60 = 0;
+  int in_cap85 = 0;
+  for (const auto& d : dirs) {
+    const float cos_theta = std::clamp(axis[0] * d[0] + axis[1] * d[1] + axis[2] * d[2], -1.0f, 1.0f);
+    const float theta_deg = std::acos(cos_theta) * 180.0f / kPi;
+    if (theta_deg <= 30.0f) {
+      in_cap30++;
+    }
+    if (theta_deg <= 60.0f) {
+      in_cap60++;
+    }
+    if (theta_deg <= 85.0f) {
+      in_cap85++;
+    }
+  }
+  const auto closed_form = [kPi](float theta_deg) { return 1.0 - std::cos(theta_deg * kPi / 180.0); };
+  // Tolerances: binomial sigma ~0.003 at n=20000, so 0.01 is >3 sigma, plus the pixel lattice.
+  EXPECT_NEAR(static_cast<double>(in_cap30) / n, closed_form(30.0f), 0.01);
+  EXPECT_NEAR(static_cast<double>(in_cap60) / n, closed_form(60.0f), 0.01);
+  EXPECT_NEAR(static_cast<double>(in_cap85) / n, closed_form(85.0f), 0.01);
+}
+
+// ---- The background survey query's pure faces (742.3 M3) ------------------------------------------
+
+// The gate's vocabulary: a request id is (generation, serial) and equality is the whole adoption
+// gate; the selection key compares content, not identity — two derivations of the same row are
+// the same key, and a changed symmetry spelling is a different one.
+TEST(AnalysisPanelLogic, SurveyGateVocabularyComparesContentNotIdentity) {
+  const SurveyQueryId a{ 7, 1 };
+  const SurveyQueryId same{ 7, 1 };
+  const SurveyQueryId next_serial{ 7, 2 };
+  const SurveyQueryId other_generation{ 8, 1 };
+  EXPECT_TRUE(a == same);
+  EXPECT_TRUE(a != next_serial);
+  EXPECT_TRUE(a != other_generation);
+
+  SurveySelectionKey key;
+  key.generation = 7;
+  key.crystal_id = 1;
+  key.faces = { 3, 5 };
+  key.layer_face_counts = { 2 };
+  key.symmetry_bits_plus_one = 0;
+
+  SurveySelectionKey rederived = key;  // what the pump re-derives from the standing row
+  EXPECT_TRUE(key == rederived);
+
+  rederived.symmetry_bits_plus_one = 1;  // a symmetry re-read that changes the spelling
+  EXPECT_TRUE(key != rederived);
+  rederived = key;
+  rederived.faces = { 3, 1, 5 };  // a different class of the same crystal
+  EXPECT_TRUE(key != rederived);
+}
+
+// The overview's four visible states (R7), from the session fields alone: no intent, waiting,
+// cancelled, completed, refused — and the precedence when several are set (an adopted outcome
+// outranks a stale latch clearing, the cancel latch outranks waiting).
+TEST(AnalysisPanelLogic, SurveyOverviewStateDerivationTruthTable) {
+  SurveyQuerySession survey;
+  EXPECT_EQ(SurveyOverviewStateFor(survey), SurveyOverviewState::kNoSelection);
+
+  survey.intent_valid = true;
+  EXPECT_EQ(SurveyOverviewStateFor(survey), SurveyOverviewState::kWaiting);
+
+  survey.cancelled_for_key = true;
+  EXPECT_EQ(SurveyOverviewStateFor(survey), SurveyOverviewState::kCancelled);
+  survey.cancelled_for_key = false;
+
+  survey.adopted_error = "multi_layer_unsupported: the request names two layers";
+  EXPECT_EQ(SurveyOverviewStateFor(survey), SurveyOverviewState::kRefused);
+
+  // A no-op deleter: the handle only needs to be non-null for the derivation; nothing here
+  // dereferences it, and the lambda keeps the destructor from deleting a fake pointer.
+  survey.adopted_result =
+      SurveyHandle(reinterpret_cast<const LUMICE_PathSurvey*>(&survey), [](const LUMICE_PathSurvey*) {});
+  EXPECT_EQ(SurveyOverviewStateFor(survey), SurveyOverviewState::kCompleted);
+  survey.adopted_result.reset();
+  survey.adopted_error.clear();
+
+  survey.cancelled_for_key = true;  // the latch survives an outcome-free intent reset ordering
+  EXPECT_EQ(SurveyOverviewStateFor(survey), SurveyOverviewState::kCancelled);
+}
+
+// ---- The background survey query's lifecycle, headless (742.3 R6) ----------------------------------
+//
+// The executor and the pump are fully drivable without a frame: the state is a plain GuiState,
+// the executor takes a real scene, and the queries really run on the worker thread. Polling with
+// a deadline (never a bare sleep) stands in for the frame loop's DriveUntil — the assertions
+// wait for a state transition, not for a wall-clock guess, so these are deterministic on a fast
+// machine as much as on a loaded one.
+
+namespace {
+
+// One prism crystal, id 1 — the smallest scene the survey face accepts (the M1-0 probe's shape).
+constexpr const char* kSurveySceneJson = R"({
+  "crystal": [ { "id": 1, "type": "prism",
+                 "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                 "axis": { "zenith": { "type": "gauss", "mean": 0, "std": 0.3 },
+                           "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                           "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+  "filter": [],
+  "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5, "spectrum": "D65" },
+             "ray_num": 1000, "max_hits": 7,
+             "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+  "render": []
+})";
+
+// A payload with one row per display text given, all crystal 1 — the selection the pump reads.
+std::shared_ptr<const AnalysisPayload> PayloadWithRows(unsigned long long generation,
+                                                       const std::vector<std::string>& displays,
+                                                       const std::vector<std::vector<int>>& face_sets) {
+  auto payload = std::make_shared<AnalysisPayload>();
+  payload->snapshot_generation = generation;
+  payload->entries.reserve(displays.size());
+  for (size_t i = 0; i < displays.size(); ++i) {
+    LUMICE_RaypathHistogramEntry row;
+    std::memset(&row, 0, sizeof(row));
+    row.chain[0].crystal_id = 1;
+    const auto& faces = face_sets[i];
+    for (size_t f = 0; f < faces.size() && f < LUMICE_MAX_RAYPATH_SEGMENT_LEN; ++f) {
+      row.chain[0].segment[f] = faces[f];
+    }
+    row.chain[0].segment_len = static_cast<int>(faces.size());
+    row.chain_len = 1;
+    std::snprintf(row.display, sizeof(row.display), "%s", displays[i].c_str());
+    payload->entries.push_back(row);
+  }
+  return payload;
+}
+
+// The headless DriveUntil: pump frames until the predicate holds or the deadline passes. Returns
+// the predicate's last value — false means the deadline ran out, which every caller asserts on.
+template <typename Pred>
+bool PumpUntil(GuiState& state, SurveyExecutor& executor, Pred pred, int timeout_ms) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (!pred()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    PumpSurveyQuery(state, executor);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  PumpSurveyQuery(state, executor);
+  return true;
+}
+
+// The executor-level issuing helper shared by the lifecycle tests: a P|B|D class request for
+// `faces` on crystal 1, buffers copied in (the executor takes them by value — masters here are
+// never moved from).
+void IssueClassQuery(SurveyExecutor& executor, const SurveyQueryId& id, const std::vector<int>& faces) {
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.face_count = static_cast<int>(faces.size());
+  request.layer_count = 1;
+  request.symmetry_bits_plus_one = 0;
+  request.budget_ms = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS;
+  executor.IssueQuery(id, request, faces, std::vector<int>(1, static_cast<int>(faces.size())));
+}
+
+// A bounded quiescence wait at the executor level (no GuiState): returns false on timeout.
+bool WaitForQuiescent(SurveyExecutor& executor, int timeout_ms) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (executor.InFlight()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return true;
+}
+
+// The issue-side twin: wait until the executor has a query between issue and finish.
+bool WaitForInFlight(SurveyExecutor& executor, int timeout_ms) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (!executor.InFlight()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return true;
+}
+
+}  // namespace
+
+// The full arc on a real scene: a selection issues a query; the worker answers it; the gate
+// adopts the outcome with its key; a changed selection supersedes and the new key's outcome
+// replaces the old; pumping on never cross-contaminates the adopted answer.
+TEST(AnalysisPanelLogic, SurveyPumpIssuesAdoptsAndGatesSelections) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  state.analysis_result.payload = PayloadWithRows(7, { "1-2", "1-3-2" }, { { 1, 2 }, { 1, 3, 2 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "1-2";
+
+  ASSERT_TRUE(PumpUntil(state, executor, [&] { return state.analysis.survey.adopted_result != nullptr; }, 15000));
+  const SurveyQuerySession& survey = state.analysis.survey;
+  EXPECT_EQ(SurveyOverviewStateFor(survey), SurveyOverviewState::kCompleted);
+  EXPECT_EQ(survey.key.generation, 7u);
+  EXPECT_EQ(survey.key.crystal_id, 1);
+  EXPECT_EQ(survey.key.faces, (std::vector<int>{ 1, 2 }));
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathSurveyGetInfo(survey.adopted_result.get(), &info), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(info.crystal_id, 1);  // the engine's echo — a real survey answered, not a mock
+
+  // A changed selection supersedes: the new key's outcome lands, and pumping on never swaps it.
+  state.analysis.selected_entry = "1-3-2";
+  ASSERT_TRUE(PumpUntil(
+      state, executor,
+      [&] { return state.analysis.survey.adopted_result != nullptr && state.analysis.survey.key.faces.size() == 3; },
+      15000));
+  EXPECT_EQ(state.analysis.survey.key.faces, (std::vector<int>{ 1, 3, 2 }));
+  for (int i = 0; i < 50; ++i) {
+    PumpSurveyQuery(state, executor);
+  }
+  EXPECT_EQ(state.analysis.survey.key.faces, (std::vector<int>{ 1, 3, 2 }));
+  EXPECT_EQ(SurveyOverviewStateFor(state.analysis.survey), SurveyOverviewState::kCompleted);
+}
+
+// The cancel row (R6): withdrawing the intent stops the query and holds — no outcome ever
+// arrives for the cancelled key, the latch blocks any re-issue, and a selection change clears
+// the latch and asks anew.
+TEST(AnalysisPanelLogic, SurveyCancelLatchHoldsUntilTheSelectionChanges) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  state.analysis_result.payload = PayloadWithRows(3, { "1-2", "1-3-2" }, { { 1, 2 }, { 1, 3, 2 } });
+  state.analysis.selected_entry = "1-2";
+
+  // Wait only for ISSUE (not completion): the test cancels the moment the query is out, however
+  // fast the engine answers afterwards.
+  ASSERT_TRUE(PumpUntil(state, executor, [&] { return executor.InFlight(); }, 15000));
+  executor.CancelInFlight(QueryFace::kSurvey);     // the button's machinery half
+  state.analysis.survey.cancelled_for_key = true;  // the button's latch half
+  // The engine answers a cancel with an OK-carrying partial document at its next cooperative
+  // poll — an outcome by id, and exactly the one the user withdrew. The gate's latch check is
+  // what must drop it: settle the worker (wait out the finish), then pump a window long enough
+  // for any straggler and assert nothing was ever adopted and the state stays cancelled.
+  ASSERT_TRUE(PumpUntil(state, executor, [&] { return !executor.InFlight(); }, 20000));
+  for (int i = 0; i < 300; ++i) {
+    PumpSurveyQuery(state, executor);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_FALSE(executor.InFlight());
+  EXPECT_EQ(SurveyOverviewStateFor(state.analysis.survey), SurveyOverviewState::kCancelled);
+  EXPECT_FALSE(state.analysis.survey.adopted_result != nullptr);
+  EXPECT_TRUE(state.analysis.survey.adopted_error.empty());
+
+  // The latch holds while the same selection stands: nothing re-issues under it.
+  for (int i = 0; i < 20; ++i) {
+    PumpSurveyQuery(state, executor);
+  }
+  EXPECT_FALSE(executor.InFlight());
+  EXPECT_EQ(SurveyOverviewStateFor(state.analysis.survey), SurveyOverviewState::kCancelled);
+
+  // A changed selection clears the latch with the intent: the new query answers.
+  state.analysis.selected_entry = "1-3-2";
+  ASSERT_TRUE(PumpUntil(state, executor, [&] { return state.analysis.survey.adopted_result != nullptr; }, 20000));
+  EXPECT_EQ(SurveyOverviewStateFor(state.analysis.survey), SurveyOverviewState::kCompleted);
+}
+
+// The executor's contract faces: superseding a queued or running query works from the caller's
+// side (the drained finishes are the ids the executor actually ran, the newest last); querying
+// a released binding refuses with the named GUI-side reason; a fresh binding re-arms; and
+// shutdown joins a possibly-running worker and leaves nothing behind.
+TEST(AnalysisPanelLogic, SurveyExecutorSupersedesRefusesOnReleaseAndJoins) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  // Two queries issued back to back: the second supersedes the first wherever it was. The
+  // buffer masters below are never moved from — IssueQuery takes its buffers by value, and
+  // passing a moved-from husk would hand the engine a null face array behind a non-zero count.
+  const std::vector<int> faces_class{ 1, 2 };
+  const std::vector<int> counts_class{ 2 };
+  const std::vector<int> faces_chain{ 1, 3, 2 };
+  const std::vector<int> counts_chain{ 3 };
+  auto issue = [&executor](const SurveyQueryId& id, const std::vector<int>& faces, const std::vector<int>& counts) {
+    LUMICE_PathSurveyRequest request{};
+    request.struct_size = sizeof(request);
+    request.crystal_id = 1;
+    request.face_count = static_cast<int>(faces.size());
+    request.layer_count = static_cast<int>(counts.size());
+    request.symmetry_bits_plus_one = 0;
+    request.budget_ms = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS;
+    executor.IssueQuery(id, request, faces, counts);  // copies: the masters survive the call
+  };
+  const SurveyQueryId id_a = executor.NextId(1);
+  issue(id_a, faces_class, counts_class);
+  const SurveyQueryId id_b = executor.NextId(1);
+  issue(id_b, faces_chain, counts_chain);
+
+  // Drain until the executor is quiescent: q2 supersedes q1 wherever q1 was — before the worker
+  // picked it up (only q2 then ever runs and posts), or mid-query (q1's cut outcome posts first,
+  // q2's last). Both orders end with id_b as the newest finish and ok, because q2 is the latest
+  // intent and the engine answers a real query with a completed document.
+  std::vector<SurveyQueryId> drained_ids;
+  std::optional<SurveyExecutor::Finished> last;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (auto finished = executor.TakeFinished(QueryFace::kSurvey)) {
+      drained_ids.push_back(finished->id);
+      last = std::move(*finished);
+      continue;
+    }
+    if (!executor.InFlight()) {
+      // Quiescent with an empty slot — but a finish could be a cooperative-poll away. Settle
+      // briefly; if nothing arrives in that window, the executor is done.
+      bool settled = true;
+      for (int i = 0; i < 200; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (auto finished = executor.TakeFinished(QueryFace::kSurvey)) {
+          drained_ids.push_back(finished->id);
+          last = std::move(*finished);
+          settled = false;
+          break;
+        }
+        if (executor.InFlight()) {
+          settled = false;
+          break;
+        }
+      }
+      if (settled) {
+        break;
+      }
+    } else {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
+  ASSERT_FALSE(drained_ids.empty());
+  for (const SurveyQueryId& id : drained_ids) {
+    EXPECT_TRUE(id == id_a || id == id_b);
+  }
+  ASSERT_TRUE(last.has_value());
+  EXPECT_EQ(last->id, id_b);
+  EXPECT_TRUE(last->ok);
+  EXPECT_FALSE(executor.InFlight());
+
+  // A query against a released binding refuses, with the GUI-side name (R7 — honest scope, not
+  // a fabricated engine refusal), and a fresh binding re-arms the executor.
+  executor.ReleaseScene();
+  issue(executor.NextId(1), faces_class, counts_class);
+  std::optional<SurveyExecutor::Finished> released;
+  const auto release_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!(released = executor.TakeFinished(QueryFace::kSurvey))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), release_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_FALSE(released->ok);
+  EXPECT_NE(std::string::npos, released->error.find("scene_released"));
+
+  LUMICE_Scene* raw_scene2 = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene2), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene2(raw_scene2);
+  // Back-to-back SetScene + IssueQuery: the binding swap and the query live in separate slots,
+  // so the worker applies the new binding before running the query — the pin for the swallow
+  // bug one shared slot had (an issue between a SetScene and the wake lost the binding).
+  executor.SetScene(std::move(scene2));
+  issue(executor.NextId(1), faces_class, counts_class);
+  std::optional<SurveyExecutor::Finished> rearmed;
+  const auto rearm_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!(rearmed = executor.TakeFinished(QueryFace::kSurvey))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), rearm_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_TRUE(rearmed->ok);
+
+  // Shutdown joins a possibly-still-working executor and leaves nothing running.
+  executor.ShutdownAndJoin();
+  EXPECT_FALSE(executor.InFlight());
+}
+
+// The review's Major pin (r1): a successor issued while its predecessor still runs must stay
+// cancellable. The broken ordering was: IssueQuery(B) swapped the member to B's token, A's
+// finish then cleared it, and B ran to its deadline with every cancel path silently no-op'ing —
+// reachable exactly on the design's fast A→B path. The pin: cancel a running successor and
+// require quiescence in a fraction of the budget (with the bug this wait runs the full 15 s).
+TEST(AnalysisPanelLogic, SurveyExecutorCancelReachesASupersededSuccessor) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  const std::vector<int> faces_class{ 1, 2 };
+  const std::vector<int> faces_chain{ 1, 3, 2 };
+  const SurveyQueryId id_a = executor.NextId(1);
+  IssueClassQuery(executor, id_a, faces_class);
+  // A picked up and computing (its token registered at pickup).
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+
+  // B supersedes A mid-run. Wait for A's finish to become visible: the worker's finish-post →
+  // B-pickup pair is one critical section, so once A's outcome is in the mailbox, B is
+  // registered and computing.
+  const SurveyQueryId id_b = executor.NextId(1);
+  IssueClassQuery(executor, id_b, faces_chain);
+  std::optional<SurveyExecutor::Finished> a_finish;
+  const auto a_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (!(a_finish = executor.TakeFinished(QueryFace::kSurvey))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), a_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_EQ(a_finish->id, id_a);
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+
+  // Cancel the RUNNING successor: quiescence must come from the cooperative poll cutting B
+  // short, not from B's budget running out.
+  executor.CancelInFlight(QueryFace::kSurvey);
+  ASSERT_TRUE(WaitForQuiescent(executor, 8000));
+
+  // Whatever finished, the ids are the two issued and the newest is B's.
+  std::optional<SurveyExecutor::Finished> last;
+  const auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < drain_deadline) {
+    if (auto finished = executor.TakeFinished(QueryFace::kSurvey)) {
+      EXPECT_TRUE(finished->id == id_a || finished->id == id_b);
+      last = std::move(*finished);
+      continue;
+    }
+    if (!executor.InFlight()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_TRUE(last.has_value());
+  EXPECT_EQ(last->id, id_b);
+  executor.ShutdownAndJoin();
+}
+
+// The map face's queueing semantics (742.5): a map issue NEVER cancels a standing survey — the
+// survey's intent would starve (its pump re-issues only on a key change) — it queues behind it
+// on the one worker, and each face drains its own mailbox. (The broken shape, one shared slot
+// with unconditional in-flight cancel, would cut the survey short right here.)
+TEST(AnalysisPanelLogic, MapIssueQueuesBehindSurveyAndLeavesItRunning) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  const std::vector<int> faces_class{ 1, 2 };
+  const SurveyQueryId survey_id = executor.NextId(1);
+  IssueClassQuery(executor, survey_id, faces_class);
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+  EXPECT_TRUE(executor.InFlight(QueryFace::kSurvey));
+
+  // The map issue lands while the survey computes: the survey stays the running query.
+  LUMICE_PathMapRequest map_request{};
+  map_request.struct_size = sizeof(map_request);
+  map_request.crystal_id = 1;
+  static const int map_faces[] = { 1, 2 };
+  map_request.faces = map_faces;
+  map_request.face_count = 2;
+  static const int map_counts[] = { 2 };
+  map_request.layer_face_counts = map_counts;
+  map_request.layer_count = 1;
+  map_request.full_sky = 1;
+  map_request.view_rows = 0;
+  map_request.view_cols = 0;
+  map_request.sample_count = 100000;
+  executor.IssueMapQuery(executor.NextId(1), map_request, { map_faces, map_faces + 2 }, { map_counts, map_counts + 1 },
+                         {});
+
+  std::optional<SurveyExecutor::Finished> survey_finish;
+  const auto survey_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!(survey_finish = executor.TakeFinished(QueryFace::kSurvey))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), survey_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_EQ(survey_finish->id, survey_id);
+  EXPECT_TRUE(survey_finish->ok);  // the survey ran to its answer, untouched by the map issue
+
+  // The map then runs on the same worker and answers into its own slot.
+  std::optional<SurveyExecutor::Finished> map_finish;
+  const auto map_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!(map_finish = executor.TakeFinished(QueryFace::kMap))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), map_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_TRUE(map_finish->ok);
+  EXPECT_TRUE(map_finish->map_result != nullptr);
+  EXPECT_FALSE(executor.InFlight());
+  executor.ShutdownAndJoin();
+}
+
+// The per-face outstanding query (the Revert row's predicate): each face reports only its own
+// in-flight or queued job — latching a face whose answer already arrived would turn an intact,
+// adopted result into a false "cancelled".
+TEST(AnalysisPanelLogic, QueryOutstandingIsPerFace) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+  EXPECT_FALSE(executor.QueryOutstanding());
+  EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kSurvey));
+  EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kMap));
+
+  // A survey in flight: the survey face answers true, the map face false.
+  IssueClassQuery(executor, executor.NextId(1), { 1, 2 });
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+  EXPECT_TRUE(executor.QueryOutstanding(QueryFace::kSurvey));
+  EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kMap));
+  EXPECT_TRUE(executor.QueryOutstanding());
+
+  // A map query queued behind it: both faces now outstanding.
+  LUMICE_PathMapRequest map_request{};
+  map_request.struct_size = sizeof(map_request);
+  map_request.crystal_id = 1;
+  static const int map_faces[] = { 1, 2 };
+  map_request.faces = map_faces;
+  map_request.face_count = 2;
+  static const int map_counts[] = { 2 };
+  map_request.layer_face_counts = map_counts;
+  map_request.layer_count = 1;
+  map_request.full_sky = 1;
+  map_request.sample_count = 100000;
+  executor.IssueMapQuery(executor.NextId(1), map_request, { map_faces, map_faces + 2 }, { map_counts, map_counts + 1 },
+                         {});
+  EXPECT_TRUE(executor.QueryOutstanding(QueryFace::kMap));
+
+  executor.ShutdownAndJoin();
+  EXPECT_FALSE(executor.QueryOutstanding());
+}
+
+// The per-face mailboxes and cancels: a survey-face cancel is a no-op while a MAP query is the
+// one running (the map answers; nothing lands in the survey's slot), and the reverse holds.
+TEST(AnalysisPanelLogic, FaceCancelTouchesOnlyItsOwnFace) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  LUMICE_PathMapRequest map_request{};
+  map_request.struct_size = sizeof(map_request);
+  map_request.crystal_id = 1;
+  static const int map_faces[] = { 1, 2 };
+  map_request.faces = map_faces;
+  map_request.face_count = 2;
+  static const int map_counts[] = { 2 };
+  map_request.layer_face_counts = map_counts;
+  map_request.layer_count = 1;
+  map_request.full_sky = 1;
+  map_request.view_rows = 0;
+  map_request.view_cols = 0;
+  map_request.sample_count = 100000;
+  const SurveyQueryId map_id = executor.NextId(1);
+  executor.IssueMapQuery(map_id, map_request, { map_faces, map_faces + 2 }, { map_counts, map_counts + 1 }, {});
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+
+  executor.CancelInFlight(QueryFace::kSurvey);  // the wrong face: nothing to cancel
+  EXPECT_TRUE(executor.InFlight(QueryFace::kMap));
+
+  std::optional<SurveyExecutor::Finished> map_finish;
+  const auto map_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!(map_finish = executor.TakeFinished(QueryFace::kMap))) {
+    ASSERT_LT(std::chrono::steady_clock::now(), map_deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_EQ(map_finish->id, map_id);
+  EXPECT_TRUE(map_finish->ok);  // the map never saw the survey-face cancel
+  EXPECT_FALSE(executor.TakeFinished(QueryFace::kSurvey).has_value());
+  executor.ShutdownAndJoin();
 }
 
 }  // namespace

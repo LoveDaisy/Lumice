@@ -591,6 +591,156 @@ warm 曾沿旧 δ 支撑给当前点误发 `certified` 包含关系，已由 PR 
 probe）已交付（见上）。界面应显示报告的 scope/evidence/coverage 与 unfinished 原因，用户选择
 具体 sky direction 后获取 fiber 详情——该查询语义现由 `point` / `probe` 承载。
 
+**交互层交付状态（2026-10-31，742.3–742.7 as-built）**：工作区壳、类级概览、参考图地图交互、
+点检视器（太阳方向球 / 光路 3D / 点级详情 / 代表轨迹）与跨片组合验收均已交付——Render/Analyze
+同窗切换（四列布局，D1/D5）、场景全景（同纹理单圆盘等面积重投影 + 半球切换 + 锥形 ROI 手势，D2）、
+份额列表整体迁入（浮窗退役）、选择身份（行→Analyze 时快照内的稳定键，非行号）与类级概览（engine
+typed survey 的类级事实逐字消费）、地图交互与点意图（742.5）、点文档三区联动（742.6，见下方
+as-built）。**仍未交付**（即本段上文的 feature-report 联动）：feature report 的机制卡片与
+结构对象在地图/详情上的呈现——后续接入点全部复用 742.3 落下的三件机制、不另建生命周期：
+
+- **选择身份**（`SelectedClassIdentityFor` / `MakeSurveyRequestForIdentity`，`analysis_panel.hpp`）：
+  由选中行 + 当前对称位机械派生的稳定键，可直接拼写 survey 请求。742.4 的概览组织、742.5 的
+  天空点意图、742.6 的点/分量查询都应以此为选择的唯一表示，不引入第二份选择状态。
+- **后台查询机制**（`SurveyExecutor`，`analyze_survey.hpp`）：唯一 worker、冻结场景绑定（DoAnalyze
+  保留场景对象）、取消 token、有限期限、按 `(分析快照代，代内序号)` 采纳、单槽 mailbox。任何新的
+  查询面（点/probe/map/representative ray——workspace 同一绑定的兄弟入口）挂同一执行器扩展，不建
+  通用调度器、不经 `LUMICE_Server`。
+- **结果归属**（`SurveyQuerySession`，GuiState analysis 档）：意图/键/取消 latch/采纳结果随
+  `analysis` 的 per-reason 规则走（文档切换清、Revert 保留、再 Analyze 作废旧代归属）。概览类
+  UI 的「这份结果属于哪次分析/哪个选择」语义以它为单一权威。
+
+**742.4 as-built（类级概览的分层呈现）**：右列详情卡的 survey 摘要升级为按路由臂组织的分层概览
+（`src/gui/analyze_overview.{hpp,cpp}`）——纯模型 `BuildSurveyOverviewModel` 把采纳的 survey
+文档读成「臂分类 + 少量主结论 + 可展开块」，零重算、零 fabricated 读数；渲染侧不进 GuiState
+台账（展开态走 ImGui 控件态）。臂与块的对应：恒等臂（全成员 rank-0）= 源像证书 + 权重 tint +
+「方向恒等无位置色散」的如实陈述；全维臂 = 支撑区间 + 闭式认证锐边 + 有限分辨率亮域峰 +
+**色散块**（引擎固定 650/450 对、min 偏发行红内蓝外、followed onsets、n echo、geometry_basis
+与 edge 闭式证书就地可查）+ diagnose 块（权重色偏，与位置色散分列，独立 kernel 路径）+
+tint 块（引擎 caliber 串原文呈现）+ 参考剖面块（内嵌 solar radial probe 的读数与样本曲线，
+空 bin 是 NaN 间隙、不画零）；家族臂 = 冻结阶梯（逐级冻结维/自由维/采样与生存过滤否决）；
+拒答臂 = 具名拒答 + 独立 witness/TIR 并存（拒答说支撑未知，不说无光）。composition 锚：C01
+类的色散 min 行 = 闭式 `2*asin(n*sin(A/2)) - A` 在 edge 证书 apex 与 n echo 下的独立重述
+（1e-4° 带内，实测 1e-14 级）；真实上屏证据在 gui_test real-timing 池（色散腿的两次 λ 功率和
+约 14 s，fixed-dt 池的看门狗装不下它——`run_after_analysis_renders_gpu` 同型先例）。
+
+**742.5 as-built（参考图地图交互层，2026-10-30）**：`##AnalyzeRaypathView` 占位替换为真实参考图
+区域（`src/gui/analyze_map_view.{hpp,cpp}`）——采纳 map 以单圆盘等面积投影上屏（原型 `makeView`
+合同：屏幕上=天顶投影，`ρ=2sin(θ/2)`；格心方向经 Info 帧公式换算、位置=−travel 的 §12 取反在拾取
+与显示两处各一次具名转换），拖移平移、光标锚点滚轮缩放、Fit（采纳图自身的质量加权范围：值加权
+质心 + 95% 质量半径 ×1.4）、全景、λ 控制（显式 [350,900] 或引擎参考解析，回显来源）全部接真实
+重求值：视图键 = 选择身份 + 视图（中心+角半径）+ λ，settle 0.3 s 合并手势突发，请求走
+`SurveyExecutor` map 面（同 worker、按 face 排队不互取消、采纳门键含视图+λ）。默认视图链 = 选类 →
+full_sky（n=500k 交互档，M1 实测全天 0.88 s）→ 到达自动 Fit 一次 → 细化窗口请求；细化到达前旧图
+锚定天空显示并标注（`MapRefiningFor` 具名），迟到旧视图结果由 id 门丢弃。口径行逐字读取器直读
+（λ+来源、成员 x/y、n、视图界、kept 数、quantity spec、geometry_basis），截断/拒答/取消/有限零/
+rank-0（点质量臂 m±err+方法+零格注记）状态分立。天空点意图（`SkyPointIntent`，travel 语义与
+`cone_center` 同约定）由图上点击/拖标记或无图坐标输入两条路径写入，随 `analysis` 档 per-reason
+规则走；map 代码不引用 ROI 状态、ROI 手势不写点意图（结构隔离，state 级与真实鼠标路径双钉）。
+叠加消费 `BuildSurveyOverviewModel` 同源载荷（概览组织规则单源，不写第二份「文档→事实」映射，
+不经 JSON 第二拼装，不建第二份结果缓存）：位置对象标记（survey 文档
+`LUMICE_PathSurveyGetObject` 的 `position_available` alt/az）+ 色散 min 行双 λ 等 δ 曲线
+（`LUMICE_PathSurveyGetDispersion`/`GetFollowedOnset` 的 δ 值，红内蓝外，标注引擎 λ 标签），
+缺载荷如实空缺，拒答图上仍可画有载荷的结构。真实上屏证据在 gui_test real-timing 池
+（`map_region_shows_the_class_map_and_takes_the_pick`：真实链 + 真实点击 + ROI 不变量），组合/纯
+规则在 `test/unit-correctness/gui/test_analyze_map_view.cpp`（投影对独立天空锚、窗口 span 手推导、
+Fit/归一化/颜色状态、真实 executor 泵）。v1 未交付（后续 face，非本片欠账）：per-λ 彩色底图族、
+分离亮斑智能 Fit、交互中连续细化、点查询消费（见下）。
+
+**742.6 的交接合同（点意图与选择状态，无需重建）**：选择身份 = `SelectedClassIdentityFor` /
+`SurveySelectionKey`（742.3，map 与 survey 同源派生）；点意图 =
+`GuiState::analysis.sky_point`（`SkyPointIntent`：`valid` + `dir`（travel 语义，`AltAzToDir`
+约定，点查询 target 可逐字填充）+ `from_map_pick`（表达来源：图上拾取/坐标输入）），随 `analysis`
+档规则走（文档切换清、Revert 保留；**再 Analyze 保留**——点意图是用户指名的天空方向，不携带
+归属代，跨代保留语义自洽；map/survey 会话才由选择键的 generation 分量杀死）；采纳 map 句柄 =
+`analysis.map.adopted_result`（GUI 线程独占，742.3 所有权规则），其 Info 携带视图帧与口径回显；
+λ 意图 = `analysis.map_wavelength_nm`（0 = 引擎参考）。暗处/弱尾/未知处可停留（设点无强度判断），
+点查询失败不移动点（742.6 消费规则），概览/survey/map 任一拒答不封锁点意图。
+
+**742.6 as-built（点检视器：点文档/fiber/因素/代表轨迹，2026-10-30）**：`##AnalyzeSunGlobe`、
+`##AnalyzeRaypath3D` 两个占位与右列点级详情就位（`src/gui/analyze_point_view.{hpp,cpp}`），
+全部消费**同一个采纳点文档**。点查询面（executor 的 `kPoint`）绑定所选行字面 faces（R1：零第二
+选择状态；引擎侧本就是字面序列查询，`MemberKind::kLiteral`），目标 = `sky_point.dir` 经
+`DirToAltAz`（map 坐标输入同一条具名换算）落到引擎 (alt,az) 标签，λ = `map_wavelength_nm`
+（0=引擎参考，与 map 共用同一旋钮），档位 = 引擎默认采样 + 45 行 sun grid + `kPointQueryBudgetMs`
+= 2000 ms 单源常量（请求体与 executor 选项同读）。点会话 key = selection + sky point + λ；
+key 变更**丢弃** adopted 结果（新目标的答案不得留在旧目标名下——AC5 的显示侧淘汰；与 map 的
+"旧图锚定天空"不同，点结果没有这种诚实的旧图主张）。采纳后三区联动：右列点级详情块回显引擎
+Info（labels/deviation/faces/λ+source/n/tier）、分量行可选（kind/端点/覆盖/积分，含
+available_points/total_points 与不可用积分的具名态）、当前样本因素行（ρ、A 与 A/a²、T、J
+（`jacobian_available` 时连 singular values）、K=1/(J+eps)、乘积——不可用具名、不加和、不归一；
+逐接口透射标注"条件于该光路"）；太阳方向球 = 晶体系 u 球的 Lambert 等面积圆盘（投影锚=该分量
+首个 valid 样本，全球入盘、对跖点为缘），fiber 折线只走本分量 valid 样本（无效样本断行、分量
+间不连），deviation 网格背景有则画（`SunGridCellColorRgba`，无效格 alpha 0）、无则具名空缺，
+权重条 = `factor_product`（`fiber_integral` 的被积量本身），滑杆+播放只写样本索引（AC3 的结构
+保证：播放摸不到 `sky_point`）；3D 区 = 名义口径真尺度网格（scene_to_analytic 的 Nominal 规则：
+分布取 center——网格即查询所见几何）+ 742.2 恢复的 Contacts/Legs 折线（entry/internal/exit
+三色、延伸长度是本 TU 展示约定、contacts 标记），世界/晶体系切换是同一显示变换（pose 旋转），
+拒答词表逐名映射 + 待计算具名态。代表轨迹走 executor 的 `kRay` 面（workspace 入口，引擎无
+取消契约、µs 级——队列替换即取代），key = 点采纳 id + 分量 + 存储样本序，绘制门 = key 即当前
+样本（旧 pose 折线永不冒充——AC4）；单柄有界（一次一个），选择死亡/点换代双杀。特殊态：
+outcome=MASS 走点质量臂（方向/分离角/orbit 积分+measure support，无 fiber 无播放）、
+deadline/cancelled 部分文档如实横幅、多层 `multi_layer_unsupported` + 指向既有退路文案。
+点查询成本（GUI 实测，include_context=0）：C01 ~0.13 s、C03 2.2 s@2s 预算（CLI 的 13 s 墙钟是
+survey context 与预算成比例的抛光，GUI 不请求 context）。
+
+**742.7 的交接合同（点检视器的消费面，无需重建）**：点会话 = `analysis.point`
+（`PointQuerySession`），轨迹会话 = `analysis.trace`（`RayTraceSession`），显示游标 =
+`analysis.point_view`（`PointViewState`：分量/样本/播放/网格开关/晶体系/相机）——三者随
+`analysis` 档 per-reason 规则走。请求派生 = `MakePointRequestForKey` / `MakeRayRequestForSample`
+（`analyze_point_view.hpp`）；阅读器 = `PointComponentRows` / `PointValidSampleCount|IndexAt` /
+`PointFactorLines` / `PointCaliberLines` / `PointMassLines`（纯函数、C reader 之上）；u 球投影 =
+`MakeSunGlobeProjector` / `SunGlobeProject`；轨迹折线 = `BuildRayTracePolyline`（只读 742.2 的
+contacts/legs，延伸是展示约定）；帧变换 = `RayTracePointToCrystalFrame`。
+
+**742.7 as-built（跨片组合验收，2026-10-31，R2 评审后收口）**：组合证据由十一条集成腿承载
+（`test/gui/functional/test_raypath_analysis_panel.cpp`，前四片零重建、零新增 TU）——
+`analyze_full_chain_one_session`（一会话连续主链：选类→概览无抢点→双 λ 色散读数→图平移+细化→真
+画布拾取（拾取自身文档诚实读回）→锚定点文档→滑杆→轨迹重键，C readers 钉 2 contacts/3 legs）、
+`internal_reflection_trace_from_the_real_consumer`（语料 C03 型 `3-5-6-7` 从真实消费者（点检视
+器 3D 区）看见完整合法折线：4 contacts/5 segments，kinds 入射+3 内部+出射；锚点 (38,180)=太阳
+偏差 122°，语料反日聚集带，CLI 探针在案）、`analyze_faces_rekey_on_row_switch`（A→B 在飞切换
+survey/map/point 全部重键至 B 身份 + λ 旋钮在飞重问 map **和 point**（回参考以读回值为准））、
+`new_document_clears_every_analyze_face`（New 清四会话与天空点、executor 闲置；Revert 全保留
+零重发——ray 面按值捕获后验证，非引用别名恒真）、
+`identity_class_shows_the_mass_arm_and_the_map_answers`（C15 `1-3-6-2` 恒等类跨面：概览恒等臂、
+rank-0 图回答、太阳像点查询 MASS 臂零分量无轨迹意图——恒等不造 fiber）、
+`refused_class_names_the_refusal_and_keeps_the_witness` / `refused_class_blockades_nothing`
+（AC2 首句的 C17 形状，两腿各守一半：`3-1-5-7` 在本场景的 survey 成员路由有限而 δ 轴结构对象
+拒答 `slab_crease_touching`——概览拒答臂具名呈现、独立 witness（正贡献事件在档）与 TIR 份额
+并存、chromatic 块以引擎原话具名缺席（只影响该项）；独立会话中图回答（kept 993862）、点查询
+独立发现（反日带锚点 1 分量）——拒答不封锁任何其他面）、
+`scene_edit_follows_the_explicit_accept_contract`（编辑在飞：冻结快照上的查询照常采纳；编辑已
+采纳：结果原样保留（显式接受语义）；再 Analyze：选择清空、旧代归属作废（digest 腿的 R6 成文
+形状），重选按新 archive 一代回答）、`cancel_survey_button_reaches_the_named_state` /
+`cancel_point_button_reaches_the_named_state`（Cancel survey 按钮在 δ 相取消快速回报、具名
+kCancelled+latch、变更选择清 latch 再答（经滚动选行——折叠行的直点是静默失败，`SelectRowByDisplay`
+助手由此而来）；Cancel point 在排队态撤销（排在前一 survey 之后，窗口确定）且 survey 面不被
+株连）、`document_open_clears_every_analyze_face`（文档切换——open 路径的 deserialize 机制——
+清全部面与意图，executor 闲置；查询在飞时的撤回尾段是协作式期限形状，不属本腿主张）。池归属
+（与 `scripts/build.sh` 两 filter 一致）：real-timing 四条（chain pair + C17 pair——前者排
+per-face 队列、后者 survey 尾段不受协作期限约束，池实测 13/13），fixed-dt 七条（rekey、
+new、identity、scene_edit、cancel_survey、cancel_point、document_open，池实测 548/548）。
+「关闭」触发器的处置：独立分析浮窗已随 742.3 退役，Analyze 工作区无独立关闭动作（离开分析
+上下文=切工作区，covered by 既有 switch 腿 + 本片 rekey 腿的面归属规则），应用级关闭在
+gui_test 证据形态之外。「切工作区跨新面」与「会话内 Save/Open」的 covered-by：前者=采纳门键
+含 generation + 工作区切换为纯视图不写状态（742.3 as-built 成文）+ rekey 腿的面归属规则，
+后者=quick 池 file_ops 既有回归 + 本片 open 腿的 deserialize 机制（Save 的原生对话框与
+Full sky/Fit 真实点击同属 hands-on 交接项）。组合级测量（本机 M1 Max、`385fbd2c1`、
+kFullyRandomJson、550 参考 λ、16 ms vsync 帧折算）：选类→概览含色散 ~2.3 s、图细化 ~0.5 s、
+拾取+点查询 ~0.45 s、轨迹 ~0.05 s、全会话 ~4 s（C03 类 ~4.7 s、C15 ~1.1 s）；A→B 全落定
+~7.4 s；Cancel survey 撤回在 δ 相数秒回报。诚实边界（同批钉住）：`kDiscovered` 允许零分量
+（离 fiber 目标的空发现是具名空态非缺陷）；太阳对跖点目标是请求级 `kInvalidTarget` 拒答；
+池共租下 survey 色散腿可诚实触 15 s 预算（partial 按 execution 分派呈现，概览横幅不变）；
+halo 场景（zenith 均布 mean 90）主类路由为快速拒答臂——其 kWaiting 窗口是点击竞态，取消/等待
+类腿须选全维场景。**引擎侧观测（本片上抛，不在零 src 约束内修）**：`3-1-5-7`（24 成员）的
+GUI survey 墙钟不受其 15 s 期限约束（观测 40–100 s，随机器负载漂移）——survey 的 stop 装置
+（`detail/quantity/witness.hpp` 的 DiscoveryStop 装置）只覆盖 lattice pass，witness/TIR 相的
+循环不轮询取消令牌，协作式期限对它失效；两条 C17 腿因此归 real-timing 池（负载敏感本性），
+候选修复=相边界与循环内补 stop 轮询，待 owner 裁定。GUI 边界审计复核随片完成：五个 analyze TU 零 JSON 拼装、概览模型单源双消费、
+具名空态是唯一占位形态（`check_policies.py` 全绿）。用户操作与首版能力边界的耐久表述在
+`doc/user-manual/06-raypath-analysis{,_zh}.md` §6–§8 与「首版已知限制」节。
+
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 
 - **Render / Analyze 是同一窗口下的两个工作区**，顶部标签切换（不是两个独立系统窗口）：共享同一份

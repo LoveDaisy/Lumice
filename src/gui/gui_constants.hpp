@@ -48,6 +48,11 @@ constexpr float kLeftPanelWidth = 400.0f;
 constexpr float kRightPanelWidth = 300.0f;
 constexpr float kTopBarHeight = 40.0f;
 constexpr float kStatusBarHeight = 28.0f;
+// The Analyze workspace's outer columns (analyze_workspace.cpp; the plan's four-column skeleton:
+// left 300 / right 400, the middle taking what remains). The Render workspace keeps
+// kLeftPanelWidth/kRightPanelWidth above — the two workspaces' layouts are independent.
+constexpr float kAnalyzeLeftPanelWidth = 300.0f;
+constexpr float kAnalyzeRightPanelWidth = 400.0f;
 
 // Display brightness baseline, mirroring lumice::kNormScale (core/color_util.hpp). The GUI needs
 // it because absolute exposure mode is computed client-side (mono_exposure_scale.hpp) rather than
@@ -209,6 +214,10 @@ static_assert(kAnalysisConeDefaultRadiusDeg > 0.0f && kAnalysisConeDefaultRadius
 // camera. A feel value, not a ruling — there is no proxy to measure it by, so it is one number in
 // one place.
 constexpr float kAnalysisConeMarkerHitRadiusPt = 12.0f;
+// The analysis pick's crosshair at the cursor: half-length of each arm, in logical points. The
+// panorama's armed-pick branch (analyze_workspace.cpp) draws the same crosshair through the same
+// constant as the preview's, so the two indications cannot drift.
+constexpr float kAnalysisPickCrosshairArmPt = 10.0f;
 
 // The display-mode segmented control in the preview's top-right corner (RenderPreviewPanel).
 // Geometry in logical points, read through UiPx(); the two alphas are opacities and are not.

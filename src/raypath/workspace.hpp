@@ -32,9 +32,11 @@
 
 #include "analytic/stop.hpp"
 #include "config/config_manager.hpp"
+#include "raypath/map_analysis.hpp"
 #include "raypath/path_feature_report.hpp"
 #include "raypath/prepared_geometry.hpp"
 #include "raypath/probe_analysis.hpp"
+#include "raypath/representative_ray.hpp"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/survey_report.hpp"
 
@@ -59,6 +61,15 @@ class AnalysisWorkspace {
                     const analytic::StopToken* cancel = nullptr);
   Error QueryReport(const PathFeatureReportRequest& request, FeatureReportResult* out,
                     const analytic::StopToken* cancel = nullptr);
+  // The map face: no warm, no cached-result slot — every request re-runs the class on its own
+  // view (the view/lambda-dependent recomputation rule). It shares the geometry slot and the
+  // cancel token with the other faces, and runs no structure, so the ledger's structure count
+  // does not move.
+  Error QueryMap(const MapRequest& request, MapResult* out, const analytic::StopToken* cancel = nullptr);
+  // The representative-ray face: one single-shot corridor+chain evaluation on the snapshot, no
+  // warm, no budget, no cancel poll (the query declares no interruptible boundary — see
+  // representative_ray.hpp). Shares the geometry slot.
+  Error QueryRepresentativeRay(const RepresentativeRayRequest& request, RepresentativeRayResult* out);
 
   // ---- the reuse reads (the workspace's own decision ledger, for the acceptance tests) ----
   long GeometryBuildCount() const { return geometry_builds_; }  // face-table builds performed

@@ -76,7 +76,10 @@ namespace {
 // Not serialized, so no row can reach the panel.
 // 89 with look_at, the named camera target and follow intent. It is session-only: files persist the
 // resulting pose, not an instruction to keep changing it when the sun moves.
-constexpr std::size_t kExpectedGovernedFieldCount = 89;
+// 90 with workspace, the Render/Analyze workspace selection and the Analyze workspace's own
+// session state. kSession and ineligible like analysis before it: which workspace the frame shows
+// is this session's layout, not part of the document. Not serialized, so no row can reach the panel.
+constexpr std::size_t kExpectedGovernedFieldCount = 90;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

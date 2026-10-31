@@ -265,6 +265,118 @@ const LUMICE_RaypathHistogramEntry* SelectedAnalysisEntry(const GuiState& state)
   return nullptr;
 }
 
+std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& state) {
+  const LUMICE_RaypathHistogramEntry* e = SelectedAnalysisEntry(state);
+  if (e == nullptr) {
+    return std::nullopt;
+  }
+  SelectedClassIdentity identity;
+  identity.core_crystal_id = e->chain[0].crystal_id;
+  for (int l = 0; l < e->chain_len; ++l) {
+    identity.faces.insert(identity.faces.end(), e->chain[l].segment, e->chain[l].segment + e->chain[l].segment_len);
+    identity.layer_face_counts.push_back(e->chain[l].segment_len);
+  }
+  // The survey face's binary spelling (the M1-0 probe pinned both ends): the default all-three
+  // read position IS the physical P|B|D class; the all-unchecked position IS the literal chain;
+  // an intermediate reduction has NO survey class — the literal sequence (the row's own
+  // representative) is requested, and the overview labels that scope (R7), never a fabricated
+  // class summary. The face refuses the intermediate subgroup encodings outright.
+  identity.symmetry_bits_plus_one = AnalysisSymmetryBits(state) == 7 ? 0 : 1;
+  return identity;
+}
+
+LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentity& identity, std::vector<int>* faces,
+                                                      std::vector<int>* counts) {
+  *faces = identity.faces;
+  *counts = identity.layer_face_counts;
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = identity.core_crystal_id;
+  request.faces = faces->data();
+  request.face_count = static_cast<int>(faces->size());
+  request.layer_face_counts = counts->data();
+  request.layer_count = static_cast<int>(counts->size());
+  request.symmetry_bits_plus_one = identity.symmetry_bits_plus_one;
+  request.budget_ms = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS;
+  return request;
+}
+
+SurveySelectionKey SurveySelectionKeyFor(const SelectedClassIdentity& identity, unsigned long long generation) {
+  SurveySelectionKey key;
+  key.generation = generation;
+  key.crystal_id = identity.core_crystal_id;
+  key.faces = identity.faces;
+  key.layer_face_counts = identity.layer_face_counts;
+  key.symmetry_bits_plus_one = identity.symmetry_bits_plus_one;
+  return key;
+}
+
+namespace {
+
+// The issuing half of the pump: build the request for the CURRENT selection (the identity the
+// key was derived from) and hand it to the executor with the id the pump already assigned.
+// Buffers move into the executor's job — the C request only borrows them for the call.
+void IssueSurveyQuery(SurveyExecutor& executor, const SurveyQueryId& id, const SelectedClassIdentity& identity) {
+  std::vector<int> faces;
+  std::vector<int> counts;
+  const LUMICE_PathSurveyRequest request = MakeSurveyRequestForIdentity(identity, &faces, &counts);
+  executor.IssueQuery(id, request, std::move(faces), std::move(counts));
+}
+
+}  // namespace
+
+void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
+  SurveyQuerySession& survey = state.analysis.survey;
+
+  // 1. Drain: adopt the finished query iff it still answers the CURRENT intent and the intent
+  //    stands (R6's gate — a late A never lands under B, and a CANCELLED intent accepts no
+  //    outcome at all: the engine answers a cancel with an OK-carrying partial document, not an
+  //    error, so the id match alone would adopt the very result the user just withdrew). A
+  //    refusal is an answer for a standing intent: it is what the engine names for a multi-layer
+  //    class (R5), and the overview shows it rather than a fabricated summary. Everything else
+  //    in the slot is a superseded zombie (cancelled or replaced intent) and is dropped here,
+  //    never shown.
+  while (std::optional<SurveyExecutor::Finished> finished = executor.TakeFinished(QueryFace::kSurvey)) {
+    if (survey.intent_valid && !survey.cancelled_for_key && finished->id == survey.intent_id) {
+      survey.adopted_result = finished->ok ? finished->result : nullptr;
+      survey.adopted_error = finished->ok ? std::string() : std::move(finished->error);
+    }
+  }
+
+  // 2. The live selection as the key an intent is issued for, derived through the ONE identity
+  //    chain (a56 — the request builder below consumes the same SelectedClassIdentityFor, so
+  //    the pump's change detection and the issued request cannot drift apart). No row on show
+  //    (cleared, or merged away by a symmetry re-read) — no key.
+  const std::optional<SelectedClassIdentity> identity = SelectedClassIdentityFor(state);
+  if (!identity.has_value() || !state.analysis_result.payload) {
+    if (survey.intent_valid) {
+      // The selection died: R6 — the intent dies with it, adopted outcome included.
+      executor.CancelInFlight(QueryFace::kSurvey);
+      survey = SurveyQuerySession{};
+    }
+    return;
+  }
+  SurveySelectionKey key = SurveySelectionKeyFor(*identity, state.analysis_result.payload->snapshot_generation);
+
+  if (!survey.intent_valid || survey.key != key) {
+    // A new or changed selection: withdraw whatever is out (R6 — the new intent supersedes; the
+    // previous outcome belongs to a key that is gone) and issue the fresh one.
+    executor.CancelInFlight(QueryFace::kSurvey);
+    survey = SurveyQuerySession{};
+    survey.intent_valid = true;
+    survey.key = key;
+    survey.intent_id = executor.NextId(key.generation);
+    IssueSurveyQuery(executor, survey.intent_id, *identity);
+    return;
+  }
+  // The same selection stands, with the intent valid and the id issued. If it has no outcome
+  // yet, the query is queued or in flight — the overview shows waiting; when the outcome
+  // arrives the drain above adopts it this frame or the next. A re-issue is neither needed nor
+  // possible here: the executor runs at most one query, only ever one issued for the standing
+  // intent. `cancelled_for_key` is the one state that keeps this branch from re-issuing — the
+  // cancel button set it against this very key, and a re-issue would make it mean nothing.
+}
+
 // ---- ROI: the click on the preview ---------------------------------------------------------------
 
 std::optional<CanvasPixel> PreviewPointToCanvasPixel(float rel_x_pt, float rel_y_pt, float dpi_scale_x,
@@ -289,6 +401,44 @@ void CanvasPixelToPreviewPoint(int px, int py, float dpi_scale_x, float dpi_scal
 
 LUMICE_AnnotationView PreviewAnnotationView(const GuiState& state, int canvas_w, int canvas_h) {
   return BuildAnnotationView(MakeAnnotationViewKey(AnnotationViewInputFor(state, state.renderer), canvas_w, canvas_h));
+}
+
+LUMICE_AnnotationView PanoramaAnnotationView(const GuiState& state, int canvas_w, int canvas_h) {
+  // The Analyze workspace's panorama: the up-looking equal-area fisheye — lens 1 at fov 180 with
+  // the view pitched to +90 (straight up), so the disk centre is the zenith and the rim the
+  // horizon, both sides (shader display and this pick view) camera-framed by the same view
+  // angles. visible=Full on purpose: the lens's own behind-camera sentinel already bounds the
+  // disk, and the half-sky visible values route the annotation projector through a different
+  // domain the panorama does not want. No overlay circles or markers: the key carries only what
+  // will be read.
+  AnnotationViewInput in;
+  in.lens_type = kLensTypeFisheyeEqualArea;
+  in.fov = 180.0f;
+  in.azimuth = 0.0f;
+  // The hemisphere switch pitches the camera: +90 reads the upper sky (zenith at the disk
+  // centre), -90 the lower (nadir at the centre).
+  in.elevation = state.workspace.panorama_upper ? 90.0f : -90.0f;
+  in.roll = 0.0f;
+  in.visible = kVisibleFull;
+  in.front = false;
+  in.sun_altitude_deg = state.sun.altitude;
+  return BuildAnnotationView(MakeAnnotationViewKey(in, canvas_w, canvas_h));
+}
+
+bool PanoramaPickHitsSky(const GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
+  // The up-looking fisheye's square canvas outcorners its disk: outside the rim
+  // LUMICE_UnprojectPixel still answers (the lens inverse carries no rim rejection at fov 180),
+  // with a direction below the horizon. The panorama's pick and drag accept upper-sky directions
+  // only — the disk, not the square.
+  float dir[3] = { 0.0f, 0.0f, 0.0f };
+  int valid = 0;
+  if (LUMICE_UnprojectPixel(&view, px, py, dir, &valid) != LUMICE_OK || valid == 0) {
+    return false;
+  }
+  // Travel convention: sky light travels away from the viewed hemisphere's centre — looking up
+  // (+90), upper-sky light travels downward (z < 0); looking down (-90), lower-sky light travels
+  // upward (z > 0). The slack spans the rim's horizon band (rim pixels sit at |z| <= 0.005).
+  return state.workspace.panorama_upper ? dir[2] < 0.05f : dir[2] > -0.05f;
 }
 
 bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
@@ -1142,90 +1292,6 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 
 namespace {
 
-void RenderRoiControls(GuiState& state) {
-  auto& a = state.analysis;
-  ImGui::TextUnformatted("Region");
-  ImGui::SameLine();
-  const int prev_mode = a.roi_mode;
-  ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-  ImGui::SameLine();
-  // "In frame" and "Point" are choices made against a picture of the document, so both radios
-  // wait for the document to have shown one — the same predicate the Analyze button reads
-  // (CanStartAnalysis), so the three cannot disagree on what "no picture yet" means. Not the
-  // preview's own "texture bound" flag: a background photograph alone raises that too, and a
-  // photograph is not a picture of the document. A mode already selected still analyses without
-  // a live preview — DoAnalyze sizes the frame at the document's own resolution then — so this
-  // gates the radio, not the button.
-  const bool has_picture = HasEverShownPicture(state.run_intent);
-  ImGui::BeginDisabled(!has_picture);
-  ImGui::RadioButton("In frame", &a.roi_mode, LUMICE_RAYPATH_ROI_IN_FRAME);
-  ImGui::EndDisabled();
-  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Needs a picture of this document: press Run once first.");
-  }
-  ImGui::SameLine();
-  ImGui::BeginDisabled(!has_picture);
-  ImGui::RadioButton("Point", &a.roi_mode, LUMICE_RAYPATH_ROI_CONE);
-  ImGui::EndDisabled();
-  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Needs a picture of this document to pick a point on: press Run once first.");
-  }
-  if (a.roi_mode != LUMICE_RAYPATH_ROI_CONE && prev_mode == LUMICE_RAYPATH_ROI_CONE) {
-    a.pick_armed = false;  // never leave a click armed for a mode that does not read it
-    a.cone_marker_dragging = false;
-  }
-
-  if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
-    // A centre from the moment the mode is entered, so the marker is on screen to be dragged
-    // before any pick. Level-triggered: "no valid centre and a preview to project on", not "the
-    // frame the radio was clicked" — a switch made before the first picture arrives is served the
-    // frame the picture does. This window renders after the preview panel, so the viewport read
-    // here is this frame's.
-    if (!a.cone_center_valid && g_preview_vp.active) {
-      EnsureDefaultConeCenter(state, PreviewAnnotationView(state, g_preview_vp.vp_w, g_preview_vp.vp_h),
-                              g_preview_vp.vp_w, g_preview_vp.vp_h);
-    }
-    // Same predicate as the radio above, not the viewport flag: a background photograph must not
-    // arm a pick on a document that has never been rendered.
-    const bool can_pick = has_picture;
-    ImGui::BeginDisabled(!can_pick);
-    // Read once: the button below flips pick_armed, and the pop must match the push made
-    // for the value the frame STARTED with, not the one the click just wrote.
-    const bool armed_style = a.pick_armed;
-    if (armed_style) {
-      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.55f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.75f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.40f));
-    }
-    if (ImGui::Button(ICON_FA_CROSSHAIRS " Pick on preview")) {
-      a.pick_armed = !a.pick_armed;
-      if (a.pick_armed) {
-        // One click-taking mode at a time with the Angular Distance picker
-        // (GuiState::AngularDistPicker). The eyedropper/pick pairing is left as it was: in the
-        // preview the eyedropper's branch already takes precedence over this one.
-        state.angular_dist_picker.armed = false;
-      }
-    }
-    if (armed_style) {
-      ImGui::PopStyleColor(3);
-    }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip(can_pick ? "Then click a point on the preview. Esc cancels.\n"
-                                   "Or drag the marker on the preview directly." :
-                                   "Needs a picture of this document to click on: press Run once first.");
-    }
-    ImGui::SameLine();
-    if (a.cone_center_valid) {
-      float alt = 0.0f;
-      float az = 0.0f;
-      DirToAltAz(a.cone_center_dir, &alt, &az);
-      ImGui::Text("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
-    } else {
-      ImGui::TextDisabled("No centre yet");
-    }
-  }
-}
 
 // The request's parameters that are not the region: the ray budget. Session state, sent with the
 // next Analyze — editing it starts nothing, like the region.
@@ -1390,9 +1456,9 @@ void RenderRadiusSlider(GuiState& state) {
   const int rings = cone_result ? payload->cone_ring_count : kAnalysisConeRingCount;
   const float min_deg = cone_deg / static_cast<float>(std::max(rings, 1));
   // Never disabled: the radius is display-time state whether or not a result exists yet. Before
-  // one, it sizes the ring on the preview (DrawAnalysisRoiRing reads it every frame) so the
-  // user sees the region the list will be summed over; after one, it re-sums the rings on hand.
-  // Either way the request is the full cone and nothing here starts a run.
+  // one, it sizes the ring on the panorama (DrawPanoramaRoiRing's ring reads it every frame) so
+  // the user sees the region the list will be summed over; after one, it re-sums the rings on
+  // hand. Either way the request is the full cone and nothing here starts a run.
   ImGui::SetNextItemWidth(UiPx(220.0f));
   if (ImGui::SliderFloat("Radius", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
     // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
@@ -1711,32 +1777,13 @@ void RenderActionButtons(GuiState& state) {
 
 }  // namespace
 
-void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server) {
-  if (!state.analysis.window_open) {
-    return;
-  }
-  // Tall and narrow on purpose: the window is a list of raypaths, and rows are what it runs out
-  // of first — a wide default only stretches the table's five columns across empty space.
-  //
-  // Re-applied, not just on appearance, on the frame the UI scale changes: this window is
-  // non-modal and can stay open through Settings (see WindowResizeCondForScale, theme.hpp), so a
-  // FirstUseEver cond alone would leave it pinned at the old pixel size while its UiPx()-derived
-  // content grows.
-  static float s_sized_for_scale = 0.0f;
-  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSize(ImVec2(UiPx(520.0f), UiPx(640.0f)), size_cond);
-  // size_cond is only ever FirstUseEver or Always, so one call covers both: the ordinary first
-  // appearance centres once, and a scale change re-centres alongside the resize (ImGui grows a
-  // window from its top-left, so leaving the position alone would run a larger panel off-screen).
-  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), size_cond, ImVec2(0.5f, 0.5f));
-  if (!ImGui::Begin(ICON_FA_ROUTE " Raypath Analysis", &state.analysis.window_open,
-                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
-    ImGui::End();
-    return;
-  }
-  RenderListFreshnessBanner(state);
+void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
+  // The analysis tool's sections, hosted by the Analyze workspace's share-list region — no
+  // window of its own any more. The ROI controls live on the panorama side
+  // (RenderPanoramaRoiControls, analyze_workspace.cpp); everything that reads and shapes the
+  // RESULT is here.
   RenderPickBanner(state);
-  RenderRoiControls(state);
+  RenderListFreshnessBanner(state);
   RenderRequestParamsControls(state);
   RenderRunControls(state, server);
   RenderRadiusSlider(state);
@@ -1745,15 +1792,100 @@ void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server) {
   RenderResultSearchBox();
   RenderResultList(state);
   RenderActionButtons(state);
-  ImGui::End();
 }
 
-void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
-                         float dpi_scale_x, float dpi_scale_y) {
-  const auto& a = state.analysis;
-  if (!a.window_open || a.roi_mode != LUMICE_RAYPATH_ROI_CONE) {
-    return;
+void RenderPanoramaRoiControls(GuiState& state) {
+  auto& a = state.analysis;
+  ImGui::TextUnformatted("Region");
+  ImGui::SameLine();
+  const int prev_mode = a.roi_mode;
+  ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
+  ImGui::SameLine();
+  // "In frame" and "Point" are choices made against a picture of the document, so both radios
+  // wait for the document to have shown one — the same predicate the Analyze button reads
+  // (CanStartAnalysis), so the three cannot disagree on what "no picture yet" means. Not the
+  // preview's own "texture bound" flag: a background photograph alone raises that too, and a
+  // photograph is not a picture of the document. A mode already selected still analyses without
+  // a live preview — DoAnalyze sizes the frame at the document's own resolution then — so this
+  // gates the radio, not the button.
+  const bool has_picture = HasEverShownPicture(state.run_intent);
+  ImGui::BeginDisabled(!has_picture);
+  ImGui::RadioButton("In frame", &a.roi_mode, LUMICE_RAYPATH_ROI_IN_FRAME);
+  ImGui::EndDisabled();
+  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("Needs a picture of this document: press Run once first.");
   }
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!has_picture);
+  ImGui::RadioButton("Point", &a.roi_mode, LUMICE_RAYPATH_ROI_CONE);
+  ImGui::EndDisabled();
+  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("Needs a picture of this document to pick a point on: press Run once first.");
+  }
+  if (a.roi_mode != LUMICE_RAYPATH_ROI_CONE && prev_mode == LUMICE_RAYPATH_ROI_CONE) {
+    a.pick_armed = false;  // never leave a click armed for a mode that does not read it
+    a.cone_marker_dragging = false;
+  }
+
+  if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
+    // A centre from the moment the mode is entered, so the marker is on screen to be dragged
+    // before any pick. Level-triggered: "no valid centre and a preview to project on", not "the
+    // frame the radio was clicked" — a switch made before the first picture arrives is served the
+    // frame the picture does. This window renders after the preview panel, so the viewport read
+    // here is this frame's.
+    if (!a.cone_center_valid && g_panorama_vp.active) {
+      EnsureDefaultConeCenter(state, PanoramaAnnotationView(state, g_panorama_vp.vp_w, g_panorama_vp.vp_h),
+                              g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+    }
+    // Same predicate as the radio above, not the viewport flag: a background photograph must not
+    // arm a pick on a document that has never been rendered.
+    const bool can_pick = has_picture;
+    ImGui::BeginDisabled(!can_pick);
+    // Read once: the button below flips pick_armed, and the pop must match the push made
+    // for the value the frame STARTED with, not the one the click just wrote.
+    const bool armed_style = a.pick_armed;
+    if (armed_style) {
+      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.55f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.75f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.40f));
+    }
+    if (ImGui::Button(ICON_FA_CROSSHAIRS " Pick on the panorama")) {
+      a.pick_armed = !a.pick_armed;
+      if (a.pick_armed) {
+        // One click-taking mode at a time with the Angular Distance picker
+        // (GuiState::AngularDistPicker). The eyedropper/pick pairing is left as it was: in the
+        // preview the eyedropper's branch already takes precedence over this one.
+        state.angular_dist_picker.armed = false;
+      }
+    }
+    if (armed_style) {
+      ImGui::PopStyleColor(3);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip(can_pick ? "Then click a point on the panorama. Esc cancels.\n"
+                                   "Or drag the marker on the panorama directly." :
+                                   "Needs a picture of this document to click on: press Run once first.");
+    }
+    ImGui::SameLine();
+    if (a.cone_center_valid) {
+      float alt = 0.0f;
+      float az = 0.0f;
+      DirToAltAz(a.cone_center_dir, &alt, &az);
+      ImGui::Text("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+    } else {
+      ImGui::TextDisabled("No centre yet");
+    }
+  }
+}
+
+namespace {
+
+// The marker-and-ring draw itself. Its one wrapper is DrawPanoramaRoiRing, whose gate runs
+// whenever the Analyze workspace shows the panorama region and the mode is Point.
+void DrawRoiRingImpl(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin, float dpi_scale_x,
+                     float dpi_scale_y) {
+  const auto& a = state.analysis;
   // This frame's projection of the direction: off the picture (behind the camera, outside the
   // lens's circle, the clipped hemisphere) means no marker and no ring — the direction is still
   // the request's, and the list is unaffected.
@@ -1768,11 +1900,10 @@ void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& vie
   float cy = 0.0f;
   CanvasPixelToPreviewPoint(marker->px, marker->py, dpi_scale_x, dpi_scale_y, &cx, &cy);
   const ImVec2 centre(origin.x + cx, origin.y + cy);
-  // The preview window's own list, not the foreground one: the marker belongs to the picture, so
-  // it is clipped to the preview's rectangle and sits UNDER whatever is drawn after the preview
-  // panel — the analysis window itself, an edit modal — rather than over every window on screen.
-  // The caller draws inside the preview panel's Begin/End (app_panels.cpp), which is what makes
-  // "the current window" that one.
+  // The panorama region window's own list, not the foreground one: the marker belongs to the
+  // picture, so it is clipped to the panorama's rectangle and sits UNDER whatever is drawn after
+  // it rather than over every window on screen. The caller draws inside the panorama region's
+  // Begin/End (analyze_workspace.cpp), which is what makes "the current window" that one.
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
   // The centre mark is always drawn; the ring only when the local scale could be measured. A drag
@@ -1782,6 +1913,16 @@ void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& vie
   if (radius_px.has_value()) {
     dl->AddCircle(centre, *radius_px / dpi_scale_x, colour, kRoiRingSegments, UiPx(kRoiRingThicknessPt));
   }
+}
+
+}  // namespace
+
+void DrawPanoramaRoiRing(const GuiState& state, const LUMICE_AnnotationView& view, const ImVec2& origin,
+                         float dpi_scale_x, float dpi_scale_y) {
+  if (state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE) {
+    return;
+  }
+  DrawRoiRingImpl(state, view, origin, dpi_scale_x, dpi_scale_y);
 }
 
 }  // namespace lumice::gui

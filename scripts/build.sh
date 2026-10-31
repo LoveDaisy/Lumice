@@ -58,6 +58,27 @@ build() {
         #         under fixed-dt for the engine's simulated-time watchdog to abort the
         #         case mid-analysis. Its two CPU siblings (ten workers, well under a
         #         second) stay in the correctness pool.
+        #       - survey_overview_shows_dispersion_and_profile: the overview case drives a
+        #         REAL full-dimensional survey through the app (the chromatic legs' two-lambda
+        #         power sums are ~14s of worker time on their own). Under fixed-dt the case
+        #         runs past the engine's 60s watchdog before the survey returns; on real
+        #         frame timing it finishes in ~25s. Its wall-clock cost is the point, so the
+        #       - map_region_shows_the_class_map_and_takes_the_pick: the map face answers behind
+        #         the survey's chromatic legs on the one worker (queue by face), then the default
+        #         view chain's refinement runs — the same wall-clock shape as the survey overview
+        #         case, and the real click it drives is meaningless under fixed-dt.
+        #       - analyze_full_chain_one_session, internal_reflection_trace_from_the_real_consumer
+        #         (742.7): the integration legs drive the per-face queue shape end to end — the
+        #         class survey's chromatic legs, the map refinement behind them, then the point
+        #         query and the representative ray, all in one session with real canvas picks.
+        #         The waits are the wall-clock point; fixed-dt starves them exactly like the
+        #         per-face legs above.
+        #       - refused_class_names_the_refusal_and_keeps_the_witness,
+        #         refused_class_blockades_nothing (742.7): the corpus C17 class's survey carries
+        #         a 24-member witness/TIR tail whose wall clock is not bounded by the survey's
+        #         cooperative 15 s deadline (the stop plumbing covers the lattice pass only) —
+        #         observed 40-100 s on a loaded machine. Load-sensitive by nature, so the
+        #         real-timing pool; the claims themselves are engine-document assertions.
         #     These are matched by NAME (the engine's filter tests both name and category),
         #     so renaming any of them means updating this filter and its twin in
         #     scripts/regen_gui_test_refs.py — check_policies.py's gui-test-suite-args-sync
@@ -67,11 +88,11 @@ build() {
         # contract in the diff where a reviewer sees it, and it survives someone changing that
         # default. Keep it AFTER --filter — check_policies.py's gui-test-suite-args-sync reads the
         # filter value with a regex anchored on `--fixed-dt --filter "..."`.
-        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu" --no-user-config
+        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,-map_region_shows_the_class_map_and_takes_the_pick,-point_inspector_shows_the_point_fiber_and_the_path,-analyze_full_chain_one_session,-internal_reflection_trace_from_the_real_consumer,-refused_class_names_the_refusal_and_keeps_the_witness,-refused_class_blockades_nothing" --no-user-config
         ret=$?
         if [[ $ret == 0 ]]; then
           echo "Running GUI real-timing tests (perf + wall-clock-dependent, isolated)..."
-          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu" --no-user-config
+          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu,survey_overview_shows_dispersion_and_profile,map_region_shows_the_class_map_and_takes_the_pick,point_inspector_shows_the_point_fiber_and_the_path,analyze_full_chain_one_session,internal_reflection_trace_from_the_real_consumer,refused_class_names_the_refusal_and_keeps_the_witness,refused_class_blockades_nothing" --no-user-config
           ret=$?
         fi
       else

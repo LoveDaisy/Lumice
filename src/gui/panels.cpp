@@ -1327,20 +1327,8 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   // bottom of RenderEntryCard via an InvisibleButton overlay that covers the
   // card body.
   const bool pick_active = state.pick_link_source.has_value();
-  bool pick_target_disabled = false;
-  if (pick_active) {
-    const auto& src_ref = *state.pick_link_source;
-    if (src_ref.layer_idx == layer_idx && src_ref.entry_idx == entry_idx) {
-      pick_target_disabled = true;  // can't link to self
-    } else if (src_ref.layer_idx >= 0 && src_ref.layer_idx < static_cast<int>(state.layers.size()) &&
-               src_ref.entry_idx >= 0 &&
-               src_ref.entry_idx < static_cast<int>(state.layers[src_ref.layer_idx].entries.size())) {
-      const auto& src_entry = state.layers[src_ref.layer_idx].entries[src_ref.entry_idx];
-      if (entry.crystal_id == src_entry.crystal_id && entry.filter_id == src_entry.filter_id) {
-        pick_target_disabled = true;  // already shared
-      }
-    }
-  }
+  const bool pick_target_disabled =
+      PickLinkRowStateFor(state, layer_idx, entry_idx) == PickLinkRowState::kDisabledSelfOrShared;
 
   ImGui::PushID(entry_idx);
 
@@ -2061,6 +2049,111 @@ void RenderScatteringSection(GuiState& state) {
     RenderLayer(state, i);
     ImGui::Spacing();
   }
+}
+
+void AddScatteringLayer(GuiState& state) {
+  // Bind the new layer's seed entry to a fresh pool slot — see the "+ Crystal"
+  // handler for the same rationale (avoid implicit link to slot 0).
+  EntryCard new_entry;
+  new_entry.crystal_id = static_cast<int>(state.crystals.size());
+  state.crystals.emplace_back();
+  Layer new_layer;
+  new_layer.entries.push_back(new_entry);
+  // Footgun #2 guard: the layer that WAS the last layer is about to become
+  // an intermediate layer. If its prob is (near-)zero, no rays will reach the
+  // new layer — the newly added layer would be silently dead. Promote to a
+  // sensible continuation default so the user sees rays in the new layer by
+  // default. This is a user-initiated state transition (not a load), so it
+  // is not covered by the "don't silently rewrite loaded values" rule.
+  // Zero-detection MUST use IsProbZero — a raw == 0.0f would let a
+  // slider-dragged 1e-7 sneak past this promotion.
+  if (!state.layers.empty() && IsProbZero(state.layers.back().probability)) {
+    state.layers.back().probability = kDefaultContinuationProb;
+  }
+  state.layers.push_back(std::move(new_layer));
+  g_thumbnail_cache.OnLayerStructureChanged();
+}
+
+void ProcessEditRequest(GuiState& state) {
+  if (GetEditRequest().target == EditTarget::kNone) {
+    return;
+  }
+  const EditRequest& req = GetEditRequest();
+  if (req.target == EditTarget::kCard) {
+    const EditModalTarget modal_tgt = GetEditModalTarget();
+    if (!IsEditModalOpen() || modal_tgt.layer_idx != req.layer_idx || modal_tgt.entry_idx != req.entry_idx) {
+      EditRequest resolved = req;
+      resolved.target = IsEditModalOpen() ? GetActiveTabAsEditTarget() : EditTarget::kCrystal;
+      OpenEditModal(resolved, state);
+    }
+  } else {
+    OpenEditModal(req, state);
+  }
+  ResetEditRequest();
+}
+
+void RequestEntryCardEdit(int layer_idx, int entry_idx) {
+  g_edit_request = { EditTarget::kCard, layer_idx, entry_idx };
+}
+
+PickLinkRowState PickLinkRowStateFor(const GuiState& state, int layer_idx, int entry_idx) {
+  if (!state.pick_link_source.has_value()) {
+    // No pick armed: every row is a plain editor-opening target; the state's only consumer
+    // checks it under an armed pick, and kValidTarget is the answer that keeps that call site
+    // branch-free.
+    return PickLinkRowState::kValidTarget;
+  }
+  const auto& src_ref = *state.pick_link_source;
+  if (src_ref.layer_idx == layer_idx && src_ref.entry_idx == entry_idx) {
+    return PickLinkRowState::kDisabledSelfOrShared;  // can't link to self
+  }
+  if (src_ref.layer_idx >= 0 && src_ref.layer_idx < static_cast<int>(state.layers.size()) && src_ref.entry_idx >= 0 &&
+      src_ref.entry_idx < static_cast<int>(state.layers[src_ref.layer_idx].entries.size())) {
+    const auto& src_entry = state.layers[src_ref.layer_idx].entries[src_ref.entry_idx];
+    const auto& entry = state.layers[layer_idx].entries[entry_idx];
+    if (entry.crystal_id == src_entry.crystal_id && entry.filter_id == src_entry.filter_id) {
+      return PickLinkRowState::kDisabledSelfOrShared;  // already shared
+    }
+  }
+  return PickLinkRowState::kValidTarget;
+}
+
+bool CompletePickLinkAtRow(GuiState& state, int layer_idx, int entry_idx) {
+  if (PickLinkRowStateFor(state, layer_idx, entry_idx) != PickLinkRowState::kValidTarget) {
+    return false;
+  }
+  // "Link A to B" semantics: A (the entry whose modal opened the picker — pick_link_source)
+  // adopts B's (the clicked row/card's) crystal/filter ids. So the *clicked* entry is the source
+  // (model) and pick_link_source is the target (modified).
+  const auto pick_source_ref = *state.pick_link_source;
+  const bool changed = ApplyPickLink(state, GuiState::EntryRef{ layer_idx, entry_idx }, pick_source_ref);
+  state.pick_link_source.reset();
+  // Effects derived centrally by ReconcileGuiEffects (see the cards' completion site for the
+  // soft/hard split).
+  return changed;
+}
+
+void ReopenEditorOnPickCompletion(GuiState& state, const std::optional<GuiState::EntryRef>& pick_source_at_entry) {
+  if (!pick_source_at_entry.has_value() || state.pick_link_source.has_value()) {
+    return;  // nothing was armed, or the pick is still waiting for its target
+  }
+  const auto& src = *pick_source_at_entry;
+  if (src.layer_idx < 0 || src.layer_idx >= static_cast<int>(state.layers.size())) {
+    return;
+  }
+  const auto& entries = state.layers[src.layer_idx].entries;
+  if (src.entry_idx < 0 || src.entry_idx >= static_cast<int>(entries.size())) {
+    return;
+  }
+  // The editing entry's crystal_id was just re-bound to the clicked card's crystal, so also
+  // reset the singleton trackball view to that crystal's default orientation — otherwise the
+  // modal preview keeps the old crystal's rotation while the thumbnail shows the new one.
+  ResetCrystalViewToCrystal(state.crystals[entries[src.entry_idx].crystal_id]);
+  EditRequest reopen;
+  reopen.target = EditTarget::kCrystal;
+  reopen.layer_idx = src.layer_idx;
+  reopen.entry_idx = src.entry_idx;
+  OpenEditModal(reopen, state);
 }
 
 

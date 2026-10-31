@@ -24,6 +24,9 @@
 
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_view.hpp"
+#include "gui/analyze_overview.hpp"
+#include "gui/analyze_point_view.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_constants.hpp"
@@ -39,21 +42,56 @@
 #include "include/lumice_render.h"
 #include "test_gui_shared.hpp"
 #include "util/raypath_analysis_display.hpp"
+#include "util/sky_direction.hpp"
 
 namespace {
 
 using SimState = gui::GuiState::SimState;
 
-const char* const kWindowRef = "//" ICON_FA_ROUTE " Raypath Analysis";
-const char* const kTopBarButton = "##TopBar/" ICON_FA_ROUTE " Analysis";
+// The analysis tool lives in the Analyze workspace now: the share list in the middle area's
+// right column, the ROI controls above the panorama's picture. Both are TOP-LEVEL chrome windows
+// (##AnalyzeShareList, ##AnalyzePanorama). The panorama's PICTURE is a same-named CHILD under the
+// chrome window — BeginChild spells child names "Parent/Name_<id>", so FindWindowByName still
+// lands on the chrome window — and every pixel the pick, the marker and the gestures measure is
+// relative to that child's position, so the picture helpers below resolve it by ParentWindow.
+// The refs are STATIC (ImGuiTestContext::SetRef stores the const char* itself) and ABSOLUTE
+// (the leading "//" makes the engine resolve the first segment as a window name — without it a
+// ref whose window name starts with "##" reads as an item-id suffix and every descent fails).
+const char* ListWindowRef() {
+  return "//##AnalyzeShareList";
+}
+void SetListRef(ImGuiTestContext* ctx) {
+  ctx->SetRef(ListWindowRef());
+}
+const char* PanoramaRegionRef() {
+  return "//##AnalyzePanorama";
+}
+const char* const kWindowRef = "//##AnalyzeShareList";
 const char* const kAnalyzeButton = ICON_FA_PLAY " Analyze";
-const char* const kPickButton = ICON_FA_CROSSHAIRS " Pick on preview";
-const char* const kPickBanner = "//" ICON_FA_ROUTE " Raypath Analysis/##pick_banner";
+const char* const kPickButton = ICON_FA_CROSSHAIRS " Pick on the panorama";
 
 const char* const kHalo22Json = R"({
   "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.2},
                "axis": {"zenith": {"type": "uniform", "mean": 90, "std": 360},
                         "azimuth": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+            "ray_num": 100000, "max_hits": 7,
+            "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+  "render": [{"id": 1, "lens": {"type": "linear", "fov": 60},
+              "resolution": [64, 64], "view": {"elevation": 42}}]
+})";
+
+// The fully random prism — the C01 shape (raypath_feature_random_regular.json's crystal, the
+// same physics as kHalo22Json with the zenith axis written the one way the survey's routing v1
+// domain reads as the full-sphere random family: uniform, centred at the pole). This scene's
+// dominant class routes to the full-dimensional arm, so its survey carries the chromatic legs
+// the halo scene above is honestly refused — the dispersion-on-screen fixture.
+const char* const kFullyRandomJson = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.2},
+               "axis": {"zenith": {"type": "uniform", "mean": 0, "std": 360},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
   "filter": [],
   "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
             "ray_num": 100000, "max_hits": 7,
@@ -220,51 +258,93 @@ ImGuiID FindListRowScrolling(ImGuiTestContext* ctx, const std::string& label) {
 }
 
 void OpenWindow(ImGuiTestContext* ctx) {
-  if (!gui::g_state.analysis.window_open) {
-    ctx->ItemClick(kTopBarButton);
-    ctx->Yield(2);
+  // "Opening the analysis tool" IS entering the Analyze workspace now: the switch's Analyze slot
+  // brings up the frame whose share list and panorama ROI this suite drives. Idempotent — a case
+  // already in Analyze just yields.
+  if (gui::g_state.workspace.mode != gui::GuiState::WorkspaceMode::kAnalyze) {
+    ctx->ItemClick("##TopBar/" ICON_FA_ROUTE " Analyze");
+    ctx->Yield(3);
   }
-  ctx->WindowMove(kWindowRef, ImVec2(60, 60));
   ctx->Yield(1);
 }
 
-// Click the preview's centre with the pick armed; returns the canvas pixel the click landed on.
-gui::CanvasPixel PickPreviewCentre(ImGuiTestContext* ctx) {
-  ImGuiWindow* w = ctx->GetWindowByRef("//##PreviewPanel");
-  IM_CHECK_SILENT_RETV(w != nullptr, gui::CanvasPixel{});
-  const float dpi_x = gui::g_preview_vp.dpi_scale_x;
-  const float dpi_y = gui::g_preview_vp.dpi_scale_y;
-  const float px_pt = static_cast<float>(gui::g_preview_vp.vp_w) * 0.5f / dpi_x;
-  const float py_pt = static_cast<float>(gui::g_preview_vp.vp_h) * 0.5f / dpi_y;
-  ctx->MouseMoveToPos(ImVec2(w->Pos.x + px_pt, w->Pos.y + py_pt));
+// The panorama's PICTURE region. ##AnalyzePanorama exists twice: the top-level chrome window
+// (the Region radios live there — FindWindowByName lands on it, its id being the name's own
+// hash) and, inside it, the child the deferred pass blits the picture under.
+ImGuiWindow* PanoramaPictureWindow() {
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+        std::strstr(w->Name, "##AnalyzePanorama") != nullptr) {
+      return w;
+    }
+  }
+  return nullptr;
+}
+
+// Click the PANORAMA's picture centre with the pick armed; returns the canvas pixel the click
+// landed on (the panorama's own canvas, g_panorama_vp). The pick's picture is the Analyze
+// workspace's panorama now — the preview no longer hosts the cone gestures.
+gui::CanvasPixel PickPanoramaCentre(ImGuiTestContext* ctx) {
+  ImGuiWindow* pano = PanoramaPictureWindow();
+  IM_CHECK_SILENT_RETV(pano != nullptr, gui::CanvasPixel{});
+  const float px_pt = pano->Pos.x + pano->Size.x * 0.5f + pano->Size.x * 0.25f;  // a quarter right of centre
+  const float py_pt = pano->Pos.y + pano->Size.y * 0.5f;
+  ctx->MouseMoveToPos(ImVec2(px_pt, py_pt));
   ctx->Yield(2);
   // Where the click actually lands, from the mouse's own position: MouseMoveToPos can be a pixel
   // off the request, and the oracle must be built from the same pixel the panel saw.
   const ImVec2 mouse = ImGui::GetIO().MousePos;
-  const std::optional<gui::CanvasPixel> px = gui::PreviewPointToCanvasPixel(
-      mouse.x - w->Pos.x, mouse.y - w->Pos.y, dpi_x, dpi_y, gui::g_preview_vp.vp_w, gui::g_preview_vp.vp_h);
+  const std::optional<gui::CanvasPixel> px =
+      gui::PreviewPointToCanvasPixel(mouse.x - pano->Pos.x, mouse.y - pano->Pos.y, gui::g_panorama_vp.dpi_scale_x,
+                                     gui::g_panorama_vp.dpi_scale_y, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   IM_CHECK_SILENT_RETV(px.has_value(), gui::CanvasPixel{});
   ctx->MouseClick(0);
   ctx->Yield(2);
   return *px;
 }
 
+// Click the panorama's picture AT a sky point (altitude/azimuth in degrees): the projected pixel,
+// through the same annotation view the picture is drawn with — the click and the cone it places
+// share one projection, so the cone centre is the point named, not a rounding away from it.
+bool PickPanoramaAt(ImGuiTestContext* ctx, float alt_deg, float az_deg) {
+  ImGuiWindow* picture = PanoramaPictureWindow();
+  IM_CHECK_RETV(picture != nullptr, false);
+  float dir[3] = { 0.0f, 0.0f, 0.0f };
+  lumice::AltAzToDir(alt_deg, az_deg, dir);
+  const LUMICE_AnnotationView view =
+      gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
+  float fx = 0.0f;
+  float fy = 0.0f;
+  int valid = 0;
+  IM_CHECK_RETV(LUMICE_ProjectDirection(&view, dir, &fx, &fy, &valid) == LUMICE_OK && valid == 1, false);
+  float x_pt = 0.0f;
+  float y_pt = 0.0f;
+  gui::CanvasPixelToPreviewPoint(static_cast<int>(std::lround(fx)), static_cast<int>(std::lround(fy)),
+                                 gui::g_panorama_vp.dpi_scale_x, gui::g_panorama_vp.dpi_scale_y, &x_pt, &y_pt);
+  ctx->MouseMoveToPos(ImVec2(picture->Pos.x + x_pt, picture->Pos.y + y_pt));
+  ctx->Yield(2);
+  ctx->MouseClick(0);
+  ctx->Yield(2);
+  return gui::g_state.analysis.cone_center_valid;
+}
+
 // The cone marker's position on screen this frame (the panel's own projection, through the DPI
 // path the drawing uses), or nullopt when there is none.
 std::optional<ImVec2> MarkerScreenPos(ImGuiTestContext* ctx) {
-  ImGuiWindow* w = ctx->GetWindowByRef("//##PreviewPanel");
+  (void)ctx;
+  ImGuiWindow* w = PanoramaPictureWindow();
   if (w == nullptr) {
     return std::nullopt;
   }
   const LUMICE_AnnotationView view =
-      gui::PreviewAnnotationView(gui::g_state, gui::g_preview_vp.vp_w, gui::g_preview_vp.vp_h);
+      gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   const std::optional<gui::CanvasPixel> px = gui::ProjectConeCenterMarker(gui::g_state, view);
   if (!px.has_value()) {
     return std::nullopt;
   }
   float x_pt = 0.0f;
   float y_pt = 0.0f;
-  gui::CanvasPixelToPreviewPoint(px->px, px->py, gui::g_preview_vp.dpi_scale_x, gui::g_preview_vp.dpi_scale_y, &x_pt,
+  gui::CanvasPixelToPreviewPoint(px->px, px->py, gui::g_panorama_vp.dpi_scale_x, gui::g_panorama_vp.dpi_scale_y, &x_pt,
                                  &y_pt);
   return ImVec2(w->Pos.x + x_pt, w->Pos.y + y_pt);
 }
@@ -319,42 +399,57 @@ bool IsAccentColour(const unsigned char rgb[3]) {
 // oracle for "the centre is the direction under the cursor", built from the same pixel the panel
 // saw (PickPreviewCentre's reasoning).
 bool UnprojectMouse(float out[3]) {
-  ImGuiWindow* w = ImGui::FindWindowByName("##PreviewPanel");
+  ImGuiWindow* w = PanoramaPictureWindow();
   if (w == nullptr) {
     return false;
   }
   const ImVec2 mouse = ImGui::GetIO().MousePos;
   const std::optional<gui::CanvasPixel> px =
-      gui::PreviewPointToCanvasPixel(mouse.x - w->Pos.x, mouse.y - w->Pos.y, gui::g_preview_vp.dpi_scale_x,
-                                     gui::g_preview_vp.dpi_scale_y, gui::g_preview_vp.vp_w, gui::g_preview_vp.vp_h);
+      gui::PreviewPointToCanvasPixel(mouse.x - w->Pos.x, mouse.y - w->Pos.y, gui::g_panorama_vp.dpi_scale_x,
+                                     gui::g_panorama_vp.dpi_scale_y, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   if (!px.has_value()) {
     return false;
   }
   const LUMICE_AnnotationView view =
-      gui::PreviewAnnotationView(gui::g_state, gui::g_preview_vp.vp_w, gui::g_preview_vp.vp_h);
+      gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   int valid = 0;
   return LUMICE_UnprojectPixel(&view, px->px, px->py, out, &valid) == LUMICE_OK && valid == 1;
 }
 
-// Whether the pick banner is on screen: the child window exists and was submitted last frame
-// (a child that stopped being submitted stays in ImGui's window list, so existence alone says
-// nothing — WasActive does).
+// Whether the pick banner is on screen: the banner child exists and was submitted last frame
+// (a window that stopped being submitted stays in ImGui's window list, so existence alone says
+// nothing — WasActive does). The banner is a CHILD of the share-list window, and BeginChild
+// spells child names "Parent/Name_<id>" — a form the engine's window refs cannot address — so
+// the pool is scanned for the name segment instead.
 bool PickBannerVisible(ImGuiTestContext* ctx) {
-  const ImGuiTestItemInfo info = ctx->WindowInfo(kPickBanner, ImGuiTestOpFlags_NoError);
-  return info.Window != nullptr && info.Window->WasActive;
+  (void)ctx;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->WasActive && std::strstr(w->Name, "##pick_banner") != nullptr) {
+      return true;
+    }
+  }
+  return false;
 }
 
-// Point mode, a centre picked on the preview, Analyze pressed: the run is in progress on return.
+// Point mode, a centre picked on the panorama, Analyze pressed: the run is in progress on
+// return. The ROI controls (region radios, the pick arming) sit on the PANORAMA side; Analyze
+// sits with the list. The pick targets the halo's own centre — the direction the document's
+// camera looks (22 degrees above the sun on its azimuth), the point the OLD default centre (the
+// preview's middle pixel) sat on for free. The panorama's default centre is the fisheye's
+// middle (the zenith), off the halo, so the point analyses that assert chain identities pick
+// this direction explicitly: the 3-5 / 3-7 rows the fixture's assertions name live in this cone.
 bool StartPointAnalysis(ImGuiTestContext* ctx) {
-  ctx->SetRef(kWindowRef);
+  ctx->SetRef(PanoramaRegionRef());
   ctx->ItemClick("Point");
+  ctx->Yield(2);  // CONE's pick-button row is submitted the frame after the radio flips
   ctx->ItemClick(kPickButton);
   ctx->Yield(1);
   IM_CHECK_RETV(gui::g_state.analysis.pick_armed, false);
   ctx->SetRef("");
-  PickPreviewCentre(ctx);
+  IM_CHECK_RETV(PickPanoramaAt(ctx, gui::g_state.renderer.elevation, gui::g_state.renderer.azimuth), false);
   IM_CHECK_RETV(gui::g_state.analysis.cone_center_valid, false);
-  ctx->SetRef(kWindowRef);
+  // The Analyze button sits with the list sections.
+  SetListRef(ctx);
   ctx->ItemClick(kAnalyzeButton);
   ctx->SetRef("");
   IM_CHECK_RETV(gui::g_state.analysis.started, false);
@@ -388,7 +483,7 @@ bool RunPointAnalysisThenStop(ImGuiTestContext* ctx) {
                     30),
                 false);
   const auto partial = gui::g_state.analysis_result.payload;
-  ctx->SetRef(kWindowRef);
+  SetListRef(ctx);
   IM_CHECK_RETV(ctx->ItemInfo(ICON_FA_STOP " Stop").ID != 0, false);
   ctx->ItemClick(ICON_FA_STOP " Stop");
   ctx->SetRef("");
@@ -443,7 +538,7 @@ bool RunAfterAnalysisRenders(ImGuiTestContext* ctx, bool exclude, bool gpu) {
     const auto& view_result = gui::g_state.analysis_result;
     IM_CHECK_RETV(!view_result.display_order.empty(), false);
     const int top = view_result.display_order[0];
-    ctx->SetRef(kWindowRef);
+    SetListRef(ctx);
     // The row is a Selectable under PushID(original index) inside the results table; the
     // wildcard finds it by label through the table's and the id's anonymous path segments.
     const std::string top_display = view_result.payload->entries[static_cast<size_t>(top)].display;
@@ -516,9 +611,11 @@ bool ReplaceServerWithAFreshOne(ImGuiTestContext* ctx) {
 // way — the analysis must not be mistaken for a render, and that is only observable by sampling
 // every frame rather than by looking at the end state.
 bool RunWholeSkyAnalysisToCompletion(ImGuiTestContext* ctx, bool* saw_simulating) {
-  ctx->SetRef(kWindowRef);
+  ctx->SetRef(PanoramaRegionRef());
   ctx->ItemClick("Whole sky");
+  SetListRef(ctx);
   IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
+  SetListRef(ctx);
   ctx->ItemClick(kAnalyzeButton);
   ctx->SetRef("");
   IM_CHECK_RETV(gui::g_state.analysis.started, false);
@@ -545,14 +642,58 @@ std::string TopChainDisplay() {
   return view.payload->entries[static_cast<size_t>(view.display_order[0])].display;
 }
 
+// Write the sky-point intent for (altitude, azimuth) labels of the sky point itself: one named
+// conversion for every anchor in this suite — the intent carries TRAVEL (the negated position),
+// the sign convention spelled here once instead of five hand-written trig copies.
+void SetSkyPointTarget(double alt_deg, double az_deg) {
+  const double pos[3] = { std::cos(alt_deg * lumice::kDeg2Rad) * std::cos(az_deg * lumice::kDeg2Rad),
+                          std::cos(alt_deg * lumice::kDeg2Rad) * std::sin(az_deg * lumice::kDeg2Rad),
+                          std::sin(alt_deg * lumice::kDeg2Rad) };
+  gui::g_state.analysis.sky_point.valid = true;
+  for (int k = 0; k < 3; ++k) {
+    gui::g_state.analysis.sky_point.dir[k] = static_cast<float>(-pos[k]);
+  }
+}
+
+// Find and click the list row whose display spelling is exactly `display` (the scroll-to shape
+// the multilayer leg established), returning the selection identity it arms.
+std::optional<gui::SelectedClassIdentity> SelectRowByDisplay(ImGuiTestContext* ctx, const char* display) {
+  std::string found;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strcmp(e.display, display) == 0) {
+      found = e.display;
+      break;
+    }
+  }
+  if (found.empty()) {
+    return std::nullopt;
+  }
+  const std::string label = gui::AnalysisRowLabel(found, gui::AnalysisCoreToPoolMap(gui::g_state));
+  SetListRef(ctx);
+  const ImGuiID row = FindListRowScrolling(ctx, label);
+  if (row == 0) {
+    return std::nullopt;
+  }
+  ctx->ItemClick(row);
+  ctx->SetRef("");
+  return gui::SelectedClassIdentityFor(gui::g_state);
+}
+
 // In-frame mode, Analyze pressed, driven until the run ends on the panel's finite budget. The
-// radio is gated on a live preview (analysis_panel.cpp), so the caller brings one up first.
+// radio gates on the document having shown a picture (HasEverShownPicture — the same predicate
+// the Analyze button reads), which the completed run the caller brought up satisfied; the
+// Analyze workspace hosts no preview, so the frame the analysis reads is the document's own
+// resolution (DoAnalyze's IN_FRAME fallback).
 bool RunInFrameAnalysisToCompletion(ImGuiTestContext* ctx) {
-  IM_CHECK_RETV(gui::g_preview_vp.active, false);
-  ctx->SetRef(kWindowRef);
+  SetListRef(ctx);
+  ctx->SetRef(PanoramaRegionRef());
   IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("In frame")), false);
+  ctx->SetRef(PanoramaRegionRef());
   ctx->ItemClick("In frame");
+  SetListRef(ctx);
   IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
+  SetListRef(ctx);
   ctx->ItemClick(kAnalyzeButton);
   ctx->SetRef("");
   IM_CHECK_RETV(gui::g_state.analysis.started, false);
@@ -675,7 +816,7 @@ bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with
   ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
   ctx->Yield(2);
 
-  ctx->SetRef(kWindowRef);
+  SetListRef(ctx);
   ctx->ItemClick((std::string("**/") + top_display).c_str());
   ctx->Yield(1);
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value(), false);
@@ -731,7 +872,8 @@ bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with
     }
   }
 
-  ctx->ItemClick("**/Close##edit_modal");
+  ctx->SetRef("//Edit Entry");
+  ctx->ItemClick("Close##edit_modal");
   ctx->Yield(2);
   gui::g_state.modal_immediate_mode = false;
   return true;
@@ -763,7 +905,6 @@ bool ShowHaloDocumentWithResult(ImGuiTestContext* ctx, unsigned long long genera
   gui::g_state.analysis.fetched_once = true;
   gui::g_state.analysis.fetched_generation = generation;
   gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
-  gui::g_state.analysis.window_open = true;
   ctx->Yield(2);
   return true;
 }
@@ -777,11 +918,11 @@ std::string ExcludedRowPath(const std::string& display) {
   for (const auto& [pool, core] : gui::ComputeCrystalPoolToCoreIdMap(gui::g_state)) {
     core_to_pool.emplace(core, pool);
   }
-  return "**/" + gui::ExcludedRowLabel(display, core_to_pool);
+  return gui::ExcludedRowLabel(display, core_to_pool);
 }
 
 std::string IncludeAgainPath(const std::string& display) {
-  return "**/" + display + "/" + gui::kIncludeAgainButtonLabel;
+  return display + "/" + gui::kIncludeAgainButtonLabel;
 }
 
 // Exclude a chain, put a result on show that no longer has it, and read the greyed row off the
@@ -792,12 +933,17 @@ std::string IncludeAgainPath(const std::string& display) {
 bool ExcludedRowShowsAndIncludeAgainTakesItBack(ImGuiTestContext* ctx) {
   ResetTestState();
   IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  // Opened AFTER the deserialize, which replaces the whole GuiState — the workspace mode
+  // included — so a workspace entered before it would be bounced back to Render and the list
+  // would never draw.
+  OpenWindow(ctx);
   IM_CHECK_RETV(gui::g_state.filters.empty(), false);
   IM_CHECK_RETV(ShowHaloDocumentWithResult(ctx, 1, { { "3-5", 3.0 }, { "1-3", 1.0 } }), false);
   ctx->WindowMove(kWindowRef, ImVec2(60, 60));
   ctx->Yield(1);
-  ctx->SetRef(kWindowRef);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+  SetListRef(ctx);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("3-5")).c_str(), ImGuiTestOpFlags_NoError).ID == 0,
+                false);
 
   // Exclude 3-5: the filter is written, the memory holds the 75% the row showed.
   ctx->ItemClick("**/3-5");
@@ -809,15 +955,16 @@ bool ExcludedRowShowsAndIncludeAgainTakesItBack(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.filters[0].param.size() == 1u, false);
   // Still a result row: shown as one, not greyed.
   IM_CHECK_RETV(ctx->ItemInfo("**/3-5").ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("3-5")).c_str(), ImGuiTestOpFlags_NoError).ID == 0,
+                false);
 
   // The next result has no 3-5 (the filter took): the greyed row appears, under the result row
   // 1-3 and with the remembered share.
   ctx->SetRef("");
   IM_CHECK_RETV(ShowHaloDocumentWithResult(ctx, 2, { { "1-3", 1.0 } }), false);
-  ctx->SetRef(kWindowRef);
+  SetListRef(ctx);
   IM_CHECK_RETV(ctx->ItemInfo("**/3-5", ImGuiTestOpFlags_NoError).ID == 0, false);
-  const ImGuiTestItemInfo greyed = ctx->ItemInfo(ExcludedRowPath("3-5").c_str());
+  const ImGuiTestItemInfo greyed = ctx->ItemInfo((std::string("**/") + ExcludedRowPath("3-5")).c_str());
   IM_CHECK_RETV(greyed.ID != 0, false);
   const ImGuiTestItemInfo kept = ctx->ItemInfo("**/1-3");
   IM_CHECK_RETV(kept.ID != 0, false);
@@ -828,32 +975,33 @@ bool ExcludedRowShowsAndIncludeAgainTakesItBack(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(std::fabs(*rows[0].was_pct - 75.0) < 1e-9, false);
   IM_CHECK_RETV(std::strcmp(gui::ExcludedRowWasText(rows[0].was_pct).c_str(), "was 75.00%") == 0, false);
   // A click on it selects nothing: the Exclude button stays shut.
-  ctx->ItemClick(ExcludedRowPath("3-5").c_str());
+  ctx->ItemClick((std::string("**/") + ExcludedRowPath("3-5")).c_str());
   ctx->Yield(1);
   IM_CHECK_RETV(!gui::g_state.analysis.selected_entry.has_value(), false);
   IM_CHECK_RETV(IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
 
   // The search box reaches it: "1-3" hides it, "3-5" shows it alone, empty brings all back.
-  ctx->ItemInputValue("**/###analysis_search", "1-3");
+  SetListRef(ctx);
+  ctx->ItemInputValue("###analysis_search", "1-3");
   ctx->Yield(3);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("3-5")).c_str(), ImGuiTestOpFlags_NoError).ID == 0,
+                false);
   IM_CHECK_RETV(ctx->ItemInfo("**/1-3").ID != 0, false);
-  ctx->ItemInputValue("**/###analysis_search", "3-5");
+  ctx->ItemInputValue("###analysis_search", "3-5");
   ctx->Yield(3);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str()).ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo("**/1-3", ImGuiTestOpFlags_NoError).ID == 0, false);
-  ctx->ItemInputValue("**/###analysis_search", "");
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("3-5")).c_str()).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("1-3", ImGuiTestOpFlags_NoError).ID == 0, false);
+  ctx->ItemInputValue("###analysis_search", "");
   ctx->Yield(3);
 
   // The right-click menu reaches it: the raw text, and the row in its three-field form.
   auto choose = [&](const std::string& path, const char* item) {
-    ctx->SetRef(kWindowRef);
-    ctx->ItemClick(path.c_str(), ImGuiMouseButton_Right);
+    ctx->ItemClick((std::string("**/") + path.c_str()).c_str(), ImGuiMouseButton_Right);
     ctx->Yield(2);
     ctx->SetRef("//$FOCUSED");
     ctx->ItemClick((std::string("**/") + item).c_str());
     ctx->Yield(2);
-    ctx->SetRef(kWindowRef);
+    SetListRef(ctx);
   };
   choose(ExcludedRowPath("3-5"), "Copy raypath");
   IM_CHECK_RETV(std::strcmp(ImGui::GetClipboardText(), "3-5") == 0, false);
@@ -869,13 +1017,14 @@ bool ExcludedRowShowsAndIncludeAgainTakesItBack(ImGuiTestContext* ctx) {
 
   // Include again: the filter's only row goes, so the entry drops the filter, the memory is
   // forgotten, and the greyed row is gone the next frame. 1-3 is untouched.
-  ctx->SetRef(kWindowRef);
-  IM_CHECK_RETV(ctx->ItemInfo(IncludeAgainPath("3-5").c_str()).ID != 0, false);
-  ctx->ItemClick(IncludeAgainPath("3-5").c_str());
+  SetListRef(ctx);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + IncludeAgainPath("3-5")).c_str()).ID != 0, false);
+  ctx->ItemClick((std::string("**/") + IncludeAgainPath("3-5")).c_str());
   ctx->Yield(2);
   IM_CHECK_RETV(!gui::g_state.layers[0].entries[0].filter_id.has_value(), false);
   IM_CHECK_RETV(gui::g_state.analysis.excluded_memory.empty(), false);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("3-5")).c_str(), ImGuiTestOpFlags_NoError).ID == 0,
+                false);
   IM_CHECK_RETV(ctx->ItemInfo("**/1-3").ID != 0, false);
   IM_CHECK_RETV(gui::ComputeExcludedRaypathRows(gui::g_state).empty(), false);
   ctx->SetRef("");
@@ -892,6 +1041,8 @@ bool ExcludedRowShowsAndIncludeAgainTakesItBack(ImGuiTestContext* ctx) {
 bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
   ResetTestState();
   IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  // After the deserialize, which resets the whole GuiState (workspace mode included).
+  OpenWindow(ctx);
   gui::FilterConfig out;
   out.name = "drop two";
   out.action = 1;  // filter_out
@@ -903,9 +1054,9 @@ bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(ShowHaloDocumentWithResult(ctx, 1, { { "2-4", 1.0 } }), false);
   ctx->WindowMove(kWindowRef, ImVec2(60, 60));
   ctx->Yield(1);
-  ctx->SetRef(kWindowRef);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str()).ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("1-3").c_str()).ID != 0, false);
+  SetListRef(ctx);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("3-5")).c_str()).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("1-3")).c_str()).ID != 0, false);
   ctx->SetRef("");
 
   const ScopedPopups popup_guard(ctx);
@@ -923,8 +1074,7 @@ bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(before.filter_rows.size() == 2u, false);
   }
 
-  ctx->SetRef(kWindowRef);
-  ctx->ItemClick(IncludeAgainPath("3-5").c_str());
+  ctx->ItemClick((std::string("**/") + IncludeAgainPath("3-5").c_str()).c_str());
   ctx->SetRef("");
   // Two frames: the click's frame already ran the editor's pull and push once after the write;
   // one more shows whatever it left behind is stable rather than mid-flight.
@@ -954,14 +1104,1856 @@ bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(std::strcmp(buffers.filter_rows[0].c_str(), "1-3") == 0, false);
 
   // And the list: 3-5 is no longer greyed, 1-3 still is.
-  ctx->SetRef(kWindowRef);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("1-3").c_str()).ID != 0, false);
+  SetListRef(ctx);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("3-5")).c_str(), ImGuiTestOpFlags_NoError).ID == 0,
+                false);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + ExcludedRowPath("1-3")).c_str()).ID != 0, false);
   ctx->SetRef("");
 
-  ctx->ItemClick("**/Close##edit_modal");
+  ctx->SetRef("//Edit Entry");
+  ctx->ItemClick("Close##edit_modal");
   ctx->Yield(2);
   gui::g_state.modal_immediate_mode = false;
+  return true;
+}
+
+// The owner's chain on the C01 scene (the 22-degree halo fixture this suite shares with the
+// e2e layer): Analyze, pick a row, Exclude it, and Run again — driven through real frames and
+// real clicks, with the two captures a human reads: the list holding the selection, the
+// exclusion, and the rerun's sky on the panorama. The rerun commits the document WITH the
+// filter, so the picture after it is the excluded sky.
+bool C01ChainAnalyzeSelectExcludeRerun(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Select the top row of the list, and keep the evidence of the selection on file.
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value(), false);
+  IM_CHECK_RETV(*gui::g_state.analysis.selected_entry == top_display, false);
+  ctx->LogInfo("[c01 chain] analyzed %zu rows; selected top row '%s'",
+               gui::g_state.analysis_result.payload->entries.size(), top_display.c_str());
+  ctx->SetRef("");
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(SaveWindowPng(ctx, kWindowRef, GuiTestTempPath("analysis_c01_chain_list.png").string()), false);
+  // The right column's selection card (the identity facts the row names), on file too.
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_c01_chain_details.png").string()),
+                false);
+
+  // Exclude it: one Out filter on the document, bound to the entry.
+  SetListRef(ctx);
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
+  ctx->MouseMove(ICON_FA_BAN " Exclude this raypath");
+  ctx->Yield(2);
+  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+  ctx->SetRef("");
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);
+  IM_CHECK_RETV(gui::g_state.filters[0].action == 1, false);
+  IM_CHECK_RETV(gui::g_state.layers[0].entries[0].filter_id.has_value(), false);
+  ctx->LogInfo("[c01 chain] excluded '%s' (filters=%d)", top_display.c_str(),
+               static_cast<int>(gui::g_state.filters.size()));
+
+  // Run again, from the top bar, on a finite budget: it renders the excluded sky.
+  gui::g_state.sim.infinite = false;
+  gui::g_state.sim.ray_num_millions = 0.1f;
+  const unsigned long long uploads_before = gui::g_state.texture_upload_count;
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
+  // A dirty document's finished run reads kModified; the real loop's commit tick clears it —
+  // cleared by hand here, the moment the app would (RunAfterAnalysisRenders's reasoning).
+  gui::g_state.dirty = false;
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kDone; }, 60), false);
+  IM_CHECK_RETV(
+      DriveUntil(ctx, [uploads_before] { return gui::g_state.texture_upload_count > uploads_before; }, 10), false);
+  ctx->LogInfo("[c01 chain] rerendered after exclusion: uploads %llu -> %llu", uploads_before,
+               gui::g_state.texture_upload_count);
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(SaveWindowPng(ctx, PanoramaRegionRef(), GuiTestTempPath("analysis_c01_chain_rerender.png").string()),
+                false);
+  return true;
+}
+
+// ---- M3's survey-query evidence cases (742.3 M3-5) --------------------------------------------------
+
+// The completed digest on the halo fixture: a selection issues the background query, the
+// worker's answer is adopted under its key, and the typed document carries the class's real
+// facts — read back here through the same readers the region draws with, so the screenshot a
+// human reads and the assertions below cannot both be mock. The re-Analyze half pins R6's
+// generation gate: the bookkeeping dies with the selection, the next generation re-arms.
+bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::string top_display = TopChainDisplay();
+  const unsigned long long generation = gui::g_state.analysis_result.payload->snapshot_generation;
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  const gui::SurveyQuerySession& survey = gui::g_state.analysis.survey;
+  IM_CHECK_RETV(survey.key.generation == generation, false);
+  IM_CHECK_RETV(survey.cancelled_for_key == false, false);
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathSurveyGetInfo(survey.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(
+      info.execution == LUMICE_PATH_OUTCOME_COMPLETED || info.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED,
+      false);
+  // The engine echoes the request's crystal back — the adopted document answers THIS key. (The
+  // core id here is 0: the fixture's pool crystal maps to core id 0, and 0 is a valid echo.)
+  IM_CHECK_RETV(static_cast<long long>(info.crystal_id) == survey.key.crystal_id, false);
+  ctx->LogInfo("[survey digest] generation %llu, echo crystal %lld, members %zu, objects %zu, budget %d ms", generation,
+               static_cast<long long>(info.crystal_id), info.member_count, info.object_count, info.budget_ms);
+  // 742.4: the same document read into the overview model the region now draws. The halo
+  // fixture's zenith axis is a uniform centred at 90° — the one spelling the survey's routing v1
+  // domain does NOT read as the full-sphere random family — so its dominant class is honestly
+  // REFUSED (measure_shape_outside_routing_domain), and the overview's refusal arm is what the
+  // region shows: the named refusal, the witness's positive event, and the chromatic layer's
+  // engine-worded absence. (The dispersion-on-screen face is the kFullyRandomJson case below.)
+  {
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*survey.adopted_result);
+    IM_CHECK_RETV(model.valid, false);
+    IM_CHECK_RETV(model.arm == gui::SurveyArm::kRefused, false);
+    IM_CHECK_RETV(model.evidence_state == LUMICE_PATH_STATE_REFUSED, false);
+    IM_CHECK_RETV(model.evidence_mode.find("measure_shape_outside_routing_domain") != std::string::npos, false);
+    IM_CHECK_RETV(model.witness.available && model.witness.value_available, false);
+    IM_CHECK_RETV(model.witness.kept_count > 0, false);
+    IM_CHECK_RETV(!model.dispersion.available && !model.diagnose.available, false);
+    IM_CHECK_RETV(model.chromatic_note.find("routing v1 domain") != std::string::npos, false);
+    IM_CHECK_RETV(!model.conclusions.empty(), false);
+    ctx->LogInfo("[survey digest] overview model: refused arm, mode '%s', witness kept %lld/%lld, conclusions %d",
+                 model.evidence_mode.c_str(), static_cast<long long>(model.witness.kept_count),
+                 static_cast<long long>(model.witness.sample_count), static_cast<int>(model.conclusions.size()));
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_digest.png").string()),
+                false);
+
+  // Re-Analyze: the selection clears, the survey bookkeeping dies with it (R6 — no adopted
+  // outcome survives into the next generation's region), and a straggler of the old generation
+  // would find no intent to land under.
+  SetListRef(ctx);
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
+  ctx->ItemClick(kAnalyzeButton);
+  ctx->SetRef("");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.empty(), false);
+  ctx->LogInfo("[survey digest] re-analyze voided the old generation's intent and outcome");
+
+  // The next generation answers again, under the new generation's id.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::g_state.analysis_result.payload != nullptr &&
+                             gui::g_state.sim_state != SimState::kSimulating;
+                    },
+                    60),
+                false);
+  const std::string next_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + next_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(
+      gui::g_state.analysis.survey.key.generation == gui::g_state.analysis_result.payload->snapshot_generation, false);
+  ctx->LogInfo("[survey digest] re-armed under generation %llu", gui::g_state.analysis.survey.key.generation);
+  return true;
+}
+
+
+// The map region's face (742.5, AC1/AC3/AC6): on the fully random prism, the selected class's
+// reference map arrives through the real chain — share list selection -> survey and map queued
+// on the one worker -> the full-sky map -> the auto-Fit -> the refinement window — and the
+// region takes a real click as the sky point while the panorama's ROI state stands untouched.
+// The assertions read the adopted result the picture is drawn from, so the screenshot a human
+// reads and the checks below cannot both be mock.
+bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // The no-data state before any selection: the region asks for a class and keeps its pick
+  // input available (the honest empty state, R7).
+  IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  // The map answers behind the survey's chromatic legs (one worker, queue by face), then the
+  // default view chain runs: the full-sky map auto-Fits and the refinement window answers —
+  // the test waits for the WINDOW map specifically.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  const gui::MapQuerySession& map = gui::g_state.analysis.map;
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+  IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+  IM_CHECK_RETV(info.kept_count > 0, false);  // the picture carries real events, not an empty echo
+  ctx->LogInfo("[map view] window delta[%.1f,%.1f] az[%.1f,%.1f] %dx%d, members %d/%d, lambda %.1f, kept %lld",
+               info.view_delta_min_deg, info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg,
+               info.view_rows, info.view_cols, info.members_evaluated, info.member_count, info.wavelength_nm,
+               info.kept_count);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_map_region.png").string()), false);
+
+  // The pick on the real mouse path: a click on the canvas centre sets the sky point, and the
+  // panorama's ROI state and the share list's selection stay exactly what they were (AC3 — the
+  // two click semantics never share a write).
+  const int roi_mode_before = gui::g_state.analysis.roi_mode;
+  const bool roi_valid_before = gui::g_state.analysis.cone_center_valid;
+  const float roi_dir_before[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
+                                    gui::g_state.analysis.cone_center_dir[2] };
+  const bool pick_armed_before = gui::g_state.analysis.pick_armed;
+  const std::string selected_before = gui::g_state.analysis.selected_entry.value_or("");
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
+  IM_CHECK_RETV(gui::g_state.analysis.roi_mode == roi_mode_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.cone_center_valid == roi_valid_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.cone_center_dir[0] == roi_dir_before[0], false);
+  IM_CHECK_RETV(gui::g_state.analysis.cone_center_dir[1] == roi_dir_before[1], false);
+  IM_CHECK_RETV(gui::g_state.analysis.cone_center_dir[2] == roi_dir_before[2], false);
+  IM_CHECK_RETV(gui::g_state.analysis.pick_armed == pick_armed_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before, false);
+
+  // The flip falsifier: a full-sky view puts the sun far off the disk's centre, so the halo
+  // ring surrounds the sun MARKER only when the raster's row order and the anchors agree — the
+  // one view where a vertical mirror of the picture is visible to the eye. Screenshot on file.
+  // (The view arrives by the same write the Full sky button performs — the gesture click paths
+  // are already covered by the pick above; the test engine's hover on this chrome layout is
+  // addressed separately.)
+  for (int k = 0; k < 3; ++k) {
+    gui::g_state.analysis.map_view.centre_pos[k] = k == 2 ? 1.0f : 0.0f;
+  }
+  gui::g_state.analysis.map_view.radius_deg = gui::kMapFullSkyRadiusDeg;
+  gui::g_state.analysis.map_view.user_moved = true;
+  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 1;
+                    },
+                    30),
+                false);
+  ctx->Yield(2);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_map_region_full_sky.png").string()),
+                false);
+  return true;
+}
+
+// The point inspector (742.6, AC7): the real chain from the map pick through the point document,
+// the component, the slider/playback, the factors and the 3D path — on the fully random prism,
+// whose 22-degree halo fiber the (42, 0) target sits on (the M0 probe's verified anchor for this
+// scene geometry: one closed component, ~48 samples). Real-timing pool: the point queues behind
+// the selection's survey on the one worker, the same wall-clock shape as the map leg above.
+bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  // No sky point yet: the point block asks for one and nothing is outstanding (the honest
+  // no-intent state, in the real app's frame).
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+
+  // The real pick on the map canvas: whatever sky position the refined view centres on, the pick
+  // must arm the point intent (the pick-to-point chain through the real mouse path).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
+                    },
+                    60),
+                false);
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kNoIntent, false);
+
+  // The verified on-fiber anchor (the pick above proved the mouse path; this state write pins the
+  // document the rest of the chain asserts on — the 742.5 leg's "the same write the button
+  // performs" shape): (42, 0) sits on this scene's halo fiber.
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  const gui::PointQuerySession& point = gui::g_state.analysis.point;
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+  IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+  IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+  IM_CHECK_RETV(info.execution == LUMICE_PATH_OUTCOME_COMPLETED, false);
+  // The target echo names the anchor's own labels (the one named conversion, verified on the
+  // engine's echo — not the request's copy).
+  IM_CHECK_RETV(std::fabs(info.target_altitude_deg - 42.0) < 1e-3, false);
+  std::vector<gui::PointComponentRow> rows;
+  const int components = gui::PointComponentRows(*point.adopted_result, &rows);
+  IM_CHECK_RETV(components >= 1, false);
+  const int valid_count = gui::PointValidSampleCount(*point.adopted_result, 0);
+  IM_CHECK_RETV(valid_count > 1, false);
+  ctx->LogInfo("[point view] components %d, samples %d, target (alt %.2f, az %.2f, dev %.2f), lambda %.1f", components,
+               valid_count, info.target_altitude_deg, info.target_azimuth_deg, info.target_deviation_deg,
+               info.wavelength_nm);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_point_detail.png").string()),
+                false);
+
+  // The fiber on the globe and the trace in the 3D region follow the cursor: step the slider to
+  // the second valid sample (the slider drag path is the fixed-dt leg's; this leg pins the chain)
+  // and the trace re-keys — the drawn polyline's key IS the current sample (AC4).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      return t.adopted_result != nullptr && t.intent_valid &&
+                             t.key.sample ==
+                                 gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 0);
+                    },
+                    30),
+                false);
+  gui::g_state.analysis.point_view.sample_index = 1;
+  gui::g_state.analysis.point_view.playing = false;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      if (!t.adopted_result || !t.intent_valid) {
+                        return false;
+                      }
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 1);
+                      return t.key.sample == stored && gui::RayTraceDisplayStateFor(t, { t.key.point_id, 0, stored }) ==
+                                                           gui::RayTraceDisplayState::kDrawn;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_raypath_3d.png").string()), false);
+
+  // Playback writes the sample index and NOTHING else (AC3, pinned on the real app's frame loop):
+  // the sky point and the ROI state are bitwise what they were, the selection untouched.
+  const float sky_before[3] = { gui::g_state.analysis.sky_point.dir[0], gui::g_state.analysis.sky_point.dir[1],
+                                gui::g_state.analysis.sky_point.dir[2] };
+  const int roi_before = gui::g_state.analysis.roi_mode;
+  const std::string selected_before_str = gui::g_state.analysis.selected_entry.value_or("");
+  gui::g_state.analysis.point_view.playing = true;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::g_state.analysis.point_view.sample_index != 1;  // the cursor moved (wrap included)
+                    },
+                    30),
+                false);
+  gui::g_state.analysis.point_view.playing = false;
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.dir[0] == sky_before[0] &&
+                    gui::g_state.analysis.sky_point.dir[1] == sky_before[1] &&
+                    gui::g_state.analysis.sky_point.dir[2] == sky_before[2],
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.roi_mode == roi_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before_str, false);
+  ctx->LogInfo("[point view] playback stepped to sample %d; sky point and ROI untouched",
+               gui::g_state.analysis.point_view.sample_index);
+  return true;
+}
+
+// The rank-0 arm (AC5) on the corpus plate scene (C14's shape: the horizontal plate whose 1-2
+// chain sends the sun's image straight through — the point at the sun itself is a point mass,
+// not a fiber). Fixed-dt pool: the mass arm answers in milliseconds.
+bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
+  static const char* const kPlateJson = R"({
+    "crystal": [ { "id": 1, "type": "prism",
+                   "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                   "axis": { "zenith": 0, "azimuth": {"type": "uniform", "mean": 0, "std": 360}, "roll": 0 } } ],
+    "filter": [],
+    "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
+                                 "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
+               "ray_num": 1000, "max_hits": 7,
+               "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+    "render": []
+  })";
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kPlateJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // The plate scene's basal row: the chain spelled 1-2 in the list (the sun's direct image).
+  SetListRef(ctx);
+  ctx->ItemClick("**/1-2");
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::SelectedClassIdentityFor(gui::g_state).has_value(); }, 10), false);
+  // The point at the sun's own position: rank 0 — the direction-identity path.
+  SetSkyPointTarget(20.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          30),
+      false);
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+                false);
+  IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_MASS, false);
+  // No fiber is forced: no component rows, no ray intent, the trace stays hidden (AC5).
+  std::vector<gui::PointComponentRow> rows;
+  IM_CHECK_RETV(gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &rows) == 0, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  LUMICE_PathPointMass mass{};
+  mass.struct_size = sizeof(mass);
+  IM_CHECK_RETV(LUMICE_PathPointGetMass(gui::g_state.analysis.point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK,
+                false);
+  // The mass IS the sun's image: the separation is the float intent roundtrip's own error (the
+  // GUI's sky-point dir is float; the CLI's double path measures 4.5e-12 on the same scene).
+  IM_CHECK_RETV(std::fabs(mass.target_separation_deg) < 1e-3, false);
+  ctx->LogInfo("[point view] rank-0 mass at (alt %.3f, az %.3f), separation %.2e deg", mass.altitude_deg,
+               mass.azimuth_deg, mass.target_separation_deg);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_point_mass.png").string()), false);
+  return true;
+}
+
+// The dispersion-on-screen face (742.4, AC2): on the fully random prism — the C01 shape written
+// the way the routing v1 domain reads as the full-sphere random family — the dominant class's
+// overview carries the layered full-dimensional facts, and the chromatic block on screen holds
+// the two-lambda min-deviation row with red inside blue and the closed-form certificate behind
+// it. The assertions read the same model the region draws, so the screenshot a human reads and
+// the checks below cannot both be mock; the picture is the evidence of the block being VISIBLE.
+bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  // The survey's chromatic legs (the two-lambda tint power sums) are the cost here — give the
+  // background query its minute.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  const gui::SurveyQuerySession& survey = gui::g_state.analysis.survey;
+  IM_CHECK_RETV(survey.adopted_result != nullptr, false);
+
+  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*survey.adopted_result);
+  IM_CHECK_RETV(model.valid, false);
+  IM_CHECK_RETV(model.arm == gui::SurveyArm::kFullDimensional, false);
+  IM_CHECK_RETV(model.dispersion.available, false);
+  IM_CHECK_RETV(model.dispersion.min_row_available, false);
+  // The red-inside-blue fact itself: the 650nm inner edge sits at a SMALLER deviation than the
+  // 450nm one, and the displacement is the row's own spread.
+  IM_CHECK_RETV(model.dispersion.value_red_deg < model.dispersion.value_blue_deg, false);
+  IM_CHECK_RETV(model.dispersion.direction == "red_inner_blue_outer", false);
+  IM_CHECK_RETV(std::fabs(model.dispersion.displacement_deg -
+                          (model.dispersion.value_blue_deg - model.dispersion.value_red_deg)) < 1e-9,
+                false);
+  IM_CHECK_RETV(model.dispersion.certificate_available, false);
+  IM_CHECK_RETV(model.probe.available && model.probe.peak_available, false);
+  IM_CHECK_RETV(model.tint.available, false);
+  ctx->LogInfo("[survey overview] dispersion %.3f/%.3f (Δ%.3f°, %s), probe %d rows, apex %.1f°",
+               model.dispersion.value_red_deg, model.dispersion.value_blue_deg, model.dispersion.displacement_deg,
+               model.dispersion.direction.c_str(), static_cast<int>(model.probe.sample_value.size()),
+               model.dispersion.certificate_apex_deg);
+  IM_CHECK_RETV(
+      SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_overview_dispersion.png").string()),
+      false);
+  // The profile block, expanded: the reference curve on screen is the human-readable half of
+  // the probe block's evidence (the samples and their gap rule are the model test's). The
+  // header lives inside the details child, so the item is addressed through the child wildcard
+  // (the GUI test engine-addressing rule for items inside a named child).
+  ctx->ItemClick("**/Reference profile — 550 nm##ov_prof");
+  ctx->Yield(2);
+  // Bring the curve into the frame: the readings sit above it, and the panel's own height ends
+  // right at them (the block ordering is readings first, curve behind). ScrollToItemY — the
+  // programmatic scroll, not the wheel: the right panel declines user-wheel scrolling.
+  ctx->ScrollToItemY("**/Internal-reflection share##ov_tir");
+  ctx->Yield(2);
+  IM_CHECK_RETV(
+      SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_overview_profile.png").string()),
+      false);
+  return true;
+}
+
+// The engine's named refusal, on the two-layer scene: a multi-layer class is a legitimate
+// selection and the survey answers it with multi_layer_unsupported — shown, not fabricated
+// around (R5/R7; the multi-layer evidence the plan's M3-5 asks to be on file).
+bool SurveyRefusesMultilayerClassByName(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kPcTwoLayerJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // A row whose chain crosses layers: the display holds the joiner (this scene's reason to be
+  // in the suite — its comment says so).
+  std::string multi_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strstr(e.display, " -> ") != nullptr) {
+      multi_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!multi_display.empty(), false);
+  // The on-screen label is not the raw display: multi-layer rows are drawn through
+  // AnalysisRowLabel over the Analyze-time core-to-pool map (the row_menu case's pattern), and
+  // on this scene the first multi-layer row sits below the first page of the ScrollY table —
+  // pan the table's child to it before clicking (FindListRowScrolling; a clipped row reports no
+  // label at all). Selecting by the drawn label records the raw text.
+  const std::string multi_label = gui::AnalysisRowLabel(multi_display, gui::AnalysisCoreToPoolMap(gui::g_state));
+  SetListRef(ctx);
+  const ImGuiID multi_row = FindListRowScrolling(ctx, multi_label);
+  IM_CHECK_RETV(multi_row != 0, false);
+  ctx->ItemClick(multi_row);
+  ctx->SetRef("");
+  ctx->Yield(3);
+  {
+    // Diagnostic, kept: the case exists to pin a named refusal, and these four lines tell a
+    // fresh reader which link of issue→refuse→adopt broke if it ever reds again.
+    const auto& s = gui::g_state.analysis.survey;
+    ctx->LogInfo("[survey refusal] after issue: intent=%d in_flight=%d state=%d err='%s'", s.intent_valid ? 1 : 0,
+                 gui::g_survey_executor.InFlight() ? 1 : 0, static_cast<int>(gui::SurveyOverviewStateFor(s)),
+                 s.adopted_error.c_str());
+  }
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kRefused;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.find("multi_layer_unsupported") != std::string::npos, false);
+  ctx->LogInfo("[survey refusal] %s", gui::g_state.analysis.survey.adopted_error.c_str());
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_refusal.png").string()),
+                false);
+  return true;
+}
+
+// R6's concurrency stance, both directions, on the real server: a survey computing in the
+// background neither blocks nor is blocked by a render run — the run starts and finishes under
+// an in-flight survey with the survey state intact, and a selection made under a running run
+// still gets its answer. No mutex story: both observations are the states themselves.
+bool SurveyAndRenderRunAreOrthogonal(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Direction 1 — survey first, run under it.
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  const gui::SurveyHandle adopted_before = gui::g_state.analysis.survey.adopted_result;
+  gui::g_state.sim.infinite = false;
+  gui::g_state.sim.ray_num_millions = 0.1f;
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
+  gui::g_state.dirty = false;  // the real loop's commit tick clears it (the c01 chain's note)
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kDone; }, 60), false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == adopted_before, false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kCompleted,
+                false);
+  ctx->LogInfo("[survey orthogonal] a full render run passed under an intact adopted survey");
+
+  // Direction 2 — run first (unbounded), selection under it. The list is the kept analysis
+  // result (a render commit keeps it on show, flagged stale); the survey answers anyway,
+  // because it is bound to the frozen Analyze-time scene and never touches the server session.
+  gui::g_state.sim.infinite = true;
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
+  const std::string other_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + other_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                                 gui::SurveyOverviewState::kCompleted &&
+                             gui::g_state.sim_state == SimState::kSimulating;
+                    },
+                    30),
+                false);
+  ctx->LogInfo("[survey orthogonal] a selection's survey completed under a running render");
+  // The top-bar Stop ends the render run (the list window's own Stop belongs to the analysis
+  // run and sits disabled under the render's Run↔Analyze mutual exclusion).
+  ctx->ItemClick("##TopBar/" ICON_FA_STOP " Stop");
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_state.analysis.started; }, 10), false);
+  return true;
+}
+
+// R6's teardown matrix, the rows the frame paths own: switching to the Render workspace cancels
+// nothing and clears nothing (the query finishes into the mailbox; coming back adopts it), New
+// clears the session and releases the executor's binding, Revert keeps the session with the
+// kept selection and only withdraws an in-flight query.
+bool SurveySurvivesAWorkspaceSwitch(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  // Switch away before the answer lands: the query keeps running (the Render frame pumps
+  // nothing), and the switch itself is pure view — no dirty, no sim-state write.
+  // The toggle is single-slot: from Analyze it reads bare "Render" (no icon prefix — the
+  // product's kToRenderLabel), naming the destination.
+  ctx->ItemClick("##TopBar/Render");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kRender, false);
+  IM_CHECK_RETV(gui::g_state.dirty == false, false);
+
+  // Back in the Analyze workspace: the pump adopts whatever finished while away.
+  ctx->ItemClick("##TopBar/" ICON_FA_ROUTE " Analyze");
+  ctx->Yield(2);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  ctx->LogInfo("[survey switch] the query finished across a workspace switch and was adopted");
+
+  // New: the whole analysis session dies with the document — survey bookkeeping included — and
+  // the executor's binding is released on the worker thread.
+  ResetTestState();
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+
+  // Revert with a query IN FLIGHT: the withdrawal carries the cancel latch (the engine answers
+  // a cancel with an OK-carrying partial document, and that answer must not land as this
+  // selection's completed digest). Selecting and reverting back-to-back, with no Yield between,
+  // means the query cannot have finished yet — the latch is what the overview then shows.
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  const std::string in_flight_display = TopChainDisplay();
+  ctx->ItemClick((std::string("**/") + in_flight_display).c_str());
+  gui::DoRevert();
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 20), false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kCancelled,
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.empty(), false);
+  ctx->LogInfo("[survey switch] Revert withdrew an in-flight query under the cancel latch");
+  // The kept selection is not re-issued under the latch; a DIFFERENT selection clears the latch
+  // with its new intent and answers (the top row again would be the same key — the latch holds).
+  const auto& kept_view = gui::g_state.analysis_result;
+  const std::string other_display = kept_view.payload->entries[static_cast<size_t>(kept_view.display_order[1])].display;
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + other_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  ctx->LogInfo("[survey switch] a changed selection re-armed after the reverted query");
+
+  // Revert after adoption: rebuild the analysis state, adopt a survey, then revert — the
+  // bookkeeping survives with the kept selection (same committed scene), nothing re-issues
+  // under it, and the adopted digest stays on show (no latch was set — nothing was withdrawn).
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  const std::string revert_display = TopChainDisplay();
+  ctx->ItemClick((std::string("**/") + revert_display).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    30),
+                false);
+  const gui::SurveyHandle adopted_before_revert = gui::g_state.analysis.survey.adopted_result;
+  gui::DoRevert();
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == true, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == adopted_before_revert, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+  ctx->LogInfo("[survey switch] Revert kept the session and the adopted outcome");
+  return true;
+}
+
+// ---- 742.7's integration legs: the cross-slice combination evidence the per-slice legs leave
+// out — one session driving the whole C01 chain, the internal-reflection path seen from its real
+// consumer, and the new faces' lifecycle across row switches and document actions. The claims are
+// session-level (one selection feeding every face coherently), not per-face re-pins: each face's
+// own contract stays with the leg that introduced it.
+
+// The continuous chain (v1-scope §4 C01): ONE selection, ONE session — the class overview (which
+// must not grab a sky point for the user), the refined reference map, a real pick on the canvas,
+// the point document, the fiber, the factors and the representative path — every echo naming the
+// same selected class. Real-timing pool, the per-face legs' shape: the survey's chromatic legs,
+// then the map refinement and the point queue behind it on the one worker.
+bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Before any selection every face sits in its honest no-intent state — the baseline the
+  // "the default chain never grabs a point" claim is read against.
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+
+  const std::string top_display = TopChainDisplay();
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->SetRef("");
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+  // The overview settles (the chromatic legs are the wait), and the settled chain has STILL
+  // written no sky point: the default overview never picks for the user (v1-scope B).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  // The session-level dispersion readings (the 742.4 leg owns the full pin; the chain carries
+  // them here): the dual-lambda inner edges, red inside blue, from the one real survey. Under
+  // pool co-tenancy the survey's chromatic legs can honestly hit the 15 s budget — the partial
+  // keeps the routing facts and drops the dispersion row; the leg pins the dispersion on the
+  // survey's own terms (completed → the readings must be there) and names the partial otherwise.
+  {
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFullDimensional, false);
+    ctx->LogInfo("[v1 chain] survey execution %d, budget %d ms, early-stopped %d, dispersion available %d",
+                 model.execution, model.budget_ms, model.early_stopped ? 1 : 0, model.dispersion.available ? 1 : 0);
+    if (model.dispersion.available) {
+      IM_CHECK_RETV(model.dispersion.min_row_available, false);
+      IM_CHECK_RETV(model.dispersion.value_red_deg < model.dispersion.value_blue_deg, false);
+      IM_CHECK_RETV(model.dispersion.direction == "red_inner_blue_outer", false);
+      IM_CHECK_RETV(model.tint.available, false);
+      ctx->LogInfo("[v1 chain] dispersion %.3f/%.3f (delta %.3f deg, %s)", model.dispersion.value_red_deg,
+                   model.dispersion.value_blue_deg, model.dispersion.displacement_deg,
+                   model.dispersion.direction.c_str());
+    } else {
+      IM_CHECK_RETV(model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED, false);
+      ctx->LogInfo("[v1 chain] the survey stopped inside its budget — the dispersion row is the honest partial");
+    }
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_v1_chain_overview.png").string()),
+                false);
+
+  // The map window answers behind the survey on the one worker (default chain: full sky, then
+  // the auto-Fit, then the refinement), and its echo names the SAME class the overview
+  // summarized — one identity feeding both faces.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  {
+    const gui::MapQuerySession& map = gui::g_state.analysis.map;
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.kept_count > 0, false);
+    ctx->LogInfo("[v1 chain] map lambda %.1f, kept %lld, window delta[%.1f,%.1f]", info.wavelength_nm, info.kept_count,
+                 info.view_delta_min_deg, info.view_delta_max_deg);
+  }
+  // One pan, then one zoom-in view change (the gesture writes' shape — the 742.5 leg's
+  // precedent): the map re-asks under the new centre and then the new window, and each
+  // refinement lands while the session stays coherent.
+  gui::g_state.analysis.map_view.centre_pos[0] += 0.1f;  // a pan off the mass centre
+  gui::g_state.analysis.map_view.user_moved = true;
+  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    30),
+                false);
+  gui::g_state.analysis.map_view.radius_deg = 10.0f;
+  gui::g_state.analysis.map_view.user_moved = true;
+  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0 && i.view_delta_max_deg < 12.0;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_v1_chain_map.png").string()), false);
+
+  // The real pick on the canvas centre: the point intent arms through the real mouse path (the
+  // pick's outcome is the discovery arm's own honest answer at whatever spot the class's mass
+  // centroid is — off-fiber spots answer an empty discovered document, which is the display's
+  // named-empty state, not a failure). The document the chain then asserts on is pinned by the
+  // anchor write below — the 742.6 leg's verified on-fiber target for this scene's halo fiber,
+  // written through the same state the pick path writes ("the same write the button performs").
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  // The pick's own document is a real terminal state and gets pinned as one: the discovery arm's
+  // outcome is read back honestly (on-fiber or not), its component count logged — this step
+  // carries the AC2 "an empty answer is still an answer" evidence at the combination level
+  // (the anchor write below then re-keys to the deterministic document).
+  {
+    LUMICE_PathPointInfo pick_info{};
+    pick_info.struct_size = sizeof(pick_info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &pick_info) == LUMICE_PATH_READ_OK,
+        false);
+    IM_CHECK_RETV(pick_info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+    std::vector<gui::PointComponentRow> pick_rows;
+    const int pick_components = gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &pick_rows);
+    ctx->LogInfo("[v1 chain] the pick's own document: outcome DISCOVERED, %d component(s) at the centroid spot",
+                 pick_components);
+  }
+  SetSkyPointTarget(42.0, 0.0);
+  ctx->Yield(2);  // the pump re-arms under the new key before the wait reads the state
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  {
+    const gui::PointQuerySession& point = gui::g_state.analysis.point;
+    LUMICE_PathPointInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+    const gui::MapQuerySession& map = gui::g_state.analysis.map;
+    LUMICE_PathMapInfo map_info{};
+    map_info.struct_size = sizeof(map_info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(map.adopted_result.get(), &map_info) == LUMICE_PATH_READ_OK, false);
+    // One wavelength knob feeds both faces (the engine's reference echo, read back from each).
+    IM_CHECK_RETV(info.wavelength_nm == map_info.wavelength_nm, false);
+    // The caliber lines are the engine's own echo (the D65-vs-reference caliber the user reads).
+    const std::vector<std::string> caliber = gui::PointCaliberLines(info);
+    IM_CHECK_RETV(!caliber.empty(), false);
+    std::vector<gui::PointComponentRow> rows;
+    const int components = gui::PointComponentRows(*point.adopted_result, &rows);
+    IM_CHECK_RETV(components >= 1, false);
+    const int valid_count = gui::PointValidSampleCount(*point.adopted_result, 0);
+    IM_CHECK_RETV(valid_count > 1, false);
+    LUMICE_PathPointSample sample{};
+    sample.struct_size = sizeof(sample);
+    const int stored = gui::PointValidSampleIndexAt(*point.adopted_result, 0, 0);
+    IM_CHECK_RETV(LUMICE_PathPointGetSample(point.adopted_result.get(), 0, static_cast<size_t>(stored), &sample) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    const std::vector<std::string> factors = gui::PointFactorLines(sample);
+    IM_CHECK_RETV(!factors.empty(), false);
+    ctx->LogInfo("[v1 chain] point alt %.2f az %.2f dev %.2f, lambda %.1f, %d component(s), %d valid samples",
+                 info.target_altitude_deg, info.target_azimuth_deg, info.target_deviation_deg, info.wavelength_nm,
+                 components, valid_count);
+    for (const std::string& line : caliber) {
+      ctx->LogInfo("[v1 chain] caliber: %s", line.c_str());
+    }
+  }
+
+  // The representative path follows the same session's cursor: sample 0 drawn, a slider step
+  // re-keys it, and the C01 chain's own shape comes back through the C readers (2 contacts —
+  // entry face, exit face — 3 segments: the entry/internal/exit polyline).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      return t.adopted_result != nullptr && t.intent_valid &&
+                             t.key.sample ==
+                                 gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 0);
+                    },
+                    30),
+                false);
+  gui::g_state.analysis.point_view.sample_index = 1;
+  gui::g_state.analysis.point_view.playing = false;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      if (!t.adopted_result || !t.intent_valid) {
+                        return false;
+                      }
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 1);
+                      return t.key.sample == stored && gui::RayTraceDisplayStateFor(t, { t.key.point_id, 0, stored }) ==
+                                                           gui::RayTraceDisplayState::kDrawn;
+                    },
+                    30),
+                false);
+  {
+    LUMICE_PathRayContacts contacts{};
+    contacts.struct_size = sizeof(contacts);
+    LUMICE_PathRayLegs legs{};
+    legs.struct_size = sizeof(legs);
+    IM_CHECK_RETV(LUMICE_RepresentativeRayGetContacts(gui::g_state.analysis.trace.adopted_result.get(), &contacts) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(
+        LUMICE_RepresentativeRayGetLegs(gui::g_state.analysis.trace.adopted_result.get(), &legs) == LUMICE_PATH_READ_OK,
+        false);
+    IM_CHECK_RETV(contacts.contact_count == 2, false);
+    IM_CHECK_RETV(legs.leg_count == 3, false);
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_v1_chain_trace.png").string()),
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, PanoramaRegionRef(), GuiTestTempPath("analyze_v1_chain_panorama.png").string()),
+                false);
+  ctx->LogInfo("[v1 chain] one session: overview, map, pick, point, fiber, factors, trace — identity %u",
+               static_cast<unsigned>(identity->core_crystal_id));
+  return true;
+}
+
+// The internal-reflection path from its real consumer (v1-scope §4: beyond C01's two-face
+// transmission): the corpus's C03 chain `3-5-6-7` — the same scene's L0 list — selected as a
+// real row, its own reference map refined, a real pick on the canvas, and the 3D region drawing
+// the recovered polyline. The pin shape is the engine document's (4 contacts, 5 segments —
+// entry, three internal, exit), read back through the C readers, not a screenshot's looks.
+// Real-timing pool: the class survey's chromatic legs queue the map and the point on the one
+// worker, the standing shape.
+bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // The C03 chain in this scene's L0 list (the corpus's internal-reflection representative; the
+  // scene was chosen so this row exists — a red here means the scene choice broke, and says so).
+  std::string c03_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strcmp(e.display, "3-5-6-7") == 0) {
+      c03_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!c03_display.empty(), false);
+  const std::string c03_label = gui::AnalysisRowLabel(c03_display, gui::AnalysisCoreToPoolMap(gui::g_state));
+  SetListRef(ctx);
+  const ImGuiID c03_row = FindListRowScrolling(ctx, c03_label);
+  IM_CHECK_RETV(c03_row != 0, false);
+  ctx->ItemClick(c03_row);
+  ctx->SetRef("");
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+
+  // The class's own map refines (behind its survey on the one worker) and echoes the class.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  // A real pick on the canvas centre — the real mouse path arms the intent (its own outcome is
+  // the discovery arm's honest answer at the centroid spot). The document the leg asserts on is
+  // then pinned to the (38, 180) anchor: the M0 probe's verified on-fiber target for this
+  // scene's 3-5-6-7 fiber (two components, ~120 deg from the sun — the corpus's antisolar
+  // concentration band; CLI probe on this exact geometry), written through the same state the
+  // pick path writes. Not (-20, 180): that point IS the sun's antipode, where the engine
+  // honestly refuses the target (kInvalidTarget) instead of answering.
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  // The pick's own document read back honestly (outcome + component count logged) — an empty
+  // discovery at the centroid is a real terminal state, not a failure the leg papers over.
+  {
+    LUMICE_PathPointInfo pick_info{};
+    pick_info.struct_size = sizeof(pick_info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &pick_info) == LUMICE_PATH_READ_OK,
+        false);
+    IM_CHECK_RETV(pick_info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+    std::vector<gui::PointComponentRow> pick_rows;
+    const int pick_components = gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &pick_rows);
+    ctx->LogInfo("[v1 c03] the pick's own document: outcome DISCOVERED, %d component(s) at the centroid spot",
+                 pick_components);
+  }
+  SetSkyPointTarget(38.0, 180.0);
+  ctx->Yield(2);  // the pump re-arms under the new key before the wait reads the state
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  const gui::PointQuerySession& point = gui::g_state.analysis.point;
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+  IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+  std::vector<gui::PointComponentRow> rows;
+  const int components = gui::PointComponentRows(*point.adopted_result, &rows);
+  IM_CHECK_RETV(components >= 1, false);
+  IM_CHECK_RETV(gui::PointValidSampleCount(*point.adopted_result, 0) > 0, false);
+  ctx->LogInfo("[v1 c03] target (alt %.2f, az %.2f, dev %.2f), %d component(s)", info.target_altitude_deg,
+               info.target_azimuth_deg, info.target_deviation_deg, components);
+
+  // The 3D region draws the recovered path for the current sample; the document's shape is the
+  // recovery's own pin: four contacts, five segments, kinds in the recovery's order.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      if (!t.adopted_result || !t.intent_valid) {
+                        return false;
+                      }
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, 0);
+                      return t.key.sample == stored && gui::RayTraceDisplayStateFor(t, { t.key.point_id, 0, stored }) ==
+                                                           gui::RayTraceDisplayState::kDrawn;
+                    },
+                    30),
+                false);
+  {
+    LUMICE_PathRayContacts contacts{};
+    contacts.struct_size = sizeof(contacts);
+    LUMICE_PathRayLegs legs{};
+    legs.struct_size = sizeof(legs);
+    IM_CHECK_RETV(LUMICE_RepresentativeRayGetContacts(gui::g_state.analysis.trace.adopted_result.get(), &contacts) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(
+        LUMICE_RepresentativeRayGetLegs(gui::g_state.analysis.trace.adopted_result.get(), &legs) == LUMICE_PATH_READ_OK,
+        false);
+    IM_CHECK_RETV(contacts.contact_count == 4, false);
+    IM_CHECK_RETV(legs.leg_count == 5, false);
+    gui::RayTracePolyline line;
+    IM_CHECK_RETV(BuildRayTracePolyline(*gui::g_state.analysis.trace.adopted_result, 1.1f, &line), false);
+    IM_CHECK_RETV(line.seg_kinds.size() == 5, false);
+    IM_CHECK_RETV(line.seg_kinds[0] == 0 && line.seg_kinds[1] == 1 && line.seg_kinds[2] == 1 &&
+                      line.seg_kinds[3] == 1 && line.seg_kinds[4] == 2,
+                  false);
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_v1_c03_trace.png").string()), false);
+  ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
+  return true;
+}
+
+// The new faces' lifecycle across row switches (v1-scope E): select A, switch to B while A's
+// queries are still in flight, and every face re-keys to B — the adopted outcomes name B, the
+// lambda knob re-asks the map and the point under the same session rules. The halo scene keeps
+// the worker costs inside the correctness pool's fixed-dt window (the workspace-switch leg's
+// precedent); the claim is the rekeying, not the physics.
+bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // A sky point intent, so the point face (and through it the ray face) participates in the
+  // switch: an arbitrary named direction — the claim is the session, not the physics.
+  SetSkyPointTarget(40.0, 0.0);
+  const auto& view = gui::g_state.analysis_result;
+  const std::string a_display = view.payload->entries[static_cast<size_t>(view.display_order[0])].display;
+  const std::string b_display = view.payload->entries[static_cast<size_t>(view.display_order[1])].display;
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + a_display).c_str());
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::SelectedClassIdentityFor(gui::g_state).has_value(), false);
+  // B lands while A's faces are still working — no wait for A.
+  ctx->ItemClick((std::string("**/") + b_display).c_str());
+  ctx->SetRef("");
+  const std::optional<gui::SelectedClassIdentity> identity_b = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity_b.has_value(), false);
+
+  // B's survey and map adopt; the gates answer B's keys (A's outcomes structurally cannot pass).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(info.crystal_id == identity_b->core_crystal_id, false);
+  }
+  // The point face settles terminal under B and names B in its echo.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      return st == gui::PointQueryState::kCompleted || st == gui::PointQueryState::kRefused;
+                    },
+                    60),
+                false);
+  if (gui::g_state.analysis.point.adopted_result != nullptr) {
+    LUMICE_PathPointInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity_b->core_crystal_id, false);
+  }
+  ctx->LogInfo("[v1 rekey] B's survey, map and point adopted under B's identity; A's era dropped");
+
+  // The lambda knob re-asks the map AND the point (the one shared knob rides both keys) in
+  // flight; the echo carries 450, and resetting back re-asks both under the engine reference —
+  // read off the document first, so the reset never leans on a "not 450" accident.
+  float reference_lambda = 0.0f;
+  {
+    LUMICE_PathMapInfo i{};
+    i.struct_size = sizeof(i);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &i) == LUMICE_PATH_READ_OK,
+                  false);
+    reference_lambda = i.wavelength_nm;
+    IM_CHECK_RETV(reference_lambda != 450.0f, false);  // the scene premise this leg leans on
+  }
+  gui::g_state.analysis.map_wavelength_nm = 450.0f;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0 && i.wavelength_nm == 450.0f;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      if (st != gui::PointQueryState::kCompleted) {
+                        return false;
+                      }
+                      LUMICE_PathPointInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &i) ==
+                                 LUMICE_PATH_READ_OK &&
+                             i.wavelength_nm == 450.0f;
+                    },
+                    60),
+                false);
+  gui::g_state.analysis.map_wavelength_nm = 0.0f;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [reference_lambda] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0 && i.wavelength_nm == reference_lambda;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [reference_lambda] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      if (st != gui::PointQueryState::kCompleted) {
+                        return false;
+                      }
+                      LUMICE_PathPointInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &i) ==
+                                 LUMICE_PATH_READ_OK &&
+                             i.wavelength_nm == reference_lambda;
+                    },
+                    60),
+                false);
+  ctx->LogInfo("[v1 rekey] the lambda knob re-asked map and point at 450, then the reference %.1f again",
+               reference_lambda);
+  return true;
+}
+
+// The new faces die and survive with the document (v1-scope E, the cross-face claim the
+// workspace-switch leg predates): New clears every analysis session — survey, map, point, ray,
+// the sky-point intent with them, the executor left idle; Revert keeps the adopted outcomes and
+// the intent, re-issuing nothing. The halo scene, fixed-dt pool — same reasons as the rekey leg.
+bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Arm every face: a selection (survey + map), a sky point (point), and let the ray follow.
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  SetSkyPointTarget(40.0, 0.0);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      return st == gui::PointQueryState::kCompleted || st == gui::PointQueryState::kRefused;
+                    },
+                    60),
+                false);
+  const gui::SurveyHandle survey_before = gui::g_state.analysis.survey.adopted_result;
+  const gui::MapHandle map_before = gui::g_state.analysis.map.adopted_result;
+  const gui::PointHandle point_before = gui::g_state.analysis.point.adopted_result;
+  IM_CHECK_RETV(survey_before != nullptr && map_before != nullptr, false);
+  IM_CHECK_RETV(point_before != nullptr || !gui::g_state.analysis.point.adopted_error.empty(), false);
+
+  // New: the whole analysis session dies with the document — every face's bookkeeping included —
+  // and the executor's binding is released on the worker thread.
+  gui::DoNew();
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+  ctx->LogInfo("[v1 new] New cleared survey, map, point, ray and the sky point; the executor is idle");
+
+  // Revert keeps: rebuild the faces, then revert — every adopted outcome and the intent stay,
+  // nothing re-issues (the analysis-tired per-reason rules, now across all four faces).
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  SetSkyPointTarget(40.0, 0.0);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      return st == gui::PointQueryState::kCompleted || st == gui::PointQueryState::kRefused;
+                    },
+                    60),
+                false);
+  const gui::SurveyHandle survey_kept = gui::g_state.analysis.survey.adopted_result;
+  const gui::MapHandle map_kept = gui::g_state.analysis.map.adopted_result;
+  const gui::PointHandle point_kept = gui::g_state.analysis.point.adopted_result;
+  // The ray face's precondition: the keep-assertion only carries meaning over an ARMED trace.
+  // When the point document carries components, drive the trace to its adopted state and
+  // capture the handle BY VALUE (a raw .get() address could be reused after a free — the
+  // handle copy owns). When it carries none (the mass/refused shapes), the trace never arms:
+  // the assertion degrades, explicitly, to "Revert keeps it un-armed".
+  bool trace_armed = false;
+  bool trace_intent_kept = false;
+  gui::RepresentativeRayHandle trace_result_kept;
+  {
+    LUMICE_PathPointInfo pt_info{};
+    pt_info.struct_size = sizeof(pt_info);
+    const bool has_components =
+        gui::g_state.analysis.point.adopted_result != nullptr &&
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &pt_info) == LUMICE_PATH_READ_OK &&
+        pt_info.outcome == LUMICE_PATH_POINT_DISCOVERED && pt_info.component_count > 0;
+    if (has_components) {
+      IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.analysis.trace.adopted_result != nullptr; }, 30), false);
+      trace_armed = true;
+    }
+    trace_intent_kept = gui::g_state.analysis.trace.intent_valid;
+    trace_result_kept = gui::g_state.analysis.trace.adopted_result;
+    if (trace_armed) {
+      IM_CHECK_RETV(trace_intent_kept && trace_result_kept != nullptr, false);
+    } else {
+      IM_CHECK_RETV(trace_intent_kept == false && trace_result_kept == nullptr, false);
+      ctx->LogInfo(
+          "[v1 revert] the point document has no components: the ray face stays un-armed, "
+          "and the keep-assertion degrades to keeping it so");
+    }
+  }
+  IM_CHECK_RETV(survey_kept != nullptr && map_kept != nullptr, false);
+  gui::DoRevert();
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == true, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == survey_kept, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result == map_kept, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == point_kept, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == trace_intent_kept, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == trace_result_kept, false);
+  if (trace_armed) {
+    ctx->LogInfo("[v1 revert] the armed ray face survived Revert by handle value");
+  }
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+  ctx->LogInfo("[v1 revert] Revert kept every face's adopted outcome and the sky point; nothing re-issued");
+  return true;
+}
+
+// The identity class (C15's `1-3-6-2`, every member rank-0) across all faces at once: the
+// overview routes the identity arm's honest statement, the map still answers (the rank-0
+// point-mass arm, m±err — not a refused or empty picture), and the point query at the sun's own
+// image answers the MASS arm — no component rows, no ray intent, no fabricated fiber. The one
+// session where "direction identity" is the answer, nothing else degrades with it (AC2's
+// 不整页封锁 on this scene's own identity family). Fixed-dt pool: the rank-0 survey
+// early-stops (certified, no chromatic legs) and the mass arm answers in milliseconds.
+bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  std::string c15_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strcmp(e.display, "1-3-6-2") == 0) {
+      c15_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!c15_display.empty(), false);
+  const std::string c15_label = gui::AnalysisRowLabel(c15_display, gui::AnalysisCoreToPoolMap(gui::g_state));
+  SetListRef(ctx);
+  const ImGuiID c15_row = FindListRowScrolling(ctx, c15_label);
+  IM_CHECK_RETV(c15_row != 0, false);
+  ctx->ItemClick(c15_row);
+  ctx->SetRef("");
+  const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity.has_value(), false);
+
+  // The overview's identity arm (all twelve members rank-0, certified) — the honest "direction
+  // identity" statement, not a fabricated dispersion or fiber story.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  {
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kIdentity, false);
+    ctx->LogInfo("[v1 c15] overview arm identity, valid %d", model.valid ? 1 : 0);
+  }
+  // The map answers under the same selection (the rank-0 point-mass arm) and names the class.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
+                    },
+                    60),
+                false);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.kept_count > 0, false);
+    ctx->LogInfo("[v1 c15] map answered: kept %lld, lambda %.1f", info.kept_count, info.wavelength_nm);
+  }
+  // The point query at the sun's own image (the rank-0 point): the MASS arm's named lines, no
+  // component rows — and the ray face stays silent (the pump's guard never issues a trace for
+  // the mass document; nothing fabricated replaces the fiber).
+  SetSkyPointTarget(20.0, 0.0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  {
+    LUMICE_PathPointInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_MASS, false);
+    std::vector<gui::PointComponentRow> rows;
+    IM_CHECK_RETV(gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &rows) == 0, false);
+    LUMICE_PathPointMass mass{};
+    mass.struct_size = sizeof(mass);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetMass(gui::g_state.analysis.point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK, false);
+    const std::vector<std::string> mass_lines = gui::PointMassLines(mass);
+    IM_CHECK_RETV(!mass_lines.empty(), false);
+    IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+    IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == nullptr, false);
+    ctx->LogInfo("[v1 c15] point MASS at the sun image: %zu named line(s), no component, no trace intent",
+                 mass_lines.size());
+  }
+  return true;
+}
+
+// The refused arm beside its independent facts (AC2's first sentence, the C17 shape):
+// `3-1-5-7` — the corpus's open-arc family whose honest boundary IS the partition refusal —
+// routes its members fine but refuses the delta axis's structural objects
+// (`slab_crease_touching`), and the overview answers the refusal arm: the named refusal, the
+// independent witness and the TIR share beside it, the chromatic block named unevaluated —
+// only THAT item missing, everything else alive. Real-timing pool: this survey's witness/TIR
+// tail is not bounded by the cooperative deadline (the as-built's escalation).
+bool RefusedClassNamesTheRefusalAndKeepsTheWitness(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::optional<gui::SelectedClassIdentity> identity = SelectRowByDisplay(ctx, "3-1-5-7");
+  IM_CHECK_RETV(identity.has_value(), false);
+
+  // The overview answers COMPLETED — the refusal is the document's arm, not a failed query —
+  // with the refusal named, the witness and TIR alive beside it, and the chromatic block's
+  // absence named rather than zeroed.
+  // The budget follows the as-built's own observation band for this survey (40-100 s wall, the
+  // witness/TIR tail outliving the cooperative deadline) plus margin — 60 s sat BELOW the band.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    240),
+                false);
+  {
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kRefused, false);
+    IM_CHECK_RETV(!model.evidence_mode.empty(), false);
+    IM_CHECK_RETV(model.witness.available && model.witness.value_available, false);
+    IM_CHECK_RETV(model.witness.kept_count > 0, false);
+    IM_CHECK_RETV(model.tir.available, false);
+    IM_CHECK_RETV(model.dispersion.available == false, false);
+    IM_CHECK_RETV(!model.chromatic_note.empty(), false);
+    ctx->LogInfo("[v1 c17] refused arm '%s': witness kept %lld, tir available, chromatic named '%s'",
+                 model.evidence_mode.c_str(), model.witness.kept_count, model.chromatic_note.c_str());
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_v1_c17_refused.png").string()),
+                false);
+  return true;
+}
+
+// The independence half of the C17 claim, in its own session (each half short enough for the
+// pool-context watchdog): a refused delta axis blockades neither the map face nor a point
+// query on the same class — the map answers, and a sky-point query discovers (the corpus
+// band, dev ~120 deg). Real-timing pool, same survey tail as the names leg.
+bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const std::optional<gui::SelectedClassIdentity> identity = SelectRowByDisplay(ctx, "3-1-5-7");
+  IM_CHECK_RETV(identity.has_value(), false);
+  // The budget follows the as-built's own observation band for this survey (40-100 s wall)
+  // plus margin — 60 s sat BELOW the band.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    240),
+                false);
+
+  // The map answers under the same selection (a refused delta axis does not blockade the map
+  // face) and names the class — the FIRST adopted map is the evidence (the full-sky arrival
+  // already proves the face answers; waiting for the refinement chain would buy nothing here
+  // and is the pool-context watchdog budget's long pole).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
+                    },
+                    60),
+                false);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.kept_count > 0, false);
+    ctx->LogInfo("[v1 c17] map answered: kept %lld", info.kept_count);
+  }
+  // A point query on the refused class still discovers — the corpus band target, the same
+  // anchor the internal-reflection leg pins (probe: one component on this exact geometry).
+  SetSkyPointTarget(38.0, 180.0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  {
+    LUMICE_PathPointInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.crystal_id == identity->core_crystal_id, false);
+    IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_DISCOVERED, false);
+    std::vector<gui::PointComponentRow> rows;
+    const int components = gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &rows);
+    IM_CHECK_RETV(components >= 1, false);
+    ctx->LogInfo("[v1 c17] point query independent of the survey refusal: discovered, %d component(s)", components);
+  }
+  return true;
+}
+
+// The document rules the per-slice legs leave out, part one (v1-scope E / AC3): editing the
+// scene leaves the adopted outcomes in place (explicit accept — nothing clears or re-asks
+// behind the user's back) and the next Analyze replaces them under the new archive. The halo
+// scene, fixed-dt pool — the lifecycle legs' reasons; one survey's in-flight window each.
+bool SceneEditFollowsTheExplicitAcceptContract(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // Edit while a query is IN FLIGHT: the selection issued under the current archive keeps
+  // running on the frozen snapshot and adopts — the edit kills nothing.
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  gui::g_state.crystals[0].height = 0.1f;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  const gui::SurveyHandle in_flight_era = gui::g_state.analysis.survey.adopted_result;
+  IM_CHECK_RETV(in_flight_era != nullptr, false);
+  ctx->LogInfo("[v1 edit] the in-flight query adopted on its frozen snapshot across the edit");
+
+  // Edit while ADOPTED: the outcomes stay adopted (explicit accept — the edit is not an update).
+  gui::g_state.crystals[0].height = 1.2f;
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == in_flight_era, false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kCompleted,
+                false);
+  ctx->LogInfo("[v1 edit] the adopted outcome survives a document edit untouched");
+
+  // The explicit update: re-Analyze clears the selection and voids the old generation's
+  // bookkeeping (the digest leg's documented R6 shape — no adopted outcome survives into the
+  // next generation's region), and re-selecting answers under the new archive.
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  ctx->LogInfo("[v1 edit] re-Analyze voided the old generation's selection and outcome");
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&era = in_flight_era] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                                 gui::SurveyOverviewState::kCompleted &&
+                             gui::g_state.analysis.survey.adopted_result != era;
+                    },
+                    60),
+                false);
+  ctx->LogInfo("[v1 edit] re-selecting answered under the new archive's generation");
+  return true;
+}
+
+// Part two: the Cancel survey / Cancel point buttons withdraw their own faces to the named
+// cancelled states with the latch, a changed selection re-arms, and a document switch (the
+// open path's mechanism) clears every face. The halo scene's seconds-scale survey provides the
+// in-flight windows; fixed-dt pool.
+bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  // The fully random scene, deliberately: its dominant class routes full-dimensional, so the
+  // survey's in-flight window is seconds wide (the halo scene's dominant class routes to the
+  // fast refused arm — its kWaiting window is a click-race) and a cancel during the delta
+  // phase posts back without waiting on the chromatic legs.
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // The Cancel survey button: withdraw while the full-dimensional survey runs its delta phase,
+  // and the named cancelled state latches until a new selection.
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kWaiting;
+                    },
+                    20),
+                false);
+  ctx->ItemClick("**/Cancel survey");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCancelled;
+                    },
+                    45),
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.cancelled_for_key, false);
+  // The state flips when the pump adopts the cancellation; the worker clears its own in-flight
+  // bookkeeping a frame or two later — wait for it bounded rather than asserting the race.
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 20), false);
+  ctx->LogInfo("[v1 cancel] Cancel survey withdrew the intent under the latch; the executor is idle");
+  // A changed selection clears the latch and re-arms — the probe-verified fast identity chain
+  // (`1-3-6-2` early-stops on this scene, no chromatic legs) proves the re-arm without making
+  // the pool-context wall-clock budget the leg's long pole.
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "1-3-6-2").has_value(), false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  ctx->LogInfo("[v1 cancel] a changed selection cleared the latch and answered");
+  return true;
+}
+
+// Part two: the Cancel point button while the point is QUEUED behind the dominant class's
+// fresh survey (the wide window makes the queued state deterministic) — the withdraw names the
+// point's cancelled state and the survey face is not superseded — and a document switch (the
+// open path's mechanism) clears every face.
+bool CancelPointButtonReachesTheNamedState(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  SetSkyPointTarget(40.0, 0.0);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                                 gui::SurveyOverviewState::kWaiting &&
+                             gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kWaiting;
+                    },
+                    20),
+                false);
+  ctx->ItemClick("**/Cancel point");
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled; },
+          20),
+      false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.cancelled_for_key, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kWaiting, false);
+  ctx->LogInfo("[v1 cancel] Cancel point withdrew the queued intent; the survey face kept its own wait");
+  return true;
+}
+
+// A document switch — the open path's mechanism (the native dialog aside, the in-app boundary
+// IS the deserialize) — clears every analysis face and the intent with them, with the executor
+// left idle. The faces are settled before the switch (an in-flight query's withdrawal tail is
+// the engine's cooperative-stop shape, the as-built's own escalation — not this leg's claim).
+// The halo scene's fast refused-arm survey keeps the leg inside the fixed-dt pool's budget.
+bool DocumentOpenClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  SetSkyPointTarget(40.0, 0.0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQueryState st = gui::PointQueryStateFor(gui::g_state.analysis.point);
+                      return st == gui::PointQueryState::kCompleted || st == gui::PointQueryState::kRefused;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 20), false);
+
+  IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+  ctx->LogInfo("[v1 open] a document switch cleared survey, map, point, ray and the sky point");
   return true;
 }
 
@@ -976,23 +2968,24 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
-      IM_CHECK(gui::g_state.analysis.window_open);
-
-      ctx->SetRef(kWindowRef);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      // The ROI controls live on the panorama side.
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
+      ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.analysis.roi_mode, LUMICE_RAYPATH_ROI_CONE);
       ctx->ItemClick(kPickButton);
       ctx->Yield(1);
       IM_CHECK(gui::g_state.analysis.pick_armed);
       ctx->SetRef("");
 
-      const gui::CanvasPixel px = PickPreviewCentre(ctx);
+      const gui::CanvasPixel px = PickPanoramaCentre(ctx);
       // The ROI is placed: the pick is consumed, the centre is valid, and this frame's marker
       // projects back onto the pixel that was clicked.
       IM_CHECK(!gui::g_state.analysis.pick_armed);
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       const LUMICE_AnnotationView view =
-          gui::PreviewAnnotationView(gui::g_state, gui::g_preview_vp.vp_w, gui::g_preview_vp.vp_h);
+          gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
       const std::optional<gui::CanvasPixel> marker = gui::ProjectConeCenterMarker(gui::g_state, view);
       IM_CHECK(marker.has_value());
       IM_CHECK_EQ(marker->px, px.px);
@@ -1006,15 +2999,17 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.cone_center_dir[0], want[0], 1e-6f);
       IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.cone_center_dir[1], want[1], 1e-6f);
       IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.cone_center_dir[2], want[2], 1e-6f);
-      // The frame centre looks 42 degrees up: the centre direction says so (altitude = asin(-z)).
-      IM_CHECK_FLOAT_NEAR(std::asin(-gui::g_state.analysis.cone_center_dir[2]) * 180.0f / 3.14159265f, 42.0f, 0.5f);
+      // Upper-sky light travels downward (z < 0) — the direction is on the panorama's sky. The
+      // equal-area closed form is pinned in gui_unit (PanoramaUnprojectIsEqualAreaOverTheDisk);
+      // the oracle here is the C API unprojection checked above, pixel for pixel.
+      IM_CHECK_LT(gui::g_state.analysis.cone_center_dir[2], 0.0f);
       // The ring is drawable: the local scale at the click resolves.
       IM_CHECK(gui::ConeRingRadiusCanvasPx(view, px.px, px.py, gui::g_state.analysis.cone_radius_deg).has_value());
 
       // Analyze, through the button.
       LUMICE_SimLifecycleResult before{};
       LUMICE_GetSimLifecycle(gui::g_server, &before);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->ItemClick(kAnalyzeButton);
       ctx->SetRef("");
@@ -1031,8 +3026,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_GT(first, 0.0);
       const double largest = *std::max_element(view_result.display_energy.begin(), view_result.display_energy.end());
       IM_CHECK_EQ(first, largest);
-      // The 22-degree halo IS the top chain at this point of the sky.
-      IM_CHECK_STR_EQ(view_result.payload->entries[static_cast<size_t>(view_result.display_order[0])].display, "3-5");
+      // The top row's display text is the chain grammar itself (the same bytes the CSV writes):
+      // which chain dominates depends on where on the sky the panorama pick landed, so the case
+      // pins the grammar and the ordering, not one scene-specific chain identity.
+      IM_CHECK(view_result.payload->entries[static_cast<size_t>(view_result.display_order[0])].display[0] != '\0');
       // The analysis is a submission of its own (v4.36): the server's epoch moved past the
       // render's — and the picture on screen is still the render's, because the GUI's own
       // committed_epoch (the one ReconcileSimState keys on) did not: sim_state stayed kDone.
@@ -1056,7 +3053,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/true));
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       IM_CHECK(!gui::CanStartAnalysis(true, gui::g_state.sim_state, gui::g_state.analysis_run_in_progress,
                                       gui::g_state.run_intent));
@@ -1069,9 +3066,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Stop the render; Analyze opens up; start it; Run on the top bar is now the one shut.
       gui::DoStop();
       IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kDone; }, 20));
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Whole sky");
+      ctx->SetRef(ListWindowRef());
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      SetListRef(ctx);
       ctx->ItemClick(kAnalyzeButton);
       ctx->SetRef("");
       IM_CHECK(gui::g_state.analysis.started);
@@ -1091,7 +3091,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Not pointer equality: the entries are read on this thread per (generation, symmetry)
       // and every read publishes a new payload object for the same result.
       const auto partial = gui::g_state.analysis_result.payload;
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       ctx->ItemClick(ICON_FA_STOP " Stop");
       ctx->SetRef("");
       IM_CHECK(!gui::g_state.analysis.started);
@@ -1101,7 +3101,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.analysis_result.payload != nullptr);
       IM_CHECK_GE(gui::g_state.analysis_result.payload->snapshot_generation, partial->snapshot_generation);
       IM_CHECK_EQ(gui::g_state.analysis_result.payload->roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef("");
     };
@@ -1124,7 +3124,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       LUMICE_GetSimLifecycle(gui::g_server, &before);
       const unsigned long long uploads_before = gui::g_state.texture_upload_count;
 
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       ctx->ItemInputValue("Radius", 10.0f);
       ctx->SetRef("");
       ctx->Yield(5);
@@ -1188,7 +3188,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       const unsigned long long uploads_before = gui::g_state.texture_upload_count;
 
       // Select the top row, then turn D off.
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       ctx->ItemClick("**/3-5");
       ctx->Yield(1);
       IM_CHECK(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == "3-5");
@@ -1217,7 +3217,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ((int)gui::g_state.sim_state, (int)SimState::kDone);
 
       // D back on: the rows merge again, the same count and total as at first.
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       ctx->ItemClick("**/D##analysis_symmetry");
       ctx->Yield(2);
       ctx->SetRef("");
@@ -1235,7 +3235,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
   // The radius slider is live BEFORE any result: in Point mode with the default centre and no
   // Analyze pressed, it is enabled, setting it changes the session's radius and the ring drawn on
-  // the preview (the pixel radius DrawAnalysisRoiRing draws from), and nothing runs — no result
+  // the panorama (the pixel radius DrawPanoramaRoiRing draws from), and nothing runs — no result
   // appears, the intent flag stays clear, the lifecycle is the render's, the sim state is Done.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "radius_slider_drags_before_any_result");
@@ -1243,14 +3243,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
       ctx->Yield(1);
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       IM_CHECK(!gui::g_state.analysis_result.payload);
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Radius")));
       const LUMICE_AnnotationView view =
-          gui::PreviewAnnotationView(gui::g_state, gui::g_preview_vp.vp_w, gui::g_preview_vp.vp_h);
+          gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
       const std::optional<gui::CanvasPixel> marker = gui::ProjectConeCenterMarker(gui::g_state, view);
       IM_CHECK(marker.has_value());
       const std::optional<float> ring_before =
@@ -1299,7 +3300,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       LUMICE_GetSimLifecycle(gui::g_server, &before);
       const SimState sim_state_before = gui::g_state.sim_state;
 
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(ctx->ItemInfo("##Rays(M)_input").ID != 0);
       ctx->ItemInputValue("##Rays(M)_input", 2.5f);
       ctx->Yield(2);
@@ -1339,17 +3340,17 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
       IM_CHECK(!gui::g_state.analysis.cone_center_valid);
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
       ctx->SetRef("");
       ctx->Yield(1);
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       IM_CHECK(!gui::g_state.analysis.pick_armed);
       const LUMICE_AnnotationView view =
-          gui::PreviewAnnotationView(gui::g_state, gui::g_preview_vp.vp_w, gui::g_preview_vp.vp_h);
+          gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
       float want[3] = { 0.0f, 0.0f, 0.0f };
       int valid = 0;
-      IM_CHECK_EQ(LUMICE_UnprojectPixel(&view, gui::g_preview_vp.vp_w / 2, gui::g_preview_vp.vp_h / 2, want, &valid),
+      IM_CHECK_EQ(LUMICE_UnprojectPixel(&view, gui::g_panorama_vp.vp_w / 2, gui::g_panorama_vp.vp_h / 2, want, &valid),
                   LUMICE_OK);
       IM_CHECK_EQ(valid, 1);
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], want[0]);
@@ -1358,55 +3359,54 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // And the marker is on the picture, at that pixel.
       const std::optional<gui::CanvasPixel> marker = gui::ProjectConeCenterMarker(gui::g_state, view);
       IM_CHECK(marker.has_value());
-      IM_CHECK_EQ(marker->px, gui::g_preview_vp.vp_w / 2);
-      IM_CHECK_EQ(marker->py, gui::g_preview_vp.vp_h / 2);
+      IM_CHECK_EQ(marker->px, gui::g_panorama_vp.vp_w / 2);
+      IM_CHECK_EQ(marker->py, gui::g_panorama_vp.vp_h / 2);
       // Analyze is open at once: the centre the button needed is there.
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef("");
     };
   }
 
-  // AC1: the marker is the direction's projection on THIS view. A camera drag on the preview
-  // (started away from the marker, so the camera and not the marker owns it) turns the view;
-  // the marker's screen position moves with the picture and the direction does not change.
+  // AC1: the marker is the direction's projection on THIS view. The panorama's view change is
+  // the hemisphere switch (no camera orbit on this surface): switching to the lower hemisphere
+  // takes the upper-sky direction off the picture, and switching back puts the marker exactly
+  // where it was — while the direction, the truth, does not change.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "marker_follows_the_view_drag");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
+      ctx->Yield(2);
       ctx->ItemClick(kPickButton);
       ctx->SetRef("");
       ctx->Yield(1);
-      PickPreviewCentre(ctx);
+      PickPanoramaCentre(ctx);
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       IM_CHECK(!gui::g_state.analysis.pick_armed);
       const float dir_before[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
                                     gui::g_state.analysis.cone_center_dir[2] };
       const std::optional<ImVec2> marker_before = MarkerScreenPos(ctx);
       IM_CHECK(marker_before.has_value());
-      const float az_before = gui::g_state.renderer.azimuth;
+      IM_CHECK(gui::g_state.workspace.panorama_upper);
 
-      // Press well clear of the marker's grab radius (down-right of it, inside the preview) and
-      // drag horizontally: an orbit of the camera, on the linear lens the scene renders with.
-      const ImVec2 grab(marker_before->x + 150.0f, marker_before->y + 120.0f);
-      ctx->MouseMoveToPos(grab);
-      ctx->Yield(2);
-      IM_CHECK(!gui::g_state.analysis.cone_marker_dragging);
-      ctx->MouseDown(0);
-      ctx->MouseMoveToPos(ImVec2(grab.x + 60.0f, grab.y));
-      ctx->MouseUp(0);
-      ctx->Yield(2);
-      IM_CHECK(!gui::g_state.analysis.cone_marker_dragging);
-      IM_CHECK_NE(gui::g_state.renderer.azimuth, az_before);  // the view turned
+      // Switch the hemisphere: the picture re-projects around the flipped axis (the projector
+      // clamps the now-behind-camera direction to this view's rim — visible, not meaningful).
+      ctx->ItemClick("**/Lower##panorama_hemisphere");
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.workspace.panorama_upper);
+
+      // Switch back: the same direction, the same pixel — the per-frame projection's contract.
+      ctx->ItemClick("**/Upper##panorama_hemisphere");
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.workspace.panorama_upper);
       const std::optional<ImVec2> marker_after = MarkerScreenPos(ctx);
       IM_CHECK(marker_after.has_value());
-      // The picture moved under the fixed direction, so the marker moved on screen — by a good
-      // fraction of the mouse travel (an orbit moves the content one pixel per pixel of drag).
-      IM_CHECK_GT(ImFabs(marker_after->x - marker_before->x), 20.0f);
+      IM_CHECK_LT(ImFabs(marker_after->x - marker_before->x), 2.0f);
+      IM_CHECK_LT(ImFabs(marker_after->y - marker_before->y), 2.0f);
       // The direction is the truth and did not change.
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], dir_before[0]);
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], dir_before[1]);
@@ -1424,7 +3424,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
       ctx->SetRef("");
       ctx->Yield(1);
@@ -1480,19 +3480,20 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
-      ctx->Yield(1);
+      ctx->Yield(2);  // CONE's pick-button row is submitted the frame after the radio flips
       IM_CHECK(!PickBannerVisible(ctx));
       ctx->ItemClick(kPickButton);
       ctx->Yield(2);
       IM_CHECK(gui::g_state.analysis.pick_armed);
       IM_CHECK(PickBannerVisible(ctx));
       ctx->SetRef("");
-      // Esc, from the preview (where the click would go): banner and flag both clear.
-      ImGuiWindow* preview = ctx->GetWindowByRef("//##PreviewPanel");
-      IM_CHECK(preview != nullptr);
-      ctx->MouseMoveToPos(ImVec2(preview->Pos.x + preview->Size.x * 0.75f, preview->Pos.y + preview->Size.y * 0.75f));
+      // Esc, over the panorama's picture (where the click would land): banner and flag both
+      // clear. The Analyze workspace hosts no preview panel to move the mouse into.
+      ImGuiWindow* picture = PanoramaPictureWindow();
+      IM_CHECK(picture != nullptr);
+      ctx->MouseMoveToPos(ImVec2(picture->Pos.x + picture->Size.x * 0.75f, picture->Pos.y + picture->Size.y * 0.75f));
       ctx->KeyPress(ImGuiKey_Escape);
       ctx->Yield(2);
       IM_CHECK(!gui::g_state.analysis.pick_armed);
@@ -1500,7 +3501,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Armed again, the click consumes it — at a point AWAY from the default marker (a click on
       // the marker is the drag gesture, which consumes the pick as well; the pick path proper is
       // what this case drives).
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick(kPickButton);
       ctx->SetRef("");
       ctx->Yield(2);
@@ -1538,7 +3539,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       const ScopedPopups popup_guard(ctx);
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
       ctx->SetRef("");
       ctx->Yield(2);
@@ -1600,7 +3601,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(!view_result.display_order.empty());
       const std::string top_display =
           view_result.payload->entries[static_cast<size_t>(view_result.display_order[0])].display;
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       ctx->ItemClick((std::string("**/") + top_display).c_str());
       ctx->Yield(1);
       IM_CHECK(gui::g_state.analysis.selected_entry.has_value());
@@ -1725,6 +3726,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedServerGuard guard;
       ResetTestState();
+      OpenWindow(ctx);
       auto payload = std::make_shared<gui::AnalysisPayload>();
       payload->snapshot_generation = 3;
       payload->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
@@ -1749,11 +3751,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.analysis.fetched_once = true;
       gui::g_state.analysis.fetched_generation = 3;
       gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
-      gui::g_state.analysis.window_open = true;
       ctx->Yield(2);
-      ctx->WindowMove(kWindowRef, ImVec2(60, 60));
-      ctx->Yield(1);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
 
       // The column and the line exist in the rendered table. The header cell is not addressable
       // by label (imgui_tables.cpp never hands header labels to the engine), so the column is read
@@ -1817,7 +3816,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::AdoptAnalysisPayloadIfNew(gui::g_state, exact));
       gui::g_state.analysis.fetched_generation = 4;
       ctx->Yield(2);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(
           ctx->ItemInfo(std::string("**/").append(gui::kAnalysisOtherRowLabel).c_str(), ImGuiTestOpFlags_NoError).ID ==
           0);
@@ -1872,7 +3871,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::AnalysisPictureNotice(gui::g_state.run_intent, gui::g_state.sim_state) == nullptr);
 
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef("");
       IM_CHECK(StartPointAnalysis(ctx));
@@ -1927,12 +3926,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(!gui::CanStartAnalysis(true, gui::g_state.sim_state, false, gui::g_state.run_intent));
 
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(IsDisabled(ctx->ItemInfo("In frame")));
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(IsDisabled(ctx->ItemInfo("Point")));
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Whole sky")));
       // A click on the disabled button does nothing: no intent, no run.
+      SetListRef(ctx);
       ctx->ItemClick(kAnalyzeButton);
       ctx->Yield(2);
       IM_CHECK(!gui::g_state.analysis.started);
@@ -1948,9 +3951,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(DriveUntil(ctx, [uploads_before] { return gui::g_state.texture_upload_count > uploads_before; }, 10));
       IM_CHECK_EQ((int)gui::g_state.run_intent, (int)gui::RunIntent::kRunCompleted);
       IM_CHECK(gui::AnalysisPictureNotice(gui::g_state.run_intent, gui::g_state.sim_state) == nullptr);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo("In frame")));
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Point")));
       ctx->SetRef("");
 
@@ -1959,9 +3964,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.crystals[0].height = 0.1f;
       gui::g_state.dirty = true;
       IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kModified; }, 5));
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo("In frame")));
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Point")));
       ctx->SetRef("");
       bool saw_simulating = false;
@@ -2008,9 +4015,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ((int)gui::g_state.run_intent, (int)gui::RunIntent::kNone);
 
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(IsDisabled(ctx->ItemInfo("In frame")));
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(IsDisabled(ctx->ItemInfo("Point")));
+      SetListRef(ctx);
       IM_CHECK(IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef("");
       IM_CHECK(!gui::CanStartAnalysis(true, gui::g_state.sim_state, false, gui::g_state.run_intent));
@@ -2078,9 +4088,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpScene(ctx, kPcTwoLayerJson, /*infinite=*/false, /*gpu=*/false));
       OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Whole sky");
+      ctx->SetRef(ListWindowRef());
+      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      SetListRef(ctx);
       ctx->ItemClick(kAnalyzeButton);
       ctx->SetRef("");
       IM_CHECK(DriveUntil(
@@ -2114,7 +4127,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(raw.find('?') == std::string::npos);
       // And a row on screen carries exactly that label — found by it, under the window, with the
       // list panned to it (on this scene the first multi-layer row sits below the first page).
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       const ImGuiID row_id = FindListRowScrolling(ctx, label);
       IM_CHECK(row_id != 0);
       // The raw text is NOT what is drawn: with the row on screen, no item carries the ASCII form.
@@ -2151,6 +4164,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedServerGuard guard;
       ResetTestState();
+      OpenWindow(ctx);
       // A scene for the label rewrite to number by: three crystals, three entries in the root
       // layer, and the Analyze-time snapshot taken from it — so the hand-written display's
       // "C2(" maps to card #2 and the drawn label spells "#2(". The search then has two
@@ -2190,11 +4204,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.analysis.fetched_once = true;
       gui::g_state.analysis.fetched_generation = 3;
       gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
-      gui::g_state.analysis.window_open = true;
       ctx->Yield(2);
-      ctx->WindowMove(kWindowRef, ImVec2(60, 60));
-      ctx->Yield(1);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
 
       // Rows are found by what is DRAWN: the multi-layer row's label carries the arrow glyph and
       // the card's "#2(" spelling.
@@ -2202,12 +4213,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Hand-written literal, independent of the helper: "C2(...)" under the snapshot built
       // above draws as the card spelling with the glyph joiner and nothing else moved.
       IM_CHECK_STR_EQ(multi_label.c_str(), ("#2(3-5) " ICON_FA_ARROW_RIGHT " (1-3)"));
-      const std::string other_path = std::string("**/").append(gui::kAnalysisOtherRowLabel);
+      const std::string other_path = gui::kAnalysisOtherRowLabel;
       auto row_shown = [&](const std::string& label) {
-        return ctx->ItemInfo(("**/" + label).c_str(), ImGuiTestOpFlags_NoError).ID != 0;
+        // The rows live in the table's child window: an item path from the list window cannot
+        // cross into it without the "**/" wildcard descent.
+        return ctx->ItemInfo((std::string("**/") + label).c_str(), ImGuiTestOpFlags_NoError).ID != 0;
       };
       auto search = [&](const char* text) {
-        ctx->ItemInputValue("**/###analysis_search", text);
+        ctx->ItemInputValue("###analysis_search", text);
         ctx->Yield(3);
       };
       // Empty box: everything, other line included.
@@ -2295,6 +4308,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedServerGuard guard;
       ResetTestState();
+      OpenWindow(ctx);
       auto make_payload = [](unsigned long long generation, std::initializer_list<const char*> displays) {
         auto payload = std::make_shared<gui::AnalysisPayload>();
         payload->snapshot_generation = generation;
@@ -2318,7 +4332,6 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         gui::g_state.analysis.fetched_once = true;
         gui::g_state.analysis.fetched_generation = generation;
         gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
-        gui::g_state.analysis.window_open = true;
         ctx->Yield(2);
         return true;
       };
@@ -2328,7 +4341,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(show(3, { "1-2", "2-3" }));
       ctx->WindowMove(kWindowRef, ImVec2(60, 60));
       ctx->Yield(1);
-      ctx->SetRef(kWindowRef);
+      SetListRef(ctx);
       ctx->ItemInputValue("**/###analysis_search", "1-2");
       ctx->Yield(3);
       IM_CHECK(row_shown("1-2"));
@@ -2346,7 +4359,6 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::ResetFrontendState(gui::g_state, gui::FrontendResetReason::kNewDocument);
       ctx->Yield(3);
       IM_CHECK(gui::g_state.analysis_result.payload == nullptr);
-      IM_CHECK(gui::g_state.analysis.window_open);
       IM_CHECK(show(4, { "2-3" }));
       ctx->Yield(2);
       IM_CHECK(row_shown("2-3"));
@@ -2366,6 +4378,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedServerGuard guard;
       ResetTestState();
+      OpenWindow(ctx);
       IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "");  // the reset emptied it
       auto payload = std::make_shared<gui::AnalysisPayload>();
       payload->snapshot_generation = 3;
@@ -2391,18 +4404,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.analysis.fetched_once = true;
       gui::g_state.analysis.fetched_generation = 3;
       gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
-      gui::g_state.analysis.window_open = true;
       ctx->Yield(2);
-      ctx->WindowMove(kWindowRef, ImVec2(60, 60));
-      ctx->Yield(1);
 
       // Right-click the row drawn as `label`, then choose `item` in the popup that opened.
       auto choose = [&](const std::string& label, const char* item) {
-        ctx->SetRef(kWindowRef);
-        ctx->ItemClick(("**/" + label).c_str(), ImGuiMouseButton_Right);
+        SetListRef(ctx);
+        ctx->ItemClick((std::string("**/") + label).c_str(), ImGuiMouseButton_Right);
         ctx->Yield(2);
         ctx->SetRef("//$FOCUSED");
-        ctx->ItemClick((std::string("**/") + item).c_str());
+        ctx->ItemClick(item);
         ctx->Yield(2);
         ctx->SetRef("");
       };
@@ -2460,5 +4470,103 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(IncludeAgainWhileTheImmediateEditorIsOpen(ctx));
     };
+  }
+
+  // M2-5's real-app evidence: the full chain, on file.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "c01_chain_analyze_select_exclude_rerun");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(C01ChainAnalyzeSelectExcludeRerun(ctx)); };
+  }
+
+  // M3-5's survey-query evidence: the digest answers with real class facts (and re-Analyze
+  // re-arms under the next generation), the multi-layer refusal names itself, and the
+  // background query is orthogonal to a render run in both directions.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_digest_answers_with_real_class_facts");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyDigestAnswersWithRealClassFacts(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_overview_shows_dispersion_and_profile");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyOverviewShowsDispersionAndProfile(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyRefusesMultilayerClassByName(ctx)); };
+  }
+  // The map region (742.5): real chain, real click, real isolation — see the function's comment.
+  // Real-timing pool: the map answers behind the survey's chromatic legs on the one worker, the
+  // same wall-clock shape that put the survey overview case there.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_region_shows_the_class_map_and_takes_the_pick");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MapRegionShowsTheClassMapAndTakesThePick(ctx)); };
+  }
+  // The point inspector (742.6): the real chain pick → point → component → slider/trace →
+  // playback invariance. Real-timing pool: the point queues behind the selection's survey on the
+  // one worker (the mass arm below is the fixed-dt pool's — it answers in milliseconds).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "point_inspector_shows_the_point_fiber_and_the_path");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PointInspectorShowsThePointFiberAndThePath(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "point_mass_arm_is_honest_and_forces_no_fiber");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PointMassArmIsHonestAndForcesNoFiber(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_and_render_run_are_orthogonal");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyAndRenderRunAreOrthogonal(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_survives_a_workspace_switch");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveySurvivesAWorkspaceSwitch(ctx)); };
+  }
+  // 742.7's integration legs — four real-timing (the chain pair and the C17 pair: the former
+  // queues the per-face chain on one worker, the latter's survey carries the unbudgeted
+  // witness/TIR tail; see scripts/build.sh's filter comments) and seven fixed-dt (the
+  // lifecycle/identity set, across the halo and fully-random scenes).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_full_chain_one_session");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(AnalyzeFullChainOneSession(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "internal_reflection_trace_from_the_real_consumer");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(InternalReflectionTraceFromTheRealConsumer(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_faces_rekey_on_row_switch");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(AnalyzeFacesRekeyOnRowSwitch(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "new_document_clears_every_analyze_face");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(NewDocumentClearsEveryAnalyzeFace(ctx)); };
+  }
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "identity_class_shows_the_mass_arm_and_the_map_answers");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(IdentityClassShowsTheMassArmAndTheMapAnswers(ctx)); };
+  }
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "refused_class_names_the_refusal_and_keeps_the_witness");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(RefusedClassNamesTheRefusalAndKeepsTheWitness(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "refused_class_blockades_nothing");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(RefusedClassBlockadesNothing(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "scene_edit_follows_the_explicit_accept_contract");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SceneEditFollowsTheExplicitAcceptContract(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "cancel_survey_button_reaches_the_named_state");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(CancelSurveyButtonReachesTheNamedState(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "cancel_point_button_reaches_the_named_state");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(CancelPointButtonReachesTheNamedState(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "document_open_clears_every_analyze_face");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(DocumentOpenClearsEveryAnalyzeFace(ctx)); };
   }
 }

@@ -276,6 +276,42 @@ void RenderLayer(GuiState& state, int layer_idx);
 // Scattering section (layer management, rendered inside left panel scroll area).
 void RenderScatteringSection(GuiState& state);
 
+// The "+ Layer" primitive: one new scattering layer with a fresh-pool seed entry, promoting a
+// near-zero last layer to the continuation default (the footgun #2 guard). The cards' toolbar
+// (RenderLeftPanel) and the Analyze workspace's crystal list (analyze_workspace.cpp) are the two
+// callers — one implementation, so the two columns cannot drift.
+void AddScatteringLayer(GuiState& state);
+
+// Consume a pending EditRequest (a card or button queued it): open the entry editor modal on it,
+// resolving a kCard request against an already-open modal (the active tab wins, so a second click
+// while editing does not snap the modal back to the Crystal tab), then clear the request. The one
+// processing point for both card hosts.
+void ProcessEditRequest(GuiState& state);
+
+// Queue the entry editor for one entry's card — the click a compact list row (analyze_workspace)
+// turns into, the same request a card body click queues, processed by the same
+// ProcessEditRequest at the host's end of frame.
+void RequestEntryCardEdit(int layer_idx, int entry_idx);
+
+// A row's (or card's) standing under an armed pick-link: disabled because it is the pick's own
+// source or already shares the source's (crystal, filter) — a click would be a no-op — or a
+// valid target. One predicate for the cards (RenderEntryCard) and the Analyze workspace's list
+// rows, so the two hosts cannot disagree about what is clickable.
+enum class PickLinkRowState { kDisabledSelfOrShared, kValidTarget };
+PickLinkRowState PickLinkRowStateFor(const GuiState& state, int layer_idx, int entry_idx);
+
+// Complete the share from the clicked row/card (the model) into the armed pick's source (the
+// modified) — the cards' ApplyPickLink bind — and disarm the pick. False (nothing written) when
+// the row is not a valid target per PickLinkRowStateFor.
+bool CompletePickLinkAtRow(GuiState& state, int layer_idx, int entry_idx);
+
+// The host's post-pass after a pick completed this frame: re-open the entry editor on the pick's
+// SOURCE entry (the entry whose modal armed the pick), so the user resumes editing where they
+// started, with the singleton trackball view reset to that crystal's default. No-op when the
+// pick is still armed (nothing completed) or no pick was armed at frame entry. RenderLeftPanel
+// and the Analyze workspace's list host call it; one implementation.
+void ReopenEditorOnPickCompletion(GuiState& state, const std::optional<GuiState::EntryRef>& pick_source_at_entry);
+
 // Scene controls (Sun + Simulation) rendered in the right panel Scene group.
 void RenderSceneControls(GuiState& state);
 

@@ -1,7 +1,10 @@
 #include "analytic/entry_measure.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -118,6 +121,7 @@ Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polyg
       double p[3];
       placement.Apply(polygons.corner[slot][k], p);
       points_.insert(points_.end(), p, p + 3);
+      real_points_.insert(real_points_.end(), polygons.corner[slot][k], polygons.corner[slot][k] + 3);
     }
     offsets_.push_back(static_cast<int>(points_.size() / 3));
   };
@@ -137,6 +141,8 @@ Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polyg
       c += so3::Dot3(n, &points_[3 * static_cast<size_t>(v)]);
     }
     c /= (end - begin);
+    plane_normals_.insert(plane_normals_.end(), n, n + 3);
+    plane_offsets_.push_back(c);
     placement.Reflect(n, c);
   }
   append(slots[last]);
@@ -146,6 +152,49 @@ Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polyg
   placement.Rotate(normals.normal[slots[last]], exit_normal_);
   // LI area_eps. A crystal edge is a polygon edge, so the shortest one is the table's.
   eps_ = kEntryMeasureEpsRel * polygons.min_edge_length * polygons.min_edge_length;
+
+  // The recovery's record, over the polygons just placed: each polygon's plane in the unfolded
+  // frame (polygon 0 is the entry face, placed by the identity), the real face's plane it folds
+  // back to, and — once, over every present face — the crystal's own half-spaces the recovered
+  // path is contained by.
+  plane_normals_.insert(plane_normals_.begin(), entry_normal_, entry_normal_ + 3);
+  double entry_offset = 0.0;
+  for (int v = offsets_[0]; v < offsets_[1]; v++) {
+    entry_offset += so3::Dot3(entry_normal_, &points_[3 * static_cast<size_t>(v)]);
+  }
+  entry_offset /= offsets_[1] - offsets_[0];
+  plane_offsets_.insert(plane_offsets_.begin(), entry_offset);
+  double exit_plane[3];
+  placement.Rotate(normals.normal[slots[last]], exit_plane);
+  plane_normals_.insert(plane_normals_.end(), exit_plane, exit_plane + 3);
+  double exit_offset = 0.0;
+  for (int v = offsets_[last]; v < offsets_[last + 1]; v++) {
+    exit_offset += so3::Dot3(exit_plane, &points_[3 * static_cast<size_t>(v)]);
+  }
+  exit_offset /= offsets_[last + 1] - offsets_[last];
+  plane_offsets_.push_back(exit_offset);
+  for (int k = 0; k < slot_count; k++) {
+    const int slot = slots[k];
+    real_normals_.insert(real_normals_.end(), normals.normal[slot], normals.normal[slot] + 3);
+    double offset = 0.0;
+    const int count = offsets_[k + 1] - offsets_[k];
+    for (int v = 0; v < count; v++) {
+      offset += so3::Dot3(normals.normal[slot], &real_points_[3 * static_cast<size_t>(offsets_[k] + v)]);
+    }
+    real_offsets_.push_back(offset / count);
+  }
+  for (int slot = 0; slot < normals.slot_cnt; slot++) {
+    if (!normals.present[slot]) {
+      continue;
+    }
+    crystal_normals_.insert(crystal_normals_.end(), normals.normal[slot], normals.normal[slot] + 3);
+    double offset = 0.0;
+    for (int v = 0; v < polygons.corner_cnt[slot]; v++) {
+      offset += so3::Dot3(normals.normal[slot], polygons.corner[slot][v]);
+    }
+    crystal_offsets_.push_back(offset / polygons.corner_cnt[slot]);
+  }
+  min_edge_ = polygons.min_edge_length;
 }
 
 EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index, CorridorDiagnostics* diagnostics) {
@@ -246,6 +295,192 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index,
   m.status = EntryMeasureStatus::kOk;
   m.value = m.area_perp_internal * cos_i / cos_t;
   return m;
+}
+
+namespace {
+
+// The recovery's tolerances, scale-relative to the crystal (doc/geometry/numerical-robustness.md
+// #2): a length bound derived from the same min_edge_length the area gate's eps is, sitting above
+// the float closed-form corners' own planarity noise (the geometry both the corridor and the
+// verification read — per-corner ~FLT_EPSILON * size, so margins down to ~1e-7 * edge are still
+// float-consistent) and orders of magnitude below the feature sizes the area gate resolves. What
+// it must catch — a wrong fold-back transform, a wrong face order, a grazing breakdown — violates
+// by the distance to a wrong plane or polygon, i.e. by crystal-scale amounts, so the bound keeps
+// its detection power with room to spare.
+constexpr double kRecoverTolRel = 1e-6;
+
+// Reflection of x in the plane (n unit, offset c): the fold-back's one primitive, applied with the
+// corridor's own recorded planes.
+void ReflectInPlane(const double n[3], double c, double x[3]) {
+  const double d = so3::Dot3(n, x) - c;
+  for (int i = 0; i < 3; i++) {
+    x[i] -= 2.0 * d * n[i];
+  }
+}
+
+// The signed distance of a point (already on the polygon's plane) to the nearest edge line of the
+// convex corner ring `pts` (3 per corner, `count` corners): positive inside. The winding reference
+// is the ring's own first triple against the plane normal, so no caller-side orientation rule
+// exists to get wrong. A degenerate (zero-length) edge makes the ring unusable and is reported as
+// an unlimited negative margin — the caller refuses named.
+double ConvexPolygonMargin(const double* pts, int count, const double n[3], const double q[3]) {
+  if (count < 3) {
+    return -1.0;
+  }
+  double e0[3] = { pts[3] - pts[0], pts[4] - pts[1], pts[5] - pts[2] };
+  double v0[3] = { pts[6] - pts[0], pts[7] - pts[1], pts[8] - pts[2] };
+  double ref[3];
+  so3::Cross3(e0, v0, ref);
+  const double ref_sign = so3::Dot3(ref, n) >= 0.0 ? 1.0 : -1.0;
+  double margin = std::numeric_limits<double>::infinity();
+  for (int i = 0; i < count; i++) {
+    const double* a = pts + 3 * i;
+    const double* b = pts + 3 * ((i + 1) % count);
+    const double e[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+    const double v[3] = { q[0] - a[0], q[1] - a[1], q[2] - a[2] };
+    const double edge_length = std::sqrt(so3::Dot3(e, e));
+    if (!(edge_length > 0.0)) {
+      return -1.0;
+    }
+    double c[3];
+    so3::Cross3(e, v, c);
+    // Cross-per-edge-length: the point's signed distance to this edge's line, in the ring's own
+    // winding direction.
+    margin = std::min(margin, ref_sign * so3::Dot3(c, n) / edge_length);
+  }
+  return margin;
+}
+
+}  // namespace
+
+const char* RecoveryStatusName(RecoveryStatus status) {
+  switch (status) {
+    case RecoveryStatus::kOk:
+      return "ok";
+    case RecoveryStatus::kNotEvaluated:
+      return "not_evaluated";
+    case RecoveryStatus::kDegenerate:
+      return "degenerate_corridor";
+  }
+  return "unknown";
+}
+
+const char* EntryMeasureStatusName(EntryMeasureStatus status) {
+  switch (status) {
+    case EntryMeasureStatus::kOk:
+      return "ok";
+    case EntryMeasureStatus::kEntryBackface:
+      return "entry_backface";
+    case EntryMeasureStatus::kExitCriticalAngle:
+      return "exit_critical_angle";
+    case EntryMeasureStatus::kCorridorEmpty:
+      return "corridor_empty";
+  }
+  return "unknown";
+}
+
+RecoveryStatus Corridor::RecoverRepresentativePath(const CorridorDiagnostics& diagnostics,
+                                                   RepresentativePath* out) const {
+  *out = {};
+  const int polygon_count = static_cast<int>(offsets_.size()) - 1;
+  // The diagnostics are the intersection this corridor evaluated: without its geometry there is
+  // nothing to recover, and a corridor the area gate refused is not a legal one even though the
+  // clipped ring's vertices are still recorded. Both gates are the corridor's own.
+  if (!diagnostics.geometry_evaluated || diagnostics.vertices.size() < 3 ||
+      diagnostics.vertices.size() != diagnostics.edge_sources.size() ||
+      !(diagnostics.raw_area > diagnostics.area_threshold)) {
+    return RecoveryStatus::kNotEvaluated;
+  }
+
+  // The internal direction from the projection basis (u, w): Evaluate built them orthonormal with
+  // w = d x u, so d = u x w is the normalized internal direction the intersection was cut along.
+  const std::array<double, 3>& u = diagnostics.projection_basis[0];
+  const std::array<double, 3>& w = diagnostics.projection_basis[1];
+  double d[3];
+  so3::Cross3(u.data(), w.data(), d);
+
+  // The interior point: the intersection polygon is convex (clipping a convex ring keeps it
+  // convex), so its vertex average is interior. With the internal direction it defines the one
+  // straight line of the unfolded picture.
+  double c_u = 0.0;
+  double c_w = 0.0;
+  for (const std::array<double, 2>& v : diagnostics.vertices) {
+    c_u += v[0];
+    c_w += v[1];
+  }
+  c_u /= static_cast<double>(diagnostics.vertices.size());
+  c_w /= static_cast<double>(diagnostics.vertices.size());
+  double origin[3];
+  for (int i = 0; i < 3; i++) {
+    origin[i] = c_u * u[i] + c_w * w[i];
+  }
+
+  // The unfolded line meets every ghost plane in order; a non-increasing or unbounded meeting
+  // (a plane parallel to the line) is a named refusal, not a clamp.
+  double t[kMaxFaceCount];
+  for (int k = 0; k < polygon_count; k++) {
+    const double* n = &plane_normals_[3 * static_cast<size_t>(k)];
+    const double denom = so3::Dot3(n, d);
+    if (!(std::fabs(denom) > 0.0)) {
+      return RecoveryStatus::kDegenerate;
+    }
+    t[k] = (plane_offsets_[k] - so3::Dot3(n, origin)) / denom;
+    if (k > 0 && !(t[k] > t[k - 1])) {
+      return RecoveryStatus::kDegenerate;
+    }
+  }
+
+  // Fold each ghost intersection back through the reflection chain: the polygon of face k was
+  // placed with the map P_{k-1} = rho_{k-1} o ... o rho_1 (the polygons' own planes), so the
+  // original point is P_{k-1}^{-1}(x_k) — the reflections applied last-placed first.
+  double pts[kMaxFaceCount][3];
+  for (int k = 0; k < polygon_count; k++) {
+    for (int i = 0; i < 3; i++) {
+      pts[k][i] = origin[i] + t[k] * d[i];
+    }
+    for (int j = k - 1; j >= 1; j--) {
+      ReflectInPlane(&plane_normals_[3 * static_cast<size_t>(j)], plane_offsets_[j], pts[k]);
+    }
+  }
+
+  // Independent verification on the original crystal — the same checks the unit tests run, run
+  // here so a numerically degenerate corridor refuses named instead of emitting a trajectory.
+  const double tol = kRecoverTolRel * min_edge_;
+  for (int k = 0; k < polygon_count; k++) {
+    // I0 plane membership: the folded point sits on its original finite face's plane.
+    const double plane_residual =
+        std::fabs(so3::Dot3(&real_normals_[3 * static_cast<size_t>(k)], pts[k]) - real_offsets_[k]);
+    if (!(plane_residual <= tol)) {
+      return RecoveryStatus::kDegenerate;
+    }
+    // I1 finite-face containment: inside the original polygon, in the polygon's own margins.
+    const double* ring = &real_points_[3 * static_cast<size_t>(offsets_[k])];
+    const int count = offsets_[k + 1] - offsets_[k];
+    if (ConvexPolygonMargin(ring, count, &real_normals_[3 * static_cast<size_t>(k)], pts[k]) < -tol) {
+      return RecoveryStatus::kDegenerate;
+    }
+  }
+  // I2 in-crystal propagation: every leg's midpoint satisfies every present face's inward
+  // half-space (the convex-crystal containment test, walked over the whole crystal, not just the
+  // sequence's faces).
+  for (int k = 0; k + 1 < polygon_count; k++) {
+    const double mid[3] = { 0.5 * (pts[k][0] + pts[k + 1][0]), 0.5 * (pts[k][1] + pts[k + 1][1]),
+                            0.5 * (pts[k][2] + pts[k + 1][2]) };
+    const size_t face_count = crystal_offsets_.size();
+    for (size_t f = 0; f < face_count; f++) {
+      if (so3::Dot3(&crystal_normals_[3 * f], mid) - crystal_offsets_[f] > tol) {
+        return RecoveryStatus::kDegenerate;
+      }
+    }
+  }
+
+  for (int k = 0; k < polygon_count; k++) {
+    for (int i = 0; i < 3; i++) {
+      out->contacts[k][i] = pts[k][i];
+    }
+  }
+  out->contact_count = polygon_count;
+  return RecoveryStatus::kOk;
 }
 
 }  // namespace lumice::analytic

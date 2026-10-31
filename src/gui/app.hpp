@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/analyze_survey.hpp"
 #include "gui/annotation_anchors.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/crystal_renderer.hpp"
@@ -52,6 +53,30 @@ struct PreviewViewport {
   std::vector<CurveLabelSet> curve_labels;
 };
 
+// The Analyze workspace's scene panorama: a second VIEW of the same committed texture the Render
+// preview shows — the texture is always dual equal-area full-sky (gui-state-governance.md §9.1),
+// so the panorama is that data through the existing reprojection family with the view fixed at
+// Fisheye Equal Area / 180° and the hemisphere switch as the `visible` uniform. No second
+// projection implementation: the deferred pass renders it through the very
+// RenderPreviewFrameAndBlit the preview uses, into the region RenderAnalyzeWorkspace publishes
+// here each frame. `params` is refreshed per frame from the same supply the preview's comes from
+// (mono exposure, tone, source format) with only `view_proj` overridden; `bg` stays disabled —
+// the photo-compare overlay is a Render-workspace affordance.
+//
+// LEVEL-TRIGGERED like PreviewViewport: the frame that draws the workspace publishes the
+// panorama's rect (or nothing, when there is no texture to show), the frame that does not
+// publishes neither — RenderAnalyzeWorkspace clears `active` at entry.
+struct PanoramaViewport {
+  bool active = false;
+  int vp_x = 0;
+  int vp_y = 0;
+  int vp_w = 0;
+  int vp_h = 0;
+  PreviewParams params;
+  float dpi_scale_x = 1.0f;
+  float dpi_scale_y = 1.0f;
+};
+
 // Sky-Color eyedropper mode: while active, the preview shows the background photo alone and a
 // click on it samples that photo's pixel into renderer.background.
 //
@@ -91,6 +116,8 @@ extern ThumbnailCache g_thumbnail_cache;
 extern LUMICE_Server* g_server;
 extern ServerPoller g_server_poller;
 extern PreviewViewport g_preview_vp;
+extern PanoramaViewport g_panorama_vp;
+extern SurveyExecutor g_survey_executor;
 extern BgColorPickState g_bg_pick;
 
 // "There is a background photo on screen to act on" — a photo is loaded AND it is being shown AND
@@ -642,11 +669,24 @@ std::string FormatSamplingTooltip(LUMICE_RayCount crystals, LUMICE_RayCount orie
 // their display state — see 345.4 read/write split contract).
 void ToggleCompositePreview(GuiState& state);
 
+// The frame's main-area panels — the Render-mode trio, or the Analyze workspace's four columns,
+// by GuiState::workspace. ONE implementation for the app's frame loop (main.cpp) and the gui_test
+// harness's frame loop (test_gui_main.cpp) alike: the panel sequence used to live as two copies,
+// and the workspace branch is exactly the kind of change a second copy silently never sees.
+void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_height);
+
 // Panel rendering
 void RenderTopBar(float window_width);
 void RenderLeftPanel(float window_height);
 void RenderRightPanel(GLFWwindow* window, float window_width, float window_height);
 void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_height);
+// The Analyze workspace's four-column shell (analyze_workspace.cpp): the frame's layout when
+// GuiState::workspace says Analyze, drawn instead of the three Render-mode panels. Same scene
+// document, same editors — a different arrangement of them. Called only through
+// RenderWorkspacePanels.
+void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height);
+// Pin a chrome panel to the main viewport (the definition in app_panels.cpp carries the why).
+void SetNextPanelGeometry(float x, float y, float w, float h);
 void RenderStatusBar(float window_width, float window_height);
 void RenderUnsavedPopup(GLFWwindow* window);
 // task-cleanup-hardening AC4: Save-modified prompt. Rendered once per frame

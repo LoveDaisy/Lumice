@@ -362,23 +362,6 @@ inline ImVec2 MainVpPos(float x, float y) {
   return ImVec2(vp->Pos.x + x, vp->Pos.y + y);
 }
 
-// Pin a chrome panel to the main viewport so ImGui never promotes it to an
-// independent OS viewport. Without SetNextWindowViewport, panels that sit at
-// the viewport edge (e.g. status bar at the bottom row) may be promoted,
-// which makes them appear covered by the host window or float outside it.
-//
-// Exempt from the WindowResizeCondForScale (theme.hpp) audit: every caller below invokes this
-// unconditionally on every frame of the main render loop (never behind an "if just opened" gate),
-// with w/h freshly computed from UiPx() each time — the no-Cond SetNextWindowSize call this makes
-// is ImGuiCond_Always by ImGui's own default, so there is no stale frame for a scale change to
-// land on.
-inline void SetNextPanelGeometry(float x, float y, float w, float h) {
-  const ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + x, vp->Pos.y + y));
-  ImGui::SetNextWindowSize(ImVec2(w, h));
-  ImGui::SetNextWindowViewport(vp->ID);
-}
-
 // The top bar's one boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
 // follows the palette) with the ordinary item spacing on each side, so the gap between two groups
 // is twice the gap inside one plus the rule — the bar's rhythm is the theme's ItemSpacing.x and
@@ -405,6 +388,24 @@ float ToolbarGroupButtonWidth(std::initializer_list<const char*> labels) {
   return widest + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 }  // namespace
+
+// Pin a chrome panel to the main viewport so ImGui never promotes it to an
+// independent OS viewport. Without SetNextWindowViewport, panels that sit at
+// the viewport edge (e.g. status bar at the bottom row) may be promoted,
+// which makes them appear covered by the host window or float outside it.
+//
+// Exempt from the WindowResizeCondForScale (theme.hpp) audit: every caller below invokes this
+// unconditionally on every frame of the main render loop (never behind an "if just opened" gate),
+// with w/h freshly computed from UiPx() each time — the no-Cond SetNextWindowSize call this makes
+// is ImGuiCond_Always by ImGui's own default, so there is no stale frame for a scale change to
+// land on. Declared in app.hpp beside the Render*Panel family: the Analyze workspace's panels
+// (analyze_workspace.cpp) pin their geometry through the same helper.
+void SetNextPanelGeometry(float x, float y, float w, float h) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + x, vp->Pos.y + y));
+  ImGui::SetNextWindowSize(ImVec2(w, h));
+  ImGui::SetNextWindowViewport(vp->ID);
+}
 
 void RenderTopBar(float window_width) {
   SetNextPanelGeometry(0, 0, window_width, UiPx(kTopBarHeight));
@@ -595,15 +596,41 @@ void RenderTopBar(float window_width) {
   if (tint_colors_button) {
     ImGui::PopStyleColor(3);
   }
-  // The second occupant of the feature-button group: the Raypath Analysis window
-  // (analysis_panel.cpp). A plain toggle — the window has no "default on open" rule the way
-  // Colors does; what it shows is decided by its own controls once open.
-  ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_ROUTE " Analysis")) {
-    g_state.analysis.window_open = !g_state.analysis.window_open;
-  }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Which raypaths make the light in a region of the sky. Opens the Raypath Analysis window.");
+  // The second occupant of the feature-button group: the Render/Analyze workspace switch — the
+  // Analysis button's replacement and the analysis's new entry (the Analyze workspace is where
+  // the analysis lives). One slot whose label names the DESTINATION, the bar's own Run/Stop
+  // idiom: from Render it reads [route " Analyze], from Analyze it reads [Render]. The
+  // two-mode segmented pair this slot was first drawn as measured +32 px
+  // over the bar's 20 px narrow-window headroom (required 1036 vs 1024,
+  // the_top_bar_fits_at_the_minimum_window_width) — the label-shortening rung of the switch
+  // plan's degradation ladder, and the slot keeps the width of the wider of its two labels
+  // (ToolbarGroupButtonWidth) so the toggle can never shift its neighbours. The mode itself is
+  // on screen (four columns vs the render layout); the tooltips say where the click goes.
+  // Switching is session state: it never dirties, never commits, never cancels or starts a run.
+  {
+    const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
+    const char* kToAnalyzeLabel = ICON_FA_ROUTE " Analyze";
+    const char* kToRenderLabel = "Render";
+    ImGui::SameLine();
+    if (analyze) {
+      if (ImGui::Button(kToRenderLabel, ImVec2(ToolbarGroupButtonWidth({ kToAnalyzeLabel, kToRenderLabel }), 0))) {
+        g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
+        // The armed cone pick aims at the panorama, which this mode takes off screen — the same
+        // "never leave a click armed for a mode that does not read it" rule the ROI radios follow.
+        g_state.analysis.pick_armed = false;
+        g_state.analysis.cone_marker_dragging = false;
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Switch back to the Render workspace.");
+      }
+    } else {
+      if (ImGui::Button(kToAnalyzeLabel, ImVec2(ToolbarGroupButtonWidth({ kToAnalyzeLabel, kToRenderLabel }), 0))) {
+        g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Which raypaths make the light in a region of the sky. Switches to the Analyze workspace.");
+      }
+    }
   }
   // The third occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
   // like Analysis — the window has no state of its own to set on open.
@@ -824,8 +851,6 @@ constexpr float kCollapseBtnSize = 20.0f;
 // glyph does not sit on top of the colour it is reporting.
 constexpr float kBgPickSwatchOffsetPt = 16.0f;
 constexpr float kBgPickSwatchSizePt = 24.0f;
-// The analysis pick's crosshair at the cursor: half-length of each arm, in ImGui points.
-constexpr float kAnalysisPickCrosshairArmPt = 10.0f;
 // The Angular Distance picker's readout: offset from the cursor to the number's top-left, in ImGui
 // points. Further right than the eyedropper swatch's 16 pt: text starting at 16 pt put its first
 // digit under the arrow cursor's body (seen in a capture), where a swatch's larger square still
@@ -935,43 +960,11 @@ void RenderLeftPanel(float window_height) {
   // ---- Bottom toolbar: add layer only (per-layer delete lives on the header row) ----
   ImGui::Spacing();
   if (ImGui::SmallButton("+ Layer")) {
-    // Bind the new layer's seed entry to a fresh pool slot — see panels.cpp's
-    // "+ Crystal" handler for the same rationale (avoid implicit link to slot 0).
-    EntryCard new_entry;
-    new_entry.crystal_id = static_cast<int>(g_state.crystals.size());
-    g_state.crystals.emplace_back();
-    Layer new_layer;
-    new_layer.entries.push_back(new_entry);
-    // Footgun #2 guard: the layer that WAS the last layer is about to become
-    // an intermediate layer. If its prob is (near-)zero, no rays will reach the
-    // new layer — the newly added layer would be silently dead. Promote to a
-    // sensible continuation default so the user sees rays in the new layer by
-    // default. This is a user-initiated state transition (not a load), so it
-    // is not covered by the "don't silently rewrite loaded values" rule.
-    // Zero-detection MUST use IsProbZero (same helper as panels.cpp) — a raw
-    // == 0.0f would let a slider-dragged 1e-7 sneak past this promotion.
-    if (!g_state.layers.empty() && IsProbZero(g_state.layers.back().probability)) {
-      g_state.layers.back().probability = kDefaultContinuationProb;
-    }
-    g_state.layers.push_back(std::move(new_layer));
-    g_thumbnail_cache.OnLayerStructureChanged();
+    AddScatteringLayer(g_state);
   }
 
   // Process edit request: open modal if an edit button or card area was clicked
-  if (GetEditRequest().target != EditTarget::kNone) {
-    const auto& req = GetEditRequest();
-    if (req.target == EditTarget::kCard) {
-      const auto modal_tgt = GetEditModalTarget();
-      if (!IsEditModalOpen() || modal_tgt.layer_idx != req.layer_idx || modal_tgt.entry_idx != req.entry_idx) {
-        EditRequest resolved = req;
-        resolved.target = IsEditModalOpen() ? GetActiveTabAsEditTarget() : EditTarget::kCrystal;
-        OpenEditModal(resolved, g_state);
-      }
-    } else {
-      OpenEditModal(req, g_state);
-    }
-    ResetEditRequest();
-  }
+  ProcessEditRequest(g_state);
 
   // Pick-mode cancel: blank area / panel-switch click.
   // If pick is still active after cards are rendered (no card's InvisibleButton consumed
@@ -985,23 +978,10 @@ void RenderLeftPanel(float window_height) {
   // Pick-mode completion: if pick was active at frame entry but is now reset
   // (cleared by RenderEntryCard's pick-click handler), re-open the modal on
   // the SOURCE entry so the user resumes editing where they started. The
-  // editing entry's crystal_id was just re-bound to the clicked card's
-  // crystal, so also reset the singleton trackball view to that crystal's
-  // default orientation — otherwise the modal preview keeps the old
-  // crystal's rotation while the thumbnail (which always renders from the
-  // entry's axis distribution) shows the new one. Cancel paths
-  // (Esc / blank-area click) clear pick_source_at_entry and skip this
-  // branch, so view reset only fires when a link was actually applied.
-  if (pick_source_at_entry.has_value() && !g_state.pick_link_source.has_value()) {
-    const auto& src = *pick_source_at_entry;
-    const auto& editing_entry = g_state.layers[src.layer_idx].entries[src.entry_idx];
-    ResetCrystalViewToCrystal(g_state.crystals[editing_entry.crystal_id]);
-    EditRequest reopen;
-    reopen.target = EditTarget::kCrystal;
-    reopen.layer_idx = src.layer_idx;
-    reopen.entry_idx = src.entry_idx;
-    OpenEditModal(reopen, g_state);
-  }
+  // shared post-pass (panels.cpp) owns the rebind-aware view reset and the
+  // reopen; cancel paths (Esc / blank-area click) clear pick_source_at_entry
+  // and skip it, so view reset only fires when a link was actually applied.
+  ReopenEditorOnPickCompletion(g_state, pick_source_at_entry);
 
   ImGui::End();
 }
@@ -2311,17 +2291,17 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     g_bg_pick.swallow_drag_until_release = false;
   }
   // The analysis panel's "pick a point" mode has the same two ways out, for the same reasons:
-  // Esc, read here ahead of any widget; and the preview going away under it (a document switch,
-  // a texture cleared), which would otherwise leave a click armed over nothing to click on. The
-  // window being closed counts as the latter — its button is the only way to arm it.
-  if (g_state.analysis.pick_armed && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !g_state.analysis.window_open)) {
+  // Esc, read here ahead of any widget; and the picture going away under it. The picture the
+  // armed pick aims at is the Analyze workspace's panorama, so leaving that workspace is the
+  // "gone" case (the switch itself disarms too — the mode reads this only in Render frames,
+  // which an armed pick cannot reach except across the switch).
+  if (g_state.analysis.pick_armed &&
+      (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || g_state.workspace.mode != GuiState::WorkspaceMode::kAnalyze)) {
     g_state.analysis.pick_armed = false;
   }
-  // A marker drag ends with the button, wherever the release happens (off the preview, over
-  // another window): the same latch shape as the eyedropper's swallow above. The window closing
-  // ends it too, for the reason it disarms the pick.
-  if (g_state.analysis.cone_marker_dragging &&
-      (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || !g_state.analysis.window_open)) {
+  // A marker drag ends with the button, wherever the release happens (off the picture, over
+  // another window): the same latch shape as the eyedropper's swallow above.
+  if (g_state.analysis.cone_marker_dragging && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
     g_state.analysis.cone_marker_dragging = false;
   }
   // The Angular Distance picker (angular_dist_picker.hpp) has the same two ways out, for the same
@@ -2365,10 +2345,9 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
 
   float preview_height = panel_height;
 
-  g_preview_vp.active = false;
-  // Same statement, same reason: both halves of the publication are level-triggered, so the frame
-  // that does not republish them is the frame that has neither. See PreviewViewport in app.hpp.
-  g_preview_vp.curve_labels.clear();
+  // The frame's viewport publications (both modes') are cleared once at the dispatch point,
+  // RenderWorkspacePanels — the statement that used to live here moved there, so a stale
+  // publication from the other workspace can never reach either region.
 
   if (PreviewShowsPicture()) {
     // Compute viewport in framebuffer pixels (for HiDPI)
@@ -2685,38 +2664,13 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       // motion from the press that took the colour. Conservative on purpose; not a condition the
       // bug imposes, so it can be narrowed without reopening that defect.
       // The analysis window in Point mode is a third owner of the click, locking the camera the
-      // way the eyedropper does: the press that picks a point, or that takes hold of the cone
-      // marker, must not also orbit by a pixel. Which of ITS gestures runs — grab the marker,
-      // set the centre, or neither — is decided once here by ArbitrateConeInput from the hover
-      // test on this frame's projection of the marker, and every branch below reads that one
-      // verdict. Outside Point mode (window closed, other ROI) the verdict is kCamera and nothing
-      // here changes.
+      // (The analysis cone's gestures used to share this surface — marker drag and armed pick
+      // arbitrated against the camera. They moved to the Analyze workspace's panorama, which is
+      // the picture that mode aims at; nothing here reads the analysis state any more.)
       const ImVec2 vp_origin = ImGui::GetWindowPos();
-      const bool cone_mode = g_state.analysis.window_open && g_state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE;
-      bool marker_hover = false;
-      if (cone_mode && is_hovered) {
-        const std::optional<CanvasPixel> marker =
-            ProjectConeCenterMarker(g_state, PreviewAnnotationView(g_state, g_preview_vp.vp_w, g_preview_vp.vp_h));
-        if (marker.has_value()) {
-          float mx = 0.0f;
-          float my = 0.0f;
-          CanvasPixelToPreviewPoint(marker->px, marker->py, dpi_scale_x, dpi_scale_y, &mx, &my);
-          const float dx = io.MousePos.x - vp_origin.x - mx;
-          const float dy = io.MousePos.y - vp_origin.y - my;
-          const float hit_r = UiPx(kAnalysisConeMarkerHitRadiusPt);
-          marker_hover = dx * dx + dy * dy <= hit_r * hit_r;
-        }
-      }
-      // An armed Angular Distance pick owns the click outright, the cone marker included: the user
-      // is aiming a ring, and a press that lands on the marker must add the ring rather than grab
-      // the marker. So under it the arbiter is not consulted at all.
+      // An armed Angular Distance pick owns the click outright: the user is aiming a ring.
       const bool angular_pick = g_state.angular_dist_picker.armed;
-      const ConeInputOwner cone_owner =
-          cone_mode && !angular_pick ?
-              ArbitrateConeInput(marker_hover || g_state.analysis.cone_marker_dragging, g_state.analysis.pick_armed) :
-              ConeInputOwner::kCamera;
-      const bool gestures_locked = g_bg_pick.active || g_bg_pick.swallow_drag_until_release ||
-                                   cone_owner != ConeInputOwner::kCamera || angular_pick ||
+      const bool gestures_locked = g_bg_pick.active || g_bg_pick.swallow_drag_until_release || angular_pick ||
                                    g_state.angular_dist_picker.swallow_drag_until_release;
       // Same predicate the eyedropper button is enabled by, and deliberately not a second copy of
       // the expression: "there is a photo on screen to act on" is one question, whether the act is
@@ -2908,73 +2862,8 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         }
       }
 
-      // The analysis window's two gestures: the sixth and seventh branches, exclusive with the
-      // five above through gestures_locked and with each other through cone_owner. Both take the
-      // cursor through the same window-origin / DPI path the eyedropper's does, then through
-      // LUMICE_UnprojectPixel under the view the picture on screen was drawn with
-      // (PreviewAnnotationView) — so the direction the server judges by is the direction under
-      // the cursor, on this lens, at this DPI.
-      //
-      // Marker drag: a press on the marker takes hold of it; while held, every frame's cursor
-      // position becomes the centre (a drag off the picture keeps the last direction that was
-      // sky — DragAnalysisConeCenter); the release lets go. The hand cursor says "this can be
-      // grabbed" on hover and stays for the drag.
-      //
-      // The press also consumes an armed pick. The arbiter gives the marker the click when the
-      // two overlap, but the click still SETS the centre (the press frame below writes the
-      // pressed pixel's direction), and a pick is "disarmed by the click that consumes it"
-      // (gui_state.hpp) — whichever gesture that click ran as. Left armed, the user would have
-      // clicked, watched the marker move, and still be in pick mode; the overlap is not rare,
-      // either, since the default centre sits at the viewport's middle, which is where a pick
-      // tends to land.
-      if (cone_owner == ConeInputOwner::kMarkerDrag && !g_bg_pick.active) {
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-          g_state.analysis.cone_marker_dragging = true;
-          g_state.analysis.pick_armed = false;
-        }
-        if (g_state.analysis.cone_marker_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-          const std::optional<CanvasPixel> px =
-              PreviewPointToCanvasPixel(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y, dpi_scale_x,
-                                        dpi_scale_y, g_preview_vp.vp_w, g_preview_vp.vp_h);
-          if (px.has_value()) {
-            const LUMICE_AnnotationView view = PreviewAnnotationView(g_state, g_preview_vp.vp_w, g_preview_vp.vp_h);
-            DragAnalysisConeCenter(g_state, view, px->px, px->py);
-          }
-        }
-        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-          g_state.analysis.cone_marker_dragging = false;
-        }
-      }
-      // Pick: the armed click sets the centre. While armed and over the preview a crosshair is
-      // drawn at the cursor (ImGui has no crosshair among its system cursors, so it is drawn by
-      // hand, the OS cursor untouched) — the mode's on-preview half of the indication, the
-      // window's banner being the other. On this window's own draw list, like the ROI marker
-      // and ring below and unlike the eyedropper's swatch: the crosshair marks a point OF the
-      // picture, so it is clipped to the preview and sits under any window drawn over it.
-      if (cone_owner == ConeInputOwner::kPickClick && !g_bg_pick.active && is_hovered) {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
-        const ImVec2 m = io.MousePos;
-        const float arm = UiPx(kAnalysisPickCrosshairArmPt);
-        dl->AddLine(ImVec2(m.x - arm, m.y), ImVec2(m.x + arm, m.y), colour, 1.5f);
-        dl->AddLine(ImVec2(m.x, m.y - arm), ImVec2(m.x, m.y + arm), colour, 1.5f);
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-          const std::optional<CanvasPixel> px =
-              PreviewPointToCanvasPixel(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y, dpi_scale_x,
-                                        dpi_scale_y, g_preview_vp.vp_w, g_preview_vp.vp_h);
-          if (px.has_value()) {
-            const LUMICE_AnnotationView view = PreviewAnnotationView(g_state, g_preview_vp.vp_w, g_preview_vp.vp_h);
-            PickAnalysisConeCenter(g_state, view, px->px, px->py);
-          }
-        }
-      }
-      // The ROI marker and ring, placed from the direction on THIS frame's view; nothing when the
-      // window is closed, the mode is not Point, or the direction is off the picture.
-      if (cone_mode) {
-        DrawAnalysisRoiRing(g_state, PreviewAnnotationView(g_state, g_preview_vp.vp_w, g_preview_vp.vp_h), vp_origin,
-                            dpi_scale_x, dpi_scale_y);
-      }
+      // (The cone pick's crosshair and the ROI marker/ring moved to the panorama with the rest
+      // of the analysis gestures; the preview draws none of them.)
     }
   } else {
     ImVec2 avail = ImGui::GetContentRegionAvail();

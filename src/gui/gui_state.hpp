@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "gui/analysis_result.hpp"
+#include "gui/analyze_map_view.hpp"
+#include "gui/analyze_survey.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/view_look_at_types.hpp"
 #include "include/lumice_base.h"    // LUMICE_RayCount (64-bit ray-count type)
@@ -1729,7 +1731,7 @@ struct GuiState {
   bool defaults_panel_open = false;
 
   // The read-only "Summary" window (config_summary_window.cpp): one page of the current document
-  // for a screenshot. Session-only like the two above. Unlike analysis.window_open, which stays
+  // for a screenshot. Session-only like the two above. Unlike the analysis tool's selection, which stays
   // open across a Revert, this one is closed by EVERY FrontendResetReason (app.cpp
   // ResetFrontendState) — the window is a picture of one document, and a reset replaces or
   // restores that document under it.
@@ -1742,7 +1744,6 @@ struct GuiState {
   // the sim commit. The analysis REQUEST is built from these at the moment Analyze is pressed;
   // the RESULT lives in `analysis_result` below, which is derived (poller-fed), not session.
   struct RaypathAnalysisSession {
-    bool window_open = false;
     // LUMICE_RAYPATH_ROI_* verbatim — the wire values are the GUI values, no second enum to keep
     // aligned (the RadioButton row indexes this int directly, exactly as AxisDistType's does).
     int roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
@@ -1829,8 +1830,80 @@ struct GuiState {
     // the click, and the memory is about the chain, which does not change.
     std::map<std::pair<int, std::string>, ExcludedRaypathMemory> excluded_memory;
     uint64_t excluded_seq = 0;
+    // The background survey query's session state (742.3 R6): the current intent (the request id
+    // the executor owes an answer for), the selection it was issued for, the cancel latch, and
+    // the gate-passed outcome (a completed typed result or the engine's named refusal). All of
+    // it is the tool's own bookkeeping about one background query of THIS scene — the same tier
+    // rule as every field above, and the whole-struct reset above clears it exactly where the
+    // selection it belongs to dies (document switches; Revert keeps it with the kept selection).
+    SurveyQuerySession survey;
+    // The map face's session state (742.5): the same tier and the same per-reason rules, over
+    // the reference-map query — intent/key (selection + view + wavelength), the Revert latch,
+    // and the adopted outcome (a picture kept across view supersession, dropped with the
+    // selection). The display view, the sky-point intent and the explicit wavelength are the
+    // session's other three members: the view is the display's own disk state driving the
+    // requests, the intent is the user's sky target (independent of any class or ROI state),
+    // and the wavelength is the user's explicit-λ choice (0 = the engine's reference). The
+    // intent and the wavelength survive a re-Analyze — a named sky direction and a chosen
+    // wavelength carry no analysis generation; only the sessions do.
+    MapQuerySession map;
+    MapViewState map_view;
+    SkyPointIntent sky_point;
+    double map_wavelength_nm = 0.0;
+    // The point face's session state (742.6): the same tier and the same per-reason rules as the
+    // survey/map sessions above, over the sky-point query — intent/key (selection + sky point +
+    // the shared λ), the cancel latch, and the adopted outcome (DROPPED when the key changes: a
+    // newer sky point's answer must not linger under the new target). The ray face's session
+    // rides beside it: one representative-ray query for the CURRENT point sample, keyed by the
+    // point adoption + component + sample (a stale pose's polyline never draws — AC4). The
+    // display cursor (component/sample/playback/camera) is the point view's own state; playback
+    // writes the sample index and nothing else (AC3).
+    PointQuerySession point;
+    RayTraceSession trace;
+    PointViewState point_view;
+    // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
+    // always due north). The map request's window geometry derives from the sun the ENGINE will
+    // evaluate against — the executor's frozen scene, not the live document, which the user may
+    // have edited since. The anchor chain's last resort reads this, never the live sun.
+    bool frozen_sun_valid = false;
+    float frozen_sun_altitude = 20.0f;
+    // The crystal configs the frozen scene binding was built from, captured at DoAnalyze — the
+    // same freeze as the sun above, for the same reason: the point inspector's 3D mesh must be
+    // the geometry the trace ran against, and a post-Analyze edit of the live document must not
+    // rebuild it into a shape the polyline no longer lies inside (AC4). Indexed by the pool slot
+    // the snapshot's own core->pool map names (both sides captured at DoAnalyze, so the
+    // numbering is one system's). Cleared with the session by the same per-reason rules.
+    std::vector<CrystalConfig> frozen_crystals;
   };
   RaypathAnalysisSession analysis;
+
+  // Which of the shell's two workspaces the frame shows — the Render/Analyze top-bar switch's
+  // state (the Analyze workspace shell, analyze_workspace.cpp). Session tier: a layout choice of
+  // this session, never persisted, never in the document, never in ConfigSnapshot. Open and
+  // Revert keep it (ResetFrontendState does not touch it — which panels are on screen is not
+  // document state, the same rule that keeps analysis.window_open); DoNew resets it, because
+  // DoNew replaces the whole GuiState with a fresh document's clean slate — the rule every
+  // session field already follows. Switching workspaces is pure view: it never dirties, never
+  // commits or cancels anything, and shares the one scene document with the Render workspace —
+  // the same editors write the same fields in both.
+  //
+  // The workspace's own session state (the middle columns' split ratio, the panorama's view
+  // state, later the background query bookkeeping) grows inside AnalyzeWorkspaceSession rather
+  // than beside it, so the tier table stays at one row for the workspace the way `analysis` is
+  // one row for the analysis tool.
+  enum class WorkspaceMode { kRender, kAnalyze };
+  struct AnalyzeWorkspaceSession {
+    WorkspaceMode mode = WorkspaceMode::kRender;
+    // The middle area's horizontal divider: the upper row's (panorama + share list) share of the
+    // middle height, clamped to [0.15, 0.85] when dragged. Session memory (this session's own
+    // arrangement, not document state); 0.45 puts the near-square panorama the prototype pins
+    // within reach at both acceptance sizes — near-exact at 1600×980, slightly tall at 1280×800.
+    float middle_rows_ratio = 0.45f;
+    // The panorama's hemisphere — a view state of the panorama (the committed texture is always
+    // the full sky; the switch is the display-time `visible` uniform), not document state.
+    bool panorama_upper = true;
+  };
+  AnalyzeWorkspaceSession workspace;
 
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the

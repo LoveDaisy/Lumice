@@ -340,6 +340,147 @@ LUMICE_API LUMICE_ErrorCode LUMICE_PathProbeToJson(const LUMICE_PathProbe* resul
 // Release a probe result. NULL is a no-op.
 LUMICE_API void LUMICE_PathProbeDestroy(LUMICE_PathProbe* result);
 
+// =============== Class Reference Map (the map face) ===============
+// The whole physical class's reference map: a (deviation x azimuth-about-sun) grid in the probe
+// frame, each cell the class's summed band-sum value — every resolved member evaluated on the
+// same lattice and the same PixelTable, the band members' per-sr values summed
+// member-by-member, rank-0 members (the identity paths) summed into a point-mass arm instead.
+// Never a representative's map times the member count, and never rank-0 mass smeared into the
+// per-sr cells: a rank-0 class's sky image IS the point mass, and its zero cells are not
+// "no light".
+//
+// Caliber, echoed by the result's readers: single reference wavelength (the probe resolution's
+// rule — the scene's spectrum when exactly one discrete wavelength, else 550 nm), the nominal
+// geometry, the point sun, the scene's declared pose density (or the named refusal
+// measure_not_expressible — no silent substitution, never a zero map). Deterministic: the same
+// request reproduces the map bit for bit; a different view re-runs every member on its own
+// PixelTable — a request never upscales an older grid. No warm data, no cached result.
+//
+// Synchronous on the calling thread (a caller's background thread is its own decision); the
+// budget/cancel polls sit at the per-member boundaries — a stopped map keeps its completed
+// member prefix and reports truncated in the info/evidence readers, never presenting partial
+// sums as the whole class.
+
+// The budget_ms a 0 budget_ms request resolves to, and the largest one it may carry (the
+// probe's published pair, mirrored).
+#define LUMICE_PATH_MAP_DEFAULT_BUDGET_MS 15000
+#define LUMICE_PATH_MAP_MAX_BUDGET_MS 120000
+// The largest cell count a view may carry (schema, not tuning: the measured per-cell cost is
+// second-order, so the bound caps the result's memory).
+#define LUMICE_PATH_MAP_MAX_PIXELS 262144
+
+// The pixel status domain of LUMICE_PathMapPixels.status. singular: the cell covers the sun
+// direction or its antipode (NaN value, never a written zero); point_mass: the cell holding
+// the rank-0 arm's m / Omega.
+#define LUMICE_PATH_MAP_PIXEL_OK 1
+#define LUMICE_PATH_MAP_PIXEL_SINGULAR 2
+#define LUMICE_PATH_MAP_PIXEL_POINT_MASS 3
+
+// Request. `struct_size` MUST be set to sizeof(LUMICE_PathMapRequest) of the header the caller
+// compiled against: fields are only ever appended, and a size smaller than this version's is
+// rejected (LUMICE_ERR_INVALID_VALUE). The budget fields are first-class from the first
+// version. The raypath/layer encoding is LUMICE_SinglePathRequest's; exactly one layer is
+// mapped, more than one is refused as multi_layer_unsupported.
+typedef struct LUMICE_PathMapRequest {
+  size_t struct_size;
+  int crystal_id;  // a crystal entry of the scene
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  // The view: full_sky 1 selects the named all-sky view (delta [0, 180], azimuth [0, 360];
+  // the centre/spans are ignored). full_sky 0 selects the explicit window centred on the sky
+  // point (altitude in [-90, 90], azimuth measured as the sun's — the probe's at-point
+  // convention), spans in degrees; a delta window is clamped to [0, 180] and an emptied one
+  // is refused (invalid_argument).
+  int full_sky;
+  double centre_altitude_deg;
+  double centre_azimuth_deg;
+  double delta_span_deg;
+  double azimuth_span_deg;
+  // The sampling scale: the grid's rows (delta) and columns (azimuth), row-major; a full-sky
+  // request with both at 0 takes the default grid (180 x 360); otherwise at least 1 x 1, at
+  // most LUMICE_PATH_MAP_MAX_PIXELS cells in total.
+  int view_rows;
+  int view_cols;
+  // NULL or wavelength_count 0 selects the reference wavelength (the probe resolution's
+  // rule); exactly one entry selects it explicitly (in [350, 900]). More than one is refused:
+  // the per-lambda map family is a later face.
+  const double* wavelengths_nm;
+  int wavelength_count;
+  // The band-sum lattice n (the probe's ruler). 0 = 2000000 (the survey probe's count);
+  // otherwise [1, LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT].
+  int sample_count;
+  // 0 = LUMICE_PATH_MAP_DEFAULT_BUDGET_MS; at most LUMICE_PATH_MAP_MAX_BUDGET_MS. Polled at
+  // the per-member boundaries: a stopped map keeps its completed prefix and reports truncated.
+  int budget_ms;
+  const volatile int* interrupted;  // the caller's one-way stop flag (the engine only reads it,
+                                    // never writes). NULL = no flag.
+} LUMICE_PathMapRequest;
+
+typedef struct LUMICE_PathMap_ LUMICE_PathMap;
+
+// Analyse. On LUMICE_OK *out owns an immutable typed result read through the getters below.
+// On failure *out is NULL and err_buf holds "<reason>: <detail>" as LUMICE_AnalyzeSinglePath
+// spells it; the request refusals are the probe's: unknown_crystal_id, invalid_path,
+// multi_layer_unsupported, face_not_in_crystal, wavelength_out_of_range, invalid_target (the
+// view centre), invalid_argument (sample count, budget, grid, spans, wavelength count),
+// crystal_rejected, path_infeasible, plus null_arg and internal with the same meanings. The
+// document-level refusal the RESULT carries rather than the error: measure_not_expressible
+// (the scene's axis distribution is not expressible in the map's pose families) — the state
+// reads refused with the mode, never a zero map.
+LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathMap(const LUMICE_Scene* scene, const LUMICE_PathMapRequest* request,
+                                                  LUMICE_PathMap** out, char* err_buf, size_t err_size);
+
+// Release a map result. NULL is a no-op.
+LUMICE_API void LUMICE_PathMapDestroy(LUMICE_PathMap* result);
+
+// =============== Representative ray ===============
+// One concrete member's (crystal + face sequence) legal corridor at one explicit pose and
+// wavelength, recovered as a drawable path: the entry point, every internal reflection point,
+// the exit point, and the world-frame direction of every leg. The result binds to the request's
+// member/pose/wavelength — never a class-total path. A pose the corridor's gates, the optical
+// chain or the recovery's containment refuses is a named refusal riding the result, carrying the
+// measured corridor quantities as evidence and no trajectory numbers.
+
+// Request. `struct_size` MUST be set to sizeof(LUMICE_RepresentativeRayRequest) of the header
+// the caller compiled against: fields are only ever appended, and a size smaller than this
+// version's is rejected (LUMICE_ERR_INVALID_VALUE). The raypath/layer encoding is
+// LUMICE_SinglePathRequest's; exactly one layer is requested, more than one is refused as
+// multi_layer_unsupported.
+typedef struct LUMICE_RepresentativeRayRequest {
+  size_t struct_size;
+  int crystal_id;  // a crystal entry of the scene
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  const double* pose;  // 9 doubles, row-major body -> world, a rotation
+  // NULL or wavelength_count 0 selects the reference wavelength (the probe resolution's rule:
+  // the scene's single discrete wavelength, else 550); exactly one entry selects it explicitly
+  // (in [350, 900]). More than one is refused.
+  const double* wavelengths_nm;
+  int wavelength_count;
+} LUMICE_RepresentativeRayRequest;
+
+typedef struct LUMICE_RepresentativeRay_ LUMICE_RepresentativeRay;
+
+// Analyse. On LUMICE_OK *out owns an immutable typed result read through the getters below. On
+// failure *out is NULL and err_buf holds "<reason>: <detail>" as LUMICE_AnalyzePathMap spells
+// it; the request refusals are the map's: unknown_crystal_id, invalid_path,
+// multi_layer_unsupported, face_not_in_crystal, wavelength_out_of_range, invalid_argument (a
+// pose that is no rotation), crystal_rejected, plus null_arg and internal. The
+// corridor/chain/recovery refusals ride the RESULT (state refused, Info's reason), never an
+// error. The query is one synchronous single-shot evaluation — microseconds, no sampling loop —
+// so there is no budget field and nothing to cancel.
+LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzeRepresentativeRay(const LUMICE_Scene* scene,
+                                                            const LUMICE_RepresentativeRayRequest* request,
+                                                            LUMICE_RepresentativeRay** out, char* err_buf,
+                                                            size_t err_size);
+
+// Release a representative-ray result. NULL is a no-op.
+LUMICE_API void LUMICE_RepresentativeRayDestroy(LUMICE_RepresentativeRay* result);
+
 // =============== Typed query workspace ===============
 // One workspace captures a parsed Scene when created. The caller may destroy the Scene after
 // creation. Queries on the same workspace must not overlap; distinct workspaces may run in
@@ -394,6 +535,22 @@ LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryReport(LUMICE_PathWorkspace
                                                             const LUMICE_PathQueryOptions* options,
                                                             LUMICE_PathFeatureReport** out, char* err_buf,
                                                             size_t err_size);
+// The map face on the workspace: same snapshot, the shared geometry slot and cancel token; no
+// warm data (the options' warm handle is refused) and no cached-result slot — every request
+// re-runs the class on its own view. The deadline field of options is the map's whole budget.
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryMap(LUMICE_PathWorkspace* workspace,
+                                                         const LUMICE_PathMapRequest* request,
+                                                         const LUMICE_PathQueryOptions* options, LUMICE_PathMap** out,
+                                                         char* err_buf, size_t err_size);
+// The representative-ray face on the workspace: same snapshot and shared geometry slot; no warm
+// data (a non-null warm option is refused, the map's rule), no deadline and no cancel poll — the
+// query is one single-shot evaluation and declares no interruptible boundary, so the options'
+// fields are accepted for shape uniformity and never polled.
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryRepresentativeRay(LUMICE_PathWorkspace* workspace,
+                                                                       const LUMICE_RepresentativeRayRequest* request,
+                                                                       const LUMICE_PathQueryOptions* options,
+                                                                       LUMICE_RepresentativeRay** out, char* err_buf,
+                                                                       size_t err_size);
 
 // =============== Typed result readers ===============
 // Every returned pointer is borrowed from the immutable result and remains valid until Destroy.
@@ -918,6 +1075,72 @@ typedef struct LUMICE_PathProbeSample {
   int k;
   double k_eff;
 } LUMICE_PathProbeSample;
+
+// The class reference map's readers. Info carries the caliber echo (what was computed, over
+// what view, with what coverage); Pixels is the bulk grid (row-major, the view's own row-major
+// order — cell r * cols + c); PointMass is the rank-0 arm. A refused map reads Info's
+// state/reason and Evidence; Pixels and PointMass answer NOT_AVAILABLE.
+typedef struct LUMICE_PathMapInfo {
+  size_t struct_size;
+  int execution;           // LUMICE_PATH_OUTCOME_*
+  int state;               // LUMICE_PATH_STATE_* (the claim's state)
+  LUMICE_PathText reason;  // refused/unevaluated mode ("<reason>: <detail>")
+  int crystal_id;
+  int analytic_api_version;
+  LUMICE_PathText crystal_kind;
+  const int* faces;
+  size_t face_count;
+  size_t shape_count;
+  int shape_is_nominal;
+  double sun_altitude_deg;
+  double sun_azimuth_deg;
+  double incident_direction[3];
+  double wavelength_nm;
+  LUMICE_PathText wavelength_source;
+  double refractive_index;
+  int sample_count;  // the lattice n each member ran
+  int budget_ms;
+  int interrupted;
+  int member_count;       // the class's full size
+  int members_evaluated;  // the completed member prefix (== member_count when not truncated)
+  int truncated;          // 1 = the run stopped early; the prefix is not the whole class
+  long long kept_count;   // summed kept events over the evaluated members
+  int view_full_sky;
+  double view_delta_min_deg;
+  double view_delta_max_deg;
+  double view_az_min_deg;
+  double view_az_max_deg;
+  int view_rows;
+  int view_cols;
+  // The mapping frame (the probe frame the view is built in): a cell's centre direction is
+  // cos(delta)*incident + sin(delta)*(cos(az)*e1 + sin(az)*e2); the inverse reading maps a
+  // direction through (e1, e2). The GUI needs no second convention.
+  double view_incident[3];
+  double view_e1[3];
+  double view_e2[3];
+  size_t pixel_count;
+  int point_mass_available;  // 1 = the rank-0 arm carried mass (LUMICE_PathMapGetPointMass reads it)
+} LUMICE_PathMapInfo;
+
+typedef struct LUMICE_PathMapPixels {
+  size_t struct_size;
+  const double* delta_deg;  // per-cell centre coordinates (the mapping's own spelling)
+  const double* azimuth_deg;
+  const double* values;   // per sr, the class sum; NaN on singular cells
+  const int* counts;      // summed member event counts per cell
+  const uint8_t* status;  // LUMICE_PATH_MAP_PIXEL_*
+  size_t pixel_count;
+} LUMICE_PathMapPixels;
+
+typedef struct LUMICE_PathMapPointMass {
+  size_t struct_size;
+  double m;                    // the summed rank-0 mass (mass units, the band-sum convention)
+  double m_error;              // summed per-member quadrature changes (a conservative sum)
+  const char* const* methods;  // the per-member method names, deduplicated ("lattice_mean",
+                               // "psi_average"); more than one names a mixed-class sum
+  size_t method_count;
+  long long pixel;  // the cell holding m / Omega (row-major index); -1 = the view does not cover it
+} LUMICE_PathMapPointMass;
 
 // Survey object kind is the variant tag. Numeric payloads are readable only under their kind
 // and successful evidence state; absent values use availability flags, never defaulted zero.
@@ -2350,6 +2573,76 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathProbeGetProfile(const LUMICE_PathPro
                                                             LUMICE_PathProbeProfile* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathProbeGetSample(const LUMICE_PathProbe* result, size_t profile, size_t index,
                                                            LUMICE_PathProbeSample* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathMapGetInfo(const LUMICE_PathMap* result, LUMICE_PathMapInfo* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathMapGetQuantity(const LUMICE_PathMap* result, LUMICE_PathQuantitySpec* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathMapGetEvidence(const LUMICE_PathMap* result,
+                                                           LUMICE_PathSurveyEvidence* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathMapGetPixels(const LUMICE_PathMap* result, LUMICE_PathMapPixels* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathMapGetPointMass(const LUMICE_PathMap* result, LUMICE_PathMapPointMass* out);
+
+// ---- the representative ray's readers --------------------------------------------
+// The info reader always answers; the contacts/legs readers answer LUMICE_PATH_READ_OK on the
+// produced arm and LUMICE_PATH_READ_NOT_AVAILABLE on a refusal (a refusal carries no trajectory).
+// Every pointer is borrowed from the immutable result, valid until Destroy.
+
+typedef struct LUMICE_RepresentativeRayInfo {
+  size_t struct_size;
+  int produced;                   // 1 = the path arm (the contacts/legs readers answer); 0 = refused
+  LUMICE_PathText reason;         // the refusal's named cause; empty when produced
+  LUMICE_PathText entry_status;   // the corridor gate's status name, always spelled
+  LUMICE_PathText chain_failure;  // the chain's failure name when it refused; empty otherwise
+  int geometry_evaluated;         // whether the corridor cut an intersection at all
+  double area_perp_internal;      // the measured corridor area
+  double area_threshold;          // the corridor's own area gate
+  double entry_measure;           // A_P at the pose; 0 on a refusal
+  int crystal_id;
+  int analytic_api_version;
+  LUMICE_PathText crystal_kind;
+  const double* pose;  // 9 doubles, row-major body -> world (the request's own input)
+  double sun_altitude_deg;
+  double sun_azimuth_deg;
+  const double* incident_direction;  // 3 doubles, world, propagation sun -> crystal
+  double wavelength_nm;
+  LUMICE_PathText wavelength_source;
+  double refractive_index;
+  const int* faces;  // the request's face sequence
+  int face_count;
+  int shape_count;       // the shape scalars' count (identity echo; the crystal the
+  int shape_is_nominal;  // point face's own shape getter describes)
+} LUMICE_RepresentativeRayInfo;
+
+// One collision point: the world-frame point on its original finite face and the Fresnel factor
+// of the interface it sits on (T at entry and exit, R at internal faces).
+typedef struct LUMICE_PathRayContact {
+  double point[3];
+  double transmittance;
+} LUMICE_PathRayContact;
+
+// One leg's world-frame propagation direction: row k runs from contact k to contact k + 1
+// (k in [0, face_count - 1]); row 0 is the incident direction, row face_count the outgoing one.
+typedef struct LUMICE_PathRayLeg {
+  double direction[3];
+} LUMICE_PathRayLeg;
+
+typedef struct LUMICE_PathRayContacts {
+  size_t struct_size;
+  size_t contact_count;                   // face_count rows: entry, internal..., exit
+  const LUMICE_PathRayContact* contacts;  // borrowed, valid until Destroy
+} LUMICE_PathRayContacts;
+
+typedef struct LUMICE_PathRayLegs {
+  size_t struct_size;
+  size_t leg_count;               // face_count + 1 rows: incident, after each interface, outgoing
+  const LUMICE_PathRayLeg* legs;  // borrowed, valid until Destroy
+} LUMICE_PathRayLegs;
+
+LUMICE_API LUMICE_PathReadStatus LUMICE_RepresentativeRayGetInfo(const LUMICE_RepresentativeRay* result,
+                                                                 LUMICE_RepresentativeRayInfo* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_RepresentativeRayGetContacts(const LUMICE_RepresentativeRay* result,
+                                                                     LUMICE_PathRayContacts* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_RepresentativeRayGetLegs(const LUMICE_RepresentativeRay* result,
+                                                                 LUMICE_PathRayLegs* out);
+
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetInfo(const LUMICE_PathSurvey* result, LUMICE_PathSurveyInfo* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetObject(const LUMICE_PathSurvey* result, size_t index,
                                                             LUMICE_PathSurveyObject* out);

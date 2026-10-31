@@ -433,15 +433,16 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
 档位语言沿用 §2。「面板→主窗口」问的是面板内编辑能否正确抵达主文档 / 仿真；「主窗口→面板」问的是主窗口
 动作（New / Open / Run / Revert / 结构编辑）之后面板派生态是否仍与文档一致。
 
-**Analysis 面板**（`RaypathAnalysisSession` 21 字段 + `AnalysisResultView` 8 字段 + `analysis_run_in_progress`）：
+**Analysis 面板**（`RaypathAnalysisSession` 21 字段 + `AnalysisResultView` 8 字段 + `analysis_run_in_progress`；2026-10-30 起 +`survey`（后台 survey 查询会话）并 −`window_open`（浮窗随 742.3 迁移退役，下表该行仅存档））：
 
 | 字段 | 档位 | 面板→主窗口 | 主窗口→面板 |
 |---|---|---|---|
-| `window_open` | T-session | 不写主文档 | 所有 reason 保留（哪些面板开着不是文档状态） |
+| `window_open`（**已退役**，2026-10-30 浮窗迁移） | 曾为 T-session | 不写主文档 | 曾所有 reason 保留（哪些面板开着不是文档状态）；字段随浮窗删除 |
 | `roi_mode` / `cone_center_valid` / `cone_center_dir` / `cone_marker_dragging` / `cone_radius_deg` / `ray_num_millions` / `infinite` / `ray_budget_initialized` / `pick_armed` / `symmetry_p/b/d` / `selected_entry` / `fetched_once` / `fetched_generation` / `fetched_symmetry` | T-session（分析**请求**参数与列表读取游标） | 不写主文档（`RaypathAnalysisSession` 注释「none of it reaches the sim commit」，逐字段 grep 零写路径） | 4 个文档切换 reason 整体清空；`kRevert` 保留（请求参数不属于文档） |
 | `analyzed_cone_center_dir` | T-session（派生：请求时刻的锥心副本） | 不写主文档 | 有独立漂移检测 `ConeCenterDriftedFromResult`——它回答「锥心 vs 结果」，与本节谓词正交，不合并 |
 | `started` | reconcile 输入（`run_intent` 的分析侧孪生） | 不写主文档 | `DoRun` 清（server 转回渲染会话）；文档切换清 |
 | `excluded_memory` / `excluded_seq` | T-session（记忆：Exclude 点击时该行的 `share_pct` + 读取时的 symmetry 位 + 单调序号，键 `(pool 槽位, filter 行 token)`） | 不写主文档——它是关于**已排除的链**曾经显示过什么的记录；排除本身（filter）才是文档的 | 4 个文档切换 reason 随整体清空；`kRevert` 保留（结果也保留）；Include again 删对应键 |
+| `survey`（`SurveyQuerySession`，2026-10-30） | T-session（后台 survey 查询的意图 + 采纳结果：`(代,序号)` 请求 id、所选行键、取消 latch、gate 放行的完成文档或具名拒答文本；机制在 `SurveyExecutor`，`analyze_survey.cpp`——worker 线程独占冻结场景，GUI 侧只有这些会话字段） | 不写主文档 | 4 个文档切换 reason 随 `analysis` 整体清空（执行器绑定同批在 worker 上释放）；`kRevert` 保留（与保留的选中行同批）；取消按钮置 latch（意图失效，迟到结果按 id 丢弃）；`DoAnalyze` 清零 + 换冻结场景绑定 |
 | 列表里的置灰「excluded」行 | **派生谓词，不是字段**（`ComputeExcludedRaypathRows`，`analysis_panel.hpp`）：每帧从「根层晶体上每个 Out filter 的纯光路 token 行」减去「结果 payload 里同名 `display` 的行」算出，唯一权威是文档的 filter；`was X%` 来自上一行的记忆，其余全部可重算 | 唯一反向写路径「Include again」只走 `WriteFilterToPool` / `PropagateFilterIdToLinked`（与 Exclude 同一对原语），由 reconciler 每帧 diff 接到硬 dirty——与 Exclude 一致；对打开着的 Edit Entry 弹窗而言它就是一次普通的外部 pool 写，落在 §11.3 三方合并「仅 theirs 变」分支 | 不缓存派生结果，所以文档切换 / Revert / 弹窗编辑 filter 之后无需任何重同步：下一帧重算即是当前真值 |
 | `analysis_result.payload` / `entries_symmetry` / `display_energy` / `display_order` / `display_cumulative_pct` / `display_total` / `display_ring_count` | DERIVED（poller 喂入 + display-time 重投影） | 唯一反向写路径「Exclude this raypath」只写 `state.filters`，由 `gui_state_reconcile.cpp` 每帧 diff 接到 `MarkStructHardDirty`，隔一帧生效——一致 | 文档切换清空；**Run / Revert 有意保留**，由 §10.1 谓词标 stale |
 | `analysis_result.analyzed_scene` | DERIVED（§10.1 新增） | 不写主文档 | 随 `analysis_result` 整体清空 / 保留；`DoAnalyze` 每次重写 |
@@ -588,6 +589,7 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 | S8 | `color_window.cpp` 直接编辑 `state.raypath_color` | 无副本 | **合规范例** | ImGui 教义形态：控件直绑模型，没有副本就没有重同步问题（弹窗做不到这一点，因为 filter 的文本行表示与 SoP 模型表示不同——owner 裁定不改成直绑） |
 | S9 | S3 的「文档切换 / `ResetFrontendState`」分支 | 位置引用 + 模型副本 | **同根因，已修** | 每个 reset reason 都替换或恢复整个 pool，弹窗的位置引用与缓冲区全部失去意义，却没有任何 reason 关它。Immediate 下 §11.3 的 pull 已把「旧缓冲区污染新文档」堵住；**Staged 下未提交的编辑被合并规则保留，OK 会把旧文档的编辑写进新文档同位置的 entry**。修法 = `CloseEditModalOnDocumentReset()`，在 `ResetFrontendState` 里紧邻 `ClearAxisCustomMemory()` 无条件调用（同一理由、同一形状、不分 reason）；`ResetModalState()`（测试专用）= 它 + 测试才要的强制项，调它实现，两份字段集不会漂。测试：`test_edit_modal_document_reset_chain.cpp`（四个 reason 各一）+ `edit_modal/a_new_document_closes_the_editor_and_its_uncommitted_edit` |
 | S10 | `GuiState::pick_link_source`（`EntryRef`，S4） | 位置引用 | **同根因，已修** | pick 模式期间卡片的删除按钮仍可点（pick 覆盖层只接管卡片本体的点击），而 `ApplyPickLink` 的边界检查只抓「掉出末尾」，中间删除后引用在范围内、静默指向前移进来的条目——**静默错链**。修法 = `NotifyEntryDeleted(GuiState&, …)` / `NotifyLayerDeleted` 对它做同一三态补偿；命中删除位置则 `reset()` 结束 pick 模式（把 pick 静默指向另一个条目比取消更让人困惑，与 Esc / 点空白取消一致）。共用的算术从 `CompensateLayerIndexForDeletion` 改名 `CompensatePositionalIndexForDeletion`。测试：`test_edit_modal_delete_binding.cpp` 8 例 |
+| S11 | `app.cpp` `g_panorama_vp`（`PanoramaViewport`，742.3 M2-3） | 视口发布态（非模型副本） | **合规，无动作** | 与 `g_preview_vp` 同族的电平触发发布：Analyze 工作区每帧从会话态整组重算 `view`/lens/`visible` 并只在该帧绘制时置 `active`，不跨帧持有任何模型内容——陈旧读无对象（下一帧全量重算即当前真值），重同步问题结构性不存在。发布互斥（哪些视口本帧 active）由 `RenderWorkspacePanels` 分派点的入口清空承载
 
 **依赖显式锁的副本清单**（规则第二句的落地）：今天只有 S2 一处。它的锁有两半——UI 半（`BeginPopupModal`）与代码
 半（序列化器输出结构限定行集合）——两半都写在 `defaults_panel.cpp` 顶部的 copy-model 注释里。任何一半失效

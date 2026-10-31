@@ -304,6 +304,20 @@ int BranchMarginCount(int face_count) {
   return face_count + 2;
 }
 
+const char* ChainFailureName(ChainFailure failure) {
+  switch (failure) {
+    case ChainFailure::kNone:
+      return "none";
+    case ChainFailure::kPathInfeasible:
+      return "path_infeasible";
+    case ChainFailure::kTirBoundary:
+      return "tir_boundary";
+    case ChainFailure::kNonFinite:
+      return "non_finite";
+  }
+  return "unknown";
+}
+
 std::string BranchMarginName(int index, int face_count) {
   const int last = BranchMarginCount(face_count) - 1;
   assert(index >= 0 && index <= last);

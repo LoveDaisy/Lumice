@@ -284,6 +284,10 @@ add_executable(unit_correctness_test
   # lumice_raypath_obj OBJECT library linked below — the same objects liblumice carries.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp"
+  # The representative-ray face: the typed assembly over the corridor and chain, its refusal
+  # matrix (on the analytic suite's own pin poses), the point-result pose source, the request
+  # refusals and the completion boundary.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_representative_ray.cpp"
   # The budget owner: the legacy windows' zero rules, the unified query deadline's resolve-once
   # and clamp-forever, and the per-face runtime reads (one resolution per leg per query).
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_query_control.cpp"
@@ -350,6 +354,20 @@ add_executable(unit_correctness_test
   # refusal, the arc's azimuth sweep and its degenerate pole, the named refusal shapes, and the
   # online lambda grid with the red-edge width.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_probe_analysis.cpp"
+  # The class reference map (the map face): the class-vs-member reconciliation and the
+  # representative-xN negative control, the rank-0 mass arm (C15) and the constructed mixed
+  # class, determinism and view recomputation, the stop prefix and the refusal matrix, the
+  # singular-cell honesty, the caliber/coverage document, the closed-form inner-edge anchor
+  # with the probe-consistency leg, and the workspace face's slot reuse and cancel.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_reference_map.cpp"
+  # The map's C bridge (v4.59): the request/readers happy path, the rank-0 mass arm over the C
+  # surface, the document-level measure refusal, the request refusals and reader size
+  # contracts, and the workspace face with the cross-destroy lifetime.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_reference_map_c_api.cpp"
+  # The representative ray's C bridge (v4.60): the request/readers happy path on a pinned legal
+  # pose, the named refusal riding the result, the request refusals and reader size contracts,
+  # and the workspace face with the cross-destroy lifetime and the standalone agreement.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_representative_ray_c_api.cpp"
   # The survey's weight-tint leg: the kernel's point-mass-at-empty-pixel-table contract, the
   # leg's blue-over-red mechanism pin, its determinism, the fixed-pose refusal, and the
   # identity document's negative assertions (no positional dispersion, no diagnose, no probes).
@@ -547,8 +565,11 @@ set_tests_properties("LumiceGoldenAnalyticTest" PROPERTIES LABELS "golden-analyt
 # Links lumice_gui_obj the way gui_test does, but with NO GLFW window, NO GL context and NO ImGui
 # test engine: a windowless home for the gui subsystem's pure-logic cases. Its sources sit in the
 # same test/unit-correctness/gui/ directory as unit_correctness_test's, and it carries the same
-# LABEL — the split is a LINK boundary (these cases call into file_io.cpp / user_defaults.cpp),
-# not a layer or subsystem boundary. Sharing the label is what lets the existing
+# LABEL — the split is a LINK boundary (these cases call into file_io.cpp / user_defaults.cpp,
+# and — since the background survey query's lifecycle tests, 742.3 — into the engine's raypath
+# face through lumice_analytic_kernel + lumice_raypath_obj, which is what makes those tests
+# drive real queries headlessly instead of a mock), not a layer or subsystem boundary. Sharing
+# the label is what lets the existing
 # `ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"` selector in CI and scripts/test.sh pick it
 # up with no change. See doc/testing/testing-architecture.md §5 for why this is a second target rather
 # than a second layer, and for the naming rule that lets it keep a link-derived name.
@@ -627,6 +648,18 @@ if(BUILD_GUI)
     # The Raypath Analysis panel's logic: adoption gate, ring sums, click arithmetic, the exclude
     # closure — every proposition the panel makes that is not an ImGui call.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_analysis_panel_logic.cpp"
+    # The map view's pure rules and its pump: the projection held to independent sky anchors,
+    # the window spans derived by hand, the Fit/norm/colour statuses, and the lifecycle over a
+    # real executor (742.5).
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_map_view.cpp"
+    # The point view's pure rules and its two pumps (742.6): the request derivation through the
+    # one named conversion, the u-globe projection on hand-derived anchors, the factor lines'
+    # named-unavailable states, and the point/trace lifecycle over a real executor (the C01 halo
+    # point is the live anchor; the trace follows the sample and dies with the point).
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_point_view.cpp"
+    # The class overview's model rules (742.4): the identity arm's read-back on a real survey
+    # document, and the shared text/state vocabulary.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_analyze_overview_model.cpp"
     # The Angular Distance picker's radius at a pixel (against closed-form lens formulas and core's
     # inverse), which pixels are not pickable, and the list/overlay writes a pick makes.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_angular_dist_picker.cpp"
@@ -684,7 +717,8 @@ if(BUILD_GUI)
   #
   # gui_test does NOT need this exemption — it links plain `lumice` (see test/gui/CMakeLists.txt).
   target_link_libraries(gui_unit_test
-    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj)
+    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj
+            lumice_analytic_kernel lumice_raypath_obj)
   set_target_properties(gui_unit_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
@@ -766,6 +800,11 @@ if(BUILD_GUI)
     # a ref must still name the same physical layer (or read as deleted), pinned on the index AND
     # the layer's identity, because the panel's own two checks pass on the wrong layer.
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_color_ref_layer_delete_chain.cpp"
+    # The survey engine's arms -> the typed readers -> the class overview's model (742.4): the
+    # C01 dispersion anchored to the closed-form minimum from the document's own quantities, the
+    # refused-support document's coexisting independent facts, and the family ladder's levels —
+    # the arms whose documents cost real engine legs, hence this tier.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_analyze_overview_chain.cpp"
     # Startup server construction -> the calibration run on a background thread -> the first Run
     # and the poller: the server the calibration warmed up is the one the Run uses, and the run
     # stays off the screen because every wake/destroy path joins it first.
@@ -783,8 +822,14 @@ if(BUILD_GUI)
   # `lumice_obj`, not `lumice` — the same named exemption gui_unit_test documents above: a
   # composition chain that cross-checks the GUI against core's own primitives needs the internal
   # symbols that liblumice.dylib's -fvisibility=hidden does not export.
+  # `lumice_raypath_obj` + `lumice_analytic_kernel` for the same reason: the survey executor and
+  # the document-reset paths in the GUI call the raypath C API (LUMICE_PathWorkspace*/
+  # PathCancelToken*) whose definitions live in the raypath layer's object library, and the
+  # raypath layer's own assembly pulls in analytic-kernel symbols — object libraries propagate
+  # neither, so gui_unit_test has carried both explicitly for the same visibility reason.
   target_link_libraries(composition_correctness_test
-    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj)
+    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj
+            lumice_analytic_kernel lumice_raypath_obj)
   set_target_properties(composition_correctness_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 

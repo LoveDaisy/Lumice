@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "declarations": [
+    {
+      "date": "2026-10-30",
+      "new_test_tus": 8,
+      "reason": "The analyze-gui-v1 scrum's typed-face test mass, one TU per delivered face (branch feat/analyze-gui-v1, pieces 742.1-742.6): reference-map engine faces (test_reference_map.cpp typed rules, test_reference_map_c_api.cpp the C surface contracts), representative-ray recovery (test_representative_ray.cpp the typed query and its independent I0-I3 verification, test_representative_ray_c_api.cpp the C handle lifetime/refusal vocabulary), and the GUI consumption TUs (test_analyze_overview_model.cpp the layered overview model, test_analyze_map_view.cpp the map projection/pump rules, test_analyze_point_view.cpp the point inspector's request/projection/factor rules and its two real-executor pumps, test_analyze_overview_chain.cpp the composition chain the overview consumes). Each face's alternative - folding its tests into an existing TU - would have coupled independent acceptance domains and grown compile-unit hub closures for no counting gain; the pieces' own reviews accepted the split, and this entry declares the cumulative branch total the merge-base diff measures."
+    }
+  ]
+}

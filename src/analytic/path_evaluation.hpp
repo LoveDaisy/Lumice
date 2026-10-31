@@ -105,6 +105,24 @@ bool ValidateUnitVector(const double v[3]);
 // Finite, R^T R within kRotationTolerance of I (entrywise) and det(R) > 0. `r` is row-major.
 bool ValidateRotation(const double r[9]);
 
+// The frame transforms of the pose convention (row-major body -> world), the one spelling of
+// each: v_W = R v_B and v_B = R^T v_W. Templates so the Jet evaluations share them; everything
+// that rotates between the crystal frame and the world calls these rather than re-deriving the
+// index order — the R-vs-R^T mix-up is exactly the failure shape the convention exists to pin.
+template <class S, class T>
+void BodyToWorld(const S r[9], const T v[3], S out[3]) {
+  for (int i = 0; i < 3; i++) {
+    out[i] = r[i * 3 + 0] * v[0] + r[i * 3 + 1] * v[1] + r[i * 3 + 2] * v[2];
+  }
+}
+
+template <class S, class T>
+void WorldToBody(const S r[9], const T v[3], S out[3]) {
+  for (int i = 0; i < 3; i++) {
+    out[i] = r[0 * 3 + i] * v[0] + r[1 * 3 + i] * v[1] + r[2 * 3 + i] * v[2];
+  }
+}
+
 // Stage 2 outputs, caller-owned. `segment_directions` holds (slot_count + 1) * 3 doubles,
 // `interface_transmittances` slot_count doubles. When the path is not valid every output is zeroed.
 struct PathOutputs {
@@ -135,6 +153,10 @@ bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count
 // spelling is a cross-repository contract: LI reads these names. BranchMarginCount is face_count + 2.
 int BranchMarginCount(int face_count);
 std::string BranchMarginName(int index, int face_count);
+
+// Lower-case reason names of the chain's failure kinds (the refusal vocabulary of a path the
+// chain refuses): none / path_infeasible / tir_boundary / non_finite.
+const char* ChainFailureName(ChainFailure failure);
 
 }  // namespace lumice::analytic
 

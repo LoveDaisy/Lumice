@@ -8,7 +8,7 @@ The Raypath Analysis window answers "which raypaths make the light in this regio
 
 ## 1. Where it is
 
-Click the **Analysis** button (route icon) in the Top Bar, next to **Colors**. It opens an independent, non-modal "Raypath Analysis" window that you can leave open alongside the main preview — it does not replace or dock into any existing panel.
+The analysis tool lives in the **Analyze workspace**: click the workspace toggle in the Top Bar (from the Render workspace it reads **Analyze**, with a route icon; the same slot reads **Render** to switch back). The window then shows the Analyze layout instead of the render layout — the scene editors on the left, and the analysis on the right and in the middle: the **scene panorama** (the committed picture as an equal-area full-sky disk, with the region controls and the cone pick on it) above the **share list** this chapter describes, with a class overview in the bottom-right. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
 
 ## 2. Choosing a region (ROI)
 
@@ -18,7 +18,7 @@ The **Region** row offers three modes:
 |------|-------------------|
 | **Whole sky** | Every ray that leaves the scene, in any direction. No spatial filtering. |
 | **In frame** | Only rays that land inside the picture as currently framed (same lens / view / visible / front settings the preview uses). The choice needs the document to have been rendered once (a background photograph alone does not count); with the mode already selected and no live preview, the frame is the document's own view at its simulation resolution. |
-| **Point** | A cone around a direction, shown on the preview as a marker. Like In frame, the choice waits for the document's first picture. |
+| **Point** | A cone around a direction, shown on the scene panorama as a marker (and on the render preview in the Render workspace, projected from the same direction). Like In frame, the choice waits for the document's first picture. |
 
 **The Point marker**: switching to Point mode places the marker at the centre of the current view by default (if there is a preview to place it on, and no earlier pick to keep). It moves with the view every frame — projected from the direction it represents, not fixed to a screen position — so rotating or panning the view never leaves it behind. The marker, its ring and the pick crosshair are drawn on the preview itself, so any window over the preview — the analysis window, an entry editor — covers them rather than being drawn through. Hover over the marker for a hand cursor and drag it to a new spot to set the centre directly; the altitude/azimuth reading next to **Pick on preview** updates as you drag. Press **Pick on preview** instead for a banner across the top of the window ("Click on the preview to set the centre — Esc to cancel") and a crosshair cursor: click anywhere on the preview to move the marker there, or press Esc to cancel.
 
@@ -85,7 +85,128 @@ If the crystal already has an **Out** filter instead, the button does not disabl
 
 **Export CSV**, beside it, saves the list **as shown** — under the radius and the P / B / D symmetry currently on display, in the display order — to a `.csv` file through a save dialog. The file opens with `#`-prefixed lines that record the export time, the region, the cone centre / radius / rings summed for a Point result, the symmetry, the total ray count, the total energy the percentages are shares of, and the record-full hit count, so it describes itself without the window. Then one column-header row (`Raypath,Energy,Cumulative %,+/-`, matching the table above one for one) and the rows: the raypath name, its share of the total energy, the cumulative share, and the 1/√N noise together with the takeover bound the **+/-** column shows in parentheses (empty when none), and finally the **other** row when there is one. Numbers are written plain — no `%` sign, no thousands grouping — so a spreadsheet or script reads them directly. The button is disabled while there is no result.
 
-## 6. From the command line
+## 6. The class overview
+
+Select a row and the **Selection details** card in the bottom-right asks the engine about that
+class while you keep working: the query runs in the background (a **Cancel survey** button is
+there while it does), and the card shows one of four honest states — waiting, cancelled, the
+engine's named refusal (a class crossing several crystals answers `multi_layer_unsupported`,
+which is the answer, not an error), or the completed overview. Nothing is computed on the
+interface thread, and nothing is invented: a refused or unevaluated part shows the engine's own
+words.
+
+The completed overview is organized by the class's routing arm, a few main conclusions first
+with the details behind expanders:
+
+- **A direction-invariant class** (every pose sends its light back to the sun's own direction)
+  shows the certified **source image** at the sun, the **weight tint** reading (e.g.
+  "blue-tinted") with the exact measurement caliber spelled out, and the statement that
+  wavelength moves no edge here — the colour question is the tint, not a shift.
+- **A full-dimensional class** shows the **support** (the deviation range the class covers), the
+  **sharp edge** with its closed-form certificate when the geometry certifies one, the
+  brightness peak as a **finite-resolution probe reading** (distinct from the geometric edge),
+  and the **chromatic dispersion** block: the inner edge at 650 nm and at 450 nm, how far apart
+  they sit and which way (for the classic two-face halo, red inner and blue outer), followed by
+  every other onset the table carried, and the basis — the engine's own geometry string and the
+  certificate's formula, apex angle and cross-check — readable in place. The **weight colour
+  reading**, the **weight tint** and the **reference profile** (the class's brightness along the
+  solar radial line at the document's reference wavelength, drawn with empty bins as gaps, not
+  zeros) sit behind their own expanders. A class without a sharp structure renders exactly that:
+  a support and a probe reading, no fabricated "brightest point".
+- **A family-restricted class** (a directed crystal) shows the **freezing ladder**: which
+  orientation dimension each level froze, at what centre and width, how many candidate images
+  each level proposed and how many the survival filter killed.
+- **A refused class** says so in the engine's words — the delta axis could not partition this
+  geometry, which is a statement about the partition, not that the class carries no light — and
+  keeps the independent facts readable beside it: the **independent witness** (the declared
+  source's own positive events on this class) and the **internal-reflection share**.
+
+The header always names the reference wavelength and where it came from, the sun the positions
+read, and whether the survey stopped inside its budget (a partial document says so). Selecting
+another class re-asks; the card never mixes two answers.
+
+## 7. The raypath view (the class reference map)
+
+Select a row and the **Raypath view** region (bottom-left) draws that class's own sky picture —
+the engine's physical class reference map, one single-wavelength brightness disk computed from
+every member of the class (not a representative scaled up). The picture arrives in the
+background like the overview does, and the region states honestly where it stands: waiting,
+cancelled, the engine's named refusal, or the picture — plus a *coarse* note while a newer view
+is still computing (the old picture stays on screen, anchored to the sky, and never passes for
+the newest answer).
+
+**Reading it.** The disk is centred where you last looked; the yellow dot is the sun (the map's
+zero of deviation), the thin cross is the zenith, the faint arc is the horizon. Brightness is a
+diagnostic ramp over the class's per-steradian power at the reference wavelength — it is not
+scene colour, and the line under the picture spells the exact caliber: the wavelength and its
+source, how many of the class's members were evaluated (a budget-stopped map says *truncated*
+and shows its completed prefix), the sampling count, the view's own bounds, and the engine's
+geometry basis. A rank-0 class (a direction-invariant one) has no ring to draw: its sky image
+is the point mass at the sun, shown as the amber cell, with its measured mass readable in
+place — the dark cells around it are not "no light".
+
+**Operating it.** Drag pans (the sky follows the cursor), the wheel zooms anchored at the
+cursor, **Fit** frames the distribution the map itself carries, **Full sky** returns to the
+whole sky. Every view change re-asks the engine for that view — zooming is a real
+re-evaluation at the sampled tier, never an upscale of an older raster — and requests settle
+briefly so a wheel burst is one ask. The λ slider names an explicit wavelength (a new
+evaluation per wavelength; the engine keeps no warm map); *reference* returns to the document's
+own choice. **Overlays** toggles the survey's located conclusions on the picture: the positional
+objects as diamonds, and the chromatic dispersion's two inner edges as the red-inside-blue-outside
+pair of circles about the sun, labelled with their own wavelengths — the curves are the survey
+document's values, drawn where they belong; a survey without positional payload draws nothing
+and invents no curve.
+
+**Pointing.** A click on the picture (a press that does not move) sets the **sky point** —
+where you are asking about — marked with a white crosshair you can drag anywhere on the disk,
+dark regions included: the pick is a coordinate, never a brightness threshold. The altitude and
+azimuth fields under the picture do the same without any map at all (type the angles of the sky
+point, azimuth measured as the sun's), so a refused or still-computing map never blocks
+naming a target. The sky point is independent of the scene ROI: clicking the map never changes
+the cone centre or the share list, and pointing the cone on the panorama never moves your sky
+point.
+
+## 8. The point inspector (sun-direction globe, raypath 3D, point detail)
+
+Where §7 answered "what does this class look like over the whole sky", the three regions fed by
+the **sky point** answer "what is happening at this one direction" — and they keep the three
+spaces apart: the map is directions, the **sun direction globe** is the crystal's poses (the
+directions the sun sits in *the crystal's own frame* — a projection of the pose space, not the
+whole of it), and the **Raypath 3D** region is one concrete light path through one crystal.
+
+**Point detail** (right column, under the class overview) is the anchor. Once a class is
+selected and a sky point is set, the engine is asked about that exact direction in the
+background (a couple-of-seconds tier; the point queues behind the survey and map on the same
+worker, and the block says so while it waits, with a **Cancel point** button). The answer opens
+with the engine's own echo — the target labels and deviation, the member face sequence, the
+crystal, the wavelength and its source, the refractive index, the sampling tier — then the
+components: the closed loops or arcs of crystal poses that send light to your point, each with
+its end statuses and its fiber integral with its coverage (48/48 points, say). Pick a component
+and the other two regions follow it. A **point mass** answer (a direction-invariant path — the
+sun's own image) is presented as the mass it is: position, target separation, the orbit
+integral and its measure support — no fiber, no playback, no forced curve. A refusal names
+itself; a multi-layer chain names `multi_layer_unsupported` and points at the existing retreat
+(keep only this chain in the filters and re-run).
+
+**The sun direction globe** draws the selected component's fiber: each valid sample is one pose
+where the sun sits somewhere in the crystal (the `u` arrow), the polyline walks them in order,
+and the highlighted marker is the current sample. The deviation grid (toggleable) colours the
+sphere by where each sun direction deflected the light — drawn only when the document carries
+the grid, absent otherwise, never painted as zero. Under the disk: the weight bar (each
+sample's ρ·A/a²·T·K — the very quantity the fiber integral sums), the sample slider and
+**Play**. Dragging the slider or playing moves through the poses that already came back in the
+document; the sky point itself never moves — playing changes the pose you are looking at, not
+the direction you asked about.
+
+**Raypath 3D** draws the current sample's real path: the crystal's wireframe (its analysis
+shape — distributions flattened to the values the engine used) with the entry leg, every
+internal reflection and the exit leg from the engine's representative-ray recovery, colour-coded
+with a legend, contacts marked. **World** and **Crystal** are the same physical path in two
+frames (drag orbits, wheel zooms). While the path for a fresh pose is computing the region says
+so; a pose with no legal path names why (the corridor's refusal and its measured area); a
+rank-0 point mass has no path and says that instead of drawing one.
+
+## 9. From the command line
 
 The same analysis is a CLI subcommand, `Lumice analyze`, and it writes the same CSV — byte for byte the file **Export CSV** saves for the same run, produced by one shared formatter rather than two. The config is the scene; the question is asked with options, never read from the config, which is what makes it scriptable and reproducible:
 
@@ -115,7 +236,7 @@ def repeats(name):  # any layer whose face sequence repeats a face consecutively
 clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])]
 ```
 
-## 7. Path feature reports from the CLI
+## 10. Path feature reports from the CLI
 
 The GUI analysis list still ranks complete raypaths in an ROI. It does not yet display the
 new path-feature document or make its records clickable in the preview.
@@ -151,6 +272,25 @@ explicitly unsupported, but reflections within one crystal are allowed.
 be combined with `--report`. The full definitions, limitations and the version-2 to version-3
 migration are in
 [the report field reference](../raypath/raypath-cli-output.md#7-target-free-path-feature-report-schema-3).
+
+## Known limits of this first version
+
+- The diagnostic map and point queries run at a **reference wavelength, nominal geometry and a
+  point sun** — they are deliberately not the D65 scene picture, and every caliber line says so.
+  The dispersion pair is the engine's fixed 650/450 nm comparison.
+- Each query face carries its own budget (survey 15 s, point 2 s, the map its own default); a
+  budget-stopped answer keeps the facts it established and says it is partial — it never pads
+  with zeros or invents the missing part.
+- Direction-invariant (rank-0) classes answer with the **point mass** arm — no fiber, no
+  playback, no curve forced where the physics has none. Near-pole and exact-antisolar targets
+  keep their existing named refusals.
+- Deferred by the confirmed first-version scope, not regressions: per-wavelength colour map
+  families, smart Fit for detached bright patches, continuous refinement during a gesture,
+  full-sky curves (Parry/Lowitz), full-spectrum / solar-disk images, energy cross-checks,
+  backward pose dragging, interpolation between arbitrary pose samples, and multi-layer
+  inversion (the existing keep-one-chain retreat applies).
+- The map is a single-disk equal-area projection; the sun-direction globe is a projection of the
+  crystal's pose space, not the whole of it.
 
 ## Further reading
 

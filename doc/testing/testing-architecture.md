@@ -1575,8 +1575,8 @@ cost distribution and states the tail it did not look at:
   `bench-compile`, `isa-v4-compile`, `shared-gui-test-build`), plus `Ubuntu ARM64`, the cheapest leg
   of the build matrix, and the MSVC leg of `windows-shared-export`. Both proportions are recomputable
   from that table.
-- **Not enumerated at all**: the individual cases inside a scope. `gui_test` runs 344 cases across
-  38 categories (338 in its correctness pool, 6 in the real-timing pool, per the binary's own run
+- **Not enumerated at all**: the individual cases inside a scope. `gui_test` runs 346 cases across
+  38 categories (339 in its correctness pool, 7 in the real-timing pool, per the binary's own run
   summary); the fast e2e set collects 105; neither was gone through case by case. One
   measured statement about that distribution is worth carrying, because it bounds what scheduling
   can achieve — and the shape of that bound is itself worth knowing. It used to be a single case:
@@ -1620,9 +1620,12 @@ of their layers inside this `pr` run, not separately timed invocations.
 | `quick` | `ctest -L "unit-correctness\|composition-correctness\|parity\|golden-analytic"` (8/8 passed) | 67s | ctest default |
 | `quick` | fast e2e (`-m "not slow"` via `pyproject.toml` `addopts`, 219 passed) | 88s | `-n auto` → 12 workers |
 | `quick` | `gui_test` correctness pool (`--fixed-dt`, 513/513 passed) | 151s | single process |
+| | (742.7 adds seven fixed-dt lifecycle/identity legs — three from the first pass, four from the review revisions: the pool re-measured 548/548, 2026-10-31; the two C17 refused-arm legs live in the real-timing pool — the class's 24-member witness/TIR survey tail outlives its cooperative deadline on a loaded machine, see raypath-analysis.md §5.1.8) | | |
 | | **`quick` layer subtotal** | **306s** | |
 | `full` | `gui_test` real-timing pool (no `--fixed-dt`, 6/6 passed) | +11s | single process |
-| | **`full` layer subtotal** | **317s** | |
+| `full` | + 742.6's point-inspector real-timing leg (the pool's 7th case) | +~55s | measured 2026-10-30, the analyze-gui-v1 machine: the point queues behind the selection's survey and the map refinement on the one worker; the row above is that leg's predecessor measurement, kept as recorded |
+| `full` | + 742.7's real-timing legs (the integration chain pair, then the two C17 refused-arm legs from the review revision) | pool measured 13/13 | measured 2026-10-31, the analyze-gui-v1 machine, `385fbd2c1` (13/13 recorded at the R2 revision's HEAD): the filter names twelve entries and `perf_test` is a category matching two cases, so the pool runs 13 — the chain leg re-drives the survey→map→pick→point→trace queue end to end (~4s on a warm machine, frame-derived), the internal-reflection leg adds the C03 class's own survey+map+point queue (~4.7s); the predecessor rows above are kept as recorded |
+| | **`full` layer subtotal** | **~372s** (317s + the point leg's ~55s; the 742.7 two-leg pool measured 121.6s in one run — see the row above for the current shape) | |
 | `pr` | shared-lib cold configure + build + install | +21s | 12-way build |
 | `pr` | slow correctness: configured roots minus `test/performance`, `-m slow` | 183s | `-n 3` |
 | `pr` | slow performance: `pytest test/performance -m slow` | 79s | serial, single process |

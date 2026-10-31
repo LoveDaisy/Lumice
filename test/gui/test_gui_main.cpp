@@ -933,9 +933,9 @@ int main(int argc, char** argv) {
     auto layout_height = static_cast<float>(win_h);
 
     gui::RenderTopBar(layout_width);
-    gui::RenderLeftPanel(layout_height);
-    gui::RenderRightPanel(window, layout_width, layout_height);
-    gui::RenderPreviewPanel(window, layout_width, layout_height);
+    // One implementation with the app's frame loop (main.cpp): the Render-mode trio or the
+    // Analyze workspace's four columns, by GuiState::workspace.
+    gui::RenderWorkspacePanels(window, layout_width, layout_height);
     if (g_enable_log_panel) {
       gui::RenderLogPanel(layout_width, layout_height);
     }
@@ -945,11 +945,10 @@ int main(int argc, char** argv) {
     // early-returns when color_window_open is false, so cost for existing
     // tests is negligible.
     gui::RenderColorWindow(gui::g_state, gui::g_server);
-    // The Raypath Analysis window, mirrored from src/gui/main.cpp for the same reason as the
-    // Colors window above; a no-op while analysis.window_open is false.
-    gui::RenderAnalysisPanel(gui::g_state, gui::g_server);
-    // The Summary window, mirrored from src/gui/main.cpp like the two above; a no-op while
-    // config_summary_window_open is false.
+    // (The Raypath Analysis floating window is retired: its sections are the Analyze workspace's
+    // share-list region, drawn through RenderWorkspacePanels above.)
+    // The Summary window, mirrored from src/gui/main.cpp like the Colors window above; a no-op
+    // while config_summary_window_open is false.
     gui::RenderConfigSummaryWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);
     // Intentional deviation from plan (which suggested nullptr): the test
@@ -1120,6 +1119,8 @@ int main(int argc, char** argv) {
   // static g_server_poller dtor's worker-join hangs at process exit — gui_test runs every test,
   // prints the summary, then never returns.
   gui::JoinPendingStop();
+  gui::g_survey_executor.ShutdownAndJoin();  // same reason as the app's exit path: the worker
+                                             // joins before the engine-side cleanup below
   gui::g_server_poller.Stop();
 
   ImGuiTestEngine_Stop(engine);

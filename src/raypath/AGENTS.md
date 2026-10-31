@@ -4,8 +4,9 @@ Module surface rules for the raypath analysis module. The field reference and
 schema authority is `doc/raypath/raypath-cli-output.md`; the layered
 (schema3) design record is `doc/raypath/raypath-schema3-layered-design.md`.
 
-- The bridge consumes the four typed query entries through `single_path_analysis.hpp`,
-  `probe_analysis.hpp`, `survey_report.hpp`, `path_feature_report.hpp`, and their codec
+- The bridge consumes the five typed query entries through `single_path_analysis.hpp`,
+  `probe_analysis.hpp`, `survey_report.hpp`, `path_feature_report.hpp`, `representative_ray.hpp`,
+  and their codec
   declarations; it never includes `detail/` or `survey/` implementation headers. Shared
   input values live in narrow `domain/` leaves, not in a query result header.
 - `survey_reuse.hpp` owns warm candidate admission and per-fact/profile qualification;
@@ -22,8 +23,8 @@ schema authority is `doc/raypath/raypath-cli-output.md`; the layered
   expansion still owned by `detail/physical_member_scope.*`. Actual family-measure
   reading lives in `detail/measure_scope.*`; the ideal freezing ladder lives in
   `detail/structure/family.*`. Do not merge actual weights with ideal rank inputs.
-- The four public result headers (`point_result.hpp`, `probe_result.hpp`, `survey_result.hpp`,
-  `feature_report_result.hpp`) own immutable typed snapshots with result-bound references.
+- The five public result headers (`point_result.hpp`, `probe_result.hpp`, `survey_result.hpp`,
+  `feature_report_result.hpp`, `representative_ray_result.hpp`) own immutable typed snapshots with result-bound references.
   Their include closures contain no detail/config/JSON headers. Value leaves live in `results/`
   and `domain/`; shared numerical producers live in `detail/structure/` and `detail/quantity/`
   and do not write query documents. See `doc/raypath/typed-results.md` for the field ledger,
