@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793456942845,
+  "lastUpdate": 1793456948491,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4",
-          "message": "Merge pull request #443 from LoveDaisy/chore/workflow-token-least-privilege\n\nci: add top-level permissions: contents: read to workflows",
-          "timestamp": "2026-09-28T20:18:35+08:00",
-          "tree_id": "200ab539ed87c0bd2915e7f5e25f6ed5dac388e4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4"
-        },
-        "date": 1790598762889,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 903281.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1028729.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 1089354.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 593747.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "73b0f697916c89df61e26e9fb12ee6bc0cbc6afb",
           "message": "Merge pull request #444 from LoveDaisy/scrum/analytic-module-a-v0\n\nliblumice_analytic module A v0: EvaluatePath, TraceFiber, DiscoverComponents + LI parity",
           "timestamp": "2026-09-29T09:40:58+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 562647.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ed0062b7978aff4024c97d61b3eaf193332a0ce7",
+          "message": "Merge pull request #557 from LoveDaisy/feat/witness-tir-deadline\n\nfix(survey): the 15s deadline now bites inside the witness and TIR legs — cooperative polls at batch boundaries",
+          "timestamp": "2026-10-31T22:25:04+08:00",
+          "tree_id": "7a451064b6104c5005007f3631ff8bf19bfb1077",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/ed0062b7978aff4024c97d61b3eaf193332a0ce7"
+        },
+        "date": 1793456947966,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 918626.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1012235.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 841193,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 582232.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
