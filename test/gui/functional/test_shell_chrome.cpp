@@ -67,7 +67,7 @@ const char* const kTopBarButtons[] = {
   "##TopBar/" ICON_FA_FOLDER_OPEN,
   "##TopBar/" ICON_FA_FLOPPY_DISK,
   "##TopBar/" ICON_FA_PALETTE " Colors",
-  "##TopBar/" ICON_FA_FILE_LINES " Summary",
+  "##TopBar/" ICON_FA_FILE_LINES,
   kWorkspaceToRenderBtn,
   kWorkspaceToAnalyzeBtn,
   kSettingsBtn,

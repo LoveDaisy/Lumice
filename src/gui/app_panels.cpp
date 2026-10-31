@@ -620,13 +620,16 @@ void RenderTopBar(float window_width) {
     ImGui::PopStyleColor(3);
   }
   // The second occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
-  // like Analysis — the window has no state of its own to set on open.
+  // like Analysis — the window has no state of its own to set on open. Icon-only like the file
+  // group: its word was the bar's next-widest cheap reclaim after New/Open/Save, spent by owner
+  // ruling on the group-gap rule's narrow-window budget (the same fit pin), and the tooltip
+  // carries the word.
   ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_FILE_LINES " Summary")) {
+  if (ImGui::Button(ICON_FA_FILE_LINES)) {
     g_state.config_summary_window_open = !g_state.config_summary_window_open;
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("One page of the current configuration, for a screenshot. Opens the Summary window.");
+    ImGui::SetTooltip("Summary: one page of the current configuration, for a screenshot. Opens the Summary window.");
   }
 
   // task-colored-toggle-to-topbar (346.3): colored/full-spectrum display-time
