@@ -1670,6 +1670,63 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
     gui::g_state.workspace.middle_rows_ratio = ratio_before;
     ctx->Yield(2);
   }
+  // ---- The orbit rotation convention pin (doc/geometry/coordinate-convention.md §9.8) ----
+  // The project-wide grab metaphor (Render main view + modal preview + this orbit camera): drag
+  // right -> the crystal's NEAR face follows the hand RIGHT; drag down -> the near face follows
+  // DOWN. Every quantity below comes out of gui::OrbitBasis — the same basis the renderer draws
+  // with — and the landmark M = −fwd + 0.25·right sits a quarter-right of the view centre on the
+  // camera-facing side, so the assertions are about the basis itself, decoupled from the scene.
+  const float yaw0 = gui::g_state.analysis.point_view.orbit_yaw_deg;
+  const float pitch0 = gui::g_state.analysis.point_view.orbit_pitch_deg;
+  double fwd0[3];
+  double right0[3];
+  double up0[3];
+  gui::OrbitBasis(yaw0, pitch0, fwd0, right0, up0);
+  const double landmark[3] = { -fwd0[0] + 0.25 * right0[0], -fwd0[1] + 0.25 * right0[1], -fwd0[2] + 0.25 * right0[2] };
+  const auto screen_motion = [](const double m[3], const double a[3], const double b[3]) {
+    return m[0] * (b[0] - a[0]) + m[1] * (b[1] - a[1]) + m[2] * (b[2] - a[2]);
+  };
+
+  // Drag right: the near face moves right (dsx > 0), the yaw axis dominates (a=0.25 puts the
+  // dominance limit at cot(pitch)/a ≈ 9.9 at the default 22°; 4 leaves margin), and yaw itself
+  // decreased.
+  ctx->ItemDragWithDelta("**/##r3d_canvas", ImVec2(24.0f, 0.0f));
+  ctx->Yield(2);
+  const float yaw1 = gui::g_state.analysis.point_view.orbit_yaw_deg;
+  const float pitch1 = gui::g_state.analysis.point_view.orbit_pitch_deg;
+  double fwd1[3];
+  double right1[3];
+  double up1[3];
+  gui::OrbitBasis(yaw1, pitch1, fwd1, right1, up1);
+  const double dsx = screen_motion(landmark, right0, right1);
+  const double dsy = screen_motion(landmark, up0, up1);
+  ctx->LogInfo("[ray3d orbit] right drag: yaw %.3f -> %.3f, dsx %.6f, dsy %.6f", yaw0, yaw1, dsx, dsy);
+  IM_CHECK_RETV(dsx > 0.0, false);                               // grab: the near face follows the hand to the right
+  IM_CHECK_RETV(std::fabs(dsx) >= 4.0 * std::fabs(dsy), false);  // yaw-dominant, not a nod
+  IM_CHECK_RETV(yaw1 < yaw0, false);                             // a right drag decreases yaw
+
+  // Drag down: the near face moves down (dsy < 0) and the screen-x motion is EXACTLY zero — in
+  // the z-up basis `right` depends on yaw only, so a pure pitch drag cannot move anything
+  // sideways. This invariant fails on the transposed basis (its right depends on pitch), so it
+  // doubles as the red/green discriminator, not just a direction check.
+  ctx->ItemDragWithDelta("**/##r3d_canvas", ImVec2(0.0f, 24.0f));
+  ctx->Yield(2);
+  const float pitch2 = gui::g_state.analysis.point_view.orbit_pitch_deg;
+  double fwd2[3];
+  double right2[3];
+  double up2[3];
+  gui::OrbitBasis(yaw1, pitch2, fwd2, right2, up2);
+  const double dsx_down = screen_motion(landmark, right1, right2);
+  const double dsy_down = screen_motion(landmark, up1, up2);
+  ctx->LogInfo("[ray3d orbit] down drag: pitch %.3f -> %.3f, dsx %.6f, dsy %.6f", pitch1, pitch2, dsx_down, dsy_down);
+  IM_CHECK_RETV(dsy_down < 0.0, false);              // grab: the near face follows the hand downward
+  IM_CHECK_RETV(std::fabs(dsx_down) < 1e-9, false);  // a pitch drag never moves anything sideways
+  IM_CHECK_RETV(pitch2 < pitch1, false);             // a down drag decreases pitch
+
+  // Restore the pre-pin pose through the same public fields — the leg's remaining playback
+  // assertions must not see the drags.
+  gui::g_state.analysis.point_view.orbit_yaw_deg = yaw0;
+  gui::g_state.analysis.point_view.orbit_pitch_deg = pitch0;
 
   // Playback writes the sample index and NOTHING else (AC3, pinned on the real app's frame loop):
   // the sky point and the ROI state are bitwise what they were, the selection untouched.
