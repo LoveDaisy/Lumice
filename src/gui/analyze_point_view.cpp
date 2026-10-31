@@ -703,13 +703,34 @@ bool BuildPointCrystalMesh(const CrystalConfig& cr, LUMICE_CrystalMesh* out) {
   return LUMICE_GetCrystalMesh(&param, /*sample_seed=*/0, out) == LUMICE_OK;
 }
 
-// The orbit camera's screen basis: yaw about the display frame's vertical (+z), pitch from the
-// horizontal, orthographic. Pitch clamps short of the pole; the right axis's own singularity is
-// handled at the normalization below.
-void OrbitBasis(float yaw_deg, float pitch_deg, double right[3], double up[3]) {
+void RotateBodyToWorld(const double pose[9], const float v[3], float out[3]) {
+  out[0] = static_cast<float>(pose[0] * v[0] + pose[1] * v[1] + pose[2] * v[2]);
+  out[1] = static_cast<float>(pose[3] * v[0] + pose[4] * v[1] + pose[5] * v[2]);
+  out[2] = static_cast<float>(pose[6] * v[0] + pose[7] * v[1] + pose[8] * v[2]);
+}
+
+ImU32 SegmentColor(int kind, float alpha) {
+  switch (kind) {
+    case 0:
+      return IM_COL32(90, 160, 255, static_cast<int>(255 * alpha));  // entry: blue
+    case 1:
+      return IM_COL32(255, 165, 60, static_cast<int>(255 * alpha));  // internal: orange
+    default:
+      return IM_COL32(90, 220, 120, static_cast<int>(255 * alpha));  // exit: green
+  }
+}
+
+}  // namespace
+
+// The 3D view's orthographic orbit basis in the display frame (declared in the hpp for the
+// gui_test pin to consume the same basis the renderer draws with). The convention note — axes,
+// drag signs, the doc pointer — lands with the behavior fix; see the hpp declaration meanwhile.
+void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]) {
   const double yaw = static_cast<double>(yaw_deg) * (3.14159265358979323846 / 180.0);
   const double pitch = std::clamp(static_cast<double>(pitch_deg), -88.0, 88.0) * (3.14159265358979323846 / 180.0);
-  const double fwd[3] = { std::cos(pitch) * std::cos(yaw), std::sin(pitch), std::cos(pitch) * std::sin(yaw) };
+  fwd[0] = std::cos(pitch) * std::cos(yaw);
+  fwd[1] = std::sin(pitch);
+  fwd[2] = std::cos(pitch) * std::sin(yaw);
   // right = fwd x worldUp (+z the crystal's c-axis display convention), up = right x fwd. The
   // normalizer's floor keeps the horizontal look (pitch 0 at yaw ±90°, fwd parallel to +z — the
   // one real singularity of this cross product) defined instead of trusting the double-rounded
@@ -729,25 +750,6 @@ void OrbitBasis(float yaw_deg, float pitch_deg, double right[3], double up[3]) {
   up[1] = right[2] * fwd[0] - right[0] * fwd[2];
   up[2] = right[0] * fwd[1] - right[1] * fwd[0];
 }
-
-void RotateBodyToWorld(const double pose[9], const float v[3], float out[3]) {
-  out[0] = static_cast<float>(pose[0] * v[0] + pose[1] * v[1] + pose[2] * v[2]);
-  out[1] = static_cast<float>(pose[3] * v[0] + pose[4] * v[1] + pose[5] * v[2]);
-  out[2] = static_cast<float>(pose[6] * v[0] + pose[7] * v[1] + pose[8] * v[2]);
-}
-
-ImU32 SegmentColor(int kind, float alpha) {
-  switch (kind) {
-    case 0:
-      return IM_COL32(90, 160, 255, static_cast<int>(255 * alpha));  // entry: blue
-    case 1:
-      return IM_COL32(255, 165, 60, static_cast<int>(255 * alpha));  // internal: orange
-    default:
-      return IM_COL32(90, 220, 120, static_cast<int>(255 * alpha));  // exit: green
-  }
-}
-
-}  // namespace
 
 const CrystalConfig* FrozenCrystalForPool(const GuiState& state, int pool) {
   if (pool < 0 || pool >= static_cast<int>(state.analysis.frozen_crystals.size())) {
@@ -1347,9 +1349,10 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     const float side = std::min(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y);
     const float scale = (side * 0.42f / fit) * std::clamp(view.orbit_zoom, 0.25f, 8.0f);
     const ImVec2 mid((canvas_min.x + canvas_max.x) * 0.5f, (canvas_min.y + canvas_max.y) * 0.5f);
+    double fwd[3];
     double right[3];
     double up[3];
-    OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, right, up);
+    OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
     auto project = [&](const float p[3]) {
       const double dx = static_cast<double>(p[0]) - centre[0];
       const double dy = static_cast<double>(p[1]) - centre[1];
