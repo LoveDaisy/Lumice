@@ -17,6 +17,7 @@
 #include "raypath/query_control.hpp"  // the survey legs' poll sites
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_report.hpp"
+#include "survey_golden_compare.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {
@@ -299,8 +300,11 @@ TEST(SurveyWitnessStop, ThePostLatticePhasePollsItsOwnSite) {
 }
 
 // The no-stop path's zero-evolution contract at unit scale: an unstopped run serializes
-// byte-identically to the pre-change golden.
-TEST(SurveyWitnessStop, AnUnstoppedRunIsByteIdenticalToThePreChangeGolden) {
+// identically to the pre-change golden — byte-exact across two runs on one machine (the
+// determinism half of the contract), and equal to the golden with numeric tokens compared
+// at 12 significant digits (the portability half: full-precision doubles drift 1-2 ULP
+// across ISAs through libm; see survey_golden_compare.hpp).
+TEST(SurveyWitnessStop, AnUnstoppedRunIsDeterministicAndMatchesThePreChangeGolden) {
   const WitnessFixture fix = WitnessFixture::Make();
   SurveyObject card;
   card.SetKind(SurveyObjectKind::kSupportSet);
@@ -310,7 +314,16 @@ TEST(SurveyWitnessStop, AnUnstoppedRunIsByteIdenticalToThePreChangeGolden) {
   SurveyData document;
   document.objects.push_back(std::move(card));
   const std::string json = SurveyResultToJson(SurveyResult(document), "test");
-  EXPECT_EQ(json, std::string(kGoldenWitnessDocument));
+  SurveyObject card_again;
+  card_again.SetKind(SurveyObjectKind::kSupportSet);
+  AssembleWitness(fix.Input(200000), &card_again);
+  ASSERT_TRUE(card_again.Witness() != nullptr);
+  SurveyData document_again;
+  document_again.objects.push_back(std::move(card_again));
+  EXPECT_EQ(SurveyResultToJson(SurveyResult(document_again), "test"), json)
+      << "two unstopped runs diverged byte-for-byte";
+  EXPECT_EQ(survey_golden_compare::CanonicalizeJsonNumbers(json),
+            survey_golden_compare::CanonicalizeJsonNumbers(kGoldenWitnessDocument));
 }
 
 // The family arm's refused-corner witness takes the query's stop. This corner is the one

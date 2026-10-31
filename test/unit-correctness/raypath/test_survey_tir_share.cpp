@@ -16,6 +16,7 @@
 #include "raypath/query_control.hpp"  // the survey legs' poll sites
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_report.hpp"
+#include "survey_golden_compare.hpp"
 #include "survey_test_fixtures.hpp"
 
 namespace lumice::raypath::survey {
@@ -339,7 +340,10 @@ TEST(TirShareStop, InPhaseCancelStopsTheChunkedPipeline) {
 // The no-stop path's zero-evolution contract at unit scale: an unstopped run serializes
 // byte-identically to the pre-change golden (captured before the chunked pipeline landed;
 // the block is deterministic — lattice + pure per-row batch, no timing fields inside).
-TEST(TirShareStop, AnUnstoppedRunIsByteIdenticalToThePreChangeGolden) {
+// Same contract shape as the witness twin: byte-exact across two runs on one machine,
+// golden-equal with numeric tokens at 12 significant digits (cross-ISA libm ULP drift;
+// see survey_golden_compare.hpp).
+TEST(TirShareStop, AnUnstoppedRunIsDeterministicAndMatchesThePreChangeGolden) {
   TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
   const std::vector<int> representative{ 13, 15, 26, 28 };
   fix.representative = representative;
@@ -348,7 +352,13 @@ TEST(TirShareStop, AnUnstoppedRunIsByteIdenticalToThePreChangeGolden) {
   ASSERT_TRUE(document.tir_share.has_value());
   EXPECT_EQ(document.tir_share->State(), EvidenceState::kFinite);
   const std::string json = SurveyResultToJson(SurveyResult(document), "test");
-  EXPECT_EQ(json, std::string(kGoldenTirShareDocument));
+  SurveyData document_again;
+  AssembleTirShare(fix.Input(200000), &document_again);
+  ASSERT_TRUE(document_again.tir_share.has_value());
+  EXPECT_EQ(SurveyResultToJson(SurveyResult(document_again), "test"), json)
+      << "two unstopped runs diverged byte-for-byte";
+  EXPECT_EQ(survey_golden_compare::CanonicalizeJsonNumbers(json),
+            survey_golden_compare::CanonicalizeJsonNumbers(kGoldenTirShareDocument));
 }
 
 }  // namespace
