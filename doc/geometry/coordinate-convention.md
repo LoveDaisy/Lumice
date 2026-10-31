@@ -371,9 +371,9 @@ metaphor all of them share.
 display frame, which is z-up (the crystal's c-axis, `+z`, is up on screen):
 
 ```
-fwd   = (cos p·cos y,  cos p·sin y,  sin p)   // scene -> viewer, z-up spherical
+fwd   = (cos p·cos y,  cos p·sin y,  sin p)   // view direction: viewer -> scene, z-up spherical
 right = (sin y, −cos y, 0)                    // = fwd × ẑ, normalized
-up    = right × fwd
+up    = right × fwd                           // right × up = −fwd (toward-viewer is −fwd)
 ```
 
 `yaw` sweeps the horizontal plane (from `+x` toward `+y`), `pitch` rises from
@@ -383,7 +383,12 @@ it makes `right` a function of the yaw alone — a pure pitch drag cannot move
 anything sideways on screen. The gui_test pin asserts that as an exact
 invariant (`point_inspector_shows_the_point_fiber_and_the_path` reads the same
 `OrbitBasis` the renderer draws with). Projection is orthographic: screen
-`x = d·right`, screen `y = d·up` (y up on screen).
+`x = d·right`, screen `y = d·up` (y up on screen). Handedness: `right × up =
+−fwd`, so the toward-viewer direction is `−fwd` and the visible near face
+lies on the `−fwd` side (the gui_test pin's landmark `M = −fwd + 0.25·right`
+is placed accordingly). Geometric meaning of the pitch sign: positive pitch
+tilts the view direction UP from the horizon — the eye sits below the plane
+looking up at the crystal (the default `22°` is an upward view).
 
 **The drag mapping (grab).** Dragging the canvas follows the project's one
 drag metaphor: *the near face follows the hand*. Right drag decreases yaw,

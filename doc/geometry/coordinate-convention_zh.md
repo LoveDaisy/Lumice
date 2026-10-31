@@ -261,9 +261,9 @@ Analyze 工作区的光路 3D 视图（point inspector 的轨迹区）使用一�
 （晶体的 c 轴 `+z` 在屏幕上朝上）：
 
 ```
-fwd   = (cos p·cos y,  cos p·sin y,  sin p)   // 场景 -> 视者，z-up 球坐标
+fwd   = (cos p·cos y,  cos p·sin y,  sin p)   // 视线方向：视者 -> 场景，z-up 球坐标
 right = (sin y, −cos y, 0)                    // = fwd × ẑ，归一化
-up    = right × fwd
+up    = right × fwd                           // right × up = −fwd（朝向视者是 −fwd）
 ```
 
 `yaw` 在水平面内扫掠（自 `+x` 向 `+y`），`pitch` 自水平面向 `+z` 抬升，并被钳到 `±88°`。
@@ -271,7 +271,9 @@ up    = right × fwd
 `right` 只是 yaw 的函数——纯 pitch 拖曳不能把任何东西在屏幕上左右移动。gui_test 钉
 （`point_inspector_shows_the_point_fiber_and_the_path`）把它作为精确不变量断言，且读取的
 是渲染器所用的同一个 `OrbitBasis`。投影为正交：屏幕 `x = d·right`、屏幕 `y = d·up`
-（y 在屏幕上朝上）。
+（y 在屏幕上朝上）。手性：`right × up = −fwd`，朝向视者的方向是 `−fwd`，可见近面在
+`−fwd` 一侧（gui_test 钉的地标 `M = −fwd + 0.25·right` 正是按此放置）。pitch 符号的几何
+含义：正 pitch 使视线自水平面向上抬——眼在水平面下方仰视晶体（默认 `22°` 是仰视）。
 
 **拖曳映射（grab）**。拖动画布遵循项目唯一的拖曳隐喻：*近面随手*。右拖减小 yaw，下拖
 减小 pitch：

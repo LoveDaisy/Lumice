@@ -1678,6 +1678,20 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   // camera-facing side, so the assertions are about the basis itself, decoupled from the scene.
   const float yaw0 = gui::g_state.analysis.point_view.orbit_yaw_deg;
   const float pitch0 = gui::g_state.analysis.point_view.orbit_pitch_deg;
+  // The pin runs at the documented default pose — the §9.8 dominance-margin derivation (cot
+  // pitch / 0.25) binds to it. If the defaults ever change, fail HERE, attributably, instead of
+  // letting the dominance assertion below produce an unexplainable red.
+  IM_CHECK_RETV(std::fabs(yaw0 - 35.0f) < 1e-4f && std::fabs(pitch0 - 22.0f) < 1e-4f, false);
+  // Restores the pre-pin pose even when one of the assertions below returns early — cross-leg
+  // display state must be restored in a destructor, not at a function tail.
+  struct OrbitPoseRestore {
+    float yaw;
+    float pitch;
+    ~OrbitPoseRestore() {
+      gui::g_state.analysis.point_view.orbit_yaw_deg = yaw;
+      gui::g_state.analysis.point_view.orbit_pitch_deg = pitch;
+    }
+  } pose_restore{ yaw0, pitch0 };
   double fwd0[3];
   double right0[3];
   double up0[3];
@@ -1722,11 +1736,7 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(dsy_down < 0.0, false);              // grab: the near face follows the hand downward
   IM_CHECK_RETV(std::fabs(dsx_down) < 1e-9, false);  // a pitch drag never moves anything sideways
   IM_CHECK_RETV(pitch2 < pitch1, false);             // a down drag decreases pitch
-
-  // Restore the pre-pin pose through the same public fields — the leg's remaining playback
-  // assertions must not see the drags.
-  gui::g_state.analysis.point_view.orbit_yaw_deg = yaw0;
-  gui::g_state.analysis.point_view.orbit_pitch_deg = pitch0;
+  // (the pose itself is restored by the OrbitPoseRestore destructor above — on every path)
 
   // Playback writes the sample index and NOTHING else (AC3, pinned on the real app's frame loop):
   // the sky point and the ROI state are bitwise what they were, the selection untouched.

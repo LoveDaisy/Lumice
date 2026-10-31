@@ -729,8 +729,9 @@ void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], 
   const double yaw = static_cast<double>(yaw_deg) * (3.14159265358979323846 / 180.0);
   const double pitch = std::clamp(static_cast<double>(pitch_deg), -88.0, 88.0) * (3.14159265358979323846 / 180.0);
   // z-up spherical coordinates about the scene's display convention (the crystal's c-axis, +z,
-  // is up on screen): yaw sweeps the horizontal plane, pitch rises from it. `fwd` points from
-  // the scene toward the viewer.
+  // is up on screen): yaw sweeps the horizontal plane, pitch rises from it. `fwd` is the view
+  // direction, from the viewer INTO the scene — the eye and the visible near face are on the
+  // −fwd side (with up = right x fwd below, the basis satisfies right x up = −fwd).
   fwd[0] = std::cos(pitch) * std::cos(yaw);
   fwd[1] = std::cos(pitch) * std::sin(yaw);
   fwd[2] = std::sin(pitch);

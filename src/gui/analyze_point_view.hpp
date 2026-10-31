@@ -185,13 +185,14 @@ RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const
 
 // The 3D region's orthographic orbit basis in the display frame, z-up (the crystal's c-axis
 // display convention): `yaw_deg` sweeps the horizontal plane from +x toward +y, `pitch_deg`
-// rises from that plane toward +z (clamped to ±88°, short of the pole). `fwd` points from the
-// scene toward the viewer; `right`/`up` are the screen axes, with `right` a function of the yaw
-// alone — exactly (sin yaw, −cos yaw, 0). Drag signs follow the project-wide grab metaphor (the
-// near face follows the hand; §9.8 has the three-camera table): right drag decreases yaw, down
-// drag decreases pitch. Exposed — not a TU-local helper — so the gui_test pin reads the SAME
-// basis the renderer draws with (the convention's single authority; the test never re-derives
-// it). Full statement: doc/geometry/coordinate-convention.md §9.8.
+// rises from that plane toward +z (clamped to ±88°, short of the pole). `fwd` is the view
+// direction, from the viewer INTO the scene — the eye and the visible near face sit on the
+// −fwd side, and with `up = right × fwd` the basis satisfies right × up = −fwd. `right`/`up`
+// are the screen axes, `right` a function of the yaw alone — exactly (sin yaw, −cos yaw, 0).
+// The drag signs are the caller's grab mapping (doc/geometry/coordinate-convention.md §9.8
+// has the three-camera table). Exposed — not a TU-local helper — so the gui_test pin reads
+// the SAME basis the renderer draws with (the convention's single authority; the test never
+// re-derives it).
 void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]);
 
 // ---- The pumps and renderers (GuiState-dependent, defined in the .cpp) ------------------------------
