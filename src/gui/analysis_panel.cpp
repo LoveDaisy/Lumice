@@ -1549,7 +1549,11 @@ void RenderResultList(GuiState& state) {
   // rays the online deal SENT its crystal, which is proportional neither to the crystal's
   // `proportion` nor to the row's Energy — shown, it only asks "why does this row get many rays
   // and little energy". Energy (the share) is the strength; the count's one job is the +/- cell.
-  if (!ImGui::BeginTable("##analysis_rows", 4, flags, ImVec2(0.0f, std::max(avail_h, UiPx(120.0f))))) {
+  // The table is the window's one scrolling region: it absorbs whatever height is left under the
+  // fixed controls and the button row, and when even that is less than its header row needs, it
+  // yields to the header instead of pushing the window into scrolling.
+  const float table_min_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+  if (!ImGui::BeginTable("##analysis_rows", 4, flags, ImVec2(0.0f, std::max(avail_h, table_min_h)))) {
     return;
   }
   ImGui::TableSetupScrollFreeze(0, 1);

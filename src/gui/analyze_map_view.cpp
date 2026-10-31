@@ -1072,7 +1072,8 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapViewState& view, const SkyPoint
 }  // namespace
 
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
-  ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders);
+  ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders,
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
   MapQuerySession& map = state.analysis.map;
   MapViewState& view = state.analysis.map_view;
   SkyPointIntent& intent = state.analysis.sky_point;
@@ -1359,17 +1360,26 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     in.completed = MapQueryStateFor(map) == MapQueryState::kCompleted;
-    // The block scrolls within what the region can still give it (the point input below keeps
-    // its own row) — the caliber never pushes the header out of reach.
-    const float input_row_reserve = UiPx(30.0f);
-    const float caliber_h = std::max(UiPx(20.0f), ImGui::GetContentRegionAvail().y - input_row_reserve);
-    ImGui::BeginChild("##map_caliber", ImVec2(0, caliber_h), ImGuiChildFlags_None);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    for (const std::string& line : MapCaliberLines(in)) {
-      ImGui::TextWrapped("%s", line.c_str());
+    // The block is the region's elastic panel: it gives back exactly what the point input below
+    // needs, measured the way ImGui advances it — the separator's 1px line rides two item
+    // spacings, the alt/az row is one frame height, and a set sky point adds the Clear row (the
+    // row's leading item spacing plus a small button's own height; its trailing spacing never
+    // lands in the content size). No floor: when even the input's share does not fit, the block
+    // collapses instead of pushing the input out — an honest empty area, never a scrolled-out
+    // header (a scrolled-out header is an unreachable one).
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float input_row_reserve = style.ItemSpacing.y * 2.0f + ImGui::GetFrameHeight() +
+                                    (intent.valid ? style.ItemSpacing.y + ImGui::GetFontSize() : 0.0f);
+    const float caliber_h = ImGui::GetContentRegionAvail().y - input_row_reserve;
+    if (caliber_h >= UiPx(1.0f)) {
+      ImGui::BeginChild("##map_caliber", ImVec2(0, caliber_h), ImGuiChildFlags_None);
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      for (const std::string& line : MapCaliberLines(in)) {
+        ImGui::TextWrapped("%s", line.c_str());
+      }
+      ImGui::PopStyleColor();
+      ImGui::EndChild();
     }
-    ImGui::PopStyleColor();
-    ImGui::EndChild();
   }
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------

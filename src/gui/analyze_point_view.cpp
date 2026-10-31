@@ -1058,7 +1058,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 // ---- The raypath 3D view -----------------------------------------------------------------------------
 
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
-  ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders);
+  ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders,
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
   PointQuerySession& point = state.analysis.point;
   RayTraceSession& trace = state.analysis.trace;
   PointViewState& view = state.analysis.point_view;
@@ -1321,90 +1322,94 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   // The canvas + gestures: drag orbits (yaw/pitch), wheel zooms. Pure display state.
   const ImVec2 avail = ImGui::GetContentRegionAvail();
   const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
-  // The canvas reserves the legend's own line below it — a scrolled-out legend is an unreachable
-  // one (the map region's rule), and the legend is AC4's colour key.
-  const float legend_px = UiPx(22.0f);
-  const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + std::max(UiPx(40.0f), avail.y - legend_px));
-  ImGui::InvisibleButton("##r3d_canvas", ImVec2(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y),
-                         ImGuiButtonFlags_MouseButtonLeft);
-  const bool active = ImGui::IsItemActive();
-  if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    const ImVec2 delta = ImGui::GetIO().MouseDelta;
-    view.orbit_yaw_deg += delta.x * 0.5f;
-    view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg + delta.y * 0.5f, -88.0f, 88.0f);
-  }
-  if (ImGui::IsItemHovered() && std::abs(ImGui::GetIO().MouseWheel) > 0.0f) {
-    view.orbit_zoom =
-        std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
-  }
+  // The canvas gives back exactly what the legend's own line needs — a scrolled-out legend is
+  // an unreachable one (the map region's rule), and the legend is AC4's colour key. No floor:
+  // the canvas absorbs what is left and, at squeezed rows, yields to zero rather than push the
+  // fixed stack above out of the region (an invisible canvas beats a scrolled-out title).
+  const float canvas_h = avail.y - ImGui::GetStyle().ItemSpacing.y - ImGui::GetTextLineHeight();
+  if (canvas_h > 0.0f) {
+    const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
+    ImGui::InvisibleButton("##r3d_canvas", ImVec2(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y),
+                           ImGuiButtonFlags_MouseButtonLeft);
+    const bool active = ImGui::IsItemActive();
+    if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+      const ImVec2 delta = ImGui::GetIO().MouseDelta;
+      view.orbit_yaw_deg += delta.x * 0.5f;
+      view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg + delta.y * 0.5f, -88.0f, 88.0f);
+    }
+    if (ImGui::IsItemHovered() && std::abs(ImGui::GetIO().MouseWheel) > 0.0f) {
+      view.orbit_zoom =
+          std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
+    }
 
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
-  const float side = std::min(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y);
-  const float scale = (side * 0.42f / fit) * std::clamp(view.orbit_zoom, 0.25f, 8.0f);
-  const ImVec2 mid((canvas_min.x + canvas_max.x) * 0.5f, (canvas_min.y + canvas_max.y) * 0.5f);
-  double right[3];
-  double up[3];
-  OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, right, up);
-  auto project = [&](const float p[3]) {
-    const double dx = static_cast<double>(p[0]) - centre[0];
-    const double dy = static_cast<double>(p[1]) - centre[1];
-    const double dz = static_cast<double>(p[2]) - centre[2];
-    const double sx = dx * right[0] + dy * right[1] + dz * right[2];
-    const double sy = dx * up[0] + dy * up[1] + dz * up[2];
-    return ImVec2(static_cast<float>(mid.x + sx * scale), static_cast<float>(mid.y - sy * scale));
-  };
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
+    const float side = std::min(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y);
+    const float scale = (side * 0.42f / fit) * std::clamp(view.orbit_zoom, 0.25f, 8.0f);
+    const ImVec2 mid((canvas_min.x + canvas_max.x) * 0.5f, (canvas_min.y + canvas_max.y) * 0.5f);
+    double right[3];
+    double up[3];
+    OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, right, up);
+    auto project = [&](const float p[3]) {
+      const double dx = static_cast<double>(p[0]) - centre[0];
+      const double dy = static_cast<double>(p[1]) - centre[1];
+      const double dz = static_cast<double>(p[2]) - centre[2];
+      const double sx = dx * right[0] + dy * right[1] + dz * right[2];
+      const double sy = dx * up[0] + dy * up[1] + dz * up[2];
+      return ImVec2(static_cast<float>(mid.x + sx * scale), static_cast<float>(mid.y - sy * scale));
+    };
 
-  // The mesh wireframe (dim), then the trace (full alpha on top).
-  for (int e = 0; e < cache.mesh.edge_count; ++e) {
-    float a[3];
-    float b[3];
-    to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2] * 3], a);
-    to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2 + 1] * 3], b);
-    dl->AddLine(project(a), project(b), IM_COL32(105, 110, 120, 120), 1.0f);
-  }
-  for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
-    const float* p0 = &line.points[s * 6];
-    const float* p1 = p0 + 3;
-    float d0[3];
-    float d1[3];
-    point_to_display(p0, d0);
-    point_to_display(p1, d1);
-    dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
-  }
-  // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
-  // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
-  // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
-  // display synthesis and marked by nothing.
-  for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
-    const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
-    float d[3];
-    point_to_display(p, d);
-    dl->AddCircle(project(d), UiPx(2.5f), IM_COL32(240, 240, 240, 190), 0, 1.0f);
-  }
-  // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
-  // centre (the crystal view's own anchor; the world view's entry leg already carries the
-  // incident). The tip rides the content fit's scale, the anchor does not.
-  if (view.crystal_frame) {
-    const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
-                         static_cast<float>(current->sample.sun_in_crystal[1]),
-                         static_cast<float>(current->sample.sun_in_crystal[2]) };
-    const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
-                           mesh_centre[2] + u[2] * fit * 0.6f };
-    dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+    // The mesh wireframe (dim), then the trace (full alpha on top).
+    for (int e = 0; e < cache.mesh.edge_count; ++e) {
+      float a[3];
+      float b[3];
+      to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2] * 3], a);
+      to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2 + 1] * 3], b);
+      dl->AddLine(project(a), project(b), IM_COL32(105, 110, 120, 120), 1.0f);
+    }
+    for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
+      const float* p0 = &line.points[s * 6];
+      const float* p1 = p0 + 3;
+      float d0[3];
+      float d1[3];
+      point_to_display(p0, d0);
+      point_to_display(p1, d1);
+      dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
+    }
+    // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
+    // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
+    // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
+    // display synthesis and marked by nothing.
+    for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
+      const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
+      float d[3];
+      point_to_display(p, d);
+      dl->AddCircle(project(d), UiPx(2.5f), IM_COL32(240, 240, 240, 190), 0, 1.0f);
+    }
+    // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
+    // centre (the crystal view's own anchor; the world view's entry leg already carries the
+    // incident). The tip rides the content fit's scale, the anchor does not.
+    if (view.crystal_frame) {
+      const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
+                           static_cast<float>(current->sample.sun_in_crystal[1]),
+                           static_cast<float>(current->sample.sun_in_crystal[2]) };
+      const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
+                             mesh_centre[2] + u[2] * fit * 0.6f };
+      dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+    }
   }
   // The legend.
   ImGui::TextDisabled("entry");
   ImGui::SameLine();
-  dl->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(0, 1.0f), 2.0f);
+  ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(0, 1.0f), 2.0f);
   ImGui::SameLine();
   ImGui::TextDisabled("internal");
   ImGui::SameLine();
-  dl->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(1, 1.0f), 2.0f);
+  ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(1, 1.0f), 2.0f);
   ImGui::SameLine();
   ImGui::TextDisabled("exit");
   ImGui::SameLine();
-  dl->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
+  ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
   if (current->sample.interface_count >= 2) {
     ImGui::SameLine();
     ImGui::TextDisabled("face transmittance: entry %.3f, exit %.3f", current->sample.interface_transmittances[0],

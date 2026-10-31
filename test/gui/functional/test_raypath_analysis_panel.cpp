@@ -281,6 +281,21 @@ ImGuiWindow* PanoramaPictureWindow() {
   return nullptr;
 }
 
+// A child region's live ImGuiWindow under the lower row (##AnalyzeRaypathView / ##AnalyzeRaypath3D):
+// child windows register as "Parent/Name_<id>", so a ref cannot address them directly — resolve by
+// the parent's exact top-level name and a name fragment (the same lookup shape
+// PanoramaPictureWindow and FindListRowScrolling use).
+ImGuiWindow* LowerRowRegionWindow(const char* name_fragment) {
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+        std::strcmp(w->ParentWindow->Name, "##AnalyzeLowerRow") == 0 &&
+        std::strstr(w->Name, name_fragment) != nullptr) {
+      return w;
+    }
+  }
+  return nullptr;
+}
+
 // Click the PANORAMA's picture centre with the pick armed; returns the canvas pixel the click
 // landed on (the panorama's own canvas, g_panorama_vp). The pick's picture is the Analyze
 // workspace's panorama now — the preview no longer hosts the cone gestures.
@@ -1306,6 +1321,19 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   SetListRef(ctx);
   ctx->ItemClick((std::string("**/") + top_display).c_str());
   ctx->SetRef("");
+  // The kWaiting pin: the multi-line queue note is exactly the
+  // fixed text stack the region must carry without scrolling — the waiting-text arm the
+  // skeleton scroll-pin case cannot reach honestly without a server.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kWaiting; }, 10),
+      false);
+  {
+    ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypathView");
+    IM_CHECK_RETV(region != nullptr, false);
+    IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
+    IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
+  }
   // The map answers behind the survey's chromatic legs (one worker, queue by face), then the
   // default view chain runs: the full-sky map auto-Fits and the refinement window answers —
   // the test waits for the WINDOW map specifically.
@@ -1358,6 +1386,18 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.pick_armed == pick_armed_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before, false);
 
+  // The with-result pin: the caliber block is on screen and the
+  // pick has set the sky point, so the point input is at its two-row shape — the region must
+  // budget it exactly and never scroll (the reserve defect pinned the scroll to the bottom and
+  // cut the header row off).
+  {
+    ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypathView");
+    IM_CHECK_RETV(region != nullptr, false);
+    ctx->LogInfo("[scroll pins] map with-result SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
+    IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
+    IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
+  }
+
   // The flip falsifier: a full-sky view puts the sun far off the disk's centre, so the halo
   // ring surrounds the sun MARKER only when the raster's row order and the anchors agree — the
   // one view where a vertical mirror of the picture is visible to the eye. Screenshot on file.
@@ -1390,7 +1430,102 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   return true;
 }
 
-// The point inspector (742.6, AC7): the real chain from the map pick through the point document,
+// The scroll pins: the Analyze workspace's rolling regions are
+// STRUCTURALLY non-scrolling — the map and 3D regions carry their fixed stacks (header row, state
+// text, the two-row sky-point input) without a scrollbar, the divider strip contains its grab bar
+// inside its own rect, and the share list never scrolls as a window. Asserted at the 1600x980
+// default basis, the 1280x800 acceptance size and the 1024x640 minimum, against the worst
+// fixed-content shapes reachable without a server: the regions' no-selection text stacks and the
+// sky point set, which is what makes the input block two rows. The waiting-text arm (the map's
+// multi-line queue note) rides the real-timing map leg below, where an intent is honest — set
+// here without a server it would sit one pump frame from kRefused, and a state the app itself
+// races away from is flake fuel, not a fixture.
+bool WorkspaceScrollRegionsAreStructurallyFixed(ImGuiTestContext* ctx) {
+  ResetTestState();
+  OpenWindow(ctx);
+  // The two-row input block: a set sky point draws the "sky point: ..." line and the Clear
+  // button under the alt/az row — the height the map region must budget exactly.
+  SetSkyPointTarget(42.0, 0.0);
+  ctx->Yield(2);
+
+  const auto request_basis = [&](int width, int height, const char* label) {
+    g_window_size_test.width = width;
+    g_window_size_test.height = height;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK(g_window_size_test.done.load());
+    ctx->Yield(3);
+    ctx->LogInfo("[scroll pins] basis %s", label);
+  };
+  const auto assert_regions_fixed = [&]() {
+    ImGuiWindow* map = LowerRowRegionWindow("##AnalyzeRaypathView");
+    ImGuiWindow* r3d = LowerRowRegionWindow("##AnalyzeRaypath3D");
+    ImGuiWindow* divider = ctx->GetWindowByRef("//##AnalyzeRowsDivider");
+    ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
+    ImGuiWindow* lower = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+    if (map != nullptr && r3d != nullptr && divider != nullptr && share != nullptr && lower != nullptr) {
+      // The values first: a red assert prints its expression, this line pins the numbers. The
+      // LOWER ROW's own scroll rides along: NoScrollbar only hides the bar, so a nonzero scroll
+      // there would shift both children up while every child-side reading stays zero.
+      ctx->LogInfo(
+          "[scroll pins] map SM %.1f SC %.1f | 3d SM %.1f SC %.1f | divider SM %.1f/%.1f | share SM %.1f SC %.1f | "
+          "lower SM %.1f SC %.1f",
+          map->ScrollMax.y, map->Scroll.y, r3d->ScrollMax.y, r3d->Scroll.y, divider->ScrollMax.x, divider->ScrollMax.y,
+          share->ScrollMax.y, share->Scroll.y, lower->ScrollMax.y, lower->Scroll.y);
+      const ImGuiTestItemInfo title = ctx->ItemInfo("**/Raypath view", ImGuiTestOpFlags_NoError);
+      if (title.ID != 0) {
+        ctx->LogInfo("[scroll pins] header title rect top %.1f, region clip top %.1f", title.RectFull.Min.y,
+                     map->InnerClipRect.Min.y);
+      }
+    }
+    // The map and 3D regions: no scroll range, no scroll position — the header row and the
+    // input block are reachable by construction, at every basis.
+    const auto assert_region_no_scroll = [&](const char* fragment) {
+      ImGuiWindow* region = LowerRowRegionWindow(fragment);
+      IM_CHECK_RETV(region != nullptr, false);
+      IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
+      IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
+      return true;
+    };
+    IM_CHECK_RETV(assert_region_no_scroll("##AnalyzeRaypathView"), false);
+    IM_CHECK_RETV(assert_region_no_scroll("##AnalyzeRaypath3D"), false);
+    // The divider: the 8pt strip never scrolls, and its grab bar stays inside the strip's own
+    // rect — the line that rode ~2pt past the strip's bottom edge was the visible defect.
+    IM_CHECK_RETV(divider != nullptr, false);
+    IM_CHECK_RETV(divider->ScrollMax.x == 0.0f, false);
+    IM_CHECK_RETV(divider->ScrollMax.y == 0.0f, false);
+    // The strip is EXACTLY the 8pt its grab bar needs (the harness runs at UI scale 1.0):
+    // ImGui clamps a top-level window's SetNextWindowSize up to style.WindowMinSize (32pt with
+    // the default style), and a clamped strip's opaque background would cover the first rows of
+    // both regions below it while every scroll reading above stays zero.
+    IM_CHECK_RETV(divider->Rect().GetHeight() <= 8.5f, false);
+    const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(grab.ID != 0, false);
+    IM_CHECK_RETV(grab.RectFull.Min.y >= divider->Rect().Min.y - 0.5f, false);
+    IM_CHECK_RETV(grab.RectFull.Max.y <= divider->Rect().Max.y + 0.5f, false);
+    IM_CHECK_RETV(grab.RectFull.Min.x >= divider->Rect().Min.x - 0.5f, false);
+    IM_CHECK_RETV(grab.RectFull.Max.x <= divider->Rect().Max.x + 0.5f, false);
+    // The share list: the window itself never scrolls (its one scrolling region — the result
+    // table's own — is pinned in the point_pick_analyze_lists_chains leg with a result in).
+    IM_CHECK_RETV(share != nullptr, false);
+    IM_CHECK_RETV(share->ScrollMax.y == 0.0f, false);
+    IM_CHECK_RETV(share->Scroll.y == 0.0f, false);
+    return true;
+  };
+
+  const ScopedWindowBasis window_basis(ctx);
+  IM_CHECK_RETV(assert_regions_fixed(), false);
+  request_basis(1280, 800, "1280x800");
+  IM_CHECK_RETV(assert_regions_fixed(), false);
+  request_basis(1024, 640, "1024x640");
+  IM_CHECK_RETV(assert_regions_fixed(), false);
+  return true;
+}
+
+
 // the component, the slider/playback, the factors and the 3D path — on the fully random prism,
 // whose 22-degree halo fiber the (42, 0) target sits on (the M0 probe's verified anchor for this
 // scene geometry: one closed component, ~48 samples). Real-timing pool: the point queues behind
@@ -1487,6 +1622,54 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
                     30),
                 false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_raypath_3d.png").string()), false);
+
+  // The 3D region pin: title, the two-line description and the
+  // legend are the fixed stack; the canvas absorbs the rest. Zero scroll at the default basis.
+  {
+    ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypath3D");
+    IM_CHECK_RETV(region != nullptr, false);
+    ctx->LogInfo("[scroll pins] 3d default SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
+    IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
+    IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
+  }
+  // The squeezed-row red anchor: at the 0.85 clamp the lower row still fits the fixed stack and
+  // the legend, while the canvas's old 40pt floor does not — the canvas must YIELD (scroll stays
+  // zero) instead of pushing the stack out. The squeeze is a state write (the same write the
+  // drag performs), because pre-fix the grab bar rides ~6pt outside its own 8pt strip and no
+  // press can reach its centre — the drag itself is verified separately below, post-restore.
+  {
+    const float ratio_before = gui::g_state.workspace.middle_rows_ratio;
+    gui::g_state.workspace.middle_rows_ratio = 0.85f;
+    ctx->Yield(3);
+    {
+      ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypath3D");
+      IM_CHECK_RETV(region != nullptr, false);
+      ctx->LogInfo("[scroll pins] 3d squeezed SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
+      IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
+      IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
+    }
+    gui::g_state.workspace.middle_rows_ratio = ratio_before;
+    ctx->Yield(3);
+    // The grab gesture, over the real mouse path: press the strip's bar, drag it down past the
+    // 0.85 clamp, release — the ratio must follow the mouse. (Pre-fix this cannot pass: the bar
+    // extends below the strip's rect and the press hovers the lower row window instead.)
+    ImGuiWindow* divider = ctx->GetWindowByRef("//##AnalyzeRowsDivider");
+    IM_CHECK_RETV(divider != nullptr, false);
+    const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(grab.ID != 0, false);
+    const ImVec2 centre = grab.RectFull.GetCenter();
+    ctx->MouseMoveToPos(centre);
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(centre.x, centre.y + 350.0f));
+    ctx->Yield(3);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.workspace.middle_rows_ratio > ratio_before + 0.3f, false);  // the drag wrote it
+    gui::g_state.workspace.middle_rows_ratio = ratio_before;
+    ctx->Yield(2);
+  }
 
   // Playback writes the sample index and NOTHING else (AC3, pinned on the real app's frame loop):
   // the sky point and the ROI state are bitwise what they were, the selection untouched.
@@ -3021,6 +3204,75 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(view_result.payload->roi_mode, LUMICE_RAYPATH_ROI_CONE);
       IM_CHECK_GT(view_result.payload->entries.size(), 0u);
       IM_CHECK_EQ(view_result.display_order.size(), view_result.payload->entries.size());
+      // The share-list pins at the 1280x800 acceptance size: with
+      // the result in, the window itself must not scroll — the controls above the table are the
+      // fixed header and are visible by construction (ScrollMax == 0 says the whole content
+      // fits), and the one scrolling region under the pointer is the table's own inner window.
+      // The listed basis, not smaller: the plan's §9.2 boundary leaves the 1024x640 minimum
+      // outside the guarantee domain (the controls' information layout, not the scroll
+      // structure, would be the thing to redesign there).
+      {
+        const ScopedWindowBasis window_basis(ctx);
+        g_window_size_test.width = 1280;
+        g_window_size_test.height = 800;
+        g_window_size_test.done.store(false);
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK(g_window_size_test.done.load());
+        ctx->Yield(3);
+        ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
+        IM_CHECK(share != nullptr);
+        IM_CHECK_EQ(share->ScrollMax.y, 0.0f);
+        IM_CHECK_EQ(share->Scroll.y, 0.0f);
+        ImGuiWindow* table_child = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w->ParentWindow == share && std::strstr(w->Name, "##analysis_rows") != nullptr) {
+            table_child = w;
+            break;
+          }
+        }
+        IM_CHECK(table_child != nullptr);
+        // The fixed header is on screen: the search box resolves with a real clipped rect
+        // (a control scrolled out of the window resolves too, but carries no visible height).
+        const ImGuiTestItemInfo search = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
+        IM_CHECK(search.ID != 0);
+        IM_CHECK_GT(search.RectClipped.GetHeight(), 0.0f);
+        // The floor's red anchor: squeezing the upper row (the same write the drag performs)
+        // into the band where the result table's old 120pt floor stops fitting — the window
+        // must STILL not scroll (the table yields instead). Moderate: the controls' own fit
+        // stays inside the §9.2 boundary, well above the 0.15 clamp. The grab drag itself is
+        // verified right after (see the point leg's squeeze anchor for the same shape).
+        const float ratio_before = gui::g_state.workspace.middle_rows_ratio;
+        gui::g_state.workspace.middle_rows_ratio = 0.32f;
+        ctx->Yield(3);
+        ctx->LogInfo("[scroll pins] share squeezed SM %.1f SC %.1f, ratio %.2f", share->ScrollMax.y, share->Scroll.y,
+                     gui::g_state.workspace.middle_rows_ratio);
+        IM_CHECK_EQ(share->ScrollMax.y, 0.0f);
+        IM_CHECK_EQ(share->Scroll.y, 0.0f);
+        gui::g_state.workspace.middle_rows_ratio = ratio_before;
+        ctx->Yield(3);
+        // The grab gesture over the real mouse path: drag the bar down, the ratio follows.
+        ImGuiWindow* divider = ctx->GetWindowByRef("//##AnalyzeRowsDivider");
+        IM_CHECK(divider != nullptr);
+        const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
+        IM_CHECK(grab.ID != 0);
+        const ImVec2 centre = grab.RectFull.GetCenter();
+        ctx->MouseMoveToPos(centre);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        ctx->MouseMoveToPos(ImVec2(centre.x, centre.y + 120.0f));
+        ctx->Yield(3);
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+        IM_CHECK_GT(gui::g_state.workspace.middle_rows_ratio, ratio_before + 0.05f);  // the drag wrote it
+        gui::g_state.workspace.middle_rows_ratio = ratio_before;
+        ctx->Yield(2);
+        ctx->LogInfo("[scroll pins] share@1280x800 SM %.1f SC %.1f, table %s", share->ScrollMax.y, share->Scroll.y,
+                     table_child->Name);
+      }
       // First row = the largest displayed energy of all rows.
       const double first = view_result.display_energy[static_cast<size_t>(view_result.display_order[0])];
       IM_CHECK_GT(first, 0.0);
@@ -4538,6 +4790,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "new_document_clears_every_analyze_face");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(NewDocumentClearsEveryAnalyzeFace(ctx)); };
+  }
+  // The scroll pins: skeleton workspace, no server, no sim — the
+  // regions' structural no-scroll contract at three window bases, plus the divider's grab-bar
+  // containment. Correctness pool: fixed-dt, state writes only, ~1-3 s.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "workspace_scroll_regions_are_structurally_fixed");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(WorkspaceScrollRegionsAreStructurallyFixed(ctx)); };
   }
   {
     ImGuiTest* t =
