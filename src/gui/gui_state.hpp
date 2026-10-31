@@ -1861,6 +1861,10 @@ struct GuiState {
     PointQuerySession point;
     RayTraceSession trace;
     PointViewState point_view;
+    // The wait displays' render feedback (analyze_survey.hpp WaitFeedbackTexts): what each wait
+    // site drew this frame, for the gui_test layer to read (ImGui text has no ID to address).
+    // Cleared at the Analyze workspace's frame entry; the render sites are the only writers.
+    WaitFeedbackTexts wait_feedback_texts;
     // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
     // always due north). The map request's window geometry derives from the sun the ENGINE will
     // evaluate against — the executor's frozen scene, not the live document, which the user may

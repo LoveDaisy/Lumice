@@ -325,7 +325,7 @@ void IssueSurveyQuery(SurveyExecutor& executor, const SurveyQueryId& id, const S
 
 }  // namespace
 
-void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
+void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
   SurveyQuerySession& survey = state.analysis.survey;
 
   // 1. Drain: adopt the finished query iff it still answers the CURRENT intent and the intent
@@ -360,12 +360,15 @@ void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor) {
 
   if (!survey.intent_valid || survey.key != key) {
     // A new or changed selection: withdraw whatever is out (R6 — the new intent supersedes; the
-    // previous outcome belongs to a key that is gone) and issue the fresh one.
+    // previous outcome belongs to a key that is gone) and issue the fresh one. The wait clock
+    // restarts with it: the epoch is the issue frame, so a rekey shows the new wait's own
+    // elapsed, never the superseded intent's (plan §3.1, the rekey-restarts ruling).
     executor.CancelInFlight(QueryFace::kSurvey);
     survey = SurveyQuerySession{};
     survey.intent_valid = true;
     survey.key = key;
     survey.intent_id = executor.NextId(key.generation);
+    survey.intent_start_s = now_s;
     IssueSurveyQuery(executor, survey.intent_id, *identity);
     return;
   }
@@ -879,6 +882,12 @@ std::map<int, int> AnalysisCoreToPoolMap(const GuiState& state) {
 
 std::string AnalysisRowLabel(std::string_view display, const std::map<int, int>& core_to_pool) {
   return JoinerForDisplay(RewriteCrystalPrefixes(display, core_to_pool));
+}
+
+std::string WaitActivityDotsFor(double elapsed_s) {
+  const double clamped = elapsed_s > 0.0 ? elapsed_s : 0.0;
+  const int step = static_cast<int>(clamped / kWaitActivityDotsPeriodSeconds) % 3;
+  return std::string(static_cast<size_t>(step) + 1, '.');
 }
 
 namespace {
@@ -1564,6 +1573,10 @@ void RenderResultList(GuiState& state) {
   ImGui::TableHeadersRow();
 
   const double total = view.display_total;
+  // The busy marker's per-frame facts, read once for the whole loop (AC3): the class survey in
+  // its waiting state is what makes the selected row live. The same
+  // session display state the overview's wait line reads — one truth, two faces of it.
+  const bool survey_waiting = SurveyOverviewStateFor(state.analysis.survey) == SurveyOverviewState::kWaiting;
   for (size_t row = 0; row < view.display_order.size(); ++row) {
     const int idx = view.display_order[row];
     const auto& e = view.payload->entries[static_cast<size_t>(idx)];
@@ -1591,6 +1604,10 @@ void RenderResultList(GuiState& state) {
     if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
       state.analysis.selected_entry = std::string(e.display);
     }
+    // The row rect, captured before the copy menu (an open popup's MenuItems would overwrite
+    // the last-item rect the overlay below needs).
+    const ImVec2 row_rect_min = ImGui::GetItemRectMin();
+    const ImVec2 row_rect_max = ImGui::GetItemRectMax();
     // Right-click: the raw text (what the CSV and the CLI print, " -> " joiner and all — not the
     // arrow-glyph label), or the whole row in the CSV's own column order and formatting; the
     // row is the same call the CSV export makes, so the two cannot drift apart.
@@ -1601,6 +1618,27 @@ void RenderResultList(GuiState& state) {
       };
     });
     ImGui::PopID();
+    // The busy marker (AC3): the selected row of a waiting survey carries the activity dots at
+    // the row's right edge. An overlay on the row rect, never a change to the Selectable's
+    // label — the label bytes are the row's identity for the search, the selection and the test
+    // engine's addressing, and the id-constant invariant (plan §3.3) holds trivially when they
+    // do not move. Accent: the dots are the one live thing in this row right now. The drawn
+    // string is reported to the wait-feedback field, the gui_test layer's channel (an AddText
+    // has no item to address).
+    if (selected && survey_waiting) {
+      const std::string dots = WaitActivityDotsFor(ImGui::GetTime() - state.analysis.survey.intent_start_s);
+      const ImVec2 dots_size = ImGui::CalcTextSize(dots.c_str());
+      const float y_mid = (row_rect_min.y + row_rect_max.y) * 0.5f;
+      // The dots follow the label's tail — the "appended to the row" reading — and fall back to
+      // the row's right edge when the label fills the row. Either way they draw over the row's
+      // own background, on the same draw list, after the row.
+      const float tail_x = row_rect_min.x + ImGui::CalcTextSize(label.c_str()).x + UiPx(6.0f);
+      const float x =
+          tail_x + dots_size.x <= row_rect_max.x - UiPx(2.0f) ? tail_x : row_rect_max.x - dots_size.x - UiPx(2.0f);
+      ImGui::GetWindowDrawList()->AddText(ImVec2(x, y_mid - dots_size.y * 0.5f),
+                                          ImGui::ColorConvertFloat4ToU32(AccentColor()), dots.c_str());
+      state.analysis.wait_feedback_texts.share_list_busy_dots = dots;
+    }
     ImGui::TableSetColumnIndex(1);
     ImGui::Text("%.2f%%", ComputeDisplayEnergyPct(energy, total));
     ImGui::TableSetColumnIndex(2);

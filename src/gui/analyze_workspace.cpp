@@ -311,8 +311,12 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
   switch (SurveyOverviewStateFor(survey)) {
     case SurveyOverviewState::kNoSelection:
       break;  // unreachable with a selection on show — the pump reconciled before any render
-    case SurveyOverviewState::kWaiting:
-      ImGui::TextUnformatted("Survey: querying in the background…");
+    case SurveyOverviewState::kWaiting: {
+      // The wait line is the pure function's output (unit-held bytes), and the same string is
+      // reported to the render-feedback field: what the test reads is what was drawn (AC4).
+      const std::string wait_line = SurveyWaitLineFor(survey, ImGui::GetTime());
+      g_state.analysis.wait_feedback_texts.survey_wait_line = wait_line;
+      ImGui::TextUnformatted(wait_line.c_str());
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       ImGui::TextWrapped("An engine-typed summary of this class is computed off the interface thread.");
       ImGui::PopStyleColor();
@@ -328,6 +332,7 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
         survey.adopted_error.clear();
       }
       break;
+    }
     case SurveyOverviewState::kCancelled:
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       ImGui::TextWrapped(
@@ -367,12 +372,27 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // before any region reads the sessions, so the overview and the map on screen are always this
   // frame's state. Render mode does not pump: in-flight queries keep running (R6 — switching
   // away neither cancels nor cleans) and their outcomes wait in the single slots for the return.
-  PumpSurveyQuery(g_state, g_survey_executor);
+  PumpSurveyQuery(g_state, g_survey_executor, ImGui::GetTime());
   PumpMapQuery(g_state, g_survey_executor, ImGui::GetTime());
   // The point face's pumps (742.6), in dependency order: the point query first, then the ray
   // trace it feeds (the ray intent reads the adopted point document and the display cursor).
-  PumpPointQuery(g_state, g_survey_executor);
+  PumpPointQuery(g_state, g_survey_executor, ImGui::GetTime());
   PumpRayTrace(g_state, g_survey_executor);
+
+  // The wait displays' render-feedback fields are THIS frame's outputs: cleared at entry, the
+  // render sites are the only writers (a site stores its text iff it drew it this frame), so a
+  // field's content is exactly the wait text the user saw (analyze_survey.hpp
+  // WaitFeedbackTexts). The status bar's segment field is the status bar's own to clear — that
+  // render runs in every frame of either workspace.
+  {
+    WaitFeedbackTexts& feedback = g_state.analysis.wait_feedback_texts;
+    feedback.survey_wait_line.clear();
+    feedback.map_wait_line.clear();
+    feedback.map_refining_note.clear();
+    feedback.point_wait_line_fiber.clear();
+    feedback.point_wait_line_details.clear();
+    feedback.share_list_busy_dots.clear();
+  }
 
   // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);
   // this region publishes by assignment below.

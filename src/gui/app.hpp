@@ -661,6 +661,15 @@ std::string FormatSamplingDensityCompact(LUMICE_RayCount draws, LUMICE_RayCount 
 std::string FormatSamplingSegment(LUMICE_RayCount crystals, LUMICE_RayCount orientations, LUMICE_RayCount rays);
 std::string FormatSamplingTooltip(LUMICE_RayCount crystals, LUMICE_RayCount orientations, LUMICE_RayCount rays);
 
+// The status bar's background-query active segment (AC2 of the wait-feedback layer): "| Analyzing..."
+// while any analysis query face owes an answer, and the empty string — the segment simply not
+// there — once every face has settled. The text is fixed on purpose: the segment says that a
+// query is live, the same single fact "Simulating..." says about a run, and the per-face waits'
+// elapsed seconds live on the Analyze workspace's wait lines, not here — a fixed word also gives
+// the width-budget leg a true worst case to register (the test's sample IS the whole text). Pure,
+// like the segment formatters above.
+std::string FormatQueryActiveSegment(bool queries_outstanding);
+
 // task-348.3 AC1/AC2 shared writer: toggle the user preference `show_composite_preview`.
 // Called from both the top-bar Colored checkbox (app_panels.cpp; icon-only Button in
 // 348.3, reverted to a plain-text Checkbox in 349.3 #4) and the in-window "Enable

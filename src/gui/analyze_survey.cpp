@@ -87,6 +87,53 @@ PointQueryState PointQueryStateFor(const PointQuerySession& point) {
   return PointQueryState::kWaiting;
 }
 
+// ---- The wait displays' elapsed time ----------------------------------------------------------------
+
+std::string FormatWaitElapsedSuffix(double elapsed_s) {
+  const double clamped = elapsed_s > 0.0 ? elapsed_s : 0.0;
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), " (%.1f s)", clamped);
+  return std::string(buf);
+}
+
+std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s) {
+  return "Survey: querying in the background…" + FormatWaitElapsedSuffix(now_s - survey.intent_start_s);
+}
+
+std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s) {
+  const std::string elapsed = FormatWaitElapsedSuffix(now_s - map.intent_start_s);
+  if (survey_outstanding) {
+    // The prediction says only what the standing intent will deliver: a hand on the view has
+    // superseded the default chain's all-sky request with the view you asked for.
+    if (user_moved) {
+      return "Computing the class map in the background — it queues behind this class's survey, whose "
+             "chromatic legs take ~15 s. The map for the view you asked for answers after it." +
+             elapsed;
+    }
+    return "Computing the class map in the background — it queues behind this class's survey, whose "
+           "chromatic legs take ~15 s. What arrives first is the all-sky map; the view refines for you "
+           "after that." +
+           elapsed;
+  }
+  return "Computing the class map in the background (sub-second at the interaction tier)…" + elapsed;
+}
+
+std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s) {
+  return "Coarse map of the previous view — refining for the current one; the picture is anchored to "
+         "the sky, not upscaled." +
+         FormatWaitElapsedSuffix(now_s - map.intent_start_s);
+}
+
+std::string PointWaitLineFor(const PointQuerySession& point, double now_s) {
+  // The budget in the sentence stays the face's own constant (the tier the request asks for);
+  // the elapsed suffix after it is the wait's live number.
+  char buf[128];
+  std::snprintf(buf, sizeof(buf),
+                "Computing the point (%.1f s tier; queues behind the survey and map on the one worker)…",
+                kPointQueryBudgetMs / 1000.0);
+  return std::string(buf) + FormatWaitElapsedSuffix(now_s - point.intent_start_s);
+}
+
 // ---- The worker ------------------------------------------------------------------------------------
 
 struct SurveyExecutor::Impl {

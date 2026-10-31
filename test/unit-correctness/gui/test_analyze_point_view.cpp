@@ -431,12 +431,12 @@ bool PumpAllUntil(GuiState& state, SurveyExecutor& executor, double now, Pred pr
     if (std::chrono::steady_clock::now() > deadline) {
       return false;
     }
-    PumpPointQuery(state, executor);
+    PumpPointQuery(state, executor, now);
     PumpRayTrace(state, executor);
     now += 0.05;
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
-  PumpPointQuery(state, executor);
+  PumpPointQuery(state, executor, now);
   PumpRayTrace(state, executor);
   return true;
 }
@@ -491,7 +491,7 @@ TEST(AnalyzePointView, PointPumpAdoptsEchoesAndMovesHonestly) {
   // Moving the sky point is a new intent; the old answer DROPS (a newer target's answer must not
   // linger under the new one — AC5), and the gate kills the superseded zombie when it arrives.
   SetSkyPoint(state, 21.9, 60.0);
-  PumpPointQuery(state, executor);
+  PumpPointQuery(state, executor, 100.0);
   EXPECT_NE(state.analysis.point.intent_id, first_id);
   EXPECT_EQ(state.analysis.point.adopted_result, nullptr);
   EXPECT_EQ(PointQueryStateFor(state.analysis.point), PointQueryState::kWaiting);
@@ -557,7 +557,7 @@ TEST(AnalyzePointView, RayTraceFollowsTheSampleAndDiesWithThePoint) {
       30000));
   // Selection death kills both sessions — no adopted point, no lingering trace (AC5).
   state.analysis.selected_entry.reset();
-  PumpPointQuery(state, executor);
+  PumpPointQuery(state, executor, 100.0);
   PumpRayTrace(state, executor);
   EXPECT_EQ(PointQueryStateFor(state.analysis.point), PointQueryState::kNoIntent);
   EXPECT_FALSE(state.analysis.trace.intent_valid);
@@ -578,18 +578,18 @@ TEST(AnalyzePointView, PointNeedsBothSelectionAndSkyPoint) {
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
   state.analysis.selected_entry = "3-5";
   // No sky point yet: no intent, even with a selection.
-  PumpPointQuery(state, executor);
+  PumpPointQuery(state, executor, 100.0);
   EXPECT_EQ(PointQueryStateFor(state.analysis.point), PointQueryState::kNoIntent);
   // With both, the intent issues.
   SetSkyPoint(state, 22.0, 0.0);
-  PumpPointQuery(state, executor);
+  PumpPointQuery(state, executor, 100.0);
   EXPECT_TRUE(state.analysis.point.intent_valid);
   // The intent dies with the sky point (the user cleared it): the session is dropped, adopted
   // outcome included.
   ASSERT_TRUE(
       PumpAllUntil(state, executor, 100.0, [&] { return state.analysis.point.adopted_result != nullptr; }, 60000));
   state.analysis.sky_point.valid = false;
-  PumpPointQuery(state, executor);
+  PumpPointQuery(state, executor, 100.0);
   EXPECT_EQ(PointQueryStateFor(state.analysis.point), PointQueryState::kNoIntent);
   EXPECT_EQ(state.analysis.point.adopted_result, nullptr);
   executor.ShutdownAndJoin();
@@ -607,9 +607,10 @@ TEST(AnalyzePointView, PointCancelLatchHoldsAgainstThePump) {
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
   state.analysis.selected_entry = "3-5";
   SetSkyPoint(state, 22.0, 0.0);
-  PumpPointQuery(state, executor);
+  PumpPointQuery(state, executor, 100.0);
   ASSERT_TRUE(state.analysis.point.intent_valid);
   const SurveyQueryId issued = state.analysis.point.intent_id;
+  EXPECT_EQ(state.analysis.point.intent_start_s, 100.0);  // the wait display's epoch (A-layer)
   // The cancel button's rows (the details block's own shape): withdraw, latch, stop.
   executor.CancelInFlight(QueryFace::kPoint);
   state.analysis.point.cancelled_for_key = true;
@@ -617,18 +618,20 @@ TEST(AnalyzePointView, PointCancelLatchHoldsAgainstThePump) {
   state.analysis.point.adopted_error.clear();
   // The pump must NOT re-issue while the same key stands — the latch is the button's meaning.
   for (int i = 0; i < 5; ++i) {
-    PumpPointQuery(state, executor);
+    PumpPointQuery(state, executor, 100.0);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   EXPECT_TRUE(state.analysis.point.intent_valid);
   EXPECT_EQ(state.analysis.point.intent_id, issued);
   EXPECT_EQ(state.analysis.point.adopted_result, nullptr);
   EXPECT_EQ(PointQueryStateFor(state.analysis.point), PointQueryState::kCancelled);
-  // A moved sky point starts fresh: the latch clears with the old intent.
+  // A moved sky point starts fresh: the latch clears with the old intent, and the wait epoch
+  // restarts with it (the rekey-restarts rule, plan §3.1 — a later clock, a younger stamp).
   SetSkyPoint(state, 21.9, 60.0);
-  PumpPointQuery(state, executor);
+  PumpPointQuery(state, executor, 130.0);
   EXPECT_TRUE(state.analysis.point.intent_valid);
   EXPECT_FALSE(state.analysis.point.cancelled_for_key);
+  EXPECT_EQ(state.analysis.point.intent_start_s, 130.0);
   executor.ShutdownAndJoin();
 }
 
@@ -880,7 +883,7 @@ TEST(AnalyzePointView, RapidPointMovesStayBoundedAtOneIntent) {
   state.analysis.selected_entry = "3-5";
   for (int i = 0; i < 5; ++i) {
     SetSkyPoint(state, 21.5 + static_cast<double>(i), 0.0);
-    PumpPointQuery(state, executor);
+    PumpPointQuery(state, executor, 100.0);
   }
   EXPECT_TRUE(state.analysis.point.intent_valid);
   // The standing intent names the LAST move: its labels round-trip to altitude 21.5 + 4.
@@ -919,6 +922,25 @@ TEST(AnalyzePointView, FrozenMeshSourceSurvivesADocumentEdit) {
   EXPECT_EQ(FrozenCrystalForPool(state, -1), nullptr);
   GuiState empty;
   EXPECT_EQ(FrozenCrystalForPool(empty, 0), nullptr);
+}
+
+// The point wait line: the budget names the tier the request
+// asks for (the face's own constant, spelled the way it always was) and the live elapsed
+// suffix rides after it. One function, two render consumers — the fiber region and the details
+// block cannot drift apart.
+TEST(AnalyzePointView, PointWaitLineCarriesTheTierAndTheElapsed) {
+  PointQuerySession point;
+  point.intent_valid = true;
+  point.intent_start_s = 7.0;
+  const std::string line = PointWaitLineFor(point, 8.25);
+  EXPECT_NE(line.find("Computing the point (2.0 s tier; queues behind the survey and map on the one worker)…"),
+            std::string::npos);
+  EXPECT_NE(line.find("(1.2 s)"), std::string::npos);
+  EXPECT_EQ(line.substr(line.size() - 7), "(1.2 s)");
+  // A later frame-time advances; a restarted epoch rolls the number back.
+  EXPECT_NE(PointWaitLineFor(point, 9.5).find("(2.5 s)"), std::string::npos);
+  point.intent_start_s = 10.0;
+  EXPECT_NE(PointWaitLineFor(point, 9.5).find("(0.0 s)"), std::string::npos);
 }
 
 }  // namespace

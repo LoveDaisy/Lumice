@@ -200,9 +200,10 @@ void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], 
 // The point face's frame pump — the map pump's sibling: drains the executor's point mailbox
 // through the adoption gate, then keeps the intent level-triggered against the live selection +
 // sky point + wavelength. A key change DROPS the adopted result (a newer sky point's answer must
-// not linger under the new target — AC5) and issues the fresh intent. Writes only
-// state.analysis's point fields, the point view's adoption reset, and the executor.
-void PumpPointQuery(GuiState& state, SurveyExecutor& executor);
+// not linger under the new target — AC5) and issues the fresh intent. `now_s` is the frame
+// clock, stamped onto each new intent as its wait-display epoch (the survey pump's rule). Writes
+// only state.analysis's point fields, the point view's adoption reset, and the executor.
+void PumpPointQuery(GuiState& state, SurveyExecutor& executor, double now_s);
 
 // The ray face's frame pump: drains the ray mailbox, then keeps the ray intent level-triggered
 // against the CURRENT point adoption + component + sample. No point adoption (or the mass arm)

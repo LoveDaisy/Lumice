@@ -23,6 +23,7 @@
 
 namespace {
 
+using lumice::gui::FormatQueryActiveSegment;
 using lumice::gui::FormatSamplingDensity;
 using lumice::gui::FormatSamplingDensityCompact;
 using lumice::gui::FormatSamplingSegment;
@@ -151,4 +152,19 @@ TEST(SamplingDensity, segment_shows_both_counters) {
   // dense enough", which ray_seg_num does not speak to. Nothing here should mention segments.
   EXPECT_TRUE(!Contains(segment, "seg"));
   EXPECT_TRUE(!Contains(tooltip, "Ray segments"));
+}
+
+// ---- The status bar's query-active segment ----
+//
+// Two states and nothing else: the fixed word while any analysis query face owes an answer, the
+// empty string — the segment not there — once they have all settled. The text is fixed on
+// purpose (the per-face waits' elapsed seconds live on the Analyze workspace's wait lines), so
+// this constant IS the segment's true worst case for the width-budget leg.
+TEST(SamplingDensity, QueryActiveSegmentIsFixedTextOrAbsent) {
+  const std::string live = FormatQueryActiveSegment(/*queries_outstanding=*/true);
+  EXPECT_TRUE(Contains(live, "| Analyzing..."));
+  EXPECT_EQ(live, "| Analyzing...");  // the exact bytes the width budget registers
+
+  const std::string idle = FormatQueryActiveSegment(/*queries_outstanding=*/false);
+  EXPECT_TRUE(idle.empty());  // empty = the render site draws nothing at all
 }

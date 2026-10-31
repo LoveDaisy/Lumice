@@ -1314,6 +1314,52 @@ TEST(AnalysisPanelLogic, SurveyOverviewStateDerivationTruthTable) {
   EXPECT_EQ(SurveyOverviewStateFor(survey), SurveyOverviewState::kCancelled);
 }
 
+// ---- The wait displays' elapsed time ---------------------------------------------------------------
+
+// The one suffix formatter the three faces share: zero clamps to a begun wait, one decimal
+// place, and the same " (N.N s)" shape whatever the face.
+TEST(AnalysisPanelLogic, WaitElapsedSuffixFormatIsSingleSourced) {
+  EXPECT_EQ(FormatWaitElapsedSuffix(0.0), " (0.0 s)");
+  EXPECT_EQ(FormatWaitElapsedSuffix(2.34), " (2.3 s)");
+  EXPECT_EQ(FormatWaitElapsedSuffix(41.96), " (42.0 s)");
+  EXPECT_EQ(FormatWaitElapsedSuffix(100.0), " (100.0 s)");
+  EXPECT_EQ(FormatWaitElapsedSuffix(-0.5), " (0.0 s)");  // clock skew never reads as a debt
+}
+
+// The overview's wait line: the base sentence plus the live suffix — a later frame-time gives a
+// larger number, and a restarted epoch (the rekey rule, plan §3.1) rolls it back. The strings
+// ARE the pin: the render site draws this exact bytes.
+TEST(AnalysisPanelLogic, SurveyWaitLineCarriesTheLiveElapsed) {
+  SurveyQuerySession survey;
+  survey.intent_valid = true;
+  survey.intent_start_s = 10.0;
+  EXPECT_EQ(SurveyWaitLineFor(survey, 10.0), "Survey: querying in the background… (0.0 s)");
+  EXPECT_EQ(SurveyWaitLineFor(survey, 12.5), "Survey: querying in the background… (2.5 s)");
+  // The rekey restart: the pump overwrites the epoch, the same session reads young again.
+  survey.intent_start_s = 12.0;
+  EXPECT_EQ(SurveyWaitLineFor(survey, 12.5), "Survey: querying in the background… (0.5 s)");
+}
+
+// The share list's busy marker cycles one→two→three dots on the period and stays ASCII.
+TEST(AnalysisPanelLogic, WaitActivityDotsCycleOnThePeriod) {
+  using lumice::gui::kWaitActivityDotsPeriodSeconds;
+  EXPECT_EQ(WaitActivityDotsFor(0.0), ".");
+  EXPECT_EQ(WaitActivityDotsFor(kWaitActivityDotsPeriodSeconds * 0.9), ".");
+  EXPECT_EQ(WaitActivityDotsFor(kWaitActivityDotsPeriodSeconds), "..");
+  EXPECT_EQ(WaitActivityDotsFor(kWaitActivityDotsPeriodSeconds * 1.9), "..");
+  EXPECT_EQ(WaitActivityDotsFor(kWaitActivityDotsPeriodSeconds * 2), "...");
+  EXPECT_EQ(WaitActivityDotsFor(kWaitActivityDotsPeriodSeconds * 3), ".");  // wrapped around
+  EXPECT_EQ(WaitActivityDotsFor(-1.0), ".");                                // clamped, one dot
+  for (const double t : { 0.0, 0.13, 1.7, 61.3, 3600.0 }) {
+    const std::string dots = WaitActivityDotsFor(t);
+    EXPECT_GE(dots.size(), 1u);
+    EXPECT_LE(dots.size(), 3u);
+    for (const char c : dots) {
+      EXPECT_EQ(c, '.');  // ASCII only — the body font's coverage is not on the line here
+    }
+  }
+}
+
 // ---- The background survey query's lifecycle, headless (742.3 R6) ----------------------------------
 //
 // The executor and the pump are fully drivable without a frame: the state is a plain GuiState,
@@ -1363,17 +1409,21 @@ std::shared_ptr<const AnalysisPayload> PayloadWithRows(unsigned long long genera
 
 // The headless DriveUntil: pump frames until the predicate holds or the deadline passes. Returns
 // the predicate's last value — false means the deadline ran out, which every caller asserts on.
+// The pumps take the frame clock (the wait epoch's source), so a fake monotonically advancing
+// time rides each pump — one 60 fps frame per loop.
 template <typename Pred>
 bool PumpUntil(GuiState& state, SurveyExecutor& executor, Pred pred, int timeout_ms) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  double now_s = 100.0;
   while (!pred()) {
     if (std::chrono::steady_clock::now() > deadline) {
       return false;
     }
-    PumpSurveyQuery(state, executor);
+    PumpSurveyQuery(state, executor, now_s);
+    now_s += 1.0 / 60.0;
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
-  PumpSurveyQuery(state, executor);
+  PumpSurveyQuery(state, executor, now_s);
   return true;
 }
 
@@ -1452,7 +1502,7 @@ TEST(AnalysisPanelLogic, SurveyPumpIssuesAdoptsAndGatesSelections) {
       15000));
   EXPECT_EQ(state.analysis.survey.key.faces, (std::vector<int>{ 1, 3, 2 }));
   for (int i = 0; i < 50; ++i) {
-    PumpSurveyQuery(state, executor);
+    PumpSurveyQuery(state, executor, 200.0 + i / 60.0);
   }
   EXPECT_EQ(state.analysis.survey.key.faces, (std::vector<int>{ 1, 3, 2 }));
   EXPECT_EQ(SurveyOverviewStateFor(state.analysis.survey), SurveyOverviewState::kCompleted);
@@ -1484,7 +1534,7 @@ TEST(AnalysisPanelLogic, SurveyCancelLatchHoldsUntilTheSelectionChanges) {
   // for any straggler and assert nothing was ever adopted and the state stays cancelled.
   ASSERT_TRUE(PumpUntil(state, executor, [&] { return !executor.InFlight(); }, 20000));
   for (int i = 0; i < 300; ++i) {
-    PumpSurveyQuery(state, executor);
+    PumpSurveyQuery(state, executor, 300.0 + i / 60.0);
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   EXPECT_FALSE(executor.InFlight());
@@ -1494,7 +1544,7 @@ TEST(AnalysisPanelLogic, SurveyCancelLatchHoldsUntilTheSelectionChanges) {
 
   // The latch holds while the same selection stands: nothing re-issues under it.
   for (int i = 0; i < 20; ++i) {
-    PumpSurveyQuery(state, executor);
+    PumpSurveyQuery(state, executor, 400.0 + i / 60.0);
   }
   EXPECT_FALSE(executor.InFlight());
   EXPECT_EQ(SurveyOverviewStateFor(state.analysis.survey), SurveyOverviewState::kCancelled);
@@ -1503,6 +1553,36 @@ TEST(AnalysisPanelLogic, SurveyCancelLatchHoldsUntilTheSelectionChanges) {
   state.analysis.selected_entry = "1-3-2";
   ASSERT_TRUE(PumpUntil(state, executor, [&] { return state.analysis.survey.adopted_result != nullptr; }, 20000));
   EXPECT_EQ(SurveyOverviewStateFor(state.analysis.survey), SurveyOverviewState::kCompleted);
+}
+
+// The wait display's epoch: the pump stamps the issue frame's
+// clock onto the new intent, and a rekey (a changed selection) overwrites it — the rekey-
+// restarts rule, plan §3.1. The stamp is the wait lines' only source of truth, so a missing
+// write here would show every later wait as the superseded intent's age.
+TEST(AnalysisPanelLogic, SurveyPumpStampsTheWaitEpochAndARekeyRestartsIt) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  state.analysis_result.payload = PayloadWithRows(7, { "1-2", "1-3-2" }, { { 1, 2 }, { 1, 3, 2 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "1-2";
+
+  PumpSurveyQuery(state, executor, 10.0);
+  ASSERT_TRUE(state.analysis.survey.intent_valid);
+  EXPECT_EQ(state.analysis.survey.intent_start_s, 10.0);
+
+  // The rekey: a changed selection re-issues and the epoch moves with it — never the old wait's
+  // age under the new intent.
+  state.analysis.selected_entry = "1-3-2";
+  PumpSurveyQuery(state, executor, 25.0);
+  ASSERT_TRUE(state.analysis.survey.intent_valid);
+  EXPECT_EQ(state.analysis.survey.intent_start_s, 25.0);
+  executor.ShutdownAndJoin();
 }
 
 // The executor's contract faces: superseding a queued or running query works from the caller's

@@ -103,6 +103,12 @@ struct SurveyQuerySession {
   // clearing — the pump owns all three transitions.
   bool intent_valid = false;
   SurveyQueryId intent_id;  // meaningful only while intent_valid
+  // The frame-clock second (ImGui::GetTime) at which the standing intent was ISSUED — the wait
+  // displays' elapsed-time epoch. Written by the pump on the same
+  // line intent_valid is set, overwritten on every re-issue, so a rekey restarts the wait clock
+  // the way the user's wait restarts with the new intent. Meaningful only while intent_valid;
+  // cleared with the session by the per-reason resets like every field here.
+  double intent_start_s = 0.0;
   // The selection the intent was issued for; the pump compares it against the live selection.
   SurveySelectionKey key;
   // The cancel button's latch: the intent was withdrawn on purpose, and the pump must not
@@ -179,6 +185,10 @@ struct MapQuerySession {
   // An intent is outstanding: a map query was issued and neither cancelled nor answered yet.
   bool intent_valid = false;
   SurveyQueryId intent_id;  // meaningful only while intent_valid
+  // The wait displays' elapsed-time epoch — the survey session's own field, same rules (the
+  // pump writes it at both issue sites: the first issue and the view/wavelength supersession,
+  // so a refinement re-ask restarts the wait clock with the intent it belongs to).
+  double intent_start_s = 0.0;
   // The key the intent was issued for; the pump compares it against the live view+selection.
   MapIntentKey key;
   // The Revert row's latch (the map has no cancel button of its own — its queries are
@@ -227,6 +237,10 @@ struct PointQuerySession {
   // An intent is outstanding: a point query was issued and neither cancelled nor answered yet.
   bool intent_valid = false;
   SurveyQueryId intent_id;  // meaningful only while intent_valid
+  // The wait displays' elapsed-time epoch — the survey session's own field, same rules. The
+  // pump's single issue branch covers both a first intent and a supersession (a moved sky
+  // point), so the write there restarts the wait clock with the key it belongs to.
+  double intent_start_s = 0.0;
   // The key the intent was issued for; the pump compares it against the live selection + point.
   PointIntentKey key;
   // The point block's cancel latch (the survey's own shape): the intent was withdrawn on
@@ -247,6 +261,60 @@ struct PointQuerySession {
 // outcome arms of a completed document.
 enum class PointQueryState { kNoIntent, kWaiting, kCompleted, kRefused, kCancelled };
 PointQueryState PointQueryStateFor(const PointQuerySession& point);
+
+// ---- The wait displays' elapsed time ---------------------------------------------------------------
+
+// The ONE elapsed-time suffix formatter the wait displays share (a56 — three faces drawing one
+// wait grammar must not drift into three spellings): " (3.2 s)", one decimal place because the
+// map face's typical wait is sub-second and an integer spelling would sit at " (0 s)" for the
+// whole wait (plan §2's default assumption, review-ratified). A negative elapsed (a caller's
+// clock skew) clamps to zero — the suffix always shows a wait that has begun, never a debt.
+std::string FormatWaitElapsedSuffix(double elapsed_s);
+
+// The overview's kWaiting line: the base sentence plus the elapsed suffix. `now_s` is the frame
+// clock; the elapsed is `now_s - survey.intent_start_s`, so the line the user reads advances with
+// every frame the wait stands (the pump stamps the epoch at the issue, and the cancel/answer
+// ends the wait by leaving this state). Call with a session SurveyOverviewStateFor names
+// kWaiting — the render site is the only caller. Pure, so the unit layer can hold the bytes.
+std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s);
+
+// The map region's kWaiting line — the queue-is-the-truth branch's three texts plus the elapsed
+// suffix (the map's wait names WHY it waits: the selection's survey ahead of it on the one
+// worker, or nothing ahead at the interaction tier). `survey_outstanding` is the caller's
+// `SurveyExecutor::QueryOutstanding(QueryFace::kSurvey)` read and `user_moved` the map view's
+// steer flag, taken as parameters so the function stays pure. Same waiting-state precondition as
+// SurveyWaitLineFor. Pure.
+std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s);
+
+// The map's refining note — the "old picture anchored on the sky" annotation plus the elapsed
+// suffix (the refinement intent's own wait, same epoch semantics: a re-ask restarts it). Same
+// precondition discipline, now with MapRefiningFor. Pure.
+std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s);
+
+// The point block's kWaiting line (the fiber region and the details region draw the same
+// sentence — one function, two consumers, so the duplication cannot drift). Plus the elapsed
+// suffix, same epoch semantics. Pure.
+std::string PointWaitLineFor(const PointQuerySession& point, double now_s);
+
+// What the render sites that draw a wait text report back for the gui_test layer (AC4's
+// channel): ImGui text items have no ID, so the test engine cannot address a wait line —
+// instead each render site stores the string it drew THIS FRAME into its field here, and the
+// Analyze workspace clears all of them at frame entry, so a field's content equals the text the
+// user saw that frame (never a second truth the tests fabricated). The status bar's segment
+// lives beside them: it is drawn by the always-rendered status bar, so its field is fresh in
+// every frame of either workspace. Session tier with the rest of RaypathAnalysisSession: the
+// per-reason resets clear it with the sessions the texts describe. Fields stale only while the
+// Analyze workspace is hidden (its render is the writer); the status bar field has no such
+// window.
+struct WaitFeedbackTexts {
+  std::string survey_wait_line;          // analyze_workspace.cpp, the overview's kWaiting line
+  std::string map_wait_line;             // analyze_map_view.cpp, the kWaiting branch's one text
+  std::string map_refining_note;         // analyze_map_view.cpp, the refining note
+  std::string point_wait_line_fiber;     // analyze_point_view.cpp, the fiber region's kWaiting
+  std::string point_wait_line_details;   // analyze_point_view.cpp, the details' kWaiting
+  std::string share_list_busy_dots;      // analysis_panel.cpp, the selected row's activity dots
+  std::string status_bar_query_segment;  // app_panels.cpp, the status bar's active segment
+};
 
 // ---- The ray face's session (742.6) ----------------------------------------------------------------
 

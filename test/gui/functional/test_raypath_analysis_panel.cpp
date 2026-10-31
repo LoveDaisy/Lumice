@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <initializer_list>
@@ -152,6 +153,22 @@ bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
     ctx->Yield();
   }
   return true;
+}
+
+// The wait lines' " (N.N s)" suffix, read off a render-feedback field; -1.0 when the line is
+// empty or carries no suffix (the caller distinguishes "no wait text" from "a wait text whose
+// number is zero"). Only the growth/rollback COMPARISONS consume it — the exact bytes are the
+// pure functions' pins in the unit layer, never re-asserted here.
+double ParseWaitElapsed(const std::string& line) {
+  const size_t open = line.rfind(" (");
+  if (open == std::string::npos) {
+    return -1.0;
+  }
+  const size_t close = line.find(" s)", open);
+  if (close == std::string::npos) {
+    return -1.0;
+  }
+  return std::atof(line.substr(open + 2, close - open - 2).c_str());
 }
 
 // Server up, halo scene loaded, one finite render run to completion — the state Analyze needs.
@@ -3079,6 +3096,15 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
 
+  // The coexistence stage (the status bar's AC2): an unbounded render run holds while the
+  // survey below waits its long window, so the query-active segment has to stand beside the
+  // sim word — and the leg's cancellations exercise both sides at once, the orthogonality the
+  // survey-and-render leg pins reused as this leg's stage.
+  gui::g_state.sim.infinite = true;
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
+
   // The Cancel survey button: withdraw while the full-dimensional survey runs its delta phase,
   // and the named cancelled state latches until a new selection.
   SetListRef(ctx);
@@ -3092,6 +3118,29 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
                     },
                     20),
                 false);
+  // The wait displays (AC1/AC2/AC3 of the wait-feedback layer), read off the render-feedback
+  // fields — the same strings the render drew this frame. The overview wait line carries a live
+  // elapsed; the status bar names a query as live; the selected row carries the activity dots.
+  const std::string& survey_line = gui::g_state.analysis.wait_feedback_texts.survey_wait_line;
+  const double first_elapsed = ParseWaitElapsed(survey_line);
+  IM_CHECK_RETV(first_elapsed >= 0.0, false);
+  IM_CHECK_RETV(survey_line.find("Survey: querying in the background") != std::string::npos, false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.status_bar_query_segment == "| Analyzing...", false);
+  IM_CHECK_RETV(!gui::g_state.analysis.wait_feedback_texts.share_list_busy_dots.empty(), false);
+  // The coexistence observable (AC2), read in this same window: the query segment stands beside
+  // the sim word — two appended segments, neither branch reads the other.
+  IM_CHECK_RETV(gui::g_state.sim_state == SimState::kSimulating, false);
+  const double stamped_at_issue = gui::g_state.analysis.survey.intent_start_s;
+  // The elapsed advances with the frames (the frame clock; bounded wait, never a bare sleep).
+  IM_CHECK_RETV(DriveUntil(ctx, [&] { return ParseWaitElapsed(survey_line) > first_elapsed + 0.3; }, 15), false);
+  // The marked row stays addressable by its unchanged label bytes while it is marked — the
+  // id-constant invariant's observable (plan §3.3; the dots are a draw beside the row, not a
+  // label rewrite).
+  SetListRef(ctx);
+  IM_CHECK_RETV(ctx->ItemInfo((std::string("**/") + TopChainDisplay()).c_str()).ID != 0, false);
+  ctx->SetRef("");
+  ctx->LogInfo("[v1 cancel] wait line %.1f->%.1f s, segment on, dots on; the marked row still addresses", first_elapsed,
+               ParseWaitElapsed(survey_line));
   ctx->ItemClick("**/Cancel survey");
   IM_CHECK_RETV(DriveUntil(
                     ctx,
@@ -3102,14 +3151,24 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
                     45),
                 false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.cancelled_for_key, false);
+  // Cancel stops the clock (AC1): the wait display left the waiting state with it — the overview
+  // line and the selected row's dots are gone the frame the cancelled state rendered; the status
+  // bar's segment follows every face, not this one (the map may still be settling).
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.survey_wait_line.empty(), false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.share_list_busy_dots.empty(), false);
   // The state flips when the pump adopts the cancellation; the worker clears its own in-flight
   // bookkeeping a frame or two later — wait for it bounded rather than asserting the race.
   IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 20), false);
   ctx->LogInfo("[v1 cancel] Cancel survey withdrew the intent under the latch; the executor is idle");
   // A changed selection clears the latch and re-arms — the probe-verified fast identity chain
   // (`1-3-6-2` early-stops on this scene, no chromatic legs) proves the re-arm without making
-  // the pool-context wall-clock budget the leg's long pole.
+  // the pool-context wall-clock budget the leg's long pole. The rekey overwrites the wait
+  // epoch: the new intent's stamp is a newer frame time than the first wait's (the rekey-
+  // restarts rule, plan §3.1 — with the pure functions' behavior pinned in the unit layer this
+  // deterministic stamp pin carries the wait-window's rollback).
   IM_CHECK_RETV(SelectRowByDisplay(ctx, "1-3-6-2").has_value(), false);
+  IM_CHECK_RETV(
+      DriveUntil(ctx, [&] { return gui::g_state.analysis.survey.intent_start_s > stamped_at_issue; }, 5), false);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -3119,6 +3178,9 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
                     60),
                 false);
   ctx->LogInfo("[v1 cancel] a changed selection cleared the latch and answered");
+  // The stage's render run keeps going from here — the guard tears the server down with it, the
+  // same hand-off the unbounded preview-animation legs leave behind (the run-lifecycle suite
+  // owns stop-drain semantics; this leg owns the waits, and they all landed above).
   return true;
 }
 
@@ -3145,6 +3207,24 @@ bool CancelPointButtonReachesTheNamedState(ImGuiTestContext* ctx) {
                     },
                     20),
                 false);
+  // Every face's own wait display, read off the render-feedback fields (AC1): the point's two
+  // text faces — the fiber region and the details block draw the same sentence — each carry the
+  // live elapsed, and the map (queued behind the survey in this window) names its queue.
+  IM_CHECK_RETV(
+      gui::g_state.analysis.wait_feedback_texts.point_wait_line_fiber.find("Computing the point") != std::string::npos,
+      false);
+  IM_CHECK_RETV(ParseWaitElapsed(gui::g_state.analysis.wait_feedback_texts.point_wait_line_fiber) >= 0.0, false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.point_wait_line_details.find("Computing the point") !=
+                    std::string::npos,
+                false);
+  IM_CHECK_RETV(ParseWaitElapsed(gui::g_state.analysis.wait_feedback_texts.point_wait_line_details) >= 0.0, false);
+  IM_CHECK_RETV(
+      DriveUntil(ctx, [] { return !gui::g_state.analysis.wait_feedback_texts.map_wait_line.empty(); }, 30), false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.map_wait_line.find("queues behind this class's survey") !=
+                    std::string::npos,
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.status_bar_query_segment == "| Analyzing...", false);
+  ctx->LogInfo("[v1 cancel] the queued point's two wait faces, the queued map line and the segment all live");
   ctx->ItemClick("**/Cancel point");
   IM_CHECK_RETV(
       DriveUntil(
@@ -3152,6 +3232,11 @@ bool CancelPointButtonReachesTheNamedState(ImGuiTestContext* ctx) {
           20),
       false);
   IM_CHECK_RETV(gui::g_state.analysis.point.cancelled_for_key, false);
+  // The withdrawn face's wait displays are gone; the survey's own line is untouched by another
+  // face's cancel (the queue's truth the two fields name separately).
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.point_wait_line_fiber.empty(), false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.point_wait_line_details.empty(), false);
+  IM_CHECK_RETV(!gui::g_state.analysis.wait_feedback_texts.survey_wait_line.empty(), false);
   IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
   IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kWaiting, false);
   ctx->LogInfo("[v1 cancel] Cancel point withdrew the queued intent; the survey face kept its own wait");
