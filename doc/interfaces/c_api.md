@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 460        // ABI version, encoded major*100 + minor (v4.60)
+#define LUMICE_API_VERSION 461        // ABI version, encoded major*100 + minor (v4.61)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -81,6 +81,17 @@ there is no implicit preference. A `LUMICE_PathCancelToken` is one-way and may b
 another thread. The query options' positive `deadline_ms` resolves one absolute deadline at entry;
 zero means no deadline on the new path. Execution outcomes distinguish a cooperative deadline
 stop from an explicit cancellation. The old Analyze entries retain their published budget behavior.
+From v4.61 the token also answers a poll-style liveness snapshot: `LUMICE_PathCancelTokenPoll`
+copies the last engine phase a poll ran in (`LUMICE_PathPollStage`) plus a monotonic tick count
+into a caller-sized `LUMICE_PathPollSnapshot` — no callback, no push. Stage and activity only:
+poll counts count polling events, never remaining work, so the face has no progress percentage
+and no done value. A fresh token reads NONE/0 (idle). A snapshot that stops changing is a stalled
+or cancelled query, not a completed one — "settled" is the caller's knowledge, since only the
+caller sees the query function return. Reading a destroyed token is undefined: stop polling
+before destroy. Stages are coarse (the engine's internal sites fold into the leg they belong
+to), and a token reused across queries accumulates ticks and overwrites the stage — use one
+token per query. A smaller `struct_size` is refused with nothing written; a larger future tail
+is accepted.
 The four `raypath` CLI analysis commands use workspace queries with explicit warm import and
 serialize only their completed handles; they do not parse their own output to make decisions.
 The CLI's positive budget now bounds the whole workspace query, while old C callers retain

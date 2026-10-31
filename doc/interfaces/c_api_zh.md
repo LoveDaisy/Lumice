@@ -45,7 +45,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ```c
 // lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
 //（lumice_base.h 刻意不包含它，原因见下）
-#define LUMICE_API_VERSION 460        // ABI 版本，编码为 major*100 + minor（v4.60）
+#define LUMICE_API_VERSION 461        // ABI 版本，编码为 major*100 + minor（v4.61）
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
@@ -74,7 +74,14 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 `LUMICE_PathWarmDataFromJson` 是旧 warm 文本的显式导入入口。新 query 对携带 warm 文本的请求
 具名拒绝，文本与 typed warm 同时给出也不暗选其一。`LUMICE_PathCancelToken` 可从另一线程
 单向请求取消。正数 `deadline_ms` 在入口解析为一次绝对截止，0 表示新路径不设截止；执行结局
-区分协作式截止与显式取消。既有 Analyze 入口的预算语义不变。四个 `raypath` CLI 分析命令
+区分协作式截止与显式取消。既有 Analyze 入口的预算语义不变。v4.61 起取消令牌还能答一次
+poll 式活性快照：`LUMICE_PathCancelTokenPoll` 把「最近一次 poll 所处的引擎阶段
+（`LUMICE_PathPollStage`）+ 单调 tick 计数」拷入调用方定尺的 `LUMICE_PathPollSnapshot`——
+无回调、无推送。语义 = 阶段 + 活性：poll 计数计的是轮询事件，不是剩余工作量，因此该面
+没有进度百分比、也没有 done 值。新令牌读 NONE/0（零在飞）。快照停走是在飞查询停滞或被
+取消，不是完成——「已落定」是调用方的知识，只有它看得见查询函数返回。读已销毁的令牌未定义：
+销毁前停止轮询。阶段是粗粒度的（引擎内部站点折叠进所属腿），跨查询复用同一令牌会累计
+tick 并覆写阶段——按查询一枚令牌。过小 `struct_size` 拒绝且零写入；更大的未来尾部接受。四个 `raypath` CLI 分析命令
 现走 workspace query，warm 文本在查询前显式导入，只对完成的句柄编码，不解析输出作业务判断。
 CLI 的正数预算现在约束整个 workspace 查询；旧 C 调用仍保持逐腿窗口和旧零值/默认值合同。
 point 的 Workspace 查询还会读取请求中已发布 extent 覆盖的 `interrupted` 指针；旧前缀不得越界读取。

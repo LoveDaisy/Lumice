@@ -565,6 +565,14 @@
 // refusal riding the result with the measured corridor evidence. No budget and no cancel: the
 // query is one synchronous single-shot evaluation. No ToJson face; no existing symbol or struct
 // layout changed.
-#define LUMICE_API_VERSION 460
+// ADDED (v4.61): the cancel token's poll-stage snapshot, a pure append —
+// LUMICE_PathCancelTokenPoll, the LUMICE_PathPollStage enum and the LUMICE_PathPollSnapshot
+// struct. A poll-style liveness read over the existing cancel token: the LAST engine phase a
+// poll ran in plus a monotonic tick count, copied at call time — no callback, no push. Stage
+// and activity only: poll counts count polling events, never remaining work, so the face has
+// no progress percentage and no done value (a snapshot that stops changing is a stalled or
+// cancelled query; "settled" stays the caller's knowledge). No existing symbol or struct
+// layout changed.
+#define LUMICE_API_VERSION 461
 
 #endif  // LUMICE_API_VERSION_H_
