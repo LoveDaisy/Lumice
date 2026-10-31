@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793442970070,
+  "lastUpdate": 1793445162441,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4",
-          "message": "Merge pull request #443 from LoveDaisy/chore/workflow-token-least-privilege\n\nci: add top-level permissions: contents: read to workflows",
-          "timestamp": "2026-09-28T20:18:35+08:00",
-          "tree_id": "200ab539ed87c0bd2915e7f5e25f6ed5dac388e4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4"
-        },
-        "date": 1790598756871,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 335412,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 512159.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 566879.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 312997.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4792,6 +4744,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 315113.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "284c9455d369800eb8b70405d488abe377dbf75c",
+          "message": "Merge pull request #556 from LoveDaisy/feat/analyze-wait-feedback-a\n\nfeat(analyze): the wait says how long it has waited — per-face elapsed lines, a status-bar Analyzing segment, row activity dots",
+          "timestamp": "2026-10-31T19:08:56+08:00",
+          "tree_id": "7d66f431a427bc186d7e1e8075afa021ede499f2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/284c9455d369800eb8b70405d488abe377dbf75c"
+        },
+        "date": 1793445160725,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 403671.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 505463.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 363609.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 307918,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
