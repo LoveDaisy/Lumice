@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793441346349,
+  "lastUpdate": 1793441348965,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "51bc059b3fa58ffeeef7ae600d704bf242a639de",
-          "message": "Merge pull request #440 from LoveDaisy/feat/config-change-preview-transition\n\nGUI: a struct-hard edit no longer blanks the preview",
-          "timestamp": "2026-09-28T15:21:22+08:00",
-          "tree_id": "8725666a1d1fef58c78a1647e3213d2e90e95384",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/51bc059b3fa58ffeeef7ae600d704bf242a639de"
-        },
-        "date": 1790580909961,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 96.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e6d934376e48fc8fc854f3d4f4a866d325bcd3bd",
           "message": "Merge pull request #441 from LoveDaisy/scrum/lumice-shared-lib-foundation\n\nPublish-ready shared library foundation: liblumice_analytic, per-library export lists, packaging",
           "timestamp": "2026-09-28T17:16:31+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f64a77d8de746d0479d5ec85665e23b629b57fea",
+          "message": "Merge pull request #554 from LoveDaisy/feat/analyze-panel-clip-fix\n\nfix(analyze): three scroll regions clipped their headers — measured reserves, a table that absorbs, and an 8pt strip ImGui secretly sized to 32pt",
+          "timestamp": "2026-10-31T18:04:58+08:00",
+          "tree_id": "440d8445970baae5ba4c237d591750c937060670",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f64a77d8de746d0479d5ec85665e23b629b57fea"
+        },
+        "date": 1793441348151,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 108.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.8,
             "unit": "%"
           }
         ]
