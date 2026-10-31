@@ -8,7 +8,7 @@ The Raypath Analysis window answers "which raypaths make the light in this regio
 
 ## 1. Where it is
 
-The analysis tool lives in the **Analyze workspace**: click the workspace toggle in the Top Bar (from the Render workspace it reads **Analyze**, with a route icon; the same slot reads **Render** to switch back). The window then shows the Analyze layout instead of the render layout — the scene editors on the left, and the analysis on the right and in the middle: the **scene panorama** (the committed picture as an equal-area full-sky disk, with the region controls and the cone pick on it) above the **share list** this chapter describes, with a class overview in the bottom-right. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
+The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout — the scene editors on the left, and the analysis on the right and in the middle: the **scene panorama** (the committed picture as an equal-area full-sky disk, with the region controls and the cone pick on it) above the **share list** this chapter describes, with a class overview in the bottom-right. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
 
 ## 2. Choosing a region (ROI)
 

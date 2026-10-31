@@ -68,16 +68,21 @@ From left to right, the Top Bar exposes:
     hemisphere clip enabled is refused with a warning rather than exported, since the config format
     has no way to express that clip and the CLI would otherwise render the un-clipped view.
   - `Include Texture in .lmc` — toggle for the next save. Screenshot lines and labels are controlled by the one-shot options window described above; they do not modify the Overlay panel. The two server-side panorama exports do not carry the preview's text-label layer.
-- **Colors / Analysis / Summary**: three buttons that each open an independent, non-modal window
-  beside the preview — the raypath colour classes, the Raypath Analysis tool, and the read-only
-  **Summary**, one page of the current configuration (version, sun, simulation, render settings,
-  then every layer with its entries' crystal, shape, axis and filter) laid out in two columns to
-  fit one 1280 × 900 screen and be screenshotted and shared — each row under the label the panel
-  itself uses, and only the rows the panel currently shows (Sky Color or Paper Color, never both).
-  The Summary has no image export of its own: take the picture with your operating
-  system's screenshot tool (⌘⇧4 on macOS, Win+Shift+S on Windows, or your desktop's equivalent on
-  Linux); **Copy as text** on its version line puts the same page on the clipboard as tab-separated
-  text. See [User Manual — Configuration Summary](../user-manual/07-config-summary.md).
+- **Colors / Summary**: two buttons that each open an independent, non-modal window beside the
+  preview — the raypath colour classes and the read-only **Summary** (icon-only, like the file
+  buttons; hover for its word), one page of the current configuration (version, sun, simulation,
+  render settings, then every layer with its entries' crystal, shape, axis and filter) laid out
+  in two columns to fit one 1280 × 900 screen and be screenshotted and shared — each row under
+  the label the panel itself uses, and only the rows the panel currently shows (Sky Color or
+  Paper Color, never both). The Summary has no image export of its own: take the picture with
+  your operating system's screenshot tool (⌘⇧4 on macOS, Win+Shift+S on Windows, or your
+  desktop's equivalent on Linux); **Copy as text** on its version line puts the same page on the
+  clipboard as tab-separated text. See [User Manual — Configuration Summary](../user-manual/07-config-summary.md).
+- **Render | Analyze**: the two-cell workspace switch, its own group between the feature buttons
+  and Settings. The current mode's cell is highlighted and clicking it does nothing; the other
+  cell moves between the render layout and the Analyze workspace (scene editors left, analysis
+  right and middle — see [User Manual — Raypath Analysis](../user-manual/06-raypath-analysis.md)).
+  Switching is view state: it never dirties the document and never starts or stops a run.
 - **Settings**: the personal-defaults editor — what a *new* document starts from, plus the
   `Application preferences` rows at the top, which describe this machine rather than any document:
   the GPU backend and worker count a new document starts with, and **UI scale**, a multiplier

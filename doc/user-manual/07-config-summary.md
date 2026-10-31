@@ -6,7 +6,7 @@ The Summary window lays the current configuration out on one page — the crysta
 
 ## 1. Where it is
 
-Click the **Summary** button (document icon) in the Top Bar, next to **Colors** and **Analysis**. It opens an independent, non-modal "Summary" window beside the preview; click the button again, or the window's ×, to close it. Opening a different document — New, Open, Import, or Revert — closes it too, since the page describes one document.
+Click the **Summary** button (document icon) in the Top Bar, next to **Colors**. It opens an independent, non-modal "Summary" window beside the preview; click the button again, or the window's ×, to close it. Opening a different document — New, Open, Import, or Revert — closes it too, since the page describes one document.
 
 The window is a fixed 1200 px wide and laid out in two columns — the settings groups on the left, the layers and their entries on the right — so that a typical document fits on one 1280 × 900 screen without scrolling; its height follows the content up to that budget, and only a very long document scrolls past it. It is read-only: nothing on it edits anything.
 

@@ -37,6 +37,7 @@
 #include "gui/semantic_colors.hpp"
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/toolbar_layout.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
 // imgui_internal.h for SeparatorEx(ImGuiSeparatorFlags_Vertical) only — the one themed vertical
@@ -362,19 +363,25 @@ inline ImVec2 MainVpPos(float x, float y) {
   return ImVec2(vp->Pos.x + x, vp->Pos.y + y);
 }
 
-// The top bar's one boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
-// follows the palette) with the ordinary item spacing on each side, so the gap between two groups
-// is twice the gap inside one plus the rule — the bar's rhythm is the theme's ItemSpacing.x and
-// nothing else. It replaces a bare "|" glyph whose weight and colour came from the font.
-//
-// Why not a wider gap: at kMinWindowWidth the bar's widest content (a colour class present, so the
-// Colored / Full Spectrum checkbox and its warning pip are drawn) leaves ~20 px of headroom with
-// this spacing, and 1.5x ItemSpacing per side overflowed it by 12 — the budget is pinned by
-// shell_chrome/the_top_bar_fits_at_the_minimum_window_width.
-void ToolbarGroupSeparator() {
+// The top bar's boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
+// follows the palette) whose surrounding gaps carry the adaptive group-gap rule
+// (toolbar_layout.hpp, §4.8) — the rule itself stays the 1 px ImGui draws, and the target gap's
+// difference from the base rhythm (2 × ItemSpacing.x + the rule) is split evenly across the two
+// item gaps by pushing ItemSpacing.x for exactly these two SameLine calls. At kMinWindowWidth the
+// target is the base + 8, and the fit pin (the_top_bar_fits_at_the_minimum_window_width) measures
+// the bar with exactly these gaps; the never-narrower guard only means a miscalibrated target
+// cannot shrink the bar's rhythm below its own base — the gap the theme's ItemSpacing.x already
+// provides.
+void ToolbarGroupSeparator(float window_width) {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float gap_px = UiPx(TopBarGroupGapPt(window_width / CurrentUiScale()));
+  const float extra = gap_px - (style.ItemSpacing.x * 2.0f + 1.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                      ImVec2(style.ItemSpacing.x + (extra > 0.0f ? extra * 0.5f : 0.0f), style.ItemSpacing.y));
   ImGui::SameLine();
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
+  ImGui::PopStyleVar();
 }
 
 // One width for every button of a top-bar group: the widest label plus the frame padding. A group
@@ -421,7 +428,7 @@ void RenderTopBar(float window_width) {
     if (ImGui::Button(left_toggle_label)) {
       g_state.left_panel_collapsed = !g_state.left_panel_collapsed;
     }
-    ToolbarGroupSeparator();
+    ToolbarGroupSeparator(window_width);
   }
 
   // Run/Stop and Continue — one width for the whole execution group (max of ALL four labels, incl.
@@ -497,25 +504,41 @@ void RenderTopBar(float window_width) {
     }
   }
 
-  ToolbarGroupSeparator();
+  ToolbarGroupSeparator(window_width);
 
   // File operations — New/Open disabled while busy (simulating OR async Stop draining); Save menu
   // itself stays enabled so read-only exports (Screenshot / Dual Fisheye Equal Area /
   // Equirectangular / Config JSON) remain reachable.
-  const float file_op_width = ToolbarGroupButtonWidth({ "New", "Open", "Save" });
+  //
+  // Icon-only labels: the words they replaced were the bar's widest cheap reclaim, spent on the
+  // workspace group's split (the narrow-window budget is pinned by
+  // shell_chrome/the_top_bar_fits_at_the_minimum_window_width). Each icon's word lives in its
+  // tooltip — read through AllowWhenDisabled for New/Open, since they spend much of their life
+  // behind BeginDisabled(busy), and a tooltip that fired only while enabled would vanish exactly
+  // when the disabled state invites the question "why not now".
+  const float file_op_width = ToolbarGroupButtonWidth({ ICON_FA_FILE, ICON_FA_FOLDER_OPEN, ICON_FA_FLOPPY_DISK });
   ImGui::BeginDisabled(busy);
-  if (ImGui::Button("New", ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(ICON_FA_FILE, ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kNew);
   }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("New: start a new document.");
+  }
   ImGui::SameLine();
-  if (ImGui::Button("Open", ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(ICON_FA_FOLDER_OPEN, ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kOpen);
+  }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("Open: load a document from a file.");
   }
   ImGui::EndDisabled();
   ImGui::SameLine();
   {
-    if (ImGui::Button("Save", ImVec2(file_op_width, 0))) {
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK, ImVec2(file_op_width, 0))) {
       ImGui::OpenPopup("SaveMenu");
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("Save: document, copy, image exports, and config JSON.");
     }
     if (ImGui::BeginPopup("SaveMenu")) {
       bool no_texture = !g_preview.HasTexture();
@@ -559,7 +582,7 @@ void RenderTopBar(float window_width) {
     }
   }
 
-  ToolbarGroupSeparator();
+  ToolbarGroupSeparator(window_width);
 
   // task-345.5 (⑥): dedicated "feature button" group, immediately right of
   // New/Open/Save. Colors is the first occupant; future cross-cutting toggles
@@ -596,50 +619,17 @@ void RenderTopBar(float window_width) {
   if (tint_colors_button) {
     ImGui::PopStyleColor(3);
   }
-  // The second occupant of the feature-button group: the Render/Analyze workspace switch — the
-  // Analysis button's replacement and the analysis's new entry (the Analyze workspace is where
-  // the analysis lives). One slot whose label names the DESTINATION, the bar's own Run/Stop
-  // idiom: from Render it reads [route " Analyze], from Analyze it reads [Render]. The
-  // two-mode segmented pair this slot was first drawn as measured +32 px
-  // over the bar's 20 px narrow-window headroom (required 1036 vs 1024,
-  // the_top_bar_fits_at_the_minimum_window_width) — the label-shortening rung of the switch
-  // plan's degradation ladder, and the slot keeps the width of the wider of its two labels
-  // (ToolbarGroupButtonWidth) so the toggle can never shift its neighbours. The mode itself is
-  // on screen (four columns vs the render layout); the tooltips say where the click goes.
-  // Switching is session state: it never dirties, never commits, never cancels or starts a run.
-  {
-    const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
-    const char* kToAnalyzeLabel = ICON_FA_ROUTE " Analyze";
-    const char* kToRenderLabel = "Render";
-    ImGui::SameLine();
-    if (analyze) {
-      if (ImGui::Button(kToRenderLabel, ImVec2(ToolbarGroupButtonWidth({ kToAnalyzeLabel, kToRenderLabel }), 0))) {
-        g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
-        // The armed cone pick aims at the panorama, which this mode takes off screen — the same
-        // "never leave a click armed for a mode that does not read it" rule the ROI radios follow.
-        g_state.analysis.pick_armed = false;
-        g_state.analysis.cone_marker_dragging = false;
-      }
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Switch back to the Render workspace.");
-      }
-    } else {
-      if (ImGui::Button(kToAnalyzeLabel, ImVec2(ToolbarGroupButtonWidth({ kToAnalyzeLabel, kToRenderLabel }), 0))) {
-        g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
-      }
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Which raypaths make the light in a region of the sky. Switches to the Analyze workspace.");
-      }
-    }
-  }
-  // The third occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
-  // like Analysis — the window has no state of its own to set on open.
+  // The second occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
+  // like Analysis — the window has no state of its own to set on open. Icon-only like the file
+  // group: its word was the bar's next-widest cheap reclaim after New/Open/Save, spent by owner
+  // ruling on the group-gap rule's narrow-window budget (the same fit pin), and the tooltip
+  // carries the word.
   ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_FILE_LINES " Summary")) {
+  if (ImGui::Button(ICON_FA_FILE_LINES)) {
     g_state.config_summary_window_open = !g_state.config_summary_window_open;
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("One page of the current configuration, for a screenshot. Opens the Summary window.");
+    ImGui::SetTooltip("Summary: one page of the current configuration, for a screenshot. Opens the Summary window.");
   }
 
   // task-colored-toggle-to-topbar (346.3): colored/full-spectrum display-time
@@ -755,6 +745,67 @@ void RenderTopBar(float window_width) {
     }
   }
 
+  // The workspace switch: its own group, on the feature group's right. The Colored checkbox and
+  // its warning pip are the feature group's conditional last members, so the boundary sits after
+  // them — splitting in front of the checkbox would cut the feature group in two whenever a
+  // colour class exists — and before Settings, which opens a modal (a different kind of control
+  // from a view switch) and must not read as the switch's neighbour.
+  ToolbarGroupSeparator(window_width);
+
+  // The Render/Analyze workspace switch as a two-cell segmented control — the bar's one mode
+  // indicator. The single destination slot this replaces was a degradation rung: its first
+  // segmented drawing measured +32 px over the then-20 px narrow-window headroom (required 1036
+  // vs 1024, the_top_bar_fits_at_the_minimum_window_width), and its route icon named only the
+  // way there ("go to Analyze") while a mode switch reads both ways. Both cells are drawn every
+  // frame with one quantized width — the wider label, ToolbarGroupButtonWidth — flush together
+  // (SameLine(0, 0)) so the pair reads as one control and its total width never changes, which
+  // is what makes "switching cannot move the neighbours" true by construction (pinned
+  // byte-for-byte by workspace_switch_swaps_layout_and_stays_clean, together with the segmented
+  // shape itself). The current mode's cell carries the accent — "selected", the same reading as
+  // the tinted Colors button — and its click is a no-op; the mode itself is on screen (four
+  // columns vs the render layout) and the tooltips say where the click goes. The file group's
+  // iconified labels are the reclaim that funds the pair (same fit pin). Switching is session
+  // state: it never dirties, never commits, never cancels or starts a run.
+  {
+    const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
+    const float cell_width = ToolbarGroupButtonWidth({ "Render", "Analyze" });
+    if (!analyze) {
+      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.35f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
+    }
+    if (ImGui::Button("Render", ImVec2(cell_width, 0)) && analyze) {
+      g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
+      // The armed cone pick aims at the panorama, which this mode takes off screen — the same
+      // "never leave a click armed for a mode that does not read it" rule the ROI radios follow.
+      g_state.analysis.pick_armed = false;
+      g_state.analysis.cone_marker_dragging = false;
+    }
+    if (!analyze) {
+      ImGui::PopStyleColor(3);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(analyze ? "Switch back to the Render workspace." : "The Render workspace is current.");
+    }
+    ImGui::SameLine(0.0f, 0.0f);
+    if (analyze) {
+      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.35f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
+    }
+    if (ImGui::Button("Analyze", ImVec2(cell_width, 0)) && !analyze) {
+      g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
+    }
+    if (analyze) {
+      ImGui::PopStyleColor(3);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(analyze ?
+                            "The Analyze workspace is current." :
+                            "Which raypaths make the light in a region of the sky. Switches to the Analyze workspace.");
+    }
+  }
+
   // Personal defaults, promoted out of the Save menu. The panel it opens edits what a NEW document
   // starts from, so by file-scope logic it belonged with the export commands — but it was reached
   // by nobody who had not been told where it was, which is the only measure a settings entry has.
@@ -769,7 +820,7 @@ void RenderTopBar(float window_width) {
   //     the user is watching runs is a settings entry they cannot find when they think to look.
   // The panel's preset library is one section inside it, so retuning a preset is still reachable;
   // it no longer has a menu item of its own pointing straight at that section.
-  ToolbarGroupSeparator();
+  ToolbarGroupSeparator(window_width);
   if (ImGui::Button(ICON_FA_GEAR " Settings")) {
     OpenDefaultsPanel(g_state, DefaultsPanelSection::kSettings);
   }

@@ -279,7 +279,7 @@ void OpenWindow(ImGuiTestContext* ctx) {
   // brings up the frame whose share list and panorama ROI this suite drives. Idempotent — a case
   // already in Analyze just yields.
   if (gui::g_state.workspace.mode != gui::GuiState::WorkspaceMode::kAnalyze) {
-    ctx->ItemClick("##TopBar/" ICON_FA_ROUTE " Analyze");
+    ctx->ItemClick("##TopBar/Analyze");
     ctx->Yield(3);
   }
   ctx->Yield(1);
@@ -2040,15 +2040,15 @@ bool SurveySurvivesAWorkspaceSwitch(ImGuiTestContext* ctx) {
   ctx->SetRef("");
   // Switch away before the answer lands: the query keeps running (the Render frame pumps
   // nothing), and the switch itself is pure view — no dirty, no sim-state write.
-  // The toggle is single-slot: from Analyze it reads bare "Render" (no icon prefix — the
-  // product's kToRenderLabel), naming the destination.
+  // The segmented pair shows both cells in every mode; the tinted one is the current mode, the
+  // bare one names the destination.
   ctx->ItemClick("##TopBar/Render");
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kRender, false);
   IM_CHECK_RETV(gui::g_state.dirty == false, false);
 
   // Back in the Analyze workspace: the pump adopts whatever finished while away.
-  ctx->ItemClick("##TopBar/" ICON_FA_ROUTE " Analyze");
+  ctx->ItemClick("##TopBar/Analyze");
   ctx->Yield(2);
   IM_CHECK_RETV(DriveUntil(
                     ctx,

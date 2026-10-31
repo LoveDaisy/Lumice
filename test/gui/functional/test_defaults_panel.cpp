@@ -639,7 +639,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
 
-      ctx->ItemClick("##TopBar/Save");
+      ctx->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK);
       ctx->Yield(2);
       ctx->SetRef("//$FOCUSED");
       IM_CHECK(!ctx->ItemExists("**/Save Current as Defaults..."));

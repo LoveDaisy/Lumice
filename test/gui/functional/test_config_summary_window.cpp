@@ -23,7 +23,7 @@
 
 namespace {
 
-constexpr const char* kButtonRef = "##TopBar/" ICON_FA_FILE_LINES " Summary";
+constexpr const char* kButtonRef = "##TopBar/" ICON_FA_FILE_LINES;
 constexpr const char* kWindowRef = "###ConfigSummary";
 
 // The window as ImGui drew it this frame, or null when it is not being submitted.
