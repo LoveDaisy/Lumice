@@ -1,14 +1,20 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
-#include "core/optics.hpp"  // IceRefractiveIndex: the dispersion table the fixture reads
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
+#include "analytic/stop.hpp"       // StopToken — the poll ledger the handshakes read
+#include "core/optics.hpp"         // IceRefractiveIndex: the dispersion table the fixture reads
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_witness.hpp"
+#include "raypath/query_control.hpp"  // the survey legs' poll sites
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_report.hpp"
 #include "survey_test_fixtures.hpp"
@@ -201,6 +207,110 @@ TEST(SurveyWitness, SerializedWitnessShapesFollowThePayloadRegistry) {
   EXPECT_EQ(refused.at("state"), "refused");
   EXPECT_EQ(refused.at("mode"), "no_declared_source_witness");
   EXPECT_FALSE(shape_doc.at("objects")[1].contains("witness"));
+}
+
+// ============================================================================================
+// The cooperative-stop pins. The leg's lattice pass was already stoppable (the post-lattice
+// check refuses a cut pass — pinned here at both entries: an expired deadline and a ledger
+// handshake cancel); the post-lattice phase boundary gains its own named poll (coverage
+// pinned), and an unstopped run stays byte-identical to the pre-change golden.
+// ============================================================================================
+
+// Bounded entry wait on the poll ledger (the handshake basis — the counter is the entry
+// signal, the bound the failure path).
+bool WaitForWitnessPoll(const analytic::StopToken& token, int site, std::chrono::milliseconds bound) {
+  const auto end = std::chrono::steady_clock::now() + bound;
+  while (token.PollCount(site) == 0) {
+    if (std::chrono::steady_clock::now() > end) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return true;
+}
+
+// The pre-change golden document (captured before the post-lattice phase poll landed; see the
+// byte-identity pin below). Filled from the dump run.
+constexpr const char* kGoldenWitnessDocument =
+    R"JSON({"schema":"lumice.path-survey","schema_version":4,"generator":{"lumice":"test","analytic_api_version":8},"request":{"crystal_id":0,"path_layers":[],"symmetry_bits":7,"wavelength_nm":null,"budget_ms":0},"scope":{"scene_identity":"","scene_layer":null,"members":[],"wavelength_nm":0.0,"wavelength_source":"","refractive_index":0.0,"sun_altitude_deg":null,"sun_azimuth_deg":null},"routing":{"early_stopped":false,"members":[]},"objects":[{"kind":"support_set","members":[],"evidence":{"state":"unevaluated","reason":"not_requested"},"witness":{"state":"finite","coverage":{"members_evaluated":1,"geometry_basis":"the declared-source lattice argmax pose, re-evaluated by the diagnostic batch on the nominal crystal shape","wavelength_nm":550.0},"kept_count":16558,"sample_count":200000,"lattice":"antipodal_fibonacci","deterministic":true,"deviation_deg":153.0820618701839,"weight":0.06443543134543582,"entry":0.07207003219060117,"interface_product":0.8940669150115771,"source_note":"declared source: the antipodal Fibonacci lattice over SO(3) (the declared measure's own sampler); witness = the max-weight kept event's pose; kept_count is an existence count, weight the lattice's w = A*T, entry and interface_product the diagnostic batch's own re-evaluation at that pose"}}],"unevaluated":[],"warm_index":{"seeds":[],"seed_sources":[],"reuse_scope":"","produced_for":"","config_fingerprint":""},"chromatic":{"state":"unevaluated","reason":"not_requested"},"evidence":{"state":"unevaluated","reason":"not_requested"},"budget":{"requested_ms":0,"enforced":false,"note":"the v1 survey's only computation is the millisecond T0 routing leg, which is no budget consumer; budget enforcement lands with the band-sum/T3 quantification legs"},"timing":{"total_seconds":0.0}})JSON";
+
+// An already-expired deadline refuses before the argmax: BuildEvents' own polls cut the
+// lattice at its first boundary, the leg's post-lattice check names the refusal — a cut
+// lattice claims no witness.
+TEST(SurveyWitnessStop, ExpiredDeadlineRefusesBeforeTheArgmax) {
+  const WitnessFixture fix = WitnessFixture::Make();
+  analytic::DiscoveryStop stop;
+  stop.deadline = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+  quantity::WitnessInput input = fix.Input(50000);
+  input.stop = &stop;
+  SurveyObject card;
+  card.SetKind(SurveyObjectKind::kSupportSet);
+  AssembleWitness(input, &card);
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kRefused);
+  EXPECT_EQ(card.Witness()->Mode(), "stop_requested");
+}
+
+// The lattice handshake: entered (the lattice's own poll site moved), cancelled from this
+// thread, and the leg returns the named refusal within a bounded window.
+TEST(SurveyWitnessStop, LatticeCancelStopsTheLeg) {
+  const WitnessFixture fix = WitnessFixture::Make();
+  analytic::StopToken token;
+  analytic::DiscoveryStop stop;
+  stop.token = &token;
+  quantity::WitnessInput input = fix.Input(1000000);
+  input.stop = &stop;
+  SurveyObject card;
+  card.SetKind(SurveyObjectKind::kSupportSet);
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    AssembleWitness(input, &card);
+    done = true;
+  });
+  const auto join_bound = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  const bool entered = WaitForWitnessPoll(token, analytic::kPollEventsLattice, std::chrono::seconds(30));
+  token.RequestCancel();  // safe either way: entered, or the run already finished
+  while (!done && std::chrono::steady_clock::now() < join_bound) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  ASSERT_TRUE(done) << "the leg ignored the cancel (entered=" << entered << ")";
+  worker.join();  // joined on every path — a joinable thread's destructor would terminate
+  ASSERT_TRUE(entered) << "the lattice pass never polled";
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kRefused);
+  EXPECT_EQ(card.Witness()->Mode(), "stop_requested");
+}
+
+// The post-lattice phase boundary is real evidence: its own site moves on an unstopped run
+// (the argmax + independent re-evaluation section's poll point).
+TEST(SurveyWitnessStop, ThePostLatticePhasePollsItsOwnSite) {
+  const WitnessFixture fix = WitnessFixture::Make();
+  analytic::StopToken token;
+  analytic::DiscoveryStop stop;
+  stop.token = &token;
+  quantity::WitnessInput input = fix.Input(50000);
+  input.stop = &stop;
+  SurveyObject card;
+  card.SetKind(SurveyObjectKind::kSupportSet);
+  AssembleWitness(input, &card);
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kFinite);
+  EXPECT_GT(token.PollCount(raypath::kPollSurveyWitnessPhase), 0) << "the post-lattice phase never polled";
+}
+
+// The no-stop path's zero-evolution contract at unit scale: an unstopped run serializes
+// byte-identically to the pre-change golden.
+TEST(SurveyWitnessStop, AnUnstoppedRunIsByteIdenticalToThePreChangeGolden) {
+  const WitnessFixture fix = WitnessFixture::Make();
+  SurveyObject card;
+  card.SetKind(SurveyObjectKind::kSupportSet);
+  AssembleWitness(fix.Input(200000), &card);
+  ASSERT_TRUE(card.Witness() != nullptr);
+  EXPECT_EQ(card.Witness()->State(), EvidenceState::kFinite);
+  SurveyData document;
+  document.objects.push_back(std::move(card));
+  const std::string json = SurveyResultToJson(SurveyResult(document), "test");
+  EXPECT_EQ(json, std::string(kGoldenWitnessDocument));
 }
 
 }  // namespace

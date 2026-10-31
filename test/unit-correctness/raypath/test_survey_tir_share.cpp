@@ -1,13 +1,19 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 #include <vector>
 
-#include "core/optics.hpp"  // IceRefractiveIndex: the dispersion table the pair reads
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
+#include "analytic/stop.hpp"       // StopToken — the poll ledger the handshakes read
+#include "core/optics.hpp"         // IceRefractiveIndex: the dispersion table the pair reads
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/detail/survey/survey_tir_share.hpp"
+#include "raypath/query_control.hpp"  // the survey legs' poll sites
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/survey_report.hpp"
 #include "survey_test_fixtures.hpp"
@@ -217,6 +223,132 @@ TEST(TirShareResult, RefusedSupportArmStillRunsTheLeg) {
   EXPECT_EQ(document.tir_share->Value().interfaces.size(), 2u);
   EXPECT_EQ(document.tir_share->Value().interfaces[0].face, 1);
   EXPECT_EQ(document.tir_share->Value().interfaces[1].face, 5);
+}
+
+// ============================================================================================
+// The cooperative-stop pins. The deadline refuses at the pass boundary (the leg's existing
+// semantics, pinned); the in-phase cancel rides the row-chunk poll site (the handshake waits
+// on the ledger counter — the entry signal — never on a sleep); and an unstopped run is
+// covered: every new poll site moves on a run that reaches it, and the document is byte-
+// identical to the pre-change golden (the no-stop path's zero-evolution contract, pinned at
+// unit scale; the nine-corpus dual-binary regression is the task's mechanical gate).
+// ============================================================================================
+
+// Bounded entry wait on the poll ledger: true once the site moved, false at the bound (the
+// failure path — the test then reports the poll point is not real). No sleep proves anything
+// here; the counter is the evidence.
+bool WaitForTirPoll(const analytic::StopToken& token, int site, std::chrono::milliseconds bound) {
+  const auto end = std::chrono::steady_clock::now() + bound;
+  while (token.PollCount(site) == 0) {
+    if (std::chrono::steady_clock::now() > end) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return true;
+}
+
+// The pre-change golden document (captured from the unchunked pipeline before the row-chunk
+// polling landed; see the byte-identity pin below). Filled from the dump run.
+constexpr const char* kGoldenTirShareDocument = R"JSON({"schema":"lumice.path-survey","schema_version":4,"generator":{"lumice":"test","analytic_api_version":8},"request":{"crystal_id":0,"path_layers":[],"symmetry_bits":7,"wavelength_nm":null,"budget_ms":0},"scope":{"scene_identity":"","scene_layer":null,"members":[],"wavelength_nm":0.0,"wavelength_source":"","refractive_index":0.0,"sun_altitude_deg":null,"sun_azimuth_deg":null},"routing":{"early_stopped":false,"members":[]},"objects":[],"unevaluated":[],"warm_index":{"seeds":[],"seed_sources":[],"reuse_scope":"","produced_for":"","config_fingerprint":""},"chromatic":{"state":"unevaluated","reason":"not_requested"},"tir_share":{"n_red":1.308038815909098,"n_blue":1.3156924295898642,"interfaces":[{"face":15,"share_red":0.0,"share_blue":2.7611011432126397e-06},{"face":26,"share_red":0.597906011835096,"share_blue":0.6522375519358893}],"share_all_tir_red":0.0,"share_all_tir_blue":0.0,"sample_count":200000,"lattice":"antipodal_fibonacci","deterministic":true,"representative":[13,15,26,28],"member_count":12,"kept_count_red":2907,"kept_count_blue":2883,"caliber":"share of kept-event transmission weight (w = A*T) on poses with every internal interface TIR, per lambda: the declared antipodal Fibonacci lattice x the class representative at the fixed 650/450 pair; kept events whose candidate-pose chart degenerates at exactly-zero deviation (the pose's azimuthal freedom is unconstrained there) sit outside the estimator's declared support, excluded from both numerator and denominator; a class-level estimate of the near-TIR weight mechanism, NOT the C15 corpus's actual-distribution positive-A caliber and not a cross-lambda ratio","evidence":{"state":"finite","coverage":{"members_evaluated":1,"geometry_basis":"the class power-sum lattice kept events, re-classified per internal interface by the diagnostic batch on the nominal crystal shape at the fixed 650/450 pair","wavelength_nm":450.0}}},"evidence":{"state":"unevaluated","reason":"not_requested"},"budget":{"requested_ms":0,"enforced":false,"note":"the v1 survey's only computation is the millisecond T0 routing leg, which is no budget consumer; budget enforcement lands with the band-sum/T3 quantification legs"},"timing":{"total_seconds":0.0}})JSON";
+
+// An already-expired deadline refuses at the pass boundary before any pipeline work: the
+// whole-leg refusal, named — the shares need both full passes, a cut pass claims nothing.
+TEST(TirShareStop, ExpiredDeadlineRefusesAtThePassBoundary) {
+  TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
+  const std::vector<int> representative{ 13, 15, 26, 28 };
+  fix.representative = representative;
+  analytic::DiscoveryStop stop;
+  stop.deadline = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+  quantity::TirShareInput input = fix.Input(20000);
+  input.stop = &stop;
+  SurveyData document;
+  AssembleTirShare(input, &document);
+  ASSERT_TRUE(document.tir_share.has_value());
+  EXPECT_EQ(document.tir_share->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.tir_share->Mode(), "stop_requested");
+}
+
+// The pass boundary is real evidence: its own site moves on a run that reaches it (split from
+// the T0 assembly's per-member site — one site, one stop point).
+TEST(TirShareStop, ThePassBoundaryPollsItsOwnSite) {
+  TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
+  const std::vector<int> representative{ 13, 15, 26, 28 };
+  fix.representative = representative;
+  analytic::StopToken token;
+  analytic::DiscoveryStop stop;
+  stop.token = &token;
+  quantity::TirShareInput input = fix.Input(2000);
+  input.stop = &stop;
+  SurveyData document;
+  AssembleTirShare(input, &document);
+  ASSERT_TRUE(document.tir_share.has_value());
+  EXPECT_GT(token.PollCount(raypath::kPollSurveyTirPass), 0) << "the pass boundary never polled";
+}
+
+// The in-phase pipeline is covered: the row-chunk site moves on an unstopped run (the chunk
+// boundaries are the phase's only cooperative poll points).
+TEST(TirShareStop, TheInPhasePipelinePollsAtRowChunkBoundaries) {
+  TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
+  const std::vector<int> representative{ 13, 15, 26, 28 };
+  fix.representative = representative;
+  analytic::StopToken token;
+  analytic::DiscoveryStop stop;
+  stop.token = &token;
+  quantity::TirShareInput input = fix.Input(2000);
+  input.stop = &stop;
+  SurveyData document;
+  AssembleTirShare(input, &document);
+  ASSERT_TRUE(document.tir_share.has_value());
+  EXPECT_GT(token.PollCount(raypath::kPollSurveyTirRows), 0) << "the in-phase pipeline never polled";
+}
+
+// The handshake: the leg is ENTERED (the row-chunk site moved — the pipeline is inside its
+// pollable region), then cancelled from this thread; it must return the named whole-leg
+// refusal within a bounded window (one chunk's work + O(1) tail), never the full run.
+TEST(TirShareStop, InPhaseCancelStopsTheChunkedPipeline) {
+  TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
+  const std::vector<int> representative{ 13, 15, 26, 28 };
+  fix.representative = representative;
+  analytic::StopToken token;
+  analytic::DiscoveryStop stop;
+  stop.token = &token;
+  quantity::TirShareInput input = fix.Input(200000);
+  input.stop = &stop;
+  SurveyData document;
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    AssembleTirShare(input, &document);
+    done = true;
+  });
+  const auto join_bound = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  const bool entered = WaitForTirPoll(token, raypath::kPollSurveyTirRows, std::chrono::seconds(30));
+  token.RequestCancel();  // safe either way: entered, or the run already finished
+  while (!done && std::chrono::steady_clock::now() < join_bound) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  ASSERT_TRUE(done) << "the leg ignored the cancel (entered=" << entered << ")";
+  worker.join();  // joined on every path — a joinable thread's destructor would terminate
+  ASSERT_TRUE(entered) << "the leg never reached its in-phase pipeline";
+  ASSERT_TRUE(document.tir_share.has_value());
+  EXPECT_EQ(document.tir_share->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.tir_share->Mode(), "stop_requested");
+  EXPECT_GT(token.PollCount(raypath::kPollSurveyTirRows), 1) << "the cancel was observed at a chunk boundary";
+}
+
+// The no-stop path's zero-evolution contract at unit scale: an unstopped run serializes
+// byte-identically to the pre-change golden (captured before the chunked pipeline landed;
+// the block is deterministic — lattice + pure per-row batch, no timing fields inside).
+TEST(TirShareStop, AnUnstoppedRunIsByteIdenticalToThePreChangeGolden) {
+  TirShareFixture fix = TirShareFixture::Make(TirShareFixture::Scene::kAsymmetricPyramid);
+  const std::vector<int> representative{ 13, 15, 26, 28 };
+  fix.representative = representative;
+  SurveyData document;
+  AssembleTirShare(fix.Input(200000), &document);  // kept events span several row chunks
+  ASSERT_TRUE(document.tir_share.has_value());
+  EXPECT_EQ(document.tir_share->State(), EvidenceState::kFinite);
+  const std::string json = SurveyResultToJson(SurveyResult(document), "test");
+  EXPECT_EQ(json, std::string(kGoldenTirShareDocument));
 }
 
 }  // namespace

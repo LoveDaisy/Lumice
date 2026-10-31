@@ -1,13 +1,19 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 
-#include "core/optics.hpp"  // IceRefractiveIndex: the dispersion closed form's n pair
+#include "analytic/discovery.hpp"  // DiscoveryStop — the shared stop judgment
+#include "analytic/stop.hpp"       // StopToken — the poll ledger the handshakes read
+#include "core/optics.hpp"         // IceRefractiveIndex: the dispersion closed form's n pair
 #include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/query_control.hpp"  // the survey legs' poll sites
 #include "raypath/survey_report.hpp"
 #include "survey_test_fixtures.hpp"
 
@@ -511,6 +517,60 @@ TEST(SurveyAssembly, CompletionBindsTheDeclaredScopeAndRejectsDanglingReferences
   ASSERT_FALSE(foreign.objects.empty());
   foreign.objects.front().members = { { 9, 9, 9 } };
   EXPECT_THROW(survey::SurveyResult{ foreign }, std::invalid_argument);
+}
+
+// The assembly's past-the-cut gate: a cancel observed inside the TIR leg names the cut on the
+// document (the T0 note's two-arm shape) and the requested legs after the cut one do not
+// start — the ESS leg's absence is the note's to explain, never a silent skip. The witness
+// completed before the cut (it ran to its own finish); the TIR block carries the named
+// refusal; the execution axis reports the cancel. The entry signal is the TIR leg's in-phase
+// ledger site, the same handshake basis the leg's own pins use.
+TEST(SurveyAssemblyStop, CancelDuringTheTirLegNamesTheCutAndSkipsTheLaterLegs) {
+  const ConfigManager config = RegularPrismSceneWithSun(15.0);
+  SurveyRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 1, 5, 7 } };
+  request.symmetry_bits = 0;
+  request.mc_ess_draws = 64;               // requested: its absence after the cut is the gate's claim
+  request.budget_ms = kMaxSurveyBudgetMs;  // the deadline must NOT fire; the cancel is the stop
+  analytic::StopToken token;
+  analytic::DiscoveryStop stop;
+  stop.deadline = std::chrono::steady_clock::time_point::max();
+  stop.token = &token;
+  SurveyAssemblyOptions options;
+  options.stop = &stop;
+  SurveyData document;
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    (void)AssembleSurveyData(config, request, &document, options);
+    done = true;
+  });
+  const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  const bool entered = [&] {
+    const auto enter_bound = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (token.PollCount(raypath::kPollSurveyTirRows) == 0 && std::chrono::steady_clock::now() < enter_bound) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return token.PollCount(raypath::kPollSurveyTirRows) > 0;
+  }();
+  token.RequestCancel();  // safe either way: entered, or the run already finished
+  while (!done && std::chrono::steady_clock::now() < end) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  ASSERT_TRUE(done) << "the assembly ignored the cancel (entered=" << entered << ")";
+  worker.join();  // joined on every path — a joinable thread's destructor would terminate
+  ASSERT_TRUE(entered) << "the TIR leg never reached its in-phase pipeline";
+  EXPECT_EQ(document.execution, ExecutionOutcome::kCancelled);
+  ASSERT_TRUE(document.tir_share.has_value());
+  EXPECT_EQ(document.tir_share->State(), EvidenceState::kRefused);
+  EXPECT_EQ(document.tir_share->Mode(), "stop_requested");
+  EXPECT_NE(document.budget_note.find("The TIR share leg stopped at a cooperative poll"), std::string::npos)
+      << "the cut is named on the document";
+  EXPECT_FALSE(document.mc_region_ess.has_value()) << "the requested leg past the cut did not run";
+  // The witness completed before the cut — the run reached the TIR leg with the witness intact.
+  ASSERT_FALSE(document.objects.empty());
+  ASSERT_TRUE(document.objects.front().Witness() != nullptr);
+  EXPECT_EQ(document.objects.front().Witness()->State(), EvidenceState::kFinite);
 }
 
 }  // namespace lumice::raypath::survey
