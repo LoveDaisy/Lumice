@@ -17,6 +17,13 @@
 // waits for a counter to move has proof the loop entered before it cancels — no sleeps, no
 // pre-armed flags. Sites are small dense ints; this header owns the range split (kernels
 // below 16, raypath 16 and up) and each module declares its own constants.
+//
+// The liveness snapshot (LastPolledSite/TotalPolls) rides the same NotePoll writes: the last
+// site polled and the total poll count across all sites. It is evidence, not ordering — a
+// reader may see the tick count move before the last-site store lands, so the pair is "the
+// last known state", never an atomic phase transition. LastPolledSite is the data source of
+// the poll-stage snapshot the raypath layer curates (query_control.hpp's StageOfSite); it
+// never clears, so a pause between polls reads as the last reached stage, not as idle.
 
 #include <atomic>
 #include <cassert>
@@ -37,14 +44,28 @@ class StopToken {
   void NotePoll(int site) const {
     assert(site >= 0 && site < kSiteCount);
     polls_[static_cast<size_t>(site)].fetch_add(1, std::memory_order_relaxed);
+    // The liveness snapshot's two writes, same relaxed evidence discipline: last_site_ is the
+    // active stage's data source, total_polls_ the monotonic tick (fetch_add only, so readers
+    // across threads never see it decrease — that monotonicity is structural, not enforced).
+    last_site_.store(site, std::memory_order_relaxed);
+    total_polls_.fetch_add(1, std::memory_order_relaxed);
   }
   long PollCount(int site) const { return polls_[static_cast<size_t>(site)].load(std::memory_order_relaxed); }
+
+  // The liveness snapshot (read from any thread): the last polled site (-1 before the first
+  // poll — never a valid site id, so "no poll yet" and "site 0" stay distinct) and the total
+  // poll count across all sites. The stage grouping over these two reads is the raypath
+  // layer's curation (query_control.hpp), not this header's concern.
+  int LastPolledSite() const { return last_site_.load(std::memory_order_relaxed); }
+  long TotalPolls() const { return total_polls_.load(std::memory_order_relaxed); }
 
   static constexpr int kSiteCount = 32;
 
  private:
   std::atomic<bool> cancelled_{ false };
   mutable std::atomic<long> polls_[kSiteCount]{};
+  mutable std::atomic<int> last_site_{ -1 };
+  mutable std::atomic<long> total_polls_{ 0 };
 };
 
 // Why a stop fired. The legacy volatile flag is an explicit cancel (the signal entry's
