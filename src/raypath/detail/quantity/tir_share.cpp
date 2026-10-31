@@ -11,6 +11,17 @@
 
 namespace lumice::raypath::quantity {
 using survey::EvidenceState;
+namespace {
+
+// The TIR leg's in-phase pipeline runs in fixed row chunks — row rebuild, batch evaluation and
+// classification for one chunk, then the chunk-boundary poll. 1024 rows per poll keeps the
+// lattice polls' cadence discipline (one poll per fixed-size work unit) against rows that cost
+// orders of magnitude more each (one full diagnostic evaluation per row), so the poll's
+// relative cost stays noise-level while the bounded-return window stays a fraction of a second.
+constexpr size_t kTirRowChunkSize = 1024;
+
+}  // namespace
+
 TirShareResult EvaluateTirShare(const TirShareInput& input) {
   TirShareResult tir;
   tir.SetState(EvidenceState::kFinite);
@@ -51,7 +62,7 @@ TirShareResult EvaluateTirShare(const TirShareInput& input) {
   for (int lambda = 0; lambda < 2; lambda++) {
     if (input.stop != nullptr) {
       if (input.stop->token != nullptr) {
-        input.stop->token->NotePoll(raypath::kPollSurveyT0);  // the leg's pass boundary
+        input.stop->token->NotePoll(raypath::kPollSurveyTirPass);  // the leg's pass boundary
       }
       if (input.stop->Stopped()) {
         // The shares need both passes over the full lattice: a cut pass claims nothing.
@@ -66,69 +77,90 @@ TirShareResult EvaluateTirShare(const TirShareInput& input) {
     analytic::IceDiscovery discovery(*input.table, *input.polygons, slots.data(), static_cast<int>(slots.size()),
                                      refractive_index, input.incident);
     const std::vector<analytic::SampleEvent> events = discovery.BuildEvents(input.sample_count, input.stop);
-    // Every kept event re-posed and re-derived in one batch call; the batch is the classifier,
-    // the shares' numerator and denominator both read the discovery-side w = A*T.
-    std::vector<analytic::DiagnosticInputRow> rows;
-    rows.reserve(events.size());
-    for (const analytic::SampleEvent& event : events) {
-      double pose[9];
-      analytic::CandidatePose(input.incident, event.event.phi, event.event, pose);
-      analytic::DiagnosticInputRow row;
-      row.crystal = *input.crystal;
-      for (int k = 0; k < 9; k++) {
-        row.pose[static_cast<size_t>(k)] = pose[k];
-      }
-      for (int k = 0; k < 3; k++) {
-        row.incident[static_cast<size_t>(k)] = input.incident[k];
-      }
-      row.refractive_index = refractive_index;
-      row.source_token = 0;
-      rows.push_back(std::move(row));
-    }
-    std::vector<analytic::DiagnosticOutputRow> values;
-    if (!analytic::EvaluateDiagnosticBatch(*input.representative, rows, {}, &values) || values.size() != rows.size()) {
-      tir.SetState(EvidenceState::kRefused);
-      tir.Mode() = "batch_read_unavailable";
-      return CompleteQuantity(std::move(tir));
-    }
+    // The in-phase pipeline, chunk by chunk: rebuild the kept events' diagnostic rows, evaluate
+    // the chunk as one batch, classify it, accumulate. The batch is a pure per-row map and the
+    // classification accumulates in event order, so the chunked pass performs the same row
+    // evaluations and the same additions in the same order as the unchunked one — an unstopped
+    // run's shares are bit-identical (the byte-identity pin and the corpus regression hold
+    // that). The poll sits BEFORE each chunk's work: a stop observed at a boundary costs the
+    // run nothing past it, including a cut lattice's kept prefix (refused before its first
+    // chunk does any work).
     double sum = 0.0;
     double sum_all = 0.0;
     long long degenerate = 0;
     std::vector<double> sum_iface(static_cast<size_t>(internal_count), 0.0);
-    for (size_t i = 0; i < events.size(); i++) {
-      const analytic::DiagnosticOutputRow& value = values[i];
-      if (!analytic::ValidateRotation(rows[i].pose.data())) {
-        // The candidate-pose chart's zero-deviation degeneracy: at deviation exactly 0 the
-        // event's outgoing direction is antiparallel to its incoming axis, the chart's F triad
-        // degenerates and the pose's azimuthal freedom is unconstrained — no pose is THE
-        // event's, so no TIR classification exists and the event sits outside the estimator's
-        // declared support (excluded from both numerator and denominator below, its count
-        // reported in the leg's log line and its caliber prose; the witness leg's argmax never
-        // lands here, which is why the sibling never saw it). A validated pose the batch still
-        // cannot trace is a different thing: a reader disagreement, refused below.
-        degenerate++;
-        continue;
+    for (size_t begin = 0; begin < events.size(); begin += kTirRowChunkSize) {
+      if (input.stop != nullptr) {
+        if (input.stop->token != nullptr) {
+          input.stop->token->NotePoll(raypath::kPollSurveyTirRows);  // the in-phase chunk boundary
+        }
+        if (input.stop->Stopped()) {
+          // A cut pipeline claims nothing: the whole-leg refusal, the pass boundary's own shape.
+          tir.SetState(EvidenceState::kRefused);
+          tir.Mode() = "stop_requested";
+          return CompleteQuantity(std::move(tir));
+        }
       }
-      if (!value.path_valid || static_cast<int>(value.interfaces.size()) != internal_count + 2) {
-        // The lattice kept this pose (w = A*T > 0 in its own read) and the batch does not
-        // confirm it: a reader disagreement is a defect to investigate, never a row to drop
-        // from an estimator.
+      const size_t end = std::min(begin + kTirRowChunkSize, events.size());
+      std::vector<analytic::DiagnosticInputRow> rows;
+      rows.reserve(end - begin);
+      for (size_t i = begin; i < end; i++) {
+        double pose[9];
+        analytic::CandidatePose(input.incident, events[i].event.phi, events[i].event, pose);
+        analytic::DiagnosticInputRow row;
+        row.crystal = *input.crystal;
+        for (int k = 0; k < 9; k++) {
+          row.pose[static_cast<size_t>(k)] = pose[k];
+        }
+        for (int k = 0; k < 3; k++) {
+          row.incident[static_cast<size_t>(k)] = input.incident[k];
+        }
+        row.refractive_index = refractive_index;
+        row.source_token = 0;
+        rows.push_back(std::move(row));
+      }
+      std::vector<analytic::DiagnosticOutputRow> values;
+      if (!analytic::EvaluateDiagnosticBatch(*input.representative, rows, {}, &values) ||
+          values.size() != rows.size()) {
         tir.SetState(EvidenceState::kRefused);
         tir.Mode() = "batch_read_unavailable";
         return CompleteQuantity(std::move(tir));
       }
-      const double weight = events[i].weight;
-      bool all_tir = true;
-      for (int j = 0; j < internal_count; j++) {
-        if (value.interfaces[static_cast<size_t>(j) + 1].discriminant < 0.0) {
-          sum_iface[static_cast<size_t>(j)] += weight;
-        } else {
-          all_tir = false;
+      for (size_t i = begin; i < end; i++) {
+        const analytic::DiagnosticOutputRow& value = values[i - begin];
+        if (!analytic::ValidateRotation(rows[i - begin].pose.data())) {
+          // The candidate-pose chart's zero-deviation degeneracy: at deviation exactly 0 the
+          // event's outgoing direction is antiparallel to its incoming axis, the chart's F triad
+          // degenerates and the pose's azimuthal freedom is unconstrained — no pose is THE
+          // event's, so no TIR classification exists and the event sits outside the estimator's
+          // declared support (excluded from both numerator and denominator below, its count
+          // reported in the leg's log line and its caliber prose; the witness leg's argmax never
+          // lands here, which is why the sibling never saw it). A validated pose the batch still
+          // cannot trace is a different thing: a reader disagreement, refused below.
+          degenerate++;
+          continue;
         }
-      }
-      sum += weight;
-      if (all_tir) {
-        sum_all += weight;
+        if (!value.path_valid || static_cast<int>(value.interfaces.size()) != internal_count + 2) {
+          // The lattice kept this pose (w = A*T > 0 in its own read) and the batch does not
+          // confirm it: a reader disagreement is a defect to investigate, never a row to drop
+          // from an estimator.
+          tir.SetState(EvidenceState::kRefused);
+          tir.Mode() = "batch_read_unavailable";
+          return CompleteQuantity(std::move(tir));
+        }
+        const double weight = events[i].weight;
+        bool all_tir = true;
+        for (int j = 0; j < internal_count; j++) {
+          if (value.interfaces[static_cast<size_t>(j) + 1].discriminant < 0.0) {
+            sum_iface[static_cast<size_t>(j)] += weight;
+          } else {
+            all_tir = false;
+          }
+        }
+        sum += weight;
+        if (all_tir) {
+          sum_all += weight;
+        }
       }
     }
     sum_weight[lambda] = sum;

@@ -153,6 +153,29 @@ void AssembleMcRegionEssWhenRequested(const ConfigManager& config, const InputSn
   }
 }
 
+// The TIR leg and everything past it, both arms that run the leg: a stop the leg observed
+// names the cut on the document (the T0 note's two-arm shape, appended only on a stopped run —
+// unstopped documents' notes stay byte-frozen) and the legs after the cut one do not start
+// (the T0 early-return's shape, mid-document: what ran stays, the legs past the cut are the
+// note's to explain, never a silent skip). An unstopped TIR leg hands over to the requested
+// MC region ESS leg exactly as before.
+void AssembleTirThenPastTheCut(const ConfigManager& config, const InputSnapshot& snapshot, const SurveyRequest& request,
+                               int member_count, double wavelength_nm, SurveyData* out,
+                               const analytic::DiscoveryStop* stop) {
+  const bool tir_stopped = stop != nullptr && out->tir_share.has_value() &&
+                           out->tir_share->State() == EvidenceState::kRefused &&
+                           out->tir_share->Mode() == "stop_requested";
+  if (tir_stopped) {
+    out->budget_note += stop->Why() == analytic::StopReason::kDeadline ?
+                            " The TIR share leg stopped at the query's unified deadline; the legs past "
+                            "the cut did not run." :
+                            " The TIR share leg stopped at a cooperative poll (explicit cancel); the "
+                            "legs past the cut did not run.";
+    return;
+  }
+  AssembleMcRegionEssWhenRequested(config, snapshot, request, member_count, wavelength_nm, out, stop);
+}
+
 }  // namespace
 
 Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& request, SurveyData* out,
@@ -376,8 +399,8 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
         AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
                                          static_cast<int>(scope_members.size()), options.stop),
                          out);
-        AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope_members.size()),
-                                         wavelength.wavelength_nm, out, options.stop);
+        AssembleTirThenPastTheCut(config, snapshot, request, static_cast<int>(scope_members.size()),
+                                  wavelength.wavelength_nm, out, options.stop);
         any_escaped = true;
         escape_mode = outcome.refusal_mode;
       } else {
@@ -441,8 +464,8 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
           AssembleTirShare(TirShareInputOf(config, table, polygons, crystal.shape, request.path_layers[0],
                                            static_cast<int>(scope_members.size()), options.stop),
                            out);
-          AssembleMcRegionEssWhenRequested(config, snapshot, request, static_cast<int>(scope_members.size()),
-                                           wavelength.wavelength_nm, out, options.stop);
+          AssembleTirThenPastTheCut(config, snapshot, request, static_cast<int>(scope_members.size()),
+                                    wavelength.wavelength_nm, out, options.stop);
         }
       }
     } else {

@@ -92,6 +92,10 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     witness_input.refractive_index = input.refractive_index;
     witness_input.wavelength_nm = input.wavelength_nm;
     witness_input.member_count = member_count;
+    // The query's stop rides the corner's witness leg too — the assembly-level refused-support
+    // calls pass it, and this corner is the same leg (the sibling tint/probe legs below pass it
+    // as well); an unwired stop would leave this lattice the one unstopped survey leg.
+    witness_input.stop = input.stop;
     // Slice A's single refused-card entry, carrying the gate-order ruling's own scope: the
     // card joins the ladder's cards (clear_objects=false), the chromatic/tint stamp below is
     // overwritten whenever the density-expressible legs run, and it survives only in the

@@ -8,9 +8,11 @@
 // mechanism (blue's lower critical angle widens the TIR window) read as a class-level estimate.
 // Per lambda the leg runs one BuildEvents pass (the tint's two-pass shape, same lattice size),
 // re-poses every kept event (CandidatePose) and re-derives the chain through the diagnostic
-// batch in one call, then classifies each kept event by the batch's per-interface discriminant
-// sign (negative = TIR, internal slots only — the batch row's interfaces[0] is the entry and
-// interfaces[last] the exit, whose negative discriminants are gate failures, not TIR).
+// batch in row chunks (one cooperative poll per chunk boundary — the pass boundary and the
+// chunk boundaries are the leg's stop points), then classifies each kept event by the batch's
+// per-interface discriminant sign (negative = TIR, internal slots only — the batch row's
+// interfaces[0] is the entry and interfaces[last] the exit, whose negative discriminants are
+// gate failures, not TIR).
 //
 // The estimate reads the discovery-side weights on both sides of every share (numerator and
 // denominator the same reader, the declared lattice's own unit) — the batch is only the
@@ -53,8 +55,10 @@ struct TirShareInput {
   double incident[3] = { 0.0, 0.0, -1.0 };           // the sun's propagation direction (SunIncidentDirection)
   int member_count = 0;                              // the class size the representative stands for
   int sample_count = kSurveyTirShareSampleCount;
-  // Cooperative stop for the leg's lattice passes (BuildEvents' own poll) — an explicit
-  // cancel; a cut pass keeps its evidence shape and never fabricates the full lattice.
+  // Cooperative stop for the leg's whole run: the per-lambda pass boundary and the in-phase
+  // row-chunk pipeline both poll it (an explicit cancel or the query's unified deadline). A
+  // cut pass claims nothing — the leg refuses whole, never fabricating the full lattice's
+  // shares from a prefix.
   const analytic::DiscoveryStop* stop = nullptr;
 };
 
