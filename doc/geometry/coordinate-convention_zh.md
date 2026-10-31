@@ -252,6 +252,53 @@ lat = asin(−c.y)       = asin(g_z)
 `AnnotationOverlayGuiParity.RectangularFollowsTheCameraPoseAndTheGuiDeliberatelyDoesNot`：
 零姿态下精确一致，方位角下差一个纯水平位移，俯仰/滚转下差异出现纵向分量。
 
+### 9.7 光路 3D 轨道相机（GUI 内部）
+
+Analyze 工作区的光路 3D 视图（point inspector 的轨迹区）使用一个自己的小型正交轨道相机。
+本节钉住它的约定——以及由于这是第三台声明约定的 GUI 相机——它们共享的拖曳隐喻。
+
+**基**。`OrbitBasis`（`src/gui/analyze_point_view.hpp`）在显示系内作答，显示系是 z-up
+（晶体的 c 轴 `+z` 在屏幕上朝上）：
+
+```
+fwd   = (cos p·cos y,  cos p·sin y,  sin p)   // 场景 -> 视者，z-up 球坐标
+right = (sin y, −cos y, 0)                    // = fwd × ẑ，归一化
+up    = right × fwd
+```
+
+`yaw` 在水平面内扫掠（自 `+x` 向 `+y`），`pitch` 自水平面向 `+z` 抬升，并被钳到 `±88°`。
+钳位正是让 `fwd × ẑ` 的奇点（pitch `±90°` 时 fwd 平行于 `+z`）不可达的原因，它同时使
+`right` 只是 yaw 的函数——纯 pitch 拖曳不能把任何东西在屏幕上左右移动。gui_test 钉
+（`point_inspector_shows_the_point_fiber_and_the_path`）把它作为精确不变量断言，且读取的
+是渲染器所用的同一个 `OrbitBasis`。投影为正交：屏幕 `x = d·right`、屏幕 `y = d·up`
+（y 在屏幕上朝上）。
+
+**拖曳映射（grab）**。拖动画布遵循项目唯一的拖曳隐喻：*近面随手*。右拖减小 yaw，下拖
+减小 pitch：
+
+```
+orbit_yaw_deg   −= delta.x · 0.5°
+orbit_pitch_deg −= delta.y · 0.5°    // 钳到 [−88°, +88°]
+```
+
+轨道状态是会话级显示态（`PointViewState`）：不持久化，采纳新的 point 文档时相机保持在
+用户留下的位置（观看偏好，不是场景数据）。
+
+**三台 GUI 相机一致——一致在隐喻层，不在公式字形**。grab 是不变量；下面的公式不同是
+合法的，因为它们参数化的对象不同。逐字取自源码：
+
+| 相机 | 参数的含义 | 拖曳公式（源码） |
+|---|---|---|
+| Render 主视图，内向外镜头 | 固定场景中的**相机** | `azimuth −= dx·gain;  elevation += dy·gain`（`app_panels.cpp`） |
+| Render 主视图，Globe 镜头 | 相机，外向内 | `azimuth += dx·gain;  elevation −= dy·gain`——刻意从内向外翻转符号，让球仍随手（`app_panels.cpp` 注释） |
+| 模态晶体预览 trackball（en §9.6；zh 镜像暂缺该节） | 固定相机下的**物体**（世界系旋转） | 世界系轴 `(dy, dx, 0)/|d|`、角 `|d|·0.01`；右拖绕世界竖轴自旋，下拖把晶体顶部转向观者（`ApplyTrackballRotation`） |
+| 光路 3D 轨道相机（本节） | 固定相机下的**物体**（轨道角） | `yaw −= dx·0.5°;  pitch −= dy·0.5°`（`analyze_point_view.cpp`） |
+
+注意光路 3D 行与 Render 内向外行携带*相反的纵向字形*（`pitch −= dy` 对 `elevation += dy`），
+而两者都是 grab：内向外镜头移动相机，内容的表观运动是相机运动的取负；轨道相机则直接旋转
+物体。把这张表读成「需要被对齐的不一致」会破坏其中一侧的 grab——本节钉住的约定是隐喻层，
+各相机的公式对各自的参数化对象各自正确。
+
 ## 10. 持久化兼容
 
 ### 10.1 语义变化字段（破坏性）

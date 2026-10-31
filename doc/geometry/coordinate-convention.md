@@ -360,6 +360,63 @@ and `AnnotationOverlayGuiParity.RectangularFollowsTheCameraPoseAndTheGuiDelibera
 they agree exactly at a zero pose, differ by a pure horizontal shift under an
 azimuth, and differ with a vertical component under elevation or roll.
 
+### 9.8 Raypath 3D Orbit Camera (GUI-internal)
+
+The Analyze workspace's raypath 3D view (the point inspector's trace region)
+uses a small orthographic orbit camera of its own. This section pins its
+convention, and — because this is the third GUI camera to state one — the drag
+metaphor all of them share.
+
+**The basis.** `OrbitBasis` (`src/gui/analyze_point_view.hpp`) answers in the
+display frame, which is z-up (the crystal's c-axis, `+z`, is up on screen):
+
+```
+fwd   = (cos p·cos y,  cos p·sin y,  sin p)   // scene -> viewer, z-up spherical
+right = (sin y, −cos y, 0)                    // = fwd × ẑ, normalized
+up    = right × fwd
+```
+
+`yaw` sweeps the horizontal plane (from `+x` toward `+y`), `pitch` rises from
+that plane toward `+z` and is clamped to `±88°`. The clamp is what keeps the
+`fwd × ẑ` singularity (fwd parallel to `+z` at pitch `±90°`) unreachable, and
+it makes `right` a function of the yaw alone — a pure pitch drag cannot move
+anything sideways on screen. The gui_test pin asserts that as an exact
+invariant (`point_inspector_shows_the_point_fiber_and_the_path` reads the same
+`OrbitBasis` the renderer draws with). Projection is orthographic: screen
+`x = d·right`, screen `y = d·up` (y up on screen).
+
+**The drag mapping (grab).** Dragging the canvas follows the project's one
+drag metaphor: *the near face follows the hand*. Right drag decreases yaw,
+down drag decreases pitch:
+
+```
+orbit_yaw_deg   −= delta.x · 0.5°
+orbit_pitch_deg −= delta.y · 0.5°    // clamped to [−88°, +88°]
+```
+
+The orbit state is session-level display state (`PointViewState`): nothing is
+persisted, and adopting a new point document keeps the camera where the user
+left it (a viewing preference, not scene data).
+
+**The three GUI cameras agree — at the metaphor, not at the glyph.** Grab is
+the invariant; the formulas differ legitimately because they parameterize
+different things. Verbatim from source:
+
+| Camera | What the parameters mean | Drag formulas (source) |
+|---|---|---|
+| Render main view, inside-out lenses | the **camera** inside a fixed scene | `azimuth −= dx·gain;  elevation += dy·gain` (`app_panels.cpp`) |
+| Render main view, Globe lens | the camera, outside-in | `azimuth += dx·gain;  elevation −= dy·gain` — flipped from inside-out precisely so the sphere still follows the hand (`app_panels.cpp` comment) |
+| Modal crystal preview trackball (§9.6) | the **object** under a fixed camera (world-frame rotation) | axis `(dy, dx, 0)/|d|` in world coords, angle `|d|·0.01`; right drag spins about world up, down drag tips the crystal top toward the viewer (`ApplyTrackballRotation`) |
+| Raypath 3D orbit camera (this section) | the **object** under a fixed camera (orbit angles) | `yaw −= dx·0.5°;  pitch −= dy·0.5°` (`analyze_point_view.cpp`) |
+
+Note the ray3D row and the inside-out Render row carry *opposite vertical
+glyphs* (`pitch −= dy` vs `elevation += dy`) and both are grab: inside-out
+lenses move the camera, so the content's apparent motion is the camera's
+negation, while the orbit camera rotates the object directly. Reading the
+table as an inconsistency to be "aligned" would break grab on one side — the
+convention this section pins is the metaphor, and the per-camera formulas are
+each correct for what they parameterize.
+
 ## 10. Persistence Compatibility
 
 ### 10.1 Fields with Changed Semantics (Breaking)
