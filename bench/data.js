@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793458535977,
+  "lastUpdate": 1793458537953,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "73b0f697916c89df61e26e9fb12ee6bc0cbc6afb",
-          "message": "Merge pull request #444 from LoveDaisy/scrum/analytic-module-a-v0\n\nliblumice_analytic module A v0: EvaluatePath, TraceFiber, DiscoverComponents + LI parity",
-          "timestamp": "2026-09-29T09:40:58+08:00",
-          "tree_id": "7dbc414388ddfcacdb2e91a6a1ddb3596a584cf4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/73b0f697916c89df61e26e9fb12ee6bc0cbc6afb"
-        },
-        "date": 1790646744991,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 91.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.1,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e129d76c7ac6844f6499a631f39e7eb81f169450",
           "message": "Merge pull request #445 from LoveDaisy/scrum/raypath-subcommand\n\nLumice raypath: single-path analysis module, lumice.h v4.50 entry, D4 verification",
           "timestamp": "2026-09-29T18:08:24+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33934bd7de38458727db064be595da31a2314160",
+          "message": "Merge pull request #558 from LoveDaisy/feat/topbar-toggle-regroup\n\nfeat(gui): the workspace switch becomes its own segmented group — and the top bar's groups get room to breathe",
+          "timestamp": "2026-10-31T22:51:20+08:00",
+          "tree_id": "43b7e4bb1b41920e5806a9a565ed409eb8669ac6",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/33934bd7de38458727db064be595da31a2314160"
+        },
+        "date": 1793458537472,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 86.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.4,
             "unit": "%"
           }
         ]
