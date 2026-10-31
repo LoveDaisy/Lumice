@@ -176,11 +176,14 @@ def test_registry_v4_per_miss_shape_and_terminal_values():
     assert registry["version"] == 4
 
     # The four build entries' two-condition shape and re-anchored outer bounds.
+    # The aggregates' 1740/3300 follow the 2026-10-31 ctest raise (480 -> 560/660,
+    # PR #551): the aggregate is envelope + registered ctest budget, so the pin
+    # moves with it (registry reasons carry the evidence run ids).
     expected = {
         "Ubuntu x86_64": ({"overhead_seconds": 30, "max_seconds_per_miss": 5.0}, 1800, 2160),
         "Ubuntu ARM64": ({"overhead_seconds": 15, "max_seconds_per_miss": 5.0}, 1020, 1380),
-        "macOS ARM64": ({"overhead_seconds": 20, "max_seconds_per_miss": 5.0}, 1200, 1680),
-        "Windows MSVC x86_64": ({"overhead_seconds": 105, "max_seconds_per_miss": 5.0}, 2640, 3120),
+        "macOS ARM64": ({"overhead_seconds": 20, "max_seconds_per_miss": 5.0}, 1200, 1740),
+        "Windows MSVC x86_64": ({"overhead_seconds": 105, "max_seconds_per_miss": 5.0}, 2640, 3300),
     }
     for job, (per_miss, outer, agg_limit) in expected.items():
         build = next(
