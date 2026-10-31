@@ -47,9 +47,9 @@ const char* const kStopBtn = "##TopBar/" ICON_FA_STOP " Stop";
 const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
 const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
 const char* const kSettingsBtn = "##TopBar/" ICON_FA_GEAR " Settings";
-// The workspace switch's two labels — the slot shows the DESTINATION, so which one exists this
-// frame depends on the mode (from Render it reads Analyze; from Analyze it reads Render).
-const char* const kWorkspaceToAnalyzeBtn = "##TopBar/" ICON_FA_ROUTE " Analyze";
+// The workspace switch's two cells — a segmented pair, both drawn every frame. The tint on the
+// current mode's cell is the only mode-dependent part: its click is a no-op, the other's switches.
+const char* const kWorkspaceToAnalyzeBtn = "##TopBar/Analyze";
 const char* const kWorkspaceToRenderBtn = "##TopBar/Render";
 const char* const kRightToggleBtn = "##TopBar/" ICON_FA_CHEVRON_RIGHT "##right_panel_toggle";
 const char* const kRevertBtn = "##TopBar/Revert";
@@ -66,6 +66,8 @@ const char* const kTopBarButtons[] = {
   "##TopBar/" ICON_FA_FLOPPY_DISK,
   "##TopBar/" ICON_FA_PALETTE " Colors",
   "##TopBar/" ICON_FA_FILE_LINES " Summary",
+  kWorkspaceToRenderBtn,
+  kWorkspaceToAnalyzeBtn,
   kSettingsBtn,
   kRevertBtn,
   kRightToggleBtn,
@@ -392,6 +394,14 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
   // document neither dirties nor changes its simulation state (the switch is session view state),
   // and the frame with no preview publishes no preview viewport (level-triggered, so DoAnalyze's
   // IN_FRAME canvas falls back to the document resolution and the deferred blit skips).
+  //
+  // The segmented shape is pinned here too, because the no-shift claim rests on it: both cells
+  // exist in both modes, one quantized width for both, flush together — so the pair's rectangle
+  // is the same rectangle whatever the mode, and the first group to its right holds its position
+  // byte for byte across the toggle. The Analyze→Render half also pins the armed-pick clear: the
+  // armed cone pick aims at the panorama, which the Render mode takes off screen, and no click
+  // may stay armed for a mode that does not read it (the ROI radios' rule; the clear lives in the
+  // Render cell's click branch — deleting it turns this case red).
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_switch_swaps_layout_and_stays_clean");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -400,6 +410,17 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
       ImGuiWindow* left = ctx->GetWindowByRef("##LeftPanel");
       IM_CHECK(left != nullptr && left->Active);
+
+      const ImGuiTestItemInfo render_cell = ctx->ItemInfo(kWorkspaceToRenderBtn, ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo analyze_cell = ctx->ItemInfo(kWorkspaceToAnalyzeBtn, ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo settings_before = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(render_cell.ID, 0u);
+      IM_CHECK_NE(analyze_cell.ID, 0u);
+      IM_CHECK_NE(settings_before.ID, 0u);
+      // Flush (SameLine(0, 0): the cells touch) and one width (ToolbarGroupButtonWidth): the
+      // pair reads — and is laid out — as one control of constant size.
+      IM_CHECK_EQ(render_cell.RectFull.Max.x, analyze_cell.RectFull.Min.x);
+      IM_CHECK_EQ(render_cell.RectFull.GetWidth(), analyze_cell.RectFull.GetWidth());
 
       const bool dirty_before = gui::g_state.dirty;
       const auto sim_state_before = gui::g_state.sim_state;
@@ -416,11 +437,22 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.dirty, dirty_before);
       IM_CHECK_EQ(static_cast<int>(gui::g_state.sim_state), static_cast<int>(sim_state_before));
 
+      // The switch is pure view state — nothing on the bar moved: the Settings group, the first
+      // thing to the pair's right, holds its rectangle exactly across the toggle.
+      const ImGuiTestItemInfo settings_after = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(settings_after.ID, 0u);
+      IM_CHECK_EQ(settings_after.RectFull.Min.x, settings_before.RectFull.Min.x);
+      IM_CHECK_EQ(settings_after.RectFull.Max.x, settings_before.RectFull.Max.x);
+
+      gui::g_state.analysis.pick_armed = true;
+      gui::g_state.analysis.cone_marker_dragging = true;
       ctx->ItemClick(kWorkspaceToRenderBtn);
       ctx->Yield(3);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
       IM_CHECK(left != nullptr && left->Active);
       IM_CHECK(middle != nullptr && !middle->Active);
+      IM_CHECK_EQ(gui::g_state.analysis.pick_armed, false);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_marker_dragging, false);
     };
   }
 

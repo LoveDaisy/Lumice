@@ -612,43 +612,7 @@ void RenderTopBar(float window_width) {
   if (tint_colors_button) {
     ImGui::PopStyleColor(3);
   }
-  // The second occupant of the feature-button group: the Render/Analyze workspace switch — the
-  // Analysis button's replacement and the analysis's new entry (the Analyze workspace is where
-  // the analysis lives). One slot whose label names the DESTINATION, the bar's own Run/Stop
-  // idiom: from Render it reads [route " Analyze], from Analyze it reads [Render]. The
-  // two-mode segmented pair this slot was first drawn as measured +32 px
-  // over the bar's 20 px narrow-window headroom (required 1036 vs 1024,
-  // the_top_bar_fits_at_the_minimum_window_width) — the label-shortening rung of the switch
-  // plan's degradation ladder, and the slot keeps the width of the wider of its two labels
-  // (ToolbarGroupButtonWidth) so the toggle can never shift its neighbours. The mode itself is
-  // on screen (four columns vs the render layout); the tooltips say where the click goes.
-  // Switching is session state: it never dirties, never commits, never cancels or starts a run.
-  {
-    const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
-    const char* kToAnalyzeLabel = ICON_FA_ROUTE " Analyze";
-    const char* kToRenderLabel = "Render";
-    ImGui::SameLine();
-    if (analyze) {
-      if (ImGui::Button(kToRenderLabel, ImVec2(ToolbarGroupButtonWidth({ kToAnalyzeLabel, kToRenderLabel }), 0))) {
-        g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
-        // The armed cone pick aims at the panorama, which this mode takes off screen — the same
-        // "never leave a click armed for a mode that does not read it" rule the ROI radios follow.
-        g_state.analysis.pick_armed = false;
-        g_state.analysis.cone_marker_dragging = false;
-      }
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Switch back to the Render workspace.");
-      }
-    } else {
-      if (ImGui::Button(kToAnalyzeLabel, ImVec2(ToolbarGroupButtonWidth({ kToAnalyzeLabel, kToRenderLabel }), 0))) {
-        g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
-      }
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Which raypaths make the light in a region of the sky. Switches to the Analyze workspace.");
-      }
-    }
-  }
-  // The third occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
+  // The second occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
   // like Analysis — the window has no state of its own to set on open.
   ImGui::SameLine();
   if (ImGui::Button(ICON_FA_FILE_LINES " Summary")) {
@@ -768,6 +732,67 @@ void RenderTopBar(float window_width) {
             "Either no rays match (they may be blocked by a physical filter), or every matching\n"
             "class is currently hidden. Open the Colors window to inspect per-class details.");
       }
+    }
+  }
+
+  // The workspace switch: its own group, on the feature group's right. The Colored checkbox and
+  // its warning pip are the feature group's conditional last members, so the boundary sits after
+  // them — splitting in front of the checkbox would cut the feature group in two whenever a
+  // colour class exists — and before Settings, which opens a modal (a different kind of control
+  // from a view switch) and must not read as the switch's neighbour.
+  ToolbarGroupSeparator();
+
+  // The Render/Analyze workspace switch as a two-cell segmented control — the bar's one mode
+  // indicator. The single destination slot this replaces was a degradation rung: its first
+  // segmented drawing measured +32 px over the then-20 px narrow-window headroom (required 1036
+  // vs 1024, the_top_bar_fits_at_the_minimum_window_width), and its route icon named only the
+  // way there ("go to Analyze") while a mode switch reads both ways. Both cells are drawn every
+  // frame with one quantized width — the wider label, ToolbarGroupButtonWidth — flush together
+  // (SameLine(0, 0)) so the pair reads as one control and its total width never changes, which
+  // is what makes "switching cannot move the neighbours" true by construction (pinned
+  // byte-for-byte by workspace_switch_swaps_layout_and_stays_clean, together with the segmented
+  // shape itself). The current mode's cell carries the accent — "selected", the same reading as
+  // the tinted Colors button — and its click is a no-op; the mode itself is on screen (four
+  // columns vs the render layout) and the tooltips say where the click goes. The file group's
+  // iconified labels are the reclaim that funds the pair (same fit pin). Switching is session
+  // state: it never dirties, never commits, never cancels or starts a run.
+  {
+    const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
+    const float cell_width = ToolbarGroupButtonWidth({ "Render", "Analyze" });
+    if (!analyze) {
+      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.35f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
+    }
+    if (ImGui::Button("Render", ImVec2(cell_width, 0)) && analyze) {
+      g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
+      // The armed cone pick aims at the panorama, which this mode takes off screen — the same
+      // "never leave a click armed for a mode that does not read it" rule the ROI radios follow.
+      g_state.analysis.pick_armed = false;
+      g_state.analysis.cone_marker_dragging = false;
+    }
+    if (!analyze) {
+      ImGui::PopStyleColor(3);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(analyze ? "Switch back to the Render workspace." : "The Render workspace is current.");
+    }
+    ImGui::SameLine(0.0f, 0.0f);
+    if (analyze) {
+      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.35f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
+    }
+    if (ImGui::Button("Analyze", ImVec2(cell_width, 0)) && !analyze) {
+      g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
+    }
+    if (analyze) {
+      ImGui::PopStyleColor(3);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(analyze ?
+                            "The Analyze workspace is current." :
+                            "Which raypaths make the light in a region of the sky. Switches to the Analyze workspace.");
     }
   }
 
