@@ -439,9 +439,13 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   ImGui::End();
 
   SetNextPanelGeometry(left_w + col_w + ImGui::GetStyle().ItemSpacing.x, top, list_w, upper_h);
+  // The window itself never scrolls (the same flag pair the right panel carries): its one
+  // scrolling region is the result table's own inner window, so the controls above it are a
+  // fixed header and stay reachable at every height.
   ImGui::Begin("##AnalyzeShareList", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                   ImGuiWindowFlags_NoBringToFrontOnFocus);
   RenderAnalysisPanelBody(g_state, g_server);
   ImGui::End();
 
