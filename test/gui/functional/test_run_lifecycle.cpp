@@ -44,7 +44,7 @@ const char* const kRunBtn = "##TopBar/" ICON_FA_PLAY " Run";
 const char* const kStopBtn = "##TopBar/" ICON_FA_STOP " Stop";
 const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
 const char* const kRevertBtn = "##TopBar/Revert";
-const char* const kNewBtn = "##TopBar/New";
+const char* const kNewBtn = "##TopBar/" ICON_FA_FILE;
 const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
 
 // A live server for the duration of one case, torn down on EVERY exit path. Held by an object

@@ -502,20 +502,36 @@ void RenderTopBar(float window_width) {
   // File operations — New/Open disabled while busy (simulating OR async Stop draining); Save menu
   // itself stays enabled so read-only exports (Screenshot / Dual Fisheye Equal Area /
   // Equirectangular / Config JSON) remain reachable.
-  const float file_op_width = ToolbarGroupButtonWidth({ "New", "Open", "Save" });
+  //
+  // Icon-only labels: the words they replaced were the bar's widest cheap reclaim, spent on the
+  // workspace group's split (the narrow-window budget is pinned by
+  // shell_chrome/the_top_bar_fits_at_the_minimum_window_width). Each icon's word lives in its
+  // tooltip — read through AllowWhenDisabled for New/Open, since they spend much of their life
+  // behind BeginDisabled(busy), and a tooltip that fired only while enabled would vanish exactly
+  // when the disabled state invites the question "why not now".
+  const float file_op_width = ToolbarGroupButtonWidth({ ICON_FA_FILE, ICON_FA_FOLDER_OPEN, ICON_FA_FLOPPY_DISK });
   ImGui::BeginDisabled(busy);
-  if (ImGui::Button("New", ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(ICON_FA_FILE, ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kNew);
   }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("New: start a new document.");
+  }
   ImGui::SameLine();
-  if (ImGui::Button("Open", ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(ICON_FA_FOLDER_OPEN, ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kOpen);
+  }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("Open: load a document from a file.");
   }
   ImGui::EndDisabled();
   ImGui::SameLine();
   {
-    if (ImGui::Button("Save", ImVec2(file_op_width, 0))) {
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK, ImVec2(file_op_width, 0))) {
       ImGui::OpenPopup("SaveMenu");
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("Save: document, copy, image exports, and config JSON.");
     }
     if (ImGui::BeginPopup("SaveMenu")) {
       bool no_texture = !g_preview.HasTexture();

@@ -31,6 +31,7 @@
 #include <thread>
 #include <vector>
 
+#include "IconsFontAwesome6.h"          // the top bar's New/Open/Save buttons are icon-only since the workspace split
 #include "gui/export_fbo_renderer.hpp"  // RenderExportToRgba — the non-proxy view of the sim layer
 #include "gui/gui_state.hpp"
 #include "gui/server_poller.hpp"
@@ -316,7 +317,7 @@ void SeedModifiedDocument(ImGuiTestContext* ctx, const std::string& path) {
 // RenderSaveModifiedPopup — called right after RenderUnsavedPopup in both the product's loop and
 // this harness's — consumes to open the second modal.
 void DriveNewIntoTheModifiedPrompt(ImGuiTestContext* ctx) {
-  ctx->ItemClick("##TopBar/New");
+  ctx->ItemClick("##TopBar/" ICON_FA_FILE);
   ctx->Yield(2);
   ctx->ItemClick("Unsaved Changes/Save");
   ctx->Yield(3);
@@ -339,14 +340,14 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
 
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/New")));
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/Open")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FILE)));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FOLDER_OPEN)));
 
       gui::g_state.run_intent = gui::RunIntent::kRunning;
       ctx->Yield(2);
-      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/New")));
-      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/Open")));
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/Save")));
+      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FILE)));
+      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FOLDER_OPEN)));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FLOPPY_DISK)));
 
       gui::g_state.run_intent = gui::RunIntent::kNone;
       ctx->Yield(2);
@@ -393,7 +394,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       // assertion here returns with the popup still up, and an open popup eats every click the
       // next case makes.
       const auto check = [](ImGuiTestContext* c, const char* scenario, const Item* items, int n) {
-        c->ItemClick("##TopBar/Save");
+        c->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK);
         c->Yield(2);
         c->SetRef("//$FOCUSED");
         for (int i = 0; i < n; ++i) {
@@ -466,14 +467,14 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
 
       const bool texture_before = gui::g_state.save_texture;
 
-      ctx->ItemClick("##TopBar/Save");
+      ctx->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK);
       ctx->Yield(2);
       ctx->ItemClick("**/Include Texture in .lmc");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.save_texture, !texture_before);
 
       // Reopen and read the mark back: the edit survived closing and reopening the menu.
-      ctx->ItemClick("##TopBar/Save");
+      ctx->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK);
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.save_texture, !texture_before);
       ctx->ItemClick("**/Include Texture in .lmc");  // back off, and observe it move
@@ -498,7 +499,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       gui::g_state.dirty = true;
       ctx->Yield();
 
-      ctx->ItemClick("##TopBar/New");
+      ctx->ItemClick("##TopBar/" ICON_FA_FILE);
       ctx->Yield(2);
       ctx->ItemClick("Unsaved Changes/Cancel");
       ctx->Yield(2);
@@ -520,7 +521,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       gui::g_state.dirty = true;
       ctx->Yield();
 
-      ctx->ItemClick("##TopBar/New");
+      ctx->ItemClick("##TopBar/" ICON_FA_FILE);
       ctx->Yield(2);
       ctx->ItemClick("Unsaved Changes/Don't Save");
       ctx->Yield(2);
@@ -550,7 +551,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       gui::g_state.dirty = true;
       ctx->Yield();
 
-      ctx->ItemClick("##TopBar/New");
+      ctx->ItemClick("##TopBar/" ICON_FA_FILE);
       ctx->Yield(2);
       ctx->ItemClick("Unsaved Changes/Save");
       ctx->Yield(2);

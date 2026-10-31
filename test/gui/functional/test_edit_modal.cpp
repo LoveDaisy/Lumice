@@ -474,10 +474,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(4);
       IM_CHECK(ctx->ItemExists("**/###crystal_tab"));
 
-      // ##TopBar/Save rather than New: the Immediate window opens at ImGui's default origin near
-      // the upper left and can cover the leftmost top-bar items. The menu's contents are
-      // functional/test_file_ops.cpp's contract; all that is read here is that it opened.
-      ctx->ItemClick("##TopBar/Save");
+      // The top-bar Save (floppy) rather than New: the Immediate window opens at ImGui's default
+      // origin near the upper left and can cover the leftmost top-bar items. The menu's contents
+      // are functional/test_file_ops.cpp's contract; all that is read here is that it opened.
+      ctx->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK);
       ctx->Yield(2);
       IM_CHECK(ctx->ItemExists("**/Save Copy"));
       IM_CHECK(ctx->ItemExists("**/###crystal_tab"));

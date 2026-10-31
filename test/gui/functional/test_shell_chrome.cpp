@@ -61,11 +61,10 @@ const char* const kTopBarButtons[] = {
   "##TopBar/" ICON_FA_CHEVRON_LEFT "##left_panel_toggle",
   kRunBtn,
   kContinueBtn,
-  "##TopBar/New",
-  "##TopBar/Open",
-  "##TopBar/Save",
+  "##TopBar/" ICON_FA_FILE,
+  "##TopBar/" ICON_FA_FOLDER_OPEN,
+  "##TopBar/" ICON_FA_FLOPPY_DISK,
   "##TopBar/" ICON_FA_PALETTE " Colors",
-  "##TopBar/" ICON_FA_ROUTE " Analyze",
   "##TopBar/" ICON_FA_FILE_LINES " Summary",
   kSettingsBtn,
   kRevertBtn,
@@ -172,7 +171,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         }
         // The neighbour is what the user actually notices moving: New, the first control to the
         // right of the execution group (Continue sits between, and is measured with the slot).
-        const ImGuiTestItemInfo neighbour = ctx->ItemInfo("##TopBar/New", ImGuiTestOpFlags_NoError);
+        const ImGuiTestItemInfo neighbour = ctx->ItemInfo("##TopBar/" ICON_FA_FILE, ImGuiTestOpFlags_NoError);
         if (width < 0.0f) {
           width = btn.RectFull.GetWidth();
           right_neighbour_x = neighbour.RectFull.Min.x;
