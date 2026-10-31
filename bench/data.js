@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793458532618,
+  "lastUpdate": 1793458535977,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "73b0f697916c89df61e26e9fb12ee6bc0cbc6afb",
-          "message": "Merge pull request #444 from LoveDaisy/scrum/analytic-module-a-v0\n\nliblumice_analytic module A v0: EvaluatePath, TraceFiber, DiscoverComponents + LI parity",
-          "timestamp": "2026-09-29T09:40:58+08:00",
-          "tree_id": "7dbc414388ddfcacdb2e91a6a1ddb3596a584cf4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/73b0f697916c89df61e26e9fb12ee6bc0cbc6afb"
-        },
-        "date": 1790646742910,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 965494.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1030160.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 668902.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 593550.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e129d76c7ac6844f6499a631f39e7eb81f169450",
           "message": "Merge pull request #445 from LoveDaisy/scrum/raypath-subcommand\n\nLumice raypath: single-path analysis module, lumice.h v4.50 entry, D4 verification",
           "timestamp": "2026-09-29T18:08:24+08:00",
@@ -9590,6 +9542,54 @@ window.BENCHMARK_DATA = {
             "value": 582232.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33934bd7de38458727db064be595da31a2314160",
+          "message": "Merge pull request #558 from LoveDaisy/feat/topbar-toggle-regroup\n\nfeat(gui): the workspace switch becomes its own segmented group — and the top bar's groups get room to breathe",
+          "timestamp": "2026-10-31T22:51:20+08:00",
+          "tree_id": "43b7e4bb1b41920e5806a9a565ed409eb8669ac6",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/33934bd7de38458727db064be595da31a2314160"
+        },
+        "date": 1793458535648,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 818783.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1010097.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 712650.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 949375.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
