@@ -67,22 +67,30 @@ struct PanoramaGlViewport {
   float dpi_scale_y = 1.0f;
 };
 
-// MECHANICAL EXTRACTION (red state): the body below is the publish site's pre-fix formula
-// verbatim, so this commit moves code and changes no bits — which means the defect travels
-// with it. The body reads `rect` as if it were window-local, but under ViewportsEnable it is
-// OS-screen absolute; `main_vp_origin` is already part of the contract (the nonzero-origin
-// cases in test_panorama_viewport.cpp hold the conversion to it) and is what the localization
-// fix consumes.
+// The conversion proper. P1, the property that makes the picture stick to the child window
+// while the OS window moves: the output is a function of the window-LOCAL geometry only —
+// moving the window translates `rect` and `main_vp_origin` together, the difference is
+// untouched, and the published viewport cannot move. P2, the compatibility leg: with the main
+// viewport at (0, 0) (multi-viewport off — every existing document, every gui_test, every
+// committed reference image) the arithmetic degenerates to the pre-fix publication bitwise.
+// The nonzero-origin cases in test_panorama_viewport.cpp hold P1; the (0, 0) case holds P2;
+// the fractional-DPI case holds the truncation and the bottom-up Y convention.
 inline PanoramaGlViewport PanoramaChildRectToGlViewport(const PanoramaScreenRect& rect,
-                                                        [[maybe_unused]] const PanoramaScreenPoint& main_vp_origin,
+                                                        const PanoramaScreenPoint& main_vp_origin,
                                                         const PanoramaSurface& surface) {
   PanoramaGlViewport out;
   const float dpi_x = static_cast<float>(surface.fb_w) / surface.display_w;
   const float dpi_y = static_cast<float>(surface.fb_h) / surface.display_h;
-  out.vp_x = static_cast<int>(rect.x * dpi_x);
+  // Window-local points: strip the main viewport's origin off the absolute corner before the
+  // GL viewport counts pixels. (The pre-fix formula stopped here at `rect` itself — the defect
+  // the nonzero-origin nail caught.)
+  const float local_x = rect.x - main_vp_origin.x;
+  const float local_y = rect.y - main_vp_origin.y;
+  out.vp_x = static_cast<int>(local_x * dpi_x);
   // OpenGL Y is bottom-up (the preview panel's own comment): the region's bottom edge measured
-  // from the window's bottom.
-  out.vp_y = static_cast<int>((surface.display_h - (rect.y + rect.h)) * dpi_y);
+  // from the window's bottom. DisplaySize is already window-local, so the flip consumes the
+  // localized geometry too.
+  out.vp_y = static_cast<int>((surface.display_h - (local_y + rect.h)) * dpi_y);
   out.vp_w = static_cast<int>(rect.w * dpi_x);
   out.vp_h = static_cast<int>(rect.h * dpi_y);
   out.dpi_scale_x = dpi_x;
