@@ -5,7 +5,8 @@
 #include <vector>
 
 #include "analytic/diagnostic_batch.hpp"
-#include "core/math.hpp"  // math::kRadToDegreeD — the deviation's unit conversion
+#include "core/math.hpp"              // math::kRadToDegreeD — the deviation's unit conversion
+#include "raypath/query_control.hpp"  // the survey legs' poll sites
 #include "util/logger.hpp"
 
 namespace lumice::raypath::quantity {
@@ -52,6 +53,20 @@ WitnessResult EvaluateWitness(const WitnessInput& input) {
     witness.SetState(EvidenceState::kRefused);
     witness.Mode() = "stop_requested";
     return CompleteQuantity(std::move(witness));
+  }
+  // The post-lattice phase boundary (the argmax and the winning pose's independent
+  // re-evaluation): O(1) work today, one named poll so the boundary is real ledger evidence
+  // and a stop landing inside this section is still observed at it — the mechanism-complete
+  // shape of the sibling legs, not a wall-clock term.
+  if (input.stop != nullptr) {
+    if (input.stop->token != nullptr) {
+      input.stop->token->NotePoll(raypath::kPollSurveyWitnessPhase);
+    }
+    if (input.stop->Stopped()) {
+      witness.SetState(EvidenceState::kRefused);
+      witness.Mode() = "stop_requested";
+      return CompleteQuantity(std::move(witness));
+    }
   }
   if (events.empty()) {
     witness.SetState(EvidenceState::kRefused);

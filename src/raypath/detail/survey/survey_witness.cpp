@@ -33,6 +33,10 @@ void AssembleRefusedSupport(const quantity::WitnessInput& witness_input, const s
     }
     out->warm_index.seeds.push_back({ std::move(seed), "witness_argmax" });
   }
+  // The witness leg's stop, read off the leg's own refusal before the card moves: the
+  // sub-block already carries the stop_requested mode; the document-level note names the leg.
+  const bool witness_stopped = card.Witness() != nullptr && card.Witness()->State() == EvidenceState::kRefused &&
+                               card.Witness()->Mode() == "stop_requested";
   if (objects_discipline == RefusedSupportObjects::kReplaceObjects) {
     out->objects.clear();
   }
@@ -43,6 +47,13 @@ void AssembleRefusedSupport(const quantity::WitnessInput& witness_input, const s
   out->weight_tint->SetState(EvidenceState::kUnevaluated);
   out->weight_tint->Reason() = chromatic_reason;
   out->budget_note = budget_note;
+  // The T0 note's two-arm shape, appended only on a stopped run — an unstopped document's
+  // note stays byte-frozen (the corpus regression pins that).
+  if (witness_stopped && witness_input.stop != nullptr) {
+    out->budget_note += witness_input.stop->Why() == analytic::StopReason::kDeadline ?
+                            " The witness lattice leg stopped at the query's unified deadline." :
+                            " The witness lattice leg stopped at a cooperative poll (explicit cancel).";
+  }
 }
 
 }  // namespace lumice::raypath::survey

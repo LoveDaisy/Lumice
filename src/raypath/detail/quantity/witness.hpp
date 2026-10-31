@@ -53,8 +53,10 @@ struct WitnessInput {
   // The query-face context mode: the lattice leg is T3 quantification, skipped (no witness
   // sub-block at all) when the assembly runs context-only.
   bool context_only = false;
-  // Cooperative stop for the lattice pass (BuildEvents' own poll) — an explicit cancel; a cut
-  // pass keeps the card's evidence shape and never fabricates the witness lattice.
+  // Cooperative stop for the leg's whole run: the lattice pass (BuildEvents' own poll), the
+  // post-lattice check and the phase boundary all observe it (an explicit cancel or the
+  // query's unified deadline). A cut pass claims nothing — the leg refuses whole, never
+  // fabricating a witness from a prefix.
   const analytic::DiscoveryStop* stop = nullptr;
 };
 

@@ -719,7 +719,8 @@ kCancelled+latch、变更选择清 latch 再答（经滚动选行——折叠行
 株连）、`document_open_clears_every_analyze_face`（文档切换——open 路径的 deserialize 机制——
 清全部面与意图，executor 闲置；查询在飞时的撤回尾段是协作式期限形状，不属本腿主张）。池归属
 （与 `scripts/build.sh` 两 filter 一致）：real-timing 四条（chain pair + C17 pair——前者排
-per-face 队列、后者 survey 尾段不受协作期限约束，池实测 13/13），fixed-dt 七条（rekey、
+per-face 队列、后者 survey 尾段负载敏感（有界墙钟类：15 s 期限收敛后 ≈ 期限+余量，负载重时
+具名截断），池实测 13/13），fixed-dt 七条（rekey、
 new、identity、scene_edit、cancel_survey、cancel_point、document_open，池实测 548/548）。
 「关闭」触发器的处置：独立分析浮窗已随 742.3 退役，Analyze 工作区无独立关闭动作（离开分析
 上下文=切工作区，covered by 既有 switch 腿 + 本片 rekey 腿的面归属规则），应用级关闭在
@@ -733,11 +734,17 @@ kFullyRandomJson、550 参考 λ、16 ms vsync 帧折算）：选类→概览含
 （离 fiber 目标的空发现是具名空态非缺陷）；太阳对跖点目标是请求级 `kInvalidTarget` 拒答；
 池共租下 survey 色散腿可诚实触 15 s 预算（partial 按 execution 分派呈现，概览横幅不变）；
 halo 场景（zenith 均布 mean 90）主类路由为快速拒答臂——其 kWaiting 窗口是点击竞态，取消/等待
-类腿须选全维场景。**引擎侧观测（本片上抛，不在零 src 约束内修）**：`3-1-5-7`（24 成员）的
-GUI survey 墙钟不受其 15 s 期限约束（观测 40–100 s，随机器负载漂移）——survey 的 stop 装置
-（`detail/quantity/witness.hpp` 的 DiscoveryStop 装置）只覆盖 lattice pass，witness/TIR 相的
-循环不轮询取消令牌，协作式期限对它失效；两条 C17 腿因此归 real-timing 池（负载敏感本性），
-候选修复=相边界与循环内补 stop 轮询，待 owner 裁定。GUI 边界审计复核随片完成：五个 analyze TU 零 JSON 拼装、概览模型单源双消费、
+类腿须选全维场景。**引擎侧观测销账（742 HANDOVER 观测项，2026-10-31 as-built）**：曾观测
+`3-1-5-7`（24 成员）的 GUI survey 墙钟不受其 15 s 期限约束（观测 40–100 s，随机器负载漂移）
+——彼时 witness/TIR 相的循环不轮询取消令牌。as-built：TIR 相内改为 1024 行/块的「重建→批
+求值→分类」流水线（块边界轮询，poll 先于块工作）、λ 相边界拆独立 poll 位、witness 相后段补
+边界轮询——查询全程每个「逐项成本 = 一次完整诊断求值」的循环都有协作轮询点；停机 → 腿级
+`stop_requested` 全腿拒绝（切相不认前缀）+ 文档级两臂截断注记（命名停在哪条腿）+ 过闸不再起
+后续腿。无停机路径字节级零演进：九台语料双二进制 pinned 臂 18/18 字节零、point wire 零
+diff、单测 pre-change 金样字节一致。实测：CLI C17 enforcement（budget 5 s）墙钟 5.0–5.4 s
+（期限 + ≤0.4 s 余量）；TIR 相本体前后等速（0.73 s，同树受控对照）。两条 C17 腿保持
+real-timing 池：负载敏感本性不变，期限收敛后墙钟 ≈ 15 s + 余量（60 s 断言上界 4× 余量），
+claim 仍是引擎文档断言。GUI 边界审计复核随片完成：五个 analyze TU 零 JSON 拼装、概览模型单源双消费、
 具名空态是唯一占位形态（`check_policies.py` 全绿）。用户操作与首版能力边界的耐久表述在
 `doc/user-manual/06-raypath-analysis{,_zh}.md` §6–§8 与「首版已知限制」节。
 

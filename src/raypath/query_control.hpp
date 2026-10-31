@@ -89,16 +89,21 @@ void ResetBudgetResolutionCountsForTest();
 // Poll-ledger site ids the raypath faces own (range 16..31 — analytic/stop.hpp's split). A
 // site's counter moving during a run is the evidence its stop point is real; the handshake
 // tests wait on exactly these counters before cancelling.
-inline constexpr int kPollSurveyT0 = 16;           // survey assembly, per member verdict
-inline constexpr int kPollStructureMember = 17;    // class support, per member field+axis+partition
-inline constexpr int kPollProbeLambdas = 18;       // probe, per-lambda boundary
-inline constexpr int kPollPointLegs = 19;          // point discovery legs' boundaries
-inline constexpr int kPollMcEssDraws = 20;         // survey MC ESS leg, per draw chunk
-inline constexpr int kPollEnumerationMember = 21;  // report enumeration, per member
-inline constexpr int kPollSurveyChromatic = 22;    // survey chromatic pair, at leg entry
-inline constexpr int kPollSamplerDraws = 23;       // the diagnostic sampler's draw loops (survey MC ESS
-                                                   // and report discovery — never both in one query)
-inline constexpr int kPollMapMembers = 24;         // map query, per member
+inline constexpr int kPollSurveyT0 = 16;            // survey assembly, per member verdict
+inline constexpr int kPollStructureMember = 17;     // class support, per member field+axis+partition
+inline constexpr int kPollProbeLambdas = 18;        // probe, per-lambda boundary
+inline constexpr int kPollPointLegs = 19;           // point discovery legs' boundaries
+inline constexpr int kPollMcEssDraws = 20;          // survey MC ESS leg, per draw chunk
+inline constexpr int kPollEnumerationMember = 21;   // report enumeration, per member
+inline constexpr int kPollSurveyChromatic = 22;     // survey chromatic pair, at leg entry
+inline constexpr int kPollSamplerDraws = 23;        // the diagnostic sampler's draw loops (survey MC ESS
+                                                    // and report discovery — never both in one query)
+inline constexpr int kPollMapMembers = 24;          // map query, per member
+inline constexpr int kPollSurveyTirPass = 25;       // survey TIR share leg, per-lambda pass boundary
+inline constexpr int kPollSurveyTirRows = 26;       // survey TIR share leg, the in-phase row-chunk boundary
+                                                    // (row rebuild -> batch evaluation -> classification pipeline)
+inline constexpr int kPollSurveyWitnessPhase = 27;  // survey witness leg, the post-lattice phase boundary
+                                                    // (argmax + the pose's independent re-evaluation)
 
 // The outcome a face records from its stop: completed unless its authority observed a reason.
 // (The stop argument is the LAST thing the face polled; a cancel racing the final poll reads

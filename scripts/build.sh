@@ -74,11 +74,11 @@ build() {
         #         The waits are the wall-clock point; fixed-dt starves them exactly like the
         #         per-face legs above.
         #       - refused_class_names_the_refusal_and_keeps_the_witness,
-        #         refused_class_blockades_nothing (742.7): the corpus C17 class's survey carries
-        #         a 24-member witness/TIR tail whose wall clock is not bounded by the survey's
-        #         cooperative 15 s deadline (the stop plumbing covers the lattice pass only) —
-        #         observed 40-100 s on a loaded machine. Load-sensitive by nature, so the
-        #         real-timing pool; the claims themselves are engine-document assertions.
+        #         refused_class_blockades_nothing (742.7): the corpus C17 class's survey tail is
+        #         deadline-bounded now (the witness/TIR phases poll the query's cooperative stop),
+        #         but its wall clock is still load-sensitive by nature — the 15 s budget plus the
+        #         bounded-return margin under pool-context load. So the real-timing pool; the
+        #         claims themselves are engine-document assertions.
         #     These are matched by NAME (the engine's filter tests both name and category),
         #     so renaming any of them means updating this filter and its twin in
         #     scripts/regen_gui_test_refs.py — check_policies.py's gui-test-suite-args-sync

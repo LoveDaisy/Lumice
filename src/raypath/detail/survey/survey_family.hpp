@@ -60,8 +60,9 @@ struct FamilyArmInput {
   // tint) and the witness lattice are skipped when set.
   bool context_only = false;
   // Cooperative stop, polled at the arm's own boundaries (the level loops, the survivor card
-  // loop) and riding into the level-0 structure support; a cut fails closed with the arm's
-  // named refusal. The survey's legs stay deadline-unenforced — this is an explicit cancel.
+  // loop) and riding into the level-0 structure support and the refused-corner witness lattice;
+  // a cut fails closed with the arm's named refusal — the query's unified deadline and cancel
+  // token hold across every leg this arm runs.
   const analytic::DiscoveryStop* stop = nullptr;
 };
 
