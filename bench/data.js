@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793474155551,
+  "lastUpdate": 1793474157693,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "e129d76c7ac6844f6499a631f39e7eb81f169450",
-          "message": "Merge pull request #445 from LoveDaisy/scrum/raypath-subcommand\n\nLumice raypath: single-path analysis module, lumice.h v4.50 entry, D4 verification",
-          "timestamp": "2026-09-29T18:08:24+08:00",
-          "tree_id": "940b3fbc2d846b901770e2c322d5509ac5278264",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/e129d76c7ac6844f6499a631f39e7eb81f169450"
-        },
-        "date": 1790677426951,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 92.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "9282fe084bf6c22f1620b39162daca6413f1cd29",
           "message": "Merge pull request #446 from LoveDaisy/scrum/analytic-wave2\n\nliblumice_analytic wave 2: per-pose diagnostics (API 5), band sum module B (API 6), 93 LI parity fixtures",
           "timestamp": "2026-09-30T08:45:42+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a6c9ed30e3b546ecded6de86bb35045ee50ca793",
+          "message": "Merge pull request #559 from LoveDaisy/feat/query-stage-heartbeat-abi\n\nfeat: poll-stage heartbeat over the cancel token (C ABI v4.61)",
+          "timestamp": "2026-11-01T03:11:41+08:00",
+          "tree_id": "eef80cb7afd5f8eff4f733b0af4b7b1569895512",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a6c9ed30e3b546ecded6de86bb35045ee50ca793"
+        },
+        "date": 1793474157130,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.1,
             "unit": "%"
           }
         ]
