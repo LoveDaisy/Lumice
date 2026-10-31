@@ -723,18 +723,24 @@ ImU32 SegmentColor(int kind, float alpha) {
 }  // namespace
 
 // The 3D view's orthographic orbit basis in the display frame (declared in the hpp for the
-// gui_test pin to consume the same basis the renderer draws with). The convention note — axes,
-// drag signs, the doc pointer — lands with the behavior fix; see the hpp declaration meanwhile.
+// gui_test pin to consume the same basis the renderer draws with; the convention is doc'd in
+// doc/geometry/coordinate-convention.md §9.8).
 void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]) {
   const double yaw = static_cast<double>(yaw_deg) * (3.14159265358979323846 / 180.0);
   const double pitch = std::clamp(static_cast<double>(pitch_deg), -88.0, 88.0) * (3.14159265358979323846 / 180.0);
+  // z-up spherical coordinates about the scene's display convention (the crystal's c-axis, +z,
+  // is up on screen): yaw sweeps the horizontal plane, pitch rises from it. `fwd` points from
+  // the scene toward the viewer.
   fwd[0] = std::cos(pitch) * std::cos(yaw);
-  fwd[1] = std::sin(pitch);
-  fwd[2] = std::cos(pitch) * std::sin(yaw);
-  // right = fwd x worldUp (+z the crystal's c-axis display convention), up = right x fwd. The
-  // normalizer's floor keeps the horizontal look (pitch 0 at yaw ±90°, fwd parallel to +z — the
-  // one real singularity of this cross product) defined instead of trusting the double-rounded
-  // cosine to stay off zero.
+  fwd[1] = std::cos(pitch) * std::sin(yaw);
+  fwd[2] = std::sin(pitch);
+  // right = fwd x worldUp, up = right x fwd. With |pitch| <= 88° the clamp keeps cos(pitch)
+  // >= 0.035, so `right` normalizes to exactly (sin yaw, −cos yaw, 0) — a function of the yaw
+  // alone, which is what makes a pure pitch drag unable to move anything on screen sideways
+  // (the gui_test pin asserts that as an exact invariant). The pitch clamp is also what
+  // prevents this cross product's one real singularity (fwd parallel to +z at pitch ±90°); the
+  // `n < 1e-12` branch below is an unreachable defense against the double-rounded cosine,
+  // kept so the normalizer never divides by zero even if the clamp were ever widened.
   right[0] = fwd[1] * 1.0 - fwd[2] * 0.0;
   right[1] = fwd[2] * 0.0 - fwd[0] * 1.0;
   right[2] = 0.0;
@@ -1336,8 +1342,12 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     const bool active = ImGui::IsItemActive();
     if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
       const ImVec2 delta = ImGui::GetIO().MouseDelta;
-      view.orbit_yaw_deg += delta.x * 0.5f;
-      view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg + delta.y * 0.5f, -88.0f, 88.0f);
+      // Grab convention — the project's one drag metaphor (Render main view inside-out and Globe
+      // alike, the modal preview trackball, this orbit camera; doc/geometry/coordinate-convention.md
+      // §9.8): the content's near face follows the hand. Right drag → yaw decreases; down drag →
+      // pitch decreases.
+      view.orbit_yaw_deg -= delta.x * 0.5f;
+      view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg - delta.y * 0.5f, -88.0f, 88.0f);
     }
     if (ImGui::IsItemHovered() && std::abs(ImGui::GetIO().MouseWheel) > 0.0f) {
       view.orbit_zoom =
