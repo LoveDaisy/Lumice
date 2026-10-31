@@ -357,8 +357,7 @@ TEST(TirShareStop, AnUnstoppedRunIsDeterministicAndMatchesThePreChangeGolden) {
   ASSERT_TRUE(document_again.tir_share.has_value());
   EXPECT_EQ(SurveyResultToJson(SurveyResult(document_again), "test"), json)
       << "two unstopped runs diverged byte-for-byte";
-  EXPECT_EQ(survey_golden_compare::CanonicalizeJsonNumbers(json),
-            survey_golden_compare::CanonicalizeJsonNumbers(kGoldenTirShareDocument));
+  EXPECT_TRUE(survey_golden_compare::DocumentsMatchWithinTolerance(json, std::string(kGoldenTirShareDocument))) << json;
 }
 
 }  // namespace

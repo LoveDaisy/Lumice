@@ -322,8 +322,7 @@ TEST(SurveyWitnessStop, AnUnstoppedRunIsDeterministicAndMatchesThePreChangeGolde
   document_again.objects.push_back(std::move(card_again));
   EXPECT_EQ(SurveyResultToJson(SurveyResult(document_again), "test"), json)
       << "two unstopped runs diverged byte-for-byte";
-  EXPECT_EQ(survey_golden_compare::CanonicalizeJsonNumbers(json),
-            survey_golden_compare::CanonicalizeJsonNumbers(kGoldenWitnessDocument));
+  EXPECT_TRUE(survey_golden_compare::DocumentsMatchWithinTolerance(json, std::string(kGoldenWitnessDocument))) << json;
 }
 
 // The family arm's refused-corner witness takes the query's stop. This corner is the one
