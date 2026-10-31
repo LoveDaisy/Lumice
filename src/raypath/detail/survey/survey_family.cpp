@@ -56,6 +56,27 @@ SurveyObject FamilyCardOf(const structure::FamilySurvivor& fact, double waveleng
 
 }  // namespace
 
+namespace {
+
+// The refused corner's stop must survive the arm's own budget notes: every post-corner path in
+// this arm sets its note, overwriting the sentence AssembleRefusedSupport appended (the
+// assembly-level arms have no post-append setter; this arm does), so the arm re-appends the
+// sentence on its way out. Idempotent: the one path that reaches a return without an
+// intervening setter already carries the sentence from the helper's own append.
+void AppendCornerWitnessStop(const FamilyArmInput& input, bool corner_witness_stopped, SurveyData* out) {
+  if (!corner_witness_stopped || input.stop == nullptr) {
+    return;
+  }
+  const char* sentence = input.stop->Why() == analytic::StopReason::kDeadline ?
+                             " The witness lattice leg stopped at the query's unified deadline." :
+                             " The witness lattice leg stopped at a cooperative poll (explicit cancel).";
+  if (out->budget_note.find(sentence) == std::string::npos) {
+    out->budget_note += sentence;
+  }
+}
+
+}  // namespace
+
 FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* out) {
   FamilyRoutingBlock& block = out->family_routing.emplace();
   block.measure = input.measure;
@@ -78,6 +99,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
   // card keeps the witness leg's positive fact — the support is unknown, not zero, and never a
   // fabricated union.
   std::string level0_refusal_mode;
+  bool corner_witness_stopped = false;  // the arm's exits re-append the corner's stop sentence
   if (!support.ok) {
     level0_refusal_mode = support.refusal_mode;
     block.level0_refusal_mode = support.refusal_mode;
@@ -114,6 +136,12 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
         "enforcement lands with the quantification legs";
     AssembleRefusedSupport(witness_input, *input.members, support.refusal_mode, corner_chromatic_reason,
                            corner_budget_note, RefusedSupportObjects::kAppendToObjects, out);
+    // The corner card is the one just appended: read the leg's own refusal back for the arm's
+    // exits (every post-corner note setter overwrites the helper's sentence).
+    const SurveyObject& corner_card = out->objects.back();
+    corner_witness_stopped = corner_card.Witness() != nullptr &&
+                             corner_card.Witness()->State() == EvidenceState::kRefused &&
+                             corner_card.Witness()->Mode() == "stop_requested";
   }
   if (support.ok && input.density->Ok() && input.measure.zenith.kind == FamilyDimKind::kGauss) {
     // AC5's boundedness-role separation: the width went into the ladder; the support's own tail
@@ -138,6 +166,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
   std::copy(input.incident, input.incident + 3, structure_input.incident);
   structure::FamilyStructureResult structure = structure::EvaluateFamilyStructure(structure_input, support);
   if (!structure.refusal_mode.empty()) {
+    AppendCornerWitnessStop(input, corner_witness_stopped, out);
     return { false, structure.refusal_mode };
   }
   block.ladder = std::move(structure.ladder);
@@ -202,6 +231,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
           ChromaticPairProseRedFirst() +
           " pair; none is budget-enforced yet; enforcement lands with the quantification legs";
     }
+    AppendCornerWitnessStop(input, corner_witness_stopped, out);
     return { AnyFiniteObject(*out), level0_refusal_mode };
   }
 
@@ -320,6 +350,7 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
   }
   ILOG_INFO(GetGlobalLogger(), "[raypath survey] family routing: {} ladder level(s), {} object card(s)",
             block.ladder.size(), out->objects.size());
+  AppendCornerWitnessStop(input, corner_witness_stopped, out);
   return { AnyFiniteObject(*out), level0_refusal_mode };
 }
 

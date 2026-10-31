@@ -313,5 +313,61 @@ TEST(SurveyWitnessStop, AnUnstoppedRunIsByteIdenticalToThePreChangeGolden) {
   EXPECT_EQ(json, std::string(kGoldenWitnessDocument));
 }
 
+// The family arm's refused-corner witness takes the query's stop. This corner is the one
+// call path the sibling pins do not reach: the leg-level pins prove EvaluateWitness is
+// stoppable and the assembly-level pins prove the refused-support path, but neither touches
+// survey_family.cpp's own WitnessInput — the wiring that rides input.stop into the corner is
+// one line, and if a refactor drops it the corner's lattice runs unpolled again with nothing
+// red. The handshake: enter the corner's lattice (its ledger site), cancel, and the document
+// must carry the named refusal AND the refused-support truncation sentence (which the wiring
+// feeds); an unwired corner produces a finite witness and no sentence.
+TEST(SurveyWitnessStop, FamilyRefusedCornerWitnessTakesTheQueryStop) {
+  ConfigManager config = RegularPrismSceneWithSun(15.0);
+  CrystalConfig& crystal = config.crystals_.find(1)->second;
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 90, 0.3f };
+  // The scene entry carries its own copy of the crystal; keep the two in step.
+  for (auto& setting : config.scene_.ms_.front().setting_) {
+    setting.crystal_.axis_.latitude_dist = crystal.axis_.latitude_dist;
+  }
+  SurveyRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 1, 5, 7 } };
+  request.symmetry_bits = 0;
+  request.budget_ms = kMaxSurveyBudgetMs;  // the deadline must NOT fire; the cancel is the stop
+  analytic::StopToken token;
+  analytic::DiscoveryStop stop;
+  stop.deadline = std::chrono::steady_clock::time_point::max();
+  stop.token = &token;
+  SurveyAssemblyOptions options;
+  options.stop = &stop;
+  SurveyData document;
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    (void)AssembleSurveyData(config, request, &document, options);
+    done = true;
+  });
+  const auto join_bound = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  const bool entered = WaitForWitnessPoll(token, analytic::kPollEventsLattice, std::chrono::seconds(30));
+  token.RequestCancel();  // safe either way: entered, or the run already finished
+  while (!done && std::chrono::steady_clock::now() < join_bound) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  ASSERT_TRUE(done) << "the family arm ignored the cancel (entered=" << entered << ")";
+  worker.join();  // joined on every path — a joinable thread's destructor would terminate
+  ASSERT_TRUE(entered) << "the corner's witness lattice never polled";
+  const SurveyObject* witness_card = nullptr;
+  for (const SurveyObject& card : document.objects) {
+    if (card.Witness() != nullptr) {
+      witness_card = &card;
+      break;
+    }
+  }
+  ASSERT_TRUE(witness_card != nullptr) << "the refused corner never assembled the witness card";
+  EXPECT_EQ(witness_card->Witness()->State(), EvidenceState::kRefused);
+  EXPECT_EQ(witness_card->Witness()->Mode(), "stop_requested");
+  EXPECT_NE(document.budget_note.find(" The witness lattice leg stopped at a cooperative poll"), std::string::npos)
+      << "the refused-support note names the corner's stop";
+}
+
 }  // namespace
 }  // namespace lumice::raypath::survey
