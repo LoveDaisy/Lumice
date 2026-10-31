@@ -37,6 +37,7 @@
 #include "gui/semantic_colors.hpp"
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/toolbar_layout.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
 // imgui_internal.h for SeparatorEx(ImGuiSeparatorFlags_Vertical) only — the one themed vertical
@@ -362,19 +363,25 @@ inline ImVec2 MainVpPos(float x, float y) {
   return ImVec2(vp->Pos.x + x, vp->Pos.y + y);
 }
 
-// The top bar's one boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
-// follows the palette) with the ordinary item spacing on each side, so the gap between two groups
-// is twice the gap inside one plus the rule — the bar's rhythm is the theme's ItemSpacing.x and
-// nothing else. It replaces a bare "|" glyph whose weight and colour came from the font.
-//
-// Why not a wider gap: at kMinWindowWidth the bar's widest content (a colour class present, so the
-// Colored / Full Spectrum checkbox and its warning pip are drawn) leaves ~20 px of headroom with
-// this spacing, and 1.5x ItemSpacing per side overflowed it by 12 — the budget is pinned by
-// shell_chrome/the_top_bar_fits_at_the_minimum_window_width.
-void ToolbarGroupSeparator() {
+// The top bar's boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
+// follows the palette) whose surrounding gaps carry the adaptive group-gap rule
+// (toolbar_layout.hpp, §4.8) — the rule itself stays the 1 px ImGui draws, and the target gap's
+// difference from the base rhythm (2 × ItemSpacing.x + the rule) is split evenly across the two
+// item gaps by pushing ItemSpacing.x for exactly these two SameLine calls. At kMinWindowWidth the
+// target is the base + 8, and the fit pin (the_top_bar_fits_at_the_minimum_window_width) measures
+// the bar with exactly these gaps; the never-narrower guard only means a miscalibrated target
+// cannot shrink the bar's rhythm below its own base — the gap the theme's ItemSpacing.x already
+// provides.
+void ToolbarGroupSeparator(float window_width) {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float gap_px = UiPx(TopBarGroupGapPt(window_width / CurrentUiScale()));
+  const float extra = gap_px - (style.ItemSpacing.x * 2.0f + 1.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                      ImVec2(style.ItemSpacing.x + (extra > 0.0f ? extra * 0.5f : 0.0f), style.ItemSpacing.y));
   ImGui::SameLine();
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
+  ImGui::PopStyleVar();
 }
 
 // One width for every button of a top-bar group: the widest label plus the frame padding. A group
@@ -421,7 +428,7 @@ void RenderTopBar(float window_width) {
     if (ImGui::Button(left_toggle_label)) {
       g_state.left_panel_collapsed = !g_state.left_panel_collapsed;
     }
-    ToolbarGroupSeparator();
+    ToolbarGroupSeparator(window_width);
   }
 
   // Run/Stop and Continue — one width for the whole execution group (max of ALL four labels, incl.
@@ -497,7 +504,7 @@ void RenderTopBar(float window_width) {
     }
   }
 
-  ToolbarGroupSeparator();
+  ToolbarGroupSeparator(window_width);
 
   // File operations — New/Open disabled while busy (simulating OR async Stop draining); Save menu
   // itself stays enabled so read-only exports (Screenshot / Dual Fisheye Equal Area /
@@ -575,7 +582,7 @@ void RenderTopBar(float window_width) {
     }
   }
 
-  ToolbarGroupSeparator();
+  ToolbarGroupSeparator(window_width);
 
   // task-345.5 (⑥): dedicated "feature button" group, immediately right of
   // New/Open/Save. Colors is the first occupant; future cross-cutting toggles
@@ -740,7 +747,7 @@ void RenderTopBar(float window_width) {
   // them — splitting in front of the checkbox would cut the feature group in two whenever a
   // colour class exists — and before Settings, which opens a modal (a different kind of control
   // from a view switch) and must not read as the switch's neighbour.
-  ToolbarGroupSeparator();
+  ToolbarGroupSeparator(window_width);
 
   // The Render/Analyze workspace switch as a two-cell segmented control — the bar's one mode
   // indicator. The single destination slot this replaces was a degradation rung: its first
@@ -810,7 +817,7 @@ void RenderTopBar(float window_width) {
   //     the user is watching runs is a settings entry they cannot find when they think to look.
   // The panel's preset library is one section inside it, so retuning a preset is still reachable;
   // it no longer has a menu item of its own pointing straight at that section.
-  ToolbarGroupSeparator();
+  ToolbarGroupSeparator(window_width);
   if (ImGui::Button(ICON_FA_GEAR " Settings")) {
     OpenDefaultsPanel(g_state, DefaultsPanelSection::kSettings);
   }

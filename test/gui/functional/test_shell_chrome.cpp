@@ -29,8 +29,10 @@
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"  // DeserializeFromJson — the panorama case loads a scene like the GUI does
 #include "gui/gui_constants.hpp"
-#include "gui/log_sink.hpp"     // ImGuiLogSink — the panel's second gate
-#include "test_screenshot.hpp"  // SavePng / StripAlpha — the archived skeleton capture
+#include "gui/log_sink.hpp"        // ImGuiLogSink — the panel's second gate
+#include "gui/theme.hpp"           // UiPx — the rendered gap reads the rule through the one outlet
+#include "gui/toolbar_layout.hpp"  // TopBarGroupGapPt — the fit pin reads the rule's own function
+#include "test_screenshot.hpp"     // SavePng / StripAlpha — the archived skeleton capture
 // imgui_internal.h is normally an anti-pattern. Z-order has no public reading: it is the ORDER of
 // ImGuiContext::Windows, and the two rules relied on here (BringWindowToDisplayFront splices to the
 // back; a window created with NoBringToFrontOnFocus is pushed to the front, i.e. the bottom) are
@@ -343,7 +345,16 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
   // The left part is read off the rendered frame (the right edge of Settings), and so is the right
   // end from Revert through the right toggle, which at any wider window sit flush together. The ⚠
   // glyph is text, not an item with a rectangle, so its width is the one thing taken from
-  // CalcTextSize; the window floor comes from a constant.
+  // CalcTextSize.
+  //
+  // Measured at the REAL minimum, not analytically at the test basis: the shared window is
+  // resized to kMinWindowWidth through the main-thread handshake (GLFW is main-thread-only; the
+  // request waits for the reply and the resize is ScopedWindowBasis-guarded, so a red below never
+  // leaks the basis), and the frame's own item gaps are the adaptive rule's minimum — the same
+  // gaps the fit budget must absorb. The wide end is pinned right after: back at the test basis
+  // (= kTopBarGroupGapAnchorWidthPt), the same boundary measures the maximum. The boundary read
+  // is Analyze-cell → Settings, the one separator whose two neighbours are always drawn (every
+  // other boundary has a conditional member on one side).
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "the_top_bar_fits_at_the_minimum_window_width");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -353,25 +364,55 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       gui::g_state.raypath_color.push_back(cls);
       ctx->Yield(4);
 
+      // The pure function, pinned directly: both ends clamp, the middle never dips.
+      IM_CHECK_EQ(gui::TopBarGroupGapPt(static_cast<float>(gui::kMinWindowWidth)), gui::kTopBarGroupGapMinPt);
+      IM_CHECK_EQ(gui::TopBarGroupGapPt(gui::kTopBarGroupGapAnchorWidthPt), gui::kTopBarGroupGapMaxPt);
+      IM_CHECK_EQ(gui::TopBarGroupGapPt(gui::kTopBarGroupGapAnchorWidthPt * 4.0f), gui::kTopBarGroupGapMaxPt);
+      float prev_gap = gui::TopBarGroupGapPt(static_cast<float>(gui::kMinWindowWidth));
+      int monotonicity_violations = 0;
+      for (int w = gui::kMinWindowWidth + 64; w <= static_cast<int>(gui::kTopBarGroupGapAnchorWidthPt); w += 64) {
+        const float gap = gui::TopBarGroupGapPt(static_cast<float>(w));
+        monotonicity_violations += (gap < prev_gap) ? 1 : 0;
+        prev_gap = gap;
+      }
+      IM_CHECK_EQ(monotonicity_violations, 0);
+
+      const float floor_width = static_cast<float>(gui::kMinWindowWidth);
+      const ScopedWindowBasis window_basis(ctx);
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = gui::kMinWindowWidth;
+      g_window_size_test.height = gui::kMinWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+
       const ImGuiTestItemInfo checkbox =
           ctx->ItemInfo("##TopBar/Full Spectrum##CompositePreviewToggle", ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo analyze_cell = ctx->ItemInfo(kWorkspaceToAnalyzeBtn, ImGuiTestOpFlags_NoError);
       const ImGuiTestItemInfo settings = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
       const ImGuiTestItemInfo revert = ctx->ItemInfo(kRevertBtn, ImGuiTestOpFlags_NoError);
       const ImGuiTestItemInfo right_toggle = ctx->ItemInfo(kRightToggleBtn, ImGuiTestOpFlags_NoError);
       ImGuiWindow* bar = ctx->GetWindowByRef("##TopBar");
 
-      gui::g_state.raypath_color.clear();
-      ctx->Yield(2);
-
       IM_CHECK(bar != nullptr);
       IM_CHECK_NE(checkbox.ID, 0u);  // the widest configuration really was the one measured
+      IM_CHECK_NE(analyze_cell.ID, 0u);
       IM_CHECK_NE(settings.ID, 0u);
       IM_CHECK_NE(revert.ID, 0u);
       IM_CHECK_NE(right_toggle.ID, 0u);
-      IM_CHECK_GT(settings.RectFull.Min.x, checkbox.RectFull.Max.x);
+      IM_CHECK_GT(settings.RectFull.Min.x, analyze_cell.RectFull.Max.x);
       IM_CHECK_GT(revert.RectFull.Min.x, settings.RectFull.Max.x);
 
       const ImGuiStyle& style = ImGui::GetStyle();
+      // The frame at kMinWindowWidth renders the rule's minimum, exactly (the pushed ItemSpacing
+      // reproduces the target through exact float ops — same-source equality per the assertion
+      // discipline: renderer and test read the one pure function).
+      const float min_gap = gui::UiPx(gui::TopBarGroupGapPt(floor_width));
+      IM_CHECK_EQ(settings.RectFull.Min.x - analyze_cell.RectFull.Max.x, min_gap);
       // Revert and the right toggle are flush (one item gap) at this window width, so the span from
       // Revert's left edge to the toggle's right edge is what the right end needs at any width.
       IM_CHECK_EQ(right_toggle.RectFull.Min.x - revert.RectFull.Max.x, style.ItemSpacing.x);
@@ -380,10 +421,30 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
           warning_glyph_w + style.ItemSpacing.x + (right_toggle.RectFull.Max.x - revert.RectFull.Min.x);
       const float required =
           (settings.RectFull.Max.x - bar->Pos.x) + style.ItemSpacing.x + right_end_w + style.WindowPadding.x;
-      const float floor_width = static_cast<float>(gui::kMinWindowWidth);
       ctx->LogInfo("required=%.1f min_window=%.1f headroom=%.1f", static_cast<double>(required),
                    static_cast<double>(floor_width), static_cast<double>(floor_width - required));
       IM_CHECK_LE(required, floor_width);
+
+      // The wide end: back at the test basis (== the anchor), the same boundary reads the maximum.
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = gui::kInitWindowWidth;
+      g_window_size_test.height = gui::kInitWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+
+      const ImGuiTestItemInfo analyze_cell_wide = ctx->ItemInfo(kWorkspaceToAnalyzeBtn, ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo settings_wide = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(analyze_cell_wide.ID, 0u);
+      IM_CHECK_NE(settings_wide.ID, 0u);
+      IM_CHECK_EQ(settings_wide.RectFull.Min.x - analyze_cell_wide.RectFull.Max.x,
+                  gui::UiPx(gui::TopBarGroupGapPt(static_cast<float>(gui::kInitWindowWidth))));
+      IM_CHECK_EQ(gui::UiPx(gui::TopBarGroupGapPt(static_cast<float>(gui::kInitWindowWidth))),
+                  gui::UiPx(gui::kTopBarGroupGapMaxPt));
     };
   }
 
