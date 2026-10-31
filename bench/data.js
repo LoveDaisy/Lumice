@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793424424879,
+  "lastUpdate": 1793424426967,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "1455e6aeb0201ab8b80fe2ef34ff16cf1ae2ed30",
-          "message": "Merge pull request #437 from LoveDaisy/chore/symmetry-two-meanings-cross-repo-docs\n\ndocs: state which symmetry meaning each repo's computation uses",
-          "timestamp": "2026-09-28T10:49:54+08:00",
-          "tree_id": "07236666f17979fcb194db2933d7e276e6f5c16e",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/1455e6aeb0201ab8b80fe2ef34ff16cf1ae2ed30"
-        },
-        "date": 1790564455658,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 95.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "5d353c63c4688fb9be43a5042ef239a4c310a93b",
           "message": "Merge pull request #439 from LoveDaisy/feat/channel-br-gain-x2\n\nChannel B-R display mode: raise gain from 0.5 to 2",
           "timestamp": "2026-09-28T14:33:59+08:00",
@@ -13981,6 +13937,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Ubuntu x86_64",
             "value": 99,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a92d037c5dc3459b9668540e36cc255c65b8c7b2",
+          "message": "Merge pull request #552 from LoveDaisy/feat/realtime-legs-placement\n\ntest: reclaim the one analyze CI row that actually pays wall-clock — real-timing legs never ran in PR ctest",
+          "timestamp": "2026-10-31T13:23:32+08:00",
+          "tree_id": "ad4451ec4d84a542a8ea46928ecb4229d88297e5",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a92d037c5dc3459b9668540e36cc255c65b8c7b2"
+        },
+        "date": 1793424426407,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 87,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.9,
             "unit": "%"
           },
           {
