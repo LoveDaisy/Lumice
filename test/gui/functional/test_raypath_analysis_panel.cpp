@@ -2913,8 +2913,11 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
 // routes its members fine but refuses the delta axis's structural objects
 // (`slab_crease_touching`), and the overview answers the refusal arm: the named refusal, the
 // independent witness and the TIR share beside it, the chromatic block named unevaluated —
-// only THAT item missing, everything else alive. Real-timing pool: this survey's witness/TIR
-// tail is not bounded by the cooperative deadline (the as-built's escalation).
+// only THAT item missing, everything else alive. The survey's tail is bounded by the
+// cooperative deadline now (the witness/TIR phases poll): the run lands inside the budget
+// band whatever the machine's load — under load it returns the named partial (execution
+// deadline exceeded, the TIR block present with its stop_requested refusal), unloaded it
+// completes whole — the document shape dispatches on the execution outcome.
 bool RefusedClassNamesTheRefusalAndKeepsTheWitness(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -2925,29 +2928,42 @@ bool RefusedClassNamesTheRefusalAndKeepsTheWitness(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(identity.has_value(), false);
 
   // The overview answers COMPLETED — the refusal is the document's arm, not a failed query —
-  // with the refusal named, the witness and TIR alive beside it, and the chromatic block's
-  // absence named rather than zeroed.
-  // The budget follows the as-built's own observation band for this survey (40-100 s wall, the
-  // witness/TIR tail outliving the cooperative deadline) plus margin — 60 s sat BELOW the band.
+  // and the deadline keeps the wall inside the budget band: the 15 s budget plus the leg's
+  // bounded-return margin (one row chunk + assembly tail), padded for pool-context load.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
                       return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
                              gui::SurveyOverviewState::kCompleted;
                     },
-                    240),
+                    60),
                 false);
   {
     const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
     IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kRefused, false);
     IM_CHECK_RETV(!model.evidence_mode.empty(), false);
+    // Both outcomes are honest here: on a machine whose load pushes the tail past the budget
+    // the deadline bites (named partial), on an unloaded one the run completes whole — the
+    // 60 s bound above is the wall-clock convergence claim, and the document shape dispatches
+    // on the execution outcome (the pool's own precedent).
+    const bool cut = model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED;
+    IM_CHECK_RETV(cut || model.execution == LUMICE_PATH_OUTCOME_COMPLETED, false);
     IM_CHECK_RETV(model.witness.available && model.witness.value_available, false);
     IM_CHECK_RETV(model.witness.kept_count > 0, false);
+    // The TIR block is present either way; a cut names why on it (the block's availability
+    // survives the cut — a refused block carries its mode — the shares do not).
     IM_CHECK_RETV(model.tir.available, false);
+    if (cut) {
+      IM_CHECK_RETV(!model.tir.value_available, false);
+      IM_CHECK_RETV(model.tir.mode == "stop_requested", false);
+    } else {
+      IM_CHECK_RETV(model.tir.value_available, false);
+    }
     IM_CHECK_RETV(model.dispersion.available == false, false);
     IM_CHECK_RETV(!model.chromatic_note.empty(), false);
-    ctx->LogInfo("[v1 c17] refused arm '%s': witness kept %lld, tir available, chromatic named '%s'",
-                 model.evidence_mode.c_str(), model.witness.kept_count, model.chromatic_note.c_str());
+    ctx->LogInfo("[v1 c17] refused arm '%s', execution %d: witness kept %lld, tir %s, chromatic named '%s'",
+                 model.evidence_mode.c_str(), model.execution, model.witness.kept_count,
+                 model.tir.mode.empty() ? "finite" : model.tir.mode.c_str(), model.chromatic_note.c_str());
   }
   IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_v1_c17_refused.png").string()),
                 false);
@@ -2966,15 +2982,15 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
 
   const std::optional<gui::SelectedClassIdentity> identity = SelectRowByDisplay(ctx, "3-1-5-7");
   IM_CHECK_RETV(identity.has_value(), false);
-  // The budget follows the as-built's own observation band for this survey (40-100 s wall)
-  // plus margin — 60 s sat BELOW the band.
+  // The survey's tail is bounded by the cooperative deadline now: the run returns the named
+  // partial inside the budget band (see the names leg for the document-shape assertions).
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
                       return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
                              gui::SurveyOverviewState::kCompleted;
                     },
-                    240),
+                    60),
                 false);
 
   // The map answers under the same selection (a refused delta axis does not blockade the map
@@ -3106,7 +3122,10 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
 
   // The Cancel survey button: withdraw while the full-dimensional survey runs its delta phase,
-  // and the named cancelled state latches until a new selection.
+  // and the named cancelled state latches until a new selection. The withdraw is prompt from
+  // any phase now — the quantification legs (the witness lattice, the TIR row pipeline) poll
+  // the same token the delta phase always did — so the named state's bound is a pump bound,
+  // not a phase-boundary bound.
   SetListRef(ctx);
   ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
   ctx->SetRef("");
@@ -3148,7 +3167,7 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
                       return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
                              gui::SurveyOverviewState::kCancelled;
                     },
-                    45),
+                    20),
                 false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.cancelled_for_key, false);
   // Cancel stops the clock (AC1): the wait display left the waiting state with it — the overview
@@ -4924,8 +4943,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveySurvivesAWorkspaceSwitch(ctx)); };
   }
   // 742.7's integration legs — four real-timing (the chain pair and the C17 pair: the former
-  // queues the per-face chain on one worker, the latter's survey carries the unbudgeted
-  // witness/TIR tail; see scripts/build.sh's filter comments) and seven fixed-dt (the
+  // queues the per-face chain on one worker, the latter's survey tail is wall-clock-shaped but
+  // deadline-bounded now; see scripts/build.sh's filter comments) and seven fixed-dt (the
   // lifecycle/identity set, across the halo and fully-random scenes).
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_full_chain_one_session");
