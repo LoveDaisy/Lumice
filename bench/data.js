@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793445166778,
+  "lastUpdate": 1793445168881,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "01b9dd59561fea636f6f0a888b375d2e42e95374",
-          "message": "Merge pull request #442 from LoveDaisy/chore/release-4.7.1\n\nchore(release): cut 4.7.1",
-          "timestamp": "2026-09-28T19:04:03+08:00",
-          "tree_id": "67bb9062b1e0b8474469bb9b06c73e3f3b84ce30",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/01b9dd59561fea636f6f0a888b375d2e42e95374"
-        },
-        "date": 1790594372494,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 94.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 97.8,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4",
           "message": "Merge pull request #443 from LoveDaisy/chore/workflow-token-least-privilege\n\nci: add top-level permissions: contents: read to workflows",
           "timestamp": "2026-09-28T20:18:35+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "284c9455d369800eb8b70405d488abe377dbf75c",
+          "message": "Merge pull request #556 from LoveDaisy/feat/analyze-wait-feedback-a\n\nfeat(analyze): the wait says how long it has waited — per-face elapsed lines, a status-bar Analyzing segment, row activity dots",
+          "timestamp": "2026-10-31T19:08:56+08:00",
+          "tree_id": "7d66f431a427bc186d7e1e8075afa021ede499f2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/284c9455d369800eb8b70405d488abe377dbf75c"
+        },
+        "date": 1793445168319,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.4,
             "unit": "%"
           }
         ]
