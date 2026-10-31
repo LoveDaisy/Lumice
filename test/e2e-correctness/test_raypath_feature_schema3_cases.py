@@ -90,7 +90,12 @@ def test_dissolved_seed_failure_cells_complete_with_computed_objects(config, pat
     # structurally: the cell completes, and every enumerated object is computed (the probe
     # round found exactly this shape; a named escape here would be a conscious re-pin, not a
     # tolerated drift).
-    doc = _report(config, path, "--wavelength", "550", "--events", "8192")
+    # The budget rides at the hang cap, not the 120 s default the other oracles share: the
+    # heavy 3-1-5 column's discovery leg is what spends the wall clock, and under the fast
+    # layer's xdist co-scheduling a worker's stretch crossed 120 s and cut the enumeration's
+    # last members into kind_1 walk_truncated records (walk_s 0.0 — the honest cut, not a
+    # defect). A higher cap is invisible when the query finishes early (18.8 s idle measured).
+    doc = _report(config, path, "--wavelength", "550", "--events", "8192", budget_ms=300000)
     assert doc["outcome"] == "completed"
     assert not doc["budgets"]["exhausted"]
     assert doc["mc_evidence"]["unfinished"] == []
