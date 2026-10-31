@@ -16,6 +16,7 @@
 #include "gui/gui_constants.hpp"
 #include "gui/mono_exposure_scale.hpp"
 #include "gui/panels.hpp"
+#include "gui/panorama_viewport.hpp"
 #include "gui/semantic_colors.hpp"
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
@@ -154,17 +155,35 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
   int fb_w = 0;
   int fb_h = 0;
   glfwGetFramebufferSize(window, &fb_w, &fb_h);
-  const float dpi_x = static_cast<float>(fb_w) / ImGui::GetIO().DisplaySize.x;
-  const float dpi_y = static_cast<float>(fb_h) / ImGui::GetIO().DisplaySize.y;
+  // The publish quantities, packed for the one conversion in panorama_viewport.hpp. Under
+  // ViewportsEnable the child rect is OS-screen absolute — GetWindowPos() carries the main
+  // viewport's origin, the MainVpPos idiom in app_panels.cpp being the same fact used in the
+  // other direction — while the GL viewport the deferred blit fills counts main-window-local
+  // pixels. The origin travels with the rect so the conversion can localize it; the gesture
+  // block below keeps comparing region_min against io.MousePos, both absolute, and must not.
+  lumice::gui::PanoramaSurface surface;
+  surface.display_w = ImGui::GetIO().DisplaySize.x;
+  surface.display_h = ImGui::GetIO().DisplaySize.y;
+  surface.fb_w = fb_w;
+  surface.fb_h = fb_h;
+  lumice::gui::PanoramaScreenRect screen_rect;
+  screen_rect.x = region_min.x;
+  screen_rect.y = region_min.y;
+  screen_rect.w = size.x;
+  screen_rect.h = size.y;
+  const ImGuiViewport* main_vp = ImGui::GetMainViewport();
+  lumice::gui::PanoramaScreenPoint main_vp_origin;
+  main_vp_origin.x = main_vp->Pos.x;
+  main_vp_origin.y = main_vp->Pos.y;
+  const lumice::gui::PanoramaGlViewport vp =
+      lumice::gui::PanoramaChildRectToGlViewport(screen_rect, main_vp_origin, surface);
   g_panorama_vp.active = true;
-  g_panorama_vp.vp_x = static_cast<int>(region_min.x * dpi_x);
-  // OpenGL Y is bottom-up (the preview panel's own comment): the region's bottom edge measured
-  // from the window's bottom.
-  g_panorama_vp.vp_y = static_cast<int>((ImGui::GetIO().DisplaySize.y - (region_min.y + size.y)) * dpi_y);
-  g_panorama_vp.vp_w = static_cast<int>(size.x * dpi_x);
-  g_panorama_vp.vp_h = static_cast<int>(size.y * dpi_y);
-  g_panorama_vp.dpi_scale_x = dpi_x;
-  g_panorama_vp.dpi_scale_y = dpi_y;
+  g_panorama_vp.vp_x = vp.vp_x;
+  g_panorama_vp.vp_y = vp.vp_y;
+  g_panorama_vp.vp_w = vp.vp_w;
+  g_panorama_vp.vp_h = vp.vp_h;
+  g_panorama_vp.dpi_scale_x = vp.dpi_scale_x;
+  g_panorama_vp.dpi_scale_y = vp.dpi_scale_y;
 
   PreviewParams& pp = g_panorama_vp.params;
   auto& rc = g_state.renderer;
