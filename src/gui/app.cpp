@@ -2076,6 +2076,12 @@ std::string FormatSamplingSegment(LUMICE_RayCount crystals, LUMICE_RayCount orie
          FormatSamplingDensityCompact(orientations, rays);
 }
 
+std::string FormatQueryActiveSegment(bool queries_outstanding) {
+  // The separator convention is the stats segments' ("| Total rays: ..."); the word follows the
+  // sim word's own ASCII-dots spelling ("Simulating..."), the activity idiom AC2 reuses.
+  return queries_outstanding ? "| Analyzing..." : std::string();
+}
+
 std::string FormatSamplingTooltip(LUMICE_RayCount crystals, LUMICE_RayCount orientations, LUMICE_RayCount rays) {
   // Raw counts alongside the densities: the density answers "is this dimension sampled?", the raw
   // count is what a user quotes in a bug report, and neither substitutes for the other.

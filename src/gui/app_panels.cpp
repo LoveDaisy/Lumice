@@ -2910,6 +2910,20 @@ void RenderStatusBar(float window_width, float window_height) {
       break;
   }
 
+  // The background analysis queries' active segment (AC2 of the wait-feedback layer): an
+  // independent SameLine segment AFTER the sim word, the same appended-segment shape the stats
+  // segments below use — the two clusters never branch on each other, so every combination
+  // (Simulating + queries in flight included) shows in full and neither can overwrite the other.
+  // Accent, same reading as "Simulating..." above: the one thing on screen that is live right
+  // now. The drawn string is reported to the wait-feedback field — the status bar runs in every
+  // frame, so its field is always this frame's truth, workspace aside.
+  const std::string query_segment = FormatQueryActiveSegment(g_survey_executor.QueryOutstanding());
+  g_state.analysis.wait_feedback_texts.status_bar_query_segment = query_segment;
+  if (!query_segment.empty()) {
+    ImGui::SameLine();
+    ImGui::TextColored(AccentColor(), "%s", query_segment.c_str());
+  }
+
   // Stats
   if (g_state.stats_sim_ray_num > 0) {
     ImGui::SameLine();

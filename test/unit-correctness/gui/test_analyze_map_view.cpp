@@ -594,12 +594,12 @@ bool PumpBothUntil(GuiState& state, SurveyExecutor& executor, double now, Pred p
     if (std::chrono::steady_clock::now() > deadline) {
       return false;
     }
-    PumpSurveyQuery(state, executor);
+    PumpSurveyQuery(state, executor, now);
     PumpMapQuery(state, executor, now);
     now += 0.05;
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
-  PumpSurveyQuery(state, executor);
+  PumpSurveyQuery(state, executor, now);
   PumpMapQuery(state, executor, now);
   return true;
 }
@@ -804,6 +804,46 @@ TEST(AnalyzeMapView, SkyPointIntentRoundtripsThroughTheLabel) {
     }
     EXPECT_NEAR(gap, 0.0, 1e-4) << "az of (" << label[0] << "," << label[1] << ")";
   }
+}
+
+// The wait line's three texts: the queue is the truth the wait
+// names — behind the survey the prediction says so, the steered view asks for its own answer —
+// and the direct branch at the interaction tier. All three carry the live elapsed suffix.
+TEST(AnalyzeMapView, MapWaitLineNamesTheQueueAndCarriesTheElapsed) {
+  MapQuerySession map;
+  map.intent_valid = true;
+  map.intent_start_s = 5.0;
+  const double now = 6.5;
+  const std::string elapsed = " (1.5 s)";
+
+  const std::string queued_default = MapWaitLineFor(map, /*survey_outstanding=*/true, /*user_moved=*/false, now);
+  EXPECT_NE(queued_default.find("queues behind this class's survey"), std::string::npos);
+  EXPECT_NE(queued_default.find("the all-sky map"), std::string::npos);
+  EXPECT_EQ(queued_default.substr(queued_default.size() - elapsed.size()), elapsed);
+
+  const std::string queued_moved = MapWaitLineFor(map, true, /*user_moved=*/true, now);
+  EXPECT_NE(queued_moved.find("The map for the view you asked for answers after it"), std::string::npos);
+  EXPECT_EQ(queued_moved.substr(queued_moved.size() - elapsed.size()), elapsed);
+
+  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, /*user_moved=*/false, now);
+  EXPECT_NE(direct.find("sub-second at the interaction tier"), std::string::npos);
+  EXPECT_EQ(direct.substr(direct.size() - elapsed.size()), elapsed);
+
+  // A later frame-time advances the number; a restarted epoch (the rekey rule) rolls it back.
+  EXPECT_NE(MapWaitLineFor(map, true, false, now + 1.0).find(" (2.5 s)"), std::string::npos);
+  map.intent_start_s = 8.0;
+  EXPECT_NE(MapWaitLineFor(map, true, false, now).find(" (0.0 s)"), std::string::npos);
+}
+
+// The refining note carries its own elapsed — the refinement intent's wait, the same epoch the
+// pump stamps on every re-ask.
+TEST(AnalyzeMapView, MapRefiningNoteCarriesTheElapsed) {
+  MapQuerySession map;
+  map.intent_valid = true;
+  map.intent_start_s = 3.0;
+  const std::string note = MapRefiningNoteFor(map, 4.0);
+  EXPECT_NE(note.find("Coarse map of the previous view"), std::string::npos);
+  EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
 }
 
 }  // namespace

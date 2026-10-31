@@ -26,6 +26,7 @@
 
 namespace {
 
+using lumice::gui::FormatQueryActiveSegment;
 using lumice::gui::FormatSamplingSegment;
 using lumice::gui::g_state;
 
@@ -288,14 +289,20 @@ void RegisterStatusBarTests(ImGuiTestEngine* engine) {
     const ImGuiStyle& style = ImGui::GetStyle();
     const float spacing = style.ItemSpacing.x;
 
-    // Worst case on every bounded segment at once: the longest status word, a ten-digit ray count,
-    // the longest lens name, and both sampling counters in their widest (barely-sampled) form —
-    // which is a real configuration, not a contrived one: a scene with a fixed shape AND a fixed
-    // orientation reads "1 per N" on both.
+    // Worst case on every bounded segment at once: the longest status word, the query-active
+    // segment (its whole text — a fixed word, so the sample IS the worst case), a ten-digit ray
+    // count, the longest lens name, and both sampling counters in their widest (barely-sampled)
+    // form — which is a real configuration, not a contrived one: a scene with a fixed shape AND
+    // a fixed orientation reads "1 per N" on both.
     const std::string sampling = FormatSamplingSegment(1, 1, 9900000000ULL);
     const float sampling_w = ImGui::CalcTextSize(sampling.c_str()).x;
     const float total_rays_w = ImGui::CalcTextSize("| Total rays: 9.9 x10^9").x;
     const float res_lens_w = ImGui::CalcTextSize("| 1024x512  Dual Fisheye  FOV:180").x;
+    // The query-active segment is bounded by construction (FormatQueryActiveSegment returns one
+    // fixed string or nothing), so its non-empty output is its own upper bound — the unit layer
+    // pins the exact bytes (test_sampling_density_stats.cpp).
+    const float query_segment_w = ImGui::CalcTextSize(FormatQueryActiveSegment(true).c_str()).x;
+    IM_CHECK_STR_EQ(FormatQueryActiveSegment(false).c_str(), "");
 
     // Both-barely-sampled really is the widest the segment gets, so the budget is not measuring an
     // accidentally narrow case.
@@ -306,9 +313,9 @@ void RegisterStatusBarTests(ImGuiTestEngine* engine) {
     // plus the dirty marker.
     const float filename_allowance = ImGui::CalcTextSize("| scene.lmc *").x;
     const float log_button = ImGui::CalcTextSize(ICON_FA_CHEVRON_RIGHT " Log").x + style.FramePadding.x * 2;
-    const float required = style.WindowPadding.x + ImGui::CalcTextSize("Simulating...").x + spacing + total_rays_w +
-                           spacing + sampling_w + spacing + res_lens_w + spacing + filename_allowance + spacing +
-                           log_button + style.WindowPadding.x;
+    const float required = style.WindowPadding.x + ImGui::CalcTextSize("Simulating...").x + spacing + query_segment_w +
+                           spacing + total_rays_w + spacing + sampling_w + spacing + res_lens_w + spacing +
+                           filename_allowance + spacing + log_button + style.WindowPadding.x;
     const float floor_width = static_cast<float>(lumice::gui::kMinWindowWidth);
     ctx->LogInfo("required=%.1f min_window=%.1f headroom=%.1f", required, floor_width, floor_width - required);
     IM_CHECK_LE(required, floor_width);

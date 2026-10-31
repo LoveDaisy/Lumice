@@ -176,9 +176,11 @@ LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentit
 // answers the CURRENT intent (the engine's named refusal is an answer too, R5) — then keeps the
 // intent level-triggered against the live selection: a new or changed selection supersedes
 // whatever is out, a vanished selection kills the intent (its adopted outcome goes with it), a
-// standing selection with an outcome or a cancel latch is left alone. Reads and writes only the
-// session's SurveyQuerySession and the executor; no widget, no document field, no recomputation.
-void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor);
+// standing selection with an outcome or a cancel latch is left alone. `now_s` is the frame
+// clock, stamped onto each new intent as its wait-display epoch (the pump stays free of ImGui
+// so the unit layer can drive it headless). Reads and writes only the session's
+// SurveyQuerySession and the executor; no widget, no document field, no recomputation.
+void PumpSurveyQuery(GuiState& state, SurveyExecutor& executor, double now_s);
 
 // ---- ROI: the click on the preview ---------------------------------------------------------------
 
@@ -367,6 +369,19 @@ std::map<int, int> AnalysisCoreToPoolMap(const GuiState& state);
 // and the Exclude filter's name with the Analyze-time one — the name of the row the user
 // clicked.
 std::string AnalysisRowLabel(std::string_view display, const std::map<int, int>& core_to_pool);
+
+// The share list's busy marker for the selected row while the class survey is in its waiting
+// state (AC3 of the wait-feedback layer): one to three ASCII dots cycling on the elapsed
+// seconds (a period long enough to read as an animation, short enough to feel alive). The dots
+// are drawn by the row's own render as an overlay at the row's right edge — never appended to
+// the Selectable's label, whose bytes are the row's identity for the search, the selection and
+// the test engine's item addressing (a label-suffix marker would change the widget id every
+// rotation step and desync every label-addressed probe of the row — the id-constant invariant
+// plan §3.3 rules — while a draw outside the label leaves the label's bytes, and so the id,
+// exactly what they were). Pure; elapsed comes from the survey session's wait epoch.
+std::string WaitActivityDotsFor(double elapsed_s);
+// The dots' rotation period in seconds — the cycle the animation steps through (1 → 2 → 3 → 1).
+inline constexpr double kWaitActivityDotsPeriodSeconds = 0.4;
 
 // The exclusion itself, on an eligible selection, reaching every entry that uses the chain's
 // crystal (the histogram counted it wherever it was used). Entries with no filter get one: a

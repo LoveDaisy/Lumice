@@ -690,6 +690,7 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
     map.intent_valid = true;
     map.key = key;
     map.intent_id = executor.NextId(selection.generation);
+    map.intent_start_s = now_s;  // the wait display's epoch — this frame (plan §3.1)
     IssueMapIntent(state, executor, map.intent_id, key);
     return;
   }
@@ -704,6 +705,7 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
     map.cancelled_for_key = false;
     map.key = key;
     map.intent_id = executor.NextId(selection.generation);
+    map.intent_start_s = now_s;  // a rekey restarts the wait clock (plan §3.1)
     IssueMapIntent(state, executor, map.intent_id, key);
   }
 }
@@ -1165,30 +1167,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   } else if (st == MapQueryState::kWaiting && map.adopted_result == nullptr) {
     // The queue is the truth the wait names (plan risk 4): the selection's survey — whose
     // chromatic legs run ~15 s on a full-dimensional class — goes first on the one worker, and
-    // this map rides behind it. Only a map asked in that window can honestly say so.
+    // this map rides behind it. Only a map asked in that window can honestly say so. The line
+    // is the pure function's output and is reported to the render-feedback field: what the
+    // test reads is what was drawn (AC4).
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    if (g_survey_executor.QueryOutstanding(QueryFace::kSurvey)) {
-      // The prediction says only what the standing intent will deliver: a hand on the view has
-      // superseded the default chain's all-sky request with the view you asked for.
-      if (view.user_moved) {
-        ImGui::TextWrapped(
-            "Computing the class map in the background — it queues behind this class's survey, whose "
-            "chromatic legs take ~15 s. The map for the view you asked for answers after it.");
-      } else {
-        ImGui::TextWrapped(
-            "Computing the class map in the background — it queues behind this class's survey, whose "
-            "chromatic legs take ~15 s. What arrives first is the all-sky map; the view refines for you "
-            "after that.");
-      }
-    } else {
-      ImGui::TextWrapped("Computing the class map in the background (sub-second at the interaction tier)…");
-    }
+    const std::string wait_line =
+        MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey), view.user_moved, ImGui::GetTime());
+    state.analysis.wait_feedback_texts.map_wait_line = wait_line;
+    ImGui::TextWrapped("%s", wait_line.c_str());
     ImGui::PopStyleColor();
   } else if (refining) {
+    // The refining note carries its own elapsed — the refinement intent's wait, same epoch the
+    // pump stamps on every re-ask.
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(
-        "Coarse map of the previous view — refining for the current one; the picture is anchored to "
-        "the sky, not upscaled.");
+    const std::string note = MapRefiningNoteFor(map, ImGui::GetTime());
+    state.analysis.wait_feedback_texts.map_refining_note = note;
+    ImGui::TextWrapped("%s", note.c_str());
     ImGui::PopStyleColor();
   }
 

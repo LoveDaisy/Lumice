@@ -480,7 +480,7 @@ void IssuePointIntent(SurveyExecutor& executor, const SurveyQueryId& id, const P
 
 }  // namespace
 
-void PumpPointQuery(GuiState& state, SurveyExecutor& executor) {
+void PumpPointQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
   PointQuerySession& point = state.analysis.point;
   PointViewState& view = state.analysis.point_view;
 
@@ -531,6 +531,7 @@ void PumpPointQuery(GuiState& state, SurveyExecutor& executor) {
     point.intent_valid = true;
     point.key = key;
     point.intent_id = executor.NextId(key.selection.generation);
+    point.intent_start_s = now_s;  // the wait display's epoch — a moved point restarts it (plan §3.1)
     IssuePointIntent(executor, point.intent_id, key);
   }
 }
@@ -796,10 +797,12 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     switch (st) {
-      case PointQueryState::kWaiting:
-        ImGui::TextWrapped("Computing the point (%.1f s tier; queues behind the survey and map on the one worker)…",
-                           kPointQueryBudgetMs / 1000.0);
+      case PointQueryState::kWaiting: {
+        const std::string wait_line = PointWaitLineFor(point, ImGui::GetTime());
+        state.analysis.wait_feedback_texts.point_wait_line_fiber = wait_line;
+        ImGui::TextWrapped("%s", wait_line.c_str());
         break;
+      }
       case PointQueryState::kCancelled:
         ImGui::TextWrapped(
             "Point cancelled for this selection. Moving the sky point — or re-picking the class — "
@@ -1460,8 +1463,9 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
     return;
   }
   if (st == PointQueryState::kWaiting) {
-    ImGui::TextWrapped("Computing the point (%.1f s tier; queues behind the survey and map on the one worker)…",
-                       kPointQueryBudgetMs / 1000.0);
+    const std::string wait_line = PointWaitLineFor(point, ImGui::GetTime());
+    state.analysis.wait_feedback_texts.point_wait_line_details = wait_line;
+    ImGui::TextWrapped("%s", wait_line.c_str());
     if (ImGui::SmallButton("Cancel point")) {
       // R6's cancel row, the survey's shape: withdraw the intent, latch it against this key, and
       // stop the playback a withdrawn query could keep feeding.
