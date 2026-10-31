@@ -805,10 +805,21 @@ TEST(AnalyzePointView, MultiLayerSelectionRefusesByName) {
 // The partial document (the C17 shape: what arrived is kept and readable AS partial): a
 // 1 ms-budget point query stops honestly — the document adopts (a partial IS an answer), its
 // execution tag reads not-completed, and the caliber lines spell it.
+//
+// The query rides the workspace face — the one the GUI executor and the CLI both consume — where
+// the deadline rides LUMICE_PathQueryOptions and propagates into the inline survey context. The
+// direct LUMICE_AnalyzeSinglePath entry would also honor the 1 ms budget for the discovery legs,
+// but its context is the legacy cancel-only shape: nothing cuts the inline survey there, so a
+// 1 ms query pays a full uncut survey (~13 s on this fixture) for context the test never reads.
 TEST(AnalyzePointView, PartialDocumentAdoptsAndReadsAsPartial) {
   LUMICE_Scene* raw_scene = nullptr;
   ASSERT_EQ(LUMICE_SceneFromJson(kPointSceneJson, &raw_scene), LUMICE_OK);
   std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  char ws_err[512] = {};
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &raw_workspace, ws_err, sizeof(ws_err)), LUMICE_OK) << ws_err;
+  std::unique_ptr<LUMICE_PathWorkspace, void (*)(LUMICE_PathWorkspace*)> workspace(raw_workspace,
+                                                                                   LUMICE_PathWorkspaceDestroy);
   static const int kFaces[2] = { 3, 5 };
   static const int kLayerCounts[1] = { 2 };
   LUMICE_SinglePathRequest request{};
@@ -822,10 +833,16 @@ TEST(AnalyzePointView, PartialDocumentAdoptsAndReadsAsPartial) {
   request.target_azimuth_deg = 0.0;
   request.sample_count = kPointQuerySampleCount;
   request.sun_grid_lat_count = kPointSunGridLatCount;
-  request.deadline_ms = 1;  // the stop is the point: what arrives is the partial document
+  // The deadline rides the options on this face (the request body's deadline_ms is the direct
+  // entry's field); 1 ms: the stop is the point — what arrives is the partial document.
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = 1;
   LUMICE_SinglePathResult* raw_result = nullptr;
   char err[256] = {};
-  ASSERT_EQ(LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw_result, err, sizeof(err)), LUMICE_OK) << err;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &request, &options, &raw_result, err, sizeof(err)),
+            LUMICE_OK)
+      << err;
   PointHandle result(raw_result, PointDeleter{});
   LUMICE_PathPointInfo info{};
   info.struct_size = sizeof(info);
