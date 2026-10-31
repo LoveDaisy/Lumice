@@ -1172,15 +1172,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // test reads is what was drawn (AC4).
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     const std::string wait_line =
-        MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey), view.user_moved, ImGui::GetTime());
+        MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey), view.user_moved, ImGui::GetTime(),
+                       g_survey_executor.InflightPollSnapshot());
     state.analysis.wait_feedback_texts.map_wait_line = wait_line;
     ImGui::TextWrapped("%s", wait_line.c_str());
     ImGui::PopStyleColor();
   } else if (refining) {
     // The refining note carries its own elapsed — the refinement intent's wait, same epoch the
-    // pump stamps on every re-ask.
+    // pump stamps on every re-ask — and the poll's stage clause while the refinement's map
+    // query itself is computing (751; face-matched, so a queued survey's stage never lands here).
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    const std::string note = MapRefiningNoteFor(map, ImGui::GetTime());
+    const std::string note = MapRefiningNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
     state.analysis.wait_feedback_texts.map_refining_note = note;
     ImGui::TextWrapped("%s", note.c_str());
     ImGui::PopStyleColor();

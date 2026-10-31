@@ -21,6 +21,7 @@
 // finished slot can only ever be overwritten by an outcome that also fails the gate.
 
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -264,6 +265,26 @@ PointQueryState PointQueryStateFor(const PointQuerySession& point);
 
 // ---- The wait displays' elapsed time ---------------------------------------------------------------
 
+// The executor's live poll read, taken by the render sites that draw a wait text: which face
+// is actually computing and the engine's last-known {stage, ticks} for it (the cancel token's
+// poll ledger, v4.61's snapshot face). Pure data — the stage→text mapping lives with the
+// wait-line functions below, the one presentation spelling. `face` is meaningful only while
+// `in_flight`; otherwise the struct is the idle shape (NONE / 0) the wait lines render
+// unchanged from.
+struct InflightPoll {
+  bool in_flight = false;
+  QueryFace face = QueryFace::kSurvey;
+  LUMICE_PathPollStage stage = LUMICE_PATH_POLL_STAGE_NONE;
+  int64_t ticks = 0;
+};
+
+// The ONE stage→text spelling the wait lines share (a56 — four functions drawing one grammar
+// must not drift): the engine's curated enum in the wait line's own words. NONE contributes
+// no text (the caller's clause helper skips it); a value this binary does not know (a newer
+// engine) falls back to the generic "computing" — the display never guesses at vocabulary it
+// cannot see. Exposed for the unit layer's byte holds.
+std::string PollStageText(LUMICE_PathPollStage stage);
+
 // The ONE elapsed-time suffix formatter the wait displays share (a56 — three faces drawing one
 // wait grammar must not drift into three spellings): " (3.2 s)", one decimal place because the
 // map face's typical wait is sub-second and an integer spelling would sit at " (0 s)" for the
@@ -271,30 +292,37 @@ PointQueryState PointQueryStateFor(const PointQuerySession& point);
 // clock skew) clamps to zero — the suffix always shows a wait that has begun, never a debt.
 std::string FormatWaitElapsedSuffix(double elapsed_s);
 
-// The overview's kWaiting line: the base sentence plus the elapsed suffix. `now_s` is the frame
-// clock; the elapsed is `now_s - survey.intent_start_s`, so the line the user reads advances with
-// every frame the wait stands (the pump stamps the epoch at the issue, and the cancel/answer
-// ends the wait by leaving this state). Call with a session SurveyOverviewStateFor names
-// kWaiting — the render site is the only caller. Pure, so the unit layer can hold the bytes.
-std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s);
+// The overview's kWaiting line: the base sentence, the poll's stage clause when the SURVEY
+// face itself is computing (a query that has polled at least once), then the elapsed suffix.
+// `now_s` is the frame clock; the elapsed is `now_s - survey.intent_start_s`, so the line the
+// user reads advances with every frame the wait stands (the pump stamps the epoch at the
+// issue, and the cancel/answer ends the wait by leaving this state). Call with a session
+// SurveyOverviewStateFor names kWaiting — the render site is the only caller. Pure, so the
+// unit layer can hold the bytes. The default poll keeps the plain line (every existing
+// caller's bytes).
+std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s, const InflightPoll& poll = {});
 
-// The map region's kWaiting line — the queue-is-the-truth branch's three texts plus the elapsed
-// suffix (the map's wait names WHY it waits: the selection's survey ahead of it on the one
-// worker, or nothing ahead at the interaction tier). `survey_outstanding` is the caller's
-// `SurveyExecutor::QueryOutstanding(QueryFace::kSurvey)` read and `user_moved` the map view's
-// steer flag, taken as parameters so the function stays pure. Same waiting-state precondition as
-// SurveyWaitLineFor. Pure.
-std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s);
+// The map region's kWaiting line — the queue-is-the-truth branch's three texts plus the poll's
+// stage clause and the elapsed suffix (the map's wait names WHY it waits: the selection's
+// survey ahead of it on the one worker, or nothing ahead at the interaction tier).
+// `survey_outstanding` is the caller's `SurveyExecutor::QueryOutstanding(QueryFace::kSurvey)`
+// read and `user_moved` the map view's steer flag, taken as parameters so the function stays
+// pure. The stage clause only applies when the MAP face itself is computing — while the survey
+// ahead of it runs, another face's stage must not hang on this line (queueing keeps its own
+// text). Same waiting-state precondition as SurveyWaitLineFor. Pure.
+std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s,
+                           const InflightPoll& poll = {});
 
-// The map's refining note — the "old picture anchored on the sky" annotation plus the elapsed
-// suffix (the refinement intent's own wait, same epoch semantics: a re-ask restarts it). Same
-// precondition discipline, now with MapRefiningFor. Pure.
-std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s);
+// The map's refining note — the "old picture anchored on the sky" annotation plus the poll's
+// stage clause and the elapsed suffix (the refinement intent's own wait, same epoch
+// semantics: a re-ask restarts it). Same precondition discipline, now with MapRefiningFor.
+// Pure.
+std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s, const InflightPoll& poll = {});
 
 // The point block's kWaiting line (the fiber region and the details region draw the same
-// sentence — one function, two consumers, so the duplication cannot drift). Plus the elapsed
-// suffix, same epoch semantics. Pure.
-std::string PointWaitLineFor(const PointQuerySession& point, double now_s);
+// sentence — one function, two consumers, so the duplication cannot drift). Plus the poll's
+// stage clause and the elapsed suffix, same epoch semantics. Pure.
+std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const InflightPoll& poll = {});
 
 // What the render sites that draw a wait text report back for the gui_test layer (AC4's
 // channel): ImGui text items have no ID, so the test engine cannot address a wait line —
@@ -488,6 +516,15 @@ class SurveyExecutor {
   // answer into a false "cancelled").
   bool QueryOutstanding() const;
   bool QueryOutstanding(QueryFace face) const;
+
+  // The running query's poll snapshot, read live (the wait lines' stage clause's data): the
+  // face actually computing and the engine's last-known {stage, ticks} for it. Locks only to
+  // copy the in-flight token — the shared handle keeps it alive across the C read, and the
+  // token is all-atomic, so the poll never races a destroy. Nothing computing → in_flight
+  // false, stage NONE, ticks 0 (the idle shape the wait lines render unchanged from). A
+  // failed poll (unreachable in practice) reads NONE/0 under in_flight — the plain line,
+  // never a guessed stage. GUI thread.
+  InflightPoll InflightPollSnapshot() const;
 
   // Cancels in-flight, drops queued, and joins the worker (which destroys the binding on its own
   // thread). The app's teardown calls this before the LUMICE global cleanup; every later call is

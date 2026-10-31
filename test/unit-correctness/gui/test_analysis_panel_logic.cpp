@@ -1340,6 +1340,51 @@ TEST(AnalysisPanelLogic, SurveyWaitLineCarriesTheLiveElapsed) {
   EXPECT_EQ(SurveyWaitLineFor(survey, 12.5), "Survey: querying in the background… (0.5 s)");
 }
 
+// The poll snapshot's stage clause (751): the engine's last-known phase names itself in the
+// line only while the SURVEY face is computing AND has polled at least once; an idle executor,
+// another face's queued query and an unpolled query all render the plain line — a stage never
+// hangs where it does not belong. An unknown stage (a newer engine) falls back to the generic
+// word, and the clause holds through a poll-free stretch (last-known, never fabricated
+// activity).
+TEST(AnalysisPanelLogic, SurveyWaitLineCarriesThePollStageOnlyForItsOwnFace) {
+  SurveyQuerySession survey;
+  survey.intent_valid = true;
+  survey.intent_start_s = 10.0;
+
+  InflightPoll idle;  // in_flight false: the plain line, byte-for-byte
+  EXPECT_EQ(SurveyWaitLineFor(survey, 12.5, idle), "Survey: querying in the background… (2.5 s)");
+
+  InflightPoll other_face;  // the map ahead in the queue is computing — its stage is its own
+  other_face.in_flight = true;
+  other_face.face = QueryFace::kMap;
+  other_face.stage = LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
+  other_face.ticks = 12;
+  EXPECT_EQ(SurveyWaitLineFor(survey, 12.5, other_face), "Survey: querying in the background… (2.5 s)");
+
+  InflightPoll unpolled;  // registered but no poll yet: no stage to name
+  unpolled.in_flight = true;
+  unpolled.face = QueryFace::kSurvey;
+  EXPECT_EQ(SurveyWaitLineFor(survey, 12.5, unpolled), "Survey: querying in the background… (2.5 s)");
+
+  InflightPoll running;
+  running.in_flight = true;
+  running.face = QueryFace::kSurvey;
+  running.stage = LUMICE_PATH_POLL_STAGE_STRUCTURE_SUPPORT;
+  running.ticks = 7;
+  EXPECT_NE(SurveyWaitLineFor(survey, 12.5, running).find(" — measuring structure support… (2.5 s)"),
+            std::string::npos);
+
+  InflightPoll unknown = running;
+  unknown.stage = static_cast<LUMICE_PathPollStage>(99);
+  EXPECT_NE(SurveyWaitLineFor(survey, 12.5, unknown).find("computing"), std::string::npos);
+  EXPECT_EQ(PollStageText(LUMICE_PATH_POLL_STAGE_NONE), "");
+  EXPECT_EQ(PollStageText(static_cast<LUMICE_PathPollStage>(99)), "computing");
+
+  // The silence contract: a later frame with the SAME snapshot names the same stage — the
+  // clause holds while ticks stand still; only the elapsed number moves.
+  EXPECT_NE(SurveyWaitLineFor(survey, 12.9, running).find("measuring structure support"), std::string::npos);
+}
+
 // The share list's busy marker cycles one→two→three dots on the period and stays ASCII.
 TEST(AnalysisPanelLogic, WaitActivityDotsCycleOnThePeriod) {
   using lumice::gui::kWaitActivityDotsPeriodSeconds;
