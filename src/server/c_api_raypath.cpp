@@ -22,6 +22,7 @@
 #include "raypath/path_feature_report.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/probe_json.hpp"
+#include "raypath/query_control.hpp"  // StageOfSite — the poll snapshot's stage curation
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
 #include "raypath/survey_report.hpp"
@@ -1135,6 +1136,68 @@ void LUMICE_PathCancelTokenRequest(LUMICE_PathCancelToken* token) {
 
 void LUMICE_PathCancelTokenDestroy(LUMICE_PathCancelToken* token) {
   std::unique_ptr<LUMICE_PathCancelToken_> owned(token);
+}
+
+namespace {
+
+// The engine's curated stage (query_control.hpp's one table) spelled in the ABI's vocabulary —
+// the tag mapping the ExecutionTag fold is, so a missing enum value fails the switch build.
+LUMICE_PathPollStage PollStageTag(lumice::raypath::PollStage stage) {
+  using S = lumice::raypath::PollStage;
+  switch (stage) {
+    case S::kNone:
+      return LUMICE_PATH_POLL_STAGE_NONE;
+    case S::kSurveyAssembly:
+      return LUMICE_PATH_POLL_STAGE_SURVEY_ASSEMBLY;
+    case S::kStructureSupport:
+      return LUMICE_PATH_POLL_STAGE_STRUCTURE_SUPPORT;
+    case S::kChromaticLeg:
+      return LUMICE_PATH_POLL_STAGE_CHROMATIC_LEG;
+    case S::kEssSampling:
+      return LUMICE_PATH_POLL_STAGE_ESS_SAMPLING;
+    case S::kTirShare:
+      return LUMICE_PATH_POLL_STAGE_TIR_SHARE;
+    case S::kWitness:
+      return LUMICE_PATH_POLL_STAGE_WITNESS;
+    case S::kEnumeration:
+      return LUMICE_PATH_POLL_STAGE_ENUMERATION;
+    case S::kProbeLambdas:
+      return LUMICE_PATH_POLL_STAGE_PROBE_LAMBDAS;
+    case S::kPointLegs:
+      return LUMICE_PATH_POLL_STAGE_POINT_LEGS;
+    case S::kMapMembers:
+      return LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
+    case S::kFiberDiscovery:
+      return LUMICE_PATH_POLL_STAGE_FIBER_DISCOVERY;
+    case S::kBoundaryWalk:
+      return LUMICE_PATH_POLL_STAGE_BOUNDARY_WALK;
+    case S::kLatticeScan:
+      return LUMICE_PATH_POLL_STAGE_LATTICE_SCAN;
+  }
+  return LUMICE_PATH_POLL_STAGE_NONE;
+}
+
+}  // namespace
+
+LUMICE_ErrorCode LUMICE_PathCancelTokenPoll(const LUMICE_PathCancelToken* token, LUMICE_PathPollSnapshot* out) {
+  // The typed readers' size discipline: validate the caller's extent before anything is
+  // written, then fill the cleared record under the caller's own struct_size.
+  if (out == nullptr) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  const size_t caller_size = out->struct_size;
+  if (caller_size < sizeof(LUMICE_PathPollSnapshot)) {
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if (token == nullptr) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  LUMICE_PathPollSnapshot snapshot{};
+  snapshot.struct_size = caller_size;
+  snapshot.stage = PollStageTag(lumice::raypath::StageOfSite(token->token.LastPolledSite()));
+  snapshot.ticks = static_cast<int64_t>(token->token.TotalPolls());
+  *out = snapshot;
+  return LUMICE_OK;
 }
 
 LUMICE_ErrorCode LUMICE_PathWarmDataFromSurvey(const LUMICE_PathSurvey* result, LUMICE_PathWarmData** out) {

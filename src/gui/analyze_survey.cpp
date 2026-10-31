@@ -89,6 +89,53 @@ PointQueryState PointQueryStateFor(const PointQuerySession& point) {
 
 // ---- The wait displays' elapsed time ----------------------------------------------------------------
 
+std::string PollStageText(LUMICE_PathPollStage stage) {
+  switch (stage) {
+    case LUMICE_PATH_POLL_STAGE_SURVEY_ASSEMBLY:
+      return "routing the class survey";
+    case LUMICE_PATH_POLL_STAGE_STRUCTURE_SUPPORT:
+      return "measuring structure support";
+    case LUMICE_PATH_POLL_STAGE_CHROMATIC_LEG:
+      return "running the chromatic pair";
+    case LUMICE_PATH_POLL_STAGE_ESS_SAMPLING:
+      return "sampling for the error estimate";
+    case LUMICE_PATH_POLL_STAGE_TIR_SHARE:
+      return "computing the TIR share";
+    case LUMICE_PATH_POLL_STAGE_WITNESS:
+      return "running the witness lattice";
+    case LUMICE_PATH_POLL_STAGE_ENUMERATION:
+      return "enumerating the structure";
+    case LUMICE_PATH_POLL_STAGE_PROBE_LAMBDAS:
+      return "scanning the probe line";
+    case LUMICE_PATH_POLL_STAGE_POINT_LEGS:
+      return "tracing point legs";
+    case LUMICE_PATH_POLL_STAGE_MAP_MEMBERS:
+      return "summing the map members";
+    case LUMICE_PATH_POLL_STAGE_FIBER_DISCOVERY:
+      return "discovering fibers";
+    case LUMICE_PATH_POLL_STAGE_BOUNDARY_WALK:
+      return "walking the boundary";
+    case LUMICE_PATH_POLL_STAGE_LATTICE_SCAN:
+      return "scanning the sample lattice";
+    case LUMICE_PATH_POLL_STAGE_NONE:
+      return "";
+  }
+  return "computing";  // a value this binary does not know — the honest fallback
+}
+
+// The stage clause a wait line gets from a poll read: " — <text>" only when THIS face is the
+// one computing and has polled at least once (NONE has no text). Every other shape — an idle
+// executor, another face's query ahead in the queue, an unpolled query — renders nothing, so
+// a stage never hangs on a line it does not belong to. The clause is last-known by
+// construction (the snapshot reads what the ledger last recorded): when the query sits in a
+// poll-free stretch the text holds, which is the honest presentation, not a stale one.
+std::string StageClauseFor(const InflightPoll& poll, QueryFace face) {
+  if (!poll.in_flight || poll.face != face || poll.stage == LUMICE_PATH_POLL_STAGE_NONE) {
+    return {};
+  }
+  return " — " + PollStageText(poll.stage);
+}
+
 std::string FormatWaitElapsedSuffix(double elapsed_s) {
   const double clamped = elapsed_s > 0.0 ? elapsed_s : 0.0;
   char buf[32];
@@ -96,42 +143,54 @@ std::string FormatWaitElapsedSuffix(double elapsed_s) {
   return std::string(buf);
 }
 
-std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s) {
-  return "Survey: querying in the background…" + FormatWaitElapsedSuffix(now_s - survey.intent_start_s);
+std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s, const InflightPoll& poll) {
+  std::string line = "Survey: querying in the background";
+  line += StageClauseFor(poll, QueryFace::kSurvey);
+  line += "…";
+  line += FormatWaitElapsedSuffix(now_s - survey.intent_start_s);
+  return line;
 }
 
-std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s) {
+std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s,
+                           const InflightPoll& poll) {
   const std::string elapsed = FormatWaitElapsedSuffix(now_s - map.intent_start_s);
+  // The stage clause is face-matched to the map: while the survey ahead of it runs, the clause
+  // is empty and the queue texts stand alone — another face's stage never hangs on this line.
+  const std::string stage = StageClauseFor(poll, QueryFace::kMap);
   if (survey_outstanding) {
     // The prediction says only what the standing intent will deliver: a hand on the view has
     // superseded the default chain's all-sky request with the view you asked for.
     if (user_moved) {
       return "Computing the class map in the background — it queues behind this class's survey, whose "
              "chromatic legs take ~15 s. The map for the view you asked for answers after it." +
-             elapsed;
+             stage + elapsed;
     }
     return "Computing the class map in the background — it queues behind this class's survey, whose "
            "chromatic legs take ~15 s. What arrives first is the all-sky map; the view refines for you "
            "after that." +
-           elapsed;
+           stage + elapsed;
   }
-  return "Computing the class map in the background (sub-second at the interaction tier)…" + elapsed;
+  return "Computing the class map in the background (sub-second at the interaction tier)" + stage + "…" + elapsed;
 }
 
-std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s) {
+std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s, const InflightPoll& poll) {
   return "Coarse map of the previous view — refining for the current one; the picture is anchored to "
          "the sky, not upscaled." +
-         FormatWaitElapsedSuffix(now_s - map.intent_start_s);
+         StageClauseFor(poll, QueryFace::kMap) + FormatWaitElapsedSuffix(now_s - map.intent_start_s);
 }
 
-std::string PointWaitLineFor(const PointQuerySession& point, double now_s) {
+std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const InflightPoll& poll) {
   // The budget in the sentence stays the face's own constant (the tier the request asks for);
   // the elapsed suffix after it is the wait's live number.
   char buf[128];
   std::snprintf(buf, sizeof(buf),
-                "Computing the point (%.1f s tier; queues behind the survey and map on the one worker)…",
+                "Computing the point (%.1f s tier; queues behind the survey and map on the one worker)",
                 kPointQueryBudgetMs / 1000.0);
-  return std::string(buf) + FormatWaitElapsedSuffix(now_s - point.intent_start_s);
+  std::string line = buf;
+  line += StageClauseFor(poll, QueryFace::kPoint);
+  line += "…";
+  line += FormatWaitElapsedSuffix(now_s - point.intent_start_s);
+  return line;
 }
 
 // ---- The worker ------------------------------------------------------------------------------------
@@ -588,6 +647,34 @@ bool SurveyExecutor::QueryOutstanding(QueryFace face) const {
       return impl_->pending_ray.has_value();
   }
   return false;
+}
+
+InflightPoll SurveyExecutor::InflightPollSnapshot() const {
+  // Lock only to copy the in-flight handle: the shared_ptr keeps the token alive across the C
+  // read (the worker can finish and unregister the member meanwhile — the copy still owns the
+  // token), and the token itself is all-atomic, so the poll never races a write. All on the
+  // GUI thread's seat; nothing here computes.
+  TokenPtr token;
+  QueryFace face = QueryFace::kSurvey;
+  {
+    std::lock_guard<std::mutex> lock(impl_->mu);
+    token = impl_->inflight_token;
+    face = impl_->inflight_face;
+  }
+  InflightPoll poll;
+  poll.face = face;
+  if (!token) {
+    return poll;  // in_flight false, stage NONE, ticks 0 — the idle shape
+  }
+  poll.in_flight = true;
+  LUMICE_PathPollSnapshot snapshot{};
+  snapshot.struct_size = sizeof(snapshot);
+  if (LUMICE_PathCancelTokenPoll(token.get(), &snapshot) == LUMICE_OK) {
+    poll.stage = snapshot.stage;
+    poll.ticks = snapshot.ticks;
+  }
+  // A failed poll leaves NONE/0 under in_flight: the plain wait line, never a guessed stage.
+  return poll;
 }
 
 void SurveyExecutor::ShutdownAndJoin() {

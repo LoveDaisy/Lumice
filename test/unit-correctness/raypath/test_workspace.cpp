@@ -179,6 +179,8 @@ TEST(Workspace, SurveyWitnessObservesQueryCancelBeforeCompletingItsLattice) {
     }
   }
   EXPECT_TRUE(found_witness);
+  const int stray = FirstUnattributedPollSite(token, kPollFaceSurvey);
+  EXPECT_EQ(stray, -1) << "the survey run ticked site " << stray << ", outside its attribution";
 }
 
 TEST(Workspace, SurveyClassTintObservesQueryCancelBeforeCompletingItsLattice) {
@@ -208,6 +210,8 @@ TEST(Workspace, SurveyClassTintObservesQueryCancelBeforeCompletingItsLattice) {
   EXPECT_EQ(result.Data().weight_tint->State(), survey::EvidenceState::kRefused);
   EXPECT_EQ(result.Data().weight_tint->Mode(), "stop_requested");
   EXPECT_EQ(result.Data().execution, ExecutionOutcome::kCancelled);
+  const int stray = FirstUnattributedPollSite(token, kPollFaceSurvey);
+  EXPECT_EQ(stray, -1) << "the tint run ticked site " << stray << ", outside its attribution";
 }
 
 TEST(Workspace, SurveyChromaticObservesQueryCancelBeforePairFinishes) {
@@ -237,6 +241,8 @@ TEST(Workspace, SurveyChromaticObservesQueryCancelBeforePairFinishes) {
   EXPECT_EQ(result.Data().chromatic.state, survey::EvidenceState::kRefused);
   EXPECT_EQ(result.Data().chromatic.mode, "stop_requested");
   EXPECT_FALSE(result.Data().diagnose.has_value());
+  const int stray = FirstUnattributedPollSite(token, kPollFaceSurvey);
+  EXPECT_EQ(stray, -1) << "the chromatic run ticked site " << stray << ", outside its attribution";
 }
 
 TEST(Workspace, CreationIsLazyAndOwnsNothingButTheSnapshot) {
@@ -427,6 +433,8 @@ TEST(Workspace, ACancelledSurveyNeverFillsTheWarmSlot) {
   ASSERT_TRUE(entered) << "the survey's structure leg never polled";
   EXPECT_EQ(cut.Data().execution, ExecutionOutcome::kCancelled);
   EXPECT_EQ(workspace->OccupiedSlotCount(), 1);  // the geometry slot only — no warm, no result
+  const int stray = FirstUnattributedPollSite(token, kPollFaceSurvey);
+  EXPECT_EQ(stray, -1) << "the cancelled run ticked site " << stray << ", outside its attribution";
 
   // The refused slot shows behaviorally: the next point runs an inline context.
   const long runs = workspace->StructureRunCount();
@@ -492,6 +500,8 @@ TEST(Workspace, TheStopAuthorityWorksThroughTheWorkspace) {
   EXPECT_TRUE(done);
   EXPECT_GT(token.PollCount(analytic::kPollBandLattice), 0) << "the workspace query never polled";
   EXPECT_EQ(result.Data().meta.execution, ExecutionOutcome::kCancelled);
+  const int stray = FirstUnattributedPollSite(token, kPollFacePoint);
+  EXPECT_EQ(stray, -1) << "the workspace point run ticked site " << stray << ", outside its attribution";
 }
 
 }  // namespace

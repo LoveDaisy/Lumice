@@ -511,6 +511,52 @@ LUMICE_API void LUMICE_PathWorkspaceDestroy(LUMICE_PathWorkspace* workspace);
 LUMICE_API LUMICE_ErrorCode LUMICE_PathCancelTokenCreate(LUMICE_PathCancelToken** out);
 LUMICE_API void LUMICE_PathCancelTokenRequest(LUMICE_PathCancelToken* token);
 LUMICE_API void LUMICE_PathCancelTokenDestroy(LUMICE_PathCancelToken* token);
+
+// ---- The cancel token's poll-stage snapshot (v4.61) ------------------------------------------
+// The query's engine-side liveness evidence, read by polling: LUMICE_PathCancelTokenPoll copies
+// a small {stage, ticks} snapshot of the token's poll ledger at call time — nothing pushes and
+// nothing calls back. Three states, named:
+//   - idle: no query has polled through this token — stage NONE, ticks 0;
+//   - in flight (or stopped mid-run): stage is the LAST phase a poll ran in, ticks its
+//     monotonic count (only ever incremented). A snapshot that stops changing is a stalled or
+//     cancelled query — NOT a completed one. "Settled" is the CALLER's knowledge (it owns the
+//     query's lifetime and sees the query function return); the engine cannot observe settled
+//     through a token and this face never claims it — there is deliberately no done value;
+//   - destroyed: reading a destroyed token is undefined — stop polling before
+//     LUMICE_PathCancelTokenDestroy, exactly as for every other use of the handle.
+// The honesty boundary: poll counts count polling events, not remaining work. There is no
+// progress percentage and no completion signal anywhere in this face. Stages are coarse on
+// purpose (the engine's internal sites fold into the leg they belong to, so the vocabulary
+// survives internal re-polling and renumbering); a token reused across queries accumulates
+// ticks and overwrites the stage — use one token per query to keep snapshots isolated.
+// The caller sets struct_size to sizeof(LUMICE_PathPollSnapshot) of this header: a smaller
+// size is refused with nothing written (LUMICE_ERR_INVALID_VALUE), a larger future tail
+// accepted. A NULL token or a NULL out is LUMICE_ERR_NULL_ARG.
+typedef enum LUMICE_PathPollStage {
+  LUMICE_PATH_POLL_STAGE_NONE = 0,
+  LUMICE_PATH_POLL_STAGE_SURVEY_ASSEMBLY = 1,    // the survey's routing verdicts
+  LUMICE_PATH_POLL_STAGE_STRUCTURE_SUPPORT = 2,  // per-member structure support (field + walk + partition)
+  LUMICE_PATH_POLL_STAGE_CHROMATIC_LEG = 3,      // the survey chromatic pair leg
+  LUMICE_PATH_POLL_STAGE_ESS_SAMPLING = 4,       // the draw loops' budget judgment (MC ESS / discovery)
+  LUMICE_PATH_POLL_STAGE_TIR_SHARE = 5,          // the survey TIR share leg
+  LUMICE_PATH_POLL_STAGE_WITNESS = 6,            // the survey witness leg
+  LUMICE_PATH_POLL_STAGE_ENUMERATION = 7,        // the report enumeration's per-member boundary
+  LUMICE_PATH_POLL_STAGE_PROBE_LAMBDAS = 8,      // the probe's per-lambda boundaries
+  LUMICE_PATH_POLL_STAGE_POINT_LEGS = 9,         // the point discovery legs' boundaries
+  LUMICE_PATH_POLL_STAGE_MAP_MEMBERS = 10,       // the map's per-member band sums
+  LUMICE_PATH_POLL_STAGE_FIBER_DISCOVERY = 11,   // the point discovery's fiber phases
+  LUMICE_PATH_POLL_STAGE_BOUNDARY_WALK = 12,     // the structure assembly's boundary walk
+  LUMICE_PATH_POLL_STAGE_LATTICE_SCAN = 13       // the sample-event lattice passes
+} LUMICE_PathPollStage;
+
+typedef struct LUMICE_PathPollSnapshot {
+  size_t struct_size;
+  LUMICE_PathPollStage stage;
+  int64_t ticks;
+} LUMICE_PathPollSnapshot;
+
+LUMICE_API LUMICE_ErrorCode LUMICE_PathCancelTokenPoll(const LUMICE_PathCancelToken* token,
+                                                       LUMICE_PathPollSnapshot* out);
 LUMICE_API LUMICE_ErrorCode LUMICE_PathWarmDataFromSurvey(const LUMICE_PathSurvey* result, LUMICE_PathWarmData** out);
 LUMICE_API LUMICE_ErrorCode LUMICE_PathWarmDataFromPoint(const LUMICE_SinglePathResult* result,
                                                          LUMICE_PathWarmData** out);

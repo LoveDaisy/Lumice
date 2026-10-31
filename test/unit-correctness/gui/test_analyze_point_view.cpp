@@ -943,5 +943,29 @@ TEST(AnalyzePointView, PointWaitLineCarriesTheTierAndTheElapsed) {
   EXPECT_NE(PointWaitLineFor(point, 9.5).find("(0.0 s)"), std::string::npos);
 }
 
+// The stage clause on the point line (751): the POINT face's own computing names the engine's
+// last-known phase; another face's query renders the plain line.
+TEST(AnalyzePointView, PointWaitLineCarriesTheStageOnlyForItsOwnFace) {
+  PointQuerySession point;
+  point.intent_valid = true;
+  point.intent_start_s = 7.0;
+
+  InflightPoll survey_running;  // the survey ahead in the queue: its stage is its own
+  survey_running.in_flight = true;
+  survey_running.face = QueryFace::kSurvey;
+  survey_running.stage = LUMICE_PATH_POLL_STAGE_FIBER_DISCOVERY;
+  survey_running.ticks = 4;
+  EXPECT_EQ(PointWaitLineFor(point, 8.25, survey_running).find("discovering fibers"), std::string::npos);
+
+  InflightPoll point_running;
+  point_running.in_flight = true;
+  point_running.face = QueryFace::kPoint;
+  point_running.stage = LUMICE_PATH_POLL_STAGE_POINT_LEGS;
+  point_running.ticks = 5;
+  const std::string line = PointWaitLineFor(point, 8.25, point_running);
+  EXPECT_NE(line.find(" — tracing point legs…"), std::string::npos);
+  EXPECT_EQ(line.substr(line.size() - 7), "(1.2 s)");  // the elapsed suffix stays last
+}
+
 }  // namespace
 }  // namespace lumice::gui

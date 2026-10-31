@@ -798,7 +798,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     switch (st) {
       case PointQueryState::kWaiting: {
-        const std::string wait_line = PointWaitLineFor(point, ImGui::GetTime());
+        const std::string wait_line =
+            PointWaitLineFor(point, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
         state.analysis.wait_feedback_texts.point_wait_line_fiber = wait_line;
         ImGui::TextWrapped("%s", wait_line.c_str());
         break;
@@ -1463,7 +1464,7 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
     return;
   }
   if (st == PointQueryState::kWaiting) {
-    const std::string wait_line = PointWaitLineFor(point, ImGui::GetTime());
+    const std::string wait_line = PointWaitLineFor(point, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
     state.analysis.wait_feedback_texts.point_wait_line_details = wait_line;
     ImGui::TextWrapped("%s", wait_line.c_str());
     if (ImGui::SmallButton("Cancel point")) {

@@ -835,6 +835,50 @@ TEST(AnalyzeMapView, MapWaitLineNamesTheQueueAndCarriesTheElapsed) {
   EXPECT_NE(MapWaitLineFor(map, true, false, now).find(" (0.0 s)"), std::string::npos);
 }
 
+// The stage clause on the map line (751): only the MAP face's own computing names a stage —
+// while the survey ahead runs, the queue text stands alone (another face's stage must not
+// hang on this line); the direct branch carries the engine's last-known phase.
+TEST(AnalyzeMapView, MapWaitLineCarriesTheStageOnlyForItsOwnFace) {
+  MapQuerySession map;
+  map.intent_valid = true;
+  map.intent_start_s = 5.0;
+  const double now = 6.5;
+
+  InflightPoll survey_running;  // the queue's truth: the SURVEY face is the one computing
+  survey_running.in_flight = true;
+  survey_running.face = QueryFace::kSurvey;
+  survey_running.stage = LUMICE_PATH_POLL_STAGE_CHROMATIC_LEG;
+  survey_running.ticks = 3;
+  const std::string queued = MapWaitLineFor(map, true, false, now, survey_running);
+  EXPECT_NE(queued.find("queues behind this class's survey"), std::string::npos);
+  EXPECT_EQ(queued.find("running the chromatic pair"), std::string::npos)
+      << "another face's stage must not hang on the map's queue line";
+
+  InflightPoll map_running;
+  map_running.in_flight = true;
+  map_running.face = QueryFace::kMap;
+  map_running.stage = LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
+  map_running.ticks = 9;
+  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, /*user_moved=*/false, now, map_running);
+  EXPECT_NE(direct.find(" — summing the map members… (1.5 s)"), std::string::npos);
+}
+
+// The refining note carries the stage clause too (751, same mechanism): while the refinement's
+// map query itself is computing, its last-known phase rides the note.
+TEST(AnalyzeMapView, MapRefiningNoteCarriesTheStageWhileTheMapComputes) {
+  MapQuerySession map;
+  map.intent_valid = true;
+  map.intent_start_s = 3.0;
+  InflightPoll poll;
+  poll.in_flight = true;
+  poll.face = QueryFace::kMap;
+  poll.stage = LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
+  const std::string note = MapRefiningNoteFor(map, 4.0, poll);
+  EXPECT_NE(note.find("refining for the current one"), std::string::npos);
+  EXPECT_NE(note.find("summing the map members"), std::string::npos);
+  EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
+}
+
 // The refining note carries its own elapsed — the refinement intent's wait, the same epoch the
 // pump stamps on every re-ask.
 TEST(AnalyzeMapView, MapRefiningNoteCarriesTheElapsed) {

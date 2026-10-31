@@ -400,7 +400,22 @@ TEST_F(SurveyCApi, CCancelTokenStopsAnEnteredQuery) {
     code = LUMICE_PathWorkspaceQueryPoint(workspace.get(), &request, &options, &raw_result, err, sizeof(err));
   });
   const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  // The poll snapshot's live half: sampled from the caller's seat while the query runs on the
+  // worker — ticks never decrease across samples, and a nonzero tick count names a stage this
+  // request's face (point, no context) can be in.
+  long sampled_ticks = 0;
   while (QueryDeadlineResolutionCount() == before && std::chrono::steady_clock::now() < until) {
+    LUMICE_PathPollSnapshot live{};
+    live.struct_size = sizeof(live);
+    if (LUMICE_PathCancelTokenPoll(cancel.get(), &live) == LUMICE_OK) {
+      EXPECT_GE(live.ticks, sampled_ticks) << "the tick count went backwards across samples";
+      sampled_ticks = live.ticks;
+      if (live.ticks > 0) {
+        EXPECT_TRUE(live.stage == LUMICE_PATH_POLL_STAGE_POINT_LEGS ||
+                    live.stage == LUMICE_PATH_POLL_STAGE_FIBER_DISCOVERY)
+            << "stage " << static_cast<int>(live.stage) << " is outside the point face's no-context domain";
+      }
+    }
     std::this_thread::yield();
   }
   const bool entered = QueryDeadlineResolutionCount() > before;
@@ -408,6 +423,13 @@ TEST_F(SurveyCApi, CCancelTokenStopsAnEnteredQuery) {
   worker.join();
   ASSERT_TRUE(entered);
   ASSERT_EQ(code, LUMICE_OK);
+  // After the query returns the token stays readable and frozen — a stalled snapshot is NOT a
+  // completion claim (there is no done value; the caller knows the query settled by its return).
+  LUMICE_PathPollSnapshot settled{};
+  settled.struct_size = sizeof(settled);
+  ASSERT_EQ(LUMICE_PathCancelTokenPoll(cancel.get(), &settled), LUMICE_OK);
+  EXPECT_GE(settled.ticks, sampled_ticks);
+  EXPECT_GT(settled.ticks, 0) << "the discovery lattice ran but never ticked the ledger";
   std::unique_ptr<LUMICE_SinglePathResult, void (*)(LUMICE_SinglePathResult*)> result(raw_result,
                                                                                       LUMICE_SinglePathResultDestroy);
   size_t length = 0;
@@ -416,6 +438,40 @@ TEST_F(SurveyCApi, CCancelTokenStopsAnEnteredQuery) {
   ASSERT_EQ(LUMICE_SinglePathResultToJson(result.get(), text.data(), text.size(), nullptr), LUMICE_OK);
   const auto document = nlohmann::json::parse(text);
   EXPECT_TRUE(document.at("meta").at("interrupted").get<bool>());
+}
+
+// The poll snapshot's refusal half: a fresh token idles (NONE/0 — the documented idle shape),
+// NULLs are named refusals, an undersized extent is refused with NOTHING written, and a larger
+// future tail is accepted (the typed readers' size discipline).
+TEST_F(SurveyCApi, PollSnapshotIdlesOnAFreshTokenAndRefusesBadCalls) {
+  LUMICE_PathCancelToken* raw_cancel = nullptr;
+  ASSERT_EQ(LUMICE_PathCancelTokenCreate(&raw_cancel), LUMICE_OK);
+  std::unique_ptr<LUMICE_PathCancelToken, void (*)(LUMICE_PathCancelToken*)> cancel(raw_cancel,
+                                                                                    LUMICE_PathCancelTokenDestroy);
+  LUMICE_PathPollSnapshot snap{};
+  snap.struct_size = sizeof(snap);
+  ASSERT_EQ(LUMICE_PathCancelTokenPoll(cancel.get(), &snap), LUMICE_OK);
+  EXPECT_EQ(snap.stage, LUMICE_PATH_POLL_STAGE_NONE);
+  EXPECT_EQ(snap.ticks, 0);
+
+  EXPECT_EQ(LUMICE_PathCancelTokenPoll(nullptr, &snap), LUMICE_ERR_NULL_ARG);
+  EXPECT_EQ(LUMICE_PathCancelTokenPoll(cancel.get(), nullptr), LUMICE_ERR_NULL_ARG);
+
+  struct FutureTail : LUMICE_PathPollSnapshot {
+    char extra[16];
+  };
+  FutureTail future{};
+  future.struct_size = sizeof(FutureTail);
+  ASSERT_EQ(LUMICE_PathCancelTokenPoll(cancel.get(), &future), LUMICE_OK);
+  EXPECT_EQ(future.stage, LUMICE_PATH_POLL_STAGE_NONE);
+  EXPECT_EQ(future.ticks, 0);
+
+  snap.stage = LUMICE_PATH_POLL_STAGE_WITNESS;  // sentinels a refusal must not touch
+  snap.ticks = 42;
+  snap.struct_size = sizeof(snap) - 1;
+  EXPECT_EQ(LUMICE_PathCancelTokenPoll(cancel.get(), &snap), LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(snap.stage, LUMICE_PATH_POLL_STAGE_WITNESS);  // zero-write on the refused extent
+  EXPECT_EQ(snap.ticks, 42);
 }
 
 TEST_F(SurveyCApi, WorkspaceRejectsUnpublishedRequestExtentsAndConflictingWarm) {

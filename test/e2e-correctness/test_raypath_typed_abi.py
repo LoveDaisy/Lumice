@@ -75,6 +75,12 @@ class QueryOptions(C.Structure):
     ]
 
 
+class PollSnapshot(C.Structure):
+    _fields_ = [
+        ("struct_size", C.c_size_t), ("stage", C.c_int), ("ticks", C.c_longlong),
+    ]
+
+
 class PathText(C.Structure):
     _fields_ = [("data", C.c_char_p), ("length", C.c_size_t)]
 
@@ -715,6 +721,94 @@ def _check_representative_ray_published_extents_and_cross_destroy_reads():
     lib.LUMICE_RepresentativeRayDestroy(ray)
 
 
+def _check_cancel_token_poll_snapshot():
+    """The cancel token's poll-stage snapshot (v4.61) against the installed product library:
+    a fresh token idles (NONE/0); NULL and undersized calls refuse in shape with nothing
+    written; a real workspace survey drives ticks up into the survey face's stage domain; and
+    the snapshot stays readable — and frozen — after the query returns, with no done value
+    anywhere (stage and activity only, never a progress claim)."""
+    assert C.sizeof(PollSnapshot) == 24
+    assert (PollSnapshot.stage.offset, PollSnapshot.ticks.offset) == (8, 16)
+    lib = _product_library()
+    lib.LUMICE_SceneFromJsonFile.argtypes = [C.c_char_p, C.POINTER(C.c_void_p)]
+    lib.LUMICE_SceneFromJsonFile.restype = C.c_int
+    lib.LUMICE_SceneDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_PathWorkspaceCreate.argtypes = [C.c_void_p, C.POINTER(C.c_void_p), C.c_void_p, C.c_size_t]
+    lib.LUMICE_PathWorkspaceCreate.restype = C.c_int
+    lib.LUMICE_PathWorkspaceDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_PathCancelTokenCreate.argtypes = [C.POINTER(C.c_void_p)]
+    lib.LUMICE_PathCancelTokenCreate.restype = C.c_int
+    lib.LUMICE_PathCancelTokenDestroy.argtypes = [C.c_void_p]
+    lib.LUMICE_PathCancelTokenPoll.argtypes = [C.c_void_p, C.c_void_p]
+    lib.LUMICE_PathCancelTokenPoll.restype = C.c_int
+    lib.LUMICE_PathWorkspaceQuerySurvey.argtypes = [C.c_void_p, C.c_void_p, C.c_void_p,
+                                                    C.POINTER(C.c_void_p), C.c_void_p, C.c_size_t]
+    lib.LUMICE_PathWorkspaceQuerySurvey.restype = C.c_int
+    lib.LUMICE_PathSurveyDestroy.argtypes = [C.c_void_p]
+
+    token = C.c_void_p()
+    assert lib.LUMICE_PathCancelTokenCreate(C.byref(token)) == 0
+    try:
+        snap = PollSnapshot()
+        snap.struct_size = C.sizeof(snap)
+        # idle: a fresh token names no stage and no ticks
+        assert lib.LUMICE_PathCancelTokenPoll(token, C.byref(snap)) == 0
+        assert (snap.stage, snap.ticks) == (0, 0)
+        # refusals: NULLs named; an undersized extent refused with NOTHING written
+        assert lib.LUMICE_PathCancelTokenPoll(None, C.byref(snap)) == 1
+        assert lib.LUMICE_PathCancelTokenPoll(token, None) == 1
+        snap.stage, snap.ticks = 6, 42
+        snap.struct_size = C.sizeof(snap) - 1
+        assert lib.LUMICE_PathCancelTokenPoll(token, C.byref(snap)) == 5
+        assert (snap.stage, snap.ticks) == (6, 42)
+
+        # a real survey through a workspace, carrying this token
+        faces = (C.c_int * 2)(3, 5)
+        counts = (C.c_int * 1)(2)
+        config = ROOT / "test" / "e2e" / "configs" / "raypath_analysis_halo_22.json"
+        scene = C.c_void_p()
+        assert lib.LUMICE_SceneFromJsonFile(str(config).encode(), C.byref(scene)) == 0
+        workspace = C.c_void_p()
+        err = C.create_string_buffer(256)
+        assert lib.LUMICE_PathWorkspaceCreate(scene, C.byref(workspace), err, len(err)) == 0, err.value
+        lib.LUMICE_SceneDestroy(scene)
+        request = SurveyRequest()
+        request.struct_size = C.sizeof(SurveyRequest)
+        request.crystal_id = 1
+        request.faces = faces
+        request.face_count = 2
+        request.layer_face_counts = counts
+        request.layer_count = 1
+        request.wavelength_nm = 550
+        request.budget_ms = 15000
+        options = QueryOptions()
+        options.struct_size = C.sizeof(options)
+        options.deadline_ms = 15000
+        options.cancel = token
+        result = C.c_void_p()
+        try:
+            assert lib.LUMICE_PathWorkspaceQuerySurvey(workspace, C.byref(request), C.byref(options),
+                                                       C.byref(result), err, len(err)) == 0, err.value
+        finally:
+            lib.LUMICE_PathSurveyDestroy(result)
+        lib.LUMICE_PathWorkspaceDestroy(workspace)
+
+        # settled-is-the-caller's-knowledge: the query returned and the token stays readable —
+        # frozen at the last stage it polled, ticks monotonic, no done value anywhere
+        snap.struct_size = C.sizeof(snap)  # the refusal section left it undersized on purpose
+        assert lib.LUMICE_PathCancelTokenPoll(token, C.byref(snap)) == 0
+        assert snap.ticks > 0
+        # the survey face's stage domain: assembly/support/chromatic/ess/tir/witness (1..6)
+        # plus the shared kernel folds (boundary walk 12, lattice scan 13)
+        assert snap.stage in {1, 2, 3, 4, 5, 6, 12, 13}, snap.stage
+        again = PollSnapshot()
+        again.struct_size = C.sizeof(again)
+        assert lib.LUMICE_PathCancelTokenPoll(token, C.byref(again)) == 0
+        assert (again.stage, again.ticks) == (snap.stage, snap.ticks)
+    finally:
+        lib.LUMICE_PathCancelTokenDestroy(token)
+
+
 def _run_independent_client(check):
     _product_library_path()
     run = subprocess.run([sys.executable, "-I", str(Path(__file__).resolve()), check],
@@ -742,6 +836,10 @@ def test_map_family_published_extents_and_cross_destroy_reads():
 
 def test_representative_ray_published_extents_and_cross_destroy_reads():
     _run_independent_client("ray")
+
+
+def test_cancel_token_poll_snapshot_shapes_and_live_ticks():
+    _run_independent_client("poll")
 
 
 def test_external_c_client_links_only_product_and_uses_typed_warm(tmp_path):
@@ -1040,4 +1138,5 @@ if __name__ == "__main__":
     {"point": _check_published_request_extents_and_future_tail_keep_borrowed_result_alive,
      "other": _check_other_request_families_accept_published_extents_and_preserve_future_tails,
      "map": _check_map_family_published_extents_and_cross_destroy_reads,
-     "ray": _check_representative_ray_published_extents_and_cross_destroy_reads}[sys.argv[1]]()
+     "ray": _check_representative_ray_published_extents_and_cross_destroy_reads,
+     "poll": _check_cancel_token_poll_snapshot}[sys.argv[1]]()

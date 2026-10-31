@@ -314,7 +314,10 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
     case SurveyOverviewState::kWaiting: {
       // The wait line is the pure function's output (unit-held bytes), and the same string is
       // reported to the render-feedback field: what the test reads is what was drawn (AC4).
-      const std::string wait_line = SurveyWaitLineFor(survey, ImGui::GetTime());
+      // The poll snapshot rides along: the stage clause appears only while the SURVEY face
+      // itself is computing, named from the engine's own ledger (742's wait grammar + 751).
+      const std::string wait_line =
+          SurveyWaitLineFor(survey, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
       g_state.analysis.wait_feedback_texts.survey_wait_line = wait_line;
       ImGui::TextUnformatted(wait_line.c_str());
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);

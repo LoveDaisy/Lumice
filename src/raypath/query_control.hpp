@@ -105,6 +105,118 @@ inline constexpr int kPollSurveyTirRows = 26;       // survey TIR share leg, the
 inline constexpr int kPollSurveyWitnessPhase = 27;  // survey witness leg, the post-lattice phase boundary
                                                     // (argmax + the pose's independent re-evaluation)
 
+// ---- The poll-stage curation (the liveness snapshot's vocabulary) --------------------------
+//
+// The raw ledger's last site + total ticks (analytic/stop.hpp) are engine facts; this table is
+// the ONE place that curates them into a user-readable stage and attributes each site to the
+// query faces whose runs can fire it. Every consumer (the C ABI's poll snapshot, the GUI's
+// wait-line text, the handshake tests' attribution assertions) reads this table — a second
+// site-to-stage spelling anywhere else is a policy fork.
+//
+// Stage semantics: a stage says which kind of work the query was last seen inside. It is NOT a
+// progress measure — poll counts count polling events, not remaining work, so there is no
+// percentage and no "done" value anywhere in this vocabulary (the honest boundary the C header
+// and the GUI text repeat). A quiet stretch between polls reads as the last reached stage.
+
+// The curated stage of a site. Coarse by design — kernel sites fold into the leg they belong
+// to, so internal re-polling or a site's renumbering never moves the ABI's vocabulary.
+enum class PollStage {
+  kNone,              // no poll yet (a fresh token), or an id outside the table
+  kSurveyAssembly,    // the survey's T0 routing verdicts (assembly and family arms)
+  kStructureSupport,  // per-member structure support (field + walk + partition + row)
+  kChromaticLeg,      // the survey chromatic pair leg
+  kEssSampling,       // the draw loops' budget judgment (the survey's opt-in MC ESS leg, the
+                      // report's discovery legs — never both in one query)
+  kTirShare,          // the survey TIR share leg (pass boundaries and in-phase row chunks)
+  kWitness,           // the survey witness leg's post-lattice phase
+  kEnumeration,       // the report enumeration's per-member anti-hang boundary
+  kProbeLambdas,      // the probe's per-lambda boundaries
+  kPointLegs,         // the point discovery legs' boundaries
+  kMapMembers,        // the map's per-member band sums
+  kFiberDiscovery,    // the point discovery's fiber phases (band lattice + pool clusters)
+  kBoundaryWalk,      // the structure assembly's boundary walk (march steps + piece rounds)
+  kLatticeScan,       // the 1024-sample event-lattice passes (tint/TIR/witness legs, the map's
+                      // per-member band sums, the probe's per-lambda band sums)
+};
+
+// The query faces a site can fire under (a bit set over these — FacesOfSite's vocabulary).
+// The point and probe faces run the survey's context-only assembly when no warm source
+// answers, so the assembly's sites attribute to them too; that overlap is measured fact, not
+// an accident to normalize away.
+enum PollFaceBit {
+  kPollFaceSurvey = 1 << 0,
+  kPollFaceMap = 1 << 1,
+  kPollFacePoint = 1 << 2,
+  kPollFaceProbe = 1 << 3,
+  kPollFaceReport = 1 << 4,
+};
+
+// One site's curated row. `faces` may be 0 with a stage still named: kPollKinkLattice's stage
+// is real vocabulary, but no raypath query face passes a stop into WeightKinks today (the
+// callers that would fire it all construct KinkOptions{}), so no face claims it — the first
+// handshake test that sees it tick fails, pinning the attribution until a face honestly owns it.
+struct PollSiteInfo {
+  int site;
+  PollStage stage;
+  unsigned faces;  // an or-combination of PollFaceBit values
+};
+
+inline constexpr PollSiteInfo kPollSiteTable[] = {
+  { kPollSurveyT0, PollStage::kSurveyAssembly, kPollFaceSurvey | kPollFacePoint | kPollFaceProbe },
+  { kPollStructureMember, PollStage::kStructureSupport, kPollFaceSurvey | kPollFacePoint | kPollFaceProbe },
+  { kPollProbeLambdas, PollStage::kProbeLambdas, kPollFaceProbe },
+  { kPollPointLegs, PollStage::kPointLegs, kPollFacePoint },
+  { kPollMcEssDraws, PollStage::kEssSampling, kPollFaceSurvey },  // declared; no call site today
+  { kPollEnumerationMember, PollStage::kEnumeration, kPollFaceReport },
+  { kPollSurveyChromatic, PollStage::kChromaticLeg, kPollFaceSurvey },
+  { kPollSamplerDraws, PollStage::kEssSampling, kPollFaceSurvey | kPollFaceReport },
+  { kPollMapMembers, PollStage::kMapMembers, kPollFaceMap },
+  { kPollSurveyTirPass, PollStage::kTirShare, kPollFaceSurvey },
+  { kPollSurveyTirRows, PollStage::kTirShare, kPollFaceSurvey },
+  { kPollSurveyWitnessPhase, PollStage::kWitness, kPollFaceSurvey },
+  { analytic::kPollBandLattice, PollStage::kFiberDiscovery, kPollFacePoint },
+  { analytic::kPollPoolClusters, PollStage::kFiberDiscovery, kPollFacePoint },
+  { analytic::kPollEventsLattice, PollStage::kLatticeScan, kPollFaceSurvey | kPollFaceMap | kPollFaceProbe },
+  { analytic::kPollWalkSteps, PollStage::kBoundaryWalk, kPollFaceSurvey | kPollFacePoint | kPollFaceProbe },
+  { analytic::kPollWalkPieces, PollStage::kBoundaryWalk, kPollFaceSurvey | kPollFacePoint | kPollFaceProbe },
+  { analytic::kPollKinkLattice, PollStage::kLatticeScan, 0u },
+};
+
+// The curated stage of a poll site; an id outside the table (including a fresh token's -1)
+// reads kNone. Linear scan over 18 rows — a snapshot read runs it once per call, not per ray.
+inline PollStage StageOfSite(int site) {
+  for (const PollSiteInfo& row : kPollSiteTable) {
+    if (row.site == site) {
+      return row.stage;
+    }
+  }
+  return PollStage::kNone;
+}
+
+// The faces whose runs can fire `site`; an id outside the table reads 0 (no face claims it).
+inline unsigned FacesOfSite(int site) {
+  for (const PollSiteInfo& row : kPollSiteTable) {
+    if (row.site == site) {
+      return row.faces;
+    }
+  }
+  return 0u;
+}
+
+// The attribution contract as a read (the tests pin it, the same way they pin the resolution
+// counters): the first site in [0, kSiteCount) whose counter moved during `token`'s run
+// without `faces` claiming it, or -1 when the run stayed inside its attribution. A nonzero
+// return is either a table lie or a call site the table never saw — fix the table, never the
+// assertion.
+inline int FirstUnattributedPollSite(const analytic::StopToken& token, unsigned faces) {
+  for (int site = 0; site < analytic::StopToken::kSiteCount; ++site) {
+    if (token.PollCount(site) > 0 && (FacesOfSite(site) & faces) == 0u) {
+      return site;
+    }
+  }
+  return -1;
+}
+
 // The outcome a face records from its stop: completed unless its authority observed a reason.
 // (The stop argument is the LAST thing the face polled; a cancel racing the final poll reads
 // as completed — the run was over.)

@@ -2,6 +2,7 @@
 
 #include <chrono>
 
+#include "analytic/stop.hpp"
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/quantity/mc_ess.hpp"
 #include "raypath/detail/schema3/report_assembly.hpp"
@@ -194,6 +195,46 @@ TEST(QueryControl, McEssLegResolvesItsGuardrailOnce) {
   }
 }
 
+// ---- the poll-stage curation's static reads (the snapshot vocabulary's one table) ----------
+
+TEST(QueryControl, PollStageTableCoversItsSitesAndLeavesUnknownIdsUnnamed) {
+  for (const PollSiteInfo& row : kPollSiteTable) {
+    EXPECT_NE(row.stage, PollStage::kNone) << "site " << row.site << " carries no stage";
+    if (row.site != analytic::kPollKinkLattice) {
+      EXPECT_NE(row.faces, 0u) << "site " << row.site
+                               << " carries no face attribution (the one documented exception is the kink lattice)";
+    }
+    EXPECT_EQ(StageOfSite(row.site), row.stage);
+    EXPECT_EQ(FacesOfSite(row.site), row.faces);
+  }
+  // The ids outside the table stay unnamed — including a fresh token's -1 and the range gaps.
+  for (const int absent : { -1, 6, 15, 28, 31, 99 }) {
+    EXPECT_EQ(StageOfSite(absent), PollStage::kNone) << "site " << absent << " must stay unnamed";
+    EXPECT_EQ(FacesOfSite(absent), 0u);
+  }
+}
+
+// The liveness snapshot's structural reads: a fresh token reads -1 / 0 (the idle shape the
+// poll snapshot's semantics build on), the last site overwrites, and the tick only grows —
+// monotonicity is the fetch_add's structural property, pinned here as the snapshot's contract.
+TEST(QueryControl, StopTokenLivenessSnapshotIsMonotonicAndOverwrites) {
+  analytic::StopToken token;
+  EXPECT_EQ(token.LastPolledSite(), -1);
+  EXPECT_EQ(token.TotalPolls(), 0);
+  token.NotePoll(kPollSurveyT0);
+  token.NotePoll(kPollStructureMember);
+  token.NotePoll(kPollStructureMember);
+  EXPECT_EQ(token.TotalPolls(), 3);
+  EXPECT_EQ(token.LastPolledSite(), kPollStructureMember);
+  const long seen = token.TotalPolls();
+  for (int site = 0; site < analytic::StopToken::kSiteCount; ++site) {
+    token.NotePoll(site);
+    EXPECT_EQ(token.TotalPolls(), seen + site + 1);  // exactly one tick per poll, never fewer
+    EXPECT_GE(token.LastPolledSite(), 0);
+  }
+  EXPECT_EQ(token.LastPolledSite(), analytic::StopToken::kSiteCount - 1);
+}
+
 }  // namespace
 }  // namespace lumice::raypath
 
@@ -277,6 +318,13 @@ struct WorkerHandle {
 constexpr auto kEnterBound = std::chrono::seconds(30);
 constexpr auto kJoinBound = std::chrono::seconds(30);
 
+// The attribution half of the stage table's contract (FirstUnattributedPollSite in
+// query_control.hpp): every site the run ticked must be one the table attributes to the face.
+void ExpectSitesWithinFaceAttribution(const analytic::StopToken& token, unsigned face, const char* what) {
+  const int stray = FirstUnattributedPollSite(token, face);
+  EXPECT_EQ(stray, -1) << what << " ticked site " << stray << ", which the stage table does not attribute to it";
+}
+
 // The context assembly (the S0 measurement's dominant unsplittable block: 12.8 s, zero polls
 // then) is entered, cancelled, and returns with the named refusal — never a fabricated context.
 TEST(QueryStopHandshake, PointContextIsEnteredThenCancelled) {
@@ -306,6 +354,7 @@ TEST(QueryStopHandshake, PointContextIsEnteredThenCancelled) {
   EXPECT_GT(token.PollCount(kPollStructureMember), 0);
   EXPECT_GT(token.PollCount(analytic::kPollWalkSteps) + token.PollCount(analytic::kPollWalkPieces), 0)
       << "the walk's own step/piece polls are the coverage evidence";
+  ExpectSitesWithinFaceAttribution(token, kPollFacePoint, "the point context");
 }
 
 // The discovery legs: entered via the lattice poll, cancelled mid-lattice, partial components.
@@ -329,6 +378,7 @@ TEST(QueryStopHandshake, PointDiscoveryIsEnteredThenCancelled) {
   ASSERT_TRUE(worker.JoinBounded(kJoinBound)) << "the discovery legs ignored the cancel";
   EXPECT_EQ(result.Data().meta.execution, ExecutionOutcome::kCancelled);
   EXPECT_TRUE(result.Data().meta.interrupted);
+  ExpectSitesWithinFaceAttribution(token, kPollFacePoint, "the point discovery");
 }
 
 // The legacy signal entry stays a first-class cancel: the same single authority reads it, the
@@ -358,6 +408,7 @@ TEST(QueryStopHandshake, TheLegacySignalFlagIsAnExplicitCancel) {
   EXPECT_FALSE(observer.CancelRequested());  // the token never fired: the signal alone stopped it
   EXPECT_EQ(result.Data().meta.execution, ExecutionOutcome::kCancelled);  // the signal IS an explicit cancel
   EXPECT_TRUE(result.Data().meta.interrupted);
+  ExpectSitesWithinFaceAttribution(observer, kPollFacePoint, "the signal-entry point run");
 }
 
 // The probe's context phase (the S0 measurement's dominant block, and the exact path where a
@@ -385,6 +436,7 @@ TEST(QueryStopHandshake, ProbeContextIsEnteredThenCancelled) {
   EXPECT_EQ(result.Data().context.edge.reason, "stop_requested");
   EXPECT_TRUE(result.Data().context.cut_by_stop);  // the typed signal, not the display string
   EXPECT_TRUE(result.Data().meta.interrupted);     // the first lambda boundary saw the token
+  ExpectSitesWithinFaceAttribution(token, kPollFaceProbe, "the probe context");
 }
 
 // The probe's lambda phase: entered via the lattice poll, cancelled mid-line, the cut profile
@@ -417,6 +469,7 @@ TEST(QueryStopHandshake, ProbeLambdaLineIsEnteredThenCancelled) {
     }
   }
   EXPECT_TRUE(any_stop_refused);
+  ExpectSitesWithinFaceAttribution(token, kPollFaceProbe, "the probe lambda line");
 }
 
 // Deadline and cancel stay separately observable (the outcome axis's whole point): the same
@@ -470,6 +523,7 @@ TEST(QueryStopHandshake, McEssDrawsAreEnteredThenCancelled) {
   ASSERT_TRUE(worker.JoinBounded(kJoinBound)) << "the MC draws ignored the cancel";
   EXPECT_EQ(ess.State(), survey::EvidenceState::kRefused);
   EXPECT_EQ(std::string(ess.Mode()), "budget_exhausted");  // the leg's honest truncation shape
+  ExpectSitesWithinFaceAttribution(token, kPollFaceSurvey, "the MC ESS leg");
 }
 
 // The report's phases in one handshake: discovery entered (sampler polls), then the
@@ -496,6 +550,7 @@ TEST(QueryStopHandshake, ReportEnumerationIsEnteredThenCancelled) {
   ASSERT_TRUE(worker.JoinBounded(kJoinBound)) << "the report ignored the cancel";
   EXPECT_EQ(result.Data().execution, ExecutionOutcome::kCancelled);
   EXPECT_TRUE(result.Data().core.budget.truncated);  // the cut is declared, never hidden
+  ExpectSitesWithinFaceAttribution(token, kPollFaceReport, "the report pipeline");
 }
 
 }  // namespace
