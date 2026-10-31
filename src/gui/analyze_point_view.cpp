@@ -703,33 +703,6 @@ bool BuildPointCrystalMesh(const CrystalConfig& cr, LUMICE_CrystalMesh* out) {
   return LUMICE_GetCrystalMesh(&param, /*sample_seed=*/0, out) == LUMICE_OK;
 }
 
-// The orbit camera's screen basis: yaw about the display frame's vertical (+z), pitch from the
-// horizontal, orthographic. Pitch clamps short of the pole; the right axis's own singularity is
-// handled at the normalization below.
-void OrbitBasis(float yaw_deg, float pitch_deg, double right[3], double up[3]) {
-  const double yaw = static_cast<double>(yaw_deg) * (3.14159265358979323846 / 180.0);
-  const double pitch = std::clamp(static_cast<double>(pitch_deg), -88.0, 88.0) * (3.14159265358979323846 / 180.0);
-  const double fwd[3] = { std::cos(pitch) * std::cos(yaw), std::sin(pitch), std::cos(pitch) * std::sin(yaw) };
-  // right = fwd x worldUp (+z the crystal's c-axis display convention), up = right x fwd. The
-  // normalizer's floor keeps the horizontal look (pitch 0 at yaw ±90°, fwd parallel to +z — the
-  // one real singularity of this cross product) defined instead of trusting the double-rounded
-  // cosine to stay off zero.
-  right[0] = fwd[1] * 1.0 - fwd[2] * 0.0;
-  right[1] = fwd[2] * 0.0 - fwd[0] * 1.0;
-  right[2] = 0.0;
-  const double n = std::sqrt(right[0] * right[0] + right[1] * right[1]);
-  if (n < 1e-12) {
-    right[0] = 1.0;
-    right[1] = 0.0;
-  } else {
-    right[0] /= n;
-    right[1] /= n;
-  }
-  up[0] = right[1] * fwd[2] - right[2] * fwd[1];
-  up[1] = right[2] * fwd[0] - right[0] * fwd[2];
-  up[2] = right[0] * fwd[1] - right[1] * fwd[0];
-}
-
 void RotateBodyToWorld(const double pose[9], const float v[3], float out[3]) {
   out[0] = static_cast<float>(pose[0] * v[0] + pose[1] * v[1] + pose[2] * v[2]);
   out[1] = static_cast<float>(pose[3] * v[0] + pose[4] * v[1] + pose[5] * v[2]);
@@ -748,6 +721,42 @@ ImU32 SegmentColor(int kind, float alpha) {
 }
 
 }  // namespace
+
+// The 3D view's orthographic orbit basis in the display frame (declared in the hpp for the
+// gui_test pin to consume the same basis the renderer draws with; the convention is doc'd in
+// doc/geometry/coordinate-convention.md §9.8).
+void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]) {
+  const double yaw = static_cast<double>(yaw_deg) * (3.14159265358979323846 / 180.0);
+  const double pitch = std::clamp(static_cast<double>(pitch_deg), -88.0, 88.0) * (3.14159265358979323846 / 180.0);
+  // z-up spherical coordinates about the scene's display convention (the crystal's c-axis, +z,
+  // is up on screen): yaw sweeps the horizontal plane, pitch rises from it. `fwd` is the view
+  // direction, from the viewer INTO the scene — the eye and the visible near face are on the
+  // −fwd side (with up = right x fwd below, the basis satisfies right x up = −fwd).
+  fwd[0] = std::cos(pitch) * std::cos(yaw);
+  fwd[1] = std::cos(pitch) * std::sin(yaw);
+  fwd[2] = std::sin(pitch);
+  // right = fwd x worldUp, up = right x fwd. With |pitch| <= 88° the clamp keeps cos(pitch)
+  // >= 0.035, so `right` normalizes to exactly (sin yaw, −cos yaw, 0) — a function of the yaw
+  // alone, which is what makes a pure pitch drag unable to move anything on screen sideways
+  // (the gui_test pin asserts that as an exact invariant). The pitch clamp is also what
+  // prevents this cross product's one real singularity (fwd parallel to +z at pitch ±90°); the
+  // `n < 1e-12` branch below is an unreachable defense against the double-rounded cosine,
+  // kept so the normalizer never divides by zero even if the clamp were ever widened.
+  right[0] = fwd[1] * 1.0 - fwd[2] * 0.0;
+  right[1] = fwd[2] * 0.0 - fwd[0] * 1.0;
+  right[2] = 0.0;
+  const double n = std::sqrt(right[0] * right[0] + right[1] * right[1]);
+  if (n < 1e-12) {
+    right[0] = 1.0;
+    right[1] = 0.0;
+  } else {
+    right[0] /= n;
+    right[1] /= n;
+  }
+  up[0] = right[1] * fwd[2] - right[2] * fwd[1];
+  up[1] = right[2] * fwd[0] - right[0] * fwd[2];
+  up[2] = right[0] * fwd[1] - right[1] * fwd[0];
+}
 
 const CrystalConfig* FrozenCrystalForPool(const GuiState& state, int pool) {
   if (pool < 0 || pool >= static_cast<int>(state.analysis.frozen_crystals.size())) {
@@ -1334,8 +1343,12 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     const bool active = ImGui::IsItemActive();
     if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
       const ImVec2 delta = ImGui::GetIO().MouseDelta;
-      view.orbit_yaw_deg += delta.x * 0.5f;
-      view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg + delta.y * 0.5f, -88.0f, 88.0f);
+      // Grab convention — the project's one drag metaphor (Render main view inside-out and Globe
+      // alike, the modal preview trackball, this orbit camera; doc/geometry/coordinate-convention.md
+      // §9.8): the content's near face follows the hand. Right drag → yaw decreases; down drag →
+      // pitch decreases.
+      view.orbit_yaw_deg -= delta.x * 0.5f;
+      view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg - delta.y * 0.5f, -88.0f, 88.0f);
     }
     if (ImGui::IsItemHovered() && std::abs(ImGui::GetIO().MouseWheel) > 0.0f) {
       view.orbit_zoom =
@@ -1347,9 +1360,10 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     const float side = std::min(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y);
     const float scale = (side * 0.42f / fit) * std::clamp(view.orbit_zoom, 0.25f, 8.0f);
     const ImVec2 mid((canvas_min.x + canvas_max.x) * 0.5f, (canvas_min.y + canvas_max.y) * 0.5f);
+    double fwd[3];
     double right[3];
     double up[3];
-    OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, right, up);
+    OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
     auto project = [&](const float p[3]) {
       const double dx = static_cast<double>(p[0]) - centre[0];
       const double dy = static_cast<double>(p[1]) - centre[1];

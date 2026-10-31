@@ -181,6 +181,20 @@ enum class RayTraceDisplayState { kHidden, kComputing, kDrawn, kRefused, kError 
 // session's own key — a stale pose's polyline is never drawn (the gate).
 RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const RayTraceKey& current_key);
 
+// ---- The raypath 3D orbit camera ---------------------------------------------------------------------
+
+// The 3D region's orthographic orbit basis in the display frame, z-up (the crystal's c-axis
+// display convention): `yaw_deg` sweeps the horizontal plane from +x toward +y, `pitch_deg`
+// rises from that plane toward +z (clamped to ±88°, short of the pole). `fwd` is the view
+// direction, from the viewer INTO the scene — the eye and the visible near face sit on the
+// −fwd side, and with `up = right × fwd` the basis satisfies right × up = −fwd. `right`/`up`
+// are the screen axes, `right` a function of the yaw alone — exactly (sin yaw, −cos yaw, 0).
+// The drag signs are the caller's grab mapping (doc/geometry/coordinate-convention.md §9.8
+// has the three-camera table). Exposed — not a TU-local helper — so the gui_test pin reads
+// the SAME basis the renderer draws with (the convention's single authority; the test never
+// re-derives it).
+void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]);
+
 // ---- The pumps and renderers (GuiState-dependent, defined in the .cpp) ------------------------------
 
 // The point face's frame pump — the map pump's sibling: drains the executor's point mailbox
