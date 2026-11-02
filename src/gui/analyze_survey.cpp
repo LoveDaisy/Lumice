@@ -348,8 +348,6 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
       MapHandle map_result;
       PointHandle point_result;
       RepresentativeRayHandle ray_result;
-      GUI_LOG_INFO("[survey trace] pickup face={} id={}/{}", static_cast<int>(job.face), job.id.generation,
-                   job.id.serial);
       lock.unlock();
       if (!impl->workspace) {
         // The binding is unusable under this query. Name WHICH failure honestly (R7): a
@@ -396,8 +394,6 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
                                                               sizeof(err));
         ray_result = RepresentativeRayHandle(raw, RepresentativeRayDeleter{});
       }
-      GUI_LOG_INFO("[survey trace] finish face={} id={}/{} err={} '{}'", static_cast<int>(job.face), job.id.generation,
-                   job.id.serial, static_cast<int>(err_code), err);
       lock.lock();
       // Clear the member only while it still names THIS job's token — the worker wrote it at
       // this job's pickup, and nothing else writes it, so this is the matching unregister.

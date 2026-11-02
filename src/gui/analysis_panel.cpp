@@ -141,8 +141,6 @@ bool AdoptAnalysisPayloadIfNew(GuiState& state, const std::shared_ptr<const Anal
   if (payload->snapshot_generation <= held) {
     return false;
   }
-  GUI_LOG_INFO("[survey trace] adopting payload {} -> {}, clearing selection '{}'", held, payload->snapshot_generation,
-               state.analysis.selected_entry.value_or("none"));
   state.analysis_result.payload = payload;
   state.analysis.selected_entry.reset();
   RecomputeAnalysisDisplayOrder(state);

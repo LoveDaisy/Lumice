@@ -146,29 +146,8 @@ struct ScopedServerGuard {
 template <typename Pred>
 bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
-  std::string last_trace;
   while (!pred()) {
-    const auto& state = gui::g_state;
-    const auto& survey = state.analysis.survey;
-    const auto poll = gui::g_survey_executor.InflightPollSnapshot();
-    const std::string trace =
-        std::to_string(static_cast<int>(state.sim_state)) + "/" + std::to_string(state.analysis_run_in_progress) + "/" +
-        std::to_string(state.analysis_result.payload ? state.analysis_result.payload->snapshot_generation : 0) + "/" +
-        state.analysis.selected_entry.value_or("none") + "/" +
-        std::to_string(static_cast<int>(gui::SurveyOverviewStateFor(survey))) + "/" +
-        std::to_string(survey.intent_id.generation) + "/" + std::to_string(survey.intent_id.serial) + "/" +
-        std::to_string(gui::g_survey_executor.QueryOutstanding(gui::QueryFace::kSurvey)) + "/" +
-        std::to_string(poll.in_flight) + "/" + std::to_string(static_cast<int>(poll.face)) + "/" +
-        std::to_string(static_cast<int>(poll.stage));
-    if (trace != last_trace) {
-      ctx->LogInfo(
-          "[survey trace] sim/progress/payload/selection/state/id.gen/id.serial/outstanding/inflight/face/stage=%s "
-          "error=%s",
-          trace.c_str(), survey.adopted_error.c_str());
-      last_trace = trace;
-    }
     if (std::chrono::steady_clock::now() > deadline) {
-      ctx->LogInfo("[survey trace] deadline: %s", trace.c_str());
       return false;
     }
     ctx->Yield();
@@ -1298,6 +1277,11 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_digest.png").string()),
                 false);
 
+  // Capture values before Re-Analyze resets the session; a reference to survey would then
+  // alias the new generation rather than retain the old outcome for the attribution checks.
+  const gui::SurveyQueryId first_intent = survey.intent_id;
+  const gui::SurveyHandle first_result = survey.adopted_result;
+
   // Re-Analyze: the selection clears, the survey bookkeeping dies with it (R6 — no adopted
   // outcome survives into the next generation's region), and a straggler of the old generation
   // would find no intent to land under.
@@ -1311,15 +1295,16 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.empty(), false);
   ctx->LogInfo("[survey digest] re-analyze voided the old generation's intent and outcome");
 
-  // The next generation answers again, under the new generation's id.
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      return gui::g_state.analysis_result.payload != nullptr &&
-                             gui::g_state.sim_state != SimState::kSimulating;
-                    },
-                    60),
-                false);
+  // The next generation answers again, under the new generation's id. sim_state describes
+  // the render, not this analysis: it can stay Done while partial analysis payloads arrive.
+  // Wait for the analysis itself, or its final snapshot can clear a selection made too early.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::g_state.analysis_result.payload != nullptr && !gui::g_state.analysis_run_in_progress; },
+          60),
+      false);
+  const unsigned long long next_generation = gui::g_state.analysis_result.payload->snapshot_generation;
+  IM_CHECK_RETV(next_generation > generation, false);
   const std::string next_display = TopChainDisplay();
   SetListRef(ctx);
   ctx->ItemClick((std::string("**/") + next_display).c_str());
@@ -1334,6 +1319,11 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
                 false);
   IM_CHECK_RETV(
       gui::g_state.analysis.survey.key.generation == gui::g_state.analysis_result.payload->snapshot_generation, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.key.generation == next_generation, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id.generation == next_generation, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id != first_intent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != first_result, false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry == std::optional<std::string>{ next_display }, false);
   ctx->LogInfo("[survey digest] re-armed under generation %llu", gui::g_state.analysis.survey.key.generation);
   return true;
 }
