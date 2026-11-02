@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793649331777,
+  "lastUpdate": 1793650646325,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5a6e0df8340efd9cf0b86e005e69a70cd1d7bf5c",
-          "message": "Merge pull request #453 from LoveDaisy/scrum/capability-libs\n\nOrganize the C API and engine by capability",
-          "timestamp": "2026-09-30T22:20:49+08:00",
-          "tree_id": "e33e93629598cfbac336b950cd72445b26fb5b14",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/5a6e0df8340efd9cf0b86e005e69a70cd1d7bf5c"
-        },
-        "date": 1790779822521,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 328879.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 511989.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 417924,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 288862.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4792,6 +4744,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 310530.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9930c9a89fd804e79320f1faa457c33a994c3839",
+          "message": "Merge pull request #562 from LoveDaisy/feat/msvc-math-macro-gate\n\nfix(policy): reject MSVC-unsafe math constant macros",
+          "timestamp": "2026-11-03T04:13:23+08:00",
+          "tree_id": "84c5c41207c1680acdcccc3a71c06f77fc6b7652",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/9930c9a89fd804e79320f1faa457c33a994c3839"
+        },
+        "date": 1793650642483,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 423324.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 504749,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 366590.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 305955.3,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
