@@ -26,11 +26,13 @@
 #include <string>
 
 #include "gui/app.hpp"
+#include "gui/color_window.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/server_poller.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
 #include "support/gui_server_lifetime.hpp"
+#include "support/live_server.hpp"
 #include "support/server_poller_test_peer.hpp"
 
 namespace lumice::gui {
@@ -57,10 +59,13 @@ TEST(RunLifecycleChain, TestTeardownJoinsTheAsyncStopBeforeTouchingTheServer) {
       LUMICE_DestroyServer(g_server);
       g_server = nullptr;
       g_state.run_intent = RunIntent::kNone;
+      g_state.raypath_color.clear();
     }
   } cleanup;
   g_server = LUMICE_CreateServer();
   ASSERT_NE(g_server, nullptr);
+  ASSERT_EQ(test::CommitSceneJson(g_server, test::kColorSceneJson), LUMICE_OK);
+  g_state.raypath_color.resize(1);
   g_state.run_intent = RunIntent::kRunning;
   g_state.analysis.started = true;
   auto publication = ServerPollerTestPeer::HoldPublication(g_server_poller);
@@ -84,12 +89,18 @@ TEST(RunLifecycleChain, TestTeardownJoinsTheAsyncStopBeforeTouchingTheServer) {
   });
   entered.wait();
   const bool returned = joined.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready;
-  publication.unlock();  // Release before every assertion or future destructor that can return.
+  // Frame-tail display edits remain live while DoStop drains. They must defer rather than
+  // re-open kRunning (and reset per-resume fields) under this in-flight paused worker.
+  const bool pushed_while_stopping = PushDisplayState(g_state, g_server);
+  publication.unlock();    // Release before every assertion or future destructor that can return.
+  g_server_poller.Stop();  // also recover a deliberately broken display wake before joining
   const bool still_inflight_at_return = joined.get();
   JoinPendingStop();  // recovery also owns the task when the prefix is deliberately broken
   EXPECT_FALSE(returned) << "test teardown passed a still-running async Stop";
   EXPECT_FALSE(still_inflight_at_return);
   EXPECT_FALSE(g_stop_inflight.load());
+  EXPECT_FALSE(pushed_while_stopping);
+  EXPECT_TRUE(PushDisplayState(g_state, g_server)) << "deferred display state must be retryable after Stop";
 }
 
 // ---------------------------------------------------------------------------------------------
