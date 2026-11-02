@@ -146,8 +146,29 @@ struct ScopedServerGuard {
 template <typename Pred>
 bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
+  std::string last_trace;
   while (!pred()) {
+    const auto& state = gui::g_state;
+    const auto& survey = state.analysis.survey;
+    const auto poll = gui::g_survey_executor.InflightPollSnapshot();
+    const std::string trace =
+        std::to_string(static_cast<int>(state.sim_state)) + "/" + std::to_string(state.analysis_run_in_progress) + "/" +
+        std::to_string(state.analysis_result.payload ? state.analysis_result.payload->snapshot_generation : 0) + "/" +
+        state.analysis.selected_entry.value_or("none") + "/" +
+        std::to_string(static_cast<int>(gui::SurveyOverviewStateFor(survey))) + "/" +
+        std::to_string(survey.intent_id.generation) + "/" + std::to_string(survey.intent_id.serial) + "/" +
+        std::to_string(gui::g_survey_executor.QueryOutstanding(gui::QueryFace::kSurvey)) + "/" +
+        std::to_string(poll.in_flight) + "/" + std::to_string(static_cast<int>(poll.face)) + "/" +
+        std::to_string(static_cast<int>(poll.stage));
+    if (trace != last_trace) {
+      ctx->LogInfo(
+          "[survey trace] sim/progress/payload/selection/state/id.gen/id.serial/outstanding/inflight/face/stage=%s "
+          "error=%s",
+          trace.c_str(), survey.adopted_error.c_str());
+      last_trace = trace;
+    }
     if (std::chrono::steady_clock::now() > deadline) {
+      ctx->LogInfo("[survey trace] deadline: %s", trace.c_str());
       return false;
     }
     ctx->Yield();
