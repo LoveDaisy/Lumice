@@ -204,8 +204,10 @@ class ServerPoller {
   // Start polling with the given server. Sets server pointer and wakes worker.
   void Start(LUMICE_Server* server);
 
-  // Synchronously pause the worker. Returns only after the worker has confirmed
-  // it is no longer accessing the server. Safe to call multiple times.
+  // Synchronously pause the worker. Every return, including repeated/concurrent Stops,
+  // waits until the worker is no longer accessing the server. The lifecycle owner must
+  // prevent Start/Wake calls throughout this stop/destroy interval; this does not join
+  // other server users (in particular DoStop's async task — use JoinPendingStop for it).
   //
   // "No longer accessing the server" is load-bearing, not a nicety: callers destroy the server
   // immediately afterwards (MaybeReconstructServerForConstructionProperties does Stop() then

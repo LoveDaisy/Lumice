@@ -909,6 +909,25 @@ TEST(ServerPollerShutdown, EveryConcurrentStopWaitsForTheInFlightPoll) {
   EXPECT_FALSE(gui::ServerPollerTestPeer::Active(poller));
 }
 
+TEST(ServerPollerShutdown, DestructionJoinsTheInFlightPoll) {
+  LiveServer server;
+  auto poller = std::make_unique<gui::ServerPoller>();
+  auto publication = gui::ServerPollerTestPeer::HoldPublication(*poller);
+  poller->WakeForRefresh(server);
+  ASSERT_TRUE(gui::ServerPollerTestPeer::WaitForActive(*poller, false));
+  std::promise<void> entering;
+  auto entered = entering.get_future();
+  auto destroyed = std::async(std::launch::async, [&] {
+    entering.set_value();
+    poller.reset();
+  });
+  entered.wait();
+  const bool returned = destroyed.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready;
+  publication.unlock();
+  destroyed.get();
+  EXPECT_FALSE(returned) << "destruction returned before the worker's final server access";
+}
+
 // ---- The analysis result: materialized once per generation, carried forward, fenced on demand ----
 //
 // An analysis session's frames carry a histogram and no image, so they never enter the texture

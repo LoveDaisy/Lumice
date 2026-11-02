@@ -41,6 +41,7 @@
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
 #include "include/lumice_render.h"
+#include "support/gui_server_lifetime.hpp"
 #include "test_gui_shared.hpp"
 #include "util/raypath_analysis_display.hpp"
 #include "util/sky_direction.hpp"
@@ -129,6 +130,7 @@ const char* const kPcTwoLayerJson = R"({
 // the case, and a server left running would be inherited by the next one.
 struct ScopedServerGuard {
   ~ScopedServerGuard() {
+    lumice::test::JoinGuiServerTasksForTeardown();
     if (gui::g_server != nullptr) {
       gui::g_server_poller.Stop();
       LUMICE_StopServer(gui::g_server);
@@ -622,6 +624,7 @@ bool RunAfterAnalysisRenders(ImGuiTestContext* ctx, bool exclude, bool gpu) {
 // Replace the app's server with one that has never committed anything, so that whatever the
 // next analysis traces cannot have come from a run this server saw.
 bool ReplaceServerWithAFreshOne(ImGuiTestContext* ctx) {
+  lumice::test::JoinGuiServerTasksForTeardown();
   gui::g_server_poller.Stop();
   if (gui::g_server != nullptr) {
     LUMICE_StopServer(gui::g_server);

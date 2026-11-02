@@ -20,6 +20,8 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 
@@ -28,6 +30,8 @@
 #include "gui/server_poller.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
+#include "support/gui_server_lifetime.hpp"
+#include "support/server_poller_test_peer.hpp"
 
 namespace lumice::gui {
 namespace {
@@ -38,6 +42,54 @@ PreviewSnapshot MakeSnapshot(unsigned long long epoch, int lifecycle) {
   snap.epoch = epoch;
   snap.lifecycle = lifecycle;
   return snap;
+}
+
+// The teardown prefix must join the WHOLE DoStop task, not merely observe its optimistic
+// analysis intent or the poller's pause request. Test the exact prefix used by GUI guards
+// separately from Stop(), so fixing Stop cannot mask a missing future join here.
+TEST(RunLifecycleChain, TestTeardownJoinsTheAsyncStopBeforeTouchingTheServer) {
+  test::JoinGuiServerTasksForTeardown();
+  g_server_poller.Stop();
+  struct Cleanup {
+    ~Cleanup() {
+      JoinPendingStop();
+      g_server_poller.Stop();
+      LUMICE_DestroyServer(g_server);
+      g_server = nullptr;
+      g_state.run_intent = RunIntent::kNone;
+    }
+  } cleanup;
+  g_server = LUMICE_CreateServer();
+  ASSERT_NE(g_server, nullptr);
+  g_state.run_intent = RunIntent::kRunning;
+  g_state.analysis.started = true;
+  auto publication = ServerPollerTestPeer::HoldPublication(g_server_poller);
+  g_server_poller.WakeForRefresh(g_server);
+  ASSERT_TRUE(ServerPollerTestPeer::WaitForActive(g_server_poller, false));
+  DoStop();
+  const bool paused_in_flight = ServerPollerTestPeer::WaitForActive(g_server_poller, true);
+  if (!paused_in_flight) {
+    publication.unlock();
+    JoinPendingStop();
+    FAIL() << "DoStop never reached its poller barrier";
+  }
+  EXPECT_FALSE(g_state.analysis.started);  // withdrawn intent, yet the task still owns the server
+  EXPECT_TRUE(g_stop_inflight.load());
+  std::promise<void> entering;
+  auto entered = entering.get_future();
+  auto joined = std::async(std::launch::async, [&] {
+    entering.set_value();
+    test::JoinGuiServerTasksForTeardown();
+    return g_stop_inflight.load();
+  });
+  entered.wait();
+  const bool returned = joined.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready;
+  publication.unlock();  // Release before every assertion or future destructor that can return.
+  const bool still_inflight_at_return = joined.get();
+  JoinPendingStop();  // recovery also owns the task when the prefix is deliberately broken
+  EXPECT_FALSE(returned) << "test teardown passed a still-running async Stop";
+  EXPECT_FALSE(still_inflight_at_return);
+  EXPECT_FALSE(g_stop_inflight.load());
 }
 
 // ---------------------------------------------------------------------------------------------
