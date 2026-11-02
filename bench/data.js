@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793649329673,
+  "lastUpdate": 1793649331777,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "9282fe084bf6c22f1620b39162daca6413f1cd29",
-          "message": "Merge pull request #446 from LoveDaisy/scrum/analytic-wave2\n\nliblumice_analytic wave 2: per-pose diagnostics (API 5), band sum module B (API 6), 93 LI parity fixtures",
-          "timestamp": "2026-09-30T08:45:42+08:00",
-          "tree_id": "6d73ac11e978bac05aa5833e3d6725c7fa212092",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/9282fe084bf6c22f1620b39162daca6413f1cd29"
-        },
-        "date": 1790729854095,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "c0f0e1fe7ec5d6c1f1ebc35c76c60ee01de9c46b",
           "message": "Merge pull request #452 from LoveDaisy/chore/analytic-docs-weight-kink-critical-lines\n\ndocs(analytic): three kinds of critical lines; LI 31c682e parity fixtures (94)",
           "timestamp": "2026-09-30T19:42:02+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dabd3f70e5c64ffd45b2e93832dcdd02e1fe19fd",
+          "message": "Merge pull request #560 from LoveDaisy/fix/analyze-reanalyze-survey-validation-blocker\n\nfix(gui): synchronize analysis reselection and quiesce teardown",
+          "timestamp": "2026-11-03T03:49:26+08:00",
+          "tree_id": "e1322da05e898511f4110603b9c181c936522363",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/dabd3f70e5c64ffd45b2e93832dcdd02e1fe19fd"
+        },
+        "date": 1793649331353,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 96.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.2,
             "unit": "%"
           }
         ]
