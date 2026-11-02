@@ -2478,7 +2478,8 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
           // 1, Major #3). Skip the push entirely while calibration is still actually running
           // (s_last_pushed_ev is left unset, so this condition is re-evaluated true every frame
           // until it isn't — no state is lost, the push just lands once calibration finishes).
-          !CalibrationPending()) {
+          // The async Stop has the same exclusion: do not re-wake the worker it is pausing.
+          !CalibrationPending() && !g_stop_inflight.load()) {
         LUMICE_SetCompositeExposure(g_server, composite_ev_push);
         // Wake a paused poller so the next frame can pick up the freshly re-baked
         // composite even after a finite sim has completed (same rationale as the

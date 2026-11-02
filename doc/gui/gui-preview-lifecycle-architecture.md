@@ -185,7 +185,9 @@ CUDA 超大 batch 中途无法响应。第一性原理：
 此外，poller 静止不等于所有 server 使用者已退出：销毁/重建者还须在触碰 server 前调用
 `JoinPendingStop()`（启动校准同理由 `JoinPendingCalibration()` 负责）。`analysis.started=false`
 是命令侧撤回意图，不是异步 Stop 完成凭据。正常 DoStop 仍在后台等待，不为销毁屏障改成 UI
-线程阻塞。GUI 测试的 guard 和跨用例 reset 同样承担此所有者责任。
+线程阻塞。两处 display-time 刷新（颜色状态与 composite EV）在 `g_stop_inflight` 为真时非阻塞
+地跳过整个 push/wake，保留未推送基线供后续帧重试，避免停止期间重新开启 worker。GUI 测试的
+guard 和跨用例 reset 同样承担异步任务 join 的所有者责任。
 
 ---
 
