@@ -41,6 +41,7 @@
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
 #include "include/lumice_render.h"
+#include "support/gui_server_lifetime.hpp"
 #include "test_gui_shared.hpp"
 #include "util/raypath_analysis_display.hpp"
 #include "util/sky_direction.hpp"
@@ -129,6 +130,7 @@ const char* const kPcTwoLayerJson = R"({
 // the case, and a server left running would be inherited by the next one.
 struct ScopedServerGuard {
   ~ScopedServerGuard() {
+    lumice::test::JoinGuiServerTasksForTeardown();
     if (gui::g_server != nullptr) {
       gui::g_server_poller.Stop();
       LUMICE_StopServer(gui::g_server);
@@ -622,6 +624,7 @@ bool RunAfterAnalysisRenders(ImGuiTestContext* ctx, bool exclude, bool gpu) {
 // Replace the app's server with one that has never committed anything, so that whatever the
 // next analysis traces cannot have come from a run this server saw.
 bool ReplaceServerWithAFreshOne(ImGuiTestContext* ctx) {
+  lumice::test::JoinGuiServerTasksForTeardown();
   gui::g_server_poller.Stop();
   if (gui::g_server != nullptr) {
     LUMICE_StopServer(gui::g_server);
@@ -1277,6 +1280,11 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_digest.png").string()),
                 false);
 
+  // Capture values before Re-Analyze resets the session; a reference to survey would then
+  // alias the new generation rather than retain the old outcome for the attribution checks.
+  const gui::SurveyQueryId first_intent = survey.intent_id;
+  const gui::SurveyHandle first_result = survey.adopted_result;
+
   // Re-Analyze: the selection clears, the survey bookkeeping dies with it (R6 — no adopted
   // outcome survives into the next generation's region), and a straggler of the old generation
   // would find no intent to land under.
@@ -1290,15 +1298,16 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.empty(), false);
   ctx->LogInfo("[survey digest] re-analyze voided the old generation's intent and outcome");
 
-  // The next generation answers again, under the new generation's id.
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      return gui::g_state.analysis_result.payload != nullptr &&
-                             gui::g_state.sim_state != SimState::kSimulating;
-                    },
-                    60),
-                false);
+  // The next generation answers again, under the new generation's id. sim_state describes
+  // the render, not this analysis: it can stay Done while partial analysis payloads arrive.
+  // Wait for the analysis itself, or its final snapshot can clear a selection made too early.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::g_state.analysis_result.payload != nullptr && !gui::g_state.analysis_run_in_progress; },
+          60),
+      false);
+  const unsigned long long next_generation = gui::g_state.analysis_result.payload->snapshot_generation;
+  IM_CHECK_RETV(next_generation > generation, false);
   const std::string next_display = TopChainDisplay();
   SetListRef(ctx);
   ctx->ItemClick((std::string("**/") + next_display).c_str());
@@ -1313,6 +1322,11 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
                 false);
   IM_CHECK_RETV(
       gui::g_state.analysis.survey.key.generation == gui::g_state.analysis_result.payload->snapshot_generation, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.key.generation == next_generation, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id.generation == next_generation, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id != first_intent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != first_result, false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry == std::optional<std::string>{ next_display }, false);
   ctx->LogInfo("[survey digest] re-armed under generation %llu", gui::g_state.analysis.survey.key.generation);
   return true;
 }

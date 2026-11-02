@@ -178,6 +178,17 @@ CUDA 超大 batch 中途无法响应。第一性原理：
 > 的 `poller.Stop() + LUMICE_StopServer` offload 到后台 `std::async` 线程，完成后由 `g_stop_inflight` 完成闩推进
 > 意图 kStopping→kStopped）。`kStopEndState` 保留为单一 flip 点：未来若要改回 Idle，改这一行 + 迁移上述 Save 守卫即可。
 
+**销毁静止合同**：`ServerPoller::Stop()` 的每一次返回（包括重复与并发调用）都要经过
+`active_ == false` 屏障。`kPaused` 只说明停止意图已发布：另一个 Stop 可能仍在等待本次
+`PollOnce`，其发布快照后的 `GetDrainStatus` 仍会解引用 server wrapper。生命周期所有者必须
+在 Stop→销毁区间禁止新的 Start/Wake；Stop 不清除已发布快照，也不终止独立结果帧的寿命。
+此外，poller 静止不等于所有 server 使用者已退出：销毁/重建者还须在触碰 server 前调用
+`JoinPendingStop()`（启动校准同理由 `JoinPendingCalibration()` 负责）。`analysis.started=false`
+是命令侧撤回意图，不是异步 Stop 完成凭据。正常 DoStop 仍在后台等待，不为销毁屏障改成 UI
+线程阻塞。两处 display-time 刷新（颜色状态与 composite EV）在 `g_stop_inflight` 为真时非阻塞
+地跳过整个 push/wake，保留未推送基线供后续帧重试，避免停止期间重新开启 worker。GUI 测试的
+guard 和跨用例 reset 同样承担异步任务 join 的所有者责任。
+
 ---
 
 ## 9. 设计必须守的不变量（可固化成门禁 / 测试）

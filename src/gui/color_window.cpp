@@ -69,7 +69,9 @@ bool PushDisplayState(const GuiState& state, LUMICE_Server* server) {
   // it either (code review round 2, Major #2: round 1 only guarded the wake, not this write).
   // Returning false here leaves the display-state baseline unchanged, so ApplyGuiEffects retries
   // this same push next reconcile — no state is lost, it just lands once calibration finishes.
-  if (CalibrationPending()) {
+  // An async Stop also owns this server and is pausing the poller. Defer until its last
+  // server call returns: waking now can reset per-resume fields under the in-flight poll.
+  if (CalibrationPending() || g_stop_inflight.load()) {
     return false;
   }
   const int n = static_cast<int>(state.raypath_color.size());
@@ -111,9 +113,8 @@ bool PushDisplayState(const GuiState& state, LUMICE_Server* server) {
   // observes an invalid snapshot and ReconcileSimState pulls a completed sim back into
   // kSimulating — task-color-migration AC1 activity bug root cause (a).
   //
-  // The calibration check above already covers this wake too (CalibrationPending() was checked
-  // before the write above, and nothing between there and here can make it start pending again on
-  // the GUI's single thread), so no second check is needed here.
+  // The task checks above cover this wake too: only the GUI owner can dispatch another
+  // calibration/Stop, and this push does not yield to it between the checks and the wake.
   g_server_poller.WakeForRefresh(server);
   return true;
 }

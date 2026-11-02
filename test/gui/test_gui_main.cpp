@@ -53,6 +53,7 @@
 // For ImGuiTestEngine::TestContext: the case-entry window-basis audit names the running test's
 // Category/Name, and that field lives in the engine struct, not the public context header.
 #include "imgui_te_internal.h"
+#include "support/gui_server_lifetime.hpp"
 #include "support/scoped_result_frame.hpp"
 #include "test_gui_shared.hpp"
 
@@ -186,6 +187,8 @@ std::string g_test_clipboard;
 }  // namespace
 
 void ResetTestState() {
+  // A withdrawn intent is not task completion; join before resetting state or dropping g_server.
+  lumice::test::JoinGuiServerTasksForTeardown();
   // Document state (delegates to DoNew: g_state, g_preview, g_crystal_mesh_id/hash)
   gui::DoNew();
   // What the previous case copied must not be what this case's copy assertion reads back.

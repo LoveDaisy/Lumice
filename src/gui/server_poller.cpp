@@ -59,14 +59,11 @@ void ServerPoller::Stop() {
   {
     std::lock_guard<std::mutex> lk(mutex_);
     const State s = state_.load();
-    // kIdleHeartbeat is NOT a rest state to early-return on: the worker still wakes every
-    // kIdleHeartbeatIntervalMs and dereferences server_. Skipping the handshake for it would let
-    // Stop() return with a tick either in flight or one timer edge away, and every caller of
-    // Stop() destroys or stops the server right afterwards.
-    if (s != State::kRunning && s != State::kIdleHeartbeat) {
-      return;
+    // kPaused is only the stop intent: another Stop may have published it while its
+    // in-flight poll is still using server_. Every caller must pass the active_ barrier.
+    if (s == State::kRunning || s == State::kIdleHeartbeat) {
+      state_.store(State::kPaused);
     }
-    state_.store(State::kPaused);
   }
   cv_.notify_all();
 
