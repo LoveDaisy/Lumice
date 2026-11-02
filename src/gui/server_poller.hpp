@@ -308,6 +308,9 @@ class ServerPoller {
   uint64_t HeartbeatTickCountForTest() const { return heartbeat_tick_count_.load(std::memory_order_relaxed); }
 
  private:
+  // Tests hold the publication lock to park a real worker before its final server read.
+  friend struct ServerPollerTestPeer;
+
   // kPaused and kIdleHeartbeat are BOTH "not polling at full speed", and splitting them is what
   // makes the heartbeat safe rather than a UAF:
   //   kPaused         — explicit stop (Stop()). Zero polling, untimed cv_.wait. The worker will

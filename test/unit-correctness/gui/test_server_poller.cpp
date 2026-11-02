@@ -20,6 +20,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <thread>
 
@@ -30,6 +31,7 @@
 #include "lumice_engine.h"
 #include "lumice_scene.h"
 #include "support/live_server.hpp"
+#include "support/server_poller_test_peer.hpp"
 
 namespace gui = lumice::gui;
 
@@ -854,6 +856,57 @@ TEST(ServerPollerShutdown, StopQuiescesTheHeartbeatBeforeReturning) {
   std::this_thread::sleep_for(std::chrono::milliseconds(2 * gui::kIdleHeartbeatIntervalMs));
   EXPECT_EQ(local->HeartbeatTickCountForTest(), ticks_at_return)
       << "a heartbeat tick ran after Stop() returned — its caller had already destroyed the server";
+}
+
+// A paused intent is not a quiescent worker. Park a REAL poll before its final server read,
+// let the first Stop publish kPaused, then enter a second Stop while that read is still owed.
+// Unlike a crash lottery, the barrier stays closed until both return observations are recorded.
+TEST(ServerPollerShutdown, EveryConcurrentStopWaitsForTheInFlightPoll) {
+  LiveServer server;
+  gui::ServerPoller poller;
+  auto publication = gui::ServerPollerTestPeer::HoldPublication(poller);
+  poller.WakeForRefresh(server);
+  const bool active = gui::ServerPollerTestPeer::WaitForActive(poller, false);
+  if (!active) {
+    publication.unlock();
+    FAIL() << "worker never entered a real poll";
+  }
+
+  auto first = std::async(std::launch::async, [&] { poller.Stop(); });
+  const bool paused_in_flight = gui::ServerPollerTestPeer::WaitForActive(poller, true);
+  if (!paused_in_flight) {
+    publication.unlock();
+    first.get();
+    FAIL() << "first Stop never paused the in-flight worker";
+  }
+  std::promise<void> second_entering;
+  auto second_entered = second_entering.get_future();
+  auto second = std::async(std::launch::async, [&] {
+    second_entering.set_value();
+    poller.Stop();
+    return gui::ServerPollerTestPeer::Active(poller);
+  });
+  second_entered.wait();
+  // This bounded observation gives the second caller a scheduling opportunity; the real
+  // in-flight predicate and withheld publication lock, not elapsed time, establish the premise.
+  const bool second_returned = second.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready;
+  const bool first_returned = first.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+  publication.unlock();  // Always release before any assertion/future destruction can return.
+  first.get();
+  const bool second_saw_active = second.get();
+  EXPECT_FALSE(first_returned);
+  EXPECT_FALSE(second_returned) << "second Stop returned on kPaused while the worker still held the server";
+  EXPECT_FALSE(second_saw_active);
+  EXPECT_FALSE(gui::ServerPollerTestPeer::Active(poller));
+
+  const auto stopped = poller.LoadSnapshot();
+  ASSERT_NE(stopped, nullptr);
+  poller.Stop();  // already quiescent, repeated Stop preserves the published object
+  EXPECT_EQ(poller.LoadSnapshot(), stopped);
+  poller.WakeForRefresh(server);
+  ASSERT_TRUE(WaitFor([&] { return poller.LoadSnapshot() != stopped; }, 5000));
+  poller.Stop();
+  EXPECT_FALSE(gui::ServerPollerTestPeer::Active(poller));
 }
 
 // ---- The analysis result: materialized once per generation, carried forward, fenced on demand ----
