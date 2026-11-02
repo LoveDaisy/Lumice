@@ -46,13 +46,15 @@ Checks:
      Closes the "unregistered field silently escapes governance" loophole
      that scrum-gui-state-reconcile T0 (reconcile-foundation) was built to
      prevent (doc/gui/gui-state-governance.md).
-  9. no-msvc-unsafe-builtin — MSVC does not recognise the GCC/Clang
+  9. no-msvc-unsafe-builtin — src/ and test/ must not use GCC/Clang-only
      `__builtin_popcount*` / `__builtin_ctz*` / `__builtin_clz*` intrinsic
-     families and reports C3861. src/ and test/ must route through
-     `lumice::PopCount` (src/util/bit_utils.hpp) or an equivalent portable
-     implementation. Scope is intentionally narrow: only the popcount/ctz/clz
-     families are pinned (task-popcount-helper), extend the regex when a new
-     MSVC-unsafe `__builtin_*` family surfaces.
+     families (MSVC C3861); use `lumice::PopCount` (src/util/bit_utils.hpp)
+     or an equivalent portable helper. The same scope rejects the non-standard
+     math constants M_E, M_LOG2E, M_LOG10E, M_LN2, M_LN10, M_PI, M_PI_2,
+     M_PI_4, M_1_PI, M_2_PI, M_2_SQRTPI, M_SQRT2, M_SQRT1_2 (MSVC C2065
+     by default); use local constexpr constants of the required type/precision,
+     not a global _USE_MATH_DEFINES switch. Only these builtin families and
+     complete math-macro names are pinned, not arbitrary __builtin_* or M_*.
   10. no-default-constructed-crystal-slots — no `std::vector<Crystal>` in src/
      may be sized by `resize()`, `assign(n)`, or a count-ctor, and none may be
      grown with an argument-less `emplace_back()`. All four produce
@@ -354,6 +356,14 @@ USING_NAMESPACE = re.compile(r"\busing\s+namespace\b")
 # pinned: PR#182 was specifically about `__builtin_popcountll`; extend the
 # alternation when a new MSVC-unsafe family surfaces.
 MSVC_UNSAFE_BUILTIN = re.compile(r"\b__builtin_(?:popcount|ctz|clz)\w*")
+# Non-standard math constants listed by Microsoft's CRT Math Constants reference:
+# https://learn.microsoft.com/en-us/cpp/c-runtime-library/math-constants
+# PR#551, Windows MSVC x86_64, run 41119762293: M_PI escaped local checks
+# and failed with C2065. Match complete names, not arbitrary M_* identifiers.
+MSVC_UNSAFE_MATH_MACRO = re.compile(
+    r"\b(?:M_E|M_LOG2E|M_LOG10E|M_LN2|M_LN10|M_PI|M_PI_2|M_PI_4|"
+    r"M_1_PI|M_2_PI|M_2_SQRTPI|M_SQRT2|M_SQRT1_2)\b"
+)
 # Stream-writing calls that bypass the logger's sinks / level filter / format.
 # Buffer-writing formatters (snprintf, vsnprintf, sprintf, asprintf) are NOT
 # listed: they produce a string, they do not emit output, so they are not a
@@ -1075,22 +1085,8 @@ def check_gui_state_field_tier_registration() -> list[Violation]:
 
 def check_no_msvc_unsafe_builtin() -> list[Violation]:
     out: list[Violation] = []
-    for path in cxx_sources(SRC):
-        for lineno, _orig, code in code_lines(path):
-            if MSVC_UNSAFE_BUILTIN.search(code):
-                out.append(
-                    Violation(
-                        path,
-                        lineno,
-                        "no-msvc-unsafe-builtin",
-                        "`__builtin_popcount`/`ctz`/`clz` are GCC/Clang-only "
-                        "(MSVC reports C3861); use `lumice::PopCount` "
-                        "(src/util/bit_utils.hpp) or an equivalent portable helper.",
-                    )
-                )
-    test_root = REPO_ROOT / "test"
-    if test_root.exists():
-        for path in cxx_sources(test_root):
+    for root in (SRC, REPO_ROOT / "test"):
+        for path in cxx_sources(root):
             for lineno, _orig, code in code_lines(path):
                 if MSVC_UNSAFE_BUILTIN.search(code):
                     out.append(
@@ -1101,6 +1097,18 @@ def check_no_msvc_unsafe_builtin() -> list[Violation]:
                             "`__builtin_popcount`/`ctz`/`clz` are GCC/Clang-only "
                             "(MSVC reports C3861); use `lumice::PopCount` "
                             "(src/util/bit_utils.hpp) or an equivalent portable helper.",
+                        )
+                    )
+                if match := MSVC_UNSAFE_MATH_MACRO.search(code):
+                    out.append(
+                        Violation(
+                            path,
+                            lineno,
+                            "no-msvc-unsafe-builtin",
+                            f"`{match.group()}` is a non-standard math macro "
+                            "(MSVC does not define it by default; C2065); use a local "
+                            "`constexpr` constant with the required type/precision, "
+                            "not a global `_USE_MATH_DEFINES` switch.",
                         )
                     )
     return out
@@ -2501,7 +2509,7 @@ def main() -> int:
     print(
         "Policy check passed (env centralization, knob registration, GUI API boundary, "
         "reconciler-widget-include, using-namespace, struct-layout parity, no-config-by-value-copy, "
-        "gui-state-field-tier-registration, no-msvc-unsafe-builtin, "
+        "gui-state-field-tier-registration, no-msvc-unsafe-builtin (builtins and math macros), "
         "no-default-constructed-crystal-slots, gui-test-suite-args-sync, no-bare-print, "
         "msvc-string-literal-limit, user-defaults-single-write-path, "
         "pytest-invocation-marker, no-render-in-benchmark-poll, no-test-symbol-in-src, "
