@@ -9,13 +9,25 @@
 
 ## Verdict
 
-**The existing C point-result payload is sufficient for the 756 multi-factor contribution
-curves** (rho, A/a^2, T, K, and their product along a true SO(3) arclength). Every field a
-curve needs is populated at the production assembly level for every stored pose; the counting,
-ordering and closure contracts below were cross-validated on live query output, not just read
-out of headers. **There is no engine-side payload gap**; the 756 work needs no `src/` change to
-draw its curves. What 756 must do is honor the consumption contract (§5) — it is consumer-side
-discipline, not engine work.
+**The existing C point-result payload is sufficient for drawing 756's multi-factor contribution
+curves in the existing angle-Lebesgue convention** (rho, A/a^2, T, K, and their product along a
+true SO(3) arclength). Every field such a curve needs is populated at the production assembly
+level for every stored pose, and the counting, ordering and closure contracts below were
+cross-validated on live query output, not just read out of headers. Drawing those fields
+requires **no `src/` change**.
+
+The verdict is scoped, and one boundary matters for 756's plan: this says nothing about a
+*measure-consistent* contribution curve on fixed-axis (plate) scenes. On such scenes the
+angle-Lebesgue factors read identically zero (§4); the rank-0 orbit-factor payload that does
+carry a measure-consistent weight exists **only** in the `point_mass` outcome
+(`single_path_analysis.cpp:888-907`) and is not a per-pose factor curve
+(`point_result.hpp:102-108` has no K, no product, no SO(3) arclength), so an ordinary
+discovered plate fiber has **no existing data source to switch to**. If 756 needs
+measure-consistent plate curves, that is a new minimum-payload requirement to put before the
+owner (§4), not a consumption-side option.
+
+What 756 must honor either way is the consumption contract (§5) — consumer-side discipline,
+not engine work.
 
 ## 1. Production chain, per stage
 
@@ -65,9 +77,15 @@ TraceFiber (src/analytic/fiber_continuation.hpp)      trace: poses + increments 
   struct before the readers fill it (`c_api_raypath.cpp:1370-1383`); both
   `LUMICE_PathPointGetSample` (`:2272`) and `LUMICE_PathPointGetComponent` (`:2235`) enter
   through it. `rho`/`A/a^2`/`T`/`valid`/pose fields are written unconditionally (`:2286-2298`);
-  `jacobian`/`singular_values`/`k_carea`/`factor_product` only when `jacobian_available`
-  (`:2300-2305`); `fiber_integral` only when `integral_available` (`:2263-2266`). **A zero in an
-  unfilled C field is the clear, not data: availability is the flags' job, never a value's.**
+  `jacobian`/`singular_values`/`k_carea`/`factor_product` are written whenever
+  `jacobian_available`, **whatever `valid` says** (`:2300-2305`); `fiber_integral` only when
+  `integral_available` (`:2263-2266`). Two consequences a C consumer must not conflate:
+  - with `jacobian_available == 0` the fields stay at the BeginRead zero — **a zero there is
+    the clear, not data**;
+  - with `jacobian_available != 0` but `valid == 0`, storage carries NaN for `factor_product`
+    (`single_path_analysis.cpp:303-307`) and the reader copies that NaN through — the C caller
+    receives NaN, not the zero. (An invalid-but-Jacobian-available pose was not observed live;
+    whitebox-verified only.)
 - **JSON face = null, with the flag alongside.** Every factor field goes through `Num()`
   (non-finite -> `null`, `detail/json_values.hpp:33-39`) and the `jacobian.available` boolean
   rides along (`single_path_json.cpp:179-182`); `fiber_integral` is `null` with its rule string
@@ -94,7 +112,9 @@ Across the four real components (433 points): count contract, per-segment recomp
 (max abs deviation <= 6.2e-17 rad — double round-trip level), monotone non-negative increments,
 closed closure, arc seed placement, and the product invariant
 (`factor_product` finite ⟺ `valid && jacobian_available`) all held. The declared integrals
-matched a left-endpoint recomputation to <= 1.7e-21 relative.
+matched a left-endpoint recomputation to <= 1.8e-21 **absolute** (relative <= 1.8e-16 on the
+non-zero integrals; the C16 loop's integral is ~5.1e-63, where only the absolute statement is
+meaningful).
 
 The payload invariants above are pinned as an e2e test:
 `test/e2e-correctness/test_raypath_point_payload_invariants.py` (closed-producing halo scene,
@@ -103,20 +123,31 @@ count/recompute/monotone/closure/null-coherence/integral-rule).
 ## 3. Availability matrix
 
 The same "unavailable" fact has three faces; a curve consumer filters by the predicate of its
-layer. **Grading**: wb✓ = whitebox-established; live✓ = observed live; a live-absent row keeps
-its whitebox contract but was not seen in the canonical corpus.
+layer. The two unavailability gates (`valid`, `jacobian_available`) are independent and the C
+face treats them differently, so the matrix splits their four combinations for the gated arms.
+**Grading**: wb✓ = whitebox-established; live✓ = observed live; a live-absent row keeps its
+whitebox contract but was not seen in the canonical corpus.
 
-| arm | always populated? | invalid pose | jacobian unavailable | expression per layer | grade |
+| arm | valid ∧ J-avail | valid ∧ ¬J-avail | ¬valid ∧ J-avail | ¬valid ∧ ¬J-avail | grade |
 |---|---|---|---|---|---|
-| rho | yes | still computed | still computed | number in all three layers (no NaN path) | wb✓ live✓ (incl. the rho≡0 declared-measure row) |
-| A/a^2 | field present | **default 0.0** (read via `valid`) | independent of Jacobian | finite number in all layers | wb✓ live✓ (zero-value row live on C10 h0.8) |
-| T | field present | default 0.0 (read via `valid`) | independent | finite number in all layers | wb✓ live✓ (all > 0 live; 0 row not seen) |
-| J / sigma | flag-guarded | independent gate | **NaN** / `null` / zero + flag | flag + value/`null`/0 | wb✓ live✓ for available rows; unavailable row wb✓ live— |
-| K = 1/(J+eps) | follows J | follows J (not independent) | NaN / `null` / zero + flag | same as J | wb✓ live✓ |
-| factor_product | `valid && jac` gate | NaN / `null` / zero + flag | same | same | wb✓ live✓ (0 mismatches over 433 points) |
-| `arclength_increments` | present whenever the component is | — | — | plain array, N−1 entries | wb✓ live✓ |
-| `fiber_integral` | skip-not-renormalize partial sum | skipped segments | via factor product | `integral_available` flag; `null`/0 when none | wb✓ live✓ (incl. a live available-at-0.0 row) |
-| `available_points` / `total_points` | always | — | — | ints | wb✓ live✓ |
+| rho | finite number (all layers) | finite number | finite number | finite number | wb✓ live✓ (incl. the rho≡0 declared-measure row) |
+| A/a^2 | finite number | finite number | **storage 0.0** / JSON `0` / C 0 — read only via `valid` | same | wb✓ live✓ (zero-value row live on C10 h0.8; ¬valid rows live—) |
+| T | finite number | finite number | as A/a^2 | as A/a^2 | wb✓ live✓ (all > 0 live) |
+| J / sigma | finite | NaN / `null` / **C zero** (flag clear → BeginRead clear survives) | finite (independent gate) | NaN / `null` / C zero | wb✓ live✓ for J-avail rows; ¬J-avail rows wb✓ live— |
+| K = 1/(J+eps) | finite | as J | finite (follows J) | as J | wb✓ live✓ |
+| factor_product | finite | NaN / `null` / **C zero** | NaN / `null` / **C NaN** (reader copies storage NaN through; `c_api_raypath.cpp:2300-2305` gates on `jacobian_available` only) | NaN / `null` / C zero | wb✓ live✓ (0 mismatches over 433 points; ¬valid∧J-avail cell wb✓ live—) |
+| `arclength_increments` | present (N−1 entries) | present | present | present | wb✓ live✓ |
+| `fiber_integral` | contributes its segment | segment skipped | segment skipped | segment skipped | wb✓ live✓ (incl. a live available-at-0.0 row) |
+| `available_points` / `total_points` | counts | — | — | — | wb✓ live✓ (ints, always present) |
+
+The one-line filter for every layer and every combination stays: usable ⟺
+`valid && jacobian_available` (JSON: `factor_product != null`; C: both flags). A C-side value
+comparison against 0 is never a usability test — but note the ¬valid∧J-avail cell above hands
+the C caller a NaN, not a zero, so "check the flags" is the *only* portable rule. Component
+level: the `fiber_integral` row reads each segment by its **first** point's combination;
+`integral_available` is true iff at least one segment contributed, with `null` (JSON) or the
+BeginRead zero (C) otherwise (`single_path_analysis.cpp:396-413`); `available_points` counts
+points, not segments.
 
 Condition rows established whitebox-only (not produced by any canonical live query; the honest
 display paths exist and consumers must still implement them, but visual acceptance should not
@@ -129,38 +160,66 @@ assume they are visible in typical scenes):
 - `incomplete[]` entries carry cause + pose counts only — **no per-point payload by design**
   (`single_path_analysis.cpp` `ToIncomplete`); curves are drawn from `components` alone.
 
-## 4. The rho arm's measure semantics (the one consumer-side trap)
+## 4. The rho arm's measure semantics and the plate-scene boundary
 
 On fixed-axis scenes (plates: zenith and roll pinned, the C11/C10/C14 family) the declared
 orientation measure lives on a spin orbit, and **rho — the joint density w.r.t. angle Lebesgue
-in three angles — is 0 a.e. on that support**. Live: rho == 0 on every point of the C11 plate
-arc while every other factor is finite and positive; `factor_product` and `fiber_integral`
-inherit the 0 (`fiber_integral == 0.0` with `integral_available == true` — a usable zero, not
-an absence). The document's `measure_registration` block names the support
-(`support_kind`, `registered_gap`; JSON field notes at `single_path_json.cpp:75-84`); the
-measure-consistent weighting for such supports is the rank-0 orbit-factor branch
-(`OrbitFactors`, `point_result.hpp:102-124`), not the per-pose rho arm.
+in three angles — is 0 a.e. on that support** (`declared_density.cpp:505-513`: a singular slot
+returns 0.0, its mass carried by UMarginal's support kinds, not by this double). Live: rho == 0
+on every point of the C11 plate arc while every other factor is finite and positive;
+`factor_product` and `fiber_integral` inherit the 0 (`fiber_integral == 0.0` with
+`integral_available == true` — a usable zero, not an absence). The document's
+`measure_registration` block names the support (`support_kind`, `registered_gap`; JSON field
+notes at `single_path_json.cpp:75-84`).
 
-756 must therefore make an explicit convention decision for plate-family scenes — either
-declare that its curves are in the angle-Lebesgue convention (and read identically zero on
-plates) or switch to the orbit-measure branch for them — and say so in its plan. Neither the
-0 nor the integral is a defect; treating either as missing data would be.
+What does **not** follow: that a measure-consistent plate curve is available by switching
+payloads. The only measure-consistent weight in the tree is the rank-0 orbit-factor branch, and
+its boundary is hard:
+
+- `orbit_factors` is built **only** when the outcome is `point_mass` (`rank.rank_zero`,
+  `single_path_analysis.cpp:888-907`). A discovered plate fiber — C11's 35-point arc, C10's
+  arcs — carries no orbit block at all.
+- Even in the rank-0 outcome, `OrbitFactorPoint` (`point_result.hpp:102-108`) carries
+  `theta_rad`/`rho_theta`/`entry_measure_a2`/`total_transmission`/`valid` — **no K, no factor
+  product, no SO(3) arclength** — i.e. it is a different quadrature on a different orbit
+  parameter, not the per-pose factor curve 756 draws.
+
+So for plate-family scenes 756 has exactly one zero-cost option: **declare that its curves are
+in the angle-Lebesgue convention**, which reads identically zero on plates (and say so in its
+plan). A measure-consistent contribution curve on an ordinary discovered plate fiber has **no
+existing payload**; if 756 needs it, that is a new requirement to record and put before the
+owner. Its minimal shape, stated here only as a requirement sketch (the probe's constraint
+forbids implementing it): a per-pose weight on the fiber's own poses that replaces the
+angle-Lebesgue rho with the declared measure's density (the UMarginal/spin-orbit coordinate
+along the same poses), assembled at the same point as `Detail` (`single_path_analysis.cpp`
+`ToComponent`), so that `factor_product`'s fourth arm becomes measure-consistent while the
+increment-based arclength stays as is. Neither the 0 nor the integral is a defect; treating
+either as missing data would be.
 
 ## 5. Consumption contract for factor curves (756 / 755.5)
 
-1. **x-axis**: within one component, `cumsum(arclength_increments)` (radians). Closed: zero at
-   the seed (`seed_index == 0`, first and last poses coincide to machine precision, loop length
-   is whatever the physics gives — 328.4° live, not 360°). Arc: zero at the backward far-end
-   boundary event; the seed sits mid-curve at cumulative `sum(increments[:seed_index])`.
+1. **x-axis**: within one component, build `x[0] = 0`, `x[i+1] = x[i] + increments[i]` — i.e.
+   `[0]` prefixed to `cumsum(arclength_increments)` — so the axis has exactly `len(points)`
+   entries, one per point (the increments themselves are the N−1 edges). Filter factors by the
+   predicate below **keeping each point's original index and x value**; never delete points
+   first and re-cumulate. Closed: zero at the seed (`seed_index == 0`, first and last poses
+   coincide to machine precision, loop length is whatever the physics gives — 328.4° live, not
+   360°). Arc: zero at the backward far-end boundary event; the seed sits mid-curve at
+   `x[seed_index]`.
 2. **Filter predicate per layer**: JSON — `jacobian.available && valid` (equivalently
    `factor_product != null`); C — the flags only (`jacobian_available`, `valid`,
-   `integral_available`), **never a value comparison against 0** (§1 zero-fill).
-3. **Read `measure_registration` before trusting a rho curve** (§4).
+   `integral_available`), **never a value comparison against 0 or NaN** (§3: a C caller sees
+   the BeginRead zero when the Jacobian flag is clear but storage's NaN copied through when
+   only `valid` fails).
+3. **Read `measure_registration` before trusting a rho curve** (§4). On plate-family scenes,
+   remember the boundary: angle-Lebesgue curves read 0; a measure-consistent curve needs a
+   payload that does not exist yet (§4, owner adjudication).
 4. **Integrals**: left-endpoint rule, skipped segments counted in completeness, not
    renormalized; recompute with the same rule or numbers will disagree by the skipped share.
 5. **Components are the only curve source**: `incomplete[]` has no points; `point_mass` and
-   empty-outcome documents have no curve at all (rank-0 chains need the orbit branch; refusals
-   are honest empties — distinguish them via `reach`, per `doc/raypath/raypath-cli-output.md`).
+   empty-outcome documents have no curve at all (the rank-0 orbit branch answers a different
+   question — §4; refusals are honest empties — distinguish them via `reach`, per
+   `doc/raypath/raypath-cli-output.md`).
 
 ## 6. Scope of this audit
 
