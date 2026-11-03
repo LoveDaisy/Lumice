@@ -32,6 +32,7 @@
 #include "gui/log_sink.hpp"        // ImGuiLogSink — the panel's second gate
 #include "gui/theme.hpp"           // UiPx — the rendered gap reads the rule through the one outlet
 #include "gui/toolbar_layout.hpp"  // TopBarGroupGapPt — the fit pin reads the rule's own function
+#include "gui/user_defaults.hpp"   // kFactoryUiScaleMultiplier — the scale leg restores through it
 #include "test_screenshot.hpp"     // SavePng / StripAlpha — the archived skeleton capture
 // imgui_internal.h is normally an anti-pattern. Z-order has no public reading: it is the ORDER of
 // ImGuiContext::Windows, and the two rules relied on here (BringWindowToDisplayFront splices to the
@@ -610,6 +611,208 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The two new splitters (D1: main view | right column; D2: list | diagnostics) each write only
+  // their own session ratio — the independence the contract names — and each pins at its pixel
+  // floors: dragged past a floor the ratio stops there and the derived width sits on it, a
+  // window below the floors' sum clamps by the contract's proportional rung, and bringing the
+  // window back restores the split the stored ratio describes (the ratio, not a pixel width, is
+  // what the session keeps). The harness's pointer cannot leave the OS window, so the
+  // past-the-floor drags end at the window's edge — which is past both floors at every basis
+  // this window reaches.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "shell_chrome", "workspace_splitters_drag_independently_and_pin_at_their_floors");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedWindowBasis window_basis(ctx);
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      const float d1_0 = gui::g_state.workspace.right_column_ratio;
+      const float d2_0 = gui::g_state.workspace.right_list_ratio;
+      const float rows_0 = gui::g_state.workspace.middle_rows_ratio;
+
+      const auto drag = [&](const char* ref, float dx, float dy) {
+        const ImGuiTestItemInfo grab = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
+        IM_CHECK(grab.ID != 0);
+        const ImVec2 c = grab.RectFull.GetCenter();
+        ctx->MouseMoveToPos(c);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y + dy));
+        ctx->Yield(3);
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+      };
+
+      // D1 left: the right column widens; the other two splits are bit-identical.
+      drag("**/##AnalyzeColumnSplitter", -200.0f, 0.0f);
+      const float d1_1 = gui::g_state.workspace.right_column_ratio;
+      IM_CHECK_GT(d1_1, d1_0);
+      IM_CHECK_EQ(gui::g_state.workspace.right_list_ratio, d2_0);
+      IM_CHECK_EQ(gui::g_state.workspace.middle_rows_ratio, rows_0);
+
+      // The ratio, not a pixel width: at the minimum window the column follows the stored ratio
+      // (up from its floor? down — narrower window, same share), and back at the basis it
+      // returns to the width the ratio describes.
+      auto set_basis = [&](int w, int h) {
+        g_window_size_test.apply_aspect = false;
+        g_window_size_test.width = w;
+        g_window_size_test.height = h;
+        g_window_size_test.done.store(false);
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK(g_window_size_test.done.load());
+        ctx->Yield(3);
+      };
+      set_basis(gui::kMinWindowWidth, gui::kMinWindowHeight);
+      ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
+      IM_CHECK(share != nullptr);
+      const float narrow_w = share->Size.x;
+      const float narrow_avail = static_cast<float>(gui::kMinWindowWidth) - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
+      ctx->LogInfo("[splitters] d1 %.4f -> narrow w %.1f (floor %.0f, basis w would be %.1f)",
+                   static_cast<double>(d1_1), static_cast<double>(narrow_w),
+                   static_cast<double>(gui::UiPx(gui::kAnalyzeRightColMinWidth)),
+                   static_cast<double>(d1_1 * narrow_avail));
+      IM_CHECK_FLOAT_NEAR(narrow_w, d1_1 * narrow_avail, 1.0f);
+      set_basis(gui::kInitWindowWidth, gui::kInitWindowHeight);
+      share = ctx->GetWindowByRef("##AnalyzeShareList");
+      IM_CHECK(share != nullptr);
+      IM_CHECK_FLOAT_NEAR(share->Size.x,
+                          d1_1 * (static_cast<float>(gui::kInitWindowWidth) - gui::UiPx(gui::kAnalyzeLeftPanelWidth)),
+                          1.0f);
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, d1_1);  // no drag, no write
+
+      // D1 right, past the window edge: the ratio pins at the content floor and the column sits
+      // on it — at the basis and again at the minimum window.
+      drag("**/##AnalyzeColumnSplitter", 2000.0f, 0.0f);
+      const float d1_pinned = gui::g_state.workspace.right_column_ratio;
+      const float floor_w = gui::UiPx(gui::kAnalyzeRightColMinWidth);
+      ctx->LogInfo("[splitters] d1 pinned %.4f (floor ratio %.4f)", static_cast<double>(d1_pinned),
+                   static_cast<double>(
+                       floor_w / (static_cast<float>(gui::kInitWindowWidth) - gui::UiPx(gui::kAnalyzeLeftPanelWidth))));
+      share = ctx->GetWindowByRef("##AnalyzeShareList");
+      IM_CHECK(share != nullptr);
+      IM_CHECK_EQ(share->Size.x, floor_w);
+      set_basis(gui::kMinWindowWidth, gui::kMinWindowHeight);
+      share = ctx->GetWindowByRef("##AnalyzeShareList");
+      IM_CHECK(share != nullptr);
+      IM_CHECK_EQ(share->Size.x, floor_w);
+      set_basis(gui::kInitWindowWidth, gui::kInitWindowHeight);
+
+      // D2 down: the diagnostics region shrinks; D1 stays exactly where the pin left it, the
+      // row split untouched. Up past its floor: the list's own floor pins instead.
+      drag("**/##AnalyzeRightRowsSplitter", 0.0f, 120.0f);
+      IM_CHECK_GT(gui::g_state.workspace.right_list_ratio, d2_0);
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, d1_pinned);
+      IM_CHECK_EQ(gui::g_state.workspace.middle_rows_ratio, rows_0);
+      drag("**/##AnalyzeRightRowsSplitter", 0.0f, -2000.0f);
+      ctx->LogInfo("[splitters] d2 pinned %.4f", static_cast<double>(gui::g_state.workspace.right_list_ratio));
+      ImGuiWindow* details = ctx->GetWindowByRef("##AnalyzeDetails");
+      IM_CHECK(details != nullptr);
+      IM_CHECK_GE(details->Size.y,
+                  912.0f - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeShareListMinHeight) - 1.0f);
+    };
+  }
+
+  // The diagnostics region's idle states (the interaction contract §9.1): before any result the
+  // region guides — with no picture of the document yet it points at the Render workspace's Run,
+  // with one it points at the region radios and the list's Analyze — and while an analysis runs
+  // it names the run and keeps the cancel entry reachable. The branches are named windows (the
+  // pick banner's testability shape), and every state is reached the way the product reaches it
+  // — the session's own flags, never a text write. The fourth state (a first result turning the
+  // region into the identity block, ratios untouched) is pinned by the panel suite's whole-flow
+  // case.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "shell_chrome", "workspace_diagnostics_idle_states_follow_the_analysis_state");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      const auto window_present = [](const char* fragment) {
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      // A fresh document: no picture, no result — the no-picture guidance, the summary, no
+      // query region.
+      IM_CHECK(window_present("##AnalyzeIdleNoPictureGuide"));
+      IM_CHECK(!window_present("##AnalyzeIdlePictureGuide"));
+      IM_CHECK(window_present("##AnalyzeIdleSummary"));
+      IM_CHECK(!window_present("##AnalyzeDetailsScroll"));
+
+      // A picture seen (the same flag the Analyze button reads): the guidance switches.
+      gui::g_state.run_intent = gui::RunIntent::kLoaded;
+      ctx->Yield(3);
+      IM_CHECK(window_present("##AnalyzeIdlePictureGuide"));
+      IM_CHECK(!window_present("##AnalyzeIdleNoPictureGuide"));
+
+      // An analysis in flight: the region names the run and hosts the cancel entry. Reached the
+      // way the product reaches it — `analysis.started` is the derive's input
+      // (DeriveAnalysisInProgress: submitted, no wake edge yet), and the per-frame derive owns
+      // the in-progress flag, so writing the flag itself would be overwritten before it read.
+      gui::g_state.analysis.started = true;
+      ctx->Yield(3);
+      const ImGuiTestItemInfo stop = ctx->ItemInfo("**/" ICON_FA_STOP " Stop", ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(stop.ID, 0u);
+      IM_CHECK_GT(stop.RectFull.GetHeight(), 0.0f);
+      gui::g_state.analysis.started = false;
+      gui::g_state.run_intent = gui::RunIntent::kNone;
+      ctx->Yield(2);
+    };
+  }
+
+  // At a non-default UI scale the skeleton's controls keep their reachability — the contract's
+  // render-level calibration duty, exercised at 150%: the fixed left column, the splitters, the
+  // list header and the diagnostics region all submit with real rects. The scale rebuilds the
+  // product at the frame boundary (the settings panel's own path), so the yields below ride the
+  // rebuild, and the dial is restored through the same path so no later case inherits the style.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_skeleton_reachable_at_150_percent_scale");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      gui::g_ui_scale_multiplier = 1.5f;
+      gui::g_ui_scale_dirty = true;
+      ctx->Yield(5);
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(4);
+
+      const char* kReachable[] = {
+        kWorkspaceToRenderBtn,        "**/Layer 1, entry 1: Crystal##crys_0_0",
+        "**/##Altitude_slider",       "**/##AnalyzeRowsSplitter",
+        "**/##AnalyzeColumnSplitter", "**/##AnalyzeRightRowsSplitter",
+        "**/###analysis_search",
+      };
+      for (const char* ref : kReachable) {
+        const ImGuiTestItemInfo info = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
+        if (info.ID == 0u) {
+          IM_ERRORF("not reachable at 150% scale: %s", ref);
+          if (ctx->IsError()) {
+            break;
+          }
+          continue;
+        }
+        if (!(info.RectFull.GetWidth() > 1.0f && info.RectFull.GetHeight() > 1.0f)) {
+          IM_ERRORF("zero-area at 150% scale: %s", ref);
+          if (ctx->IsError()) {
+            break;
+          }
+        }
+      }
+
+      gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
+      gui::g_ui_scale_dirty = true;
+      ctx->Yield(5);
+    };
+  }
+
   // Pick-link in the Analyze workspace: the list rows complete the share with the cards' own
   // predicate (one PickLinkRowStateFor, two hosts), and the completion reopens the editor on the
   // pick's source — the Render flow's shape, not a second semantics.
@@ -741,7 +944,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         "**/Layer 1, entry 1: Crystal##crys_0_0",  // the list row
         "**/+ Layer",                              // the shared add primitive
         "**/##Altitude_slider",                    // the Sun editor
-        "**/##AnalyzeRowsSplitter",                // the divider
+        "**/##AnalyzeRowsSplitter",                // the panorama/band divider
+        "**/##AnalyzeColumnSplitter",              // D1: main view | right column
+        "**/##AnalyzeRightRowsSplitter",           // D2: list | diagnostics
       };
       for (const char* ref : kReachable) {
         const ImGuiTestItemInfo info = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
@@ -769,13 +974,16 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         "##AnalyzeShareList", "##AnalyzeRaypathView", "##AnalyzeRaypath3D", "##AnalyzeSunGlobe", "##AnalyzeDetails",
       };
       int regions_found = 0;
-      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-        if (w == nullptr || !w->Active) {
-          continue;
-        }
-        for (const char* region : kRegions) {
+      for (const char* region : kRegions) {
+        // At least one live window per fragment, not a total count: the details window hosts a
+        // named scroll child whose name carries the same fragment, so raw matches overcount.
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w == nullptr || !w->Active) {
+            continue;
+          }
           if (std::strstr(w->Name, region) != nullptr) {
             regions_found++;
+            break;
           }
         }
       }

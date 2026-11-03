@@ -321,7 +321,10 @@ ImGuiWindow* LowerRowRegionWindow(const char* name_fragment) {
 gui::CanvasPixel PickPanoramaCentre(ImGuiTestContext* ctx) {
   ImGuiWindow* pano = PanoramaPictureWindow();
   IM_CHECK_SILENT_RETV(pano != nullptr, gui::CanvasPixel{});
-  const float px_pt = pano->Pos.x + pano->Size.x * 0.5f + pano->Size.x * 0.25f;  // a quarter right of centre
+  // Half the disk's radius right of centre — the disk (min(width, height) / 2), not the window:
+  // the main view is wide, and a quarter of its WIDTH would fall outside the picture disk.
+  const float disk_radius = std::min(pano->Size.x, pano->Size.y) * 0.5f;
+  const float px_pt = pano->Pos.x + pano->Size.x * 0.5f + disk_radius * 0.5f;
   const float py_pt = pano->Pos.y + pano->Size.y * 0.5f;
   ctx->MouseMoveToPos(ImVec2(px_pt, py_pt));
   ctx->Yield(2);
@@ -1177,7 +1180,7 @@ bool C01ChainAnalyzeSelectExcludeRerun(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   IM_CHECK_RETV(SaveWindowPng(ctx, kWindowRef, GuiTestTempPath("analysis_c01_chain_list.png").string()), false);
   // The right column's selection card (the identity facts the row names), on file too.
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_c01_chain_details.png").string()),
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analysis_c01_chain_details.png").string()),
                 false);
 
   // Exclude it: one Out filter on the document, bound to the entry.
@@ -1277,7 +1280,7 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
                  model.evidence_mode.c_str(), static_cast<long long>(model.witness.kept_count),
                  static_cast<long long>(model.witness.sample_count), static_cast<int>(model.conclusions.size()));
   }
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_digest.png").string()),
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analysis_survey_digest.png").string()),
                 false);
 
   // Capture values before Re-Analyze resets the session; a reference to survey would then
@@ -1620,8 +1623,7 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   ctx->LogInfo("[point view] components %d, samples %d, target (alt %.2f, az %.2f, dev %.2f), lambda %.1f", components,
                valid_count, info.target_altitude_deg, info.target_azimuth_deg, info.target_deviation_deg,
                info.wavelength_nm);
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_point_detail.png").string()),
-                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analyze_point_detail.png").string()), false);
 
   // The fiber on the globe and the trace in the 3D region follow the cursor: step the slider to
   // the second valid sample (the slider drag path is the fixed-dt leg's; this leg pins the chain)
@@ -1792,6 +1794,38 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before_str, false);
   ctx->LogInfo("[point view] playback stepped to sample %d; sky point and ROI untouched",
                gui::g_state.analysis.point_view.sample_index);
+
+  // The completed point's own controls, driven as interactions at the minimum window (the depth
+  // band's stacked form): scrolled into view, the sample slider resolves a real rect and the
+  // play toggle answers a click — the band's reachability claim for the region's live state.
+  {
+    const ScopedWindowBasis window_basis(ctx);
+    g_window_size_test.width = gui::kMinWindowWidth;
+    g_window_size_test.height = gui::kMinWindowHeight;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(g_window_size_test.done.load(), false);
+    ctx->Yield(3);
+    ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+    IM_CHECK_RETV(band != nullptr, false);
+    band->Scroll.y = band->ScrollMax.y;
+    ctx->Yield(2);
+    const ImGuiTestItemInfo sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(sample.ID != 0, false);
+    IM_CHECK_RETV(sample.RectClipped.GetHeight() > 0.0f, false);
+    ctx->ItemClick("**/Play##globe_play");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
+    ctx->ItemClick("**/Stop##globe_play");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+    band->Scroll.y = 0.0f;
+    ctx->Yield(2);
+  }
+  ctx->Yield(2);
   return true;
 }
 
@@ -1845,7 +1879,7 @@ bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(std::fabs(mass.target_separation_deg) < 1e-3, false);
   ctx->LogInfo("[point view] rank-0 mass at (alt %.3f, az %.3f), separation %.2e deg", mass.altitude_deg,
                mass.azimuth_deg, mass.target_separation_deg);
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_point_mass.png").string()), false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analyze_point_mass.png").string()), false);
   return true;
 }
 
@@ -1898,7 +1932,7 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
                model.dispersion.direction.c_str(), static_cast<int>(model.probe.sample_value.size()),
                model.dispersion.certificate_apex_deg);
   IM_CHECK_RETV(
-      SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_overview_dispersion.png").string()),
+      SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analysis_survey_overview_dispersion.png").string()),
       false);
   // The profile block, expanded: the reference curve on screen is the human-readable half of
   // the probe block's evidence (the samples and their gap rule are the model test's). The
@@ -1912,7 +1946,7 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
   ctx->ScrollToItemY("**/Internal-reflection share##ov_tir");
   ctx->Yield(2);
   IM_CHECK_RETV(
-      SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_overview_profile.png").string()),
+      SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analysis_survey_overview_profile.png").string()),
       false);
   return true;
 }
@@ -1968,7 +2002,7 @@ bool SurveyRefusesMultilayerClassByName(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_error.find("multi_layer_unsupported") != std::string::npos, false);
   ctx->LogInfo("[survey refusal] %s", gui::g_state.analysis.survey.adopted_error.c_str());
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analysis_survey_refusal.png").string()),
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analysis_survey_refusal.png").string()),
                 false);
   return true;
 }
@@ -2210,7 +2244,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
       ctx->LogInfo("[v1 chain] the survey stopped inside its budget — the dispersion row is the honest partial");
     }
   }
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_v1_chain_overview.png").string()),
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analyze_v1_chain_overview.png").string()),
                 false);
 
   // The map window answers behind the survey on the one worker (default chain: full sky, then
@@ -2979,7 +3013,7 @@ bool RefusedClassNamesTheRefusalAndKeepsTheWitness(ImGuiTestContext* ctx) {
                  model.evidence_mode.c_str(), model.execution, model.witness.kept_count,
                  model.tir.mode.empty() ? "finite" : model.tir.mode.c_str(), model.chromatic_note.c_str());
   }
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeRightPanel", GuiTestTempPath("analyze_v1_c17_refused.png").string()),
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analyze_v1_c17_refused.png").string()),
                 false);
   return true;
 }
@@ -3337,6 +3371,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      // The splits the splitters own, read before anything runs: the manual-priority contract
+      // (the interaction contract §9.3) says the first result and the selection rewrite none of
+      // them — pinned bit-exact at the end of the flow.
+      const float d1_ratio_before = gui::g_state.workspace.right_column_ratio;
+      const float d2_ratio_before = gui::g_state.workspace.right_list_ratio;
+      const float rows_ratio_before = gui::g_state.workspace.middle_rows_ratio;
       // The ROI controls live on the panorama side.
       ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
@@ -3393,9 +3433,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // the result in, the window itself must not scroll — the controls above the table are the
       // fixed header and are visible by construction (ScrollMax == 0 says the whole content
       // fits), and the one scrolling region under the pointer is the table's own inner window.
-      // The listed basis, not smaller: the plan's §9.2 boundary leaves the 1024x640 minimum
-      // outside the guarantee domain (the controls' information layout, not the scroll
-      // structure, would be the thing to redesign there).
+      // At this width the right column also sits above the search box's full form, so the
+      // narrow-column forms (analysis_panel.cpp) are off — the list reads as designed here.
       {
         const ScopedWindowBasis window_basis(ctx);
         g_window_size_test.width = 1280;
@@ -3424,19 +3463,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         const ImGuiTestItemInfo search = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
         IM_CHECK(search.ID != 0);
         IM_CHECK_GT(search.RectClipped.GetHeight(), 0.0f);
-        // The floor's red anchor: squeezing the upper row (the same write the drag performs)
-        // into the band where the result table's old 120pt floor stops fitting — the window
-        // must STILL not scroll (the table yields instead). Moderate: the controls' own fit
-        // stays inside the §9.2 boundary, well above the 0.15 clamp. The grab drag itself is
-        // verified right after (see the point leg's squeeze anchor for the same shape).
-        const float ratio_before = gui::g_state.workspace.middle_rows_ratio;
-        gui::g_state.workspace.middle_rows_ratio = 0.32f;
+        // The floor's red anchor: squeezing the SHARE LIST (the same write the D2 splitter's
+        // drag performs — the list's height is the right column's own split now, not the main
+        // view's row ratio) into the band where the result table's old 120pt floor stops
+        // fitting — the window must STILL not scroll (the table yields instead). Moderate: the
+        // controls' own fit stays well above the pixel floors the splitter clamps to. The grab
+        // drag itself is verified right after (see the point leg's squeeze anchor for the same
+        // shape).
+        const float ratio_before = gui::g_state.workspace.right_list_ratio;
+        gui::g_state.workspace.right_list_ratio = 0.32f;
         ctx->Yield(3);
         ctx->LogInfo("[scroll pins] share squeezed SM %.1f SC %.1f, ratio %.2f", share->ScrollMax.y, share->Scroll.y,
-                     gui::g_state.workspace.middle_rows_ratio);
+                     gui::g_state.workspace.right_list_ratio);
         IM_CHECK_EQ(share->ScrollMax.y, 0.0f);
         IM_CHECK_EQ(share->Scroll.y, 0.0f);
-        gui::g_state.workspace.middle_rows_ratio = ratio_before;
+        gui::g_state.workspace.right_list_ratio = ratio_before;
         ctx->Yield(3);
         // The grab gesture over the real mouse path: drag the bar down, the ratio follows.
         ImGuiWindow* divider = ctx->GetWindowByRef("//##AnalyzeRowsDivider");
@@ -3458,6 +3499,85 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->LogInfo("[scroll pins] share@1280x800 SM %.1f SC %.1f, table %s", share->ScrollMax.y, share->Scroll.y,
                      table_child->Name);
       }
+      // The 1024x640 minimum (the interaction contract's clamp-order floor): the right column
+      // pins exactly at its 260 content floor and the list's narrow-column forms come on — the
+      // search box in its collapsed-label form, the buttons stacked — with every control still
+      // resolving a real rect. The depth band, too narrow for the three regions side by side,
+      // switches to its stacked form: each region the band's full width at its floor height, the
+      // band itself the one scrolling region (ScrollMax > 0), and the regions' own controls are
+      // driven through the real mouse path after scrolling them into view — reachability as an
+      // interaction, not a canvas-size proxy.
+      {
+        const ScopedWindowBasis window_basis(ctx);
+        g_window_size_test.width = gui::kMinWindowWidth;
+        g_window_size_test.height = gui::kMinWindowHeight;
+        g_window_size_test.done.store(false);
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK(g_window_size_test.done.load());
+        ctx->Yield(3);
+
+        // The right column at its floor: the clamp the contract's order ① names (the stored
+        // ratio would give ~212 here), header controls reachable.
+        ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
+        IM_CHECK(share != nullptr);
+        ctx->LogInfo("[narrow] share w=%.1f, d1 ratio %.4f", share->Size.x, gui::g_state.workspace.right_column_ratio);
+        IM_CHECK_EQ(share->Size.x, gui::UiPx(gui::kAnalyzeRightColMinWidth));
+        SetListRef(ctx);
+        const ImGuiTestItemInfo search = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
+        IM_CHECK(search.ID != 0);
+        IM_CHECK_GT(search.RectClipped.GetHeight(), 0.0f);
+        const ImGuiTestItemInfo analyze_btn = ctx->ItemInfo(kAnalyzeButton, ImGuiTestOpFlags_NoError);
+        IM_CHECK(analyze_btn.ID != 0);
+        IM_CHECK_GT(analyze_btn.RectClipped.GetHeight(), 0.0f);
+        ctx->SetRef("");
+
+        // The band in its stacked form: scrollable, the three regions at their floors.
+        ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+        IM_CHECK(band != nullptr);
+        ctx->LogInfo("[narrow] band SM %.1f, map %.0fx%.0f", band->ScrollMax.y,
+                     LowerRowRegionWindow("##AnalyzeRaypathView")->Size.x,
+                     LowerRowRegionWindow("##AnalyzeRaypathView")->Size.y);
+        IM_CHECK_GT(band->ScrollMax.y, 0.0f);
+        IM_CHECK_FLOAT_NEAR(LowerRowRegionWindow("##AnalyzeRaypathView")->Size.y,
+                            gui::UiPx(gui::kAnalyzeDepthMapMinSize), 1.0f);
+        IM_CHECK_FLOAT_NEAR(LowerRowRegionWindow("##AnalyzeRaypath3D")->Size.y, gui::UiPx(gui::kAnalyzeDepth3DMinSize),
+                            1.0f);
+        IM_CHECK_FLOAT_NEAR(LowerRowRegionWindow("##AnalyzeSunGlobe")->Size.y,
+                            gui::UiPx(gui::kAnalyzeDepthGlobeMinSize), 1.0f);
+
+        // The map cell is the band's first: the sky-point input row answers typed input and the
+        // button, at the narrow width, with no scrolling.
+        ctx->ItemInputValue("**/alt°##sky", 30.0f);
+        ctx->ItemInputValue("**/az°##sky", 180.0f);
+        ctx->ItemClick("**/Set sky point");
+        ctx->Yield(2);
+        IM_CHECK(gui::g_state.analysis.sky_point.valid);
+        // The typed angles, through the direction convention itself (util/sky_direction.hpp: the
+        // light-travel direction is the position's negation — z = -sin(alt)):
+        IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.sky_point.dir[2], -std::sin(30.0f * lumice::kDeg2Rad), 1e-3f);
+
+        // The globe cell is the band's last: scroll it into view. Before any point intent the
+        // globe's fixed head is the title and the Deviation grid toggle — the one control it
+        // owns in every state; the sample/play controls belong to a completed point result and
+        // are driven by the point inspector's leg.
+        band->Scroll.y = band->ScrollMax.y;
+        ctx->Yield(2);
+        const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
+        ctx->ItemClick("**/Deviation grid##globe");
+        ctx->Yield(2);
+        IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
+
+        // The 3D cell, between the two: at the minimum window its floor height still leaves the
+        // canvas legible (its region carries the whole cell).
+        ImGuiWindow* r3d = LowerRowRegionWindow("##AnalyzeRaypath3D");
+        IM_CHECK(r3d != nullptr);
+        IM_CHECK_GT(r3d->InnerRect.GetHeight(), 150.0f);
+        band->Scroll.y = 0.0f;
+        ctx->Yield(2);
+      }
       // First row = the largest displayed energy of all rows.
       const double first = view_result.display_energy[static_cast<size_t>(view_result.display_order[0])];
       IM_CHECK_GT(first, 0.0);
@@ -3475,6 +3595,35 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_GT(after.epoch, before.epoch);
       IM_CHECK_EQ(gui::g_state.committed_epoch, before.epoch);
       IM_CHECK_EQ((int)gui::g_state.sim_state, (int)SimState::kDone);
+
+      // Manual priority, pinned over the whole flow (the interaction contract §9.3): the run
+      // and everything the legs above did to the window wrote none of the three splits —
+      // bit-exact against the values read before the pick.
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, d1_ratio_before);
+      IM_CHECK_EQ(gui::g_state.workspace.right_list_ratio, d2_ratio_before);
+      IM_CHECK_EQ(gui::g_state.workspace.middle_rows_ratio, rows_ratio_before);
+
+      // A selection turns the diagnostics region from the idle block to the identity block: the
+      // idle children leave (the guidance branches and the observation summary are named windows
+      // — the pick banner's testability shape), the query region takes over as the named scroll
+      // child under the identity head.
+      const std::string top_display = TopChainDisplay();
+      SetListRef(ctx);
+      ctx->ItemClick((std::string("**/") + top_display).c_str());
+      ctx->SetRef("");
+      ctx->Yield(3);
+      const auto window_present = [](const char* fragment) {
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+            return true;
+          }
+        }
+        return false;
+      };
+      IM_CHECK(!window_present("##AnalyzeIdleNoPictureGuide"));
+      IM_CHECK(!window_present("##AnalyzeIdlePictureGuide"));
+      IM_CHECK(!window_present("##AnalyzeIdleSummary"));
+      IM_CHECK(window_present("##AnalyzeDetailsScroll"));
     };
   }
 
