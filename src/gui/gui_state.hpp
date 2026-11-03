@@ -1898,10 +1898,24 @@ struct GuiState {
   enum class WorkspaceMode { kRender, kAnalyze };
   struct AnalyzeWorkspaceSession {
     WorkspaceMode mode = WorkspaceMode::kRender;
-    // The middle area's horizontal divider: the upper row's (panorama + share list) share of the
-    // middle height, clamped to [0.15, 0.85] when dragged. Session memory (this session's own
-    // arrangement, not document state); 0.45 puts the near-square panorama the prototype pins
-    // within reach at both acceptance sizes — near-exact at 1600×980, slightly tall at 1280×800.
+    // D1: the right column's share of the span right of the fixed left column — what the
+    // `##AnalyzeColumnSplitter` drags. Ratio semantics (doc/gui/analyze-interaction-contract.md
+    // §4.2): the split's identity, not a pixel width — the frame derives pixels from it and clamps
+    // those at the content floors (gui_constants.hpp), while the stored value changes only by
+    // dragging. No query result, selection change or content change ever writes it (manual
+    // priority — the first result included), and restoring the window size restores the split.
+    // Session memory like every field here: never persisted, never in the document or
+    // ConfigSnapshot; DoNew resets it with the whole GuiState, Revert/Open keep it.
+    float right_column_ratio = kAnalyzeRightColumnDefaultRatio;
+    // D2: the share list's share of the right column's height — what the
+    // `##AnalyzeRightRowsSplitter` drags. Same semantics and tier as D1 above; no automatic
+    // rewrite path exists (a first result changes neither ratio, contract §9.3).
+    float right_list_ratio = kAnalyzeRightListDefaultRatio;
+    // The main view column's row split: the panorama's (upper row's) share of the column height,
+    // clamped to [0.15, 0.85] when dragged. Session memory (this session's own arrangement, not
+    // document state). TRANSITION: the lower row is now the depth band (map / 3D / globe awaiting
+    // their windows), so this ratio is the main view's share of its column; the field retires with
+    // the band (755.4/.5).
     float middle_rows_ratio = 0.45f;
     // The panorama's hemisphere — a view state of the panorama (the committed texture is always
     // the full sky; the switch is the display-time `visible` uniform), not document state.

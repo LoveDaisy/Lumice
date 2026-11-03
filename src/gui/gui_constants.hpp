@@ -48,11 +48,49 @@ constexpr float kLeftPanelWidth = 400.0f;
 constexpr float kRightPanelWidth = 300.0f;
 constexpr float kTopBarHeight = 40.0f;
 constexpr float kStatusBarHeight = 28.0f;
-// The Analyze workspace's outer columns (analyze_workspace.cpp; the plan's four-column skeleton:
-// left 300 / right 400, the middle taking what remains). The Render workspace keeps
-// kLeftPanelWidth/kRightPanelWidth above — the two workspaces' layouts are independent.
+// The Analyze workspace's split geometry (analyze_workspace.cpp; the fixed-left-column +
+// main-view + right-column skeleton of doc/gui/analyze-interaction-contract.md §2/§4). The left
+// column keeps its fixed width; every other split is stored as a ratio on the session
+// (GuiState::AnalyzeWorkspaceSession) and derives its pixels per frame — the constants below are
+// the pixel floors those derivations clamp against, not widths anyone stores. All values are 1x
+// logical px read through UiPx() and carry the contract's render-level calibration duty (§11:
+// suggestions measured from font metrics, to be re-measured against the live CalcTextSize /
+// GetFrameHeight; last calibrated 2026-11-04 against the Roboto Medium 15px theme — FramePadding
+// 6/3, ItemSpacing 8/3 — the same source the contract's §11 table used). The Render workspace
+// keeps kLeftPanelWidth/kRightPanelWidth; the two workspaces' layouts are independent.
 constexpr float kAnalyzeLeftPanelWidth = 300.0f;
-constexpr float kAnalyzeRightPanelWidth = 400.0f;
+// D1: the right column's content floor — the share list's widest fixed row (the search box's full
+// form, contract §11 R2) stays complete above it; below it the panel switches to its narrow-column
+// forms (analysis_panel.cpp).
+constexpr float kAnalyzeRightColMinWidth = 260.0f;
+// D1: the main view's soft floor (§4.2) — the picture keeps a usable width while the right column
+// takes what it asks for; the first two rungs of the contract's clamp order.
+constexpr float kAnalyzeMainViewMinWidth = 360.0f;
+// D1's default: the contract's ≈380 px right column folded to a ratio of the span right of the
+// fixed left column at the default window, so the stored default IS the split it describes.
+constexpr float kAnalyzeRightColumnDefaultRatio =
+    380.0f / (static_cast<float>(kInitWindowWidth) - kAnalyzeLeftPanelWidth);
+// D2: the share list's height floor — the panel's fixed head (the budget rows, the run controls,
+// the symmetry row, the separator, the search row) plus the table's header row, one data row and
+// the button row. The window itself never scrolls (the result table is its one scrolling region),
+// so this floor is what keeps every control reachable at the smallest list height.
+constexpr float kAnalyzeShareListMinHeight = 250.0f;
+// D2: the diagnostics region's height floor — its title plus one wrapped state line.
+constexpr float kAnalyzeDetailsMinHeight = 64.0f;
+// D2's default: the contract's list ≈45% of the right column's height.
+constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
+// The depth band's per-cell content floors (§11 R3/R4): the map region's input row, the globe's
+// fixed interaction stack, the 3D view at legible size. Each is its region's width floor in the
+// band's side-by-side form and height floor in the stacked form.
+constexpr float kAnalyzeDepthMapMinSize = 290.0f;
+constexpr float kAnalyzeDepthGlobeMinSize = 250.0f;
+constexpr float kAnalyzeDepth3DMinSize = 240.0f;
+// The split strips' thickness (##AnalyzeRowsDivider's 8 pt recipe, shared by the two new strips).
+constexpr float kAnalyzeSplitterSize = 8.0f;
+// Hysteresis of the depth band's form switch (logical px): side-by-side arms this far above the
+// three cells' floor sum and holds until the band drops below the bare sum, so a resize walking
+// the boundary does not flicker between the two forms.
+constexpr float kAnalyzeDepthBandFormHysteresisPt = 24.0f;
 
 // Display brightness baseline, mirroring lumice::kNormScale (core/color_util.hpp). The GUI needs
 // it because absolute exposure mode is computed client-side (mono_exposure_scale.hpp) rather than
