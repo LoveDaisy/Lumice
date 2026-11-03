@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793739834460,
+  "lastUpdate": 1793739841666,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5a6e0df8340efd9cf0b86e005e69a70cd1d7bf5c",
-          "message": "Merge pull request #453 from LoveDaisy/scrum/capability-libs\n\nOrganize the C API and engine by capability",
-          "timestamp": "2026-09-30T22:20:49+08:00",
-          "tree_id": "e33e93629598cfbac336b950cd72445b26fb5b14",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/5a6e0df8340efd9cf0b86e005e69a70cd1d7bf5c"
-        },
-        "date": 1790779828312,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 827051.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1029368.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 819360.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 551134.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6311b6bd9421e45d367cc351d08ae0cc257a3148",
           "message": "Merge pull request #455 from LoveDaisy/refactor/capi-scene-codec-split\n\nSplit c_api_scene.cpp into bridge, encoder and decoder",
           "timestamp": "2026-09-30T23:35:26+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 549892.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3aadae00161f1b38193db5fd3c7ac5f4535f59b3",
+          "message": "Merge pull request #563 from LoveDaisy/feat/fiber-arclength-payload-probe\n\ndocs(raypath): fiber arclength payload audit for contribution curves",
+          "timestamp": "2026-11-04T04:59:13+08:00",
+          "tree_id": "e5adef887341388bc5d87629182c19bfa3d0f278",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/3aadae00161f1b38193db5fd3c7ac5f4535f59b3"
+        },
+        "date": 1793739840589,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 925757.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1010061.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 651915.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 576931.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
