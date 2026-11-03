@@ -18,6 +18,11 @@
 > 它不含的只有 §5 那六条**没被实现的**候选形态，而那些是一个已废弃设计空间内部的备选。
 >
 > 关联：`doc/gui/gui-visual-language.md`（排版/色彩/尺寸节奏——那份管「长什么样」，本文管「放在哪」，两者正交且可分别落地）、`doc/gui/gui-state-governance.md`（其 field→tier 分类器是本文组织原则的机制层依据）、`doc/gui/gui-preview-lifecycle-architecture.md`（dirty 芯片所依赖的生命周期语义）。
+>
+> 适用边界补注（2026-11-04）：Analyze 工作区（742 引入的四列形态）的容器重排由独立合同承载
+> （[`analyze-interaction-contract.md`](analyze-interaction-contract.md)）——其与本文 §5 被推翻清单、
+> §8 同屏硬约束的逐条对照见该合同 §13；本文的「⛔ 不得据本文重启面板重排」针对的是主 shell 的
+> master–detail 形态，不构成对 Analyze 工作区重排的授权或禁止。
 
 ## 0. 为什么重排面板
 

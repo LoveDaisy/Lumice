@@ -286,7 +286,12 @@ Settings 每次打开都重置到默认尺寸（`ImGuiCond_Appearing`），Summa
 | Custom Spectrum / 5 个确认对话框 | `edit_modals.cpp` / `app_panels.cpp` | 自动贴合 | `AlwaysAutoResize`，不动 |
 | Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×584 不变，故 `defaults_panel_layout` 参考图不重拍 |
 | Summary | `config_summary_window.cpp` | 半可变 | 宽钉 1200；出现时贴合内容、上限 min(900, 工作区)，之后高可拉到工作区 |
-| Raypath Analysis / Colors | `analysis_panel.cpp` / `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
+| Colors | `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
+
+> Raypath Analysis 自 742 起并入 Analyze 工作区（`RenderAnalysisPanelBody` 宿主工作区份额列表区，
+> 不再是浮窗），上表原「Raypath Analysis / Colors」自由档行对其不再适用。Analyze 工作区后续两个
+> 独立窗口（Raypath view、姿态/轨迹）的档位归档与容器合同见
+> [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §6/§7/§14，随其实现片更新本表。
 
 ### 9.3 与 `gui-layout-architecture.md` §8 的边界：可拉尺寸不是重排
 
