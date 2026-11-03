@@ -47,18 +47,25 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
   if (state.analysis_result.payload == nullptr) {
     // The list's own empty-state line (RenderResultList's, one source for the same fact).
     ImGui::TextDisabled("No result yet. Choose a region and press Analyze.");
-    // The same branch logic as the panorama's empty state: without a picture of the document the
-    // first step is the Render workspace's Run; with one, the radios and the list's Analyze are
-    // the path. The controls themselves stay where they are in this slice (the region radios
-    // above the picture, the Analyze button in the list) — the guidance names the real places.
-    if (!HasEverShownPicture(state.run_intent)) {
-      ImGui::TextWrapped(
-          "No rendered image for this document yet — press Run once in the Render "
-          "workspace; an analysis needs a picture of the document to aim at.");
-    } else {
-      ImGui::TextWrapped("Choose a region above the picture, then press Analyze in the list above.");
-    }
+  }
+  // The same branch logic as the panorama's empty state: without a picture of the document the
+  // first step is the Render workspace's Run; with one, the radios and the list's Analyze are
+  // the path. The controls themselves stay where they are in this slice (the region radios
+  // above the picture, the Analyze button in the list) — the guidance names the real places.
+  // Each branch is its own named child (the pick banner's reason: a text item has no id a test
+  // can address; a window does), so a case can pin which guidance is on screen.
+  if (!HasEverShownPicture(state.run_intent)) {
+    ImGui::BeginChild("##AnalyzeIdleNoPictureGuide", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
+    ImGui::TextWrapped(
+        "No rendered image for this document yet — press Run once in the Render "
+        "workspace; an analysis needs a picture of the document to aim at.");
+    ImGui::EndChild();
   } else {
+    ImGui::BeginChild("##AnalyzeIdlePictureGuide", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
+    ImGui::TextWrapped("Choose a region above the picture, then press Analyze in the list above.");
+    ImGui::EndChild();
+  }
+  if (state.analysis_result.payload != nullptr) {
     ImGui::TextWrapped("Select a class in the list above; the class overview takes this region.");
   }
   // ---- The run status: the analysis in flight, with its cancel entry. ----
@@ -75,7 +82,9 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
     }
     PopDestructiveStyle();
   }
-  // ---- The observation summary: the request as it stands. ----
+  // ---- The observation summary: the request as it stands. A named child like the guides —
+  // its presence is what a case pins (the bullets themselves are plain text). ----
+  ImGui::BeginChild("##AnalyzeIdleSummary", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
   ImGui::Separator();
   ImGui::BulletText("Region: %s", RoiModeLabel(a.roi_mode));
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
@@ -100,6 +109,7 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
   } else {
     ImGui::BulletText("Document: up to date");
   }
+  ImGui::EndChild();
 }
 
 // The main view column's horizontal divider: a full-width grab strip with the resize-NS cursor,
@@ -114,11 +124,15 @@ void MiddleRowsSplitter(const char* id, float width, float* ratio, float area_to
   ImGui::InvisibleButton(id, ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
   const bool active = ImGui::IsItemActive();
-  if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+  const ImVec2 mouse_delta = ImGui::GetIO().MouseDelta;
+  if (active && (mouse_delta.x != 0.0f || mouse_delta.y != 0.0f) && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
     // The splitter sits between the rows, so its centre is the ratio's pivot: move the mouse,
-    // move the pivot. Screen-space y against the main view column's frame.
+    // move the pivot. Screen-space y against the main view column's frame. The zero-delta gate
+    // is not decoration: with the button held on a stationary pointer, IsMouseDragging stays
+    // true and a pivot-plus-zero write would read the strip's CURRENT position as the ratio —
+    // a half-strip-width step per frame, the strip crawling away from the resting hand.
     const float pivot_y = ImGui::GetItemRectMin().y + height * 0.5f;
-    *ratio = (pivot_y + ImGui::GetIO().MouseDelta.y - area_top) / area_h;
+    *ratio = (pivot_y + mouse_delta.y - area_top) / area_h;
     *ratio = std::clamp(*ratio, 0.15f, 0.85f);
   }
   if (hovered || active) {
@@ -144,11 +158,15 @@ void RightColumnSplitter(const char* id, float height, float* ratio, float area_
   ImGui::InvisibleButton(id, ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
   const bool active = ImGui::IsItemActive();
-  if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    // The strip sits between the columns, so its centre is the ratio's pivot. Screen-space x
-    // against the span's left edge.
-    const float pivot_x = ImGui::GetItemRectMin().x + width * 0.5f;
-    *ratio = (pivot_x + ImGui::GetIO().MouseDelta.x - area_left) / area_w;
+  const ImVec2 mouse_delta = ImGui::GetIO().MouseDelta;
+  if (active && (mouse_delta.x != 0.0f || mouse_delta.y != 0.0f) && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    // The strip's right edge is the split: the right column is what remains of the span to the
+    // strip's right, so the ratio reads off the strip's trailing edge — dragging the hand right
+    // narrows the right column. Screen-space x against the span's right edge. (The zero-delta
+    // gate: a held-still pointer must not write the strip's own position back as the ratio —
+    // the same crawl the row splitter's gate blocks.)
+    const float strip_right = ImGui::GetItemRectMax().x + mouse_delta.x;
+    *ratio = (area_left + area_w - strip_right) / area_w;
     const float right_floor = UiPx(kAnalyzeRightColMinWidth);
     const float main_floor = UiPx(kAnalyzeMainViewMinWidth);
     if (area_w >= right_floor + main_floor + width) {
@@ -178,9 +196,11 @@ void RightRowsSplitter(const char* id, float width, float* ratio, float area_top
   ImGui::InvisibleButton(id, ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
   const bool active = ImGui::IsItemActive();
-  if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+  const ImVec2 mouse_delta = ImGui::GetIO().MouseDelta;
+  if (active && (mouse_delta.x != 0.0f || mouse_delta.y != 0.0f) && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    // (Zero-delta gate: the row splitter's crawl block, same reason.)
     const float pivot_y = ImGui::GetItemRectMin().y + height * 0.5f;
-    *ratio = (pivot_y + ImGui::GetIO().MouseDelta.y - area_top) / area_h;
+    *ratio = (pivot_y + mouse_delta.y - area_top) / area_h;
     const float list_floor = UiPx(kAnalyzeShareListMinHeight);
     const float details_floor = UiPx(kAnalyzeDetailsMinHeight);
     if (area_h >= list_floor + details_floor + height) {
