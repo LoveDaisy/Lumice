@@ -109,10 +109,12 @@ a failure mode: whitebox assembly reading vs. arithmetic on live output.
 | C09 cone `13-15-26-28` @ (20,110) | none | `reach.target_in_range == true` with zero components — reachable, but the finite crystal passes no ray |
 | C14 plate `1-2` @ (20,0) | none | `outcome == "point_mass"` (rank 0) — the degenerate chain, curves do not apply |
 
-Across the four real components (433 points): count contract, per-segment recomputation
-(max abs deviation <= 6.2e-17 rad — double round-trip level), monotone non-negative increments,
-closed closure, arc seed placement, and the product invariant
-(`factor_product` finite ⟺ `valid && jacobian_available`) all held. The declared integrals
+Count contract across the six real components of the four component-bearing cases (433
+points in total); per-segment recomputation, monotone non-negative increments, closed
+closure, arc seed placement, and the product invariant
+(`factor_product` finite ⟺ `valid && jacobian_available`) on the recomputation bundle's
+four components — C16/C11/C03, 303 points — all held (max abs deviation <= 6.2e-17 rad —
+double round-trip level); C10's two arcs are recorded as live count rows only. The declared integrals
 matched a left-endpoint recomputation to <= 1.8e-21 **absolute** (relative <= 1.8e-16 on the
 non-zero integrals; the C16 loop's integral is ~5.1e-63, where only the absolute statement is
 meaningful).
@@ -167,7 +169,9 @@ On fixed-axis scenes (plates: zenith and roll pinned, the C11/C10/C14 family) th
 orientation measure lives on a spin orbit, and **rho — the joint density w.r.t. angle Lebesgue
 in three angles — is 0 a.e. on that support** (`declared_density.cpp:505-513`: a singular slot
 returns 0.0, its mass carried by UMarginal's support kinds, not by this double). Live: rho == 0
-on every point of the C11 plate arc while every other factor is finite and positive;
+on every point of the C11 plate arc while every other arm is finite and available;
+A/a^2 takes a legal zero at the two valid arc endpoints (§2), and T and K are strictly
+positive on the arc;
 `factor_product` and `fiber_integral` inherit the 0 (`fiber_integral == 0.0` with
 `integral_available == true` — a usable zero, not an absence). The document's
 `measure_registration` block names the support (`support_kind`, `registered_gap`; JSON field
