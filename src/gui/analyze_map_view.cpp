@@ -1117,7 +1117,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   } else if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
     ImGui::TextDisabled("(the engine-chosen reference until a map echoes it)");
   }
-  ImGui::SameLine();
+  // The view buttons follow the wavelength on one line only while the row can hold them — the
+  // side-by-side band cell is as wide as its content floor, and the completed state's header
+  // (title, overlays, the slider, both buttons) is wider than that; a clipped view button makes
+  // the map unsteerable exactly where the map exists, so the buttons wrap onto their own line
+  // instead. Measured against the live remaining width, so it reads the same at any cell size.
+  const float style_spacing_x = ImGui::GetStyle().ItemSpacing.x;
+  const float fit_w = ImGui::CalcTextSize("Fit##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const float full_sky_w = ImGui::CalcTextSize("Full sky##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  if (ImGui::GetContentRegionAvail().x >= fit_w + style_spacing_x + full_sky_w) {
+    ImGui::SameLine();
+  }
   if (ImGui::SmallButton("Fit##map")) {
     if (map.adopted_result != nullptr) {
       LUMICE_PathMapInfo info{};
@@ -1137,7 +1147,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
   }
-  ImGui::SameLine();
+  if (ImGui::GetContentRegionAvail().x >= full_sky_w + UiPx(2.0f)) {
+    ImGui::SameLine();
+  }
   if (ImGui::SmallButton("Full sky##map")) {
     view.centre_pos[0] = 0.0f;
     view.centre_pos[1] = 0.0f;

@@ -614,6 +614,11 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     } else if (band_side_by_side && main_w < cells_floor) {
       band_side_by_side = false;
     }
+    // The height rung: horizontal room does not make the three regions operable — below the
+    // fixed-stack floor the side-by-side form's children do not scroll, and the stacked form's
+    // own scroll is the only reachability there is. No hysteresis on this rung: the row ratio
+    // moves continuously under the dragging hand.
+    band_side_by_side = band_side_by_side && band_h >= UiPx(kAnalyzeDepthBandMinHeightPt);
   }
 
   // ---- Left column: crystal list + Sun + Simulation (the Render right panel's Scene controls,

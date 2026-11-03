@@ -1870,14 +1870,47 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   // window of its own any more. The ROI controls live on the panorama side
   // (RenderPanoramaRoiControls, analyze_workspace.cpp); everything that reads and shapes the
   // RESULT is here.
-  RenderPickBanner(state);
-  RenderListFreshnessBanner(state);
-  RenderRequestParamsControls(state);
-  RenderRunControls(state, server);
-  RenderRadiusSlider(state);
-  RenderSymmetryControls(state, server);
-  ImGui::Separator();
-  RenderResultSearchBox();
+  //
+  // The fixed head grows with state — the freshness banner wraps at a narrow column, the picture
+  // notice and the radius row appear conditionally — and the host window never scrolls (the
+  // table is its one scrolling region), so an over-budget head would push the Exclude / Export
+  // CSV row out of the window for good. When the head's natural height (measured last frame)
+  // exceeds what the region can give it while still holding the table's minimum and the button
+  // row, the head moves into its own scrolling child — the degradation ladder's internal-scroll
+  // rung; at every ordinary state the head is shorter than the space and renders flat, exactly
+  // as before. The measurement rides one frame behind a state change; the states that grow the
+  // head persist, so the clamp engages on the frame after the banner appears.
+  ImGuiStorage* storage = ImGui::GetStateStorage();
+  const ImGuiID head_h_key = ImGui::GetID("analysis_head_natural_h");
+  const float buttons_h =
+      ImGui::GetFrameHeightWithSpacing() +
+      (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
+  const float table_min_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+  const float max_head_h = ImGui::GetContentRegionAvail().y - buttons_h - table_min_h;
+  const bool clamp_head = storage->GetFloat(head_h_key, 0.0f) > max_head_h;
+  const auto draw_head = [&state, server] {
+    RenderPickBanner(state);
+    RenderListFreshnessBanner(state);
+    RenderRequestParamsControls(state);
+    RenderRunControls(state, server);
+    RenderRadiusSlider(state);
+    RenderSymmetryControls(state, server);
+    ImGui::Separator();
+    RenderResultSearchBox();
+  };
+  float head_natural = 0.0f;
+  if (clamp_head) {
+    ImGui::BeginChild("##analysis_head", ImVec2(0.0f, max_head_h));
+    const float inner_top = ImGui::GetCursorPosY();
+    draw_head();
+    head_natural = ImGui::GetCursorPosY() - inner_top;
+    ImGui::EndChild();
+  } else {
+    const float top = ImGui::GetCursorPosY();
+    draw_head();
+    head_natural = ImGui::GetCursorPosY() - top;
+  }
+  storage->SetFloat(head_h_key, head_natural);
   RenderResultList(state);
   RenderActionButtons(state);
 }

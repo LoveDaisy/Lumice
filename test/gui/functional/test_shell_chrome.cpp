@@ -748,6 +748,19 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         ctx->MouseUp(0);
         ctx->Yield(2);
       }
+
+      // The band's height rung: at the row ratio's far clamp the band is below the fixed-stack
+      // floor, and the side-by-side form — whose children do not scroll — must give way to the
+      // stacked one, whose own scroll is the reachability there.
+      gui::g_state.workspace.middle_rows_ratio = 0.85f;
+      ctx->Yield(3);
+      ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+      IM_CHECK(band != nullptr);
+      ctx->LogInfo("[splitters] band at 0.85 rows: h %.0f, ScrollMax %.0f", static_cast<double>(band->Size.y),
+                   static_cast<double>(band->ScrollMax.y));
+      IM_CHECK_GT(band->ScrollMax.y, 0.0f);
+      gui::g_state.workspace.middle_rows_ratio = rows_0;
+      ctx->Yield(2);
     };
   }
 
@@ -789,11 +802,45 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK(window_present("##AnalyzeIdlePictureGuide"));
       IM_CHECK(!window_present("##AnalyzeIdleNoPictureGuide"));
 
-      // An analysis in flight: the region names the run and hosts the cancel entry. Reached the
-      // way the product reaches it — `analysis.started` is the derive's input
-      // (DeriveAnalysisInProgress: submitted, no wake edge yet), and the per-frame derive owns
-      // the in-progress flag, so writing the flag itself would be overwritten before it read.
+      // An analysis in flight: the region names the run and hosts the cancel entry. The state is
+      // reached the way the product reaches it — a RUNNING backend plus the analysis's started
+      // flag. The derive (DeriveAnalysisInProgress) reads the poller's snapshot, so a completed
+      // snapshot left by an earlier case would honestly say idle: a real run is the only
+      // construction that survives the pool. (The run is stopped and the server torn down below,
+      // the panorama case's dance.)
+      gui::g_server = LUMICE_CreateServer();
+      LUMICE_SetLogLevel(gui::g_server, static_cast<LUMICE_LogLevel>(g_core_log_level));
+      {
+        constexpr const char* kScene = R"({
+          "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.2},
+                       "axis": {"zenith": {"type": "uniform", "mean": 90, "std": 360},
+                                "azimuth": {"type": "uniform", "mean": 0, "std": 360}}}],
+          "filter": [],
+          "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+                    "ray_num": 100000, "max_hits": 7,
+                    "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+          "render": [{"id": 1, "lens": {"type": "linear", "fov": 60},
+                      "resolution": [64, 64], "view": {"elevation": 42}}]
+        })";
+        std::istringstream in(kScene);
+        std::string json_str((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        IM_CHECK(gui::DeserializeFromJson(json_str, gui::g_state));
+      }
+      gui::g_state.renderer.sim_resolution_index = 0;
+      gui::g_state.sim.infinite = false;
+      gui::g_state.sim.ray_num_millions = 0.1f;
+      gui::DoRun(/*user_initiated=*/true);
       gui::g_state.analysis.started = true;
+      const auto run_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+      while (gui::g_state.sim_state != gui::GuiState::SimState::kSimulating &&
+             std::chrono::steady_clock::now() < run_deadline) {
+        ctx->Yield(1);
+      }
+      IM_CHECK_EQ((int)gui::g_state.sim_state, (int)gui::GuiState::SimState::kSimulating);
+      // DeserializeFromJson replaced the whole GuiState — the workspace went back to Render
+      // (the five-rule ledger's deserialize row). Re-enter Analyze: the diagnostics region is
+      // this case's subject, and the picture the run is producing is on the main view.
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
       ctx->Yield(3);
       // Scoped to the diagnostics window: with the run in flight the list panel draws its own
       // Stop beside the budget controls, and a bare "**/" would match that one first.
@@ -806,7 +853,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       // permitted height (the list takes the rest), where the running block sits below the fold
       // of the region's one scrolling viewport. The wheel reaches it: scroll the viewport down
       // and the Stop resolves a rect clipped INSIDE the window's visible area — reachable, not
-      // merely submitted. (DoStop with no server returns at its guard; the click is safe.)
+      // merely submitted — and the click lands on it (DoStop is the same entry the list drives).
       {
         const float details_floor_ratio =
             (912.0f - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) / 912.0f;
@@ -851,6 +898,18 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         gui::g_state.workspace.right_list_ratio = 0.45f;
       }
 
+      // Teardown: stop the run, wait it out (the panorama case's dance — the shared server must
+      // not outlive the case that made it, and a stopping intent must not leak to later cases).
+      gui::DoStop();
+      const auto stop_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+      while (gui::g_state.sim_state != gui::GuiState::SimState::kDone &&
+             gui::g_state.sim_state != gui::GuiState::SimState::kIdle &&
+             std::chrono::steady_clock::now() < stop_deadline) {
+        ctx->Yield(1);
+      }
+      LUMICE_StopServer(gui::g_server);
+      LUMICE_DestroyServer(gui::g_server);
+      gui::g_server = nullptr;
       gui::g_state.analysis.started = false;
       gui::g_state.run_intent = gui::RunIntent::kNone;
       ctx->Yield(2);

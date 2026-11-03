@@ -1665,11 +1665,12 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
     IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
   }
-  // The squeezed-row red anchor: at the 0.85 clamp the lower row still fits the fixed stack and
-  // the legend, while the canvas's old 40pt floor does not — the canvas must YIELD (scroll stays
-  // zero) instead of pushing the stack out. The squeeze is a state write (the same write the
-  // drag performs), because pre-fix the grab bar rides ~6pt outside its own 8pt strip and no
-  // press can reach its centre — the drag itself is verified separately below, post-restore.
+  // The squeezed-row red anchor, translated to the height-rung semantics: at the 0.85 clamp the
+  // band drops below the side-by-side form's fixed-stack floor, so the form is the stacked one —
+  // the 3D region holds its floor height there (any content beyond it scrolls inside the region,
+  // the designed degradation), while the strip defect this leg originally pinned (a 32pt-clamped
+  // divider covering the headers and stealing their hover) stays pinned by the divider's size
+  // and grab-containment asserts in workspace_scroll_regions_are_structurally_fixed.
   {
     const float ratio_before = gui::g_state.workspace.middle_rows_ratio;
     gui::g_state.workspace.middle_rows_ratio = 0.85f;
@@ -1677,8 +1678,9 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
     {
       ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypath3D");
       IM_CHECK_RETV(region != nullptr, false);
-      ctx->LogInfo("[scroll pins] 3d squeezed SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
-      IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
+      ctx->LogInfo("[scroll pins] 3d squeezed h %.1f SM %.1f SC %.1f", region->Size.y, region->ScrollMax.y,
+                   region->Scroll.y);
+      IM_CHECK_RETV(std::fabs(region->Size.y - gui::UiPx(gui::kAnalyzeDepth3DMinSize)) < 1.0f, false);
       IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
     }
     gui::g_state.workspace.middle_rows_ratio = ratio_before;
@@ -3450,12 +3452,18 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK(az_in.ID != 0);
         const ImGuiTestItemInfo set_btn = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
         IM_CHECK(set_btn.ID != 0);
+        const ImGuiTestItemInfo fit_btn = ctx->ItemInfo("**/Fit##map", ImGuiTestOpFlags_NoError);
+        IM_CHECK(fit_btn.ID != 0);
+        const ImGuiTestItemInfo full_sky_btn = ctx->ItemInfo("**/Full sky##map", ImGuiTestOpFlags_NoError);
+        IM_CHECK(full_sky_btn.ID != 0);
         ctx->LogInfo("[side-by-side] map w=%.0f, alt right %.0f, az right %.0f, set right %.0f, clip right %.0f",
                      map->Size.x, alt_in.RectClipped.Max.x, az_in.RectClipped.Max.x, set_btn.RectClipped.Max.x,
                      map->InnerClipRect.Max.x);
         IM_CHECK(contained(alt_in));
         IM_CHECK(contained(az_in));
         IM_CHECK(contained(set_btn));
+        IM_CHECK(contained(fit_btn));  // the view buttons wrap onto their own line at this width
+        IM_CHECK(contained(full_sky_btn));
         ctx->ItemInputValue("**/alt°##sky", 30.0f);
         ctx->ItemInputValue("**/az°##sky", 180.0f);
         ctx->ItemClick("**/Set sky point");
@@ -3657,6 +3665,41 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(!window_present("##AnalyzeIdlePictureGuide"));
       IM_CHECK(!window_present("##AnalyzeIdleSummary"));
       IM_CHECK(window_present("##AnalyzeDetailsScroll"));
+
+      // The stale-at-the-floors repro: with a point result in, both splits dragged to their
+      // floors and the scene edited afterwards, the freshness banner wraps and the head grows —
+      // and the buttons must still sit inside the never-scrolling list window (the head moves
+      // into its own scrolling child instead). The head's natural-height measurement rides one
+      // frame behind the banner, hence the yields before the containment read.
+      const int fixture_crystal = gui::g_state.layers[0].entries[0].crystal_id;
+      gui::g_state.crystals[fixture_crystal].height.center += 0.1f;
+      const float d1_saved = gui::g_state.workspace.right_column_ratio;
+      const float d2_saved = gui::g_state.workspace.right_list_ratio;
+      gui::g_state.workspace.right_column_ratio =
+          gui::UiPx(gui::kAnalyzeRightColMinWidth) / (static_cast<float>(gui::kInitWindowWidth) - 300.0f);
+      gui::g_state.workspace.right_list_ratio =
+          (912.0f - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) / 912.0f;
+      ctx->Yield(4);
+      {
+        ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
+        IM_CHECK(share != nullptr);
+        const ImGuiTestItemInfo csv = ctx->ItemInfo("**/" ICON_FA_FILE_CSV " Export CSV", ImGuiTestOpFlags_NoError);
+        IM_CHECK(csv.ID != 0);
+        IM_CHECK_GT(csv.RectClipped.GetHeight(), 0.0f);
+        IM_CHECK_GE(csv.RectClipped.Min.y, share->InnerClipRect.Min.y - 0.5f);
+        IM_CHECK_LE(csv.RectClipped.Max.y, share->InnerClipRect.Max.y + 0.5f);
+        const ImGuiTestItemInfo exclude =
+            ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath", ImGuiTestOpFlags_NoError);
+        IM_CHECK(exclude.ID != 0);
+        IM_CHECK_GT(exclude.RectClipped.GetHeight(), 0.0f);
+        ctx->LogInfo("[stale floors] share %.0fx%.0f, csv clip y [%.0f, %.0f] within [%.0f, %.0f]", share->Size.x,
+                     share->Size.y, csv.RectClipped.Min.y, csv.RectClipped.Max.y, share->InnerClipRect.Min.y,
+                     share->InnerClipRect.Max.y);
+      }
+      gui::g_state.workspace.right_column_ratio = d1_saved;
+      gui::g_state.workspace.right_list_ratio = d2_saved;
+      gui::g_state.crystals[fixture_crystal].height.center -= 0.1f;
+      ctx->Yield(2);
     };
   }
 
