@@ -79,10 +79,12 @@ constexpr float kAnalyzeShareListMinHeight = 250.0f;
 constexpr float kAnalyzeDetailsMinHeight = 64.0f;
 // D2's default: the contract's list ≈45% of the right column's height.
 constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
-// The depth band's per-cell content floors (§11 R3/R4): the map region's input row, the globe's
-// fixed interaction stack, the 3D view at legible size. Each is its region's width floor in the
-// band's side-by-side form and height floor in the stacked form.
-constexpr float kAnalyzeDepthMapMinSize = 290.0f;
+// The depth band's per-cell content floors (§11 R3/R4): the map region's sky-point input row
+// (the widest fixed row: two 90 px inputs with their visible labels, the Set sky point button —
+// ≈343 px inner + the child's padding, measured against the Roboto Medium 15px theme), the
+// globe's fixed interaction stack, the 3D view at legible size. Each is its region's width floor
+// in the band's side-by-side form and height floor in the stacked form.
+constexpr float kAnalyzeDepthMapMinSize = 370.0f;
 constexpr float kAnalyzeDepthGlobeMinSize = 250.0f;
 constexpr float kAnalyzeDepth3DMinSize = 240.0f;
 // The split strips' thickness (##AnalyzeRowsDivider's 8 pt recipe, shared by the two new strips).

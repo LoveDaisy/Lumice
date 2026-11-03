@@ -42,7 +42,8 @@ namespace {
 // another region already renders or the session already holds: no new query, no new state owner.
 void RenderAnalysisIdleDiagnostics(GuiState& state) {
   const auto& a = state.analysis;
-  ImGui::TextUnformatted("Diagnostics");
+  // (The "Diagnostics" title is the window's fixed head, drawn by the caller — this function is
+  // the scrolling region's content.)
   // ---- The entry guidance: where an analysis starts from, as the state actually is. ----
   if (state.analysis_result.payload == nullptr) {
     // The list's own empty-state line (RenderResultList's, one source for the same fact).
@@ -114,26 +115,24 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
 
 // The main view column's horizontal divider: a full-width grab strip with the resize-NS cursor,
 // the classic ImGui splitter shape (invisible button + hover/active line drawn over it), writing
-// GuiState::AnalyzeWorkspaceSession::middle_rows_ratio. Level-triggered like every other drag:
-// only a frame with a drag in flight writes the ratio. The strip lives in its own thin window,
-// so the ratio's reference frame — the main view column's top and height — is passed in;
-// measuring against the strip's own window would make the ratio a function of the last mouse
-// delta alone.
-void MiddleRowsSplitter(const char* id, float width, float* ratio, float area_top, float area_h) {
+// GuiState::AnalyzeWorkspaceSession::middle_rows_ratio. A moving frame writes
+// `ratio += dy / area_h` — the split's normalized boundary advancing exactly by the hand's
+// travel — and nothing else: the write deliberately reads neither the item rectangle nor any
+// absolute position. The rectangle moves with the layout, so a pivot-read-plus-delta would
+// compound the strip's own half height into every moving frame (a 1 px-per-frame drag grew the
+// list ~75 px over 20 frames), and under ViewportsEnable the rectangle is screen-absolute while
+// the reference frame is window-local, so the main viewport's origin would ride every write.
+// Deltas carry no coordinate system and the stored ratio carries no geometry: both failure
+// shapes are outside the write's alphabet, not guarded against in it. A held-still pointer
+// keeps IsMouseDragging true but has no delta — no write.
+void MiddleRowsSplitter(const char* id, float width, float* ratio, float area_h) {
   const float height = UiPx(kAnalyzeSplitterSize);
   ImGui::InvisibleButton(id, ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
   const bool active = ImGui::IsItemActive();
-  const ImVec2 mouse_delta = ImGui::GetIO().MouseDelta;
-  if (active && (mouse_delta.x != 0.0f || mouse_delta.y != 0.0f) && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    // The splitter sits between the rows, so its centre is the ratio's pivot: move the mouse,
-    // move the pivot. Screen-space y against the main view column's frame. The zero-delta gate
-    // is not decoration: with the button held on a stationary pointer, IsMouseDragging stays
-    // true and a pivot-plus-zero write would read the strip's CURRENT position as the ratio —
-    // a half-strip-width step per frame, the strip crawling away from the resting hand.
-    const float pivot_y = ImGui::GetItemRectMin().y + height * 0.5f;
-    *ratio = (pivot_y + mouse_delta.y - area_top) / area_h;
-    *ratio = std::clamp(*ratio, 0.15f, 0.85f);
+  const float mouse_dy = ImGui::GetIO().MouseDelta.y;
+  if (active && mouse_dy != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    *ratio = std::clamp(*ratio + mouse_dy / area_h, 0.15f, 0.85f);
   }
   if (hovered || active) {
     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
@@ -148,25 +147,20 @@ void MiddleRowsSplitter(const char* id, float width, float* ratio, float area_to
 }
 
 // D1 (main view | right column), the row splitter's vertical counterpart — the same recipe
-// (invisible button + hover/active line + the one affordance line + level-triggered write),
-// with the resize-EW cursor, measuring against the split's reference frame (the span right of
-// the fixed left column) and clamping the write to the pixel floors (gui_constants.hpp): a drag
-// past a floor pins the ratio at that floor, at this window width — the layout re-derives the
-// pixels every frame, the stored ratio stays the split's identity.
-void RightColumnSplitter(const char* id, float height, float* ratio, float area_left, float area_w) {
+// (invisible button + hover/active line + the one affordance line + delta-only write), with the
+// resize-EW cursor. Dragging the hand right narrows the right column: the ratio (the right
+// column's share) decreases by the travel. The pixel-floor clamp (gui_constants.hpp) pins the
+// write at the floors of this window width — the layout re-derives the pixels every frame, the
+// stored ratio stays the split's identity. `area_w` is a size, not a position: sizes survive the
+// viewport-origin translation the splitter must not read (see MiddleRowsSplitter).
+void RightColumnSplitter(const char* id, float height, float* ratio, float area_w) {
   const float width = UiPx(kAnalyzeSplitterSize);
   ImGui::InvisibleButton(id, ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
   const bool active = ImGui::IsItemActive();
-  const ImVec2 mouse_delta = ImGui::GetIO().MouseDelta;
-  if (active && (mouse_delta.x != 0.0f || mouse_delta.y != 0.0f) && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    // The strip's right edge is the split: the right column is what remains of the span to the
-    // strip's right, so the ratio reads off the strip's trailing edge — dragging the hand right
-    // narrows the right column. Screen-space x against the span's right edge. (The zero-delta
-    // gate: a held-still pointer must not write the strip's own position back as the ratio —
-    // the same crawl the row splitter's gate blocks.)
-    const float strip_right = ImGui::GetItemRectMax().x + mouse_delta.x;
-    *ratio = (area_left + area_w - strip_right) / area_w;
+  const float mouse_dx = ImGui::GetIO().MouseDelta.x;
+  if (active && mouse_dx != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    *ratio -= mouse_dx / area_w;
     const float right_floor = UiPx(kAnalyzeRightColMinWidth);
     const float main_floor = UiPx(kAnalyzeMainViewMinWidth);
     if (area_w >= right_floor + main_floor + width) {
@@ -189,18 +183,17 @@ void RightColumnSplitter(const char* id, float height, float* ratio, float area_
 }
 
 // D2 (share list | diagnostics within the right column), the row splitter's shape with the same
-// pixel-floor clamp: the list keeps its fixed head plus the table's header row, one data row and
-// the button row; the diagnostics region keeps its title and one state line.
-void RightRowsSplitter(const char* id, float width, float* ratio, float area_top, float area_h) {
+// delta-only write and the pixel-floor clamp: the list keeps its fixed head plus the table's
+// header row, one data row and the button row; the diagnostics region keeps its title and a
+// visible first line of its scrolling region.
+void RightRowsSplitter(const char* id, float width, float* ratio, float area_h) {
   const float height = UiPx(kAnalyzeSplitterSize);
   ImGui::InvisibleButton(id, ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
   const bool active = ImGui::IsItemActive();
-  const ImVec2 mouse_delta = ImGui::GetIO().MouseDelta;
-  if (active && (mouse_delta.x != 0.0f || mouse_delta.y != 0.0f) && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    // (Zero-delta gate: the row splitter's crawl block, same reason.)
-    const float pivot_y = ImGui::GetItemRectMin().y + height * 0.5f;
-    *ratio = (pivot_y + mouse_delta.y - area_top) / area_h;
+  const float mouse_dy = ImGui::GetIO().MouseDelta.y;
+  if (active && mouse_dy != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    *ratio += mouse_dy / area_h;
     const float list_floor = UiPx(kAnalyzeShareListMinHeight);
     const float details_floor = UiPx(kAnalyzeDetailsMinHeight);
     if (area_h >= list_floor + details_floor + height) {
@@ -679,7 +672,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // top-level window's SetNextWindowSize (685.54 -> 685), and a grab sized by the unfloored
   // value would stick 0.54px out of its own strip and fail the containment pin.
   MiddleRowsSplitter("##AnalyzeRowsSplitter", ImGui::GetContentRegionAvail().x, &g_state.workspace.middle_rows_ratio,
-                     top, panel_height);
+                     panel_height);
   ImGui::End();
   ImGui::PopStyleVar(2);
 
@@ -727,7 +720,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
   RightColumnSplitter("##AnalyzeColumnSplitter", ImGui::GetContentRegionAvail().y,
-                      &g_state.workspace.right_column_ratio, main_x, avail_w);
+                      &g_state.workspace.right_column_ratio, avail_w);
   ImGui::End();
   ImGui::PopStyleVar(2);
 
@@ -752,7 +745,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
   // (Grab spans the strip's real inner width — the same floored-size reason as the row divider.)
   RightRowsSplitter("##AnalyzeRightRowsSplitter", ImGui::GetContentRegionAvail().x, &g_state.workspace.right_list_ratio,
-                    top, panel_height);
+                    panel_height);
   ImGui::End();
   ImGui::PopStyleVar(2);
 
@@ -760,7 +753,11 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // survey's four visible states and the point block when a class is selected; the idle state's
   // entry guidance, run status and observation summary when none is (§9.1). The window itself
   // never scrolls: the query content is its one scrolling region, the identity facts its fixed
-  // head — the same fixed-header/inner-scroll convention the share list carries. ----
+  // head — the window's own head is exactly one line (the title), the region's whole D2-floor
+  // budget promise: everything else — identity facts, query states, the idle guidance / run
+  // status / observation summary — grows inside the ONE scrolling region, so the smallest
+  // permitted diagnostics height still shows the title and a visible first line, and the wheel
+  // reaches the rest. ----
   SetNextPanelGeometry(right_x, details_y, right_w, details_h);
   ImGui::Begin("##AnalyzeDetails", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -773,8 +770,12 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     // answer, named. Below them, the survey query's four visible states (R7): the
     // engine-answered digest when one was adopted, the named refusal where the engine says
     // no, waiting and cancelled spelled as such. The point-level block (742.6) follows as the
-    // second level of the two-level information contract (D6).
+    // second level of the two-level information contract (D6). The identity facts scroll WITH
+    // the query content: at the D2 floor a multi-row fixed head would push the query region's
+    // own start below the clip, and the facts are information, not controls — nothing here
+    // needs to stay under the hand.
     ImGui::TextUnformatted("Selection details");
+    ImGui::BeginChild("##AnalyzeDetailsScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::BulletText("%s", g_state.analysis.selected_entry->c_str());
     ImGui::BulletText("snapshot crystal %d · %d layer(s) · %d faces", identity->core_crystal_id,
                       static_cast<int>(identity->layer_face_counts.size()), static_cast<int>(identity->faces.size()));
@@ -783,13 +784,15 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
       ImGui::TextWrapped("The typed survey refuses multi-layer classes: multi_layer_unsupported.");
       ImGui::PopStyleColor();
     }
-    ImGui::BeginChild("##AnalyzeDetailsScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
     ImGui::Separator();
     RenderSurveyOverview(*identity);
     RenderPointDetailsBlock(g_state, *identity);
     ImGui::EndChild();
   } else {
+    ImGui::TextUnformatted("Diagnostics");
+    ImGui::BeginChild("##AnalyzeDetailsScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
     RenderAnalysisIdleDiagnostics(g_state);
+    ImGui::EndChild();
   }
   ImGui::End();
 }

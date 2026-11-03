@@ -714,6 +714,40 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK(details != nullptr);
       IM_CHECK_GE(details->Size.y,
                   912.0f - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeShareListMinHeight) - 1.0f);
+
+      // The write is delta-only, so the boundary moves EXACTLY by the hand's travel: a slow
+      // multi-frame drag of ten 1px steps moves the list's height by ten, a drag on the other
+      // axis moves nothing (the per-axis gate), and a held-still press drifts nothing (the
+      // zero-delta gate) — displacement assertions, not direction-and-clamp ones.
+      {
+        ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
+        IM_CHECK(share != nullptr);
+        const float list_h_start = share->Size.y;
+        const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRightRowsSplitter", ImGuiTestOpFlags_NoError);
+        IM_CHECK(grab.ID != 0);
+        const ImVec2 c = grab.RectFull.GetCenter();
+        ctx->MouseMoveToPos(c);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        for (int i = 1; i <= 10; ++i) {  // purely horizontal: the list height must not move
+          ctx->MouseMoveToPos(ImVec2(c.x + static_cast<float>(i), c.y));
+          ctx->Yield(1);
+        }
+        IM_CHECK_EQ(share->Size.y, list_h_start);
+        for (int i = 1; i <= 10; ++i) {  // slow vertical: the height tracks the travel 1:1
+          ctx->MouseMoveToPos(ImVec2(c.x + 10.0f, c.y + static_cast<float>(i)));
+          ctx->Yield(1);
+        }
+        ctx->LogInfo("[splitters] slow drag: list %.1f -> %.1f (expected %.1f)", static_cast<double>(list_h_start),
+                     static_cast<double>(share->Size.y), static_cast<double>(list_h_start + 10.0f));
+        IM_CHECK_FLOAT_NEAR(share->Size.y, list_h_start + 10.0f, 2.0f);
+        const float after_move = share->Size.y;
+        ctx->Yield(5);  // held still: no drift (equal to the value the movement ended on)
+        IM_CHECK_EQ(share->Size.y, after_move);
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+      }
     };
   }
 
@@ -741,12 +775,13 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         return false;
       };
 
-      // A fresh document: no picture, no result — the no-picture guidance, the summary, no
-      // query region.
+      // A fresh document: no picture, no result — the no-picture guidance, the summary; the
+      // query scroll region exists in both branches (the region's one scrolling viewport), the
+      // identity branch does not.
       IM_CHECK(window_present("##AnalyzeIdleNoPictureGuide"));
       IM_CHECK(!window_present("##AnalyzeIdlePictureGuide"));
       IM_CHECK(window_present("##AnalyzeIdleSummary"));
-      IM_CHECK(!window_present("##AnalyzeDetailsScroll"));
+      IM_CHECK(window_present("##AnalyzeDetailsScroll"));
 
       // A picture seen (the same flag the Analyze button reads): the guidance switches.
       gui::g_state.run_intent = gui::RunIntent::kLoaded;
@@ -760,9 +795,62 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       // the in-progress flag, so writing the flag itself would be overwritten before it read.
       gui::g_state.analysis.started = true;
       ctx->Yield(3);
+      // Scoped to the diagnostics window: with the run in flight the list panel draws its own
+      // Stop beside the budget controls, and a bare "**/" would match that one first.
+      ctx->SetRef("//##AnalyzeDetails");
       const ImGuiTestItemInfo stop = ctx->ItemInfo("**/" ICON_FA_STOP " Stop", ImGuiTestOpFlags_NoError);
       IM_CHECK_NE(stop.ID, 0u);
       IM_CHECK_GT(stop.RectFull.GetHeight(), 0.0f);
+
+      // The cancel entry at the D2 floor: the diagnostics region dragged to its smallest
+      // permitted height (the list takes the rest), where the running block sits below the fold
+      // of the region's one scrolling viewport. The wheel reaches it: scroll the viewport down
+      // and the Stop resolves a rect clipped INSIDE the window's visible area — reachable, not
+      // merely submitted. (DoStop with no server returns at its guard; the click is safe.)
+      {
+        const float details_floor_ratio =
+            (912.0f - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) / 912.0f;
+        gui::g_state.workspace.right_list_ratio = details_floor_ratio;
+        ctx->Yield(3);
+        ImGuiWindow* details_win = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && w->ParentWindow == nullptr &&
+              std::strcmp(w->Name, "##AnalyzeDetails") == 0) {
+            details_win = w;
+          }
+        }
+        IM_CHECK(details_win != nullptr);
+        ImGuiWindow* scroll = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && w->ParentWindow == details_win &&
+              std::strstr(w->Name, "##AnalyzeDetailsScroll") != nullptr) {
+            scroll = w;
+          }
+        }
+        IM_CHECK(scroll != nullptr);
+        ctx->LogInfo("[idle floor] scroll viewport %.0f, ScrollMax %.0f", scroll->InnerRect.GetHeight(),
+                     scroll->ScrollMax.y);
+        // Step the viewport down toward the Stop (below the guidance block, above the summary):
+        // a stepwise scroll, like the list-row finder — the click below is the reachability
+        // evidence, so the view must actually carry the button.
+        bool stop_in_view = false;
+        for (int step = 0; step < 10 && !stop_in_view; ++step) {
+          scroll->Scroll.y = std::min(scroll->ScrollMax.y, scroll->Scroll.y + scroll->InnerRect.GetHeight() * 0.5f);
+          ctx->Yield(2);
+          const ImGuiTestItemInfo probe = ctx->ItemInfo("**/" ICON_FA_STOP " Stop", ImGuiTestOpFlags_NoError);
+          stop_in_view = probe.ID != 0 && probe.RectClipped.GetHeight() > 0.0f &&
+                         probe.RectClipped.Min.y >= details_win->InnerClipRect.Min.y - 0.5f &&
+                         probe.RectClipped.Max.y <= details_win->InnerClipRect.Max.y + 0.5f;
+        }
+        IM_CHECK(stop_in_view);
+        const ImGuiTestItemInfo stop_floor = ctx->ItemInfo("**/" ICON_FA_STOP " Stop", ImGuiTestOpFlags_NoError);
+        IM_CHECK_NE(stop_floor.ID, 0u);
+        IM_CHECK_GT(stop_floor.RectClipped.GetHeight(), 0.0f);
+        ctx->ItemClick("**/" ICON_FA_STOP " Stop");
+        ctx->Yield(2);
+        gui::g_state.workspace.right_list_ratio = 0.45f;
+      }
+
       gui::g_state.analysis.started = false;
       gui::g_state.run_intent = gui::RunIntent::kNone;
       ctx->Yield(2);

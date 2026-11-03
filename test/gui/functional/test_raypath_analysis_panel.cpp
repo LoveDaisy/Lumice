@@ -3429,6 +3429,39 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(view_result.payload->roi_mode, LUMICE_RAYPATH_ROI_CONE);
       IM_CHECK_GT(view_result.payload->entries.size(), 0u);
       IM_CHECK_EQ(view_result.display_order.size(), view_result.payload->entries.size());
+      // The side-by-side band's containment: at the default window the map cell is at its
+      // content floor, and the sky-point row — the widest fixed row the floor was measured
+      // from — fits WHOLE (every control's clipped rect inside the region), and the Set button
+      // answers a real click. The cell's width does not grow with the view's spare space, so a
+      // floor set below the row would clip the button forever — the containment, not a
+      // submitted-flag, is the evidence.
+      {
+        ImGuiWindow* map = LowerRowRegionWindow("##AnalyzeRaypathView");
+        IM_CHECK(map != nullptr);
+        const auto contained = [&](const ImGuiTestItemInfo& item) {
+          return item.RectClipped.Min.x >= map->InnerClipRect.Min.x - 0.5f &&
+                 item.RectClipped.Max.x <= map->InnerClipRect.Max.x + 0.5f && item.RectClipped.GetWidth() > 0.0f;
+        };
+        SetListRef(ctx);
+        ctx->SetRef("");  // root descent: the inputs live in the band's map region, not the list
+        const ImGuiTestItemInfo alt_in = ctx->ItemInfo("**/alt°##sky", ImGuiTestOpFlags_NoError);
+        IM_CHECK(alt_in.ID != 0);
+        const ImGuiTestItemInfo az_in = ctx->ItemInfo("**/az°##sky", ImGuiTestOpFlags_NoError);
+        IM_CHECK(az_in.ID != 0);
+        const ImGuiTestItemInfo set_btn = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
+        IM_CHECK(set_btn.ID != 0);
+        ctx->LogInfo("[side-by-side] map w=%.0f, alt right %.0f, az right %.0f, set right %.0f, clip right %.0f",
+                     map->Size.x, alt_in.RectClipped.Max.x, az_in.RectClipped.Max.x, set_btn.RectClipped.Max.x,
+                     map->InnerClipRect.Max.x);
+        IM_CHECK(contained(alt_in));
+        IM_CHECK(contained(az_in));
+        IM_CHECK(contained(set_btn));
+        ctx->ItemInputValue("**/alt°##sky", 30.0f);
+        ctx->ItemInputValue("**/az°##sky", 180.0f);
+        ctx->ItemClick("**/Set sky point");
+        ctx->Yield(2);
+        IM_CHECK(gui::g_state.analysis.sky_point.valid);
+      }
       // The share-list pins at the 1280x800 acceptance size: with
       // the result in, the window itself must not scroll — the controls above the table are the
       // fixed header and are visible by construction (ScrollMax == 0 says the whole content
