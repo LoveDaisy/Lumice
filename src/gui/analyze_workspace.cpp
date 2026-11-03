@@ -675,7 +675,11 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
-  MiddleRowsSplitter("##AnalyzeRowsSplitter", main_w, &g_state.workspace.middle_rows_ratio, top, panel_height);
+  // The grab bar spans the strip's real inner width, not the layout float: ImGui floors a
+  // top-level window's SetNextWindowSize (685.54 -> 685), and a grab sized by the unfloored
+  // value would stick 0.54px out of its own strip and fail the containment pin.
+  MiddleRowsSplitter("##AnalyzeRowsSplitter", ImGui::GetContentRegionAvail().x, &g_state.workspace.middle_rows_ratio,
+                     top, panel_height);
   ImGui::End();
   ImGui::PopStyleVar(2);
 
@@ -722,7 +726,8 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
-  RightColumnSplitter("##AnalyzeColumnSplitter", panel_height, &g_state.workspace.right_column_ratio, main_x, avail_w);
+  RightColumnSplitter("##AnalyzeColumnSplitter", ImGui::GetContentRegionAvail().y,
+                      &g_state.workspace.right_column_ratio, main_x, avail_w);
   ImGui::End();
   ImGui::PopStyleVar(2);
 
@@ -745,7 +750,9 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
-  RightRowsSplitter("##AnalyzeRightRowsSplitter", right_w, &g_state.workspace.right_list_ratio, top, panel_height);
+  // (Grab spans the strip's real inner width — the same floored-size reason as the row divider.)
+  RightRowsSplitter("##AnalyzeRightRowsSplitter", ImGui::GetContentRegionAvail().x, &g_state.workspace.right_list_ratio,
+                    top, panel_height);
   ImGui::End();
   ImGui::PopStyleVar(2);
 
