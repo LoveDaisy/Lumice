@@ -1367,9 +1367,13 @@ void RenderListFreshnessBanner(const GuiState& state) {
   if (ComputeAnalysisListFreshness(has_result, scene_still_matches) != AnalysisListFreshness::kStale) {
     return;
   }
-  ImGui::TextColored(
-      WarningTextColor(), ICON_FA_TRIANGLE_EXCLAMATION
-      " This list is from a configuration that has since changed \xe2\x80\x94 press Analyze to refresh it.");
+  // Wrapped, not clipped: the banner is the one place the stale fact is spelled, and at the right
+  // column's narrow widths a single clipped line would lose exactly the part that says what to do.
+  ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+  ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
+                     " This list is from a configuration that has since changed \xe2\x80\x94 press Analyze to "
+                     "refresh it.");
+  ImGui::PopStyleColor();
 }
 
 void RenderRunControls(GuiState& state, LUMICE_Server* server) {
@@ -1520,8 +1524,40 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
 // label can change without the box losing its text, the same width). "Search", not "Filter": on
 // this window "filter" already means two things — the P/B/D merge above and the raypath filter
 // Exclude writes — and a third would not help.
+//
+// Two forms, one widget, one id. The full form is the designed one: input at its width, the
+// visible label to its right (InputText draws its label right of the box once a width is set;
+// the "###" splits id from display). When the column is too narrow for that row — the right
+// column's 260 floor minus the window padding — the narrow-column form flips only the label's
+// visibility: the box takes the whole row, the display part collapses into the id (the text in
+// the box survives the swap, the id never moves), the "Search" hint inside the empty box stays
+// the findable word, and the tooltip carries what the label said. Row and id identical, so
+// nothing below jumps either way; the threshold reads the column's own content width, not the
+// window's, and everything is UiPx so the flip point does not drift across UI scales.
 void RenderResultSearchBox() {
-  g_analysis_search_filter.Draw(ICON_FA_MAGNIFYING_GLASS " Search###analysis_search", 240.0f);
+  constexpr float kSearchInputWidthPt = 240.0f;
+  const char* const kFullLabel = ICON_FA_MAGNIFYING_GLASS " Search###analysis_search";
+  const float label_w = ImGui::CalcTextSize(ICON_FA_MAGNIFYING_GLASS " Search").x;
+  const float full_row_w = UiPx(kSearchInputWidthPt) + ImGui::GetStyle().ItemInnerSpacing.x + label_w;
+  const bool narrow = ImGui::GetContentRegionAvail().x < full_row_w;
+  if (narrow) {
+    g_analysis_search_filter.Draw("###analysis_search", ImGui::GetContentRegionAvail().x);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("Search");
+    }
+  } else {
+    g_analysis_search_filter.Draw(kFullLabel, UiPx(kSearchInputWidthPt));
+  }
+}
+
+// Whether the action buttons stack at this content width (the buttons' real sizes against the
+// space): the shared fact of RenderResultList's height reservation and RenderActionButtons'
+// SameLine, so the two can never disagree about the row count under them.
+bool AnalysisActionButtonsStack(float avail_w) {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float exclude_w = ImGui::CalcTextSize(ICON_FA_BAN " Exclude this raypath").x + style.FramePadding.x * 2.0f;
+  const float csv_w = ImGui::CalcTextSize(ICON_FA_FILE_CSV " Export CSV").x + style.FramePadding.x * 2.0f;
+  return avail_w < exclude_w + style.ItemSpacing.x + csv_w;
 }
 
 void RenderResultList(GuiState& state) {
@@ -1551,9 +1587,13 @@ void RenderResultList(GuiState& state) {
   }
   const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY |
                                 ImGuiTableFlags_SizingStretchProp;
-  // One row kept back below the table, for the button row that follows it (Exclude and Export CSV
-  // share the line); GetFrameHeightWithSpacing already carries the item spacing between the two.
-  const float avail_h = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+  // One row kept back below the table for the button row that follows it (two when the column is
+  // too narrow for them to share it — AnalysisActionButtonsStack, the same fact the button row
+  // reads); GetFrameHeightWithSpacing already carries the item spacing between the two.
+  const float button_rows_h =
+      ImGui::GetFrameHeightWithSpacing() +
+      (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
+  const float avail_h = ImGui::GetContentRegionAvail().y - button_rows_h;
   // No "Rays" column, on purpose: under adaptive ray allocation a row's hit count is how many
   // rays the online deal SENT its crystal, which is proportional neither to the crystal's
   // `proportion` nor to the row's Energy — shown, it only asks "why does this row get many rays
@@ -1771,10 +1811,14 @@ std::string LocalTimeNow() {
 }
 
 // The one row of buttons under the list: Exclude, and Export CSV beside it. One row, not two —
-// RenderResultList keeps exactly one row's height back for them.
+// RenderResultList keeps exactly one row's height back for them. At a column too narrow to hold
+// both, they stack (the one-row height budget is per button row; the table above yields the same
+// way it does for a taller fixed head). Measured against the column's own content width with the
+// buttons' real sizes, so the flip point is the layout itself, not a magic width.
 void RenderActionButtons(GuiState& state) {
   std::string why;
   const ExcludeEligibility elig = EvaluateExcludeEligibility(state, &why);
+  const bool stack = AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x);
   ImGui::BeginDisabled(elig != ExcludeEligibility::kOk);
   if (ImGui::Button(ICON_FA_BAN " Exclude this raypath")) {
     ApplyExcludeSelectedRaypath(state);
@@ -1794,7 +1838,9 @@ void RenderActionButtons(GuiState& state) {
       ImGui::SetTooltip("%s", why.c_str());
     }
   }
-  ImGui::SameLine();
+  if (!stack) {
+    ImGui::SameLine();
+  }
   const auto& payload = state.analysis_result.payload;
   const bool has_rows = payload && !payload->entries.empty();
   ImGui::BeginDisabled(!has_rows);
