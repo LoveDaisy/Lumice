@@ -8,7 +8,7 @@ The Raypath Analysis window answers "which raypaths make the light in this regio
 
 ## 1. Where it is
 
-The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout — the scene editors on the left, and the analysis on the right and in the middle: the **scene panorama** (the committed picture as an equal-area full-sky disk, with the region controls and the cone pick on it) above the **share list** this chapter describes, with a class overview in the bottom-right. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
+The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout: the scene editors in a fixed left column, the **scene panorama** (the committed picture as an equal-area full-sky disk, with the region controls and the cone pick on it) as the large main view, the **share list** this chapter describes in the right column's upper half, and the **diagnostics region** (the selection's details, or an entry guide before any result) in the right column's lower half. The two column and row splits are draggable, and the depths that have not yet moved to their own windows (the class map, the Raypath 3D region, the sun-direction globe) live in a band under the main view, side by side when the window is wide enough and stacked — scrollable — when it is not. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
 
 ## 2. Choosing a region (ROI)
 
@@ -87,7 +87,8 @@ If the crystal already has an **Out** filter instead, the button does not disabl
 
 ## 6. The class overview
 
-Select a row and the **Selection details** card in the bottom-right asks the engine about that
+Select a row and the **Selection details** card in the diagnostics region (the right column's
+lower half) asks the engine about that
 class while you keep working: the query runs in the background (a **Cancel survey** button is
 there while it does), and the card shows one of four honest states — waiting, cancelled, the
 engine's named refusal (a class crossing several crystals answers `multi_layer_unsupported`,
@@ -127,7 +128,7 @@ another class re-asks; the card never mixes two answers.
 
 ## 7. The raypath view (the class reference map)
 
-Select a row and the **Raypath view** region (bottom-left) draws that class's own sky picture —
+Select a row and the **Raypath view** region (in the band under the main view) draws that class's own sky picture —
 the engine's physical class reference map, one single-wavelength brightness disk computed from
 every member of the class (not a representative scaled up). The picture arrives in the
 background like the overview does, and the region states honestly where it stands: waiting,
@@ -174,7 +175,7 @@ spaces apart: the map is directions, the **sun direction globe** is the crystal'
 directions the sun sits in *the crystal's own frame* — a projection of the pose space, not the
 whole of it), and the **Raypath 3D** region is one concrete light path through one crystal.
 
-**Point detail** (right column, under the class overview) is the anchor. Once a class is
+**Point detail** (in the diagnostics region, under the class overview) is the anchor. Once a class is
 selected and a sky point is set, the engine is asked about that exact direction in the
 background (a couple-of-seconds tier; the point queues behind the survey and map on the same
 worker, and the block says so while it waits, with a **Cancel point** button). The answer opens
