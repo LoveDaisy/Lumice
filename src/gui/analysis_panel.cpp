@@ -1560,6 +1560,15 @@ bool AnalysisActionButtonsStack(float avail_w) {
   return avail_w < exclude_w + style.ItemSpacing.x + csv_w;
 }
 
+// The result table's floor: the frozen header row plus ONE data row — the least the table can
+// show while still being the list (the "at least one row" the layout slice promises). The head's
+// clamp budget (RenderAnalysisPanelBody) and the table's own yield floor read this same bound,
+// so an over-budget head can never take the data rows away.
+float AnalysisTableMinHeight() {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  return (ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f) * 2.0f;
+}
+
 void RenderResultList(GuiState& state) {
   const auto& view = state.analysis_result;
   if (!view.payload) {
@@ -1601,7 +1610,7 @@ void RenderResultList(GuiState& state) {
   // The table is the window's one scrolling region: it absorbs whatever height is left under the
   // fixed controls and the button row, and when even that is less than its header row needs, it
   // yields to the header instead of pushing the window into scrolling.
-  const float table_min_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+  const float table_min_h = AnalysisTableMinHeight();
   if (!ImGui::BeginTable("##analysis_rows", 4, flags, ImVec2(0.0f, std::max(avail_h, table_min_h)))) {
     return;
   }
@@ -1885,7 +1894,7 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   const float buttons_h =
       ImGui::GetFrameHeightWithSpacing() +
       (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
-  const float table_min_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+  const float table_min_h = AnalysisTableMinHeight();
   const float max_head_h = ImGui::GetContentRegionAvail().y - buttons_h - table_min_h;
   const bool clamp_head = storage->GetFloat(head_h_key, 0.0f) > max_head_h;
   const auto draw_head = [&state, server] {

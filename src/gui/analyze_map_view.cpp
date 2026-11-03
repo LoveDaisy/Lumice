@@ -1121,11 +1121,18 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // side-by-side band cell is as wide as its content floor, and the completed state's header
   // (title, overlays, the slider, both buttons) is wider than that; a clipped view button makes
   // the map unsteerable exactly where the map exists, so the buttons wrap onto their own line
-  // instead. Measured against the live remaining width, so it reads the same at any cell size.
+  // instead. The judgment reads the LAST ITEM's right edge against the content region's right
+  // edge: after ItemSize commits a widget the cursor drops to the next line, so
+  // GetContentRegionAvail().x there would report the whole fresh line's width and every check
+  // would pass while the SameLine it guards still overflows.
+  const auto fits_on_line = [&](float next_w) {
+    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
+  };
   const float style_spacing_x = ImGui::GetStyle().ItemSpacing.x;
   const float fit_w = ImGui::CalcTextSize("Fit##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
   const float full_sky_w = ImGui::CalcTextSize("Full sky##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  if (ImGui::GetContentRegionAvail().x >= fit_w + style_spacing_x + full_sky_w) {
+  if (fits_on_line(fit_w + style_spacing_x + full_sky_w)) {
     ImGui::SameLine();
   }
   if (ImGui::SmallButton("Fit##map")) {
@@ -1147,7 +1154,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
   }
-  if (ImGui::GetContentRegionAvail().x >= full_sky_w + UiPx(2.0f)) {
+  if (fits_on_line(full_sky_w)) {
     ImGui::SameLine();
   }
   if (ImGui::SmallButton("Full sky##map")) {

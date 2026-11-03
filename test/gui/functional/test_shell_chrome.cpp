@@ -761,6 +761,36 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_GT(band->ScrollMax.y, 0.0f);
       gui::g_state.workspace.middle_rows_ratio = rows_0;
       ctx->Yield(2);
+
+      // Just above the rung the side-by-side form holds, and the map cell's worst honest stack —
+      // title, view-button row, the no-selection state text, the input row — fits: the sky-point
+      // row's Set button stays inside the cell's clip at a legal split position. The ratio is the
+      // panorama's (upper) share, so the rung's edge sits near 0.70: band = panel*(1-r) - strip.
+      gui::g_state.workspace.middle_rows_ratio = 0.70f;  // band ≈ 912*0.30 - 8 = 266, the rung's edge
+      ctx->Yield(3);
+      band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+      IM_CHECK(band != nullptr);
+      IM_CHECK_FLOAT_NEAR(band->Size.y, 912.0f * 0.30f - gui::UiPx(gui::kAnalyzeSplitterSize), 2.0f);
+      IM_CHECK_EQ(band->ScrollMax.y, 0.0f);  // side-by-side: the band itself does not scroll
+      {
+        ImGuiWindow* map = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && w->ParentWindow == band &&
+              std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
+            map = w;
+          }
+        }
+        IM_CHECK(map != nullptr);
+        const ImGuiTestItemInfo set_btn = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
+        IM_CHECK(set_btn.ID != 0);
+        IM_CHECK_GT(set_btn.RectClipped.GetHeight(), 0.0f);
+        IM_CHECK_LE(set_btn.RectClipped.Max.y, map->InnerClipRect.Max.y + 0.5f);
+        ctx->LogInfo("[splitters] band %.0f, map clip bottom %.0f, set btn bottom %.0f",
+                     static_cast<double>(band->Size.y), static_cast<double>(map->InnerClipRect.Max.y),
+                     static_cast<double>(set_btn.RectClipped.Max.y));
+      }
+      gui::g_state.workspace.middle_rows_ratio = rows_0;
+      ctx->Yield(2);
     };
   }
 

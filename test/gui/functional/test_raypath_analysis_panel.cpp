@@ -3692,6 +3692,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
             ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath", ImGuiTestOpFlags_NoError);
         IM_CHECK(exclude.ID != 0);
         IM_CHECK_GT(exclude.RectClipped.GetHeight(), 0.0f);
+        // The list is still a list: the table's floor (header + one data row) holds under the
+        // clamped head, so a class row remains visible — the pre-clamp defect traded "buttons
+        // clipped" for "rows invisible", and this is the assert that forbids the trade.
+        const std::string top_display = TopChainDisplay();
+        const ImGuiTestItemInfo first_row =
+            ctx->ItemInfo((std::string("**/") + top_display).c_str(), ImGuiTestOpFlags_NoError);
+        IM_CHECK(first_row.ID != 0);
+        IM_CHECK_GT(first_row.RectClipped.GetHeight(), 0.0f);
         ctx->LogInfo("[stale floors] share %.0fx%.0f, csv clip y [%.0f, %.0f] within [%.0f, %.0f]", share->Size.x,
                      share->Size.y, csv.RectClipped.Min.y, csv.RectClipped.Max.y, share->InnerClipRect.Min.y,
                      share->InnerClipRect.Max.y);

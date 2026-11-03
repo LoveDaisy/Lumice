@@ -89,12 +89,14 @@ constexpr float kAnalyzeDepthGlobeMinSize = 250.0f;
 constexpr float kAnalyzeDepth3DMinSize = 240.0f;
 // The split strips' thickness (##AnalyzeRowsDivider's 8 pt recipe, shared by the two new strips).
 constexpr float kAnalyzeSplitterSize = 8.0f;
-// The depth band's side-by-side form also needs vertical room: below this band height the three
-// regions' fixed stacks (the map's title / wavelength / view-button rows and the sky-point row
-// alone are ≈115 px) cannot stand beside their canvases, and no child of the band scrolls in
-// that form — the stacked form's own scroll is the only reachability there is. Height has no
-// hysteresis: the row ratio moves continuously under the dragging hand.
-constexpr float kAnalyzeDepthBandMinHeightPt = 150.0f;
+// The depth band's side-by-side form also needs vertical room: below this band height the map
+// cell — the tallest of the three regions' fixed stacks in its worst honest state — cannot hold
+// its title row, view-button row, the no-selection state text, the separator, the sky-point
+// input row and the canvas's own 64 px floor beside them (≈249 px measured against the Roboto
+// Medium 15px theme), and no child of the band scrolls in that form — the stacked form's own
+// scroll is the only reachability there is. Height has no hysteresis: the row ratio moves
+// continuously under the dragging hand.
+constexpr float kAnalyzeDepthBandMinHeightPt = 250.0f;
 // Hysteresis of the depth band's form switch (logical px): side-by-side arms this far above the
 // three cells' floor sum and holds until the band drops below the bare sum, so a resize walking
 // the boundary does not flicker between the two forms.
