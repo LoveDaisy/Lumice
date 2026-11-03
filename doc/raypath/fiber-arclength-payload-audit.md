@@ -18,9 +18,10 @@ requires **no `src/` change**.
 
 The verdict is scoped, and one boundary matters for 756's plan: this says nothing about a
 *measure-consistent* contribution curve on fixed-axis (plate) scenes. On such scenes the
-angle-Lebesgue factors read identically zero (§4); the rank-0 orbit-factor payload that does
-carry a measure-consistent weight exists **only** in the `point_mass` outcome
-(`single_path_analysis.cpp:888-907`) and is not a per-pose factor curve
+angle-Lebesgue **rho — and with it `factor_product` and `fiber_integral` — read identically
+zero** (§4), while A/a^2, T and K stay informative per their own availability flags; the
+rank-0 orbit-factor payload that does carry a measure-consistent weight exists **only** in the
+`point_mass` outcome (`single_path_analysis.cpp:888-907`) and is not a per-pose factor curve
 (`point_result.hpp:102-108` has no K, no product, no SO(3) arclength), so an ordinary
 discovered plate fiber has **no existing data source to switch to**. If 756 needs
 measure-consistent plate curves, that is a new minimum-payload requirement to put before the
@@ -101,7 +102,7 @@ a failure mode: whitebox assembly reading vs. arithmetic on live output.
 | case (chain, target) | components | result |
 |---|---|---|
 | C16 column, sun 20, target (−20,0), 550 nm (`3-5`) | 1 closed | 145 points / 144 increments; first-last pose distance **6.4e-16 rad**; loop length 328.398° (a closed loop has no canonical angle); matches the corpus C16 record |
-| C11 plate `1-4-5-2` @ (20,120) | 1 arc | 35 points, seed at index 14; seed cumulative arclength 6.460°; **rho == 0 on all points** (fixed-axis declared measure, §4) |
+| C11 plate `1-4-5-2` @ (20,120) | 1 arc | 35 points, seed at index 14; seed cumulative arclength 6.460°; **rho == 0 on all points** (fixed-axis declared measure, §4); the other arms are present and finite — A/a^2 is 0 at the two valid arc endpoints (legal zero-area, not unavailable), K is a constant 0.9746014667 on the orbit |
 | C03 random `3-5-6-7` @ (20,120) | 2 arcs | 56/67 points, seeds at 47/19; splice continuous |
 | C10 h0.8 plate `3-6-4-8` @ (20,120) | 2 arcs | 59/71 points; **A/a^2 == 0 on 51/59 and 63/71 valid poses** (finite zero, product finite zero) |
 | C01 random `3-5` @ (20,120) | none | `reach.target_in_range == false` — the honest out-of-domain refusal |
@@ -185,16 +186,20 @@ its boundary is hard:
   parameter, not the per-pose factor curve 756 draws.
 
 So for plate-family scenes 756 has exactly one zero-cost option: **declare that its curves are
-in the angle-Lebesgue convention**, which reads identically zero on plates (and say so in its
-plan). A measure-consistent contribution curve on an ordinary discovered plate fiber has **no
-existing payload**; if 756 needs it, that is a new requirement to record and put before the
-owner. Its minimal shape, stated here only as a requirement sketch (the probe's constraint
-forbids implementing it): a per-pose weight on the fiber's own poses that replaces the
-angle-Lebesgue rho with the declared measure's density (the UMarginal/spin-orbit coordinate
-along the same poses), assembled at the same point as `Detail` (`single_path_analysis.cpp`
-`ToComponent`), so that `factor_product`'s fourth arm becomes measure-consistent while the
-increment-based arclength stays as is. Neither the 0 nor the integral is a defect; treating
-either as missing data would be.
+in the angle-Lebesgue convention**, under which rho — and its weighted product and integral —
+read identically zero on plates, while A/a^2, T and K remain per their own availability flags
+(and say the convention in its plan). A measure-consistent contribution curve on an ordinary
+discovered plate fiber has **no existing payload**; if 756 needs it, that is a new requirement
+to record and put before the owner. This note deliberately does **not** sketch the replacement
+— the naive "swap rho for the orbit density and keep the rest" is wrong: the orbit quadrature's
+weight and its integration element must share one MeasureBinding
+(`fiber_quadrature.hpp:10-14`), the declared density along a spin orbit is a dtheta-parameter
+density distinct from the arc-length density (`declared_density.hpp:73-78`), and the existing
+K (= 1/(J+eps) of the full SO(3) map, a constant 0.9746014667 on the whole C11 orbit) does not
+appear in the orbit integral at all. Whether that K belongs in a measure-consistent fiber
+contribution, and how a parameter element relates to the SO(3) arclength axis, are pending
+semantics for the owner/756 to adjudicate — not choices this probe pre-judges. Neither the 0
+nor the integral is a defect; treating either as missing data would be.
 
 ## 5. Consumption contract for factor curves (756 / 755.5)
 
@@ -212,8 +217,9 @@ either as missing data would be.
    the BeginRead zero when the Jacobian flag is clear but storage's NaN copied through when
    only `valid` fails).
 3. **Read `measure_registration` before trusting a rho curve** (§4). On plate-family scenes,
-   remember the boundary: angle-Lebesgue curves read 0; a measure-consistent curve needs a
-   payload that does not exist yet (§4, owner adjudication).
+   rho, `factor_product` and `fiber_integral` read 0 in the angle-Lebesgue convention while
+   A/a^2, T and K stay informative; a measure-consistent curve needs a payload that does not
+   exist yet (§4, owner adjudication).
 4. **Integrals**: left-endpoint rule, skipped segments counted in completeness, not
    renormalized; recompute with the same rule or numbers will disagree by the skipped share.
 5. **Components are the only curve source**: `incomplete[]` has no points; `point_mass` and
