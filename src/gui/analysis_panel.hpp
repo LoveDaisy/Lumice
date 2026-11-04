@@ -383,10 +383,12 @@ std::string WaitActivityDotsFor(double elapsed_s);
 // The dots' rotation period in seconds — the cycle the animation steps through (1 → 2 → 3 → 1).
 inline constexpr double kWaitActivityDotsPeriodSeconds = 0.4;
 
-// The narrow-column reading contract's hover half (§14's wrap-policy freedom): a row whose label
-// its submitting column clipped carries the full label on hover. Call right after the row's
-// Selectable — it reads the last item's rect against the column width. The table rows and the
-// details block's component rows are the same fact twice, not two facts: one implementation.
+// The narrow-column reading contract, hover half: a table row's label does not re-wrap inside
+// its column — ImGui table columns do not grow their row height with wrapped content, and a
+// wrapping row would couple the table's height budget and the scroll addressing it feeds — so
+// the clipped row's full identity travels on hover instead. Call right after the row's
+// Selectable: it reads the last item's rect against the column width. The share list's rows and
+// the details block's component rows are the same fact twice, not two facts: one implementation.
 void RowLabelTextTooltip(const std::string& label);
 
 // The exclusion itself, on an eligible selection, reaching every entry that uses the chain's

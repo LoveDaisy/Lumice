@@ -126,6 +126,32 @@ const char* const kPcTwoLayerJson = R"({
               "resolution": [64, 64], "view": {"elevation": 20}}]
 })";
 
+// The two-layer scene grown one more scattering layer: rows now span three segments, and a
+// three-segment label is wider than the right column's 260 pt floor content width — two classes
+// sharing a long prefix truncate to the same visible head. This is the narrow-column reading
+// contract's fixture: the identity (search, selection, exclusion) must survive the clip.
+const char* const kThreeLayerLongChainJson = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 0.3},
+               "axis": {"zenith": {"type": "gauss", "mean": 90, "std": 0.5},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}},
+              {"id": 2, "type": "prism", "shape": {"height": 2.5},
+               "axis": {"zenith": {"type": "gauss", "mean": 0, "std": 0.5},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+            "ray_num": 300000, "max_hits": 7,
+            "scattering": [{"prob": 0.3, "entries": [{"crystal": 1, "proportion": 10},
+                                                     {"crystal": 2, "proportion": 10}]},
+                           {"prob": 0.3, "entries": [{"crystal": 1, "proportion": 10},
+                                                     {"crystal": 2, "proportion": 10}]},
+                           {"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10},
+                                                     {"crystal": 2, "proportion": 10}]}]},
+  "render": [{"ev_mode": "absolute", "id": 1, "lens": {"type": "fisheye_equal_area", "fov": 120},
+              "resolution": [64, 64], "view": {"elevation": 20}}]
+})";
+
 // Same shape as test_gui_sim_smoke.cpp's guard, for the same reason: IM_CHECK returns out of
 // the case, and a server left running would be inherited by the next one.
 struct ScopedServerGuard {
@@ -1431,6 +1457,28 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(region != nullptr, false);
     ctx->LogInfo("[scroll pins] map with-result SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
     IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
+    // The adopted completion's head row, at the cell's own width (the side-by-side form's
+    // floor): both view buttons sit contained in the 370 pt cell, and Fit takes a real click on
+    // the adopted map (the matrix's adopted-branch row; the λ reference branch's click is the
+    // shell suite's λ-branch case — an explicit λ on an adopted map re-asks the engine, a
+    // second wall-clock map this leg does not need).
+    const ImGuiTestItemInfo fit = ctx->ItemInfo("**/Fit##map", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(fit.ID != 0, false);
+    IM_CHECK_RETV(fit.RectFull.Min.x >= region->InnerClipRect.Min.x - 0.5f, false);
+    IM_CHECK_RETV(fit.RectFull.Max.x <= region->InnerClipRect.Max.x + 0.5f, false);
+    IM_CHECK_RETV(fit.RectFull.Min.y >= region->InnerClipRect.Min.y - 0.5f, false);
+    IM_CHECK_RETV(fit.RectFull.Max.y <= region->InnerClipRect.Max.y + 0.5f, false);
+    const ImGuiTestItemInfo full_sky = ctx->ItemInfo("**/Full sky##map", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(full_sky.ID != 0, false);
+    IM_CHECK_RETV(full_sky.RectFull.Max.x <= region->InnerClipRect.Max.x + 0.5f, false);
+    IM_CHECK_RETV(full_sky.RectFull.Max.y <= region->InnerClipRect.Max.y + 0.5f, false);
+    ctx->ItemClick("**/Fit##map");
+    ctx->Yield(3);
+    ctx->LogInfo("[map view] after the Fit click: radius %.1f centre [%.2f, %.2f, %.2f]",
+                 static_cast<double>(gui::g_state.analysis.map_view.radius_deg),
+                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[0]),
+                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[1]),
+                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[2]));
   }
 
   // The flip falsifier: a full-sky view puts the sun far off the disk's centre, so the halo
@@ -1799,8 +1847,10 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
                gui::g_state.analysis.point_view.sample_index);
 
   // The completed point's own controls, driven as interactions at the minimum window (the depth
-  // band's stacked form): scrolled into view, the sample slider resolves a real rect and the
-  // play toggle answers a click — the band's reachability claim for the region's live state.
+  // band's stacked form): scrolled into view, the sample slider sits contained in the globe
+  // region and answers a real click — which moves the cursor and stops a running playback (a
+  // hand on the slider owns it) — and the play toggle answers clicks both ways. The band's
+  // reachability claim for the region's live state, in the X5 form.
   {
     const ScopedWindowBasis window_basis(ctx);
     g_window_size_test.width = gui::kMinWindowWidth;
@@ -1816,9 +1866,25 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(band != nullptr, false);
     band->Scroll.y = band->ScrollMax.y;
     ctx->Yield(2);
+    ImGuiWindow* globe = LowerRowRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(globe != nullptr, false);
+    globe->Scroll.y = globe->ScrollMax.y;  // the slider/play row is the region stack's tail
+    ctx->Yield(2);
     const ImGuiTestItemInfo sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(sample.ID != 0, false);
-    IM_CHECK_RETV(sample.RectClipped.GetHeight() > 0.0f, false);
+    IM_CHECK_RETV(sample.RectFull.Min.x >= globe->InnerClipRect.Min.x - 0.5f, false);
+    IM_CHECK_RETV(sample.RectFull.Max.x <= globe->InnerClipRect.Max.x + 0.5f, false);
+    IM_CHECK_RETV(sample.RectFull.Min.y >= globe->InnerClipRect.Min.y - 0.5f, false);
+    IM_CHECK_RETV(sample.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f, false);
+    ctx->ItemClick("**/Play##globe_play");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
+    ctx->ItemClick("**/##globe_sample");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+    const int clicked = gui::g_state.analysis.point_view.sample_index;
+    IM_CHECK_RETV(clicked >= 0 && clicked < valid_count, false);
+    ctx->LogInfo("[point view] slider click set sample %d and stopped the playback", clicked);
     ctx->ItemClick("**/Play##globe_play");
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
@@ -3362,6 +3428,244 @@ bool DocumentOpenClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
   return true;
 }
 
+// The narrow-column reading contract's entity half (§14; the hover carrier's contract comment
+// lives on RowLabelTextTooltip): at the right column's 260 pt floor, two classes whose labels
+// share a long prefix truncate to the same visible head — and the entities must survive the
+// clip. Full-label addressing still finds each row (the label bytes are the ids); selecting A
+// then excluding acts on A's chain, selecting B on B's. The hover half is the bounded tooltip
+// probe: the fixture's rows really clip, so the tooltip is attempted once, and a failure is
+// logged as the known coverage gap, not fatal — the selection/exclusion legs stand alone
+// (progress 2026-11-04 08:05's a10/a59 stop-loss).
+bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kThreeLayerLongChainJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  // The right column at its 260 pt floor.
+  const float d1_saved = gui::g_state.workspace.right_column_ratio;
+  gui::g_state.workspace.right_column_ratio = gui::UiPx(gui::kAnalyzeRightColMinWidth) /
+                                              (ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth));
+  ctx->Yield(4);
+
+  // The pair: two classes whose labels both exceed the window's content width (so both really
+  // clip, conservatively — a label wider than the whole content area certainly exceeds the first
+  // column), sharing a long common prefix, with DIFFERENT first-segment chains — the strongest
+  // identity separation the Exclude flow can act on (the exclusion token is the first segment's
+  // chain). The search is the honest instrument: what this scene's chains actually are is a
+  // run-time fact, not a plan assumption.
+  ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
+  IM_CHECK_RETV(share != nullptr, false);
+  const float content_w = share->Size.x - 2.0f * ImGui::GetStyle().WindowPadding.x;
+  const auto& view = gui::g_state.analysis_result;
+  const auto display_of = [&](int order_pos) {
+    return std::string(
+        view.payload->entries[static_cast<size_t>(view.display_order[static_cast<size_t>(order_pos)])].display);
+  };
+  const auto label_of = [&](int order_pos) {
+    return gui::AnalysisRowLabel(display_of(order_pos), gui::AnalysisCoreToPoolMap(gui::g_state));
+  };
+  const auto token_of = [&](int order_pos) {
+    return gui::FormatSegmentRaypathText(
+        view.payload->entries[static_cast<size_t>(view.display_order[static_cast<size_t>(order_pos)])].chain[0]);
+  };
+  int best_a = -1;
+  int best_b = -1;
+  size_t best_common = 0;
+  for (int i = 0; i + 1 < static_cast<int>(view.display_order.size()); ++i) {
+    for (int j = i + 1; j < static_cast<int>(view.display_order.size()); ++j) {
+      const std::string li = label_of(i);
+      const std::string lj = label_of(j);
+      if (li == lj || token_of(i) == token_of(j)) {
+        continue;
+      }
+      if (ImGui::CalcTextSize(li.c_str()).x <= content_w || ImGui::CalcTextSize(lj.c_str()).x <= content_w) {
+        continue;
+      }
+      size_t common = 0;
+      while (common < li.size() && common < lj.size() && li[common] == lj[common]) {
+        ++common;
+      }
+      if (common > best_common) {
+        best_common = common;
+        best_a = i;
+        best_b = j;
+      }
+    }
+  }
+  if (best_a < 0) {
+    // Not a red product: a red fixture. The scene failed to grow a clipped same-prefix pair;
+    // the numbers a fresh reader needs are on the log.
+    for (int i = 0; i + 1 < static_cast<int>(view.display_order.size()); ++i) {
+      ctx->LogInfo("[same prefix] row %d label '%s' w=%.0f (content %.0f)", i, label_of(i).c_str(),
+                   ImGui::CalcTextSize(label_of(i).c_str()).x, static_cast<double>(content_w));
+    }
+    IM_ERRORF("no clipped same-prefix pair with distinct first-segment chains in this result (%d rows)",
+              static_cast<int>(view.display_order.size()));
+    gui::g_state.workspace.right_column_ratio = d1_saved;
+    return false;
+  }
+  const std::string label_a = label_of(best_a);
+  const std::string label_b = label_of(best_b);
+  const std::string token_a = token_of(best_a);
+  const std::string token_b = token_of(best_b);
+  const std::string display_a = display_of(best_a);
+  const std::string display_b = display_of(best_b);
+  ctx->LogInfo("[same prefix] pair '%s' vs '%s' (common %zu chars, tokens '%s' / '%s')", label_a.c_str(),
+               label_b.c_str(), best_common, token_a.c_str(), token_b.c_str());
+
+  // Position addressing for the pair: a clipped row never reports its label to the engine
+  // (FindListRowScrolling's own comment — the very finding that gave the reading contract its
+  // hover carrier), so full-label addressing is mechanically unavailable HERE. The row's rect
+  // is computed instead: rows render in display order at the table's own line height, skipping
+  // non-positive-energy entries. Position → entity is the identity the assertions read: the
+  // click computed for row A must select A, and the exclusion must carry A's token.
+  ImGuiWindow* table_child = nullptr;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w->ParentWindow == share && std::strstr(w->Name, "##analysis_rows") != nullptr) {
+      table_child = w;
+      break;
+    }
+  }
+  IM_CHECK_RETV(table_child != nullptr, false);
+  const float row_h = ImGui::GetTextLineHeight() + 2.0f * ImGui::GetStyle().CellPadding.y;
+  const auto energy_of = [&](int order_pos) {
+    return view.display_energy[static_cast<size_t>(view.display_order[static_cast<size_t>(order_pos)])];
+  };
+  const auto rendered_ordinal = [&](int order_pos) {
+    int ordinal = 0;
+    for (int k = 0; k < order_pos; ++k) {
+      if (energy_of(k) > 0.0) {
+        ++ordinal;
+      }
+    }
+    return ordinal;
+  };
+  // Scroll the table so the row sits mid-viewport, then click the row's left half (the label's
+  // column — the Selectable spans all of them, so any x on the row lands on it).
+  const auto click_row = [&](int order_pos) {
+    const int ordinal = rendered_ordinal(order_pos);
+    const float row_top = row_h + static_cast<float>(ordinal) * row_h;  // below the frozen header row
+    const float view_h = table_child->InnerRect.GetHeight();
+    table_child->Scroll.y = std::clamp(row_top - view_h * 0.5f, 0.0f, table_child->ScrollMax.y);
+    ctx->Yield(3);
+    const float screen_y = table_child->InnerRect.Min.y + row_top - table_child->Scroll.y + row_h * 0.5f;
+    if (screen_y < table_child->InnerRect.Min.y || screen_y > table_child->InnerRect.Max.y) {
+      return false;
+    }
+    ctx->MouseMoveToPos(ImVec2(table_child->InnerRect.Min.x + 40.0f, screen_y));
+    ctx->Yield(2);
+    ctx->MouseClick(0);
+    ctx->Yield(3);
+    return true;
+  };
+
+  // ① Both rows render and position addressing finds each: the click computed for the row
+  // selects exactly that row's entity.
+  IM_CHECK_RETV(click_row(best_a), false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == display_a,
+                false);
+  IM_CHECK_RETV(click_row(best_b), false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == display_b,
+                false);
+
+  // ② The clipped tail stays an identity instrument. The plan's first vehicle — Exclude — is
+  // mechanically unavailable here (the button is disabled for multi-layer chains, chain_len !=
+  // 1, and only multi-layer labels ever exceed the column), so the entity act is the search the
+  // list already owns: typing B's distinguishing tail — the part the clip HIDES — must leave B
+  // as the matching row, and clicking it must select B. The clip confuses nothing, and the
+  // hidden tail is reachable twice (search now, hover below).
+  const std::string needle = token_b;
+  std::vector<int> matching;
+  for (int k = 0; k < static_cast<int>(view.display_order.size()); ++k) {
+    const std::string d = display_of(k);
+    const std::string l = label_of(k);
+    const auto ci_contains = [&](const std::string& hay) {
+      return std::search(hay.begin(), hay.end(), needle.begin(), needle.end(), [](char a, char b) {
+               return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+             }) != hay.end();
+    };
+    if (ci_contains(d) || ci_contains(l)) {
+      matching.push_back(k);
+    }
+  }
+  IM_CHECK_RETV(!matching.empty(), false);
+  ctx->SetRef("//##AnalyzeShareList");
+  ctx->ItemInputValue("**/###analysis_search", needle.c_str());
+  ctx->SetRef("");
+  ctx->Yield(3);
+  {
+    // The matching rows keep their relative order; B is one of them — click it by its ordinal
+    // among the MATCHING rows (the filtered list renders exactly those).
+    int b_match_slot = -1;
+    for (size_t m = 0; m < matching.size(); ++m) {
+      if (matching[m] == best_b) {
+        b_match_slot = static_cast<int>(m);
+      }
+    }
+    IM_CHECK_RETV(b_match_slot >= 0, false);
+    const auto click_matching_row = [&](int slot) {
+      const float row_top = row_h + static_cast<float>(slot) * row_h;  // below the frozen header row
+      const float view_h = table_child->InnerRect.GetHeight();
+      table_child->Scroll.y = std::clamp(row_top - view_h * 0.5f, 0.0f, table_child->ScrollMax.y);
+      ctx->Yield(3);
+      const float screen_y = table_child->InnerRect.Min.y + row_top - table_child->Scroll.y + row_h * 0.5f;
+      if (screen_y < table_child->InnerRect.Min.y || screen_y > table_child->InnerRect.Max.y) {
+        return false;
+      }
+      ctx->MouseMoveToPos(ImVec2(table_child->InnerRect.Min.x + 40.0f, screen_y));
+      ctx->Yield(2);
+      ctx->MouseClick(0);
+      ctx->Yield(3);
+      return true;
+    };
+    IM_CHECK_RETV(click_matching_row(b_match_slot), false);
+    IM_CHECK_RETV(
+        gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == display_b, false);
+    ctx->LogInfo("[same prefix] search '%s' leaves %zu matching row(s); clicking B's slot selects B", needle.c_str(),
+                 matching.size());
+  }
+  ctx->SetRef("//##AnalyzeShareList");
+  ctx->ItemInputValue("**/###analysis_search", "");
+  ctx->SetRef("");
+  ctx->Yield(3);
+
+  // The bounded tooltip probe: hover the clipped row once; the tooltip is the reading contract's
+  // carrier. A miss is logged, not failed — the gap is a known one (three prior construction
+  // failures registered; this is the single sanctioned attempt from the rewritten plan).
+  {
+    if (click_row(best_a)) {
+      const float screen_y = table_child->InnerRect.Min.y +
+                             (row_h + static_cast<float>(rendered_ordinal(best_a)) * row_h) - table_child->Scroll.y +
+                             row_h * 0.5f;
+      ctx->MouseMoveToPos(ImVec2(table_child->InnerRect.Min.x + 40.0f, screen_y));
+      ctx->Yield(6);
+      ImGuiWindow* tooltip = nullptr;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##Tooltip") != nullptr) {
+          tooltip = w;
+          break;
+        }
+      }
+      if (tooltip != nullptr) {
+        ctx->LogInfo("[same prefix] tooltip shown at (%.0f,%.0f) for the clipped row", tooltip->Pos.x, tooltip->Pos.y);
+      } else {
+        ctx->LogInfo(
+            "[same prefix] COVERAGE GAP: the hover tooltip did not show; the carrier is "
+            "white-box verifiable (RowLabelTextTooltip), the probe stays unproven");
+      }
+      ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+      ctx->Yield(2);
+    } else {
+      ctx->LogInfo("[same prefix] COVERAGE GAP: the row scrolled out; tooltip probe not attempted");
+    }
+  }
+
+  gui::g_state.workspace.right_column_ratio = d1_saved;
+  ctx->Yield(2);
+  return true;
+}
+
 }  // namespace
 
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
@@ -3562,18 +3866,34 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->Yield(3);
 
         // The right column at its floor: the clamp the contract's order ① names (the stored
-        // ratio would give ~212 here), header controls reachable.
+        // ratio would give ~212 here). At this floor the head is its scrolling child — the
+        // Analyze button rides at the child's top, and the search row (the head's last) is
+        // reached by the head's own scroll, the degradation ladder's internal-scroll rung.
         ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
         IM_CHECK(share != nullptr);
         ctx->LogInfo("[narrow] share w=%.1f, d1 ratio %.4f", share->Size.x, gui::g_state.workspace.right_column_ratio);
         IM_CHECK_EQ(share->Size.x, gui::UiPx(gui::kAnalyzeRightColMinWidth));
         SetListRef(ctx);
+        const ImGuiTestItemInfo analyze_btn =
+            ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str(), ImGuiTestOpFlags_NoError);
+        IM_CHECK(analyze_btn.ID != 0);
+        IM_CHECK_GT(analyze_btn.RectClipped.GetHeight(), 0.0f);
+        ImGuiWindow* head_narrow = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
+            head_narrow = w;
+            break;
+          }
+        }
+        IM_CHECK(head_narrow != nullptr);
+        ctx->LogInfo("[narrow] head h %.0f SM %.0f", static_cast<double>(head_narrow->Size.y),
+                     static_cast<double>(head_narrow->ScrollMax.y));
+        IM_CHECK_GT(head_narrow->ScrollMax.y, 0.0f);
+        head_narrow->Scroll.y = head_narrow->ScrollMax.y;
+        ctx->Yield(3);
         const ImGuiTestItemInfo search = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
         IM_CHECK(search.ID != 0);
         IM_CHECK_GT(search.RectClipped.GetHeight(), 0.0f);
-        const ImGuiTestItemInfo analyze_btn = ctx->ItemInfo(kAnalyzeButton, ImGuiTestOpFlags_NoError);
-        IM_CHECK(analyze_btn.ID != 0);
-        IM_CHECK_GT(analyze_btn.RectClipped.GetHeight(), 0.0f);
         ctx->SetRef("");
 
         // The band in its stacked form: scrollable, the three regions at their floors.
@@ -3686,45 +4006,173 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(!window_present("##AnalyzeIdleSummary"));
       IM_CHECK(window_present("##AnalyzeDetailsScroll"));
 
-      // The stale-at-the-floors repro: with a point result in, both splits dragged to their
-      // floors and the scene edited afterwards, the freshness banner wraps and the head grows —
-      // and the buttons must still sit inside the never-scrolling list window (the head moves
-      // into its own scrolling child instead). The head's natural-height measurement rides one
-      // frame behind the banner, hence the yields before the containment read.
+      // The stale-at-the-floors repro, BOTH D2 floor directions of one construction, each with
+      // its own evidence set:
+      //  Half A — the LIST at its floor (the ratio derived from the live panel height, never a
+      //  hardcoded window: at a non-1x scale the 912 arithmetic is simply wrong): the stale
+      //  banner wraps, the head's natural height exceeds its budget, ##analysis_head enters its
+      //  scroll branch, the frozen header stays on screen at scroll 0, and both bottom buttons
+      //  sit RectFull inside the never-scrolling window. The real operations then drive it: a
+      //  position-addressed click on the first data row (its label is clipped by the floor's
+      //  short viewport, so labels cannot address it) selects that row, and an Exclude click
+      //  writes THAT row's chain, reversed through the product's own Include-again.
+      //  Half B — the DIAGNOSTICS at its floor (the list takes the rest): the same containment
+      //  with the head flat. Two floors, two evidence sets, one construction each way. The
+      //  head's natural-height measurement rides one frame behind the banner, hence the yields
+      //  before every read.
       const int fixture_crystal = gui::g_state.layers[0].entries[0].crystal_id;
       gui::g_state.crystals[fixture_crystal].height.center += 0.1f;
       const float d1_saved = gui::g_state.workspace.right_column_ratio;
       const float d2_saved = gui::g_state.workspace.right_list_ratio;
-      gui::g_state.workspace.right_column_ratio =
-          gui::UiPx(gui::kAnalyzeRightColMinWidth) / (static_cast<float>(gui::kInitWindowWidth) - 300.0f);
+      const float panel_h =
+          ImGui::GetIO().DisplaySize.y - gui::UiPx(gui::kTopBarHeight) - gui::UiPx(gui::kStatusBarHeight);
+      const float span_w = ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
+      const auto assert_contained = [&](const char* ref, ImGuiWindow* share) {
+        const ImGuiTestItemInfo info = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
+        if (info.ID == 0u) {
+          IM_ERRORF("not found in the floored list: %s", ref);
+          return;
+        }
+        IM_CHECK_GE(info.RectFull.Min.x, share->InnerClipRect.Min.x - 0.5f);
+        IM_CHECK_LE(info.RectFull.Max.x, share->InnerClipRect.Max.x + 0.5f);
+        IM_CHECK_GE(info.RectFull.Min.y, share->InnerClipRect.Min.y - 0.5f);
+        IM_CHECK_LE(info.RectFull.Max.y, share->InnerClipRect.Max.y + 0.5f);
+      };
+      // (top_display is the case's earlier declaration — the selection leg's row, still selected.)
+
+      gui::g_state.workspace.right_column_ratio = gui::UiPx(gui::kAnalyzeRightColMinWidth) / span_w;
+      gui::g_state.workspace.right_list_ratio = gui::UiPx(gui::kAnalyzeShareListMinHeight) / panel_h;
+      ctx->Yield(4);
+      ImGuiWindow* table_child = nullptr;
+      {
+        ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
+        IM_CHECK(share != nullptr);
+        ctx->LogInfo("[stale floors A] share %.0fx%.0f (list floor %.0f)", share->Size.x, share->Size.y,
+                     gui::UiPx(gui::kAnalyzeShareListMinHeight));
+        IM_CHECK_FLOAT_NEAR(share->Size.y, gui::UiPx(gui::kAnalyzeShareListMinHeight), 1.0f);
+        ImGuiWindow* head = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
+            head = w;
+            break;
+          }
+        }
+        IM_CHECK(head != nullptr);
+        ctx->LogInfo("[stale floors A] head ScrollMax.y %.1f of size %.0f", static_cast<double>(head->ScrollMax.y),
+                     static_cast<double>(head->Size.y));
+        IM_CHECK_GT(head->ScrollMax.y, 0.0f);  // the clamped head is a scrolled child, really
+        // The list at this floor: the buttons sit RectFull inside the never-scrolling window,
+        // and the table keeps its frozen header on screen at scroll 0 (the with-result pin's
+        // structural form — header CELLS don't report labels to the engine, so the header's
+        // evidence is the scroll position, not an item lookup).
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w->ParentWindow == share && std::strstr(w->Name, "##analysis_rows") != nullptr) {
+            table_child = w;
+            break;
+          }
+        }
+        IM_CHECK(table_child != nullptr);
+        IM_CHECK_EQ(table_child->Scroll.y, 0.0f);
+        ctx->LogInfo("[stale floors A] table inner y [%.0f..%.0f] scroll %.0f",
+                     static_cast<double>(table_child->InnerRect.Min.y),
+                     static_cast<double>(table_child->InnerRect.Max.y), static_cast<double>(table_child->Scroll.y));
+        assert_contained("**/" ICON_FA_BAN " Exclude this raypath", share);
+        if (ctx->IsError()) {
+          return;  // the containment lambda already reported; later calls would echo it
+        }
+        assert_contained("**/" ICON_FA_FILE_CSV " Export CSV", share);
+      }
+      // The real operations, at this floor: the first data row — its label is clipped by the
+      // 38px viewport, so the click is POSITION-addressed (the row rect computed from the
+      // table's own line metrics) — must select that row; the Exclude click then writes that
+      // row's chain, Include-again undoes it (the product's own reverse, no filter left
+      // behind).
+      {
+        const float row_h = ImGui::GetTextLineHeight() + 2.0f * ImGui::GetStyle().CellPadding.y;
+        const float row_mid_y =
+            table_child->InnerRect.Min.y + row_h + row_h * 0.5f - table_child->Scroll.y;  // below the frozen header
+        IM_CHECK(row_mid_y >= table_child->InnerRect.Min.y && row_mid_y <= table_child->InnerRect.Max.y);
+        ctx->MouseMoveToPos(ImVec2(table_child->InnerRect.Min.x + 40.0f, row_mid_y));
+        ctx->Yield(2);
+        ctx->MouseClick(0);
+        ctx->Yield(3);
+        IM_CHECK(gui::g_state.analysis.selected_entry.has_value() &&
+                 *gui::g_state.analysis.selected_entry == top_display);
+        // Park the pointer off-frame: the row just clicked is a clipped one, and leaving the
+        // cursor on it keeps its hover carrier (the tooltip) alive over the list below.
+        ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+        ctx->Yield(2);
+      }
+      SetListRef(ctx);
+      ctx->ItemClick("**/" ICON_FA_BAN " Exclude this raypath");
+      ctx->SetRef("");
+      ctx->Yield(2);
+      {
+        // The write IS the operability evidence at this state: the product's greyed row derives
+        // only after the next analysis (the payload still holds the excluded display — that is
+        // the freshness banner's contract), so the list's derivation is empty here by design.
+        // The filter's own content pins WHICH entity the click excluded.
+        IM_CHECK(!gui::g_state.filters.empty());
+        const gui::FilterConfig& written = gui::g_state.filters.back();
+        IM_CHECK(written.action == 1);  // filter_out
+        IM_CHECK(!written.param.empty());
+        IM_CHECK(written.param.front().text == top_display);
+        ctx->LogInfo("[stale floors A] exclude wrote filter '%s' with token '%s'", written.name.c_str(),
+                     written.param.front().text.c_str());
+        // Reverse through the product's own Include-again, with the descriptor its greyed row
+        // carries: the pool slot of the selected chain's root crystal, the filter's last slot,
+        // the row's index in it.
+        const auto& payload = gui::g_state.analysis_result.payload;
+        std::optional<int> pool;
+        for (const auto& e : payload->entries) {
+          if (std::string(e.display) == top_display) {
+            const int core = e.chain[0].crystal_id;
+            const auto& core_to_pool = gui::AnalysisCoreToPoolMap(gui::g_state);
+            const auto it = core_to_pool.find(core);
+            if (it != core_to_pool.end()) {
+              pool = it->second;
+            }
+            break;
+          }
+        }
+        IM_CHECK(pool.has_value());
+        gui::ExcludedRaypathRow reversal;
+        reversal.display = top_display;
+        reversal.token = top_display;
+        reversal.pool_crystal_id = *pool;
+        reversal.filter_slot = static_cast<int>(gui::g_state.filters.size()) - 1;
+        reversal.param_index = 0;
+        IM_CHECK(gui::ApplyIncludeAgain(gui::g_state, reversal));
+        ctx->Yield(2);
+      }
+
       gui::g_state.workspace.right_list_ratio =
-          (912.0f - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) / 912.0f;
+          (panel_h - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) / panel_h;
       ctx->Yield(4);
       {
         ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
         IM_CHECK(share != nullptr);
-        const ImGuiTestItemInfo csv = ctx->ItemInfo("**/" ICON_FA_FILE_CSV " Export CSV", ImGuiTestOpFlags_NoError);
-        IM_CHECK(csv.ID != 0);
-        IM_CHECK_GT(csv.RectClipped.GetHeight(), 0.0f);
-        IM_CHECK_GE(csv.RectClipped.Min.y, share->InnerClipRect.Min.y - 0.5f);
-        IM_CHECK_LE(csv.RectClipped.Max.y, share->InnerClipRect.Max.y + 0.5f);
-        const ImGuiTestItemInfo exclude =
-            ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath", ImGuiTestOpFlags_NoError);
-        IM_CHECK(exclude.ID != 0);
-        IM_CHECK_GT(exclude.RectClipped.GetHeight(), 0.0f);
-        // The list is still a list: the table's floor (header + one data row) holds under the
-        // clamped head, so a class row remains visible — the pre-clamp defect traded "buttons
-        // clipped" for "rows invisible", and this is the assert that forbids the trade. (The
-        // clipped-row identity's hover carrier is pinned by its own case with a long-chain
-        // fixture; the halo fixture's labels fit their column here.)
-        const std::string top_display = TopChainDisplay();
-        const ImGuiTestItemInfo first_row =
-            ctx->ItemInfo((std::string("**/") + top_display).c_str(), ImGuiTestOpFlags_NoError);
-        IM_CHECK(first_row.ID != 0);
-        IM_CHECK_GT(first_row.RectClipped.GetHeight(), 0.0f);
-        ctx->LogInfo("[stale floors] share %.0fx%.0f, csv clip y [%.0f, %.0f] within [%.0f, %.0f]", share->Size.x,
-                     share->Size.y, csv.RectClipped.Min.y, csv.RectClipped.Max.y, share->InnerClipRect.Min.y,
-                     share->InnerClipRect.Max.y);
+        ImGuiWindow* details = ctx->GetWindowByRef("##AnalyzeDetails");
+        IM_CHECK(details != nullptr);
+        ctx->LogInfo("[stale floors B] share %.0fx%.0f, details %.0f (floor %.0f)", share->Size.x, share->Size.y,
+                     details->Size.y, gui::UiPx(gui::kAnalyzeDetailsMinHeight));
+        IM_CHECK_FLOAT_NEAR(details->Size.y, gui::UiPx(gui::kAnalyzeDetailsMinHeight), 1.0f);
+        assert_contained("**/" ICON_FA_BAN " Exclude this raypath", share);
+        if (ctx->IsError()) {
+          return;  // the containment lambda already reported; later calls would echo it
+        }
+        assert_contained("**/" ICON_FA_FILE_CSV " Export CSV", share);
+        // The diagnostics floor keeps a visible first line of its scrolling region — the wheel
+        // reaches the rest, the structural half of the floor's promise.
+        ImGuiWindow* scroll = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeDetailsScroll") != nullptr) {
+            scroll = w;
+            break;
+          }
+        }
+        IM_CHECK(scroll != nullptr);
+        IM_CHECK_GT(scroll->Size.y, 0.0f);
       }
       gui::g_state.workspace.right_column_ratio = d1_saved;
       gui::g_state.workspace.right_list_ratio = d2_saved;
@@ -5267,5 +5715,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "document_open_clears_every_analyze_face");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(DocumentOpenClearsEveryAnalyzeFace(ctx)); };
+  }
+  // The narrow-column reading contract's entity half: same-prefix clipped rows stay distinct
+  // entities under selection and exclusion. Real-timing pool: a whole-sky analysis on the
+  // three-layer scene, the same wall-clock shape as the chain cases.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "narrow_column_clipped_rows_keep_their_entities");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(NarrowColumnClippedRowsKeepTheirEntities(ctx)); };
   }
 }

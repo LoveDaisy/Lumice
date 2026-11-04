@@ -1638,7 +1638,10 @@ void RenderResultList(GuiState& state) {
   const float button_rows_h =
       ImGui::GetFrameHeightWithSpacing() +
       (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
-  const float avail_h = ImGui::GetContentRegionAvail().y - button_rows_h;
+  // The table's share of what is left also yields the gap between the table and the button row
+  // (the clamp above reserves the same gap on its side) — the button row must land inside the
+  // window with room, never flush against its bottom edge.
+  const float avail_h = ImGui::GetContentRegionAvail().y - button_rows_h - ImGui::GetStyle().ItemSpacing.y;
   // No "Rays" column, on purpose: under adaptive ray allocation a row's hit count is how many
   // rays the online deal SENT its crystal, which is proportional neither to the crystal's
   // `proportion` nor to the row's Energy — shown, it only asks "why does this row get many rays
@@ -1941,7 +1944,13 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
       ImGui::GetFrameHeightWithSpacing() +
       (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
   const float table_min_h = AnalysisTableMinHeight();
-  const float max_head_h = ImGui::GetContentRegionAvail().y - buttons_h - table_min_h;
+  // The two inter-block gaps (head→table, table→buttons) ride in the budget too: without them
+  // the clamp sizes the head so the table and the button row land EXACTLY on the window's
+  // bottom edge, and any sub-pixel rounding pushes the buttons past the clip — a floored list
+  // whose controls vanish. The margin is the contract's X5 form: the buttons at the floor are
+  // fully inside, not flush.
+  const float block_gaps = ImGui::GetStyle().ItemSpacing.y * 2.0f;
+  const float max_head_h = ImGui::GetContentRegionAvail().y - buttons_h - table_min_h - block_gaps;
   const bool clamp_head = storage->GetFloat(head_h_key, 0.0f) > max_head_h;
   const auto draw_head = [&state, server] {
     RenderPickBanner(state);

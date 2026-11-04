@@ -1383,11 +1383,20 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   // The canvas + gestures: drag orbits (yaw/pitch), wheel zooms. Pure display state.
   const ImVec2 avail = ImGui::GetContentRegionAvail();
   const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
-  // The canvas gives back exactly what the legend's own line needs — a scrolled-out legend is
-  // an unreachable one (the map region's rule), and the legend is AC4's colour key. No floor:
-  // the canvas absorbs what is left and, at squeezed rows, yields to zero rather than push the
-  // fixed stack above out of the region (an invisible canvas beats a scrolled-out title).
-  const float canvas_h = avail.y - ImGui::GetStyle().ItemSpacing.y - ImGui::GetTextLineHeight();
+  // The canvas gives back exactly what the legend actually consumed last frame — a scrolled-out
+  // legend is an unreachable one (the map region's rule), and the legend is AC4's colour key.
+  // No floor: the canvas absorbs what is left and, at squeezed rows, yields to zero rather than
+  // push the fixed stack above out of the region (an invisible canvas beats a scrolled-out
+  // title). The legend's height is measured, not derived (the ##analysis_head pattern): its
+  // line count is a wrap judgment over live widths — a face-transmittance readout joins the row
+  // while it fits, wraps below when it doesn't — and a static arithmetic mirror of that judgment
+  // is exactly the "constant chasing a conditional state" shape the content-adaptation contract
+  // forbids. The cache rides one frame behind a width change; the widths that change it persist.
+  static float legend_h_cache = 0.0f;
+  if (legend_h_cache <= 0.0f) {
+    legend_h_cache = ImGui::GetTextLineHeight();  // the first frame's honest default: one line
+  }
+  const float canvas_h = avail.y - ImGui::GetStyle().ItemSpacing.y - legend_h_cache;
   if (canvas_h > 0.0f) {
     const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
     ImGui::InvisibleButton("##r3d_canvas", ImVec2(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y),
@@ -1465,6 +1474,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     }
   }
   // The legend.
+  const float legend_top_y = ImGui::GetCursorPosY();
   ImGui::TextDisabled("entry");
   ImGui::SameLine();
   ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(0, 1.0f), 2.0f);
@@ -1490,6 +1500,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       ImGui::PopStyleColor();
     }
   }
+  legend_h_cache = ImGui::GetCursorPosY() - legend_top_y;
   ImGui::EndChild();
 }
 

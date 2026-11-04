@@ -19,6 +19,7 @@
 // as they touch anything.
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -26,6 +27,7 @@
 #include <string>
 
 #include "IconsFontAwesome6.h"
+#include "gui/analyze_map_view.hpp"  // kMapFullSkyRadiusDeg — the Full-sky reset's expected value
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"  // DeserializeFromJson — the panorama case loads a scene like the GUI does
 #include "gui/gui_constants.hpp"
@@ -34,6 +36,7 @@
 #include "gui/toolbar_layout.hpp"  // TopBarGroupGapPt — the fit pin reads the rule's own function
 #include "gui/user_defaults.hpp"   // kFactoryUiScaleMultiplier — the scale leg restores through it
 #include "test_screenshot.hpp"     // SavePng / StripAlpha — the archived skeleton capture
+#include "util/sky_direction.hpp"  // kDeg2Rad — the sky-point intent's direction convention
 // imgui_internal.h is normally an anti-pattern. Z-order has no public reading: it is the ORDER of
 // ImGuiContext::Windows, and the two rules relied on here (BringWindowToDisplayFront splices to the
 // back; a window created with NoBringToFrontOnFocus is pushed to the front, i.e. the bottom) are
@@ -86,6 +89,47 @@ int WindowStackIndex(const char* name) {
     }
   }
   return -1;
+}
+
+// Set the shared window's size and wait for it to land — the splitters case's local shape,
+// gathered once for the basis legs below.
+void ApplyWindowBasis(ImGuiTestContext* ctx, int width, int height) {
+  g_window_size_test.apply_aspect = false;
+  g_window_size_test.width = width;
+  g_window_size_test.height = height;
+  g_window_size_test.done.store(false);
+  g_window_size_test.requested.store(true);
+  for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  IM_CHECK(g_window_size_test.done.load());
+  ctx->Yield(3);
+}
+
+// A live region child window of the workspace (##AnalyzeRaypathView / ##AnalyzeRaypath3D /
+// ##AnalyzeSunGlobe): the child name carries a hash suffix, the fragment is the stable part.
+ImGuiWindow* AnalyzeRegionWindow(const char* fragment) {
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+      return w;
+    }
+  }
+  return nullptr;
+}
+
+// The containment evidence form: the item's FULL rectangle inside the host window's inner clip
+// rect, four edges. RectClipped comparisons and RectFull area checks do not pass for containment
+// — a half-clipped control satisfies both while being unreachable.
+void AssertRectContained(ImGuiTestContext* ctx, const char* ref, ImGuiWindow* host) {
+  const ImGuiTestItemInfo info = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
+  if (info.ID == 0u) {
+    IM_ERRORF("not found for containment in %s: %s", host->Name, ref);
+    return;
+  }
+  IM_CHECK_GE(info.RectFull.Min.x, host->InnerClipRect.Min.x - 0.5f);
+  IM_CHECK_LE(info.RectFull.Max.x, host->InnerClipRect.Max.x + 0.5f);
+  IM_CHECK_GE(info.RectFull.Min.y, host->InnerClipRect.Min.y - 0.5f);
+  IM_CHECK_LE(info.RectFull.Max.y, host->InnerClipRect.Max.y + 0.5f);
 }
 
 }  // namespace
@@ -708,6 +752,38 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_FLOAT_NEAR(share->Size.x, floor_w + 30.0f, 3.0f);
       gui::g_state.workspace.right_column_ratio = d1_pinned;  // the drag wrote it; pin again
       ctx->Yield(2);
+
+      // The dead zone's other half, multi-frame small steps, D1's: from this clamped layout a
+      // press arms the drag with an 8px move (ImGui's own drag-lock threshold, ~6px, is the
+      // arm cost every splitter pays — not ours), then three 2px movements inside the same
+      // press move the boundary by six more — every frame's delta lands, none is absorbed (the
+      // single big displacement above proved no dead zone; this half proves the per-frame
+      // accumulation).
+      {
+        ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
+        IM_CHECK(share != nullptr);
+        const float before_w = share->Size.x;
+        const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeColumnSplitter", ImGuiTestOpFlags_NoError);
+        IM_CHECK(grab.ID != 0);
+        const ImVec2 c = grab.RectFull.GetCenter();
+        ctx->MouseMoveToPos(c);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        ctx->MouseMoveToPos(ImVec2(c.x - 8.0f, c.y));  // arm: past the drag-lock threshold
+        ctx->Yield(2);
+        for (int i = 1; i <= 3; ++i) {
+          ctx->MouseMoveToPos(ImVec2(c.x - 8.0f - 2.0f * static_cast<float>(i), c.y));
+          ctx->Yield(2);
+        }
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+        ctx->LogInfo("[splitters] D1 arm+three 2px steps: %.1f -> %.1f (expected %.1f)", static_cast<double>(before_w),
+                     static_cast<double>(share->Size.x), static_cast<double>(before_w + 14.0f));
+        IM_CHECK_FLOAT_NEAR(share->Size.x, before_w + 14.0f, 3.0f);
+        gui::g_state.workspace.right_column_ratio = d1_pinned;  // restore the pinned state
+        ctx->Yield(2);
+      }
       set_basis(gui::kInitWindowWidth, gui::kInitWindowHeight);
 
       // D2 down: the diagnostics region shrinks; D1 stays exactly where the pin left it, the
@@ -722,6 +798,38 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK(details != nullptr);
       IM_CHECK_GE(details->Size.y,
                   912.0f - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeShareListMinHeight) - 1.0f);
+
+      // D2's half of the same proof, from a layout clamped at its OTHER pin: the stored ratio
+      // asks for more than the diagnostics floor leaves, the display sits on the clamp, and an
+      // armed press's three 2px upward steps move the list by six — no dead zone, no per-frame
+      // absorption.
+      gui::g_state.workspace.right_list_ratio = 0.95f;
+      ctx->Yield(3);
+      {
+        ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
+        IM_CHECK(share != nullptr);
+        const float before_h = share->Size.y;
+        const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRightRowsSplitter", ImGuiTestOpFlags_NoError);
+        IM_CHECK(grab.ID != 0);
+        const ImVec2 c = grab.RectFull.GetCenter();
+        ctx->MouseMoveToPos(c);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        ctx->MouseMoveToPos(ImVec2(c.x, c.y - 8.0f));  // arm: past the drag-lock threshold
+        ctx->Yield(2);
+        for (int i = 1; i <= 3; ++i) {
+          ctx->MouseMoveToPos(ImVec2(c.x, c.y - 8.0f - 2.0f * static_cast<float>(i)));
+          ctx->Yield(2);
+        }
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+        ctx->LogInfo("[splitters] D2 arm+three 2px steps: %.1f -> %.1f (expected %.1f)", static_cast<double>(before_h),
+                     static_cast<double>(share->Size.y), static_cast<double>(before_h - 14.0f));
+        IM_CHECK_FLOAT_NEAR(share->Size.y, before_h - 14.0f, 3.0f);
+      }
+      gui::g_state.workspace.right_list_ratio = d2_0;
+      ctx->Yield(2);
 
       // The write is delta-only, so the boundary moves EXACTLY by the hand's travel: a slow
       // multi-frame drag of ten 1px steps moves the list's height by ten, a drag on the other
@@ -978,18 +1086,54 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       for (const char* ref : kReachable) {
         const ImGuiTestItemInfo info = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
         if (info.ID == 0u) {
-          IM_ERRORF("not reachable at 150% scale: %s", ref);
+          IM_ERRORF("not reachable at 150%% scale: %s", ref);
           if (ctx->IsError()) {
             break;
           }
           continue;
         }
         if (!(info.RectFull.GetWidth() > 1.0f && info.RectFull.GetHeight() > 1.0f)) {
-          IM_ERRORF("zero-area at 150% scale: %s", ref);
+          IM_ERRORF("zero-area at 150%% scale: %s", ref);
           if (ctx->IsError()) {
             break;
           }
         }
+      }
+
+      // The evidence form the rewritten contract demands: containment of the tier's key
+      // controls in the regions they live in, then the real operations — the search input
+      // typed, D1 dragged (its write is delta-only, so the drag's own landing is the evidence).
+      {
+        ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
+        IM_CHECK(share != nullptr);
+        AssertRectContained(ctx, "**/###analysis_search", share);
+        AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", share);
+        ImGuiWindow* panorama = ctx->GetWindowByRef("//##AnalyzePanorama");
+        IM_CHECK(panorama != nullptr);
+        AssertRectContained(ctx, "**/Whole sky", panorama);
+        AssertRectContained(ctx, "**/In frame", panorama);
+        AssertRectContained(ctx, "**/Point", panorama);
+        ctx->SetRef("//##AnalyzeShareList");
+        ctx->ItemInputValue("**/###analysis_search", "3");
+        ctx->ItemInputValue("**/###analysis_search", "");
+        ctx->SetRef("");
+        const float d1_before = gui::g_state.workspace.right_column_ratio;
+        const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeColumnSplitter", ImGuiTestOpFlags_NoError);
+        IM_CHECK(grab.ID != 0);
+        const ImVec2 c = grab.RectFull.GetCenter();
+        ctx->MouseMoveToPos(c);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        ctx->MouseMoveToPos(ImVec2(c.x - 40.0f, c.y));
+        ctx->Yield(3);
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+        ctx->LogInfo("[150 percent] D1 drag %.4f -> %.4f", static_cast<double>(d1_before),
+                     static_cast<double>(gui::g_state.workspace.right_column_ratio));
+        IM_CHECK_GT(gui::g_state.workspace.right_column_ratio, d1_before);
+        gui::g_state.workspace.right_column_ratio = d1_before;  // the drag wrote it; restore
+        ctx->Yield(2);
       }
 
       gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
@@ -1188,6 +1332,384 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK(g_window_size_test.done.load());
       ctx->Yield(2);
+    };
+  }
+
+  // The contract's ③ split — the window too narrow for both columns' floors — at 1x, reached by
+  // a plain 900x640 window (default assumption 2: the compressed tier does not need a scale leg
+  // to reach it). The columns share the span proportionally, the band takes its stacked form
+  // with its own scroll as the reachability, and the tier's key operations are driven for real
+  // in the geometry that actually results.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_operates_at_the_900x640_proportional_split");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedWindowBasis window_basis(ctx);
+      ApplyWindowBasis(ctx, 900, 640);
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+
+      // The proportional rung engaged: both floors cannot fit the span right of the left column.
+      const float avail_w = ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
+      IM_CHECK_LT(avail_w, gui::UiPx(gui::kAnalyzeRightColMinWidth) + gui::UiPx(gui::kAnalyzeMainViewMinWidth) +
+                               gui::UiPx(gui::kAnalyzeSplitterSize));
+      ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
+      IM_CHECK(share != nullptr);
+      const float expected_right =
+          (avail_w - gui::UiPx(gui::kAnalyzeSplitterSize)) *
+          (gui::UiPx(gui::kAnalyzeRightColMinWidth) /
+           (gui::UiPx(gui::kAnalyzeRightColMinWidth) + gui::UiPx(gui::kAnalyzeMainViewMinWidth)));
+      ctx->LogInfo("[900x640] share %.1f (proportional %.1f)", static_cast<double>(share->Size.x),
+                   static_cast<double>(expected_right));
+      IM_CHECK_FLOAT_NEAR(share->Size.x, expected_right, 1.0f);
+
+      // The band: stacked — each region the full band width at its floor height, the band
+      // scrolling (the reachability at this height).
+      ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+      IM_CHECK(band != nullptr);
+      ImGuiWindow* map = AnalyzeRegionWindow("##AnalyzeRaypathView");
+      ImGuiWindow* r3d = AnalyzeRegionWindow("##AnalyzeRaypath3D");
+      ImGuiWindow* globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
+      IM_CHECK(map != nullptr);
+      IM_CHECK(r3d != nullptr);
+      IM_CHECK(globe != nullptr);
+      ctx->LogInfo("[900x640] band %.0f scrollmax %.0f; map %.0fx%.0f 3d %.0fx%.0f globe %.0fx%.0f",
+                   static_cast<double>(band->Size.y), static_cast<double>(band->ScrollMax.y),
+                   static_cast<double>(map->Size.x), static_cast<double>(map->Size.y), static_cast<double>(r3d->Size.x),
+                   static_cast<double>(r3d->Size.y), static_cast<double>(globe->Size.x),
+                   static_cast<double>(globe->Size.y));
+      IM_CHECK_GT(band->ScrollMax.y, 0.0f);
+      // The stacked form's defining fact: each region the FULL band content width — equal to its
+      // siblings, and the band's inner width minus the scrollbar the stacked form's own scroll
+      // shows. (The exact width is ImGui's content computation; the shape is the contract.)
+      IM_CHECK_FLOAT_NEAR(map->Size.x, r3d->Size.x, 1.0f);
+      IM_CHECK_FLOAT_NEAR(map->Size.x, globe->Size.x, 1.0f);
+      IM_CHECK_LE(map->Size.x, band->Size.x - 2.0f * ImGui::GetStyle().WindowPadding.x + 1.0f);
+      IM_CHECK_FLOAT_NEAR(map->Size.y, gui::UiPx(gui::kAnalyzeDepthMapMinSize), 2.0f);
+      IM_CHECK_FLOAT_NEAR(r3d->Size.y, gui::UiPx(gui::kAnalyzeDepth3DMinSize), 2.0f);
+      IM_CHECK_FLOAT_NEAR(globe->Size.y, gui::UiPx(gui::kAnalyzeDepthGlobeMinSize), 2.0f);
+
+      // The map cell (the stacked band's head, at scroll 0): type a sky point, press Set.
+      band->Scroll.y = 0.0f;
+      ctx->Yield(2);
+      ctx->SetRef("//##AnalyzeLowerRow");
+      ctx->ItemInputValue("**/alt°##sky", 30.0f);
+      ctx->ItemInputValue("**/az°##sky", 45.0f);
+      ctx->ItemClick("**/Set sky point");
+      ctx->SetRef("");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.analysis.sky_point.valid);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.sky_point.dir[2], -std::sin(30.0f * lumice::kDeg2Rad), 1e-3f);
+
+      // The globe (the stacked band's tail): scroll it in, flip its toggle for real.
+      band->Scroll.y = band->ScrollMax.y;
+      ctx->Yield(2);
+      AssertRectContained(ctx, "**/Deviation grid##globe", globe);
+      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
+      ctx->ItemClick("**/Deviation grid##globe");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
+
+      // The right column at this window: the search box takes real input, the (disabled,
+      // serverless) Analyze button sits contained, and the diagnostics floor keeps a visible
+      // first line of its scrolling region with the wheel reaching the rest.
+      const float d2_saved = gui::g_state.workspace.right_list_ratio;
+      const float panel_h =
+          ImGui::GetIO().DisplaySize.y - gui::UiPx(gui::kTopBarHeight) - gui::UiPx(gui::kStatusBarHeight);
+      gui::g_state.workspace.right_list_ratio =
+          (panel_h - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) / panel_h;
+      ctx->Yield(3);
+      ctx->SetRef("//##AnalyzeShareList");
+      ctx->ItemInputValue("**/###analysis_search", "3-5");
+      ctx->ItemInputValue("**/###analysis_search", "");
+      AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", share);
+      ctx->SetRef("");
+      {
+        ImGuiWindow* scroll = AnalyzeRegionWindow("##AnalyzeDetailsScroll");
+        IM_CHECK(scroll != nullptr);
+        ctx->LogInfo("[900x640] details scroll child %.0f, scrollmax %.0f", static_cast<double>(scroll->Size.y),
+                     static_cast<double>(scroll->ScrollMax.y));
+        IM_CHECK_GT(scroll->ScrollMax.y, 0.0f);
+      }
+      gui::g_state.workspace.right_list_ratio = d2_saved;
+      ctx->Yield(2);
+      // Inline basis restore (the 1280x800 leg's rule): the next case's entry audit must have
+      // nothing to undo.
+      ApplyWindowBasis(ctx, gui::kInitWindowWidth, gui::kInitWindowHeight);
+      ctx->Yield(2);
+    };
+  }
+
+  // The 2x scale leg — the workspace-clamp matrix cell: at twice the UI scale the Analyze
+  // workspace's own floors exceed what the shared window's span can give, the ③ proportional
+  // rung engages, and the tier's key operations must hold in the geometry that results. The
+  // 150% leg keeps the ordinary-split shape; this one is the clamp, and its D1 write is the ③
+  // branch (both floors pinned, the ratio held at the proportional split while the drag lands).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_operates_at_200_percent_scale_clamped");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      gui::g_ui_scale_multiplier = 2.0f;
+      gui::g_ui_scale_dirty = true;
+      // The rebuild and the window re-derivation land over several frames (pool-context timing
+      // is wider than a fixed yield count covers): wait for the scale to settle through the one
+      // outlet before asserting anything about the geometry it produces.
+      for (int i = 0; i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > 2.0f * gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                                  gui::UiPx(gui::kAnalyzeLeftPanelWidth) < 2.0f * gui::kAnalyzeLeftPanelWidth + 0.5f);
+           ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK_FLOAT_NEAR(gui::UiPx(gui::kAnalyzeLeftPanelWidth), 2.0f * gui::kAnalyzeLeftPanelWidth, 0.5f);
+      // On the harness the scale rebuild itself re-plans the window (the size follows the
+      // monitor the harness reports), and the resulting span still fits both floors — the
+      // clamp does not engage by the scale alone. The plan's sanctioned substitute (risk 1):
+      // an explicit window size at the clamped-equivalent geometry — the same scale, a span
+      // too narrow for the doubled floors. Set once the scale has settled, so the re-plan
+      // cannot override it.
+      ApplyWindowBasis(ctx, 1800, 900);
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(4);
+
+      // The clamp engaged: at 2x the two columns' floors alone exceed the span.
+      const float avail_w = ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
+      ctx->LogInfo(
+          "[2x clamp] span right of the left column: %.0f (floors %.0f)", static_cast<double>(avail_w),
+          static_cast<double>(gui::UiPx(gui::kAnalyzeRightColMinWidth) + gui::UiPx(gui::kAnalyzeMainViewMinWidth)));
+      IM_CHECK_LT(avail_w, gui::UiPx(gui::kAnalyzeRightColMinWidth) + gui::UiPx(gui::kAnalyzeMainViewMinWidth) +
+                               gui::UiPx(gui::kAnalyzeSplitterSize));
+
+      // The panorama's fixed rows — the ROI radios and the hemisphere pair — wrap under the
+      // judgment and each sits contained; the hemisphere radio's real click is the operability
+      // half.
+      ImGuiWindow* panorama = ctx->GetWindowByRef("//##AnalyzePanorama");
+      IM_CHECK(panorama != nullptr);
+      AssertRectContained(ctx, "**/Whole sky", panorama);
+      AssertRectContained(ctx, "**/In frame", panorama);
+      AssertRectContained(ctx, "**/Point", panorama);
+      AssertRectContained(ctx, "**/Upper##panorama_hemisphere", panorama);
+      AssertRectContained(ctx, "**/Lower##panorama_hemisphere", panorama);
+      ctx->SetRef("//##AnalyzePanorama");
+      ctx->ItemClick("Lower##panorama_hemisphere");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, false);
+      ctx->ItemClick("Upper##panorama_hemisphere");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, true);
+      ctx->SetRef("");
+
+      // The map cell at the band scroll positions its two ends need, in order: the header
+      // (scroll 0 — the view buttons' containment and Full sky's real click), then the cell's
+      // bottom slice (the sky row — the cell is far taller than the 2x band, one scroll shows
+      // one slice).
+      ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+      IM_CHECK(band != nullptr);
+      ImGuiWindow* map = AnalyzeRegionWindow("##AnalyzeRaypathView");
+      IM_CHECK(map != nullptr);
+      AssertRectContained(ctx, "**/Fit##map", map);
+      AssertRectContained(ctx, "**/Full sky##map", map);
+      gui::g_state.analysis.map_view.radius_deg = 12.0f;
+      ctx->ItemClick("**/Full sky##map");
+      ctx->Yield(2);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.map_view.radius_deg, gui::kMapFullSkyRadiusDeg, 0.5f);
+      band->Scroll.y = map->Size.y - (band->Size.y - 2.0f * ImGui::GetStyle().WindowPadding.y);
+      ctx->Yield(2);
+      ctx->SetRef("//##AnalyzeLowerRow");
+      ctx->ItemInputValue("**/alt°##sky", 15.0f);
+      ctx->ItemClick("**/Set sky point");
+      ctx->SetRef("");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.analysis.sky_point.valid);
+
+      // The globe at the band scroll position that shows its cell's top (the cell is taller
+      // than the 2x-clamped band, so the scroll bottom shows only the cell's lower part); the
+      // search box typed; the (disabled) Analyze contained.
+      ImGuiWindow* globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
+      IM_CHECK(globe != nullptr);
+      ImGuiWindow* r3d_2x = AnalyzeRegionWindow("##AnalyzeRaypath3D");
+      IM_CHECK(r3d_2x != nullptr);
+      band->Scroll.y = map->Size.y + r3d_2x->Size.y + 2.0f * ImGui::GetStyle().ItemSpacing.y;
+      ctx->Yield(2);
+      AssertRectContained(ctx, "**/Deviation grid##globe", globe);
+      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
+      ctx->ItemClick("**/Deviation grid##globe");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
+      ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
+      IM_CHECK(share != nullptr);
+      AssertRectContained(ctx, "**/###analysis_search", share);
+      AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", share);
+      ctx->SetRef("//##AnalyzeShareList");
+      ctx->ItemInputValue("**/###analysis_search", "3");
+      ctx->ItemInputValue("**/###analysis_search", "");
+      ctx->SetRef("");
+
+      // The ③ write branch: a real drag lands, and the ratio holds at the proportional pin —
+      // the only split the clamp allows.
+      const float pinned = gui::UiPx(gui::kAnalyzeRightColMinWidth) /
+                           (gui::UiPx(gui::kAnalyzeRightColMinWidth) + gui::UiPx(gui::kAnalyzeMainViewMinWidth));
+      ctx->LogInfo("[2x clamp] D1 ratio %.4f (pin %.4f)",
+                   static_cast<double>(gui::g_state.workspace.right_column_ratio), static_cast<double>(pinned));
+      const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeColumnSplitter", ImGuiTestOpFlags_NoError);
+      IM_CHECK(grab.ID != 0);
+      const ImVec2 c = grab.RectFull.GetCenter();
+      ctx->MouseMoveToPos(c);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(c.x - 40.0f, c.y));
+      ctx->Yield(3);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.workspace.right_column_ratio, pinned, 0.01f);
+
+      gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
+      gui::g_ui_scale_dirty = true;
+      for (int i = 0; i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                                  gui::UiPx(gui::kAnalyzeLeftPanelWidth) < gui::kAnalyzeLeftPanelWidth + 0.5f);
+           ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK_FLOAT_NEAR(gui::UiPx(gui::kAnalyzeLeftPanelWidth), gui::kAnalyzeLeftPanelWidth, 0.5f);
+      // Inline basis restore (the 1280x800 leg's rule): the scale rebuild re-plans the window,
+      // so the explicit size lands AFTER the settle — done here, waited on, so the next case's
+      // entry audit has nothing to undo.
+      ApplyWindowBasis(ctx, gui::kInitWindowWidth, gui::kInitWindowHeight);
+      ctx->Yield(2);
+    };
+  }
+
+  // The row ratio's break points (the 0.82–0.85 band the adjudication named as the former
+  // contract's fracture) and D2's two floors: the stack-END controls take real operations in
+  // the geometry each ratio actually produces — never "the cell reached its floor" as a proxy
+  // for content reachability.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_row_ratio_extremes_keep_stack_ends_operable");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      const float rows_saved = gui::g_state.workspace.middle_rows_ratio;
+      const float list_saved = gui::g_state.workspace.right_list_ratio;
+      ImGuiWindow* band = nullptr;
+      ImGuiWindow* map = nullptr;
+      ImGuiWindow* r3d = nullptr;
+      ImGuiWindow* globe = nullptr;
+      {
+        band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+        IM_CHECK(band != nullptr);
+        map = AnalyzeRegionWindow("##AnalyzeRaypathView");
+        r3d = AnalyzeRegionWindow("##AnalyzeRaypath3D");
+        globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
+        IM_CHECK(map != nullptr);
+        IM_CHECK(r3d != nullptr);
+        IM_CHECK(globe != nullptr);
+      }
+
+      // 0.85 — the far clamp: the band is far below its rung, the stacked form's scroll is the
+      // reachability. The band scroll positions a region's CELL; the scroll bottom shows the
+      // globe's lower portion (the cell is taller than the band), so the toggle — at the cell's
+      // top — needs the band scrolled to the globe's own content offset. The globe's remaining
+      // stack is its region's own internal scroll (the designed degradation).
+      gui::g_state.workspace.middle_rows_ratio = 0.85f;
+      ctx->Yield(3);
+      band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+      IM_CHECK(band != nullptr);
+      ctx->LogInfo("[0.85] band %.0f scrollmax %.0f", static_cast<double>(band->Size.y),
+                   static_cast<double>(band->ScrollMax.y));
+      IM_CHECK_GT(band->ScrollMax.y, 0.0f);
+      band->Scroll.y = map->Size.y + r3d->Size.y + 2.0f * ImGui::GetStyle().ItemSpacing.y;
+      ctx->Yield(2);
+      globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
+      IM_CHECK(globe != nullptr);
+      AssertRectContained(ctx, "**/Deviation grid##globe", globe);
+      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
+      ctx->ItemClick("**/Deviation grid##globe");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
+      // The 3D cell keeps its floor height in the stacked form (its canvas yields; the cell
+      // does not).
+      IM_CHECK_FLOAT_NEAR(r3d->Size.y, gui::UiPx(gui::kAnalyzeDepth3DMinSize), 2.0f);
+
+      // 0.82 — just inside the clamp: the map's sky-point row (the cell's tail) takes a real
+      // Set. The cell (370) is taller than the band (~156), so the band scroll shows the cell's
+      // bottom slice — the sky row — not its header (the header and the sky row are separate
+      // scroll positions of the same cell; the cell's own content fits its 370 height, the band
+      // scroll is the reachability between slices).
+      gui::g_state.workspace.middle_rows_ratio = 0.82f;
+      ctx->Yield(3);
+      band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+      IM_CHECK(band != nullptr);
+      band->Scroll.y = map->Size.y - (band->Size.y - 2.0f * ImGui::GetStyle().WindowPadding.y);
+      ctx->Yield(2);
+      AssertRectContained(ctx, "**/Set sky point", map);
+      ctx->SetRef("//##AnalyzeLowerRow");
+      ctx->ItemInputValue("**/alt°##sky", 12.0f);
+      ctx->ItemClick("**/Set sky point");
+      ctx->SetRef("");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.analysis.sky_point.valid);
+      gui::g_state.workspace.middle_rows_ratio = rows_saved;
+      ctx->Yield(2);
+
+      // D2's two floors. Diagnostics floor: the idle stack scrolls (the Stop click's
+      // operability is the idle-states case's carrier — this cell pins the geometry and the
+      // wheel reach). List floor: the search box contains and takes input.
+      const float panel_h =
+          ImGui::GetIO().DisplaySize.y - gui::UiPx(gui::kTopBarHeight) - gui::UiPx(gui::kStatusBarHeight);
+      gui::g_state.workspace.right_list_ratio =
+          (panel_h - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) / panel_h;
+      ctx->Yield(3);
+      {
+        ImGuiWindow* details = ctx->GetWindowByRef("##AnalyzeDetails");
+        IM_CHECK(details != nullptr);
+        IM_CHECK_FLOAT_NEAR(details->Size.y, gui::UiPx(gui::kAnalyzeDetailsMinHeight), 1.0f);
+        ImGuiWindow* scroll = AnalyzeRegionWindow("##AnalyzeDetailsScroll");
+        IM_CHECK(scroll != nullptr);
+        IM_CHECK_GT(scroll->ScrollMax.y, 0.0f);
+      }
+      gui::g_state.workspace.right_list_ratio = gui::UiPx(gui::kAnalyzeShareListMinHeight) / panel_h;
+      ctx->Yield(3);
+      {
+        ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
+        IM_CHECK(share != nullptr);
+        IM_CHECK_FLOAT_NEAR(share->Size.y, gui::UiPx(gui::kAnalyzeShareListMinHeight), 1.0f);
+        AssertRectContained(ctx, "**/###analysis_search", share);
+        ctx->SetRef("//##AnalyzeShareList");
+        ctx->ItemInputValue("**/###analysis_search", "3");
+        ctx->ItemInputValue("**/###analysis_search", "");
+        ctx->SetRef("");
+      }
+      gui::g_state.workspace.right_list_ratio = list_saved;
+      ctx->Yield(2);
+    };
+  }
+
+  // The λ reference branch and the view buttons at the side-by-side cell's own width (the band
+  // arms side-by-side at the default window): the explicit-wavelength state's exit button is
+  // contained and real-clicked in the 370 pt cell, and Full sky resets the map view regardless
+  // of adoption.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "shell_chrome", "workspace_map_lambda_branch_and_view_buttons_at_cell_floor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      ImGuiWindow* map = AnalyzeRegionWindow("##AnalyzeRaypathView");
+      IM_CHECK(map != nullptr);
+      IM_CHECK_FLOAT_NEAR(map->Size.x, gui::UiPx(gui::kAnalyzeDepthMapMinSize), 2.0f);
+      gui::g_state.analysis.map_wavelength_nm = 550.0;
+      ctx->Yield(2);
+      AssertRectContained(ctx, "**/reference##map_lambda", map);
+      AssertRectContained(ctx, "**/Fit##map", map);
+      AssertRectContained(ctx, "**/Full sky##map", map);
+      ctx->ItemClick("**/reference##map_lambda");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.analysis.map_wavelength_nm, 0.0);
+      gui::g_state.analysis.map_view.radius_deg = 12.0f;
+      ctx->ItemClick("**/Full sky##map");
+      ctx->Yield(2);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.map_view.radius_deg, gui::kMapFullSkyRadiusDeg, 0.5f);
     };
   }
 
