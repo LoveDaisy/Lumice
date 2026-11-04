@@ -497,8 +497,9 @@ bool PickBannerVisible(ImGuiTestContext* ctx) {
 }
 
 // Point mode, a centre picked on the panorama, Analyze pressed: the run is in progress on
-// return. The ROI controls (region radios, the pick arming) sit on the PANORAMA side; Analyze
-// sits with the list. The pick targets the halo's own centre — the direction the document's
+// return. The whole request — region radios, the pick arming, Analyze — sits on the main view's
+// operation bar (contract §2.2). The pick targets the halo's own centre — the direction the
+// document's
 // camera looks (22 degrees above the sun on its azimuth), the point the OLD default centre (the
 // preview's middle pixel) sat on for free. The panorama's default centre is the fisheye's
 // middle (the zenith), off the halo, so the point analyses that assert chain identities pick
@@ -513,8 +514,8 @@ bool StartPointAnalysis(ImGuiTestContext* ctx) {
   ctx->SetRef("");
   IM_CHECK_RETV(PickPanoramaAt(ctx, gui::g_state.renderer.elevation, gui::g_state.renderer.azimuth), false);
   IM_CHECK_RETV(gui::g_state.analysis.cone_center_valid, false);
-  // The Analyze button sits with the list sections.
-  SetListRef(ctx);
+  // The Analyze button sits on the main view's operation bar.
+  ctx->SetRef(PanoramaRegionRef());
   ctx->ItemClick(kAnalyzeButton);
   ctx->SetRef("");
   IM_CHECK_RETV(gui::g_state.analysis.started, false);
@@ -548,7 +549,7 @@ bool RunPointAnalysisThenStop(ImGuiTestContext* ctx) {
                     30),
                 false);
   const auto partial = gui::g_state.analysis_result.payload;
-  SetListRef(ctx);
+  ctx->SetRef(PanoramaRegionRef());
   IM_CHECK_RETV(ctx->ItemInfo(ICON_FA_STOP " Stop").ID != 0, false);
   ctx->ItemClick(ICON_FA_STOP " Stop");
   ctx->SetRef("");
@@ -679,9 +680,9 @@ bool ReplaceServerWithAFreshOne(ImGuiTestContext* ctx) {
 bool RunWholeSkyAnalysisToCompletion(ImGuiTestContext* ctx, bool* saw_simulating) {
   ctx->SetRef(PanoramaRegionRef());
   ctx->ItemClick("Whole sky");
-  SetListRef(ctx);
+  ctx->SetRef(PanoramaRegionRef());
   IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
-  SetListRef(ctx);
+  ctx->SetRef(PanoramaRegionRef());
   ctx->ItemClick(kAnalyzeButton);
   ctx->SetRef("");
   IM_CHECK_RETV(gui::g_state.analysis.started, false);
@@ -744,33 +745,6 @@ std::optional<gui::SelectedClassIdentity> SelectRowByDisplay(ImGuiTestContext* c
   ctx->ItemClick(row);
   ctx->SetRef("");
   return gui::SelectedClassIdentityFor(gui::g_state);
-}
-
-// In-frame mode, Analyze pressed, driven until the run ends on the panel's finite budget. The
-// radio gates on the document having shown a picture (HasEverShownPicture — the same predicate
-// the Analyze button reads), which the completed run the caller brought up satisfied; the
-// Analyze workspace hosts no preview, so the frame the analysis reads is the document's own
-// resolution (DoAnalyze's IN_FRAME fallback).
-bool RunInFrameAnalysisToCompletion(ImGuiTestContext* ctx) {
-  SetListRef(ctx);
-  ctx->SetRef(PanoramaRegionRef());
-  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("In frame")), false);
-  ctx->SetRef(PanoramaRegionRef());
-  ctx->ItemClick("In frame");
-  SetListRef(ctx);
-  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
-  SetListRef(ctx);
-  ctx->ItemClick(kAnalyzeButton);
-  ctx->SetRef("");
-  IM_CHECK_RETV(gui::g_state.analysis.started, false);
-  IM_CHECK_RETV(!gui::g_state.analysis.infinite, false);
-  IM_CHECK_RETV(
-      DriveUntil(
-          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
-          60),
-      false);
-  IM_CHECK_RETV(gui::g_state.analysis_result.payload->roi_mode == LUMICE_RAYPATH_ROI_IN_FRAME, false);
-  return true;
 }
 
 // A sink of our own on the GUI logger for the duration of a case, so what DoRun logs can be read
@@ -1319,7 +1293,7 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   // Re-Analyze: the selection clears, the survey bookkeeping dies with it (R6 — no adopted
   // outcome survives into the next generation's region), and a straggler of the old generation
   // would find no intent to land under.
-  SetListRef(ctx);
+  ctx->SetRef(PanoramaRegionRef());
   IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
   ctx->ItemClick(kAnalyzeButton);
   ctx->SetRef("");
@@ -5022,7 +4996,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Analyze, through the button.
       LUMICE_SimLifecycleResult before{};
       LUMICE_GetSimLifecycle(gui::g_server, &before);
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->ItemClick(kAnalyzeButton);
       ctx->SetRef("");
@@ -5166,31 +5140,17 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->Yield(3);
 
         // The right column at its floor: the clamp the contract's order ① names (the stored
-        // ratio would give ~212 here). At this floor the head is its scrolling child — the
-        // Analyze button rides at the child's top, and the search row (the head's last) is
-        // reached by the head's own scroll, the degradation ladder's internal-scroll rung.
+        // ratio would give ~212 here). The request's controls — Analyze among them — moved to
+        // the main view's operation bar (contract §2.2), so the head that remains (banners,
+        // symmetry, search) is shorter than before: at this floor it fits flat, and the search
+        // row answers without any scroll. (The head's own scroll rung stays live behind the
+        // wrapping banners — the freshness/pick states that grow it are the other cases' to
+        // evidence.)
         ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
         IM_CHECK(share != nullptr);
         ctx->LogInfo("[narrow] share w=%.1f, d1 ratio %.4f", share->Size.x, gui::g_state.workspace.right_column_ratio);
         IM_CHECK_EQ(share->Size.x, gui::UiPx(gui::kAnalyzeRightColMinWidth));
         SetListRef(ctx);
-        const ImGuiTestItemInfo analyze_btn =
-            ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str(), ImGuiTestOpFlags_NoError);
-        IM_CHECK(analyze_btn.ID != 0);
-        IM_CHECK_GT(analyze_btn.RectClipped.GetHeight(), 0.0f);
-        ImGuiWindow* head_narrow = nullptr;
-        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-          if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
-            head_narrow = w;
-            break;
-          }
-        }
-        IM_CHECK(head_narrow != nullptr);
-        ctx->LogInfo("[narrow] head h %.0f SM %.0f", static_cast<double>(head_narrow->Size.y),
-                     static_cast<double>(head_narrow->ScrollMax.y));
-        IM_CHECK_GT(head_narrow->ScrollMax.y, 0.0f);
-        head_narrow->Scroll.y = head_narrow->ScrollMax.y;
-        ctx->Yield(3);
         const ImGuiTestItemInfo search = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
         IM_CHECK(search.ID != 0);
         IM_CHECK_GT(search.RectFull.GetHeight(), 0.0f);
@@ -5309,13 +5269,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // The stale-at-the-floors repro, BOTH D2 floor directions of one construction, each with
       // its own evidence set:
       //  Half A — the LIST at its floor (the ratio derived from the live panel height, never a
-      //  hardcoded window: at a non-1x scale the 912 arithmetic is simply wrong): the stale
-      //  banner wraps, the head's natural height exceeds its budget, ##analysis_head enters its
-      //  scroll branch, the frozen header stays on screen at scroll 0, and both bottom buttons
-      //  sit RectFull inside the never-scrolling window. The real operations then drive it: a
-      //  position-addressed click on the first data row (its label is clipped by the floor's
-      //  short viewport, so labels cannot address it) selects that row, and an Exclude click
-      //  writes THAT row's chain, reversed through the product's own Include-again.
+      //  hardcoded window: at a non-1x scale the 912 arithmetic is simply wrong): the head —
+      //  short since the request controls moved to the operation bar — fits flat, its search
+      //  row resolves inside the never-scrolling window, the frozen header stays on screen at
+      //  scroll 0, and both bottom buttons sit RectFull inside the window. The real operations
+      //  then drive it: a position-addressed click on the first data row (its label is clipped
+      //  by the floor's short viewport, so labels cannot address it) selects that row, and an
+      //  Exclude click writes THAT row's chain, reversed through the product's own
+      //  Include-again.
       //  Half B — the DIAGNOSTICS at its floor (the list takes the rest): the same containment
       //  with the head flat. Two floors, two evidence sets, one construction each way. The
       //  head's natural-height measurement rides one frame behind the banner, hence the yields
@@ -5356,16 +5317,25 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->LogInfo("[stale floors A] share %.0fx%.0f (list floor %.0f)", share->Size.x, share->Size.y,
                      gui::UiPx(gui::kAnalyzeShareListMinHeight));
         IM_CHECK_FLOAT_NEAR(share->Size.y, gui::UiPx(gui::kAnalyzeShareListMinHeight), 1.0f);
+        // The head is short since the request controls moved to the operation bar (contract
+        // §2.2): at this floor it fits flat — no scrolling child at all — and the search row,
+        // its last, resolves inside the never-scrolling window directly. (The clamp's scroll
+        // rung stays live behind the wrapping banners; this construction's state does not
+        // reach it, and the shorter head is the relaxed form the migration planned for.)
         for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
           if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
             head = w;
             break;
           }
         }
-        IM_CHECK(head != nullptr);
-        ctx->LogInfo("[stale floors A] head ScrollMax.y %.1f of size %.0f", static_cast<double>(head->ScrollMax.y),
-                     static_cast<double>(head->Size.y));
-        IM_CHECK_GT(head->ScrollMax.y, 0.0f);  // the clamped head is a scrolled child, really
+        IM_CHECK(head == nullptr);
+        const ImGuiTestItemInfo search_row = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
+        IM_CHECK(search_row.ID != 0);
+        IM_CHECK_GE(search_row.RectFull.Min.x, share->InnerClipRect.Min.x - 0.5f);
+        IM_CHECK_LE(search_row.RectFull.Max.x, share->InnerClipRect.Max.x + 0.5f);
+        IM_CHECK_GE(search_row.RectFull.Min.y, share->InnerClipRect.Min.y - 0.5f);
+        IM_CHECK_LE(search_row.RectFull.Max.y, share->InnerClipRect.Max.y + 0.5f);
+        ctx->LogInfo("[stale floors A] head flat (no clamp child); search row inside the window");
         // The list at this floor: the buttons sit RectFull inside the never-scrolling window,
         // and the table keeps its frozen header on screen at scroll 0 (the with-result pin's
         // structural form — header CELLS don't report labels to the engine, so the header's
@@ -5494,20 +5464,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       }
 
       // The Radius row, driven LAST: its input re-sorts the display order (the radius re-sums
-      // the rings), so the row selection above must not share the frame with it. In the
-      // clamped head's scroll child: scrolled into view, the slider's elastic width keeps its
-      // full frame inside the child's clip (the wide branch's trailing label is bound in the
-      // scale-tiers leg — the hook's slider rect does not cover a trailing label), and a real
-      // input drives the radius to BOTH ends of its range (the r2 review's probe caught the
-      // fixed 220 pt slider clipped at this very tier).
-      head->Scroll.y = head->ScrollMax.y;
+      // the rings), so the row selection above must not share the frame with it. On the main
+      // view's operation bar since the migration (contract §2.2) — the list head no longer
+      // hosts it, so the containment face is the panorama window and no scroll is needed. A
+      // real input drives the radius to BOTH ends of its range (the r2 review's probe caught
+      // the fixed 220 pt slider clipped at this very tier — the bar's elastic width judgment
+      // carries the same duty).
       ctx->Yield(3);
       const ImGuiTestItemInfo radius = ctx->ItemInfo("**/Radius###Radius_narrow", ImGuiTestOpFlags_NoError);
       IM_CHECK(radius.ID != 0);
-      IM_CHECK_GE(radius.RectFull.Min.x, head->InnerClipRect.Min.x - 0.5f);
-      IM_CHECK_LE(radius.RectFull.Max.x, head->InnerClipRect.Max.x + 0.5f);
-      IM_CHECK_GE(radius.RectFull.Min.y, head->InnerClipRect.Min.y - 0.5f);
-      IM_CHECK_LE(radius.RectFull.Max.y, head->InnerClipRect.Max.y + 0.5f);
+      ImGuiWindow* bar_host = ctx->GetWindowByRef(PanoramaRegionRef());
+      IM_CHECK(bar_host != nullptr);
+      IM_CHECK_GE(radius.RectFull.Min.x, bar_host->InnerClipRect.Min.x - 0.5f);
+      IM_CHECK_LE(radius.RectFull.Max.x, bar_host->InnerClipRect.Max.x + 0.5f);
+      IM_CHECK_GE(radius.RectFull.Min.y, bar_host->InnerClipRect.Min.y - 0.5f);
+      IM_CHECK_LE(radius.RectFull.Max.y, bar_host->InnerClipRect.Max.y + 0.5f);
       {
         const auto& payload = gui::g_state.analysis_result.payload;
         const float cone_deg = payload->cone_radius_rad * 57.29577951308232;
@@ -5569,7 +5540,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/true));
       OpenWindow(ctx);
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       IM_CHECK(!gui::CanStartAnalysis(true, gui::g_state.sim_state, gui::g_state.analysis_run_in_progress,
                                       gui::g_state.run_intent));
@@ -5585,9 +5556,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Whole sky");
       ctx->SetRef(ListWindowRef());
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick(kAnalyzeButton);
       ctx->SetRef("");
       IM_CHECK(gui::g_state.analysis.started);
@@ -5607,7 +5578,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Not pointer equality: the entries are read on this thread per (generation, symmetry)
       // and every read publishes a new payload object for the same result.
       const auto partial = gui::g_state.analysis_result.payload;
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick(ICON_FA_STOP " Stop");
       ctx->SetRef("");
       IM_CHECK(!gui::g_state.analysis.started);
@@ -5617,7 +5588,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.analysis_result.payload != nullptr);
       IM_CHECK_GE(gui::g_state.analysis_result.payload->snapshot_generation, partial->snapshot_generation);
       IM_CHECK_EQ(gui::g_state.analysis_result.payload->roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef("");
     };
@@ -5640,7 +5611,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       LUMICE_GetSimLifecycle(gui::g_server, &before);
       const unsigned long long uploads_before = gui::g_state.texture_upload_count;
 
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemInputValue("Radius###Radius_narrow", 10.0f);
       ctx->SetRef("");
       ctx->Yield(5);
@@ -5764,7 +5735,6 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(1);
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       IM_CHECK(!gui::g_state.analysis_result.payload);
-      SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Radius###Radius_narrow")));
       const LUMICE_AnnotationView view =
           gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
@@ -5816,7 +5786,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       LUMICE_GetSimLifecycle(gui::g_server, &before);
       const SimState sim_state_before = gui::g_state.sim_state;
 
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(ctx->ItemInfo("##Rays(M)_input").ID != 0);
       ctx->ItemInputValue("##Rays(M)_input", 2.5f);
       ctx->Yield(2);
@@ -5878,7 +5848,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(marker->px, gui::g_panorama_vp.vp_w / 2);
       IM_CHECK_EQ(marker->py, gui::g_panorama_vp.vp_h / 2);
       // Analyze is open at once: the centre the button needed is there.
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef("");
     };
@@ -6387,7 +6357,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // analysis by Stop; these let it end on its budget, the other end a run has, and read the
   // safety net's warning off the GUI logger instead of only the picture. One case per ROI
   // because the ROI decides which consumer the analysis session builds, and the mismatch used
-  // to fire for every one of them.
+  // to fire for every one of them. (The third ROI the suite once covered — In frame — retired
+  // with the free-camera main view; its GUI entry is gone, and the engine-side contract keeps
+  // its own coverage.)
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "run_after_completed_point_analysis_no_mismatch");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -6407,16 +6379,6 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       OpenWindow(ctx);
       IM_CHECK(RunWholeSkyAnalysisToCompletion(ctx, nullptr));
       IM_CHECK_EQ(gui::g_state.analysis_result.payload->roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-      IM_CHECK(RunAfterCompletedAnalysisHasNoRebuildMismatch(ctx));
-    };
-  }
-  {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "run_after_completed_in_frame_analysis_no_mismatch");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ScopedServerGuard guard;
-      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
-      OpenWindow(ctx);
-      IM_CHECK(RunInFrameAnalysisToCompletion(ctx));
       IM_CHECK(RunAfterCompletedAnalysisHasNoRebuildMismatch(ctx));
     };
   }
@@ -6579,7 +6541,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::AnalysisPictureNotice(gui::g_state.run_intent, gui::g_state.sim_state) == nullptr);
 
       OpenWindow(ctx);
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef("");
       IM_CHECK(StartPointAnalysis(ctx));
@@ -6605,10 +6567,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // A document that never had a picture (kNone / kIdle, no preview): Analyze and the In frame /
-  // Point radios are all disabled, the panel says there is no picture, and a click on Analyze
+  // A document that never had a picture (kNone / kIdle, no preview): Analyze and the Point
+  // radio are disabled, the In frame entry is not on the bar at all (it retired with the
+  // free-camera main view), and the panel says there is no picture, and a click on Analyze
   // starts nothing. Then a Run from the top bar renders as it always did, the notice goes, the
-  // three come alive, and an edit afterwards (kModified) leaves them alive — the picture need
+  // two come alive, and an edit afterwards (kModified) leaves them alive — the picture need
   // only have existed, not match.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "a_never_run_document_waits_for_its_first_run");
@@ -6634,16 +6597,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(!gui::CanStartAnalysis(true, gui::g_state.sim_state, false, gui::g_state.run_intent));
 
       OpenWindow(ctx);
-      SetListRef(ctx);
-      IM_CHECK(IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef(PanoramaRegionRef());
-      IM_CHECK(IsDisabled(ctx->ItemInfo("In frame")));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      IM_CHECK(ctx->ItemInfo("In frame", ImGuiTestOpFlags_NoError).ID == 0);
       ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(IsDisabled(ctx->ItemInfo("Point")));
       ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Whole sky")));
       // A click on the disabled button does nothing: no intent, no run.
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick(kAnalyzeButton);
       ctx->Yield(2);
       IM_CHECK(!gui::g_state.analysis.started);
@@ -6659,23 +6621,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(DriveUntil(ctx, [uploads_before] { return gui::g_state.texture_upload_count > uploads_before; }, 10));
       IM_CHECK_EQ((int)gui::g_state.run_intent, (int)gui::RunIntent::kRunCompleted);
       IM_CHECK(gui::AnalysisPictureNotice(gui::g_state.run_intent, gui::g_state.sim_state) == nullptr);
-      SetListRef(ctx);
-      IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef(PanoramaRegionRef());
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("In frame")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      IM_CHECK(ctx->ItemInfo("In frame", ImGuiTestOpFlags_NoError).ID == 0);
       ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Point")));
       ctx->SetRef("");
 
       // An edit after the run: the picture is of the previous configuration, and that is a
-      // notice, not a refusal — all three stay alive and the analysis completes.
+      // notice, not a refusal — the two stay alive and the analysis completes.
       gui::g_state.crystals[0].height = 0.1f;
       gui::g_state.dirty = true;
       IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kModified; }, 5));
-      SetListRef(ctx);
-      IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef(PanoramaRegionRef());
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("In frame")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      IM_CHECK(ctx->ItemInfo("In frame", ImGuiTestOpFlags_NoError).ID == 0);
       ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Point")));
       ctx->SetRef("");
@@ -6689,9 +6649,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
   // The regression the gate was changed for: a background photograph on a document that has never
   // been rendered. The preview publishes its viewport for a photograph alone (g_preview_vp.active
-  // reads true — the positive control that the OLD gate, which read that flag, would have lit In
-  // frame and Pick), but a photograph is not a picture of the document: run_intent is still
-  // kNone, and In frame, Point and Analyze all stay disabled.
+  // reads true — the positive control that the OLD gate, which read that flag, would have lit
+  // Pick), but a photograph is not a picture of the document: run_intent is still
+  // kNone, Point and Analyze stay disabled, and the retired In frame entry is nowhere on the bar.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "a_background_photograph_alone_is_not_a_picture");
     static bool s_bg_requested = false;
@@ -6723,12 +6683,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ((int)gui::g_state.run_intent, (int)gui::RunIntent::kNone);
 
       OpenWindow(ctx);
-      SetListRef(ctx);
       ctx->SetRef(PanoramaRegionRef());
-      IM_CHECK(IsDisabled(ctx->ItemInfo("In frame")));
+      IM_CHECK(ctx->ItemInfo("In frame", ImGuiTestOpFlags_NoError).ID == 0);
       ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(IsDisabled(ctx->ItemInfo("Point")));
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
       ctx->SetRef("");
       IM_CHECK(!gui::CanStartAnalysis(true, gui::g_state.sim_state, false, gui::g_state.run_intent));
@@ -6799,9 +6758,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Whole sky");
       ctx->SetRef(ListWindowRef());
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
-      SetListRef(ctx);
+      ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick(kAnalyzeButton);
       ctx->SetRef("");
       IM_CHECK(DriveUntil(

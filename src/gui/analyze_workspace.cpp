@@ -34,11 +34,12 @@ namespace {
 // The diagnostics region's idle state (analyze-interaction-contract.md §9.1 — a first-class
 // design, not an empty placeholder): the entry guidance (the list's own empty-state line, plus
 // the next step — no picture yet points at the Render workspace's Run, a picture points at the
-// region radios and the list's Analyze), the analysis's own run status while one is in flight
-// (the same state machine and Stop the list's controls drive — two faces of one truth, the
-// contract's cancel entry for this region), and the observation summary (the request as it
-// stands, for the "edit the scene, compare again" pass). Everything is a display read of fields
-// another region already renders or the session already holds: no new query, no new state owner.
+// main view's operation bar: region there, Analyze there), the analysis's own run status while
+// one is in flight (the same state machine and Stop the bar's controls drive — two faces of one
+// truth, the contract's cancel entry for this region), and the observation summary (the request
+// as it stands, for the "edit the scene, compare again" pass). Everything is a display read of
+// fields another region already renders or the session already holds: no new query, no new
+// state owner.
 void RenderAnalysisIdleDiagnostics(GuiState& state) {
   const auto& a = state.analysis;
   // (The "Diagnostics" title is the window's fixed head, drawn by the caller — this function is
@@ -65,9 +66,9 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
     disabled_wrapped("No result yet. Choose a region and press Analyze.");
   }
   // The same branch logic as the panorama's empty state: without a picture of the document the
-  // first step is the Render workspace's Run; with one, the radios and the list's Analyze are
-  // the path. The controls themselves stay where they are in this slice (the region radios
-  // above the picture, the Analyze button in the list) — the guidance names the real places.
+  // first step is the Render workspace's Run; with one, the main view's operation bar is the
+  // path — the guidance names the real places (the bar below the picture, both region and
+  // Analyze button on it).
   // Each branch is its own named child (the pick banner's reason: a text item has no id a test
   // can address; a window does), so a case can pin which guidance is on screen.
   if (!HasEverShownPicture(state.run_intent)) {
@@ -78,7 +79,7 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
     ImGui::EndChild();
   } else {
     ImGui::BeginChild("##AnalyzeIdlePictureGuide", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
-    ImGui::TextWrapped("Choose a region above the picture, then press Analyze in the list above.");
+    ImGui::TextWrapped("Choose a region on the bar below the picture, then press Analyze there.");
     ImGui::EndChild();
   }
   if (state.analysis_result.payload != nullptr) {
@@ -290,44 +291,18 @@ void RenderCrystalList(GuiState& state) {
 
 }  // namespace
 
-// The main view: the committed texture through the REAL renderer view — the same lens, FOV,
-// pose, exposure, overlays, markers, labels, display mode and background-photo state the Render
-// preview shows (one display-state source; analyze-interaction-contract.md §5.4), published
-// through the shared picture assembly (AssemblePreviewPictureParams). The picture itself is
-// drawn by the deferred pass (RenderPreviewFrameAndBlit into the region this publishes to
-// g_panorama_vp); this side draws the state around it and hosts the picture region's gestures:
-// the cone ROI's two analysis arms and the camera orbit as the third, plus the Angular Distance
-// pick — every mode aims at the picture that is live.
-void RenderScenePanorama(GLFWwindow* window) {
-  // The publication is cleared once per frame at the dispatch point; this function publishes
-  // by assignment below.
-
-  // Camera reconciliation and the renderer's view invariants, before this frame's picture is
-  // assembled — the same order the preview panel runs in: the left column's scene and
-  // observation edits above rendered first, so the same frame's picture is built from the
-  // reconciled view, and a Look At lock or a Sun edit lands on the frame it happens.
-  UpdateLockedLookAt(g_state);
-  ClampRendererViewInvariants(g_state.renderer);
-
-  ImGui::SeparatorText("Scene panorama");
-  // The ROI controls sit ABOVE the picture: Point mode's gestures aim at the picture below them.
-  RenderPanoramaRoiControls(g_state);
-
-  if (!g_preview.HasTexture()) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(
-        "No rendered image for this document yet — press Run once in the Render workspace; the "
-        "main view shows the traced sky here.");
-    ImGui::PopStyleColor();
-    return;
-  }
-
+// The picture region proper — the child the deferred pass blits into and the one hosting its
+// gestures (the cone ROI's two analysis arms, the camera orbit as the third, the Angular
+// Distance pick), at the height the caller's operation-bar reserve leaves it. Split out of
+// RenderScenePanorama so the empty state and the bar bracket it without re-indenting the
+// gesture block.
+void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
   // The picture region: transparent, because the deferred pass blits the reprojected texture
   // under ImGui exactly as it does for the Render preview panel. Everything the region hosts —
   // the display-mode control, the publication, the shared assembly, the interaction button and
   // every gesture — lives inside this child, the way the preview panel's own window hosts them.
-  const ImVec2 size = ImGui::GetContentRegionAvail();
-  ImGui::BeginChild("##AnalyzePanorama", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoBackground);
+  const ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, std::max(0.0f, picture_h));
+  ImGui::BeginChild("##AnalyzePanoramaPicture", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoBackground);
   const ImVec2 region_min = ImGui::GetWindowPos();
 
   // Submitted ahead of `##panorama_interact` on purpose — RenderDisplayModeControl's own
@@ -397,9 +372,16 @@ void RenderScenePanorama(GLFWwindow* window) {
     // picture faces publish the same shared assembly, so PreviewAnnotationView IS the picture's
     // view here as it is in the preview).
     const LUMICE_AnnotationView view = PreviewAnnotationView(g_state, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-    // A centre when there is none — level-triggered, the preview panel's own rule, so the mode
-    // gets its default as soon as the picture region exists.
-    if (!a.cone_center_valid) {
+    // A centre when there is none — or a re-place of the DEFAULT one when the picture rectangle
+    // it was computed on changed size (the operation bar's height rides one frame behind the
+    // mode switches that grow it, so the middle of frame N is not the middle of frame N+1). A
+    // user-picked or user-dragged centre is never re-placed by anything but the user.
+    const auto& analysis = g_state.analysis;
+    const bool needs_default =
+        !analysis.cone_center_valid ||
+        (analysis.cone_center_is_default && (analysis.cone_center_default_vp_w != g_panorama_vp.vp_w ||
+                                             analysis.cone_center_default_vp_h != g_panorama_vp.vp_h));
+    if (needs_default) {
       EnsureDefaultConeCenter(g_state, view, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
     }
     bool marker_hover = false;
@@ -494,15 +476,56 @@ void RenderScenePanorama(GLFWwindow* window) {
   }
 
   ImGui::EndChild();
+}
 
-  // The preview's own two-branch notice, below the picture: kNone (nothing ever rendered) cannot
-  // reach here (the texture gate above), so this is the kModified branch — the picture is of the
-  // configuration before the edit.
-  if (const char* notice = AnalysisPictureNotice(g_state.run_intent, g_state.sim_state)) {
+// The main view: the committed texture through the REAL renderer view — the same lens, FOV,
+// pose, exposure, overlays, markers, labels, display mode and background-photo state the Render
+// preview shows (one display-state source; analyze-interaction-contract.md §5.4), published
+// through the shared picture assembly (AssemblePreviewPictureParams). The picture itself is
+// drawn by the deferred pass (RenderPreviewFrameAndBlit into the region this publishes to
+// g_panorama_vp); this side draws the state around it and hosts the picture region's gestures
+// (RenderAnalyzeMainPicture). Below the picture, the operation bar — the analysis request's
+// controls next to what they aim at (contract §2.2).
+void RenderScenePanorama(GLFWwindow* window) {
+  // The publication is cleared once per frame at the dispatch point; this function publishes
+  // by assignment below.
+
+  // Camera reconciliation and the renderer's view invariants, before this frame's picture is
+  // assembled — the same order the preview panel runs in: the left column's scene and
+  // observation edits above rendered first, so the same frame's picture is built from the
+  // reconciled view, and a Look At lock or a Sun edit lands on the frame it happens.
+  UpdateLockedLookAt(g_state);
+  ClampRendererViewInvariants(g_state.renderer);
+
+  // The bar's height, as measured last frame (the one-frame-lag recipe the share list's head
+  // clamp runs): the states that change it — Point mode's pick row, a fold of the bar's judged
+  // joins at a narrow width, a run's in-progress line — persist, so the reserve is right from
+  // the frame after the change. The floor keeps the bar's first row reachable on the very first
+  // frame, before any measurement exists.
+  ImGuiStorage* storage = ImGui::GetStateStorage();
+  const ImGuiID bar_h_key = ImGui::GetID("panorama_opbar_natural_h");
+  const float bar_reserve =
+      std::max(storage->GetFloat(bar_h_key, 0.0f), ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y);
+  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  if (!g_preview.HasTexture()) {
+    // The bar still renders below this — its Analyze side carries the same no-picture refusals
+    // and its run controls draw the picture notice, so the empty state guides and refuses in
+    // one place.
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("%s", notice);
+    ImGui::TextWrapped(
+        "No rendered image for this document yet — press Run once in the Render workspace; the "
+        "main view shows the traced sky here.");
     ImGui::PopStyleColor();
+  } else {
+    RenderAnalyzeMainPicture(window, avail.y - bar_reserve - ImGui::GetStyle().ItemSpacing.y);
   }
+
+  // The operation bar, drawn directly in this window — no child, so the tests' bare-name item
+  // lookups from the window ref keep resolving, and the height is a cursor delta rather than a
+  // child measurement.
+  const float bar_top = ImGui::GetCursorPosY();
+  RenderAnalyzeOperationBar(g_state, g_server);
+  storage->SetFloat(bar_h_key, ImGui::GetCursorPosY() - bar_top);
 }
 
 // ---- The class overview (742.4) ---------------------------------------------------------------------
@@ -752,8 +775,8 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   SetNextPanelGeometry(main_x, top, main_w, upper_h);
   ImGui::Begin("##AnalyzePanorama", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground |
-                   ImGuiWindowFlags_NoBringToFrontOnFocus);
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
+                   ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus);
   RenderScenePanorama(window);
   ImGui::End();
 

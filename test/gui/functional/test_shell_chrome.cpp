@@ -498,8 +498,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
   // Switching workspaces swaps the frame's layout and touches nothing else: the Analyze branch
   // replaces the three Render-mode panels with the workspace's windows and switches back; the
   // document neither dirties nor changes its simulation state (the switch is session view state),
-  // and the frame with no preview publishes no preview viewport (level-triggered, so DoAnalyze's
-  // IN_FRAME canvas falls back to the document resolution and the deferred blit skips).
+  // and the frame with no preview publishes no preview viewport (level-triggered, so the
+  // deferred blit skips; and a Whole-sky/Point analysis request reads no canvas — no frame
+  // would fall back to anything).
   //
   // The segmented shape is pinned here too, because the no-shift claim rests on it: both cells
   // exist in both modes, one quantized width for both, flush together — so the pair's rectangle
@@ -1213,12 +1214,12 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
         IM_CHECK(share != nullptr);
         AssertRectContained(ctx, "**/###analysis_search", share);
-        AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", share);
         ImGuiWindow* panorama = ctx->GetWindowByRef("//##AnalyzePanorama");
         IM_CHECK(panorama != nullptr);
+        AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", panorama);
         AssertRectContained(ctx, "**/Whole sky", panorama);
-        AssertRectContained(ctx, "**/In frame", panorama);
         AssertRectContained(ctx, "**/Point", panorama);
+        IM_CHECK(ctx->ItemInfo("**/In frame", ImGuiTestOpFlags_NoError).ID == 0);
         ctx->SetRef("//##AnalyzeShareList");
         ctx->ItemInputValue("**/###analysis_search", "3");
         ctx->ItemInputValue("**/###analysis_search", "");
@@ -1517,8 +1518,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
 
       // The right column at this window: the search box takes real input, the (disabled,
-      // serverless) Analyze button sits contained, and the diagnostics floor keeps a visible
-      // first line of its scrolling region with the wheel reaching the rest.
+      // serverless) Analyze button sits contained on the main view's operation bar, and the
+      // diagnostics floor keeps a visible first line of its scrolling region with the wheel
+      // reaching the rest.
       const float d2_saved = gui::g_state.workspace.right_list_ratio;
       const float panel_h =
           ImGui::GetIO().DisplaySize.y - gui::UiPx(gui::kTopBarHeight) - gui::UiPx(gui::kStatusBarHeight);
@@ -1528,7 +1530,10 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->SetRef("//##AnalyzeShareList");
       ctx->ItemInputValue("**/###analysis_search", "3-5");
       ctx->ItemInputValue("**/###analysis_search", "");
-      AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", share);
+      ctx->SetRef("");
+      ImGuiWindow* panorama_9 = ctx->GetWindowByRef("//##AnalyzePanorama");
+      IM_CHECK(panorama_9 != nullptr);
+      AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", panorama_9);
       ctx->SetRef("");
       {
         ImGuiWindow* scroll = AnalyzeRegionWindow("##AnalyzeDetailsScroll");
@@ -1584,14 +1589,15 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_LT(avail_w, gui::UiPx(gui::kAnalyzeRightColMinWidth) + gui::UiPx(gui::kAnalyzeMainViewMinWidth) +
                                gui::UiPx(gui::kAnalyzeSplitterSize));
 
-      // The panorama's fixed rows — the ROI radios — wrap under the judgment and each sits
-      // contained; the Whole-sky radio's real click is the operability half (the one radio not
-      // gated on a picture, so it is clickable in this no-run-yet state).
+      // The panorama's fixed rows — the operation bar's region radios — wrap under the judgment
+      // and each sits contained; the Whole-sky radio's real click is the operability half (the
+      // one radio not gated on a picture, so it is clickable in this no-run-yet state). The In
+      // frame entry is retired: not on the bar at all.
       ImGuiWindow* panorama = ctx->GetWindowByRef("//##AnalyzePanorama");
       IM_CHECK(panorama != nullptr);
       AssertRectContained(ctx, "**/Whole sky", panorama);
-      AssertRectContained(ctx, "**/In frame", panorama);
       AssertRectContained(ctx, "**/Point", panorama);
+      IM_CHECK(ctx->ItemInfo("**/In frame", ImGuiTestOpFlags_NoError).ID == 0);
       gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
       ctx->SetRef("//##AnalyzePanorama");
       ctx->ItemClick("**/Whole sky");
@@ -1648,7 +1654,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
       IM_CHECK(share != nullptr);
       AssertRectContained(ctx, "**/###analysis_search", share);
-      AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", share);
+      ImGuiWindow* panorama_2x = ctx->GetWindowByRef("//##AnalyzePanorama");
+      IM_CHECK(panorama_2x != nullptr);
+      AssertRectContained(ctx, "**/" ICON_FA_PLAY " Analyze", panorama_2x);
       ctx->SetRef("//##AnalyzeShareList");
       ctx->ItemInputValue("**/###analysis_search", "3");
       ctx->ItemInputValue("**/###analysis_search", "");

@@ -108,7 +108,7 @@ coordinates」，归属事实）；各查询面自己的等待/取消/拒答态�
 | 分类 | 内容 | Analyze 内形态 | 默认展开 | 可达入口 |
 |---|---|---|---|---|
 | **场景编辑**（sim-tier 文档） | Sun（高度角/直径/光谱）；晶体与滤镜（层/条目）；Rays/Max hits/GPU（渲染运行预算） | Sun 组就地展开可编辑；晶体/滤镜 = **入口行**（身份＋编辑入口），参数控件只在 Entry Edit；渲染运行预算不平铺 | Sun 展开；晶体列表展开；渲染预算组不出现（Render 顶栏执行簇为 owner，`app_panels.cpp:443-487`） | Sun 滑条就地；晶体行点击开 Entry Edit（现路径：`analyze_workspace.cpp:104`→`panels.cpp:2095`→`panels.cpp:2077`，模态形态不变）；渲染预算在 Render 工作区 |
-| **运行设置**（分析请求参数） | 区域选择、锥心、分析半径、分析 Rays 预算、Analyze/Stop | 主视图下缘操作条＋列表区头部（预算滑条现位于列表头部 `analysis_panel.cpp:1307-1333`，归属操作条就近 Analyze 按钮——落点为建议值，实现片可按操作条宽度裁决） | 操作条常驻（一条，可折行） | 主视图下缘 |
+| **运行设置**（分析请求参数） | 区域选择、锥心、分析半径、分析 Rays 预算、Analyze/Stop | 主视图下缘操作条（已落地：区域两选＋Pick＋锥心读数＋半径＋预算＋Analyze/Stop 一条 judged-join 流，窄宽折行不裁剪；列表头只余 banner/新鲜度/对称性/搜索） | 操作条常驻（一条，可折行） | 主视图下缘 |
 | **观察/辅助线**（display-tier） | 镜头类型/FOV/视角/曝光/背景；辅助线组（网格/地平线/太阳路径/标注圆） | 左栏观察组；与 Render 共用同一显示状态源（§5.4），不新造第二套 | 镜头＋辅助线常用组展开；其余组折叠；折叠态会话内保留 | 左栏 |
 
 **晶体入口与参数控件的区别表达**（验收约束）：左栏晶体行是**入口与身份**（一行一条目，点击开
@@ -185,13 +185,30 @@ Render workspace」）。
 - 区域语义是**天空方向域**，与镜头/画幅无关：换镜头、拖相机不重新解释已设区域
   （用户定稿方向）。Whole sky 与锥心方向都锚定天空方向，不锚定屏幕矩形。
 - **In frame 移除的结构性理由**（验收指定结论）：In frame 的区域语义 = 分析时刻的当前画幅
-  （DoAnalyze 取预览画幅或文档分辨率，`app.cpp:1816-1824`）。主视图获得自由相机后，「当前画幅」
+  （DoAnalyze 取预览画幅或文档分辨率）。主视图获得自由相机后，「当前画幅」
   成为移动靶——同一区域定义被任何一次相机操作静默重解释，与上一条的方向域语义直接冲突。故 GUI
   移除 In frame；**CLI/C API 的 In frame 后端语义不动**（不删后端能力，scrum 规划约束）。
-  当前侧证据：In frame/Point 单选由 HasEverShownPicture 门控
-  （`analysis_panel.cpp:1846-1865`），移除后该门控只余 Point。
+  当前侧证据：Point 单选由 HasEverShownPicture 门控
+  （`analysis_panel.cpp` 的 region 段），移除后该门控只余 Point。
 - 移除的连带：`LUMICE_RAYPATH_ROI_IN_FRAME` 相关的「画幅=点击时刻画幅」提示与画幅尺寸链路在
   Analyze 侧退役；契约级验证归实现片。
+
+#### 5.3.1 退役记录（2026-11-05 实施裁决）
+
+- **裁决**：owner 2026-11-05 实施裁决——**选项 A：本期退役 GUI In frame 入口**。
+  依据＝scrum 755 规划判断的 owner 授权原文（GUI 收敛为 Whole sky/Point、保留 CLI/C API 能力）与
+  本合同 §2.2/§5.3 的既有钉定；决策可逆（git 单 commit 可恢复入口）。
+- **退役范围（已执行）**：GUI 入口（Region 单选 Third Option、其 HasEverShownPicture 门控与
+  tooltip）＋GUI 侧不可达装配分支（`BuildAnalysisRequest` 的 IN_FRAME case 与其 canvas 参数、
+  `DoAnalyze` 的画幅回退——调用方审计确认单选移除后 GUI 无 IN_FRAME 写入者，case 不可达）。
+  **CLI/C API 入口、引擎实现、后端测试三条一律未动**：`LUMICE_RAYPATH_ROI_IN_FRAME`
+  （`lumice_engine.h`）、`--roi frame`、`RoiModeLabel` 的 "in frame" 分支（CLI 侧真实消费）均保留。
+- **残余缺口（如实记录，不预设需求）**：非圆形、大于 15° 锥半径上限
+  （`kAnalysisConeMaxRadiusDeg`）的画幅形区域统计在 GUI 无等价物——例如「整幅宽的水平带」。
+  按 scrum 章程「功能扩展原则上留待改版后上手反馈」：该缺口不预设需求、不开新任务；若上手反馈
+  提出真实用载，届时再按证据立项。
+- **验收锚**：GUI 侧退役断言（功能测试的 In frame 缺席检查＋C API 侧 IN_FRAME 单测保持绿）
+  双向钉住「GUI 无、后端有」。
 
 ### 5.4 取景连续性
 

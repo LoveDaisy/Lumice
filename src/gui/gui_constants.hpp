@@ -70,15 +70,19 @@ constexpr float kAnalyzeMainViewMinWidth = 360.0f;
 // fixed left column at the default window, so the stored default IS the split it describes.
 constexpr float kAnalyzeRightColumnDefaultRatio =
     380.0f / (static_cast<float>(kInitWindowWidth) - kAnalyzeLeftPanelWidth);
-// D2: the share list's height floor — the panel's fixed head (the budget rows, the run controls,
+// D2: the share list's height floor — the panel's fixed head (the pick and freshness banners,
 // the symmetry row, the separator, the search row) plus the table's header row, one data row and
-// the button row. The window itself never scrolls (the result table is its one scrolling region),
-// so this floor is what keeps every control reachable at the smallest list height. Re-derived
-// 2026-11-04: at this floor the clamped head (##analysis_head), the table and the button row
-// land inside the window WITH margin (the clamp reserves the two inter-block gaps) — the
-// stale-at-the-floors leg's containment is the evidence; without the margin the buttons sat
-// flush on the clip edge and any sub-pixel rounding culled them.
+// the button row. The window itself never scrolls (the result table is its one scrolling
+// region), so this floor is what keeps every control reachable at the smallest list height.
+// Measured 2026-11-04 for the head that then also carried the request controls — those moved to
+// the main view's operation bar (contract §2.2), so the floor is now conservative: shorter head,
+// same reserve. Re-derived value owes a calibration pass (§11), not a correctness fix.
 constexpr float kAnalyzeShareListMinHeight = 250.0f;
+// The operation bar's slider-wrap judgment (contract §11 R6): the minimum track the bar gives a
+// slider before the slider wraps to its own line instead of joining the current one. Below it
+// the Rays slider's track would crowd its input box unusably; calibrated against the Roboto
+// Medium 15px theme (the same source as the contract's §11 table).
+constexpr float kAnalyzeOpBarSliderTrackMin = 150.0f;
 // D2: the diagnostics region's height floor — its title plus one wrapped state line.
 // Re-confirmed 2026-11-04 at the proportional split: the scroll child keeps a visible first
 // line (34 px measured) and the wheel reaches the rest (ScrollMax 128 with the idle stack).

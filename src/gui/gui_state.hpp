@@ -1754,6 +1754,17 @@ struct GuiState {
     // picture and the direction the server judges by is the direction the marker shows.
     bool cone_center_valid = false;
     float cone_center_dir[3] = { 0.0f, 0.0f, 0.0f };
+    // Whether the centre on hand is the mode's own default placement (the view's middle pixel,
+    // EnsureDefaultConeCenter) rather than something the user set. The default is re-placed when
+    // the picture rectangle it was computed on changes size — the operation bar's height rides
+    // one frame behind the mode switches that grow it, so the middle of frame N is not the
+    // middle of frame N+1 — while a user-picked or user-dragged centre is never moved by
+    // anything but the user (sky-direction state, AC4).
+    bool cone_center_is_default = false;
+    // The picture publication's size the current default was placed on; only meaningful while
+    // cone_center_is_default.
+    int cone_center_default_vp_w = 0;
+    int cone_center_default_vp_h = 0;
     // The marker is being dragged: set by the press on it, cleared by the release, and while set
     // every frame's mouse position is unprojected into cone_center_dir. Session state because the
     // drag outlives a frame; nothing else reads it.

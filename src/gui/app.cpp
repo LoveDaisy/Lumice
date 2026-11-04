@@ -1813,15 +1813,11 @@ bool DoAnalyze() {
   if (!scene) {
     return false;
   }
-  // The IN_FRAME canvas is the preview's own when there is one — the frame on screen is what
-  // "in frame" means. Without a preview the frame is still the document's own view, sized at
-  // the resolution the document would render at: PreviewAnnotationView reads only the state
-  // and the canvas size, so this is the same frame a preview of that size would show. (The
-  // other two modes never read the canvas.)
-  const int doc_res = kSimResolutions[g_state.renderer.sim_resolution_index];
-  const int canvas_w = g_preview_vp.active ? g_preview_vp.vp_w : doc_res;
-  const int canvas_h = g_preview_vp.active ? g_preview_vp.vp_h : doc_res;
-  const LUMICE_RaypathAnalysisRequest req = BuildAnalysisRequest(g_state, canvas_w, canvas_h);
+  // The request reads only sky-direction state (Whole sky; a Point centre), never a canvas —
+  // the In frame mode whose assembly read the preview's frame retired with the free-camera
+  // main view (the interaction contract §5.3's removal record; the CLI/C API contract and the
+  // engine behind it are untouched).
+  const LUMICE_RaypathAnalysisRequest req = BuildAnalysisRequest(g_state);
   const LUMICE_ErrorCode err = LUMICE_StartRaypathAnalysis(g_server, scene.get(), &req);
   if (err != LUMICE_OK) {
     GUI_LOG_WARNING("[GUI] DoAnalyze: LUMICE_StartRaypathAnalysis failed with error code {} (roi_mode={})",

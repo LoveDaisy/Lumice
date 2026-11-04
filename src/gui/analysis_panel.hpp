@@ -277,13 +277,13 @@ std::optional<float> ConeRingRadiusCanvasPx(const LUMICE_AnnotationView& view, i
 // ResetFrontendState) and so re-seeds from the new document.
 void EnsureDefaultAnalysisRayBudget(GuiState& state);
 
-// The LUMICE_RaypathAnalysisRequest for the session's ROI. IN_FRAME takes the preview view on the
-// canvas_w x canvas_h canvas; CONE takes the picked centre with the FULL cone
-// (kAnalysisConeMaxRadiusDeg / kAnalysisConeRingCount) — the slider is applied at display time,
-// never here, and so is the symmetry (the request has none; v4.33). The ray budget is the session's own
-// (ray_num_millions / infinite), always explicit: the GUI never sends LUMICE_RAYPATH_RAY_BUDGET_SCENE_DEFAULT, because
-// it already holds the value the sentinel would stand for.
-LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state, int canvas_w, int canvas_h);
+// The LUMICE_RaypathAnalysisRequest for the session's ROI. CONE takes the picked centre with the
+// FULL cone (kAnalysisConeMaxRadiusDeg / kAnalysisConeRingCount) — the slider is applied at
+// display time, never here, and so is the symmetry (the request has none; v4.33). The ray budget
+// is the session's own (ray_num_millions / infinite), always explicit: the GUI never sends
+// LUMICE_RAYPATH_RAY_BUDGET_SCENE_DEFAULT, because it already holds the value the sentinel would
+// stand for.
+LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state);
 
 // ---- Exclude this raypath ------------------------------------------------------------------------
 
@@ -476,13 +476,19 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 // ---- Rendering -----------------------------------------------------------------------------------
 
 // The analysis tool's sections as the Analyze workspace's share-list region hosts them — called
-// from inside that region's child (analyze_workspace.cpp). No window of its own; the ROI controls
-// are the panorama's (RenderPanoramaRoiControls below).
+// from inside that region's child (analyze_workspace.cpp). No window of its own; the request's
+// controls — region, centre, radius, budget, Analyze/Stop — are the main view's operation bar's
+// (RenderAnalyzeOperationBar below).
 void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server);
 
-// The ROI controls — region radios, cone radius, the pick arming — hosted by the panorama region
-// above the picture: Point mode's gestures aim at THAT picture. The default-centre and pick
-// branches read the panorama's viewport publication.
+// The main view's operation bar (contract §2.2): region radios, the Point pick arming and
+// centre readout, the radius, the budget and Analyze/Stop — one judged-join strip hosted below
+// the picture by the Analyze workspace. The default-centre and pick branches read the
+// panorama's viewport publication.
+void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server);
+
+// The operation bar's region segment: the Whole sky / Point radios, and in Point mode the pick
+// arming and the centre readout. (Exposed for the logic tests; the bar is the only renderer.)
 void RenderPanoramaRoiControls(GuiState& state);
 
 // The marker and ring over the Analyze workspace's panorama: CONE mode with a projectable centre

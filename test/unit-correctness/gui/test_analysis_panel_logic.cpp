@@ -816,7 +816,7 @@ TEST(AnalysisPanelLogic, RequestCarriesTheFullConeAndTheSessionBudget) {
   state.analysis.cone_radius_deg = 1.0f;  // the slider: must NOT reach the request
   state.analysis.ray_num_millions = 12.5f;
   state.analysis.infinite = false;
-  const LUMICE_RaypathAnalysisRequest req = BuildAnalysisRequest(state, 100, 100);
+  const LUMICE_RaypathAnalysisRequest req = BuildAnalysisRequest(state);
   EXPECT_EQ(req.roi_mode, LUMICE_RAYPATH_ROI_CONE);
   EXPECT_FLOAT_EQ(req.cone_center[0], 0.1f);
   EXPECT_FLOAT_EQ(req.cone_center[2], -0.9f);
@@ -828,23 +828,15 @@ TEST(AnalysisPanelLogic, RequestCarriesTheFullConeAndTheSessionBudget) {
 
   // An unlimited budget reaches the request as such.
   state.analysis.infinite = true;
-  const LUMICE_RaypathAnalysisRequest cone2 = BuildAnalysisRequest(state, 100, 100);
+  const LUMICE_RaypathAnalysisRequest cone2 = BuildAnalysisRequest(state);
   EXPECT_EQ(cone2.infinite, 1);
   state.analysis.infinite = false;
 
-  state.analysis.roi_mode = LUMICE_RAYPATH_ROI_IN_FRAME;
-  state.renderer.lens_type = LUMICE_LENS_TYPE_FISHEYE_EQUAL_AREA;
-  state.renderer.fov = 120.0f;
-  const LUMICE_RaypathAnalysisRequest in_frame = BuildAnalysisRequest(state, 320, 200);
-  EXPECT_EQ(in_frame.roi_mode, LUMICE_RAYPATH_ROI_IN_FRAME);
-  EXPECT_EQ(in_frame.frame_view.width, 320);
-  EXPECT_EQ(in_frame.frame_view.height, 200);
-  EXPECT_EQ(in_frame.frame_view.lens_type, LUMICE_LENS_TYPE_FISHEYE_EQUAL_AREA);
-  EXPECT_FLOAT_EQ(in_frame.frame_view.lens_fov, 120.0f);
-  EXPECT_EQ(in_frame.ray_num, 12500000u) << "the budget is not a CONE-only field";
-
+  // The GUI's whole region choice is Whole sky / Point — the In frame entry retired with the
+  // free-camera main view, and the request builder carries no canvas/frame branch to test: the
+  // IN_FRAME contract lives on (C API / CLI / engine), out of this builder's reach.
   state.analysis.roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
-  const LUMICE_RaypathAnalysisRequest full = BuildAnalysisRequest(state, 1, 1);
+  const LUMICE_RaypathAnalysisRequest full = BuildAnalysisRequest(state);
   EXPECT_EQ(full.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
   EXPECT_EQ(full.ray_num, 12500000u);
   EXPECT_EQ(full.infinite, 0);

@@ -422,6 +422,7 @@ bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, 
   auto& a = state.analysis;
   std::copy(dir, dir + 3, a.cone_center_dir);
   a.cone_center_valid = true;
+  a.cone_center_is_default = false;  // the click owns the centre; resizes never move it
   a.pick_armed = false;
   float alt = 0.0f;
   float az = 0.0f;
@@ -466,6 +467,7 @@ bool DragAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, 
     return false;
   }
   std::copy(dir, dir + 3, state.analysis.cone_center_dir);
+  state.analysis.cone_center_is_default = false;  // a hand on the marker owns the centre from here
   return true;
 }
 
@@ -480,6 +482,9 @@ bool EnsureDefaultConeCenter(GuiState& state, const LUMICE_AnnotationView& view,
   auto& a = state.analysis;
   std::copy(dir, dir + 3, a.cone_center_dir);
   a.cone_center_valid = true;
+  a.cone_center_is_default = true;
+  a.cone_center_default_vp_w = vp_w;
+  a.cone_center_default_vp_h = vp_h;
   float alt = 0.0f;
   float az = 0.0f;
   DirToAltAz(dir, &alt, &az);
@@ -535,7 +540,7 @@ void EnsureDefaultAnalysisRayBudget(GuiState& state) {
   state.analysis.ray_budget_initialized = true;
 }
 
-LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state, int canvas_w, int canvas_h) {
+LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state) {
   LUMICE_RaypathAnalysisRequest req{};
   req.roi_mode = state.analysis.roi_mode;
   // The budget applies to every ROI mode, so it sits outside the switch. Millions -> rays in
@@ -543,10 +548,11 @@ LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state, int ca
   // rounding of it.
   req.infinite = state.analysis.infinite ? 1 : 0;
   req.ray_num = static_cast<LUMICE_RayCount>(static_cast<double>(state.analysis.ray_num_millions) * 1e6);
+  // The GUI's region choices are Whole sky and Point only (the In frame radio retired with the
+  // free-camera main view — analyze-interaction-contract.md §5.3's removal record; the mode's
+  // CLI/C API contract and the engine behind it are untouched). The switch is therefore total
+  // over what the session's roi_mode can hold: no canvas/frame branch to serve.
   switch (state.analysis.roi_mode) {
-    case LUMICE_RAYPATH_ROI_IN_FRAME:
-      req.frame_view = PreviewAnnotationView(state, canvas_w, canvas_h);
-      break;
     case LUMICE_RAYPATH_ROI_CONE:
       std::copy(state.analysis.cone_center_dir, state.analysis.cone_center_dir + 3, req.cone_center);
       req.cone_radius_rad = kAnalysisConeMaxRadiusDeg * kDeg2Rad;
@@ -1265,28 +1271,33 @@ namespace {
 
 
 // The request's parameters that are not the region: the ray budget. Session state, sent with the
-// next Analyze — editing it starts nothing, like the region.
-void RenderRequestParamsControls(GuiState& state) {
+// next Analyze — editing it starts nothing, like the region. Bar form: one inline row whose
+// checkbox joins the previous segment's line when the caller judged it fits, the slider following
+// the checkbox while the line holds a usable track for it (below that it owns the line — a
+// wrapped control, not a clipped one; contract §11 R6's folding judgment).
+void RenderRequestParamsControls(GuiState& state, bool join_line) {
   auto& a = state.analysis;
   EnsureDefaultAnalysisRayBudget(state);
-  // The document's Rays row, re-drawn for the session's own field: a checkbox that turns the
-  // total off and a slider for the total. The RENDERING is kept in step with panels.cpp by hand —
-  // evaluated and not shared, because the two rows read different fields under different enable
-  // gates (the registry's Applicability versus a.infinite), and a helper would need both spelled
-  // as parameters. The DOMAIN is not hand-copied: range, format and scale are the same four symbols
-  // the registry row reads (gui/ray_num_domain.hpp), so the two cannot disagree on what a budget is.
-  PushLabelColumnItemWidth();
+  // The document's Rays row, re-drawn for the session's own field. The RENDERING is kept in step
+  // with panels.cpp by hand — evaluated and not shared, because the two rows read different
+  // fields under different enable gates (the registry's Applicability versus a.infinite), and a
+  // helper would need both spelled as parameters. The DOMAIN is not hand-copied: range, format
+  // and scale are the same four symbols the registry row reads (gui/ray_num_domain.hpp), so the
+  // two cannot disagree on what a budget is.
+  if (join_line) {
+    ImGui::SameLine();
+  }
   Checkbox("Infinite rays", &a.infinite);
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Trace until stopped.");
   }
-  ImGui::PopItemWidth();
-  ImGui::BeginGroup();
+  if (ImGui::GetContentRegionAvail().x >= UiPx(kAnalyzeOpBarSliderTrackMin)) {
+    ImGui::SameLine();
+  }
   ImGui::BeginDisabled(a.infinite);
   SliderWithInput("Rays(M)", &a.ray_num_millions, kRayNumMinMillions, kRayNumMaxMillions, kRayNumSliderFmt,
                   kRayNumSliderScale);
   ImGui::EndDisabled();
-  ImGui::EndGroup();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip(
         "Total rays the analysis traces across all wavelengths, in millions.\n"
@@ -1341,16 +1352,18 @@ void RenderListFreshnessBanner(const GuiState& state) {
   ImGui::PopStyleColor();
 }
 
-void RenderRunControls(GuiState& state, LUMICE_Server* server) {
+void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
   const bool in_progress = state.analysis_run_in_progress;
   const bool needs_centre = state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE && !state.analysis.cone_center_valid;
-  // No frame gate for IN_FRAME: the frame is the document's own view at the preview's canvas
-  // when there is one and at the document's own resolution otherwise (DoAnalyze), so the mode
-  // always names a frame — a mode left selected before the preview went away still analyses.
-  // The one picture condition is CanStartAnalysis's own: the document has shown one at least once.
+  // The one picture condition is CanStartAnalysis's own: the document has shown one at least
+  // once. A mode left selected before the preview went away still analyses — the Whole sky and
+  // Point requests are sky-direction state, nothing about them reads a canvas.
   const bool can_start =
       CanStartAnalysis(server != nullptr, state.sim_state, in_progress, state.run_intent) && !needs_centre;
 
+  if (join_line) {
+    ImGui::SameLine();
+  }
   if (in_progress) {
     PushDestructiveStyle();
     if (ImGui::Button(ICON_FA_STOP " Stop")) {
@@ -1439,11 +1452,14 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server) {
   }
 }
 
-void RenderRadiusSlider(GuiState& state) {
+void RenderRadiusSlider(GuiState& state, bool join_line) {
   const auto& payload = state.analysis_result.payload;
   const bool cone_result = payload && payload->roi_mode == LUMICE_RAYPATH_ROI_CONE && payload->cone_ring_count > 0;
   if (state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE && !cone_result) {
     return;
+  }
+  if (join_line) {
+    ImGui::SameLine();
   }
   // The slider's range is the result's cone when there is one, the request's otherwise (they are
   // the same numbers unless the constants changed between the run and now).
@@ -1938,19 +1954,20 @@ void RowLabelTextTooltip(const std::string& label) {
 
 void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   // The analysis tool's sections, hosted by the Analyze workspace's share-list region — no
-  // window of its own any more. The ROI controls live on the panorama side
-  // (RenderPanoramaRoiControls, analyze_workspace.cpp); everything that reads and shapes the
-  // RESULT is here.
+  // window of its own any more. The request's controls — region, centre, radius, budget,
+  // Analyze/Stop — live on the main view's operation bar (RenderAnalyzeOperationBar,
+  // analyze_workspace.cpp), next to the picture they aim at; everything that reads and shapes
+  // the RESULT stays here.
   //
-  // The fixed head grows with state — the freshness banner wraps at a narrow column, the picture
-  // notice and the radius row appear conditionally — and the host window never scrolls (the
-  // table is its one scrolling region), so an over-budget head would push the Exclude / Export
-  // CSV row out of the window for good. When the head's natural height (measured last frame)
-  // exceeds what the region can give it while still holding the table's minimum and the button
-  // row, the head moves into its own scrolling child — the degradation ladder's internal-scroll
-  // rung; at every ordinary state the head is shorter than the space and renders flat, exactly
-  // as before. The measurement rides one frame behind a state change; the states that grow the
-  // head persist, so the clamp engages on the frame after the banner appears.
+  // The fixed head grows with state — the pick and freshness banners wrap at a narrow column —
+  // and the host window never scrolls (the table is its one scrolling region), so an
+  // over-budget head would push the Exclude / Export CSV row out of the window for good. When
+  // the head's natural height (measured last frame) exceeds what the region can give it while
+  // still holding the table's minimum and the button row, the head moves into its own scrolling
+  // child — the degradation ladder's internal-scroll rung; at every ordinary state the head is
+  // shorter than the space and renders flat, exactly as before. The measurement rides one frame
+  // behind a state change; the states that grow the head persist, so the clamp engages on the
+  // frame after the banner appears.
   ImGuiStorage* storage = ImGui::GetStateStorage();
   const ImGuiID head_h_key = ImGui::GetID("analysis_head_natural_h");
   const float buttons_h =
@@ -1968,9 +1985,6 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   const auto draw_head = [&state, server] {
     RenderPickBanner(state);
     RenderListFreshnessBanner(state);
-    RenderRequestParamsControls(state);
-    RenderRunControls(state, server);
-    RenderRadiusSlider(state);
     RenderSymmetryControls(state, server);
     ImGui::Separator();
     RenderResultSearchBox();
@@ -1992,46 +2006,57 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   RenderActionButtons(state);
 }
 
+namespace {
+
+// The operation bar's inline-width measures and its one join judgment. Every join on the bar —
+// the region radios', Analyze/Stop's, the budget's, the radius's — is made through the same two
+// helpers and the same FitsOnBarLine, so no two joins measure a row differently.
+float InlineLabelledControlWidth(const char* label) {
+  // A radio and a checkbox draw the same way: square + inner spacing + text.
+  return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+}
+
+float InlineButtonWidth(const char* label) {
+  return ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+// SameLine is a judgment, not a default: the panorama region's width has no floor below the
+// ③ split's share, where a row's full extent no longer fits — the judged item wraps rather than
+// clip (a clipped control is an operation the user cannot reach; contract §11 R6).
+bool FitsOnBarLine(float next_w) {
+  return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <=
+         ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+}
+
+}  // namespace
+
+// The operation bar's region segment: the Whole sky / Point radios — the GUI's whole region
+// choice. The In frame entry retired with the free-camera main view
+// (analyze-interaction-contract.md §5.3's removal record): its region semantics — the frame of
+// the moment of the click — is a moving target under a camera the user drives, against the
+// sky-direction semantics the other two anchor. The mode's CLI/C API contract and the engine
+// behind it are untouched.
 void RenderPanoramaRoiControls(GuiState& state) {
   auto& a = state.analysis;
-  // SameLine is a judgment, not a default: the panorama region's width has no floor below the
-  // ③ split's share, where this row's full extent no longer fits — the radios wrap rather than
-  // clip (a clipped radio is a mode the user cannot reach).
-  const auto fits_on_line = [&](float next_w) {
-    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <=
-           ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
-  };
-  const auto radio_w = [&](const char* label) {
-    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
-  };
   ImGui::TextUnformatted("Region");
   // The first radio joins the label the same way every later join is judged — the ③ widths
   // wrap it below instead of clipping the mode selector's first choice.
-  if (fits_on_line(radio_w("Whole sky"))) {
+  if (FitsOnBarLine(InlineLabelledControlWidth("Whole sky"))) {
     ImGui::SameLine();
   }
   const int prev_mode = a.roi_mode;
   ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-  if (fits_on_line(radio_w("In frame"))) {
+  if (FitsOnBarLine(InlineLabelledControlWidth("Point"))) {
     ImGui::SameLine();
   }
-  // "In frame" and "Point" are choices made against a picture of the document, so both radios
-  // wait for the document to have shown one — the same predicate the Analyze button reads
-  // (CanStartAnalysis), so the three cannot disagree on what "no picture yet" means. Not the
+  // "Point" is a choice made against a picture of the document, so the radio waits for the
+  // document to have shown one — the same predicate the Analyze button reads
+  // (CanStartAnalysis), so the two cannot disagree on what "no picture yet" means. Not the
   // preview's own "texture bound" flag: a background photograph alone raises that too, and a
-  // photograph is not a picture of the document. A mode already selected still analyses without
-  // a live preview — DoAnalyze sizes the frame at the document's own resolution then — so this
-  // gates the radio, not the button.
+  // photograph is not a picture of the document. A mode already selected still analyses
+  // without a live preview — a Whole-sky request reads no canvas and a Point request reads the
+  // centre direction, not a rectangle — so this gates the radio, not the button.
   const bool has_picture = HasEverShownPicture(state.run_intent);
-  ImGui::BeginDisabled(!has_picture);
-  ImGui::RadioButton("In frame", &a.roi_mode, LUMICE_RAYPATH_ROI_IN_FRAME);
-  ImGui::EndDisabled();
-  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Needs a picture of this document: press Run once first.");
-  }
-  if (fits_on_line(radio_w("Point"))) {
-    ImGui::SameLine();
-  }
   ImGui::BeginDisabled(!has_picture);
   ImGui::RadioButton("Point", &a.roi_mode, LUMICE_RAYPATH_ROI_CONE);
   ImGui::EndDisabled();
@@ -2044,19 +2069,10 @@ void RenderPanoramaRoiControls(GuiState& state) {
   }
 
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
-    // A centre from the moment the mode is entered, so the marker is on screen to be dragged
-    // before any pick. Level-triggered: "no valid centre and a picture to project on", not "the
-    // frame the radio was clicked" — a switch made before the first picture arrives is served
-    // the frame the picture does. The view is PreviewAnnotationView — the one view the picture
-    // faces draw through, so the default centre is the middle of what the user actually sees.
-    // The gate is the same predicate as the radio above, not the viewport flag: a background
-    // photograph must not place a centre on a document that has never been rendered.
-    if (!a.cone_center_valid && g_panorama_vp.active) {
-      EnsureDefaultConeCenter(state, PreviewAnnotationView(state, g_panorama_vp.vp_w, g_panorama_vp.vp_h),
-                              g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-    }
     // Same predicate as the radio above, not the viewport flag: a background photograph must not
-    // arm a pick on a document that has never been rendered.
+    // arm a pick on a document that has never been rendered. (The default centre is written by
+    // the picture region's gesture block — the one level-triggered writer, reading the picture
+    // this frame was actually drawn with.)
     const bool can_pick = has_picture;
     ImGui::BeginDisabled(!can_pick);
     // Read once: the button below flips pick_armed, and the pop must match the push made
@@ -2066,6 +2082,9 @@ void RenderPanoramaRoiControls(GuiState& state) {
       ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.55f));
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.75f));
       ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.40f));
+    }
+    if (FitsOnBarLine(InlineButtonWidth(ICON_FA_CROSSHAIRS " Pick on the panorama"))) {
+      ImGui::SameLine();
     }
     if (ImGui::Button(ICON_FA_CROSSHAIRS " Pick on the panorama")) {
       a.pick_armed = !a.pick_armed;
@@ -2094,7 +2113,7 @@ void RenderPanoramaRoiControls(GuiState& state) {
     } else {
       std::snprintf(centre, sizeof(centre), "No centre yet");
     }
-    if (fits_on_line(ImGui::CalcTextSize(centre).x)) {
+    if (FitsOnBarLine(ImGui::CalcTextSize(centre).x)) {
       ImGui::SameLine();
     }
     if (a.cone_center_valid) {
@@ -2105,6 +2124,20 @@ void RenderPanoramaRoiControls(GuiState& state) {
       ImGui::PopStyleColor();
     }
   }
+}
+
+// The Analyze main view's operation bar (analyze-interaction-contract.md §2.2): the analysis
+// request's controls — region, cone centre, radius, budget, Analyze/Stop — on one strip below
+// the picture they aim at, so region → Analyze → list reads next to what it operates on. The
+// picture notice rides with the run controls' own line — this bar is the one place in the
+// workspace that draws that fact. Every join is judged (FitsOnBarLine), so the same flow is the
+// contract's single row at the wide widths and folds at the narrow ones, never clips.
+void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
+  ImGui::Separator();
+  RenderPanoramaRoiControls(state);
+  RenderRunControls(state, server, FitsOnBarLine(InlineButtonWidth(ICON_FA_PLAY " Analyze")));
+  RenderRequestParamsControls(state, FitsOnBarLine(InlineLabelledControlWidth("Infinite rays")));
+  RenderRadiusSlider(state, FitsOnBarLine(ImGui::CalcTextSize("Radius").x));
 }
 
 namespace {
