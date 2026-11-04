@@ -611,8 +611,8 @@ bool RunAfterAnalysisRenders(ImGuiTestContext* ctx, bool exclude, bool gpu) {
     ctx->Yield(1);
     IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value(), false);
     IM_CHECK_RETV(*gui::g_state.analysis.selected_entry == top_display, false);
-    IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
-    ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+    IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath###action_exclude")), false);
+    ctx->ItemClick(ICON_FA_BAN " Exclude this raypath###action_exclude");
     ctx->Yield(1);
     // The filter is in the document, an Out one, so the same crystal stays excludable: the
     // button is still enabled, and a second press of it for the same chain is the idempotent
@@ -621,8 +621,8 @@ bool RunAfterAnalysisRenders(ImGuiTestContext* ctx, bool exclude, bool gpu) {
     IM_CHECK_RETV(gui::g_state.filters[0].action == 1, false);
     IM_CHECK_RETV(gui::g_state.filters[0].param.size() == 1u, false);
     IM_CHECK_RETV(gui::EvaluateExcludeEligibility(gui::g_state, nullptr) == gui::ExcludeEligibility::kOk, false);
-    IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
-    ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+    IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath###action_exclude")), false);
+    ctx->ItemClick(ICON_FA_BAN " Exclude this raypath###action_exclude");
     ctx->SetRef("");
     ctx->Yield(1);
     IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);
@@ -885,8 +885,8 @@ bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with
   ctx->ItemClick((std::string("**/") + top_display).c_str());
   ctx->Yield(1);
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value(), false);
-  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
-  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath###action_exclude")), false);
+  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath###action_exclude");
   ctx->SetRef("");
   // Two frames: the click's frame already ran the editor's pull and push once after the write;
   // one more shows whatever it left behind is stable rather than mid-flight.
@@ -1013,8 +1013,8 @@ bool ExcludedRowShowsAndIncludeAgainTakesItBack(ImGuiTestContext* ctx) {
   // Exclude 3-5: the filter is written, the memory holds the 75% the row showed.
   ctx->ItemClick("**/3-5");
   ctx->Yield(1);
-  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
-  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath###action_exclude")), false);
+  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath###action_exclude");
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);
   IM_CHECK_RETV(gui::g_state.filters[0].param.size() == 1u, false);
@@ -1043,7 +1043,7 @@ bool ExcludedRowShowsAndIncludeAgainTakesItBack(ImGuiTestContext* ctx) {
   ctx->ItemClick((std::string("**/") + ExcludedRowPath("3-5")).c_str());
   ctx->Yield(1);
   IM_CHECK_RETV(!gui::g_state.analysis.selected_entry.has_value(), false);
-  IM_CHECK_RETV(IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
+  IM_CHECK_RETV(IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath###action_exclude")), false);
 
   // The search box reaches it: "1-3" hides it, "3-5" shows it alone, empty brings all back.
   SetListRef(ctx);
@@ -1212,10 +1212,10 @@ bool C01ChainAnalyzeSelectExcludeRerun(ImGuiTestContext* ctx) {
 
   // Exclude it: one Out filter on the document, bound to the entry.
   SetListRef(ctx);
-  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
-  ctx->MouseMove(ICON_FA_BAN " Exclude this raypath");
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath###action_exclude")), false);
+  ctx->MouseMove(ICON_FA_BAN " Exclude this raypath###action_exclude");
   ctx->Yield(2);
-  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath###action_exclude");
   ctx->SetRef("");
   ctx->Yield(1);
   IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);
@@ -3475,9 +3475,10 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   ctx->SetRef("");
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE, false);
-  // The point query for the globe's completed-state controls: the anchor on this scene's halo
-  // fiber (the same write the map pick performs).
-  SetSkyPointTarget(30.0, 0.0);
+  // The point query for the globe's completed-state controls: the anchor ON this scene's halo
+  // fiber (42,0 — the point-inspector leg's verified on-fiber anchor; an off-fiber target
+  // completes with no component and the globe never grows its slider).
+  SetSkyPointTarget(42.0, 0.0);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
@@ -3541,18 +3542,60 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(
         gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == top_display,
         false);
-    // The button pair: contained, Exclude enabled for the single-layer selection.
+    // The button pair: contained on ALL four edges, Exclude enabled for the single-layer
+    // selection — and a REAL exclusion: the click writes the filter with this row's chain, and
+    // Include-again (with the descriptor the greyed row would carry) reverses it before the
+    // next tier, so every tier exercises the write, not just its geometry.
+    const auto contained_pair = [&](const ImGuiTestItemInfo& item) {
+      return item.RectFull.Min.x >= share_t->InnerClipRect.Min.x - 0.5f &&
+             item.RectFull.Max.x <= share_t->InnerClipRect.Max.x + 0.5f &&
+             item.RectFull.Min.y >= share_t->InnerClipRect.Min.y - 0.5f &&
+             item.RectFull.Max.y <= share_t->InnerClipRect.Max.y + 0.5f;
+    };
     const ImGuiTestItemInfo exclude_t =
-        ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath", ImGuiTestOpFlags_NoError);
+        ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath###action_exclude", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(exclude_t.ID != 0, false);
-    IM_CHECK_RETV(exclude_t.RectFull.Max.y <= share_t->InnerClipRect.Max.y + 0.5f &&
-                      exclude_t.RectFull.Min.y >= share_t->InnerClipRect.Min.y - 0.5f,
-                  false);
+    IM_CHECK_RETV(contained_pair(exclude_t), false);
     IM_CHECK_RETV(!IsDisabled(exclude_t), false);
-    const ImGuiTestItemInfo csv_t = ctx->ItemInfo("**/" ICON_FA_FILE_CSV " Export CSV", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(csv_t.ID != 0 && csv_t.RectFull.Max.y <= share_t->InnerClipRect.Max.y + 0.5f, false);
-    // The Radius: scroll the clamped head to it, contain it, then drag its track to the far
-    // end by the real mouse path.
+    const ImGuiTestItemInfo csv_t =
+        ctx->ItemInfo("**/" ICON_FA_FILE_CSV " Export CSV###action_csv", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(csv_t.ID != 0, false);
+    IM_CHECK_RETV(contained_pair(csv_t), false);
+    SetListRef(ctx);
+    ctx->ItemClick("**/" ICON_FA_BAN " Exclude this raypath###action_exclude");
+    ctx->SetRef("");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.filters.empty(), false);
+    const gui::FilterConfig& written_t = gui::g_state.filters.back();
+    IM_CHECK_RETV(written_t.action == 1 && !written_t.param.empty() && written_t.param.front().text == top_display,
+                  false);
+    {
+      std::optional<int> pool_t;
+      for (const auto& e : gui::g_state.analysis_result.payload->entries) {
+        if (std::string(e.display) == top_display) {
+          const auto it = gui::AnalysisCoreToPoolMap(gui::g_state).find(e.chain[0].crystal_id);
+          if (it != gui::AnalysisCoreToPoolMap(gui::g_state).end()) {
+            pool_t = it->second;
+          }
+          break;
+        }
+      }
+      IM_CHECK_RETV(pool_t.has_value(), false);
+      gui::ExcludedRaypathRow reversal_t;
+      reversal_t.display = top_display;
+      reversal_t.token = top_display;
+      reversal_t.pool_crystal_id = *pool_t;
+      reversal_t.filter_slot = static_cast<int>(gui::g_state.filters.size()) - 1;
+      reversal_t.param_index = 0;
+      IM_CHECK_RETV(gui::ApplyIncludeAgain(gui::g_state, reversal_t), false);
+      ctx->Yield(2);
+      ctx->LogInfo("[scale tiers %s] exclude written and reversed", label);
+    }
+    // The Radius: scroll the clamped head to it, contain it, then drag its track to BOTH ends
+    // by the real mouse path. The oracle is the request-side range — this leg's payload is
+    // FULL_SKY (cone_radius_rad 0 by contract), and the slider in that branch reads
+    // kAnalysisConeMaxRadiusDeg / the ring count — reading the payload here made the far-end
+    // assert vacuous (the r4 review's catch).
     ImGuiWindow* head_t = nullptr;
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
@@ -3560,7 +3603,9 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
         break;
       }
     }
-    IM_CHECK_RETV(head_t != nullptr, false);
+    if (head_t == nullptr) {
+      head_t = share_t;  // the flat head: its rows live in the never-scrolling window itself
+    }
     head_t->Scroll.y = head_t->ScrollMax.y;
     ctx->Yield(3);
     const ImGuiTestItemInfo radius_t = ctx->ItemInfo("**/Radius", ImGuiTestOpFlags_NoError).ID != 0 ?
@@ -3570,8 +3615,20 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(radius_t.RectFull.Max.x <= head_t->InnerClipRect.Max.x + 0.5f &&
                       radius_t.RectFull.Min.x >= head_t->InnerClipRect.Min.x - 0.5f,
                   false);
-    const float cone_deg = gui::g_state.analysis_result.payload->cone_radius_rad * 57.29577951308232;
+    const float cone_deg = gui::kAnalysisConeMaxRadiusDeg;
+    const float min_deg = gui::kAnalysisConeMaxRadiusDeg / static_cast<float>(gui::kAnalysisConeRingCount);
     const ImVec2 track_c = radius_t.RectFull.GetCenter();
+    ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Max.x - 3.0f, track_c.y));
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Min.x + 3.0f, track_c.y));
+    ctx->Yield(3);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    ctx->LogInfo("[scale tiers %s] radius after the near-end drag: %.2f (min %.2f)", label,
+                 static_cast<double>(gui::g_state.analysis.cone_radius_deg), static_cast<double>(min_deg));
+    IM_CHECK_RETV(gui::g_state.analysis.cone_radius_deg < min_deg + (cone_deg - min_deg) * 0.2f, false);
     ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Min.x + 3.0f, track_c.y));
     ctx->Yield(2);
     ctx->MouseDown(0);
@@ -3580,7 +3637,7 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->Yield(3);
     ctx->MouseUp(0);
     ctx->Yield(2);
-    ctx->LogInfo("[scale tiers %s] radius after the track drag: %.2f (max %.2f)", label,
+    ctx->LogInfo("[scale tiers %s] radius after the far-end drag: %.2f (max %.2f)", label,
                  static_cast<double>(gui::g_state.analysis.cone_radius_deg), static_cast<double>(cone_deg));
     IM_CHECK_RETV(gui::g_state.analysis.cone_radius_deg > cone_deg * 0.8f, false);
     // The globe's completed-state controls: the band scrolled to the globe's cell, the globe
@@ -3601,9 +3658,10 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       }
     }
     IM_CHECK_RETV(map_t != nullptr && globe_t != nullptr, false);
-    // The stacked form: the globe's cell starts after the map's; land on its top, then scroll
-    // the region to its own tail.
-    band_t->Scroll.y = std::min(band_t->ScrollMax.y, map_t->Size.y + ImGui::GetStyle().ItemSpacing.y);
+    // The stacked form: the band scroll shows a SLICE of the globe's cell — the band's bottom
+    // shows the cell's bottom (the point-inspector leg's shape), and the globe's internal
+    // scroll brings its own tail (the slider/play row) into that slice.
+    band_t->Scroll.y = band_t->ScrollMax.y;
     ctx->Yield(2);
     globe_t->Scroll.y = globe_t->ScrollMax.y;
     ctx->Yield(2);
@@ -3624,7 +3682,10 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
 
   // The settle loop the shell legs established: the rebuild and the window re-derivation land
   // over frames; wait for the scale through the one outlet.
-  const auto set_scale = [&](float multiplier) {
+  // Explicit bool returns: an IM_CHECK_RETV inside a deduced-return lambda without a final
+  // return true is a non-void function falling off its end — UB on the success path (the r4
+  // review's -fsyntax-only catch).
+  const auto set_scale = [&](float multiplier) -> bool {
     gui::g_ui_scale_multiplier = multiplier;
     gui::g_ui_scale_dirty = true;
     for (int i = 0;
@@ -3636,8 +3697,9 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - multiplier * gui::kAnalyzeLeftPanelWidth) < 0.5f,
                   false);
     ctx->Yield(4);
+    return true;
   };
-  const auto set_basis = [&](int w, int h) {
+  const auto set_basis = [&](int w, int h) -> bool {
     g_window_size_test.apply_aspect = false;
     g_window_size_test.width = w;
     g_window_size_test.height = h;
@@ -3648,17 +3710,19 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     }
     IM_CHECK_RETV(g_window_size_test.done.load(), false);
     ctx->Yield(3);
+    return true;
   };
 
   IM_CHECK_RETV(drive_tier("baseline 1x"), false);
-  set_scale(1.5f);
+  IM_CHECK_RETV(set_scale(1.5f), false);
   IM_CHECK_RETV(drive_tier("150 percent"), false);
-  set_scale(2.0f);
-  set_basis(1800, 900);  // the clamped-equivalent geometry (plan risk 1)
+  IM_CHECK_RETV(set_scale(2.0f), false);
+  IM_CHECK_RETV(set_basis(1800, 900), false);  // the clamped-equivalent geometry (plan risk 1)
   IM_CHECK_RETV(drive_tier("200 percent clamped"), false);
   // The reviewer's 1280-workspace 2x tier: the narrowest legal right column, where the radius
-  // label leaves the slider's line (the label-row branch) — the drive handles either id.
-  set_basis(1280, 800);
+  // label leaves the slider's line and the Exclude button takes its narrow form — the drive
+  // handles either id/label.
+  IM_CHECK_RETV(set_basis(1280, 800), false);
   IM_CHECK_RETV(drive_tier("200 percent 1280 clamped"), false);
 
   // Restore: the factory scale, settled, then the inline basis restore (the 1280x800 leg's
@@ -3953,7 +4017,7 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     // The button pair: contained in the never-scrolling window and enabled for the selection.
     const ImGuiTestItemInfo exclude_c =
-        ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath", ImGuiTestOpFlags_NoError);
+        ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath###action_exclude", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(exclude_c.ID != 0, false);
     IM_CHECK_RETV(exclude_c.RectFull.Min.x >= share_c->InnerClipRect.Min.x - 0.5f &&
                       exclude_c.RectFull.Max.x <= share_c->InnerClipRect.Max.x + 0.5f &&
@@ -3963,7 +4027,8 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
     // Disabled, by design: the selection is a multi-layer chain (chain_len != 1 refuses the
     // exclusion — the DECISION that moved this leg's entity act to the search).
     IM_CHECK_RETV(IsDisabled(exclude_c), false);
-    const ImGuiTestItemInfo csv_c = ctx->ItemInfo("**/" ICON_FA_FILE_CSV " Export CSV", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo csv_c =
+        ctx->ItemInfo("**/" ICON_FA_FILE_CSV " Export CSV###action_csv", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(csv_c.ID != 0, false);
     IM_CHECK_RETV(csv_c.RectFull.Max.y <= share_c->InnerClipRect.Max.y + 0.5f, false);
     // The search: a real input at this tier.
@@ -4480,11 +4545,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         // viewport top where the freeze keeps it.
         IM_CHECK_GT(first_row.RectFull.Min.y, table_child->InnerClipRect.Min.y);
         IM_CHECK_LE(first_row.RectFull.Min.y, table_child->InnerClipRect.Min.y + ImGui::GetTextLineHeight() * 2.5f);
-        assert_contained("**/" ICON_FA_BAN " Exclude this raypath", share);
+        assert_contained("**/" ICON_FA_BAN " Exclude this raypath###action_exclude", share);
         if (ctx->IsError()) {
           return;  // the containment lambda already reported; later calls would echo it
         }
-        assert_contained("**/" ICON_FA_FILE_CSV " Export CSV", share);
+        assert_contained("**/" ICON_FA_FILE_CSV " Export CSV###action_csv", share);
         if (ctx->IsError()) {
           return;
         }
@@ -4532,7 +4597,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->Yield(2);
       }
       SetListRef(ctx);
-      ctx->ItemClick("**/" ICON_FA_BAN " Exclude this raypath");
+      ctx->ItemClick("**/" ICON_FA_BAN " Exclude this raypath###action_exclude");
       ctx->SetRef("");
       ctx->Yield(2);
       {
@@ -4613,11 +4678,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->LogInfo("[stale floors B] share %.0fx%.0f, details %.0f (floor %.0f)", share->Size.x, share->Size.y,
                      details->Size.y, gui::UiPx(gui::kAnalyzeDetailsMinHeight));
         IM_CHECK_FLOAT_NEAR(details->Size.y, gui::UiPx(gui::kAnalyzeDetailsMinHeight), 1.0f);
-        assert_contained("**/" ICON_FA_BAN " Exclude this raypath", share);
+        assert_contained("**/" ICON_FA_BAN " Exclude this raypath###action_exclude", share);
         if (ctx->IsError()) {
           return;  // the containment lambda already reported; later calls would echo it
         }
-        assert_contained("**/" ICON_FA_FILE_CSV " Export CSV", share);
+        assert_contained("**/" ICON_FA_FILE_CSV " Export CSV###action_csv", share);
         // The diagnostics floor keeps a visible first line of its scrolling region — the wheel
         // reaches the rest, the structural half of the floor's promise.
         ImGuiWindow* scroll = nullptr;
@@ -5201,7 +5266,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemClick((std::string("**/") + top_display).c_str());
       ctx->Yield(1);
       IM_CHECK(gui::g_state.analysis.selected_entry.has_value());
-      IM_CHECK(IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath###action_exclude")));
       std::string why;
       IM_CHECK_EQ((int)gui::EvaluateExcludeEligibility(gui::g_state, &why),
                   (int)gui::ExcludeEligibility::kEntryHasInFilter);
@@ -5209,9 +5274,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(why.find("In filter") != std::string::npos);
       IM_CHECK(gui::ExcludeAppendNotice(gui::g_state).empty());
       // Hover, so the disabled button's tooltip frame is drawn; then click, which does nothing.
-      ctx->MouseMove(ICON_FA_BAN " Exclude this raypath");
+      ctx->MouseMove(ICON_FA_BAN " Exclude this raypath###action_exclude");
       ctx->Yield(2);
-      ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+      ctx->ItemClick(ICON_FA_BAN " Exclude this raypath###action_exclude");
       ctx->SetRef("");
       ctx->Yield(1);
       IM_CHECK_EQ(gui::g_state.filters.size(), 1u);
@@ -5393,7 +5458,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemClick(std::string("**/").append(gui::kAnalysisOtherRowLabel).c_str());
       ctx->Yield(1);
       IM_CHECK(!gui::g_state.analysis.selected_entry.has_value());
-      IM_CHECK(IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath###action_exclude")));
       // And it does not take a selection away from a real row either.
       ctx->ItemClick("**/1-2");
       ctx->Yield(1);
@@ -6178,5 +6243,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "narrow_column_clipped_rows_keep_their_entities");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(NarrowColumnClippedRowsKeepTheirEntities(ctx)); };
+  }
+  // One analysis carried through the scale tiers (150% / 2x clamped / the narrow 1280 tier):
+  // the result-state key operations per tier. Real-timing pool: the analysis plus the point
+  // query run once, the tier switches are rebuilds.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_result_carries_across_scale_tiers");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(AnalyzeResultCarriesAcrossScaleTiers(ctx)); };
   }
 }

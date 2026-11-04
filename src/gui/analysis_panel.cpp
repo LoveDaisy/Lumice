@@ -1886,8 +1886,18 @@ void RenderActionButtons(GuiState& state) {
   std::string why;
   const ExcludeEligibility elig = EvaluateExcludeEligibility(state, &why);
   const bool stack = AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x);
+  // The Exclude button's narrow form: at the compressed tiers a single button can exceed the
+  // column outright (the 1280-workspace 2x tier measured 292px of button in a 287px clip) —
+  // stacking cannot fix a control wider than its row. Below the column's width the visible
+  // label shortens to the verb and the tooltip carries the full sentence; the "###" anchor
+  // keeps ONE id across the forms, so the action, the eligibility and every label-addressed
+  // probe are the same button either way (the search box's one-widget-two-forms pattern).
+  const float exclude_full_w =
+      ImGui::CalcTextSize(ICON_FA_BAN " Exclude this raypath").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const bool exclude_narrow = exclude_full_w > ImGui::GetContentRegionAvail().x;
   ImGui::BeginDisabled(elig != ExcludeEligibility::kOk);
-  if (ImGui::Button(ICON_FA_BAN " Exclude this raypath")) {
+  if (ImGui::Button(exclude_narrow ? ICON_FA_BAN " Exclude###action_exclude" :
+                                     ICON_FA_BAN " Exclude this raypath###action_exclude")) {
     ApplyExcludeSelectedRaypath(state);
   }
   ImGui::EndDisabled();
@@ -1911,7 +1921,7 @@ void RenderActionButtons(GuiState& state) {
   const auto& payload = state.analysis_result.payload;
   const bool has_rows = payload && !payload->entries.empty();
   ImGui::BeginDisabled(!has_rows);
-  if (ImGui::Button(ICON_FA_FILE_CSV " Export CSV")) {
+  if (ImGui::Button(ICON_FA_FILE_CSV " Export CSV###action_csv")) {
     const std::filesystem::path path = ShowExportCsvDialog();
     if (!path.empty()) {
       if (ExportAnalysisResultsCsv(path, BuildAnalysisResultsCsv(state, LocalTimeNow()))) {
