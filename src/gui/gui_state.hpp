@@ -1766,8 +1766,10 @@ struct GuiState {
     // the window's expiry as well; a user-picked or user-dragged centre is never moved by
     // anything but the user (sky-direction state, AC4).
     bool cone_center_is_default = false;
-    // The picture publication's size the current default was placed on, and the frame it was
-    // placed on; meaningful only while cone_center_is_default.
+    // The picture publication's size the current default was placed on, and the frame of the
+    // FIRST placement — a size compensation re-places the direction but never refreshes the
+    // frame, so the convergence window ends a fixed few frames after the default was born,
+    // however long a resize chain runs. Meaningful only while cone_center_is_default.
     int cone_center_default_vp_w = 0;
     int cone_center_default_vp_h = 0;
     int cone_center_default_frame = -1;

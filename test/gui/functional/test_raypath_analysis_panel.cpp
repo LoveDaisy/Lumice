@@ -6275,6 +6275,191 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The screenshot is a picture of what is ON SCREEN: with the Analyze main view live, the
+  // export is the main view's picture at the main view's size — every fact (params, canvas, DPI,
+  // anchors) from the one active publication — and the Render-side export still answers with the
+  // preview panel's own. RenderScreenshot runs GL, so the calls route through the case's GuiFunc
+  // (the background-upload rule).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "screenshot_exports_the_active_face");
+    static lumice::gui::ScreenshotExportSelection s_shot_sel;
+    static lumice::gui::ScreenshotRender s_shot;
+    static bool s_shot_requested = false;
+    static bool s_shot_done = false;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (s_shot_requested && !s_shot_done) {
+        s_shot = gui::RenderScreenshot(s_shot_sel);
+        s_shot_done = true;
+      }
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      const auto take = [&ctx](int frames) {
+        s_shot_requested = true;
+        IM_CHECK(DriveUntil(ctx, [] { return s_shot_done; }, frames));
+        s_shot_requested = false;
+        s_shot_done = false;
+      };
+      // Render side: the preview panel's own publication.
+      take(10);
+      const int render_w = s_shot.w;
+      const int render_h = s_shot.h;
+      IM_CHECK_EQ(render_w, gui::g_preview_vp.vp_w);
+      IM_CHECK_EQ(render_h, gui::g_preview_vp.vp_h);
+
+      // Analyze, main view live, lens switched for real: the export follows the live face, and
+      // the two faces' canvases are different rectangles (the discriminator — a wrong-side export
+      // would carry the preview's numbers here).
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(3);
+      IM_CHECK(gui::g_panorama_vp.active);
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ComboClick("Lens Type##view/Fisheye Equal Area");
+      ctx->SetRef("");
+      ctx->Yield(4);
+      IM_CHECK_NE(gui::g_panorama_vp.vp_w, gui::g_preview_vp.vp_w);
+      IM_CHECK_NE(gui::g_panorama_vp.vp_h, gui::g_preview_vp.vp_h);
+      take(10);
+      IM_CHECK_EQ(s_shot.w, gui::g_panorama_vp.vp_w);
+      IM_CHECK_EQ(s_shot.h, gui::g_panorama_vp.vp_h);
+    };
+  }
+
+  // The bar-takeover degradation: with a picture on show, Point mode's tall bar and the
+  // main-view row at its 0.15 clamp, the column cannot hold both — the bar takes the whole
+  // column in its own scrolling child (every control visible), the sliders still operate for
+  // real, and the picture region stands down (no publication: the deferred pass skips, and the
+  // Analyze button refuses honestly — no picture on screen to pick a centre on). The reviewer's
+  // repro is the smallest supported window: 1024x640 at the 0.15 clamp leaves the column ~73 pt
+  // against a Point bar of ~123 pt.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "bar_degrades_to_scroll_when_the_column_cannot_hold_it");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = 1024;
+      g_window_size_test.height = 640;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      ctx->Yield(4);
+      gui::g_state.workspace.middle_rows_ratio = 0.15f;  // the row split's own clamp floor
+      ctx->Yield(4);
+      IM_CHECK(!gui::g_panorama_vp.active);  // the picture stood down
+      // The bar's controls, in the takeover child: present, and the operable ones operate.
+      bool bar_child = false;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        bar_child = bar_child || (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr);
+      }
+      IM_CHECK(bar_child);
+      ctx->SetRef(PanoramaRegionRef());
+      IM_CHECK(ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str(), ImGuiTestOpFlags_NoError).ID !=
+               0);  // visible
+      // Operable: the centre the pre-takeover frames placed stands, the server is idle — the
+      // button is live, not a greyed shell.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str())));
+      // The takeover bar lives in its own scrolling child: rows below the fold are culled, so
+      // reach them the way a user does — scroll the child — then address through the child's ref
+      // with bare names.
+      ImGuiWindow* bar_scroll = nullptr;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr) {
+          bar_scroll = w;
+        }
+      }
+      IM_CHECK(bar_scroll != nullptr);
+      bar_scroll->Scroll.y = bar_scroll->ScrollMax.y;
+      ctx->Yield(2);
+      ctx->SetRef("");
+      // (The wildcard form is the one that resolves for the child-hosted controls here — the
+      // dynamic string, same shape as the Analyze button's lookup above.)
+      ctx->ItemInputValue((std::string("**/") + "##Rays(M)_input").c_str(), 3.5f);
+      ctx->Yield(2);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.ray_num_millions, 3.5f, 1e-3f);  // the budget operated
+      ctx->ItemInputValue((std::string("**/") + "Radius###Radius_narrow").c_str(), 6.0f);
+      ctx->Yield(2);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.cone_radius_deg, 6.0f, 1e-3f);  // the radius operated
+      ctx->SetRef("");
+      // The basis audit: a window the test resized comes back before the test ends.
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = gui::kInitWindowWidth;
+      g_window_size_test.height = gui::kInitWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+    };
+  }
+
+  // The default centre's convergence deadline is absolute: it is the FIRST placement's frame,
+  // and a size compensation never refreshes it — so a resize chain that runs well past the
+  // window cannot keep re-deriving the direction, and a view edit followed by a further resize
+  // after the deadline leaves the region exactly where the window left it.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "default_convergence_deadline_is_absolute");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      ctx->Yield(4);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      const auto drag_d1 = [&ctx](float dx) {
+        const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeColumnSplitter", ImGuiTestOpFlags_NoError);
+        IM_CHECK(grab.ID != 0);
+        const ImVec2 c = grab.RectFull.GetCenter();
+        ctx->MouseMoveToPos(c);
+        ctx->Yield(1);
+        ctx->MouseDown(0);
+        ctx->Yield(1);
+        ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y));
+        ctx->Yield(1);
+        ctx->MouseUp(0);
+        ctx->Yield(1);
+      };
+      // Inside the window: a view edit and the first resize re-derive the middle (that is the
+      // initialization the mechanism exists for) — the direction moves off the birth view.
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ItemInputValue("##Azimuth##view_input", gui::g_state.renderer.azimuth + 40.0f);
+      ctx->SetRef("");
+      ctx->Yield(2);
+      drag_d1(20.0f);
+      ctx->Yield(1);
+      drag_d1(20.0f);
+      // The chain has run past the first placement's deadline (the drags above spent more frames
+      // than the window holds, and no compensation refreshed it). Whatever direction the window
+      // left is the region's; capture it.
+      float frozen[3];
+      std::copy(gui::g_state.analysis.cone_center_dir, gui::g_state.analysis.cone_center_dir + 3, frozen);
+      // A view edit and more resizing after the deadline: the region stands byte for byte.
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ItemInputValue("##Azimuth##view_input", gui::g_state.renderer.azimuth + 60.0f);
+      ctx->SetRef("");
+      ctx->Yield(2);
+      drag_d1(20.0f);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], frozen[0]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], frozen[1]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[2], frozen[2]);
+    };
+  }
+
   // AC2/§3: the left column's Display group is the SAME exposure field the Render right panel
   // edits — driving it for real re-lights the main view on the next frame (the mono path
   // re-multiplies the committed texture, no server interaction), and the document stays

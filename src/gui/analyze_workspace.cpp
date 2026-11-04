@@ -297,11 +297,16 @@ void RenderCrystalList(GuiState& state) {
 // RenderScenePanorama so the empty state and the bar bracket it without re-indenting the
 // gesture block.
 void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
+  // A non-positive height is the caller's bar-takeover state — never submitted, because a
+  // zero-height BeginChild would fill what is left instead of taking none.
+  if (picture_h <= 0.0f) {
+    return;
+  }
   // The picture region: transparent, because the deferred pass blits the reprojected texture
   // under ImGui exactly as it does for the Render preview panel. Everything the region hosts —
   // the display-mode control, the publication, the shared assembly, the interaction button and
   // every gesture — lives inside this child, the way the preview panel's own window hosts them.
-  const ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, std::max(0.0f, picture_h));
+  const ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, picture_h);
   ImGui::BeginChild("##AnalyzePanoramaPicture", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoBackground);
   const ImVec2 region_min = ImGui::GetWindowPos();
 
@@ -543,7 +548,22 @@ void RenderScenePanorama(GLFWwindow* window) {
         "main view shows the traced sky here.");
     ImGui::PopStyleColor();
   } else {
-    RenderAnalyzeMainPicture(window, avail.y - bar_reserve - ImGui::GetStyle().ItemSpacing.y);
+    const float picture_h = avail.y - bar_reserve - ImGui::GetStyle().ItemSpacing.y;
+    if (picture_h > 0.0f) {
+      RenderAnalyzeMainPicture(window, picture_h);
+    }
+    // The column cannot hold the picture AND the bar: the bar takes the whole column in its own
+    // scrolling child — every control stays reachable — and the picture region is not submitted
+    // at all this frame (a zero-height BeginChild would mean "fill what is left", handing the
+    // space straight back to the picture and clipping the bar out for good: a state the
+    // 0.15-clamped row split at the smallest supported window reaches with the Point bar up).
+    // No picture, no publication: the deferred pass skips, honestly.
+    if (picture_h <= 0.0f) {
+      ImGui::BeginChild("##AnalyzeOpBarScroll", avail, 0.0f);
+      RenderAnalyzeOperationBar(g_state, g_server);
+      ImGui::EndChild();
+      return;
+    }
   }
 
   // The operation bar, drawn directly in this window — no child, so the tests' bare-name item

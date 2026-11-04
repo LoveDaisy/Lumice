@@ -490,13 +490,13 @@ void DoSaveAs() {
   PerformSaveAs();
 }
 
-// Build PreviewParams for export: copy current preview viewport params, but override
-// intensity_* fields to sample the GUI EV slider live (the viewport copy carries whatever the
-// last rendered frame used, which is a frame behind a just-moved slider). The exposure itself
-// comes from mono_exposure_scale.hpp, so an export lands at the brightness the preview shows
+// Build PreviewParams for export: copy the publication the export renders through, but override
+// intensity_* fields to sample the GUI EV slider live (a viewport copy carries whatever the last
+// rendered frame used, which is a frame behind a just-moved slider). The exposure itself comes
+// from mono_exposure_scale.hpp, so an export lands at the brightness the active picture shows
 // under either mode.
-static PreviewParams BuildExportParams() {
-  PreviewParams params = g_preview_vp.params;
+static PreviewParams BuildExportParams(const PreviewParams& published) {
+  PreviewParams params = published;
   lumice::gui::MonoExposureInput ev_in;
   ev_in.exposure_offset = g_state.renderer.exposure_offset;
   ev_in.ev_auto = g_state.ev_auto;
@@ -522,11 +522,21 @@ ScreenshotFrameFacts CurrentScreenshotFrameFacts() {
 }
 
 ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
-  PreviewParams params = BuildExportParams();
+  // The screenshot is a picture of what is on screen: the ACTIVE picture face's publication,
+  // every fact from the same place. The Analyze main view publishes its own view of the same
+  // committed texture — an export taken while it is live must be ITS picture, at ITS size,
+  // through ITS anchors — not the preview panel's last frame.
+  const bool panorama_live = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze && g_panorama_vp.active;
+  const PreviewParams& published = panorama_live ? g_panorama_vp.params : g_preview_vp.params;
+  const int w = panorama_live ? g_panorama_vp.vp_w : g_preview_vp.vp_w;
+  const int h = panorama_live ? g_panorama_vp.vp_h : g_preview_vp.vp_h;
+  const float dpi_x = panorama_live ? g_panorama_vp.dpi_scale_x : g_preview_vp.dpi_scale_x;
+  const float dpi_y = panorama_live ? g_panorama_vp.dpi_scale_y : g_preview_vp.dpi_scale_y;
+  const gui::AnnotationAnchors& pub_anchors = panorama_live ? g_panorama_vp.anchors : PreviewAnnotationAnchors();
+
+  PreviewParams params = BuildExportParams(published);
   ApplyScreenshotExportSelectionToParams(sel, g_state, CurrentScreenshotFrameFacts(), params);
 
-  int w = g_preview_vp.vp_w;
-  int h = g_preview_vp.vp_h;
   // The FBO is the live viewport's DEVICE pixel size, so the exported PNG is the full-resolution
   // twin of what is on screen (on a Retina display, twice the width of the preview area — that is
   // correct and deliberate, not a bug to normalize away).
@@ -545,12 +555,10 @@ ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
   // one is prefilled from the panel on every open, lives for this one export, gates lines and
   // labels separately, and can only take away what the screen shows, so untouched it IS the
   // screen and it has no state of its own to drift.
-  const float dpi_x = g_preview_vp.dpi_scale_x;
-  const float dpi_y = g_preview_vp.dpi_scale_y;
   const float label_w = DeviceToLogical(w, dpi_x);
   const float label_h = DeviceToLogical(h, dpi_y);
   const std::vector<CurveLabelSet> curve_labels =
-      BuildScreenshotExportLabelSets(PreviewAnnotationAnchors(), g_state, sel, label_w, label_h);
+      BuildScreenshotExportLabelSets(pub_anchors, g_state, sel, label_w, label_h);
   ScreenshotRender out;
   out.w = w;
   out.h = h;
@@ -590,7 +598,8 @@ void DoExportDualFisheyeEqualAreaPng() {
     return;
   }
 
-  PreviewParams params = BuildExportParams();
+  // A texture-level export, not a screenshot: the render face's publication is the base.
+  PreviewParams params = BuildExportParams(g_preview_vp.params);
   ConfigureDualFisheyeExportParams(params);
 
   auto rgba = RenderExportToRgba(g_preview, params, w, h);
@@ -626,7 +635,8 @@ void DoExportEquirectangularPng() {
   int dst_w = 2 * short_res;
   int dst_h = short_res;
 
-  PreviewParams params = BuildExportParams();
+  // A texture-level export, not a screenshot: the render face's publication is the base.
+  PreviewParams params = BuildExportParams(g_preview_vp.params);
   ConfigureEquirectExportParams(params);
 
   auto rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h);

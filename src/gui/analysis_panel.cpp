@@ -480,6 +480,10 @@ bool EnsureDefaultConeCenter(GuiState& state, const LUMICE_AnnotationView& view,
     return false;
   }
   auto& a = state.analysis;
+  // The deadline is the FIRST placement's: a size compensation re-places the direction but must
+  // not refresh the frame that ends its own convergence window — otherwise a continuous run of
+  // size changes (each inside the last one's window) could re-derive the direction forever.
+  const bool initial_placement = !a.cone_center_valid;
   std::copy(dir, dir + 3, a.cone_center_dir);
   a.cone_center_valid = true;
   a.cone_center_is_default = true;
@@ -488,7 +492,9 @@ bool EnsureDefaultConeCenter(GuiState& state, const LUMICE_AnnotationView& view,
   // The placement's birth frame, for the convergence window that bounds the re-place. Zero when
   // no ImGui context exists — the logic tests call this function bare, and they never consume
   // the age; the workspace caller always runs inside a frame.
-  a.cone_center_default_frame = ImGui::GetCurrentContext() != nullptr ? static_cast<int>(ImGui::GetFrameCount()) : 0;
+  if (initial_placement) {
+    a.cone_center_default_frame = ImGui::GetCurrentContext() != nullptr ? static_cast<int>(ImGui::GetFrameCount()) : 0;
+  }
   float alt = 0.0f;
   float az = 0.0f;
   DirToAltAz(dir, &alt, &az);
