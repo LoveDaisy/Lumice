@@ -1599,6 +1599,15 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.analysis.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
       ctx->SetRef("");
 
+      // The left column's folds are the narrow-width reachability form (the contract's R1): the
+      // Simulation fold (closed by default — the View group ships open, so it is not a fold
+      // click's subject) opens under the clamp and its Rays field sits contained in the column.
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ItemClick("Simulation");
+      ctx->Yield(2);
+      AssertRectContained(ctx, "##Rays(M)_slider", ctx->GetWindowByRef("//##AnalyzeLeftPanel"));
+      ctx->SetRef("");
+
       // The map cell at the band scroll positions its two ends need, in order: the header
       // (scroll 0 — the view buttons' containment and Full sky's real click), then the cell's
       // bottom slice (the sky row — the cell is far taller than the 2x band, one scroll shows

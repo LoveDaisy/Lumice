@@ -6017,6 +6017,111 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // AC2/§3: the left column's Display group is the SAME exposure field the Render right panel
+  // edits — driving it for real re-lights the main view on the next frame (the mono path
+  // re-multiplies the committed texture, no server interaction), and the document stays
+  // display-touched only: no kModified, no ray-count movement.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "left_column_display_edits_relight_in_place");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->Yield(2);
+      ImGuiWindow* pano = PanoramaPictureWindow();
+      IM_CHECK(pano != nullptr);
+      LUMICE_RayCount rays_before = 0;
+      LUMICE_GetSimRayCount(gui::g_server, &rays_before);
+      unsigned char before[3] = { 0, 0, 0 };
+      // The picture's centre is the halo's brightest region (the document's camera points at
+      // it), at any pool window size — a point above it can sit on empty sky, which the screen
+      // tone renders as the background colour, and black re-multiplies to black.
+      const ImVec2 sample(pano->Pos.x + pano->Size.x * 0.5f, pano->Pos.y + pano->Size.y * 0.5f);
+      IM_CHECK(ReadScreenPixel(ctx, sample, before));
+      IM_CHECK(before[0] + before[1] + before[2] > 0);
+
+      // The group folds by default; open it, then drive the EV slider for real.
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      // SliderWithInput's addressable items are the derived ones ("##<label>_input"/"_slider"),
+      // not the display label — the same convention the defaults panel's cases drive by.
+      IM_CHECK(!ctx->ItemExists("##EV##display_input"));  // folded: the field is not submitted
+      ctx->ItemClick("Display");
+      ctx->Yield(2);
+      IM_CHECK(ctx->ItemExists("##EV##display_input"));
+      ctx->ItemInputValue("##EV##display_input", 1.5f);
+      ctx->SetRef("");
+      ctx->Yield(4);
+
+      IM_CHECK_FLOAT_NEAR(gui::g_state.renderer.exposure_offset, 1.5f, 1e-3f);
+      unsigned char after[3] = { 0, 0, 0 };
+      IM_CHECK(ReadScreenPixel(ctx, sample, after));
+      IM_CHECK(std::memcmp(before, after, 3) != 0);  // the picture re-lit
+      // Display tier: the document is not dirtied by an observation edit, and nothing re-ran.
+      IM_CHECK_EQ((int)gui::g_state.sim_state, (int)gui::GuiState::SimState::kDone);
+      IM_CHECK(!gui::g_state.analysis_run_in_progress);
+      LUMICE_RayCount rays_after = 0;
+      LUMICE_GetSimRayCount(gui::g_server, &rays_after);
+      IM_CHECK_EQ(rays_after, rays_before);
+    };
+  }
+
+  // §5.4: the left column's lens switch is the document's field — the main view follows on the
+  // next frame, and the Render workspace shows the SAME lens when the user crosses back. One
+  // field, two faces.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "left_column_lens_switch_crosses_workspaces");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeLinear);
+      // The View group is expanded by default; the combo is addressable without opening folds.
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ComboClick("Lens Type##view/Fisheye Equal Area");
+      ctx->SetRef("");
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeFisheyeEqualArea);
+      // The main view publishes the renderer's own view: the lens is the same on its picture.
+      IM_CHECK(gui::g_panorama_vp.active);
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.lens_type, gui::kLensTypeFisheyeEqualArea);
+
+      ctx->ItemClick("##TopBar/Render");
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeFisheyeEqualArea);
+      IM_CHECK(gui::g_preview_vp.active);
+      IM_CHECK_EQ(gui::g_preview_vp.params.view_proj.lens_type, gui::kLensTypeFisheyeEqualArea);
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeFisheyeEqualArea);
+    };
+  }
+
+  // The Simulation fold is the scene's render-budget entry, deliberately default-collapsed:
+  // opening it and editing a field for real writes the DOCUMENT (kModified), and nothing re-runs
+  // — the explicit Run contract keeps its shape (§3's "edits in place, runs on command").
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "simulation_fold_edits_in_place");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->Yield(2);
+      IM_CHECK_EQ((int)gui::g_state.sim_state, (int)gui::GuiState::SimState::kDone);
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      IM_CHECK(!ctx->ItemExists("##Rays(M)_input"));  // folded by default: the field is not submitted
+      ctx->ItemClick("Simulation");
+      ctx->Yield(2);
+      IM_CHECK(ctx->ItemExists("##Rays(M)_input"));
+      ctx->ItemInputValue("##Rays(M)_input", 7.5f);
+      ctx->SetRef("");
+      ctx->Yield(2);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.sim.ray_num_millions, 7.5f, 1e-3f);
+      IM_CHECK_EQ((int)gui::g_state.sim_state, (int)gui::GuiState::SimState::kModified);
+      IM_CHECK(!gui::g_state.analysis_run_in_progress);
+    };
+  }
+
   // AC2: the marker itself can be dragged. Hovering it shows the hand cursor; a press on it and a
   // move re-aim the centre to the direction under the cursor (LUMICE_UnprojectPixel on the
   // mouse's pixel — bit-identical, the drag transfers the inverse's output verbatim) while the

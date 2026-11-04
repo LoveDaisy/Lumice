@@ -720,8 +720,27 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     RenderCrystalList(g_state);
     ProcessEditRequest(g_state);
     ReopenEditorOnPickCompletion(g_state, pick_source_at_entry);
-    ImGui::SeparatorText("Scene");
-    RenderSceneControls(g_state);
+    // Scene editing, in place (analyze-interaction-contract.md §3): the Sun group expanded —
+    // the same controls Render's right panel hosts — and Simulation behind a DEFAULT-COLLAPSED
+    // fold, the render budget staying an in-place entry without flattening the column (its
+    // edits still ride the explicit Run contract: kModified, no automatic re-run).
+    RenderSunControls(g_state);
+    if (ImGui::CollapsingHeader("Simulation")) {
+      RenderSimulationControls(g_state);
+    }
+    // The observation groups — the Render right panel's View / Display / Overlay bodies through
+    // the same functions on the same fields (§3's display tier shares one source with Render).
+    // Lens and overlays are the everyday groups — expanded; brightness/colour folds. The folds
+    // are ImGui window storage, so a fold's open state survives within the session for free.
+    if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {
+      RenderViewControlsGroup(g_state);
+    }
+    if (ImGui::CollapsingHeader("Display")) {
+      RenderDisplayTimeControlsGroup(g_state);
+    }
+    if (ImGui::CollapsingHeader("Overlay", ImGuiTreeNodeFlags_DefaultOpen)) {
+      RenderOverlayControlsGroup(g_state);
+    }
   }
   ImGui::End();
 

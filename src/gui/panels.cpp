@@ -2238,9 +2238,10 @@ void ReopenEditorOnPickCompletion(GuiState& state, const std::optional<GuiState:
 }
 
 
-// ========== Scene Controls (rendered in the right panel Scene group) ==========
+// ========== Scene Controls (Render right panel's Scene group; the Analyze left column composes
+// the two segments itself, with Simulation default-collapsed) ==========
 
-void RenderSceneControls(GuiState& state) {
+void RenderSunControls(GuiState& state) {
   ImGui::SeparatorText("Sun");
   ImGui::BeginGroup();
   // AC2 migration path (scrum-gui-state-reconcile T0): widget only writes state.sun.altitude; the
@@ -2304,7 +2305,9 @@ void RenderSceneControls(GuiState& state) {
       OpenSpectrumModal(state);  // re-open editor for the existing custom spectrum
     }
   }
+}
 
+void RenderSimulationControls(GuiState& state) {
   ImGui::SeparatorText("Simulation");
   Checkbox(PanelLabel("sim.infinite").c_str(), &state.sim.infinite);
   if (ImGui::IsItemHovered()) {
@@ -2370,6 +2373,11 @@ void RenderSceneControls(GuiState& state) {
       ImGui::EndDisabled();
     }
   }
+}
+
+void RenderSceneControls(GuiState& state) {
+  RenderSunControls(state);
+  RenderSimulationControls(state);
 }
 
 }  // namespace lumice::gui

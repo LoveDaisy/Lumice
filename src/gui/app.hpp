@@ -731,6 +731,15 @@ void ClampRendererViewInvariants(RenderConfig& rc);
 // control) is what the host masks its click-on-hover gesture branches with.
 bool RenderDisplayModeControl();
 
+// ---- The shared observation control groups -------------------------------------------------------
+//
+// The Render right panel's View / Display(display-time) / Overlay group bodies, extracted so the
+// Analyze left column hosts the SAME controls on the SAME fields — one display-state source, one
+// editing semantics; same ids, different windows (the two workspaces never render in one frame).
+void RenderViewControlsGroup(GuiState& state);
+void RenderDisplayTimeControlsGroup(GuiState& state);
+void RenderOverlayControlsGroup(GuiState& state);
+
 // One frame of camera-orbit drag: the preview panel's drag body (UnlockLookAt, the DPI/FOV-
 // correct gain, the Globe sign flip, the azimuth wrap and the elevation clamp), shared with the
 // Analyze main view's camera arm. `delta_pt` is ImGui's MouseDelta for this frame; the viewport
