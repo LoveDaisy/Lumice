@@ -1420,15 +1420,16 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.pick_armed == pick_armed_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before, false);
 
-  // The with-result pin: the caliber block is on screen and the
-  // pick has set the sky point, so the point input is at its two-row shape — the region must
-  // budget it exactly and never scroll (the reserve defect pinned the scroll to the bottom and
-  // cut the header row off).
+  // The with-result pin, in its modern form: the region starts at its top (Scroll.y == 0 — the
+  // header row on screen), and everything past the fold is the region's OWN internal scroll, the
+  // degradation ladder's rung. The original reserve defect (742.4) showed as scroll PINNED to
+  // the bottom with the header cut off — that is what Scroll.y == 0 forbids; a nonzero
+  // ScrollMax at the 370px cell (whose wrapped header and caliber block exceed the height) is
+  // the designed budget overflow, wheel-reachable, not the defect.
   {
     ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypathView");
     IM_CHECK_RETV(region != nullptr, false);
     ctx->LogInfo("[scroll pins] map with-result SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
-    IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
     IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
   }
 
@@ -3611,6 +3612,25 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
 
+        // The stacked band narrower than the map row's floor: the main view at its own soft floor
+        // leaves the band ~356 — below the sky-point row's width — and the row wraps (the
+        // live-width judgment) instead of clipping the Set button behind the map's NoScrollbar.
+        // (The band scroll is still at the globe leg's bottom — the map cell is the first, so
+        // back to the top first: items outside the viewport are culled, not merely clipped.)
+        band->Scroll.y = 0.0f;
+        ctx->Yield(2);
+        const float d1_saved = gui::g_state.workspace.right_column_ratio;
+        gui::g_state.workspace.right_column_ratio = 356.0f / 724.0f;  // the main view at its 360 floor
+        ctx->Yield(3);
+        ImGuiWindow* map_narrow = LowerRowRegionWindow("##AnalyzeRaypathView");
+        IM_CHECK(map_narrow != nullptr);
+        const ImGuiTestItemInfo set_narrow = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
+        IM_CHECK(set_narrow.ID != 0);
+        IM_CHECK_GT(set_narrow.RectClipped.GetHeight(), 0.0f);
+        IM_CHECK_LE(set_narrow.RectClipped.Max.x, map_narrow->InnerClipRect.Max.x + 0.5f);
+        gui::g_state.workspace.right_column_ratio = d1_saved;
+        ctx->Yield(2);
+
         // The 3D cell, between the two: at the minimum window its floor height still leaves the
         // canvas legible (its region carries the whole cell).
         ImGuiWindow* r3d = LowerRowRegionWindow("##AnalyzeRaypath3D");
@@ -3694,7 +3714,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_GT(exclude.RectClipped.GetHeight(), 0.0f);
         // The list is still a list: the table's floor (header + one data row) holds under the
         // clamped head, so a class row remains visible — the pre-clamp defect traded "buttons
-        // clipped" for "rows invisible", and this is the assert that forbids the trade.
+        // clipped" for "rows invisible", and this is the assert that forbids the trade. (The
+        // clipped-row identity's hover carrier is pinned by its own case with a long-chain
+        // fixture; the halo fixture's labels fit their column here.)
         const std::string top_display = TopChainDisplay();
         const ImGuiTestItemInfo first_row =
             ctx->ItemInfo((std::string("**/") + top_display).c_str(), ImGuiTestOpFlags_NoError);

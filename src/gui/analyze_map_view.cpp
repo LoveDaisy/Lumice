@@ -1404,16 +1404,28 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   const ImGuiID az_key = ImGui::GetID("sky_input_az");
   float input_alt = sky_storage->GetFloat(alt_key, 0.0f);
   float input_az = sky_storage->GetFloat(az_key, 0.0f);
+  // The row wraps when the cell cannot hold it — the side-by-side cell is at its content floor
+  // and the stacked form can be narrower than that floor legitimately (the main view's own soft
+  // floor minus padding sits below the row's width), and this child never scrolls, so a forced
+  // SameLine would clip the Set button exactly where typing is the only way to name a target.
+  // Labeled widgets draw their label right of the frame, so each successor's footprint includes
+  // the label's own advance.
+  const float style_inner_x = ImGui::GetStyle().ItemInnerSpacing.x;
   ImGui::SetNextItemWidth(UiPx(90.0f));
   if (ImGui::InputFloat("alt°##sky", &input_alt, 0.0f, 0.0f, "%.1f")) {
     sky_storage->SetFloat(alt_key, input_alt);
   }
-  ImGui::SameLine();
+  if (fits_on_line(UiPx(90.0f) + style_inner_x + ImGui::CalcTextSize("az°").x)) {
+    ImGui::SameLine();
+  }
   ImGui::SetNextItemWidth(UiPx(90.0f));
   if (ImGui::InputFloat("az°##sky", &input_az, 0.0f, 0.0f, "%.1f")) {
     sky_storage->SetFloat(az_key, input_az);
   }
-  ImGui::SameLine();
+  const float set_w = ImGui::CalcTextSize("Set sky point").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  if (fits_on_line(set_w)) {
+    ImGui::SameLine();
+  }
   if (ImGui::SmallButton("Set sky point")) {
     float dir[3];
     AltAzToDir(input_alt, input_az, dir);
@@ -1423,18 +1435,28 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     intent.dir[1] = dir[1];
     intent.dir[2] = dir[2];
   }
-  ImGui::SameLine();
+  char status[128];
   if (intent.valid) {
     float alt = 0.0f;
     float az = 0.0f;
     DirToAltAz(intent.dir, &alt, &az);
-    ImGui::TextDisabled("sky point: alt %.2f° az %.2f° (%s)", alt, az,
-                        intent.from_map_pick ? "picked on the map" : "typed coordinates");
+    std::snprintf(status, sizeof(status), "sky point: alt %.2f° az %.2f° (%s)", alt, az,
+                  intent.from_map_pick ? "picked on the map" : "typed coordinates");
+  } else {
+    std::snprintf(status, sizeof(status), "no sky point set");
+  }
+  const float clear_w = ImGui::CalcTextSize("Clear##sky").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  if (fits_on_line(ImGui::CalcTextSize(status).x + (intent.valid ? style_inner_x + clear_w : 0.0f))) {
+    ImGui::SameLine();
+  }
+  ImGui::TextDisabled("%s", status);
+  if (intent.valid) {
+    if (fits_on_line(clear_w)) {
+      ImGui::SameLine();
+    }
     if (ImGui::SmallButton("Clear##sky")) {
       intent = SkyPointIntent{};
     }
-  } else {
-    ImGui::TextDisabled("no sky point set");
   }
 
   ImGui::EndChild();

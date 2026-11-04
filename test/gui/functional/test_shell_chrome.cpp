@@ -700,6 +700,14 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       share = ctx->GetWindowByRef("##AnalyzeShareList");
       IM_CHECK(share != nullptr);
       IM_CHECK_EQ(share->Size.x, floor_w);
+      // From the clamped layout the hand moves the boundary immediately: the delta accumulates
+      // from the DISPLAYED boundary (the stored ratio sits below the floor here), so a 30px drag
+      // widens the column by ~30 instead of crawling through the clamp band while the strip
+      // stands still.
+      drag("**/##AnalyzeColumnSplitter", -30.0f, 0.0f);
+      IM_CHECK_FLOAT_NEAR(share->Size.x, floor_w + 30.0f, 3.0f);
+      gui::g_state.workspace.right_column_ratio = d1_pinned;  // the drag wrote it; pin again
+      ctx->Yield(2);
       set_basis(gui::kInitWindowWidth, gui::kInitWindowHeight);
 
       // D2 down: the diagnostics region shrinks; D1 stays exactly where the pin left it, the

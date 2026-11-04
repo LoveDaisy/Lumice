@@ -1560,6 +1560,16 @@ bool AnalysisActionButtonsStack(float avail_w) {
   return avail_w < exclude_w + style.ItemSpacing.x + csv_w;
 }
 
+// A row's label clipped by its submitting column: SpanAllColumns widens the hit area, not the
+// drawn text, so at a narrow right column the class identity cuts off mid-chain — the row
+// carries its full label on hover instead (the columns' wrap policy is the implementation's
+// freedom; the identity itself is not optional).
+void RowLabelTextTooltip(const std::string& label) {
+  if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label.c_str()).x > ImGui::GetColumnWidth(-1)) {
+    ImGui::SetTooltip("%s", label.c_str());
+  }
+}
+
 // The result table's floor: the frozen header row plus ONE data row — the least the table can
 // show while still being the list (the "at least one row" the layout slice promises). The head's
 // clamp budget (RenderAnalysisPanelBody) and the table's own yield floor read this same bound,
@@ -1653,6 +1663,7 @@ void RenderResultList(GuiState& state) {
     if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
       state.analysis.selected_entry = std::string(e.display);
     }
+    RowLabelTextTooltip(label);
     // The row rect, captured before the copy menu (an open popup's MenuItems would overwrite
     // the last-item rect the overlay below needs).
     const ImVec2 row_rect_min = ImGui::GetItemRectMin();
@@ -1736,6 +1747,7 @@ void RenderResultList(GuiState& state) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
     ImGui::PopStyleColor();
+    RowLabelTextTooltip(label);
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Excluded by filter \"%s\" on this crystal. Not in this result; the Energy cell is the\n"

@@ -132,7 +132,11 @@ void MiddleRowsSplitter(const char* id, float width, float* ratio, float area_h)
   const bool active = ImGui::IsItemActive();
   const float mouse_dy = ImGui::GetIO().MouseDelta.y;
   if (active && mouse_dy != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    *ratio = std::clamp(*ratio + mouse_dy / area_h, 0.15f, 0.85f);
+    // The delta accumulates from the DISPLAYED boundary — the stored ratio after the same clamp
+    // the layout applies — never from the raw stored value: at a window too narrow for the band
+    // the two differ, and a raw write would spend the first stretch of the drag crawling through
+    // the clamp band while the strip visibly stands still.
+    *ratio = std::clamp(std::clamp(*ratio, 0.15f, 0.85f) + mouse_dy / area_h, 0.15f, 0.85f);
   }
   if (hovered || active) {
     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
@@ -160,11 +164,15 @@ void RightColumnSplitter(const char* id, float height, float* ratio, float area_
   const bool active = ImGui::IsItemActive();
   const float mouse_dx = ImGui::GetIO().MouseDelta.x;
   if (active && mouse_dx != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    *ratio -= mouse_dx / area_w;
+    // Delta from the displayed boundary (see MiddleRowsSplitter): at a window whose layout is
+    // clamped away from the stored ratio, a raw write makes the first stretch of the drag dead
+    // while the strip stands still.
     const float right_floor = UiPx(kAnalyzeRightColMinWidth);
     const float main_floor = UiPx(kAnalyzeMainViewMinWidth);
+    const float raw =
+        std::clamp(*ratio, right_floor / area_w, (area_w - width - main_floor) / area_w) - mouse_dx / area_w;
     if (area_w >= right_floor + main_floor + width) {
-      *ratio = std::clamp(*ratio, right_floor / area_w, (area_w - width - main_floor) / area_w);
+      *ratio = std::clamp(raw, right_floor / area_w, (area_w - width - main_floor) / area_w);
     } else {
       // Both floors cannot fit: the contract's ③ split is the only reachable one, so the ratio
       // pins to it while the window is this narrow.
@@ -193,11 +201,13 @@ void RightRowsSplitter(const char* id, float width, float* ratio, float area_h) 
   const bool active = ImGui::IsItemActive();
   const float mouse_dy = ImGui::GetIO().MouseDelta.y;
   if (active && mouse_dy != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    *ratio += mouse_dy / area_h;
+    // Delta from the displayed boundary (see MiddleRowsSplitter).
     const float list_floor = UiPx(kAnalyzeShareListMinHeight);
     const float details_floor = UiPx(kAnalyzeDetailsMinHeight);
+    const float raw =
+        std::clamp(*ratio, list_floor / area_h, (area_h - height - details_floor) / area_h) + mouse_dy / area_h;
     if (area_h >= list_floor + details_floor + height) {
-      *ratio = std::clamp(*ratio, list_floor / area_h, (area_h - height - details_floor) / area_h);
+      *ratio = std::clamp(raw, list_floor / area_h, (area_h - height - details_floor) / area_h);
     } else {
       *ratio = list_floor / (list_floor + details_floor);
     }
