@@ -1428,8 +1428,30 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   if (legend_h_cache <= 0.0f) {
     legend_h_cache = ImGui::GetTextLineHeight();  // the first frame's honest default: one line
   }
+  // The floor is PREFERRED, not absolute. At the row ratio's endpoints the stacked host's own
+  // visible slice is shorter than the floor (1024x640 at rows 0.85 leaves the band ~78px; 2x
+  // halves the logical numbers again), and a canvas taller than its host's visible height can
+  // never sit fully inside the ancestors' clips — the "exists but unrecoverable" shape the
+  // four-edge containment probe caught. So the floor yields to the host's visible height, the
+  // content ladder's last rung (compress the graphic area itself), and still never to zero:
+  // whatever remains of the slice is a real, fully-recoverable orbit. Both caps are
+  // scroll-invariant on purpose: this region's own viewport (Size, not the ancestor-cropped
+  // clip — that one shrinks and grows with where the band's slice happens to sit, and a cap
+  // fed by the scroll it shapes would rescale the canvas under the user's hand), and the
+  // band's own clip (a top-level window, cropped by nothing above it). The vertical scrollbar
+  // deducts width, not height, so neither cap feeds back into itself.
+  const ImGuiWindow* region_win = ImGui::GetCurrentWindow();
+  float host_cap = FLT_MAX;
+  if (region_win->ParentWindow != nullptr) {
+    // One WindowPadding comes off the band's clip: this region's content begins one padding
+    // below the cell's top, so a canvas that spent the band's whole clip height would poke
+    // that much past the clip's bottom before any scroll could raise it.
+    host_cap = std::min(region_win->Size.y - ImGui::GetStyle().WindowPadding.y * 2.0f,
+                        region_win->ParentWindow->InnerClipRect.GetHeight() - ImGui::GetStyle().WindowPadding.y);
+  }
   const float canvas_floor = UiPx(110.0f);  // the compressed-yield floor: a draggable orbit at every width
-  const float canvas_h = std::max(canvas_floor, avail.y - ImGui::GetStyle().ItemSpacing.y - legend_h_cache);
+  const float canvas_h = std::max(
+      0.0f, std::min(std::max(avail.y - ImGui::GetStyle().ItemSpacing.y - legend_h_cache, canvas_floor), host_cap));
   bool canvas_hovered = false;
   if (canvas_h > 0.0f) {
     const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);

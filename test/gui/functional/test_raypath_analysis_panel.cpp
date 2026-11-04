@@ -4119,34 +4119,71 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
         }
       }
       IM_CHECK_RETV(r3d_t != nullptr, false);
-      // The band shows the cell's CANVAS band, not its top: the region's fixed head at this
-      // tier is ~440px tall and the band's visible slice is shorter than that — the canvas
-      // would sit below the slice and the registry would not report it.
-      const float r3d_top_in_band_t = r3d_t->Pos.y - band_e->Pos.y + band_e->Scroll.y;
-      band_e->Scroll.y = std::min(r3d_top_in_band_t + 400.0f, band_e->ScrollMax.y);
-      ctx->Yield(2);
-      r3d_t->Scroll.y = 0.0f;
-      ctx->Yield(2);
-      // The 1024 block's sky-point Set issued a fresh point intent (a Set always does), so the
-      // "completed results already adopted" premise only holds again after the engine answers
-      // it — the 3D region shows its waiting placeholder until then. Wait for the canvas: its
-      // existence is the leg's real precondition and subsumes point adopted + trace drawn.
+      r3d_t->Scroll.y = 0.0f;  // a known region scroll: the framing below reads content offsets
+      // Coarse-seek + wait in one loop. The seek target comes from the layout constants — the
+      // stacked band's cells run map (370pt) + spacing + 3D — because a culled window's Pos is
+      // whatever it was the last frame it rendered, and aiming a scroll at a stale Pos lands
+      // the slice back on cells that never submitted (the wait would then spin on a canvas
+      // that cannot register). Re-aiming every attempt is idempotent once it lands.
       IM_CHECK_RETV(DriveUntil(
-                        ctx, [ctx] { return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0; }, 30),
+                        ctx,
+                        [ctx, band_e] {
+                          const float cell_top =
+                              gui::UiPx(gui::kAnalyzeDepthMapMinSize) + ImGui::GetStyle().ItemSpacing.y;
+                          band_e->Scroll.y = std::min(cell_top + 400.0f, band_e->ScrollMax.y);
+                          return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0;
+                        },
+                        30),
                     false);
+      // Frame the canvas WHOLE through both nested viewports: the region scrolls to the
+      // canvas's own band, then the host scrolls that band into its slice. The product caps the
+      // canvas at the binding clip (the smaller of region clip and band slice), so a top-aligned
+      // position shows all of it — and the four-edge containment below is the recovery's
+      // receipt, not a hope (the review's probe caught the old form passing with 29px of a
+      // 220px canvas showing).
+      const ImGuiTestItemInfo found_t = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
+      IM_CHECK_RETV(found_t.ID != 0, false);
+      const float canvas_top_in_region = found_t.RectFull.Min.y - r3d_t->Pos.y + r3d_t->Scroll.y;
+      const float cell_top_in_band = r3d_t->Pos.y - band_e->Pos.y + band_e->Scroll.y;
+      // Region first, band second — the band's aim reads the region scroll that actually
+      // landed: the region's own scroll moves the canvas WITHIN the cell's rectangle, but a
+      // region whose content already fits cannot scroll at all (SM 0 clamps the write), and
+      // aiming the band at an unapplied scroll misses by exactly that amount.
+      const float region_scroll_request_t = std::max(0.0f, canvas_top_in_region - ImGui::GetStyle().WindowPadding.y);
+      r3d_t->Scroll.y = region_scroll_request_t;
+      ctx->Yield(2);
+      const float region_scroll_t = r3d_t->Scroll.y;  // the clamped, actually-applied value
+      const float canvas_top_in_band = cell_top_in_band + (canvas_top_in_region - region_scroll_t);
+      band_e->Scroll.y = std::clamp(canvas_top_in_band - ImGui::GetStyle().WindowPadding.y, 0.0f, band_e->ScrollMax.y);
+      ctx->Yield(2);
       const ImGuiTestItemInfo r3d_canvas_t = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
       IM_CHECK_RETV(r3d_canvas_t.ID != 0, false);
-      IM_CHECK_RETV(r3d_canvas_t.RectFull.Max.x <= r3d_t->InnerClipRect.Max.x + 0.5f &&
-                        r3d_canvas_t.RectFull.Min.y >= r3d_t->InnerClipRect.Min.y - 0.5f,
+      // The recovery receipt: the whole rectangle inside the region's clip AND inside the
+      // band's slice — all four edges each, the X5 form both levels of ancestors owe.
+      IM_CHECK_RETV(r3d_canvas_t.RectFull.Min.x >= r3d_t->InnerClipRect.Min.x - 0.5f &&
+                        r3d_canvas_t.RectFull.Max.x <= r3d_t->InnerClipRect.Max.x + 0.5f &&
+                        r3d_canvas_t.RectFull.Min.y >= r3d_t->InnerClipRect.Min.y - 0.5f &&
+                        r3d_canvas_t.RectFull.Max.y <= r3d_t->InnerClipRect.Max.y + 0.5f,
                     false);
+      IM_CHECK_RETV(r3d_canvas_t.RectFull.Min.x >= band_e->InnerClipRect.Min.x - 0.5f &&
+                        r3d_canvas_t.RectFull.Max.x <= band_e->InnerClipRect.Max.x + 0.5f &&
+                        r3d_canvas_t.RectFull.Min.y >= band_e->InnerClipRect.Min.y - 0.5f &&
+                        r3d_canvas_t.RectFull.Max.y <= band_e->InnerClipRect.Max.y + 0.5f,
+                    false);
+      ctx->LogInfo("[scale tiers 1024 clamped] canvas recovered whole: h %.0f in region clip h %.0f, band slice h %.0f",
+                   static_cast<double>(r3d_canvas_t.RectFull.GetHeight()),
+                   static_cast<double>(r3d_t->InnerClipRect.GetHeight()),
+                   static_cast<double>(band_e->InnerClipRect.GetHeight()));
       // The legend's runaway-wrap pin, decomposed (the review's own control experiment: the
       // pre-fix wrap-at-a-sliver measured the legend at 1146px where a sane wrap gives 192):
       // the legend's height is the region's content minus the head above the canvas and the
       // canvas itself — at this tier the fixed head (title, radios and the usage paragraph at
       // 184px×2x) legitimately dwarfs the cell and the region scrolls, so the WHOLE region's
-      // ScrollMax is not the legend's proxy; the legend itself is what the bound pins.
+      // ScrollMax is not the legend's proxy; the legend itself is what the bound pins. The
+      // head reads from the canvas's CONTENT offset, not its screen rect: the framing above
+      // deliberately put the canvas at the viewport top, which scrolled the head out of view.
       const float content_h = r3d_t->ScrollMax.y + r3d_t->Size.y;
-      const float head_h = r3d_canvas_t.RectFull.Min.y - r3d_t->Pos.y - ImGui::GetStyle().WindowPadding.y;
+      const float head_h = canvas_top_in_region - ImGui::GetStyle().WindowPadding.y;
       const float legend_h =
           content_h - head_h - r3d_canvas_t.RectFull.GetHeight() - ImGui::GetStyle().ItemSpacing.y * 2.0f;
       ctx->LogInfo(
@@ -4412,6 +4449,93 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(symmetry_drive(head_f, "D", gui::g_state.analysis.symmetry_d), false);
       ctx->LogInfo("[scale tiers 1024 1.5x] symmetry toggles flip and revert at the second band width");
     }
+  }
+
+  // The review's other kill geometry: the row ratio's 0.85 endpoint at a 640px-high window.
+  // The band's outer height drops to ~78px — below the canvas floor's 110pt — and before the
+  // cap existed, the floor made full containment geometrically impossible there no matter how
+  // anything scrolled. Completed state carries over (this test's own premise), so the canvas
+  // must exist, be framed whole through both viewports, and answer a real orbit drag.
+  IM_CHECK_RETV(set_scale(1.0f), false);
+  IM_CHECK_RETV(set_basis(1024, 640), false);
+  {
+    const float rows_saved_640 = gui::g_state.workspace.middle_rows_ratio;
+    gui::g_state.workspace.middle_rows_ratio = 0.85f;
+    ctx->Yield(4);
+    ImGuiWindow* r3d_640 = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypath3D") != nullptr) {
+        r3d_640 = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(r3d_640 != nullptr, false);
+    ImGuiWindow* band_640 = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+    IM_CHECK_RETV(band_640 != nullptr, false);
+    r3d_640->Scroll.y = 0.0f;  // a known region scroll, as at the 1024 block
+    // Adaptive seek + wait in one loop: the slice here is ~78px, so no fixed aim lands the
+    // canvas band at every scale — the probe cycles the cell's span instead (each attempt one
+    // step down the cell; the completed state's own recompute resolves meanwhile). The counter
+    // is a local captured by reference, not a static: a static would leak the scan phase into
+    // the pool's next run of this test.
+    int scan_640 = 0;
+    IM_CHECK_RETV(DriveUntil(
+                      ctx,
+                      [ctx, band_640, &scan_640] {
+                        const float cell_top_640 =
+                            gui::UiPx(gui::kAnalyzeDepthMapMinSize) + ImGui::GetStyle().ItemSpacing.y;
+                        const float step_640 = std::max(20.0f, band_640->Size.y / 4.0f);
+                        band_640->Scroll.y = std::min(cell_top_640 + static_cast<float>(scan_640++ % 16) * step_640,
+                                                      band_640->ScrollMax.y);
+                        return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0;
+                      },
+                      30),
+                  false);
+    const ImGuiTestItemInfo found_640 = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(found_640.ID != 0, false);
+    const float canvas_top_region_640 = found_640.RectFull.Min.y - r3d_640->Pos.y + r3d_640->Scroll.y;
+    const float cell_top_band_640 = r3d_640->Pos.y - band_640->Pos.y + band_640->Scroll.y;
+    // Region first, band second — the band's aim reads the region scroll that actually
+    // landed (a fitting region cannot scroll; SM 0 clamps the write to 0, the 1024 block's
+    // form with the read-back).
+    const float region_scroll_request_640 = std::max(0.0f, canvas_top_region_640 - ImGui::GetStyle().WindowPadding.y);
+    r3d_640->Scroll.y = region_scroll_request_640;
+    ctx->Yield(2);
+    const float region_scroll_640 = r3d_640->Scroll.y;  // the clamped, actually-applied value
+    const float canvas_top_band_640 = cell_top_band_640 + (canvas_top_region_640 - region_scroll_640);
+    band_640->Scroll.y =
+        std::clamp(canvas_top_band_640 - ImGui::GetStyle().WindowPadding.y, 0.0f, band_640->ScrollMax.y);
+    ctx->Yield(2);
+    const ImGuiTestItemInfo canvas_640 = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(canvas_640.ID != 0, false);
+    IM_CHECK_RETV(canvas_640.RectFull.Min.x >= r3d_640->InnerClipRect.Min.x - 0.5f &&
+                      canvas_640.RectFull.Max.x <= r3d_640->InnerClipRect.Max.x + 0.5f &&
+                      canvas_640.RectFull.Min.y >= r3d_640->InnerClipRect.Min.y - 0.5f &&
+                      canvas_640.RectFull.Max.y <= r3d_640->InnerClipRect.Max.y + 0.5f,
+                  false);
+    IM_CHECK_RETV(canvas_640.RectFull.Min.x >= band_640->InnerClipRect.Min.x - 0.5f &&
+                      canvas_640.RectFull.Max.x <= band_640->InnerClipRect.Max.x + 0.5f &&
+                      canvas_640.RectFull.Min.y >= band_640->InnerClipRect.Min.y - 0.5f &&
+                      canvas_640.RectFull.Max.y <= band_640->InnerClipRect.Max.y + 0.5f,
+                  false);
+    const float yaw_640 = gui::g_state.analysis.point_view.orbit_yaw_deg;
+    const ImVec2 center_640 = canvas_640.RectFull.GetCenter();
+    ctx->MouseMoveToPos(center_640);
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(center_640.x + 14.0f, center_640.y));
+    ctx->Yield(3);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_yaw_deg != yaw_640, false);
+    ctx->LogInfo(
+        "[scale tiers 640 at rows 0.85] canvas h %.0f whole in region clip h %.0f and band slice h %.0f; orbit "
+        "drag moved yaw",
+        static_cast<double>(canvas_640.RectFull.GetHeight()), static_cast<double>(r3d_640->InnerClipRect.GetHeight()),
+        static_cast<double>(band_640->InnerClipRect.GetHeight()));
+    gui::g_state.workspace.middle_rows_ratio = rows_saved_640;
+    ctx->Yield(2);
   }
 
   // Restore: the factory scale, settled, then the inline basis restore (the 1280x800 leg's
