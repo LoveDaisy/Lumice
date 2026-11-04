@@ -383,6 +383,12 @@ std::string WaitActivityDotsFor(double elapsed_s);
 // The dots' rotation period in seconds — the cycle the animation steps through (1 → 2 → 3 → 1).
 inline constexpr double kWaitActivityDotsPeriodSeconds = 0.4;
 
+// The narrow-column reading contract's hover half (§14's wrap-policy freedom): a row whose label
+// its submitting column clipped carries the full label on hover. Call right after the row's
+// Selectable — it reads the last item's rect against the column width. The table rows and the
+// details block's component rows are the same fact twice, not two facts: one implementation.
+void RowLabelTextTooltip(const std::string& label);
+
 // The exclusion itself, on an eligible selection, reaching every entry that uses the chain's
 // crystal (the histogram counted it wherever it was used). Entries with no filter get one: a
 // filter_out filter on the chain's face sequence, symmetric under the bits the list on show was

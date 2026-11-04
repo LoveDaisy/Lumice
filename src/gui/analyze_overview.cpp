@@ -548,9 +548,14 @@ namespace {
 
 // One labeled degree: the block texts keep three decimals, the unit is part of the number.
 void TextDeg(const char* label, double deg) {
-  ImGui::Text("%s %s", label, FormatDeg(deg).c_str());
+  ImGui::TextWrapped("%s %s", label, FormatDeg(deg).c_str());
 }
 
+// The region's text wraps, never clips: ImGui's Text/TextDisabled/BulletText size a single line
+// and clip at the region's right edge — exactly where a sentence gets interesting at the right
+// column's 260 pt floor (the screenshot that caught this reads "...certified by the closed-form
+// minimu"). DisabledWrapped is the color pair by hand (no DisabledTextWrapped in ImGui); a
+// wrapping bullet is the Bullet()+TextWrapped pair.
 void DisabledWrapped(const char* fmt, ...) {
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
   va_list args;
@@ -570,9 +575,10 @@ void DispersionBlock(const SurveyDispersionView& d) {
   if (!d.min_row_available) {
     DisabledWrapped("No minimum-deviation fold in this class — the followed onsets are the positional facts.");
   } else {
-    ImGui::Text("%s inner edge %s — %s %s", d.red_label.c_str(), FormatDeg(d.value_red_deg).c_str(),
-                d.blue_label.c_str(), FormatDeg(d.value_blue_deg).c_str());
-    ImGui::Text("Displacement %s (%s).", FormatDeg(d.displacement_deg).c_str(), DirectionProse(d.direction).c_str());
+    ImGui::TextWrapped("%s inner edge %s — %s %s", d.red_label.c_str(), FormatDeg(d.value_red_deg).c_str(),
+                       d.blue_label.c_str(), FormatDeg(d.value_blue_deg).c_str());
+    ImGui::TextWrapped("Displacement %s (%s).", FormatDeg(d.displacement_deg).c_str(),
+                       DirectionProse(d.direction).c_str());
     DisabledWrapped("Refractive indices n(%s) = %.4f, n(%s) = %.4f — the engine's dispersion table at this pair.",
                     d.red_label.c_str(), d.n_red, d.blue_label.c_str(), d.n_blue);
   }
@@ -582,9 +588,10 @@ void DispersionBlock(const SurveyDispersionView& d) {
         // ASCII spellings throughout: the body font's glyph ranges carry Latin plus the
         // punctuation block only (theme.cpp), so Greek deltas, math relations and arrows would
         // rasterize to "?" — the same fact that gave the analysis list its icon joiner.
-        ImGui::BulletText("%s/%s: %s to %s (shift %s, %s)", row.source.c_str(), row.profile.c_str(),
-                          FormatDeg(row.value_red_deg).c_str(), FormatDeg(row.value_blue_deg).c_str(),
-                          FormatDeg(row.displacement_deg).c_str(), DirectionProse(row.direction).c_str());
+        ImGui::Bullet();
+        ImGui::TextWrapped("%s/%s: %s to %s (shift %s, %s)", row.source.c_str(), row.profile.c_str(),
+                           FormatDeg(row.value_red_deg).c_str(), FormatDeg(row.value_blue_deg).c_str(),
+                           FormatDeg(row.displacement_deg).c_str(), DirectionProse(row.direction).c_str());
       }
       ImGui::TreePop();
     }
@@ -607,8 +614,8 @@ void DiagnoseBlock(const SurveyDiagnoseView& dg) {
   if (!ImGui::CollapsingHeader(header)) {
     return;
   }
-  ImGui::Text("Verdict: %s, %s, %s.", dg.verdict_kind.c_str(), dg.color.c_str(),
-              dg.visible ? "visible" : "not visible");
+  ImGui::TextWrapped("Verdict: %s, %s, %s.", dg.verdict_kind.c_str(), dg.color.c_str(),
+                     dg.visible ? "visible" : "not visible");
   if (dg.position_available) {
     TextDeg("Position:", dg.position_deg);
   }
@@ -636,15 +643,15 @@ void ProbeBlock(const SurveyProbeView& p) {
     return;
   }
   if (p.edge_available) {
-    ImGui::Text("Edge %s", FormatDeg(p.edge_deg).c_str());
+    ImGui::TextWrapped("Edge %s", FormatDeg(p.edge_deg).c_str());
   }
   if (p.peak_available) {
-    ImGui::Text("Peak %s", FormatDeg(p.peak_deg).c_str());
+    ImGui::TextWrapped("Peak %s", FormatDeg(p.peak_deg).c_str());
   }
   if (p.separation_available) {
-    ImGui::Text("Peak–edge separation %s", FormatDeg(p.separation_deg).c_str());
+    ImGui::TextWrapped("Peak–edge separation %s", FormatDeg(p.separation_deg).c_str());
   }
-  ImGui::Text("%lld kept lattice events.", static_cast<long long>(p.kept_count));
+  ImGui::TextWrapped("%lld kept lattice events.", static_cast<long long>(p.kept_count));
   if (p.sample_delta_deg.size() < 2) {
     return;
   }
@@ -710,7 +717,7 @@ void TintBlock(const SurveyTintView& tint, SurveyArm arm) {
     DisabledWrapped("No reading (%s).", SurveyStateName(tint.state));
     return;
   }
-  ImGui::Text("Blue/red ratio %.3f — %s.", tint.ratio, DirectionProse(tint.direction).c_str());
+  ImGui::TextWrapped("Blue/red ratio %.3f — %s.", tint.ratio, DirectionProse(tint.direction).c_str());
   if (!tint.caliber.empty()) {
     DisabledWrapped("Caliber: %s", tint.caliber.c_str());
   }
@@ -724,8 +731,8 @@ void WitnessBlock(const SurveyWitnessView& w) {
     DisabledWrapped("No readable witness value.");
     return;
   }
-  ImGui::Text("Positive events kept: %lld of %lld lattice samples (max kept weight %.4g).",
-              static_cast<long long>(w.kept_count), static_cast<long long>(w.sample_count), w.weight);
+  ImGui::TextWrapped("Positive events kept: %lld of %lld lattice samples (max kept weight %.4g).",
+                     static_cast<long long>(w.kept_count), static_cast<long long>(w.sample_count), w.weight);
   DisabledWrapped("Read on the declared source's own lattice — independent of the refused delta axis.");
 }
 
@@ -741,8 +748,8 @@ void TirBlock(const SurveyTirView& tir) {
     }
     return;
   }
-  ImGui::Text("All-TIR share %.3f (red) / %.3f (blue) across %zu interface(s).", tir.share_all_tir_red,
-              tir.share_all_tir_blue, tir.interface_count);
+  ImGui::TextWrapped("All-TIR share %.3f (red) / %.3f (blue) across %zu interface(s).", tir.share_all_tir_red,
+                     tir.share_all_tir_blue, tir.interface_count);
 }
 
 void FamilyBlock(const SurveyFamilyView& family) {
@@ -753,8 +760,9 @@ void FamilyBlock(const SurveyFamilyView& family) {
     DisabledWrapped("Ladder refused at level 0 (%s).", family.refusal_mode.c_str());
   }
   for (const SurveyFamilyLevelView& level : family.levels) {
-    ImGui::BulletText("L%d — %d sample(s), %d valid, %d proposed, %d killed by the survival filter.", level.level,
-                      level.samples, level.valid_samples, level.objects_proposed, level.objects_killed);
+    ImGui::Bullet();
+    ImGui::TextWrapped("L%d — %d sample(s), %d valid, %d proposed, %d killed by the survival filter.", level.level,
+                       level.samples, level.valid_samples, level.objects_proposed, level.objects_killed);
     if (!level.frozen_dims.empty()) {
       std::string frozen = "frozen: ";
       for (const std::string& dim : level.frozen_dims) {
@@ -796,7 +804,8 @@ void ObjectsBlock(const SurveyOverviewModel& model) {
       std::snprintf(blur, sizeof(blur), ", blur %s", FormatDeg(row.blur_deg).c_str());
       label += blur;
     }
-    ImGui::BulletText("%s", label.c_str());
+    ImGui::Bullet();
+    ImGui::TextWrapped("%s", label.c_str());
     if (!row.reason.empty()) {
       DisabledWrapped("%s", row.reason.c_str());
     }
@@ -813,9 +822,10 @@ void RenderSurveyOverviewModel(const SurveyOverviewModel& model) {
     ImGui::TextUnformatted("Survey document unreadable.");
     return;
   }
-  ImGui::BulletText("%s — %zu member(s), %zu object(s), budget %d ms%s", SurveyOutcomeName(model.execution),
-                    model.member_count, model.object_count, model.budget_ms,
-                    model.early_stopped ? ", early-stopped" : "");
+  ImGui::Bullet();
+  ImGui::TextWrapped("%s — %zu member(s), %zu object(s), budget %d ms%s", SurveyOutcomeName(model.execution),
+                     model.member_count, model.object_count, model.budget_ms,
+                     model.early_stopped ? ", early-stopped" : "");
   {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     if (model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED || model.early_stopped) {

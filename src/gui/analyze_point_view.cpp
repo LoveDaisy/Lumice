@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <map>
 #include <utility>
 
 #include "app.hpp"                  // g_survey_executor — the cancel button reaches the one executor
+#include "gui/analysis_panel.hpp"   // RowLabelTextTooltip — the component rows' hover identity
 #include "gui/crystal_preview.hpp"  // CrystalParamHash — the mesh cache's change key
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
@@ -27,6 +29,18 @@ std::string PathTextToString(const LUMICE_PathText& text) {
     return std::string();
   }
   return std::string(text.data, text.length);
+}
+
+// The regions' text wraps, never clips: the cells' widths run from the side-by-side floors down
+// to the ③ split, below several of these lines' full extent, and ImGui's TextDisabled sizes one
+// clipped line (no DisabledTextWrapped exists; the color pair is by hand).
+void DisabledWrappedText(const char* fmt, ...) {
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+  va_list args;
+  va_start(args, fmt);
+  ImGui::TextWrappedV(fmt, args);
+  va_end(args);
+  ImGui::PopStyleColor();
 }
 
 // A trace end's display words: the status verbatim, the reason in parentheses when the engine
@@ -772,9 +786,20 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   ImGui::BeginChild("##AnalyzeSunGlobe", size, ImGuiChildFlags_Borders);
   PointQuerySession& point = state.analysis.point;
   PointViewState& view = state.analysis.point_view;
+  // SameLine is a judgment, not a default (the map region's rule): the side-by-side cell sits at
+  // its own content floor, the stacked form can be narrower, and a clipped toggle or readout is
+  // an unreachable fact — successors wrap when the line cannot hold them.
+  const auto fits_on_line = [&](float next_w) {
+    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
+  };
 
   ImGui::TextUnformatted("Sun direction globe");
-  ImGui::SameLine();
+  const float dev_grid_w =
+      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Deviation grid").x;
+  if (fits_on_line(dev_grid_w)) {
+    ImGui::SameLine();
+  }
   ImGui::Checkbox("Deviation grid##globe", &view.show_deviation_grid);
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
   ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
@@ -821,7 +846,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   // Completed. Either arm reads through the document's own Info.
   const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
   if (!info.has_value()) {
-    ImGui::TextDisabled("The adopted point document did not answer its Info reader.");
+    DisabledWrappedText("The adopted point document did not answer its Info reader.");
     ImGui::EndChild();
     return;
   }
@@ -889,7 +914,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
   const int valid_count = static_cast<int>(valid_indices.size());
   if (valid_count == 0) {
-    ImGui::TextDisabled("This component carries no valid sample — nothing to project.");
+    DisabledWrappedText("This component carries no valid sample — nothing to project.");
     ImGui::EndChild();
     return;
   }
@@ -992,7 +1017,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     }
   }
   if (!have_grid && view.show_deviation_grid) {
-    ImGui::TextDisabled("(no sun grid in this document — the backdrop is absent, not zero)");
+    DisabledWrappedText("(no sun grid in this document — the backdrop is absent, not zero)");
   }
 
   // The weight bar: the component's per-sample integrand (rho*A/a^2*T*K — the quantity the
@@ -1059,11 +1084,21 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   }
   if (const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
       current.has_value()) {
-    ImGui::SameLine();
-    ImGui::TextDisabled("sample %d/%d — zenith %.1f, az %.1f, roll %.1f%s",
-                        std::clamp(view.sample_index, 0, valid_count - 1) + 1, valid_count, current->sample.zenith_deg,
-                        current->sample.azimuth_deg, current->sample.roll_deg,
-                        current->sample.angles_degenerate != 0 ? " (degenerate)" : "");
+    char readout[128];
+    std::snprintf(readout, sizeof(readout), "sample %d/%d — zenith %.1f, az %.1f, roll %.1f%s",
+                  std::clamp(view.sample_index, 0, valid_count - 1) + 1, valid_count, current->sample.zenith_deg,
+                  current->sample.azimuth_deg, current->sample.roll_deg,
+                  current->sample.angles_degenerate != 0 ? " (degenerate)" : "");
+    if (fits_on_line(ImGui::CalcTextSize(readout).x)) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("%s", readout);
+    } else {
+      // The cursor readout wraps onto its own line rather than clip: the coordinates are the
+      // sample cursor's whole point.
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("%s", readout);
+      ImGui::PopStyleColor();
+    }
   }
   ImGui::EndChild();
 }
@@ -1076,12 +1111,25 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   PointQuerySession& point = state.analysis.point;
   RayTraceSession& trace = state.analysis.trace;
   PointViewState& view = state.analysis.point_view;
+  // SameLine is a judgment, not a default (the map region's rule): the frame radios' row exceeds
+  // the side-by-side cell at its arm boundary, and a clipped radio is an unreachable control.
+  const auto fits_on_line = [&](float next_w) {
+    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
+  };
 
   ImGui::TextUnformatted("Raypath 3D");
-  ImGui::SameLine();
   int frame = view.crystal_frame ? 1 : 0;
+  const auto radio_w = [&](const char* label) {
+    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+  };
+  if (fits_on_line(radio_w("World"))) {
+    ImGui::SameLine();
+  }
   ImGui::RadioButton("World##r3d", &frame, 0);
-  ImGui::SameLine();
+  if (fits_on_line(radio_w("Crystal"))) {
+    ImGui::SameLine();
+  }
   ImGui::RadioButton("Crystal##r3d", &frame, 1);
   view.crystal_frame = frame == 1;
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
@@ -1117,7 +1165,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   }
   const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
   if (!info.has_value()) {
-    ImGui::TextDisabled("The adopted point document did not answer its Info reader.");
+    DisabledWrappedText("The adopted point document did not answer its Info reader.");
     ImGui::EndChild();
     return;
   }
@@ -1142,7 +1190,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       *point.adopted_result, std::clamp(view.component_index, 0, static_cast<int>(info->component_count) - 1));
   const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
   if (!current.has_value()) {
-    ImGui::TextDisabled("No valid sample on show — nothing to draw.");
+    DisabledWrappedText("No valid sample on show — nothing to draw.");
     ImGui::EndChild();
     return;
   }
@@ -1152,11 +1200,11 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   current_key.sample = current->stored;
   switch (RayTraceDisplayStateFor(trace, current_key)) {
     case RayTraceDisplayState::kHidden:
-      ImGui::TextDisabled("No representative path asked for yet.");
+      DisabledWrappedText("No representative path asked for yet.");
       ImGui::EndChild();
       return;
     case RayTraceDisplayState::kComputing:
-      ImGui::TextDisabled("Computing the representative path for this sample…");
+      DisabledWrappedText("Computing the representative path for this sample…");
       ImGui::EndChild();
       return;
     case RayTraceDisplayState::kError:
@@ -1192,14 +1240,14 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   const std::map<int, int> core_to_pool = AnalysisCoreToPoolMap(state);
   const auto pool_it = core_to_pool.find(info->crystal_id);
   if (pool_it == core_to_pool.end() || pool_it->second < 0) {
-    ImGui::TextDisabled("The analyzed crystal is not in the snapshot's pool map — no mesh to draw it with.");
+    DisabledWrappedText("The analyzed crystal is not in the snapshot's pool map — no mesh to draw it with.");
     ImGui::EndChild();
     return;
   }
   const int pool = pool_it->second;
   const CrystalConfig* frozen = FrozenCrystalForPool(state, pool);
   if (frozen == nullptr) {
-    ImGui::TextDisabled("The frozen binding carries no crystal for this pool slot — no mesh to draw it with.");
+    DisabledWrappedText("The frozen binding carries no crystal for this pool slot — no mesh to draw it with.");
     ImGui::EndChild();
     return;
   }
@@ -1213,13 +1261,13 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     cache.valid = BuildPointCrystalMesh(*frozen, &cache.mesh);
   }
   if (!cache.valid || cache.mesh.vertex_count <= 0) {
-    ImGui::TextDisabled("The crystal mesh came back empty for this configuration.");
+    DisabledWrappedText("The crystal mesh came back empty for this configuration.");
     ImGui::EndChild();
     return;
   }
   RayTracePolyline line;
   if (!BuildRayTracePolyline(*trace.adopted_result, /*extension=*/1.1f, &line)) {
-    ImGui::TextDisabled("The path's readers answered empty — nothing to draw.");
+    DisabledWrappedText("The path's readers answered empty — nothing to draw.");
     ImGui::EndChild();
     return;
   }
@@ -1429,9 +1477,18 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   ImGui::SameLine();
   ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
   if (current->sample.interface_count >= 2) {
-    ImGui::SameLine();
-    ImGui::TextDisabled("face transmittance: entry %.3f, exit %.3f", current->sample.interface_transmittances[0],
-                        current->sample.interface_transmittances[current->sample.interface_count - 1]);
+    char transmittance[96];
+    std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",
+                  current->sample.interface_transmittances[0],
+                  current->sample.interface_transmittances[current->sample.interface_count - 1]);
+    if (fits_on_line(ImGui::CalcTextSize(transmittance).x)) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("%s", transmittance);
+    } else {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("%s", transmittance);
+      ImGui::PopStyleColor();
+    }
   }
   ImGui::EndChild();
 }
@@ -1502,7 +1559,7 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
   // Completed: the document's own echo first (the engine's words, AC1), then the arm.
   const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
   if (!info.has_value()) {
-    ImGui::TextDisabled("The adopted point document did not answer its Info reader.");
+    DisabledWrappedText("The adopted point document did not answer its Info reader.");
     return;
   }
   if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
@@ -1512,7 +1569,8 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
     ImGui::PopStyleColor();
   }
   for (const std::string& line_text : PointCaliberLines(*info)) {
-    ImGui::BulletText("%s", line_text.c_str());
+    ImGui::Bullet();
+    ImGui::TextWrapped("%s", line_text.c_str());
   }
 
   if (info->outcome == LUMICE_PATH_POINT_MASS) {
@@ -1520,9 +1578,10 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
     mass.struct_size = sizeof(mass);
     if (LUMICE_PathPointGetMass(point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK) {
       ImGui::Spacing();
-      ImGui::TextUnformatted("Rank-0 point mass (no fiber, no playback — the mass is the whole answer):");
+      ImGui::TextWrapped("Rank-0 point mass (no fiber, no playback — the mass is the whole answer):");
       for (const std::string& line_text : PointMassLines(mass)) {
-        ImGui::BulletText("%s", line_text.c_str());
+        ImGui::Bullet();
+        ImGui::TextWrapped("%s", line_text.c_str());
       }
     } else {
       ImGui::TextDisabled("The mass block did not answer its reader.");
@@ -1581,6 +1640,9 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
       view.sample_index = 0;
       view.playing = false;
     }
+    // The same reading contract as the share list's rows: the row is selectable, but the
+    // component's identity is the label — a clipped tail stays reachable on hover.
+    RowLabelTextTooltip(std::string(label));
   }
   const int component = std::clamp(view.component_index, 0, component_total - 1);
   {
@@ -1608,7 +1670,8 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
   }
   ImGui::SeparatorText("Current sample factors");
   for (const std::string& line_text : PointFactorLines(current->sample)) {
-    ImGui::BulletText("%s", line_text.c_str());
+    ImGui::Bullet();
+    ImGui::TextWrapped("%s", line_text.c_str());
   }
 }
 

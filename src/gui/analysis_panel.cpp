@@ -1334,7 +1334,10 @@ void RenderRequestParamsControls(GuiState& state) {
 
 // The persistent "you are in pick mode" line at the top of the window while a pick is armed. A
 // bordered child rather than a bare TextColored, so a test can find it by name — an ImGui text
-// item has no id of its own (ItemInfo cannot address it), a child window does.
+// item has no id of its own (ItemInfo cannot address it), a child window does. AutoResizeY, not
+// a fixed height: the line wraps at the right column's narrow widths, and a fixed frame-height
+// child would clip the wrapped tail — the armed-mode fact is the one thing the banner exists to
+// say.
 void RenderPickBanner(const GuiState& state) {
   if (!state.analysis.pick_armed) {
     return;
@@ -1342,11 +1345,11 @@ void RenderPickBanner(const GuiState& state) {
   ImGui::PushStyleColor(ImGuiCol_ChildBg, AccentColor(0.18f));
   ImGui::PushStyleColor(ImGuiCol_Border, AccentColor(0.9f));
   ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(1.0f));
-  const float h = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y;
-  if (ImGui::BeginChild("##pick_banner", ImVec2(0.0f, h), ImGuiChildFlags_Borders)) {
+  if (ImGui::BeginChild("##pick_banner", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY)) {
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(AccentColor(),
-                       ICON_FA_CROSSHAIRS " Click on the preview to set the centre  \xe2\x80\x94  Esc to cancel");
+    ImGui::PushStyleColor(ImGuiCol_Text, AccentColor());
+    ImGui::TextWrapped(ICON_FA_CROSSHAIRS " Click on the preview to set the centre  \xe2\x80\x94  Esc to cancel");
+    ImGui::PopStyleColor();
   }
   ImGui::EndChild();
   ImGui::PopStyleVar();
@@ -1392,13 +1395,14 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server) {
       DoStop();
     }
     PopDestructiveStyle();
-    ImGui::SameLine();
     LUMICE_RayCount rays = 0;
     if (server != nullptr) {
       LUMICE_GetSimRayCount(server, &rays);
     }
-    ImGui::TextColored(AccentColor(), "Analyzing (%s)... %s rays", RoiModeLabel(state.analysis.roi_mode),
+    ImGui::PushStyleColor(ImGuiCol_Text, AccentColor());
+    ImGui::TextWrapped("Analyzing (%s)... %s rays", RoiModeLabel(state.analysis.roi_mode),
                        FormatThousands(static_cast<std::uint64_t>(rays)).c_str());
+    ImGui::PopStyleColor();
   } else {
     ImGui::BeginDisabled(!can_start);
     PushGoodButtonStyle();
@@ -1421,13 +1425,24 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server) {
       ImGui::SetTooltip("%s", why);
     }
     if (state.analysis_result.payload) {
-      ImGui::SameLine();
+      // SameLine is a judgment, not a default: the readouts follow the Analyze button only while
+      // the line holds them, and drop to their own lines at the 260 pt floor — a clipped count
+      // is a miscounted list.
+      const float count_w = ImGui::CalcTextSize("00,000,000 raypaths (full sky)").x;
+      if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + count_w <=
+          ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+        ImGui::SameLine();
+      }
       ImGui::TextDisabled("%zu raypaths (%s)", state.analysis_result.payload->entries.size(),
                           RoiModeLabel(state.analysis_result.payload->roi_mode));
       // The record is bounded; when it cut something, say so where the row count is, so the
       // count above is not read as "every raypath there was".
       if (state.analysis_result.payload->truncated_chain_count > 0) {
-        ImGui::SameLine();
+        const float trunc_w = ImGui::CalcTextSize("; record full (000,000 hits)").x;
+        if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + trunc_w <=
+            ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+          ImGui::SameLine();
+        }
         ImGui::TextDisabled(
             "; record full (%s hits)",
             FormatThousands(static_cast<std::uint64_t>(state.analysis_result.payload->truncated_chain_count)).c_str());
@@ -1440,10 +1455,13 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server) {
       }
     }
     // The marker moved (a drag, a pick) since the result on show was asked for: the list is
-    // about the old centre. A hint only — Analyze stays the one way to re-run.
+    // about the old centre. A hint only — Analyze stays the one way to re-run. Wrapped: at the
+    // column floor the line exceeds the row the Analyze button left it on.
     if (ConeCenterDriftedFromResult(state)) {
-      ImGui::TextColored(WarningTextColor(), ICON_FA_TRIANGLE_EXCLAMATION
+      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+      ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
                          " Centre has moved \xe2\x80\x94 press Analyze to update the list.");
+      ImGui::PopStyleColor();
     }
   }
   // When the picture on screen is not of the document on the panels, say so here — a line of
@@ -1453,7 +1471,9 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server) {
   // banner's question (RenderListFreshnessBanner), and the two may show together — they answer
   // different questions.
   if (const char* notice = AnalysisPictureNotice(state.run_intent, state.sim_state)) {
-    ImGui::TextDisabled("%s", notice);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", notice);
+    ImGui::PopStyleColor();
   }
 }
 
@@ -1484,7 +1504,13 @@ void RenderRadiusSlider(GuiState& state) {
                           "The analysis always traces the whole cone; this picks the part the list sums.");
   }
   if (cone_result) {
-    ImGui::SameLine();
+    // The rings readout joins the slider only while the line holds both; it drops to its own
+    // line at the column floor rather than clip.
+    const float rings_w = ImGui::CalcTextSize("000 / 000 rings").x;
+    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + rings_w <=
+        ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+      ImGui::SameLine();
+    }
     ImGui::TextDisabled("%d / %d rings", state.analysis_result.display_ring_count, rings);
   }
 }
@@ -1513,9 +1539,17 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
   // session): say which bits it IS showing rather than let the checkboxes claim otherwise.
   const auto& payload = state.analysis_result.payload;
   if (payload && !payload->entries.empty() && state.analysis_result.entries_symmetry != AnalysisSymmetryBits(state)) {
-    ImGui::SameLine();
-    ImGui::TextColored(WarningTextColor(), ICON_FA_TRIANGLE_EXCLAMATION " List shows %s; analyze again to apply.",
-                       SymmetryBitsLabel(state.analysis_result.entries_symmetry).c_str());
+    // The mismatch note wraps onto its own line when the checkbox row cannot hold it — it is the
+    // one place the list's actual reduction is spelled, never a clipped tail.
+    const std::string note = std::string(ICON_FA_TRIANGLE_EXCLAMATION " List shows ") +
+                             SymmetryBitsLabel(state.analysis_result.entries_symmetry) + "; analyze again to apply.";
+    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(note.c_str()).x <=
+        ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+      ImGui::SameLine();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    ImGui::TextWrapped("%s", note.c_str());
+    ImGui::PopStyleColor();
   }
 }
 
@@ -1560,16 +1594,6 @@ bool AnalysisActionButtonsStack(float avail_w) {
   return avail_w < exclude_w + style.ItemSpacing.x + csv_w;
 }
 
-// A row's label clipped by its submitting column: SpanAllColumns widens the hit area, not the
-// drawn text, so at a narrow right column the class identity cuts off mid-chain — the row
-// carries its full label on hover instead (the columns' wrap policy is the implementation's
-// freedom; the identity itself is not optional).
-void RowLabelTextTooltip(const std::string& label) {
-  if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label.c_str()).x > ImGui::GetColumnWidth(-1)) {
-    ImGui::SetTooltip("%s", label.c_str());
-  }
-}
-
 // The result table's floor: the frozen header row plus ONE data row — the least the table can
 // show while still being the list (the "at least one row" the layout slice promises). The head's
 // clamp budget (RenderAnalysisPanelBody) and the table's own yield floor read this same bound,
@@ -1582,8 +1606,10 @@ float AnalysisTableMinHeight() {
 void RenderResultList(GuiState& state) {
   const auto& view = state.analysis_result;
   if (!view.payload) {
-    ImGui::TextDisabled(state.analysis_run_in_progress ? "Waiting for the first result..." :
-                                                         "No result yet. Choose a region and press Analyze.");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped(state.analysis_run_in_progress ? "Waiting for the first result..." :
+                                                        "No result yet. Choose a region and press Analyze.");
+    ImGui::PopStyleColor();
     return;
   }
   // The document's exclusions, read back as rows (ComputeExcludedRaypathRows): derived here,
@@ -1886,6 +1912,14 @@ void RenderActionButtons(GuiState& state) {
 
 }  // namespace
 
+// The reading contract's hover half — contract and commentary on the declaration in
+// analysis_panel.hpp; this is the one implementation both consumers share.
+void RowLabelTextTooltip(const std::string& label) {
+  if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label.c_str()).x > ImGui::GetColumnWidth(-1)) {
+    ImGui::SetTooltip("%s", label.c_str());
+  }
+}
+
 void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   // The analysis tool's sections, hosted by the Analyze workspace's share-list region — no
   // window of its own any more. The ROI controls live on the panorama side
@@ -1938,11 +1972,23 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
 
 void RenderPanoramaRoiControls(GuiState& state) {
   auto& a = state.analysis;
+  // SameLine is a judgment, not a default: the panorama region's width has no floor below the
+  // ③ split's share, where this row's full extent no longer fits — the radios wrap rather than
+  // clip (a clipped radio is a mode the user cannot reach).
+  const auto fits_on_line = [&](float next_w) {
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <=
+           ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+  };
+  const auto radio_w = [&](const char* label) {
+    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+  };
   ImGui::TextUnformatted("Region");
   ImGui::SameLine();
   const int prev_mode = a.roi_mode;
   ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-  ImGui::SameLine();
+  if (fits_on_line(radio_w("In frame"))) {
+    ImGui::SameLine();
+  }
   // "In frame" and "Point" are choices made against a picture of the document, so both radios
   // wait for the document to have shown one — the same predicate the Analyze button reads
   // (CanStartAnalysis), so the three cannot disagree on what "no picture yet" means. Not the
@@ -1957,7 +2003,9 @@ void RenderPanoramaRoiControls(GuiState& state) {
   if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("Needs a picture of this document: press Run once first.");
   }
-  ImGui::SameLine();
+  if (fits_on_line(radio_w("Point"))) {
+    ImGui::SameLine();
+  }
   ImGui::BeginDisabled(!has_picture);
   ImGui::RadioButton("Point", &a.roi_mode, LUMICE_RAYPATH_ROI_CONE);
   ImGui::EndDisabled();
@@ -2009,14 +2057,24 @@ void RenderPanoramaRoiControls(GuiState& state) {
                                    "Or drag the marker on the panorama directly." :
                                    "Needs a picture of this document to click on: press Run once first.");
     }
-    ImGui::SameLine();
+    char centre[96];
     if (a.cone_center_valid) {
       float alt = 0.0f;
       float az = 0.0f;
       DirToAltAz(a.cone_center_dir, &alt, &az);
-      ImGui::Text("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+      std::snprintf(centre, sizeof(centre), "Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
     } else {
-      ImGui::TextDisabled("No centre yet");
+      std::snprintf(centre, sizeof(centre), "No centre yet");
+    }
+    if (fits_on_line(ImGui::CalcTextSize(centre).x)) {
+      ImGui::SameLine();
+    }
+    if (a.cone_center_valid) {
+      ImGui::TextWrapped("%s", centre);
+    } else {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("%s", centre);
+      ImGui::PopStyleColor();
     }
   }
 }

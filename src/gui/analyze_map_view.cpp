@@ -1083,9 +1083,25 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   bool gesture_this_frame = false;
 
   // The header row: title, overlay toggle (pure render state — ImGui storage, R10), the
-  // wavelength control, and the two view buttons.
+  // wavelength control, and the two view buttons. SameLine is a judgment here, not a default:
+  // every successor joins the line only while it still fits — the stacked band form can be
+  // narrower than this row's full extent (the main view's ③ split), and a clipped toggle or
+  // slider is an unreachable control exactly where the map exists (the contract's
+  // content-adaptation default: wrap, don't clip).
+  // The judgment reads the LAST ITEM's right edge against the content region's right edge: after
+  // ItemSize commits a widget the cursor drops to the next line, so
+  // GetContentRegionAvail().x there would report the whole fresh line's width and every check
+  // would pass while the SameLine it guards still overflows.
+  const auto fits_on_line = [&](float next_w) {
+    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
+  };
   ImGui::TextUnformatted("Raypath view");
-  ImGui::SameLine();
+  const float overlays_w =
+      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Overlays").x;
+  if (fits_on_line(overlays_w)) {
+    ImGui::SameLine();
+  }
   ImGuiStorage* storage = ImGui::GetStateStorage();
   const ImGuiID overlay_key = ImGui::GetID("overlays");
   bool overlays = storage->GetBool(overlay_key, true);
@@ -1108,6 +1124,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (state.analysis.map_wavelength_nm > 0.0) {
     lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
   }
+  const float lambda_w = UiPx(140.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("λ").x;
+  if (fits_on_line(lambda_w)) {
+    ImGui::SameLine();
+  }
   ImGui::SetNextItemWidth(UiPx(140.0f));
   if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
@@ -1115,20 +1135,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (state.analysis.map_wavelength_nm > 0.0 && ImGui::SmallButton("reference##map_lambda")) {
     state.analysis.map_wavelength_nm = 0.0;
   } else if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
-    ImGui::TextDisabled("(the engine-chosen reference until a map echoes it)");
+    // Info text wraps, never clips: the fresh-line fallback below this row's slider can itself be
+    // wider than the cell at the ③ split.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("(the engine-chosen reference until a map echoes it)");
+    ImGui::PopStyleColor();
   }
   // The view buttons follow the wavelength on one line only while the row can hold them — the
   // side-by-side band cell is as wide as its content floor, and the completed state's header
   // (title, overlays, the slider, both buttons) is wider than that; a clipped view button makes
   // the map unsteerable exactly where the map exists, so the buttons wrap onto their own line
-  // instead. The judgment reads the LAST ITEM's right edge against the content region's right
-  // edge: after ItemSize commits a widget the cursor drops to the next line, so
-  // GetContentRegionAvail().x there would report the whole fresh line's width and every check
-  // would pass while the SameLine it guards still overflows.
-  const auto fits_on_line = [&](float next_w) {
-    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
-    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
-  };
+  // instead. The judgment is `fits_on_line` above.
   const float style_spacing_x = ImGui::GetStyle().ItemSpacing.x;
   const float fit_w = ImGui::CalcTextSize("Fit##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
   const float full_sky_w = ImGui::CalcTextSize("Full sky##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
@@ -1348,7 +1365,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       SkyPosition(anchor_info.sun_altitude_deg, anchor_info.sun_azimuth_deg, sun_pos);
       const double delta =
           std::acos(Clamp1(pos[0] * sun_pos[0] + pos[1] * sun_pos[1] + pos[2] * sun_pos[2])) * kRad2DegD;
-      ImGui::Text("cursor: alt %.2f° az %.2f° · δ %.2f° from the sun", alt, az, delta);
+      // Readouts wrap, never clip: this child never scrolls, and the ③ split's widths sit below
+      // this line's full extent.
+      ImGui::TextWrapped("cursor: alt %.2f° az %.2f° · δ %.2f° from the sun", alt, az, delta);
     }
   }
 
@@ -1446,10 +1465,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     std::snprintf(status, sizeof(status), "no sky point set");
   }
   const float clear_w = ImGui::CalcTextSize("Clear##sky").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  if (fits_on_line(ImGui::CalcTextSize(status).x + (intent.valid ? style_inner_x + clear_w : 0.0f))) {
+  const float status_w = ImGui::CalcTextSize(status).x + (intent.valid ? style_inner_x + clear_w : 0.0f);
+  if (fits_on_line(status_w)) {
     ImGui::SameLine();
+    ImGui::TextDisabled("%s", status);
+  } else {
+    // Fresh line, and wrapped: at the ③ split the status text alone exceeds the cell, and a
+    // single-line TextDisabled would clip the coordinates it exists to report.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", status);
+    ImGui::PopStyleColor();
   }
-  ImGui::TextDisabled("%s", status);
   if (intent.valid) {
     if (fits_on_line(clear_w)) {
       ImGui::SameLine();

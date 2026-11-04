@@ -44,10 +44,26 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
   const auto& a = state.analysis;
   // (The "Diagnostics" title is the window's fixed head, drawn by the caller — this function is
   // the scrolling region's content.)
+  // The region's text wraps, never clips: ImGui's BulletText/Text/TextDisabled size a single
+  // line and clip at the region's right edge — exactly where a sentence gets interesting at the
+  // right column's 260 pt floor (analyze_overview.cpp's conclusions learned this first). The
+  // bullet+wrapped pair is BulletText's wrapping shape; DisabledWrapped here is the color pair
+  // by hand (ImGui has no DisabledTextWrapped).
+  const auto disabled_wrapped = [](const char* fmt, auto... args) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped(fmt, args...);
+    ImGui::PopStyleColor();
+  };
+  const auto disabled_bullet_wrapped = [](const char* fmt, auto... args) {
+    ImGui::Bullet();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped(fmt, args...);
+    ImGui::PopStyleColor();
+  };
   // ---- The entry guidance: where an analysis starts from, as the state actually is. ----
   if (state.analysis_result.payload == nullptr) {
     // The list's own empty-state line (RenderResultList's, one source for the same fact).
-    ImGui::TextDisabled("No result yet. Choose a region and press Analyze.");
+    disabled_wrapped("No result yet. Choose a region and press Analyze.");
   }
   // The same branch logic as the panorama's empty state: without a picture of the document the
   // first step is the Render workspace's Run; with one, the radios and the list's Analyze are
@@ -75,8 +91,10 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
     if (g_server != nullptr) {
       LUMICE_GetSimRayCount(g_server, &rays);
     }
-    ImGui::TextColored(AccentColor(), "Analyzing (%s)... %s rays", RoiModeLabel(a.roi_mode),
+    ImGui::PushStyleColor(ImGuiCol_Text, AccentColor());
+    ImGui::TextWrapped("Analyzing (%s)... %s rays", RoiModeLabel(a.roi_mode),
                        FormatThousands(static_cast<std::uint64_t>(rays)).c_str());
+    ImGui::PopStyleColor();
     PushDestructiveStyle();
     if (ImGui::SmallButton(ICON_FA_STOP " Stop")) {
       DoStop();
@@ -87,28 +105,28 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
   // its presence is what a case pins (the bullets themselves are plain text). ----
   ImGui::BeginChild("##AnalyzeIdleSummary", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
   ImGui::Separator();
-  ImGui::BulletText("Region: %s", RoiModeLabel(a.roi_mode));
+  disabled_bullet_wrapped("Region: %s", RoiModeLabel(a.roi_mode));
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
     if (a.cone_center_valid) {
       float alt = 0.0f;
       float az = 0.0f;
       DirToAltAz(a.cone_center_dir, &alt, &az);
-      ImGui::BulletText("Cone centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+      disabled_bullet_wrapped("Cone centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
     } else {
-      ImGui::BulletText("Cone centre: not set");
+      disabled_bullet_wrapped("Cone centre: not set");
     }
   }
   if (a.infinite) {
-    ImGui::BulletText("Analysis budget: infinite rays");
+    disabled_bullet_wrapped("Analysis budget: infinite rays");
   } else {
-    ImGui::BulletText("Analysis budget: %.1fM rays", a.ray_num_millions);
+    disabled_bullet_wrapped("Analysis budget: %.1fM rays", a.ray_num_millions);
   }
   if (state.sim_state == GuiState::SimState::kModified) {
     ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::BulletText("Document: modified — the picture predates the edit.");
+    ImGui::TextWrapped("Document: modified — the picture predates the edit.");
     ImGui::PopStyleColor();
   } else {
-    ImGui::BulletText("Document: up to date");
+    disabled_bullet_wrapped("Document: up to date");
   }
   ImGui::EndChild();
 }
@@ -474,7 +492,7 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
       const std::string wait_line =
           SurveyWaitLineFor(survey, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
       g_state.analysis.wait_feedback_texts.survey_wait_line = wait_line;
-      ImGui::TextUnformatted(wait_line.c_str());
+      ImGui::TextWrapped("%s", wait_line.c_str());
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       ImGui::TextWrapped("An engine-typed summary of this class is computed off the interface thread.");
       ImGui::PopStyleColor();
@@ -791,9 +809,12 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     // needs to stay under the hand.
     ImGui::TextUnformatted("Selection details");
     ImGui::BeginChild("##AnalyzeDetailsScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
-    ImGui::BulletText("%s", g_state.analysis.selected_entry->c_str());
-    ImGui::BulletText("snapshot crystal %d · %d layer(s) · %d faces", identity->core_crystal_id,
-                      static_cast<int>(identity->layer_face_counts.size()), static_cast<int>(identity->faces.size()));
+    // Identity facts wrap like the region's other text (BulletText is a single clipped line).
+    ImGui::Bullet();
+    ImGui::TextWrapped("%s", g_state.analysis.selected_entry->c_str());
+    ImGui::Bullet();
+    ImGui::TextWrapped("snapshot crystal %d · %d layer(s) · %d faces", identity->core_crystal_id,
+                       static_cast<int>(identity->layer_face_counts.size()), static_cast<int>(identity->faces.size()));
     if (identity->layer_face_counts.size() > 1) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       ImGui::TextWrapped("The typed survey refuses multi-layer classes: multi_layer_unsupported.");
