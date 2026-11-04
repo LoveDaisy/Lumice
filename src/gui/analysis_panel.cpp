@@ -1492,7 +1492,16 @@ void RenderRadiusSlider(GuiState& state) {
   // one, it sizes the ring on the panorama (DrawPanoramaRoiRing's ring reads it every frame) so
   // the user sees the region the list will be summed over; after one, it re-sums the rings on
   // hand. Either way the request is the full cone and nothing here starts a run.
-  ImGui::SetNextItemWidth(UiPx(220.0f));
+  //
+  // The width is elastic: the designed 220 pt while the line holds slider AND its visible
+  // label, shrinking to keep both inside the head's real width (the scroll child's vertical
+  // scroll cannot recover a horizontally clipped slider tail — the input's right end would be
+  // unreachable exactly where the ring is being sized). Below the label-plus-minimum the label
+  // itself would clip: the floor keeps a usable track and lets the label wrap to the next line
+  // rather than lose it.
+  const float label_w = ImGui::CalcTextSize("Radius").x;
+  const float slider_max = ImGui::GetContentRegionAvail().x - label_w - ImGui::GetStyle().ItemInnerSpacing.x;
+  ImGui::SetNextItemWidth(std::max(UiPx(120.0f), std::min(UiPx(220.0f), slider_max)));
   if (ImGui::SliderFloat("Radius", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
     // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
     RecomputeAnalysisDisplayOrder(state);

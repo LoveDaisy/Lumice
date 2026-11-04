@@ -1096,6 +1096,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
     return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
   };
+  // The sky-point tail's measured height — the canvas budget and the elastic caliber panel
+  // both give back exactly this, one frame late (the ##analysis_head pattern; see the tail's
+  // measurement at the bottom of this region).
+  static float sky_tail_cache = 0.0f;  // the map region renders once per frame; single instance
+  if (sky_tail_cache <= 0.0f) {
+    // The first frame's honest default: the tail's un-wrapped shape (one row per element).
+    const ImGuiStyle& style0 = ImGui::GetStyle();
+    sky_tail_cache = style0.ItemSpacing.y * 3.0f + 1.0f + ImGui::GetFrameHeight() + ImGui::GetTextLineHeight() +
+                     ImGui::GetFrameHeightWithSpacing();
+  }
   ImGui::TextUnformatted("Raypath view");
   const float overlays_w =
       ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Overlays").x;
@@ -1230,8 +1240,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   const float avail_h = ImGui::GetContentRegionAvail().y;
   // The picture takes a bounded share of the region so the header, the state line, the readout,
   // the caliber block and the point input all stay on the region's own budget even at the
-  // acceptance-minimum window — a scrolled-out header is an unreachable one.
-  const float pic_px = std::max(64.0f, std::min(avail_w, std::max(64.0f, avail_h * 0.52f)));
+  // acceptance-minimum window — a scrolled-out header is an unreachable one. The budget is the
+  // space AFTER the sky-point tail's measured height, in EVERY state: the tail (separator,
+  // input row, wrapped status, Clear) renders below whether or not a map was adopted, and the
+  // old 52%-of-everything share clipped the Clear button exactly in the no-caliber states
+  // (waiting for the first map, no selection). The degradation ladder's "press the graphics
+  // floor" rung: the 64 px retention holds inside the post-tail budget, yields toward 24 px
+  // when the budget itself shrinks below it, and the tail always wins (this child never
+  // scrolls — a clipped control here is an unreachable one).
+  const float canvas_v_budget = std::max(0.0f, avail_h - sky_tail_cache);
+  const float pic_share_v = std::min(canvas_v_budget, std::max(64.0f, canvas_v_budget * 0.52f));
+  const float pic_px = std::max(24.0f, std::min(avail_w, pic_share_v));
   const ImVec2 pic_min = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##map_canvas", ImVec2(pic_px, pic_px));
   const bool canvas_hovered = ImGui::IsItemHovered();
@@ -1274,16 +1293,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   float marker_px = -1.0f;
   float marker_py = -1.0f;
   DrawSkyPointMarker(dl, view, intent, pic_min, pic_px, &marker_px, &marker_py);
-
-  // The sky-point tail's measured height (the elastic caliber panel gives back exactly this,
-  // one frame late — see the caliber block below).
-  static float sky_tail_cache = 0.0f;  // the map region renders once per frame; single instance
-  if (sky_tail_cache <= 0.0f) {
-    // The first frame's honest default: the tail's un-wrapped shape (one row per element).
-    const ImGuiStyle& style0 = ImGui::GetStyle();
-    sky_tail_cache = style0.ItemSpacing.y * 3.0f + 1.0f + ImGui::GetFrameHeight() + ImGui::GetTextLineHeight() +
-                     ImGui::GetFrameHeightWithSpacing();
-  }
 
   // ---- The gestures (the prototype's bindRp semantics; the ROI's state is never touched here) ----
   if (canvas_hovered && !view.point_dragging) {

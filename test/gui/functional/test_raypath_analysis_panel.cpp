@@ -4179,6 +4179,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       //  before every read.
       const int fixture_crystal = gui::g_state.layers[0].entries[0].crystal_id;
       gui::g_state.crystals[fixture_crystal].height.center += 0.1f;
+      // A typed sky point BEFORE the floors: the tail (Set/coordinates/Clear) renders below the
+      // map's state line and canvas in every map state, and the r2 review's probe caught the
+      // un-budgeted tail clipping the Clear at rung-height cells — the containment below pins
+      // the fix where the overflow actually lived.
+      SetSkyPointTarget(30.0, 0.0);
       const float d1_saved = gui::g_state.workspace.right_column_ratio;
       const float d2_saved = gui::g_state.workspace.right_list_ratio;
       const float panel_h =
@@ -4201,13 +4206,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.workspace.right_list_ratio = gui::UiPx(gui::kAnalyzeShareListMinHeight) / panel_h;
       ctx->Yield(4);
       ImGuiWindow* table_child = nullptr;
+      ImGuiWindow* head = nullptr;
       {
         ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
         IM_CHECK(share != nullptr);
         ctx->LogInfo("[stale floors A] share %.0fx%.0f (list floor %.0f)", share->Size.x, share->Size.y,
                      gui::UiPx(gui::kAnalyzeShareListMinHeight));
         IM_CHECK_FLOAT_NEAR(share->Size.y, gui::UiPx(gui::kAnalyzeShareListMinHeight), 1.0f);
-        ImGuiWindow* head = nullptr;
         for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
           if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
             head = w;
@@ -4249,6 +4254,30 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
           return;  // the containment lambda already reported; later calls would echo it
         }
         assert_contained("**/" ICON_FA_FILE_CSV " Export CSV", share);
+        if (ctx->IsError()) {
+          return;
+        }
+        // The map's sky-point tail, at this construction's rung-height map cell with a typed
+        // sky point and a selection-driven map (waiting or completed — the tail renders below
+        // both): the Clear sits RectFull inside the map region — the state whose overflow the
+        // r2 review's probe measured.
+        ImGuiWindow* map_sf = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
+            map_sf = w;
+            break;
+          }
+        }
+        IM_CHECK(map_sf != nullptr);
+        const ImGuiTestItemInfo clear_sf = ctx->ItemInfo("**/Clear##sky", ImGuiTestOpFlags_NoError);
+        IM_CHECK(clear_sf.ID != 0);
+        IM_CHECK_GE(clear_sf.RectFull.Min.x, map_sf->InnerClipRect.Min.x - 0.5f);
+        IM_CHECK_LE(clear_sf.RectFull.Max.x, map_sf->InnerClipRect.Max.x + 0.5f);
+        IM_CHECK_GE(clear_sf.RectFull.Min.y, map_sf->InnerClipRect.Min.y - 0.5f);
+        IM_CHECK_LE(clear_sf.RectFull.Max.y, map_sf->InnerClipRect.Max.y + 0.5f);
+        ctx->LogInfo("[stale floors A] clear bottom %.0f of clip %.0f (map state %d)",
+                     static_cast<double>(clear_sf.RectFull.Max.y), static_cast<double>(map_sf->InnerClipRect.Max.y),
+                     static_cast<int>(gui::MapQueryStateFor(gui::g_state.analysis.map)));
       }
       // The real operations, at this floor: the first data row — its label is clipped by the
       // 38px viewport, so the click is POSITION-addressed (the row rect computed from the
@@ -4312,6 +4341,34 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         reversal.param_index = 0;
         IM_CHECK(gui::ApplyIncludeAgain(gui::g_state, reversal));
         ctx->Yield(2);
+      }
+
+      // The Radius row, driven LAST: its input re-sorts the display order (the radius re-sums
+      // the rings), so the row selection above must not share the frame with it. In the
+      // clamped head's scroll child: scrolled into view, the slider's elastic width keeps its
+      // visible label and full frame inside the child's clip, and a real input drives the
+      // radius to BOTH ends of its range (the r2 review's probe caught the fixed 220 pt slider
+      // clipped at this very tier).
+      head->Scroll.y = head->ScrollMax.y;
+      ctx->Yield(3);
+      const ImGuiTestItemInfo radius = ctx->ItemInfo("**/Radius", ImGuiTestOpFlags_NoError);
+      IM_CHECK(radius.ID != 0);
+      IM_CHECK_GE(radius.RectFull.Min.x, head->InnerClipRect.Min.x - 0.5f);
+      IM_CHECK_LE(radius.RectFull.Max.x, head->InnerClipRect.Max.x + 0.5f);
+      IM_CHECK_GE(radius.RectFull.Min.y, head->InnerClipRect.Min.y - 0.5f);
+      IM_CHECK_LE(radius.RectFull.Max.y, head->InnerClipRect.Max.y + 0.5f);
+      {
+        const auto& payload = gui::g_state.analysis_result.payload;
+        const float cone_deg = payload->cone_radius_rad * 57.29577951308232;
+        const float min_deg = cone_deg / static_cast<float>(std::max(payload->cone_ring_count, 1));
+        ctx->ItemInputValue("**/Radius", min_deg);
+        ctx->Yield(2);
+        IM_CHECK(fabsf(gui::g_state.analysis.cone_radius_deg - min_deg) < 0.05f);
+        ctx->ItemInputValue("**/Radius", cone_deg);
+        ctx->Yield(2);
+        IM_CHECK(fabsf(gui::g_state.analysis.cone_radius_deg - cone_deg) < 0.05f);
+        ctx->LogInfo("[stale floors A] radius driven to both ends: [%.3f, %.3f]", static_cast<double>(min_deg),
+                     static_cast<double>(cone_deg));
       }
 
       gui::g_state.workspace.right_list_ratio =

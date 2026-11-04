@@ -1638,15 +1638,26 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
 
       // 0.82 — just inside the clamp: the map's sky-point row (the cell's tail) takes a real
       // Set. The cell (370) is taller than the band (~156), so the band scroll shows the cell's
-      // bottom slice — the sky row — not its header (the header and the sky row are separate
-      // scroll positions of the same cell; the cell's own content fits its 370 height, the band
-      // scroll is the reachability between slices).
+      // bottom slice — the sky row. The tail's measured height sits the row above the cell's
+      // bottom, so the scroll lands on an estimate and then walks UP until the button's full
+      // rectangle is inside the band's clip (the canvas budget changed where the row sits).
       gui::g_state.workspace.middle_rows_ratio = 0.82f;
       ctx->Yield(3);
       band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
       IM_CHECK(band != nullptr);
       band->Scroll.y = map->Size.y - (band->Size.y - 2.0f * ImGui::GetStyle().WindowPadding.y);
       ctx->Yield(2);
+      bool set_in_slice = false;
+      for (int step = 0; step < 10 && !set_in_slice; ++step) {
+        const ImGuiTestItemInfo probe = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
+        set_in_slice = probe.ID != 0 && probe.RectFull.Min.y >= band->InnerClipRect.Min.y - 0.5f &&
+                       probe.RectFull.Max.y <= band->InnerClipRect.Max.y + 0.5f;
+        if (!set_in_slice) {
+          band->Scroll.y = std::max(0.0f, band->Scroll.y - 12.0f);
+          ctx->Yield(2);
+        }
+      }
+      IM_CHECK(set_in_slice);
       AssertRectContained(ctx, "**/Set sky point", map);
       ctx->SetRef("//##AnalyzeLowerRow");
       ctx->ItemInputValue("**/alt°##sky", 12.0f);
