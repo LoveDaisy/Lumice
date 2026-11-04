@@ -3876,8 +3876,11 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(map_t->Scroll.y == map_t0, false);
     ctx->LogInfo("[scale tiers baseline] takeover: band %.0f -> %.0f, map held at %.0f", static_cast<double>(band_t0),
                  static_cast<double>(band_t->Scroll.y), static_cast<double>(map_t->Scroll.y));
+    const float band_before_tick_c = band_t->Scroll.y;  // captured BEFORE the event is even sent:
+    // MouseWheelY queues the wheel AND yields a frame — the dispatch has landed by the time it
+    // returns, so a capture after the call reads the post-event band and the hold check below
+    // degenerates into a tautology (the exact shape the review's Minor called out).
     ctx->MouseWheelY(-1.0f);  // tick C: the claim standing, the dispatch is the map's — the band holds
-    const float band_before_tick_c = band_t->Scroll.y;  // captured BEFORE the event lands
     ctx->Yield(2);
     IM_CHECK_RETV(band_t->Scroll.y == band_before_tick_c, false);
     // The map's own consume half is NOT asserted here: at this tier the map cell fits (SM 0 —
