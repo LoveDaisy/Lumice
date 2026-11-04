@@ -737,7 +737,12 @@ bool RenderDisplayModeControl();
 // Analyze left column hosts the SAME controls on the SAME fields — one display-state source, one
 // editing semantics; same ids, different windows (the two workspaces never render in one frame).
 void RenderViewControlsGroup(GuiState& state);
-void RenderDisplayTimeControlsGroup(GuiState& state);
+// Render-only eyedropper: `host_bg_pick` says whether this face's picture carries the
+// photo-sampling consumer the button arms (g_bg_pick). Only the Render preview does — the
+// Analyze main view has no sampling gesture and no Esc/photo-gone exit for the mode — so the
+// shared group must not offer the entry there: an armed mode with no consumer is a mode the
+// user can enter and not leave.
+void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick);
 void RenderOverlayControlsGroup(GuiState& state);
 
 // One frame of camera-orbit drag: the preview panel's drag body (UnlockLookAt, the DPI/FOV-

@@ -1839,7 +1839,7 @@ void RenderViewControlsGroup(GuiState& state) {
 // the live operator reads / the headroom notice) — the fields both workspaces show about the
 // picture's brightness and colours, on one source. The Render-only rows around it (the
 // re-running resolution combo above, the background photo block below) stay with Render.
-void RenderDisplayTimeControlsGroup(GuiState& state) {
+void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   auto& r = state.renderer;
   // The exposure anchor. Display-time only: it changes which anchor the client-side conversion in
   // mono_exposure_scale.hpp divides by, so the picture re-lights on the next frame with no
@@ -1984,31 +1984,38 @@ void RenderDisplayTimeControlsGroup(GuiState& state) {
     // photo out. Which is why the tooltip says to sample SKY: a pixel off the treeline sets the
     // whole empty sky to dark green.
     //
+    // Render-host-only (the group's `host_bg_pick`): the press it arms is consumed by THIS
+    // workspace's preview — the photo-sampling gesture, the Esc and photo-gone exits — and no
+    // other face carries that consumer, so a host without it must not offer an armed-but-
+    // unconsumable mode (the shared assembly's own "not reachable there" premise depends on it).
+    //
     // Inside the Screen arm, and not by mere association with the swatch it follows: the photo it
     // samples from is itself disabled under Print (doc/rendering/print-mode-subtractive-ink.md §7 instance
     // 1), so under Print this button could only ever render disabled.
-    ImGui::SameLine();
-    const bool bg_pick_ok = BgPhotoOnScreen(state);
-    ImGui::BeginDisabled(!bg_pick_ok);
-    if (ImGui::Button(ICON_FA_EYE_DROPPER "##display_sky_pick")) {
-      g_bg_pick.active = !g_bg_pick.active;
-      if (g_bg_pick.active) {
-        state.angular_dist_picker.armed = false;  // one click-taking mode at a time (gui_state.hpp)
+    if (host_bg_pick) {
+      ImGui::SameLine();
+      const bool bg_pick_ok = BgPhotoOnScreen(state);
+      ImGui::BeginDisabled(!bg_pick_ok);
+      if (ImGui::Button(ICON_FA_EYE_DROPPER "##display_sky_pick")) {
+        g_bg_pick.active = !g_bg_pick.active;
+        if (g_bg_pick.active) {
+          state.angular_dist_picker.armed = false;  // one click-taking mode at a time (gui_state.hpp)
+        }
       }
-    }
-    ImGui::EndDisabled();
-    // AllowWhenDisabled: the disabled case is the one that most needs to say why.
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      if (!g_preview.HasBackground()) {
-        ImGui::SetTooltip("No background photo loaded — use Load Bg under Background first.");
-      } else if (!state.bg_show) {
-        ImGui::SetTooltip("The background photo is hidden. Tick Show under Background to sample it.");
-      } else {
-        ImGui::SetTooltip(
-            "Pick the sky colour off the background photo.\n"
-            "The preview shows the photo alone while picking; click a patch of\n"
-            "SKY (the halo is composited over the sky, not the ground), or press\n"
-            "Esc to cancel.");
+      ImGui::EndDisabled();
+      // AllowWhenDisabled: the disabled case is the one that most needs to say why.
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (!g_preview.HasBackground()) {
+          ImGui::SetTooltip("No background photo loaded — use Load Bg under Background first.");
+        } else if (!state.bg_show) {
+          ImGui::SetTooltip("The background photo is hidden. Tick Show under Background to sample it.");
+        } else {
+          ImGui::SetTooltip(
+              "Pick the sky colour off the background photo.\n"
+              "The preview shows the photo alone while picking; click a patch of\n"
+              "SKY (the halo is composited over the sky, not the ground), or press\n"
+              "Esc to cancel.");
+        }
       }
     }
   } else {
@@ -2111,7 +2118,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     }
     // The display-time rows below are the shared group — the same function the Analyze left
     // column hosts (the exposure/ground fields both faces show).
-    RenderDisplayTimeControlsGroup(g_state);
+    RenderDisplayTimeControlsGroup(g_state, /*host_bg_pick=*/true);
 
     ImGui::SeparatorText("Background");
     if (ImGui::Button("Load Bg##display")) {

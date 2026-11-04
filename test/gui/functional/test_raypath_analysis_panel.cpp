@@ -5987,6 +5987,208 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The Angular Distance pick owns its press on this picture too — the Render host's
+  // gestures_locked rule on its second host: with the picker armed, a press-drag-release on the
+  // main view commits the angle and moves nothing else. Whole sky: the camera never takes the
+  // press. Point: the cone centre stands byte for byte. (The regression the review round
+  // demanded: one press, one consumer.)
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "angular_pick_owns_the_press_on_the_main_view");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->Yield(2);
+      ImGuiWindow* pano = PanoramaPictureWindow();
+      IM_CHECK(pano != nullptr);
+      // Arm through the left column's angular section — the same fold button and popup Pick the
+      // Render suite drives (test_angular_dist_picker.cpp).
+      gui::g_state.angular_dist_section_open = true;
+      ctx->Yield(3);
+      const auto arm_through_button = [&ctx]() {
+        ctx->ItemClick("**/###sun_circles_fold");
+        ctx->Yield(3);
+        ctx->ItemClick("**/" ICON_FA_CROSSHAIRS "##pick_circle");
+        ctx->Yield(2);
+        IM_CHECK(gui::g_state.angular_dist_picker.armed);
+      };
+      const float az_before = gui::g_state.renderer.azimuth;
+      const float el_before = gui::g_state.renderer.elevation;
+      const int sun_angles_before = static_cast<int>(gui::g_state.sun_circle_angles.size());
+      arm_through_button();
+      // Press, drag, release: the angle commits (the picker disarms), the camera never moved.
+      const ImVec2 press(pano->Pos.x + pano->Size.x * 0.4f, pano->Pos.y + pano->Size.y * 0.5f);
+      ctx->MouseMoveToPos(press);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(press.x + 40.0f, press.y + 20.0f));
+      ctx->Yield(2);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.armed);
+      IM_CHECK_GT(static_cast<int>(gui::g_state.sun_circle_angles.size()), sun_angles_before);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, az_before);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, el_before);
+
+      // Point: the same armed press leaves the centre byte-stable. (Entering the mode first
+      // lets the default settle, so the bytes below are the settled ones.)
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      ctx->Yield(4);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      float centre_before[3];
+      std::copy(gui::g_state.analysis.cone_center_dir, gui::g_state.analysis.cone_center_dir + 3, centre_before);
+      arm_through_button();
+      ctx->MouseMoveToPos(press);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(press.x - 30.0f, press.y + 15.0f));
+      ctx->Yield(2);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.armed);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], centre_before[0]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], centre_before[1]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[2], centre_before[2]);
+    };
+  }
+
+  // The default cone centre's bounded life (the review's freeze): once an Analyze has accepted
+  // it — or the user has taken the camera — no layout or picture-rectangle change re-places the
+  // effective ROI. The direction is byte-stable across an orbit and a column-split drag.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "default_point_freezes_once_accepted");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      ctx->Yield(4);  // the operation bar settles; the default sits at the settled middle
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      IM_CHECK(gui::g_state.analysis.cone_center_is_default);
+      float centre_before[3];
+      std::copy(gui::g_state.analysis.cone_center_dir, gui::g_state.analysis.cone_center_dir + 3, centre_before);
+
+      // Accept: the request takes the default, and the flag freezes (accepted regions never
+      // move by themselves). The run is stopped — this case is about the centre, not the list.
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick(kAnalyzeButton);
+      ctx->SetRef("");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.analysis.started);
+      IM_CHECK(!gui::g_state.analysis.cone_center_is_default);
+      gui::DoStop();
+      ctx->Yield(2);
+
+      // Orbit, then change the main view's width by dragging D1: the centre stands.
+      ImGuiWindow* pano = PanoramaPictureWindow();
+      IM_CHECK(pano != nullptr);
+      const float az_before = gui::g_state.renderer.azimuth;
+      const ImVec2 drag_from(pano->Pos.x + pano->Size.x * 0.5f, pano->Pos.y + pano->Size.y * 0.7f);
+      ctx->MouseMoveToPos(drag_from);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(drag_from.x + 90.0f, drag_from.y - 60.0f));
+      ctx->Yield(3);
+      ctx->MouseUp(0);
+      ctx->Yield(3);
+      IM_CHECK_NE(gui::g_state.renderer.azimuth, az_before);
+      const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeColumnSplitter", ImGuiTestOpFlags_NoError);
+      IM_CHECK(grab.ID != 0);
+      const ImVec2 c = grab.RectFull.GetCenter();
+      ctx->MouseMoveToPos(c);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(c.x + 30.0f, c.y));
+      ctx->Yield(3);
+      ctx->MouseUp(0);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], centre_before[0]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], centre_before[1]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[2], centre_before[2]);
+    };
+  }
+
+  // The display-mode control is not a ROI surface: with the analysis pick armed, a click on the
+  // Channel B-R segment changes the display channel and nothing else — the pick stays armed,
+  // the centre stands. (The press surface the ROI arms read excludes the control; a press on a
+  // control is the control's.)
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "display_mode_click_does_not_take_the_roi");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      ctx->Yield(4);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      float centre_before[3];
+      std::copy(gui::g_state.analysis.cone_center_dir, gui::g_state.analysis.cone_center_dir + 3, centre_before);
+      IM_CHECK_EQ(gui::g_state.renderer.display_mode, 0);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick(kPickButton);  // arm the analysis pick
+      ctx->Yield(1);
+      IM_CHECK(gui::g_state.analysis.pick_armed);
+      ctx->ItemClick("**/Channel B-R##preview_display_mode");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.display_mode, 1);  // the channel changed
+      IM_CHECK(gui::g_state.analysis.pick_armed);          // the press was not the pick's
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], centre_before[0]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], centre_before[1]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[2], centre_before[2]);
+      IM_CHECK(!gui::g_state.workspace.panorama_camera_dragging);
+    };
+  }
+
+  // The eyedropper is the Render host's: with a background photo loaded and shown, the Analyze
+  // left column's Display group carries no sky-pick entry at all — an armed mode with no
+  // consumer must not be reachable — and the Render workspace still has its own.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_display_group_carries_no_eyedropper");
+    static bool s_bg_requested = false;
+    static bool s_bg_done = false;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (s_bg_requested && !s_bg_done) {
+        const std::vector<unsigned char> grey(static_cast<size_t>(16 * 16 * 3), 128);
+        gui::g_preview.UploadBgTexture(grey.data(), 16, 16);
+        s_bg_done = true;
+      }
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      s_bg_requested = false;
+      s_bg_done = false;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      s_bg_requested = true;
+      IM_CHECK(DriveUntil(ctx, [] { return s_bg_done; }, 5));
+      gui::g_state.bg_show = true;
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasBackground());
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(3);
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ItemClick("Display");
+      ctx->Yield(2);
+      IM_CHECK(!ctx->ItemExists("**/" ICON_FA_EYE_DROPPER "##display_sky_pick"));  // no entry, no mode to arm
+      IM_CHECK(!gui::g_bg_pick.active);
+      ctx->SetRef("");
+      ctx->ItemClick("##TopBar/Render");
+      ctx->Yield(3);
+      // The Render host keeps its own entry (the ref carries the icon: the button's id hashes
+      // the full label, icon included — test_bg_color_picker_mode.cpp's addressing form).
+      IM_CHECK(ctx->ItemExists("**/" ICON_FA_EYE_DROPPER "##display_sky_pick"));
+    };
+  }
+
   // AC2/§3: the left column's Display group is the SAME exposure field the Render right panel
   // edits — driving it for real re-lights the main view on the next frame (the mono path
   // re-multiplies the committed texture, no server interaction), and the document stays

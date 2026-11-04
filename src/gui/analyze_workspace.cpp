@@ -366,6 +366,13 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
   // 7, dual orthographic 9): their shader path skips the view matrix so view angles + FOV have
   // no visual effect — the same gate the preview panel's camera arm carries.
   const bool full_sky = LensIsFullSky(g_state.renderer.lens_type);
+  // An armed Angular Distance pick — or the swallow latch a completed pick still holds — owns
+  // the press outright, the Render host's gestures_locked rule carried to its second host: no
+  // camera or ROI arm may start while it lasts, and a marker/camera latch taken before the
+  // arming keeps the press it already owns. Without this, one press would be consumed twice —
+  // the camera orbiting through the very click that set a circle's angle.
+  const bool angular_pick_owns =
+      g_state.angular_dist_picker.armed || g_state.angular_dist_picker.swallow_drag_until_release;
 
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
     // The annotation view the picture was drawn with — the pick family's one view (both
@@ -385,7 +392,10 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
       EnsureDefaultConeCenter(g_state, view, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
     }
     bool marker_hover = false;
-    if (region_hovered) {
+    if (interact_hovered) {
+      // The hover/press surface for the ROI arms is the interaction button's — occlusion-aware
+      // and excluding the display-mode control submitted above it — not the region rectangle:
+      // a press on a control is the control's, never a pick or a marker grab underneath it.
       if (const std::optional<CanvasPixel> marker = ProjectConeCenterMarker(g_state, view); marker.has_value()) {
         float mx = 0.0f;
         float my = 0.0f;
@@ -402,56 +412,63 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
     // keeps it through a drag across the marker), the marker's (cone_marker_dragging), the
     // pick's own disarm-on-click. The camera latch read here overrides the arbitration for the
     // whole press it owns; the other two keep their arms the same way.
-    const ConeInputOwner owner = g_state.workspace.panorama_camera_dragging ?
-                                     ConeInputOwner::kCamera :
-                                     ArbitrateConeInput(marker_hover || a.cone_marker_dragging, a.pick_armed);
-    if (owner == ConeInputOwner::kMarkerDrag) {
-      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-      if (region_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        a.cone_marker_dragging = true;
-        a.pick_armed = false;
-      }
-      if (a.cone_marker_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        // The drag's own gate is LUMICE_UnprojectPixel's valid semantics (inside
-        // DragAnalysisConeCenter): off the picture (letterbox, outside the lens's image, the
-        // clipped hemisphere) the write is skipped and the last on-sky direction stands.
-        if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
-                io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
-                g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-            px.has_value()) {
-          DragAnalysisConeCenter(g_state, view, px->px, px->py);
+    if (!angular_pick_owns) {
+      const ConeInputOwner owner = g_state.workspace.panorama_camera_dragging ?
+                                       ConeInputOwner::kCamera :
+                                       ArbitrateConeInput(marker_hover || a.cone_marker_dragging, a.pick_armed);
+      if (owner == ConeInputOwner::kMarkerDrag) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+          a.cone_marker_dragging = true;
+          a.pick_armed = false;
+        }
+        if (a.cone_marker_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+          // The drag's own gate is LUMICE_UnprojectPixel's valid semantics (inside
+          // DragAnalysisConeCenter): off the picture (letterbox, outside the lens's image, the
+          // clipped hemisphere) the write is skipped and the last on-sky direction stands.
+          if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
+                  io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
+                  g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+              px.has_value()) {
+            DragAnalysisConeCenter(g_state, view, px->px, px->py);
+          }
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+          a.cone_marker_dragging = false;
         }
       }
-      if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-        a.cone_marker_dragging = false;
-      }
-    }
-    if (owner == ConeInputOwner::kPickClick && region_hovered) {
-      // The armed crosshair, drawn on this window's list like the ring below.
-      ImDrawList* dl = ImGui::GetWindowDrawList();
-      const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
-      const ImVec2 m = io.MousePos;
-      const float arm = UiPx(kAnalysisPickCrosshairArmPt);
-      dl->AddLine(ImVec2(m.x - arm, m.y), ImVec2(m.x + arm, m.y), colour, 1.5f);
-      dl->AddLine(ImVec2(m.x, m.y - arm), ImVec2(m.x, m.y + arm), colour, 1.5f);
-      if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        // The pick's own gate is the same valid semantics: a click off the picture leaves the
-        // pick armed — a miss should not cost a second trip to the button.
-        if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
-                io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
-                g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-            px.has_value()) {
-          PickAnalysisConeCenter(g_state, view, px->px, px->py);
+      if (owner == ConeInputOwner::kPickClick && interact_hovered) {
+        // The armed crosshair, drawn on this window's list like the ring below.
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
+        const ImVec2 m = io.MousePos;
+        const float arm = UiPx(kAnalysisPickCrosshairArmPt);
+        dl->AddLine(ImVec2(m.x - arm, m.y), ImVec2(m.x + arm, m.y), colour, 1.5f);
+        dl->AddLine(ImVec2(m.x, m.y - arm), ImVec2(m.x, m.y + arm), colour, 1.5f);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+          // The pick's own gate is the same valid semantics: a click off the picture leaves the
+          // pick armed — a miss should not cost a second trip to the button.
+          if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
+                  io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
+                  g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+              px.has_value()) {
+            PickAnalysisConeCenter(g_state, view, px->px, px->py);
+          }
         }
       }
-    }
-    if (owner == ConeInputOwner::kCamera && interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-      g_state.workspace.panorama_camera_dragging = true;
+      if (owner == ConeInputOwner::kCamera && interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        g_state.workspace.panorama_camera_dragging = true;
+        // The view is the user's from this press on: a default centre the user has orbited away
+        // from stops following the picture's rectangle (the sky-direction contract — an
+        // effective region never moves under an observation or layout operation).
+        a.cone_center_is_default = false;
+      }
     }
     DrawPanoramaRoiRing(g_state, view, region_min, g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y);
-  } else if (interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+  } else if (!angular_pick_owns && interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
     // Outside CONE mode the camera owns the region outright (ArbitrateConeInput's comment).
     g_state.workspace.panorama_camera_dragging = true;
+    g_state.analysis.cone_center_is_default = false;  // same freeze as the CONE branch's camera arm
   }
 
   // The camera arm's drag, in every ROI mode: display-tier — the view angles move, nothing in
@@ -759,7 +776,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
       RenderViewControlsGroup(g_state);
     }
     if (ImGui::CollapsingHeader("Display")) {
-      RenderDisplayTimeControlsGroup(g_state);
+      RenderDisplayTimeControlsGroup(g_state, /*host_bg_pick=*/false);
     }
     if (ImGui::CollapsingHeader("Overlay", ImGuiTreeNodeFlags_DefaultOpen)) {
       RenderOverlayControlsGroup(g_state);

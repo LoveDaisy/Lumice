@@ -1828,6 +1828,10 @@ bool DoAnalyze() {
   // held generation stays as it was — the run's first snapshot carries a larger one (the
   // counter only grows), so the first result is adopted without any reset of the cursor.
   g_state.analysis.started = true;
+  // The region is accepted: a centre still marked "default" becomes this analysis's direction,
+  // and nothing but the user moves it from here — no layout change or camera orbit re-places an
+  // effective ROI (the sky-direction contract).
+  g_state.analysis.cone_center_is_default = false;
   g_state.analysis.selected_entry.reset();
   // The survey query's bookkeeping dies with the selection it was issued for (R6's re-Analyze
   // row: cancel what is out, void the old generation's attribution — a late result of the old
