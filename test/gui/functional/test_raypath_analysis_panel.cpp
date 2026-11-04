@@ -1446,6 +1446,30 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.pick_armed == pick_armed_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before, false);
 
+  // The sky-point tail's Clear, in the X5 form at the adopted-completion state (the r1 review's
+  // probe caught the wrapped tail pushing it past this child's clip — the measured reserve
+  // gives the whole tail room now): Clear sits RectFull inside the map region and a real click
+  // clears the intent, while Set and the coordinates stay reachable.
+  {
+    ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypathView");
+    IM_CHECK_RETV(region != nullptr, false);
+    ctx->LogInfo("[map view] clear tail: clip bottom %.0f", static_cast<double>(region->InnerClipRect.Max.y));
+    const ImGuiTestItemInfo set_now = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(set_now.ID != 0, false);
+    IM_CHECK_RETV(set_now.RectFull.Max.y <= region->InnerClipRect.Max.y + 0.5f, false);
+    const ImGuiTestItemInfo clear_btn = ctx->ItemInfo("**/Clear##sky", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(clear_btn.ID != 0, false);
+    IM_CHECK_RETV(clear_btn.RectFull.Min.x >= region->InnerClipRect.Min.x - 0.5f &&
+                      clear_btn.RectFull.Max.x <= region->InnerClipRect.Max.x + 0.5f &&
+                      clear_btn.RectFull.Min.y >= region->InnerClipRect.Min.y - 0.5f &&
+                      clear_btn.RectFull.Max.y <= region->InnerClipRect.Max.y + 0.5f,
+                  false);
+    ctx->ItemClick("**/Clear##sky");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.analysis.sky_point.valid, false);
+    ctx->LogInfo("[map view] Clear click landed; intent cleared");
+  }
+
   // The with-result pin, in its modern form: the region starts at its top (Scroll.y == 0 — the
   // header row on screen), and everything past the fold is the region's OWN internal scroll, the
   // degradation ladder's rung. The original reserve defect (742.4) showed as scroll PINNED to
@@ -3663,6 +3687,137 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
 
   gui::g_state.workspace.right_column_ratio = d1_saved;
   ctx->Yield(2);
+
+  // The compressed tier's RESULT-STATE key operations (the matrix's 900x640 cell with the
+  // analysis this case already brought up): the table's first row contained and selectable, the
+  // CSV/Exclude pair contained and enabled, the search driven for real, the map's λ judgment
+  // wrapping at this width yet contained and driven, the sky-point Set real, the globe toggle
+  // real. The tier's no-result geometry is the shell suite's own leg; this is the half a
+  // no-result construction cannot reach.
+  {
+    g_window_size_test.apply_aspect = false;
+    g_window_size_test.width = 900;
+    g_window_size_test.height = 640;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(g_window_size_test.done.load(), false);
+    ctx->Yield(3);
+    ImGuiWindow* share_c = ctx->GetWindowByRef(kWindowRef);
+    IM_CHECK_RETV(share_c != nullptr, false);
+    const float avail_w_c = ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
+    IM_CHECK_RETV(avail_w_c < gui::UiPx(gui::kAnalyzeRightColMinWidth) + gui::UiPx(gui::kAnalyzeMainViewMinWidth) +
+                                  gui::UiPx(gui::kAnalyzeSplitterSize),
+                  false);  // the proportional rung engaged
+
+    // The list: the first row is VERTICALLY in view (the y-band the table's own metrics derive
+    // sits inside the clip) and selectable by position — its label is horizontally clipped at
+    // this tier (long multi-layer labels never report to the engine; the stale-floors leg pins
+    // the short-label form of the same assertion), so the position + the identity assertion
+    // carry the evidence.
+    SetListRef(ctx);
+    table_child->Scroll.y = 0.0f;  // the case's earlier row clicks left the table scrolled
+    ctx->Yield(2);
+    // Select the pair's first row by position (the case's own helper — the rendered ordinal,
+    // not a hardcoded slot: rows with no energy never render).
+    IM_CHECK_RETV(click_row(best_a), false);
+    IM_CHECK_RETV(
+        gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == display_a, false);
+    ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+    ctx->Yield(2);
+    // The button pair: contained in the never-scrolling window and enabled for the selection.
+    const ImGuiTestItemInfo exclude_c =
+        ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(exclude_c.ID != 0, false);
+    IM_CHECK_RETV(exclude_c.RectFull.Min.x >= share_c->InnerClipRect.Min.x - 0.5f &&
+                      exclude_c.RectFull.Max.x <= share_c->InnerClipRect.Max.x + 0.5f &&
+                      exclude_c.RectFull.Min.y >= share_c->InnerClipRect.Min.y - 0.5f &&
+                      exclude_c.RectFull.Max.y <= share_c->InnerClipRect.Max.y + 0.5f,
+                  false);
+    // Disabled, by design: the selection is a multi-layer chain (chain_len != 1 refuses the
+    // exclusion — the DECISION that moved this leg's entity act to the search).
+    IM_CHECK_RETV(IsDisabled(exclude_c), false);
+    const ImGuiTestItemInfo csv_c = ctx->ItemInfo("**/" ICON_FA_FILE_CSV " Export CSV", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(csv_c.ID != 0, false);
+    IM_CHECK_RETV(csv_c.RectFull.Max.y <= share_c->InnerClipRect.Max.y + 0.5f, false);
+    // The search: a real input at this tier.
+    ctx->ItemInputValue("**/###analysis_search", needle.c_str());
+    ctx->ItemInputValue("**/###analysis_search", "");
+    ctx->SetRef("");
+
+    // The map: the λ judgment fires at this width (the header row exceeds the cell) — the
+    // slider wraps onto its own line yet sits contained, and a real input drives it.
+    ImGuiWindow* band_c = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+    IM_CHECK_RETV(band_c != nullptr, false);
+    ImGuiWindow* map_c = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
+        map_c = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(map_c != nullptr, false);
+    band_c->Scroll.y = 0.0f;
+    ctx->Yield(2);
+    const ImGuiTestItemInfo lambda_c = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(lambda_c.ID != 0, false);
+    IM_CHECK_RETV(lambda_c.RectFull.Min.x >= map_c->InnerClipRect.Min.x - 0.5f &&
+                      lambda_c.RectFull.Max.x <= map_c->InnerClipRect.Max.x + 0.5f &&
+                      lambda_c.RectFull.Min.y >= map_c->InnerClipRect.Min.y - 0.5f &&
+                      lambda_c.RectFull.Max.y <= map_c->InnerClipRect.Max.y + 0.5f,
+                  false);
+    ctx->ItemInputValue("**/λ##map", 600.0f);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.map_wavelength_nm > 599.0 && gui::g_state.analysis.map_wavelength_nm < 601.0,
+                  false);
+    gui::g_state.analysis.map_wavelength_nm = 0.0;  // the reference branch again; no map re-ask chain
+    ctx->Yield(1);
+    // The sky-point row: the cell is taller than the band here too — scroll to its bottom slice.
+    band_c->Scroll.y = map_c->Size.y - (band_c->Size.y - 2.0f * ImGui::GetStyle().WindowPadding.y);
+    ctx->Yield(2);
+    ctx->SetRef("//##AnalyzeLowerRow");
+    ctx->ItemInputValue("**/alt°##sky", 21.0f);
+    ctx->ItemClick("**/Set sky point");
+    ctx->SetRef("");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+
+    // The globe: the stacked band's tail region, its toggle contained and driven.
+    band_c->Scroll.y = band_c->ScrollMax.y;
+    ctx->Yield(2);
+    ImGuiWindow* globe_c = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
+        globe_c = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(globe_c != nullptr, false);
+    const ImGuiTestItemInfo grid_c = ctx->ItemInfo("**/Deviation grid##globe", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(grid_c.ID != 0, false);
+    IM_CHECK_RETV(grid_c.RectFull.Max.x <= globe_c->InnerClipRect.Max.x + 0.5f &&
+                      grid_c.RectFull.Max.y <= globe_c->InnerClipRect.Max.y + 0.5f,
+                  false);
+    const bool grid_c_before = gui::g_state.analysis.point_view.show_deviation_grid;
+    ctx->ItemClick("**/Deviation grid##globe");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid == !grid_c_before, false);
+
+    // Inline basis restore (the 1280x800 leg's rule: the next case's entry audit must have
+    // nothing to undo).
+    g_window_size_test.width = gui::kInitWindowWidth;
+    g_window_size_test.height = gui::kInitWindowHeight;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(g_window_size_test.done.load(), false);
+    ctx->Yield(3);
+  }
+
   return true;
 }
 
@@ -3746,8 +3901,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ImGuiWindow* map = LowerRowRegionWindow("##AnalyzeRaypathView");
         IM_CHECK(map != nullptr);
         const auto contained = [&](const ImGuiTestItemInfo& item) {
-          return item.RectClipped.Min.x >= map->InnerClipRect.Min.x - 0.5f &&
-                 item.RectClipped.Max.x <= map->InnerClipRect.Max.x + 0.5f && item.RectClipped.GetWidth() > 0.0f;
+          return item.RectFull.Min.x >= map->InnerClipRect.Min.x - 0.5f &&
+                 item.RectFull.Max.x <= map->InnerClipRect.Max.x + 0.5f &&
+                 item.RectFull.Min.y >= map->InnerClipRect.Min.y - 0.5f &&
+                 item.RectFull.Max.y <= map->InnerClipRect.Max.y + 0.5f;
         };
         SetListRef(ctx);
         ctx->SetRef("");  // root descent: the inputs live in the band's map region, not the list
@@ -3762,7 +3919,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         const ImGuiTestItemInfo full_sky_btn = ctx->ItemInfo("**/Full sky##map", ImGuiTestOpFlags_NoError);
         IM_CHECK(full_sky_btn.ID != 0);
         ctx->LogInfo("[side-by-side] map w=%.0f, alt right %.0f, az right %.0f, set right %.0f, clip right %.0f",
-                     map->Size.x, alt_in.RectClipped.Max.x, az_in.RectClipped.Max.x, set_btn.RectClipped.Max.x,
+                     map->Size.x, alt_in.RectFull.Max.x, az_in.RectFull.Max.x, set_btn.RectFull.Max.x,
                      map->InnerClipRect.Max.x);
         IM_CHECK(contained(alt_in));
         IM_CHECK(contained(az_in));
@@ -3808,7 +3965,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         // (a control scrolled out of the window resolves too, but carries no visible height).
         const ImGuiTestItemInfo search = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
         IM_CHECK(search.ID != 0);
-        IM_CHECK_GT(search.RectClipped.GetHeight(), 0.0f);
+        IM_CHECK_GT(search.RectFull.GetHeight(), 0.0f);
         // The floor's red anchor: squeezing the SHARE LIST (the same write the D2 splitter's
         // drag performs — the list's height is the right column's own split now, not the main
         // view's row ratio) into the band where the result table's old 120pt floor stops
@@ -3893,7 +4050,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->Yield(3);
         const ImGuiTestItemInfo search = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
         IM_CHECK(search.ID != 0);
-        IM_CHECK_GT(search.RectClipped.GetHeight(), 0.0f);
+        IM_CHECK_GT(search.RectFull.GetHeight(), 0.0f);
         ctx->SetRef("");
 
         // The band in its stacked form: scrollable, the three regions at their floors.
@@ -4076,6 +4233,17 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->LogInfo("[stale floors A] table inner y [%.0f..%.0f] scroll %.0f",
                      static_cast<double>(table_child->InnerRect.Min.y),
                      static_cast<double>(table_child->InnerRect.Max.y), static_cast<double>(table_child->Scroll.y));
+        // The first data row, in the X5 form: with the clamp's block-gap margin the floor's
+        // viewport holds header + row fully, so the row resolves by label and its FULL
+        // rectangle sits inside the table's clip (pre-margin this viewport clipped the row and
+        // the engine never reported its label — the two facts are the same fact).
+        const ImGuiTestItemInfo first_row =
+            ctx->ItemInfo((std::string("**/") + top_display).c_str(), ImGuiTestOpFlags_NoError);
+        IM_CHECK(first_row.ID != 0);
+        IM_CHECK_GE(first_row.RectFull.Min.y, table_child->InnerClipRect.Min.y - 0.5f);
+        IM_CHECK_LE(first_row.RectFull.Max.y, table_child->InnerClipRect.Max.y + 0.5f);
+        IM_CHECK_GE(first_row.RectFull.Min.x, table_child->InnerClipRect.Min.x - 0.5f);
+        IM_CHECK_LE(first_row.RectFull.Max.x, table_child->InnerClipRect.Max.x + 0.5f);
         assert_contained("**/" ICON_FA_BAN " Exclude this raypath", share);
         if (ctx->IsError()) {
           return;  // the containment lambda already reported; later calls would echo it

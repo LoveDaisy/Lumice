@@ -899,11 +899,15 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         IM_CHECK(map != nullptr);
         const ImGuiTestItemInfo set_btn = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
         IM_CHECK(set_btn.ID != 0);
-        IM_CHECK_GT(set_btn.RectClipped.GetHeight(), 0.0f);
-        IM_CHECK_LE(set_btn.RectClipped.Max.y, map->InnerClipRect.Max.y + 0.5f);
+        // The X5 containment form (this diff's own contract): the button's FULL rectangle
+        // inside the cell's effective clip, not a clipped-height proxy.
+        IM_CHECK_GE(set_btn.RectFull.Min.x, map->InnerClipRect.Min.x - 0.5f);
+        IM_CHECK_LE(set_btn.RectFull.Max.x, map->InnerClipRect.Max.x + 0.5f);
+        IM_CHECK_GE(set_btn.RectFull.Min.y, map->InnerClipRect.Min.y - 0.5f);
+        IM_CHECK_LE(set_btn.RectFull.Max.y, map->InnerClipRect.Max.y + 0.5f);
         ctx->LogInfo("[splitters] band %.0f, map clip bottom %.0f, set btn bottom %.0f",
                      static_cast<double>(band->Size.y), static_cast<double>(map->InnerClipRect.Max.y),
-                     static_cast<double>(set_btn.RectClipped.Max.y));
+                     static_cast<double>(set_btn.RectFull.Max.y));
       }
       gui::g_state.workspace.middle_rows_ratio = rows_0;
       ctx->Yield(2);
@@ -1031,14 +1035,16 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
           scroll->Scroll.y = std::min(scroll->ScrollMax.y, scroll->Scroll.y + scroll->InnerRect.GetHeight() * 0.5f);
           ctx->Yield(2);
           const ImGuiTestItemInfo probe = ctx->ItemInfo("**/" ICON_FA_STOP " Stop", ImGuiTestOpFlags_NoError);
-          stop_in_view = probe.ID != 0 && probe.RectClipped.GetHeight() > 0.0f &&
-                         probe.RectClipped.Min.y >= details_win->InnerClipRect.Min.y - 0.5f &&
-                         probe.RectClipped.Max.y <= details_win->InnerClipRect.Max.y + 0.5f;
+          stop_in_view = probe.ID != 0 && probe.RectFull.Min.y >= details_win->InnerClipRect.Min.y - 0.5f &&
+                         probe.RectFull.Max.y <= details_win->InnerClipRect.Max.y + 0.5f &&
+                         probe.RectFull.Min.x >= details_win->InnerClipRect.Min.x - 0.5f &&
+                         probe.RectFull.Max.x <= details_win->InnerClipRect.Max.x + 0.5f;
         }
         IM_CHECK(stop_in_view);
         const ImGuiTestItemInfo stop_floor = ctx->ItemInfo("**/" ICON_FA_STOP " Stop", ImGuiTestOpFlags_NoError);
         IM_CHECK_NE(stop_floor.ID, 0u);
-        IM_CHECK_GT(stop_floor.RectClipped.GetHeight(), 0.0f);
+        IM_CHECK_GE(stop_floor.RectFull.Min.y, details_win->InnerClipRect.Min.y - 0.5f);
+        IM_CHECK_LE(stop_floor.RectFull.Max.y, details_win->InnerClipRect.Max.y + 0.5f);
         ctx->ItemClick("**/" ICON_FA_STOP " Stop");
         ctx->Yield(2);
         gui::g_state.workspace.right_list_ratio = 0.45f;

@@ -1108,11 +1108,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::Checkbox("Overlays##map", &overlays)) {
     storage->SetBool(overlay_key, overlays);
   }
-  ImGui::SameLine();
   // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
   // float shows the effective value either way; editing it asks the explicit wavelength — a key
   // change the pump turns into a new request (the engine has no warm map: every lambda is a
-  // real re-evaluation).
+  // real re-evaluation). Its SameLine is the judgment below — no unconditional SameLine sits
+  // before it (a leftover join would void the judgment and clip the slider at the ③ widths).
   float lambda_scratch = 550.0f;
   if (map.adopted_result != nullptr) {
     LUMICE_PathMapInfo info{};
@@ -1275,6 +1275,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   float marker_py = -1.0f;
   DrawSkyPointMarker(dl, view, intent, pic_min, pic_px, &marker_px, &marker_py);
 
+  // The sky-point tail's measured height (the elastic caliber panel gives back exactly this,
+  // one frame late — see the caliber block below).
+  static float sky_tail_cache = 0.0f;  // the map region renders once per frame; single instance
+  if (sky_tail_cache <= 0.0f) {
+    // The first frame's honest default: the tail's un-wrapped shape (one row per element).
+    const ImGuiStyle& style0 = ImGui::GetStyle();
+    sky_tail_cache = style0.ItemSpacing.y * 3.0f + 1.0f + ImGui::GetFrameHeight() + ImGui::GetTextLineHeight() +
+                     ImGui::GetFrameHeightWithSpacing();
+  }
+
   // ---- The gestures (the prototype's bindRp semantics; the ROI's state is never touched here) ----
   if (canvas_hovered && !view.point_dragging) {
     const ImGuiIO& io = ImGui::GetIO();
@@ -1394,17 +1404,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     in.completed = MapQueryStateFor(map) == MapQueryState::kCompleted;
-    // The block is the region's elastic panel: it gives back exactly what the point input below
-    // needs, measured the way ImGui advances it — the separator's 1px line rides two item
-    // spacings, the alt/az row is one frame height, and a set sky point adds the Clear row (the
-    // row's leading item spacing plus a small button's own height; its trailing spacing never
-    // lands in the content size). No floor: when even the input's share does not fit, the block
-    // collapses instead of pushing the input out — an honest empty area, never a scrolled-out
-    // header (a scrolled-out header is an unreachable one).
-    const ImGuiStyle& style = ImGui::GetStyle();
-    const float input_row_reserve = style.ItemSpacing.y * 2.0f + ImGui::GetFrameHeight() +
-                                    (intent.valid ? style.ItemSpacing.y + ImGui::GetFontSize() : 0.0f);
-    const float caliber_h = ImGui::GetContentRegionAvail().y - input_row_reserve;
+    // The block is the region's elastic panel: it gives back exactly what the sky-point tail
+    // below it consumed LAST FRAME — the tail's height is measured, not derived (the
+    // ##analysis_head one-frame-late pattern): the tail is a separator, an input row, a status
+    // line that may wrap onto its own lines, and a Clear that may take a row of its own, each
+    // under a live SameLine judgment — a static arithmetic mirror of those judgments is exactly
+    // the "constant chasing a conditional state" shape the content-adaptation contract forbids
+    // (and the shape that clipped the Clear button: the old reserve assumed one input row and
+    // one status line). The measured height lives in sky_tail_cache above. No floor: when even
+    // the input's share does not fit, the block collapses instead of pushing the tail out — an
+    // honest empty area, never a clipped control (this child never scrolls).
+    const float caliber_h = ImGui::GetContentRegionAvail().y - sky_tail_cache;
     if (caliber_h >= UiPx(1.0f)) {
       ImGui::BeginChild("##map_caliber", ImVec2(0, caliber_h), ImGuiChildFlags_None);
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
@@ -1417,6 +1427,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
+  const float sky_tail_top_y = ImGui::GetCursorPosY();
   ImGui::Separator();
   ImGuiStorage* sky_storage = ImGui::GetStateStorage();
   const ImGuiID alt_key = ImGui::GetID("sky_input_alt");
@@ -1484,6 +1495,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       intent = SkyPointIntent{};
     }
   }
+  sky_tail_cache = ImGui::GetCursorPosY() - sky_tail_top_y;
 
   ImGui::EndChild();
 }

@@ -184,13 +184,16 @@ void RightColumnSplitter(const char* id, float height, float* ratio, float area_
   if (active && mouse_dx != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
     // Delta from the displayed boundary (see MiddleRowsSplitter): at a window whose layout is
     // clamped away from the stored ratio, a raw write makes the first stretch of the drag dead
-    // while the strip stands still.
+    // while the strip stands still. The clamp bounds only exist in the normal tier — when the
+    // two floors cannot both fit, lower > upper and std::clamp's precondition is violated
+    // (libc++ hardening aborts) — so the tiers branch BEFORE any clamp: the compressed tier
+    // writes its fixed split directly, the normal tier computes raw inside its ordered bounds.
     const float right_floor = UiPx(kAnalyzeRightColMinWidth);
     const float main_floor = UiPx(kAnalyzeMainViewMinWidth);
-    const float raw =
-        std::clamp(*ratio, right_floor / area_w, (area_w - width - main_floor) / area_w) - mouse_dx / area_w;
     if (area_w >= right_floor + main_floor + width) {
-      *ratio = std::clamp(raw, right_floor / area_w, (area_w - width - main_floor) / area_w);
+      const float lo = right_floor / area_w;
+      const float hi = (area_w - width - main_floor) / area_w;
+      *ratio = std::clamp(std::clamp(*ratio, lo, hi) - mouse_dx / area_w, lo, hi);
     } else {
       // Both floors cannot fit: the contract's ③ split is the only reachable one, so the ratio
       // pins to it while the window is this narrow.
@@ -219,13 +222,15 @@ void RightRowsSplitter(const char* id, float width, float* ratio, float area_h) 
   const bool active = ImGui::IsItemActive();
   const float mouse_dy = ImGui::GetIO().MouseDelta.y;
   if (active && mouse_dy != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    // Delta from the displayed boundary (see MiddleRowsSplitter).
+    // Delta from the displayed boundary (see MiddleRowsSplitter); tiers branch before any
+    // clamp — the compressed tier's bounds are inverted and std::clamp's precondition would
+    // be violated (see RightColumnSplitter).
     const float list_floor = UiPx(kAnalyzeShareListMinHeight);
     const float details_floor = UiPx(kAnalyzeDetailsMinHeight);
-    const float raw =
-        std::clamp(*ratio, list_floor / area_h, (area_h - height - details_floor) / area_h) + mouse_dy / area_h;
     if (area_h >= list_floor + details_floor + height) {
-      *ratio = std::clamp(raw, list_floor / area_h, (area_h - height - details_floor) / area_h);
+      const float lo = list_floor / area_h;
+      const float hi = (area_h - height - details_floor) / area_h;
+      *ratio = std::clamp(std::clamp(*ratio, lo, hi) + mouse_dy / area_h, lo, hi);
     } else {
       *ratio = list_floor / (list_floor + details_floor);
     }
