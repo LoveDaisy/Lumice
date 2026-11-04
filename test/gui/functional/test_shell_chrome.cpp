@@ -897,7 +897,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
           }
         }
         IM_CHECK(map != nullptr);
-        const ImGuiTestItemInfo set_btn = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
+        const ImGuiTestItemInfo set_btn = ctx->ItemInfo("**/Set sky point###sky_set", ImGuiTestOpFlags_NoError);
         IM_CHECK(set_btn.ID != 0);
         // The X5 containment form (this diff's own contract): the button's FULL rectangle
         // inside the cell's effective clip, not a clipped-height proxy.
@@ -1501,7 +1501,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->SetRef("//##AnalyzeLowerRow");
       ctx->ItemInputValue("**/alt°##sky", 30.0f);
       ctx->ItemInputValue("**/az°##sky", 45.0f);
-      ctx->ItemClick("**/Set sky point");
+      ctx->ItemClick("**/Set sky point###sky_set");
       ctx->SetRef("");
       ctx->Yield(2);
       IM_CHECK(gui::g_state.analysis.sky_point.valid);
@@ -1510,9 +1510,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       // The globe (the stacked band's tail): scroll it in, flip its toggle for real.
       band->Scroll.y = band->ScrollMax.y;
       ctx->Yield(2);
-      AssertRectContained(ctx, "**/Deviation grid##globe", globe);
+      AssertRectContained(ctx, "**/Deviation grid###globe_dev_grid", globe);
       const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-      ctx->ItemClick("**/Deviation grid##globe");
+      ctx->ItemClick("**/Deviation grid###globe_dev_grid");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
 
@@ -1621,7 +1621,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->SetRef("//##AnalyzeLowerRow");
       ctx->ItemInputValue("**/alt°##sky", 15.0f);
-      ctx->ItemClick("**/Set sky point");
+      ctx->ItemClick("**/Set sky point###sky_set");
       ctx->SetRef("");
       ctx->Yield(2);
       IM_CHECK(gui::g_state.analysis.sky_point.valid);
@@ -1635,9 +1635,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK(r3d_2x != nullptr);
       band->Scroll.y = map->Size.y + r3d_2x->Size.y + 2.0f * ImGui::GetStyle().ItemSpacing.y;
       ctx->Yield(2);
-      AssertRectContained(ctx, "**/Deviation grid##globe", globe);
+      AssertRectContained(ctx, "**/Deviation grid###globe_dev_grid", globe);
       const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-      ctx->ItemClick("**/Deviation grid##globe");
+      ctx->ItemClick("**/Deviation grid###globe_dev_grid");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
       ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
@@ -1727,9 +1727,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
       IM_CHECK(globe != nullptr);
-      AssertRectContained(ctx, "**/Deviation grid##globe", globe);
+      AssertRectContained(ctx, "**/Deviation grid###globe_dev_grid", globe);
       const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-      ctx->ItemClick("**/Deviation grid##globe");
+      ctx->ItemClick("**/Deviation grid###globe_dev_grid");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
       // The 3D cell keeps its floor height in the stacked form (its canvas yields; the cell
@@ -1749,7 +1749,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       bool set_in_slice = false;
       for (int step = 0; step < 10 && !set_in_slice; ++step) {
-        const ImGuiTestItemInfo probe = ctx->ItemInfo("**/Set sky point", ImGuiTestOpFlags_NoError);
+        const ImGuiTestItemInfo probe = ctx->ItemInfo("**/Set sky point###sky_set", ImGuiTestOpFlags_NoError);
         set_in_slice = probe.ID != 0 && probe.RectFull.Min.y >= band->InnerClipRect.Min.y - 0.5f &&
                        probe.RectFull.Max.y <= band->InnerClipRect.Max.y + 0.5f;
         if (!set_in_slice) {
@@ -1758,10 +1758,10 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         }
       }
       IM_CHECK(set_in_slice);
-      AssertRectContained(ctx, "**/Set sky point", map);
+      AssertRectContained(ctx, "**/Set sky point###sky_set", map);
       ctx->SetRef("//##AnalyzeLowerRow");
       ctx->ItemInputValue("**/alt°##sky", 12.0f);
-      ctx->ItemClick("**/Set sky point");
+      ctx->ItemClick("**/Set sky point###sky_set");
       ctx->SetRef("");
       ctx->Yield(2);
       IM_CHECK(gui::g_state.analysis.sky_point.valid);

@@ -20,6 +20,7 @@
 
 namespace lumice::gui {
 
+
 namespace {
 
 constexpr double kPiD = 3.14159265358979323846;
@@ -1074,8 +1075,13 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapViewState& view, const SkyPoint
 }  // namespace
 
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
-  ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders,
-                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  // The region scrolls: at the compressed tiers' narrowest widths the wrapped header plus this
+  // tail exceed any handed height, and a never-scrolling child made the tail's tail controls
+  // unreachable from every scroll that bounds them (the host band's slice translates both
+  // sides together). The degradation ladder's own rung — internal scroll — is the only
+  // mechanism whose reach does not depend on measuring the content that decides the measure's
+  // own visibility.
+  ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders);
   MapQuerySession& map = state.analysis.map;
   MapViewState& view = state.analysis.map_view;
   SkyPointIntent& intent = state.analysis.sky_point;
@@ -1385,7 +1391,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   view.gesture_active = gesture_this_frame || canvas_active;
 
   // The cursor readout: the sky label and its deviation from the sun, through the SAME
-  // projection the picture was drawn with.
+  // projection the picture was drawn with. It overlays the PICTURE (a backdrop plate on the
+  // canvas's top-left) instead of occupying flow: rendered as flow it appeared only under the
+  // pointer, and its appearing reflowed every control below it — the tail's buttons moved
+  // under a moving mouse, and a click traveling toward them landed on a control that had
+  // stepped aside (the map_region leg's Clear died mid-hover exactly so). Canvas feedback
+  // belongs on the canvas.
   if (canvas_hovered && have_anchor_info) {
     const ImGuiIO& io = ImGui::GetIO();
     const double cx = (io.MousePos.x - pic_min.x) / pic_px;
@@ -1398,9 +1409,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       SkyPosition(anchor_info.sun_altitude_deg, anchor_info.sun_azimuth_deg, sun_pos);
       const double delta =
           std::acos(Clamp1(pos[0] * sun_pos[0] + pos[1] * sun_pos[1] + pos[2] * sun_pos[2])) * kRad2DegD;
-      // Readouts wrap, never clip: this child never scrolls, and the ③ split's widths sit below
-      // this line's full extent.
-      ImGui::TextWrapped("cursor: alt %.2f° az %.2f° · δ %.2f° from the sun", alt, az, delta);
+      char readout_a[64];
+      char readout_b[64];
+      std::snprintf(readout_a, sizeof(readout_a), "cursor: alt %.2f° az %.2f°", alt, az);
+      std::snprintf(readout_b, sizeof(readout_b), "δ %.2f° from the sun", delta);
+      ImDrawList* draw = ImGui::GetWindowDrawList();
+      const float plate_pad = 5.0f;
+      const float wrap_w = pic_px - 2.0f * plate_pad;
+      const float line_h = ImGui::GetTextLineHeight();
+      draw->AddRectFilled(ImVec2(pic_min.x, pic_min.y),
+                          ImVec2(pic_min.x + pic_px, pic_min.y + 2.0f * plate_pad + 2.0f * line_h),
+                          IM_COL32(16, 18, 22, 190));
+      draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(pic_min.x + plate_pad, pic_min.y + plate_pad),
+                    ImGui::GetColorU32(ImGuiCol_Text), readout_a, nullptr, wrap_w);
+      draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                    ImVec2(pic_min.x + plate_pad, pic_min.y + plate_pad + line_h), ImGui::GetColorU32(ImGuiCol_Text),
+                    readout_b, nullptr, wrap_w);
     }
   }
 
@@ -1427,25 +1451,25 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     in.completed = MapQueryStateFor(map) == MapQueryState::kCompleted;
-    // The block is the region's elastic panel: it gives back exactly what the sky-point tail
-    // below it consumed LAST FRAME — the tail's height is measured, not derived (the
-    // ##analysis_head one-frame-late pattern): the tail is a separator, an input row, a status
-    // line that may wrap onto its own lines, and a Clear that may take a row of its own, each
-    // under a live SameLine judgment — a static arithmetic mirror of those judgments is exactly
-    // the "constant chasing a conditional state" shape the content-adaptation contract forbids
-    // (and the shape that clipped the Clear button: the old reserve assumed one input row and
-    // one status line). The measured height lives in sky_tail_cache above. No floor: when even
-    // the input's share does not fit, the block collapses instead of pushing the tail out — an
-    // honest empty area, never a clipped control (this child never scrolls).
-    const float caliber_h = ImGui::GetContentRegionAvail().y - sky_tail_cache;
-    if (caliber_h >= UiPx(1.0f)) {
-      ImGui::BeginChild("##map_caliber", ImVec2(0, caliber_h), ImGuiChildFlags_None);
+    // The block is the region's explanation, rendered DIRECTLY — no child window: a child's
+    // rect swallows the hover and the click of everything whose flow it spans, and a declared
+    // height computed from last frame's tail measure overran the tail's rows on slice-cut
+    // frames (the Set button died under it while its own rect kept reporting contained).
+    // The fold is the ladder's first rung — the explanation yields before any control does —
+    // and it LATCHES: a per-frame gate on the volatile tail measure opened and closed the
+    // block across frames (the explanation's own wrapped bulk decides the very overflow it
+    // reads), flickering the tail in and out of the item registry entirely. Once the region
+    // has overflowed with the explanation up, the explanation stays down for the region's life.
+    static bool caliber_folded = false;
+    if (ImGui::GetScrollMaxY() > 0.0f) {
+      caliber_folded = true;
+    }
+    if (!caliber_folded) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       for (const std::string& line : MapCaliberLines(in)) {
         ImGui::TextWrapped("%s", line.c_str());
       }
       ImGui::PopStyleColor();
-      ImGui::EndChild();
     }
   }
 
@@ -1464,6 +1488,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // Labeled widgets draw their label right of the frame, so each successor's footprint includes
   // the label's own advance.
   const float style_inner_x = ImGui::GetStyle().ItemInnerSpacing.x;
+  // The row's fresh-line width, captured here for the Set button's form ladder below: a label
+  // wider than THIS cannot fit any line the cell can produce, and wrapping is no rescue.
+  const float sky_row_full_w = ImGui::GetContentRegionAvail().x;
   // The inputs are elastic on the same rule as the λ track: a fixed 90 pt input ends past the
   // clip at the narrowest legal cells (③ split under 2x scale — ~76 pt for this row), and this
   // child never scrolls. The 40 pt floor keeps a typeable field at every width the ③ formula
@@ -1489,11 +1516,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::InputFloat("az°##sky", &input_az, 0.0f, 0.0f, "%.1f")) {
     sky_storage->SetFloat(az_key, input_az);
   }
-  const float set_w = ImGui::CalcTextSize("Set sky point").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  // The Set button's forms (the Exclude/CSV ladder, one "###" id across them): at the
+  // compressed tiers' narrowest cells the full label exceeds even a fresh line — the verb
+  // carries the action and the typed-coordinate flow around it carries the meaning. The join
+  // stays a judgment on whichever label will render.
+  const float style_fp_x = ImGui::GetStyle().FramePadding.x;
+  const float set_full_w = ImGui::CalcTextSize("Set sky point").x + style_fp_x * 2.0f;
+  const bool set_narrow = set_full_w > sky_row_full_w;
+  const float set_w = set_narrow ? ImGui::CalcTextSize("Set###sky_set").x + style_fp_x * 2.0f : set_full_w;
   if (fits_on_line(set_w)) {
     ImGui::SameLine();
   }
-  if (ImGui::SmallButton("Set sky point")) {
+  // No tooltip on the verb form: a tooltip at the cursor swallows the very click that was
+  // aiming at the button beneath it, and the typed-coordinate inputs this button serves sit
+  // directly above it — the verb next to them is its own explanation.
+  const bool set_clicked = ImGui::SmallButton(set_narrow ? "Set###sky_set" : "Set sky point###sky_set");
+  if (set_clicked) {
     float dir[3];
     AltAzToDir(input_alt, input_az, dir);
     intent.valid = true;

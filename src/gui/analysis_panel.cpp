@@ -1933,8 +1933,19 @@ void RenderActionButtons(GuiState& state) {
   }
   const auto& payload = state.analysis_result.payload;
   const bool has_rows = payload && !payload->entries.empty();
+  // The CSV button's forms, the Exclude ladder's shape (one "###" id across all of them): the
+  // full label, the verb, and at the compressed tiers' narrowest widths the icon alone — a
+  // single control wider than its row is unfixable by stacking, and the tooltip carries the
+  // sentence in every form.
+  const float csv_full_w =
+      ImGui::CalcTextSize(ICON_FA_FILE_CSV " Export CSV").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const float csv_verb_w = ImGui::CalcTextSize(ICON_FA_FILE_CSV " CSV").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const float csv_avail = ImGui::GetContentRegionAvail().x;
+  const char* csv_label = csv_full_w <= csv_avail ? ICON_FA_FILE_CSV " Export CSV###action_csv" :
+                          csv_verb_w <= csv_avail ? ICON_FA_FILE_CSV " CSV###action_csv" :
+                                                    ICON_FA_FILE_CSV "###action_csv";
   ImGui::BeginDisabled(!has_rows);
-  if (ImGui::Button(ICON_FA_FILE_CSV " Export CSV###action_csv")) {
+  if (ImGui::Button(csv_label)) {
     const std::filesystem::path path = ShowExportCsvDialog();
     if (!path.empty()) {
       if (ExportAnalysisResultsCsv(path, BuildAnalysisResultsCsv(state, LocalTimeNow()))) {

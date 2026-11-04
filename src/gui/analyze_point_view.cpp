@@ -797,10 +797,22 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   ImGui::TextUnformatted("Sun direction globe");
   const float dev_grid_w =
       ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Deviation grid").x;
-  if (fits_on_line(dev_grid_w)) {
+  // A unit wider than the row is not fixed by wrapping (the wrapped checkbox's label would
+  // still clip — its name is the toggle's only identity). Below that the join is a judgment;
+  // at the over-width shapes the toggle keeps its id with an empty display label and the name
+  // moves to wrapped text under it (one id across the forms, "###" anchored).
+  const bool dev_grid_fits = dev_grid_w <= ImGui::GetContentRegionAvail().x;
+  if (dev_grid_fits && fits_on_line(dev_grid_w)) {
     ImGui::SameLine();
   }
-  ImGui::Checkbox("Deviation grid##globe", &view.show_deviation_grid);
+  if (dev_grid_fits) {
+    ImGui::Checkbox("Deviation grid###globe_dev_grid", &view.show_deviation_grid);
+  } else {
+    ImGui::Checkbox("###globe_dev_grid", &view.show_deviation_grid);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("Deviation grid");
+    ImGui::PopStyleColor();
+  }
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
   ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
   ImGui::PopStyleColor();
