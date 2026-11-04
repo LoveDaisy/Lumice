@@ -1081,7 +1081,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // sides together). The degradation ladder's own rung — internal scroll — is the only
   // mechanism whose reach does not depend on measuring the content that decides the measure's
   // own visibility.
-  ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders);
+  // Wheel ownership is arbitrated here, once, by taking the native wheel-to-scroll off the
+  // window and hand-routing it: the wheel inside the picture is the zoom's alone (the gesture
+  // block below), the wheel anywhere else in the region scrolls the region. With the native
+  // route left on, ImGui's scroll phase and the canvas zoom both consumed one event — a single
+  // tick moved the layout and the view together, and the first tick could slide the picture
+  // out from under the pointer so no zoom happened at all. The scrollbar itself stays (this
+  // is not NoScrollbar); only the wheel dispatch is claimed.
+  ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
   MapQuerySession& map = state.analysis.map;
   MapViewState& view = state.analysis.map_view;
   SkyPointIntent& intent = state.analysis.sky_point;
@@ -1266,8 +1273,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // old 52%-of-everything share clipped the Clear button exactly in the no-caliber states
   // (waiting for the first map, no selection). The degradation ladder's "press the graphics
   // floor" rung: the 64 px retention holds inside the post-tail budget, yields toward 24 px
-  // when the budget itself shrinks below it, and the tail always wins (this child never
-  // scrolls — a clipped control here is an unreachable one).
+  // when the budget itself shrinks below it, and the tail wins the budget before the picture
+  // does; where the budget cannot hold the wrapped bulk above the tail, the region's own
+  // scroll carries the overflow (the wheel route above).
   const float canvas_v_budget = std::max(0.0f, avail_h - sky_tail_cache);
   const float pic_share_v = std::min(canvas_v_budget, std::max(64.0f, canvas_v_budget * 0.52f));
   const float pic_px = std::max(24.0f, std::min(avail_w, pic_share_v));
@@ -1315,6 +1323,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   DrawSkyPointMarker(dl, view, intent, pic_min, pic_px, &marker_px, &marker_py);
 
   // ---- The gestures (the prototype's bindRp semantics; the ROI's state is never touched here) ----
+  // The wheel's arbitration lives in the BeginChild comment above: this branch is the canvas
+  // side (zoom, exclusive), the else-branch below is the region side (scroll, exclusive).
   if (canvas_hovered && !view.point_dragging) {
     const ImGuiIO& io = ImGui::GetIO();
     if (io.MouseWheel != 0.0f) {
@@ -1328,6 +1338,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         gesture_this_frame = true;
       }
     }
+  } else if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+    // The region's own scroll, hand-routed (the window no longer takes the wheel natively):
+    // the wheel outside the picture moves content and never the view. The step is the native
+    // wheel scroll's own formula (five lines, capped at two thirds of the view), so the feel
+    // matches every pane ImGui scrolls for itself.
+    const float max_step = ImGui::GetWindowSize().y * 0.67f;
+    const float step = std::floor(std::min(5.0f * ImGui::GetFontSize(), max_step));
+    ImGui::SetScrollY(ImGui::GetScrollY() - ImGui::GetIO().MouseWheel * step);
   }
   if (canvas_active) {
     const ImGuiIO& io = ImGui::GetIO();
@@ -1455,22 +1473,21 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // rect swallows the hover and the click of everything whose flow it spans, and a declared
     // height computed from last frame's tail measure overran the tail's rows on slice-cut
     // frames (the Set button died under it while its own rect kept reporting contained).
-    // The fold is the ladder's first rung — the explanation yields before any control does —
-    // and it LATCHES: a per-frame gate on the volatile tail measure opened and closed the
-    // block across frames (the explanation's own wrapped bulk decides the very overflow it
-    // reads), flickering the tail in and out of the item registry entirely. Once the region
-    // has overflowed with the explanation up, the explanation stays down for the region's life.
-    static bool caliber_folded = false;
-    if (ImGui::GetScrollMaxY() > 0.0f) {
-      caliber_folded = true;
+    // It is also UNCONDITIONAL — no fold: the lines are a pure function of the adopted result
+    // (the unit and aggregation, the member coverage, the truncated warning that says the
+    // picture is a prefix and not the class, the rank-0 note), so any state that hides them
+    // is an irreversible deletion of the only carrier of exactly those facts. A latch keyed
+    // on the region's own overflow did exactly that: one narrow frame hid the explanation for
+    // the process's remaining life and gave nothing back on a wider one, while the block's
+    // own wrapped bulk was what decided the overflow the latch read — the measure feeding the
+    // state that decides the measure. Where the cell is too short for the block, the region's
+    // own scroll carries it: the rung whose reach does not depend on measuring the content
+    // that decides the measure's own visibility.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    for (const std::string& line : MapCaliberLines(in)) {
+      ImGui::TextWrapped("%s", line.c_str());
     }
-    if (!caliber_folded) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      for (const std::string& line : MapCaliberLines(in)) {
-        ImGui::TextWrapped("%s", line.c_str());
-      }
-      ImGui::PopStyleColor();
-    }
+    ImGui::PopStyleColor();
   }
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
@@ -1483,8 +1500,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   float input_az = sky_storage->GetFloat(az_key, 0.0f);
   // The row wraps when the cell cannot hold it — the side-by-side cell is at its content floor
   // and the stacked form can be narrower than that floor legitimately (the main view's own soft
-  // floor minus padding sits below the row's width), and this child never scrolls, so a forced
-  // SameLine would clip the Set button exactly where typing is the only way to name a target.
+  // floor minus padding sits below the row's width), and a forced SameLine would clip the Set
+  // button exactly where typing is the only way to name a target.
   // Labeled widgets draw their label right of the frame, so each successor's footprint includes
   // the label's own advance.
   const float style_inner_x = ImGui::GetStyle().ItemInnerSpacing.x;
