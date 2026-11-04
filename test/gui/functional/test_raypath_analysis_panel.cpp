@@ -3836,6 +3836,59 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->LogInfo("[ray3d wheel] outside tick: band %.0f -> %.0f, zoom held at %.4f", static_cast<double>(band0_w),
                  static_cast<double>(band_w->Scroll.y),
                  static_cast<double>(gui::g_state.analysis.point_view.orbit_zoom));
+    // The TAKEOVER frame, at the one tier whose geometry can host it: the pointer holds still
+    // over the 3D cell's title rows — which here neither claim the wheel nor scroll
+    // themselves (the 3D region fits at this size) — and the band's own native ticks slide
+    // the map cell up under it. The tick landing on the first frame whose hover sees the map
+    // was dispatched before any claim existed: the band consumes it, the unfixed product's
+    // gesture would spend the same event again. (At the 1024×2x tier this construct is gone —
+    // every cell's rows claim there — and the pointer-arrival form is unreachable too: every
+    // engine move yields two frames, long enough for the destination to claim.)
+    ImGuiWindow* band_t = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+    IM_CHECK_RETV(band_t != nullptr, false);
+    ImGuiWindow* map_t = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
+        map_t = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(map_t != nullptr, false);
+    const float r3d_top_in_band_t = [&] {
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypath3D") != nullptr) {
+          return w->Pos.y - band_t->Pos.y + band_t->Scroll.y;
+        }
+      }
+      return 0.0f;
+    }();
+    band_t->Scroll.y = r3d_top_in_band_t - 20.0f;  // the pointer (viewport y +20) sits on the 3D cell's title row
+    ctx->Yield(2);
+    const ImVec2 takeover_pt(band_t->Pos.x + band_t->Size.x * 0.5f, band_t->Pos.y + 20.0f);
+    ctx->MouseMoveToPos(takeover_pt);
+    ctx->Yield(2);
+    const float band_t0 = band_t->Scroll.y;
+    const float map_t0 = map_t->Scroll.y;
+    ctx->MouseWheelY(1.0f);  // tick A: the band scrolls; the pointer is still on the 3D's rows
+    ctx->MouseWheelY(1.0f);  // tick B: lands on the first frame whose hover sees the map
+    ctx->Yield(2);
+    IM_CHECK_RETV(band_t->Scroll.y < band_t0, false);
+    IM_CHECK_RETV(map_t->Scroll.y == map_t0, false);
+    ctx->LogInfo("[scale tiers baseline] takeover: band %.0f -> %.0f, map held at %.0f", static_cast<double>(band_t0),
+                 static_cast<double>(band_t->Scroll.y), static_cast<double>(map_t->Scroll.y));
+    ctx->MouseWheelY(-1.0f);  // tick C: the claim standing, the dispatch is the map's — the band holds
+    const float band_before_tick_c = band_t->Scroll.y;  // captured BEFORE the event lands
+    ctx->Yield(2);
+    IM_CHECK_RETV(band_t->Scroll.y == band_before_tick_c, false);
+    // The map's own consume half is NOT asserted here: at this tier the map cell fits (SM 0 —
+    // the restored-cell receipt above), so a wheel down over its rows has no headroom to
+    // scroll. The consume side's discriminator lives in the 1024×2x stable-hover legs, where
+    // the region overflows and the tick moved the map while the band held.
+    ctx->LogInfo("[scale tiers baseline] claim stood: band held at %.0f, map SM %.0f (no headroom at this tier)",
+                 static_cast<double>(band_t->Scroll.y), static_cast<double>(map_t->ScrollMax.y));
+    band_t->Scroll.y = 0.0f;
+    map_t->Scroll.y = 0.0f;
+    ctx->Yield(2);
   }
   IM_CHECK_RETV(set_scale(1.5f), false);
   IM_CHECK_RETV(
@@ -3987,52 +4040,86 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     ctx->LogInfo("[scale tiers 1024 clamped] wheel receipt: scroll settled %.0f of %.0f",
                  static_cast<double>(map_e->Scroll.y), static_cast<double>(map_e->ScrollMax.y));
-    // The TAKEOVER frame, in its real shape: the pointer holds still and the band's own
-    // scrolling slides the map cell under it. The tick that lands on the first frame whose
-    // hover sees the map was dispatched before any claim existed (the native dispatch reads
-    // the owner the previous frame left) — the band consumes it, and the map must not spend
-    // it again. The frame sequencing is the construct: tick A scrolls the band natively
-    // (the pointer is over the 3D cell's title rows — nothing claims), the layout the next
-    // frame's hover reads has the map under the pointer, and tick B arrives exactly then.
-    // The stable-hover对照 above (band at 60, claim established before the wheel) is the
-    // other half: same asserts, different frame history.
-    IM_CHECK_RETV(band_e->ScrollMax.y > 900.0f, false);
-    band_e->Scroll.y = 700.0f;
-    ctx->Yield(2);
-    const ImVec2 takeover_pt(band_e->Pos.x + band_e->Size.x * 0.5f, band_e->Pos.y + 80.0f);
-    const float band_t0 = band_e->Scroll.y;
-    const float map_t0 = map_e->Scroll.y;
-    ctx->MouseMoveToPos(takeover_pt);
-    ctx->Yield(2);  // pointer parked over the 3D cell's title rows: nothing claims here
-    // Ticks A and B go in BACK-TO-BACK (each MouseWheelY yields exactly one frame inside the
-    // engine): A is consumed while the hover still reads the 3D rows, and B lands exactly on
-    // the first frame whose hover sees the map — the takeover frame, dispatched before any
-    // claim could exist. An extra yield here would let the map claim in between and turn B
-    // into a stable-hover tick, which the对照 above already covers.
-    ctx->MouseWheelY(1.0f);  // tick A: the band scrolls, the map slides under the pointer
-    ctx->MouseWheelY(1.0f);  // tick B: lands on the first frame whose hover sees the map
-    ctx->Yield(2);
-    IM_CHECK_RETV(band_e->Scroll.y < band_t0, false);
-    IM_CHECK_RETV(map_e->Scroll.y == map_t0, false);
-    ctx->LogInfo("[scale tiers 1024 clamped] takeover: band %.0f -> %.0f, map held at %.0f",
-                 static_cast<double>(band_t0), static_cast<double>(band_e->Scroll.y),
-                 static_cast<double>(map_e->Scroll.y));
-    ctx->MouseWheelY(-1.0f);  // tick C: the claim is standing now — the map scrolls, the band holds
-    ctx->Yield(2);
-    IM_CHECK_RETV(map_e->Scroll.y > map_t0, false);
-    const float band_after_takeover = band_e->Scroll.y;
-    IM_CHECK_RETV(band_e->Scroll.y == band_after_takeover, false);
-    ctx->LogInfo("[scale tiers 1024 clamped] claim stood: map %.0f -> %.0f, band held at %.0f",
-                 static_cast<double>(map_t0), static_cast<double>(map_e->Scroll.y),
-                 static_cast<double>(band_e->Scroll.y));
+    // (the takeover leg lives at the baseline tier: at this tier every cell's rows claim, so
+    // no non-claiming wheel-able zone exists to drive the band under a stationary pointer)
     // The band's nonzero position above is part of the arbitration's own evidence; the λ
-    // block below drives the region's header row, which reads best from the band's top —
-    // and from the region's own top (the takeover's tick C left the region scrolled).
-    map_e->Scroll.y = 0.0f;
+    // block below drives the region's header row, which reads best from the band's top.
     band_e->Scroll.y = 0.0f;
     ctx->Yield(2);
-    // (the 3D canvas's wheel-arbitration half lives at the baseline tier: this cell is too
-    // narrow for a 3D canvas to exist at all)
+    // The 3D cell at THIS compressed tier is the review's own kill geometry: the canvas holds
+    // its floor and the region scrolls past it — the model's only spatial view exists here or
+    // nowhere. Real completed point/trace results are already adopted (this leg's premise);
+    // the canvas must exist, sit inside the effective clip, and answer a real orbit drag and a
+    // real wheel zoom.
+    {
+      ImGuiWindow* r3d_t = nullptr;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypath3D") != nullptr) {
+          r3d_t = w;
+          break;
+        }
+      }
+      IM_CHECK_RETV(r3d_t != nullptr, false);
+      // The band shows the cell's CANVAS band, not its top: the region's fixed head at this
+      // tier is ~440px tall and the band's visible slice is shorter than that — the canvas
+      // would sit below the slice and the registry would not report it.
+      const float r3d_top_in_band_t = r3d_t->Pos.y - band_e->Pos.y + band_e->Scroll.y;
+      band_e->Scroll.y = std::min(r3d_top_in_band_t + 400.0f, band_e->ScrollMax.y);
+      ctx->Yield(2);
+      r3d_t->Scroll.y = 0.0f;
+      ctx->Yield(2);
+      const ImGuiTestItemInfo r3d_canvas_t = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
+      IM_CHECK_RETV(r3d_canvas_t.ID != 0, false);
+      IM_CHECK_RETV(r3d_canvas_t.RectFull.Max.x <= r3d_t->InnerClipRect.Max.x + 0.5f &&
+                        r3d_canvas_t.RectFull.Min.y >= r3d_t->InnerClipRect.Min.y - 0.5f,
+                    false);
+      // The legend's runaway-wrap pin, decomposed (the review's own control experiment: the
+      // pre-fix wrap-at-a-sliver measured the legend at 1146px where a sane wrap gives 192):
+      // the legend's height is the region's content minus the head above the canvas and the
+      // canvas itself — at this tier the fixed head (title, radios and the usage paragraph at
+      // 184px×2x) legitimately dwarfs the cell and the region scrolls, so the WHOLE region's
+      // ScrollMax is not the legend's proxy; the legend itself is what the bound pins.
+      const float content_h = r3d_t->ScrollMax.y + r3d_t->Size.y;
+      const float head_h = r3d_canvas_t.RectFull.Min.y - r3d_t->Pos.y - ImGui::GetStyle().WindowPadding.y;
+      const float legend_h =
+          content_h - head_h - r3d_canvas_t.RectFull.GetHeight() - ImGui::GetStyle().ItemSpacing.y * 2.0f;
+      ctx->LogInfo(
+          "[scale tiers 1024 clamped] 3d decomposition: content %.0f = head %.0f + canvas %.0f + legend %.0f, "
+          "SM %.0f",
+          static_cast<double>(content_h), static_cast<double>(head_h),
+          static_cast<double>(r3d_canvas_t.RectFull.GetHeight()), static_cast<double>(legend_h),
+          static_cast<double>(r3d_t->ScrollMax.y));
+      IM_CHECK_RETV(legend_h > 0.0f && legend_h < 400.0f, false);
+      const float yaw0_t = gui::g_state.analysis.point_view.orbit_yaw_deg;
+      const float zoom0_t = gui::g_state.analysis.point_view.orbit_zoom;
+      const ImVec2 canvas_c_t = r3d_canvas_t.RectFull.GetCenter();
+      const float hover_y_t =
+          std::clamp(canvas_c_t.y, r3d_t->InnerClipRect.Min.y + 2.0f, r3d_t->InnerClipRect.Max.y - 2.0f);
+      IM_CHECK_RETV(hover_y_t >= r3d_canvas_t.RectFull.Min.y && hover_y_t <= r3d_canvas_t.RectFull.Max.y, false);
+      ctx->MouseMoveToPos(ImVec2(canvas_c_t.x, hover_y_t));
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(canvas_c_t.x + 20.0f, hover_y_t));
+      ctx->Yield(3);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_yaw_deg != yaw0_t, false);
+      const float band_before_zoom_t = band_e->Scroll.y;
+      ctx->MouseWheelY(1.0f);
+      ctx->Yield(2);
+      IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_zoom > zoom0_t, false);
+      IM_CHECK_RETV(band_e->Scroll.y == band_before_zoom_t, false);
+      ctx->LogInfo(
+          "[scale tiers 1024 clamped] 3d canvas live: yaw moved, zoom %.4f -> %.4f, region SM %.0f of %.0f, "
+          "band %.0f held",
+          static_cast<double>(zoom0_t), static_cast<double>(gui::g_state.analysis.point_view.orbit_zoom),
+          static_cast<double>(r3d_t->ScrollMax.y), static_cast<double>(r3d_t->Size.y),
+          static_cast<double>(band_e->Scroll.y));
+      band_e->Scroll.y = 0.0f;
+      r3d_t->Scroll.y = 0.0f;
+      ctx->Yield(2);
+    }
     // λ: contained in the cell, then both ends through the real drag path.
     const ImGuiTestItemInfo lambda_e = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(lambda_e.ID != 0, false);

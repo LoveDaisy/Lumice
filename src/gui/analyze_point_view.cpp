@@ -1129,8 +1129,12 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 // ---- The raypath 3D view -----------------------------------------------------------------------------
 
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
-  ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders,
-                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  // The region scrolls where its own budget cannot hold the head, the canvas floor and the
+  // legend (the ladder's internal-scroll rung): the scrollbar is the affordance, the wheel is
+  // hand-routed below — the native dispatch never scrolls this child (NoScrollWithMouse, the
+  // map region's own guard), and the claim arbitration in analyze_region_wheel.hpp decides
+  // which consumer owns the event.
+  ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
   PointQuerySession& point = state.analysis.point;
   RayTraceSession& trace = state.analysis.trace;
   PointViewState& view = state.analysis.point_view;
@@ -1408,29 +1412,38 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
   // The canvas gives back exactly what the legend actually consumed last frame — a scrolled-out
   // legend is an unreachable one (the map region's rule), and the legend is AC4's colour key.
-  // No floor: the canvas absorbs what is left and, at squeezed rows, yields to zero rather than
-  // push the fixed stack above out of the region (an invisible canvas beats a scrolled-out
-  // title). The legend's height is measured, not derived (the ##analysis_head pattern): its
-  // line count is a wrap judgment over live widths — a face-transmittance readout joins the row
-  // while it fits, wraps below when it doesn't — and a static arithmetic mirror of that judgment
+  // The legend's height is measured, not derived (the ##analysis_head pattern): its line count
+  // is a wrap judgment over live widths — a face-transmittance readout joins the row while it
+  // fits, wraps below when it doesn't — and a static arithmetic mirror of that judgment
   // is exactly the "constant chasing a conditional state" shape the content-adaptation contract
   // forbids. The cache rides one frame behind a width change; the widths that change it persist.
+  // The canvas holds a FLOOR. The old "yields to zero" absorbed the model out of existence at
+  // the compressed tiers: a canvas that is never submitted cannot be scrolled to, so the
+  // completed result's only spatial view was deleted rather than degraded. Where the fixed
+  // head, this floor and the legend exceed the cell, the region scrolls — the degradation
+  // ladder's internal-scroll rung, the map region's own shape: scrollbar on, the wheel
+  // hand-routed under the workspace's claim arbitration, so every part stays reachable
+  // wherever the cell is too short.
   static float legend_h_cache = 0.0f;
   if (legend_h_cache <= 0.0f) {
     legend_h_cache = ImGui::GetTextLineHeight();  // the first frame's honest default: one line
   }
-  const float canvas_h = avail.y - ImGui::GetStyle().ItemSpacing.y - legend_h_cache;
+  const float canvas_floor = UiPx(110.0f);  // the compressed-yield floor: a draggable orbit at every width
+  const float canvas_h = std::max(canvas_floor, avail.y - ImGui::GetStyle().ItemSpacing.y - legend_h_cache);
+  bool canvas_hovered = false;
   if (canvas_h > 0.0f) {
     const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
     ImGui::InvisibleButton("##r3d_canvas", ImVec2(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y),
                            ImGuiButtonFlags_MouseButtonLeft);
+    canvas_hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
     // The orbit's wheel zoom consumes only while the workspace's wheel claim was standing at
     // the frame's start (the arbitration in analyze_region_wheel.hpp; the map disk is the
-    // other claimant). The claim itself is CANVAS-scoped here: outside the picture the wheel
-    // belongs to the host band (the 3D child never wheel-scrolls itself — its flag stays —
-    // so a wheel over the title rows scrolls the band, its natural container).
-    AnalyzeRegionWheelClaim(ImGui::IsItemHovered(), AnalyzeRay3DWheelOwnerId());
+    // other claimant). The claim is CANVAS-scoped here, plus the region's own rows wherever
+    // the region actually overflows (scroll is useful exactly there); at a fitting cell the
+    // rows still belong to the band, its natural container.
+    AnalyzeRegionWheelClaim(canvas_hovered || (ImGui::IsWindowHovered() && ImGui::GetScrollMaxY() > 0.0f),
+                            AnalyzeRay3DWheelOwnerId());
     if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
       const ImVec2 delta = ImGui::GetIO().MouseDelta;
       // Grab convention — the project's one drag metaphor (Render main view inside-out and Globe
@@ -1502,18 +1515,24 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
     }
   }
-  // The legend.
+  // The legend: every unit joins the previous line only while it fits — SameLine is a
+  // judgment here like everywhere else in the workspace — and the transmittance readout wraps
+  // BELOW only after the labels' line is actually ended. An AddLine between the labels
+  // submits no layout item, so a SameLine left dangling in front of a wrapped text made the
+  // line tail's sliver the wrap width of EVERY line — the legend grew past a thousand pixels
+  // of near-vertical characters at the narrowest cells.
   const float legend_top_y = ImGui::GetCursorPosY();
   ImGui::TextDisabled("entry");
-  ImGui::SameLine();
   ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(0, 1.0f), 2.0f);
-  ImGui::SameLine();
+  if (fits_on_line(ImGui::CalcTextSize("internal").x)) {
+    ImGui::SameLine();
+  }
   ImGui::TextDisabled("internal");
-  ImGui::SameLine();
   ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(1, 1.0f), 2.0f);
-  ImGui::SameLine();
+  if (fits_on_line(ImGui::CalcTextSize("exit").x)) {
+    ImGui::SameLine();
+  }
   ImGui::TextDisabled("exit");
-  ImGui::SameLine();
   ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
   if (current->sample.interface_count >= 2) {
     char transmittance[96];
@@ -1524,12 +1543,22 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       ImGui::SameLine();
       ImGui::TextDisabled("%s", transmittance);
     } else {
+      ImGui::NewLine();  // end the labels' line — the wrapped readout owns a fresh line, not the tail
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       ImGui::TextWrapped("%s", transmittance);
       ImGui::PopStyleColor();
     }
   }
   legend_h_cache = ImGui::GetCursorPosY() - legend_top_y;
+  // The region's own scroll, hand-routed (the map region's rule): the wheel over the rows —
+  // wherever the region actually overflows, which is exactly when the claim stands for them —
+  // moves content and never the view. The step is the native wheel scroll's own formula.
+  if (!canvas_hovered && AnalyzeRegionWheelStanding() && ImGui::IsWindowHovered() &&
+      ImGui::GetIO().MouseWheel != 0.0f) {
+    const float max_step = ImGui::GetWindowSize().y * 0.67f;
+    const float step = std::floor(std::min(5.0f * ImGui::GetFontSize(), max_step));
+    ImGui::SetScrollY(ImGui::GetScrollY() - ImGui::GetIO().MouseWheel * step);
+  }
   ImGui::EndChild();
 }
 
