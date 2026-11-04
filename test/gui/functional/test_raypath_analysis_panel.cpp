@@ -6406,6 +6406,72 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The empty state degrades like the picture path: on a fresh document (no texture) at the
+  // smallest supported window with the row split at its clamp, the notice and the operation bar
+  // together exceed a host window that is NoScrollbar/NoScrollWithMouse by design — the budget
+  // rows used to sit past a clip rect no wheel could move (ScrollMax said 41, Scroll stayed 0).
+  // A real wheel gesture must scroll them into view, they must sit inside the child's clip rect,
+  // and the budget must actually operate there — presence alone is not the claim.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "empty_state_bar_stays_reachable");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      gui::DoNew();
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = 1024;
+      g_window_size_test.height = 640;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      IM_CHECK(!gui::g_preview.HasTexture());
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(3);
+      gui::g_state.workspace.middle_rows_ratio = 0.15f;  // the row split's own clamp floor
+      ctx->Yield(6);
+      // The degradation engaged on the empty path: the bar lives in its scrolling child.
+      ImGuiWindow* bar_scroll = nullptr;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr) {
+          bar_scroll = w;
+        }
+      }
+      IM_CHECK(bar_scroll != nullptr);
+      // A real wheel gesture, over the child: the defect was the wheel doing nothing.
+      const float scroll_before = bar_scroll->Scroll.y;
+      ctx->MouseMoveToPos(bar_scroll->InnerClipRect.GetCenter());
+      ctx->MouseWheelY(-10.0f);
+      ctx->Yield(3);
+      IM_CHECK_GT(bar_scroll->Scroll.y, scroll_before);
+      // Visible, geometrically: both budget rows inside the child's clip rect.
+      ctx->SetRef("");
+      const auto rays_info = ctx->ItemInfo("**/Infinite rays");
+      IM_CHECK(rays_info.ID != 0);
+      IM_CHECK_LE(rays_info.RectFull.Max.y, bar_scroll->InnerClipRect.Max.y + 0.5f);
+      const auto m_info = ctx->ItemInfo((std::string("**/") + "##Rays(M)_input").c_str());
+      IM_CHECK(m_info.ID != 0);
+      IM_CHECK_LE(m_info.RectFull.Max.y, bar_scroll->InnerClipRect.Max.y + 0.5f);
+      // Editable: the budget operates after the scroll.
+      ctx->ItemInputValue((std::string("**/") + "##Rays(M)_input").c_str(), 3.5f);
+      ctx->Yield(2);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.ray_num_millions, 3.5f, 1e-3f);
+      ctx->SetRef("");
+      // The basis audit: a window the test resized comes back before the test ends.
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = gui::kInitWindowWidth;
+      g_window_size_test.height = gui::kInitWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+    };
+  }
+
   // The default centre's convergence deadline is absolute: it is the FIRST placement's frame,
   // and a size compensation never refreshes it — so a resize chain that runs well past the
   // window cannot keep re-deriving the direction, and a view edit followed by a further resize

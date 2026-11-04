@@ -541,12 +541,38 @@ void RenderScenePanorama(GLFWwindow* window) {
   if (!g_preview.HasTexture()) {
     // The bar still renders below this — its Analyze side carries the same no-picture refusals
     // and its run controls draw the picture notice, so the empty state guides and refuses in
-    // one place.
+    // one place. The notice counts toward the column the same way the picture does: when the
+    // notice AND the bar cannot both fit, the same scrolling degradation engages on this path —
+    // the host window is NoScrollbar / NoScrollWithMouse by design, so content pushed past its
+    // edge is unreachable, and on a fresh document at the smallest window the analysis budget
+    // rows (Infinite rays, Rays(M)) sat exactly there, past a clip rect no wheel could move.
+    // The notice's height rides the same one-frame-lag recipe as the bar's, and both paths
+    // below write the true measured value back, so the judgment converges on current content.
+    const ImGuiID notice_h_key = ImGui::GetID("panorama_empty_notice_h");
+    const float notice_reserve = std::max(storage->GetFloat(notice_h_key, 0.0f), ImGui::GetTextLineHeight());
+    const float content_wanted = notice_reserve + ImGui::GetStyle().ItemSpacing.y + bar_reserve;
+    if (content_wanted > avail.y) {
+      ImGui::BeginChild("##AnalyzeOpBarScroll", avail, 0.0f);
+      const float notice_top = ImGui::GetCursorPosY();
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped(
+          "No rendered image for this document yet — press Run once in the Render workspace; the "
+          "main view shows the traced sky here.");
+      ImGui::PopStyleColor();
+      storage->SetFloat(notice_h_key, ImGui::GetCursorPosY() - notice_top);
+      const float bar_top = ImGui::GetCursorPosY();
+      RenderAnalyzeOperationBar(g_state, g_server);
+      storage->SetFloat(bar_h_key, ImGui::GetCursorPosY() - bar_top);
+      ImGui::EndChild();
+      return;
+    }
+    const float notice_top = ImGui::GetCursorPosY();
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
         "No rendered image for this document yet — press Run once in the Render workspace; the "
         "main view shows the traced sky here.");
     ImGui::PopStyleColor();
+    storage->SetFloat(notice_h_key, ImGui::GetCursorPosY() - notice_top);
   } else {
     const float picture_h = avail.y - bar_reserve - ImGui::GetStyle().ItemSpacing.y;
     if (picture_h > 0.0f) {
