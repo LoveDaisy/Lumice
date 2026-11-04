@@ -1135,10 +1135,24 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
   }
   const float lambda_w = UiPx(140.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("λ").x;
-  if (fits_on_line(lambda_w)) {
+  const bool lambda_same_line = fits_on_line(lambda_w);
+  if (lambda_same_line) {
     ImGui::SameLine();
   }
-  ImGui::SetNextItemWidth(UiPx(140.0f));
+  // The wrapped case re-spends the FRESH line's whole width (the cursor is already on it — this
+  // read is the honest measure here, unlike a same-line judgment after ItemSize): the track
+  // shrinks so slider + its trailing label stay inside the cell. A fixed 140 pt track ends past
+  // the clip at the narrowest legal cells (the ③ split under 2x scale leaves ~90 pt for this
+  // row), and this child never scrolls, so the clipped end was an unreachable control. The
+  // 60 pt floor sits below every legal width's remainder (the probed floor case leaves ~76 pt
+  // for the row) while keeping a usable track.
+  float lambda_track = UiPx(140.0f);
+  if (!lambda_same_line) {
+    lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("λ").x -
+                                              ImGui::GetStyle().ItemInnerSpacing.x);
+    lambda_track = std::max(lambda_track, UiPx(60.0f));
+  }
+  ImGui::SetNextItemWidth(lambda_track);
   if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
   }
@@ -1450,14 +1464,28 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // Labeled widgets draw their label right of the frame, so each successor's footprint includes
   // the label's own advance.
   const float style_inner_x = ImGui::GetStyle().ItemInnerSpacing.x;
-  ImGui::SetNextItemWidth(UiPx(90.0f));
+  // The inputs are elastic on the same rule as the λ track: a fixed 90 pt input ends past the
+  // clip at the narrowest legal cells (③ split under 2x scale — ~76 pt for this row), and this
+  // child never scrolls. The 40 pt floor keeps a typeable field at every width the ③ formula
+  // can produce; the label rides right of the frame and its advance is part of the footprint.
+  const float alt_label_w = ImGui::CalcTextSize("alt°").x;
+  const float alt_track =
+      std::max(UiPx(40.0f), std::min(UiPx(90.0f), ImGui::GetContentRegionAvail().x - alt_label_w - style_inner_x));
+  ImGui::SetNextItemWidth(alt_track);
   if (ImGui::InputFloat("alt°##sky", &input_alt, 0.0f, 0.0f, "%.1f")) {
     sky_storage->SetFloat(alt_key, input_alt);
   }
-  if (fits_on_line(UiPx(90.0f) + style_inner_x + ImGui::CalcTextSize("az°").x)) {
+  const float az_label_w = ImGui::CalcTextSize("az°").x;
+  const bool az_same_line = fits_on_line(UiPx(90.0f) + style_inner_x + az_label_w);
+  if (az_same_line) {
     ImGui::SameLine();
   }
-  ImGui::SetNextItemWidth(UiPx(90.0f));
+  float az_track = UiPx(90.0f);
+  if (!az_same_line) {
+    az_track =
+        std::max(UiPx(40.0f), std::min(UiPx(90.0f), ImGui::GetContentRegionAvail().x - az_label_w - style_inner_x));
+  }
+  ImGui::SetNextItemWidth(az_track);
   if (ImGui::InputFloat("az°##sky", &input_az, 0.0f, 0.0f, "%.1f")) {
     sky_storage->SetFloat(az_key, input_az);
   }

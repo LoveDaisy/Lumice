@@ -3516,10 +3516,18 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   }
 
   // The per-tier driver. `basis` pairs the scale with the clamped-equivalent geometry the plan
-  // sanctions (risk 1) — the 150% tier keeps the ordinary split's window.
-  const auto drive_tier = [&](const char* label) {
+  // sanctions (risk 1) — the 150% tier keeps the ordinary split's window. The expected basis
+  // rides along so the tier is asserted at the ACTUAL viewport the real GLFW path produced: a
+  // windowing constraint silently adjusting the request would otherwise let the drive run in a
+  // geometry no tier claims.
+  const auto drive_tier = [&](const char* label, float expect_w, float expect_h) {
+    const ImVec2 actual_vp = ImGui::GetMainViewport()->Size;
     ImGuiWindow* share_t = ctx->GetWindowByRef(kWindowRef);
     IM_CHECK_RETV(share_t != nullptr, false);
+    ctx->LogInfo("[scale tiers %s] viewport %.0fx%.0f (requested %.0fx%.0f), share w %.1f", label,
+                 static_cast<double>(actual_vp.x), static_cast<double>(actual_vp.y), static_cast<double>(expect_w),
+                 static_cast<double>(expect_h), static_cast<double>(share_t->Size.x));
+    IM_CHECK_RETV(fabsf(actual_vp.x - expect_w) < 1.5f && fabsf(actual_vp.y - expect_h) < 1.5f, false);
     ImGuiWindow* table_t = nullptr;
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && w->ParentWindow == share_t &&
@@ -3573,8 +3581,13 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       std::optional<int> pool_t;
       for (const auto& e : gui::g_state.analysis_result.payload->entries) {
         if (std::string(e.display) == top_display) {
-          const auto it = gui::AnalysisCoreToPoolMap(gui::g_state).find(e.chain[0].crystal_id);
-          if (it != gui::AnalysisCoreToPoolMap(gui::g_state).end()) {
+          // One live map, bound once: AnalysisCoreToPoolMap returns by value, so calling it
+          // again for `end()` would hand back a second temporary while `it` still points into
+          // the first — a heap-use-after-free on the very path this leg runs every tier (the
+          // ASan probe's catch; the stale-floors reversal below binds the same way).
+          const auto& core_to_pool_t = gui::AnalysisCoreToPoolMap(gui::g_state);
+          const auto it = core_to_pool_t.find(e.chain[0].crystal_id);
+          if (it != core_to_pool_t.end()) {
             pool_t = it->second;
           }
           break;
@@ -3608,13 +3621,31 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     }
     head_t->Scroll.y = head_t->ScrollMax.y;
     ctx->Yield(3);
-    const ImGuiTestItemInfo radius_t = ctx->ItemInfo("**/Radius", ImGuiTestOpFlags_NoError).ID != 0 ?
-                                           ctx->ItemInfo("**/Radius", ImGuiTestOpFlags_NoError) :
-                                           ctx->ItemInfo("**/Radius##narrow", ImGuiTestOpFlags_NoError);
+    // One anchored id across both width branches (the product's "###Radius_narrow"): the narrow
+    // branch hides the slider's own display text — its label owns the line above — and the wide
+    // branch's trailing label rides the slider's row.
+    const ImGuiTestItemInfo radius_t = ctx->ItemInfo("**/Radius###Radius_narrow", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(radius_t.ID != 0, false);
     IM_CHECK_RETV(radius_t.RectFull.Max.x <= head_t->InnerClipRect.Max.x + 0.5f &&
                       radius_t.RectFull.Min.x >= head_t->InnerClipRect.Min.x - 0.5f,
                   false);
+    // The visible "Radius" text is not the slider rect's cargo (the hook reports the frame
+    // only, so a trailing label could sit past the clip invisibly), and a text item carries
+    // id 0 — it cannot be ItemInfo'd at all (the 1024-block's culled-label guess failed here
+    // first). Classify the branch on the product's own arithmetic over the same content width
+    // (InnerClipRect excludes padding and an active scrollbar): wide keeps a 120 pt track floor
+    // plus the label on one row — the label's drawn extent (frame_max + ItemInnerSpacing.x, the
+    // slider-label convention) is then bound past the track's right edge; narrower, the label
+    // owns its line and the track fills the row — asserted as the shape, the line above sitting
+    // inside the clip the track's own containment proves.
+    const float label_w = ImGui::CalcTextSize("Radius").x;
+    const float inner_sp = ImGui::GetStyle().ItemInnerSpacing.x;
+    const float content_w = head_t->InnerClipRect.GetWidth();
+    if (content_w - label_w - inner_sp >= gui::UiPx(120.0f)) {
+      IM_CHECK_RETV(radius_t.RectFull.Max.x + inner_sp + label_w <= head_t->InnerClipRect.Max.x + 0.5f, false);
+    } else {
+      IM_CHECK_RETV(radius_t.RectFull.GetWidth() >= content_w - 1.5f, false);
+    }
     const float cone_deg = gui::kAnalysisConeMaxRadiusDeg;
     const float min_deg = gui::kAnalysisConeMaxRadiusDeg / static_cast<float>(gui::kAnalysisConeRingCount);
     const ImVec2 track_c = radius_t.RectFull.GetCenter();
@@ -3713,17 +3744,107 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     return true;
   };
 
-  IM_CHECK_RETV(drive_tier("baseline 1x"), false);
+  IM_CHECK_RETV(
+      drive_tier("baseline 1x", static_cast<float>(gui::kInitWindowWidth), static_cast<float>(gui::kInitWindowHeight)),
+      false);
   IM_CHECK_RETV(set_scale(1.5f), false);
-  IM_CHECK_RETV(drive_tier("150 percent"), false);
+  IM_CHECK_RETV(
+      drive_tier("150 percent", static_cast<float>(gui::kInitWindowWidth), static_cast<float>(gui::kInitWindowHeight)),
+      false);
   IM_CHECK_RETV(set_scale(2.0f), false);
   IM_CHECK_RETV(set_basis(1800, 900), false);  // the clamped-equivalent geometry (plan risk 1)
-  IM_CHECK_RETV(drive_tier("200 percent clamped"), false);
+  IM_CHECK_RETV(drive_tier("200 percent clamped", 1800.0f, 900.0f), false);
   // The reviewer's 1280-workspace 2x tier: the narrowest legal right column, where the radius
   // label leaves the slider's line and the Exclude button takes its narrow form — the drive
   // handles either id/label.
   IM_CHECK_RETV(set_basis(1280, 800), false);
-  IM_CHECK_RETV(drive_tier("200 percent 1280 clamped"), false);
+  IM_CHECK_RETV(drive_tier("200 percent 1280 clamped", 1280.0f, 800.0f), false);
+
+  // The narrowest-legal-workspace edge: 2x at a 1024 workspace is a legal combination (the product
+  // clamps the scaled window minimums to the workspace), and its map cell is ~90 pt of content
+  // width — narrower than the designed λ track (140 pt) or sky inputs (90 pt). The elastic
+  // widths must hold slider/input + label inside a clip this cell's child cannot scroll, and
+  // the track's ends must answer a real drag.
+  IM_CHECK_RETV(set_basis(1024, 800), false);
+  {
+    ImGuiWindow* map_e = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
+        map_e = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(map_e != nullptr, false);
+    ctx->LogInfo("[scale tiers 1024 clamped] viewport %.0fx%.0f, map cell %.0fx%.0f",
+                 static_cast<double>(ImGui::GetMainViewport()->Size.x),
+                 static_cast<double>(ImGui::GetMainViewport()->Size.y), static_cast<double>(map_e->Size.x),
+                 static_cast<double>(map_e->Size.y));
+    IM_CHECK_RETV(fabsf(ImGui::GetMainViewport()->Size.x - 1024.0f) < 1.5f &&
+                      fabsf(ImGui::GetMainViewport()->Size.y - 800.0f) < 1.5f,
+                  false);
+    // The stacked band keeps the map first: back to its top, the cell is on screen.
+    ImGuiWindow* band_e = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+    IM_CHECK_RETV(band_e != nullptr, false);
+    band_e->Scroll.y = 0.0f;
+    ctx->Yield(2);
+    // λ: contained in the cell, then both ends through the real drag path.
+    const ImGuiTestItemInfo lambda_e = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(lambda_e.ID != 0, false);
+    IM_CHECK_RETV(lambda_e.RectFull.Max.x <= map_e->InnerClipRect.Max.x + 0.5f &&
+                      lambda_e.RectFull.Min.x >= map_e->InnerClipRect.Min.x - 0.5f &&
+                      lambda_e.RectFull.Max.y <= map_e->InnerClipRect.Max.y + 0.5f,
+                  false);
+    const ImVec2 lambda_c = lambda_e.RectFull.GetCenter();
+    ctx->MouseMoveToPos(ImVec2(lambda_e.RectFull.Max.x - 3.0f, lambda_c.y));
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(lambda_e.RectFull.Min.x + 3.0f, lambda_c.y));
+    ctx->Yield(3);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.map_wavelength_nm >= 350.0 && gui::g_state.analysis.map_wavelength_nm <= 365.0,
+                  false);
+    ctx->MouseMoveToPos(ImVec2(lambda_e.RectFull.Min.x + 3.0f, lambda_c.y));
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(lambda_e.RectFull.Max.x - 3.0f, lambda_c.y));
+    ctx->Yield(3);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.map_wavelength_nm >= 885.0, false);
+    ctx->LogInfo("[scale tiers 1024 clamped] lambda driven to both ends: %.0f nm",
+                 gui::g_state.analysis.map_wavelength_nm);
+    // The sky-point inputs: contained, then a real set through them (the direction convention's
+    // z = -sin(alt), the point_pick leg's verified form). The tail lives at the CELL's bottom —
+    // the 740 px cell rides in a ~335 px slice of the stacked band, so the header the λ row was
+    // driven in is scroll 0's view. The band's scroll must show the MAP cell's bottom slice (the
+    // first cell, unlike the point-inspector leg whose globe target IS the scroll bottom —
+    // scrolling to the end culls the map cell entirely).
+    const float band_view_h = band_e->InnerClipRect.GetHeight();
+    band_e->Scroll.y = gui::UiPx(gui::kAnalyzeDepthMapMinSize) - band_view_h + 2.0f;
+    ctx->Yield(3);
+    ctx->LogInfo("[scale tiers 1024 clamped] map clip y [%.0f..%.0f], furthest submitted y %.0f, w %.0f",
+                 static_cast<double>(map_e->InnerClipRect.Min.y), static_cast<double>(map_e->InnerClipRect.Max.y),
+                 static_cast<double>(map_e->DC.CursorMaxPos.y), static_cast<double>(map_e->InnerClipRect.GetWidth()));
+    const ImGuiTestItemInfo alt_e = ctx->ItemInfo("**/alt°##sky", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo az_e = ctx->ItemInfo("**/az°##sky", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(alt_e.ID != 0 && az_e.ID != 0, false);
+    IM_CHECK_RETV(alt_e.RectFull.Max.x <= map_e->InnerClipRect.Max.x + 0.5f &&
+                      alt_e.RectFull.Min.x >= map_e->InnerClipRect.Min.x - 0.5f &&
+                      az_e.RectFull.Max.x <= map_e->InnerClipRect.Max.x + 0.5f,
+                  false);
+    ctx->ItemInputValue("**/alt°##sky", 21.0f);
+    ctx->ItemInputValue("**/az°##sky", 180.0f);
+    ctx->ItemClick("**/Set sky point");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+    IM_CHECK_RETV(
+        fabsf(static_cast<float>(gui::g_state.analysis.sky_point.dir[2]) + std::sin(21.0f * lumice::kDeg2Rad)) < 1e-3f,
+        false);
+    ctx->LogInfo("[scale tiers 1024 clamped] sky point set through the elastic inputs");
+  }
 
   // Restore: the factory scale, settled, then the inline basis restore (the 1280x800 leg's
   // rule — the next case's entry audit must have nothing to undo).
@@ -4642,12 +4763,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // The Radius row, driven LAST: its input re-sorts the display order (the radius re-sums
       // the rings), so the row selection above must not share the frame with it. In the
       // clamped head's scroll child: scrolled into view, the slider's elastic width keeps its
-      // visible label and full frame inside the child's clip, and a real input drives the
-      // radius to BOTH ends of its range (the r2 review's probe caught the fixed 220 pt slider
-      // clipped at this very tier).
+      // full frame inside the child's clip (the wide branch's trailing label is bound in the
+      // scale-tiers leg — the hook's slider rect does not cover a trailing label), and a real
+      // input drives the radius to BOTH ends of its range (the r2 review's probe caught the
+      // fixed 220 pt slider clipped at this very tier).
       head->Scroll.y = head->ScrollMax.y;
       ctx->Yield(3);
-      const ImGuiTestItemInfo radius = ctx->ItemInfo("**/Radius", ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo radius = ctx->ItemInfo("**/Radius###Radius_narrow", ImGuiTestOpFlags_NoError);
       IM_CHECK(radius.ID != 0);
       IM_CHECK_GE(radius.RectFull.Min.x, head->InnerClipRect.Min.x - 0.5f);
       IM_CHECK_LE(radius.RectFull.Max.x, head->InnerClipRect.Max.x + 0.5f);
@@ -4657,10 +4779,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         const auto& payload = gui::g_state.analysis_result.payload;
         const float cone_deg = payload->cone_radius_rad * 57.29577951308232;
         const float min_deg = cone_deg / static_cast<float>(std::max(payload->cone_ring_count, 1));
-        ctx->ItemInputValue("**/Radius", min_deg);
+        ctx->ItemInputValue("**/Radius###Radius_narrow", min_deg);
         ctx->Yield(2);
         IM_CHECK(fabsf(gui::g_state.analysis.cone_radius_deg - min_deg) < 0.05f);
-        ctx->ItemInputValue("**/Radius", cone_deg);
+        ctx->ItemInputValue("**/Radius###Radius_narrow", cone_deg);
         ctx->Yield(2);
         IM_CHECK(fabsf(gui::g_state.analysis.cone_radius_deg - cone_deg) < 0.05f);
         ctx->LogInfo("[stale floors A] radius driven to both ends: [%.3f, %.3f]", static_cast<double>(min_deg),
@@ -4786,7 +4908,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       const unsigned long long uploads_before = gui::g_state.texture_upload_count;
 
       SetListRef(ctx);
-      ctx->ItemInputValue("Radius", 10.0f);
+      ctx->ItemInputValue("Radius###Radius_narrow", 10.0f);
       ctx->SetRef("");
       ctx->Yield(5);
 
@@ -4910,7 +5032,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       IM_CHECK(!gui::g_state.analysis_result.payload);
       SetListRef(ctx);
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("Radius")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("Radius###Radius_narrow")));
       const LUMICE_AnnotationView view =
           gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
       const std::optional<gui::CanvasPixel> marker = gui::ProjectConeCenterMarker(gui::g_state, view);
@@ -4922,7 +5044,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       LUMICE_GetSimLifecycle(gui::g_server, &before);
       const unsigned long long uploads_before = gui::g_state.texture_upload_count;
 
-      ctx->ItemInputValue("Radius", 10.0f);
+      ctx->ItemInputValue("Radius###Radius_narrow", 10.0f);
       ctx->SetRef("");
       ctx->Yield(5);
 

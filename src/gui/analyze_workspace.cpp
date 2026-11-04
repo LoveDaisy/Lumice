@@ -640,11 +640,17 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // width, the bit only chooses which side of the hysteresis band applies).
   static bool band_side_by_side = false;
   {
+    // The form's budget is the band's INNER width — the same quantity the allocation below
+    // spends (GetContentRegionAvail at the band window's top). main_w is the window's outer
+    // size; two WindowPaddings sit between the two, and a latch judged on the outer width let
+    // the three cells' floors exceed the inner width inside the hysteresis band — the last
+    // cell's frame sat past the host's clip. One budget on both sides of the latch.
+    const float band_planned_inner = std::max(0.0f, main_w - 2.0f * ImGui::GetStyle().WindowPadding.x);
     const float cells_floor =
         UiPx(kAnalyzeDepthMapMinSize + kAnalyzeDepth3DMinSize + kAnalyzeDepthGlobeMinSize) + style_spacing * 2.0f;
-    if (!band_side_by_side && main_w >= cells_floor + UiPx(kAnalyzeDepthBandFormHysteresisPt)) {
+    if (!band_side_by_side && band_planned_inner >= cells_floor + UiPx(kAnalyzeDepthBandFormHysteresisPt)) {
       band_side_by_side = true;
-    } else if (band_side_by_side && main_w < cells_floor) {
+    } else if (band_side_by_side && band_planned_inner < cells_floor) {
       band_side_by_side = false;
     }
     // The height rung: horizontal room does not make the three regions operable — below the

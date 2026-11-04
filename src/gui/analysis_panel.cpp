@@ -1503,14 +1503,18 @@ void RenderRadiusSlider(GuiState& state) {
   const float slider_max = ImGui::GetContentRegionAvail().x - label_w - ImGui::GetStyle().ItemInnerSpacing.x;
   if (slider_max >= UiPx(120.0f)) {
     ImGui::SetNextItemWidth(std::min(UiPx(220.0f), slider_max));
-    if (ImGui::SliderFloat("Radius", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+    if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
       // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
       RecomputeAnalysisDisplayOrder(state);
     }
   } else {
+    // The label owns its own line; the slider's display text is empty. "##narrow" kept drawing
+    // a second, clipped "Radius" past the full-width track ("##" only hides its own suffix),
+    // and the test hook's slider rect does not cover a trailing label, so no geometry assert
+    // could see it. "###" anchors one id across both branches — the refs stay stable.
     ImGui::TextDisabled("Radius");
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    if (ImGui::SliderFloat("Radius##narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+    if (ImGui::SliderFloat("###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
       RecomputeAnalysisDisplayOrder(state);
     }
   }

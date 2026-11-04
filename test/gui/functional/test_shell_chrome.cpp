@@ -914,6 +914,106 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The hysteresis band's budget: the form's latch and the cells'
+  // allocation must spend the same width. Entered side-by-side wide, the window then shrinks to
+  // the middle of the hysteresis band (main_w 900: the planned inner width 884 sits between the
+  // cells' floor 876 and the entry threshold 900) — the latch holds side-by-side, and the three
+  // cells' floors must still fit the inner width the allocation actually spends. Judged on the
+  // outer width, the two paddings leaked in: the last cell's frame sat ~16 px past the host's
+  // clip.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "shell_chrome", "workspace_band_cells_stay_inside_the_host_in_the_hysteresis_band");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedWindowBasis window_basis(ctx);
+      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      const auto set_basis = [&](int w, int h) {
+        g_window_size_test.apply_aspect = false;
+        g_window_size_test.width = w;
+        g_window_size_test.height = h;
+        g_window_size_test.done.store(false);
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK(g_window_size_test.done.load());
+        ctx->Yield(3);
+      };
+      const auto band_cell = [&](const char* fragment) {
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && w->ParentWindow == ctx->GetWindowByRef("//##AnalyzeLowerRow") &&
+              std::strstr(w->Name, fragment) != nullptr) {
+            return w;
+          }
+        }
+        return static_cast<ImGuiWindow*>(nullptr);
+      };
+      const float d1_saved = gui::g_state.workspace.right_column_ratio;
+      const float rows_saved = gui::g_state.workspace.middle_rows_ratio;
+      // At the default basis: main_w = 1300 - 8 - 292 = 1000, planned inner 984 >= 900 — the
+      // side-by-side form enters (or holds, if an earlier case in the pool left it on; the
+      // assertions below are form-state facts either way).
+      gui::g_state.workspace.right_column_ratio = 292.0f / 1300.0f;
+      gui::g_state.workspace.middle_rows_ratio = 0.35f;  // band ~585, well past the 250 rung
+      ctx->Yield(3);
+      {
+        ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+        IM_CHECK(band != nullptr);
+        IM_CHECK_EQ(band->ScrollMax.y, 0.0f);  // side-by-side: the band does not scroll
+        ImGuiWindow* map_w = band_cell("##AnalyzeRaypathView");
+        ImGuiWindow* globe_w = band_cell("##AnalyzeSunGlobe");
+        IM_CHECK(map_w != nullptr && globe_w != nullptr);
+        IM_CHECK_FLOAT_NEAR(map_w->Size.x, gui::UiPx(gui::kAnalyzeDepthMapMinSize), 1.5f);
+        IM_CHECK_FLOAT_NEAR(globe_w->Size.x, gui::UiPx(gui::kAnalyzeDepthGlobeMinSize), 1.5f);
+        // Into the hysteresis band: main_w 900, planned inner 884 — above the cells' floor
+        // (876), below the entry threshold (900): the latch keeps side-by-side, and the floors
+        // must fit the inner width exactly (3D absorbs the remainder: 884 - 370 - 250 - 16).
+        set_basis(1471, gui::kInitWindowHeight);
+        band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+        IM_CHECK(band != nullptr);
+        ctx->LogInfo("[band hysteresis] band %.0fx%.0f, ScrollMax %.0f", static_cast<double>(band->Size.x),
+                     static_cast<double>(band->Size.y), static_cast<double>(band->ScrollMax.y));
+        IM_CHECK_EQ(band->ScrollMax.y, 0.0f);  // the latch held: still side-by-side
+        map_w = band_cell("##AnalyzeRaypathView");
+        ImGuiWindow* three_d_w = band_cell("##AnalyzeRaypath3D");
+        globe_w = band_cell("##AnalyzeSunGlobe");
+        IM_CHECK(map_w != nullptr && three_d_w != nullptr && globe_w != nullptr);
+        IM_CHECK_FLOAT_NEAR(map_w->Size.x, gui::UiPx(gui::kAnalyzeDepthMapMinSize), 1.5f);
+        IM_CHECK_FLOAT_NEAR(globe_w->Size.x, gui::UiPx(gui::kAnalyzeDepthGlobeMinSize), 1.5f);
+        IM_CHECK_FLOAT_NEAR(three_d_w->Size.x,
+                            band->Size.x - 2.0f * ImGui::GetStyle().WindowPadding.x -
+                                gui::UiPx(gui::kAnalyzeDepthMapMinSize + gui::kAnalyzeDepthGlobeMinSize) -
+                                ImGui::GetStyle().ItemSpacing.x * 2.0f,
+                            2.0f);
+        IM_CHECK_GE(three_d_w->Size.x, gui::UiPx(gui::kAnalyzeDepth3DMinSize) - 1.5f);
+        // The catch itself: every cell fully inside the band's effective clip — the last cell's
+        // frame (the globe's) was the one that sat past the host before the budgets unified.
+        // Non-fatal per row: one escaping cell must not skip the other rows' evidence.
+        for (ImGuiWindow* w : { map_w, three_d_w, globe_w }) {
+          const ImRect cell_rect(w->Pos, ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y));
+          if (cell_rect.Min.x >= band->InnerClipRect.Min.x - 0.5f &&
+              cell_rect.Max.x <= band->InnerClipRect.Max.x + 0.5f) {
+            continue;
+          }
+          IM_ERRORF("cell '%s' escapes the band's clip: [%.0f..%.0f] vs clip [%.0f..%.0f]", w->Name,
+                    static_cast<double>(cell_rect.Min.x), static_cast<double>(cell_rect.Max.x),
+                    static_cast<double>(band->InnerClipRect.Min.x), static_cast<double>(band->InnerClipRect.Max.x));
+        }
+        ctx->LogInfo("[band hysteresis] cells [%.0f..%.0f][%.0f..%.0f][%.0f..%.0f] vs clip [..%.0f]",
+                     static_cast<double>(map_w->Pos.x), static_cast<double>(map_w->Pos.x + map_w->Size.x),
+                     static_cast<double>(three_d_w->Pos.x), static_cast<double>(three_d_w->Pos.x + three_d_w->Size.x),
+                     static_cast<double>(globe_w->Pos.x), static_cast<double>(globe_w->Pos.x + globe_w->Size.x),
+                     static_cast<double>(band->InnerClipRect.Max.x));
+      }
+      set_basis(gui::kInitWindowWidth, gui::kInitWindowHeight);
+      gui::g_state.workspace.right_column_ratio = d1_saved;
+      gui::g_state.workspace.middle_rows_ratio = rows_saved;
+      ctx->Yield(2);
+    };
+  }
+
   // The diagnostics region's idle states (the interaction contract §9.1): before any result the
   // region guides — with no picture of the document yet it points at the Render workspace's Run,
   // with one it points at the region radios and the list's Analyze — and while an analysis runs
@@ -1701,16 +1801,22 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The λ reference branch and the view buttons at the side-by-side cell's own width (the band
-  // arms side-by-side at the default window): the explicit-wavelength state's exit button is
-  // contained and real-clicked in the 370 pt cell, and Full sky resets the map view regardless
-  // of adoption.
+  // The λ reference branch and the view buttons at the side-by-side cell's own width: the band
+  // arms side-by-side BY CONSTRUCTION here — the right column pinned at its floor leaves the
+  // main view ~1032 px (planned inner 1016, past the unified entry threshold of 900), where the
+  // default split's ~548 px main view now honestly derives stacked. The explicit width also
+  // frees the leg from inheriting whatever latch state an earlier pool case happened to leave.
   {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "shell_chrome", "workspace_map_lambda_branch_and_view_buttons_at_cell_floor");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+      ctx->Yield(3);
+      const float d1_saved = gui::g_state.workspace.right_column_ratio;
+      gui::g_state.workspace.right_column_ratio =
+          static_cast<float>(gui::UiPx(gui::kAnalyzeRightColMinWidth)) /
+          static_cast<float>(gui::kInitWindowWidth - gui::UiPx(gui::kAnalyzeLeftPanelWidth));
       ctx->Yield(3);
       ImGuiWindow* map = AnalyzeRegionWindow("##AnalyzeRaypathView");
       IM_CHECK(map != nullptr);
@@ -1727,6 +1833,8 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/Full sky##map");
       ctx->Yield(2);
       IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.map_view.radius_deg, gui::kMapFullSkyRadiusDeg, 0.5f);
+      gui::g_state.workspace.right_column_ratio = d1_saved;
+      ctx->Yield(2);
     };
   }
 
