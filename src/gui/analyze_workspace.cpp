@@ -310,7 +310,14 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
   RenderPanoramaRoiControls(g_state);
   int upper = g_state.workspace.panorama_upper ? 0 : 1;
   ImGui::RadioButton("Upper##panorama_hemisphere", &upper, 0);
-  ImGui::SameLine();
+  // The join is a judgment, not a default: at the ③ split under non-default scales the second
+  // radio's label runs past the main view's clip, and a wrapped pair stays reachable where a
+  // clipped one does not.
+  const float lower_w = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Lower").x;
+  if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + lower_w <=
+      ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+    ImGui::SameLine();
+  }
   ImGui::RadioButton("Lower##panorama_hemisphere", &upper, 1);
   g_state.workspace.panorama_upper = upper == 0;
 

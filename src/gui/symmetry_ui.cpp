@@ -117,9 +117,13 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   // one will be shown.
   char id_buf[64];
   const auto unit_w = [&](const char* letter, bool with_icon) {
+    // gui::Checkbox wraps ImGui::Checkbox: the frame is SQUARE at the frame height and the
+    // label rides at ItemInnerSpacing right of it — the footprint is height-based, not the
+    // text-plus-horizontal-padding a SmallButton would be (an under-estimate re-joins a unit
+    // the row cannot hold, and the clipped letter is the toggle's only identity).
     const float style_inner_x = ImGui::GetStyle().ItemInnerSpacing.x;
-    const float icon_w = ImGui::CalcTextSize(ICON_FA_CIRCLE_INFO).x + style_inner_x;
-    return ImGui::CalcTextSize(letter).x + ImGui::GetStyle().FramePadding.x * 2.0f + (with_icon ? icon_w : 0.0f);
+    const float icon_w = ImGui::GetFrameHeight() + style_inner_x;
+    return ImGui::GetFrameHeight() + style_inner_x + ImGui::CalcTextSize(letter).x + (with_icon ? icon_w : 0.0f);
   };
   const auto fits_on_line = [&](float next_w) {
     const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;

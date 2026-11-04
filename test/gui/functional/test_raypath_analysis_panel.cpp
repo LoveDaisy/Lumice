@@ -3788,6 +3788,31 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(set_basis(1280, 800), false);
   IM_CHECK_RETV(drive_tier("200 percent 1280 clamped", 1280.0f, 800.0f), false);
 
+  // The judgment's critical band: the width the probe caught clipping B's letter while the
+  // endpoints passed. The joins' arithmetic must hold INSIDE the band, not only at the widths
+  // that happen to wrap cleanly — per-item containment + flip/revert here is the regression.
+  IM_CHECK_RETV(set_basis(1036, 800), false);
+  {
+    ImGuiWindow* share_b = ctx->GetWindowByRef(kWindowRef);
+    IM_CHECK_RETV(share_b != nullptr, false);
+    ImGuiWindow* head_b = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
+        head_b = w;
+        break;
+      }
+    }
+    if (head_b == nullptr) {
+      head_b = share_b;
+    }
+    head_b->Scroll.y = head_b->ScrollMax.y;
+    ctx->Yield(3);
+    IM_CHECK_RETV(symmetry_drive(head_b, "P", gui::g_state.analysis.symmetry_p), false);
+    IM_CHECK_RETV(symmetry_drive(head_b, "B", gui::g_state.analysis.symmetry_b), false);
+    IM_CHECK_RETV(symmetry_drive(head_b, "D", gui::g_state.analysis.symmetry_d), false);
+    ctx->LogInfo("[scale tiers 1036 band] symmetry toggles flip and revert inside the judgment band");
+  }
+
   // The narrowest-legal-workspace edge: 2x at a 1024 workspace is a legal combination (the product
   // clamps the scaled window minimums to the workspace), and its map cell is ~90 pt of content
   // width — narrower than the designed λ track (140 pt) or sky inputs (90 pt). The elastic
@@ -3844,6 +3869,35 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(gui::g_state.analysis.map_wavelength_nm >= 885.0, false);
     ctx->LogInfo("[scale tiers 1024 clamped] lambda driven to both ends: %.0f nm",
                  gui::g_state.analysis.map_wavelength_nm);
+
+    // The panorama's own fixed rows at this width: Region→Whole sky and Upper→Lower join by
+    // judgment too. A clipped radio whose center still answers a click is exactly the shape
+    // containment exists to catch — clickability is not the contract, the full rectangle is.
+    const ImGuiTestItemInfo whole_sky_e = ctx->ItemInfo("**/Whole sky", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(whole_sky_e.ID != 0, false);
+    IM_CHECK_RETV(whole_sky_e.RectFull.Max.x <= whole_sky_e.Window->InnerClipRect.Max.x + 0.5f &&
+                      whole_sky_e.RectFull.Min.x >= whole_sky_e.Window->InnerClipRect.Min.x - 0.5f,
+                  false);
+    const ImGuiTestItemInfo lower_e = [&] {
+      // The hemisphere row sits at the wrapped ROI stack's tail: at this width the joins wrap,
+      // the stack grows past the panel's visible slice, and the panel — a scrolling window, the
+      // contract's internal-scroll rung — carries the row behind its own scroll.
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzePanorama") != nullptr) {
+          w->Scroll.y = w->ScrollMax.y;
+          ctx->Yield(3);
+          break;
+        }
+      }
+      return ctx->ItemInfo("**/Lower##panorama_hemisphere", ImGuiTestOpFlags_NoError);
+    }();
+    IM_CHECK_RETV(lower_e.ID != 0, false);
+    IM_CHECK_RETV(lower_e.RectFull.Max.x <= lower_e.Window->InnerClipRect.Max.x + 0.5f &&
+                      lower_e.RectFull.Min.x >= lower_e.Window->InnerClipRect.Min.x - 0.5f,
+                  false);
+    ctx->LogInfo("[scale tiers 1024 clamped] panorama joins contained: whole sky [%.0f..%.0f], lower [%.0f..%.0f]",
+                 static_cast<double>(whole_sky_e.RectFull.Min.x), static_cast<double>(whole_sky_e.RectFull.Max.x),
+                 static_cast<double>(lower_e.RectFull.Min.x), static_cast<double>(lower_e.RectFull.Max.x));
 
     // The completed globe's sample track at this width: the play row shares its line only
     // while a usable track survives the play button's real width — below that the button owns
@@ -3938,6 +3992,31 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(symmetry_drive(head_s, "B", gui::g_state.analysis.symmetry_b), false);
       IM_CHECK_RETV(symmetry_drive(head_s, "D", gui::g_state.analysis.symmetry_d), false);
       ctx->LogInfo("[scale tiers 1024 clamped] symmetry toggles flip and revert at the narrowest width");
+    }
+
+    // The critical band's other axis: 1.5x at the narrowest basis — a different rounding of the
+    // same joins, and the probe's second clipped shape. The scale change rebuilds the layout;
+    // the settle loop's convergence is the honesty gate before the drives.
+    IM_CHECK_RETV(set_scale(1.5f), false);
+    {
+      ImGuiWindow* share_f = ctx->GetWindowByRef(kWindowRef);
+      IM_CHECK_RETV(share_f != nullptr, false);
+      ImGuiWindow* head_f = nullptr;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
+          head_f = w;
+          break;
+        }
+      }
+      if (head_f == nullptr) {
+        head_f = share_f;
+      }
+      head_f->Scroll.y = head_f->ScrollMax.y;
+      ctx->Yield(3);
+      IM_CHECK_RETV(symmetry_drive(head_f, "P", gui::g_state.analysis.symmetry_p), false);
+      IM_CHECK_RETV(symmetry_drive(head_f, "B", gui::g_state.analysis.symmetry_b), false);
+      IM_CHECK_RETV(symmetry_drive(head_f, "D", gui::g_state.analysis.symmetry_d), false);
+      ctx->LogInfo("[scale tiers 1024 1.5x] symmetry toggles flip and revert at the second band width");
     }
   }
 

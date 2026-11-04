@@ -1553,8 +1553,9 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
   // The first checkbox joins the title's row only while the row holds it — at the compressed
   // tiers' widths the group wraps below the title instead of clipping (the analysis head's
   // scrolling child has no horizontal scrollbar; the same judgment guards the checkboxes' own
-  // joins inside RenderSymmetryCheckboxes). The analysis meaning shows no info icons.
-  const float p_unit_w = ImGui::CalcTextSize("P").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  // joins inside RenderSymmetryCheckboxes, with the same footprint: gui::Checkbox is an
+  // ImGui::Checkbox — a frame at the frame height plus the label at ItemInnerSpacing).
+  const float p_unit_w = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("P").x;
   if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + p_unit_w <=
       ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
     ImGui::SameLine();
@@ -2031,7 +2032,11 @@ void RenderPanoramaRoiControls(GuiState& state) {
     return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
   };
   ImGui::TextUnformatted("Region");
-  ImGui::SameLine();
+  // The first radio joins the label the same way every later join is judged — the ③ widths
+  // wrap it below instead of clipping the mode selector's first choice.
+  if (fits_on_line(radio_w("Whole sky"))) {
+    ImGui::SameLine();
+  }
   const int prev_mode = a.roi_mode;
   ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
   if (fits_on_line(radio_w("In frame"))) {

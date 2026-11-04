@@ -565,17 +565,24 @@ bool SliderWithInput(const char* label, float* value, float min_val, float max_v
 
   if (stacked) {
     // The line cannot hold slider + input + label with a usable track: the label owns the line
-    // above (wrapped — it is the piece that reads), the slider takes the full row, the input
-    // drops below it at its own width. Same widgets, same ids; only the geometry answers the
-    // width the old form was giving away to overflow clipping.
-    ImGui::TextWrapped("%s", display_buf);
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+    // above (wrapped at the same budget the width decision consumed — an avail_override caller's
+    // right edge holds here too, not a freshly re-read region), the slider takes that budget,
+    // the input drops below at its own width. kNone means the name already lives in another
+    // column — it stays undrawn here as everywhere else. Same widgets, same ids, same
+    // committed/active aggregation; only the geometry answers the width.
+    const float budget = avail_override > 0.0f ? avail_override : ImGui::GetContentRegionAvail().x;
+    if (label_placement != LabelPlacement::kNone) {
+      ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + budget);
+      ImGui::TextWrapped("%s", display_buf);
+      ImGui::PopTextWrapPos();
+    }
+    ImGui::PushItemWidth(budget);
     RenderNonlinearSlider(slider_id, value, min_val, max_val, fmt, scale);
     const bool slider_committed = ImGui::IsItemDeactivatedAfterEdit();
     const bool slider_active = ImGui::IsItemActive();
     ImGui::PopItemWidth();
 
-    ImGui::PushItemWidth(std::min(UiPx(kInputWidth), ImGui::GetContentRegionAvail().x));
+    ImGui::PushItemWidth(std::min(UiPx(kInputWidth), budget));
     if (focus_input_now) {
       ImGui::SetKeyboardFocusHere(0);
     }
@@ -693,16 +700,22 @@ bool SliderIntWithInput(const char* label, int* value, int min_val, int max_val,
   const int old_value = *value;
 
   if (stacked) {
-    // The stacked twin of SliderWithInput's narrow form: label above, full-width slider, the
-    // input on its own line — the widths the shared form was giving away to overflow clipping.
-    ImGui::TextWrapped("%s", display_buf);
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+    // The stacked twin of SliderWithInput's narrow form: label above (at the same budget the
+    // width decision consumed, and only when the placement draws a label at all), full-width
+    // track, the input on its own line — one shared shape, kNone stays label-free.
+    const float budget = ImGui::GetContentRegionAvail().x;
+    if (label_placement != LabelPlacement::kNone) {
+      ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + budget);
+      ImGui::TextWrapped("%s", display_buf);
+      ImGui::PopTextWrapPos();
+    }
+    ImGui::PushItemWidth(budget);
     ImGui::SliderInt(slider_id, value, min_val, max_val, "%d", ImGuiSliderFlags_NoInput);
     const bool slider_committed_s = ImGui::IsItemDeactivatedAfterEdit();
     const bool slider_active_s = ImGui::IsItemActive();
     ImGui::PopItemWidth();
 
-    ImGui::PushItemWidth(std::min(UiPx(kInputWidth), ImGui::GetContentRegionAvail().x));
+    ImGui::PushItemWidth(std::min(UiPx(kInputWidth), budget));
     ImGui::InputInt(input_id, value, 0, 0);
     const bool input_committed_s = ImGui::IsItemDeactivatedAfterEdit();
     const bool input_active_s = ImGui::IsItemActive();
