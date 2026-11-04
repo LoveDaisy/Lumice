@@ -37,6 +37,7 @@
 #include "gui/raypath_segments.hpp"
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/user_defaults.hpp"  // kFactoryUiScaleMultiplier — the scale tiers restore through it
 #include "imgui_internal.h"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
@@ -3452,6 +3453,229 @@ bool DocumentOpenClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
   return true;
 }
 
+// One analysis, every scale tier: the result-state key operations at the non-default scales —
+// the plan §3.4 contract's carried-across demand. The unlock is that the payload, the
+// selection and the point/map results are STATE, not layout: one halo analysis and one point
+// query survive the scale switches, so the tiers cost a rebuild each, not a re-run. The shared
+// per-tier driver asserts the result table's first row (containment + a real click), the
+// CSV/Exclude pair (contained, enabled for a single-layer selection), the Point-mode Radius
+// (contained, and its track dragged to the range's far end by the real mouse path — the drag
+// is what proves the track's ends are reachable, an ItemInputValue cannot), and the completed
+// globe's sample controls (contained + Play/Stop real clicks).
+bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  const std::string top_display = TopChainDisplay();
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, top_display.c_str()) != std::nullopt, false);
+  // Point mode for the Radius row (the picture exists — the radio opens).
+  ctx->SetRef(PanoramaRegionRef());
+  ctx->ItemClick("Point");
+  ctx->SetRef("");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE, false);
+  // The point query for the globe's completed-state controls: the anchor on this scene's halo
+  // fiber (the same write the map pick performs).
+  SetSkyPointTarget(30.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+
+  // The map's own state on the way: the selection asks for the map behind the survey. Assert
+  // the sky-point tail's Clear inside the map region in WHICHEVER state the map answers from
+  // (waiting for the first map, or completed) — the canvas budget is state-independent by
+  // construction; the log names the observed one for a fresh reader.
+  {
+    gui::MapQueryState st = gui::MapQueryStateFor(gui::g_state.analysis.map);
+    DriveUntil(
+        ctx,
+        [&st] {
+          st = gui::MapQueryStateFor(gui::g_state.analysis.map);
+          return st == gui::MapQueryState::kWaiting || st == gui::MapQueryState::kCompleted;
+        },
+        30);
+    ImGuiWindow* map_w = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
+        map_w = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(map_w != nullptr, false);
+    const ImGuiTestItemInfo clear_w = ctx->ItemInfo("**/Clear##sky", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(clear_w.ID != 0, false);
+    IM_CHECK_RETV(clear_w.RectFull.Max.y <= map_w->InnerClipRect.Max.y + 0.5f &&
+                      clear_w.RectFull.Min.y >= map_w->InnerClipRect.Min.y - 0.5f &&
+                      clear_w.RectFull.Max.x <= map_w->InnerClipRect.Max.x + 0.5f,
+                  false);
+    ctx->LogInfo("[scale tiers] clear contained, map state %d", static_cast<int>(st));
+  }
+
+  // The per-tier driver. `basis` pairs the scale with the clamped-equivalent geometry the plan
+  // sanctions (risk 1) — the 150% tier keeps the ordinary split's window.
+  const auto drive_tier = [&](const char* label) {
+    ImGuiWindow* share_t = ctx->GetWindowByRef(kWindowRef);
+    IM_CHECK_RETV(share_t != nullptr, false);
+    ImGuiWindow* table_t = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && w->ParentWindow == share_t &&
+          std::strstr(w->Name, "##analysis_rows") != nullptr) {
+        table_t = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(table_t != nullptr, false);
+    // The list: the first row contained (short halo label — addressable) and clicked.
+    SetListRef(ctx);
+    const ImGuiTestItemInfo row_t = ctx->ItemInfo((std::string("**/") + top_display).c_str(), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(row_t.ID != 0, false);
+    IM_CHECK_RETV(row_t.RectFull.Min.y >= table_t->InnerClipRect.Min.y - 0.5f &&
+                      row_t.RectFull.Max.y <= table_t->InnerClipRect.Max.y + 0.5f &&
+                      row_t.RectFull.Max.x <= table_t->InnerClipRect.Max.x + 0.5f,
+                  false);
+    ctx->ItemClick(row_t.ID);
+    ctx->Yield(3);
+    IM_CHECK_RETV(
+        gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == top_display,
+        false);
+    // The button pair: contained, Exclude enabled for the single-layer selection.
+    const ImGuiTestItemInfo exclude_t =
+        ctx->ItemInfo("**/" ICON_FA_BAN " Exclude this raypath", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(exclude_t.ID != 0, false);
+    IM_CHECK_RETV(exclude_t.RectFull.Max.y <= share_t->InnerClipRect.Max.y + 0.5f &&
+                      exclude_t.RectFull.Min.y >= share_t->InnerClipRect.Min.y - 0.5f,
+                  false);
+    IM_CHECK_RETV(!IsDisabled(exclude_t), false);
+    const ImGuiTestItemInfo csv_t = ctx->ItemInfo("**/" ICON_FA_FILE_CSV " Export CSV", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(csv_t.ID != 0 && csv_t.RectFull.Max.y <= share_t->InnerClipRect.Max.y + 0.5f, false);
+    // The Radius: scroll the clamped head to it, contain it, then drag its track to the far
+    // end by the real mouse path.
+    ImGuiWindow* head_t = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
+        head_t = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(head_t != nullptr, false);
+    head_t->Scroll.y = head_t->ScrollMax.y;
+    ctx->Yield(3);
+    const ImGuiTestItemInfo radius_t = ctx->ItemInfo("**/Radius", ImGuiTestOpFlags_NoError).ID != 0 ?
+                                           ctx->ItemInfo("**/Radius", ImGuiTestOpFlags_NoError) :
+                                           ctx->ItemInfo("**/Radius##narrow", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(radius_t.ID != 0, false);
+    IM_CHECK_RETV(radius_t.RectFull.Max.x <= head_t->InnerClipRect.Max.x + 0.5f &&
+                      radius_t.RectFull.Min.x >= head_t->InnerClipRect.Min.x - 0.5f,
+                  false);
+    const float cone_deg = gui::g_state.analysis_result.payload->cone_radius_rad * 57.29577951308232;
+    const ImVec2 track_c = radius_t.RectFull.GetCenter();
+    ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Min.x + 3.0f, track_c.y));
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Max.x - 3.0f, track_c.y));
+    ctx->Yield(3);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    ctx->LogInfo("[scale tiers %s] radius after the track drag: %.2f (max %.2f)", label,
+                 static_cast<double>(gui::g_state.analysis.cone_radius_deg), static_cast<double>(cone_deg));
+    IM_CHECK_RETV(gui::g_state.analysis.cone_radius_deg > cone_deg * 0.8f, false);
+    // The globe's completed-state controls: the band scrolled to the globe's cell, the globe
+    // scrolled to its slider/play row, containment + real Play/Stop.
+    ImGuiWindow* band_t = ctx->GetWindowByRef("//##AnalyzeLowerRow");
+    IM_CHECK_RETV(band_t != nullptr, false);
+    ImGuiWindow* map_t = nullptr;
+    ImGuiWindow* globe_t = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w == nullptr || !w->Active) {
+        continue;
+      }
+      if (std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
+        map_t = w;
+      }
+      if (std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
+        globe_t = w;
+      }
+    }
+    IM_CHECK_RETV(map_t != nullptr && globe_t != nullptr, false);
+    // The stacked form: the globe's cell starts after the map's; land on its top, then scroll
+    // the region to its own tail.
+    band_t->Scroll.y = std::min(band_t->ScrollMax.y, map_t->Size.y + ImGui::GetStyle().ItemSpacing.y);
+    ctx->Yield(2);
+    globe_t->Scroll.y = globe_t->ScrollMax.y;
+    ctx->Yield(2);
+    const ImGuiTestItemInfo sample_t = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(sample_t.ID != 0, false);
+    IM_CHECK_RETV(sample_t.RectFull.Max.x <= globe_t->InnerClipRect.Max.x + 0.5f &&
+                      sample_t.RectFull.Max.y <= globe_t->InnerClipRect.Max.y + 0.5f,
+                  false);
+    ctx->ItemClick("**/Play##globe_play");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
+    ctx->ItemClick("**/Stop##globe_play");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+    ctx->LogInfo("[scale tiers %s] all result-state key operations held", label);
+    return true;
+  };
+
+  // The settle loop the shell legs established: the rebuild and the window re-derivation land
+  // over frames; wait for the scale through the one outlet.
+  const auto set_scale = [&](float multiplier) {
+    gui::g_ui_scale_multiplier = multiplier;
+    gui::g_ui_scale_dirty = true;
+    for (int i = 0;
+         i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > multiplier * gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                     gui::UiPx(gui::kAnalyzeLeftPanelWidth) < multiplier * gui::kAnalyzeLeftPanelWidth + 0.5f);
+         ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - multiplier * gui::kAnalyzeLeftPanelWidth) < 0.5f,
+                  false);
+    ctx->Yield(4);
+  };
+  const auto set_basis = [&](int w, int h) {
+    g_window_size_test.apply_aspect = false;
+    g_window_size_test.width = w;
+    g_window_size_test.height = h;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(g_window_size_test.done.load(), false);
+    ctx->Yield(3);
+  };
+
+  IM_CHECK_RETV(drive_tier("baseline 1x"), false);
+  set_scale(1.5f);
+  IM_CHECK_RETV(drive_tier("150 percent"), false);
+  set_scale(2.0f);
+  set_basis(1800, 900);  // the clamped-equivalent geometry (plan risk 1)
+  IM_CHECK_RETV(drive_tier("200 percent clamped"), false);
+  // The reviewer's 1280-workspace 2x tier: the narrowest legal right column, where the radius
+  // label leaves the slider's line (the label-row branch) — the drive handles either id.
+  set_basis(1280, 800);
+  IM_CHECK_RETV(drive_tier("200 percent 1280 clamped"), false);
+
+  // Restore: the factory scale, settled, then the inline basis restore (the 1280x800 leg's
+  // rule — the next case's entry audit must have nothing to undo).
+  gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
+  gui::g_ui_scale_dirty = true;
+  for (int i = 0; i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                              gui::UiPx(gui::kAnalyzeLeftPanelWidth) < gui::kAnalyzeLeftPanelWidth + 0.5f);
+       ++i) {
+    ctx->Yield(1);
+  }
+  IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - gui::kAnalyzeLeftPanelWidth) < 0.5f, false);
+  set_basis(gui::kInitWindowWidth, gui::kInitWindowHeight);
+  ctx->Yield(2);
+  return true;
+}
+
 // The narrow-column reading contract's entity half (§14; the hover carrier's contract comment
 // lives on RowLabelTextTooltip): at the right column's 260 pt floor, two classes whose labels
 // share a long prefix truncate to the same visible head — and the entities must survive the
@@ -4249,6 +4473,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_LE(first_row.RectFull.Max.y, table_child->InnerClipRect.Max.y + 0.5f);
         IM_CHECK_GE(first_row.RectFull.Min.x, table_child->InnerClipRect.Min.x - 0.5f);
         IM_CHECK_LE(first_row.RectFull.Max.x, table_child->InnerClipRect.Max.x + 0.5f);
+        // The frozen header's own band, from the real layout: the header occupies the clip from
+        // its top down to the first row's actual top (one row height — the header cells do not
+        // report labels to the engine, but the row's measured top bounds what is above it), so
+        // the band sits fully inside the clip with the row, and Scroll.y == 0 puts it at the
+        // viewport top where the freeze keeps it.
+        IM_CHECK_GT(first_row.RectFull.Min.y, table_child->InnerClipRect.Min.y);
+        IM_CHECK_LE(first_row.RectFull.Min.y, table_child->InnerClipRect.Min.y + ImGui::GetTextLineHeight() * 2.5f);
         assert_contained("**/" ICON_FA_BAN " Exclude this raypath", share);
         if (ctx->IsError()) {
           return;  // the containment lambda already reported; later calls would echo it

@@ -82,6 +82,9 @@ build() {
         #       - narrow_column_clipped_rows_keep_their_entities (755.2): the reading contract's
         #         entity leg drives a whole-sky analysis on the three-layer scene to completion —
         #         the same finite-run wall-clock shape as the chain cases above.
+        #       - analyze_result_carries_across_scale_tiers (755.2): one halo analysis and one
+        #         point query carried through the 150% / 2x-clamped scale switches — the
+        #         result-state key operations per tier without re-running the render.
         #     These are matched by NAME (the engine's filter tests both name and category),
         #     so renaming any of them means updating this filter and its twin in
         #     scripts/regen_gui_test_refs.py — check_policies.py's gui-test-suite-args-sync
@@ -91,11 +94,11 @@ build() {
         # contract in the diff where a reviewer sees it, and it survives someone changing that
         # default. Keep it AFTER --filter — check_policies.py's gui-test-suite-args-sync reads the
         # filter value with a regex anchored on `--fixed-dt --filter "..."`.
-        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,-map_region_shows_the_class_map_and_takes_the_pick,-point_inspector_shows_the_point_fiber_and_the_path,-analyze_full_chain_one_session,-internal_reflection_trace_from_the_real_consumer,-refused_class_names_the_refusal_and_keeps_the_witness,-refused_class_blockades_nothing,-narrow_column_clipped_rows_keep_their_entities" --no-user-config
+        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,-map_region_shows_the_class_map_and_takes_the_pick,-point_inspector_shows_the_point_fiber_and_the_path,-analyze_full_chain_one_session,-internal_reflection_trace_from_the_real_consumer,-refused_class_names_the_refusal_and_keeps_the_witness,-refused_class_blockades_nothing,-narrow_column_clipped_rows_keep_their_entities,-analyze_result_carries_across_scale_tiers" --no-user-config
         ret=$?
         if [[ $ret == 0 ]]; then
           echo "Running GUI real-timing tests (perf + wall-clock-dependent, isolated)..."
-          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu,survey_overview_shows_dispersion_and_profile,map_region_shows_the_class_map_and_takes_the_pick,point_inspector_shows_the_point_fiber_and_the_path,analyze_full_chain_one_session,internal_reflection_trace_from_the_real_consumer,refused_class_names_the_refusal_and_keeps_the_witness,refused_class_blockades_nothing,narrow_column_clipped_rows_keep_their_entities" --no-user-config
+          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu,survey_overview_shows_dispersion_and_profile,map_region_shows_the_class_map_and_takes_the_pick,point_inspector_shows_the_point_fiber_and_the_path,analyze_full_chain_one_session,internal_reflection_trace_from_the_real_consumer,refused_class_names_the_refusal_and_keeps_the_witness,refused_class_blockades_nothing,narrow_column_clipped_rows_keep_their_entities,analyze_result_carries_across_scale_tiers" --no-user-config
           ret=$?
         fi
       else

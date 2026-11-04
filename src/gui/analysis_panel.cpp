@@ -1494,17 +1494,25 @@ void RenderRadiusSlider(GuiState& state) {
   // hand. Either way the request is the full cone and nothing here starts a run.
   //
   // The width is elastic: the designed 220 pt while the line holds slider AND its visible
-  // label, shrinking to keep both inside the head's real width (the scroll child's vertical
-  // scroll cannot recover a horizontally clipped slider tail — the input's right end would be
-  // unreachable exactly where the ring is being sized). Below the label-plus-minimum the label
-  // itself would clip: the floor keeps a usable track and lets the label wrap to the next line
-  // rather than lose it.
+  // label, shrinking to keep both inside the head's real width. When even the 120 pt floor
+  // plus the label cannot fit (the 2x clamped tiers), the label moves to ITS OWN LINE and the
+  // slider takes the full row — a line the head's scroll can reach, instead of a slider whose
+  // right end (and label) sit past the clip. No hidden-label swap in the wide branch: the item
+  // keeps its id, so the test layer's refs stay stable.
   const float label_w = ImGui::CalcTextSize("Radius").x;
   const float slider_max = ImGui::GetContentRegionAvail().x - label_w - ImGui::GetStyle().ItemInnerSpacing.x;
-  ImGui::SetNextItemWidth(std::max(UiPx(120.0f), std::min(UiPx(220.0f), slider_max)));
-  if (ImGui::SliderFloat("Radius", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
-    // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
-    RecomputeAnalysisDisplayOrder(state);
+  if (slider_max >= UiPx(120.0f)) {
+    ImGui::SetNextItemWidth(std::min(UiPx(220.0f), slider_max));
+    if (ImGui::SliderFloat("Radius", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+      // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
+      RecomputeAnalysisDisplayOrder(state);
+    }
+  } else {
+    ImGui::TextDisabled("Radius");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::SliderFloat("Radius##narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+      RecomputeAnalysisDisplayOrder(state);
+    }
   }
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(cone_result ?
