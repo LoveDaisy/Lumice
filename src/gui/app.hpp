@@ -81,6 +81,12 @@ struct PanoramaViewport {
   // the deferred pass exactly as they are into the preview's. Cleared by RenderWorkspacePanels
   // alongside `active` — a stale set must not outlive the frame that made it.
   std::vector<CurveLabelSet> curve_labels;
+  // This face's own annotation-anchor cache — one per publication, because the two faces
+  // assemble with different lenses and canvases and a consumer must read the anchors of ITS
+  // view, not of whichever face assembled last (the screenshot export renders the preview's
+  // picture through PreviewAnnotationAnchors; the panorama's cache lives here and moves with
+  // its own frame).
+  AnnotationAnchors anchors;
 };
 
 // The canvas facts the shared picture assembly needs about the region it is assembling for —
@@ -320,10 +326,13 @@ void ApplyAspectRatio(GLFWwindow* window, AspectPreset preset, bool portrait, fl
 // the caller may re-apply that preset afterwards to restore its exact ratio at the new scale.
 void ApplyWindowGeometryForScale(GLFWwindow* window, float layout_scale);
 
-// The one AnnotationAnchors the live preview drives (app_panels.cpp, once per frame), and the
-// label sets built from what it holds for that frame. Exposed so the screenshot export renders
-// the SAME anchors the preview is showing rather than recomputing them at its own moment — an
-// export is a picture of what is on screen.
+// The Render preview publication's annotation-anchor cache (app_panels.cpp computes into it
+// once per preview frame, through its own AssemblePreviewPictureParams call), and the label
+// sets built from what it holds for that frame. Exposed so the screenshot export renders the
+// SAME anchors the preview is showing rather than recomputing them at its own moment — an
+// export is a picture of what is on screen. Each publication owns its cache: the Analyze main
+// view's lives on PanoramaViewport and never mixes with this one, so a screenshot stays bound
+// to the preview's view even after Analyze frames have assembled with another lens.
 AnnotationAnchors& PreviewAnnotationAnchors();
 AnnotationViewInput AnnotationViewInputFor(const GuiState& state, const RenderConfig& rc);
 // The same input with every curve family whose LABEL switch is off left out. What the shader draws
@@ -712,13 +721,16 @@ void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_
 // button and the gesture branches that need a window's hit-test. The assembly owns everything
 // derived from GuiState about what the picture CONTAINS.
 
-// Fill `pp` and `curve_labels` for one frame of the committed texture, as the current renderer
-// state (lens, view, exposure, overlays, background photo) says the picture should look. The
-// composite-mode exposure push rides inside it — one static baseline shared by every host, so
-// the two faces cannot push against each other. Caller has already published the viewport
-// geometry; the target carries only the canvas facts the assembly cannot derive.
+// Fill `pp`, `curve_labels` and `anchors` for one frame of the committed texture, as the current
+// renderer state (lens, view, exposure, overlays, background photo) says the picture should
+// look. The composite-mode exposure push rides inside it — one static baseline shared by every
+// host, so the two faces cannot push against each other. Caller has already published the
+// viewport geometry; the target carries only the canvas facts the assembly cannot derive, and
+// `anchors` is the CALLER'S face's own cache — each publication keeps its own, so a consumer
+// always reads the anchors of its view (the screenshot export reads the preview's through
+// PreviewAnnotationAnchors) rather than of whichever face assembled last.
 void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vector<CurveLabelSet>& curve_labels,
-                                  const PreviewPictureTarget& target);
+                                  const PreviewPictureTarget& target, AnnotationAnchors& anchors);
 
 // The renderer's per-frame view invariants, previously spelled in RenderPreviewPanel: FOV never
 // exceeds the lens' own maximum, and a full-sky lens pins the view angles to zero (its shader

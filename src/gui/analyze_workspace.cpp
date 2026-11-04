@@ -351,7 +351,8 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
   target.canvas_h_pt = size.y;
   target.vp_w_px = g_panorama_vp.vp_w;
   target.vp_h_px = g_panorama_vp.vp_h;
-  AssemblePreviewPictureParams(g_state, g_panorama_vp.params, g_panorama_vp.curve_labels, target);
+  AssemblePreviewPictureParams(g_state, g_panorama_vp.params, g_panorama_vp.curve_labels, target,
+                               g_panorama_vp.anchors);
 
   ImGui::InvisibleButton("##panorama_interact", ImGui::GetContentRegionAvail());
 
@@ -379,15 +380,23 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
     // picture faces publish the same shared assembly, so PreviewAnnotationView IS the picture's
     // view here as it is in the preview).
     const LUMICE_AnnotationView view = PreviewAnnotationView(g_state, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-    // A centre when there is none — or a re-place of the DEFAULT one when the picture rectangle
-    // it was computed on changed size (the operation bar's height rides one frame behind the
-    // mode switches that grow it, so the middle of frame N is not the middle of frame N+1). A
-    // user-picked or user-dragged centre is never re-placed by anything but the user.
+    // A centre when there is none — or a re-place of the DEFAULT one during the placement's own
+    // bounded convergence (the operation bar's height settles a frame or two after the mode
+    // switch that grows it; kAnalyzeConeCenterConvergenceFrames bounds the window). After the
+    // window, the direction is the region's: no layout, view or observation change re-derives
+    // it — the invariant is the placement lifecycle's, not an enumeration of the entries that
+    // might otherwise move it. An acceptance (DoAnalyze) or a camera press freezes ahead of the
+    // window's expiry as well; a user-picked or user-dragged centre is never re-placed by
+    // anything but the user.
     const auto& analysis = g_state.analysis;
-    const bool needs_default =
-        !analysis.cone_center_valid ||
-        (analysis.cone_center_is_default && (analysis.cone_center_default_vp_w != g_panorama_vp.vp_w ||
-                                             analysis.cone_center_default_vp_h != g_panorama_vp.vp_h));
+    const int frames_since_placement = analysis.cone_center_default_frame >= 0 ?
+                                           ImGui::GetFrameCount() - analysis.cone_center_default_frame :
+                                           kAnalyzeConeCenterConvergenceFrames + 1;
+    const bool re_place_window_open =
+        frames_since_placement <= kAnalyzeConeCenterConvergenceFrames && analysis.cone_center_is_default;
+    const bool needs_default = !analysis.cone_center_valid ||
+                               (re_place_window_open && (analysis.cone_center_default_vp_w != g_panorama_vp.vp_w ||
+                                                         analysis.cone_center_default_vp_h != g_panorama_vp.vp_h));
     if (needs_default) {
       EnsureDefaultConeCenter(g_state, view, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
     }

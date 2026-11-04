@@ -83,6 +83,13 @@ constexpr float kAnalyzeShareListMinHeight = 250.0f;
 // the Rays slider's track would crowd its input box unusably; calibrated against the Roboto
 // Medium 15px theme (the same source as the contract's §11 table).
 constexpr float kAnalyzeOpBarSliderTrackMin = 150.0f;
+// The default cone centre's convergence window, in frames: how long after its placement the
+// default may follow the picture rectangle's size (the operation bar's height settles a frame
+// or two after the mode switch that grows it — the one re-place the mechanism exists for).
+// After the window, the direction is the region's: no layout, view or observation change
+// re-derives an effective ROI. Frames, not milliseconds — the count is deterministic under the
+// test harness's fixed-dt clock.
+constexpr int kAnalyzeConeCenterConvergenceFrames = 8;
 // D2: the diagnostics region's height floor — its title plus one wrapped state line.
 // Re-confirmed 2026-11-04 at the proportional split: the scroll child keeps a visible first
 // line (34 px measured) and the wheel reaches the rest (ScrollMax 128 with the idle stack).

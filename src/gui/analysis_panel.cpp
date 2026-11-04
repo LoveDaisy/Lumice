@@ -485,6 +485,10 @@ bool EnsureDefaultConeCenter(GuiState& state, const LUMICE_AnnotationView& view,
   a.cone_center_is_default = true;
   a.cone_center_default_vp_w = vp_w;
   a.cone_center_default_vp_h = vp_h;
+  // The placement's birth frame, for the convergence window that bounds the re-place. Zero when
+  // no ImGui context exists — the logic tests call this function bare, and they never consume
+  // the age; the workspace caller always runs inside a frame.
+  a.cone_center_default_frame = ImGui::GetCurrentContext() != nullptr ? static_cast<int>(ImGui::GetFrameCount()) : 0;
   float alt = 0.0f;
   float az = 0.0f;
   DirToAltAz(dir, &alt, &az);

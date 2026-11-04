@@ -1758,13 +1758,19 @@ struct GuiState {
     // EnsureDefaultConeCenter) rather than something the user set. The default is re-placed when
     // the picture rectangle it was computed on changes size — the operation bar's height rides
     // one frame behind the mode switches that grow it, so the middle of frame N is not the
-    // middle of frame N+1 — while a user-picked or user-dragged centre is never moved by
+    // middle of frame N+1 — but ONLY during the placement's own bounded convergence window
+    // (cone_center_default_frame, kAnalyzeConeCenterConvergenceFrames): after those few frames
+    // the direction is the region's, and no layout, view or observation change re-derives it.
+    // The invariant is the placement lifecycle's, not an enumeration of the entries that might
+    // otherwise move it. An acceptance (DoAnalyze) or a camera press freezes the flag ahead of
+    // the window's expiry as well; a user-picked or user-dragged centre is never moved by
     // anything but the user (sky-direction state, AC4).
     bool cone_center_is_default = false;
-    // The picture publication's size the current default was placed on; only meaningful while
-    // cone_center_is_default.
+    // The picture publication's size the current default was placed on, and the frame it was
+    // placed on; meaningful only while cone_center_is_default.
     int cone_center_default_vp_w = 0;
     int cone_center_default_vp_h = 0;
+    int cone_center_default_frame = -1;
     // The marker is being dragged: set by the press on it, cleared by the release, and while set
     // every frame's mouse position is unprojected into cone_center_dir. Session state because the
     // drag outlives a frame; nothing else reads it.

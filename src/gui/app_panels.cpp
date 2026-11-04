@@ -2369,7 +2369,7 @@ void ClampRendererViewInvariants(RenderConfig& rc) {
 }
 
 void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vector<CurveLabelSet>& curve_labels,
-                                  const PreviewPictureTarget& target) {
+                                  const PreviewPictureTarget& target, AnnotationAnchors& anchors) {
   auto& rc = state.renderer;
   pp.view_proj = BuildPreviewViewProjFromRenderer(rc);
   // Mono exposure, recomputed every frame from GuiState (mono_exposure_scale.hpp). Computing it
@@ -2523,8 +2523,7 @@ void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vecto
     pp.overlay.angular_dist_deg = curves.angular_dist_deg;
     pp.overlay.view_dist_deg = curves.view_dist_deg;
     GuiSunWorldDir(curves.sun_altitude_deg, pp.overlay.reference_dir);
-    g_annotation_anchors.Compute(
-        MakeAnnotationViewKey(AnnotationAnchorRequestFor(state, rc), target.vp_w_px, target.vp_h_px));
+    anchors.Compute(MakeAnnotationViewKey(AnnotationAnchorRequestFor(state, rc), target.vp_w_px, target.vp_h_px));
   }
 
   // The reference-point markers. The APPEARANCE below is the GUI's own state; the POSITIONS come
@@ -2550,8 +2549,7 @@ void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vecto
     // canvas" are the same instruction to the shader, and writing them the same way means the
     // two cannot disagree. Note the switch read here is `show` alone: a marker with only its
     // LABEL on is in the request (its name needs an anchor) but must draw no ring.
-    const AnnotationAnchors::Point p =
-        state.markers[i].show ? g_annotation_anchors.MarkerPoint(i) : AnnotationAnchors::Point{};
+    const AnnotationAnchors::Point p = state.markers[i].show ? anchors.MarkerPoint(i) : AnnotationAnchors::Point{};
     CanvasPointToShaderScreenPos(p, rc.lens_type, target.vp_w_px, target.vp_h_px,
                                  pp.overlay.marker_screen_pos[i].data());
   }
@@ -2583,23 +2581,20 @@ void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vecto
     // Every set goes into ONE vector so they take part in one collision pass, which is where
     // the per-set group is read.
     if (state.show_horizon_label) {
-      curve_labels.push_back(BuildHorizonLabelSet(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+      curve_labels.push_back(BuildHorizonLabelSet(anchors, state, target.canvas_w_pt, target.canvas_h_pt));
     }
     if (state.show_sun_circles_label) {
-      curve_labels.push_back(
-          BuildSunCirclesLabelSet(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+      curve_labels.push_back(BuildSunCirclesLabelSet(anchors, state, target.canvas_w_pt, target.canvas_h_pt));
     }
     if (state.show_view_dist_label) {
-      curve_labels.push_back(
-          BuildViewDistLabelSet(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+      curve_labels.push_back(BuildViewDistLabelSet(anchors, state, target.canvas_w_pt, target.canvas_h_pt));
     }
     if (state.show_grid_label) {
-      curve_labels.push_back(BuildGridLabelSet(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+      curve_labels.push_back(BuildGridLabelSet(anchors, state, target.canvas_w_pt, target.canvas_h_pt));
     }
     // No outer switch of its own, unlike the three above: each marker carries its own label
     // switch, so the builder returns an empty vector when none of the six is on.
-    for (CurveLabelSet& set :
-         BuildMarkerLabelSets(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt)) {
+    for (CurveLabelSet& set : BuildMarkerLabelSets(anchors, state, target.canvas_w_pt, target.canvas_h_pt)) {
       curve_labels.push_back(std::move(set));
     }
   }
@@ -2805,7 +2800,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     target.canvas_h_pt = preview_height;
     target.vp_w_px = g_preview_vp.vp_w;
     target.vp_h_px = g_preview_vp.vp_h;
-    AssemblePreviewPictureParams(g_state, g_preview_vp.params, g_preview_vp.curve_labels, target);
+    AssemblePreviewPictureParams(g_state, g_preview_vp.params, g_preview_vp.curve_labels, target, g_annotation_anchors);
 
     // Mouse interaction: orbit with drag, FOV with scroll — or, with the pan/zoom modifier held,
     // the background image instead of the camera.

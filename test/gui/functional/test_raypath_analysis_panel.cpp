@@ -6189,6 +6189,92 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The default centre's convergence is bounded by its placement's age, not by which entries
+  // have been visited: after the window closes, an observation-side view edit (the left
+  // column's Azimuth — a path no freeze hook names) followed by a layout change cannot
+  // re-derive an effective ROI. The direction stands byte for byte.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "default_point_survives_view_edits");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      // Settle well past the convergence window (kAnalyzeConeCenterConvergenceFrames counts
+      // from the placement, and the bar's settle re-place restarts the clock once): the bar is
+      // stable and the window closed before anything below runs.
+      ctx->Yield(14);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      IM_CHECK(gui::g_state.analysis.cone_center_is_default);
+      float centre_before[3];
+      std::copy(gui::g_state.analysis.cone_center_dir, gui::g_state.analysis.cone_center_dir + 3, centre_before);
+
+      // The observation-side path the entry-freeze hooks never named: the View group's
+      // Azimuth, edited for real in the left column.
+      const float az_before_edit = gui::g_state.renderer.azimuth;
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ItemInputValue("##Azimuth##view_input", az_before_edit + 40.0f);
+      ctx->SetRef("");
+      ctx->Yield(4);
+      IM_CHECK_NE(gui::g_state.renderer.azimuth, az_before_edit);  // the view really moved
+      // A layout change on top: D1 drags the main view's width.
+      const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeColumnSplitter", ImGuiTestOpFlags_NoError);
+      IM_CHECK(grab.ID != 0);
+      const ImVec2 c = grab.RectFull.GetCenter();
+      ctx->MouseMoveToPos(c);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(c.x + 30.0f, c.y));
+      ctx->Yield(3);
+      ctx->MouseUp(0);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], centre_before[0]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], centre_before[1]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[2], centre_before[2]);
+    };
+  }
+
+  // The annotation-anchor caches are per publication: the screenshot export renders the
+  // preview's picture through the PREVIEW's cache, so Analyze frames assembling with another
+  // lens must never overwrite it. Drive the sequence — render, switch, change the lens, let the
+  // panorama re-anchor — and the preview cache's marker projection stands byte for byte (under
+  // the shared cache it would have been recomputed with the panorama's lens and moved).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "screenshot_anchors_stay_with_the_render_face");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      // A marker on the picture: its projection lives in the preview's cache once assembled.
+      gui::g_state.markers[LUMICE_ANNOTATION_MARKER_SUN].show = true;  // the camera aims at the sun
+      ctx->Yield(4);
+      IM_CHECK(gui::PreviewAnnotationAnchors().HasResult());
+      IM_CHECK(gui::PreviewAnnotationAnchors().MarkerPoint(LUMICE_ANNOTATION_MARKER_SUN).valid);
+      const gui::AnnotationAnchors::Point before =
+          gui::PreviewAnnotationAnchors().MarkerPoint(LUMICE_ANNOTATION_MARKER_SUN);
+
+      // Analyze assembles its own face (different publication, different cache); the lens goes
+      // with the left column, for real.
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(3);
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ComboClick("Lens Type##view/Fisheye Equal Area");
+      ctx->SetRef("");
+      ctx->Yield(6);
+      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeFisheyeEqualArea);
+      IM_CHECK(gui::g_panorama_vp.active);  // its own face assembled this frame
+
+      // The preview cache is exactly what the render left there: same marker, same pixels.
+      const gui::AnnotationAnchors::Point after =
+          gui::PreviewAnnotationAnchors().MarkerPoint(LUMICE_ANNOTATION_MARKER_SUN);
+      IM_CHECK_EQ(after.valid, before.valid);
+      IM_CHECK_EQ(after.px, before.px);
+      IM_CHECK_EQ(after.py, before.py);
+    };
+  }
+
   // AC2/§3: the left column's Display group is the SAME exposure field the Render right panel
   // edits — driving it for real re-lights the main view on the next frame (the mono path
   // re-multiplies the committed texture, no server interaction), and the document stays
