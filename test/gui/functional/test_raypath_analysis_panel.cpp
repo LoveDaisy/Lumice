@@ -3515,6 +3515,28 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->LogInfo("[scale tiers] clear contained, map state %d", static_cast<int>(st));
   }
 
+  // The list head's symmetry row: contained in the scrolling head, then a real toggle with a
+  // revert — the toggles decide what the list sums over, and the row's joins are judgments (a
+  // forced join clipped D past the window at the compressed tiers' widths; at the narrowest,
+  // P wraps below the title rather than clip). Shared by every tier's driver and by the
+  // narrowest tier's focused block below.
+  const auto symmetry_drive = [&](ImGuiWindow* head, const char* letter, bool& field) -> bool {
+    const ImGuiTestItemInfo box =
+        ctx->ItemInfo((std::string("**/") + letter + "##analysis_symmetry").c_str(), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(box.ID != 0, false);
+    IM_CHECK_RETV(box.RectFull.Max.x <= head->InnerClipRect.Max.x + 0.5f &&
+                      box.RectFull.Min.x >= head->InnerClipRect.Min.x - 0.5f,
+                  false);
+    const bool before = field;
+    ctx->ItemClick(box.ID);
+    ctx->Yield(2);
+    IM_CHECK_RETV(field != before, false);
+    ctx->ItemClick(box.ID);
+    ctx->Yield(2);
+    IM_CHECK_RETV(field == before, false);
+    return true;
+  };
+
   // The per-tier driver. `basis` pairs the scale with the clamped-equivalent geometry the plan
   // sanctions (risk 1) — the 150% tier keeps the ordinary split's window. The expected basis
   // rides along so the tier is asserted at the ACTUAL viewport the real GLFW path produced: a
@@ -3707,6 +3729,12 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->ItemClick("**/Stop##globe_play");
     ctx->Yield(2);
     IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+    // The head's symmetry toggles, driven real at every tier (the head is still at its scroll
+    // bottom from the radius block; the row sits just above the search box — at the compressed
+    // widths the checkboxes have wrapped, which the containment bound covers either way).
+    IM_CHECK_RETV(symmetry_drive(head_t, "P", gui::g_state.analysis.symmetry_p), false);
+    IM_CHECK_RETV(symmetry_drive(head_t, "B", gui::g_state.analysis.symmetry_b), false);
+    IM_CHECK_RETV(symmetry_drive(head_t, "D", gui::g_state.analysis.symmetry_d), false);
     ctx->LogInfo("[scale tiers %s] all result-state key operations held", label);
     return true;
   };
@@ -3816,18 +3844,61 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(gui::g_state.analysis.map_wavelength_nm >= 885.0, false);
     ctx->LogInfo("[scale tiers 1024 clamped] lambda driven to both ends: %.0f nm",
                  gui::g_state.analysis.map_wavelength_nm);
+
+    // The completed globe's sample track at this width: the play row shares its line only
+    // while a usable track survives the play button's real width — below that the button owns
+    // the next line and the track the full row. Either way the track answers a real drag to
+    // BOTH ends (a fully-contained 1 px track passed the containment-only form while mapping
+    // every position to sample 0 — containment alone cannot vouch for a travel). Driven BEFORE
+    // the sky-point set below: the set starts a fresh point query, and the completed-state
+    // controls belong to the result already adopted.
+    band_e->Scroll.y = band_e->ScrollMax.y;  // the stacked band's last cell is the globe
+    ctx->Yield(2);
+    ImGuiWindow* globe_e = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
+        globe_e = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(globe_e != nullptr, false);
+    globe_e->Scroll.y = globe_e->ScrollMax.y;  // the slider/play row is the region stack's tail
+    ctx->Yield(2);
+    const ImGuiTestItemInfo sample_e = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(sample_e.ID != 0, false);
+    IM_CHECK_RETV(sample_e.RectFull.Max.x <= globe_e->InnerClipRect.Max.x + 0.5f &&
+                      sample_e.RectFull.Min.x >= globe_e->InnerClipRect.Min.x - 0.5f &&
+                      sample_e.RectFull.Max.y <= globe_e->InnerClipRect.Max.y + 0.5f,
+                  false);
+    const int valid_count_e = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
+    IM_CHECK_RETV(valid_count_e > 1, false);
+    const ImVec2 sample_c = sample_e.RectFull.GetCenter();
+    ctx->MouseMoveToPos(ImVec2(sample_e.RectFull.Min.x + 3.0f, sample_c.y));
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == 0, false);
+    ctx->MouseMoveToPos(ImVec2(sample_e.RectFull.Max.x - 3.0f, sample_c.y));
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == valid_count_e - 1, false);
+    ctx->LogInfo("[scale tiers 1024 clamped] sample track dragged to both ends: %d/%d",
+                 gui::g_state.analysis.point_view.sample_index, valid_count_e);
+
     // The sky-point inputs: contained, then a real set through them (the direction convention's
     // z = -sin(alt), the point_pick leg's verified form). The tail lives at the CELL's bottom —
-    // the 740 px cell rides in a ~335 px slice of the stacked band, so the header the λ row was
-    // driven in is scroll 0's view. The band's scroll must show the MAP cell's bottom slice (the
-    // first cell, unlike the point-inspector leg whose globe target IS the scroll bottom —
-    // scrolling to the end culls the map cell entirely).
+    // the 740 px cell rides in a ~335 px slice of the stacked band, so the band's scroll must
+    // show the MAP cell's bottom slice (the first cell — scrolling to the end culls it
+    // entirely; the globe above is the scroll bottom's own tenant). This set starts a fresh
+    // point query, so it drives LAST: everything reading the adopted result ran before it.
     const float band_view_h = band_e->InnerClipRect.GetHeight();
     band_e->Scroll.y = gui::UiPx(gui::kAnalyzeDepthMapMinSize) - band_view_h + 2.0f;
     ctx->Yield(3);
-    ctx->LogInfo("[scale tiers 1024 clamped] map clip y [%.0f..%.0f], furthest submitted y %.0f, w %.0f",
-                 static_cast<double>(map_e->InnerClipRect.Min.y), static_cast<double>(map_e->InnerClipRect.Max.y),
-                 static_cast<double>(map_e->DC.CursorMaxPos.y), static_cast<double>(map_e->InnerClipRect.GetWidth()));
     const ImGuiTestItemInfo alt_e = ctx->ItemInfo("**/alt°##sky", ImGuiTestOpFlags_NoError);
     const ImGuiTestItemInfo az_e = ctx->ItemInfo("**/az°##sky", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(alt_e.ID != 0 && az_e.ID != 0, false);
@@ -3844,6 +3915,30 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
         fabsf(static_cast<float>(gui::g_state.analysis.sky_point.dir[2]) + std::sin(21.0f * lumice::kDeg2Rad)) < 1e-3f,
         false);
     ctx->LogInfo("[scale tiers 1024 clamped] sky point set through the elastic inputs");
+
+    // The head's symmetry row at the narrowest legal width: the checkboxes have wrapped (the
+    // joins are judgments), yet every toggle is contained in the scrolling head and flips for
+    // real — the forced join's clipped-tail shape, now driven rather than declared.
+    {
+      ImGuiWindow* share_s = ctx->GetWindowByRef(kWindowRef);
+      IM_CHECK_RETV(share_s != nullptr, false);
+      ImGuiWindow* head_s = nullptr;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
+          head_s = w;
+          break;
+        }
+      }
+      if (head_s == nullptr) {
+        head_s = share_s;
+      }
+      head_s->Scroll.y = head_s->ScrollMax.y;
+      ctx->Yield(3);
+      IM_CHECK_RETV(symmetry_drive(head_s, "P", gui::g_state.analysis.symmetry_p), false);
+      IM_CHECK_RETV(symmetry_drive(head_s, "B", gui::g_state.analysis.symmetry_b), false);
+      IM_CHECK_RETV(symmetry_drive(head_s, "D", gui::g_state.analysis.symmetry_d), false);
+      ctx->LogInfo("[scale tiers 1024 clamped] symmetry toggles flip and revert at the narrowest width");
+    }
   }
 
   // Restore: the factory scale, settled, then the inline basis restore (the 1280x800 leg's

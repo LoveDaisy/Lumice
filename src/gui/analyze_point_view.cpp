@@ -1070,14 +1070,24 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   }
 
   // The slider + playback row: the slider indexes the component's VALID samples (AC3); touching
-  // it stops the playback (a hand on the slider owns the cursor).
+  // it stops the playback (a hand on the slider owns the cursor). The row shares the line only
+  // while the track keeps a usable floor after the REAL play button's width — the old fixed
+  // 120 pt reservation exceeded the whole row at the narrowest legal cells (the ③ split under
+  // 2x leaves ~76 pt of content), and ImGui answered a negative width with a 1 px track: sample
+  // selection's mouse travel gone, and no scroll form returns a horizontal reach. Below the
+  // floor the button owns the next line and the track the full row.
   int pos = std::clamp(view.sample_index, 0, valid_count - 1);
-  ImGui::SetNextItemWidth(-UiPx(120.0f));
+  const float play_w = ImGui::CalcTextSize(view.playing ? "Stop" : "Play").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const float content_w = ImGui::GetContentRegionAvail().x;
+  const bool sample_shared_line = content_w - play_w - ImGui::GetStyle().ItemSpacing.x >= UiPx(80.0f);
+  ImGui::SetNextItemWidth(sample_shared_line ? content_w - play_w - ImGui::GetStyle().ItemSpacing.x : content_w);
   if (ImGui::SliderInt("##globe_sample", &pos, 0, valid_count - 1)) {
     view.sample_index = pos;
     view.playing = false;
   }
-  ImGui::SameLine();
+  if (sample_shared_line) {
+    ImGui::SameLine();
+  }
   if (ImGui::SmallButton(view.playing ? "Stop##globe_play" : "Play##globe_play")) {
     view.playing = !view.playing;
     view.last_play_step_s = ImGui::GetTime();

@@ -1550,7 +1550,15 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
         "orientation), so one row is one physical class. A filter's P/B/D is different: it\n"
         "merges face labels. Re-reads the result on hand; does not re-run.");
   }
-  ImGui::SameLine();
+  // The first checkbox joins the title's row only while the row holds it — at the compressed
+  // tiers' widths the group wraps below the title instead of clipping (the analysis head's
+  // scrolling child has no horizontal scrollbar; the same judgment guards the checkboxes' own
+  // joins inside RenderSymmetryCheckboxes). The analysis meaning shows no info icons.
+  const float p_unit_w = ImGui::CalcTextSize("P").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + p_unit_w <=
+      ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+    ImGui::SameLine();
+  }
   // Scene-wide: no single crystal to explain, so no per-crystal hints (the reduction still honours
   // each crystal's own shape and axis).
   RenderSymmetryCheckboxes(a.symmetry_p, a.symmetry_b, a.symmetry_d, SymmetryAvailability{},

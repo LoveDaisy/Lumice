@@ -414,7 +414,7 @@ static void FormatSliderInputId(const char* label, char* input_id, size_t input_
 static float PrepareSliderLayout(const char* label, char* display_label_out, size_t display_buf_size, char* slider_id,
                                  size_t slider_id_size, char* input_id, size_t input_id_size, char* label_id,
                                  size_t label_id_size, LabelPlacement label_placement = LabelPlacement::kTrailing,
-                                 float avail_override = 0.0f) {
+                                 float avail_override = 0.0f, bool* stacked_out = nullptr) {
   // Strip ImGui ID suffix (e.g. "Azimuth##view" → display "Azimuth")
   const char* hash_pos = strstr(label, "##");
   if (hash_pos) {
@@ -443,9 +443,17 @@ static float PrepareSliderLayout(const char* label, char* display_label_out, siz
   // jump: the label's x is (right edge - kLabelColWidth) whatever value the pair takes -- the term
   // cancels -- but the CONTROL's right edge is this value, so a mismatched pair moves the controls
   // out of their column while leaving the labels looking correct.
-  float slider_w = label_placement == LabelPlacement::kNone ?
-                       (avail_w - UiPx(kInputWidth) - spacing) :
-                       (avail_w - UiPx(kInputWidth) - UiPx(kLabelColWidth) - spacing - label_gap);
+  const float reserved = label_placement == LabelPlacement::kNone ?
+                             (UiPx(kInputWidth) + spacing) :
+                             (UiPx(kInputWidth) + UiPx(kLabelColWidth) + spacing + label_gap);
+  // The stacked flag: the line cannot hold slider + input (+ label) with a usable track — the
+  // floor below would paper over it while the fixed parts rode past the clip. The caller (see
+  // SliderWithInput) then moves the label and the input to their own lines, one implementation,
+  // ids unchanged; wide layouts never arm it — only widths that previously overflowed do.
+  if (stacked_out != nullptr) {
+    *stacked_out = avail_w - reserved < UiPx(40.0f);
+  }
+  float slider_w = avail_w - reserved;
   if (slider_w < UiPx(40.0f))
     slider_w = UiPx(40.0f);
   return slider_w;
@@ -548,10 +556,43 @@ bool SliderWithInput(const char* label, float* value, float min_val, float max_v
   char slider_id[64];
   char input_id[64];
   char label_id[64];
-  float slider_w = PrepareSliderLayout(label, display_buf, sizeof(display_buf), slider_id, sizeof(slider_id), input_id,
-                                       sizeof(input_id), label_id, sizeof(label_id), label_placement, avail_override);
+  bool stacked = false;
+  float slider_w =
+      PrepareSliderLayout(label, display_buf, sizeof(display_buf), slider_id, sizeof(slider_id), input_id,
+                          sizeof(input_id), label_id, sizeof(label_id), label_placement, avail_override, &stacked);
 
   const float old_value = *value;
+
+  if (stacked) {
+    // The line cannot hold slider + input + label with a usable track: the label owns the line
+    // above (wrapped — it is the piece that reads), the slider takes the full row, the input
+    // drops below it at its own width. Same widgets, same ids; only the geometry answers the
+    // width the old form was giving away to overflow clipping.
+    ImGui::TextWrapped("%s", display_buf);
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+    RenderNonlinearSlider(slider_id, value, min_val, max_val, fmt, scale);
+    const bool slider_committed = ImGui::IsItemDeactivatedAfterEdit();
+    const bool slider_active = ImGui::IsItemActive();
+    ImGui::PopItemWidth();
+
+    ImGui::PushItemWidth(std::min(UiPx(kInputWidth), ImGui::GetContentRegionAvail().x));
+    if (focus_input_now) {
+      ImGui::SetKeyboardFocusHere(0);
+    }
+    ImGui::InputFloat(input_id, value, 0, 0, fmt);
+    const bool input_committed = ImGui::IsItemDeactivatedAfterEdit();
+    const bool input_active = ImGui::IsItemActive();
+    ImGui::PopItemWidth();
+
+    *value = std::clamp(*value, min_val, max_val);
+    if (committed) {
+      *committed = slider_committed || input_committed;
+    }
+    if (active) {
+      *active = slider_active || input_active;
+    }
+    return *value != old_value;
+  }
 
   if (label_placement == LabelPlacement::kLeading) {
     BeginLeadingLabelLayout(display_buf, label_id);
@@ -645,10 +686,37 @@ bool SliderIntWithInput(const char* label, int* value, int min_val, int max_val,
   char slider_id[64];
   char input_id[64];
   char label_id[64];
+  bool stacked = false;
   float slider_w = PrepareSliderLayout(label, display_buf, sizeof(display_buf), slider_id, sizeof(slider_id), input_id,
-                                       sizeof(input_id), label_id, sizeof(label_id), label_placement);
+                                       sizeof(input_id), label_id, sizeof(label_id), label_placement, 0.0f, &stacked);
 
   const int old_value = *value;
+
+  if (stacked) {
+    // The stacked twin of SliderWithInput's narrow form: label above, full-width slider, the
+    // input on its own line — the widths the shared form was giving away to overflow clipping.
+    ImGui::TextWrapped("%s", display_buf);
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+    ImGui::SliderInt(slider_id, value, min_val, max_val, "%d", ImGuiSliderFlags_NoInput);
+    const bool slider_committed_s = ImGui::IsItemDeactivatedAfterEdit();
+    const bool slider_active_s = ImGui::IsItemActive();
+    ImGui::PopItemWidth();
+
+    ImGui::PushItemWidth(std::min(UiPx(kInputWidth), ImGui::GetContentRegionAvail().x));
+    ImGui::InputInt(input_id, value, 0, 0);
+    const bool input_committed_s = ImGui::IsItemDeactivatedAfterEdit();
+    const bool input_active_s = ImGui::IsItemActive();
+    ImGui::PopItemWidth();
+
+    *value = std::clamp(*value, min_val, max_val);
+    if (committed) {
+      *committed = slider_committed_s || input_committed_s;
+    }
+    if (active) {
+      *active = slider_active_s || input_active_s;
+    }
+    return *value != old_value;
+  }
 
   if (label_placement == LabelPlacement::kLeading) {
     BeginLeadingLabelLayout(display_buf, label_id);

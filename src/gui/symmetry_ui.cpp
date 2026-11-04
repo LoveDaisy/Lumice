@@ -105,12 +105,32 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   // P/B/D Checkboxes: unconditional under H5 (raypath / EE / AND mix all consume
   // crystal symmetry at the core layer). The pre-H5 `sym_active` gate was already
   // effectively constant.
+  //
+  // SameLine is a judgment here, not a default: a successor joins the row only while the row
+  // can still hold it (the analysis head's scrolling child has no horizontal scrollbar, so a
+  // forced join at the compressed tiers' widths clipped D — and at the narrowest, P — past the
+  // window entirely, exactly where the toggles decide what the list sums over). The judgment
+  // reads the LAST item's right edge against the content region's right edge: after ItemSize
+  // commits a widget the cursor drops to the next line, so GetContentRegionAvail().x there
+  // would report the fresh line's width and every check would pass while the join it guards
+  // still overflows. A unit's footprint is its frame plus its label, plus its info icon when
+  // one will be shown.
   char id_buf[64];
+  const auto unit_w = [&](const char* letter, bool with_icon) {
+    const float style_inner_x = ImGui::GetStyle().ItemInnerSpacing.x;
+    const float icon_w = ImGui::CalcTextSize(ICON_FA_CIRCLE_INFO).x + style_inner_x;
+    return ImGui::CalcTextSize(letter).x + ImGui::GetStyle().FramePadding.x * 2.0f + (with_icon ? icon_w : 0.0f);
+  };
+  const auto fits_on_line = [&](float next_w) {
+    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
+  };
   std::snprintf(id_buf, sizeof(id_buf), "P##%s", id_suffix);
   Checkbox(id_buf, &sym_p);
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("%s", physical ? kPAnalysisHover : kPFilterHover);
   }
+  const bool p_icon = !physical && (!avail.p_axis || avail.rotation_step != 1);
   if (!physical && !avail.p_axis) {
     std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##p_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, kPAxisTooltipText);
@@ -129,7 +149,9 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
     std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##p_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, tip);
   }
-  ImGui::SameLine();
+  if (fits_on_line(unit_w("B", !physical && !avail.b))) {
+    ImGui::SameLine();
+  }
   std::snprintf(id_buf, sizeof(id_buf), "B##%s", id_suffix);
   Checkbox(id_buf, &sym_b);
   if (ImGui::IsItemHovered()) {
@@ -139,7 +161,9 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
     std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##b_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, avail.b_axis ? kBShapeTooltipText : kBAxisTooltipText);
   }
-  ImGui::SameLine();
+  if (fits_on_line(unit_w("D", !physical && !avail.d))) {
+    ImGui::SameLine();
+  }
   std::snprintf(id_buf, sizeof(id_buf), "D##%s", id_suffix);
   Checkbox(id_buf, &sym_d);
   if (ImGui::IsItemHovered()) {
