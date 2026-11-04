@@ -1584,23 +1584,19 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_LT(avail_w, gui::UiPx(gui::kAnalyzeRightColMinWidth) + gui::UiPx(gui::kAnalyzeMainViewMinWidth) +
                                gui::UiPx(gui::kAnalyzeSplitterSize));
 
-      // The panorama's fixed rows — the ROI radios and the hemisphere pair — wrap under the
-      // judgment and each sits contained; the hemisphere radio's real click is the operability
-      // half.
+      // The panorama's fixed rows — the ROI radios — wrap under the judgment and each sits
+      // contained; the Whole-sky radio's real click is the operability half (the one radio not
+      // gated on a picture, so it is clickable in this no-run-yet state).
       ImGuiWindow* panorama = ctx->GetWindowByRef("//##AnalyzePanorama");
       IM_CHECK(panorama != nullptr);
       AssertRectContained(ctx, "**/Whole sky", panorama);
       AssertRectContained(ctx, "**/In frame", panorama);
       AssertRectContained(ctx, "**/Point", panorama);
-      AssertRectContained(ctx, "**/Upper##panorama_hemisphere", panorama);
-      AssertRectContained(ctx, "**/Lower##panorama_hemisphere", panorama);
+      gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
       ctx->SetRef("//##AnalyzePanorama");
-      ctx->ItemClick("Lower##panorama_hemisphere");
+      ctx->ItemClick("**/Whole sky");
       ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, false);
-      ctx->ItemClick("Upper##panorama_hemisphere");
-      ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, true);
+      IM_CHECK_EQ(gui::g_state.analysis.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
       ctx->SetRef("");
 
       // The map cell at the band scroll positions its two ends need, in order: the header
@@ -1901,31 +1897,15 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_panorama_vp.active, true);
       IM_CHECK_GT(gui::g_panorama_vp.vp_w, 0);
       IM_CHECK_GT(gui::g_panorama_vp.vp_h, 0);
-      // The view is the panorama's own: the equal-area fisheye pitched straight up (the upper
-      // hemisphere), the document's lens untouched.
-      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.lens_type, gui::kLensTypeFisheyeEqualArea);
-      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.fov, 180.0f);
-      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.elevation, 90.0f);
-      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.visible, gui::kVisibleFull);
+      // The view is the renderer's own: the document's lens and pose displayed as-is — the
+      // continuity contract (what Render shows, Analyze shows).
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.lens_type, gui::g_state.renderer.lens_type);
       IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeLinear);
+      IM_CHECK_FLOAT_NEAR(gui::g_panorama_vp.params.view_proj.fov, gui::g_state.renderer.fov, 1e-4f);
+      IM_CHECK_FLOAT_NEAR(gui::g_panorama_vp.params.view_proj.elevation, gui::g_state.renderer.elevation, 1e-4f);
 
-      // The hemisphere switch is a view state: it flips the session bit and the uniform the
-      // deferred pass reads, and never touches the document.
-      ctx->ItemClick("**/Lower##panorama_hemisphere");
-      ctx->Yield(3);
-      IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, false);
-      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.elevation, -90.0f);
-      ctx->ItemClick("**/Upper##panorama_hemisphere");
-      ctx->Yield(3);
-      IM_CHECK_EQ(gui::g_state.workspace.panorama_upper, true);
-
-      // ---- The cone pick over the panorama ----
-      // Arm CONE + the pick directly (this case is about the panorama's half of the flow), and
-      // click inside the picture disk at half its radius.
-      gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
-      gui::g_state.analysis.pick_armed = true;
-      ctx->Yield(2);
-      // The picture region, by name, over the window list (a child window, no items).
+      // The picture region, by name, over the window list (the region child; the picture's own
+      // controls — the display-mode control and the interaction button — live inside it).
       ImGuiWindow* pano = nullptr;
       for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
         if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzePanorama") != nullptr) {
@@ -1933,6 +1913,37 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         }
       }
       IM_CHECK(pano != nullptr);
+
+      // The camera drag is a view state: a real drag on the picture orbits the view angles and
+      // re-projects the next frame's picture, and touches nothing in the document.
+      {
+        const float az_before = gui::g_state.renderer.azimuth;
+        const float el_before = gui::g_state.renderer.elevation;
+        const ImVec2 drag_from(pano->Pos.x + pano->Size.x * 0.30f, pano->Pos.y + pano->Size.y * 0.60f);
+        ctx->MouseMoveToPos(drag_from);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        ctx->MouseMoveToPos(ImVec2(drag_from.x + 120.0f, drag_from.y - 90.0f));
+        ctx->Yield(3);
+        ctx->MouseUp(0);
+        ctx->Yield(3);
+        IM_CHECK_NE(gui::g_state.renderer.azimuth, az_before);
+        IM_CHECK_NE(gui::g_state.renderer.elevation, el_before);
+      }
+
+      // ---- The cone pick over the picture ----
+      // Arm CONE + the pick directly (this case is about the main view's half of the flow), and
+      // click inside the picture at half its radius. The view is set to the equal-area fisheye
+      // pitched at the zenith first, so the closed-form anchor below is exact — the free camera
+      // carrying the same view the fixed panorama used to bake in.
+      gui::g_state.renderer.lens_type = gui::kLensTypeFisheyeEqualArea;
+      gui::g_state.renderer.fov = 180.0f;
+      gui::g_state.renderer.elevation = 90.0f;
+      gui::g_state.renderer.visible = gui::kVisibleFull;
+      gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
+      gui::g_state.analysis.pick_armed = true;
+      ctx->Yield(2);
       const ImVec2 disk_centre((pano->Pos.x + pano->Size.x * 0.5f), (pano->Pos.y + pano->Size.y * 0.5f));
       const float disk_radius = std::min(pano->Size.x, pano->Size.y) * 0.5f;
       ctx->MouseMoveToPos(ImVec2(disk_centre.x + disk_radius * 0.5f, disk_centre.y));

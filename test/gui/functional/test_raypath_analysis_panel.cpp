@@ -38,6 +38,7 @@
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"  // kFactoryUiScaleMultiplier — the scale tiers restore through it
+#include "gui/view_look_at.hpp"   // WorldDirToAzEl — the camera-aim inverse the Look At presets run
 #include "imgui_internal.h"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
@@ -342,9 +343,9 @@ ImGuiWindow* LowerRowRegionWindow(const char* name_fragment) {
   return nullptr;
 }
 
-// Click the PANORAMA's picture centre with the pick armed; returns the canvas pixel the click
-// landed on (the panorama's own canvas, g_panorama_vp). The pick's picture is the Analyze
-// workspace's panorama now — the preview no longer hosts the cone gestures.
+// Click the main view's picture with the pick armed; returns the canvas pixel the click
+// landed on (the picture's own canvas, g_panorama_vp). The pick's picture is the Analyze
+// workspace's main view — the preview never hosted the cone gestures.
 gui::CanvasPixel PickPanoramaCentre(ImGuiTestContext* ctx) {
   ImGuiWindow* pano = PanoramaPictureWindow();
   IM_CHECK_SILENT_RETV(pano != nullptr, gui::CanvasPixel{});
@@ -376,7 +377,7 @@ bool PickPanoramaAt(ImGuiTestContext* ctx, float alt_deg, float az_deg) {
   float dir[3] = { 0.0f, 0.0f, 0.0f };
   lumice::AltAzToDir(alt_deg, az_deg, dir);
   const LUMICE_AnnotationView view =
-      gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
+      gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   float fx = 0.0f;
   float fy = 0.0f;
   int valid = 0;
@@ -401,7 +402,7 @@ std::optional<ImVec2> MarkerScreenPos(ImGuiTestContext* ctx) {
     return std::nullopt;
   }
   const LUMICE_AnnotationView view =
-      gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
+      gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   const std::optional<gui::CanvasPixel> px = gui::ProjectConeCenterMarker(gui::g_state, view);
   if (!px.has_value()) {
     return std::nullopt;
@@ -475,7 +476,7 @@ bool UnprojectMouse(float out[3]) {
     return false;
   }
   const LUMICE_AnnotationView view =
-      gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
+      gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   int valid = 0;
   return LUMICE_UnprojectPixel(&view, px->px, px->py, out, &valid) == LUMICE_OK && valid == 1;
 }
@@ -4261,8 +4262,8 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(whole_sky_e.RectFull.Max.x <= whole_sky_e.Window->InnerClipRect.Max.x + 0.5f &&
                       whole_sky_e.RectFull.Min.x >= whole_sky_e.Window->InnerClipRect.Min.x - 0.5f,
                   false);
-    const ImGuiTestItemInfo lower_e = [&] {
-      // The hemisphere row sits at the wrapped ROI stack's tail: at this width the joins wrap,
+    const ImGuiTestItemInfo point_e = [&] {
+      // The Point radio sits at the wrapped ROI stack's tail: at this width the joins wrap,
       // the stack grows past the panel's visible slice, and the panel — a scrolling window, the
       // contract's internal-scroll rung — carries the row behind its own scroll.
       for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
@@ -4272,15 +4273,15 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
           break;
         }
       }
-      return ctx->ItemInfo("**/Lower##panorama_hemisphere", ImGuiTestOpFlags_NoError);
+      return ctx->ItemInfo("**/Point", ImGuiTestOpFlags_NoError);
     }();
-    IM_CHECK_RETV(lower_e.ID != 0, false);
-    IM_CHECK_RETV(lower_e.RectFull.Max.x <= lower_e.Window->InnerClipRect.Max.x + 0.5f &&
-                      lower_e.RectFull.Min.x >= lower_e.Window->InnerClipRect.Min.x - 0.5f,
+    IM_CHECK_RETV(point_e.ID != 0, false);
+    IM_CHECK_RETV(point_e.RectFull.Max.x <= point_e.Window->InnerClipRect.Max.x + 0.5f &&
+                      point_e.RectFull.Min.x >= point_e.Window->InnerClipRect.Min.x - 0.5f,
                   false);
-    ctx->LogInfo("[scale tiers 1024 clamped] panorama joins contained: whole sky [%.0f..%.0f], lower [%.0f..%.0f]",
+    ctx->LogInfo("[scale tiers 1024 clamped] panorama joins contained: whole sky [%.0f..%.0f], point [%.0f..%.0f]",
                  static_cast<double>(whole_sky_e.RectFull.Min.x), static_cast<double>(whole_sky_e.RectFull.Max.x),
-                 static_cast<double>(lower_e.RectFull.Min.x), static_cast<double>(lower_e.RectFull.Max.x));
+                 static_cast<double>(point_e.RectFull.Min.x), static_cast<double>(point_e.RectFull.Max.x));
 
     // The completed globe's sample track at this width: the play row shares its line only
     // while a usable track survives the play button's real width — below that the button owns
@@ -4997,7 +4998,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(!gui::g_state.analysis.pick_armed);
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       const LUMICE_AnnotationView view =
-          gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
+          gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
       const std::optional<gui::CanvasPixel> marker = gui::ProjectConeCenterMarker(gui::g_state, view);
       IM_CHECK(marker.has_value());
       IM_CHECK_EQ(marker->px, px.px);
@@ -5766,7 +5767,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       SetListRef(ctx);
       IM_CHECK(!IsDisabled(ctx->ItemInfo("Radius###Radius_narrow")));
       const LUMICE_AnnotationView view =
-          gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
+          gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
       const std::optional<gui::CanvasPixel> marker = gui::ProjectConeCenterMarker(gui::g_state, view);
       IM_CHECK(marker.has_value());
       const std::optional<float> ring_before =
@@ -5862,7 +5863,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       IM_CHECK(!gui::g_state.analysis.pick_armed);
       const LUMICE_AnnotationView view =
-          gui::PanoramaAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
+          gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
       float want[3] = { 0.0f, 0.0f, 0.0f };
       int valid = 0;
       IM_CHECK_EQ(LUMICE_UnprojectPixel(&view, gui::g_panorama_vp.vp_w / 2, gui::g_panorama_vp.vp_h / 2, want, &valid),
@@ -5883,10 +5884,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // AC1: the marker is the direction's projection on THIS view. The panorama's view change is
-  // the hemisphere switch (no camera orbit on this surface): switching to the lower hemisphere
-  // takes the upper-sky direction off the picture, and switching back puts the marker exactly
-  // where it was — while the direction, the truth, does not change.
+  // AC1 on the free camera: the marker is the direction's projection on THIS view. A camera
+  // orbit moves the marker with the picture — and the direction, the truth, byte-for-byte does
+  // not change; aiming the view back at the direction (the product's own inverse, the same
+  // inverse the Look At presets run) puts the marker exactly where it was — the per-frame
+  // projection's contract.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "marker_follows_the_view_drag");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -5899,33 +5901,119 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemClick(kPickButton);
       ctx->SetRef("");
       ctx->Yield(1);
-      PickPanoramaCentre(ctx);
+      // The pick aims at the direction the camera already looks at (the view's own centre
+      // pixel), so aiming the view back at that direction later returns the marker to THIS
+      // pixel exactly — the anchor the closing assertion needs.
+      IM_CHECK(PickPanoramaAt(ctx, gui::g_state.renderer.elevation, gui::g_state.renderer.azimuth));
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       IM_CHECK(!gui::g_state.analysis.pick_armed);
       const float dir_before[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
                                     gui::g_state.analysis.cone_center_dir[2] };
       const std::optional<ImVec2> marker_before = MarkerScreenPos(ctx);
       IM_CHECK(marker_before.has_value());
-      IM_CHECK(gui::g_state.workspace.panorama_upper);
 
-      // Switch the hemisphere: the picture re-projects around the flipped axis (the projector
-      // clamps the now-behind-camera direction to this view's rim — visible, not meaningful).
-      ctx->ItemClick("**/Lower##panorama_hemisphere");
+      // A camera drag that starts far from the marker (the marker sits at the picture's
+      // centre, the drag starts near the left edge): the camera arm owns the press, the view
+      // orbits, and the direction does not move.
+      ImGuiWindow* pano = PanoramaPictureWindow();
+      IM_CHECK(pano != nullptr);
+      const ImVec2 drag_from(pano->Pos.x + pano->Size.x * 0.12f, pano->Pos.y + pano->Size.y * 0.70f);
+      ctx->MouseMoveToPos(drag_from);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(drag_from.x + 150.0f, drag_from.y - 110.0f));
       ctx->Yield(3);
-      IM_CHECK(!gui::g_state.workspace.panorama_upper);
+      ctx->MouseUp(0);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], dir_before[0]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], dir_before[1]);
+      IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[2], dir_before[2]);
+      // The view did move (the drag was not a silent no-op), and the marker left its pixel —
+      // it follows the view, off-picture (nullopt) being the honest far end.
+      float az_aim = 0.0f;
+      float el_aim = 0.0f;
+      gui::WorldDirToAzEl(dir_before, &az_aim, &el_aim);
+      IM_CHECK(std::abs(gui::g_state.renderer.elevation - el_aim) + std::abs(gui::g_state.renderer.azimuth - az_aim) >
+               0.5f);
+      const std::optional<ImVec2> marker_mid = MarkerScreenPos(ctx);
+      if (marker_mid.has_value()) {
+        IM_CHECK(ImFabs(marker_mid->x - marker_before->x) + ImFabs(marker_mid->y - marker_before->y) > 5.0f);
+      }
 
-      // Switch back: the same direction, the same pixel — the per-frame projection's contract.
-      ctx->ItemClick("**/Upper##panorama_hemisphere");
+      // Aim the view back at the direction: the marker returns to its pixel, the direction
+      // bytes never changed.
+      gui::g_state.renderer.azimuth = az_aim;
+      gui::g_state.renderer.elevation = el_aim;
       ctx->Yield(3);
-      IM_CHECK(gui::g_state.workspace.panorama_upper);
       const std::optional<ImVec2> marker_after = MarkerScreenPos(ctx);
       IM_CHECK(marker_after.has_value());
       IM_CHECK_LT(ImFabs(marker_after->x - marker_before->x), 2.0f);
       IM_CHECK_LT(ImFabs(marker_after->y - marker_before->y), 2.0f);
-      // The direction is the truth and did not change.
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], dir_before[0]);
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], dir_before[1]);
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[2], dir_before[2]);
+    };
+  }
+
+  // AC1's overlay half: the auxiliary lines' label switches publish their curve-label sets for
+  // the main view's own viewport — the same sets the deferred pass rasterizes into the picture,
+  // and the same display state the Render preview reads (one source, two faces).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "overlay_labels_publish_on_the_main_view");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_panorama_vp.active);
+      gui::g_state.show_horizon_label = true;
+      gui::g_state.show_grid_label = true;
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_panorama_vp.curve_labels.empty());
+      // Pixel evidence: the picture with its labels, saved for inspection — the deferred pass
+      // rasterized the published sets into the same blit the screen shows.
+      IM_CHECK(
+          SaveWindowPng(ctx, PanoramaRegionRef(), GuiTestTempPath("analyze_main_view_overlay_labels.png").string()));
+      gui::g_state.show_horizon_label = false;
+      gui::g_state.show_grid_label = false;
+    };
+  }
+
+  // AC4's occlusion half on the camera arm: with the entry editor's modal up over the main
+  // view, a drag on the picture orbits nothing — the modal owns the input, so the camera arm
+  // never engages (a press the modal consumed is not a press the camera consumed).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "camera_drag_stays_down_under_a_modal");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      const ScopedPopups popup_guard(ctx);
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      const float az_before = gui::g_state.renderer.azimuth;
+      const float el_before = gui::g_state.renderer.elevation;
+      ImGuiWindow* pano = PanoramaPictureWindow();
+      IM_CHECK(pano != nullptr);
+      // Opened through OpenEditModal rather than by a card click, the way
+      // marker_sits_under_a_modal_not_over_it does: the click's own path is not what this case
+      // is about, the modal's presence is.
+      gui::g_state.modal_immediate_mode = false;  // staged: a real modal, on the popup stack
+      const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
+      gui::OpenEditModal(req, gui::g_state);
+      ctx->Yield(4);
+      IM_CHECK(ImGui::GetTopMostPopupModal() != nullptr);
+      const ImVec2 drag_from(pano->Pos.x + pano->Size.x * 0.30f, pano->Pos.y + pano->Size.y * 0.60f);
+      ctx->MouseMoveToPos(drag_from);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(drag_from.x + 120.0f, drag_from.y - 90.0f));
+      ctx->Yield(3);
+      ctx->MouseUp(0);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, az_before);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, el_before);
+      IM_CHECK(!gui::g_state.workspace.panorama_camera_dragging);
     };
   }
 

@@ -1917,9 +1917,13 @@ struct GuiState {
     // their windows), so this ratio is the main view's share of its column; the field retires with
     // the band (755.4/.5).
     float middle_rows_ratio = 0.45f;
-    // The panorama's hemisphere — a view state of the panorama (the committed texture is always
-    // the full sky; the switch is the display-time `visible` uniform), not document state.
-    bool panorama_upper = true;
+    // The main view's camera-drag latch, the third arm of the picture region's gesture
+    // arbitration: once a press is consumed by the camera arm, it stays the camera's for the
+    // whole press — dragging across the cone marker mid-way must not flip arms (the marker's
+    // own cone_marker_dragging is the same rule for its arm). Cleared on release, on leaving
+    // the workspace (the top-bar switch handler), and with the whole session on DoNew. Session
+    // tier like every field here: a gesture in flight, never document state.
+    bool panorama_camera_dragging = false;
   };
   AnalyzeWorkspaceSession workspace;
 

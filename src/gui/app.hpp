@@ -725,6 +725,12 @@ void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vecto
 // path skips the view matrix, so angles would be dead state). Every frame, host-independent.
 void ClampRendererViewInvariants(RenderConfig& rc);
 
+// The display mode's segmented control (Normal / Channel B-R), drawn in the top-right corner of
+// whatever picture face hosts it. Display-time: writes renderer.display_mode, re-runs nothing.
+// Must be submitted BEFORE the host's interaction button, and the returned flag (cursor over the
+// control) is what the host masks its click-on-hover gesture branches with.
+bool RenderDisplayModeControl();
+
 // One frame of camera-orbit drag: the preview panel's drag body (UnlockLookAt, the DPI/FOV-
 // correct gain, the Globe sign flip, the azimuth wrap and the elevation clamp), shared with the
 // Analyze main view's camera arm. `delta_pt` is ImGui's MouseDelta for this frame; the viewport

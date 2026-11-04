@@ -17,14 +17,13 @@
 #include "gui/app.hpp"
 #include "gui/destructive_style.hpp"
 #include "gui/gui_constants.hpp"
-#include "gui/mono_exposure_scale.hpp"
 #include "gui/panels.hpp"
 #include "gui/panorama_viewport.hpp"
 #include "gui/semantic_colors.hpp"
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/view_look_at.hpp"  // UpdateLockedLookAt — the camera reconciliation the picture is built from
 #include "imgui.h"
-#include "util/color_space.hpp"
 #include "util/raypath_analysis_display.hpp"  // RoiModeLabel — the diagnostics summary's region line
 #include "util/sky_direction.hpp"             // DirToAltAz — the diagnostics summary's centre line
 #include "util/thousands_format.hpp"          // FormatThousands — the diagnostics run-status line
@@ -291,51 +290,49 @@ void RenderCrystalList(GuiState& state) {
 
 }  // namespace
 
-// The scene panorama: the committed texture — always dual equal-area full-sky,
-// gui-state-governance.md §9.1 — through the existing reprojection family at Fisheye Equal Area
-// / 180°, hemisphere per the view state. The params are composed fresh each frame from the same
-// supply functions the Render preview's come from (ComputeMonoExposure, SrgbToLinearRgb, the
-// kDualFisheyeOverlap source constants) with only the view overridden; the photo overlay and the
-// auxiliary lines stay off — Render-workspace affordances the panorama does not inherit. The
-// picture itself is drawn by the deferred pass (RenderPreviewFrameAndBlit into the region this
-// publishes to g_panorama_vp); this side draws the state around it: the hemisphere switch, the
-// empty state, and the preview's own two-branch notice (AnalysisPictureNotice — the same
-// predicate, never a second freshness judgment).
-void RenderScenePanorama(GLFWwindow* window, float window_height) {
+// The main view: the committed texture through the REAL renderer view — the same lens, FOV,
+// pose, exposure, overlays, markers, labels, display mode and background-photo state the Render
+// preview shows (one display-state source; analyze-interaction-contract.md §5.4), published
+// through the shared picture assembly (AssemblePreviewPictureParams). The picture itself is
+// drawn by the deferred pass (RenderPreviewFrameAndBlit into the region this publishes to
+// g_panorama_vp); this side draws the state around it and hosts the picture region's gestures:
+// the cone ROI's two analysis arms and the camera orbit as the third, plus the Angular Distance
+// pick — every mode aims at the picture that is live.
+void RenderScenePanorama(GLFWwindow* window) {
   // The publication is cleared once per frame at the dispatch point; this function publishes
   // by assignment below.
+
+  // Camera reconciliation and the renderer's view invariants, before this frame's picture is
+  // assembled — the same order the preview panel runs in: the left column's scene and
+  // observation edits above rendered first, so the same frame's picture is built from the
+  // reconciled view, and a Look At lock or a Sun edit lands on the frame it happens.
+  UpdateLockedLookAt(g_state);
+  ClampRendererViewInvariants(g_state.renderer);
 
   ImGui::SeparatorText("Scene panorama");
   // The ROI controls sit ABOVE the picture: Point mode's gestures aim at the picture below them.
   RenderPanoramaRoiControls(g_state);
-  int upper = g_state.workspace.panorama_upper ? 0 : 1;
-  ImGui::RadioButton("Upper##panorama_hemisphere", &upper, 0);
-  // The join is a judgment, not a default: at the ③ split under non-default scales the second
-  // radio's label runs past the main view's clip, and a wrapped pair stays reachable where a
-  // clipped one does not.
-  const float lower_w = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Lower").x;
-  if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + lower_w <=
-      ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
-    ImGui::SameLine();
-  }
-  ImGui::RadioButton("Lower##panorama_hemisphere", &upper, 1);
-  g_state.workspace.panorama_upper = upper == 0;
 
   if (!g_preview.HasTexture()) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
         "No rendered image for this document yet — press Run once in the Render workspace; the "
-        "panorama shows the traced sky here.");
+        "main view shows the traced sky here.");
     ImGui::PopStyleColor();
     return;
   }
 
   // The picture region: transparent, because the deferred pass blits the reprojected texture
-  // under ImGui exactly as it does for the Render preview panel.
+  // under ImGui exactly as it does for the Render preview panel. Everything the region hosts —
+  // the display-mode control, the publication, the shared assembly, the interaction button and
+  // every gesture — lives inside this child, the way the preview panel's own window hosts them.
   const ImVec2 size = ImGui::GetContentRegionAvail();
   ImGui::BeginChild("##AnalyzePanorama", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoBackground);
   const ImVec2 region_min = ImGui::GetWindowPos();
-  ImGui::EndChild();
+
+  // Submitted ahead of `##panorama_interact` on purpose — RenderDisplayModeControl's own
+  // comment carries the press-order rule.
+  const bool over_display_mode_control = RenderDisplayModeControl();
 
   int fb_w = 0;
   int fb_h = 0;
@@ -369,54 +366,42 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
   g_panorama_vp.vp_h = vp.vp_h;
   g_panorama_vp.dpi_scale_x = vp.dpi_scale_x;
   g_panorama_vp.dpi_scale_y = vp.dpi_scale_y;
+  // The picture itself: the shared assembly — the real BuildPreviewViewProjFromRenderer view,
+  // the same mono exposure and composite push, overlays, markers, labels and photo state the
+  // preview publishes. Assembled BEFORE the gestures so a drag frame's picture is the pre-drag
+  // frame's — the order the preview panel runs in (the drag lands on the next frame's picture,
+  // and every face behaves the same way).
+  PreviewPictureTarget target;
+  target.canvas_w_pt = size.x;
+  target.canvas_h_pt = size.y;
+  target.vp_w_px = g_panorama_vp.vp_w;
+  target.vp_h_px = g_panorama_vp.vp_h;
+  AssemblePreviewPictureParams(g_state, g_panorama_vp.params, g_panorama_vp.curve_labels, target);
 
-  PreviewParams& pp = g_panorama_vp.params;
-  auto& rc = g_state.renderer;
-  pp.source.max_abs_dz = kDualFisheyeOverlap;
-  pp.source.r_scale = 1.0f / std::sqrt(1.0f + kDualFisheyeOverlap);
-  lumice::SrgbToLinearRgb(rc.background, pp.background_color_linear);
-  lumice::SrgbToLinearRgb(rc.paper, pp.paper_color_linear);
-  pp.tone = rc.tone;
-  pp.display_mode = rc.display_mode;
-  // The same mono exposure the preview computes per frame, so the EV controls act on the
-  // panorama on the very next frame too — one supply, two views.
-  lumice::gui::MonoExposureInput mono_ev_in;
-  mono_ev_in.exposure_offset = rc.exposure_offset;
-  mono_ev_in.ev_auto = g_state.ev_auto;
-  mono_ev_in.snapshot_intensity = g_state.snapshot_intensity;
-  mono_ev_in.snapshot_emitted_energy = g_state.snapshot_emitted_energy;
-  mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
-  const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
-  pp.exposure.intensity_factor = mono_ev.intensity_factor;
-  pp.exposure.intensity_scale = mono_ev.intensity_scale;
-  // The up- (or down-) looking equal-area fisheye: the same framing PanoramaAnnotationView gives
-  // the pick, so the picture and the click agree by construction. visible=Full — the fisheye's
-  // own behind-camera bound is the clip; the hemisphere is the camera pitch.
-  pp.view_proj = ViewProjection{ kLensTypeFisheyeEqualArea,
-                                 180.0f,
-                                 g_state.workspace.panorama_upper ? 90.0f : -90.0f,
-                                 0.0f,
-                                 0.0f,
-                                 kVisibleFull,
-                                 false };
+  ImGui::InvisibleButton("##panorama_interact", ImGui::GetContentRegionAvail());
 
-  // ---- The cone ROI's gestures, over this region and this view ----
-  // The same gesture family the preview panel hosts (marker drag > armed pick), through
-  // PanoramaAnnotationView — the view the picture under the cursor was drawn with. No camera
-  // branch: the panorama's surface has no orbit, so the arbiter runs with its two analysis arms
-  // only, and the angular-distance picker cannot reach here — that pick lives in the Render
-  // workspace's panels.
+  // ---- The picture region's gestures ----
+  const ImGuiIO& io = ImGui::GetIO();
+  const bool interact_hovered = ImGui::IsItemHovered() && !over_display_mode_control;
+  const bool interact_active = ImGui::IsItemActive();
+  const bool region_hovered =
+      ImGui::IsMouseHoveringRect(region_min, ImVec2(region_min.x + size.x, region_min.y + size.y));
   auto& a = g_state.analysis;
+  // The camera half is disabled for lenses in kFullSkyLensTypes (dual fisheye 4-6, rectangular
+  // 7, dual orthographic 9): their shader path skips the view matrix so view angles + FOV have
+  // no visual effect — the same gate the preview panel's camera arm carries.
+  const bool full_sky = LensIsFullSky(g_state.renderer.lens_type);
+
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
-    const LUMICE_AnnotationView view = PanoramaAnnotationView(g_state, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+    // The annotation view the picture was drawn with — the pick family's one view (both
+    // picture faces publish the same shared assembly, so PreviewAnnotationView IS the picture's
+    // view here as it is in the preview).
+    const LUMICE_AnnotationView view = PreviewAnnotationView(g_state, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
     // A centre when there is none — level-triggered, the preview panel's own rule, so the mode
     // gets its default as soon as the picture region exists.
     if (!a.cone_center_valid) {
       EnsureDefaultConeCenter(g_state, view, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
     }
-    const ImGuiIO& io = ImGui::GetIO();
-    const bool region_hovered =
-        ImGui::IsMouseHoveringRect(region_min, ImVec2(region_min.x + size.x, region_min.y + size.y));
     bool marker_hover = false;
     if (region_hovered) {
       if (const std::optional<CanvasPixel> marker = ProjectConeCenterMarker(g_state, view); marker.has_value()) {
@@ -430,7 +415,14 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
         marker_hover = dx * dx + dy * dy <= hit_r * hit_r;
       }
     }
-    const ConeInputOwner owner = ArbitrateConeInput(marker_hover || a.cone_marker_dragging, a.pick_armed);
+    // Three arms — marker drag > armed pick > camera orbit — with an owner latch per arm that
+    // has taken a press: the camera's (workspace.panorama_camera_dragging — a press it consumed
+    // keeps it through a drag across the marker), the marker's (cone_marker_dragging), the
+    // pick's own disarm-on-click. The camera latch read here overrides the arbitration for the
+    // whole press it owns; the other two keep their arms the same way.
+    const ConeInputOwner owner = g_state.workspace.panorama_camera_dragging ?
+                                     ConeInputOwner::kCamera :
+                                     ArbitrateConeInput(marker_hover || a.cone_marker_dragging, a.pick_armed);
     if (owner == ConeInputOwner::kMarkerDrag) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
       if (region_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -438,10 +430,13 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
         a.pick_armed = false;
       }
       if (a.cone_marker_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        // The drag's own gate is LUMICE_UnprojectPixel's valid semantics (inside
+        // DragAnalysisConeCenter): off the picture (letterbox, outside the lens's image, the
+        // clipped hemisphere) the write is skipped and the last on-sky direction stands.
         if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
                 io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
                 g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-            px.has_value() && PanoramaPickHitsSky(g_state, view, px->px, px->py)) {
+            px.has_value()) {
           DragAnalysisConeCenter(g_state, view, px->px, px->py);
         }
       }
@@ -458,21 +453,47 @@ void RenderScenePanorama(GLFWwindow* window, float window_height) {
       dl->AddLine(ImVec2(m.x - arm, m.y), ImVec2(m.x + arm, m.y), colour, 1.5f);
       dl->AddLine(ImVec2(m.x, m.y - arm), ImVec2(m.x, m.y + arm), colour, 1.5f);
       if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // The pick's own gate is the same valid semantics: a click off the picture leaves the
+        // pick armed — a miss should not cost a second trip to the button.
         if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
                 io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
                 g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-            px.has_value() && PanoramaPickHitsSky(g_state, view, px->px, px->py)) {
+            px.has_value()) {
           PickAnalysisConeCenter(g_state, view, px->px, px->py);
         }
       }
     }
+    if (owner == ConeInputOwner::kCamera && interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      g_state.workspace.panorama_camera_dragging = true;
+    }
     DrawPanoramaRoiRing(g_state, view, region_min, g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y);
+  } else if (interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    // Outside CONE mode the camera owns the region outright (ArbitrateConeInput's comment).
+    g_state.workspace.panorama_camera_dragging = true;
   }
-  // Esc disarms an armed pick — the preview panel's rule, hosted here while the workspace owns
-  // the picture an armed pick aims at.
-  if (a.pick_armed && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-    a.pick_armed = false;
+
+  // The camera arm's drag, in every ROI mode: display-tier — the view angles move, nothing in
+  // the document does, and no analysis state is touched. The latch still ends with the press
+  // under a full-sky lens, where the drag body is gated off (no visual response to feed).
+  if (g_state.workspace.panorama_camera_dragging) {
+    if (!full_sky && interact_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+      ApplyCameraOrbitDrag(g_state, io.MouseDelta, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      g_state.workspace.panorama_camera_dragging = false;
+    }
   }
+
+  // The Angular Distance pick, hosted over this picture like the preview hosts it over its own
+  // (the overlay group's Pick buttons arm it in both workspaces; it reads whichever picture is
+  // live). The injection lands on THIS frame's published params — the deferred pass has not run.
+  if (g_state.angular_dist_picker.armed && !g_bg_pick.active && interact_hovered) {
+    ApplyAngularDistPickGesture(
+        g_state, g_panorama_vp.params, ImVec2(io.MousePos.x - region_min.x, io.MousePos.y - region_min.y),
+        g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
+  }
+
+  ImGui::EndChild();
 
   // The preview's own two-branch notice, below the picture: kNone (nothing ever rendered) cannot
   // reach here (the texture gate above), so this is the kModified branch — the picture is of the
@@ -594,6 +615,20 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   }
   std::optional<GuiState::EntryRef> pick_source_at_entry =
       pick_active_at_entry ? g_state.pick_link_source : std::nullopt;
+  // The armed analysis pick's Esc cancel — the same ahead-of-widgets rule as the picker above;
+  // the picture-gone half reads the main view's own texture gate, because the armed pick aims at
+  // THIS workspace's picture. (The Render panel carries the same reads for its own frames.)
+  if (g_state.analysis.pick_armed && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    g_state.analysis.pick_armed = false;
+  }
+  // The Angular Distance pick is hosted over both workspaces' pictures; this side's two exits
+  // are Esc and the committed texture going away under it.
+  if (g_state.angular_dist_picker.armed && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !g_preview.HasTexture())) {
+    g_state.angular_dist_picker.armed = false;
+  }
+  if (g_state.angular_dist_picker.swallow_drag_until_release && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    g_state.angular_dist_picker.swallow_drag_until_release = false;
+  }
 
   const float panel_height = window_height - UiPx(kTopBarHeight) - UiPx(kStatusBarHeight);
   const float top = UiPx(kTopBarHeight);
@@ -700,7 +735,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
-  RenderScenePanorama(window, window_height);
+  RenderScenePanorama(window);
   ImGui::End();
 
   // The row divider: a thin strip across the main view column, dragging the panorama/band ratio

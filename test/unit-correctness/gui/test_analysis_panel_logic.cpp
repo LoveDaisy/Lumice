@@ -1160,16 +1160,16 @@ TEST(AnalysisPanelLogic, ExcludeWritesOneFilterOutFilterBoundToEveryEntryOfTheCr
   EXPECT_FALSE(state.layers[0].entries[0].filter_id.has_value());
 }
 
-// ---- The panorama's pixel->direction mapping: the equal-area closure ----
+// ---- The pick view's pixel->direction mapping: the equal-area closure ----
 //
-// The panorama is an equal-area azimuthal view of one hemisphere, and the pick family reads
-// directions back through LUMICE_UnprojectPixel under PanoramaAnnotationView. The independent
-// anchor is the AREA PROPERTY, not the projection's own formula: pixels scattered uniformly over
-// the picture disk must be uniform in solid angle — the fraction within a half-angle theta of the
-// axis is (1 - cos theta) — and the azimuth uniform over the circle. Verifying the property, with
-// the axis anchored physically (the disk centre's own direction), is what keeps this from
-// certifying a self-consistent but wrong mapping: a round trip through the projection's maths
-// would pass both if they shared the same mistake.
+// The equal-area fisheye is an azimuthal view of one hemisphere, and the pick family reads
+// directions back through LUMICE_UnprojectPixel under PreviewAnnotationView — the one view both
+// picture faces draw through. The independent anchor is the AREA PROPERTY, not the projection's
+// own formula: pixels scattered uniformly over the picture disk must be uniform in solid angle —
+// the fraction within a half-angle theta of the axis is (1 - cos theta) — and the azimuth uniform
+// over the circle. Verifying the property, with the axis anchored physically (the disk centre's
+// own direction), is what keeps this from certifying a self-consistent but wrong mapping: a
+// round trip through the projection's maths would pass both if they shared the same mistake.
 TEST(AnalysisPanelLogic, PanoramaUnprojectIsEqualAreaOverTheDisk) {
   // The panorama's mapping: the up-looking equal-area fisheye. Over the picture DISK (centre of
   // the square canvas, radius = short edge / 2), uniform pixel area must map to uniform solid
@@ -1180,8 +1180,14 @@ TEST(AnalysisPanelLogic, PanoramaUnprojectIsEqualAreaOverTheDisk) {
   // round trip of the inverse under test.
   constexpr int kSize = 400;
   constexpr float kRadius = kSize * 0.5f;
-  GuiState state;  // default workspace: the upper hemisphere (camera pitched +90)
-  const LUMICE_AnnotationView view = PanoramaAnnotationView(state, kSize, kSize);
+  GuiState state;
+  // The equal-area member as the free camera carries it: the fisheye pitched straight up, the
+  // upper sky visible — the view the main view publishes when the camera points at the zenith.
+  state.renderer.lens_type = kLensTypeFisheyeEqualArea;
+  state.renderer.fov = 180.0f;
+  state.renderer.elevation = 90.0f;
+  state.renderer.visible = kVisibleFull;
+  const LUMICE_AnnotationView view = PreviewAnnotationView(state, kSize, kSize);
 
   std::mt19937 rng(7);  // fixed seed: a property test, not a distribution history
   std::uniform_real_distribution<float> uniform(0.0f, 1.0f);

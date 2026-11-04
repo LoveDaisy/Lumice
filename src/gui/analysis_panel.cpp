@@ -406,44 +406,6 @@ LUMICE_AnnotationView PreviewAnnotationView(const GuiState& state, int canvas_w,
   return BuildAnnotationView(MakeAnnotationViewKey(AnnotationViewInputFor(state, state.renderer), canvas_w, canvas_h));
 }
 
-LUMICE_AnnotationView PanoramaAnnotationView(const GuiState& state, int canvas_w, int canvas_h) {
-  // The Analyze workspace's panorama: the up-looking equal-area fisheye — lens 1 at fov 180 with
-  // the view pitched to +90 (straight up), so the disk centre is the zenith and the rim the
-  // horizon, both sides (shader display and this pick view) camera-framed by the same view
-  // angles. visible=Full on purpose: the lens's own behind-camera sentinel already bounds the
-  // disk, and the half-sky visible values route the annotation projector through a different
-  // domain the panorama does not want. No overlay circles or markers: the key carries only what
-  // will be read.
-  AnnotationViewInput in;
-  in.lens_type = kLensTypeFisheyeEqualArea;
-  in.fov = 180.0f;
-  in.azimuth = 0.0f;
-  // The hemisphere switch pitches the camera: +90 reads the upper sky (zenith at the disk
-  // centre), -90 the lower (nadir at the centre).
-  in.elevation = state.workspace.panorama_upper ? 90.0f : -90.0f;
-  in.roll = 0.0f;
-  in.visible = kVisibleFull;
-  in.front = false;
-  in.sun_altitude_deg = state.sun.altitude;
-  return BuildAnnotationView(MakeAnnotationViewKey(in, canvas_w, canvas_h));
-}
-
-bool PanoramaPickHitsSky(const GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
-  // The up-looking fisheye's square canvas outcorners its disk: outside the rim
-  // LUMICE_UnprojectPixel still answers (the lens inverse carries no rim rejection at fov 180),
-  // with a direction below the horizon. The panorama's pick and drag accept upper-sky directions
-  // only — the disk, not the square.
-  float dir[3] = { 0.0f, 0.0f, 0.0f };
-  int valid = 0;
-  if (LUMICE_UnprojectPixel(&view, px, py, dir, &valid) != LUMICE_OK || valid == 0) {
-    return false;
-  }
-  // Travel convention: sky light travels away from the viewed hemisphere's centre — looking up
-  // (+90), upper-sky light travels downward (z < 0); looking down (-90), lower-sky light travels
-  // upward (z > 0). The slack spans the rim's horizon band (rim pixels sit at |z| <= 0.005).
-  return state.workspace.panorama_upper ? dir[2] < 0.05f : dir[2] > -0.05f;
-}
-
 bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
   float dir[3] = { 0.0f, 0.0f, 0.0f };
   int valid = 0;
@@ -2083,12 +2045,14 @@ void RenderPanoramaRoiControls(GuiState& state) {
 
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
     // A centre from the moment the mode is entered, so the marker is on screen to be dragged
-    // before any pick. Level-triggered: "no valid centre and a preview to project on", not "the
-    // frame the radio was clicked" — a switch made before the first picture arrives is served the
-    // frame the picture does. This window renders after the preview panel, so the viewport read
-    // here is this frame's.
+    // before any pick. Level-triggered: "no valid centre and a picture to project on", not "the
+    // frame the radio was clicked" — a switch made before the first picture arrives is served
+    // the frame the picture does. The view is PreviewAnnotationView — the one view the picture
+    // faces draw through, so the default centre is the middle of what the user actually sees.
+    // The gate is the same predicate as the radio above, not the viewport flag: a background
+    // photograph must not place a centre on a document that has never been rendered.
     if (!a.cone_center_valid && g_panorama_vp.active) {
-      EnsureDefaultConeCenter(state, PanoramaAnnotationView(state, g_panorama_vp.vp_w, g_panorama_vp.vp_h),
+      EnsureDefaultConeCenter(state, PreviewAnnotationView(state, g_panorama_vp.vp_w, g_panorama_vp.vp_h),
                               g_panorama_vp.vp_w, g_panorama_vp.vp_h);
     }
     // Same predicate as the radio above, not the viewport flag: a background photograph must not

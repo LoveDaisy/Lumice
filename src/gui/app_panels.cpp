@@ -778,8 +778,10 @@ void RenderTopBar(float window_width) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
       // The armed cone pick aims at the panorama, which this mode takes off screen — the same
       // "never leave a click armed for a mode that does not read it" rule the ROI radios follow.
+      // The marker drag and the main view's camera latch are the same rule for their arms.
       g_state.analysis.pick_armed = false;
       g_state.analysis.cone_marker_dragging = false;
+      g_state.workspace.panorama_camera_dragging = false;
     }
     if (!analyze) {
       ImGui::PopStyleColor(3);
@@ -795,6 +797,13 @@ void RenderTopBar(float window_width) {
     }
     if (ImGui::Button("Analyze", ImVec2(cell_width, 0)) && !analyze) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
+      // The eyedropper is a Render-workspace mode (armed from the Display group, reading the
+      // preview's photo geometry); the Analyze main view does not host it, so leaving the mode
+      // armed across the switch would swallow the main view's next click for nothing — the same
+      // rule the Render button above applies to the cone pick. The Angular Distance pick, by
+      // contrast, is hosted over BOTH pictures, so it keeps its armed state across the switch.
+      g_bg_pick.active = false;
+      g_bg_pick.swallow_drag_until_release = false;
     }
     if (analyze) {
       ImGui::PopStyleColor(3);
@@ -2234,22 +2243,22 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
   ImGui::End();
 }
 
-namespace {
-
 // The display mode's one entry point: a segmented control, one segment per kDisplayModeNames entry,
-// in the top-right corner of the preview's content region. Display-time — it writes
+// in the top-right corner of the picture region's content. Display-time — it writes
 // renderer.display_mode, which the preview shader reads on the next frame, and re-runs nothing.
 // Its gate is the registry's (DisplayModeUnderScreenTone, via ConstraintFor), the same one the
 // Settings panel and the Summary window read; it greys the control under Print, which has no
 // separate R and B to subtract, and keeps the value.
 //
-// MUST be called before RenderPreviewPanel submits `##preview_interact`, and the order carries
-// weight: ImGui gives the hover to the first item submitted under the cursor, so a press here
-// makes this control the active item and the interaction button below never becomes active — no
-// camera drag, no background pan starts from a click on the control. That covers presses only.
-// IsItemHovered() on the interaction button does not consult which item holds the hover, so the
-// wheel and click-on-hover branches (FOV, background zoom, eyedropper, cone pick) would still fire
-// over the control; the returned "cursor is over the control" is what the caller masks them with.
+// MUST be called before the hosting picture face submits its interaction button —
+// `##preview_interact` in the preview panel, `##panorama_interact` in the Analyze main view — and
+// the order carries weight: ImGui gives the hover to the first item submitted under the cursor, so
+// a press here makes this control the active item and the interaction button below never becomes
+// active — no camera drag, no background pan starts from a click on the control. That covers
+// presses only. IsItemHovered() on the interaction button does not consult which item holds the
+// hover, so the wheel and click-on-hover branches (FOV, background zoom, eyedropper, cone pick)
+// would still fire over the control; the returned "cursor is over the control" is what the caller
+// masks them with.
 //
 // The opacity follows the same rectangle test rather than ImGui's item hover, because it has to be
 // decided before the first segment is drawn. ImGuiStyleVar_Alpha changes what is drawn, not what
@@ -2321,8 +2330,6 @@ bool RenderDisplayModeControl() {
   ImGui::SetCursorScreenPos(origin);
   return over_control;
 }
-
-}  // namespace
 
 // ---- The shared picture assembly (declared in app.hpp; see there for the contract) ---------------
 
