@@ -23,6 +23,20 @@
 > 语义改为「主视图列上下分享」，随深度带清退退役。机制层（查询/采纳/取消/新鲜度）零变化；上文的
 > 机制记录不受影响。
 >
+> **2026-11-05 主视图自由相机＋操作条（scrum analyze-gui-rework 755.3，scene-view-controls）**：
+> 主图从固定等面积半球换为**真实 renderer 视图**——与 Render 预览共用同一份画面装配
+> （`AssemblePreviewPictureParams`：mono 曝光逐帧重算、composite 推送静态基线单份、辅助线/标记/
+> lens border/curve labels/照片按共享显示态发布到 `g_panorama_vp`），手势三臂（marker 拖 >
+> 武装点选 > 相机 orbit，臂间按压消费 latch）；观察控制面（View/Display/Overlay 组）与
+> Sun/Simulation 就地编辑经左栏同一控件函数承载。**请求控件收敛为主图下缘操作条**（合同 §2.2）：
+> Region 两选＋Pick＋锥心读数＋半径＋预算＋Analyze/Stop 一条 judged-join 流，窄宽折行不裁剪；
+> 列表头只余 banner/新鲜度/对称性/搜索。**GUI In frame 入口按 owner 实施裁决退役**
+> （结构性理由与残余缺口的如实记录见合同 §5.3/§5.3.1）——CLI `--roi frame`、C API
+> `LUMICE_RAYPATH_ROI_IN_FRAME`、引擎实现与后端测试不动；`BuildAnalysisRequest` 不再携带
+> canvas/frame 分支。锥心默认位（视图中心）在画面矩形尺寸变化时重放，用户 Pick/拖动接管后
+> 钉死（`cone_center_is_default`）；方向域锚定不变——相机转动不改 `cone_center_dir`。
+> 机制层（查询/采纳/取消/新鲜度/Exclude 循环）零变化。
+>
 > 本文是 (i)「识别」已交付形态的机制记录；「光路分析」整体为什么拆成 (i)/(ii)、(ii) 为什么搁置、
 > (i) 路线接下来往哪走，见功能总篇 [`raypath-analysis.md`](raypath-analysis.md)。
 > 本文档结构与 §1/§2 的裁决叙事保持设计阶段原文，§3–§5、§7 的机制描述、§6 诚实边界、§8 开放

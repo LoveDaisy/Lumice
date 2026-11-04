@@ -107,7 +107,7 @@ coordinates」，归属事实）；各查询面自己的等待/取消/拒答态�
 
 | 分类 | 内容 | Analyze 内形态 | 默认展开 | 可达入口 |
 |---|---|---|---|---|
-| **场景编辑**（sim-tier 文档） | Sun（高度角/直径/光谱）；晶体与滤镜（层/条目）；Rays/Max hits/GPU（渲染运行预算） | Sun 组就地展开可编辑；晶体/滤镜 = **入口行**（身份＋编辑入口），参数控件只在 Entry Edit；渲染运行预算不平铺 | Sun 展开；晶体列表展开；渲染预算组不出现（Render 顶栏执行簇为 owner，`app_panels.cpp:443-487`） | Sun 滑条就地；晶体行点击开 Entry Edit（现路径：`analyze_workspace.cpp:104`→`panels.cpp:2095`→`panels.cpp:2077`，模态形态不变）；渲染预算在 Render 工作区 |
+| **场景编辑**（sim-tier 文档） | Sun（高度角/直径/光谱）；晶体与滤镜（层/条目）；Rays/Max hits/GPU（渲染运行预算） | Sun 组就地展开可编辑；晶体/滤镜 = **入口行**（身份＋编辑入口），参数控件只在 Entry Edit；Simulation（渲染运行预算）= **默认折叠的就地编辑组**（同控件函数、同 id 语义；已落地） | Sun 展开；晶体列表展开；Simulation 折叠（打开即就地编辑，编辑仍走显式 Run 合同：kModified、无自动重跑） | Sun 滑条就地；晶体行点击开 Entry Edit（现路径：`analyze_workspace.cpp:104`→`panels.cpp:2095`→`panels.cpp:2077`，模态形态不变）；Simulation 折叠组就地 |
 | **运行设置**（分析请求参数） | 区域选择、锥心、分析半径、分析 Rays 预算、Analyze/Stop | 主视图下缘操作条（已落地：区域两选＋Pick＋锥心读数＋半径＋预算＋Analyze/Stop 一条 judged-join 流，窄宽折行不裁剪；列表头只余 banner/新鲜度/对称性/搜索） | 操作条常驻（一条，可折行） | 主视图下缘 |
 | **观察/辅助线**（display-tier） | 镜头类型/FOV/视角/曝光/背景；辅助线组（网格/地平线/太阳路径/标注圆） | 左栏观察组；与 Render 共用同一显示状态源（§5.4），不新造第二套 | 镜头＋辅助线常用组展开；其余组折叠；折叠态会话内保留 | 左栏 |
 

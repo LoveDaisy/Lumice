@@ -80,10 +80,12 @@ From left to right, the Top Bar exposes:
   clipboard as tab-separated text. See [User Manual — Configuration Summary](../user-manual/07-config-summary.md).
 - **Render | Analyze**: the two-cell workspace switch, its own group between the feature buttons
   and Settings. The current mode's cell is highlighted and clicking it does nothing; the other
-  cell moves between the render layout and the Analyze workspace (scene editors in a fixed left
-  column, the large main view with the analysis depths beneath it, the share list and diagnostics
-  in the right column — see [User Manual — Raypath Analysis](../user-manual/06-raypath-analysis.md)).
-  Switching is view state: it never dirties the document and never starts or stops a run.
+  cell moves between the render layout and the Analyze workspace (scene and observation editors
+  in a fixed left column, the large main view showing the traced sky through the renderer's own
+  lens with the analysis depths beneath it, the analysis request's controls on an operation bar
+  under that view, and the share list and diagnostics in the right column — see
+  [User Manual — Raypath Analysis](../user-manual/06-raypath-analysis.md)). Switching is view
+  state: it never dirties the document and never starts or stops a run.
 - **Settings**: the personal-defaults editor — what a *new* document starts from, plus the
   `Application preferences` rows at the top, which describe this machine rather than any document:
   the GPU backend and worker count a new document starts with, and **UI scale**, a multiplier

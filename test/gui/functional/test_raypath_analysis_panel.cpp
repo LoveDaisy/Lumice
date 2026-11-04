@@ -6092,6 +6092,151 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The observation surfaces' zero-side-effect bundle (§5.4 + AC6): a camera drag on the main
+  // view, an overlay toggle and the two splitter drags — none may touch the document's sim tier
+  // or the analysis session. kDone stands, the committed ray count stands, the list stays fresh,
+  // the result object is the same, the diagnostics idle block keeps its shape. The continuity
+  // half rides the camera leg: the publication's view IS the dragged view, field by field — the
+  // same fields a Render-workspace preview would show, one source.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "observation_edits_leave_the_document_alone");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->Yield(2);
+      IM_CHECK(RunWholeSkyAnalysisToCompletion(ctx, nullptr));
+      const auto payload_before = gui::g_state.analysis_result.payload;
+      LUMICE_RayCount rays_before = 0;
+      LUMICE_GetSimRayCount(gui::g_server, &rays_before);
+      const unsigned long long stats_before = gui::g_state.stats_sim_ray_num;
+      const float az_before = gui::g_state.renderer.azimuth;
+      const float el_before = gui::g_state.renderer.elevation;
+
+      ImGuiWindow* pano = PanoramaPictureWindow();
+      IM_CHECK(pano != nullptr);
+      // Camera drag on the picture: outside CONE mode the camera owns the region outright, and
+      // the write is display-tier.
+      const ImVec2 drag_from(pano->Pos.x + pano->Size.x * 0.5f, pano->Pos.y + pano->Size.y * 0.7f);
+      ctx->MouseMoveToPos(drag_from);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(drag_from.x + 100.0f, drag_from.y - 70.0f));
+      ctx->Yield(3);
+      ctx->MouseUp(0);
+      ctx->Yield(3);
+      IM_CHECK_NE(gui::g_state.renderer.azimuth, az_before);
+      IM_CHECK_NE(gui::g_state.renderer.elevation, el_before);
+      IM_CHECK(gui::g_panorama_vp.active);
+      IM_CHECK_FLOAT_NEAR(gui::g_panorama_vp.params.view_proj.azimuth, gui::g_state.renderer.azimuth, 1e-4f);
+      IM_CHECK_FLOAT_NEAR(gui::g_panorama_vp.params.view_proj.elevation, gui::g_state.renderer.elevation, 1e-4f);
+      IM_CHECK_EQ(gui::g_panorama_vp.params.view_proj.lens_type, gui::g_state.renderer.lens_type);
+      IM_CHECK_FLOAT_NEAR(gui::g_panorama_vp.params.view_proj.fov, gui::g_state.renderer.fov, 1e-4f);
+
+      // An overlay toggle, in the left column's Overlay group (the shared group function). The
+      // overlay checkboxes are all-id labels — this suite addresses them by wildcard
+      // (test_overlay_controls.cpp's form); a ref-scoped bare name resolves to no id at all.
+      ctx->ItemClick("**/##grid_line");
+      ctx->Yield(3);
+
+      // The two splitters: real drags, delta-only writes.
+      const auto drag_splitter = [&](const char* item, float dx, float dy) {
+        const ImGuiTestItemInfo grab = ctx->ItemInfo(item, ImGuiTestOpFlags_NoError);
+        IM_CHECK(grab.ID != 0);
+        const ImVec2 c = grab.RectFull.GetCenter();
+        ctx->MouseMoveToPos(c);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y + dy));
+        ctx->Yield(3);
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+      };
+      drag_splitter("**/##AnalyzeColumnSplitter", 30.0f, 0.0f);
+      drag_splitter("**/##AnalyzeRightRowsSplitter", 0.0f, 25.0f);
+
+      // The bundle: nothing in the sim tier or the analysis session moved.
+      IM_CHECK_EQ((int)gui::g_state.sim_state, (int)gui::GuiState::SimState::kDone);
+      IM_CHECK(!gui::g_state.dirty);
+      IM_CHECK_EQ(gui::g_state.stats_sim_ray_num, stats_before);
+      LUMICE_RayCount rays_after = 0;
+      LUMICE_GetSimRayCount(gui::g_server, &rays_after);
+      IM_CHECK_EQ(rays_after, rays_before);
+      IM_CHECK(gui::g_state.analysis_result.payload == payload_before);
+      IM_CHECK(gui::g_state.analysis_result.analyzed_scene &&
+               gui::g_state.analysis_result.analyzed_scene->Matches(gui::g_state));
+      IM_CHECK(!gui::g_state.analysis_run_in_progress);
+      // The idle diagnostics block keeps its shape (the result is on show, nothing selected).
+      bool idle_summary = false;
+      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+        idle_summary =
+            idle_summary || (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeIdleSummary") != nullptr);
+      }
+      IM_CHECK(idle_summary);
+    };
+  }
+
+  // The composite EV push is a display-time channel through the Analyze face too: with a
+  // raypath colour lane active (the composite face's own condition), an EV edit on the left
+  // column relights the main view on the next frame — the shared assembly pushes only the
+  // manual offset, the wake refreshes, and no render epoch is spent.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "composite_ev_relights_through_the_bar");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->Yield(2);
+      ImGuiWindow* pano = PanoramaPictureWindow();
+      IM_CHECK(pano != nullptr);
+      // The composite face's own activity condition (the shared assembly reads it): a server
+      // and a raypath colour lane — one match-all class, tinted red, visible, and the
+      // composite-upload flag the push's memory reads.
+      {
+        gui::ColorClassRefConfig ref;
+        ref.layer_idx = 0;
+        ref.crystal_pool_id = gui::g_state.layers[0].entries[0].crystal_id;
+        ref.match_all = true;
+        gui::ColorClassConfig cls;
+        cls.color[0] = 1.0f;
+        cls.color[1] = 0.0f;
+        cls.color[2] = 0.0f;
+        cls.visible = true;
+        cls.z_order = 0;
+        cls.match.push_back(ref);
+        gui::g_state.raypath_color.push_back(cls);
+      }
+      gui::g_state.last_uploaded_as_composite = true;
+      ctx->Yield(2);
+      LUMICE_SimLifecycleResult before{};
+      LUMICE_GetSimLifecycle(gui::g_server, &before);
+      // The class push is a document write, so the reconcile may sit at kModified here; what the
+      // EV edit must not do is move that state or spend an epoch.
+      const int sim_state_before_ev = (int)gui::g_state.sim_state;
+      const ImVec2 sample(pano->Pos.x + pano->Size.x * 0.5f, pano->Pos.y + pano->Size.y * 0.5f);
+      unsigned char before_px[3] = { 0, 0, 0 };
+      IM_CHECK(ReadScreenPixel(ctx, sample, before_px));
+      IM_CHECK(before_px[0] + before_px[1] + before_px[2] > 0);
+
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ItemClick("Display");
+      ctx->Yield(2);
+      ctx->ItemInputValue("##EV##display_input", 1.5f);
+      ctx->SetRef("");
+      ctx->Yield(4);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.renderer.exposure_offset, 1.5f, 1e-3f);
+      unsigned char after_px[3] = { 0, 0, 0 };
+      IM_CHECK(ReadScreenPixel(ctx, sample, after_px));
+      IM_CHECK(std::memcmp(before_px, after_px, 3) != 0);  // the picture re-lit
+      LUMICE_SimLifecycleResult after{};
+      LUMICE_GetSimLifecycle(gui::g_server, &after);
+      IM_CHECK_EQ(after.epoch, before.epoch);  // display-time, not a re-run
+      IM_CHECK_EQ((int)gui::g_state.sim_state, sim_state_before_ev);
+    };
+  }
+
   // AC2: the marker itself can be dragged. Hovering it shows the hand cursor; a press on it and a
   // move re-aim the centre to the direction under the cursor (LUMICE_UnprojectPixel on the
   // mouse's pixel — bit-identical, the drag transfers the inverse's output verbatim) while the
