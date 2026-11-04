@@ -861,6 +861,7 @@ void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_
   g_preview_vp.active = false;
   g_preview_vp.curve_labels.clear();
   g_panorama_vp.active = false;
+  g_panorama_vp.curve_labels.clear();
 
   if (g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze) {
     RenderAnalyzeWorkspace(window, window_width, window_height);

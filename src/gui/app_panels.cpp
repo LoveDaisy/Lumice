@@ -2324,6 +2324,360 @@ bool RenderDisplayModeControl() {
 
 }  // namespace
 
+// ---- The shared picture assembly (declared in app.hpp; see there for the contract) ---------------
+
+void ClampRendererViewInvariants(RenderConfig& rc) {
+  // Renderer invariants (previously in RenderViewBar, runs every frame).
+  // Copy-model: GuiState always owns a single renderer, no vector/index bookkeeping needed.
+  const float max_fov = LUMICE_MaxFov(static_cast<LUMICE_LensType>(rc.lens_type));
+  rc.fov = std::min(rc.fov, max_fov);
+  if (LensIsFullSky(rc.lens_type)) {  // Full-sky lenses: force view angles to zero
+    rc.elevation = 0.0f;
+    rc.azimuth = 0.0f;
+    rc.roll = 0.0f;
+  }
+}
+
+void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vector<CurveLabelSet>& curve_labels,
+                                  const PreviewPictureTarget& target) {
+  auto& rc = state.renderer;
+  pp.view_proj = BuildPreviewViewProjFromRenderer(rc);
+  // Mono exposure, recomputed every frame from GuiState (mono_exposure_scale.hpp). Computing it
+  // here rather than reading a server-side scale is what makes both the EV slider and the
+  // exposure Mode combo take effect on the very next frame with no commit and no re-run: the
+  // pixels are already in the texture, only the multiplier applied to them changes.
+  lumice::gui::MonoExposureInput mono_ev_in;
+  mono_ev_in.exposure_offset = rc.exposure_offset;
+  mono_ev_in.ev_auto = state.ev_auto;
+  mono_ev_in.snapshot_intensity = state.snapshot_intensity;
+  mono_ev_in.snapshot_emitted_energy = state.snapshot_emitted_energy;
+  mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
+  const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
+  pp.exposure.intensity_factor = mono_ev.intensity_factor;
+
+  // Fix B DECOUPLE: the composite path is now server-side self-
+  // anchored on participating-P99 (see doc/rendering/ev-pipeline-architecture.md §6.6).
+  // GUI must push ONLY the manual `exposure_offset` here — folding `ev_auto`
+  // back in would multiply the auto-anchor by the auto-EV a second time and
+  // reintroduce the double-count that Fix B is meant to eliminate. The mono
+  // shader-uniform path above still uses `ev_total = exposure_offset +
+  // ev_auto` because the mono pipeline anchors off the mono ExposureScale
+  // (integral over the whole image), not off a self-anchored P99.
+  //
+  // Push guard logic (value-changed OR off->on edge) lives in
+  // ShouldPushCompositeExposure (gui/composite_exposure_push.hpp,
+  // code-review round 1 Major #1 + Minor #1) so the four branches are
+  // independently unit-testable rather than only reachable through a full
+  // ImGui frame. See that header for the off->on rationale (plan-review
+  // Minor #2).
+  //
+  // The two statics are the push's memory and live HERE, inside the one shared assembly, rather
+  // than beside a host: the baseline must be single across every face that publishes the
+  // picture, or two hosts would push against each other's idea of "last pushed" (each storing
+  // its own value the other's push would wrongly read as unchanged, or as changed).
+  {
+    static float s_last_pushed_ev = std::numeric_limits<float>::quiet_NaN();
+    static bool s_last_composite_active = false;
+    constexpr float kCompositeEvPushEpsilon = 1e-4f;
+    // Fixed +1.0 EV (2x) brightness boost baked into the composite-mode
+    // exposure baseline (owner-observed perceptual gap, record A1): single-color composite reads
+    // dimmer than full-spectrum at the same manual exposure offset. Stacked on top of
+    // rc.exposure_offset (baseline, not override). Independent of Fix B's "no ev_auto" constraint
+    // — this is a static perceptual compensation, not an auto-anchored term.
+    constexpr float kColorModeEvBoost = 1.0f;
+    const bool composite_active = g_server != nullptr && !state.raypath_color.empty();
+    // Fix B: push value == manual EV offset only (no ev_auto).
+    // + kColorModeEvBoost: static composite-mode brightness baseline (see above).
+    const float composite_ev_push = rc.exposure_offset + kColorModeEvBoost;
+    if (lumice::gui::ShouldPushCompositeExposure(composite_active, s_last_composite_active, composite_ev_push,
+                                                 s_last_pushed_ev, kCompositeEvPushEpsilon) &&
+        // A wake is a calibration join point in principle (app.cpp, JoinPendingCalibration): the
+        // poller must not observe the startup calibration's run on this server. But this is a
+        // display-time refresh on the render path, not a user-initiated command — joining here
+        // would block the whole frame for calibration's up-to-2s worst case (code review round
+        // 1, Major #3). Skip the push entirely while calibration is still actually running
+        // (s_last_pushed_ev is left unset, so this condition is re-evaluated true every frame
+        // until it isn't — no state is lost, the push just lands once calibration finishes).
+        // The async Stop has the same exclusion: do not re-wake the worker it is pausing.
+        !CalibrationPending() && !g_stop_inflight.load()) {
+      LUMICE_SetCompositeExposure(g_server, composite_ev_push);
+      // Wake a paused poller so the next frame can pick up the freshly re-baked
+      // composite even after a finite sim has completed (the same rationale as the
+      // color window's PushDisplayState path in color_window.cpp).
+      // No-op when the poller is already running. WakeForRefresh (not WakeForRestart)
+      // preserves valid=true across the wake edge — same display-time-inert contract
+      // as color/visible/solo/z_order edits.
+      g_server_poller.WakeForRefresh(g_server);
+      s_last_pushed_ev = composite_ev_push;
+    }
+    s_last_composite_active = composite_active;
+
+    // NO background push. It used to ride this same display-time channel, for a reason that has
+    // since stopped being true: the composite image is baked server-side into sRGB bytes, and
+    // there was no shader stage left where a linear background could still be added. There is
+    // now — PreviewRenderer::TextureMode::kSrgbRadiance — and the sky joins the composite there,
+    // in the same line and the same order as it joins the mono path. Adding it server-side as
+    // well would paint it twice; and while it was added server-side, the composite could not
+    // receive the target lens's relative illumination at all, because scaling a texel with the
+    // sky summed into it dims the sky too. The C API surface (LUMICE_SetCompositeBackground)
+    // stays for non-GUI consumers; its all-zero default is an algebraic no-op, which is what the
+    // GUI now relies on.
+  }
+  pp.exposure.intensity_scale = mono_ev.intensity_scale;
+  // Overlap parameters for dual fisheye texture sampling.
+  pp.source.max_abs_dz = kDualFisheyeOverlap;
+  pp.source.r_scale = 1.0f / std::sqrt(1.0f + kDualFisheyeOverlap);
+  // The sky colour behind the halo. Stored in GuiState as sRGB (what the picker shows) and
+  // handed to the shader as linear RGB, because the shader adds it to the halo's radiance
+  // before the transfer curve. This one assignment also feeds all three PNG export entry
+  // points: BuildExportParams copies this struct and overrides only the exposure fields.
+  lumice::SrgbToLinearRgb(rc.background, pp.background_color_linear);
+  // The paper and the operator that reads it, converted and carried the same way and for the
+  // same reason: the shader multiplies the paper by a transmittance in linear, before the
+  // transfer curve.
+  lumice::SrgbToLinearRgb(rc.paper, pp.paper_color_linear);
+  pp.tone = rc.tone;
+  pp.display_mode = rc.display_mode;
+
+  // The predicate's Print term is doc/rendering/print-mode-subtractive-ink.md §7 instance 1, and it is
+  // what makes the exclusion real rather than advisory: `bg_show` is left exactly as the user
+  // set it, so switching Mode back to Screen brings the photograph straight back. Read through
+  // BgPhotoOnScreen rather than spelled out again here, so the eyedropper and the photo gestures
+  // cannot disagree with the frame about whether the photo is in it. See the matching
+  // WhenBackgroundLoaded gate in field_editor_registry.cpp for why additive-over-subtractive is
+  // wrong in kind and not merely in taste.
+  pp.bg.enabled = BgPhotoOnScreen(state);
+  pp.bg.alpha = state.bg_alpha;
+  pp.bg.aspect = g_preview.GetBgAspect();
+  pp.bg.pan_x = state.bg_offset_x;
+  pp.bg.pan_y = state.bg_offset_y;
+  pp.bg.zoom = state.bg_scale;
+
+  // Auxiliary line overlay parameters (line flags only — the label flags are read below, where
+  // core's anchors are turned into draw-list text).
+  pp.overlay.show_horizon = state.show_horizon_line;
+  pp.overlay.show_grid = state.show_grid_line;
+  pp.overlay.show_sun_circles = state.show_sun_circles_line;
+  pp.overlay.show_view_dist = state.show_view_dist_line;
+  std::copy(std::begin(state.horizon_color), std::end(state.horizon_color), std::begin(pp.overlay.horizon_color));
+  std::copy(std::begin(state.grid_color), std::end(state.grid_color), std::begin(pp.overlay.grid_color));
+  std::copy(std::begin(state.sun_circles_color), std::end(state.sun_circles_color),
+            std::begin(pp.overlay.sun_circles_color));
+  std::copy(std::begin(state.view_dist_color), std::end(state.view_dist_color), std::begin(pp.overlay.view_dist_color));
+  pp.overlay.horizon_alpha = state.horizon_alpha;
+  pp.overlay.grid_alpha = state.grid_alpha;
+  pp.overlay.sun_circles_alpha = state.sun_circles_alpha;
+  pp.overlay.view_dist_alpha = state.view_dist_alpha;
+  // WHERE the curves are, as the definition the shader evaluates per fragment, and WHERE their
+  // text and the markers go, as core's answer for this frame — both from the ONE builder
+  // (AnnotationViewInputFor), so the line and the label on it, or the ring and its name, cannot
+  // describe different curves or different views.
+  //
+  // Lines and labels have separate switches per family, and the request is made when ANY of them
+  // is on: a user drawing only the labels still needs the anchors, and one drawing only the lines
+  // still needs the curve definition. Which families the request actually carries is decided
+  // inside AnnotationViewInputFor, off the same switches; each switch then gates its own half.
+  //
+  // EVERY FRAME, unconditionally. The anchors are a curve walk — ~0.1 ms for an ordinary grid,
+  // 2.4 ms at the narrowest field of view with every family LABELLED (a thousand curves) — and
+  // asking on every frame is what makes the text and the rings move with a drag on the frame it
+  // happens, exactly as the shader-drawn lines do. There is deliberately no "has the view
+  // changed" check in front of this: the check would cost about what the call does, and a stale
+  // answer surviving a missed field in the comparison is the defect the per-frame call exists to
+  // rule out. What IS trimmed is the request: a family whose label switch is off is drawn by the
+  // shader and not walked by core (AnnotationAnchorRequestFor).
+  {
+    const AnnotationViewInput curves = AnnotationViewInputFor(state, rc);
+    pp.overlay.elevation_deg = curves.elevation_deg;
+    pp.overlay.longitude_deg = curves.longitude_deg;
+    pp.overlay.angular_dist_deg = curves.angular_dist_deg;
+    pp.overlay.view_dist_deg = curves.view_dist_deg;
+    GuiSunWorldDir(curves.sun_altitude_deg, pp.overlay.reference_dir);
+    g_annotation_anchors.Compute(
+        MakeAnnotationViewKey(AnnotationAnchorRequestFor(state, rc), target.vp_w_px, target.vp_h_px));
+  }
+
+  // The reference-point markers. The APPEARANCE below is the GUI's own state; the POSITIONS come
+  // from core (below the lens-border block), not from a GUI-side projection.
+  pp.overlay.markers_alpha = state.markers_alpha;
+  pp.overlay.markers_radius_px = state.markers_radius_px;
+  for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
+    std::copy(std::begin(state.markers[i].color), std::end(state.markers[i].color), pp.overlay.marker_color[i].begin());
+  }
+  pp.overlay.show_lens_border = state.show_lens_border_line;
+  std::copy(std::begin(state.lens_border_color), std::end(state.lens_border_color),
+            std::begin(pp.overlay.lens_border_color));
+  pp.overlay.lens_border_alpha = state.lens_border_alpha;
+  // WHERE the rings go: core's answer for this frame, from the same LUMICE_ComputeAnnotationAnchors
+  // call the labels below read, converted from its canvas space (top-left origin, y down) into
+  // the shader's (centre origin, y up). Not a GUI-side forward projection of the six world
+  // directions — that would be a second implementation of the placement the labels use. The ring
+  // is rasterized by the shader; only the position comes from core.
+  for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
+    // A marker whose LINE switch is off is handed the default-constructed (invalid) point, which
+    // CanvasPointToShaderScreenPos already turns into the sentinel — the same path an unimaged
+    // marker takes. That is why there is no enable uniform: "switched off" and "not on this
+    // canvas" are the same instruction to the shader, and writing them the same way means the
+    // two cannot disagree. Note the switch read here is `show` alone: a marker with only its
+    // LABEL on is in the request (its name needs an anchor) but must draw no ring.
+    const AnnotationAnchors::Point p =
+        state.markers[i].show ? g_annotation_anchors.MarkerPoint(i) : AnnotationAnchors::Point{};
+    CanvasPointToShaderScreenPos(p, rc.lens_type, target.vp_w_px, target.vp_h_px,
+                                 pp.overlay.marker_screen_pos[i].data());
+  }
+
+  // Overlay labels at viewport edges. Every family's anchors come from core, through the one
+  // AnnotationAnchors result this frame computed above — the GUI walks no curve of its own, so
+  // the preview and the CLI cannot place the same number differently.
+  //
+  // PUBLISHED, NOT DRAWN. The labels are rasterized into the picture's own FBO in the deferred
+  // pass (RenderPreviewFrameAndBlit, called from the frame loop after ImGui::Render()), which is
+  // the same function and the same pixels the screenshot export reads back. That is what makes
+  // "the PNG shows what the screen shows" structural: there is no second drawing path here to
+  // gate differently, scale differently, or forget. Modals still occlude them, now for the same
+  // reason the overlay LINES are occluded — the whole picture is blitted before ImGui's draw
+  // data is rendered on top.
+  //
+  // The rect is (0, 0, canvas_w_pt, canvas_h_pt): FBO-local LOGICAL POINTS. No MainVpPos()
+  // offset any more — the old absolute-OS-screen-space anchoring existed because the labels went
+  // onto an ImGui window draw list under ImGuiConfigFlags_ViewportsEnable; a self-owned draw list
+  // targeting the picture FBO starts at its own origin.
+  //
+  // Logical points, not the device-pixel vp_w/vp_h: the anchors, the collision boxes and the
+  // glyphs must all live in the space the draw list works in, and the DPI enters exactly once,
+  // as the FramebufferScale the backend multiplies by. Feeding device pixels here and scale 1
+  // there also lands the positions correctly, which is why the export path's half-done version
+  // of this conversion looked right while rendering the text at 1/dpi of its size.
+  if (state.show_horizon_label || state.show_grid_label || state.show_sun_circles_label || state.show_view_dist_label ||
+      AnyMarkerLabelShown(state)) {
+    // Every set goes into ONE vector so they take part in one collision pass, which is where
+    // the per-set group is read.
+    if (state.show_horizon_label) {
+      curve_labels.push_back(BuildHorizonLabelSet(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+    }
+    if (state.show_sun_circles_label) {
+      curve_labels.push_back(
+          BuildSunCirclesLabelSet(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+    }
+    if (state.show_view_dist_label) {
+      curve_labels.push_back(
+          BuildViewDistLabelSet(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+    }
+    if (state.show_grid_label) {
+      curve_labels.push_back(BuildGridLabelSet(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+    }
+    // No outer switch of its own, unlike the three above: each marker carries its own label
+    // switch, so the builder returns an empty vector when none of the six is on.
+    for (CurveLabelSet& set :
+         BuildMarkerLabelSets(g_annotation_anchors, state, target.canvas_w_pt, target.canvas_h_pt)) {
+      curve_labels.push_back(std::move(set));
+    }
+  }
+
+  // Eyedropper mode: what the user is about to sample is what they must be looking at, so this
+  // frame shows the photograph and nothing else. Every line below overwrites a value that was
+  // just derived from GuiState a few dozen lines up; GuiState itself is untouched, so leaving
+  // the mode needs no restore step — the next frame derives the same fields again from the
+  // unchanged document and the picture comes back whole.
+  //
+  // alpha = 0 is exact rather than approximate: the shader's background stage is
+  // `photo*(1-alpha) + render*alpha`, so zero leaves the photo bit for bit.
+  //
+  // The overlay switches are a POSITIVE list, not a master off switch — there is no such switch
+  // in OverlayDecoration. A seventh overlay class added later will keep drawing over the photo
+  // until it is named here too. The mode is armed only from the Render workspace's Display
+  // group, so on an Analyze-frame call site this branch is unreachable — carried anyway, so the
+  // assembly is one honest implementation rather than one that assumes its caller.
+  if (g_bg_pick.active) {
+    pp.bg.alpha = 0.0f;
+    pp.overlay.show_horizon = false;
+    pp.overlay.show_grid = false;
+    pp.overlay.show_sun_circles = false;
+    pp.overlay.show_view_dist = false;
+    pp.overlay.show_lens_border = false;
+    pp.overlay.marker_screen_pos = MakeAllSentinelMarkerPositions();
+    // Not part of `pp`: the curve labels are rasterized by the deferred pass from this vector,
+    // so hiding their lines above does not hide their text.
+    curve_labels.clear();
+  }
+}
+
+void ApplyCameraOrbitDrag(GuiState& state, const ImVec2& delta, int vp_w_px, int vp_h_px) {
+  if (delta.x == 0.0f && delta.y == 0.0f) {
+    return;
+  }
+  auto& rc = state.renderer;
+  UnlockLookAt(state);
+  // Sensitivity is the lens's angular resolution at the frame center, so one pixel of
+  // drag moves the content one pixel whatever the FOV and viewport are. A fixed deg/px
+  // was ~180x too fast at fov=1° and ~70x too slow at fov=179°. vp_w/vp_h are
+  // framebuffer pixels, the same units ProjectWorldDirToScreen works in, which is what makes
+  // this DPI-correct for free.
+  const float gain = ComputeDragGainDegPerPixel(rc.lens_type, rc.fov, vp_w_px, vp_h_px);
+  // Globe is outside-in: u_view_matrix * (0,0,D) yields camera world
+  // position, so +az/+el move the camera and the sphere drifts in the
+  // opposite direction. Flip both signs so a right/down drag moves the
+  // sphere right/down, matching the inside-out lenses' feel.
+  if (rc.lens_type == kLensTypeGlobe) {
+    rc.azimuth += delta.x * gain;
+    rc.elevation -= delta.y * gain;
+  } else {
+    rc.azimuth -= delta.x * gain;
+    rc.elevation += delta.y * gain;
+  }
+  // Wrap azimuth into [-180, 180] so dragging past the slider's clamp
+  // boundary continues seamlessly instead of getting pinned at ±180.
+  if (rc.azimuth > 180.0f) {
+    rc.azimuth -= 360.0f;
+  } else if (rc.azimuth < -180.0f) {
+    rc.azimuth += 360.0f;
+  }
+  // Globe lens needs a tighter clamp to avoid view-matrix degeneracy at
+  // ±90°; inside-out lenses keep the existing ±90° range.
+  const float el_lim = (rc.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
+  rc.elevation = std::max(-el_lim, std::min(el_lim, rc.elevation));
+}
+
+void ApplyAngularDistPickGesture(GuiState& state, PreviewParams& pp, const ImVec2& cursor_rel_pt, float dpi_scale_x,
+                                 float dpi_scale_y, int vp_w_px, int vp_h_px) {
+  auto& picker = state.angular_dist_picker;
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    picker.armed = false;
+    return;
+  }
+  const std::optional<CanvasPixel> px =
+      PreviewPointToCanvasPixel(cursor_rel_pt.x, cursor_rel_pt.y, dpi_scale_x, dpi_scale_y, vp_w_px, vp_h_px);
+  std::optional<float> angle;
+  if (px.has_value()) {
+    angle = AngularDistAtCanvasPixel(picker.family, PreviewAnnotationView(state, vp_w_px, vp_h_px), pp.view_proj,
+                                     state.sun.altitude, px->px, px->py);
+  }
+  if (angle.has_value()) {
+    InjectAngularDistPickPreview(picker.family, *angle, pp.overlay);
+    // On the current window's draw list, like the analysis pick's crosshair: the number describes
+    // a point OF the picture, so it is clipped to the picture. A plate behind it, because
+    // it sits over whatever the sky is.
+    const ImGuiIO& io = ImGui::GetIO();
+    const std::string text = FormatAngularDistPickReadout(*angle);
+    const ImVec2 at(io.MousePos.x + UiPx(kAngularDistPickReadoutOffsetXPt),
+                    io.MousePos.y + UiPx(kAngularDistPickReadoutOffsetYPt));
+    const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+    const float pad = UiPx(2.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(ImVec2(at.x - pad, at.y - pad), ImVec2(at.x + size.x + pad, at.y + size.y + pad),
+                      IM_COL32(0, 0, 0, 170), 2.0f);
+    dl->AddText(at, IM_COL32(255, 255, 255, 255), text.c_str());
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      const bool added = CommitAngularDistPick(AngularDistFamilyAngles(state, picker.family), *angle);
+      GUI_LOG_INFO("[Overlay] angular distance picked: {:.2f} deg ({} family){}", *angle,
+                   picker.family == AngularDistFamily::kSun ? "sun" : "lens-center",
+                   added ? "" : " — already in the list, not added again");
+      picker.armed = false;
+      picker.swallow_drag_until_release = true;
+    }
+  }
+}
+
 void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_height) {
   // Eyedropper mode: two ways out that must be taken before anything else this frame reads the
   // flag. Esc is read ahead of ImGui::Begin for the same reason the entry-link picker in the left
@@ -2381,18 +2735,8 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // section is expanded, and before this frame assembles any view-dependent inputs.
   UpdateLockedLookAt(g_state);
 
-  // Renderer invariants (previously in RenderViewBar, runs every frame).
-  // Copy-model: GuiState always owns a single renderer, no vector/index bookkeeping needed.
-  {
-    auto& r = g_state.renderer;
-    float max_fov = LUMICE_MaxFov(static_cast<LUMICE_LensType>(r.lens_type));
-    r.fov = std::min(r.fov, max_fov);
-    if (LensIsFullSky(r.lens_type)) {  // Full-sky lenses: force view angles to zero
-      r.elevation = 0.0f;
-      r.azimuth = 0.0f;
-      r.roll = 0.0f;
-    }
-  }
+  // Renderer invariants, every frame (the shared body carries the history).
+  ClampRendererViewInvariants(g_state.renderer);
 
   float preview_height = panel_height;
 
@@ -2412,8 +2756,6 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     float dpi_scale_x = static_cast<float>(fb_w) / window_width;
     float dpi_scale_y = static_cast<float>(fb_h) / window_height;
 
-    auto& rc = g_state.renderer;
-
     // Store viewport for deferred rendering
     g_preview_vp.active = true;
     g_preview_vp.vp_x = static_cast<int>(panel_x * dpi_scale_x);
@@ -2424,261 +2766,16 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     // anchors in the same logical-point space this panel does).
     g_preview_vp.dpi_scale_x = dpi_scale_x;
     g_preview_vp.dpi_scale_y = dpi_scale_y;
-    auto& pp = g_preview_vp.params;
-    pp.view_proj = BuildPreviewViewProjFromRenderer(rc);
-    // Mono exposure, recomputed every frame from GuiState (mono_exposure_scale.hpp). Computing it
-    // here rather than reading a server-side scale is what makes both the EV slider and the
-    // exposure Mode combo take effect on the very next frame with no commit and no re-run: the
-    // pixels are already in the texture, only the multiplier applied to them changes.
-    lumice::gui::MonoExposureInput mono_ev_in;
-    mono_ev_in.exposure_offset = rc.exposure_offset;
-    mono_ev_in.ev_auto = g_state.ev_auto;
-    mono_ev_in.snapshot_intensity = g_state.snapshot_intensity;
-    mono_ev_in.snapshot_emitted_energy = g_state.snapshot_emitted_energy;
-    mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
-    const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
-    pp.exposure.intensity_factor = mono_ev.intensity_factor;
-
-    // task-347 (Fix B) DECOUPLE: the composite path is now server-side self-
-    // anchored on participating-P99 (see doc/rendering/ev-pipeline-architecture.md §6.6).
-    // GUI must push ONLY the manual `exposure_offset` here — folding `ev_auto`
-    // back in would multiply the auto-anchor by the auto-EV a second time and
-    // reintroduce the double-count that Fix B is meant to eliminate. The mono
-    // shader-uniform path above still uses `ev_total = exposure_offset +
-    // ev_auto` because the mono pipeline anchors off the mono ExposureScale
-    // (integral over the whole image), not off a self-anchored P99.
-    //
-    // Push guard logic (value-changed OR off->on edge) lives in
-    // ShouldPushCompositeExposure (gui/composite_exposure_push.hpp,
-    // code-review round 1 Major #1 + Minor #1) so the four branches are
-    // independently unit-testable rather than only reachable through a full
-    // ImGui frame. See that header for the off->on rationale (plan-review
-    // Minor #2).
-    {
-      static float s_last_pushed_ev = std::numeric_limits<float>::quiet_NaN();
-      static bool s_last_composite_active = false;
-      constexpr float kCompositeEvPushEpsilon = 1e-4f;
-      // Fixed +1.0 EV (2x) brightness boost baked into the composite-mode
-      // exposure baseline (task-color-ev-boost / A1). owner-observed perceptual
-      // gap: single-color composite reads dimmer than full-spectrum at the same
-      // manual exposure offset. Stacked on top of rc.exposure_offset (baseline,
-      // not override). Independent of Fix B's "no ev_auto" constraint — this is
-      // a static perceptual compensation, not an auto-anchored term.
-      constexpr float kColorModeEvBoost = 1.0f;
-      const bool composite_active = g_server != nullptr && !g_state.raypath_color.empty();
-      // Fix B: push value == manual EV offset only (no ev_auto).
-      // + kColorModeEvBoost: static composite-mode brightness baseline (see above).
-      const float composite_ev_push = rc.exposure_offset + kColorModeEvBoost;
-      if (lumice::gui::ShouldPushCompositeExposure(composite_active, s_last_composite_active, composite_ev_push,
-                                                   s_last_pushed_ev, kCompositeEvPushEpsilon) &&
-          // A wake is a calibration join point in principle (app.cpp, JoinPendingCalibration): the
-          // poller must not observe the startup calibration's run on this server. But this is a
-          // display-time refresh on the render path, not a user-initiated command — joining here
-          // would block the whole frame for calibration's up-to-2s worst case (code review round
-          // 1, Major #3). Skip the push entirely while calibration is still actually running
-          // (s_last_pushed_ev is left unset, so this condition is re-evaluated true every frame
-          // until it isn't — no state is lost, the push just lands once calibration finishes).
-          // The async Stop has the same exclusion: do not re-wake the worker it is pausing.
-          !CalibrationPending() && !g_stop_inflight.load()) {
-        LUMICE_SetCompositeExposure(g_server, composite_ev_push);
-        // Wake a paused poller so the next frame can pick up the freshly re-baked
-        // composite even after a finite sim has completed (same rationale as the
-        // color-window PushDisplayState path — see task-345.2 (③) in color_window.cpp).
-        // No-op when the poller is already running. WakeForRefresh (not WakeForRestart)
-        // preserves valid=true across the wake edge — same display-time-inert contract
-        // as color/visible/solo/z_order edits (task-color-migration §3 D3).
-        g_server_poller.WakeForRefresh(g_server);
-        s_last_pushed_ev = composite_ev_push;
-      }
-      s_last_composite_active = composite_active;
-
-      // NO background push. It used to ride this same display-time channel, for a reason that has
-      // since stopped being true: the composite image is baked server-side into sRGB bytes, and
-      // there was no shader stage left where a linear background could still be added. There is
-      // now — PreviewRenderer::TextureMode::kSrgbRadiance — and the sky joins the composite there,
-      // in the same line and the same order as it joins the mono path. Adding it server-side as
-      // well would paint it twice; and while it was added server-side, the composite could not
-      // receive the target lens's relative illumination at all, because scaling a texel with the
-      // sky summed into it dims the sky too. The C API surface (LUMICE_SetCompositeBackground)
-      // stays for non-GUI consumers; its all-zero default is an algebraic no-op, which is what the
-      // GUI now relies on.
-    }
-    pp.exposure.intensity_scale = mono_ev.intensity_scale;
-    // Overlap parameters for dual fisheye texture sampling.
-    pp.source.max_abs_dz = kDualFisheyeOverlap;
-    pp.source.r_scale = 1.0f / std::sqrt(1.0f + kDualFisheyeOverlap);
-    // The sky colour behind the halo. Stored in GuiState as sRGB (what the picker shows) and
-    // handed to the shader as linear RGB, because the shader adds it to the halo's radiance
-    // before the transfer curve. This one assignment also feeds all three PNG export entry
-    // points: BuildExportParams copies this struct and overrides only the exposure fields.
-    lumice::SrgbToLinearRgb(rc.background, pp.background_color_linear);
-    // The paper and the operator that reads it, converted and carried the same way and for the
-    // same reason: the shader multiplies the paper by a transmittance in linear, before the
-    // transfer curve.
-    lumice::SrgbToLinearRgb(rc.paper, pp.paper_color_linear);
-    pp.tone = rc.tone;
-    pp.display_mode = rc.display_mode;
-
-    // The predicate's Print term is doc/rendering/print-mode-subtractive-ink.md §7 instance 1, and it is
-    // what makes the exclusion real rather than advisory: `bg_show` is left exactly as the user
-    // set it, so switching Mode back to Screen brings the photograph straight back. Read through
-    // BgPhotoOnScreen rather than spelled out again here, so the eyedropper and the photo gestures
-    // cannot disagree with the frame about whether the photo is in it. See the matching
-    // WhenBackgroundLoaded gate in field_editor_registry.cpp for why additive-over-subtractive is
-    // wrong in kind and not merely in taste.
-    pp.bg.enabled = BgPhotoOnScreen(g_state);
-    pp.bg.alpha = g_state.bg_alpha;
-    pp.bg.aspect = g_preview.GetBgAspect();
-    pp.bg.pan_x = g_state.bg_offset_x;
-    pp.bg.pan_y = g_state.bg_offset_y;
-    pp.bg.zoom = g_state.bg_scale;
-
-    // Auxiliary line overlay parameters (line flags only — the label flags are read below, where
-    // core's anchors are turned into draw-list text).
-    pp.overlay.show_horizon = g_state.show_horizon_line;
-    pp.overlay.show_grid = g_state.show_grid_line;
-    pp.overlay.show_sun_circles = g_state.show_sun_circles_line;
-    pp.overlay.show_view_dist = g_state.show_view_dist_line;
-    std::copy(std::begin(g_state.horizon_color), std::end(g_state.horizon_color), std::begin(pp.overlay.horizon_color));
-    std::copy(std::begin(g_state.grid_color), std::end(g_state.grid_color), std::begin(pp.overlay.grid_color));
-    std::copy(std::begin(g_state.sun_circles_color), std::end(g_state.sun_circles_color),
-              std::begin(pp.overlay.sun_circles_color));
-    std::copy(std::begin(g_state.view_dist_color), std::end(g_state.view_dist_color),
-              std::begin(pp.overlay.view_dist_color));
-    pp.overlay.horizon_alpha = g_state.horizon_alpha;
-    pp.overlay.grid_alpha = g_state.grid_alpha;
-    pp.overlay.sun_circles_alpha = g_state.sun_circles_alpha;
-    pp.overlay.view_dist_alpha = g_state.view_dist_alpha;
-    // WHERE the curves are, as the definition the shader evaluates per fragment, and WHERE their
-    // text and the markers go, as core's answer for this frame — both from the ONE builder
-    // (AnnotationViewInputFor), so the line and the label on it, or the ring and its name, cannot
-    // describe different curves or different views.
-    //
-    // Lines and labels have separate switches per family, and the request is made when ANY of them
-    // is on: a user drawing only the labels still needs the anchors, and one drawing only the lines
-    // still needs the curve definition. Which families the request actually carries is decided
-    // inside AnnotationViewInputFor, off the same switches; each switch then gates its own half.
-    //
-    // EVERY FRAME, unconditionally. The anchors are a curve walk — ~0.1 ms for an ordinary grid,
-    // 2.4 ms at the narrowest field of view with every family LABELLED (a thousand curves) — and
-    // asking on every frame is what makes the text and the rings move with a drag on the frame it
-    // happens, exactly as the shader-drawn lines do. There is deliberately no "has the view
-    // changed" check in front of this: the check would cost about what the call does, and a stale
-    // answer surviving a missed field in the comparison is the defect the per-frame call exists to
-    // rule out. What IS trimmed is the request: a family whose label switch is off is drawn by the
-    // shader and not walked by core (AnnotationAnchorRequestFor).
-    {
-      const AnnotationViewInput curves = AnnotationViewInputFor(g_state, rc);
-      pp.overlay.elevation_deg = curves.elevation_deg;
-      pp.overlay.longitude_deg = curves.longitude_deg;
-      pp.overlay.angular_dist_deg = curves.angular_dist_deg;
-      pp.overlay.view_dist_deg = curves.view_dist_deg;
-      GuiSunWorldDir(curves.sun_altitude_deg, pp.overlay.reference_dir);
-      g_annotation_anchors.Compute(
-          MakeAnnotationViewKey(AnnotationAnchorRequestFor(g_state, rc), g_preview_vp.vp_w, g_preview_vp.vp_h));
-    }
-
-    // The reference-point markers. The APPEARANCE below is the GUI's own state; the POSITIONS come
-    // from core (below the lens-border block), not from a GUI-side projection.
-    pp.overlay.markers_alpha = g_state.markers_alpha;
-    pp.overlay.markers_radius_px = g_state.markers_radius_px;
-    for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
-      std::copy(std::begin(g_state.markers[i].color), std::end(g_state.markers[i].color),
-                pp.overlay.marker_color[i].begin());
-    }
-    pp.overlay.show_lens_border = g_state.show_lens_border_line;
-    std::copy(std::begin(g_state.lens_border_color), std::end(g_state.lens_border_color),
-              std::begin(pp.overlay.lens_border_color));
-    pp.overlay.lens_border_alpha = g_state.lens_border_alpha;
-    // WHERE the rings go: core's answer for this frame, from the same LUMICE_ComputeAnnotationAnchors
-    // call the labels below read, converted from its canvas space (top-left origin, y down) into
-    // the shader's (centre origin, y up). Not a GUI-side forward projection of the six world
-    // directions — that would be a second implementation of the placement the labels use. The ring
-    // is rasterized by the shader; only the position comes from core.
-    for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
-      // A marker whose LINE switch is off is handed the default-constructed (invalid) point, which
-      // CanvasPointToShaderScreenPos already turns into the sentinel — the same path an unimaged
-      // marker takes. That is why there is no enable uniform: "switched off" and "not on this
-      // canvas" are the same instruction to the shader, and writing them the same way means the
-      // two cannot disagree. Note the switch read here is `show` alone: a marker with only its
-      // LABEL on is in the request (its name needs an anchor) but must draw no ring.
-      const AnnotationAnchors::Point p =
-          g_state.markers[i].show ? g_annotation_anchors.MarkerPoint(i) : AnnotationAnchors::Point{};
-      CanvasPointToShaderScreenPos(p, rc.lens_type, g_preview_vp.vp_w, g_preview_vp.vp_h,
-                                   pp.overlay.marker_screen_pos[i].data());
-    }
-
-    // Overlay labels at viewport edges. Every family's anchors come from core, through the one
-    // AnnotationAnchors result this frame computed above — the GUI walks no curve of its own, so
-    // the preview and the CLI cannot place the same number differently.
-    //
-    // PUBLISHED, NOT DRAWN. The labels are rasterized into the preview's own FBO in the deferred
-    // pass (RenderPreviewFrameAndBlit, called from the frame loop after ImGui::Render()), which is
-    // the same function and the same pixels the screenshot export reads back. That is what makes
-    // "the PNG shows what the screen shows" structural: there is no second drawing path here to
-    // gate differently, scale differently, or forget. Modals still occlude them, now for the same
-    // reason the overlay LINES are occluded — the whole preview image is blitted before ImGui's
-    // draw data is rendered on top.
-    //
-    // The rect is (0, 0, panel_width, preview_height): FBO-local LOGICAL POINTS. No MainVpPos()
-    // offset any more — the old absolute-OS-screen-space anchoring existed because the labels went
-    // onto an ImGui window draw list under ImGuiConfigFlags_ViewportsEnable; a self-owned draw list
-    // targeting the preview FBO starts at its own origin.
-    //
-    // Logical points, not the device-pixel vp_w/vp_h: the anchors, the collision boxes and the
-    // glyphs must all live in the space the draw list works in, and the DPI enters exactly once,
-    // as the FramebufferScale the backend multiplies by. Feeding device pixels here and scale 1
-    // there also lands the positions correctly, which is why the export path's half-done version
-    // of this conversion looked right while rendering the text at 1/dpi of its size.
-    if (g_state.show_horizon_label || g_state.show_grid_label || g_state.show_sun_circles_label ||
-        g_state.show_view_dist_label || AnyMarkerLabelShown(g_state)) {
-      const float vp_sw = panel_width;
-      const float vp_sh = preview_height;
-      // Every set goes into ONE vector so they take part in one collision pass, which is where
-      // the per-set group is read.
-      if (g_state.show_horizon_label) {
-        g_preview_vp.curve_labels.push_back(BuildHorizonLabelSet(g_annotation_anchors, g_state, vp_sw, vp_sh));
-      }
-      if (g_state.show_sun_circles_label) {
-        g_preview_vp.curve_labels.push_back(BuildSunCirclesLabelSet(g_annotation_anchors, g_state, vp_sw, vp_sh));
-      }
-      if (g_state.show_view_dist_label) {
-        g_preview_vp.curve_labels.push_back(BuildViewDistLabelSet(g_annotation_anchors, g_state, vp_sw, vp_sh));
-      }
-      if (g_state.show_grid_label) {
-        g_preview_vp.curve_labels.push_back(BuildGridLabelSet(g_annotation_anchors, g_state, vp_sw, vp_sh));
-      }
-      // No outer switch of its own, unlike the three above: each marker carries its own label
-      // switch, so the builder returns an empty vector when none of the six is on.
-      for (CurveLabelSet& set : BuildMarkerLabelSets(g_annotation_anchors, g_state, vp_sw, vp_sh)) {
-        g_preview_vp.curve_labels.push_back(std::move(set));
-      }
-    }
-
-    // Eyedropper mode: what the user is about to sample is what they must be looking at, so this
-    // frame shows the photograph and nothing else. Every line below overwrites a value that was
-    // just derived from GuiState a few dozen lines up; GuiState itself is untouched, so leaving
-    // the mode needs no restore step — the next frame derives the same fields again from the
-    // unchanged document and the picture comes back whole.
-    //
-    // alpha = 0 is exact rather than approximate: the shader's background stage is
-    // `photo*(1-alpha) + render*alpha`, so zero leaves the photo bit for bit.
-    //
-    // The overlay switches are a POSITIVE list, not a master off switch — there is no such switch
-    // in OverlayDecoration. A seventh overlay class added later will keep drawing over the photo
-    // until it is named here too.
-    if (g_bg_pick.active) {
-      pp.bg.alpha = 0.0f;
-      pp.overlay.show_horizon = false;
-      pp.overlay.show_grid = false;
-      pp.overlay.show_sun_circles = false;
-      pp.overlay.show_view_dist = false;
-      pp.overlay.show_lens_border = false;
-      pp.overlay.marker_screen_pos = MakeAllSentinelMarkerPositions();
-      // Not part of `pp`: the curve labels are rasterized by the deferred pass from this vector,
-      // so hiding their lines above does not hide their text.
-      g_preview_vp.curve_labels.clear();
-    }
+    // The picture itself: one shared assembly (the composite push's static baseline inside it is
+    // shared the same way), carrying view_proj, exposure (mono + composite push), tone, display
+    // mode, background photo, overlay lines, the annotation anchors, the marker positions and
+    // the curve labels this viewport publishes.
+    PreviewPictureTarget target;
+    target.canvas_w_pt = panel_width;
+    target.canvas_h_pt = preview_height;
+    target.vp_w_px = g_preview_vp.vp_w;
+    target.vp_h_px = g_preview_vp.vp_h;
+    AssemblePreviewPictureParams(g_state, g_preview_vp.params, g_preview_vp.curve_labels, target);
 
     // Mouse interaction: orbit with drag, FOV with scroll — or, with the pan/zoom modifier held,
     // the background image instead of the camera.
@@ -2689,6 +2786,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     // to the window rather than seen through the lens — it is composited in NDC by
     // ComputeBgUvTransform, which never consults the view matrix, so panning it means the same
     // thing under a full-sky lens as under any other.
+    auto& rc = g_state.renderer;
     bool full_sky = LensIsFullSky(rc.lens_type);
     // Submitted ahead of `##preview_interact` on purpose — see RenderDisplayModeControl for why the
     // order is what keeps a click on it from orbiting the camera. Do not move it below, and do not
@@ -2771,38 +2869,10 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       }
 
       if (!gestures_locked && !bg_modifier && !full_sky && is_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        const ImVec2 delta = io.MouseDelta;
-        if (delta.x != 0.0f || delta.y != 0.0f) {
-          UnlockLookAt(g_state);
-          // Sensitivity is the lens's angular resolution at the frame center, so one pixel of
-          // drag moves the content one pixel whatever the FOV and viewport are. A fixed deg/px
-          // was ~180x too fast at fov=1° and ~70x too slow at fov=179°. vp_w/vp_h are
-          // framebuffer pixels (set above from the DPI scale), the same units
-          // ProjectWorldDirToScreen works in, which is what makes this DPI-correct for free.
-          const float gain = ComputeDragGainDegPerPixel(rc.lens_type, rc.fov, g_preview_vp.vp_w, g_preview_vp.vp_h);
-          // Globe is outside-in: u_view_matrix * (0,0,D) yields camera world
-          // position, so +az/+el move the camera and the sphere drifts in the
-          // opposite direction. Flip both signs so a right/down drag moves the
-          // sphere right/down, matching the inside-out lenses' feel.
-          if (rc.lens_type == kLensTypeGlobe) {
-            rc.azimuth += delta.x * gain;
-            rc.elevation -= delta.y * gain;
-          } else {
-            rc.azimuth -= delta.x * gain;
-            rc.elevation += delta.y * gain;
-          }
-          // Wrap azimuth into [-180, 180] so dragging past the slider's clamp
-          // boundary continues seamlessly instead of getting pinned at ±180.
-          if (rc.azimuth > 180.0f) {
-            rc.azimuth -= 360.0f;
-          } else if (rc.azimuth < -180.0f) {
-            rc.azimuth += 360.0f;
-          }
-          // Globe lens needs a tighter clamp to avoid view-matrix degeneracy at
-          // ±90°; inside-out lenses keep the existing ±90° range.
-          const float el_lim = (rc.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
-          rc.elevation = std::max(-el_lim, std::min(el_lim, rc.elevation));
-        }
+        // The camera body (UnlockLookAt, the DPI/FOV-correct gain, the Globe sign flip, the
+        // azimuth wrap and the elevation clamp) is the shared ApplyCameraOrbitDrag — the same
+        // function the Analyze main view's camera arm runs.
+        ApplyCameraOrbitDrag(g_state, io.MouseDelta, g_preview_vp.vp_w, g_preview_vp.vp_h);
       }
 
       if (!gestures_locked && !bg_modifier && !full_sky && is_hovered && io.MouseWheel != 0.0f) {
@@ -2873,45 +2943,12 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       // run yet), and its value is written beside the cursor. Off sky (letterbox, outside the
       // lens's image, the side `visible` / `front` hides) there is no ring, no number, and a click
       // is inert — not a cancel, for the eyedropper's reason: the miss should not cost a second
-      // trip to the button. A right click over the preview cancels, as Esc does above.
+      // trip to the button. A right click over the preview cancels, as Esc does above. The body
+      // is the shared ApplyAngularDistPickGesture — the same branch the Analyze main view runs.
       if (angular_pick && !g_bg_pick.active && is_hovered) {
-        auto& picker = g_state.angular_dist_picker;
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-          picker.armed = false;
-        } else {
-          const std::optional<CanvasPixel> px =
-              PreviewPointToCanvasPixel(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y, dpi_scale_x,
-                                        dpi_scale_y, g_preview_vp.vp_w, g_preview_vp.vp_h);
-          std::optional<float> angle;
-          if (px.has_value()) {
-            angle = AngularDistAtCanvasPixel(picker.family,
-                                             PreviewAnnotationView(g_state, g_preview_vp.vp_w, g_preview_vp.vp_h),
-                                             pp.view_proj, g_state.sun.altitude, px->px, px->py);
-          }
-          if (angle.has_value()) {
-            InjectAngularDistPickPreview(picker.family, *angle, pp.overlay);
-            // On this window's draw list, like the analysis pick's crosshair: the number describes
-            // a point OF the picture, so it is clipped to the preview. A plate behind it, because
-            // it sits over whatever the sky is.
-            const std::string text = FormatAngularDistPickReadout(*angle);
-            const ImVec2 at(io.MousePos.x + UiPx(kAngularDistPickReadoutOffsetXPt),
-                            io.MousePos.y + UiPx(kAngularDistPickReadoutOffsetYPt));
-            const ImVec2 size = ImGui::CalcTextSize(text.c_str());
-            const float pad = UiPx(2.0f);
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddRectFilled(ImVec2(at.x - pad, at.y - pad), ImVec2(at.x + size.x + pad, at.y + size.y + pad),
-                              IM_COL32(0, 0, 0, 170), 2.0f);
-            dl->AddText(at, IM_COL32(255, 255, 255, 255), text.c_str());
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-              const bool added = CommitAngularDistPick(AngularDistFamilyAngles(g_state, picker.family), *angle);
-              GUI_LOG_INFO("[Overlay] angular distance picked: {:.2f} deg ({} family){}", *angle,
-                           picker.family == AngularDistFamily::kSun ? "sun" : "lens-center",
-                           added ? "" : " — already in the list, not added again");
-              picker.armed = false;
-              picker.swallow_drag_until_release = true;
-            }
-          }
-        }
+        ApplyAngularDistPickGesture(g_state, g_preview_vp.params,
+                                    ImVec2(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y), dpi_scale_x,
+                                    dpi_scale_y, g_preview_vp.vp_w, g_preview_vp.vp_h);
       }
 
       // (The cone pick's crosshair and the ROI marker/ring moved to the panorama with the rest

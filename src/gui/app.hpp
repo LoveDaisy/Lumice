@@ -75,6 +75,26 @@ struct PanoramaViewport {
   PreviewParams params;
   float dpi_scale_x = 1.0f;
   float dpi_scale_y = 1.0f;
+  // Overlay label anchors for this frame, in LOGICAL POINTS relative to the viewport's top-left —
+  // the same field PreviewViewport carries, with the same contract. Added when the panorama's
+  // picture assembly became the shared one: the labels are rasterized into the panorama's blit by
+  // the deferred pass exactly as they are into the preview's. Cleared by RenderWorkspacePanels
+  // alongside `active` — a stale set must not outlive the frame that made it.
+  std::vector<CurveLabelSet> curve_labels;
+};
+
+// The canvas facts the shared picture assembly needs about the region it is assembling for —
+// the quantities that are the HOST's to know (the preview panel's rectangle vs. the Analyze
+// main view's) rather than derivable from GuiState. Two coordinate spaces on purpose, named
+// apart: the LABELS live in logical points (the draw list's space; the DPI enters later, as
+// the backend's FramebufferScale), while the ANCHOR cache and the marker positions are keyed
+// and sized in device pixels (the GL viewport's). The assembly takes both so neither host
+// re-derives the other's.
+struct PreviewPictureTarget {
+  float canvas_w_pt = 0.0f;
+  float canvas_h_pt = 0.0f;
+  int vp_w_px = 0;
+  int vp_h_px = 0;
 };
 
 // Sky-Color eyedropper mode: while active, the preview shows the background photo alone and a
@@ -683,6 +703,43 @@ void ToggleCompositePreview(GuiState& state);
 // harness's frame loop (test_gui_main.cpp) alike: the panel sequence used to live as two copies,
 // and the workspace branch is exactly the kind of change a second copy silently never sees.
 void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_height);
+
+// ---- The shared picture assembly -----------------------------------------------------------------
+//
+// RenderPreviewPanel's picture body, extracted so the Analyze main view can publish the SAME
+// picture the preview does — one assembly, two hosts ("单源装配、双面承载"). The hosts keep what
+// is theirs: the viewport rectangle and DPI scales, the display-mode control, the interaction
+// button and the gesture branches that need a window's hit-test. The assembly owns everything
+// derived from GuiState about what the picture CONTAINS.
+
+// Fill `pp` and `curve_labels` for one frame of the committed texture, as the current renderer
+// state (lens, view, exposure, overlays, background photo) says the picture should look. The
+// composite-mode exposure push rides inside it — one static baseline shared by every host, so
+// the two faces cannot push against each other. Caller has already published the viewport
+// geometry; the target carries only the canvas facts the assembly cannot derive.
+void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vector<CurveLabelSet>& curve_labels,
+                                  const PreviewPictureTarget& target);
+
+// The renderer's per-frame view invariants, previously spelled in RenderPreviewPanel: FOV never
+// exceeds the lens' own maximum, and a full-sky lens pins the view angles to zero (its shader
+// path skips the view matrix, so angles would be dead state). Every frame, host-independent.
+void ClampRendererViewInvariants(RenderConfig& rc);
+
+// One frame of camera-orbit drag: the preview panel's drag body (UnlockLookAt, the DPI/FOV-
+// correct gain, the Globe sign flip, the azimuth wrap and the elevation clamp), shared with the
+// Analyze main view's camera arm. `delta_pt` is ImGui's MouseDelta for this frame; the viewport
+// sizes are the DEVICE pixels the gain is computed against.
+void ApplyCameraOrbitDrag(GuiState& state, const ImVec2& delta_pt, int vp_w_px, int vp_h_px);
+
+// The Angular Distance picker's gesture branch over a picture region — the body of the preview
+// panel's armed-pick case (right-click cancel, the ring preview injected into THIS frame's
+// overlay, the readout beside the cursor, the click that commits the angle), shared so the
+// Analyze main view hosts the same mode. `cursor_rel_pt` is the cursor relative to the region's
+// top-left. The host owns every gate around the call — the armed flag, the eyedropper
+// exclusion, its own (masked) hover verdict, and the Esc and swallow latches at its frame
+// entry — so the body below is the branch the preview panel runs once those gates have passed.
+void ApplyAngularDistPickGesture(GuiState& state, PreviewParams& pp, const ImVec2& cursor_rel_pt, float dpi_scale_x,
+                                 float dpi_scale_y, int vp_w_px, int vp_h_px);
 
 // Panel rendering
 void RenderTopBar(float window_width);
