@@ -3865,58 +3865,68 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
                  static_cast<double>(map_e->Size.y));
     IM_CHECK_RETV(map_e->ScrollMax.y > 0.0f, false);
     // The wheel's arbitration, at the cell where the region really overflows: inside the
-    // picture the wheel is the zoom's alone (the region's scroll must hold), outside it the
-    // wheel scrolls the region (the view must hold). The picture is brought into the visible
-    // slice by the region's own scroll first — the band shows the cell's top and the canvas
-    // sits below the wrapped header — and the rect is re-read after the scroll (its screen
-    // position rides the scroll).
+    // picture the wheel is the zoom's alone (the region's scroll and the BAND's scroll must
+    // both hold), outside it the wheel scrolls the region (the view and the band must hold).
+    // The band sits at a NONZERO scroll for exactly the reason a zero position is no evidence:
+    // a band parked at its clamped-zero cannot move even when the arbitration leaks, so the
+    // assert would pass on a broken product. 60 px keeps the canvas inside the band's visible
+    // slice (the cell is the stacked band's first, its canvas below the wrapped header).
+    // The picture is brought into the visible slice by the region's own scroll first, and the
+    // rect is re-read after the scroll (its screen position rides the scroll).
+    band_e->Scroll.y = 60.0f;
+    ctx->Yield(2);
     const ImGuiTestItemInfo canvas_probe_e = ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas_probe_e.ID != 0, false);
-    ctx->LogInfo("[scale tiers 1024 clamped] map SM %.0f, canvas rect top %.0f bottom %.0f",
+    ctx->LogInfo("[scale tiers 1024 clamped] map SM %.0f, canvas rect top %.0f bottom %.0f, band %.0f",
                  static_cast<double>(map_e->ScrollMax.y), static_cast<double>(canvas_probe_e.RectFull.Min.y),
-                 static_cast<double>(canvas_probe_e.RectFull.Max.y));
+                 static_cast<double>(canvas_probe_e.RectFull.Max.y), static_cast<double>(band_e->Scroll.y));
     map_e->Scroll.y = std::max(0.0f, canvas_probe_e.RectFull.Min.y - map_e->Pos.y - 40.0f);
     ctx->Yield(2);
     const ImGuiTestItemInfo canvas_e = ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas_e.ID != 0, false);
     const float radius_before_e = gui::g_state.analysis.map_view.radius_deg;
     const float scroll_set_e = map_e->Scroll.y;
+    const float band_set_e = band_e->Scroll.y;
     ctx->MouseMoveToPos(canvas_e.RectFull.GetCenter());
     ctx->Yield(2);
-    ctx->MouseWheelY(1.0f);  // wheel up over the picture: zoom in, radius shrinks
+    ctx->MouseWheelY(1.0f);  // wheel up over the picture: zoom in, nothing scrolls anywhere
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.map_view.radius_deg < radius_before_e, false);
     IM_CHECK_RETV(map_e->Scroll.y == scroll_set_e, false);
+    IM_CHECK_RETV(band_e->Scroll.y == band_set_e, false);
     const float radius_zoomed_e = gui::g_state.analysis.map_view.radius_deg;
     // The outside point: just below the picture, inside the band's visible slice (the slice
     // shows the cell's top — a window-relative bottom point would sit physically outside the
     // slice and the wheel would be consumed by the band instead).
     ctx->MouseMoveToPos(ImVec2(canvas_e.RectFull.Min.x + 10.0f, canvas_e.RectFull.Max.y + 20.0f));
     ctx->Yield(2);
-    ctx->MouseWheelY(-3.0f);  // wheel down outside the picture: the region scrolls, the view holds
+    ctx->MouseWheelY(-3.0f);  // wheel down outside the picture: the region scrolls, view and band hold
     ctx->Yield(2);
     IM_CHECK_RETV(map_e->Scroll.y > scroll_set_e, false);
     IM_CHECK_RETV(gui::g_state.analysis.map_view.radius_deg == radius_zoomed_e, false);
+    IM_CHECK_RETV(band_e->Scroll.y == band_set_e, false);
     // The scroll carries the content to its end: wheel down until the region stops moving —
-    // the tail of the submitted content (the explanation's bulk included) is reachable.
+    // the tail of the submitted content (the explanation's bulk included) is reachable, and
+    // the band still holds (the wheel over this cell never chains into the band).
     int wheel_ticks_e = 0;
     for (; wheel_ticks_e < 30 && map_e->Scroll.y < map_e->ScrollMax.y - 0.5f; ++wheel_ticks_e) {
       ctx->MouseWheelY(-3.0f);
       ctx->Yield(2);
     }
     IM_CHECK_RETV(map_e->Scroll.y >= map_e->ScrollMax.y - 0.5f, false);
-    ctx->LogInfo("[scale tiers 1024 clamped] wheel held: radius %.1f -> %.1f, scroll %.0f -> %.0f of %.0f in %d ticks",
-                 static_cast<double>(radius_before_e), static_cast<double>(radius_zoomed_e),
-                 static_cast<double>(scroll_set_e), static_cast<double>(map_e->Scroll.y),
-                 static_cast<double>(map_e->ScrollMax.y), wheel_ticks_e);
+    IM_CHECK_RETV(band_e->Scroll.y == band_set_e, false);
+    ctx->LogInfo(
+        "[scale tiers 1024 clamped] wheel held: radius %.1f -> %.1f, scroll %.0f -> %.0f of %.0f in %d ticks, "
+        "band %.0f held",
+        static_cast<double>(radius_before_e), static_cast<double>(radius_zoomed_e), static_cast<double>(scroll_set_e),
+        static_cast<double>(map_e->Scroll.y), static_cast<double>(map_e->ScrollMax.y), wheel_ticks_e,
+        static_cast<double>(band_e->Scroll.y));
     map_e->Scroll.y = 0.0f;  // the λ block below drives the header row: back to its top
     ctx->Yield(2);
     ctx->LogInfo("[scale tiers 1024 clamped] wheel receipt: scroll settled %.0f of %.0f",
                  static_cast<double>(map_e->Scroll.y), static_cast<double>(map_e->ScrollMax.y));
-    // The wheel past the region's own maximum is forwarded up the window chain natively (the
-    // region no longer takes the wheel, so the band becomes the wheeling window) — the band's
-    // viewport moved with those ticks, and the cell's top slice must be brought back for the
-    // λ block below to find its header row.
+    // The band's nonzero position above is part of the arbitration's own evidence; the λ
+    // block below drives the region's header row, which reads best from the band's top.
     band_e->Scroll.y = 0.0f;
     ctx->Yield(2);
     // λ: contained in the cell, then both ends through the real drag path.

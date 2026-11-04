@@ -16,6 +16,7 @@
 #include "gui/gui_state.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
+#include "imgui_internal.h"  // SetKeyOwner / ImGuiKeyOwner_* — the wheel claim below
 #include "util/sky_direction.hpp"
 
 namespace lumice::gui {
@@ -1081,14 +1082,26 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // sides together). The degradation ladder's own rung — internal scroll — is the only
   // mechanism whose reach does not depend on measuring the content that decides the measure's
   // own visibility.
-  // Wheel ownership is arbitrated here, once, by taking the native wheel-to-scroll off the
-  // window and hand-routing it: the wheel inside the picture is the zoom's alone (the gesture
-  // block below), the wheel anywhere else in the region scrolls the region. With the native
-  // route left on, ImGui's scroll phase and the canvas zoom both consumed one event — a single
-  // tick moved the layout and the view together, and the first tick could slide the picture
-  // out from under the pointer so no zoom happened at all. The scrollbar itself stays (this
-  // is not NoScrollbar); only the wheel dispatch is claimed.
+  // Wheel ownership is arbitrated by CLAIMING the wheel key for the whole time the pointer is
+  // over this region — not by the child flag alone. The flag only removes this child from the
+  // native dispatch, and ImGui's wheeling-window resolution then bubbles the same event
+  // straight up the parent chain: the host band scrolled natively while the gestures below
+  // zoomed off the very same wheel — the double consumption had just moved up a level (the
+  // native dispatch runs in NewFrame, before any rendering, so nothing set during rendering
+  // of the same frame can stop it; SetKeyOwner's sticky OwnerNext survives the frame boundary
+  // and is what the dispatch actually reads). The claim is standing while hovered and
+  // released when not: with the wheel claimed, the dispatch moves nothing anywhere while the
+  // pointer is over the map — the canvas zoom and the region's hand-routed scroll below are
+  // the only consumers, and the band scrolls again as soon as the wheel is over it elsewhere.
+  // The wheel never chains from this cell to the band, even at the region's scroll limit.
+  // NoScrollWithMouse stays as the region's own guard: its scroll path is the manual route,
+  // nothing else.
   ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
+  if (ImGui::IsWindowHovered()) {
+    ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, ImGui::GetID("map-wheel-claim"));
+  } else {
+    ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, ImGuiKeyOwner_NoOwner);
+  }
   MapQuerySession& map = state.analysis.map;
   MapViewState& view = state.analysis.map_view;
   SkyPointIntent& intent = state.analysis.sky_point;
