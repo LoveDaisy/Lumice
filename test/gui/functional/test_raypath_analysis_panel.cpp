@@ -3465,8 +3465,30 @@ bool DocumentOpenClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
 // (contained, and its track dragged to the range's far end by the real mouse path — the drag
 // is what proves the track's ends are reachable, an ItemInputValue cannot), and the completed
 // globe's sample controls (contained + Play/Stop real clicks).
+// The engine's watchdog measures SIMULATED time (frame_count × the injected dt — the
+// lens-projection and cli-export guards' lesson), and this test legitimately spans more frames
+// than the default 60 simulated seconds: five tiers of real engine recomputes, each answered
+// over real frames. When the default kill fires mid-run it also poisons every later engine call
+// (IsError short-circuits ItemInfo), so each remaining wait spins to its own timeout as a
+// cascade — the widened budget must cover the WHOLE test, and be restored on every early path.
+struct ScopedWatchdogGuard {
+  ImGuiTestEngineIO* engine_io;
+  float saved_warn;
+  float saved_kill;
+  explicit ScopedWatchdogGuard(ImGuiTestEngineIO* io)
+      : engine_io(io), saved_warn(io->ConfigWatchdogWarning), saved_kill(io->ConfigWatchdogKillTest) {
+    engine_io->ConfigWatchdogWarning = 50000.0f;
+    engine_io->ConfigWatchdogKillTest = 100000.0f;
+  }
+  ~ScopedWatchdogGuard() {
+    engine_io->ConfigWatchdogWarning = saved_warn;
+    engine_io->ConfigWatchdogKillTest = saved_kill;
+  }
+};
+
 bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
@@ -3721,6 +3743,30 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     globe_t->Scroll.y = globe_t->ScrollMax.y;
     ctx->Yield(2);
+    // The Include-again above restored the selection key, which dropped the adopted point
+    // result; the pump recomputes it over real engine time. The map intent re-issues with it,
+    // and the map region's answer moves its cell's height — the band's ScrollMax drifts under
+    // a scroll set once before the wait, ImGui clamps the stale value, and the globe cell
+    // drifts out of the visible slice for good (observed: completed state, sample track never
+    // submitted). So the wait re-seeks the cell's tail on every attempt instead of trusting
+    // one scroll, and the slider row itself waits for the worker (its existence is the
+    // completed state).
+    IM_CHECK_RETV(DriveUntil(
+                      ctx,
+                      [ctx] {
+                        if (ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow")) {
+                          band->Scroll.y = band->ScrollMax.y;
+                        }
+                        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+                          if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
+                            w->Scroll.y = w->ScrollMax.y;
+                            break;
+                          }
+                        }
+                        return ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError).ID != 0;
+                      },
+                      30),
+                  false);
     const ImGuiTestItemInfo sample_t = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(sample_t.ID != 0, false);
     IM_CHECK_RETV(sample_t.RectFull.Max.x <= globe_t->InnerClipRect.Max.x + 0.5f &&
@@ -3803,6 +3849,16 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     band_w->Scroll.y = std::min(r3d_top_in_band, band_w->ScrollMax.y * 0.9f);
     ctx->Yield(2);
     IM_CHECK_RETV(band_w->Scroll.y > 0.5f && band_w->Scroll.y < band_w->ScrollMax.y - 0.5f, false);
+    // The tier's symmetry drives flip and restore their checkboxes — every flip is a selection
+    // key change, and a key change drops the adopted point result (the pump recomputes it). The
+    // 3D region honestly shows its waiting placeholder until the point re-adopts and the
+    // representative ray redraws, so the canvas does not exist the frame drive_tier returns:
+    // an immediate assert here raced the engine's worker and passed only where the machine was
+    // fast enough. Wait for the canvas — its existence is the leg's real precondition, and it
+    // subsumes the whole ladder (point completed, sample shown, trace drawn).
+    IM_CHECK_RETV(DriveUntil(
+                      ctx, [ctx] { return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0; }, 30),
+                  false);
     const ImGuiTestItemInfo r3d_canvas = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(r3d_canvas.ID != 0, false);
     const float zoom0_w = gui::g_state.analysis.point_view.orbit_zoom;
@@ -4071,6 +4127,13 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       ctx->Yield(2);
       r3d_t->Scroll.y = 0.0f;
       ctx->Yield(2);
+      // The 1024 block's sky-point Set issued a fresh point intent (a Set always does), so the
+      // "completed results already adopted" premise only holds again after the engine answers
+      // it — the 3D region shows its waiting placeholder until then. Wait for the canvas: its
+      // existence is the leg's real precondition and subsumes point adopted + trace drawn.
+      IM_CHECK_RETV(DriveUntil(
+                        ctx, [ctx] { return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0; }, 30),
+                    false);
       const ImGuiTestItemInfo r3d_canvas_t = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
       IM_CHECK_RETV(r3d_canvas_t.ID != 0, false);
       IM_CHECK_RETV(r3d_canvas_t.RectFull.Max.x <= r3d_t->InnerClipRect.Max.x + 0.5f &&
@@ -4201,6 +4264,28 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(globe_e != nullptr, false);
     globe_e->Scroll.y = globe_e->ScrollMax.y;  // the slider/play row is the region stack's tail
     ctx->Yield(2);
+    // The λ block above drove the shared wavelength to both ends, and the wavelength is part
+    // of the point intent's key — the query re-issued and the completed-state controls belong
+    // to the answer that has not arrived yet. The map's cell moves for the same reason as at
+    // the tier drives (its own intent answers over real time), so re-seek the globe's tail on
+    // every attempt; the track itself waits for the worker (the file's discipline: its
+    // existence is the adopted state, not a race the worker must win).
+    IM_CHECK_RETV(DriveUntil(
+                      ctx,
+                      [ctx] {
+                        if (ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow")) {
+                          band->Scroll.y = band->ScrollMax.y;
+                        }
+                        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+                          if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
+                            w->Scroll.y = w->ScrollMax.y;
+                            break;
+                          }
+                        }
+                        return ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError).ID != 0;
+                      },
+                      30),
+                  false);
     const ImGuiTestItemInfo sample_e = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(sample_e.ID != 0, false);
     IM_CHECK_RETV(sample_e.RectFull.Max.x <= globe_e->InnerClipRect.Max.x + 0.5f &&
