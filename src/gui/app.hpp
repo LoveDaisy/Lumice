@@ -732,6 +732,14 @@ void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_
 void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vector<CurveLabelSet>& curve_labels,
                                   const PreviewPictureTarget& target, AnnotationAnchors& anchors);
 
+// The base parameters for the texture-level panorama exports (dual fisheye, equirectangular):
+// the CURRENT renderer state through the shared assembly — tone, colours, display mode, mono
+// exposure — at the texture-sized canvas. Each export then applies its own fixed projection
+// preset on top. Not either face's cached publication: those answer for their own workspace's
+// exports (RenderScreenshot), while these exports must carry whatever the user set most
+// recently, whichever workspace set it in.
+PreviewParams BuildTextureExportBase(int w, int h);
+
 // The renderer's per-frame view invariants, previously spelled in RenderPreviewPanel: FOV never
 // exceeds the lens' own maximum, and a full-sky lens pins the view angles to zero (its shader
 // path skips the view matrix, so angles would be dead state). Every frame, host-independent.

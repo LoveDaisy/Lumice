@@ -522,11 +522,21 @@ ScreenshotFrameFacts CurrentScreenshotFrameFacts() {
 }
 
 ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
-  // The screenshot is a picture of what is on screen: the ACTIVE picture face's publication,
-  // every fact from the same place. The Analyze main view publishes its own view of the same
-  // committed texture — an export taken while it is live must be ITS picture, at ITS size,
-  // through ITS anchors — not the preview panel's last frame.
-  const bool panorama_live = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze && g_panorama_vp.active;
+  // The screenshot belongs to the workspace it is taken in: the ACTIVE picture face's
+  // publication, every fact from the same place. The Analyze main view publishes its own view of
+  // the same committed texture — an export taken while it is live must be ITS picture, at ITS
+  // size, through ITS anchors — and a face with no publication this frame (the operation bar's
+  // takeover degradation leaves the main view unpublished by design) has no picture to export:
+  // refuse, never fall back across faces to another face's stale frame. The Save menu greys the
+  // entry on exactly this predicate.
+  const bool analyze_face_live = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze && g_panorama_vp.active;
+  const bool render_face_live = g_state.workspace.mode != GuiState::WorkspaceMode::kAnalyze && g_preview_vp.active;
+  if (!analyze_face_live && !render_face_live) {
+    GUI_LOG_WARNING("[GUI] RenderScreenshot: no active picture publication in this workspace; refusing");
+    ScreenshotRender empty;
+    return empty;
+  }
+  const bool panorama_live = analyze_face_live;
   const PreviewParams& published = panorama_live ? g_panorama_vp.params : g_preview_vp.params;
   const int w = panorama_live ? g_panorama_vp.vp_w : g_preview_vp.vp_w;
   const int h = panorama_live ? g_panorama_vp.vp_h : g_preview_vp.vp_h;
@@ -585,6 +595,20 @@ void PerformScreenshotExport(const ScreenshotExportSelection& sel) {
   GUI_LOG_INFO("[GUI] Export screenshot{}: {}", shot.has_labels ? " (overlay)" : "", PathToU8(path));
 }
 
+// The texture-level panorama exports (dual fisheye, equirectangular) fix their own projection
+// and disable the overlays they cannot draw, but their COLOR state — tone, ground colours,
+// display mode, exposure — is the CURRENT renderer state, assembled fresh: the Analyze left
+// column edits those fields live, and an export must not answer with whatever the last Render
+// visit happened to leave in a publication cache.
+PreviewParams BuildTextureExportBase(int w, int h) {
+  PreviewParams params;
+  std::vector<CurveLabelSet> labels;
+  gui::AnnotationAnchors anchors;
+  const PreviewPictureTarget target{ static_cast<float>(w), static_cast<float>(h), w, h };
+  AssemblePreviewPictureParams(g_state, params, labels, target, anchors);
+  return params;
+}
+
 void DoExportDualFisheyeEqualAreaPng() {
   auto path = ShowExportDualFisheyeEqualAreaDialog();
   if (path.empty()) {
@@ -598,8 +622,7 @@ void DoExportDualFisheyeEqualAreaPng() {
     return;
   }
 
-  // A texture-level export, not a screenshot: the render face's publication is the base.
-  PreviewParams params = BuildExportParams(g_preview_vp.params);
+  PreviewParams params = BuildTextureExportBase(w, h);
   ConfigureDualFisheyeExportParams(params);
 
   auto rgba = RenderExportToRgba(g_preview, params, w, h);
@@ -635,8 +658,7 @@ void DoExportEquirectangularPng() {
   int dst_w = 2 * short_res;
   int dst_h = short_res;
 
-  // A texture-level export, not a screenshot: the render face's publication is the base.
-  PreviewParams params = BuildExportParams(g_preview_vp.params);
+  PreviewParams params = BuildTextureExportBase(dst_w, dst_h);
   ConfigureEquirectExportParams(params);
 
   auto rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h);

@@ -29,6 +29,7 @@
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
 #include "gui/edit_modals.hpp"
+#include "gui/export_fbo_renderer.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
@@ -6457,6 +6458,148 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], frozen[0]);
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[1], frozen[1]);
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[2], frozen[2]);
+    };
+  }
+
+  // A face with no publication this frame has no picture to export: in the bar-takeover state
+  // (Point, smallest window, row split at its clamp) the main view stands down by design, and
+  // RenderScreenshot refuses — it must never fall back across faces to the preview panel's
+  // stale frame. The Save menu greys on the same predicate.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "screenshot_refuses_when_no_face_is_live");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = 1024;
+      g_window_size_test.height = 640;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      ctx->Yield(4);
+      gui::g_state.workspace.middle_rows_ratio = 0.15f;
+      ctx->Yield(4);
+      IM_CHECK(!gui::g_panorama_vp.active);  // the takeover state, by design
+      const lumice::gui::ScreenshotRender refused = gui::RenderScreenshot(lumice::gui::ScreenshotExportSelection{});
+      IM_CHECK_EQ(refused.w, 0);
+      IM_CHECK(refused.rgba.empty());  // a refusal, not the preview panel's last frame
+      // The basis audit: the window comes back before the test ends.
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = gui::kInitWindowWidth;
+      g_window_size_test.height = gui::kInitWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+    };
+  }
+
+  // The texture-level panorama exports carry the CURRENT color state, assembled fresh: Render
+  // renders in Screen, the Analyze left column switches Print — and the export base answers
+  // Print (the preview panel's cached publication still holds Screen, which is exactly what the
+  // old stale-cache base would have shipped). Pixel evidence: the same fisheye preset over the
+  // fresh base and over the stale cache renders DIFFERENT images.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "texture_exports_carry_the_current_color_state");
+    static std::vector<unsigned char> s_fresh;
+    static std::vector<unsigned char> s_stale;
+    static bool s_pixels_requested = false;
+    static bool s_pixels_done = false;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (s_pixels_requested && !s_pixels_done) {
+        lumice::gui::PreviewParams fresh = gui::BuildTextureExportBase(64, 32);
+        lumice::gui::ConfigureDualFisheyeExportParams(fresh);
+        s_fresh = gui::RenderExportToRgba(gui::g_preview, fresh, 64, 32);
+        lumice::gui::PreviewParams stale = gui::g_preview_vp.params;
+        lumice::gui::ConfigureDualFisheyeExportParams(stale);
+        s_stale = gui::RenderExportToRgba(gui::g_preview, stale, 64, 32);
+        s_pixels_done = true;
+      }
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      IM_CHECK_EQ(gui::g_state.renderer.tone, LUMICE_TONE_SCREEN);
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(3);
+      ctx->SetRef("//##AnalyzeLeftPanel");
+      ctx->ItemClick("Display");
+      ctx->Yield(2);
+      ctx->ComboClick("Mode##display_tone/Print");
+      ctx->SetRef("");
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.renderer.tone, LUMICE_TONE_PRINT);
+      // The fresh base answers the current state; the cached publication answers the last
+      // Render visit. (The display group's fold means the combo needed the open group above.)
+      IM_CHECK_EQ(gui::BuildTextureExportBase(64, 32).tone, LUMICE_TONE_PRINT);
+      IM_CHECK_EQ(gui::g_preview_vp.params.tone, LUMICE_TONE_SCREEN);
+
+      // Pixels, not just parameters: the two bases render differently under the same preset.
+      s_pixels_requested = true;
+      IM_CHECK(DriveUntil(ctx, [] { return s_pixels_done; }, 10));
+      IM_CHECK_EQ(s_fresh.size(), s_stale.size());
+      IM_CHECK(!s_fresh.empty());
+      IM_CHECK(std::memcmp(s_fresh.data(), s_stale.data(), s_fresh.size()) != 0);
+    };
+  }
+
+  // The takeover recovers on CURRENT content: after Point's tall bar has engaged the takeover,
+  // switching to Whole sky (a much shorter bar) at a height that fits restores the main view
+  // within a frame or two — no overshoot-and-return, because the takeover writes the bar's true
+  // height to the same budget key the normal path reads, and the judgment runs on current
+  // content, never on whatever the pre-takeover frames clipped to.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "bar_takeover_recovers_on_current_content");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = 1024;
+      g_window_size_test.height = 640;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      ctx->Yield(4);
+      gui::g_state.workspace.middle_rows_ratio = 0.15f;
+      ctx->Yield(4);
+      IM_CHECK(!gui::g_panorama_vp.active);  // engaged
+      // Whole sky: the bar's natural height drops well below what this column offers.
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("**/Whole sky");
+      ctx->SetRef("");
+      gui::g_state.workspace.middle_rows_ratio = 0.20f;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_panorama_vp.active);  // recovered on current content, no overshoot
+      // The basis audit: the window comes back before the test ends.
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = gui::kInitWindowWidth;
+      g_window_size_test.height = gui::kInitWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
     };
   }
 

@@ -541,7 +541,6 @@ void RenderTopBar(float window_width) {
       ImGui::SetTooltip("Save: document, copy, image exports, and config JSON.");
     }
     if (ImGui::BeginPopup("SaveMenu")) {
-      bool no_texture = !g_preview.HasTexture();
       bool has_server = g_server != nullptr && g_state.sim_state != GuiState::SimState::kIdle;
       ImGui::BeginDisabled(busy);
       if (ImGui::MenuItem("Save")) {
@@ -552,7 +551,12 @@ void RenderTopBar(float window_width) {
       }
       ImGui::EndDisabled();
       ImGui::Separator();
-      if (ImGui::MenuItem("Screenshot...", nullptr, false, !no_texture)) {
+      // The Screenshot exports the ACTIVE picture face's publication (RenderScreenshot selects
+      // it by the same predicate): in the Analyze workspace the main view's operation-bar
+      // takeover leaves no publication this frame, and the menu says what the consumer would.
+      const bool screenshot_available =
+          g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze ? g_panorama_vp.active : g_preview_vp.active;
+      if (ImGui::MenuItem("Screenshot...", nullptr, false, screenshot_available)) {
         DoExportPreviewPng();
       }
       if (ImGui::MenuItem("Dual Fisheye Equal Area...", nullptr, false, has_server)) {

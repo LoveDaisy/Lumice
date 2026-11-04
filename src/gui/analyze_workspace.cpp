@@ -557,11 +557,17 @@ void RenderScenePanorama(GLFWwindow* window) {
     // at all this frame (a zero-height BeginChild would mean "fill what is left", handing the
     // space straight back to the picture and clipping the bar out for good: a state the
     // 0.15-clamped row split at the smallest supported window reaches with the Point bar up).
-    // No picture, no publication: the deferred pass skips, honestly.
+    // No picture, no publication: the deferred pass skips, honestly. The bar's TRUE height is
+    // measured here — unclipped, the one fact the exit judgment needs — and written to the same
+    // budget key the normal path uses, so a later state (a shorter bar, a wider window) is
+    // judged on current content, never on whatever the pre-takeover frames clipped to.
     if (picture_h <= 0.0f) {
       ImGui::BeginChild("##AnalyzeOpBarScroll", avail, 0.0f);
+      const float content_top = ImGui::GetCursorPosY();
       RenderAnalyzeOperationBar(g_state, g_server);
+      const float content_h = ImGui::GetCursorPosY() - content_top;
       ImGui::EndChild();
+      storage->SetFloat(bar_h_key, content_h);
       return;
     }
   }
