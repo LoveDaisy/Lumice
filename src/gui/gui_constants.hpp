@@ -73,9 +73,15 @@ constexpr float kAnalyzeRightColumnDefaultRatio =
 // D2: the share list's height floor — the panel's fixed head (the budget rows, the run controls,
 // the symmetry row, the separator, the search row) plus the table's header row, one data row and
 // the button row. The window itself never scrolls (the result table is its one scrolling region),
-// so this floor is what keeps every control reachable at the smallest list height.
+// so this floor is what keeps every control reachable at the smallest list height. Re-derived
+// 2026-11-04: at this floor the clamped head (##analysis_head), the table and the button row
+// land inside the window WITH margin (the clamp reserves the two inter-block gaps) — the
+// stale-at-the-floors leg's containment is the evidence; without the margin the buttons sat
+// flush on the clip edge and any sub-pixel rounding culled them.
 constexpr float kAnalyzeShareListMinHeight = 250.0f;
 // D2: the diagnostics region's height floor — its title plus one wrapped state line.
+// Re-confirmed 2026-11-04 at the proportional split: the scroll child keeps a visible first
+// line (34 px measured) and the wheel reaches the rest (ScrollMax 128 with the idle stack).
 constexpr float kAnalyzeDetailsMinHeight = 64.0f;
 // D2's default: the contract's list ≈45% of the right column's height.
 constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
@@ -83,7 +89,12 @@ constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
 // (the widest fixed row: two 90 px inputs with their visible labels, the Set sky point button —
 // ≈343 px inner + the child's padding, measured against the Roboto Medium 15px theme), the
 // globe's fixed interaction stack, the 3D view at legible size. Each is its region's width floor
-// in the band's side-by-side form and height floor in the stacked form.
+// in the band's side-by-side form and height floor in the stacked form. Re-derived 2026-11-04
+// under the content-adaptation contract (workspace-layout audit): these are the side-by-side
+// cells' DESIGN WIDTHS — the widest fixed row may exceed a cell at 2x scale or at the ③ split,
+// and the row then wraps under its SameLine judgment (the map/globe/3D headers, the region
+// info lines). The floors are the placement default, not a reachability promise; the reachability
+// evidence is the containment legs (workspace_operates_at_*, workspace_row_ratio_extremes_*).
 constexpr float kAnalyzeDepthMapMinSize = 370.0f;
 constexpr float kAnalyzeDepthGlobeMinSize = 250.0f;
 constexpr float kAnalyzeDepth3DMinSize = 240.0f;
@@ -95,7 +106,9 @@ constexpr float kAnalyzeSplitterSize = 8.0f;
 // input row and the canvas's own 64 px floor beside them (≈249 px measured against the Roboto
 // Medium 15px theme), and no child of the band scrolls in that form — the stacked form's own
 // scroll is the only reachability there is. Height has no hysteresis: the row ratio moves
-// continuously under the dragging hand.
+// continuously under the dragging hand. Re-confirmed 2026-11-04 at the 900x640 proportional
+// split (band 306, cell ≈294, map stack fits) and at the 0.85 row clamp (band 128, stacked
+// with the band's own scroll carrying reachability) — the values the matrix legs log.
 constexpr float kAnalyzeDepthBandMinHeightPt = 250.0f;
 // Hysteresis of the depth band's form switch (logical px): side-by-side arms this far above the
 // three cells' floor sum and holds until the band drops below the bare sum, so a resize walking
