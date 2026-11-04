@@ -9,9 +9,10 @@
 #include <map>
 #include <utility>
 
-#include "app.hpp"                  // g_survey_executor — the cancel button reaches the one executor
-#include "gui/analysis_panel.hpp"   // RowLabelTextTooltip — the component rows' hover identity
-#include "gui/crystal_preview.hpp"  // CrystalParamHash — the mesh cache's change key
+#include "app.hpp"                       // g_survey_executor — the cancel button reaches the one executor
+#include "gui/analysis_panel.hpp"        // RowLabelTextTooltip — the component rows' hover identity
+#include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
+#include "gui/crystal_preview.hpp"       // CrystalParamHash — the mesh cache's change key
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state.hpp"
@@ -1424,6 +1425,12 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     ImGui::InvisibleButton("##r3d_canvas", ImVec2(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y),
                            ImGuiButtonFlags_MouseButtonLeft);
     const bool active = ImGui::IsItemActive();
+    // The orbit's wheel zoom consumes only while the workspace's wheel claim was standing at
+    // the frame's start (the arbitration in analyze_region_wheel.hpp; the map disk is the
+    // other claimant). The claim itself is CANVAS-scoped here: outside the picture the wheel
+    // belongs to the host band (the 3D child never wheel-scrolls itself — its flag stays —
+    // so a wheel over the title rows scrolls the band, its natural container).
+    AnalyzeRegionWheelClaim(ImGui::IsItemHovered(), AnalyzeRay3DWheelOwnerId());
     if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
       const ImVec2 delta = ImGui::GetIO().MouseDelta;
       // Grab convention — the project's one drag metaphor (Render main view inside-out and Globe
@@ -1433,7 +1440,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       view.orbit_yaw_deg -= delta.x * 0.5f;
       view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg - delta.y * 0.5f, -88.0f, 88.0f);
     }
-    if (ImGui::IsItemHovered() && std::abs(ImGui::GetIO().MouseWheel) > 0.0f) {
+    if (AnalyzeRegionWheelStanding() && ImGui::IsItemHovered() && std::abs(ImGui::GetIO().MouseWheel) > 0.0f) {
       view.orbit_zoom =
           std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
     }

@@ -9,6 +9,7 @@
 
 #include "gui/analysis_panel.hpp"  // SelectedClassIdentityFor / SurveySelectionKeyFor — the one identity chain
 #include "gui/analyze_overview.hpp"
+#include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
 #include "gui/app.hpp"
 #include "gui/gl_common.h"
 #include "gui/gui_constants.hpp"
@@ -16,7 +17,6 @@
 #include "gui/gui_state.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
-#include "imgui_internal.h"  // SetKeyOwner / ImGuiKeyOwner_* — the wheel claim below
 #include "util/sky_direction.hpp"
 
 namespace lumice::gui {
@@ -1088,20 +1088,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // straight up the parent chain: the host band scrolled natively while the gestures below
   // zoomed off the very same wheel — the double consumption had just moved up a level (the
   // native dispatch runs in NewFrame, before any rendering, so nothing set during rendering
-  // of the same frame can stop it; SetKeyOwner's sticky OwnerNext survives the frame boundary
-  // and is what the dispatch actually reads). The claim is standing while hovered and
-  // released when not: with the wheel claimed, the dispatch moves nothing anywhere while the
-  // pointer is over the map — the canvas zoom and the region's hand-routed scroll below are
-  // the only consumers, and the band scrolls again as soon as the wheel is over it elsewhere.
-  // The wheel never chains from this cell to the band, even at the region's scroll limit.
-  // NoScrollWithMouse stays as the region's own guard: its scroll path is the manual route,
-  // nothing else.
+  // of the same frame can stop it). The claim is what the dispatch reads — and the CONSUME
+  // side is gated on the claim standing at the frame's START: on the takeover frame (the
+  // band scrolled this cell under a stationary pointer) no claim was standing yet, the
+  // dispatch has already spent the event on the band, and the gestures must not spend it
+  // again. The rule and its transition cases live in analyze_region_wheel.hpp (the 3D orbit
+  // is the other claimant). The wheel never chains from this cell to the band, even at the
+  // region's scroll limit. NoScrollWithMouse stays as the region's own guard: its scroll
+  // path is the manual route, nothing else.
   ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
-  if (ImGui::IsWindowHovered()) {
-    ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, ImGui::GetID("map-wheel-claim"));
-  } else {
-    ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, ImGuiKeyOwner_NoOwner);
-  }
+  const bool wheel_standing = AnalyzeRegionWheelStanding();
+  AnalyzeRegionWheelClaim(ImGui::IsWindowHovered(), AnalyzeMapWheelOwnerId());
   MapQuerySession& map = state.analysis.map;
   MapViewState& view = state.analysis.map_view;
   SkyPointIntent& intent = state.analysis.sky_point;
@@ -1337,10 +1334,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
 
   // ---- The gestures (the prototype's bindRp semantics; the ROI's state is never touched here) ----
   // The wheel's arbitration lives in the BeginChild comment above: this branch is the canvas
-  // side (zoom, exclusive), the else-branch below is the region side (scroll, exclusive).
+  // side (zoom, exclusive), the else-branch below is the region side (scroll, exclusive) —
+  // and both consume only while a claim was standing at the frame's start, so the takeover
+  // frame's event (already spent by the band's native scroll) is not spent twice.
   if (canvas_hovered && !view.point_dragging) {
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.MouseWheel != 0.0f) {
+    if (wheel_standing && io.MouseWheel != 0.0f) {
       const double cx = (io.MousePos.x - pic_min.x) / pic_px;
       const double cy = (io.MousePos.y - pic_min.y) / pic_px;
       double pos[3];
@@ -1351,7 +1350,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         gesture_this_frame = true;
       }
     }
-  } else if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+  } else if (wheel_standing && ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
     // The region's own scroll, hand-routed (the window no longer takes the wheel natively):
     // the wheel outside the picture moves content and never the view. The step is the native
     // wheel scroll's own formula (five lines, capped at two thirds of the view), so the feel
