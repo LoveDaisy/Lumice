@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793911370848,
+  "lastUpdate": 1793911373325,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6311b6bd9421e45d367cc351d08ae0cc257a3148",
-          "message": "Merge pull request #455 from LoveDaisy/refactor/capi-scene-codec-split\n\nSplit c_api_scene.cpp into bridge, encoder and decoder",
-          "timestamp": "2026-09-30T23:35:26+08:00",
-          "tree_id": "e2bf504be9af427f91adf8d0e55d5f369cf2e35b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/6311b6bd9421e45d367cc351d08ae0cc257a3148"
-        },
-        "date": 1790783641814,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 96.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "1d6bb6f143908c461fabfc30bd29f4f94e31dbc0",
           "message": "Merge pull request #451 from LoveDaisy/scrum/ci-time-governance\n\nscrum ci-time-governance (WIP): build-time landing",
           "timestamp": "2026-10-01T06:48:43+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5f0968259b932181425988ebdb95fc4a422442bb",
+          "message": "Merge pull request #564 from LoveDaisy/feat/analyze-gui-rework\n\nAnalyze GUI rework: task-driven main view, resizable regions, independent windows",
+          "timestamp": "2026-11-06T04:38:13+08:00",
+          "tree_id": "6d70ce4fe8476d0d71d3a15141a3c4e9c8693a71",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5f0968259b932181425988ebdb95fc4a422442bb"
+        },
+        "date": 1793911372561,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 90,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.6,
             "unit": "%"
           }
         ]
