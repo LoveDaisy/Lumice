@@ -6639,15 +6639,16 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
 // ① a λ change issued for 600 while the face waits, superseded by 0 — the adopted document's
 //    own wavelength echo judges the answer that finally landed (a transient 600 adoption that
 //    a later answer overwrites is executor-ordering territory, unclaimed at this layer);
-// ② a class switch issued while the first class's point doc still stands — the issued intent's
-//    full selection key (faces, not the shared crystal) names the second class, and the old
-//    document handle is asserted still-adopted at that moment;
+// ② a class switch issued while the first class's point request is observed executing — the
+//    issued intent's full selection key (faces, not the shared crystal) names the second
+//    class, and the final document's own faces carry the discrimination;
 // ③ a sky-point move issued, then the workspace switched before adoption — the Render-side
 //    pump adopts with the windows open, and the document names the moved target;
 // ④ the survey re-run with the executor verifiably in flight, then Stop — the trigger's
 //    semantics clear the selection, the windows stay open, a re-selection re-arms both faces;
-// ⑤ the survey in flight again and Revert (the cancel-latch face, distinct from Stop) — the
-//    windows stand through the withdrawal, then the re-selection re-arms;
+// ⑤ the point face verifiably outstanding and Revert (the cancel-latch face, distinct from
+//    ④'s analysis-run Stop) — the windows stand through the withdrawal, then the re-selection
+//    re-arms;
 // ⑥ Revert after adoption keeps every adopted outcome by handle value, the sky point, the
 //    windows (the settled contract, distinct from ⑤'s withdrawal);
 // ⑦ Open (the document replace) with the windows open and a point query verifiably in flight —
