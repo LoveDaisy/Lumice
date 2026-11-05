@@ -1860,7 +1860,16 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
   PointViewState& view = state.analysis.point_view;
 
   ImGui::Separator();
-  ImGui::TextUnformatted("Point detail");
+  // The title row is the Pose & trace window's one open entry (contract §7): clicking it makes
+  // sure the window is open — an already-open window re-clicked reopens after a manual close
+  // (the class row's own open-entry shape, analysis_panel.cpp). Opening is a display-state
+  // write only: it starts no query and touches no document field. The NEGATIVE half of the
+  // entry is structural: the sky-point writers (map pick, marker drag, coordinate input) and
+  // the λ writer live in the map TU, which holds no reference to this flag — setting a sky
+  // point never pops the window open (the user's explicit requirement).
+  if (ImGui::Selectable("Point detail")) {
+    state.analyze_pose_view_open = true;
+  }
   if (identity.layer_face_counts.size() > 1) {
     // The request-level refusal the point face will name for this selection, spelled before it
     // is asked for (the survey block states the same fact for its own face).
@@ -1979,29 +1988,26 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
     return;
   }
 
-  // The component list (AC2: rows with kind, ends, coverage, integral; selectable). The render
-  // cap names itself when a document carries more components than the list shows.
+  // The component list (AC2) as EVIDENCE rows: kind, ends, coverage and integral availability,
+  // with the label's hover tooltip for a clipped tail. The rows no longer select — the
+  // component selector's one interaction owner is the pose window's globe combo (contract
+  // §2.2 pins the list here as evidence, §7 pins the selection in the window; one function,
+  // one owner). The render cap note still names itself below.
   LUMICE_PathPointInfo count_info{};
   count_info.struct_size = sizeof(count_info);
   const size_t true_component_count =
       LUMICE_PathPointGetInfo(point.adopted_result.get(), &count_info) == LUMICE_PATH_READ_OK ?
           count_info.component_count :
           component_total;
-  ImGui::TextUnformatted("Components (select one):");
+  ImGui::TextUnformatted("Components:");
   for (int i = 0; i < component_total; ++i) {
     const PointComponentRow& row = rows[static_cast<size_t>(i)];
     char label[192];
-    std::snprintf(label, sizeof(label), "%d: %s, %d pts, ends %s / %s%s##pcomp%d", i + 1, row.kind.c_str(),
-                  row.point_count, row.forward_text.c_str(), row.backward_text.c_str(),
-                  row.integral_available ? "" : ", integral unavailable", i);
-    const bool selected = std::clamp(view.component_index, 0, component_total - 1) == i;
-    if (ImGui::Selectable(label, selected)) {
-      view.component_index = i;
-      view.sample_index = 0;
-      view.playing = false;
-    }
-    // The same reading contract as the share list's rows: the row is selectable, but the
-    // component's identity is the label — a clipped tail stays reachable on hover.
+    std::snprintf(label, sizeof(label), "%d: %s, %d pts, ends %s / %s%s", i + 1, row.kind.c_str(), row.point_count,
+                  row.forward_text.c_str(), row.backward_text.c_str(),
+                  row.integral_available ? "" : ", integral unavailable");
+    ImGui::Bullet();
+    ImGui::TextWrapped("%s", label);
     RowLabelTextTooltip(std::string(label));
   }
   const int component = std::clamp(view.component_index, 0, component_total - 1);
@@ -2021,17 +2027,12 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
     ImGui::PopStyleColor();
   }
 
-  // The current sample's factors (AC3's vocabulary, the engine's names and units).
+  // The selected component's sample evidence (contract §10's diagnostic row): a component
+  // carrying no valid sample says so HERE — the answer-and-evidence fact this block owns. The
+  // per-sample FACTORS themselves draw in the Pose & trace window (##AnalyzePoseFactors).
   const std::vector<int> detail_valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
-  const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, detail_valid_indices);
-  if (!current.has_value()) {
+  if (detail_valid_indices.empty()) {
     ImGui::TextDisabled("No valid sample on show for this component.");
-    return;
-  }
-  ImGui::SeparatorText("Current sample factors");
-  for (const std::string& line_text : PointFactorLines(current->sample)) {
-    ImGui::Bullet();
-    ImGui::TextWrapped("%s", line_text.c_str());
   }
 }
 

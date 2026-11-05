@@ -5509,6 +5509,79 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   return true;
 }
 
+// The Pose & trace window's open entry (contract §7): the point detail block's title click is
+// the ONE opener — a class row click opens the Raypath view and never the pose window, a typed
+// sky point (the coordinate input writer) never opens it, and re-clicking the title after a
+// manual close reopens. All display-state writes; the assertions read the flag and the live
+// window, no document field.
+bool PoseViewOpensFromThePointDetailTitleOnly(ImGuiTestContext* ctx) {
+  const auto window_active = [](const char* fragment) {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+        return true;
+      }
+    }
+    return false;
+  };
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(!window_active("Pose & trace"), false);
+
+  // Negative A — the class row is the Raypath view's open entry, not the pose window's.
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);  // the row click above opened it
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
+
+  // Negative B — the typed sky point (the coordinate input's write path) must not pop the
+  // window open. The pose flag stays false through the write and after the point intent fires.
+  ctx->SetRef("");
+  ctx->ItemInputValue("**/alt°##sky", 33.0f);
+  ctx->ItemInputValue("**/az°##sky", 12.0f);
+  ctx->ItemClick("**/Set sky point###sky_set");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(!window_active("Pose & trace"), false);
+  ctx->LogInfo("[pose open] typed sky point left the pose window closed");
+
+  // Positive — the title click opens the window (the state write the entry performs). The
+  // title sits below the survey overview in the diagnostics scroll region: at the default
+  // split it can be past the fold, and a clipped item registers no ID for the engine to find —
+  // scroll the region to its bottom first (the block is the scroll content's tail).
+  {
+    ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
+    IM_CHECK_RETV(details_scroll != nullptr, false);
+    details_scroll->Scroll.y = details_scroll->ScrollMax.y;
+    ctx->Yield(2);
+  }
+  ctx->ItemClick("**/Point detail");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(window_active("Pose & trace"), false);
+  // Reopen after a manual close: the click fires on every press, selected or not.
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  IM_CHECK_RETV(!window_active("Pose & trace"), false);
+  {
+    ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
+    IM_CHECK_RETV(details_scroll != nullptr, false);
+    details_scroll->Scroll.y = details_scroll->ScrollMax.y;
+    ctx->Yield(2);
+  }
+  ctx->ItemClick("**/Point detail");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(window_active("Pose & trace"), false);
+  ctx->LogInfo("[pose open] title click reopened after a manual close");
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
 // AC2's narrowest-window face (contract §11 R3): at 480x360 the split's floors hold, the
 // info region's rows wrap instead of clip (the λ track's 60 pt floor, the sky-point row's
 // ladder), the map's canvas keeps its code floor, and the state line stays readable. No
@@ -6214,6 +6287,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_splits_are_manual_independent_and_floored");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewSplitsAreManualIndependentAndFloored(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_opens_from_the_point_detail_title_only");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOpensFromThePointDetailTitleOnly(ctx)); };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip
