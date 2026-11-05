@@ -419,8 +419,13 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
   // handling — a bar that did not fit would draw Revert over Settings, or push it off the window.
   //
   // Measured at its widest real content: with a colour class present the Colored / Full Spectrum
-  // checkbox joins the feature group (showing "Full Spectrum", the longer label), and with no run
-  // yet no class has matched anything, so the empty-composite warning pip is drawn beside it too.
+  // checkbox joins the feature group (showing "Full Spectrum", the longer label). The
+  // empty-composite warning pip does NOT join here, and not only here: with no server the signal
+  // poll never runs and the flags default to matched, so the pip is unreachable in this harness
+  // in any construction — the checkbox alone is the widest state it can render. The pip state
+  // (a server snapshot with a configured-but-unmatched class) adds one ItemSpacing plus the
+  // glyph, 23 px on this font; against headroom=27 it still fits (required 1020), measured once
+  // with the glyph's real width, not assumed.
   // The left part is read off the rendered frame (the right edge of Settings), and so is the right
   // end from Revert through the right toggle, which at any wider window sit flush together. The ⚠
   // glyph is text, not an item with a rectangle, so its width is the one thing taken from
@@ -1117,6 +1122,39 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         }
       }
 
+      // The top bar at this scale (the scale legs' toolbar-consistency duty): the bar reads the
+      // rule through the design width — the OS width divided out through CurrentUiScale() — and
+      // 1600/1.5 is above kMinWindowWidth, so the bar must still fit. The right-anchored pair
+      // stays clear of Settings and flush with the right toggle, the toggle stays contained, and
+      // the bar's budget reads within the window (the fit leg's accounting, at a non-default
+      // scale). Inequalities only here: at a fractional scale the split lands off the integer
+      // grid, so the exact rendered-vs-pair equality stays at the two 1x bases. The 200% clamp
+      // leg deliberately gets no such block: its 1800px window is BELOW the app's own floor at
+      // that scale (900 design pt < kMinWindowWidth), where right-end crowding is the accepted
+      // sub-floor geometry, not a defect this suite should pin green.
+      {
+        const ImGuiTestItemInfo settings_s = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
+        const ImGuiTestItemInfo revert_s = ctx->ItemInfo(kRevertBtn, ImGuiTestOpFlags_NoError);
+        const ImGuiTestItemInfo right_toggle_s = ctx->ItemInfo(kRightToggleBtn, ImGuiTestOpFlags_NoError);
+        ImGuiWindow* bar_s = ctx->GetWindowByRef("##TopBar");
+        IM_CHECK_NE(settings_s.ID, 0u);
+        IM_CHECK_NE(revert_s.ID, 0u);
+        IM_CHECK_NE(right_toggle_s.ID, 0u);
+        IM_CHECK(bar_s != nullptr);
+        const ImGuiStyle& style_s = ImGui::GetStyle();
+        IM_CHECK_GT(revert_s.RectFull.Min.x, settings_s.RectFull.Max.x);
+        IM_CHECK_FLOAT_NEAR(right_toggle_s.RectFull.Min.x - revert_s.RectFull.Max.x, style_s.ItemSpacing.x, 0.5f);
+        AssertRectContained(ctx, kRightToggleBtn, bar_s);
+        const float warn_w = ImGui::CalcTextSize(ICON_FA_CIRCLE_EXCLAMATION).x;
+        const float required_s =
+            (settings_s.RectFull.Max.x - bar_s->Pos.x) + style_s.ItemSpacing.x +
+            (warn_w + style_s.ItemSpacing.x + (right_toggle_s.RectFull.Max.x - revert_s.RectFull.Min.x)) +
+            style_s.WindowPadding.x;
+        ctx->LogInfo("[150 percent] top bar required=%.1f window=%.0f", static_cast<double>(required_s),
+                     static_cast<double>(ImGui::GetIO().DisplaySize.x));
+        IM_CHECK_LE(required_s, ImGui::GetIO().DisplaySize.x);
+      }
+
       // The evidence form the rewritten contract demands: containment of the tier's key
       // controls in the regions they live in, then the real operations — the search input
       // typed, D1 dragged (its write is delta-only, so the drag's own landing is the evidence).
@@ -1352,6 +1390,79 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK(g_window_size_test.done.load());
       ctx->Yield(2);
+    };
+  }
+
+  // The top bar's visual rhythm, archived at its two bases with the widest real content (a
+  // colour class present: the Colored / Full Spectrum checkbox joins the feature group — the
+  // same configuration the fit pin measures; the empty-composite pip is unreachable without a
+  // server, see the fit leg's note). Automation does not sign
+  // the rhythm — the fit and split pins prove the geometry, and these frames are what a person
+  // actually looks at (owner hands-on, the aesthetic ruling this suite cannot make). The
+  // companion numbers ride in the log: at the narrow basis the rule's own left/right gaps are
+  // read off the same frame's DrawList, so each archived PNG carries its boundary's figures in
+  // the run's log line. Captures, not comparisons — nothing here fails on pixels; the archived
+  // files are the deliverable.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "top_bar_rhythm_archived_at_narrow_and_default_bases");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      gui::ColorClassConfig cls;
+      cls.visible = true;
+      gui::g_state.raypath_color.push_back(cls);
+      ctx->Yield(4);
+      ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+      ctx->Yield(2);
+      auto capture_top_bar = [&](const char* filename) {
+        g_fullframe_capture.Reset();
+        g_fullframe_capture.requested.store(true);
+        for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK(g_fullframe_capture.done.load());
+        if (g_fullframe_capture.done.load()) {
+          const std::string path = GuiTestTempPath(filename).string();
+          auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                              g_fullframe_capture.height);
+          IM_CHECK(lumice::test::SavePng(path.c_str(), rgb.data(), g_fullframe_capture.width,
+                                         g_fullframe_capture.height, 3));
+          ctx->LogInfo("archived: %s (%dx%d)", path.c_str(), g_fullframe_capture.width, g_fullframe_capture.height);
+        }
+      };
+
+      capture_top_bar("topbar_rhythm_default_1600x980.png");
+
+      const ScopedWindowBasis window_basis(ctx);
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = gui::kMinWindowWidth;
+      g_window_size_test.height = gui::kMinWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+
+      // The companion numbers for the archived narrow frame: the Analyze-cell boundary (the one
+      // whose neighbours are always drawn), read off this exact frame — the same figures the fit
+      // pin asserts, attached to the capture a person reviews.
+      {
+        const ImGuiTestItemInfo analyze_cell = ctx->ItemInfo(kWorkspaceToAnalyzeBtn, ImGuiTestOpFlags_NoError);
+        const ImGuiTestItemInfo settings_n = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
+        ImGuiWindow* bar_n = ctx->GetWindowByRef("##TopBar");
+        IM_CHECK_NE(analyze_cell.ID, 0u);
+        IM_CHECK_NE(settings_n.ID, 0u);
+        IM_CHECK(bar_n != nullptr);
+        const float rule_x = FindTopBarRuleX(bar_n, analyze_cell.RectFull.Min.x, settings_n.RectFull.Max.x,
+                                             analyze_cell.RectFull.GetHeight());
+        IM_CHECK_GT(rule_x, 0.0f);
+        ctx->LogInfo("[narrow capture] boundary gaps left=%.1f right=%.1f (rule at x=%.1f)",
+                     static_cast<double>(rule_x - analyze_cell.RectFull.Max.x),
+                     static_cast<double>(settings_n.RectFull.Min.x - rule_x - 1.0f), static_cast<double>(rule_x));
+      }
+
+      capture_top_bar("topbar_rhythm_narrow_1024x640.png");
     };
   }
 
