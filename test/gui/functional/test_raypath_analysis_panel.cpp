@@ -351,6 +351,12 @@ ImGuiWindow* LowerRowRegionWindow(const char* name_fragment) {
 ImGuiWindow* MapRegionWindow() {
   return RegionWindowUnder("Raypath view", "##AnalyzeRaypathView");
 }
+// The info region beside the map (##AnalyzeRaypathInfo): the wavelength, the view buttons,
+// the caliber block and the sky-point input. The D3 split (contract §4.2) puts the picture's
+// facts here; the containment asserts for those controls anchor to THIS child.
+ImGuiWindow* MapInfoRegionWindow() {
+  return RegionWindowUnder("Raypath view", "##AnalyzeRaypathInfo");
+}
 
 // The floating window is user-placed; at a smaller workspace basis the cascade position can
 // park it past the OS window's edge, and the viewport clip then cuts the region's content
@@ -1443,12 +1449,11 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.pick_armed == pick_armed_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selected_before, false);
 
-  // The sky-point tail's Clear, in the X5 form at the adopted-completion state (the r1 review's
-  // probe caught the wrapped tail pushing it past this child's clip — the measured reserve
-  // gives the whole tail room now): Clear sits RectFull inside the map region and a real click
-  // clears the intent, while Set and the coordinates stay reachable.
+  // The sky-point tail's Clear, in the X5 form at the adopted-completion state: Clear sits
+  // RectFull inside the INFO region (the tail lives beside the map since the D3 split) and a
+  // real click clears the intent, while Set and the coordinates stay reachable.
   {
-    ImGuiWindow* region = MapRegionWindow();
+    ImGuiWindow* region = MapInfoRegionWindow();
     IM_CHECK_RETV(region != nullptr, false);
     ctx->LogInfo("[map view] clear tail: clip bottom %.0f", static_cast<double>(region->InnerClipRect.Max.y));
     const ImGuiTestItemInfo set_now = ctx->ItemInfo("**/Set sky point###sky_set", ImGuiTestOpFlags_NoError);
@@ -1467,32 +1472,34 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
     ctx->LogInfo("[map view] Clear click landed; intent cleared");
   }
 
-  // The with-result pin, in its modern form: the region starts at its top (Scroll.y == 0 — the
-  // header row on screen), and everything past the fold is the region's OWN internal scroll, the
-  // degradation ladder's rung. The original reserve defect (742.4) showed as scroll PINNED to
-  // the bottom with the header cut off — that is what Scroll.y == 0 forbids; a nonzero
-  // ScrollMax at the 370px cell (whose wrapped header and caliber block exceed the height) is
-  // the designed budget overflow, wheel-reachable, not the defect.
+  // The with-result pin, in its modern form: each region starts at its top (Scroll.y == 0 —
+  // its first row on screen), and everything past the fold is that region's OWN internal
+  // scroll, the degradation ladder's rung. The original reserve defect (742.4) showed as scroll
+  // PINNED to the bottom with the header cut off — that is what Scroll.y == 0 forbids; a
+  // nonzero ScrollMax (the caliber block's wrapped bulk) is the designed budget overflow,
+  // wheel-reachable, not the defect. The view buttons live in the INFO region now.
   {
     ImGuiWindow* region = MapRegionWindow();
-    IM_CHECK_RETV(region != nullptr, false);
-    ctx->LogInfo("[scroll pins] map with-result SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
+    ImGuiWindow* info = MapInfoRegionWindow();
+    IM_CHECK_RETV(region != nullptr && info != nullptr, false);
+    ctx->LogInfo("[scroll pins] map with-result SM %.1f SC %.1f, info SM %.1f SC %.1f", region->ScrollMax.y,
+                 region->Scroll.y, info->ScrollMax.y, info->Scroll.y);
     IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
-    // The adopted completion's head row, at the cell's own width (the side-by-side form's
-    // floor): both view buttons sit contained in the 370 pt cell, and Fit takes a real click on
-    // the adopted map (the matrix's adopted-branch row; the λ reference branch's click is the
-    // shell suite's λ-branch case — an explicit λ on an adopted map re-asks the engine, a
-    // second wall-clock map this leg does not need).
+    IM_CHECK_RETV(info->Scroll.y == 0.0f, false);
+    // The adopted completion's head row: both view buttons sit contained in the info region,
+    // and Fit takes a real click on the adopted map (the matrix's adopted-branch row; the λ
+    // reference branch's click is the shell suite's λ-branch case — an explicit λ on an
+    // adopted map re-asks the engine, a second wall-clock map this leg does not need).
     const ImGuiTestItemInfo fit = ctx->ItemInfo("**/Fit##map", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(fit.ID != 0, false);
-    IM_CHECK_RETV(fit.RectFull.Min.x >= region->InnerClipRect.Min.x - 0.5f, false);
-    IM_CHECK_RETV(fit.RectFull.Max.x <= region->InnerClipRect.Max.x + 0.5f, false);
-    IM_CHECK_RETV(fit.RectFull.Min.y >= region->InnerClipRect.Min.y - 0.5f, false);
-    IM_CHECK_RETV(fit.RectFull.Max.y <= region->InnerClipRect.Max.y + 0.5f, false);
+    IM_CHECK_RETV(fit.RectFull.Min.x >= info->InnerClipRect.Min.x - 0.5f, false);
+    IM_CHECK_RETV(fit.RectFull.Max.x <= info->InnerClipRect.Max.x + 0.5f, false);
+    IM_CHECK_RETV(fit.RectFull.Min.y >= info->InnerClipRect.Min.y - 0.5f, false);
+    IM_CHECK_RETV(fit.RectFull.Max.y <= info->InnerClipRect.Max.y + 0.5f, false);
     const ImGuiTestItemInfo full_sky = ctx->ItemInfo("**/Full sky##map", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(full_sky.ID != 0, false);
-    IM_CHECK_RETV(full_sky.RectFull.Max.x <= region->InnerClipRect.Max.x + 0.5f, false);
-    IM_CHECK_RETV(full_sky.RectFull.Max.y <= region->InnerClipRect.Max.y + 0.5f, false);
+    IM_CHECK_RETV(full_sky.RectFull.Max.x <= info->InnerClipRect.Max.x + 0.5f, false);
+    IM_CHECK_RETV(full_sky.RectFull.Max.y <= info->InnerClipRect.Max.y + 0.5f, false);
     ctx->ItemClick("**/Fit##map");
     ctx->Yield(3);
     ctx->LogInfo("[map view] after the Fit click: radius %.1f centre [%.2f, %.2f, %.2f]",
@@ -1552,14 +1559,20 @@ bool WorkspaceScrollRegionsAreStructurallyFixed(ImGuiTestContext* ctx) {
   SetSkyPointTarget(42.0, 0.0);
   ctx->Yield(2);
   {
-    // The window's own structural pin (independent of the workspace bases below).
+    // The window's own structural pin (independent of the workspace bases below): BOTH regions
+    // fit their stacks — the map side (state line + canvas) with no scroll, and the info side
+    // (λ row, view buttons, the two-row sky-point input) with no scroll.
     gui::g_state.analyze_raypath_view_open = true;
     ctx->Yield(2);
     ImGuiWindow* region = MapRegionWindow();
-    IM_CHECK_RETV(region != nullptr, false);
-    ctx->LogInfo("[scroll pins] map in window SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
+    ImGuiWindow* info = MapInfoRegionWindow();
+    IM_CHECK_RETV(region != nullptr && info != nullptr, false);
+    ctx->LogInfo("[scroll pins] map in window SM %.1f SC %.1f, info SM %.1f SC %.1f", region->ScrollMax.y,
+                 region->Scroll.y, info->ScrollMax.y, info->Scroll.y);
     IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
     IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
+    IM_CHECK_RETV(info->ScrollMax.y == 0.0f, false);
+    IM_CHECK_RETV(info->Scroll.y == 0.0f, false);
     gui::g_state.analyze_raypath_view_open = false;
     ctx->Yield(2);
   }
@@ -3519,9 +3532,10 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       false);
 
   // The map's own state on the way: the selection asks for the map behind the survey. Assert
-  // the sky-point tail's Clear inside the map region in WHICHEVER state the map answers from
-  // (waiting for the first map, or completed) — the canvas budget is state-independent by
-  // construction; the log names the observed one for a fresh reader.
+  // the sky-point tail's Clear inside the INFO region (the tail's home since the D3 split) in
+  // WHICHEVER state the map answers from (waiting for the first map, or completed) — the
+  // tail's reachability is state-independent by construction; the log names the observed one
+  // for a fresh reader.
   {
     gui::MapQueryState st = gui::MapQueryStateFor(gui::g_state.analysis.map);
     DriveUntil(
@@ -3531,19 +3545,13 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
           return st == gui::MapQueryState::kWaiting || st == gui::MapQueryState::kCompleted;
         },
         30);
-    ImGuiWindow* map_w = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
-        map_w = w;
-        break;
-      }
-    }
-    IM_CHECK_RETV(map_w != nullptr, false);
+    ImGuiWindow* info_w = MapInfoRegionWindow();
+    IM_CHECK_RETV(info_w != nullptr, false);
     const ImGuiTestItemInfo clear_w = ctx->ItemInfo("**/Clear##sky", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(clear_w.ID != 0, false);
-    IM_CHECK_RETV(clear_w.RectFull.Max.y <= map_w->InnerClipRect.Max.y + 0.5f &&
-                      clear_w.RectFull.Min.y >= map_w->InnerClipRect.Min.y - 0.5f &&
-                      clear_w.RectFull.Max.x <= map_w->InnerClipRect.Max.x + 0.5f,
+    IM_CHECK_RETV(clear_w.RectFull.Max.y <= info_w->InnerClipRect.Max.y + 0.5f &&
+                      clear_w.RectFull.Min.y >= info_w->InnerClipRect.Min.y - 0.5f &&
+                      clear_w.RectFull.Max.x <= info_w->InnerClipRect.Max.x + 0.5f,
                   false);
     ctx->LogInfo("[scale tiers] clear contained, map state %d", static_cast<int>(st));
   }
@@ -4263,10 +4271,15 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     }
     const ImGuiTestItemInfo lambda_e = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(lambda_e.ID != 0, false);
-    IM_CHECK_RETV(lambda_e.RectFull.Max.x <= map_e->InnerClipRect.Max.x + 0.5f &&
-                      lambda_e.RectFull.Min.x >= map_e->InnerClipRect.Min.x - 0.5f &&
-                      lambda_e.RectFull.Max.y <= map_e->InnerClipRect.Max.y + 0.5f,
-                  false);
+    {
+      // The λ row lives in the INFO region since the D3 split; the containment reads its host.
+      ImGuiWindow* info_e = MapInfoRegionWindow();
+      IM_CHECK_RETV(info_e != nullptr, false);
+      IM_CHECK_RETV(lambda_e.RectFull.Max.x <= info_e->InnerClipRect.Max.x + 0.5f &&
+                        lambda_e.RectFull.Min.x >= info_e->InnerClipRect.Min.x - 0.5f &&
+                        lambda_e.RectFull.Max.y <= info_e->InnerClipRect.Max.y + 0.5f,
+                    false);
+    }
     const ImVec2 lambda_c = lambda_e.RectFull.GetCenter();
     ctx->MouseMoveToPos(ImVec2(lambda_e.RectFull.Max.x - 3.0f, lambda_c.y));
     ctx->Yield(2);
@@ -4929,7 +4942,7 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
     // the window's own geometry now (the old band cell's wrap-at-this-width judgment moved to
     // the narrowest-window legs with the cell).
     PinRaypathViewOnScreen(ctx);
-    ImGuiWindow* map_c = MapRegionWindow();
+    ImGuiWindow* map_c = MapInfoRegionWindow();  // the λ row lives in the info region (D3)
     IM_CHECK_RETV(map_c != nullptr, false);
     const ImGuiTestItemInfo lambda_c = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(lambda_c.ID != 0, false);
@@ -5087,6 +5100,202 @@ bool RaypathViewOpenIsDisplayState(ImGuiTestContext* ctx) {
   return true;
 }
 
+// AC2's D3 face (contract §4.2, §9.3): the window's own reference-map | info split is manual
+// and floored — the drag writes the ratio (both regions' widths follow it), the floors clamp
+// it (the info region at its 200 pt floor, the map at its 160 pt floor), a selection change
+// never rewrites it, the window resize follows it proportionally, and the same-process
+// close/reopen keeps it. Real analysis + two selections: the selection-change leg needs a
+// second row.
+bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  PinRaypathViewOnScreen(ctx);
+  ImGuiWindow* map = MapRegionWindow();
+  ImGuiWindow* info = MapInfoRegionWindow();
+  IM_CHECK_RETV(map != nullptr && info != nullptr, false);
+  const float ratio0 = gui::g_state.analyze_raypath_view_info_ratio;
+  const float info_w0 = info->Size.x;
+  const float map_w0 = map->Size.x;
+  ctx->LogInfo("[D3] ratio %.4f, info %.0f, map %.0f", static_cast<double>(ratio0), static_cast<double>(info_w0),
+               static_cast<double>(map_w0));
+
+  // The drag writes the ratio: 80 pt left (the info region widens, the map narrows — the
+  // ratio is the info region's share, so it grows).
+  const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##RaypathViewSplitter", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(grab.ID != 0, false);
+  const ImVec2 centre = grab.RectFull.GetCenter();
+  ctx->MouseMoveToPos(centre);
+  ctx->Yield(2);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseMoveToPos(ImVec2(centre.x - 80.0f, centre.y));
+  ctx->Yield(3);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_info_ratio > ratio0 + 0.02f, false);
+  ImGuiWindow* map2 = MapRegionWindow();
+  ImGuiWindow* info2 = MapInfoRegionWindow();
+  IM_CHECK_RETV(map2 != nullptr && info2 != nullptr, false);
+  ctx->LogInfo("[D3] after left drag: ratio %.4f, info %.0f (+%.0f), map %.0f (%.0f)",
+               static_cast<double>(gui::g_state.analyze_raypath_view_info_ratio), static_cast<double>(info2->Size.x),
+               static_cast<double>(info2->Size.x - info_w0), static_cast<double>(map2->Size.x),
+               static_cast<double>(map2->Size.x - map_w0));
+  IM_CHECK_RETV(info2->Size.x > info_w0 + 50.0f, false);
+  IM_CHECK_RETV(map2->Size.x < map_w0 - 50.0f, false);
+
+  // The floors clamp: drag far right — the info region stops at its floor and the map keeps
+  // its own; drag far left — the map stops at its floor. Each leg re-addresses the strip: the
+  // previous drag moved the split (and the strip with it), so the old centre points inside a
+  // region now.
+  const auto drag_strip = [&](float dx) {
+    const ImGuiTestItemInfo grab_again = ctx->ItemInfo("**/##RaypathViewSplitter", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(grab_again.ID != 0, false);
+    const ImVec2 c = grab_again.RectFull.GetCenter();
+    ctx->MouseMoveToPos(c);
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y));
+    ctx->Yield(3);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    return true;
+  };
+  IM_CHECK_RETV(drag_strip(500.0f), false);
+  ImGuiWindow* map3 = MapRegionWindow();
+  ImGuiWindow* info3 = MapInfoRegionWindow();
+  IM_CHECK_RETV(map3 != nullptr && info3 != nullptr, false);
+  ctx->LogInfo("[D3] right-clamped: info %.0f (floor %.0f), map %.0f (floor %.0f)", static_cast<double>(info3->Size.x),
+               static_cast<double>(gui::UiPx(gui::kRaypathViewInfoMinSize)), static_cast<double>(map3->Size.x),
+               static_cast<double>(gui::UiPx(gui::kRaypathViewMapMinSize)));
+  IM_CHECK_RETV(fabsf(info3->Size.x - gui::UiPx(gui::kRaypathViewInfoMinSize)) < 2.0f, false);
+  IM_CHECK_RETV(map3->Size.x >= gui::UiPx(gui::kRaypathViewMapMinSize) - 1.5f, false);
+  IM_CHECK_RETV(drag_strip(-700.0f), false);
+  ImGuiWindow* map4 = MapRegionWindow();
+  IM_CHECK_RETV(map4 != nullptr, false);
+  ctx->LogInfo("[D3] left-clamped: map %.0f, ratio %.4f", static_cast<double>(map4->Size.x),
+               static_cast<double>(gui::g_state.analyze_raypath_view_info_ratio));
+  IM_CHECK_RETV(fabsf(map4->Size.x - gui::UiPx(gui::kRaypathViewMapMinSize)) < 2.0f, false);
+  const float clamped_ratio = gui::g_state.analyze_raypath_view_info_ratio;
+
+  // Manual priority: a selection change — the heaviest content change the window follows —
+  // writes nothing into the split (bit-exact against the value the last drag left).
+  const std::string& second_display =
+      gui::g_state.analysis_result.payload->entries[static_cast<size_t>(gui::g_state.analysis_result.display_order[1])]
+          .display;
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_info_ratio == clamped_ratio, false);
+
+  // The resize follows proportionally: a smaller window re-derives both widths from the same
+  // ratio, and the floors still clamp.
+  {
+    const ScopedWindowBasis window_basis(ctx);
+    g_window_size_test.apply_aspect = false;
+    g_window_size_test.width = 1280;
+    g_window_size_test.height = 800;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(g_window_size_test.done.load(), false);
+    ctx->Yield(3);
+    ImGuiWindow* map_r = MapRegionWindow();
+    ImGuiWindow* info_r = MapInfoRegionWindow();
+    IM_CHECK_RETV(map_r != nullptr && info_r != nullptr, false);
+    ctx->LogInfo("[D3] resized 1280x800: info %.0f, map %.0f", static_cast<double>(info_r->Size.x),
+                 static_cast<double>(map_r->Size.x));
+    IM_CHECK_RETV(fabsf(gui::g_state.analyze_raypath_view_info_ratio - clamped_ratio) < 1e-6f, false);
+    IM_CHECK_RETV(info_r->Size.x >= gui::UiPx(gui::kRaypathViewInfoMinSize) - 1.5f, false);
+    IM_CHECK_RETV(map_r->Size.x >= gui::UiPx(gui::kRaypathViewMapMinSize) - 1.5f, false);
+    // Close and reopen: the same process keeps the user's split (session memory).
+    gui::g_state.analyze_raypath_view_open = false;
+    ctx->Yield(2);
+    gui::g_state.analyze_raypath_view_open = true;
+    PinRaypathViewOnScreen(ctx);
+    ctx->Yield(2);
+    ImGuiWindow* map_o = MapRegionWindow();
+    ImGuiWindow* info_o = MapInfoRegionWindow();
+    IM_CHECK_RETV(map_o != nullptr && info_o != nullptr, false);
+    IM_CHECK_RETV(fabsf(info_o->Size.x - info_r->Size.x) < 2.0f, false);
+    IM_CHECK_RETV(fabsf(map_o->Size.x - map_r->Size.x) < 2.0f, false);
+    ctx->LogInfo("[D3] reopen keeps the split: info %.0f, map %.0f", static_cast<double>(info_o->Size.x),
+                 static_cast<double>(map_o->Size.x));
+    gui::g_state.analyze_raypath_view_open = false;
+    ctx->Yield(2);
+  }
+  return true;
+}
+
+// AC2's narrowest-window face (contract §11 R3): at 480x360 the split's floors hold, the
+// info region's rows wrap instead of clip (the λ track's 60 pt floor, the sky-point row's
+// ladder), the map's canvas keeps its code floor, and the state line stays readable. No
+// analysis needed: the empty-state region renders the same controls.
+bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
+  const auto window_active = [](const char* fragment) {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+        return true;
+      }
+    }
+    return false;
+  };
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  gui::g_state.analyze_raypath_view_open = true;
+  {
+    ImGuiWindow* win = ctx->GetWindowByRef("//Raypath view");
+    IM_CHECK_RETV(win != nullptr, false);
+    ImGui::SetWindowPos(win, ImVec2(8.0f, 60.0f), ImGuiCond_Always);
+    ImGui::SetWindowSize(win, ImVec2(480.0f, 360.0f), ImGuiCond_Always);
+    ctx->Yield(3);
+  }
+  IM_CHECK_RETV(window_active("Raypath view"), false);
+  ImGuiWindow* map = MapRegionWindow();
+  ImGuiWindow* info = MapInfoRegionWindow();
+  IM_CHECK_RETV(map != nullptr && info != nullptr, false);
+  ctx->LogInfo("[narrowest] at 480x360: map %.0fx%.0f, info %.0fx%.0f", static_cast<double>(map->Size.x),
+               static_cast<double>(map->Size.y), static_cast<double>(info->Size.x), static_cast<double>(info->Size.y));
+  // The floors: the info region at its floor, the map absorbing the rest (still above its own).
+  IM_CHECK_RETV(fabsf(info->Size.x - gui::UiPx(gui::kRaypathViewInfoMinSize)) < 2.0f, false);
+  IM_CHECK_RETV(map->Size.x >= gui::UiPx(gui::kRaypathViewMapMinSize) - 1.5f, false);
+  // The canvas keeps its code floor inside the map region.
+  const ImGuiTestItemInfo canvas = ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas.ID != 0, false);
+  ctx->LogInfo("[narrowest] canvas %.0f square", static_cast<double>(canvas.RectFull.GetWidth()));
+  IM_CHECK_RETV(canvas.RectFull.GetWidth() >= 64.0f, false);
+  // The info region's rows wrap instead of clip: the λ slider, the Set button and the state
+  // line all resolve inside the info region's clip (RectFull containment — a wrapped control
+  // that lost its tail would fail the Max edges).
+  const ImGuiTestItemInfo lambda_n = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(lambda_n.ID != 0, false);
+  IM_CHECK_RETV(lambda_n.RectFull.Max.x <= info->InnerClipRect.Max.x + 0.5f, false);
+  const ImGuiTestItemInfo set_n = ctx->ItemInfo("**/Set sky point###sky_set", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(set_n.ID != 0, false);
+  IM_CHECK_RETV(set_n.RectClipped.GetHeight() > 0.0f, false);
+  IM_CHECK_RETV(set_n.RectFull.Max.x <= info->InnerClipRect.Max.x + 0.5f, false);
+  // And the ladder answers: typed coordinates + Set at the narrow width.
+  ctx->SetRef("");
+  ctx->ItemInputValue("**/alt°##sky", 20.0f);
+  ctx->ItemInputValue("**/az°##sky", 90.0f);
+  ctx->ItemClick("**/Set sky point###sky_set");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  // The state line: readable — the map region's whole stack (state line + canvas) fits its
+  // height with no scroll, so no row is culled. (A text item carries no id and cannot be
+  // ItemInfo'd — the containment form is the stack's own zero-scroll.)
+  IM_CHECK_RETV(map->ScrollMax.y == 0.0f, false);
+  IM_CHECK_RETV(map->Scroll.y == 0.0f, false);
+  gui::g_state.analyze_raypath_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // AC2, first case: open -> Point -> click the preview -> the centre is the click's unprojection
   // -> Analyze -> the list is non-empty and its first row carries the largest energy.
@@ -5164,16 +5373,18 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.analyze_raypath_view_open = true;
       ctx->Yield(2);
       {
-        ImGuiWindow* map = MapRegionWindow();
-        IM_CHECK(map != nullptr);
+        // All the driven controls (inputs, Set, the view buttons) live in the INFO region since
+        // the D3 split — the containment's host is that child.
+        ImGuiWindow* info = MapInfoRegionWindow();
+        IM_CHECK(info != nullptr);
         const auto contained = [&](const ImGuiTestItemInfo& item) {
-          return item.RectFull.Min.x >= map->InnerClipRect.Min.x - 0.5f &&
-                 item.RectFull.Max.x <= map->InnerClipRect.Max.x + 0.5f &&
-                 item.RectFull.Min.y >= map->InnerClipRect.Min.y - 0.5f &&
-                 item.RectFull.Max.y <= map->InnerClipRect.Max.y + 0.5f;
+          return item.RectFull.Min.x >= info->InnerClipRect.Min.x - 0.5f &&
+                 item.RectFull.Max.x <= info->InnerClipRect.Max.x + 0.5f &&
+                 item.RectFull.Min.y >= info->InnerClipRect.Min.y - 0.5f &&
+                 item.RectFull.Max.y <= info->InnerClipRect.Max.y + 0.5f;
         };
         SetListRef(ctx);
-        ctx->SetRef("");  // root descent: the inputs live in the window's map region, not the list
+        ctx->SetRef("");  // root descent: the inputs live in the window's info region, not the list
         const ImGuiTestItemInfo alt_in = ctx->ItemInfo("**/alt°##sky", ImGuiTestOpFlags_NoError);
         IM_CHECK(alt_in.ID != 0);
         const ImGuiTestItemInfo az_in = ctx->ItemInfo("**/az°##sky", ImGuiTestOpFlags_NoError);
@@ -5184,9 +5395,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK(fit_btn.ID != 0);
         const ImGuiTestItemInfo full_sky_btn = ctx->ItemInfo("**/Full sky##map", ImGuiTestOpFlags_NoError);
         IM_CHECK(full_sky_btn.ID != 0);
-        ctx->LogInfo("[side-by-side] map w=%.0f, alt right %.0f, az right %.0f, set right %.0f, clip right %.0f",
-                     map->Size.x, alt_in.RectFull.Max.x, az_in.RectFull.Max.x, set_btn.RectFull.Max.x,
-                     map->InnerClipRect.Max.x);
+        ctx->LogInfo("[side-by-side] info w=%.0f, alt right %.0f, az right %.0f, set right %.0f, clip right %.0f",
+                     info->Size.x, alt_in.RectFull.Max.x, az_in.RectFull.Max.x, set_btn.RectFull.Max.x,
+                     info->InnerClipRect.Max.x);
         IM_CHECK(contained(alt_in));
         IM_CHECK(contained(az_in));
         IM_CHECK(contained(set_btn));
@@ -5523,7 +5734,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         // a typed sky point and whatever map state the selection drives, waiting or
         // completed — the tail renders below both): the Clear sits RectFull inside the map
         // region — the state whose overflow the r2 review's probe measured.
-        ImGuiWindow* map_sf = MapRegionWindow();
+        ImGuiWindow* map_sf = MapInfoRegionWindow();
         IM_CHECK(map_sf != nullptr);
         const ImGuiTestItemInfo clear_sf = ctx->ItemInfo("**/Clear##sky", ImGuiTestOpFlags_NoError);
         IM_CHECK(clear_sf.ID != 0);
@@ -5675,6 +5886,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "raypath_view_open_is_display_state");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(RaypathViewOpenIsDisplayState(ctx)); };
+  }
+
+  // AC2's D3 face: the window's own split is manual, floored, resize-following and
+  // session-persistent (contract §4.2, §9.3).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "raypath_view_split_is_manual_and_floored");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(RaypathViewSplitIsManualAndFloored(ctx)); };
+  }
+
+  // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip
+  // (contract §11 R3).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "raypath_view_narrowest_window_keeps_controls_reachable");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(RaypathViewNarrowestWindowKeepsControlsReachable(ctx)); };
   }
 
   // AC2, second case: a render in progress keeps Analyze shut, and the other direction — an

@@ -1077,27 +1077,45 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapViewState& view, const SkyPoint
 }  // namespace
 
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
-  // The region scrolls: at the compressed tiers' narrowest widths the wrapped header plus this
-  // tail exceed any handed height, and a never-scrolling child made the tail's tail controls
-  // unreachable from every scroll that bounds them (the host band's slice translates both
-  // sides together). The degradation ladder's own rung — internal scroll — is the only
-  // mechanism whose reach does not depend on measuring the content that decides the measure's
-  // own visibility.
+  // D3 — the reference-map | info split (contract §4.2), drawn by this function: the window's
+  // content area splits into the LEFT region (the raster, its gestures and its state line,
+  // under the region's own name ##AnalyzeRaypathView) and the RIGHT region (the wavelength,
+  // the view buttons, the caliber block, the sky-point input and the legend — its own child,
+  // ##AnalyzeRaypathInfo, native wheel scroll), with the draggable strip between. The stored
+  // ratio is the split's identity (manual priority, §9.3 — no query result or selection ever
+  // writes it); the frame derives pixels and clamps them at the two floors: ① the info region
+  // stops at its floor and the map absorbs the rest, ② the map stops at its floor and both
+  // pin, ③ — only when both floors cannot fit — the floors share the span proportionally and
+  // the regions' internal scrolls take over (the map's manual route, the info's native wheel).
+  const float style_spacing_x = ImGui::GetStyle().ItemSpacing.x;
+  const float splitter_w = UiPx(kAnalyzeSplitterSize);
+  const float avail_w = std::max(0.0f, size.x);
+  const float map_floor = UiPx(kRaypathViewMapMinSize);
+  const float info_floor = UiPx(kRaypathViewInfoMinSize);
+  float info_w = state.analyze_raypath_view_info_ratio * std::max(0.0f, avail_w - splitter_w);
+  if (avail_w >= map_floor + info_floor + splitter_w) {
+    info_w = std::clamp(info_w, info_floor, avail_w - splitter_w - map_floor);
+  } else {
+    info_w = std::max(0.0f, (avail_w - splitter_w) * (info_floor / (info_floor + map_floor)));
+  }
+  const float map_w = std::max(0.0f, avail_w - splitter_w - info_w);
+
   // Wheel ownership is arbitrated by CLAIMING the wheel key for the whole time the pointer is
-  // over this region — not by the child flag alone. The flag only removes this child from the
-  // native dispatch, and ImGui's wheeling-window resolution then bubbles the same event
-  // straight up the parent chain: the host band scrolled natively while the gestures below
-  // zoomed off the very same wheel — the double consumption had just moved up a level (the
-  // native dispatch runs in NewFrame, before any rendering, so nothing set during rendering
-  // of the same frame can stop it). The claim is what the dispatch reads — and the CONSUME
-  // side is gated on the claim standing at the frame's START: on the takeover frame (the
-  // band scrolled this cell under a stationary pointer) no claim was standing yet, the
-  // dispatch has already spent the event on the band, and the gestures must not spend it
-  // again. The rule and its transition cases live in analyze_region_wheel.hpp (the 3D orbit
-  // is the other claimant). The wheel never chains from this cell to the band, even at the
-  // region's scroll limit. NoScrollWithMouse stays as the region's own guard: its scroll
-  // path is the manual route, nothing else.
-  ImGui::BeginChild("##AnalyzeRaypathView", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
+  // over the map region — not by the child flag alone. The flag only removes this child from
+  // the native dispatch, and ImGui's wheeling-window resolution then bubbles the same event
+  // up the parent chain: the host window scrolled natively while the gestures below zoomed
+  // off the very same wheel — the double consumption had just moved up a level (the native
+  // dispatch runs in NewFrame, before any rendering, so nothing set during rendering of the
+  // same frame can stop it). The claim is what the dispatch reads — and the CONSUME side is
+  // gated on the claim standing at the frame's START: on the takeover frame (the host
+  // scrolled this region under a stationary pointer) no claim was standing yet, the dispatch
+  // has already spent the event, and the gestures must not spend it again. The rule and its
+  // transition cases live in analyze_region_wheel.hpp (the 3D orbit is the other claimant).
+  // NoScrollWithMouse stays as the map region's own guard: its scroll path is the manual
+  // route, nothing else. The info region takes the wheel natively — it registers no claim, so
+  // the same event scrolls it when the pointer is over it.
+  ImGui::BeginChild("##AnalyzeRaypathView", ImVec2(map_w, size.y), ImGuiChildFlags_Borders,
+                    ImGuiWindowFlags_NoScrollWithMouse);
   const bool wheel_standing = AnalyzeRegionWheelStanding();
   AnalyzeRegionWheelClaim(ImGui::IsWindowHovered(), AnalyzeMapWheelOwnerId());
   MapQuerySession& map = state.analysis.map;
@@ -1106,139 +1124,40 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   const double now_s = ImGui::GetTime();
   bool gesture_this_frame = false;
 
-  // The header row: title, overlay toggle (pure render state — ImGui storage, R10), the
-  // wavelength control, and the two view buttons. SameLine is a judgment here, not a default:
-  // every successor joins the line only while it still fits — the stacked band form can be
-  // narrower than this row's full extent (the main view's ③ split), and a clipped toggle or
-  // slider is an unreachable control exactly where the map exists (the contract's
-  // content-adaptation default: wrap, don't clip).
-  // The judgment reads the LAST ITEM's right edge against the content region's right edge: after
-  // ItemSize commits a widget the cursor drops to the next line, so
-  // GetContentRegionAvail().x there would report the whole fresh line's width and every check
-  // would pass while the SameLine it guards still overflows.
+  // The header/state rows' join judgment, shared by both regions (the lambda reads the
+  // CURRENT window's layout at call time). SameLine is a judgment here, not a default: every
+  // successor joins the line only while it still fits — a clipped toggle or slider is an
+  // unreachable control exactly where the control exists (the contract's content-adaptation
+  // default: wrap, don't clip). The judgment reads the LAST ITEM's right edge against the
+  // content region's right edge: after ItemSize commits a widget the cursor drops to the next
+  // line, so GetContentRegionAvail().x there would report the whole fresh line's width and
+  // every check would pass while the SameLine it guards still overflows.
   const auto fits_on_line = [&](float next_w) {
     const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
     return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
   };
-  // The sky-point tail's measured height — the canvas budget and the elastic caliber panel
-  // both give back exactly this, one frame late (the ##analysis_head pattern; see the tail's
-  // measurement at the bottom of this region).
-  static float sky_tail_cache = 0.0f;  // the map region renders once per frame; single instance
-  if (sky_tail_cache <= 0.0f) {
-    // The first frame's honest default: the tail's un-wrapped shape (one row per element).
-    const ImGuiStyle& style0 = ImGui::GetStyle();
-    sky_tail_cache = style0.ItemSpacing.y * 3.0f + 1.0f + ImGui::GetFrameHeight() + ImGui::GetTextLineHeight() +
-                     ImGui::GetFrameHeightWithSpacing();
-  }
   // The header row opens with the overlay toggle — the window's own title carries the name
   // this row's old text label repeated. The toggle is the row's FIRST item, so it takes a fresh
   // line by construction (the fits_on_line judgment reads the LAST item's rect; with no
   // predecessor there is nothing to join — its old guard here would have read whatever widget
   // the parent window submitted before this child, a stale rect from outside the region).
-  // The wavelength and the view buttons join it only while they still fit — the judgment is
-  // the same content-adaptation default as before the move (wrap, don't clip).
   ImGuiStorage* storage = ImGui::GetStateStorage();
   const ImGuiID overlay_key = ImGui::GetID("overlays");
   bool overlays = storage->GetBool(overlay_key, true);
   if (ImGui::Checkbox("Overlays##map", &overlays)) {
     storage->SetBool(overlay_key, overlays);
   }
-  // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
-  // float shows the effective value either way; editing it asks the explicit wavelength — a key
-  // change the pump turns into a new request (the engine has no warm map: every lambda is a
-  // real re-evaluation). Its SameLine is the judgment below — no unconditional SameLine sits
-  // before it (a leftover join would void the judgment and clip the slider at the ③ widths).
-  float lambda_scratch = 550.0f;
-  if (map.adopted_result != nullptr) {
-    LUMICE_PathMapInfo info{};
-    info.struct_size = sizeof(info);
-    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK) {
-      lambda_scratch = static_cast<float>(info.wavelength_nm);
-    }
-  }
-  if (state.analysis.map_wavelength_nm > 0.0) {
-    lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
-  }
-  const float lambda_w = UiPx(140.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("λ").x;
-  const bool lambda_same_line = fits_on_line(lambda_w);
-  if (lambda_same_line) {
-    ImGui::SameLine();
-  }
-  // The wrapped case re-spends the FRESH line's whole width (the cursor is already on it — this
-  // read is the honest measure here, unlike a same-line judgment after ItemSize): the track
-  // shrinks so slider + its trailing label stay inside the cell. A fixed 140 pt track ends past
-  // the clip at the narrowest legal cells (the ③ split under 2x scale leaves ~90 pt for this
-  // row), and this child never scrolls, so the clipped end was an unreachable control. The
-  // 60 pt floor sits below every legal width's remainder (the probed floor case leaves ~76 pt
-  // for the row) while keeping a usable track.
-  float lambda_track = UiPx(140.0f);
-  if (!lambda_same_line) {
-    lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("λ").x -
-                                              ImGui::GetStyle().ItemInnerSpacing.x);
-    lambda_track = std::max(lambda_track, UiPx(60.0f));
-  }
-  ImGui::SetNextItemWidth(lambda_track);
-  if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
-    state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
-  }
-  if (state.analysis.map_wavelength_nm > 0.0 && ImGui::SmallButton("reference##map_lambda")) {
-    state.analysis.map_wavelength_nm = 0.0;
-  } else if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
-    // Info text wraps, never clips: the fresh-line fallback below this row's slider can itself be
-    // wider than the cell at the ③ split.
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("(the engine-chosen reference until a map echoes it)");
-    ImGui::PopStyleColor();
-  }
-  // The view buttons follow the wavelength on one line only while the row can hold them — the
-  // side-by-side band cell is as wide as its content floor, and the completed state's header
-  // (title, overlays, the slider, both buttons) is wider than that; a clipped view button makes
-  // the map unsteerable exactly where the map exists, so the buttons wrap onto their own line
-  // instead. The judgment is `fits_on_line` above.
-  const float style_spacing_x = ImGui::GetStyle().ItemSpacing.x;
-  const float fit_w = ImGui::CalcTextSize("Fit##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  const float full_sky_w = ImGui::CalcTextSize("Full sky##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  if (fits_on_line(fit_w + style_spacing_x + full_sky_w)) {
-    ImGui::SameLine();
-  }
-  if (ImGui::SmallButton("Fit##map")) {
-    if (map.adopted_result != nullptr) {
-      LUMICE_PathMapInfo info{};
-      info.struct_size = sizeof(info);
-      LUMICE_PathMapPixels pixels{};
-      pixels.struct_size = sizeof(pixels);
-      if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK &&
-          LUMICE_PathMapGetPixels(map.adopted_result.get(), &pixels) == LUMICE_PATH_READ_OK) {
-        const MapFitResult fit = FitMapViewFromPixels(pixels, info);
-        if (fit.ok) {
-          for (int k = 0; k < 3; ++k) {
-            view.centre_pos[k] = fit.centre_pos[k];
-          }
-          view.radius_deg = fit.radius_deg;
-          MapViewChanged(&view, now_s, false, /*user_steered=*/true);
-        }
-      }
-    }
-  }
-  if (fits_on_line(full_sky_w)) {
-    ImGui::SameLine();
-  }
-  if (ImGui::SmallButton("Full sky##map")) {
-    view.centre_pos[0] = 0.0f;
-    view.centre_pos[1] = 0.0f;
-    view.centre_pos[2] = 1.0f;
-    view.radius_deg = kMapFullSkyRadiusDeg;
-    MapViewChanged(&view, now_s, false, /*user_steered=*/true);
-  }
 
-  // The state line (the four visible states + the two supersession notes).
+  // The state line (the four visible states + the two supersession notes). It reads the
+  // picture's own query state, so it stays with the picture; the controls it names — the
+  // wavelength, the view buttons, the sky-point input — live in the info region beside it.
   const MapQueryState st = MapQueryStateFor(map);
   const bool refining = MapRefiningFor(map);
   if (st == MapQueryState::kNoSelection) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
-        "Select a class in the share list; its reference map takes this window. The sky-point input "
-        "below works without a map.");
+        "Select a class in the share list; its reference map takes this region. The sky-point input in the "
+        "info panel beside it works without a map.");
     ImGui::PopStyleColor();
   } else if (st == MapQueryState::kCancelled) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
@@ -1274,23 +1193,15 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
 
   // The picture: a square that fits the region, an invisible button over it carrying the
-  // gestures, the raster drawn first, the anchors and overlays over it.
-  const float avail_w = ImGui::GetContentRegionAvail().x;
-  const float avail_h = ImGui::GetContentRegionAvail().y;
-  // The picture takes a bounded share of the region so the header, the state line, the readout,
-  // the caliber block and the point input all stay on the region's own budget even at the
-  // acceptance-minimum window — a scrolled-out header is an unreachable one. The budget is the
-  // space AFTER the sky-point tail's measured height, in EVERY state: the tail (separator,
-  // input row, wrapped status, Clear) renders below whether or not a map was adopted, and the
-  // old 52%-of-everything share clipped the Clear button exactly in the no-caliber states
-  // (waiting for the first map, no selection). The degradation ladder's "press the graphics
-  // floor" rung: the 64 px retention holds inside the post-tail budget, yields toward 24 px
-  // when the budget itself shrinks below it, and the tail wins the budget before the picture
-  // does; where the budget cannot hold the wrapped bulk above the tail, the region's own
-  // scroll carries the overflow (the wheel route above).
-  const float canvas_v_budget = std::max(0.0f, avail_h - sky_tail_cache);
-  const float pic_share_v = std::min(canvas_v_budget, std::max(64.0f, canvas_v_budget * 0.52f));
-  const float pic_px = std::max(24.0f, std::min(avail_w, pic_share_v));
+  // gestures, the raster drawn first, the anchors and overlays over it. The region holds
+  // nothing below the canvas any more (the wavelength, the caliber block and the sky-point
+  // input live in the info region), so the square takes the whole remaining height — capped by
+  // the width, floored where the region itself is tiny. The old 52% share and the tail's
+  // measured reserve retired with the tail's move: the reserve existed to keep the tail's
+  // controls on the region's own budget, and that budget is the info region's now.
+  const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
+  const float canvas_avail_h = ImGui::GetContentRegionAvail().y;
+  const float pic_px = std::max(24.0f, std::min(canvas_avail_w, canvas_avail_h));
   const ImVec2 pic_min = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##map_canvas", ImVec2(pic_px, pic_px));
   const bool canvas_hovered = ImGui::IsItemHovered();
@@ -1460,6 +1371,128 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
 
+  ImGui::EndChild();  // ##AnalyzeRaypathView — the map region
+
+  // ---- D3: the draggable strip between the two regions (contract §4.2) ----
+  // The same recipe the workspace splitters run (invisible button + hover/active line +
+  // delta-only write from the displayed boundary): the drag moves the stored ratio, the layout
+  // re-derives the pixels each frame and clamps them at the floors, so restoring the window
+  // size restores the split. Dragging right widens the map (the info region's share shrinks),
+  // matching D1's direction convention.
+  {
+    const float strip_h = size.y;
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::InvisibleButton("##RaypathViewSplitter", ImVec2(splitter_w, strip_h));
+    const bool strip_hovered = ImGui::IsItemHovered();
+    const bool strip_active = ImGui::IsItemActive();
+    const float mouse_dx = ImGui::GetIO().MouseDelta.x;
+    if (strip_active && mouse_dx != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+      // Delta from the displayed boundary (the clamped split), never from the raw stored
+      // value: at a window whose layout is clamped away from the stored ratio the two differ,
+      // and a raw write spends the first stretch of the drag crawling through the clamp band.
+      const float shown_info_w = std::clamp(info_w, info_floor, std::max(info_floor, avail_w - splitter_w - map_floor));
+      const float new_info_w =
+          std::clamp(shown_info_w - mouse_dx, info_floor, std::max(info_floor, avail_w - splitter_w - map_floor));
+      state.analyze_raypath_view_info_ratio = new_info_w / std::max(1.0f, avail_w - splitter_w);
+    }
+    if (strip_hovered || strip_active) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    }
+    const ImU32 strip_col = ImGui::GetColorU32(strip_active  ? ImGuiCol_SeparatorActive :
+                                               strip_hovered ? ImGuiCol_SeparatorHovered :
+                                                               ImGuiCol_Separator);
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(ImGui::GetItemRectMin().x + splitter_w * 0.5f, ImGui::GetItemRectMin().y),
+        ImVec2(ImGui::GetItemRectMin().x + splitter_w * 0.5f, ImGui::GetItemRectMax().y), strip_col, 1.0f);
+    ImGui::SameLine(0.0f, 0.0f);
+  }
+
+  // ---- The info region: the picture's companion facts (contract §6's right side) ----
+  // The wavelength, the two view buttons, the caliber block, the sky-point input and (Step 4)
+  // the legend. It scrolls natively: the wheel over it is not claimed by any region, so
+  // ImGui's own dispatch scrolls it — the reach whose existence does not depend on measuring
+  // the content that decides the measure (the same ladder rung the old single-column region
+  // reached through its manual route).
+  ImGui::BeginChild("##AnalyzeRaypathInfo", ImVec2(info_w, size.y), ImGuiChildFlags_Borders);
+  // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
+  // float shows the effective value either way; editing it asks the explicit wavelength — a key
+  // change the pump turns into a new request (the engine has no warm map: every lambda is a
+  // real re-evaluation).
+  float lambda_scratch = 550.0f;
+  if (map.adopted_result != nullptr) {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK) {
+      lambda_scratch = static_cast<float>(info.wavelength_nm);
+    }
+  }
+  if (state.analysis.map_wavelength_nm > 0.0) {
+    lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
+  }
+  const float lambda_w = UiPx(140.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("λ").x;
+  const bool lambda_same_line = fits_on_line(lambda_w);
+  if (lambda_same_line) {
+    ImGui::SameLine();
+  }
+  // The wrapped case re-spends the FRESH line's whole width: the track shrinks so slider plus
+  // its trailing label stay inside the region. The 60 pt floor keeps a usable track at every
+  // width the info floor can produce; this child scrolls, so even the wrapped fallback stays
+  // reachable.
+  float lambda_track = UiPx(140.0f);
+  if (!lambda_same_line) {
+    lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("λ").x -
+                                              ImGui::GetStyle().ItemInnerSpacing.x);
+    lambda_track = std::max(lambda_track, UiPx(60.0f));
+  }
+  ImGui::SetNextItemWidth(lambda_track);
+  if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
+    state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
+  }
+  if (state.analysis.map_wavelength_nm > 0.0 && ImGui::SmallButton("reference##map_lambda")) {
+    state.analysis.map_wavelength_nm = 0.0;
+  } else if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("(the engine-chosen reference until a map echoes it)");
+    ImGui::PopStyleColor();
+  }
+  // The view buttons: the map's two steering verbs, beside the wavelength they steer with.
+  // The row joins only while it fits — the info floor's narrowest width wraps them onto their
+  // own line rather than clip a view button.
+  const float fit_w = ImGui::CalcTextSize("Fit##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const float full_sky_w = ImGui::CalcTextSize("Full sky##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  if (fits_on_line(fit_w + style_spacing_x + full_sky_w)) {
+    ImGui::SameLine();
+  }
+  if (ImGui::SmallButton("Fit##map")) {
+    if (map.adopted_result != nullptr) {
+      LUMICE_PathMapInfo info{};
+      info.struct_size = sizeof(info);
+      LUMICE_PathMapPixels pixels{};
+      pixels.struct_size = sizeof(pixels);
+      if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK &&
+          LUMICE_PathMapGetPixels(map.adopted_result.get(), &pixels) == LUMICE_PATH_READ_OK) {
+        const MapFitResult fit = FitMapViewFromPixels(pixels, info);
+        if (fit.ok) {
+          for (int k = 0; k < 3; ++k) {
+            view.centre_pos[k] = fit.centre_pos[k];
+          }
+          view.radius_deg = fit.radius_deg;
+          MapViewChanged(&view, now_s, false, /*user_steered=*/true);
+        }
+      }
+    }
+  }
+  if (fits_on_line(full_sky_w)) {
+    ImGui::SameLine();
+  }
+  if (ImGui::SmallButton("Full sky##map")) {
+    view.centre_pos[0] = 0.0f;
+    view.centre_pos[1] = 0.0f;
+    view.centre_pos[2] = 1.0f;
+    view.radius_deg = kMapFullSkyRadiusDeg;
+    MapViewChanged(&view, now_s, false, /*user_steered=*/true);
+  }
+
   // The caliber block: every fact read back through the result's own readers into the pure
   // composer (the unit layer holds it to the readback), then drawn (AC1).
   if (map.adopted_result != nullptr && have_anchor_info) {
@@ -1505,7 +1538,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
-  const float sky_tail_top_y = ImGui::GetCursorPosY();
   ImGui::Separator();
   ImGuiStorage* sky_storage = ImGui::GetStateStorage();
   const ImGuiID alt_key = ImGui::GetID("sky_input_alt");
@@ -1601,9 +1633,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       intent = SkyPointIntent{};
     }
   }
-  sky_tail_cache = ImGui::GetCursorPosY() - sky_tail_top_y;
 
-  ImGui::EndChild();
+  // The legend's section head (Step 4 fills the entries — one row per category the frame
+  // actually drew, each with its one-line meaning). The placeholder is honest: a heading with
+  // no rows under it is the categories-absent state, not a fake row.
+  ImGui::Separator();
+  ImGui::TextDisabled("Legend");
+
+  ImGui::EndChild();  // ##AnalyzeRaypathInfo — the info region
 }
 
 void RenderAnalyzeRaypathViewWindow(GuiState& state) {

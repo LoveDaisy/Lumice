@@ -110,6 +110,16 @@ constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
 // window took in 755.4.)
 constexpr float kAnalyzeDepthGlobeMinSize = 250.0f;
 constexpr float kAnalyzeDepth3DMinSize = 240.0f;
+
+// D3 — the Raypath view window's reference-map | info split (contract §4.2, the window's own
+// splitter). The floors are the contract's suggested values with the rendering-level duty
+// this window's implementation piece owns: the info region's floor keeps the λ track plus the
+// wrapped sky-point row's wrap ladder alive (the input row may wrap rather than clip), and the
+// map region's floor keeps the square canvas at the code floor it already had in the band
+// (64 px) with headroom — below that the ③ proportional fallback shares the span and both
+// regions take their internal scrolls.
+constexpr float kRaypathViewInfoMinSize = 200.0f;
+constexpr float kRaypathViewMapMinSize = 160.0f;
 // The split strips' thickness (##AnalyzeRowsDivider's 8 pt recipe, shared by the two new strips).
 constexpr float kAnalyzeSplitterSize = 8.0f;
 // The depth band's side-by-side form also needs vertical room: below this band height the

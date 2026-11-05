@@ -233,11 +233,14 @@ std::vector<std::string> MapCaliberLines(const MapCaliberInput& in);
 // Writes only state.analysis's map fields and the executor; no widget, no document field.
 void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s);
 
-// The Raypath view window's left region — formerly the depth band's map cell (755.4 moved the
-// whole capability into the window in one piece). Draws the state around the picture (the
-// raster itself is the .cpp's cached GL texture), hosts the gestures, the overlays, the
-// coordinate input and the caliber line. The region's own child keeps the name
-// ##AnalyzeRaypathView; its parent is the window, not the band.
+// The Raypath view window's body — formerly the depth band's map cell (755.4 moved the whole
+// capability into the window in one piece). Draws the D3 split (contract §4.2): the LEFT
+// region (the raster, its gestures and the query's state line, under the region's own name
+// ##AnalyzeRaypathView — the tests' anchor) and the RIGHT info region (##AnalyzeRaypathInfo:
+// the wavelength, the view buttons, the caliber block, the sky-point input, the legend), with
+// the draggable strip between writing the session ratio
+// GuiState::analyze_raypath_view_info_ratio. The raster itself is the .cpp's cached GL
+// texture; the overlays, the cursor readout and the coordinate input live with their halves.
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
 
 // The Raypath view floating window (doc/gui/analyze-interaction-contract.md §6): the non-modal

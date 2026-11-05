@@ -1955,6 +1955,16 @@ struct GuiState {
   // The window's own geometry (size, position, the D3 split) is ImGui window storage: session
   // memory inside the process, outside GuiState entirely.
   bool analyze_raypath_view_open = false;
+  // D3 — the Raypath view window's reference-map | info split (contract §4.2): the INFO
+  // region's share of the window's content width, what the window's own splitter drags. Ratio
+  // semantics like the workspace splitters (AnalyzeWorkspaceSession's fields): the split's
+  // identity, not a pixel width — the frame derives pixels and clamps them at the two floors
+  // (the info floor and the map floor, gui_constants.hpp), while the stored value changes only
+  // by dragging. No query result, selection change or content change ever writes it (manual
+  // priority, §9.3). Session tier like the open flag above: never persisted; DoNew resets it
+  // with the whole GuiState; Open/Revert keep it. The window stores it here (not in ImGui
+  // storage) so the tier table carries one row for the window's session state.
+  float analyze_raypath_view_info_ratio = 0.30f;
 
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the
