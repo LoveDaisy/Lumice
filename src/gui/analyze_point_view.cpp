@@ -970,12 +970,19 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   SunGlobeProjector projector;
   const bool have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
 
-  // The canvas: a square disk sized to the child's remaining height above the control rows —
-  // now just the weight bar and the slider/play row (the weight note and the sample readout
-  // live in the state area, R4).
+  // The canvas yields LAST: the fixed stack below it (the weight bar and the slider/play row,
+  // ≈48 pt with their spacings) and the state area's minimum viewport (≈64 pt — a few wrapped
+  // lines worth of scroll) are budgeted FIRST, and the canvas takes what remains. The
+  // two-segment form is the contract at every cell that can hold stack + state viewport + the
+  // 60 px canvas floor; only a cell genuinely too short for that budget — below what the canvas
+  // floor can coexist with — degrades to the whole-region scroll (the ladder's last rung, the
+  // exceptional shape, not the ordinary form: the first cut budgeted only the 48 pt and let the
+  // canvas swallow the state viewport at ordinary sizes, scrolling the fixed stack away under
+  // every scroll of the state lines).
   const float controls_px = UiPx(48.0f);
+  const float state_min_px = UiPx(64.0f);
   const ImVec2 avail = ImGui::GetContentRegionAvail();
-  const float side = std::max(UiPx(kPoseViewGlobeCanvasFloor), std::min(avail.x, avail.y - controls_px));
+  const float side = std::max(UiPx(kPoseViewGlobeCanvasFloor), std::min(avail.x, avail.y - controls_px - state_min_px));
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##globe_canvas", ImVec2(side, side));

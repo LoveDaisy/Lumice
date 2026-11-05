@@ -134,13 +134,16 @@ constexpr float kPoseViewMinHeight = 420.0f;
 constexpr float kPoseViewRightFloor = 220.0f;
 constexpr float kPoseViewLeftFloor = 240.0f;
 // D5 — the right column's vertical floors: the globe region keeps its fixed interaction stack
-// (the region's own two-segment form's constant part — title + toggle + combo + the canvas at
-// its 60 px code floor + the weight bar + the slider/play row, ≈137 pt per contract §11 R4,
-// plus the child's padding); the factors region keeps its title plus two wrapped rows (§11 R5).
-// When the two floors cannot share the column, the ③ proportional fallback applies (the
-// workspace splitters' rule); below the globe floor the region's own scroll is the
-// reachability path.
-constexpr float kPoseViewGlobeFloor = 150.0f;
+// (the region's own two-segment form's constant part — title + toggle (its wrapped over-width
+// form) + the component combo + the canvas at its 60 px code floor + the weight bar + the
+// slider/play row, worst case ≈195 pt at 1x measured against the Roboto Medium 15px theme with
+// a live-layout probe, plus the child's padding); the factors region keeps its title plus two
+// wrapped rows (§11 R5). The
+// globe floor is what keeps the FIXED STACK fully visible at the D5 drag floor — a cell at the
+// floor can still hold stack + a bounded (scrolling) state area; the whole-region-scroll
+// degradation lives below the floors' reach, not at them. When the two floors cannot share the
+// column, the ③ proportional fallback applies (the workspace splitters' rule).
+constexpr float kPoseViewGlobeFloor = 200.0f;
 constexpr float kPoseViewFactorsFloor = 70.0f;
 // The globe region's canvas floor (the region's own code floor, now named for the region's
 // canvas-sizing judgment to consume).

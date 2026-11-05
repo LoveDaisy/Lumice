@@ -5421,15 +5421,29 @@ bool PoseViewPumpAdoptsWithEveryWindowClosed(ImGuiTestContext* ctx) {
   gui::g_state.analyze_raypath_view_open = false;
   gui::g_state.analyze_pose_view_open = false;
   SetSkyPointTarget(42.0, 0.0);
-  // The arm wait accepts ANY standing intent (kWaiting or an already-answered state — a fast
-  // machine can complete the whole query inside the first checked frames); the id captured here
-  // is the one the completion must answer.
+  // The arm wait accepts ANY standing intent — then the premise is TIGHTENED: the leg's claim
+  // is "an IN-FLIGHT query completes while both windows are closed in Render", so a fast
+  // machine that already completed it re-arms with a different sky point until the query is
+  // verifiably still computing at the switch (a completed-before-switch run would pass with the
+  // face-less pump removed — the vacuous form the review flagged).
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kNoIntent; },
           30),
       false);
+  {
+    double alt = 42.0;
+    for (int attempt = 0;
+         attempt < 6 && gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kWaiting;
+         ++attempt) {
+      alt = alt == 42.0 ? 43.0 : 42.0;
+      SetSkyPointTarget(alt, 0.0);
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kWaiting, false);
+  }
   const auto waiting_intent = gui::g_state.analysis.point.intent_id;
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == nullptr, false);  // in flight, nothing adopted yet
   // Switch to Render with both windows closed: the query keeps running and — the pump's AC —
   // its completion adopts here, away from every analysis face.
   ctx->ItemClick("##TopBar/Render");
@@ -5725,19 +5739,55 @@ bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   ctx->LogInfo("[pose multiwindow] D5 drag wrote its ratio; the sky point stood");
 
-  // The Entry Edit modal joins: opened over both floating windows, its own control writes its
-  // field, and the two windows' states stand untouched by it.
+  // The Entry Edit modal joins (HARD precondition — the review's no-silent-skip rule: an editor
+  // that fails to open fails this case, it does not shrink the claim). The row label is the
+  // product's own derivation (RenderCrystalList's), not a hardcoded guess. The edit goes
+  // through the modal's real input and OK commit, verified on the document field, then reverted
+  // the same way — the two floating windows and their states stand untouched throughout.
   const float sun_alt_before = gui::g_state.sun.altitude;
+  const std::string& first_name =
+      gui::g_state.crystals[static_cast<size_t>(gui::g_state.layers[0].entries[0].crystal_id)].name;
+  // The row's label carries the entry's own name, which this leg's own edit changes, so the
+  // address is re-derived from the live state at every click instead of cached.
+  const auto crystal_row_ref = [] {
+    const std::string& nm =
+        gui::g_state.crystals[static_cast<size_t>(gui::g_state.layers[0].entries[0].crystal_id)].name;
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "Layer %d, entry %d: %s##crys_0_0", gui::DisplayLayerNumber(0),
+                  gui::DisplayEntryNumber(0), nm.empty() ? "Crystal" : nm.c_str());
+    return std::string("**/") + buf;
+  };
   ctx->SetRef("");
-  ctx->ItemClick("**/Layer 1, entry 1: Crystal##crys_0_0");
+  ctx->ItemClick(crystal_row_ref().c_str());
+  IM_CHECK_RETV(DriveUntil(
+                    ctx, [ctx] { return ctx->ItemInfo("**/##crystal_name", ImGuiTestOpFlags_NoError).ID != 0; }, 20),
+                false);  // the editor DID open over both windows
+  ctx->LogInfo("[pose multiwindow] entry editor opened over both windows");
+  const std::string probe_name = "PoseEditProbe";
+  ctx->ItemInputValue("**/##crystal_name", probe_name.c_str());
+  ctx->Yield(2);
+  ctx->Yield(2);
+  ctx->ItemClick("**/Close##edit_modal");
   ctx->Yield(3);
-  const bool edit_open = ctx->ItemExists("**/Entry");
-  if (edit_open) {
-    ctx->LogInfo("[pose multiwindow] entry editor opened over both windows");
-    // Close it the way the user does (its own close control), leaving both windows standing.
-    ctx->KeyPress(ImGuiKey_Escape);
-    ctx->Yield(2);
-  }
+  const int probe_crystal = gui::g_state.layers[0].entries[0].crystal_id;
+  IM_CHECK_RETV(gui::g_state.crystals[static_cast<size_t>(probe_crystal)].name == probe_name, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##crystal_name", ImGuiTestOpFlags_NoError).ID == 0, false);  // the modal closed
+  ctx->LogInfo("[pose multiwindow] the modal's edit landed on the document field and the modal closed");
+
+  // Revert through the same modal path: the chain leaves the document as it found it (the row
+  // address re-derived — the committed probe name is part of it now).
+  ctx->SetRef("");
+  ctx->ItemClick(crystal_row_ref().c_str());
+  IM_CHECK_RETV(DriveUntil(
+                    ctx, [ctx] { return ctx->ItemInfo("**/##crystal_name", ImGuiTestOpFlags_NoError).ID != 0; }, 20),
+                false);
+  ctx->ItemInputValue("**/##crystal_name", first_name.c_str());
+  ctx->Yield(2);
+  ctx->ItemClick("**/Close##edit_modal");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.crystals[static_cast<size_t>(probe_crystal)].name == first_name, false);
+  ctx->SetRef("");
+
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
@@ -5753,7 +5803,7 @@ bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
 // ⑨ — the non-zero OS coordinate face: the pose window parked at a non-origin position opens,
 // closes, re-renders and answers a real click at the moved geometry (the origin-sensitivity
 // family's translation probe, the pose window's own leg).
-bool PoseViewOperatesAtANonZeroOrigin(ImGuiTestContext* ctx) {
+bool PoseViewOperatesAtAMovedWindowOrigin(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
@@ -6506,8 +6556,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewJoinsAMultiWindowRealMouseChain(ctx)); };
   }
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_operates_at_a_non_zero_origin");
-    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOperatesAtANonZeroOrigin(ctx)); };
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_operates_at_a_moved_window_origin");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOperatesAtAMovedWindowOrigin(ctx)); };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip
