@@ -41,13 +41,11 @@ class SurveyExecutor;
 
 // The background queries' frame pumps — survey, map, point, ray — as ONE shared entry: drain
 // finished outcomes through the adoption gates, then reconcile each intent against its live
-// inputs. Called by the Analyze workspace's frame entry, and — since the Raypath view window
-// (analyze_map_view.hpp) took the map face out of the band — by that window's own frames in
-// the Render workspace, where it is the only analysis face rendering (the cross-face stance:
-// the pumps run on any frame an analysis face draws; the window keeps following the current
-// selection, view and lambda while it floats). Per-frame idempotent: a drain clears its slot,
-// a key-match re-asks nothing, so the Analyze-mode frame's own entry call and the window's
-// overlap harmlessly.
+// inputs. Called once per GUI frame at RenderWorkspacePanels' entry (755.5): both workspaces'
+// frames pump, and so does every face-less frame (Render mode with both analysis windows
+// closed) — an in-flight query's completion adopts regardless of which window is on screen;
+// the pump's window-independence is the AC, not an optimization. Per-frame idempotent: a drain
+// clears its slot, a key-match re-asks nothing.
 void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s);
 
 // The Analyze workspace's frame layout. `window` is the host GLFW window (unused by the

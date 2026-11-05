@@ -686,25 +686,23 @@ void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s)
 }
 
 void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height) {
-  // The background queries' frame pumps (742.3 R6, the map face added by 742.5): drain finished
-  // outcomes through the adoption gates, then reconcile each intent against its live inputs —
-  // before any region reads the sessions, so the overview and the map on screen are always this
-  // frame's state. Since 755.4 the map face lives in the Raypath view window, and the shared
-  // entry above also pumps on that window's Render-workspace frames (the window is the only
-  // analysis face rendering there); this entry covers the Analyze-workspace frames, including
-  // those where the window is open on top. In-flight queries keep running across a workspace
-  // switch (R6 — switching away neither cancels nor cleans) and their outcomes wait in the
-  // single slots for whichever face renders next.
-  PumpAnalyzeQueries(g_state, g_survey_executor, ImGui::GetTime());
+  // The background queries' frame pumps run at RenderWorkspacePanels' entry since 755.5 — every
+  // GUI frame drains the mailboxes, applies the adoption gates and keeps the intents
+  // level-triggered, before any region reads the sessions (this entry and the two analysis
+  // windows all render after that call, so the overview, the map and the point faces on screen
+  // are always this frame's state). In-flight queries keep running across a workspace switch
+  // (R6 — switching away neither cancels nor cleans) and their outcomes adopt through the gate
+  // no matter which window is open — the pump no longer depends on any window drawing.
 
   // The wait displays' render-feedback fields are THIS frame's outputs: cleared at entry, the
   // render sites are the only writers (a site stores its text iff it drew it this frame), so a
   // field's content is exactly the wait text the user saw (analyze_survey.hpp
   // WaitFeedbackTexts). The map fields' render site is the Raypath view window now — on the
-  // Render-workspace frames where this entry does not run, the window clears-and-rewrites its
-  // own two (analyze_map_view.cpp); the workspace entry still clears them here because on an
-  // Analyze frame where the window is closed nothing else will. The status bar's segment field
-  // is the status bar's own to clear — that render runs in every frame of either workspace.
+  // Render-workspace frames where this entry does not run, the window clears its own two, and
+  // the Pose & trace window clears the fiber field the same way; the workspace entry still
+  // clears them here because on an Analyze frame where either window is closed nothing else
+  // will. The status bar's segment field is the status bar's own to clear — that render runs in
+  // every frame of either workspace.
   {
     WaitFeedbackTexts& feedback = g_state.analysis.wait_feedback_texts;
     feedback.survey_wait_line.clear();
@@ -1013,6 +1011,21 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
 }
 
 void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_height) {
+  // The analysis queries' frame pump, hoisted to the ONE entry every GUI frame passes through
+  // (755.5): both workspaces' frames — and the frames where no analysis face renders at all
+  // (Render mode with both analysis windows closed) — drain the four mailboxes, apply the
+  // adoption gates and keep the intents level-triggered. An in-flight query's completion is
+  // therefore adopted regardless of which window is on screen (the AC the two window-hosted
+  // pump calls could not carry: a face-less frame never reached a pump, so a query kept running
+  // but its answer sat unadopted until a face rendered again — the hidden-wait hang). The pump
+  // is per-frame idempotent (drain clears its slot; a key match re-asks nothing), so running it
+  // here instead of in the consumers changes no consumer-visible behavior; the wait-feedback
+  // fields stay owned by their render sites (cleared by the site that can draw the field, not
+  // by the pump). Cost: a drain-and-compare pass over four sessions on every frame — the same
+  // order of work the Analyze frames have always paid, and empty on the Render frames where no
+  // intent is outstanding.
+  PumpAnalyzeQueries(g_state, g_survey_executor, ImGui::GetTime());
+
   // The frame's viewport publications, cleared once at the ONE dispatch point. Both halves of
   // each publication are level-triggered (PreviewViewport in app.hpp), so the frame that does
   // not draw a region is the frame that publishes neither its viewport nor its curve labels —

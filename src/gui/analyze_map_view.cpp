@@ -1944,17 +1944,13 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   if (!state.analyze_raypath_view_open) {
     return;
   }
-  // The pumps' cross-face stance (analyze_workspace.hpp): on the Render-workspace frames this
-  // window is the only analysis face rendering, so its frame runs the shared pump entry —
-  // in-flight queries keep their R6 semantics (never cancelled by a workspace switch) AND their
-  // outcomes land while the user is away from the Analyze workspace, which is what keeping the
-  // window open across the switch is FOR. The wait feedback this window's region may write is
-  // cleared here the same way the workspace entry clears it on the Analyze frames: a field's
-  // content is exactly what the user saw THIS frame, and the site that can draw it owns the
-  // clear. On an Analyze frame the workspace entry already pumped and cleared; this window's
-  // map region is then that frame's only map-field writer.
+  // The pumps run at RenderWorkspacePanels' entry since 755.5 (every GUI frame, windows open or
+  // not); this window keeps only its own wait-feedback hygiene: on the Render-workspace frames
+  // it is the map fields' only render site, so a field's content is exactly what the user saw
+  // THIS frame — the site that can draw it owns the clear. On an Analyze frame the workspace
+  // entry already pumped and cleared; this window's map region is then that frame's only
+  // map-field writer.
   if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
-    PumpAnalyzeQueries(state, g_survey_executor, ImGui::GetTime());
     WaitFeedbackTexts& feedback = state.analysis.wait_feedback_texts;
     feedback.map_wait_line.clear();
     feedback.map_refining_note.clear();
