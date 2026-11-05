@@ -1980,6 +1980,12 @@ TEST(AnalysisPanelLogic, SurveyExecutorShutsDownAndJoinsWhileQueryComputing) {
     PickupGateMachine machine;
     SurveyExecutor executor;
     std::thread helper;
+    // The helper's completion flag is declared BEFORE the teardown guard, so on an ASSERT's
+    // early exit the guard's destructor (release gate → join helper) runs while the flag the
+    // helper writes after ShutdownAndJoin returns is still alive — the reverse order would make
+    // the failure cleanup itself a use-after-scope (the thread's referenced state must outlive
+    // its join).
+    std::atomic<bool> shutdown_returned{ false };
     PickupGateTeardown teardown{ &machine, &executor, &helper };
     executor.SetScene(std::move(scene));
     machine.Install(executor);
@@ -1992,7 +1998,6 @@ TEST(AnalysisPanelLogic, SurveyExecutorShutsDownAndJoinsWhileQueryComputing) {
     // ShutdownAndJoin blocks in its join until the worker (parked in our gate) finishes, so it
     // must run on a helper thread; the wall clock starts before the thread does.
     const auto shutdown_begin = std::chrono::steady_clock::now();
-    std::atomic<bool> shutdown_returned{ false };
     helper = std::thread([&executor, &shutdown_returned] {
       executor.ShutdownAndJoin();
       shutdown_returned.store(true, std::memory_order_release);
