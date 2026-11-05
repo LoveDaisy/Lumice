@@ -131,43 +131,6 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
   ImGui::EndChild();
 }
 
-// The main view column's horizontal divider: a full-width grab strip with the resize-NS cursor,
-// the classic ImGui splitter shape (invisible button + hover/active line drawn over it), writing
-// GuiState::AnalyzeWorkspaceSession::middle_rows_ratio. A moving frame writes
-// `ratio += dy / area_h` — the split's normalized boundary advancing exactly by the hand's
-// travel — and nothing else: the write deliberately reads neither the item rectangle nor any
-// absolute position. The rectangle moves with the layout, so a pivot-read-plus-delta would
-// compound the strip's own half height into every moving frame (a 1 px-per-frame drag grew the
-// list ~75 px over 20 frames), and under ViewportsEnable the rectangle is screen-absolute while
-// the reference frame is window-local, so the main viewport's origin would ride every write.
-// Deltas carry no coordinate system and the stored ratio carries no geometry: both failure
-// shapes are outside the write's alphabet, not guarded against in it. A held-still pointer
-// keeps IsMouseDragging true but has no delta — no write.
-void MiddleRowsSplitter(const char* id, float width, float* ratio, float area_h) {
-  const float height = UiPx(kAnalyzeSplitterSize);
-  ImGui::InvisibleButton(id, ImVec2(width, height));
-  const bool hovered = ImGui::IsItemHovered();
-  const bool active = ImGui::IsItemActive();
-  const float mouse_dy = ImGui::GetIO().MouseDelta.y;
-  if (active && mouse_dy != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    // The delta accumulates from the DISPLAYED boundary — the stored ratio after the same clamp
-    // the layout applies — never from the raw stored value: at a window too narrow for the band
-    // the two differ, and a raw write would spend the first stretch of the drag crawling through
-    // the clamp band while the strip visibly stands still.
-    *ratio = std::clamp(std::clamp(*ratio, 0.15f, 0.85f) + mouse_dy / area_h, 0.15f, 0.85f);
-  }
-  if (hovered || active) {
-    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-  }
-  // The line: dim normally, themed while grabbed — the only affordance the strip has.
-  const ImU32 line_col = ImGui::GetColorU32(active  ? ImGuiCol_SeparatorActive :
-                                            hovered ? ImGuiCol_SeparatorHovered :
-                                                      ImGuiCol_Separator);
-  ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y + height * 0.5f),
-                                      ImVec2(ImGui::GetItemRectMax().x, ImGui::GetItemRectMin().y + height * 0.5f),
-                                      line_col, 1.0f);
-}
-
 // D1 (main view | right column), the row splitter's vertical counterpart — the same recipe
 // (invisible button + hover/active line + the one affordance line + delta-only write), with the
 // resize-EW cursor. Dragging the hand right narrows the right column: the ratio (the right
@@ -752,7 +715,6 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // rest; ② the main view stops at its soft floor and both pin; ③ — only when both floors cannot
   // fit — the floors share the span proportionally and the inner scroll regions take over. ----
   const float strip = UiPx(kAnalyzeSplitterSize);
-  const float style_spacing = ImGui::GetStyle().ItemSpacing.x;
   const float avail_w = std::max(0.0f, window_width - left_w);
   const float right_floor = UiPx(kAnalyzeRightColMinWidth);
   const float main_floor = UiPx(kAnalyzeMainViewMinWidth);
@@ -777,39 +739,6 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   }
   const float details_y = top + list_h + strip;
   const float details_h = std::max(0.0f, panel_height - strip - list_h);
-
-  // The main view column's own row split — the panorama above, the depth band below; the splitter
-  // keeps the field inside [0.15, 0.85] so both rows stay real.
-  const float upper_h = panel_height * g_state.workspace.middle_rows_ratio;
-  const float band_y = top + upper_h + strip;
-  const float band_h = std::max(0.0f, panel_height - upper_h - strip);
-
-  // The depth band's form — the transition's responsive two-shape rule: side-by-side when the
-  // band can give each of the three regions its content floor (widths), stacked — each region the
-  // full band width at its floor height, the band scrolling — when it cannot. The one-bit latch
-  // is the hysteresis a resize at the boundary needs; it is a per-frame derivation's memory (a
-  // per-process layout fact, not session state: each frame re-derives the form from the band's
-  // width, the bit only chooses which side of the hysteresis band applies).
-  static bool band_side_by_side = false;
-  {
-    // The form's budget is the band's INNER width — the same quantity the allocation below
-    // spends (GetContentRegionAvail at the band window's top). main_w is the window's outer
-    // size; two WindowPaddings sit between the two, and a latch judged on the outer width let
-    // the cells' floors exceed the inner width inside the hysteresis band — the last cell's
-    // frame sat past the host's clip. One budget on both sides of the latch.
-    const float band_planned_inner = std::max(0.0f, main_w - 2.0f * ImGui::GetStyle().WindowPadding.x);
-    const float cells_floor = UiPx(kAnalyzeDepth3DMinSize + kAnalyzeDepthGlobeMinSize) + style_spacing * 1.0f;
-    if (!band_side_by_side && band_planned_inner >= cells_floor + UiPx(kAnalyzeDepthBandFormHysteresisPt)) {
-      band_side_by_side = true;
-    } else if (band_side_by_side && band_planned_inner < cells_floor) {
-      band_side_by_side = false;
-    }
-    // The height rung: horizontal room does not make the three regions operable — below the
-    // fixed-stack floor the side-by-side form's children do not scroll, and the stacked form's
-    // own scroll is the only reachability there is. No hysteresis on this rung: the row ratio
-    // moves continuously under the dragging hand.
-    band_side_by_side = band_side_by_side && band_h >= UiPx(kAnalyzeDepthBandMinHeightPt);
-  }
 
   // ---- Left column: crystal list + Sun + Simulation (the Render right panel's Scene controls,
   // the very same function). One scrolling column, like the prototype stacks them. ----
@@ -853,71 +782,19 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   }
   ImGui::End();
 
-  // ---- Main view: the committed picture, as large as the column's upper row gives it. The
-  // panorama's mechanics are unchanged — NoBackground (the deferred pass blits the reprojected
-  // sky into this window's rect BEFORE the ImGui draw data renders; the chrome window's own
-  // background fill would paint straight over it, the same flag ##PreviewPanel carries), the
-  // delayed blit, the g_panorama_vp publication — only the rectangle grows. ----
-  SetNextPanelGeometry(main_x, top, main_w, upper_h);
+  // ---- Main view: the committed picture, filling the whole main column (755.5: the depth
+  // band retired — its two regions are the Pose & trace window's now, and the panorama/band
+  // row split retired with it). The panorama's mechanics are unchanged — NoBackground (the
+  // deferred pass blits the reprojected sky into this window's rect BEFORE the ImGui draw data
+  // renders; the chrome window's own background fill would paint straight over it, the same
+  // flag ##PreviewPanel carries), the delayed blit, the g_panorama_vp publication — only the
+  // rectangle is the full column now. ----
+  SetNextPanelGeometry(main_x, top, main_w, panel_height);
   ImGui::Begin("##AnalyzePanorama", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
                    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus);
   RenderScenePanorama(window);
-  ImGui::End();
-
-  // The row divider: a thin strip across the main view column, dragging the panorama/band ratio
-  // (its line is the only affordance — dim normally, themed on hover/grab).
-  SetNextPanelGeometry(main_x, top + upper_h, main_w, strip);
-  // Zero padding AND zero minimum size: the strip is exactly as thick as its grab bar. With the
-  // inherited (8,6) padding the bar rode below the strip's own rectangle (a free-floating line,
-  // and a press on the bar's centre landing in the lower row's hover territory); with the
-  // style's WindowMinSize (32pt, which ImGui applies to every top-level window regardless of a
-  // SetNextWindowSize) the strip came out 32pt thick and its opaque background covered the first
-  // rows of both regions beside it — the cut-off header row — while stealing their hover. No
-  // scrollbar: an 8pt strip with nothing to scroll has no business offering one.
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.0f, 0.0f));
-  ImGui::Begin("##AnalyzeRowsDivider", nullptr,
-               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-                   ImGuiWindowFlags_NoBringToFrontOnFocus);
-  // The grab bar spans the strip's real inner width, not the layout float: ImGui floors a
-  // top-level window's SetNextWindowSize (685.54 -> 685), and a grab sized by the unfloored
-  // value would stick 0.54px out of its own strip and fail the containment pin.
-  MiddleRowsSplitter("##AnalyzeRowsSplitter", ImGui::GetContentRegionAvail().x, &g_state.workspace.middle_rows_ratio,
-                     panel_height);
-  ImGui::End();
-  ImGui::PopStyleVar(2);
-
-  // ---- The depth band: the 3D / globe regions' transition host, until their window takes
-  // them (755.5) and the band retires with this split — the map region left first (755.4: it
-  // is the Raypath view window's left region now). The region functions own their content
-  // (each opens its own child); only the geometry they are handed differs by form.
-  // Side-by-side: the globe at its content floor, the 3D view absorbing what is left (the
-  // width the map cell gave up). Stacked: each the full band width at its floor height — the
-  // band itself is the one scrolling region then, so the scrollbars exist only in the form
-  // that needs them. ----
-  SetNextPanelGeometry(main_x, band_y, main_w, band_h);
-  ImGui::Begin("##AnalyzeLowerRow", nullptr,
-               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                   (band_side_by_side ? (ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) : 0));
-  {
-    const float band_inner_w = ImGui::GetContentRegionAvail().x;
-    if (band_side_by_side) {
-      const float cell_h = ImGui::GetContentRegionAvail().y;
-      const float globe_w = UiPx(kAnalyzeDepthGlobeMinSize);
-      const float three_d_w = std::max(UiPx(kAnalyzeDepth3DMinSize), band_inner_w - globe_w - style_spacing * 1.0f);
-      RenderAnalyzeRay3DRegion(g_state, ImVec2(three_d_w, cell_h));
-      ImGui::SameLine();
-      RenderAnalyzeSunGlobeRegion(g_state, ImVec2(globe_w, cell_h));
-    } else {
-      RenderAnalyzeRay3DRegion(g_state, ImVec2(band_inner_w, UiPx(kAnalyzeDepth3DMinSize)));
-      ImGui::Spacing();
-      RenderAnalyzeSunGlobeRegion(g_state, ImVec2(band_inner_w, UiPx(kAnalyzeDepthGlobeMinSize)));
-    }
-  }
   ImGui::End();
 
   // D1: the vertical strip between the main view column and the right column, dragging the

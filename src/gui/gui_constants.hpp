@@ -96,20 +96,9 @@ constexpr int kAnalyzeConeCenterConvergenceFrames = 8;
 constexpr float kAnalyzeDetailsMinHeight = 64.0f;
 // D2's default: the contract's list ≈45% of the right column's height.
 constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
-// The depth band's per-cell content floors (§11 R3/R4): the map region's sky-point input row
-// (the widest fixed row: two 90 px inputs with their visible labels, the Set sky point button —
-// ≈343 px inner + the child's padding, measured against the Roboto Medium 15px theme), the
-// globe's fixed interaction stack, the 3D view at legible size. Each is its region's width floor
-// in the band's side-by-side form and height floor in the stacked form. Re-derived 2026-11-04
-// under the content-adaptation contract (workspace-layout audit): these are the side-by-side
-// cells' DESIGN WIDTHS — the widest fixed row may exceed a cell at 2x scale or at the ③ split,
-// and the row then wraps under its SameLine judgment (the globe/3D headers, the region info
-// lines). The floors are the placement default, not a reachability promise; the reachability
-// evidence is the containment legs (workspace_operates_at_*, workspace_row_ratio_extremes_*).
-// (The map cell's 370 pt floor retired with the map region itself, which the Raypath view
-// window took in 755.4.)
-constexpr float kAnalyzeDepthGlobeMinSize = 250.0f;
-constexpr float kAnalyzeDepth3DMinSize = 240.0f;
+// (The depth band's per-cell floors kAnalyzeDepthGlobeMinSize / kAnalyzeDepth3DMinSize retired
+// with the band in 755.5 — the 3D / globe regions are the Pose & trace window's, floored by the
+// kPoseView* constants above. The map cell's floor had already retired with its window in 755.4.)
 
 // D3 — the Raypath view window's reference-map | info split (contract §4.2, the window's own
 // splitter). The floors are the contract's suggested values with the rendering-level duty
@@ -156,22 +145,11 @@ constexpr float kPoseViewFactorsFloor = 70.0f;
 // The globe region's canvas floor (the region's own code floor, now named for the region's
 // canvas-sizing judgment to consume).
 constexpr float kPoseViewGlobeCanvasFloor = 60.0f;
-// The split strips' thickness (##AnalyzeRowsDivider's 8 pt recipe, shared by the two new strips).
+// The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's
+// two splitters).
 constexpr float kAnalyzeSplitterSize = 8.0f;
-// The depth band's side-by-side form also needs vertical room: below this band height the
-// tallest region's fixed stack in its worst honest state cannot hold its title row, its control
-// rows and the canvas floor beside them, and no child of the band scrolls in that form — the
-// stacked form's own scroll is the only reachability there is. Height has no hysteresis: the
-// row ratio moves continuously under the dragging hand. Measured 2026-11-04 against the map
-// stack's ≈249 px (Roboto Medium 15px theme) — the tallest of the three regions then, so the
-// value covers the two cells the band still hosts (3D / globe); re-confirmed at the 900x640
-// proportional split (band 306, cell ≈294, stack fits) and at the 0.85 row clamp (band 128,
-// stacked with the band's own scroll carrying reachability) — the values the matrix legs log.
-constexpr float kAnalyzeDepthBandMinHeightPt = 250.0f;
-// Hysteresis of the depth band's form switch (logical px): side-by-side arms this far above the
-// cells' floor sum and holds until the band drops below the bare sum, so a resize walking the
-// boundary does not flicker between the two forms.
-constexpr float kAnalyzeDepthBandFormHysteresisPt = 24.0f;
+// (The depth band's height rung kAnalyzeDepthBandMinHeightPt and its form-switch hysteresis
+// kAnalyzeDepthBandFormHysteresisPt retired with the band in 755.5.)
 
 // Display brightness baseline, mirroring lumice::kNormScale (core/color_util.hpp). The GUI needs
 // it because absolute exposure mode is computed client-side (mono_exposure_scale.hpp) rather than

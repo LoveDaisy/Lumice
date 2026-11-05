@@ -610,52 +610,6 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The middle area's divider: dragging it moves the row ratio (session memory) and the clamp
-  // holds at both ends — the four-column skeleton's "上下比例可调" contract.
-  {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_splitter_drag_moves_the_ratio");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ResetTestState();
-      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
-      ctx->Yield(3);
-      const float before = gui::g_state.workspace.middle_rows_ratio;
-      const ImGuiTestItemInfo splitter = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
-      IM_CHECK_NE(splitter.ID, 0u);
-      const ImVec2 grab((splitter.RectFull.Min.x + splitter.RectFull.Max.x) * 0.5f,
-                        (splitter.RectFull.Min.y + splitter.RectFull.Max.y) * 0.5f);
-      ctx->MouseMoveToPos(grab);
-      ctx->Yield(2);
-      ctx->MouseDown(0);
-      ctx->Yield(2);
-      ctx->MouseMoveToPos(ImVec2(grab.x, grab.y + 120.0f));
-      ctx->Yield(4);
-      ctx->MouseUp(0);
-      ctx->Yield(2);
-      IM_CHECK_GT(gui::g_state.workspace.middle_rows_ratio, before);
-      IM_CHECK_LE(gui::g_state.workspace.middle_rows_ratio, 0.85f);
-
-      // Past the top edge the clamp pins at 0.15 — the ratio never leaves its band. The first
-      // drag moved the splitter (the ratio re-laid-out the rows), so re-query where it sits now.
-      const ImGuiTestItemInfo splitter2 = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
-      IM_CHECK_NE(splitter2.ID, 0u);
-      const ImVec2 grab2((splitter2.RectFull.Min.x + splitter2.RectFull.Max.x) * 0.5f,
-                         (splitter2.RectFull.Min.y + splitter2.RectFull.Max.y) * 0.5f);
-      ctx->MouseMoveToPos(grab2);
-      ctx->Yield(2);
-      ctx->MouseDown(0);
-      ctx->Yield(2);
-      ctx->MouseMoveToPos(ImVec2(grab2.x, grab2.y - 2000.0f));
-      ctx->Yield(4);
-      ctx->MouseUp(0);
-      ctx->Yield(2);
-      // The ratio stays inside its band and moved the drag's way. (The harness's pointer cannot
-      // leave the OS window, so the drag cannot push the pivot all the way to the 0.15 pin — the
-      // band, not the exact pin, is the product contract a pointer-driven test can reach.)
-      IM_CHECK_GE(gui::g_state.workspace.middle_rows_ratio, 0.15f);
-      IM_CHECK_LT(gui::g_state.workspace.middle_rows_ratio, 0.66f);
-    };
-  }
-
   // The two new splitters (D1: main view | right column; D2: list | diagnostics) each write only
   // their own session ratio — the independence the contract names — and each pins at its pixel
   // floors: dragged past a floor the ratio stops there and the derived width sits on it, a
@@ -674,7 +628,6 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       const float d1_0 = gui::g_state.workspace.right_column_ratio;
       const float d2_0 = gui::g_state.workspace.right_list_ratio;
-      const float rows_0 = gui::g_state.workspace.middle_rows_ratio;
 
       const auto drag = [&](const char* ref, float dx, float dy) {
         const ImGuiTestItemInfo grab = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
@@ -690,12 +643,11 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         ctx->Yield(2);
       };
 
-      // D1 left: the right column widens; the other two splits are bit-identical.
+      // D1 left: the right column widens; the other split is bit-identical.
       drag("**/##AnalyzeColumnSplitter", -200.0f, 0.0f);
       const float d1_1 = gui::g_state.workspace.right_column_ratio;
       IM_CHECK_GT(d1_1, d1_0);
       IM_CHECK_EQ(gui::g_state.workspace.right_list_ratio, d2_0);
-      IM_CHECK_EQ(gui::g_state.workspace.middle_rows_ratio, rows_0);
 
       // The ratio, not a pixel width: at the minimum window the column follows the stored ratio
       // (up from its floor? down — narrower window, same share), and back at the basis it
@@ -787,12 +739,11 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       }
       set_basis(gui::kInitWindowWidth, gui::kInitWindowHeight);
 
-      // D2 down: the diagnostics region shrinks; D1 stays exactly where the pin left it, the
-      // row split untouched. Up past its floor: the list's own floor pins instead.
+      // D2 down: the diagnostics region shrinks; D1 stays exactly where the pin left it.
+      // Up past its floor: the list's own floor pins instead.
       drag("**/##AnalyzeRightRowsSplitter", 0.0f, 120.0f);
       IM_CHECK_GT(gui::g_state.workspace.right_list_ratio, d2_0);
       IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, d1_pinned);
-      IM_CHECK_EQ(gui::g_state.workspace.middle_rows_ratio, rows_0);
       drag("**/##AnalyzeRightRowsSplitter", 0.0f, -2000.0f);
       ctx->LogInfo("[splitters] d2 pinned %.4f", static_cast<double>(gui::g_state.workspace.right_list_ratio));
       ImGuiWindow* details = ctx->GetWindowByRef("##AnalyzeDetails");
@@ -865,117 +816,6 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         ctx->MouseUp(0);
         ctx->Yield(2);
       }
-
-      // The band's height rung: at the row ratio's far clamp the band is below the fixed-stack
-      // floor, and the side-by-side form — whose children do not scroll — must give way to the
-      // stacked one, whose own scroll is the reachability there.
-      gui::g_state.workspace.middle_rows_ratio = 0.85f;
-      ctx->Yield(3);
-      ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-      IM_CHECK(band != nullptr);
-      ctx->LogInfo("[splitters] band at 0.85 rows: h %.0f, ScrollMax %.0f", static_cast<double>(band->Size.y),
-                   static_cast<double>(band->ScrollMax.y));
-      IM_CHECK_GT(band->ScrollMax.y, 0.0f);
-      gui::g_state.workspace.middle_rows_ratio = rows_0;
-      ctx->Yield(2);
-
-      // Just above the rung the side-by-side form holds: the band's two cells (3D, globe —
-      // the map cell left the band with its window) fit the legal split position, and the band
-      // itself does not scroll. (The map region's worst-stack rung — the sky-point row's Set
-      // containment at a narrow cell — is the window's own narrowest geometry now, the
-      // window-side legs' to pin.)
-      gui::g_state.workspace.middle_rows_ratio = 0.70f;  // band ≈ 912*0.30 - 8 = 266, the rung's edge
-      ctx->Yield(3);
-      band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-      IM_CHECK(band != nullptr);
-      IM_CHECK_FLOAT_NEAR(band->Size.y, 912.0f * 0.30f - gui::UiPx(gui::kAnalyzeSplitterSize), 2.0f);
-      IM_CHECK_EQ(band->ScrollMax.y, 0.0f);  // side-by-side: the band itself does not scroll
-      gui::g_state.workspace.middle_rows_ratio = rows_0;
-      ctx->Yield(2);
-    };
-  }
-
-  // The hysteresis band's budget: the form's latch and the cells'
-  // allocation must spend the same width. Entered side-by-side wide, the span then shrinks to
-  // the middle of the hysteresis band (the D1 ratio gives main_w 530: the planned inner width
-  // 514 sits between the two cells' floor 498 and the entry threshold 522) — the latch holds
-  // side-by-side, and the cells' floors must still fit the inner width the allocation actually
-  // spends (3D absorbs the remainder: 514 - 250 - 8). Judged on the outer width, the two
-  // paddings leaked in: the last cell's frame sat ~16 px past the host's clip.
-  {
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "shell_chrome", "workspace_band_cells_stay_inside_the_host_in_the_hysteresis_band");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ResetTestState();
-      const ScopedWindowBasis window_basis(ctx);
-      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
-      ctx->Yield(3);
-      const auto band_cell = [&](const char* fragment) {
-        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-          if (w != nullptr && w->Active && w->ParentWindow == ctx->GetWindowByRef("//##AnalyzeLowerRow") &&
-              std::strstr(w->Name, fragment) != nullptr) {
-            return w;
-          }
-        }
-        return static_cast<ImGuiWindow*>(nullptr);
-      };
-      const float d1_saved = gui::g_state.workspace.right_column_ratio;
-      const float rows_saved = gui::g_state.workspace.middle_rows_ratio;
-      // At the default basis: main_w = 1300 - 8 - 292 = 1000, planned inner 984 — the
-      // side-by-side form enters (or holds, if an earlier case in the pool left it on; the
-      // assertions below are form-state facts either way).
-      gui::g_state.workspace.right_column_ratio = 292.0f / 1300.0f;
-      gui::g_state.workspace.middle_rows_ratio = 0.35f;  // band ~585, well past the 250 rung
-      ctx->Yield(3);
-      {
-        ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-        IM_CHECK(band != nullptr);
-        IM_CHECK_EQ(band->ScrollMax.y, 0.0f);  // side-by-side: the band does not scroll
-        ImGuiWindow* three_d_w = band_cell("##AnalyzeRaypath3D");
-        ImGuiWindow* globe_w = band_cell("##AnalyzeSunGlobe");
-        IM_CHECK(three_d_w != nullptr && globe_w != nullptr);
-        IM_CHECK_FLOAT_NEAR(globe_w->Size.x, gui::UiPx(gui::kAnalyzeDepthGlobeMinSize), 1.5f);
-        // Into the hysteresis band: the D1 ratio gives main_w 530, planned inner 514 — above
-        // the cells' floor (498), below the entry threshold (522): the latch keeps
-        // side-by-side, and the floors must fit the inner width exactly (3D absorbs the
-        // remainder: 514 - 250 - 8).
-        gui::g_state.workspace.right_column_ratio = 762.0f / 1300.0f;
-        ctx->Yield(3);
-        band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-        IM_CHECK(band != nullptr);
-        ctx->LogInfo("[band hysteresis] band %.0fx%.0f, ScrollMax %.0f", static_cast<double>(band->Size.x),
-                     static_cast<double>(band->Size.y), static_cast<double>(band->ScrollMax.y));
-        IM_CHECK_EQ(band->ScrollMax.y, 0.0f);  // the latch held: still side-by-side
-        three_d_w = band_cell("##AnalyzeRaypath3D");
-        globe_w = band_cell("##AnalyzeSunGlobe");
-        IM_CHECK(three_d_w != nullptr && globe_w != nullptr);
-        IM_CHECK_FLOAT_NEAR(globe_w->Size.x, gui::UiPx(gui::kAnalyzeDepthGlobeMinSize), 1.5f);
-        IM_CHECK_FLOAT_NEAR(three_d_w->Size.x,
-                            band->Size.x - 2.0f * ImGui::GetStyle().WindowPadding.x -
-                                gui::UiPx(gui::kAnalyzeDepthGlobeMinSize) - ImGui::GetStyle().ItemSpacing.x * 1.0f,
-                            2.0f);
-        IM_CHECK_GE(three_d_w->Size.x, gui::UiPx(gui::kAnalyzeDepth3DMinSize) - 1.5f);
-        // The catch itself: every cell fully inside the band's effective clip — the last cell's
-        // frame (the globe's) was the one that sat past the host before the budgets unified.
-        // Non-fatal per row: one escaping cell must not skip the other rows' evidence.
-        for (ImGuiWindow* w : { three_d_w, globe_w }) {
-          const ImRect cell_rect(w->Pos, ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y));
-          if (cell_rect.Min.x >= band->InnerClipRect.Min.x - 0.5f &&
-              cell_rect.Max.x <= band->InnerClipRect.Max.x + 0.5f) {
-            continue;
-          }
-          IM_ERRORF("cell '%s' escapes the band's clip: [%.0f..%.0f] vs clip [%.0f..%.0f]", w->Name,
-                    static_cast<double>(cell_rect.Min.x), static_cast<double>(cell_rect.Max.x),
-                    static_cast<double>(band->InnerClipRect.Min.x), static_cast<double>(band->InnerClipRect.Max.x));
-        }
-        ctx->LogInfo("[band hysteresis] cells [%.0f..%.0f][%.0f..%.0f] vs clip [..%.0f]",
-                     static_cast<double>(three_d_w->Pos.x), static_cast<double>(three_d_w->Pos.x + three_d_w->Size.x),
-                     static_cast<double>(globe_w->Pos.x), static_cast<double>(globe_w->Pos.x + globe_w->Size.x),
-                     static_cast<double>(band->InnerClipRect.Max.x));
-      }
-      gui::g_state.workspace.right_column_ratio = d1_saved;
-      gui::g_state.workspace.middle_rows_ratio = rows_saved;
-      ctx->Yield(2);
     };
   }
 
@@ -1061,6 +901,10 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       // Stop beside the budget controls, and a bare "**/" would match that one first.
       ctx->SetRef("//##AnalyzeDetails");
       const ImGuiTestItemInfo stop = ctx->ItemInfo("**/" ICON_FA_STOP " Stop", ImGuiTestOpFlags_NoError);
+      ctx->LogInfo("[probe] in_progress %d started %d sim_state %d payload %d sel %d",
+                   (int)gui::g_state.analysis_run_in_progress, (int)gui::g_state.analysis.started,
+                   (int)gui::g_state.sim_state, gui::g_state.analysis_result.payload != nullptr,
+                   (int)gui::g_state.analysis.selected_entry.has_value());
       IM_CHECK_NE(stop.ID, 0u);
       IM_CHECK_GT(stop.RectFull.GetHeight(), 0.0f);
 
@@ -1149,10 +993,8 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->Yield(4);
 
       const char* kReachable[] = {
-        kWorkspaceToRenderBtn,        "**/Layer 1, entry 1: Crystal##crys_0_0",
-        "**/##Altitude_slider",       "**/##AnalyzeRowsSplitter",
-        "**/##AnalyzeColumnSplitter", "**/##AnalyzeRightRowsSplitter",
-        "**/###analysis_search",
+        kWorkspaceToRenderBtn,        "**/Layer 1, entry 1: Crystal##crys_0_0", "**/##Altitude_slider",
+        "**/##AnalyzeColumnSplitter", "**/##AnalyzeRightRowsSplitter",          "**/###analysis_search",
       };
       for (const char* ref : kReachable) {
         const ImGuiTestItemInfo info = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
@@ -1344,7 +1186,6 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         "**/Layer 1, entry 1: Crystal##crys_0_0",  // the list row
         "**/+ Layer",                              // the shared add primitive
         "**/##Altitude_slider",                    // the Sun editor
-        "**/##AnalyzeRowsSplitter",                // the panorama/band divider
         "**/##AnalyzeColumnSplitter",              // D1: main view | right column
         "**/##AnalyzeRightRowsSplitter",           // D2: list | diagnostics
       };
@@ -1366,16 +1207,15 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       }
       // The not-wired regions are child WINDOWS holding plain text — no items for the item
       // registry. Their reachability is "submitted this frame", checked over the window list
-      // (child names embed the hash suffix; the substring is the stable part). Four now: the
-      // map region left the workspace with its window (its shell presence is the window's own
-      // cases').
+      // (child names embed the hash suffix; the substring is the stable part). Two now: the map
+      // region left the workspace with its window (755.4) and the 3D / globe regions with
+      // theirs (755.5) — the shell's rolling regions are the share list and the diagnostics
+      // region; the windows' own cases pin their regions' presence.
       // The panorama is deliberately absent here: without a render it
       // shows the empty state and publishes no picture region (its own case pins the render
       // side).
       const char* kRegions[] = {
         "##AnalyzeShareList",
-        "##AnalyzeRaypath3D",
-        "##AnalyzeSunGlobe",
         "##AnalyzeDetails",
       };
       int regions_found = 0;
@@ -1392,7 +1232,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
           }
         }
       }
-      IM_CHECK_EQ(regions_found, 4);
+      IM_CHECK_EQ(regions_found, 2);
       IM_CHECK_EQ(gui::g_panorama_vp.active, false);
 
       // Archive the exact state this case verified (the pointer is already parked off-frame).
@@ -1439,31 +1279,12 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
                    static_cast<double>(expected_right));
       IM_CHECK_FLOAT_NEAR(share->Size.x, expected_right, 1.0f);
 
-      // The band: stacked — each region the full band width at its floor height, the band
-      // scrolling (the reachability at this height). Two cells now (the map region is the
-      // window's; its Set leg below opens the window for the functional half).
-      ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-      IM_CHECK(band != nullptr);
-      ImGuiWindow* r3d = AnalyzeRegionWindow("##AnalyzeRaypath3D");
-      ImGuiWindow* globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
-      IM_CHECK(r3d != nullptr);
-      IM_CHECK(globe != nullptr);
-      ctx->LogInfo("[900x640] band %.0f scrollmax %.0f; 3d %.0fx%.0f globe %.0fx%.0f",
-                   static_cast<double>(band->Size.y), static_cast<double>(band->ScrollMax.y),
-                   static_cast<double>(r3d->Size.x), static_cast<double>(r3d->Size.y),
-                   static_cast<double>(globe->Size.x), static_cast<double>(globe->Size.y));
-      IM_CHECK_GT(band->ScrollMax.y, 0.0f);
-      // The stacked form's defining fact: each region the FULL band content width — equal to its
-      // siblings, and the band's inner width minus the scrollbar the stacked form's own scroll
-      // shows. (The exact width is ImGui's content computation; the shape is the contract.)
-      IM_CHECK_FLOAT_NEAR(r3d->Size.x, globe->Size.x, 1.0f);
-      IM_CHECK_LE(r3d->Size.x, band->Size.x - 2.0f * ImGui::GetStyle().WindowPadding.x + 1.0f);
-      IM_CHECK_FLOAT_NEAR(r3d->Size.y, gui::UiPx(gui::kAnalyzeDepth3DMinSize), 2.0f);
-      IM_CHECK_FLOAT_NEAR(globe->Size.y, gui::UiPx(gui::kAnalyzeDepthGlobeMinSize), 2.0f);
+      // (The band legs this tier once carried — the stacked form's scroll and the two cells at
+      // their floor heights — retired with the band: the 3D / globe regions are the Pose & trace
+      // window's, and the compressed-tier reachability evidence lives in that window's own
+      // minimum-geometry legs.)
 
-      // The sky-point Set, through the region's window (opened for the functional half — the
-      // old band-cell scroll arithmetic had the cell's tail slices, which the window's own
-      // geometry no longer needs). Pinned on-screen: at this 900-wide OS window the cascade
+      // The sky-point Set, through the region's window. Pinned on-screen: at this 900-wide OS window the cascade
       // position would leave its right side past the edge, and the viewport clip would cut the
       // row the Set click aims at.
       gui::g_state.analyze_raypath_view_open = true;
@@ -1480,15 +1301,6 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.sky_point.dir[2], -std::sin(30.0f * lumice::kDeg2Rad), 1e-3f);
       gui::g_state.analyze_raypath_view_open = false;
       ctx->Yield(2);
-
-      // The globe (the stacked band's tail): scroll it in, flip its toggle for real.
-      band->Scroll.y = band->ScrollMax.y;
-      ctx->Yield(2);
-      AssertRectContained(ctx, "**/Deviation grid###globe_dev_grid", globe);
-      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-      ctx->ItemClick("**/Deviation grid###globe_dev_grid");
-      ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
 
       // The right column at this window: the search box takes real input, the (disabled,
       // serverless) Analyze button sits contained on the main view's operation bar, and the
@@ -1609,23 +1421,10 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       gui::g_state.analyze_raypath_view_open = false;
       ctx->Yield(2);
 
-      // The globe at the band scroll position that shows its cell's top (the cell is taller
-      // than the 2x-clamped band, so the scroll bottom shows only the cell's lower part); the
-      // search box typed; the (disabled) Analyze contained. The stacked band's globe is its
-      // second cell now — one 3D cell + one gap past its top.
-      ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-      IM_CHECK(band != nullptr);
-      ImGuiWindow* globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
-      IM_CHECK(globe != nullptr);
-      ImGuiWindow* r3d_2x = AnalyzeRegionWindow("##AnalyzeRaypath3D");
-      IM_CHECK(r3d_2x != nullptr);
-      band->Scroll.y = r3d_2x->Size.y + ImGui::GetStyle().ItemSpacing.y;
-      ctx->Yield(2);
-      AssertRectContained(ctx, "**/Deviation grid###globe_dev_grid", globe);
-      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-      ctx->ItemClick("**/Deviation grid###globe_dev_grid");
-      ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
+      // (The band's stacked-form legs this tier once carried — the scroll-to-the-globe-cell
+      // dance and its toggle click — retired with the band; the toggle's compressed-tier
+      // operability is the Pose & trace window's own geometry to evidence.)
+
       ImGuiWindow* share = ctx->GetWindowByRef("##AnalyzeShareList");
       IM_CHECK(share != nullptr);
       AssertRectContained(ctx, "**/###analysis_search", share);
@@ -1672,58 +1471,17 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The row ratio's break points (the 0.82–0.85 band the adjudication named as the former
-  // contract's fracture) and D2's two floors: the stack-END controls take real operations in
-  // the geometry each ratio actually produces — never "the cell reached its floor" as a proxy
-  // for content reachability.
+  // D2's two floors: the stack-END controls take real operations in the geometry each floor
+  // actually produces — never "the window reached its floor" as a proxy for content
+  // reachability. (The row-ratio half of this case retired with the depth band: the panorama now
+  // fills its whole column and there is no second row to squeeze.)
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_row_ratio_extremes_keep_stack_ends_operable");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_d2_floors_keep_stack_ends_operable");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->ItemClick(kWorkspaceToAnalyzeBtn);
       ctx->Yield(3);
-      const float rows_saved = gui::g_state.workspace.middle_rows_ratio;
       const float list_saved = gui::g_state.workspace.right_list_ratio;
-      ImGuiWindow* band = nullptr;
-      ImGuiWindow* r3d = nullptr;
-      ImGuiWindow* globe = nullptr;
-      {
-        band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-        IM_CHECK(band != nullptr);
-        r3d = AnalyzeRegionWindow("##AnalyzeRaypath3D");
-        globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
-        IM_CHECK(r3d != nullptr);
-        IM_CHECK(globe != nullptr);
-      }
-
-      // 0.85 — the far clamp: the band is far below its rung, the stacked form's scroll is the
-      // reachability. The band scroll positions a region's CELL; the scroll bottom shows the
-      // globe's lower portion (the cell is taller than the band), so the toggle — at the cell's
-      // top — needs the band scrolled to the globe's own content offset: one 3D cell + one gap
-      // past the band's top (the globe is the band's second cell since the map moved to its
-      // window). The globe's remaining stack is its region's own internal scroll (the designed
-      // degradation).
-      gui::g_state.workspace.middle_rows_ratio = 0.85f;
-      ctx->Yield(3);
-      band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-      IM_CHECK(band != nullptr);
-      ctx->LogInfo("[0.85] band %.0f scrollmax %.0f", static_cast<double>(band->Size.y),
-                   static_cast<double>(band->ScrollMax.y));
-      IM_CHECK_GT(band->ScrollMax.y, 0.0f);
-      band->Scroll.y = r3d->Size.y + ImGui::GetStyle().ItemSpacing.y;
-      ctx->Yield(2);
-      globe = AnalyzeRegionWindow("##AnalyzeSunGlobe");
-      IM_CHECK(globe != nullptr);
-      AssertRectContained(ctx, "**/Deviation grid###globe_dev_grid", globe);
-      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-      ctx->ItemClick("**/Deviation grid###globe_dev_grid");
-      ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
-      // The 3D cell keeps its floor height in the stacked form (its canvas yields; the cell
-      // does not).
-      IM_CHECK_FLOAT_NEAR(r3d->Size.y, gui::UiPx(gui::kAnalyzeDepth3DMinSize), 2.0f);
-      gui::g_state.workspace.middle_rows_ratio = rows_saved;
-      ctx->Yield(2);
 
       // D2's two floors. Diagnostics floor: the idle stack scrolls (the Stop click's
       // operability is the idle-states case's carrier — this cell pins the geometry and the

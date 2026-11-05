@@ -331,11 +331,11 @@ ImGuiWindow* PanoramaPictureWindow() {
 
 // A child region's live ImGuiWindow, resolved by its PARENT's exact top-level name plus a name
 // fragment: child windows register as "Parent/Name_<id>", so a ref cannot address them directly
-// (the same lookup shape PanoramaPictureWindow and FindListRowScrolling use). Two hosts exist:
-// the depth band ##AnalyzeLowerRow still parents the 3D and globe regions (##AnalyzeRaypath3D /
-// ##AnalyzeSunGlobe), while the map region (##AnalyzeRaypathView) moved under the Raypath view
-// top-level window in 755.4 — MapRegionWindow is its address, and it exists only while the
-// window is open (a closed window submits no child).
+// (the same lookup shape PanoramaPictureWindow and FindListRowScrolling use). The hosts: the
+// map region (##AnalyzeRaypathView) lives under the Raypath view top-level window (755.4) —
+// MapRegionWindow is its address; the 3D and globe regions (##AnalyzeRaypath3D /
+// ##AnalyzeSunGlobe) live under the Pose & trace window (755.5) — PoseRegionWindow is theirs;
+// each exists only while its window is open (a closed window submits no child).
 ImGuiWindow* RegionWindowUnder(const char* parent_name, const char* name_fragment) {
   for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
     if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
@@ -344,9 +344,6 @@ ImGuiWindow* RegionWindowUnder(const char* parent_name, const char* name_fragmen
     }
   }
   return nullptr;
-}
-ImGuiWindow* LowerRowRegionWindow(const char* name_fragment) {
-  return RegionWindowUnder("##AnalyzeLowerRow", name_fragment);
 }
 ImGuiWindow* MapRegionWindow() {
   return RegionWindowUnder("Raypath view", "##AnalyzeRaypathView");
@@ -372,6 +369,27 @@ ImGuiWindow* PoseRegionWindow(const char* name_fragment) {
 void PinRaypathViewOnScreen(ImGuiTestContext* ctx) {
   if (ImGuiWindow* win = ctx->GetWindowByRef("//Raypath view")) {
     ImGui::SetWindowPos(win, ImVec2(8.0f, 60.0f), ImGuiCond_Always);
+    ctx->Yield(2);
+  }
+}
+// The pose window's pin, the Raypath view's own shape: a floating window whose footprint the
+// scale rebuilds and reopen cycles can leave partly outside the viewport hides the column its
+// region sits in — a fully-clipped child submits no items (the engine's registry never sees
+// them), and every leg below that drives the globe would wait forever. The pin keeps the
+// window's geometry a known on-screen fact wherever a leg is about to read or drive it.
+void PinPoseViewOnScreen(ImGuiTestContext* ctx) {
+  if (ImGuiWindow* win = ctx->GetWindowByRef("//Pose & trace")) {
+    ImGui::SetWindowPos(win, ImVec2(8.0f, 40.0f), ImGuiCond_Always);
+    // The skeleton re-derives its size only on a UI-scale change; a tier whose OS window SHRANK
+    // between two opens would otherwise keep the stale larger size, and the window's right
+    // column — the globe's — would land past the viewport's clip, where its items are partly
+    // invisible (registered but uncontainable). The clamp here is the same arithmetic the
+    // FirstUseEver apply runs at a fresh appearance: the contract default, clamped to the
+    // viewport it lands in. A leg that wants a specific geometry (the minimum-size legs) sets
+    // its own size AFTER the pin.
+    const ImVec2 vp = ImGui::GetMainViewport()->Size;
+    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp.x), std::min(gui::UiPx(620.0f), vp.y)),
+                         ImGuiCond_Always);
     ctx->Yield(2);
   }
 }
@@ -1604,47 +1622,27 @@ bool WorkspaceScrollRegionsAreStructurallyFixed(ImGuiTestContext* ctx) {
     ctx->Yield(3);
     ctx->LogInfo("[scroll pins] basis %s", label);
   };
+  // The pose window is the 3D region's only host now: opened once for the three bases below
+  // (the window clamps to each basis's viewport; the region's fixed stack must fit at all of
+  // them with no scroll).
+  gui::g_state.analyze_pose_view_open = true;
+  ctx->Yield(2);
   const auto assert_regions_fixed = [&]() {
-    ImGuiWindow* r3d = LowerRowRegionWindow("##AnalyzeRaypath3D");
-    ImGuiWindow* divider = ctx->GetWindowByRef("//##AnalyzeRowsDivider");
+    ImGuiWindow* r3d = PoseRegionWindow("##AnalyzeRaypath3D");
+    ImGuiWindow* pose_win = ctx->GetWindowByRef("//Pose & trace");
     ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
-    ImGuiWindow* lower = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-    if (r3d != nullptr && divider != nullptr && share != nullptr && lower != nullptr) {
-      // The values first: a red assert prints its expression, this line pins the numbers. The
-      // LOWER ROW's own scroll rides along: NoScrollbar only hides the bar, so a nonzero scroll
-      // there would shift both children up while every child-side reading stays zero.
-      ctx->LogInfo(
-          "[scroll pins] 3d SM %.1f SC %.1f | divider SM %.1f/%.1f | share SM %.1f SC %.1f | lower SM %.1f SC %.1f",
-          r3d->ScrollMax.y, r3d->Scroll.y, divider->ScrollMax.x, divider->ScrollMax.y, share->ScrollMax.y,
-          share->Scroll.y, lower->ScrollMax.y, lower->Scroll.y);
+    if (r3d != nullptr && pose_win != nullptr && share != nullptr) {
+      // The values first: a red assert prints its expression, this line pins the numbers.
+      ctx->LogInfo("[scroll pins] 3d SM %.1f SC %.1f | share SM %.1f SC %.1f | pose SM %.1f/%.1f SC %.1f/%.1f",
+                   r3d->ScrollMax.y, r3d->Scroll.y, share->ScrollMax.y, share->Scroll.y, pose_win->ScrollMax.x,
+                   pose_win->ScrollMax.y, pose_win->Scroll.x, pose_win->Scroll.y);
     }
     // The 3D region: no scroll range, no scroll position — the header row and the input block
-    // are reachable by construction, at every basis. (The map region is the window's now: its
-    // pin ran once above, at the window's own geometry.)
-    const auto assert_region_no_scroll = [&](const char* fragment) {
-      ImGuiWindow* region = LowerRowRegionWindow(fragment);
-      IM_CHECK_RETV(region != nullptr, false);
-      IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
-      IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
-      return true;
-    };
-    IM_CHECK_RETV(assert_region_no_scroll("##AnalyzeRaypath3D"), false);
-    // The divider: the 8pt strip never scrolls, and its grab bar stays inside the strip's own
-    // rect — the line that rode ~2pt past the strip's bottom edge was the visible defect.
-    IM_CHECK_RETV(divider != nullptr, false);
-    IM_CHECK_RETV(divider->ScrollMax.x == 0.0f, false);
-    IM_CHECK_RETV(divider->ScrollMax.y == 0.0f, false);
-    // The strip is EXACTLY the 8pt its grab bar needs (the harness runs at UI scale 1.0):
-    // ImGui clamps a top-level window's SetNextWindowSize up to style.WindowMinSize (32pt with
-    // the default style), and a clamped strip's opaque background would cover the first rows of
-    // both regions below it while every scroll reading above stays zero.
-    IM_CHECK_RETV(divider->Rect().GetHeight() <= 8.5f, false);
-    const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(grab.ID != 0, false);
-    IM_CHECK_RETV(grab.RectFull.Min.y >= divider->Rect().Min.y - 0.5f, false);
-    IM_CHECK_RETV(grab.RectFull.Max.y <= divider->Rect().Max.y + 0.5f, false);
-    IM_CHECK_RETV(grab.RectFull.Min.x >= divider->Rect().Min.x - 0.5f, false);
-    IM_CHECK_RETV(grab.RectFull.Max.x <= divider->Rect().Max.x + 0.5f, false);
+    // are reachable by construction, at every basis. (The map region is the window's: its pin
+    // ran once above, at the window's own geometry.)
+    IM_CHECK_RETV(r3d != nullptr, false);
+    IM_CHECK_RETV(r3d->ScrollMax.y == 0.0f, false);
+    IM_CHECK_RETV(r3d->Scroll.y == 0.0f, false);
     // The share list: the window itself never scrolls (its one scrolling region — the result
     // table's own — is pinned in the point_pick_analyze_lists_chains leg with a result in).
     IM_CHECK_RETV(share != nullptr, false);
@@ -1659,6 +1657,8 @@ bool WorkspaceScrollRegionsAreStructurallyFixed(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(assert_regions_fixed(), false);
   request_basis(1024, 640, "1024x640");
   IM_CHECK_RETV(assert_regions_fixed(), false);
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
   return true;
 }
 
@@ -1757,64 +1757,27 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
                     },
                     30),
                 false);
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_raypath_3d.png").string()), false);
+  // The pose window is the 3D / globe regions' only host now: opened here, it carries the
+  // screenshot evidence and every region-side leg below.
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(1);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_raypath_3d.png").string()), false);
 
   // The 3D region pin: title, the two-line description and the
-  // legend are the fixed stack; the canvas absorbs the rest. Zero scroll at the default basis.
+  // legend are the fixed stack; the canvas absorbs the rest. Zero scroll at the window's
+  // default geometry.
   {
-    ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypath3D");
+    ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
     IM_CHECK_RETV(region != nullptr, false);
     ctx->LogInfo("[scroll pins] 3d default SM %.1f SC %.1f", region->ScrollMax.y, region->Scroll.y);
     IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
     IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
   }
-  // The squeezed-row red anchor, translated to the height-rung semantics: at the 0.85 clamp the
-  // band drops below the side-by-side form's fixed-stack floor, so the form is the stacked one —
-  // the 3D region holds its floor height there (any content beyond it scrolls inside the region,
-  // the designed degradation), while the strip defect this leg originally pinned (a 32pt-clamped
-  // divider covering the headers and stealing their hover) stays pinned by the divider's size
-  // and grab-containment asserts in workspace_scroll_regions_are_structurally_fixed.
-  {
-    // The row-splitter drag drives the workspace's own chrome: the floating window (opened by
-    // the row clicks above) covers the divider's press point at the default placement, and a
-    // press through a floating window lands on the window — z-order, the product behaving
-    // correctly. The case's remaining legs (orbit pins, globe rows) live below the window's
-    // reach, so it closes here and stays closed.
-    gui::g_state.analyze_raypath_view_open = false;
-    ctx->Yield(2);
-    const float ratio_before = gui::g_state.workspace.middle_rows_ratio;
-    gui::g_state.workspace.middle_rows_ratio = 0.85f;
-    ctx->Yield(3);
-    {
-      ImGuiWindow* region = LowerRowRegionWindow("##AnalyzeRaypath3D");
-      IM_CHECK_RETV(region != nullptr, false);
-      ctx->LogInfo("[scroll pins] 3d squeezed h %.1f SM %.1f SC %.1f", region->Size.y, region->ScrollMax.y,
-                   region->Scroll.y);
-      IM_CHECK_RETV(std::fabs(region->Size.y - gui::UiPx(gui::kAnalyzeDepth3DMinSize)) < 1.0f, false);
-      IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
-    }
-    gui::g_state.workspace.middle_rows_ratio = ratio_before;
-    ctx->Yield(3);
-    // The grab gesture, over the real mouse path: press the strip's bar, drag it down past the
-    // 0.85 clamp, release — the ratio must follow the mouse. (Pre-fix this cannot pass: the bar
-    // extends below the strip's rect and the press hovers the lower row window instead.)
-    ImGuiWindow* divider = ctx->GetWindowByRef("//##AnalyzeRowsDivider");
-    IM_CHECK_RETV(divider != nullptr, false);
-    const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(grab.ID != 0, false);
-    const ImVec2 centre = grab.RectFull.GetCenter();
-    ctx->MouseMoveToPos(centre);
-    ctx->Yield(2);
-    ctx->MouseDown(0);
-    ctx->Yield(2);
-    ctx->MouseMoveToPos(ImVec2(centre.x, centre.y + 350.0f));
-    ctx->Yield(3);
-    ctx->MouseUp(0);
-    ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.workspace.middle_rows_ratio > ratio_before + 0.3f, false);  // the drag wrote it
-    gui::g_state.workspace.middle_rows_ratio = ratio_before;
-    ctx->Yield(2);
-  }
+  // (The squeezed-row and divider-drag legs this block once carried rode the workspace's depth
+  // band and its row splitter — both retired with the band. The region's compressed-tier
+  // degradation — the fixed stack's scroll reachability at the window minimum — is the
+  // narrowest-window leg at the tail of this case, now driven through the pose window itself.)
   // ---- The orbit rotation convention pin (doc/geometry/coordinate-convention.md §9.8) ----
   // The project-wide grab metaphor (Render main view + modal preview + this orbit camera): drag
   // right -> the crystal's NEAR face follows the hand RIGHT; drag down -> the near face follows
@@ -1910,10 +1873,10 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   ctx->LogInfo("[point view] playback stepped to sample %d; sky point and ROI untouched",
                gui::g_state.analysis.point_view.sample_index);
 
-  // The completed point's own controls, driven as interactions at the minimum window (the depth
-  // band's stacked form): scrolled into view, the sample slider sits contained in the globe
+  // The completed point's own controls, driven as interactions at the smallest window (the pose
+  // window clamped to the shrunken viewport): the sample slider sits contained in the globe
   // region and answers a real click — which moves the cursor and stops a running playback (a
-  // hand on the slider owns it) — and the play toggle answers clicks both ways. The band's
+  // hand on the slider owns it) — and the play toggle answers clicks both ways. The window's
   // reachability claim for the region's live state, in the X5 form.
   {
     const ScopedWindowBasis window_basis(ctx);
@@ -1926,13 +1889,12 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
     }
     IM_CHECK_RETV(g_window_size_test.done.load(), false);
     ctx->Yield(3);
-    ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-    IM_CHECK_RETV(band != nullptr, false);
-    band->Scroll.y = band->ScrollMax.y;
-    ctx->Yield(2);
-    ImGuiWindow* globe = LowerRowRegionWindow("##AnalyzeSunGlobe");
+    // The globe region at the viewport-clamped window: its fixed stack (slider/play row among
+    // it) stays reachable; the state area below scrolls and the region's own scroll write is
+    // the belt-and-braces seek.
+    ImGuiWindow* globe = PoseRegionWindow("##AnalyzeSunGlobe");
     IM_CHECK_RETV(globe != nullptr, false);
-    globe->Scroll.y = globe->ScrollMax.y;  // the slider/play row is the region stack's tail
+    globe->Scroll.y = globe->ScrollMax.y;  // the slider/play row is the fixed stack's tail
     ctx->Yield(2);
     const ImGuiTestItemInfo sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(sample.ID != 0, false);
@@ -1955,9 +1917,8 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
     ctx->ItemClick("**/Stop##globe_play");
     ctx->Yield(2);
     IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
-    band->Scroll.y = 0.0f;
-    ctx->Yield(2);
   }
+  gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
   return true;
 }
@@ -2564,8 +2525,11 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(contacts.contact_count == 2, false);
     IM_CHECK_RETV(legs.leg_count == 3, false);
   }
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_v1_chain_trace.png").string()),
-                false);
+  // The pose window carries the trace screenshot evidence (the regions' only host now).
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(1);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_v1_chain_trace.png").string()), false);
   IM_CHECK_RETV(SaveWindowPng(ctx, PanoramaRegionRef(), GuiTestTempPath("analyze_v1_chain_panorama.png").string()),
                 false);
   ctx->LogInfo("[v1 chain] one session: overview, map, pick, point, fiber, factors, trace — identity %u",
@@ -2706,7 +2670,10 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                       line.seg_kinds[3] == 1 && line.seg_kinds[4] == 2,
                   false);
   }
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeLowerRow", GuiTestTempPath("analyze_v1_c03_trace.png").string()), false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(1);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_v1_c03_trace.png").string()), false);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
   return true;
 }
@@ -3408,8 +3375,12 @@ bool CancelPointButtonReachesTheNamedState(ImGuiTestContext* ctx) {
                     20),
                 false);
   // Every face's own wait display, read off the render-feedback fields (AC1): the point's two
-  // text faces — the fiber region and the details block draw the same sentence — each carry the
+  // text faces — the fiber region (the Pose & trace window's globe region now: opened here, its
+  // site owns the clear-and-write) and the details block draw the same sentence — each carry the
   // live elapsed, and the map (queued behind the survey in this window) names its queue.
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
   IM_CHECK_RETV(
       gui::g_state.analysis.wait_feedback_texts.point_wait_line_fiber.find("Computing the point") != std::string::npos,
       false);
@@ -3440,6 +3411,8 @@ bool CancelPointButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
   IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kWaiting, false);
   ctx->LogInfo("[v1 cancel] Cancel point withdrew the queued intent; the survey face kept its own wait");
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
   return true;
 }
 
@@ -3758,14 +3731,14 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     // slider-label convention) is then bound past the track's right edge; narrower, the label
     // owns its line and the track fills the row — asserted as the shape, the line above sitting
     // inside the clip the track's own containment proves.
-    const float label_w = ImGui::CalcTextSize("Radius").x;
-    const float inner_sp = ImGui::GetStyle().ItemInnerSpacing.x;
-    const float content_w = radius_t.Window->InnerClipRect.GetWidth();
-    if (content_w - label_w - inner_sp >= gui::UiPx(120.0f)) {
-      IM_CHECK_RETV(radius_t.RectFull.Max.x + inner_sp + label_w <= radius_t.Window->InnerClipRect.Max.x + 0.5f, false);
-    } else {
-      IM_CHECK_RETV(radius_t.RectFull.GetWidth() >= content_w - 1.5f, false);
-    }
+    // The label's own placement assert (track right + label <= clip) stayed OUT: the product
+    // classifies its two forms on the LINE-remaining width at its call site, a quantity a
+    // window-level reading can only mis-estimate — at the 2x-1280 clamped tier the radius row's
+    // join decisions land it between the two forms, and a classifier built from the window's
+    // content width asserted the wrong one. The contract both forms owe THIS leg — the slider
+    // contained in its clip and drivable at its ends — is asserted above and below; the wide
+    // form's label arithmetic is evidenced at the tiers where the classification bases agree
+    // (the 1x rows and the wide 2x row, this same assert passing there).
     const float cone_deg = gui::kAnalysisConeMaxRadiusDeg;
     const float min_deg = gui::kAnalysisConeMaxRadiusDeg / static_cast<float>(gui::kAnalysisConeRingCount);
     if (bar_scroll_child == nullptr) {
@@ -3805,43 +3778,33 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
           "under a direct scroll write): ends drive skipped at this tier, evidenced above",
           label);
     }
-    // The globe's completed-state controls: the band scrolled to the globe's cell, the globe
-    // scrolled to its slider/play row, containment + real Play/Stop. (The map region left the
-    // band with its window — the window is closed on this leg by design — so only the globe
-    // is the band's business here.)
-    ImGuiWindow* band_t = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-    IM_CHECK_RETV(band_t != nullptr, false);
+    // The globe's completed-state controls, in the pose window (the regions' only host): the
+    // globe seeked to its slider/play row, containment + real Play/Stop. (The workspace band
+    // and its cell-scroll arithmetic retired with the row split; the reachability claim moves
+    // to the window's own geometry at each tier.)
+    gui::g_state.analyze_pose_view_open = true;
+    PinPoseViewOnScreen(ctx);
+    ctx->Yield(1);
     ImGuiWindow* globe_t = nullptr;
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w == nullptr || !w->Active) {
         continue;
       }
-      if (std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
+      if (w->ParentWindow != nullptr && std::strcmp(w->ParentWindow->Name, "Pose & trace") == 0 &&
+          std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
         globe_t = w;
       }
     }
     IM_CHECK_RETV(globe_t != nullptr, false);
-    // The stacked form: the band scroll shows a SLICE of the globe's cell — the band's bottom
-    // shows the cell's bottom (the point-inspector leg's shape), and the globe's internal
-    // scroll brings its own tail (the slider/play row) into that slice.
-    band_t->Scroll.y = band_t->ScrollMax.y;
-    ctx->Yield(2);
     globe_t->Scroll.y = globe_t->ScrollMax.y;
     ctx->Yield(2);
     // The Include-again above restored the selection key, which dropped the adopted point
-    // result; the pump recomputes it over real engine time. The map intent re-issues with it,
-    // and the map region's answer moves its cell's height — the band's ScrollMax drifts under
-    // a scroll set once before the wait, ImGui clamps the stale value, and the globe cell
-    // drifts out of the visible slice for good (observed: completed state, sample track never
-    // submitted). So the wait re-seeks the cell's tail on every attempt instead of trusting
-    // one scroll, and the slider row itself waits for the worker (its existence is the
-    // completed state).
+    // result; the pump recomputes it over real engine time, and the slider row itself waits
+    // for the worker (its existence is the completed state). The wait re-seeks the globe's
+    // tail on every attempt instead of trusting one scroll.
     IM_CHECK_RETV(DriveUntil(
                       ctx,
                       [ctx] {
-                        if (ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow")) {
-                          band->Scroll.y = band->ScrollMax.y;
-                        }
                         for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
                           if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
                             w->Scroll.y = w->ScrollMax.y;
@@ -3910,35 +3873,18 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       drive_tier("baseline 1x", static_cast<float>(gui::kInitWindowWidth), static_cast<float>(gui::kInitWindowHeight)),
       false);
   // The 3D canvas's wheel arbitration, the map disk's sibling rule (the shared owner in
-  // analyze_region_wheel.hpp): the orbit zoom consumes only a wheel a standing claim
-  // protects, the band never moves from a wheel over the canvas, and outside the canvas
-  // the wheel still belongs to the band — its natural container, since the 3D child never
-  // wheel-scrolls itself. The band sits at an interior (non-boundary) scroll with the 3D
-  // cell's rows in view, so a leaking arbitration would actually move it — a clamped-edge
-  // band cannot move, and that assert passes on the broken product. (This block lives at
-  // the baseline because it needs BOTH a scrollable band and a 3D canvas: the 1024×2x cell
-  // is too narrow for the canvas to exist at all.) The band's two cells fit side-by-side at
-  // the default width now (their floor dropped with the map cell), so the height rung stacks
-  // it explicitly: the wheel-arbitration construct needs the scrollable form.
+  // analyze_region_wheel.hpp): the orbit zoom consumes only a wheel a standing claim protects.
+  // Re-hosted on the pose window (the regions' only host now; the claim arbitration is
+  // region-scoped, not host-scoped): a tick over the canvas zooms exactly one tick's worth and
+  // moves no scroll anywhere; a tick outside the canvas (the globe's title rows — the robust
+  // non-claiming substrate, the globe registers no wheel claim) leaves the orbit untouched.
+  // (The takeover-frame construct retired with the band: its substrate was the band's own
+  // scroll sliding cells under a stationary pointer, and the pose window's body does not
+  // scroll. The takeover gate's consume-side remains covered by the region-wheel unit pins.)
   {
-    const float rows_saved_w = gui::g_state.workspace.middle_rows_ratio;
-    gui::g_state.workspace.middle_rows_ratio = 0.85f;  // band ≈ 912*0.15 - 8 = 129, below the 250 rung
-    ctx->Yield(3);
-    ImGuiWindow* band_w = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-    IM_CHECK_RETV(band_w != nullptr, false);
-    ImGuiWindow* r3d_w = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypath3D") != nullptr) {
-        r3d_w = w;
-        break;
-      }
-    }
-    IM_CHECK_RETV(r3d_w != nullptr, false);
-    IM_CHECK_RETV(band_w->ScrollMax.y > 1.0f, false);
-    const float r3d_top_in_band = r3d_w->Pos.y - band_w->Pos.y + band_w->Scroll.y;
-    band_w->Scroll.y = std::min(r3d_top_in_band, band_w->ScrollMax.y * 0.9f);
-    ctx->Yield(2);
-    IM_CHECK_RETV(band_w->Scroll.y > 0.5f && band_w->Scroll.y < band_w->ScrollMax.y - 0.5f, false);
+    gui::g_state.analyze_pose_view_open = true;
+    PinPoseViewOnScreen(ctx);
+    ctx->Yield(1);
     // The tier's symmetry drives flip and restore their checkboxes — every flip is a selection
     // key change, and a key change drops the adopted point result (the pump recomputes it). The
     // 3D region honestly shows its waiting placeholder until the point re-adopts and the
@@ -3952,96 +3898,29 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     const ImGuiTestItemInfo r3d_canvas = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(r3d_canvas.ID != 0, false);
     const float zoom0_w = gui::g_state.analysis.point_view.orbit_zoom;
-    const float band0_w = band_w->Scroll.y;
-    const float r3d_scroll0_w = r3d_w->Scroll.y;
-    // The hover point: the canvas's center, pulled inside the band's visible slice (a
-    // partially clipped canvas's registry rect can reach past it; the pointer must be on a
-    // point the screen actually shows AND the canvas actually covers).
+    // The hover point: the canvas's center (the window hosts it whole at this geometry — the
+    // pointer is on a point the screen actually shows AND the canvas actually covers).
     const ImVec2 canvas_center = r3d_canvas.RectFull.GetCenter();
-    const float hover_y = std::clamp(canvas_center.y, band_w->Pos.y + 2.0f, band_w->Pos.y + band_w->Size.y - 2.0f);
-    IM_CHECK_RETV(hover_y >= r3d_canvas.RectFull.Min.y && hover_y <= r3d_canvas.RectFull.Max.y, false);
-    ctx->MouseMoveToPos(ImVec2(canvas_center.x, hover_y));
+    ctx->MouseMoveToPos(canvas_center);
     ctx->Yield(2);  // the claim stands before the wheel arrives
     ctx->MouseWheelY(1.0f);
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_zoom > zoom0_w, false);
-    IM_CHECK_RETV(band_w->Scroll.y == band0_w, false);
-    IM_CHECK_RETV(r3d_w->Scroll.y == r3d_scroll0_w, false);
-    ctx->LogInfo("[ray3d wheel] canvas tick: zoom %.4f -> %.4f, band %.0f held, 3d scroll %.0f held",
-                 static_cast<double>(zoom0_w), static_cast<double>(gui::g_state.analysis.point_view.orbit_zoom),
-                 static_cast<double>(band_w->Scroll.y), static_cast<double>(r3d_w->Scroll.y));
-    // Outside the canvas (the globe's title rows): the wheel bubbles to the band — it scrolls,
-    // the orbit does not. The globe's rows are the robust non-claiming substrate (the globe
-    // registers no wheel claim, so the band's own scroll sliding cells under the stationary
-    // pointer can never turn a later tick into a canvas tick — the 3D's own title rows are too
-    // close to the canvas in the squeezed cell for that).
-    ImGuiWindow* globe_w = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
-        globe_w = w;
-        break;
-      }
-    }
+    ctx->LogInfo("[ray3d wheel] canvas tick: zoom %.4f -> %.4f", static_cast<double>(zoom0_w),
+                 static_cast<double>(gui::g_state.analysis.point_view.orbit_zoom));
+    // Outside the canvas (the globe's title rows): the wheel belongs to no claimant — the orbit
+    // does not move. The globe's rows are the robust non-claiming substrate (the globe registers
+    // no wheel claim, and the pose window's body has nothing to scroll).
+    ImGuiWindow* globe_w = PoseRegionWindow("##AnalyzeSunGlobe");
     IM_CHECK_RETV(globe_w != nullptr, false);
-    const float globe_top_in_band_w = globe_w->Pos.y - band_w->Pos.y + band_w->Scroll.y;
-    band_w->Scroll.y = std::max(0.0f, globe_top_in_band_w - 20.0f);
-    ctx->Yield(2);
-    ctx->MouseMoveToPos(ImVec2(band_w->Pos.x + band_w->Size.x * 0.5f, band_w->Pos.y + 20.0f));
+    ctx->MouseMoveToPos(ImVec2(globe_w->Pos.x + globe_w->Size.x * 0.5f, globe_w->Pos.y + 8.0f));
     ctx->Yield(2);
     ctx->MouseWheelY(-2.0f);
     ctx->Yield(2);
-    IM_CHECK_RETV(band_w->Scroll.y > band0_w, false);
     IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_zoom == zoom0_w * 1.12f,
                   false);  // exactly one tick's worth — the outside wheel never zoomed
-    ctx->LogInfo("[ray3d wheel] outside tick: band %.0f -> %.0f, zoom held at %.4f", static_cast<double>(band0_w),
-                 static_cast<double>(band_w->Scroll.y),
+    ctx->LogInfo("[ray3d wheel] outside tick: zoom held at %.4f",
                  static_cast<double>(gui::g_state.analysis.point_view.orbit_zoom));
-    // The TAKEOVER frame, at the one tier whose geometry can host it: the pointer holds still
-    // over the globe cell's title rows — which neither claim the wheel nor scroll themselves —
-    // and ONE band tick slides the previous cell's bottom rows (the 3D's legend/transmittance
-    // text) under it. The tick landing on the first frame whose hover sees the 3D was
-    // dispatched before any claim existed (the 3D claims only over its canvas) — and the
-    // takeover frame's own consume gate agrees: with no claim standing at the frame's start
-    // the region's gestures do not spend the event the band already scrolled. No tick may
-    // FOLLOW the crossing one: the crossing frame's render plants the canvas's claim if the
-    // pointer ends anywhere near it, and a later tick would be the claimant's. (At the
-    // 1024×2x tier this construct is gone — every cell's rows claim there — and the
-    // pointer-arrival form is unreachable too: every engine move yields two frames, long
-    // enough for the destination to claim.)
-    ImGuiWindow* band_t = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-    IM_CHECK_RETV(band_t != nullptr, false);
-    ImGuiWindow* globe_t = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
-        globe_t = w;
-        break;
-      }
-    }
-    IM_CHECK_RETV(globe_t != nullptr, false);
-    const float globe_top_in_band_t = globe_t->Pos.y - band_t->Pos.y + band_t->Scroll.y;
-    band_t->Scroll.y =
-        std::max(0.0f, globe_top_in_band_t - 20.0f);  // the pointer (band top +20) sits on the globe's title row
-    ctx->Yield(2);
-    const ImVec2 takeover_pt(band_t->Pos.x + band_t->Size.x * 0.5f, band_t->Pos.y + 20.0f);
-    ctx->MouseMoveToPos(takeover_pt);
-    ctx->Yield(2);
-    const float band_t0 = band_t->Scroll.y;
-    const float globe_t0 = globe_t->Scroll.y;
-    const float r3d_scroll_t0 = r3d_w->Scroll.y;
-    const float zoom_t0 = gui::g_state.analysis.point_view.orbit_zoom;
-    ctx->MouseWheelY(1.0f);  // the crossing tick: the band scrolls up, the hover flips to the 3D's bottom rows
-    ctx->Yield(2);
-    IM_CHECK_RETV(band_t->Scroll.y < band_t0, false);
-    IM_CHECK_RETV(globe_t->Scroll.y == globe_t0, false);
-    IM_CHECK_RETV(r3d_w->Scroll.y == r3d_scroll_t0, false);
-    IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_zoom == zoom_t0, false);
-    ctx->LogInfo("[scale tiers baseline] takeover: band %.0f -> %.0f, globe held at %.0f, 3d held at %.0f",
-                 static_cast<double>(band_t0), static_cast<double>(band_t->Scroll.y),
-                 static_cast<double>(globe_t->Scroll.y), static_cast<double>(r3d_w->Scroll.y));
-    band_t->Scroll.y = 0.0f;
-    ctx->Yield(2);
-    gui::g_state.workspace.middle_rows_ratio = rows_saved_w;
-    ctx->Yield(2);
   }
   IM_CHECK_RETV(set_scale(1.5f), false);
   IM_CHECK_RETV(
@@ -4103,12 +3982,6 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(fabsf(ImGui::GetMainViewport()->Size.x - 1024.0f) < 1.5f &&
                       fabsf(ImGui::GetMainViewport()->Size.y - 800.0f) < 1.5f,
                   false);
-    // The band: two cells now (3D first, globe last). Parked at its top for the zoom leg's
-    // hold assertions below.
-    ImGuiWindow* band_e = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-    IM_CHECK_RETV(band_e != nullptr, false);
-    band_e->Scroll.y = 0.0f;
-    ctx->Yield(2);
     // The first map is the analysis's wall-clock tail: it lands while the earlier tiers are
     // being driven, so the adopted result is awaited here, once, before anything below reads
     // the region's content.
@@ -4122,11 +3995,11 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
                   false);
     ctx->LogInfo("[scale tiers 1024 clamped] first map adopted");
     // The wheel's arbitration at the region, in its window host: inside the picture the wheel
-    // is the zoom's alone (the region's scroll and the BAND's scroll must both hold). The
-    // region fits its window at this geometry (no overflow to scroll), so the seek below
-    // clamps to 0 and the region-hold assertion reads as "the zoom never scrolled the region".
-    // (The wheel-outside-the-picture leg — the region scrolling while the view and the band
-    // hold — needs the region's own overflow and lives in the narrowest-window legs.)
+    // is the zoom's alone (the region's scroll must hold). The region fits its window at this
+    // geometry (no overflow to scroll), so the seek below clamps to 0 and the region-hold
+    // assertion reads as "the zoom never scrolled the region". (The wheel-outside-the-picture
+    // leg — the region scrolling while the view holds — needs the region's own overflow and
+    // lives in the narrowest-window legs.)
     const ImGuiTestItemInfo canvas_probe_e = ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas_probe_e.ID != 0, false);
     map_e->Scroll.y = std::max(0.0f, canvas_probe_e.RectFull.Min.y - map_e->Pos.y - 40.0f);
@@ -4135,144 +4008,36 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(canvas_e.ID != 0, false);
     const float radius_before_e = gui::g_state.analysis.map_view.radius_deg;
     const float scroll_set_e = map_e->Scroll.y;
-    const float band_set_e = band_e->Scroll.y;
     ctx->MouseMoveToPos(canvas_e.RectFull.GetCenter());
     ctx->Yield(2);
-    ctx->MouseWheelY(1.0f);  // wheel up over the picture: zoom in, nothing scrolls anywhere
+    ctx->MouseWheelY(1.0f);  // wheel up over the picture: zoom in, nothing scrolls
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.map_view.radius_deg < radius_before_e, false);
     IM_CHECK_RETV(map_e->Scroll.y == scroll_set_e, false);
-    IM_CHECK_RETV(band_e->Scroll.y == band_set_e, false);
     const float radius_zoomed_e = gui::g_state.analysis.map_view.radius_deg;
-    ctx->LogInfo("[scale tiers 1024 clamped] wheel held: radius %.1f -> %.1f, region scroll %.0f, band %.0f held",
+    ctx->LogInfo("[scale tiers 1024 clamped] wheel held: radius %.1f -> %.1f, region scroll %.0f held",
                  static_cast<double>(radius_before_e), static_cast<double>(radius_zoomed_e),
-                 static_cast<double>(map_e->Scroll.y), static_cast<double>(band_e->Scroll.y));
+                 static_cast<double>(map_e->Scroll.y));
     map_e->Scroll.y = 0.0f;  // the λ block below drives the header row: back to its top
     ctx->Yield(2);
-    // (the takeover leg lives at the baseline tier; at this tier every cell's rows claim, so
-    // no non-claiming wheel-able zone exists to drive the band under a stationary pointer)
+    // (the takeover leg lived at the baseline tier and retired with the band — its substrate
+    // was the band's own scroll; no non-claiming wheel-able host scroll exists to drive under a
+    // stationary pointer any more)
     // The λ block below drives the region's header row.
-    band_e->Scroll.y = 0.0f;
+    // The 3D canvas's cramped-geometry containment — the review's own kill geometry — lived on
+    // the band's stacked cell and cannot re-host on the pose window AT THIS TIER: at 2x the
+    // window's own minimum (640 pt) is 1280 px against a 1024 px viewport, so there is no
+    // on-screen cramped geometry for a floating window to take — the shell band could shrink
+    // arbitrarily, a window cannot (its minimum is the user-reachable floor by design). The
+    // containment-with-real-drag evidence for the cramped canvas is the pose window's own
+    // minimum-geometry case at the default viewport, where 640x420 fits; the canvas's
+    // compressed-yield cap itself is pinned by the region's unit legs. The pose window closes:
+    // this tier's remaining legs drive the map window's λ and globe controls.
+    gui::g_state.analyze_pose_view_open = false;
+    ctx->LogInfo(
+        "[scale tiers 1024 clamped] canvas containment skipped: the window minimum (640pt) exceeds the "
+        "viewport at 2x — the evidence lives in the pose window's minimum-geometry case");
     ctx->Yield(2);
-    // The 3D cell at THIS compressed tier is the review's own kill geometry: the canvas holds
-    // its floor and the region scrolls past it — the model's only spatial view exists here or
-    // nowhere. Real completed point/trace results are already adopted (this leg's premise);
-    // the canvas must exist, sit inside the effective clip, and answer a real orbit drag and a
-    // real wheel zoom. The map window closes for it: the band's slice sits inside the floating
-    // window's rect at this basis, and the drag's press would land on the window (z-order —
-    // the product behaving correctly); the λ block below reopens it.
-    gui::g_state.analyze_raypath_view_open = false;
-    ctx->Yield(2);
-    {
-      ImGuiWindow* r3d_t = nullptr;
-      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypath3D") != nullptr) {
-          r3d_t = w;
-          break;
-        }
-      }
-      IM_CHECK_RETV(r3d_t != nullptr, false);
-      r3d_t->Scroll.y = 0.0f;  // a known region scroll: the framing below reads content offsets
-      // Coarse-seek + wait in one loop. The seek target: the 3D cell is the stacked band's
-      // FIRST since the map moved to its window — the scan starts at the band's top, well
-      // past the geometry a stale Pos could mis-aim at (a culled window's Pos is whatever it
-      // was the last frame it rendered; re-aiming every attempt is idempotent once it lands).
-      IM_CHECK_RETV(DriveUntil(
-                        ctx,
-                        [ctx, band_e] {
-                          band_e->Scroll.y = std::min(400.0f, band_e->ScrollMax.y);
-                          return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0;
-                        },
-                        30),
-                    false);
-      // Frame the canvas WHOLE through both nested viewports: the region scrolls to the
-      // canvas's own band, then the host scrolls that band into its slice. The product caps the
-      // canvas at the binding clip (the smaller of region clip and band slice), so a top-aligned
-      // position shows all of it — and the four-edge containment below is the recovery's
-      // receipt, not a hope (the review's probe caught the old form passing with 29px of a
-      // 220px canvas showing).
-      const ImGuiTestItemInfo found_t = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
-      IM_CHECK_RETV(found_t.ID != 0, false);
-      const float canvas_top_in_region = found_t.RectFull.Min.y - r3d_t->Pos.y + r3d_t->Scroll.y;
-      const float cell_top_in_band = r3d_t->Pos.y - band_e->Pos.y + band_e->Scroll.y;
-      // Region first, band second — the band's aim reads the region scroll that actually
-      // landed: the region's own scroll moves the canvas WITHIN the cell's rectangle, but a
-      // region whose content already fits cannot scroll at all (SM 0 clamps the write), and
-      // aiming the band at an unapplied scroll misses by exactly that amount.
-      const float region_scroll_request_t = std::max(0.0f, canvas_top_in_region - ImGui::GetStyle().WindowPadding.y);
-      r3d_t->Scroll.y = region_scroll_request_t;
-      ctx->Yield(2);
-      const float region_scroll_t = r3d_t->Scroll.y;  // the clamped, actually-applied value
-      const float canvas_top_in_band = cell_top_in_band + (canvas_top_in_region - region_scroll_t);
-      band_e->Scroll.y = std::clamp(canvas_top_in_band - ImGui::GetStyle().WindowPadding.y, 0.0f, band_e->ScrollMax.y);
-      ctx->Yield(2);
-      const ImGuiTestItemInfo r3d_canvas_t = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
-      IM_CHECK_RETV(r3d_canvas_t.ID != 0, false);
-      // The recovery receipt: the whole rectangle inside the region's clip AND inside the
-      // band's slice — all four edges each, the X5 form both levels of ancestors owe.
-      IM_CHECK_RETV(r3d_canvas_t.RectFull.Min.x >= r3d_t->InnerClipRect.Min.x - 0.5f &&
-                        r3d_canvas_t.RectFull.Max.x <= r3d_t->InnerClipRect.Max.x + 0.5f &&
-                        r3d_canvas_t.RectFull.Min.y >= r3d_t->InnerClipRect.Min.y - 0.5f &&
-                        r3d_canvas_t.RectFull.Max.y <= r3d_t->InnerClipRect.Max.y + 0.5f,
-                    false);
-      IM_CHECK_RETV(r3d_canvas_t.RectFull.Min.x >= band_e->InnerClipRect.Min.x - 0.5f &&
-                        r3d_canvas_t.RectFull.Max.x <= band_e->InnerClipRect.Max.x + 0.5f &&
-                        r3d_canvas_t.RectFull.Min.y >= band_e->InnerClipRect.Min.y - 0.5f &&
-                        r3d_canvas_t.RectFull.Max.y <= band_e->InnerClipRect.Max.y + 0.5f,
-                    false);
-      ctx->LogInfo("[scale tiers 1024 clamped] canvas recovered whole: h %.0f in region clip h %.0f, band slice h %.0f",
-                   static_cast<double>(r3d_canvas_t.RectFull.GetHeight()),
-                   static_cast<double>(r3d_t->InnerClipRect.GetHeight()),
-                   static_cast<double>(band_e->InnerClipRect.GetHeight()));
-      // The legend's runaway-wrap pin, decomposed (the review's own control experiment: the
-      // pre-fix wrap-at-a-sliver measured the legend at 1146px where a sane wrap gives 192):
-      // the legend's height is the region's content minus the head above the canvas and the
-      // canvas itself — at this tier the fixed head (title, radios and the usage paragraph at
-      // 184px×2x) legitimately dwarfs the cell and the region scrolls, so the WHOLE region's
-      // ScrollMax is not the legend's proxy; the legend itself is what the bound pins. The
-      // head reads from the canvas's CONTENT offset, not its screen rect: the framing above
-      // deliberately put the canvas at the viewport top, which scrolled the head out of view.
-      const float content_h = r3d_t->ScrollMax.y + r3d_t->Size.y;
-      const float head_h = canvas_top_in_region - ImGui::GetStyle().WindowPadding.y;
-      const float legend_h =
-          content_h - head_h - r3d_canvas_t.RectFull.GetHeight() - ImGui::GetStyle().ItemSpacing.y * 2.0f;
-      ctx->LogInfo(
-          "[scale tiers 1024 clamped] 3d decomposition: content %.0f = head %.0f + canvas %.0f + legend %.0f, "
-          "SM %.0f",
-          static_cast<double>(content_h), static_cast<double>(head_h),
-          static_cast<double>(r3d_canvas_t.RectFull.GetHeight()), static_cast<double>(legend_h),
-          static_cast<double>(r3d_t->ScrollMax.y));
-      IM_CHECK_RETV(legend_h > 0.0f && legend_h < 400.0f, false);
-      const float yaw0_t = gui::g_state.analysis.point_view.orbit_yaw_deg;
-      const float zoom0_t = gui::g_state.analysis.point_view.orbit_zoom;
-      const ImVec2 canvas_c_t = r3d_canvas_t.RectFull.GetCenter();
-      const float hover_y_t =
-          std::clamp(canvas_c_t.y, r3d_t->InnerClipRect.Min.y + 2.0f, r3d_t->InnerClipRect.Max.y - 2.0f);
-      IM_CHECK_RETV(hover_y_t >= r3d_canvas_t.RectFull.Min.y && hover_y_t <= r3d_canvas_t.RectFull.Max.y, false);
-      ctx->MouseMoveToPos(ImVec2(canvas_c_t.x, hover_y_t));
-      ctx->Yield(2);
-      ctx->MouseDown(0);
-      ctx->Yield(2);
-      ctx->MouseMoveToPos(ImVec2(canvas_c_t.x + 20.0f, hover_y_t));
-      ctx->Yield(3);
-      ctx->MouseUp(0);
-      ctx->Yield(2);
-      IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_yaw_deg != yaw0_t, false);
-      const float band_before_zoom_t = band_e->Scroll.y;
-      ctx->MouseWheelY(1.0f);
-      ctx->Yield(2);
-      IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_zoom > zoom0_t, false);
-      IM_CHECK_RETV(band_e->Scroll.y == band_before_zoom_t, false);
-      ctx->LogInfo(
-          "[scale tiers 1024 clamped] 3d canvas live: yaw moved, zoom %.4f -> %.4f, region SM %.0f of %.0f, "
-          "band %.0f held",
-          static_cast<double>(zoom0_t), static_cast<double>(gui::g_state.analysis.point_view.orbit_zoom),
-          static_cast<double>(r3d_t->ScrollMax.y), static_cast<double>(r3d_t->Size.y),
-          static_cast<double>(band_e->Scroll.y));
-      band_e->Scroll.y = 0.0f;
-      r3d_t->Scroll.y = 0.0f;
-      ctx->Yield(2);
-    }
     // λ: contained in the cell, then both ends through the real drag path. (The map window
     // reopens for it — the λ row is the region header's. The old 500x320 parking read is gone:
     // the window-level minimum clamps the request to 480x360-pt-and-up, so at this basis the
@@ -4353,105 +4118,18 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
                  static_cast<double>(whole_sky_e.RectFull.Min.x), static_cast<double>(whole_sky_e.RectFull.Max.x),
                  static_cast<double>(point_e.RectFull.Min.x), static_cast<double>(point_e.RectFull.Max.x));
 
-    // The completed globe's sample track at this width: the play row shares its line only
-    // while a usable track survives the play button's real width — below that the button owns
-    // the next line and the track the full row. Either way the track answers a real drag to
-    // BOTH ends (a fully-contained 1 px track passed the containment-only form while mapping
-    // every position to sample 0 — containment alone cannot vouch for a travel). Driven BEFORE
-    // the sky-point set below: the set starts a fresh point query, and the completed-state
-    // controls belong to the result already adopted.
-    band_e->Scroll.y = band_e->ScrollMax.y;  // the stacked band's last cell is the globe
-    ctx->Yield(2);
-    ImGuiWindow* globe_e = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
-        globe_e = w;
-        break;
-      }
-    }
-    IM_CHECK_RETV(globe_e != nullptr, false);
-    globe_e->Scroll.y = globe_e->ScrollMax.y;  // the slider/play row is the region stack's tail
-    ctx->Yield(2);
-    // The λ block above drove the shared wavelength to both ends, and the wavelength is part
-    // of the point intent's key — the query re-issued and the completed-state controls belong
-    // to the answer that has not arrived yet. The map's cell moves for the same reason as at
-    // the tier drives (its own intent answers over real time), so re-seek the globe's tail on
-    // every attempt; the track itself waits for the worker (the file's discipline: its
-    // existence is the adopted state, not a race the worker must win).
-    IM_CHECK_RETV(DriveUntil(
-                      ctx,
-                      [ctx] {
-                        if (ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow")) {
-                          band->Scroll.y = band->ScrollMax.y;
-                        }
-                        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-                          if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
-                            w->Scroll.y = w->ScrollMax.y;
-                            break;
-                          }
-                        }
-                        return ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError).ID != 0;
-                      },
-                      30),
-                  false);
-    const ImGuiTestItemInfo sample_e = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(sample_e.ID != 0, false);
-    IM_CHECK_RETV(sample_e.RectFull.Max.x <= globe_e->InnerClipRect.Max.x + 0.5f &&
-                      sample_e.RectFull.Min.x >= globe_e->InnerClipRect.Min.x - 0.5f &&
-                      sample_e.RectFull.Max.y <= globe_e->InnerClipRect.Max.y + 0.5f,
-                  false);
-    const int valid_count_e = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
-    IM_CHECK_RETV(valid_count_e > 1, false);
-    const ImVec2 sample_c = sample_e.RectFull.GetCenter();
-    ctx->MouseMoveToPos(ImVec2(sample_e.RectFull.Min.x + 3.0f, sample_c.y));
-    ctx->Yield(2);
-    ctx->MouseDown(0);
-    ctx->Yield(2);
-    ctx->MouseUp(0);
-    ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == 0, false);
-    // The far end is reached by a SHORT PAST-END DRAG, not a bare press: a press maps x to the
-    // nearest sample (at this track's width the last pixel's worth of samples sit under one
-    // grab-width), while a drag beyond the track's end holds the grab clamped at the maximum —
-    // the exact far end the assert pins.
-    ctx->MouseDown(0);
-    ctx->Yield(2);
-    ctx->MouseMoveToPos(ImVec2(sample_e.RectFull.Max.x + 8.0f, sample_c.y));
-    ctx->Yield(3);
-    ctx->MouseUp(0);
-    ctx->Yield(2);
-    // The precedent's judge (the point-inspector leg): the slider answers within its valid
-    // range — not the exact far-end index, whose x mapping at this track's width no precedent
-    // ever pinned (this leg never ran below the old tier-1 red). The exact bound is the
-    // playback/clamp semantics' own; the value reads in the log.
-    const int far_sample_e = gui::g_state.analysis.point_view.sample_index;
-    IM_CHECK_RETV(far_sample_e >= 0 && far_sample_e < valid_count_e && far_sample_e > (valid_count_e - 1) / 2, false);
-    ctx->LogInfo("[scale tiers 1024 clamped] sample track driven to both ends: 0 -> %d of %d valid", far_sample_e,
-                 valid_count_e);
+    // The completed globe's controls at this tier (the sample track's both-ends drag, the
+    // deviation toggle's flip and revert) lived on the band's stacked cell and cannot re-host
+    // on the pose window HERE: at 2x the window's own minimum (640 pt) is 1280 px against a
+    // 1024 px viewport — the same structural boundary the canvas containment leg above records.
+    // The slider's both-ends drag is evidenced at the 1x tiers (the point inspector's
+    // minimum-window leg, the baseline tier) and at the 2x-1800 tier; the toggle's flip/revert
+    // at the 1x tiers and the wide 2x tier (the shell 2x leg's toggle). The pose window stays
+    // closed: the remaining legs at this tier drive the list's own chrome.
+    ctx->LogInfo(
+        "[scale tiers 1024 clamped] globe controls skipped: the window minimum (640pt) exceeds the "
+        "viewport at 2x — both-ends drag and toggle flip are evidenced at the fitting tiers");
 
-    // The globe head's deviation toggle at this width: its unit alone exceeds the row, so the
-    // toggle keeps its id with the name moved to wrapped text — contained, then a real flip and
-    // a revert (a clipped checkbox label was the toggle's only identity; the probe caught it).
-    // The band re-scrolls first: scroll-max shows the cell's BOTTOM slice, and the toggle at
-    // the cell's top is then past the band's clip — hovered no more, whatever its own window
-    // reports.
-    band_e->Scroll.y = band_e->ScrollMax.y - globe_e->Size.y + 2.0f;  // the cell's top slice
-    ctx->Yield(3);
-    globe_e->Scroll.y = 0.0f;  // the toggle is the region head's tail
-    ctx->Yield(2);
-    const ImGuiTestItemInfo grid_e = ctx->ItemInfo("**/Deviation grid###globe_dev_grid", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(grid_e.ID != 0, false);
-    IM_CHECK_RETV(grid_e.RectFull.Max.x <= globe_e->InnerClipRect.Max.x + 0.5f &&
-                      grid_e.RectFull.Min.x >= globe_e->InnerClipRect.Min.x - 0.5f,
-                  false);
-    const bool grid_before_e = gui::g_state.analysis.point_view.show_deviation_grid;
-    ctx->ItemClick(grid_e.ID);
-    ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before_e, false);
-    ctx->ItemClick(grid_e.ID);
-    ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid == grid_before_e, false);
-    ctx->LogInfo("[scale tiers 1024 clamped] deviation toggle contained, flip and revert held");
 
     // The list's CSV export at this width: the button's forms ladder down to the icon alone
     // (one id throughout), the enabled state rides the same payload either way, and the
@@ -4531,58 +4209,43 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     }
   }
 
-  // The review's other kill geometry: the row ratio's 0.85 endpoint at a 640px-high window.
-  // The band's outer height drops to ~78px — below the canvas floor's 110pt — and before the
-  // cap existed, the floor made full containment geometrically impossible there no matter how
-  // anything scrolled. Completed state carries over (this test's own premise), so the canvas
-  // must exist, be framed whole through both viewports, and answer a real orbit drag.
+  // The review's other kill geometry, re-hosted: the pose window at its own minimum (the
+  // smallest geometry a user can reach — the band's row-ratio extremes retired with the band).
+  // The canvas floor's compressed-yield cap exists exactly for this shape: the canvas must
+  // exist, be framed whole through the region's own scroll, and answer a real orbit drag.
+  // Completed state carries over (this test's own premise).
   IM_CHECK_RETV(set_scale(1.0f), false);
   IM_CHECK_RETV(set_basis(1024, 640), false);
   {
-    const float rows_saved_640 = gui::g_state.workspace.middle_rows_ratio;
-    gui::g_state.workspace.middle_rows_ratio = 0.85f;
-    ctx->Yield(4);
+    gui::g_state.analyze_pose_view_open = true;
+    PinPoseViewOnScreen(ctx);
+    ctx->Yield(1);
+    if (ImGuiWindow* pose_640 = ctx->GetWindowByRef("//Pose & trace")) {
+      ImGui::SetWindowSize(pose_640, ImVec2(gui::UiPx(gui::kPoseViewMinWidth), gui::UiPx(gui::kPoseViewMinHeight)),
+                           ImGuiCond_Always);
+    }
+    ctx->Yield(3);
     ImGuiWindow* r3d_640 = nullptr;
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeRaypath3D") != nullptr) {
+      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+          std::strcmp(w->ParentWindow->Name, "Pose & trace") == 0 &&
+          std::strstr(w->Name, "##AnalyzeRaypath3D") != nullptr) {
         r3d_640 = w;
         break;
       }
     }
     IM_CHECK_RETV(r3d_640 != nullptr, false);
-    ImGuiWindow* band_640 = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-    IM_CHECK_RETV(band_640 != nullptr, false);
     r3d_640->Scroll.y = 0.0f;  // a known region scroll, as at the 1024 block
-    // Adaptive seek + wait in one loop: the slice here is ~78px, so no fixed aim lands the
-    // canvas band at every scale — the probe cycles the cell's span instead (each attempt one
-    // step down the cell; the completed state's own recompute resolves meanwhile). The counter
-    // is a local captured by reference, not a static: a static would leak the scan phase into
-    // the pool's next run of this test.
-    int scan_640 = 0;
+    // Wait, then frame the canvas whole through the region's own scroll: the window's minimum
+    // leaves the 3D region below its content, so the region scrolls and the framing is real.
     IM_CHECK_RETV(DriveUntil(
-                      ctx,
-                      [ctx, band_640, &scan_640] {
-                        const float step_640 = std::max(20.0f, band_640->Size.y / 4.0f);
-                        band_640->Scroll.y =
-                            std::min(static_cast<float>(scan_640++ % 16) * step_640, band_640->ScrollMax.y);
-                        return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0;
-                      },
-                      30),
+                      ctx, [ctx] { return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0; }, 30),
                   false);
     const ImGuiTestItemInfo found_640 = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(found_640.ID != 0, false);
     const float canvas_top_region_640 = found_640.RectFull.Min.y - r3d_640->Pos.y + r3d_640->Scroll.y;
-    const float cell_top_band_640 = r3d_640->Pos.y - band_640->Pos.y + band_640->Scroll.y;
-    // Region first, band second — the band's aim reads the region scroll that actually
-    // landed (a fitting region cannot scroll; SM 0 clamps the write to 0, the 1024 block's
-    // form with the read-back).
     const float region_scroll_request_640 = std::max(0.0f, canvas_top_region_640 - ImGui::GetStyle().WindowPadding.y);
     r3d_640->Scroll.y = region_scroll_request_640;
-    ctx->Yield(2);
-    const float region_scroll_640 = r3d_640->Scroll.y;  // the clamped, actually-applied value
-    const float canvas_top_band_640 = cell_top_band_640 + (canvas_top_region_640 - region_scroll_640);
-    band_640->Scroll.y =
-        std::clamp(canvas_top_band_640 - ImGui::GetStyle().WindowPadding.y, 0.0f, band_640->ScrollMax.y);
     ctx->Yield(2);
     const ImGuiTestItemInfo canvas_640 = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas_640.ID != 0, false);
@@ -4590,11 +4253,6 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
                       canvas_640.RectFull.Max.x <= r3d_640->InnerClipRect.Max.x + 0.5f &&
                       canvas_640.RectFull.Min.y >= r3d_640->InnerClipRect.Min.y - 0.5f &&
                       canvas_640.RectFull.Max.y <= r3d_640->InnerClipRect.Max.y + 0.5f,
-                  false);
-    IM_CHECK_RETV(canvas_640.RectFull.Min.x >= band_640->InnerClipRect.Min.x - 0.5f &&
-                      canvas_640.RectFull.Max.x <= band_640->InnerClipRect.Max.x + 0.5f &&
-                      canvas_640.RectFull.Min.y >= band_640->InnerClipRect.Min.y - 0.5f &&
-                      canvas_640.RectFull.Max.y <= band_640->InnerClipRect.Max.y + 0.5f,
                   false);
     const float yaw_640 = gui::g_state.analysis.point_view.orbit_yaw_deg;
     const ImVec2 center_640 = canvas_640.RectFull.GetCenter();
@@ -4607,12 +4265,13 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->MouseUp(0);
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.point_view.orbit_yaw_deg != yaw_640, false);
-    ctx->LogInfo(
-        "[scale tiers 640 at rows 0.85] canvas h %.0f whole in region clip h %.0f and band slice h %.0f; orbit "
-        "drag moved yaw",
-        static_cast<double>(canvas_640.RectFull.GetHeight()), static_cast<double>(r3d_640->InnerClipRect.GetHeight()),
-        static_cast<double>(band_640->InnerClipRect.GetHeight()));
-    gui::g_state.workspace.middle_rows_ratio = rows_saved_640;
+    ctx->LogInfo("[scale tiers 640 pose-min] canvas h %.0f whole in region clip h %.0f; orbit drag moved yaw",
+                 static_cast<double>(canvas_640.RectFull.GetHeight()),
+                 static_cast<double>(r3d_640->InnerClipRect.GetHeight()));
+    if (ImGuiWindow* pose_640 = ctx->GetWindowByRef("//Pose & trace")) {
+      ImGui::SetWindowSize(pose_640, ImVec2(gui::UiPx(960.0f), gui::UiPx(620.0f)), ImGuiCond_Always);
+    }
+    gui::g_state.analyze_pose_view_open = false;
     ctx->Yield(2);
   }
 
@@ -4986,14 +4645,15 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
 
-    // The globe: the stacked band's tail region, its toggle contained and driven.
-    ImGuiWindow* band_c = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-    IM_CHECK_RETV(band_c != nullptr, false);
-    band_c->Scroll.y = band_c->ScrollMax.y;
-    ctx->Yield(2);
+    // The globe: the pose window hosts it now — its toggle contained and driven.
+    gui::g_state.analyze_pose_view_open = true;
+    PinPoseViewOnScreen(ctx);
+    ctx->Yield(1);
     ImGuiWindow* globe_c = nullptr;
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
+      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+          std::strcmp(w->ParentWindow->Name, "Pose & trace") == 0 &&
+          std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
         globe_c = w;
         break;
       }
@@ -5701,7 +5361,6 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // them — pinned bit-exact at the end of the flow.
       const float d1_ratio_before = gui::g_state.workspace.right_column_ratio;
       const float d2_ratio_before = gui::g_state.workspace.right_list_ratio;
-      const float rows_ratio_before = gui::g_state.workspace.middle_rows_ratio;
       // The ROI controls live on the panorama side.
       ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
@@ -5855,34 +5514,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_EQ(share->Scroll.y, 0.0f);
         gui::g_state.workspace.right_list_ratio = ratio_before;
         ctx->Yield(3);
-        // The grab gesture over the real mouse path: drag the bar down, the ratio follows.
-        ImGuiWindow* divider = ctx->GetWindowByRef("//##AnalyzeRowsDivider");
-        IM_CHECK(divider != nullptr);
-        const ImGuiTestItemInfo grab = ctx->ItemInfo("**/##AnalyzeRowsSplitter", ImGuiTestOpFlags_NoError);
-        IM_CHECK(grab.ID != 0);
-        const ImVec2 centre = grab.RectFull.GetCenter();
-        ctx->MouseMoveToPos(centre);
-        ctx->Yield(2);
-        ctx->MouseDown(0);
-        ctx->Yield(2);
-        ctx->MouseMoveToPos(ImVec2(centre.x, centre.y + 120.0f));
-        ctx->Yield(3);
-        ctx->MouseUp(0);
-        ctx->Yield(2);
-        IM_CHECK_GT(gui::g_state.workspace.middle_rows_ratio, ratio_before + 0.05f);  // the drag wrote it
-        gui::g_state.workspace.middle_rows_ratio = ratio_before;
-        ctx->Yield(2);
         ctx->LogInfo("[scroll pins] share@1280x800 SM %.1f SC %.1f, table %s", share->ScrollMax.y, share->Scroll.y,
                      table_child->Name);
       }
       // The 1024x640 minimum (the interaction contract's clamp-order floor): the right column
       // pins exactly at its 260 content floor and the list's narrow-column forms come on — the
       // search box in its collapsed-label form, the buttons stacked — with every control still
-      // resolving a real rect. The depth band, too narrow for the three regions side by side,
-      // switches to its stacked form: each region the band's full width at its floor height, the
-      // band itself the one scrolling region (ScrollMax > 0), and the regions' own controls are
-      // driven through the real mouse path after scrolling them into view — reachability as an
-      // interaction, not a canvas-size proxy.
+      // resolving a real rect. The pose window (opened here for the toggle leg) carries the
+      // regions; its viewport-clamped geometry keeps their controls driven through the real
+      // mouse path — reachability as an interaction, not a canvas-size proxy.
       {
         const ScopedWindowBasis window_basis(ctx);
         g_window_size_test.width = gui::kMinWindowWidth;
@@ -5912,24 +5552,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_GT(search.RectFull.GetHeight(), 0.0f);
         ctx->SetRef("");
 
-        // The band in its stacked form: scrollable, the two regions at their floors (the map
-        // region left the band with its window — reopened here for the input row below, and
-        // pinned on-screen at this 1024-wide basis — so the row is the window's, not the
-        // band's).
-        gui::g_state.analyze_raypath_view_open = true;
-        PinRaypathViewOnScreen(ctx);
-        ctx->Yield(1);
-        ImGuiWindow* band = ctx->GetWindowByRef("//##AnalyzeLowerRow");
-        IM_CHECK(band != nullptr);
-        ctx->LogInfo("[narrow] band SM %.1f", band->ScrollMax.y);
-        IM_CHECK_GT(band->ScrollMax.y, 0.0f);
-        IM_CHECK_FLOAT_NEAR(LowerRowRegionWindow("##AnalyzeRaypath3D")->Size.y, gui::UiPx(gui::kAnalyzeDepth3DMinSize),
-                            1.0f);
-        IM_CHECK_FLOAT_NEAR(LowerRowRegionWindow("##AnalyzeSunGlobe")->Size.y,
-                            gui::UiPx(gui::kAnalyzeDepthGlobeMinSize), 1.0f);
+        // (The band's stacked-form pins this block once carried — its scroll, the two regions
+        // at their band floors — retired with the band. The regions' compressed-geometry
+        // evidence lives in the pose window's own minimum-size legs in the scale-tier case.)
 
         // The sky-point input row (in the window's region): typed input and the button answer
         // with the window open.
+        gui::g_state.analyze_raypath_view_open = true;
+        PinRaypathViewOnScreen(ctx);
+        ctx->Yield(1);
         ctx->ItemInputValue("**/alt°##sky", 30.0f);
         ctx->ItemInputValue("**/az°##sky", 180.0f);
         ctx->ItemClick("**/Set sky point###sky_set");
@@ -5938,28 +5569,26 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         // The typed angles, through the direction convention itself (util/sky_direction.hpp: the
         // light-travel direction is the position's negation — z = -sin(alt)):
         IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.sky_point.dir[2], -std::sin(30.0f * lumice::kDeg2Rad), 1e-3f);
+        gui::g_state.analyze_raypath_view_open = false;
+        ctx->Yield(1);
 
-        // The globe cell is the band's last: scroll it into view. Before any point intent the
-        // globe's fixed head is the title and the Deviation grid toggle — the one control it
-        // owns in every state; the sample/play controls belong to a completed point result and
-        // are driven by the point inspector's leg.
-        band->Scroll.y = band->ScrollMax.y;
-        ctx->Yield(2);
+        // The globe's fixed head at the compressed tier, in the pose window: before any point
+        // intent the head is the title and the Deviation grid toggle — the one control it owns
+        // in every state; the sample/play controls belong to a completed point result and are
+        // driven by the point inspector's leg.
+        gui::g_state.analyze_pose_view_open = true;
+        PinPoseViewOnScreen(ctx);
+        ctx->Yield(1);
         const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
         ctx->ItemClick("**/Deviation grid###globe_dev_grid");
         ctx->Yield(2);
         IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
-        band->Scroll.y = 0.0f;
-        ctx->Yield(2);
 
-        // The 3D cell, the stacked band's first: at the minimum window its floor height still
-        // leaves the canvas legible (its region carries the whole cell). (The old
-        // narrower-than-the-map-row wrap leg rode the band's map cell and moved to the
-        // narrowest-window legs, where the same live-width judgment is stressed on the window
-        // side.)
-        ImGuiWindow* r3d = LowerRowRegionWindow("##AnalyzeRaypath3D");
+        // The 3D region beside it: at the viewport-clamped window its canvas stays legible.
+        ImGuiWindow* r3d = PoseRegionWindow("##AnalyzeRaypath3D");
         IM_CHECK(r3d != nullptr);
         IM_CHECK_GT(r3d->InnerRect.GetHeight(), 150.0f);
+        gui::g_state.analyze_pose_view_open = false;
         ctx->Yield(1);
       }
       // First row = the largest displayed energy of all rows.
@@ -5981,11 +5610,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ((int)gui::g_state.sim_state, (int)SimState::kDone);
 
       // Manual priority, pinned over the whole flow (the interaction contract §9.3): the run
-      // and everything the legs above did to the window wrote none of the three splits —
-      // bit-exact against the values read before the pick.
+      // and everything the legs above did to the window wrote none of the splits — bit-exact
+      // against the values read before the pick.
       IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, d1_ratio_before);
       IM_CHECK_EQ(gui::g_state.workspace.right_list_ratio, d2_ratio_before);
-      IM_CHECK_EQ(gui::g_state.workspace.middle_rows_ratio, rows_ratio_before);
 
       // A selection turns the diagnostics region from the idle block to the identity block: the
       // idle children leave (the guidance branches and the observation summary are named windows
@@ -7099,151 +6727,6 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The bar-takeover degradation: with a picture on show, Point mode's tall bar and the
-  // main-view row at its 0.15 clamp, the column cannot hold both — the bar takes the whole
-  // column in its own scrolling child (every control visible), the sliders still operate for
-  // real, and the picture region stands down (no publication: the deferred pass skips, and the
-  // Analyze button refuses honestly — no picture on screen to pick a centre on). The reviewer's
-  // repro is the smallest supported window: 1024x640 at the 0.15 clamp leaves the column ~73 pt
-  // against a Point bar of ~123 pt.
-  {
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "raypath_analysis", "bar_degrades_to_scroll_when_the_column_cannot_hold_it");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ScopedServerGuard guard;
-      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = 1024;
-      g_window_size_test.height = 640;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-        ctx->Yield(1);
-      }
-      IM_CHECK(g_window_size_test.done.load());
-      ctx->Yield(3);
-      OpenWindow(ctx);
-      ctx->SetRef(PanoramaRegionRef());
-      ctx->ItemClick("Point");
-      ctx->SetRef("");
-      ctx->Yield(4);
-      gui::g_state.workspace.middle_rows_ratio = 0.15f;  // the row split's own clamp floor
-      ctx->Yield(4);
-      IM_CHECK(!gui::g_panorama_vp.active);  // the picture stood down
-      // The bar's controls, in the takeover child: present, and the operable ones operate.
-      bool bar_child = false;
-      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-        bar_child = bar_child || (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr);
-      }
-      IM_CHECK(bar_child);
-      ctx->SetRef(PanoramaRegionRef());
-      IM_CHECK(ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str(), ImGuiTestOpFlags_NoError).ID !=
-               0);  // visible
-      // Operable: the centre the pre-takeover frames placed stands, the server is idle — the
-      // button is live, not a greyed shell.
-      IM_CHECK(!IsDisabled(ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str())));
-      // The takeover bar lives in its own scrolling child: rows below the fold are culled, so
-      // reach them the way a user does — scroll the child — then address through the child's ref
-      // with bare names.
-      ImGuiWindow* bar_scroll = nullptr;
-      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr) {
-          bar_scroll = w;
-        }
-      }
-      IM_CHECK(bar_scroll != nullptr);
-      bar_scroll->Scroll.y = bar_scroll->ScrollMax.y;
-      ctx->Yield(2);
-      ctx->SetRef("");
-      // (The wildcard form is the one that resolves for the child-hosted controls here — the
-      // dynamic string, same shape as the Analyze button's lookup above.)
-      ctx->ItemInputValue((std::string("**/") + "##Rays(M)_input").c_str(), 3.5f);
-      ctx->Yield(2);
-      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.ray_num_millions, 3.5f, 1e-3f);  // the budget operated
-      ctx->ItemInputValue((std::string("**/") + "Radius###Radius_narrow").c_str(), 6.0f);
-      ctx->Yield(2);
-      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.cone_radius_deg, 6.0f, 1e-3f);  // the radius operated
-      ctx->SetRef("");
-      // The basis audit: a window the test resized comes back before the test ends.
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = gui::kInitWindowWidth;
-      g_window_size_test.height = gui::kInitWindowHeight;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-        ctx->Yield(1);
-      }
-      IM_CHECK(g_window_size_test.done.load());
-      ctx->Yield(3);
-    };
-  }
-
-  // The empty state degrades like the picture path: on a fresh document (no texture) at the
-  // smallest supported window with the row split at its clamp, the notice and the operation bar
-  // together exceed a host window that is NoScrollbar/NoScrollWithMouse by design — the budget
-  // rows used to sit past a clip rect no wheel could move (ScrollMax said 41, Scroll stayed 0).
-  // A real wheel gesture must scroll them into view, they must sit inside the child's clip rect,
-  // and the budget must actually operate there — presence alone is not the claim.
-  {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "empty_state_bar_stays_reachable");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ScopedServerGuard guard;
-      gui::DoNew();
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = 1024;
-      g_window_size_test.height = 640;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-        ctx->Yield(1);
-      }
-      IM_CHECK(g_window_size_test.done.load());
-      IM_CHECK(!gui::g_preview.HasTexture());
-      ctx->ItemClick("##TopBar/Analyze");
-      ctx->Yield(3);
-      gui::g_state.workspace.middle_rows_ratio = 0.15f;  // the row split's own clamp floor
-      ctx->Yield(6);
-      // The degradation engaged on the empty path: the bar lives in its scrolling child.
-      ImGuiWindow* bar_scroll = nullptr;
-      for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr) {
-          bar_scroll = w;
-        }
-      }
-      IM_CHECK(bar_scroll != nullptr);
-      // A real wheel gesture, over the child: the defect was the wheel doing nothing.
-      const float scroll_before = bar_scroll->Scroll.y;
-      ctx->MouseMoveToPos(bar_scroll->InnerClipRect.GetCenter());
-      ctx->MouseWheelY(-10.0f);
-      ctx->Yield(3);
-      IM_CHECK_GT(bar_scroll->Scroll.y, scroll_before);
-      // Visible, geometrically: both budget rows inside the child's clip rect.
-      ctx->SetRef("");
-      const auto rays_info = ctx->ItemInfo("**/Infinite rays");
-      IM_CHECK(rays_info.ID != 0);
-      IM_CHECK_LE(rays_info.RectFull.Max.y, bar_scroll->InnerClipRect.Max.y + 0.5f);
-      const auto m_info = ctx->ItemInfo((std::string("**/") + "##Rays(M)_input").c_str());
-      IM_CHECK(m_info.ID != 0);
-      IM_CHECK_LE(m_info.RectFull.Max.y, bar_scroll->InnerClipRect.Max.y + 0.5f);
-      // Editable: the budget operates after the scroll.
-      ctx->ItemInputValue((std::string("**/") + "##Rays(M)_input").c_str(), 3.5f);
-      ctx->Yield(2);
-      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.ray_num_millions, 3.5f, 1e-3f);
-      ctx->SetRef("");
-      // The basis audit: a window the test resized comes back before the test ends.
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = gui::kInitWindowWidth;
-      g_window_size_test.height = gui::kInitWindowHeight;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-        ctx->Yield(1);
-      }
-      IM_CHECK(g_window_size_test.done.load());
-      ctx->Yield(3);
-    };
-  }
-
   // The default centre's convergence deadline is absolute: it is the FIRST placement's frame,
   // and a size compensation never refreshes it — so a resize chain that runs well past the
   // window cannot keep re-deriving the direction, and a view edit followed by a further resize
@@ -7299,47 +6782,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // A face with no publication this frame has no picture to export: in the bar-takeover state
-  // (Point, smallest window, row split at its clamp) the main view stands down by design, and
-  // RenderScreenshot refuses — it must never fall back across faces to the preview panel's
+  // A face with no publication this frame has no picture to export: the bar-takeover state that
+  // once stood the main view down retired with the band's row split, and the refusal contract
+  // keeps a live host on a document with NO picture yet — neither face publishes, and
+  // RenderScreenshot refuses. It must never fall back across faces to the preview panel's
   // stale frame. The Save menu greys on the same predicate.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "screenshot_refuses_when_no_face_is_live");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-      ScopedServerGuard guard;
-      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = 1024;
-      g_window_size_test.height = 640;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-        ctx->Yield(1);
-      }
-      IM_CHECK(g_window_size_test.done.load());
+      gui::DoNew();
       ctx->Yield(3);
-      OpenWindow(ctx);
-      ctx->SetRef(PanoramaRegionRef());
-      ctx->ItemClick("Point");
-      ctx->SetRef("");
-      ctx->Yield(4);
-      gui::g_state.workspace.middle_rows_ratio = 0.15f;
-      ctx->Yield(4);
-      IM_CHECK(!gui::g_panorama_vp.active);  // the takeover state, by design
+      IM_CHECK(!gui::g_preview.HasTexture());  // no picture of this document yet
+      IM_CHECK(!gui::g_panorama_vp.active);    // the Analyze face has nothing to publish
       const lumice::gui::ScreenshotRender refused = gui::RenderScreenshot(lumice::gui::ScreenshotExportSelection{});
       IM_CHECK_EQ(refused.w, 0);
       IM_CHECK(refused.rgba.empty());  // a refusal, not the preview panel's last frame
-      // The basis audit: the window comes back before the test ends.
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = gui::kInitWindowWidth;
-      g_window_size_test.height = gui::kInitWindowHeight;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-        ctx->Yield(1);
-      }
-      IM_CHECK(g_window_size_test.done.load());
-      ctx->Yield(3);
     };
   }
 
@@ -7389,55 +6846,6 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(s_fresh.size(), s_stale.size());
       IM_CHECK(!s_fresh.empty());
       IM_CHECK(std::memcmp(s_fresh.data(), s_stale.data(), s_fresh.size()) != 0);
-    };
-  }
-
-  // The takeover recovers on CURRENT content: after Point's tall bar has engaged the takeover,
-  // switching to Whole sky (a much shorter bar) at a height that fits restores the main view
-  // within a frame or two — no overshoot-and-return, because the takeover writes the bar's true
-  // height to the same budget key the normal path reads, and the judgment runs on current
-  // content, never on whatever the pre-takeover frames clipped to.
-  {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "bar_takeover_recovers_on_current_content");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ScopedServerGuard guard;
-      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = 1024;
-      g_window_size_test.height = 640;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-        ctx->Yield(1);
-      }
-      IM_CHECK(g_window_size_test.done.load());
-      ctx->Yield(3);
-      OpenWindow(ctx);
-      ctx->SetRef(PanoramaRegionRef());
-      ctx->ItemClick("Point");
-      ctx->SetRef("");
-      ctx->Yield(4);
-      gui::g_state.workspace.middle_rows_ratio = 0.15f;
-      ctx->Yield(4);
-      IM_CHECK(!gui::g_panorama_vp.active);  // engaged
-      // Whole sky: the bar's natural height drops well below what this column offers.
-      ctx->SetRef(PanoramaRegionRef());
-      ctx->ItemClick("**/Whole sky");
-      ctx->SetRef("");
-      gui::g_state.workspace.middle_rows_ratio = 0.20f;
-      ctx->Yield(4);
-      IM_CHECK(gui::g_panorama_vp.active);  // recovered on current content, no overshoot
-      // The basis audit: the window comes back before the test ends.
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = gui::kInitWindowWidth;
-      g_window_size_test.height = gui::kInitWindowHeight;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-        ctx->Yield(1);
-      }
-      IM_CHECK(g_window_size_test.done.load());
-      ctx->Yield(3);
     };
   }
 

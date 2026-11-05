@@ -1930,12 +1930,6 @@ struct GuiState {
     // `##AnalyzeRightRowsSplitter` drags. Same semantics and tier as D1 above; no automatic
     // rewrite path exists (a first result changes neither ratio, contract §9.3).
     float right_list_ratio = kAnalyzeRightListDefaultRatio;
-    // The main view column's row split: the panorama's (upper row's) share of the column height,
-    // clamped to [0.15, 0.85] when dragged. Session memory (this session's own arrangement, not
-    // document state). TRANSITION: the lower row is now the depth band (map / 3D / globe awaiting
-    // their windows), so this ratio is the main view's share of its column; the field retires with
-    // the band (755.4/.5).
-    float middle_rows_ratio = 0.45f;
     // The main view's camera-drag latch, the third arm of the picture region's gesture
     // arbitration: once a press is consumed by the camera arm, it stays the camera's for the
     // whole press — dragging across the cone marker mid-way must not flip arms (the marker's
