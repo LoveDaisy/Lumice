@@ -46,6 +46,17 @@
 > [`analyze-interaction-contract.md`](../gui/analyze-interaction-contract.md) §6/§8 的 as-built 节。
 > 机制层（查询/采纳/取消/新鲜度）零变化。
 >
+> **2026-11-05 姿态面迁独立窗（同 scrum 755.5，pose-trace-window）**：深度带余下两格（3D/globe）
+> 迁入 **Pose & trace 窗**（`RenderAnalyzePoseViewWindow`，宿主 `RenderAnalyzeSunGlobeRegion` /
+> `RenderAnalyzeRay3DRegion` 与新 `##AnalyzePoseFactors` 因素区），点摘要块标题行点击开窗、
+> T-session 旗标（`analyze_pose_view_open`）＋ D4/D5 分隔比例；深度带与上下两行分隔整体退役，主视图
+> 占满主列。诊断区的点摘要块保留**答案与证据**（四态＋Cancel、caliber、rank-0 质量、无分量
+> reach＋discovery 注、分量证据清单——分量行改纯证据行，选择交互唯一 owner 是窗内 globe combo）；
+> 当前样本因素归窗内 `##AnalyzePoseFactors`。帧泵上提至 `RenderWorkspacePanels` 入口（每 GUI 帧驱动，
+> 窗开合只是显示态）。容器与开窗合同见
+> [`analyze-interaction-contract.md`](../gui/analyze-interaction-contract.md) §7/§8 的 as-built 节。
+> 机制层（查询/采纳/取消/新鲜度）零变化。
+>
 > 本文是 (i)「识别」已交付形态的机制记录；「光路分析」整体为什么拆成 (i)/(ii)、(ii) 为什么搁置、
 > (i) 路线接下来往哪走，见功能总篇 [`raypath-analysis.md`](raypath-analysis.md)。
 > 本文档结构与 §1/§2 的裁决叙事保持设计阶段原文，§3–§5、§7 的机制描述、§6 诚实边界、§8 开放

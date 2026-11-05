@@ -8,7 +8,7 @@ The Raypath Analysis window answers "which raypaths make the light in this regio
 
 ## 1. Where it is
 
-The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout: the scene editors in a fixed left column, the **scene panorama** (the committed picture through the same lens, view and display state the Render workspace shows) as the large main view, the **share list** this chapter describes in the right column's upper half, and the **diagnostics region** (the selection's details, or an entry guide before any result) in the right column's lower half. Under the panorama sits its **operation bar** — the region choice, the cone pick and centre reading, the radius, the analysis budget and the Analyze / Stop buttons, next to the picture they aim at. The two column and row splits are draggable, and the depths that have not yet moved to their own windows (the Raypath 3D region, the sun-direction globe) live in a band under the main view — the class map moved to its own window (§7). The band sits side by side when the window is wide enough and stacked — scrollable — when it is not. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
+The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout: the scene editors in a fixed left column, the **scene panorama** (the committed picture through the same lens, view and display state the Render workspace shows) as the large main view, the **share list** this chapter describes in the right column's upper half, and the **diagnostics region** (the selection's details, or an entry guide before any result) in the right column's lower half. Under the panorama sits its **operation bar** — the region choice, the cone pick and centre reading, the radius, the analysis budget and the Analyze / Stop buttons, next to the picture they aim at. The two column splits are draggable; the main view fills its whole column — the depths all moved to their own windows (the class map: §7; the pose and trace faces: §8). The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
 
 ## 2. Choosing a region (ROI)
 
@@ -177,45 +177,62 @@ naming a target. The sky point is independent of the scene ROI: clicking the map
 the cone centre or the share list, and pointing the cone on the panorama never moves your sky
 point.
 
-## 8. The point inspector (sun-direction globe, raypath 3D, point detail)
+## 8. The point inspector (the Pose & trace window, point detail)
 
-Where §7 answered "what does this class look like over the whole sky", the three regions fed by
-the **sky point** answer "what is happening at this one direction" — and they keep the three
-spaces apart: the map is directions, the **sun direction globe** is the crystal's poses (the
+Where §7 answered "what does this class look like over the whole sky", the faces fed by the
+**sky point** answer "what is happening at this one direction" — and they keep the spaces
+apart: the map is directions, the **sun direction globe** is the crystal's poses (the
 directions the sun sits in *the crystal's own frame* — a projection of the pose space, not the
-whole of it), and the **Raypath 3D** region is one concrete light path through one crystal.
+whole of it), the **Raypath 3D** region is one concrete light path through one crystal, and the
+**factors readout** is the current pose's per-interface numbers.
 
-**Point detail** (in the diagnostics region, under the class overview) is the anchor. Once a class is
+**Point detail** (in the diagnostics region, under the class overview) is the anchor and the
+window's only opener: clicking its title opens the **Pose & trace window** — a floating,
+non-modal window that gathers the three faces around one adopted point document and follows the
+current selection while it stays open (set a sky point and it does NOT pop open; the window is
+yours to open and close). The block itself keeps the answer and its evidence: once a class is
 selected and a sky point is set, the engine is asked about that exact direction in the
 background (a couple-of-seconds tier; the point queues behind the survey and map on the same
 worker, and the block says so while it waits, with a **Cancel point** button). The answer opens
 with the engine's own echo — the target labels and deviation, the member face sequence, the
 crystal, the wavelength and its source, the refractive index, the sampling tier — then the
-components: the closed loops or arcs of crystal poses that send light to your point, each with
-its end statuses and its fiber integral with its coverage (48/48 points, say). Pick a component
-and the other two regions follow it. A **point mass** answer (a direction-invariant path — the
-sun's own image) is presented as the mass it is: position, target separation, the orbit
-integral and its measure support — no fiber, no playback, no forced curve. A refusal names
-itself; a multi-layer chain names `multi_layer_unsupported` and points at the existing retreat
-(keep only this chain in the filters and re-run).
+component list as evidence rows (kind, end statuses, coverage, integral). A **point mass**
+answer (a direction-invariant path — the sun's own image) is presented as the mass it is:
+position, target separation, the orbit integral and its measure support — no fiber, no
+playback, no forced curve. A refusal names itself; a multi-layer chain names
+`multi_layer_unsupported` and points at the existing retreat (keep only this chain in the
+filters and re-run).
 
-**The sun direction globe** draws the selected component's fiber: each valid sample is one pose
-where the sun sits somewhere in the crystal (the `u` arrow), the polyline walks them in order,
-and the highlighted marker is the current sample. The deviation grid (toggleable) colours the
-sphere by where each sun direction deflected the light — drawn only when the document carries
-the grid, absent otherwise, never painted as zero. Under the disk: the weight bar (each
-sample's ρ·A/a²·T·K — the very quantity the fiber integral sums), the sample slider and
-**Play**. Dragging the slider or playing moves through the poses that already came back in the
-document; the sky point itself never moves — playing changes the pose you are looking at, not
-the direction you asked about.
+In the window, the component selector is the globe region's combo — the one place that moves
+between components. The window's two draggable splits (the 3D region | the right column, the
+globe | the factor readouts) keep their ratios while the window is closed and reopened in the
+same session.
 
-**Raypath 3D** draws the current sample's real path: the crystal's wireframe (its analysis
-shape — distributions flattened to the values the engine used) with the entry leg, every
-internal reflection and the exit leg from the engine's representative-ray recovery, colour-coded
-with a legend, contacts marked. **World** and **Crystal** are the same physical path in two
-frames (drag orbits, wheel zooms). While the path for a fresh pose is computing the region says
-so; a pose with no legal path names why (the corridor's refusal and its measured area); a
-rank-0 point mass has no path and says that instead of drawing one.
+**The sun direction globe** (the window's upper right) draws the selected component's fiber:
+each valid sample is one pose where the sun sits somewhere in the crystal (the `u` arrow), the
+polyline walks them in order, and the highlighted marker is the current sample. The deviation
+grid (toggleable) colours the sphere by where each sun direction deflected the light — drawn
+only when the document carries the grid, absent otherwise, never painted as zero. Under the
+disk: the weight bar (each sample's ρ·A/a²·T·K — the very quantity the fiber integral sums),
+the sample slider and **Play**. Dragging the slider or playing moves through the poses that
+already came back in the document; the sky point itself never moves — playing changes the pose
+you are looking at, not the direction you asked about — and with the window closed the playing
+pauses (the cursor holds where it was and resumes on reopen).
+
+**Raypath 3D** (the window's large left region) draws the current sample's real path: the
+crystal's wireframe (its analysis shape — distributions flattened to the values the engine
+used) with the entry leg, every internal reflection and the exit leg from the engine's
+representative-ray recovery, colour-coded with a legend, contacts marked. **World** and
+**Crystal** are the same physical path in two frames (drag orbits, wheel zooms). While the path
+for a fresh pose is computing the region says so; a pose with no legal path names why (the
+corridor's refusal and its measured area); a rank-0 point mass has no path and says that
+instead of drawing one.
+
+**Current sample factors** (the window's lower right) reads the current pose's own numbers —
+the orientation angles, ρ, the entry measures, the total transmission, the Jacobian with its
+named-unavailable state, K, their product, and each interface's transmittance labelled as
+conditional on this path. The class-level totals stay in the main window's diagnostics; these
+are the per-pose, per-path numbers of the sample the globe's marker names.
 
 ## 9. From the command line
 

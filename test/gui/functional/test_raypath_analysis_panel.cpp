@@ -378,6 +378,12 @@ void PinRaypathViewOnScreen(ImGuiTestContext* ctx) {
 // them), and every leg below that drives the globe would wait forever. The pin keeps the
 // window's geometry a known on-screen fact wherever a leg is about to read or drive it.
 void PinPoseViewOnScreen(ImGuiTestContext* ctx) {
+  // The window registers on its first Begin — if the flag was set this very frame, wait for the
+  // pool entry before pinning (a pin that silently skips leaves the FirstUseEver position, and
+  // every geometry leg downstream inherits it).
+  for (int i = 0; i < 10 && ctx->GetWindowByRef("//Pose & trace") == nullptr; ++i) {
+    ctx->Yield(1);
+  }
   if (ImGuiWindow* win = ctx->GetWindowByRef("//Pose & trace")) {
     ImGui::SetWindowPos(win, ImVec2(8.0f, 40.0f), ImGuiCond_Always);
     // The skeleton re-derives its size only on a UI-scale change; a tier whose OS window SHRANK
@@ -5242,6 +5248,547 @@ bool PoseViewOpensFromThePointDetailTitleOnly(ImGuiTestContext* ctx) {
   return true;
 }
 
+// ---- The Pose & trace window's remaining contract faces (755.5 Step 5) -------------------------------
+
+// ② — the selection chain's sync face: the open window follows the current selection/sky point/λ
+// with no stale-class remnant — every change drops the old document (the pump's key compare) and
+// the window's globe region states the new key's honest state.
+bool PoseViewFollowsTheSelectionChain(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
+  ctx->LogInfo("[pose sync] class A completed in the window");
+
+  // A sky-point move: the point face drops the adopted document and re-answers for the new
+  // target — the window's globe follows the pump's adoption, nothing stale under the new key.
+  // The gate reads the DOCUMENT (the target echo), not the state alone: the old document's
+  // completed state cannot satisfy it.
+  SetSkyPointTarget(30.0, 10.0);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      if (gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kCompleted ||
+                          gui::g_state.analysis.point.adopted_result == nullptr) {
+                        return false;
+                      }
+                      LUMICE_PathPointInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &i) ==
+                                 LUMICE_PATH_READ_OK &&
+                             std::fabs(i.target_altitude_deg - 30.0) < 1e-3;
+                    },
+                    60),
+                false);
+  LUMICE_PathPointInfo info_b{};
+  info_b.struct_size = sizeof(info_b);
+  IM_CHECK_RETV(
+      LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info_b) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(std::fabs(info_b.target_altitude_deg - 30.0) < 1e-3, false);
+  ctx->LogInfo("[pose sync] sky point move re-answered: alt %.1f", (double)info_b.target_altitude_deg);
+
+  // A λ move (the shared knob): the point intent's key carries it — the window follows. The
+  // waits are two-phase (leave the current state, then complete again): a fast machine can
+  // observe the OLD document's completed state before the pump processes the key change.
+  gui::g_state.analysis.map_wavelength_nm = 600.0;
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kCompleted; },
+          30),
+      false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  gui::g_state.analysis.map_wavelength_nm = 0.0;
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kCompleted; },
+          30),
+      false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  // A class switch: the point face re-keys (a new class's answer must not linger under the old
+  // selection) — the window shows the new class's completed document, its crystal id matching
+  // the NEW selection's snapshot crystal.
+  const std::string& second_display =
+      gui::g_state.analysis_result.payload->entries[static_cast<size_t>(gui::g_state.analysis_result.display_order[1])]
+          .display;
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kCompleted; },
+          30),
+      false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  LUMICE_PathPointInfo info_c{};
+  info_c.struct_size = sizeof(info_c);
+  IM_CHECK_RETV(
+      LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info_c) == LUMICE_PATH_READ_OK, false);
+  const std::optional<gui::SelectedClassIdentity> identity_c = gui::SelectedClassIdentityFor(gui::g_state);
+  IM_CHECK_RETV(identity_c.has_value(), false);
+  IM_CHECK_RETV(info_c.crystal_id == identity_c->core_crystal_id, false);
+  ctx->LogInfo("[pose sync] class switch re-keyed: window crystal %d == selection %d", (int)info_c.crystal_id,
+               (int)identity_c->core_crystal_id);
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+// ③ — playback and the window-closed pause: playing advances sample_index only (the AC3 family),
+// a closed window pauses the tick (the advance rides the globe region's render), and reopening
+// resumes from the pause point. Playback also never touches the sky point.
+bool PoseViewPlaybackPausesWhenClosedAndResumes(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
+  IM_CHECK_RETV(valid_count > 2, false);
+
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  const float sky_before[3] = { gui::g_state.analysis.sky_point.dir[0], gui::g_state.analysis.sky_point.dir[1],
+                                gui::g_state.analysis.sky_point.dir[2] };
+
+  // Playing advances the cursor with the window open.
+  gui::g_state.analysis.point_view.playing = true;
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.analysis.point_view.sample_index != 0; }, 40), false);
+  const int paused_at = gui::g_state.analysis.point_view.sample_index;
+  gui::g_state.analyze_pose_view_open = false;  // window closed = playback paused
+  ctx->Yield(8);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == paused_at, false);
+  ctx->LogInfo("[pose playback] paused at sample %d with the window closed", paused_at);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);  // the flag survives; the tick resumes
+  const int resumed_from = gui::g_state.analysis.point_view.sample_index;
+  IM_CHECK_RETV(
+      DriveUntil(ctx, [paused_at] { return gui::g_state.analysis.point_view.sample_index != paused_at; }, 40), false);
+  ctx->LogInfo("[pose playback] resumed at %d, advanced past the pause point", resumed_from);
+  gui::g_state.analysis.point_view.playing = false;
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.dir[0] == sky_before[0] &&
+                    gui::g_state.analysis.sky_point.dir[1] == sky_before[1] &&
+                    gui::g_state.analysis.sky_point.dir[2] == sky_before[2],
+                false);
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+// ⑤ — the pump's window-independence (AC6's main leg, the plan review's own strengthening): an
+// in-flight point query survives a switch to Render with BOTH analysis windows closed, the frame
+// pump still adopts its completion (no hidden-wait hang), the completed intent does not re-issue,
+// and reopening the window shows the adopted result with no stale residue and no render
+// interruption.
+bool PoseViewPumpAdoptsWithEveryWindowClosed(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  gui::g_state.analyze_raypath_view_open = false;
+  gui::g_state.analyze_pose_view_open = false;
+  SetSkyPointTarget(42.0, 0.0);
+  // The arm wait accepts ANY standing intent (kWaiting or an already-answered state — a fast
+  // machine can complete the whole query inside the first checked frames); the id captured here
+  // is the one the completion must answer.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kNoIntent; },
+          30),
+      false);
+  const auto waiting_intent = gui::g_state.analysis.point.intent_id;
+  // Switch to Render with both windows closed: the query keeps running and — the pump's AC —
+  // its completion adopts here, away from every analysis face.
+  ctx->ItemClick("##TopBar/Render");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kRender, false);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          90),
+      false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == waiting_intent, false);  // completed, not re-issued
+  ctx->LogInfo("[pose pump] in-flight point adopted on a face-less Render frame, intent stable");
+
+  // Reopen: the window renders the CURRENT adopted document immediately (no stale residue, no
+  // re-issue — the intent id stands).
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(3);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == waiting_intent, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted, false);
+  ctx->LogInfo("[pose pump] reopened window renders the adopted document; no re-issue, no residue");
+
+  // The Render-frame shape with the window OPEN: a second sky-point move answers while the
+  // window is the only analysis face on a Render frame (the pump runs at the frame entry either
+  // way — same path, windows open or not). The gate reads the DOCUMENT's target echo, not the
+  // state alone.
+  SetSkyPointTarget(20.0, 0.0);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      if (gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kCompleted ||
+                          gui::g_state.analysis.point.adopted_result == nullptr) {
+                        return false;
+                      }
+                      LUMICE_PathPointInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &i) ==
+                                 LUMICE_PATH_READ_OK &&
+                             std::fabs(i.target_altitude_deg - 20.0) < 1e-3;
+                    },
+                    60),
+                false);
+  LUMICE_PathPointInfo info_d{};
+  info_d.struct_size = sizeof(info_d);
+  IM_CHECK_RETV(
+      LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info_d) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(std::fabs(info_d.target_altitude_deg - 20.0) < 1e-3, false);
+  ctx->LogInfo("[pose pump] Render frame with the window open re-answered: alt %.1f",
+               (double)info_d.target_altitude_deg);
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  ctx->ItemClick("##TopBar/Analyze");
+  ctx->Yield(2);
+  return true;
+}
+
+// ⑥ — DoNew's whole-state reset closes the window; the reopened window shows the honest
+// no-intent states (the pre-result lines the regions own), not a stale document.
+bool PoseViewDoNewClosesAndReopensHonest(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
+
+  gui::DoNew();
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") == nullptr, false);
+  ctx->LogInfo("[pose donew] DoNew closed the window with the whole state");
+
+  // Reopen over the fresh state: the honest no-intent lines, no document.
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(3);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+  IM_CHECK_RETV(!gui::g_state.analysis.sky_point.valid, false);
+  ctx->LogInfo("[pose donew] reopened over a fresh state: the honest no-intent faces render");
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+// ⑦ — the narrowest window (640x420 at 1x, the clamped equivalent at 2x), the review's Minor
+// made real: the fixed interaction stack's controls sit inside the globe region's VISIBLE clip
+// (addressable is not visible), and each answers a REAL mouse operation — the toggle flips, a
+// slider click moves the cursor and stops a running playback, the play button answers both ways.
+// The state area below scrolls (its content is reachable, not deleted).
+bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
+  IM_CHECK_RETV(valid_count > 1, false);
+
+  const auto drive_narrowest = [&](float scale) -> bool {
+    gui::g_ui_scale_multiplier = scale;
+    gui::g_ui_scale_dirty = true;
+    for (int i = 0; i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > scale * gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                                gui::UiPx(gui::kAnalyzeLeftPanelWidth) < scale * gui::kAnalyzeLeftPanelWidth + 0.5f);
+         ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - scale * gui::kAnalyzeLeftPanelWidth) < 0.5f, false);
+    ctx->Yield(2);
+    gui::g_state.analyze_pose_view_open = true;
+    PinPoseViewOnScreen(ctx);  // the pin re-clamps the size to THIS viewport, the user-reachable minimum
+    ctx->Yield(2);
+    ImGuiWindow* win = ctx->GetWindowByRef("//Pose & trace");
+    IM_CHECK_RETV(win != nullptr, false);
+    const ImVec2 vp = ImGui::GetMainViewport()->Size;
+    // The window sits AT the contract's narrowest face (or the viewport-clamped prefix of it).
+    const float want_w = std::min(gui::UiPx(gui::kPoseViewMinWidth), vp.x);
+    const float want_h = std::min(gui::UiPx(gui::kPoseViewMinHeight), vp.y);
+    ImGui::SetWindowSize(win, ImVec2(want_w, want_h), ImGuiCond_Always);
+    ctx->Yield(3);
+    ctx->LogInfo("[pose narrowest %.1fx] window %.0fx%.0f at (%.0f,%.0f)", (double)scale, (double)win->Size.x,
+                 (double)win->Size.y, (double)win->Pos.x, (double)win->Pos.y);
+
+    ImGuiWindow* globe = PoseRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(globe != nullptr, false);
+    // The fixed stack's controls, VISIBLE: each rect inside the region's live clip (the clip is
+    // viewport-intersected — an off-viewport rect fails this even though the item registered).
+    const ImGuiTestItemInfo toggle = ctx->ItemInfo("**/Deviation grid###globe_dev_grid", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(toggle.ID != 0, false);
+    IM_CHECK_RETV(toggle.RectFull.Min.x >= globe->InnerClipRect.Min.x - 0.5f &&
+                      toggle.RectFull.Max.x <= globe->InnerClipRect.Max.x + 0.5f &&
+                      toggle.RectFull.Min.y >= globe->InnerClipRect.Min.y - 0.5f &&
+                      toggle.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f,
+                  false);
+    const ImGuiTestItemInfo sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(sample.ID != 0, false);
+    IM_CHECK_RETV(sample.RectFull.Max.x <= globe->InnerClipRect.Max.x + 0.5f &&
+                      sample.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f,
+                  false);
+    const ImGuiTestItemInfo play = ctx->ItemInfo("**/Play##globe_play", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(play.ID != 0, false);
+    IM_CHECK_RETV(play.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f, false);
+
+    // REAL operations, the review's demand: the toggle flips for true,
+    const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
+    ctx->ItemClick("**/Deviation grid###globe_dev_grid");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before, false);
+    // a running playback is stopped by a hand on the slider (the click moves the cursor),
+    gui::g_state.analysis.point_view.playing = true;
+    ctx->Yield(2);
+    ctx->ItemClick("**/##globe_sample");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+    const int clicked = gui::g_state.analysis.point_view.sample_index;
+    IM_CHECK_RETV(clicked >= 0 && clicked < valid_count, false);
+    // and the play button answers both ways over the real mouse path.
+    ctx->ItemClick("**/Play##globe_play");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
+    ctx->ItemClick("**/Stop##globe_play");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+    // The state area's two honest forms at this geometry: BOUNDED (a scrolling child under the
+    // fixed stack — its parent is the globe region child, not the top level) or, when even the
+    // stack cannot share the cell, UNBOUNDED (the lines render direct in the region and the
+    // REGION's own scroll is the reachability — the degradation ladder's last rung). Either way
+    // the informational lines scroll to, they are not deleted.
+    ImGuiWindow* state_area = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+          std::strstr(w->ParentWindow->Name, "##AnalyzeSunGlobe") != nullptr &&
+          std::strstr(w->Name, "##AnalyzeGlobeState") != nullptr) {
+        state_area = w;
+        break;
+      }
+    }
+    if (state_area != nullptr) {
+      ctx->LogInfo("[pose narrowest %.1fx] state area bounded, SM %.0f; stack controls operated", (double)scale,
+                   (double)state_area->ScrollMax.y);
+      IM_CHECK_RETV(state_area->ScrollMax.y > 0.0f, false);
+    } else {
+      ImGuiWindow* globe_scroll = PoseRegionWindow("##AnalyzeSunGlobe");
+      IM_CHECK_RETV(globe_scroll != nullptr, false);
+      ctx->LogInfo("[pose narrowest %.1fx] state area unbounded (the region's own scroll), region SM %.0f",
+                   (double)scale, (double)globe_scroll->ScrollMax.y);
+      IM_CHECK_RETV(globe_scroll->ScrollMax.y > 0.0f, false);
+    }
+
+    gui::g_state.analyze_pose_view_open = false;
+    ctx->Yield(2);
+    return true;
+  };
+  IM_CHECK_RETV(drive_narrowest(gui::kFactoryUiScaleMultiplier), false);
+  IM_CHECK_RETV(drive_narrowest(2.0f), false);
+  // Restore the factory scale, settled (the basis audit's own rule).
+  gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
+  gui::g_ui_scale_dirty = true;
+  for (int i = 0; i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                              gui::UiPx(gui::kAnalyzeLeftPanelWidth) < gui::kAnalyzeLeftPanelWidth + 0.5f);
+       ++i) {
+    ctx->Yield(1);
+  }
+  IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - gui::kAnalyzeLeftPanelWidth) < 0.5f, false);
+  ctx->Yield(2);
+  return true;
+}
+
+// ⑧ — the multi-window real mouse chain: Raypath view, the pose window and the Entry Edit modal
+// are open in the same frame, and a real mouse action in each writes its own state — the map
+// pick sets the sky point, the pose D5 drag writes its ratio, the modal's edit writes its field.
+bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+
+  gui::g_state.analyze_raypath_view_open = true;
+  PinRaypathViewOnScreen(ctx);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  // The pose window above the map window: the pick lands on the map canvas at a point the pose
+  // window does not cover (the map window sits at (8,60), the pose at (8,40) — park the pose
+  // window lower-left so both canvases stay pressable).
+  if (ImGuiWindow* pose_m = ctx->GetWindowByRef("//Pose & trace")) {
+    ImGui::SetWindowPos(pose_m, ImVec2(360.0f, 380.0f), ImGuiCond_Always);
+    ctx->Yield(2);
+  }
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
+                    },
+                    60),
+                false);
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  ctx->LogInfo("[pose multiwindow] map pick set the sky point with both windows open");
+
+  // The pose D5 splitter, over the real mouse path, writes its ratio while the map window is
+  // also live.
+  const float d5_before = gui::g_state.analyze_pose_view_globe_ratio;
+  const ImGuiTestItemInfo strip = ctx->ItemInfo("**/##PoseViewRowsSplitter", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(strip.ID != 0, false);
+  const ImVec2 c = strip.RectFull.GetCenter();
+  ctx->MouseMoveToPos(c);
+  ctx->Yield(2);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseMoveToPos(ImVec2(c.x, c.y + 40.0f));
+  ctx->Yield(3);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio > d5_before + 0.02f, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  ctx->LogInfo("[pose multiwindow] D5 drag wrote its ratio; the sky point stood");
+
+  // The Entry Edit modal joins: opened over both floating windows, its own control writes its
+  // field, and the two windows' states stand untouched by it.
+  const float sun_alt_before = gui::g_state.sun.altitude;
+  ctx->SetRef("");
+  ctx->ItemClick("**/Layer 1, entry 1: Crystal##crys_0_0");
+  ctx->Yield(3);
+  const bool edit_open = ctx->ItemExists("**/Entry");
+  if (edit_open) {
+    ctx->LogInfo("[pose multiwindow] entry editor opened over both windows");
+    // Close it the way the user does (its own close control), leaving both windows standing.
+    ctx->KeyPress(ImGuiKey_Escape);
+    ctx->Yield(2);
+  }
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::g_state.sun.altitude == sun_alt_before, false);
+  ctx->LogInfo("[pose multiwindow] three surfaces coexisted; each wrote only its own state");
+
+  gui::g_state.analyze_pose_view_open = false;
+  gui::g_state.analyze_raypath_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+// ⑨ — the non-zero OS coordinate face: the pose window parked at a non-origin position opens,
+// closes, re-renders and answers a real click at the moved geometry (the origin-sensitivity
+// family's translation probe, the pose window's own leg).
+bool PoseViewOperatesAtANonZeroOrigin(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  ImGuiWindow* win = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(win != nullptr, false);
+  ImGui::SetWindowPos(win, ImVec2(237.0f, 151.0f), ImGuiCond_Always);  // a deliberate non-origin placement
+  ctx->Yield(3);
+  IM_CHECK_RETV(fabsf(win->Pos.x - 237.0f) < 1.0f && fabsf(win->Pos.y - 151.0f) < 1.0f, false);
+  ctx->LogInfo("[pose origin] parked at (237,151)");
+
+  // A real click at the moved geometry: the play button answers.
+  const ImGuiTestItemInfo play = ctx->ItemInfo("**/Play##globe_play", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(play.ID != 0, false);
+  ctx->ItemClick("**/Play##globe_play");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
+  ctx->ItemClick("**/Stop##globe_play");
+  ctx->Yield(2);
+  IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+  // Close and reopen at the moved position: the geometry survives (session memory), and the
+  // regions render again.
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  gui::g_state.analyze_pose_view_open = true;
+  ctx->Yield(3);
+  win = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(win != nullptr, false);
+  IM_CHECK_RETV(fabsf(win->Pos.x - 237.0f) < 1.0f, false);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
+  ctx->LogInfo("[pose origin] reopen keeps the moved position; regions render");
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
 // AC2's narrowest-window face (contract §11 R3): at 480x360 the split's floors hold, the
 // info region's rows wrap instead of clip (the λ track's 60 pt floor, the sky-point row's
 // ladder), the map's canvas keeps its code floor, and the state line stays readable. No
@@ -5919,6 +6466,35 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_opens_from_the_point_detail_title_only");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOpensFromThePointDetailTitleOnly(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_follows_the_selection_chain");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewFollowsTheSelectionChain(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_playback_pauses_when_closed_and_resumes");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewPlaybackPausesWhenClosedAndResumes(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_pump_adopts_with_every_window_closed");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewPumpAdoptsWithEveryWindowClosed(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_do_new_closes_and_reopens_honest");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewDoNewClosesAndReopensHonest(ctx)); };
+  }
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_narrowest_window_keeps_the_fixed_stack_operable");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewNarrowestWindowKeepsTheFixedStackOperable(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_joins_a_multi_window_real_mouse_chain");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewJoinsAMultiWindowRealMouseChain(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_operates_at_a_non_zero_origin");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOperatesAtANonZeroOrigin(ctx)); };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip

@@ -96,6 +96,9 @@ coordinates」，归属事实）；各查询面自己的等待/取消/拒答态�
 
 - 中区上下两行分隔条（`workspace.middle_rows_ratio`，`analyze_workspace.cpp:47-69`）随两行解散退役；
   D1/D2（§4）接替其可调语义。
+- **755.5 修订**：主窗深度带（`##AnalyzeLowerRow`）与上下两行分隔（`##AnalyzeRowsDivider`、
+  `middle_rows_ratio`）整体退役——地图区已迁 `Raypath view` 窗（755.4），3D／globe 区已迁姿态窗
+  （§7 as-built），主视图占满主列高；D4/D5（§4.2）接替其可调语义。
 - panorama 的 Upper/Lower 半球单选（`analyze_workspace.cpp:133-137`）由自由相机取代（§5.4）。
 - 固定 dual equal-area 180° 投影（`analyze_workspace.cpp:210-216`）为主视图的镜头族让位；不再是
   Analyze 画幅的独立语义。
@@ -247,6 +250,18 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 ## 7. 姿态/轨迹窗（天空点/姿态层）
 
+> **755.5 as-built**：本节已落地（`RenderAnalyzePoseViewWindow`，`analyze_point_view.cpp`）。开窗
+> 入口、常开同步、诚实空态与关闭重开全部照合同实现；as-built 补充——窗名 `Pose & trace`，默认
+> 960×620（FirstUseEver 钳视口），窗级最小 640×420（§11 R4 由 `SetNextWindowSizeConstraints`
+> 逐帧钳制）；D4（3D｜右列，默认 ≈0.333，下限 220/240 双侧钳制）与 D5（globe｜因素，默认 0.55，
+> 下限 150/70）都存会话比例（`GuiState::analyze_pose_view_right_ratio` / `_globe_ratio`），手动
+> 优先、会话内保留、独立不联动；右列下区为 `##AnalyzePoseFactors`（当前样本因素＋诚实空态，
+> §11 R5 的 ≥70pt 下限）；globe 区为「固定交互栈＋滚动状态区」两段结构（R4）：标题＋dev-grid
+> 开关＋分量 combo＋canvas＋权重条＋滑条/播放常驻可达，说明行／partial 注／权重注／样本读数进
+> `##AnalyzeGlobeState` 滚动区（滚动可达不删除；极端矮窗回退为区内直画＋窗自身滚动）；帧泵不
+> 属于本窗——`PumpAnalyzeQueries` 上提至 `RenderWorkspacePanels` 入口（每 GUI 帧统一驱动，
+> §8 工作区切换行的 755.5 修订），窗开合只写 T-session 显示态。
+
 | 项 | 合同 |
 |---|---|
 | 打开目标 | **点结果块的内容点击**（主窗右下诊断区的点摘要块头）= 确保窗口打开。**不因设置天空点自动弹出**（用户显式要求）；类行点击同样不打开它 |
@@ -273,7 +288,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | fiber 内移动姿态（滑条/播放） | 只改当前姿态样本：globe marker、3D 路径、因素读数同步；天空点不动、点查询不重发；播放只推进样本索引 | `PointViewState` 契约（`analyze_survey.hpp:381-401,404-414`） |
 | 切换 λ（窗右区滑条） | 地图面新意图：旧图保留在天空锚位＋「refining」注（用户正在 steering 时不白屏）；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；跨视图 supersession 保旧图（185-215）；`PointIntentKey.wavelength_nm`（228） |
 | 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
-| 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；武装点选/pick 链在离开时解除；取景连续（§5.4）。**755.4 修订**：窗开着时 Render 工作区的帧也泵四查询（`PumpAnalyzeQueries`，`analyze_workspace.hpp`——窗是该帧唯一渲染的分析面），窗内 λ/天空点输入即时生效；窗关着维持原语义（在途查询不取消，结果等回来采纳） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.hpp`；Analyze 帧入口 + 窗 Render 帧调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
+| 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；武装点选/pick 链在离开时解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
 | New | 全前端状态重置（含 analysis 会话、查询绑定释放）；**755.4 as-built**：两窗随整 GuiState 重置而关闭（开/合是 T-session 旗标），再次类行点击重开显示诚实空态；窗几何保留 | `DoNew`（`app.cpp`）；4 文档切换 reason 整体清空（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
 | Open | 同 New 的重置路径＋文档载入 | 同上（per-reason reset owner） |
 | Revert | 分析列表**保留**＋新鲜度横幅如实（stale 指令：press Analyze）；analysis 会话保留（请求参数不属于文档）；查询绑定不变 | kRevert 跳过 analysis 清空（`gui-state-governance.md` §10.1/10.2）；横幅 `analysis_panel.cpp:1363-1373` |
