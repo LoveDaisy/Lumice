@@ -676,24 +676,35 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
   }
 }
 
+void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s) {
+  // The point face's pumps run in dependency order: the point query first, then the ray trace
+  // it feeds (the ray intent reads the adopted point document and the display cursor).
+  PumpSurveyQuery(state, executor, now_s);
+  PumpMapQuery(state, executor, now_s);
+  PumpPointQuery(state, executor, now_s);
+  PumpRayTrace(state, executor);
+}
+
 void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height) {
   // The background queries' frame pumps (742.3 R6, the map face added by 742.5): drain finished
   // outcomes through the adoption gates, then reconcile each intent against its live inputs —
   // before any region reads the sessions, so the overview and the map on screen are always this
-  // frame's state. Render mode does not pump: in-flight queries keep running (R6 — switching
-  // away neither cancels nor cleans) and their outcomes wait in the single slots for the return.
-  PumpSurveyQuery(g_state, g_survey_executor, ImGui::GetTime());
-  PumpMapQuery(g_state, g_survey_executor, ImGui::GetTime());
-  // The point face's pumps (742.6), in dependency order: the point query first, then the ray
-  // trace it feeds (the ray intent reads the adopted point document and the display cursor).
-  PumpPointQuery(g_state, g_survey_executor, ImGui::GetTime());
-  PumpRayTrace(g_state, g_survey_executor);
+  // frame's state. Since 755.4 the map face lives in the Raypath view window, and the shared
+  // entry above also pumps on that window's Render-workspace frames (the window is the only
+  // analysis face rendering there); this entry covers the Analyze-workspace frames, including
+  // those where the window is open on top. In-flight queries keep running across a workspace
+  // switch (R6 — switching away neither cancels nor cleans) and their outcomes wait in the
+  // single slots for whichever face renders next.
+  PumpAnalyzeQueries(g_state, g_survey_executor, ImGui::GetTime());
 
   // The wait displays' render-feedback fields are THIS frame's outputs: cleared at entry, the
   // render sites are the only writers (a site stores its text iff it drew it this frame), so a
   // field's content is exactly the wait text the user saw (analyze_survey.hpp
-  // WaitFeedbackTexts). The status bar's segment field is the status bar's own to clear — that
-  // render runs in every frame of either workspace.
+  // WaitFeedbackTexts). The map fields' render site is the Raypath view window now — on the
+  // Render-workspace frames where this entry does not run, the window clears-and-rewrites its
+  // own two (analyze_map_view.cpp); the workspace entry still clears them here because on an
+  // Analyze frame where the window is closed nothing else will. The status bar's segment field
+  // is the status bar's own to clear — that render runs in every frame of either workspace.
   {
     WaitFeedbackTexts& feedback = g_state.analysis.wait_feedback_texts;
     feedback.survey_wait_line.clear();
@@ -786,11 +797,10 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     // The form's budget is the band's INNER width — the same quantity the allocation below
     // spends (GetContentRegionAvail at the band window's top). main_w is the window's outer
     // size; two WindowPaddings sit between the two, and a latch judged on the outer width let
-    // the three cells' floors exceed the inner width inside the hysteresis band — the last
-    // cell's frame sat past the host's clip. One budget on both sides of the latch.
+    // the cells' floors exceed the inner width inside the hysteresis band — the last cell's
+    // frame sat past the host's clip. One budget on both sides of the latch.
     const float band_planned_inner = std::max(0.0f, main_w - 2.0f * ImGui::GetStyle().WindowPadding.x);
-    const float cells_floor =
-        UiPx(kAnalyzeDepthMapMinSize + kAnalyzeDepth3DMinSize + kAnalyzeDepthGlobeMinSize) + style_spacing * 2.0f;
+    const float cells_floor = UiPx(kAnalyzeDepth3DMinSize + kAnalyzeDepthGlobeMinSize) + style_spacing * 1.0f;
     if (!band_side_by_side && band_planned_inner >= cells_floor + UiPx(kAnalyzeDepthBandFormHysteresisPt)) {
       band_side_by_side = true;
     } else if (band_side_by_side && band_planned_inner < cells_floor) {
@@ -882,12 +892,14 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   ImGui::End();
   ImGui::PopStyleVar(2);
 
-  // ---- The depth band: the map / 3D / globe regions' transition host, until their windows take
-  // them (755.4/.5) and the band retires with this split. The region functions own their content
-  // (each opens its own child); only the geometry they are handed differs by form. Side-by-side:
-  // map and globe at their content floors, the 3D view absorbing what is left. Stacked: each the
-  // full band width at its floor height — the band itself is the one scrolling region then, so
-  // the scrollbars exist only in the form that needs them. ----
+  // ---- The depth band: the 3D / globe regions' transition host, until their window takes
+  // them (755.5) and the band retires with this split — the map region left first (755.4: it
+  // is the Raypath view window's left region now). The region functions own their content
+  // (each opens its own child); only the geometry they are handed differs by form.
+  // Side-by-side: the globe at its content floor, the 3D view absorbing what is left (the
+  // width the map cell gave up). Stacked: each the full band width at its floor height — the
+  // band itself is the one scrolling region then, so the scrollbars exist only in the form
+  // that needs them. ----
   SetNextPanelGeometry(main_x, band_y, main_w, band_h);
   ImGui::Begin("##AnalyzeLowerRow", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -897,18 +909,12 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     const float band_inner_w = ImGui::GetContentRegionAvail().x;
     if (band_side_by_side) {
       const float cell_h = ImGui::GetContentRegionAvail().y;
-      const float map_w = UiPx(kAnalyzeDepthMapMinSize);
       const float globe_w = UiPx(kAnalyzeDepthGlobeMinSize);
-      const float three_d_w =
-          std::max(UiPx(kAnalyzeDepth3DMinSize), band_inner_w - map_w - globe_w - style_spacing * 2.0f);
-      RenderAnalyzeMapRegion(g_state, ImVec2(map_w, cell_h));
-      ImGui::SameLine();
+      const float three_d_w = std::max(UiPx(kAnalyzeDepth3DMinSize), band_inner_w - globe_w - style_spacing * 1.0f);
       RenderAnalyzeRay3DRegion(g_state, ImVec2(three_d_w, cell_h));
       ImGui::SameLine();
       RenderAnalyzeSunGlobeRegion(g_state, ImVec2(globe_w, cell_h));
     } else {
-      RenderAnalyzeMapRegion(g_state, ImVec2(band_inner_w, UiPx(kAnalyzeDepthMapMinSize)));
-      ImGui::Spacing();
       RenderAnalyzeRay3DRegion(g_state, ImVec2(band_inner_w, UiPx(kAnalyzeDepth3DMinSize)));
       ImGui::Spacing();
       RenderAnalyzeSunGlobeRegion(g_state, ImVec2(band_inner_w, UiPx(kAnalyzeDepthGlobeMinSize)));

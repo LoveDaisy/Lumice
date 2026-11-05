@@ -11,7 +11,9 @@
 //     cell colour ramp. Every function is frame-free and holds itself to rules without ImGui.
 //   * The pump and the ImGui half (bottom of this header, GuiState forward-declared):
 //     PumpMapQuery — the survey pump's sibling over the map face's key (selection + view +
-//     wavelength) with the settle gate — and RenderAnalyzeMapRegion, the workspace region.
+//     wavelength) with the settle gate — and RenderAnalyzeMapRegion, the Raypath view window's
+//     left region (RenderAnalyzeRaypathViewWindow is the window; it ran the depth band's map
+//     cell until 755.4 moved it out).
 //
 // Two conventions this file refuses to blur (the M1 probe pinned both ends; see the session
 // struct comments in analyze_survey.hpp):
@@ -231,10 +233,11 @@ std::vector<std::string> MapCaliberLines(const MapCaliberInput& in);
 // Writes only state.analysis's map fields and the executor; no widget, no document field.
 void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s);
 
-// The workspace's raypath-view region — the placeholder's replacement in
-// analyze_workspace.cpp's lower row. Draws the state around the picture (the raster itself is
-// the .cpp's cached GL texture), hosts the gestures, the overlays, the coordinate input and the
-// caliber line.
+// The Raypath view window's left region — formerly the depth band's map cell (755.4 moved the
+// whole capability into the window in one piece). Draws the state around the picture (the
+// raster itself is the .cpp's cached GL texture), hosts the gestures, the overlays, the
+// coordinate input and the caliber line. The region's own child keeps the name
+// ##AnalyzeRaypathView; its parent is the window, not the band.
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
 
 // The Raypath view floating window (doc/gui/analyze-interaction-contract.md §6): the non-modal
@@ -243,7 +246,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
 // `state.analyze_raypath_view_open` is false, so a closed window costs one branch. The `bool*`
 // passed to ImGui::Begin is the flag itself: the title-bar X writes it back directly, and the
 // next class-row click reopens. In-flight queries are not touched by opening or closing (the
-// T-session contract, §8).
+// T-session contract, §8). In the Render workspace the window's frames run the shared query
+// pumps and clear the map wait-feedback fields (analyze_workspace.hpp PumpAnalyzeQueries) —
+// it is the only analysis face rendering there. The body is RenderAnalyzeMapRegion over the
+// window's content area.
 void RenderAnalyzeRaypathViewWindow(GuiState& state);
 
 // Releases the region's GL texture (the app's teardown, next to the executor's join).

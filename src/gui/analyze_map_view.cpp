@@ -10,6 +10,7 @@
 #include "gui/analysis_panel.hpp"  // SelectedClassIdentityFor / SurveySelectionKeyFor — the one identity chain
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
+#include "gui/analyze_workspace.hpp"     // PumpAnalyzeQueries — the pumps this window's Render-mode frames run
 #include "gui/app.hpp"
 #include "gui/gl_common.h"
 #include "gui/gui_constants.hpp"
@@ -1129,12 +1130,13 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     sky_tail_cache = style0.ItemSpacing.y * 3.0f + 1.0f + ImGui::GetFrameHeight() + ImGui::GetTextLineHeight() +
                      ImGui::GetFrameHeightWithSpacing();
   }
-  ImGui::TextUnformatted("Raypath view");
-  const float overlays_w =
-      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Overlays").x;
-  if (fits_on_line(overlays_w)) {
-    ImGui::SameLine();
-  }
+  // The header row opens with the overlay toggle — the window's own title carries the name
+  // this row's old text label repeated. The toggle is the row's FIRST item, so it takes a fresh
+  // line by construction (the fits_on_line judgment reads the LAST item's rect; with no
+  // predecessor there is nothing to join — its old guard here would have read whatever widget
+  // the parent window submitted before this child, a stale rect from outside the region).
+  // The wavelength and the view buttons join it only while they still fit — the judgment is
+  // the same content-adaptation default as before the move (wrap, don't clip).
   ImGuiStorage* storage = ImGui::GetStateStorage();
   const ImGuiID overlay_key = ImGui::GetID("overlays");
   bool overlays = storage->GetBool(overlay_key, true);
@@ -1235,7 +1237,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (st == MapQueryState::kNoSelection) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
-        "Select a class in the share list; its reference map takes this region. The sky-point input "
+        "Select a class in the share list; its reference map takes this window. The sky-point input "
         "below works without a map.");
     ImGui::PopStyleColor();
   } else if (st == MapQueryState::kCancelled) {
@@ -1608,6 +1610,21 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   if (!state.analyze_raypath_view_open) {
     return;
   }
+  // The pumps' cross-face stance (analyze_workspace.hpp): on the Render-workspace frames this
+  // window is the only analysis face rendering, so its frame runs the shared pump entry —
+  // in-flight queries keep their R6 semantics (never cancelled by a workspace switch) AND their
+  // outcomes land while the user is away from the Analyze workspace, which is what keeping the
+  // window open across the switch is FOR. The wait feedback this window's region may write is
+  // cleared here the same way the workspace entry clears it on the Analyze frames: a field's
+  // content is exactly what the user saw THIS frame, and the site that can draw it owns the
+  // clear. On an Analyze frame the workspace entry already pumped and cleared; this window's
+  // map region is then that frame's only map-field writer.
+  if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
+    PumpAnalyzeQueries(state, g_survey_executor, ImGui::GetTime());
+    WaitFeedbackTexts& feedback = state.analysis.wait_feedback_texts;
+    feedback.map_wait_line.clear();
+    feedback.map_refining_note.clear();
+  }
   // The Colors window's size recipe (the four-tier table's free-form row): FirstUseEver at the
   // contract's suggested default, re-applied on a UI-scale change (WindowResizeCondForScale,
   // theme.hpp) so a scale bump grows the window with its UiPx()-derived content instead of
@@ -1628,12 +1645,11 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
     ImGui::End();
     return;
   }
-  // The honest empty state (§6): the window can be open with no class selected. The map
-  // region's own no-selection line is the wording this window carries until the region itself
-  // moves in (Step 2) and owns the whole body.
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-  ImGui::TextWrapped("Select a class in the share list; its reference map takes this window.");
-  ImGui::PopStyleColor();
+  // The body IS the map region (the whole capability moved out of the depth band in one piece:
+  // the raster and its gestures, the overlays, the state line, the caliber block, the sky-point
+  // tail). The region's own child keeps its name — the tests' addressing anchors to it. Its
+  // honest no-selection state (below, in the region) is the window's empty state.
+  RenderAnalyzeMapRegion(state, ImGui::GetContentRegionAvail());
   ImGui::End();
 }
 
