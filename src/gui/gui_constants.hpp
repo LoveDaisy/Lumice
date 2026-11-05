@@ -144,12 +144,18 @@ constexpr float kPoseViewMinHeight = 420.0f;
 // either side may be the one pushed toward its bound).
 constexpr float kPoseViewRightFloor = 220.0f;
 constexpr float kPoseViewLeftFloor = 240.0f;
-// D5 — the right column's vertical floors: the globe region keeps its canvas floor (the region's
-// own 60 px code floor) plus its control rows; the factors region keeps its title plus two rows
-// (contract §11 R5). The derivation clamps both segments at these floors; when the two floors
-// cannot share the column, the ③ proportional fallback applies (the workspace splitters' rule).
-constexpr float kPoseViewGlobeCanvasFloor = 60.0f;
+// D5 — the right column's vertical floors: the globe region keeps its fixed interaction stack
+// (the region's own two-segment form's constant part — title + toggle + combo + the canvas at
+// its 60 px code floor + the weight bar + the slider/play row, ≈137 pt per contract §11 R4,
+// plus the child's padding); the factors region keeps its title plus two wrapped rows (§11 R5).
+// When the two floors cannot share the column, the ③ proportional fallback applies (the
+// workspace splitters' rule); below the globe floor the region's own scroll is the
+// reachability path.
+constexpr float kPoseViewGlobeFloor = 150.0f;
 constexpr float kPoseViewFactorsFloor = 70.0f;
+// The globe region's canvas floor (the region's own code floor, now named for the region's
+// canvas-sizing judgment to consume).
+constexpr float kPoseViewGlobeCanvasFloor = 60.0f;
 // The split strips' thickness (##AnalyzeRowsDivider's 8 pt recipe, shared by the two new strips).
 constexpr float kAnalyzeSplitterSize = 8.0f;
 // The depth band's side-by-side form also needs vertical room: below this band height the

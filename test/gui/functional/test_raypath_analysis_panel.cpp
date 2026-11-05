@@ -357,6 +357,12 @@ ImGuiWindow* MapRegionWindow() {
 ImGuiWindow* MapInfoRegionWindow() {
   return RegionWindowUnder("Raypath view", "##AnalyzeRaypathInfo");
 }
+// The Pose & trace window's two regions (755.5): the 3D orbit (##AnalyzeRaypath3D) and the
+// sun-direction globe (##AnalyzeSunGlobe) moved under the pose window's top level — the same
+// region names, a new host; they exist only while the window is open.
+ImGuiWindow* PoseRegionWindow(const char* name_fragment) {
+  return RegionWindowUnder("Pose & trace", name_fragment);
+}
 
 // The floating window is user-placed; at a smaller workspace basis the cascade position can
 // park it past the OS window's edge, and the viewport clip then cuts the region's content
@@ -5363,6 +5369,146 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
   return true;
 }
 
+// The Pose & trace window's D4/D5 splits (contract §4.2, 755.5): both are manual (a drag
+// writes its own ratio and nothing else), independent (dragging D4 never touches D5's field
+// and vice versa), session-retained (close + reopen keeps the user's split — compared by
+// VALUE, the 755.4 lesson), and floored at BOTH sides simultaneously: a single-sided floor
+// only proves the right column when the 3D region happens to take the rest — a drag to
+// either end, or a shrink under a kept wide-right ratio, can push EITHER side toward its
+// bound, so each leg asserts measured child sizes for both regions at 640x420. No analysis
+// needed: the regions render their honest empty states under the same geometry.
+bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
+  gui::g_state.analyze_pose_view_open =
+      true;  // the state write the title click performs (the click path is its own case)
+  ctx->Yield(3);
+  ImGuiWindow* win = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(win != nullptr, false);
+  ImGuiWindow* r3d = PoseRegionWindow("##AnalyzeRaypath3D");
+  ImGuiWindow* globe = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(r3d != nullptr && globe != nullptr, false);
+  const float ratio_d4 = gui::g_state.analyze_pose_view_right_ratio;
+  const float ratio_d5 = gui::g_state.analyze_pose_view_globe_ratio;
+  // The windows are LIVE objects: every ->Size read below runs after the drags, so the
+  // pre-drag geometry must be copied out here (the same reason the D3 case snapshots first).
+  const float r3d_w0 = r3d->Size.x;
+  const float globe_w0 = globe->Size.x;
+  const float globe_h0 = globe->Size.y;
+  ctx->LogInfo("[D4/D5] initial ratios %.3f / %.3f, window %.0fx%.0f", static_cast<double>(ratio_d4),
+               static_cast<double>(ratio_d5), static_cast<double>(win->Size.x), static_cast<double>(win->Size.y));
+
+  // D4's drag writes D4's ratio and only it: 60 pt right (the 3D widens, the right column
+  // narrows — the ratio is the column's share, so it shrinks).
+  const auto drag_strip = [&](const char* id, float dx, float dy) {
+    const ImGuiTestItemInfo grab = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(grab.ID != 0, false);
+    const ImVec2 c = grab.RectFull.GetCenter();
+    ctx->MouseMoveToPos(c);
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y + dy));
+    ctx->Yield(3);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    return true;
+  };
+  IM_CHECK_RETV(drag_strip("**/##PoseViewSplitter", 60.0f, 0.0f), false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_right_ratio < ratio_d4 - 0.02f, false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio == ratio_d5, false);
+  ImGuiWindow* r3d_after = PoseRegionWindow("##AnalyzeRaypath3D");
+  ImGuiWindow* globe_after = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(r3d_after != nullptr && globe_after != nullptr, false);
+  ctx->LogInfo("[D4] pre r3d %.0f globe %.0f | post r3d %.0f globe %.0f ratio %.4f", static_cast<double>(r3d_w0),
+               static_cast<double>(globe_w0), static_cast<double>(r3d_after->Size.x),
+               static_cast<double>(globe_after->Size.x),
+               static_cast<double>(gui::g_state.analyze_pose_view_right_ratio));
+  IM_CHECK_RETV(r3d_after->Size.x > r3d_w0 + 40.0f, false);
+  IM_CHECK_RETV(globe_after->Size.x < globe_w0 - 40.0f, false);
+  ctx->LogInfo("[D4] right drag: ratio %.3f, 3d %.0f (+%.0f), right col %.0f", static_cast<double>(ratio_d4),
+               static_cast<double>(r3d_after->Size.x), static_cast<double>(r3d_after->Size.x - r3d_w0),
+               static_cast<double>(globe_after->Size.x));
+
+  // D5's drag writes D5's ratio and only it, and moves the column's vertical split (the globe
+  // grows downward) — independent of D4, whose ratio stands where the last drag left it.
+  const float d4_after_first_drag = gui::g_state.analyze_pose_view_right_ratio;
+  {
+    const ImGuiTestItemInfo probe = ctx->ItemInfo("**/##PoseViewRowsSplitter", ImGuiTestOpFlags_NoError);
+    ctx->LogInfo("[D5 probe] id %08x rect (%.0f,%.0f)-(%.0f,%.0f)", probe.ID, static_cast<double>(probe.RectFull.Min.x),
+                 static_cast<double>(probe.RectFull.Min.y), static_cast<double>(probe.RectFull.Max.x),
+                 static_cast<double>(probe.RectFull.Max.y));
+  }
+  IM_CHECK_RETV(drag_strip("**/##PoseViewRowsSplitter", 0.0f, 40.0f), false);
+  ctx->LogInfo("[D5] ratio now %.4f (was %.4f)", static_cast<double>(gui::g_state.analyze_pose_view_globe_ratio),
+               static_cast<double>(ratio_d5));
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio > ratio_d5 + 0.02f, false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_right_ratio == d4_after_first_drag, false);
+  ImGuiWindow* globe_after_d5 = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(globe_after_d5 != nullptr, false);
+  IM_CHECK_RETV(globe_after_d5->Size.y > globe_h0 + 20.0f, false);
+  ctx->LogInfo("[D5] down drag: ratio %.3f -> %.3f, globe h %.0f -> %.0f", static_cast<double>(ratio_d5),
+               static_cast<double>(gui::g_state.analyze_pose_view_globe_ratio), static_cast<double>(globe_h0),
+               static_cast<double>(globe_after_d5->Size.y));
+
+  // The narrowest window's both-end clamp (the plan §3 revision): at 640x420 — the window
+  // minimum — a drag of D4 to either end leaves BOTH sides at/above their floors. Measured
+  // child sizes, not ratios: the containment assertions are structurally blind to a side
+  // squeezed under its floor when the other side takes the room.
+  ImGui::SetWindowSize(win, ImVec2(gui::UiPx(gui::kPoseViewMinWidth), gui::UiPx(gui::kPoseViewMinHeight)),
+                       ImGuiCond_Always);
+  ctx->Yield(3);
+  const auto both_floors = [&](const char* leg) {
+    ImGuiWindow* r3d_n = PoseRegionWindow("##AnalyzeRaypath3D");
+    ImGuiWindow* globe_n = PoseRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(r3d_n != nullptr && globe_n != nullptr, false);
+    ctx->LogInfo("[%s] 3d %.0f (floor %.0f), right col %.0f (floor %.0f)", leg, static_cast<double>(r3d_n->Size.x),
+                 static_cast<double>(gui::UiPx(gui::kPoseViewLeftFloor)), static_cast<double>(globe_n->Size.x),
+                 static_cast<double>(gui::UiPx(gui::kPoseViewRightFloor)));
+    IM_CHECK_RETV(globe_n->Size.x >= gui::UiPx(gui::kPoseViewRightFloor) - 1.5f, false);
+    IM_CHECK_RETV(r3d_n->Size.x >= gui::UiPx(gui::kPoseViewLeftFloor) - 1.5f, false);
+    return true;
+  };
+  IM_CHECK_RETV(both_floors("before end drags"), false);
+  // Drag right hard: the right column stops at its floor, the 3D keeps its own.
+  IM_CHECK_RETV(drag_strip("**/##PoseViewSplitter", 900.0f, 0.0f), false);
+  IM_CHECK_RETV(both_floors("right-clamped"), false);
+  // Drag left hard: the 3D stops at its floor, the right column keeps its own.
+  IM_CHECK_RETV(drag_strip("**/##PoseViewSplitter", -1800.0f, 0.0f), false);
+  IM_CHECK_RETV(both_floors("left-clamped"), false);
+
+  // The floors hold under a kept wide-right ratio + shrink (the other premise the revision
+  // names): restore the ratio large, then shrink the window to the minimum.
+  gui::g_state.analyze_pose_view_right_ratio = 0.6f;
+  ctx->Yield(2);
+  ImGui::SetWindowSize(win, ImVec2(gui::UiPx(gui::kPoseViewMinWidth), gui::UiPx(gui::kPoseViewMinHeight)),
+                       ImGuiCond_Always);
+  ctx->Yield(3);
+  IM_CHECK_RETV(both_floors("shrink under kept ratio"), false);
+
+  // Session retention, by value: close + reopen keeps both ratios and the derived split.
+  const float kept_d4 = gui::g_state.analyze_pose_view_right_ratio;
+  const float kept_d5 = gui::g_state.analyze_pose_view_globe_ratio;
+  const float globe_w_before_close = PoseRegionWindow("##AnalyzeSunGlobe")->Size.x;
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") == nullptr, false);
+  gui::g_state.analyze_pose_view_open = true;
+  ctx->Yield(3);
+  ImGuiWindow* globe_re = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(globe_re != nullptr, false);
+  IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_right_ratio - kept_d4) < 1e-6f, false);
+  IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_globe_ratio - kept_d5) < 1e-6f, false);
+  IM_CHECK_RETV(fabsf(globe_re->Size.x - globe_w_before_close) < 2.0f, false);
+  ctx->LogInfo("[D4/D5] reopen keeps ratios %.3f / %.3f", static_cast<double>(kept_d4), static_cast<double>(kept_d5));
+
+  // Restore the session the case found (cross-case hygiene: the open flag and the splits are
+  // display state this case owns).
+  gui::g_state.analyze_pose_view_open = false;
+  gui::g_state.analyze_pose_view_right_ratio = ratio_d4;
+  gui::g_state.analyze_pose_view_globe_ratio = ratio_d5;
+  ctx->Yield(2);
+  return true;
+}
+
 // AC2's narrowest-window face (contract §11 R3): at 480x360 the split's floors hold, the
 // info region's rows wrap instead of clip (the λ track's 60 pt floor, the sky-point row's
 // ladder), the map's canvas keeps its code floor, and the state line stays readable. No
@@ -6064,6 +6210,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "raypath_view_split_is_manual_and_floored");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(RaypathViewSplitIsManualAndFloored(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_splits_are_manual_independent_and_floored");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewSplitsAreManualIndependentAndFloored(ctx)); };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip
