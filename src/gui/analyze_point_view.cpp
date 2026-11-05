@@ -804,7 +804,10 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   // lines render direct in the region and the region's own native scroll is the reachability
   // path (the degradation ladder's last rung).
   const auto render_state_area = [&](auto&& draw_lines) {
-    if (ImGui::GetContentRegionAvail().y > ImGui::GetStyle().WindowPadding.y * 2.0f) {
+    // The bounded form's threshold is the scroll-draggable floor (gui_constants.hpp): a sliver
+    // between "fits" and this floor would host a scrollbar nobody can drag — the lines then
+    // render direct in the region, whose own scroll is tall enough to use.
+    if (ImGui::GetContentRegionAvail().y > UiPx(kPoseViewStateViewportFloor)) {
       ImGui::BeginChild("##AnalyzeGlobeState", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
       draw_lines();
       ImGui::EndChild();
@@ -901,10 +904,22 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   }
 
   // The discovered arm: the selected component's fiber, the current sample marker, the weight
-  // bar, the slider and playback. The partial-document note's FACTS are read here (the document
-  // is read exactly once) but DRAWN in the state area below — a note must not stand between the
-  // fixed stack and the hand (R4's scroll set).
+  // bar, the slider and playback. The partial-document note rides EVERY state area this arm can
+  // show — including the empty-payload early returns below: a deadline stopped before the
+  // component walk can legitimately return zero components, and a window open on its own (the
+  // diagnostics region may be off screen or on another workspace) must not present an
+  // unfinished document as a definite physical absence.
   const bool partial_document = info->execution != LUMICE_PATH_OUTCOME_COMPLETED;
+  const auto draw_partial_note = [&] {
+    if (partial_document) {
+      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+      ImGui::TextWrapped(
+          "Partial document (%s) — what arrived is on show; emptiness here is the run's "
+          "stop, not a physical absence.",
+          ExecutionText(info->execution));
+      ImGui::PopStyleColor();
+    }
+  };
   std::vector<PointComponentRow> rows;
   const int component_total = PointComponentRows(*point.adopted_result, &rows);
   if (component_total == 0) {
@@ -914,6 +929,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     render_state_area([&] {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
+      draw_partial_note();
       if (have_reach && !reach.target_in_range) {
         ImGui::TextWrapped(
             "No fiber here: the target's deviation is outside the range of this path's deflection field "
@@ -957,6 +973,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     render_state_area([&] {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
+      draw_partial_note();
       ImGui::TextWrapped("This component carries no valid sample — nothing to project.");
       ImGui::PopStyleColor();
     });
@@ -1741,6 +1758,14 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
   std::vector<PointComponentRow> rows;
   const int component_total = PointComponentRows(*point.adopted_result, &rows);
   if (component_total == 0) {
+    if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+      ImGui::TextWrapped(
+          "Partial document (%s) — what arrived is on show; emptiness here is the run's "
+          "stop, not a physical absence.",
+          ExecutionText(info->execution));
+      ImGui::PopStyleColor();
+    }
     disabled_line("No fiber at this point — no per-sample factors.");
     ImGui::EndChild();
     return;

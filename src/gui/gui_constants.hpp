@@ -137,17 +137,24 @@ constexpr float kPoseViewLeftFloor = 240.0f;
 // (the region's own two-segment form's constant part — title + toggle (its wrapped over-width
 // form) + the component combo + the canvas at its 60 px code floor + the weight bar + the
 // slider/play row, worst case ≈195 pt at 1x measured against the Roboto Medium 15px theme with
-// a live-layout probe, plus the child's padding); the factors region keeps its title plus two
-// wrapped rows (§11 R5). The
-// globe floor is what keeps the FIXED STACK fully visible at the D5 drag floor — a cell at the
-// floor can still hold stack + a bounded (scrolling) state area; the whole-region-scroll
-// degradation lives below the floors' reach, not at them. When the two floors cannot share the
-// column, the ③ proportional fallback applies (the workspace splitters' rule).
-constexpr float kPoseViewGlobeFloor = 200.0f;
+// a live-layout probe) PLUS a scroll-draggable state viewport (≈32 pt: below it ImGui collapses
+// and disables the scrollbar's drag — a state area that shows a range nobody can scroll is the
+// same unreachable fact as no range) and the child's padding — ≈235 pt all told; the factors
+// region keeps its title plus two wrapped rows (§11 R5). The globe floor is what keeps the
+// FIXED STACK fully visible AND the state area scrollable at the D5 drag floor; the
+// whole-region-scroll degradation lives below the floors' reach, not at them. When the two
+// floors cannot share the column, the ③ proportional fallback applies (the workspace
+// splitters' rule).
+constexpr float kPoseViewGlobeFloor = 235.0f;
 constexpr float kPoseViewFactorsFloor = 70.0f;
 // The globe region's canvas floor (the region's own code floor, now named for the region's
 // canvas-sizing judgment to consume).
 constexpr float kPoseViewGlobeCanvasFloor = 60.0f;
+// The state area's bounded-form threshold: the region renders the scrolling child when the
+// cell leaves at least this much room under the fixed stack — a narrower sliver cannot host a
+// draggable scrollbar, so the lines render direct in the region (the region's own scroll, tall
+// enough to drag) instead of a state child nobody can scroll.
+constexpr float kPoseViewStateViewportFloor = 30.0f;
 // The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's
 // two splitters).
 constexpr float kAnalyzeSplitterSize = 8.0f;

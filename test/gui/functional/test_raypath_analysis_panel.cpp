@@ -5745,8 +5745,11 @@ bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
   // through the modal's real input and OK commit, verified on the document field, then reverted
   // the same way — the two floating windows and their states stand untouched throughout.
   const float sun_alt_before = gui::g_state.sun.altitude;
-  const std::string& first_name =
+  // BY VALUE: the immediate editor writes the pool crystal in place, so a bound reference
+  // would track the edit and the restore assert would compare the object with itself.
+  const std::string first_name =
       gui::g_state.crystals[static_cast<size_t>(gui::g_state.layers[0].entries[0].crystal_id)].name;
+  IM_CHECK_RETV(first_name != "PoseEditProbe", false);
   // The row's label carries the entry's own name, which this leg's own edit changes, so the
   // address is re-derived from the live state at every click instead of cached.
   const auto crystal_row_ref = [] {
@@ -5786,6 +5789,7 @@ bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
   ctx->ItemClick("**/Close##edit_modal");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.crystals[static_cast<size_t>(probe_crystal)].name == first_name, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##crystal_name", ImGuiTestOpFlags_NoError).ID == 0, false);  // the editor closed
   ctx->SetRef("");
 
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
