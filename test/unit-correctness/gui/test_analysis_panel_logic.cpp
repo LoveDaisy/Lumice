@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -1496,6 +1497,22 @@ bool WaitForQuiescent(SurveyExecutor& executor, int timeout_ms) {
   return true;
 }
 
+// The settled twin: nothing computing AND nothing queued. WaitForQuiescent is blind to the
+// issue→pickup window — a just-issued query sits queued with nothing in flight, so "quiescent"
+// can read true before the query ever ran; "!outstanding" means every issued query was picked
+// up and its finish posted (the worker clears the token and writes the finish in one critical
+// section), which is what makes "the slot now holds the newest outcome" a structural fact.
+bool WaitForAllSettled(SurveyExecutor& executor, int timeout_ms) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (executor.QueryOutstanding()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return true;
+}
+
 // The issue-side twin: wait until the executor has a query between issue and finish.
 bool WaitForInFlight(SurveyExecutor& executor, int timeout_ms) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -1797,6 +1814,304 @@ TEST(AnalysisPanelLogic, SurveyExecutorCancelReachesASupersededSuccessor) {
   }
   ASSERT_TRUE(last.has_value());
   EXPECT_EQ(last->id, id_b);
+  executor.ShutdownAndJoin();
+}
+
+// ---- The executor-internal-contract arms (755.7 candidate B) ---------------------------------------
+//
+// Determinism here is carried by STRUCTURE, not by scheduling luck: the pickup gate parks the
+// worker between a query's pickup (token registered, mutex free) and its engine call, so "B
+// takes effect while A is provably unfinished" is constructed — A has not even entered the
+// engine — and every wall-clock number below is only an upper bound (a stop bound or a
+// hang-guard), never a premise. The refusal form's authority is the document's execution tag:
+// a cancelled survey answers ok-carrying with execution == CANCELLED, and a finished document
+// is immutable, so a natural completion could never wear that form.
+
+namespace {
+
+// The pickup gate's phase machine, one instance per test: each pickup counts one phase — the
+// callback signals the phase and then blocks until the test releases it. The single worker runs
+// pickups strictly in order, so "phase 1 = A, phase 2 = B" is by construction, not by clock.
+struct PickupGateMachine {
+  void Install(SurveyExecutor& executor) {
+    executor.SetPickupGateForTest([this](QueryFace face) {
+      int phase = 0;
+      {
+        std::lock_guard<std::mutex> lock(mu);
+        phase = ++pickups;
+        signalled_phase = phase;
+        last_face = face;
+      }
+      cv.notify_all();  // signal first, then block until the test releases this phase
+      std::unique_lock<std::mutex> lock(mu);
+      cv.wait(lock, [&] { return released_phase >= phase; });
+    });
+  }
+
+  // Test side: bounded wait until phase `phase` is signalled (the worker parked at it).
+  bool WaitForSignal(int phase, int timeout_ms) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    std::unique_lock<std::mutex> lock(mu);
+    while (signalled_phase < phase) {
+      if (cv.wait_until(lock, deadline) == std::cv_status::timeout) {
+        return signalled_phase >= phase;
+      }
+    }
+    return true;
+  }
+
+  // Test side: release phase `phase` and everything below it (idempotent).
+  void Release(int phase) {
+    {
+      std::lock_guard<std::mutex> lock(mu);
+      released_phase = std::max(released_phase, phase);
+    }
+    cv.notify_all();
+  }
+
+  std::mutex mu;
+  std::condition_variable cv;
+  int pickups = 0;          // pickups so far — the phase the worker is entering
+  int signalled_phase = 0;  // highest phase the callback has signalled
+  int released_phase = 0;   // highest phase the test has released
+  QueryFace last_face = QueryFace::kSurvey;
+};
+
+// RAII teardown, declared AFTER the executor so it dies first: unconditionally releases every
+// phase and clears the gate — including on an ASSERT's early exit — so a failed test can never
+// leave the worker parked inside the callback past the executor's own join (the destructor
+// would hang on it). A test running a shutdown helper thread hands the thread in: joined AFTER
+// the release (the worker must be able to finish before the join can return), the lifecycle
+// order the plan review pinned for every exit path.
+struct PickupGateTeardown {
+  PickupGateMachine* machine;
+  SurveyExecutor* executor;
+  std::thread* helper = nullptr;
+  ~PickupGateTeardown() {
+    machine->Release(1 << 30);
+    executor->SetPickupGateForTest(nullptr);
+    if (helper != nullptr && helper->joinable()) {
+      helper->join();
+    }
+  }
+};
+
+// The finished SURVEY outcome's document-level execution tag (LUMICE_PATH_OUTCOME_*): `ok` says
+// the C call produced a document, `execution` says how the run ended — the refusal form's
+// authority, the reader the adoption gate never consults (it adopts on id + ok alone).
+int SurveyExecutionTagOf(const SurveyExecutor::Finished& finished) {
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  EXPECT_EQ(LUMICE_PathSurveyGetInfo(finished.result.get(), &info), LUMICE_PATH_READ_OK);
+  return info.execution;
+}
+
+}  // namespace
+
+// AC2's full contract in ONE deterministic scene: B's intent takes effect while A is provably
+// unfinished (parked at the gate, engine not entered), A's finish is REFUSED — ok-carrying with
+// the document's execution == CANCELLED, the shape the pump's gate comment names ("the engine
+// answers a cancel with an OK-carrying partial document, not an error") — and the SAME B is
+// then delivered from a natural run. The supersede-cancel probe's red point is A's refusal-form
+// assertion below; its premise stands on the handshake, not on interleaving luck.
+TEST(AnalysisPanelLogic, SurveyExecutorSupersedeRefusesOldIntentAndDeliversNewest) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  PickupGateMachine machine;
+  SurveyExecutor executor;
+  PickupGateTeardown teardown{ &machine, &executor };
+  executor.SetScene(std::move(scene));
+  machine.Install(executor);
+
+  // A issued; the worker picks it up, registers its token and parks in the gate BEFORE the
+  // engine call — A is provably unfinished, and its registered token arms every cancel path.
+  const SurveyQueryId id_a = executor.NextId(1);
+  IssueClassQuery(executor, id_a, { 1, 2 });
+  ASSERT_TRUE(machine.WaitForSignal(1, 15000));
+  ASSERT_TRUE(executor.InFlight(QueryFace::kSurvey));  // the gate's premise edge: token registered
+
+  // B while A is parked: IssueQuery hits A's registered token under the lock — the real
+  // supersede happens HERE, with A demonstrably not finished (it never started computing).
+  const SurveyQueryId id_b = executor.NextId(1);
+  IssueClassQuery(executor, id_b, { 1, 3, 2 });
+
+  // Release A: it enters the engine on an already-cancelled token, its cut document posts, and
+  // the worker then picks up B and parks again — B cannot publish anything past the fence.
+  machine.Release(1);
+  ASSERT_TRUE(machine.WaitForSignal(2, 30000));
+
+  // Drain: A's finish is the only one out (B is fenced), and it carries the refusal form —
+  // this is the assertion the negative control must turn red.
+  std::optional<SurveyExecutor::Finished> a_finish = executor.TakeFinished(QueryFace::kSurvey);
+  ASSERT_TRUE(a_finish.has_value());
+  ASSERT_EQ(a_finish->id, id_a);
+  ASSERT_TRUE(a_finish->ok);
+  EXPECT_EQ(SurveyExecutionTagOf(*a_finish), LUMICE_PATH_OUTCOME_CANCELLED);
+
+  // Release B: no cancel stands on it, so it runs to its natural answer — completed or
+  // deadline-bounded are both legal (deadline is a stop bound, not the expected outcome); only
+  // the cancelled form is excluded. The SAME B the supersede issued is the one delivered.
+  machine.Release(2);
+  ASSERT_TRUE(WaitForQuiescent(executor, 25000));
+  std::optional<SurveyExecutor::Finished> b_finish = executor.TakeFinished(QueryFace::kSurvey);
+  ASSERT_TRUE(b_finish.has_value());
+  ASSERT_EQ(b_finish->id, id_b);
+  ASSERT_TRUE(b_finish->ok);
+  EXPECT_NE(SurveyExecutionTagOf(*b_finish), LUMICE_PATH_OUTCOME_CANCELLED);
+  EXPECT_FALSE(executor.TakeFinished(QueryFace::kSurvey).has_value());  // nothing after B
+}
+
+// AC1, both arms, one TEST: explicit ShutdownAndJoin while a query is genuinely computing
+// (main), and the destructor's safety-net form over an already-cancelled, still-parked query
+// (destructor). The main arm's proof is the drained CANCELLED form — "the cancel hit an
+// unfinished query" is structural, because the release happens strictly after the confirmation
+// face reads true (the flag's store sits inside ShutdownAndJoin's lock, after the cancel
+// request returns), and A was parked before its engine call. The join's wall clock is
+// auxiliary only: an upper bound, never the claim.
+TEST(AnalysisPanelLogic, SurveyExecutorShutsDownAndJoinsWhileQueryComputing) {
+  // -- Main arm: helper-threaded ShutdownAndJoin against a parked, unfinished A. --
+  {
+    LUMICE_Scene* raw_scene = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+    std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+    PickupGateMachine machine;
+    SurveyExecutor executor;
+    std::thread helper;
+    // The helper's completion flag is declared BEFORE the teardown guard, so on an ASSERT's
+    // early exit the guard's destructor (release gate → join helper) runs while the flag the
+    // helper writes after ShutdownAndJoin returns is still alive — the reverse order would make
+    // the failure cleanup itself a use-after-scope (the thread's referenced state must outlive
+    // its join).
+    std::atomic<bool> shutdown_returned{ false };
+    PickupGateTeardown teardown{ &machine, &executor, &helper };
+    executor.SetScene(std::move(scene));
+    machine.Install(executor);
+
+    const SurveyQueryId id_a = executor.NextId(1);
+    IssueClassQuery(executor, id_a, { 1, 2 });
+    ASSERT_TRUE(machine.WaitForSignal(1, 15000));
+    ASSERT_TRUE(executor.InFlight(QueryFace::kSurvey));
+
+    // ShutdownAndJoin blocks in its join until the worker (parked in our gate) finishes, so it
+    // must run on a helper thread; the wall clock starts before the thread does.
+    const auto shutdown_begin = std::chrono::steady_clock::now();
+    helper = std::thread([&executor, &shutdown_returned] {
+      executor.ShutdownAndJoin();
+      shutdown_returned.store(true, std::memory_order_release);
+    });
+
+    // The synchronization edge: poll until the confirmation face reads true — the in-flight
+    // cancel has EXECUTED. Only then release A; the order is the whole proof.
+    bool confirmed = false;
+    const auto confirm_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < confirm_deadline) {
+      if (executor.ShutdownCancelRequestedForTest()) {
+        confirmed = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(confirmed);
+    machine.Release(1);
+
+    // A answers on its cancelled token (fast — the cut happens at the engine's first
+    // cooperative poll), posts the cancelled form, then takes the shutdown job and returns; the
+    // helper's join completes after that. shutdown_returned is the join's own witness: the
+    // worker has exited, so every finish is posted and the executor is at rest.
+    bool returned = false;
+    const auto join_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < join_deadline) {
+      if (shutdown_returned.load(std::memory_order_acquire)) {
+        returned = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(returned);
+    helper.join();
+    const auto shutdown_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - shutdown_begin)
+            .count();
+    EXPECT_LE(shutdown_ms, 5000);  // auxiliary upper bound (the form below is the claim)
+
+    std::optional<SurveyExecutor::Finished> a_finish = executor.TakeFinished(QueryFace::kSurvey);
+    ASSERT_TRUE(a_finish.has_value());
+    ASSERT_EQ(a_finish->id, id_a);
+    ASSERT_TRUE(a_finish->ok);
+    EXPECT_EQ(SurveyExecutionTagOf(*a_finish), LUMICE_PATH_OUTCOME_CANCELLED);
+    EXPECT_FALSE(executor.InFlight());
+    EXPECT_FALSE(executor.QueryOutstanding());
+    EXPECT_FALSE(executor.TakeFinished(QueryFace::kSurvey).has_value());
+  }
+
+  // -- Destructor arm: the safety net must not hang, whatever is still mid-flight. No form
+  // claim here — "the cancel hit an unfinished query" is the main arm's proof; this arm only
+  // owns "destructing an executor with a parked query is bounded and clean".
+  {
+    auto destroy_begin = std::chrono::steady_clock::now();
+    {
+      LUMICE_Scene* raw_scene = nullptr;
+      ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+      std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+      PickupGateMachine machine;
+      SurveyExecutor executor;
+      PickupGateTeardown teardown{ &machine, &executor };
+      executor.SetScene(std::move(scene));
+      machine.Install(executor);
+
+      const SurveyQueryId id_a = executor.NextId(2);
+      IssueClassQuery(executor, id_a, { 1, 2 });
+      ASSERT_TRUE(machine.WaitForSignal(1, 15000));
+
+      // The test's own cancel (returns once the request is in — no observation face needed),
+      // then release: A races its fast cancelled form while the scope exits into the
+      // destructor — whichever way the interleaving lands, the join must come back.
+      executor.CancelInFlight(QueryFace::kSurvey);
+      machine.Release(1);
+      destroy_begin = std::chrono::steady_clock::now();  // setup time is not the destructor's
+    }
+    const auto destroy_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - destroy_begin).count();
+    EXPECT_LE(destroy_ms, 5000);  // the safety net's whole claim: bounded, no hang
+  }
+}
+
+// The single-slot contract (newest-wins): a stale same-face finish the GUI never drained is
+// overwritten by the next one — one drain yields B, never A, and nothing after. No gate here:
+// the overwrite contract needs no pickup control, and the lock section that clears the token
+// also writes the finish, so WaitForQuiescent returning proves A's stale outcome sits IN the
+// slot, undrained, when B is issued. The slot-write probe's red point is the id assertion.
+TEST(AnalysisPanelLogic, SurveyExecutorNewestFinishOverwritesUndrainedStale) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  const SurveyQueryId id_a = executor.NextId(1);
+  IssueClassQuery(executor, id_a, { 1, 2 });
+  ASSERT_TRUE(WaitForInFlight(executor, 15000));
+  executor.CancelInFlight(QueryFace::kSurvey);    // A's form is whatever the cut leaves — not this arm's claim
+  ASSERT_TRUE(WaitForQuiescent(executor, 8000));  // A's stale finish now provably in the slot, undrained
+
+  const SurveyQueryId id_b = executor.NextId(1);
+  IssueClassQuery(executor, id_b, { 1, 3, 2 });
+  // Wait on !outstanding, not bare quiescence: between the issue and the worker's pickup B is
+  // queued with nothing in flight, and a quiescence read in that window would drain A's stale
+  // finish and red the id assertion below on scheduling, not on the contract.
+  ASSERT_TRUE(WaitForAllSettled(executor, 25000));  // B picked up, ran, finish posted
+
+  std::optional<SurveyExecutor::Finished> newest = executor.TakeFinished(QueryFace::kSurvey);
+  ASSERT_TRUE(newest.has_value());
+  ASSERT_EQ(newest->id, id_b);  // THE overwrite: A's stale finish must not surface here
+  ASSERT_TRUE(newest->ok);
+  EXPECT_NE(SurveyExecutionTagOf(*newest), LUMICE_PATH_OUTCOME_CANCELLED);
+  EXPECT_FALSE(executor.TakeFinished(QueryFace::kSurvey).has_value());  // nothing after B
   executor.ShutdownAndJoin();
 }
 
