@@ -254,7 +254,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 > 入口、常开同步、诚实空态与关闭重开全部照合同实现；as-built 补充——窗名 `Pose & trace`，默认
 > 960×620（FirstUseEver 钳视口），窗级最小 640×420（§11 R4 由 `SetNextWindowSizeConstraints`
 > 逐帧钳制）；D4（3D｜右列，默认 ≈0.333，下限 220/240 双侧钳制）与 D5（globe｜因素，默认 0.55，
-> 下限 150/70）都存会话比例（`GuiState::analyze_pose_view_right_ratio` / `_globe_ratio`），手动
+> 下限 235/70，globe 下限＝固定交互栈最坏 ≈195＋可拖动状态视口 ≈32＋padding——两段结构在 D5 端点共存）都存会话比例（`GuiState::analyze_pose_view_right_ratio` / `_globe_ratio`），手动
 > 优先、会话内保留、独立不联动；右列下区为 `##AnalyzePoseFactors`（当前样本因素＋诚实空态，
 > §11 R5 的 ≥70pt 下限）；globe 区为「固定交互栈＋滚动状态区」两段结构（R4）：标题＋dev-grid
 > 开关＋分量 combo＋canvas＋权重条＋滑条/播放常驻可达，说明行／partial 注／权重注／样本读数进
