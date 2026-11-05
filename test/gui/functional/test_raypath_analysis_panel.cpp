@@ -5016,7 +5016,11 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(fabsf(gui::g_state.analyze_raypath_view_info_ratio - clamped_ratio) < 1e-6f, false);
     IM_CHECK_RETV(info_r->Size.x >= gui::UiPx(gui::kRaypathViewInfoMinSize) - 1.5f, false);
     IM_CHECK_RETV(map_r->Size.x >= gui::UiPx(gui::kRaypathViewMapMinSize) - 1.5f, false);
-    // Close and reopen: the same process keeps the user's split (session memory).
+    // Close and reopen: the same process keeps the user's split (session memory). The pre-close
+    // widths are saved BY VALUE: reopen reuses the same ImGuiWindow pool entries (same names),
+    // so pointer-level compares would read the reopened geometry against itself.
+    const float info_before_close = info_r->Size.x;
+    const float map_before_close = map_r->Size.x;
     gui::g_state.analyze_raypath_view_open = false;
     ctx->Yield(2);
     gui::g_state.analyze_raypath_view_open = true;
@@ -5025,8 +5029,8 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     ImGuiWindow* map_o = MapRegionWindow();
     ImGuiWindow* info_o = MapInfoRegionWindow();
     IM_CHECK_RETV(map_o != nullptr && info_o != nullptr, false);
-    IM_CHECK_RETV(fabsf(info_o->Size.x - info_r->Size.x) < 2.0f, false);
-    IM_CHECK_RETV(fabsf(map_o->Size.x - map_r->Size.x) < 2.0f, false);
+    IM_CHECK_RETV(fabsf(info_o->Size.x - info_before_close) < 2.0f, false);
+    IM_CHECK_RETV(fabsf(map_o->Size.x - map_before_close) < 2.0f, false);
     ctx->LogInfo("[D3] reopen keeps the split: info %.0f, map %.0f", static_cast<double>(info_o->Size.x),
                  static_cast<double>(map_o->Size.x));
     gui::g_state.analyze_raypath_view_open = false;
@@ -5643,9 +5647,33 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
       }
     }
     if (state_area != nullptr) {
-      ctx->LogInfo("[pose narrowest %.1fx] state area bounded, SM %.0f; stack controls operated", (double)scale,
-                   (double)state_area->ScrollMax.y);
       IM_CHECK_RETV(state_area->ScrollMax.y > 0.0f, false);
+      // The reviewer's enhancement: the bounded area's reachability is a real wheel's work —
+      // scroll it, verify the wheel actually advanced the content, wheel to the end, and only
+      // then re-check that the fixed stack above still answers (the reachability must not come
+      // at the fixed controls' expense).
+      const float sm0 = state_area->ScrollMax.y;
+      const float scroll0 = state_area->Scroll.y;
+      const ImVec2 area_centre = state_area->Rect().GetCenter();
+      ctx->MouseMoveToPos(area_centre);
+      ctx->Yield(2);
+      for (int i = 0; i < 24 && state_area->Scroll.y < state_area->ScrollMax.y - 0.5f; ++i) {
+        ctx->MouseWheelY(-1.0f);
+        ctx->Yield(1);
+      }
+      IM_CHECK_RETV(state_area->Scroll.y > scroll0 + 0.5f, false);                   // the wheel did the scrolling
+      IM_CHECK_RETV(state_area->Scroll.y >= state_area->ScrollMax.y - 1.0f, false);  // the end is in view
+      IM_CHECK_RETV(state_area->ScrollMax.y >= sm0 - 0.5f, false);                   // nothing was deleted to fit
+      ctx->LogInfo("[pose narrowest %.1fx] state area bounded, wheeled %.0f -> %.0f of SM %.0f; end in view",
+                   (double)scale, (double)scroll0, (double)state_area->Scroll.y, (double)state_area->ScrollMax.y);
+      // The fixed stack answers with the state area parked at its end.
+      ctx->ItemClick("**/Play##globe_play");
+      ctx->Yield(2);
+      IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
+      ctx->ItemClick("**/Stop##globe_play");
+      ctx->Yield(2);
+      IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+      ctx->LogInfo("[pose narrowest %.1fx] fixed stack operated with the state area at its end", (double)scale);
     } else {
       ImGuiWindow* globe_scroll = PoseRegionWindow("##AnalyzeSunGlobe");
       IM_CHECK_RETV(globe_scroll != nullptr, false);
@@ -6544,12 +6572,13 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
       DriveUntil(
           ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.sim_state == SimState::kDone; }, 20),
       false);
-  // The trigger cleared the view (DoAnalyze's own semantics): the faces emptied under the
-  // standing windows — the windows follow the emptied selection honestly, they do not close.
+  // The trigger cleared the SELECTION (a synchronous write), and the stop drained the run —
+  // the list on show is whatever the stopped run adopted (a partial, or the completed answer
+  // when the stop landed late; both legal), so nothing is asserted about it here. The windows
+  // follow whatever the faces now hold, and they do not close.
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
-  IM_CHECK_RETV(gui::g_state.analysis_result.payload == nullptr, false);
   IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
-  ctx->LogInfo("[scopes] survey stop drained; the faces emptied and both windows stayed open");
+  ctx->LogInfo("[scopes] survey stop drained; the selection cleared and both windows stayed open");
   // Rows come back with the next completed analysis — then the re-selection re-arms both faces
   // in the standing windows.
   ctx->SetRef(PanoramaRegionRef());
