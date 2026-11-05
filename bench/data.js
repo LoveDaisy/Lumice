@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793918789673,
+  "lastUpdate": 1793918794665,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "1d6bb6f143908c461fabfc30bd29f4f94e31dbc0",
-          "message": "Merge pull request #451 from LoveDaisy/scrum/ci-time-governance\n\nscrum ci-time-governance (WIP): build-time landing",
-          "timestamp": "2026-10-01T06:48:43+08:00",
-          "tree_id": "14a7af4467d0122e428a63d9dfec71858a8ec59a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/1d6bb6f143908c461fabfc30bd29f4f94e31dbc0"
-        },
-        "date": 1790808685269,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1189691.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1029301.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 665906.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 589112.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "7f16d97d16354d0b0e38424d0ee0c8cd2e53acf4",
           "message": "Merge pull request #462 from LoveDaisy/scrum/ci-time-governance\n\nci: continue time-governance calibration",
           "timestamp": "2026-10-01T17:12:50+08:00",
@@ -9590,6 +9542,54 @@ window.BENCHMARK_DATA = {
             "value": 534396.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3fa8e2cd61fcb3352f6adf6311731e91e2b30109",
+          "message": "Merge pull request #565 from LoveDaisy/feat/executor-ordering-fixture\n\ntest(gui): executor ordering contract arms — supersede refusal, shutdown join, newest-wins",
+          "timestamp": "2026-11-06T06:41:41+08:00",
+          "tree_id": "ae2aea9c76fbf464eefce3a7536d023941059f41",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/3fa8e2cd61fcb3352f6adf6311731e91e2b30109"
+        },
+        "date": 1793918794190,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1066488.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1013738.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 721119.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 625992.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
           }
         ]
       }
