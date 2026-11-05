@@ -365,23 +365,26 @@ inline ImVec2 MainVpPos(float x, float y) {
 
 // The top bar's boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
 // follows the palette) whose surrounding gaps carry the adaptive group-gap rule
-// (toolbar_layout.hpp, §4.8) — the rule itself stays the 1 px ImGui draws, and the target gap's
-// difference from the base rhythm (2 × ItemSpacing.x + the rule) is split evenly across the two
-// item gaps by pushing ItemSpacing.x for exactly these two SameLine calls. At kMinWindowWidth the
-// target is the base + 8, and the fit pin (the_top_bar_fits_at_the_minimum_window_width) measures
-// the bar with exactly these gaps; the never-narrower guard only means a miscalibrated target
-// cannot shrink the bar's rhythm below its own base — the gap the theme's ItemSpacing.x already
-// provides.
+// (toolbar_layout.hpp, §4.8) — the rule itself stays the 1 px ImGui draws. The target gap's
+// difference from the base rhythm (2 × ItemSpacing.x + the rule) is split unevenly: the left
+// side takes the larger share, so the next group hugs the rule — the split comes from the one
+// pure pair in toolbar_layout.hpp, which the tests read with the same algebra. The two gaps are
+// passed as SameLine's explicit spacing rather than through a pushed style var: with
+// offset_from_start_x == 0 and a non-negative spacing, SameLine positions the cursor through
+// exactly the value it is handed (it reads the style only when the spacing is negative), so the
+// arithmetic here is the arithmetic ImGui runs, and no style var can leak past the boundary.
+// At kMinWindowWidth the target is the base + 8, and the fit pin
+// (the_top_bar_fits_at_the_minimum_window_width) measures the bar with exactly these gaps —
+// total, and now each side against the rule; the never-narrower guard only means a
+// miscalibrated target cannot shrink the bar's rhythm below its own base — the gap the theme's
+// ItemSpacing.x already provides.
 void ToolbarGroupSeparator(float window_width) {
   const ImGuiStyle& style = ImGui::GetStyle();
   const float gap_px = UiPx(TopBarGroupGapPt(window_width / CurrentUiScale()));
-  const float extra = gap_px - (style.ItemSpacing.x * 2.0f + 1.0f);
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
-                      ImVec2(style.ItemSpacing.x + (extra > 0.0f ? extra * 0.5f : 0.0f), style.ItemSpacing.y));
-  ImGui::SameLine();
+  const float spare = gap_px - (style.ItemSpacing.x * 2.0f + 1.0f);
+  ImGui::SameLine(0.0f, style.ItemSpacing.x + TopBarGroupGapLeftExtraPx(spare));
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-  ImGui::SameLine();
-  ImGui::PopStyleVar();
+  ImGui::SameLine(0.0f, style.ItemSpacing.x + TopBarGroupGapRightExtraPx(spare));
 }
 
 // One width for every button of a top-bar group: the widest label plus the frame padding. A group

@@ -18,6 +18,7 @@
 // collapsed panel they cannot get back, or a log panel that vanishes behind the side panels as soon
 // as they touch anything.
 
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -130,6 +131,39 @@ void AssertRectContained(ImGuiTestContext* ctx, const char* ref, ImGuiWindow* ho
   IM_CHECK_LE(info.RectFull.Max.x, host->InnerClipRect.Max.x + 0.5f);
   IM_CHECK_GE(info.RectFull.Min.y, host->InnerClipRect.Min.y - 0.5f);
   IM_CHECK_LE(info.RectFull.Max.y, host->InnerClipRect.Max.y + 0.5f);
+}
+
+// The x of the top bar's vertical group rule inside [min_x, max_x], read off the rendered frame.
+// The rule is the one top-bar geometry the item registry cannot answer — the separator is
+// submitted with id 0, so no ItemInfo exists to query, and a total-gap assertion cannot tell
+// "split as the share says" from "still even" or "sides swapped". Each rule is one unrounded
+// filled quad (PrimRect: 4 vertices / 6 indices, no AA expansion) in the bar's own DrawList:
+// exactly 1 px wide, the resolved Separator colour, and as tall as the buttons flanking it.
+// Runs at the test tick (PostSwap), where the DrawList still holds the last completed frame —
+// the next Begin clears it. Returns the quad's left x, or -1 when nothing matches.
+float FindTopBarRuleX(ImGuiWindow* bar, float min_x, float max_x, float height) {
+  ImDrawList* dl = bar->DrawList;
+  const ImU32 sep_col = ImGui::GetColorU32(ImGuiCol_Separator);
+  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+    float min_vx = FLT_MAX;
+    float max_vx = -FLT_MAX;
+    float min_vy = FLT_MAX;
+    float max_vy = -FLT_MAX;
+    bool col_match = true;
+    for (int k = 0; k < 6; ++k) {
+      const ImDrawVert& v = dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])];
+      min_vx = std::min(min_vx, v.pos.x);
+      max_vx = std::max(max_vx, v.pos.x);
+      min_vy = std::min(min_vy, v.pos.y);
+      max_vy = std::max(max_vy, v.pos.y);
+      col_match = col_match && v.col == sep_col;
+    }
+    if (col_match && max_vx - min_vx == 1.0f && std::fabs(max_vy - min_vy - height) <= 0.5f && min_vx >= min_x &&
+        max_vx <= max_x) {
+      return min_vx;
+    }
+  }
+  return -1.0f;
 }
 
 }  // namespace
@@ -400,6 +434,11 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
   // (= kTopBarGroupGapAnchorWidthPt), the same boundary measures the maximum. The boundary read
   // is Analyze-cell → Settings, the one separator whose two neighbours are always drawn (every
   // other boundary has a conditional member on one side).
+  //
+  // Each boundary's gap is split unevenly around its rule (toolbar_layout.hpp: the larger left,
+  // the next group hugging the rule), so the total alone is not the fact — both bases above also
+  // read the rule's own x off the bar's DrawList (the separator has no item ID to query) and pin
+  // each side to the pure split pair's output.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "the_top_bar_fits_at_the_minimum_window_width");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -421,6 +460,30 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         prev_gap = gap;
       }
       IM_CHECK_EQ(monotonicity_violations, 0);
+
+      // The split pair, pinned directly with the renderer's own algebra (spare = target − base
+      // rhythm): the floor's spare 8 splits 6/2 and the anchor's 16 splits 12/4 — integer splits
+      // at both pinned bases, which is what keeps the rendered side-gap equalities below exact;
+      // a spare of zero or less returns 0/0 (the never-narrower guard); across the whole window
+      // range the left side stays strictly larger than the right and monotone in the width.
+      const float base_x = ImGui::GetStyle().ItemSpacing.x;
+      IM_CHECK_EQ(gui::TopBarGroupGapLeftExtraPx(gui::kTopBarGroupGapMinPt - (base_x * 2.0f + 1.0f)), 6.0f);
+      IM_CHECK_EQ(gui::TopBarGroupGapRightExtraPx(gui::kTopBarGroupGapMinPt - (base_x * 2.0f + 1.0f)), 2.0f);
+      IM_CHECK_EQ(gui::TopBarGroupGapLeftExtraPx(gui::kTopBarGroupGapMaxPt - (base_x * 2.0f + 1.0f)), 12.0f);
+      IM_CHECK_EQ(gui::TopBarGroupGapRightExtraPx(gui::kTopBarGroupGapMaxPt - (base_x * 2.0f + 1.0f)), 4.0f);
+      IM_CHECK_EQ(gui::TopBarGroupGapLeftExtraPx(0.0f), 0.0f);
+      IM_CHECK_EQ(gui::TopBarGroupGapRightExtraPx(-2.0f), 0.0f);
+      float prev_left = -1.0f;
+      int split_violations = 0;
+      for (int w = gui::kMinWindowWidth; w <= static_cast<int>(gui::kTopBarGroupGapAnchorWidthPt); w += 64) {
+        const float spare = gui::TopBarGroupGapPt(static_cast<float>(w)) - (base_x * 2.0f + 1.0f);
+        const float left = gui::TopBarGroupGapLeftExtraPx(spare);
+        const float right = gui::TopBarGroupGapRightExtraPx(spare);
+        split_violations +=
+            (left <= right || left < 0.0f || right < 0.0f || (prev_left > 0.0f && left < prev_left)) ? 1 : 0;
+        prev_left = left;
+      }
+      IM_CHECK_EQ(split_violations, 0);
 
       const float floor_width = static_cast<float>(gui::kMinWindowWidth);
       const ScopedWindowBasis window_basis(ctx);
@@ -453,11 +516,30 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_GT(revert.RectFull.Min.x, settings.RectFull.Max.x);
 
       const ImGuiStyle& style = ImGui::GetStyle();
-      // The frame at kMinWindowWidth renders the rule's minimum, exactly (the pushed ItemSpacing
-      // reproduces the target through exact float ops — same-source equality per the assertion
-      // discipline: renderer and test read the one pure function).
+      // The frame at kMinWindowWidth renders the rule's minimum, exactly (the explicit SameLine
+      // spacings reproduce the target through exact float ops — same-source equality per the
+      // assertion discipline: renderer and test read the one pure pair).
       const float min_gap = gui::UiPx(gui::TopBarGroupGapPt(floor_width));
       IM_CHECK_EQ(settings.RectFull.Min.x - analyze_cell.RectFull.Max.x, min_gap);
+      // The rule's own position — the split's rendered-frame check (toolbar_layout.hpp: the
+      // position evidence must come from the frame, not a computed total). The total equality
+      // above cannot tell "split as the share says" from "still even" or "sides swapped"; each
+      // side's gap to the rule must equal the pure pair's output, and the left must be the
+      // larger — the owner ruling this slice answers to. Same algebra, integer splits at this
+      // width, exact equality.
+      {
+        const float spare = min_gap - (style.ItemSpacing.x * 2.0f + 1.0f);
+        const float left_gap = style.ItemSpacing.x + gui::TopBarGroupGapLeftExtraPx(spare);
+        const float right_gap = style.ItemSpacing.x + gui::TopBarGroupGapRightExtraPx(spare);
+        IM_CHECK_GT(left_gap, right_gap);
+        const float rule_x = FindTopBarRuleX(bar, analyze_cell.RectFull.Min.x, settings.RectFull.Max.x,
+                                             analyze_cell.RectFull.GetHeight());
+        IM_CHECK_GT(rule_x, 0.0f);
+        IM_CHECK_EQ(rule_x - analyze_cell.RectFull.Max.x, left_gap);
+        IM_CHECK_EQ(settings.RectFull.Min.x - (rule_x + 1.0f), right_gap);
+        ctx->LogInfo("[floor] rule gaps left=%.1f right=%.1f (total %.1f, spare %.1f)", static_cast<double>(left_gap),
+                     static_cast<double>(right_gap), static_cast<double>(min_gap), static_cast<double>(spare));
+      }
       // Revert and the right toggle are flush (one item gap) at this window width, so the span from
       // Revert's left edge to the toggle's right edge is what the right end needs at any width.
       IM_CHECK_EQ(right_toggle.RectFull.Min.x - revert.RectFull.Max.x, style.ItemSpacing.x);
@@ -490,6 +572,22 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
                   gui::UiPx(gui::TopBarGroupGapPt(static_cast<float>(gui::kInitWindowWidth))));
       IM_CHECK_EQ(gui::UiPx(gui::TopBarGroupGapPt(static_cast<float>(gui::kInitWindowWidth))),
                   gui::UiPx(gui::kTopBarGroupGapMaxPt));
+      // The split's second basis (the plan's "one narrow + one wider"): the anchor's spare 16
+      // renders as 12 left / 4 right, checked against the rule the same way as the floor.
+      {
+        const float wide_gap = gui::UiPx(gui::TopBarGroupGapPt(static_cast<float>(gui::kInitWindowWidth)));
+        const float spare = wide_gap - (style.ItemSpacing.x * 2.0f + 1.0f);
+        const float left_gap = style.ItemSpacing.x + gui::TopBarGroupGapLeftExtraPx(spare);
+        const float right_gap = style.ItemSpacing.x + gui::TopBarGroupGapRightExtraPx(spare);
+        IM_CHECK_GT(left_gap, right_gap);
+        const float rule_x = FindTopBarRuleX(bar, analyze_cell_wide.RectFull.Min.x, settings_wide.RectFull.Max.x,
+                                             analyze_cell_wide.RectFull.GetHeight());
+        IM_CHECK_GT(rule_x, 0.0f);
+        IM_CHECK_EQ(rule_x - analyze_cell_wide.RectFull.Max.x, left_gap);
+        IM_CHECK_EQ(settings_wide.RectFull.Min.x - (rule_x + 1.0f), right_gap);
+        ctx->LogInfo("[anchor] rule gaps left=%.1f right=%.1f (total %.1f, spare %.1f)", static_cast<double>(left_gap),
+                     static_cast<double>(right_gap), static_cast<double>(wide_gap), static_cast<double>(spare));
+      }
     };
   }
 
