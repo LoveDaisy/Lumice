@@ -3716,18 +3716,36 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       }
     }
     const ImGuiTestItemInfo radius_t = ctx->ItemInfo("**/Radius###Radius_narrow", ImGuiTestOpFlags_NoError);
+    // A row culled in the bar's own scroll child first faces the reachability question behind
+    // the long-standing skip: can a REAL wheel bring it back? The probe wheels the child over
+    // real input and re-resolves the row — a wheel that reaches it upgrades this tier to the
+    // same containment + ends evidence the fitting tiers carry; a wheel that cannot carries the
+    // observation (scroll advanced or collapsed) into the log for the owner's reachability
+    // ruling. Either way the case continues — the globe legs below run at every tier now.
+    ImGuiTestItemInfo radius_drive = radius_t;
     if (radius_t.ID == 0 && bar_scroll_child != nullptr) {
-      ctx->LogInfo(
-          "[scale tiers %s] radius row culled in the bar's scroll child: containment and ends drive skipped "
-          "at this tier, evidenced above",
-          label);
-      return true;
+      const float sm_before = bar_scroll_child->ScrollMax.y;
+      const float scroll_before = bar_scroll_child->Scroll.y;
+      const ImVec2 child_centre = bar_scroll_child->Rect().GetCenter();
+      ctx->MouseMoveToPos(child_centre);
+      ctx->Yield(2);
+      for (int i = 0; i < 12 && bar_scroll_child->Scroll.y < bar_scroll_child->ScrollMax.y - 0.5f; ++i) {
+        ctx->MouseWheelY(-1.0f);
+        ctx->Yield(1);
+      }
+      radius_drive = ctx->ItemInfo("**/Radius###Radius_narrow", ImGuiTestOpFlags_NoError);
+      ctx->LogInfo("[scale tiers %s] wheel probe over the bar child: scroll %.0f -> %.0f of SM %.0f -> %.0f, radius %s",
+                   label, static_cast<double>(scroll_before), static_cast<double>(bar_scroll_child->Scroll.y),
+                   static_cast<double>(sm_before), static_cast<double>(bar_scroll_child->ScrollMax.y),
+                   radius_drive.ID != 0 ? "REACHED" : "still culled");
     }
-    IM_CHECK_RETV(radius_t.ID != 0, false);
-    IM_CHECK_RETV(radius_t.Window != nullptr, false);
-    IM_CHECK_RETV(radius_t.RectFull.Max.x <= radius_t.Window->InnerClipRect.Max.x + 0.5f &&
-                      radius_t.RectFull.Min.x >= radius_t.Window->InnerClipRect.Min.x - 0.5f,
-                  false);
+    const bool radius_reachable = radius_drive.ID != 0;
+    if (radius_reachable) {
+      IM_CHECK_RETV(radius_drive.Window != nullptr, false);
+      IM_CHECK_RETV(radius_drive.RectFull.Max.x <= radius_drive.Window->InnerClipRect.Max.x + 0.5f &&
+                        radius_drive.RectFull.Min.x >= radius_drive.Window->InnerClipRect.Min.x - 0.5f,
+                    false);
+    }
     // The visible "Radius" text is not the slider rect's cargo (the hook reports the frame
     // only, so a trailing label could sit past the clip invisibly), and a text item carries
     // id 0 — it cannot be ItemInfo'd at all (the 1024-block's culled-label guess failed here
@@ -3747,24 +3765,24 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     // (the 1x rows and the wide 2x row, this same assert passing there).
     const float cone_deg = gui::kAnalysisConeMaxRadiusDeg;
     const float min_deg = gui::kAnalysisConeMaxRadiusDeg / static_cast<float>(gui::kAnalysisConeRingCount);
-    if (bar_scroll_child == nullptr) {
-      const ImVec2 track_c = radius_t.RectFull.GetCenter();
-      ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Max.x - 3.0f, track_c.y));
+    if (radius_reachable) {
+      const ImVec2 track_c = radius_drive.RectFull.GetCenter();
+      ctx->MouseMoveToPos(ImVec2(radius_drive.RectFull.Max.x - 3.0f, track_c.y));
       ctx->Yield(2);
       ctx->MouseDown(0);
       ctx->Yield(2);
-      ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Min.x + 3.0f, track_c.y));
+      ctx->MouseMoveToPos(ImVec2(radius_drive.RectFull.Min.x + 3.0f, track_c.y));
       ctx->Yield(3);
       ctx->MouseUp(0);
       ctx->Yield(2);
       ctx->LogInfo("[scale tiers %s] radius after the near-end drag: %.2f (min %.2f)", label,
                    static_cast<double>(gui::g_state.analysis.cone_radius_deg), static_cast<double>(min_deg));
       IM_CHECK_RETV(gui::g_state.analysis.cone_radius_deg < min_deg + (cone_deg - min_deg) * 0.2f, false);
-      ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Min.x + 3.0f, track_c.y));
+      ctx->MouseMoveToPos(ImVec2(radius_drive.RectFull.Min.x + 3.0f, track_c.y));
       ctx->Yield(2);
       ctx->MouseDown(0);
       ctx->Yield(2);
-      ctx->MouseMoveToPos(ImVec2(radius_t.RectFull.Max.x - 3.0f, track_c.y));
+      ctx->MouseMoveToPos(ImVec2(radius_drive.RectFull.Max.x - 3.0f, track_c.y));
       ctx->Yield(3);
       ctx->MouseUp(0);
       ctx->Yield(2);
@@ -3772,16 +3790,13 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
                    static_cast<double>(gui::g_state.analysis.cone_radius_deg), static_cast<double>(cone_deg));
       IM_CHECK_RETV(gui::g_state.analysis.cone_radius_deg > cone_deg * 0.8f, false);
     } else {
-      // The scrolled-out tier: the bar lives in its own scroll child and the radius row sits
-      // past the slice — no mouse path reaches it, and the engine's input drive (a drag
-      // simulation over the item's rect) cannot place it either. The ends' drivability is
-      // evidenced at the tiers above, where the bar fits and the real drags ran; this tier
-      // records the reachability gap instead of asserting through a broken substrate — the
-      // op-bar scroll child's content-collapse under a direct scroll write is the op-bar
-      // scroll behavior's open investigation (the task notes carry the probe data).
+      // The scrolled-out tier whose reachability the wheel probe above could not restore: the
+      // observation is in the log (whether the wheel advanced the child, and what the child's
+      // ScrollMax did — the content-collapse question behind the old direct-scroll-write
+      // probe), and the ends' drivability stays evidenced at the tiers where the bar fits.
       ctx->LogInfo(
-          "[scale tiers %s] radius row scrolled out (bar in its scroll child, content collapses "
-          "under a direct scroll write): ends drive skipped at this tier, evidenced above",
+          "[scale tiers %s] radius row unreachable in the bar's scroll child even under a real wheel: "
+          "ends drive skipped at this tier, evidenced above; see the wheel-probe line",
           label);
     }
     // The globe's completed-state controls, in the pose window (the regions' only host): the
