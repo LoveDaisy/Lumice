@@ -287,11 +287,12 @@ Settings 每次打开都重置到默认尺寸（`ImGuiCond_Appearing`），Summa
 | Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×584 不变，故 `defaults_panel_layout` 参考图不重拍 |
 | Summary | `config_summary_window.cpp` | 半可变 | 宽钉 1200；出现时贴合内容、上限 min(900, 工作区)，之后高可拉到工作区 |
 | Colors | `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
+| Raypath view | `analyze_map_view.cpp`（`RenderAnalyzeRaypathViewWindow`） | 自由 | `ImGuiCond_FirstUseEver` 给默认 900×560（钳到视口内），双轴可拉，之后 ImGui 自己记；窗内 D3 分隔（图 | 信息）存会话比例（`GuiState::analyze_raypath_view_info_ratio`），两下限钳制；容器与开窗合同见 [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §6/§8 |
 
 > Raypath Analysis 自 742 起并入 Analyze 工作区（`RenderAnalysisPanelBody` 宿主工作区份额列表区，
-> 不再是浮窗），上表原「Raypath Analysis / Colors」自由档行对其不再适用。Analyze 工作区后续两个
-> 独立窗口（Raypath view、姿态/轨迹）的档位归档与容器合同见
-> [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §6/§7/§14，随其实现片更新本表。
+> 不再是浮窗），上表原「Raypath Analysis / Colors」自由档行对其不再适用。工作区独立窗口的
+> Raypath view 已于 755.4 落地并按其自由档归档如上；姿态/轨迹窗（合同 §7）随其实现片（755.5）
+> 归档。
 
 ### 9.3 与 `gui-layout-architecture.md` §8 的边界：可拉尺寸不是重排
 

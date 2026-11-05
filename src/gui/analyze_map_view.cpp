@@ -877,9 +877,13 @@ bool ProjectToRect(const MapViewState& view, const double pos[3], const ImVec2& 
 // and the topmost (smallest screen y) of them — the label anchor the curve's readout sits at.
 struct IsoDeltaWalk {
   int drawn = 0;
+  int samples_in_disk = 0;  // the circle's own samples that landed in the view disk (of kOverlaySegments+1)
   bool have_top = false;
   double top_x = 0.0;
   double top_y = 0.0;
+  // The circle is PARTIALLY visible: some samples projected in-disk, some did not. The label's
+  // honesty qualifier reads this (the drawn arc is not the whole circle).
+  bool partial() const { return samples_in_disk > 0 && samples_in_disk <= kOverlaySegments; }
 };
 
 // The iso-deviation circle about the sun (the survey dispersion's curve geometry): the circle's
@@ -918,6 +922,7 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapViewState& view, const 
       walk.drawn = 0;  // the run broke; the next in-disk point starts a fresh polyline
       continue;
     }
+    ++walk.samples_in_disk;
     if (walk.drawn > 0) {
       dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
                   ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
@@ -935,7 +940,7 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapViewState& view, const 
 }
 
 void DrawFrameAnchors(ImDrawList* dl, const MapViewState& view, const LUMICE_PathMapInfo& info, const ImVec2& pic_min,
-                      float pic_px) {
+                      float pic_px, OverlayLegendState* legend) {
   // The sun disc (the delta axis's zero — the anchor every readout quotes), the zenith cross and
   // the horizon circle. All from the result's own sun echo.
   double sun_pos[3];
@@ -947,6 +952,9 @@ void DrawFrameAnchors(ImDrawList* dl, const MapViewState& view, const LUMICE_Pat
                         IM_COL32(255, 231, 168, 255));
     dl->AddCircle(ImVec2(static_cast<float>(sx), static_cast<float>(sy)), UiPx(6.0f), IM_COL32(255, 231, 168, 128), 0,
                   1.0f);
+    if (legend != nullptr) {
+      legend->anchor_sun = true;
+    }
   }
   double zenith[3] = { 0.0, 0.0, 1.0 };
   double zx = 0.0;
@@ -957,7 +965,11 @@ void DrawFrameAnchors(ImDrawList* dl, const MapViewState& view, const LUMICE_Pat
     const float cy = static_cast<float>(zy);
     dl->AddLine(ImVec2(cx - a, cy), ImVec2(cx + a, cy), IM_COL32(200, 205, 215, 110), 1.0f);
     dl->AddLine(ImVec2(cx, cy - a), ImVec2(cx, cy + a), IM_COL32(200, 205, 215, 110), 1.0f);
+    if (legend != nullptr) {
+      legend->anchor_zenith = true;
+    }
   }
+  bool horizon_drawn = false;
   for (int s = 0; s < kOverlaySegments; ++s) {
     const double a1 = 2.0 * kPiD * s / kOverlaySegments;
     const double a2 = 2.0 * kPiD * (s + 1) / kOverlaySegments;
@@ -972,12 +984,78 @@ void DrawFrameAnchors(ImDrawList* dl, const MapViewState& view, const LUMICE_Pat
     if (ProjectToRect(view, p1, pic_min, pic_px, &x1, &y1) && ProjectToRect(view, p2, pic_min, pic_px, &x2, &y2)) {
       dl->AddLine(ImVec2(static_cast<float>(x1), static_cast<float>(y1)),
                   ImVec2(static_cast<float>(x2), static_cast<float>(y2)), IM_COL32(200, 205, 215, 60), 1.0f);
+      horizon_drawn = true;
+    }
+  }
+  if (legend != nullptr && horizon_drawn) {
+    legend->anchor_horizon = true;
+  }
+}
+
+}  // namespace
+
+// The marker vocabulary: a shape and a colour per kind (the engine's six kinds plus the
+// fallback), solid for a concluded claim (certified/finite) and outline-only otherwise — the
+// refused/unevaluated rows must not read as answered.
+OverlayMarkerStyle OverlayMarkerStyleFor(const std::string& kind_name, int state) {
+  OverlayMarkerStyle s;
+  s.filled = state == LUMICE_PATH_STATE_CERTIFIED || state == LUMICE_PATH_STATE_FINITE;
+  if (kind_name == "source image") {
+    s.shape = OverlayMarkerShape::kCircle;
+    s.colour = IM_COL32(255, 231, 168, 255);  // the sun's own image: the anchor gold
+  } else if (kind_name == "regular image") {
+    s.shape = OverlayMarkerShape::kCircle;
+    s.colour = IM_COL32(140, 230, 200, 255);
+  } else if (kind_name == "support set") {
+    s.shape = OverlayMarkerShape::kSquare;
+    s.colour = IM_COL32(140, 196, 255, 255);
+  } else if (kind_name == "caustic edge") {
+    s.shape = OverlayMarkerShape::kTriangle;
+    s.colour = IM_COL32(255, 176, 92, 255);
+  } else if (kind_name == "bright domain") {
+    s.shape = OverlayMarkerShape::kDiamond;
+    s.colour = IM_COL32(140, 196, 255, 255);
+  } else if (kind_name == "family collapse") {
+    s.shape = OverlayMarkerShape::kTriangleDown;
+    s.colour = IM_COL32(198, 160, 255, 255);
+  } else {
+    s.shape = OverlayMarkerShape::kFallbackDiamond;
+    s.colour = IM_COL32(170, 178, 190, 255);
+  }
+  return s;
+}
+
+// The observation key's one comparison: identical on every field the engine concluded — kind,
+// state, position and reason (the row's whole claim). Nothing textual from the DRAWN layer
+// (labels, colours) participates: two rows differing only in a field the tooltip shows are
+// different sources and stay separate entries.
+bool OverlayRowsSameKey(const SurveyObjectRow& a, const SurveyObjectRow& b) {
+  return a.kind_name == b.kind_name && a.state == b.state && a.state_name == b.state_name &&
+         a.position_altitude_deg == b.position_altitude_deg && a.position_azimuth_deg == b.position_azimuth_deg &&
+         a.reason == b.reason;
+}
+
+void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vector<OverlayHitGroup>* out) {
+  out->clear();
+  for (const SurveyObjectRow* hit : hits) {
+    bool folded = false;
+    for (OverlayHitGroup& group : *out) {
+      if (OverlayRowsSameKey(*group.representative, *hit)) {
+        ++group.count;
+        folded = true;
+        break;
+      }
+    }
+    if (!folded) {
+      out->push_back(OverlayHitGroup{ hit, 1 });
     }
   }
 }
 
-void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& view, const ImVec2& pic_min,
-                        float pic_px) {
+namespace {
+
+void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& view, const ImVec2& pic_min, float pic_px,
+                        OverlayLegendState* legend) {
   SurveyQuerySession& survey = state.analysis.survey;
   if (survey.adopted_result == nullptr) {
     return;
@@ -985,7 +1063,12 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& vie
   // The payloads read through the ONE document->facts mapping (§5.1.8: the overview model is the
   // single organizer; the map overlays consume its object rows and dispersion block verbatim).
   const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey.adopted_result);
-  // Positional objects: the survey's own located conclusions, drawn where the document puts them.
+  // Positional objects: the survey's own located conclusions, drawn where the document puts
+  // them — one marker per object, styled by kind and claim state; the frame's hits collect for
+  // ONE organized tooltip (every object under the pointer, grouped by the observation key),
+  // never a stack of same-text tooltips.
+  std::vector<const SurveyObjectRow*> hits;
+  const float marker_r = UiPx(6.0f);
   for (const SurveyObjectRow& row : model.objects) {
     if (!row.position_available) {
       continue;
@@ -999,20 +1082,88 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& vie
     }
     const float cx = static_cast<float>(x);
     const float cy = static_cast<float>(y);
-    const float r = UiPx(5.0f);
-    dl->AddQuad(ImVec2(cx, cy - r), ImVec2(cx + r, cy), ImVec2(cx, cy + r), ImVec2(cx - r, cy),
-                IM_COL32(140, 196, 255, 230), 1.3f);
-    if (ImGui::IsMouseHoveringRect(ImVec2(cx - r, cy - r), ImVec2(cx + r, cy + r))) {
-      if (ImGui::BeginTooltip()) {
-        ImGui::TextUnformatted("Survey object");
-        ImGui::Text("%s · %s", row.kind_name.c_str(), row.state_name.c_str());
-        ImGui::Text("alt %.2f° az %.2f°", row.position_altitude_deg, row.position_azimuth_deg);
-        if (!row.reason.empty()) {
-          ImGui::TextDisabled("%s", row.reason.c_str());
+    const OverlayMarkerStyle style = OverlayMarkerStyleFor(row.kind_name, row.state);
+    const ImVec2 pts[4] = { ImVec2(cx, cy - marker_r), ImVec2(cx + marker_r, cy), ImVec2(cx, cy + marker_r),
+                            ImVec2(cx - marker_r, cy) };
+    switch (style.shape) {
+      case OverlayMarkerShape::kCircle:
+        if (style.filled) {
+          dl->AddCircleFilled(ImVec2(cx, cy), marker_r * 0.8f, style.colour);
+        } else {
+          dl->AddCircle(ImVec2(cx, cy), marker_r * 0.8f, style.colour, 0, 1.4f);
         }
-        ImGui::EndTooltip();
+        break;
+      case OverlayMarkerShape::kSquare:
+        if (style.filled) {
+          dl->AddRectFilled(ImVec2(cx - marker_r * 0.75f, cy - marker_r * 0.75f),
+                            ImVec2(cx + marker_r * 0.75f, cy + marker_r * 0.75f), style.colour);
+        } else {
+          dl->AddRect(ImVec2(cx - marker_r * 0.75f, cy - marker_r * 0.75f),
+                      ImVec2(cx + marker_r * 0.75f, cy + marker_r * 0.75f), style.colour, 0.0f, 0, 1.4f);
+        }
+        break;
+      case OverlayMarkerShape::kTriangle:
+        if (style.filled) {
+          dl->AddTriangleFilled(pts[0], pts[1], pts[2], style.colour);
+        } else {
+          dl->AddTriangle(pts[0], pts[1], pts[2], style.colour, 1.4f);
+        }
+        break;
+      case OverlayMarkerShape::kTriangleDown:
+        if (style.filled) {
+          dl->AddTriangleFilled(pts[0], pts[3], pts[2], style.colour);
+        } else {
+          dl->AddTriangle(pts[0], pts[3], pts[2], style.colour, 1.4f);
+        }
+        break;
+      case OverlayMarkerShape::kDiamond:
+      case OverlayMarkerShape::kFallbackDiamond:
+        if (style.filled) {
+          dl->AddConvexPolyFilled(pts, 4, style.colour);
+        } else {
+          dl->AddPolyline(pts, 4, style.colour, ImDrawFlags_Closed, 1.4f);
+        }
+        break;
+    }
+    if (legend != nullptr) {
+      bool known = false;
+      for (const std::string& k : legend->object_kinds) {
+        if (k == row.kind_name) {
+          known = true;
+          break;
+        }
+      }
+      if (!known) {
+        legend->object_kinds.push_back(row.kind_name);
       }
     }
+    if (ImGui::IsMouseHoveringRect(ImVec2(cx - marker_r, cy - marker_r), ImVec2(cx + marker_r, cy + marker_r))) {
+      hits.push_back(&row);
+    }
+  }
+  // ONE tooltip per frame for everything under the pointer: the position header, then one line
+  // per observation key (identical keys fold into an ×N count — a display grouping of the
+  // model's rows; nothing drops, different sources stay separate).
+  if (!hits.empty() && ImGui::BeginTooltip()) {
+    const SurveyObjectRow& first = *hits.front();
+    ImGui::TextUnformatted("Survey objects");
+    ImGui::TextDisabled("alt %.2f° az %.2f° · %zu object%s", first.position_altitude_deg, first.position_azimuth_deg,
+                        hits.size(), hits.size() == 1 ? "" : "s");
+    std::vector<OverlayHitGroup> groups;
+    GroupOverlayHits(hits, &groups);
+    for (const OverlayHitGroup& group : groups) {
+      const SurveyObjectRow& row = *group.representative;
+      ImGui::Text("%s · %s", row.kind_name.c_str(), row.state_name.c_str());
+      if (group.count > 1) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("×%d identical", group.count);
+      }
+      ImGui::TextDisabled("alt %.2f° az %.2f°", row.position_altitude_deg, row.position_azimuth_deg);
+      if (!row.reason.empty()) {
+        ImGui::TextWrapped("%s", row.reason.c_str());
+      }
+    }
+    ImGui::EndTooltip();
   }
   // The chromatic dispersion's inner-edge pair: the engine's own delta values, drawn as
   // iso-deviation circles about the sun, red inside blue (the C01 alignment face).
@@ -1026,18 +1177,27 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& vie
       ImU32 colour;
       const std::string* label;
     };
+    if (legend != nullptr) {
+      legend->dispersion_red = true;
+      legend->dispersion_blue = true;
+    }
     const Curve curves[2] = {
       { model.dispersion.value_red_deg, IM_COL32(242, 108, 92, 235), &model.dispersion.red_label },
       { model.dispersion.value_blue_deg, IM_COL32(96, 145, 240, 235), &model.dispersion.blue_label },
     };
     for (const Curve& curve : curves) {
       // One walk draws the circle and reports its topmost drawn point — the label anchor (the
-      // readout the eye meets).
+      // readout the eye meets). A partially visible circle says so: the drawn arc is the
+      // in-view part, not the whole circle.
       const IsoDeltaWalk walk =
           WalkIsoDeltaCircle(dl, view, pic_min, pic_px, sun_pos, curve.delta_deg, curve.colour, 1.4f);
+      if (legend != nullptr && walk.partial()) {
+        legend->dispersion_partial = true;
+      }
       if (walk.have_top && walk.drawn > 0) {
-        char line[96];
-        std::snprintf(line, sizeof(line), "%s · %.3f°", curve.label->c_str(), curve.delta_deg);
+        char line[112];
+        std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
+                      walk.partial() ? " · arc in view" : "");
         const ImVec2 ts = ImGui::CalcTextSize(line);
         dl->AddRectFilled(
             ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
@@ -1235,15 +1395,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   anchor_info.struct_size = sizeof(anchor_info);
   const bool have_anchor_info = map.adopted_result != nullptr &&
                                 LUMICE_PathMapGetInfo(map.adopted_result.get(), &anchor_info) == LUMICE_PATH_READ_OK;
+  // What this frame drew — the legend's input (the legend describes the drawn picture; absent
+  // categories draw no entry). Filled by the anchor/overlay/marker draws below, read by the
+  // info region's legend section.
+  OverlayLegendState legend;
   if (have_anchor_info) {
-    DrawFrameAnchors(dl, view, anchor_info, pic_min, pic_px);
+    DrawFrameAnchors(dl, view, anchor_info, pic_min, pic_px, &legend);
   }
   if (overlays) {
-    DrawSurveyOverlays(dl, state, view, pic_min, pic_px);
+    DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &legend);
   }
   float marker_px = -1.0f;
   float marker_py = -1.0f;
   DrawSkyPointMarker(dl, view, intent, pic_min, pic_px, &marker_px, &marker_py);
+  if (marker_px >= 0.0f) {
+    legend.sky_point = true;
+  }
 
   // ---- The gestures (the prototype's bindRp semantics; the ROI's state is never touched here) ----
   // The wheel's arbitration lives in the BeginChild comment above: this branch is the canvas
@@ -1634,11 +1801,72 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
 
-  // The legend's section head (Step 4 fills the entries — one row per category the frame
-  // actually drew, each with its one-line meaning). The placeholder is honest: a heading with
-  // no rows under it is the categories-absent state, not a fake row.
+  // The legend: one entry per category THIS frame actually drew, each with its one-line
+  // meaning (the legend describes the drawn picture — a category absent from the frame draws
+  // no entry). The honesty wording on the dispersion entry is the contract's: the circles are
+  // the measured minimum-deviation geometry, not a whole-circle visibility claim, and a
+  // partially visible circle says which part the picture carries.
   ImGui::Separator();
   ImGui::TextDisabled("Legend");
+  {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    if (legend.anchor_sun) {
+      ImGui::BulletText("sun marker — the delta axis's zero");
+    }
+    if (legend.anchor_zenith) {
+      ImGui::BulletText("zenith cross");
+    }
+    if (legend.anchor_horizon) {
+      ImGui::BulletText("horizon circle");
+    }
+    for (const std::string& kind : legend.object_kinds) {
+      const OverlayMarkerStyle style = OverlayMarkerStyleFor(kind, LUMICE_PATH_STATE_CERTIFIED);
+      ImGui::Bullet();
+      // The kind's own marker shape, drawn beside the words (the legend and the picture agree).
+      ImDrawList* legend_dl = ImGui::GetWindowDrawList();
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      const float my = p.y + ImGui::GetTextLineHeight() * 0.5f;
+      const float mx = p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f);
+      const float r = UiPx(4.0f);
+      const ImVec2 pts[4] = { ImVec2(mx, my - r), ImVec2(mx + r, my), ImVec2(mx, my + r), ImVec2(mx - r, my) };
+      switch (style.shape) {
+        case OverlayMarkerShape::kCircle:
+          legend_dl->AddCircleFilled(ImVec2(mx, my), r * 0.8f, style.colour);
+          break;
+        case OverlayMarkerShape::kSquare:
+          legend_dl->AddRectFilled(ImVec2(mx - r * 0.75f, my - r * 0.75f), ImVec2(mx + r * 0.75f, my + r * 0.75f),
+                                   style.colour);
+          break;
+        case OverlayMarkerShape::kTriangle:
+          legend_dl->AddTriangleFilled(pts[0], pts[1], pts[2], style.colour);
+          break;
+        case OverlayMarkerShape::kTriangleDown:
+          legend_dl->AddTriangleFilled(pts[0], pts[3], pts[2], style.colour);
+          break;
+        case OverlayMarkerShape::kDiamond:
+        case OverlayMarkerShape::kFallbackDiamond:
+          legend_dl->AddConvexPolyFilled(pts, 4, style.colour);
+          break;
+      }
+      ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
+      ImGui::SameLine(0.0f, 0.0f);
+      ImGui::TextUnformatted(kind.c_str());
+      ImGui::SameLine();
+      ImGui::TextUnformatted("— the survey's located conclusion");
+    }
+    if (legend.dispersion_red || legend.dispersion_blue) {
+      ImGui::BulletText(
+          "dispersion circles (red inside blue) — the measured minimum-deviation geometry at the two reference "
+          "wavelengths; positions, not a whole-circle visibility or contribution claim");
+      if (legend.dispersion_partial) {
+        ImGui::TextWrapped("A circle partially outside the view draws only its in-view arc (\"arc in view\").");
+      }
+    }
+    if (legend.sky_point) {
+      ImGui::BulletText("sky-point marker — the target the point face queries");
+    }
+    ImGui::PopStyleColor();
+  }
 
   ImGui::EndChild();  // ##AnalyzeRaypathInfo — the info region
 }

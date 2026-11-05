@@ -3,7 +3,7 @@
 
 // The read-only "Summary" window: the page config_summary.hpp builds, drawn as one fixed-width,
 // scrollable ImGui window for the user to screenshot and share. Floating and non-modal like the
-// Colors and Raypath Analysis windows; opened from the top bar's feature-button group, closed by
+// Colors and Raypath view windows; opened from the top bar's feature-button group, closed by
 // its own X or by any document reset (app.cpp ResetFrontendState).
 //
 // No control in it edits anything. A control would make it a second Settings panel, and its

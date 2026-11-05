@@ -470,7 +470,7 @@ void RenderTopBar(float window_width) {
     PopGoodButtonStyle();
     ImGui::EndDisabled();
     if (g_state.analysis_run_in_progress && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("A raypath analysis is running. Wait for it, or stop it from the Raypath Analysis window.");
+      ImGui::SetTooltip("A raypath analysis is running. Wait for it, or stop it from the Analyze workspace's bar.");
     }
   }
 

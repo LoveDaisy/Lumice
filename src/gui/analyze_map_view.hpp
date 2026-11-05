@@ -27,6 +27,7 @@
 //     header's formula only.
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "gui/analyze_survey.hpp"
@@ -224,6 +225,49 @@ struct MapCaliberInput {
   bool completed = false;                           // the standing intent answered (gates the finite-zero line)
 };
 std::vector<std::string> MapCaliberLines(const MapCaliberInput& in);
+
+// ---- The overlay presentation model (pure; the renderer draws what these name) ----------------------
+
+struct SurveyObjectRow;  // gui/analyze_overview.hpp — the grouping reads its rows by pointer
+
+// One survey object marker's look: a shape per kind (the engine's six-kind vocabulary plus the
+// fallback), a colour per kind, and solid-vs-outline by the claim's state — a certified or
+// finite conclusion draws solid, the refused/unevaluated/unknown states draw outline only (the
+// marker never presents an unevaluated row as if it were an answered one).
+enum class OverlayMarkerShape { kCircle, kSquare, kTriangle, kDiamond, kTriangleDown, kFallbackDiamond };
+struct OverlayMarkerStyle {
+  OverlayMarkerShape shape = OverlayMarkerShape::kFallbackDiamond;
+  unsigned int colour = 0;  // ImU32 (RGBA8); spelled unsigned to keep this header off imgui.h
+  bool filled = false;
+};
+OverlayMarkerStyle OverlayMarkerStyleFor(const std::string& kind_name, int state);
+
+// One tooltip's grouped entries: the objects whose marker rect the pointer is inside, grouped
+// by the row's OBSERVATION key (kind + state + position + reason — the identity as the engine
+// concluded it), identical keys folding into one entry with a count. A display grouping of the
+// model's rows: nothing is dropped (every hit appears, folded or lone), no physical claim
+// changes, and different sources with the same coordinates stay separate entries whenever any
+// key field differs. First-seen order is kept (the model's own order). The grouping is pure
+// presentation; the unit layer pins it on observed row shapes plus synthetic same-key rows.
+struct OverlayHitGroup {
+  const SurveyObjectRow* representative = nullptr;
+  int count = 0;
+};
+void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vector<OverlayHitGroup>* out);
+
+// What the frame actually drew — the legend's one input (a legend describes the drawn picture,
+// so a category absent from this frame draws no entry). The overlay/anchor draws fill it; the
+// info region's legend reads it, same frame.
+struct OverlayLegendState {
+  bool anchor_sun = false;
+  bool anchor_zenith = false;
+  bool anchor_horizon = false;
+  std::vector<std::string> object_kinds;  // unique, in first-draw order
+  bool dispersion_red = false;
+  bool dispersion_blue = false;
+  bool dispersion_partial = false;  // any drawn circle left the view disk (the arc-in-view wording)
+  bool sky_point = false;
+};
 
 // ---- The pump and the renderer (GuiState-dependent, defined in the .cpp) ---------------------------
 

@@ -5189,6 +5189,38 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_info_ratio == clamped_ratio, false);
+  // AC3's negative face: selections, the survey and the adopted maps set no sky point — the
+  // intent is the user's alone (a typed coordinate or a map pick). After two selections and
+  // two adopted maps, the intent is still unset; the auto-Fit that steered the views never
+  // touched it.
+  IM_CHECK_RETV(!gui::g_state.analysis.sky_point.valid, false);
+
+  // AC5's independence face: an ROI change is display-time on the panorama and writes nothing
+  // into the sky-point intent. A typed point, then the region radio: the intent survives
+  // verbatim (same travel direction, same expression source).
+  {
+    ctx->SetRef("");
+    ctx->ItemInputValue("**/alt°##sky", 33.0f);
+    ctx->ItemInputValue("**/az°##sky", 12.0f);
+    ctx->ItemClick("**/Set sky point###sky_set");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+    const float dir_before[3] = { gui::g_state.analysis.sky_point.dir[0], gui::g_state.analysis.sky_point.dir[1],
+                                  gui::g_state.analysis.sky_point.dir[2] };
+    const bool pick_source_before = gui::g_state.analysis.sky_point.from_map_pick;
+    ctx->SetRef(PanoramaRegionRef());
+    ctx->ItemClick("Whole sky");
+    ctx->SetRef("");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.roi_mode == LUMICE_RAYPATH_ROI_FULL_SKY, false);
+    IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+    IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick == pick_source_before, false);
+    IM_CHECK_RETV(gui::g_state.analysis.sky_point.dir[0] == dir_before[0] &&
+                      gui::g_state.analysis.sky_point.dir[1] == dir_before[1] &&
+                      gui::g_state.analysis.sky_point.dir[2] == dir_before[2],
+                  false);
+    ctx->LogInfo("[D3 case] ROI change left the sky point verbatim (AC5)");
+  }
 
   // The resize follows proportionally: a smaller window re-derives both widths from the same
   // ratio, and the floors still clamp.

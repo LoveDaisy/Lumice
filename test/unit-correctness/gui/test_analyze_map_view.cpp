@@ -12,6 +12,7 @@
 #include "gui/analysis_panel.hpp"
 #include "gui/analysis_result.hpp"
 #include "gui/analyze_map_view.hpp"
+#include "gui/analyze_overview.hpp"
 #include "gui/analyze_survey.hpp"
 #include "gui/file_io.hpp"  // SceneDeleter's complete type — the survey tests' include
 #include "gui/gui_state.hpp"
@@ -888,6 +889,66 @@ TEST(AnalyzeMapView, MapRefiningNoteCarriesTheElapsed) {
   const std::string note = MapRefiningNoteFor(map, 4.0);
   EXPECT_NE(note.find("Coarse map of the previous view"), std::string::npos);
   EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
+}
+
+
+// The overlay tooltip's grouping (the Step-4 presentation contract): identical keys fold into
+// one entry with a count, anything differing on ANY observed field (kind, state, coordinates,
+// reason) stays a separate entry, first-seen order holds, and nothing drops. The rows' shapes
+// are the observed probes' (the fully-random prism's unpositioned rows never reach this layer;
+// the plate scene's source image and the synthetic same-key rows do).
+TEST(AnalyzeMapView, OverlayHitGroupsFoldIdenticalKeysAndKeepDistinctSources) {
+  SurveyObjectRow a;
+  a.kind_name = "source image";
+  a.state = LUMICE_PATH_STATE_CERTIFIED;
+  a.state_name = "certified";
+  a.position_available = true;
+  a.position_altitude_deg = 20.0;
+  a.position_azimuth_deg = 0.0;
+  SurveyObjectRow a_again = a;  // same key on every field: folds
+  SurveyObjectRow b = a;
+  b.kind_name = "support set";  // different kind at the same position: separate
+  SurveyObjectRow c = a;
+  c.reason = "scope_value_mismatch";  // different reason at the same position: separate
+  SurveyObjectRow d = a;
+  d.position_azimuth_deg = 0.5;  // different coordinates: separate
+  SurveyObjectRow a_third = a;   // a third same-key row: the count follows
+
+  const std::vector<const SurveyObjectRow*> hits = { &a, &a_again, &b, &c, &d, &a_third };
+  std::vector<OverlayHitGroup> groups;
+  GroupOverlayHits(hits, &groups);
+  ASSERT_EQ(groups.size(), 4u);
+  EXPECT_EQ(groups[0].representative, &a);
+  EXPECT_EQ(groups[0].count, 3);
+  EXPECT_EQ(groups[1].representative, &b);
+  EXPECT_EQ(groups[1].count, 1);
+  EXPECT_EQ(groups[2].representative, &c);
+  EXPECT_EQ(groups[3].representative, &d);
+  // And nothing dropped: the counts sum to the hits.
+  int total = 0;
+  for (const OverlayHitGroup& g : groups) {
+    total += g.count;
+  }
+  EXPECT_EQ(total, 6);
+}
+
+// The marker vocabulary: a concluded claim (certified/finite) draws solid, the refused and
+// unevaluated states draw outline only — the marker never presents an unevaluated row as
+// answered — and distinct kinds take distinct shapes.
+TEST(AnalyzeMapView, OverlayMarkerStyleSolidOnlyForConcludedClaims) {
+  const OverlayMarkerStyle certified = OverlayMarkerStyleFor("source image", LUMICE_PATH_STATE_CERTIFIED);
+  const OverlayMarkerStyle finite = OverlayMarkerStyleFor("support set", LUMICE_PATH_STATE_FINITE);
+  const OverlayMarkerStyle refused = OverlayMarkerStyleFor("bright domain", LUMICE_PATH_STATE_REFUSED);
+  const OverlayMarkerStyle unevaluated = OverlayMarkerStyleFor("caustic edge", LUMICE_PATH_STATE_UNEVALUATED);
+  EXPECT_TRUE(certified.filled);
+  EXPECT_TRUE(finite.filled);
+  EXPECT_FALSE(refused.filled);
+  EXPECT_FALSE(unevaluated.filled);
+  EXPECT_NE(certified.shape, finite.shape);
+  EXPECT_NE(certified.shape, refused.shape);
+  // An unknown kind still gets the honest fallback marker, not a crash or the sun's look.
+  const OverlayMarkerStyle fallback = OverlayMarkerStyleFor("some future kind", LUMICE_PATH_STATE_CERTIFIED);
+  EXPECT_EQ(fallback.shape, OverlayMarkerShape::kFallbackDiamond);
 }
 
 }  // namespace
