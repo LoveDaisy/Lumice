@@ -6636,8 +6636,9 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
 // key carries the request identity (selection faces + target + λ), so "issued" is a readback,
 // not a hope; the adopted handle standing for the OLD key at that moment is the not-yet-adopted
 // half of the premise:
-// ① a λ change issued for 600 while the face waits, superseded by 0 before any adoption — the
-//    adopted document's own wavelength echo proves the late 600 answer never landed;
+// ① a λ change issued for 600 while the face waits, superseded by 0 — the adopted document's
+//    own wavelength echo judges the answer that finally landed (a transient 600 adoption that
+//    a later answer overwrites is executor-ordering territory, unclaimed at this layer);
 // ② a class switch issued while the first class's point doc still stands — the issued intent's
 //    full selection key (faces, not the shared crystal) names the second class, and the old
 //    document handle is asserted still-adopted at that moment;
@@ -6693,7 +6694,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
     info.struct_size = sizeof(info);
     IM_CHECK_RETV(
         LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
-    IM_CHECK_RETV(std::fabs(info.wavelength_nm - 600.0) > 1e-3, false);  // the 600 answer never landed
+    IM_CHECK_RETV(std::fabs(info.wavelength_nm - 600.0) > 1e-3, false);  // the landed doc's echo is not 600
   }
   IM_CHECK_RETV(gui::g_state.analysis.map.key.wavelength_nm == 0.0, false);
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
@@ -6749,9 +6750,10 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(
         LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
     // The adopted document IS the second class's answer: its own face sequence equals the
-    // expected identity's (the negative case — a stale first-class doc under the new key —
-    // carries the old faces and fails this compare, which is the discrimination the oracle
-    // exists for).
+    // expected identity's (the negative case — a stale first-class doc as the one that finally
+    // landed under the new key — carries the old faces and fails this compare, which is the
+    // discrimination the oracle exists for; a transient stale adoption that the second class's
+    // answer later overwrites is executor-ordering territory, unclaimed at this layer).
     IM_CHECK_RETV(info.crystal_id == expected_second.core_crystal_id, false);
     IM_CHECK_RETV(info.face_count == expected_second.faces.size(), false);
     IM_CHECK_RETV(std::equal(expected_second.faces.begin(), expected_second.faces.end(), info.faces), false);
@@ -6764,11 +6766,12 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // saved by value), then target B supersedes it mid-flight — the pump's key swap is the
   // readback that B's intent now stands — and only then does the case switch workspaces. The
   // Render-side pump adopts B's answer with the windows open, and the document's own target
-  // echo (alt 30) is the late-arrival judge: had A's answer been adopted after B's intent
-  // stood, the doc would read A's target and fail here. The GUI layer cannot observe A's
-  // completion EVENT itself (the executor's internals are not exposed); the scheduling/
-  // adoption contract behind that ordering is the unit layer's
-  // (SurveyExecutorSupersedesRefusesOnReleaseAndJoins) — this case owns the composition.
+  // echo (alt 30) judges the document that LANDED: had A's answer been the final one, the doc
+  // would read A's target and fail here. What this layer cannot distinguish is a transient
+  // stale-A adoption that B's later answer overwrites — the completion-event ordering and the
+  // refusal behind it are executor-internal contracts, structurally not exposed to the GUI
+  // layer; the unit layer's SurveyExecutorSupersedesRefusesOnReleaseAndJoins carries them, and
+  // no GUI-layer claim is made for that ordering. This case owns the GUI-side composition.
   SetSkyPointTarget(28.0, 8.0);
   gui::SurveyQueryId target_a_id;
   IM_CHECK_RETV(DriveUntil(
