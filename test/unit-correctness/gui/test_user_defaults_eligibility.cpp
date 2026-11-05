@@ -85,7 +85,12 @@ namespace {
 // reference-map | info split — a layout choice of this session, kSession like workspace before
 // it). Neither is serialized, so no row can reach the panel; both are ineligible for the same
 // reasons as their family.
-constexpr std::size_t kExpectedGovernedFieldCount = 92;
+// 95 with the Pose & trace window's three session rows (755.5): `analyze_pose_view_open` (the
+// window's open flag — ineligible like analyze_raypath_view_open for the same reason) and the
+// window's own split ratios `analyze_pose_view_right_ratio` / `analyze_pose_view_globe_ratio`
+// (D4 / D5 — layout choices of this session, ineligible like analyze_raypath_view_info_ratio).
+// None is serialized, so no row can reach the panel.
+constexpr std::size_t kExpectedGovernedFieldCount = 95;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

@@ -1966,6 +1966,30 @@ struct GuiState {
   // storage) so the tier table carries one row for the window's session state.
   float analyze_raypath_view_info_ratio = 0.30f;
 
+  // The Pose & trace window's open state (analyze-interaction-contract.md §7, §8 ownership
+  // declaration): the pose/trace window the point detail block's title opens — and ONLY that
+  // click; the sky-point and wavelength writers must not open it (the user's explicit
+  // negative requirement). T-session display state, `analyze_raypath_view_open`'s family — not
+  // document state, never persisted, never in ConfigSnapshot or the dirty diff. Kept by Open
+  // and Revert (ResetFrontendState does not touch it), reset by DoNew with the whole GuiState.
+  // WRITERS (the audit set): the "Point detail" title click (RenderPointDetailsBlock), the
+  // window's own title bar X through `p_open`, and DoNew's whole-state reset — no other write
+  // path exists by construction.
+  bool analyze_pose_view_open = false;
+  // D4 — the Pose & trace window's 3D | right-column split (contract §4.2): the RIGHT column's
+  // share of the window's content width. Ratio semantics like the Raypath view's D3 field
+  // above: the split's identity, not a pixel width — the frame derives pixels and clamps them
+  // at the two floors (the 3D floor and the right-column floor, gui_constants.hpp), while the
+  // stored value changes only by dragging. No query result, selection change or content change
+  // ever writes it (manual priority, §9.3). Session tier: never persisted; DoNew resets it with
+  // the whole GuiState; Open/Revert keep it — session memory, so closing and reopening the
+  // window keeps the user's split within this process.
+  float analyze_pose_view_right_ratio = 0.333f;
+  // D5 — the Pose & trace window's right column's globe | factors split (contract §4.2): the
+  // globe region's share of the column's height. Same semantics, independence and tier as the
+  // D4 field above (dragging D5 never touches D4 and vice versa — §4.2's 独立不联动).
+  float analyze_pose_view_globe_ratio = 0.55f;
+
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the
   // background gestures and the analysis window's point pick are all locked out — and the cursor

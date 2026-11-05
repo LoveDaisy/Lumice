@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -1582,6 +1583,62 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     ImGui::SetScrollY(ImGui::GetScrollY() - ImGui::GetIO().MouseWheel * step);
   }
   ImGui::EndChild();
+}
+
+// ---- The Pose & trace window (contract §7) -----------------------------------------------------------
+
+void RenderAnalyzePoseViewWindow(GuiState& state) {
+  if (!state.analyze_pose_view_open) {
+    return;
+  }
+  // The pumps run at RenderWorkspacePanels' entry (every GUI frame — windows open or not); this
+  // window keeps only its own wait-feedback hygiene: on the Render-workspace frames it hosts
+  // the fiber region (the sole writer of point_wait_line_fiber), so a field's content is
+  // exactly what the user saw THIS frame — the site that can draw it owns the clear. The
+  // details field's writer is the main window's diagnostics block (an Analyze-frame-only face);
+  // on the Render frames where the pose window is its own host the details field simply stays
+  // at its last Analyze-frame value — stale-honest, the same rule every window-closed field
+  // follows — and this window does not touch it. On an Analyze frame the workspace entry has
+  // already pumped and cleared; the globe region below is then that frame's only fiber-field
+  // writer.
+  if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
+    state.analysis.wait_feedback_texts.point_wait_line_fiber.clear();
+  }
+  // The Raypath view window's size recipe (755.4, verbatim): FirstUseEver at the contract's
+  // suggested default, re-applied on a UI-scale change (WindowResizeCondForScale, theme.hpp);
+  // the default clamped to the viewport — at the 2x scale the suggested 960x620 pt is
+  // 1920x1240 px, past the shortest supported window's own height. The window-level minimum
+  // (the contract's §11 R4 narrowest face, 640x420) re-clamps the live size at EVERY Begin, so
+  // the frames of the user's own border drag cannot carry the window below the narrowest
+  // layout the split floors and the wrap ladder were verified at.
+  static float s_sized_for_scale = 0.0f;
+  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
+  const ImVec2 want_size = ImVec2(UiPx(960.0f), UiPx(620.0f));
+  const ImVec2 vp_size = ImGui::GetMainViewport()->Size;
+  const ImVec2 min_size =
+      ImVec2(std::min(UiPx(kPoseViewMinWidth), vp_size.x), std::min(UiPx(kPoseViewMinHeight), vp_size.y));
+  ImGui::SetNextWindowSizeConstraints(min_size, ImVec2(FLT_MAX, FLT_MAX));
+  ImGui::SetNextWindowSize(ImVec2(std::min(want_size.x, vp_size.x), std::min(want_size.y, vp_size.y)), size_cond);
+  // NoDocking: a free-form surface, not shell layout (§7's boundary note); NoCollapse: a
+  // collapsed title bar hides the pose faces without freeing their queries — the honest off
+  // state is closed, via the same flag the title bar's X writes through `p_open`.
+  if (!ImGui::Begin("Pose & trace", &state.analyze_pose_view_open,
+                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
+    ImGui::End();
+    return;
+  }
+  // The body is the two gesture regions (the factors region joins in the next step with the
+  // D4/D5 splits; this step's interim arrangement is the depth band's side-by-side form —
+  // 3D absorbing the width, the globe at its content floor — so every capability is already
+  // observable in the window while the splits land).
+  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  const float style_spacing = ImGui::GetStyle().ItemSpacing.x;
+  const float globe_w = std::min(UiPx(kAnalyzeDepthGlobeMinSize), std::max(UiPx(120.0f), avail.x * 0.4f));
+  const float three_d_w = std::max(UiPx(kAnalyzeDepth3DMinSize), avail.x - globe_w - style_spacing);
+  RenderAnalyzeRay3DRegion(state, ImVec2(three_d_w, avail.y));
+  ImGui::SameLine(0.0f, style_spacing);
+  RenderAnalyzeSunGlobeRegion(state, ImVec2(globe_w, avail.y));
+  ImGui::End();
 }
 
 // ---- The point-level details block -------------------------------------------------------------------

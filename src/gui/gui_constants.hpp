@@ -128,6 +128,28 @@ constexpr float kRaypathViewMapMinSize = 160.0f;
 // region under the input rows' wrap ladder and the canvas under its 64 px code floor).
 constexpr float kRaypathViewMinWidth = 480.0f;
 constexpr float kRaypathViewMinHeight = 360.0f;
+// The Pose & trace window's window-level minimum (contract §11 R4's narrowest face, 640x420):
+// SetNextWindowSizeConstraints re-clamps the live size at every Begin, so this bound is the
+// smallest size the user can reach. The D4/D5 split floors below were verified AT this window
+// size — the constraint is what keeps the user inside the domain those floors were proven over
+// (kPoseViewRightFloor / kPoseViewLeftFloor, the same shape the Raypath view's floors and
+// minimum run).
+constexpr float kPoseViewMinWidth = 640.0f;
+constexpr float kPoseViewMinHeight = 420.0f;
+// D4 — the Pose & trace window's split floors (contract §4.2: right column ≥ 220, 3D ≥ 240;
+// suggested values carrying the render-level calibration duty). The right floor is the globe
+// region's fixed interaction stack at its narrow wrap form; the left floor keeps the 3D orbit
+// legible. The window's minimum width (above) is the existence proof that both floors fit the
+// narrowest legal window; the derivation clamps BOTH sides at every frame (§3 of the task plan:
+// either side may be the one pushed toward its bound).
+constexpr float kPoseViewRightFloor = 220.0f;
+constexpr float kPoseViewLeftFloor = 240.0f;
+// D5 — the right column's vertical floors: the globe region keeps its canvas floor (the region's
+// own 60 px code floor) plus its control rows; the factors region keeps its title plus two rows
+// (contract §11 R5). The derivation clamps both segments at these floors; when the two floors
+// cannot share the column, the ③ proportional fallback applies (the workspace splitters' rule).
+constexpr float kPoseViewGlobeCanvasFloor = 60.0f;
+constexpr float kPoseViewFactorsFloor = 70.0f;
 // The split strips' thickness (##AnalyzeRowsDivider's 8 pt recipe, shared by the two new strips).
 constexpr float kAnalyzeSplitterSize = 8.0f;
 // The depth band's side-by-side form also needs vertical room: below this band height the

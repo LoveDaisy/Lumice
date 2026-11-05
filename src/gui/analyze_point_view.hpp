@@ -227,6 +227,18 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size);
 // computing/refused/empty states.
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size);
 
+// The Pose & trace window (analyze-interaction-contract.md §7, 755.5): the free-floating
+// non-modal window that gathers the sky point's three faces — the sun-direction globe, the
+// raypath 3D view and the current sample's factor readouts — around ONE adopted point document.
+// Opened ONLY by the point detail block's title click (and closed by its own title bar X /
+// DoNew's whole-state reset); the sky-point and wavelength writers never open it. The open flag
+// and the two split ratios are T-session display state (GuiState::analyze_pose_view_*). The
+// frame pump is NOT this window's concern — it runs at RenderWorkspacePanels' entry on every
+// GUI frame; this function keeps only the window skeleton (size recipe, minimum constraint)
+// and the fiber wait-feedback field's clear on the Render-workspace frames it is the sole
+// render site for. Rendering is a no-op while the flag is false.
+void RenderAnalyzePoseViewWindow(GuiState& state);
+
 // The crystal config the frozen scene binding was built from, by the snapshot's own pool slot —
 // the 3D region's mesh source: the geometry the trace ran against, so a post-Analyze edit of the
 // live document cannot rebuild the mesh into a shape the polyline no longer lies inside (AC4's

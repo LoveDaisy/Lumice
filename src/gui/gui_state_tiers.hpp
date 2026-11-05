@@ -213,6 +213,14 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // same tier (the split's identity, written only by its drag).
     { "analyze_raypath_view_open",  FieldTier::kSession,    false },
     { "analyze_raypath_view_info_ratio", FieldTier::kSession, false },
+    // The Pose & trace window's three session rows (755.5): the open flag (which panels are open
+    // is not document state — the same reason as analyze_raypath_view_open) and the window's own
+    // two split ratios, D4 (3D | right column) and D5 (globe | factors) — layout choices of this
+    // session, written only by their drags. Never persisted; DoNew resets them with the whole
+    // GuiState; Open/Revert keep them.
+    { "analyze_pose_view_open",     FieldTier::kSession,    false },
+    { "analyze_pose_view_right_ratio", FieldTier::kSession, false },
+    { "analyze_pose_view_globe_ratio", FieldTier::kSession, false },
     { "look_at",                    FieldTier::kSession,    false },
     // An Angular Distance pick in flight (armed + which family) — a gesture, not the document.
     { "angular_dist_picker",        FieldTier::kSession,    false },
