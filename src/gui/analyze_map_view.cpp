@@ -876,7 +876,11 @@ bool ProjectToRect(const MapViewState& view, const double pos[3], const ImVec2& 
 // One drawn segment of the iso-deviation circle's walk: whether any point landed in the disk,
 // and the topmost (smallest screen y) of them — the label anchor the curve's readout sits at.
 struct IsoDeltaWalk {
-  int drawn = 0;
+  int drawn = 0;            // the CURRENT contiguous polyline run (a disk exit breaks the run and resets
+                            // it — the polyline's segmentation, not the walked amount)
+  int drawn_total = 0;      // segments submitted across the WHOLE walk: the "actually drew this
+                            // curve" fact the legend reads (the final run's length would read
+                            // zero for a circle that left the disk mid-way and never returned)
   int samples_in_disk = 0;  // the circle's own samples that landed in the view disk (of kOverlaySegments+1)
   bool have_top = false;
   double top_x = 0.0;
@@ -930,6 +934,7 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapViewState& view, const 
     last_x = x;
     last_y = y;
     ++walk.drawn;
+    ++walk.drawn_total;
     if (!walk.have_top || y < walk.top_y) {
       walk.have_top = true;
       walk.top_x = x;
@@ -1025,14 +1030,18 @@ OverlayMarkerStyle OverlayMarkerStyleFor(const std::string& kind_name, int state
   return s;
 }
 
-// The observation key's one comparison: identical on every field the engine concluded — kind,
-// state, position and reason (the row's whole claim). Nothing textual from the DRAWN layer
-// (labels, colours) participates: two rows differing only in a field the tooltip shows are
-// different sources and stay separate entries.
+// The observation key's one comparison: identical on EVERY field the row carries — kind, state,
+// position, reason AND the evidence fields (family_level, blur_deg). "×N identical" is a claim
+// about the SOURCES, so the comparison is the row's whole content: two rows differing in any
+// carried field are different sources and stay separate entries. An earlier draft keyed on the
+// tooltip's own text fields only, and two rows with the same words but different family or blur
+// evidence folded as "identical" — a sameness the display could not prove and the sources did
+// not share (AC4's no-silent-drop line).
 bool OverlayRowsSameKey(const SurveyObjectRow& a, const SurveyObjectRow& b) {
   return a.kind_name == b.kind_name && a.state == b.state && a.state_name == b.state_name &&
-         a.position_altitude_deg == b.position_altitude_deg && a.position_azimuth_deg == b.position_azimuth_deg &&
-         a.reason == b.reason;
+         a.position_available == b.position_available && a.position_altitude_deg == b.position_altitude_deg &&
+         a.position_azimuth_deg == b.position_azimuth_deg && a.family_level == b.family_level &&
+         a.blur_deg == b.blur_deg && a.reason == b.reason;
 }
 
 void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vector<OverlayHitGroup>* out) {
@@ -1158,7 +1167,24 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& vie
         ImGui::SameLine();
         ImGui::TextDisabled("×%d identical", group.count);
       }
-      ImGui::TextDisabled("alt %.2f° az %.2f°", row.position_altitude_deg, row.position_azimuth_deg);
+      // The evidence fields the fold key honors, spelled on the position line: a family arm's
+      // level tag and a blur readout, when the row carries them — the differences between two
+      // entries are then readable where the entries differ, not only in their count.
+      char pos_line[96];
+      if (row.family_level >= 0 && row.blur_deg > 0.0) {
+        std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · level %d · blur %.2f°",
+                      row.position_altitude_deg, row.position_azimuth_deg, row.family_level, row.blur_deg);
+      } else if (row.family_level >= 0) {
+        std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · level %d", row.position_altitude_deg,
+                      row.position_azimuth_deg, row.family_level);
+      } else if (row.blur_deg > 0.0) {
+        std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · blur %.2f°", row.position_altitude_deg,
+                      row.position_azimuth_deg, row.blur_deg);
+      } else {
+        std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f°", row.position_altitude_deg,
+                      row.position_azimuth_deg);
+      }
+      ImGui::TextDisabled("%s", pos_line);
       if (!row.reason.empty()) {
         ImGui::TextWrapped("%s", row.reason.c_str());
       }
@@ -1176,14 +1202,19 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& vie
       double delta_deg;
       ImU32 colour;
       const std::string* label;
+      bool* legend_bit;  // the legend reads what the WALK actually drew, per curve — not the
+                         // survey payload's availability (a circle entirely outside the view
+                         // disk draws nothing and earns no entry; a legend describes the drawn
+                         // picture, and the drawn picture is view-dependent frame to frame)
     };
-    if (legend != nullptr) {
-      legend->dispersion_red = true;
-      legend->dispersion_blue = true;
-    }
+    bool legend_bits_sink[2] = { false, false };  // legend==nullptr callers still need an
+                                                  // addressable bit slot; writes to the sink
+                                                  // are the frame's no-legend path
     const Curve curves[2] = {
-      { model.dispersion.value_red_deg, IM_COL32(242, 108, 92, 235), &model.dispersion.red_label },
-      { model.dispersion.value_blue_deg, IM_COL32(96, 145, 240, 235), &model.dispersion.blue_label },
+      { model.dispersion.value_red_deg, IM_COL32(242, 108, 92, 235), &model.dispersion.red_label,
+        legend != nullptr ? &legend->dispersion_red : &legend_bits_sink[0] },
+      { model.dispersion.value_blue_deg, IM_COL32(96, 145, 240, 235), &model.dispersion.blue_label,
+        legend != nullptr ? &legend->dispersion_blue : &legend_bits_sink[1] },
     };
     for (const Curve& curve : curves) {
       // One walk draws the circle and reports its topmost drawn point — the label anchor (the
@@ -1191,10 +1222,13 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapViewState& vie
       // in-view part, not the whole circle.
       const IsoDeltaWalk walk =
           WalkIsoDeltaCircle(dl, view, pic_min, pic_px, sun_pos, curve.delta_deg, curve.colour, 1.4f);
-      if (legend != nullptr && walk.partial()) {
-        legend->dispersion_partial = true;
+      if (legend != nullptr && walk.drawn_total > 0) {
+        *curve.legend_bit = true;
+        if (walk.partial()) {
+          legend->dispersion_partial = true;
+        }
       }
-      if (walk.have_top && walk.drawn > 0) {
+      if (walk.drawn_total > 0) {
         char line[112];
         std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
                       walk.partial() ? " · arc in view" : "");
@@ -1880,9 +1914,18 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
     if (legend.dispersion_red || legend.dispersion_blue) {
       ImGui::Bullet();
-      ImGui::TextWrapped(
-          "dispersion circles (red inside blue) — the measured minimum-deviation geometry at the two reference "
-          "wavelengths; positions, not a whole-circle visibility or contribution claim");
+      if (legend.dispersion_red && legend.dispersion_blue) {
+        ImGui::TextWrapped(
+            "dispersion circles (red inside blue) — the measured minimum-deviation geometry at the two reference "
+            "wavelengths; positions, not a whole-circle visibility or contribution claim");
+      } else {
+        // One circle's arc sits outside the view disk this frame: the entry names the one that
+        // drew — the other half's absence is the honest state, not a dropped category.
+        ImGui::TextWrapped(
+            "%s dispersion circle — the measured minimum-deviation geometry at its reference wavelength; positions, "
+            "not a whole-circle visibility or contribution claim",
+            legend.dispersion_red ? "red" : "blue");
+      }
       if (legend.dispersion_partial) {
         ImGui::TextWrapped("A circle partially outside the view draws only its in-view arc (\"arc in view\").");
       }

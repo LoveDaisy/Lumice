@@ -243,12 +243,13 @@ struct OverlayMarkerStyle {
 OverlayMarkerStyle OverlayMarkerStyleFor(const std::string& kind_name, int state);
 
 // One tooltip's grouped entries: the objects whose marker rect the pointer is inside, grouped
-// by the row's OBSERVATION key (kind + state + position + reason — the identity as the engine
-// concluded it), identical keys folding into one entry with a count. A display grouping of the
-// model's rows: nothing is dropped (every hit appears, folded or lone), no physical claim
-// changes, and different sources with the same coordinates stay separate entries whenever any
-// key field differs. First-seen order is kept (the model's own order). The grouping is pure
-// presentation; the unit layer pins it on observed row shapes plus synthetic same-key rows.
+// by the row's OBSERVATION key — the row's whole content (kind, state, position, reason AND the
+// evidence fields family_level/blur_deg), because "identical" is a claim about the sources.
+// Identical rows fold into one entry with a count. A display grouping of the model's rows:
+// nothing is dropped (every hit appears, folded or lone), no physical claim changes, and rows
+// differing in ANY carried field stay separate entries. First-seen order is kept (the model's
+// own order). The grouping is pure presentation; the unit layer pins it on observed row shapes
+// plus synthetic same-key and evidence-differing rows.
 struct OverlayHitGroup {
   const SurveyObjectRow* representative = nullptr;
   int count = 0;

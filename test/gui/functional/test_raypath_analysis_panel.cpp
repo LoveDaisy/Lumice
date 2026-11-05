@@ -4268,10 +4268,10 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       ctx->Yield(2);
     }
     // λ: contained in the cell, then both ends through the real drag path. (The map window
-    // reopens for it — the λ row is the region header's — and parks small in the top-left
-    // corner: at this basis the band starts near mid-window, so the full-size default would
-    // overlap the globe cell's rows below, and a press aimed at them would land on the
-    // floating window instead.)
+    // reopens for it — the λ row is the region header's. The old 500x320 parking read is gone:
+    // the window-level minimum clamps the request to 480x360-pt-and-up, so at this basis the
+    // clamped window is simply open on the left, and it CLOSES before the globe block below —
+    // whose press points its footprint would otherwise cover.)
     gui::g_state.analyze_raypath_view_open = true;
     if (ImGuiWindow* win_l = ctx->GetWindowByRef("//Raypath view")) {
       ImGui::SetWindowPos(win_l, ImVec2(8.0f, 40.0f), ImGuiCond_Always);
@@ -4311,6 +4311,12 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(gui::g_state.analysis.map_wavelength_nm >= 885.0, false);
     ctx->LogInfo("[scale tiers 1024 clamped] lambda driven to both ends: %.0f nm",
                  gui::g_state.analysis.map_wavelength_nm);
+    // The window-level minimum (480x360) outgrows this basis's old 500x320 parking, and the
+    // clamped footprint would cover the globe cell's press points below — the user is done with
+    // the window, so it closes (the same write the title bar's X makes). The restored-cell block
+    // reopens it when a window is wanted again.
+    gui::g_state.analyze_raypath_view_open = false;
+    ctx->Yield(3);
 
     // The panorama's own fixed rows at this width: Region→Whole sky and Upper→Lower join by
     // judgment too. A clipped radio whose center still answers a click is exactly the shape
@@ -5217,6 +5223,35 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     ctx->LogInfo("[legend] back to the fit (arc state): ScrollMax (%.1f, %.1f)",
                  static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
     IM_CHECK_RETV(info_leg->ScrollMax.x == 0.0f, false);
+    // The entries follow the DRAWN arcs, both directions (the legend describes the drawn
+    // picture): a short window makes the region overflow, so the legend's line count reads
+    // through ScrollMax.y. Parking the view at the nadir with a 5° disk takes both circles out
+    // of it (their nearest sky is tens of degrees away) — nothing draws, the entries leave, the
+    // content shrinks; Full sky brings both back, content restored.
+    ImGuiWindow* win_leg = ctx->GetWindowByRef("//Raypath view");
+    IM_CHECK_RETV(win_leg != nullptr, false);
+    ImGui::SetWindowSize(win_leg, ImVec2(480.0f, 360.0f), ImGuiCond_Always);
+    ctx->Yield(3);
+    info_leg = MapInfoRegionWindow();
+    IM_CHECK_RETV(info_leg != nullptr, false);
+    const float sm_present = info_leg->ScrollMax.y;
+    ctx->LogInfo("[legend] short window, arcs drawn: ScrollMax.y %.1f", static_cast<double>(sm_present));
+    IM_CHECK_RETV(sm_present > 0.0f, false);
+    gui::g_state.analysis.map_view.centre_pos[0] = 0.0f;
+    gui::g_state.analysis.map_view.centre_pos[1] = 0.0f;
+    gui::g_state.analysis.map_view.centre_pos[2] = -1.0f;
+    gui::g_state.analysis.map_view.radius_deg = 5.0f;
+    ctx->Yield(4);
+    info_leg = MapInfoRegionWindow();
+    IM_CHECK_RETV(info_leg != nullptr, false);
+    ctx->LogInfo("[legend] circles out of the disk: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
+    IM_CHECK_RETV(info_leg->ScrollMax.y < sm_present, false);
+    ctx->ItemClick("**/Full sky##map");
+    ctx->Yield(3);
+    info_leg = MapInfoRegionWindow();
+    IM_CHECK_RETV(info_leg != nullptr, false);
+    ctx->LogInfo("[legend] full sky brings them back: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
+    IM_CHECK_RETV(fabsf(info_leg->ScrollMax.y - sm_present) < 1.0f, false);
   }
   IM_CHECK_RETV(drag_strip(-700.0f), false);
   ImGuiWindow* map4 = MapRegionWindow();
@@ -5345,9 +5380,19 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
   gui::g_state.analyze_raypath_view_open = true;
+  // The flag only schedules the window's submission; the top-level window exists once a frame
+  // commits it — and never borrow the instance an earlier test case left behind: this case has
+  // to stand in a fresh process too (its first frame here creates its own window).
+  ImGuiWindow* win = nullptr;
+  for (int frames = 0; frames < 20; ++frames) {
+    ctx->Yield(1);
+    win = ctx->GetWindowByRef("//Raypath view");
+    if (win != nullptr && win->Active) {
+      break;
+    }
+  }
+  IM_CHECK_RETV(win != nullptr && win->Active, false);
   {
-    ImGuiWindow* win = ctx->GetWindowByRef("//Raypath view");
-    IM_CHECK_RETV(win != nullptr, false);
     ImGui::SetWindowPos(win, ImVec2(8.0f, 60.0f), ImGuiCond_Always);
     ImGui::SetWindowSize(win, ImVec2(480.0f, 360.0f), ImGuiCond_Always);
     ctx->Yield(3);

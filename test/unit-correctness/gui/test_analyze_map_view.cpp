@@ -912,24 +912,31 @@ TEST(AnalyzeMapView, OverlayHitGroupsFoldIdenticalKeysAndKeepDistinctSources) {
   c.reason = "scope_value_mismatch";  // different reason at the same position: separate
   SurveyObjectRow d = a;
   d.position_azimuth_deg = 0.5;  // different coordinates: separate
-  SurveyObjectRow a_third = a;   // a third same-key row: the count follows
+  SurveyObjectRow e = a;
+  e.family_level = 2;  // different family evidence, same every drawn word: separate — the fold
+                       // claims the SOURCES are identical, so every carried field counts
+  SurveyObjectRow f = a;
+  f.blur_deg = 1.25;            // different blur evidence, same every drawn word: separate
+  SurveyObjectRow a_third = a;  // a third same-key row: the count follows
 
-  const std::vector<const SurveyObjectRow*> hits = { &a, &a_again, &b, &c, &d, &a_third };
+  const std::vector<const SurveyObjectRow*> hits = { &a, &a_again, &b, &c, &d, &e, &f, &a_third };
   std::vector<OverlayHitGroup> groups;
   GroupOverlayHits(hits, &groups);
-  ASSERT_EQ(groups.size(), 4u);
+  ASSERT_EQ(groups.size(), 6u);
   EXPECT_EQ(groups[0].representative, &a);
   EXPECT_EQ(groups[0].count, 3);
   EXPECT_EQ(groups[1].representative, &b);
   EXPECT_EQ(groups[1].count, 1);
   EXPECT_EQ(groups[2].representative, &c);
   EXPECT_EQ(groups[3].representative, &d);
+  EXPECT_EQ(groups[4].representative, &e);
+  EXPECT_EQ(groups[5].representative, &f);
   // And nothing dropped: the counts sum to the hits.
   int total = 0;
   for (const OverlayHitGroup& g : groups) {
     total += g.count;
   }
-  EXPECT_EQ(total, 6);
+  EXPECT_EQ(total, 8);
 }
 
 // The marker vocabulary: a concluded claim (certified/finite) draws solid, the refused and
