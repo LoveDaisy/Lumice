@@ -4962,6 +4962,100 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
 
 }  // namespace
 
+// AC1, the Raypath view window's open entry and lifecycle (contract §6): the class-row click
+// is the one open entry — selecting a class opens the non-modal window with it; the title-bar
+// X closes it and resets the open flag through the p_open write; an already-selected row
+// re-clicked reopens it; and a main-window control answers a real click while the window
+// floats (non-modal — a dialog takeover would fail this).
+bool ClassRowClickOpensTheRaypathView(ImGuiTestContext* ctx) {
+  const auto window_active = [](const char* fragment) {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+        return true;
+      }
+    }
+    return false;
+  };
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  // The row click: selection and window opening in one gesture.
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(window_active("Raypath view"), false);
+  // Non-modal: the share list's search box answers a real click while the window floats (its
+  // default placement leaves the right column uncovered; if a future placement covers a
+  // control this assert drives, the case fails visibly, not silently).
+  SetListRef(ctx);
+  const ImGuiTestItemInfo search = ctx->ItemInfo("**/###analysis_search", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(search.ID != 0, false);
+  ctx->ItemClick(search.ID);
+  ctx->SetRef("");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(window_active("Raypath view"), false);
+  // The title-bar X: the close writes the flag through p_open, the same bool the row click
+  // and the frame loops read.
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(2);
+  IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(!window_active("Raypath view"), false);
+  // The already-selected row re-clicked reopens (the contract's reopen-after-close rule: the
+  // Selectable fires on every click, selected or not).
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(window_active("Raypath view"), false);
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(2);
+  IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
+  return true;
+}
+
+// AC1's negative faces and the open flag's tier (contract §8's ownership declaration): neither
+// arriving data (the analysis completing) nor a workspace switch opens the window; an open
+// window stays open across a workspace switch and is committed in BOTH modes (the frame loops
+// submit it in each); and DoNew — the one reset reason for this flag — closes an open one with
+// the whole-GuiState replacement.
+bool RaypathViewOpenIsDisplayState(ImGuiTestContext* ctx) {
+  const auto window_active = [](const char* fragment) {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+        return true;
+      }
+    }
+    return false;
+  };
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(!window_active("Raypath view"), false);
+  // The switch away: still no open — and the flag set here opens the window in the RENDER
+  // workspace (the frame loop commits it there too), and the switch back keeps it (the window
+  // is T-session display state, not a per-workspace panel).
+  ctx->ItemClick("##TopBar/Render");
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
+  gui::g_state.analyze_raypath_view_open = true;  // the open entry itself is the row-click case's
+  ctx->Yield(2);
+  IM_CHECK_RETV(window_active("Raypath view"), false);
+  ctx->ItemClick("##TopBar/Analyze");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(window_active("Raypath view"), false);
+  // DoNew replaces the whole GuiState: the open flag goes with it and the window stops being
+  // committed the same frame rule everything else follows.
+  gui::DoNew();
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(!window_active("Raypath view"), false);
+  return true;
+}
+
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // AC2, first case: open -> Point -> click the preview -> the centre is the click's unprojection
   // -> Analyze -> the list is non-empty and its first row carries the largest energy.
@@ -5548,6 +5642,19 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.crystals[fixture_crystal].height.center -= 0.1f;
       ctx->Yield(2);
     };
+  }
+
+  // AC1, the Raypath view window's open entry and lifecycle (contract §6). The named function
+  // above is the case body; the lambda stays void the way every TestFunc does.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "class_row_click_opens_the_raypath_view");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(ClassRowClickOpensTheRaypathView(ctx)); };
+  }
+
+  // AC1's negative faces and the open flag's tier (contract §8's ownership declaration).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "raypath_view_open_is_display_state");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(RaypathViewOpenIsDisplayState(ctx)); };
   }
 
   // AC2, second case: a render in progress keeps Analyze shut, and the other direction — an
