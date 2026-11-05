@@ -222,17 +222,26 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 ## 6. Raypath view 窗（光路层）
 
+> **755.4 as-built**：本节已落地（`RenderAnalyzeRaypathViewWindow`，`analyze_map_view.cpp`）。开窗
+> 入口、常开同步、诚实空态、左右分区与关闭重开全部照合同实现；as-built 补充——D3 分隔落在窗内
+> （信息区比例存会话 `GuiState::analyze_raypath_view_info_ratio`，两下限 200/160 钳制，§4.2 的
+> 实现片校准值）；左区 = raster + 手势 + 四态状态行（画布侧），右区（`##AnalyzeRaypathInfo`）=
+> λ 控制、Fit/Full sky、caliber 块、天空点输入、图例（原生滚轮滚动）；cursor 读数按既有裁决留在
+> 画布。Overlay 三件套落地：标记按引擎 kind 词汇形状/配色（certified/finite 实心、其余描边）、
+> 单位置单 tooltip（按观测键分组、同键 ×N 折叠、异源保留）、等偏折圆部分可见时标签带
+> 「arc in view」限定语且图例言明几何位置非可见宣称。
+
 | 项 | 合同 |
 |---|---|
 | 打开目标 | **光路列表类行点击** = 选中该类并确保窗口打开（已打开则同步内容）。同型先例：晶体卡片点击开 Entry Edit（用户举例的「自然的内容点击」）。关闭后再次点击类行重新打开 |
 | 常开同步 | 打开期间跟随当前选中类：切类 → 窗内容同步（地图面按既有机制丢弃旧类会话、新意图重发，`analyze_survey.hpp:157-163`）；不要求关闭再打开 |
-| 未选中类时 | 窗可开着但显示诚实空态（现地图区无选择态文案沿用：`analyze_map_view.cpp:1152-1157`） |
-| 内容 | 左区 = 类天空分布参考图（raster + 叠加对象 + 手势：滚轮锚点缩放/拖拽平移/点选天空点，`analyze_map_view.cpp:1243-1316`）；右区 = 图面读数：cursor 读数（`analyze_map_view.cpp:1320-1334`）、caliber 块（1338-1379）、λ 控制（1096-1119）、天空点输入（1381-1419）、图例与悬停说明 |
+| 未选中类时 | 窗可开着但显示诚实空态（无选择态文案沿用） |
+| 内容 | 左区 = 类天空分布参考图（raster + 叠加对象 + 手势：滚轮锚点缩放/拖拽平移/点选天空点）；右区 = 图面读数：λ 控制、Fit/Full sky、caliber 块、天空点输入、图例与悬停说明（cursor 读数留在画布——画布反馈归画布的既有裁决） |
 | Overlay 整理 | 图例先行（标记含义可理解）；悬停按对象组织（每对象一条，重叠对象聚合为一组说明）；同位置同含义聚合展示、不同来源保留可检索信息——具体标记形状、聚合与选中交互是 §14 自由度 |
 | 与主窗分工 | 右区只放图面伴读信息；survey 报告/类概览只在主窗右下（§2.2 不重复堆放） |
 | 关闭重开 | 关窗不关文档、不取消在途查询（§8）；重开显示当前采纳结果或如实等待态 |
-| 档位预归属 | 自由档（两轴可拉；`gui-visual-language.md` §9.1 判据：内容二维——图＋信息列）。§9.2 逐窗口归档行的实际更新归实现片 4/5 |
-| 默认尺寸 | 建议值 ≈ 900×560（FirstUseEver，自由档既有配方 `gui-visual-language.md` §9.4）；渲染级校准义务在实现片 |
+| 档位预归属 | 自由档（两轴可拉；`gui-visual-language.md` §9.1 判据：内容二维——图＋信息列）。§9.2 归档行已随本片更新 |
+| 默认尺寸 | ≈900×560（FirstUseEver，钳到视口内——2x 下建议值超出最短支持窗 own height）；渲染级校准已随实现核对 |
 
 ## 7. 姿态/轨迹窗（天空点/姿态层）
 
@@ -262,8 +271,8 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | fiber 内移动姿态（滑条/播放） | 只改当前姿态样本：globe marker、3D 路径、因素读数同步；天空点不动、点查询不重发；播放只推进样本索引 | `PointViewState` 契约（`analyze_survey.hpp:381-401,404-414`） |
 | 切换 λ（窗右区滑条） | 地图面新意图：旧图保留在天空锚位＋「refining」注（用户正在 steering 时不白屏）；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；跨视图 supersession 保旧图（185-215）；`PointIntentKey.wavelength_nm`（228） |
 | 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
-| 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；武装点选/pick 链在离开时解除；取景连续（§5.4） | 泵不在 Render 执行（`analyze_workspace.cpp:374-377`）；pick 清理（`app_panels.cpp:781-782`）；状态栏段（`app_panels.cpp:2960-2975`） |
-| New | 全前端状态重置（含 analysis 会话、查询绑定释放）；两窗重开显示诚实空态；窗几何保留 | `DoNew`（`app.cpp:1123`）；4 文档切换 reason 整体清空（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp:492-497`） |
+| 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；武装点选/pick 链在离开时解除；取景连续（§5.4）。**755.4 修订**：窗开着时 Render 工作区的帧也泵四查询（`PumpAnalyzeQueries`，`analyze_workspace.hpp`——窗是该帧唯一渲染的分析面），窗内 λ/天空点输入即时生效；窗关着维持原语义（在途查询不取消，结果等回来采纳） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.hpp`；Analyze 帧入口 + 窗 Render 帧调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
+| New | 全前端状态重置（含 analysis 会话、查询绑定释放）；**755.4 as-built**：两窗随整 GuiState 重置而关闭（开/合是 T-session 旗标），再次类行点击重开显示诚实空态；窗几何保留 | `DoNew`（`app.cpp`）；4 文档切换 reason 整体清空（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
 | Open | 同 New 的重置路径＋文档载入 | 同上（per-reason reset owner） |
 | Revert | 分析列表**保留**＋新鲜度横幅如实（stale 指令：press Analyze）；analysis 会话保留（请求参数不属于文档）；查询绑定不变 | kRevert 跳过 analysis 清空（`gui-state-governance.md` §10.1/10.2）；横幅 `analysis_panel.cpp:1363-1373` |
 | 取消（survey/point） | 面级取消按钮：意图失效＋latch（同选择不重发）；完成态显示「cancelled」行；迟到结果按 id 丢弃 | survey 取消（`analyze_workspace.cpp:327-335`）；point 取消（`analyze_point_view.cpp:1470-1478`）；`cancelled_for_key`（`analyze_survey.hpp:117-118,247-249`） |

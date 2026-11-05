@@ -37,6 +37,15 @@
 > 钉死（`cone_center_is_default`）；方向域锚定不变——相机转动不改 `cone_center_dir`。
 > 机制层（查询/采纳/取消/新鲜度/Exclude 循环）零变化。
 >
+> **2026-11-05 地图区迁独立窗（scrum analyze-gui-rework 755.4，raypath-detail-window）**：深度带的
+> 地图格整体迁入显式打开的 **Raypath view 窗**（`RenderAnalyzeRaypathViewWindow`，宿主
+> `RenderAnalyzeMapRegion` 的 D3 两分区——左 raster+手势+状态行、右 λ/视图按钮/caliber/天空点输入/
+> 图例），类行点击开窗、T-session 开合旗标（`analyze_raypath_view_open`）、窗在 Render 工作区也泵
+> （`PumpAnalyzeQueries` 共享入口）。深度带退为两格（3D/globe），overlay 三件套（kind 标记、单位置
+> 组织悬停、等偏折圆诚实标注）随迁落地；容器与开窗合同见
+> [`analyze-interaction-contract.md`](../gui/analyze-interaction-contract.md) §6/§8 的 as-built 节。
+> 机制层（查询/采纳/取消/新鲜度）零变化。
+>
 > 本文是 (i)「识别」已交付形态的机制记录；「光路分析」整体为什么拆成 (i)/(ii)、(ii) 为什么搁置、
 > (i) 路线接下来往哪走，见功能总篇 [`raypath-analysis.md`](raypath-analysis.md)。
 > 本文档结构与 §1/§2 的裁决叙事保持设计阶段原文，§3–§5、§7 的机制描述、§6 诚实边界、§8 开放

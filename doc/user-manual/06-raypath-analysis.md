@@ -8,7 +8,7 @@ The Raypath Analysis window answers "which raypaths make the light in this regio
 
 ## 1. Where it is
 
-The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout: the scene editors in a fixed left column, the **scene panorama** (the committed picture through the same lens, view and display state the Render workspace shows) as the large main view, the **share list** this chapter describes in the right column's upper half, and the **diagnostics region** (the selection's details, or an entry guide before any result) in the right column's lower half. Under the panorama sits its **operation bar** — the region choice, the cone pick and centre reading, the radius, the analysis budget and the Analyze / Stop buttons, next to the picture they aim at. The two column and row splits are draggable, and the depths that have not yet moved to their own windows (the class map, the Raypath 3D region, the sun-direction globe) live in a band under the main view, side by side when the window is wide enough and stacked — scrollable — when it is not. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
+The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout: the scene editors in a fixed left column, the **scene panorama** (the committed picture through the same lens, view and display state the Render workspace shows) as the large main view, the **share list** this chapter describes in the right column's upper half, and the **diagnostics region** (the selection's details, or an entry guide before any result) in the right column's lower half. Under the panorama sits its **operation bar** — the region choice, the cone pick and centre reading, the radius, the analysis budget and the Analyze / Stop buttons, next to the picture they aim at. The two column and row splits are draggable, and the depths that have not yet moved to their own windows (the Raypath 3D region, the sun-direction globe) live in a band under the main view — the class map moved to its own window (§7). The band sits side by side when the window is wide enough and stacked — scrollable — when it is not. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
 
 ## 2. Choosing a region (ROI)
 
@@ -127,15 +127,18 @@ The header always names the reference wavelength and where it came from, the sun
 read, and whether the survey stopped inside its budget (a partial document says so). Selecting
 another class re-asks; the card never mixes two answers.
 
-## 7. The raypath view (the class reference map)
-
-Select a row and the **Raypath view** region (in the band under the main view) draws that class's own sky picture —
-the engine's physical class reference map, one single-wavelength brightness disk computed from
-every member of the class (not a representative scaled up). The picture arrives in the
-background like the overview does, and the region states honestly where it stands: waiting,
-cancelled, the engine's named refusal, or the picture — plus a *coarse* note while a newer view
-is still computing (the old picture stays on screen, anchored to the sky, and never passes for
-the newest answer).
+## 7. The raypath view (the class reference map)Select a row in the share list and the **Raypath view window** opens — a floating, non-modal
+window (move and resize it freely; it stays open and in sync while you work elsewhere) that
+draws that class's own sky picture: the engine's physical class reference map, one
+single-wavelength brightness disk computed from every member of the class (not a
+representative scaled up). The picture arrives in the background like the overview does, and
+the region states honestly where it stands: waiting, cancelled, the engine's named refusal, or
+the picture — plus a *coarse* note while a newer view is still computing (the old picture stays
+on screen, anchored to the sky, and never passes for the newest answer). The window is two
+panes separated by a draggable divider: the map on the left, and the wavelength, the Fit /
+Full-sky buttons, the caliber block, the sky-point input and a legend of what the picture
+draws on the right. Clicking another class row re-points the open window at that class;
+clicking an already-selected row again reopens it after you have closed it.
 
 **Reading it.** The disk is centred where you last looked; the yellow dot is the sun (the map's
 zero of deviation), the thin cross is the zenith, the faint arc is the horizon. Brightness is a
@@ -151,18 +154,24 @@ place — the dark cells around it are not "no light".
 cursor, **Fit** frames the distribution the map itself carries, **Full sky** returns to the
 whole sky. Every view change re-asks the engine for that view — zooming is a real
 re-evaluation at the sampled tier, never an upscale of an older raster — and requests settle
-briefly so a wheel burst is one ask. The λ slider names an explicit wavelength (a new
-evaluation per wavelength; the engine keeps no warm map); *reference* returns to the document's
-own choice. **Overlays** toggles the survey's located conclusions on the picture: the positional
-objects as diamonds, and the chromatic dispersion's two inner edges as the red-inside-blue-outside
-pair of circles about the sun, labelled with their own wavelengths — the curves are the survey
-document's values, drawn where they belong; a survey without positional payload draws nothing
-and invents no curve.
+briefly so a wheel burst is one ask. The λ slider (in the right pane) names an explicit
+wavelength (a new evaluation per wavelength; the engine keeps no warm map); *reference* returns
+to the document's own choice. **Overlays** toggles the survey's located conclusions on the
+picture: each positional object draws its own kind's marker (a filled shape when the survey
+certified or bounded it, an outline while it is refused or unevaluated), and the chromatic
+dispersion's two inner edges draw as the red-inside-blue-outside pair of circles about the sun,
+labelled with their own wavelengths — the curves are the survey document's values, drawn where
+they belong; a circle that only partly fits the view says *arc in view*, and the legend spells
+that the circles are positions, not a claim that the whole ring is visible or contributing. A
+survey without positional payload draws no markers and invents no curve, and the legend lists
+only what the picture actually shows. Hovering a marker names every object under the pointer in
+one tooltip — each object's kind, state, coordinates and any named reason; identical objects
+collapse into one line with a count.
 
 **Pointing.** A click on the picture (a press that does not move) sets the **sky point** —
 where you are asking about — marked with a white crosshair you can drag anywhere on the disk,
 dark regions included: the pick is a coordinate, never a brightness threshold. The altitude and
-azimuth fields under the picture do the same without any map at all (type the angles of the sky
+azimuth fields in the right pane do the same without any map at all (type the angles of the sky
 point, azimuth measured as the sun's), so a refused or still-computing map never blocks
 naming a target. The sky point is independent of the scene ROI: clicking the map never changes
 the cone centre or the share list, and pointing the cone on the panorama never moves your sky
