@@ -1,6 +1,8 @@
 #include "gui/analyze_survey.hpp"
 
+#include <atomic>
 #include <cstdio>
+#include <functional>
 #include <utility>
 
 #include "file_io.hpp"  // IWYU pragma: keep — SceneDeleter's definition (ScenePtr's owner)
@@ -247,6 +249,16 @@ struct SurveyExecutor::Impl {
   // release that never happened.
   std::string binding_note;
 
+  // -- test faces (analyze_survey.hpp; production never sets or reads either) --
+  // The gate is a std::function, so the worker copies it out under mu and invokes the copy off
+  // the lock: SetPickupGateForTest may swap or clear it while a callback is blocked in its own
+  // copy, and the blocked copy keeps the target alive.
+  std::function<void(QueryFace)> pickup_gate;  // guarded by mu
+  // Set inside ShutdownAndJoin's lock section, strictly after the in-flight cancel request —
+  // the write point IS the confirmation semantics (see the header). Atomic so the read needs no
+  // mutex and cannot lag the write's intent.
+  std::atomic<bool> shutdown_cancel_requested{ false };
+
   // -- worker thread only (destroyed there, never under the GUI) --
   std::unique_ptr<LUMICE_Scene, SceneDeleter> scene;
   WorkspacePtr workspace;
@@ -348,7 +360,15 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
       MapHandle map_result;
       PointHandle point_result;
       RepresentativeRayHandle ray_result;
+      // The pickup gate (test face): copy it out under the lock, then invoke it after the
+      // unlock — the callback's whole determinism value is that the mutex is FREE while it
+      // blocks (every lock section stays live) and this job's token is already registered
+      // (above). Header laws: no re-entry, production never sets it.
+      std::function<void(QueryFace)> pickup_gate = impl->pickup_gate;
       lock.unlock();
+      if (pickup_gate) {
+        pickup_gate(job.face);
+      }
       if (!impl->workspace) {
         // The binding is unusable under this query. Name WHICH failure honestly (R7): a
         // released scene, or a workspace whose build failed at SetScene — the scene still
@@ -677,6 +697,15 @@ InflightPoll SurveyExecutor::InflightPollSnapshot() const {
   return poll;
 }
 
+void SurveyExecutor::SetPickupGateForTest(PickupGateForTest gate) {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  impl_->pickup_gate = std::move(gate);
+}
+
+bool SurveyExecutor::ShutdownCancelRequestedForTest() const {
+  return impl_->shutdown_cancel_requested.load(std::memory_order_acquire);
+}
+
 void SurveyExecutor::ShutdownAndJoin() {
   if (!impl_) {
     return;
@@ -690,6 +719,10 @@ void SurveyExecutor::ShutdownAndJoin() {
     if (impl_->inflight_token) {
       LUMICE_PathCancelTokenRequest(impl_->inflight_token.get());
     }
+    // Test face: the flag goes up strictly AFTER the cancel request above, inside the same lock
+    // section — ShutdownCancelRequestedForTest() reading true is "the in-flight cancel has been
+    // executed", never "the shutdown thread has started" (the header's drift warning).
+    impl_->shutdown_cancel_requested.store(true, std::memory_order_release);
     Impl::Job job;
     job.kind = Impl::Job::Kind::kShutdown;
     impl_->pending_binding = std::move(job);

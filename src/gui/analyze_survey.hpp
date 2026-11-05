@@ -22,6 +22,7 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -525,6 +526,31 @@ class SurveyExecutor {
   // failed poll (unreachable in practice) reads NONE/0 under in_flight — the plain line,
   // never a guessed stage. GUI thread.
   InflightPoll InflightPollSnapshot() const;
+
+  // ---- Test faces for the executor-level integration arms (755.7 candidate B). Production never
+  // sets or reads either: unset / false is the whole production story, and neither face changes
+  // any behavior the GUI can observe.
+  //
+  // The pickup gate: the worker copies it out under mu and calls it OFF the mutex, once per
+  // query pickup — after the pickup critical section (this job's cancel token is registered, so
+  // every cancel path is armed) and before the engine call. While the callback blocks, every
+  // executor lock section (IssueQuery / TakeFinished / CancelInFlight / ShutdownAndJoin) is
+  // live; that is the property the ordering tests build their handshakes on. Two laws for the
+  // callback, and the tests' determinism stands on them: it must not re-enter the executor (no
+  // Issue/Take/Cancel/Shutdown/InFlight call — anything that takes mu would deadlock against
+  // nothing, but a re-entrant call could observe itself), and production never sets it. Null
+  // clears the gate.
+  using PickupGateForTest = std::function<void(QueryFace)>;
+  void SetPickupGateForTest(PickupGateForTest gate);
+
+  // True once ShutdownAndJoin has EXECUTED its in-flight cancel request: the flag is set inside
+  // ShutdownAndJoin's lock section, immediately after LUMICE_PathCancelTokenRequest returns, so
+  // observing true means the cancel has happened — never merely that a shutdown thread has
+  // started. Drifting the store ahead of the cancel request would reopen exactly the
+  // "thread started ≠ cancel executed" race this face exists to close. The C surface has no
+  // token-state reader (Create/Request/Destroy/Poll only), so the confirmation lives here, at
+  // the layer that performs the request. Read-only.
+  bool ShutdownCancelRequestedForTest() const;
 
   // Cancels in-flight, drops queued, and joins the worker (which destroys the binding on its own
   // thread). The app's teardown calls this before the LUMICE global cleanup; every later call is
