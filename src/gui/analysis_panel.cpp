@@ -285,6 +285,14 @@ std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& st
   return identity;
 }
 
+std::string SelectedClassRowLabelFor(const GuiState& state) {
+  const LUMICE_RaypathHistogramEntry* e = SelectedAnalysisEntry(state);
+  if (e == nullptr) {
+    return std::string();
+  }
+  return AnalysisRowLabel(e->display, AnalysisCoreToPoolMap(state));
+}
+
 LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentity& identity, std::vector<int>* faces,
                                                       std::vector<int>* counts) {
   *faces = identity.faces;

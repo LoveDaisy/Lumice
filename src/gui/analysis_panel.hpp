@@ -158,6 +158,13 @@ struct SelectedClassIdentity {
 // The selection's identity, or nullopt when nothing — or a row no longer on show — is selected.
 std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& state);
 
+// The selected row's label exactly as the list shows it (AnalysisRowLabel under the same
+// core->pool rewrite), or empty when nothing — or a row no longer on show — is selected. The
+// Raypath view's identity line draws this: the window can be open while the list is not on
+// screen (Render workspace, an occluding float), so the class being read must be nameable where
+// it is read, spelled the way the list spells it rather than a second rendering of the selection.
+std::string SelectedClassRowLabelFor(const GuiState& state);
+
 // The survey pump's comparison key: the identity (the same derivation the request builder
 // consumes — one chain, so change detection and issued request cannot drift) plus the
 // generation it belongs to.

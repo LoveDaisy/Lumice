@@ -120,6 +120,14 @@ constexpr float kAnalyzeDepth3DMinSize = 240.0f;
 // regions take their internal scrolls.
 constexpr float kRaypathViewInfoMinSize = 200.0f;
 constexpr float kRaypathViewMapMinSize = 160.0f;
+// The window-level minimum the contract's narrowest face (§11 R3) names: SetNextWindowSizeConstraints
+// re-clamps the live size at every Begin — including the frames of the user's own border drag — so
+// this bound is the smallest size the user can reach, not a size only the tests can set. The split
+// floors above were verified AT this window size; the constraint is what keeps the user inside the
+// domain those floors were proven over (below it, the D3 fallback formula would shrink the info
+// region under the input rows' wrap ladder and the canvas under its 64 px code floor).
+constexpr float kRaypathViewMinWidth = 480.0f;
+constexpr float kRaypathViewMinHeight = 360.0f;
 // The split strips' thickness (##AnalyzeRowsDivider's 8 pt recipe, shared by the two new strips).
 constexpr float kAnalyzeSplitterSize = 8.0f;
 // The depth band's side-by-side form also needs vertical room: below this band height the

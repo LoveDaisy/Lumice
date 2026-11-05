@@ -225,11 +225,13 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 > **755.4 as-built**：本节已落地（`RenderAnalyzeRaypathViewWindow`，`analyze_map_view.cpp`）。开窗
 > 入口、常开同步、诚实空态、左右分区与关闭重开全部照合同实现；as-built 补充——D3 分隔落在窗内
 > （信息区比例存会话 `GuiState::analyze_raypath_view_info_ratio`，两下限 200/160 钳制，§4.2 的
-> 实现片校准值）；左区 = raster + 手势 + 四态状态行（画布侧），右区（`##AnalyzeRaypathInfo`）=
-> λ 控制、Fit/Full sky、caliber 块、天空点输入、图例（原生滚轮滚动）；cursor 读数按既有裁决留在
-> 画布。Overlay 三件套落地：标记按引擎 kind 词汇形状/配色（certified/finite 实心、其余描边）、
-> 单位置单 tooltip（按观测键分组、同键 ×N 折叠、异源保留）、等偏折圆部分可见时标签带
-> 「arc in view」限定语且图例言明几何位置非可见宣称。
+> 实现片校准值）；窗级最小尺寸 480×360（§11 R3）由 `SetNextWindowSizeConstraints` 逐帧钳制落实，
+> 用户可达的最小窗即验收过的最窄布局域；右区（`##AnalyzeRaypathInfo`）= 类身份行（列表同词
+> `SelectedClassRowLabelFor`，无选择空态）、λ 控制、Fit/Full sky、caliber 块、天空点输入、图例
+> （原生滚轮滚动；全部条目 Bullet+TextWrapped 换行——限定语在最窄信息区可读）；左区 = raster +
+> 手势 + 四态状态行（画布侧）；cursor 读数按既有裁决留在画布。Overlay 三件套落地：标记按引擎
+> kind 词汇形状/配色（certified/finite 实心、其余描边）、单位置单 tooltip（按观测键分组、同键
+> ×N 折叠、异源保留）、等偏折圆部分可见时标签带「arc in view」限定语且图例言明几何位置非可见宣称。
 
 | 项 | 合同 |
 |---|---|

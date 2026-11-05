@@ -1581,6 +1581,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // the content that decides the measure (the same ladder rung the old single-column region
   // reached through its manual route).
   ImGui::BeginChild("##AnalyzeRaypathInfo", ImVec2(info_w, size.y), ImGuiChildFlags_Borders);
+  // The identity line (contract §6's status summary): the selected class named WHERE it is read.
+  // The list that carries the same label can be off-screen while this window is open (Render
+  // workspace, an occluding float), so the window re-states the list's own text — the one chain
+  // (SelectedClassRowLabelFor, the same AnalysisRowLabel spelling the list shows), not a second
+  // rendering of the selection and not a copy of the overview's report (§2.2: the survey facts
+  // stay in the main window's diagnostics). Wrapped like every legend line below: a long chain
+  // label folds, it does not clip. The Separator ends the line so the λ row's SameLine judgment
+  // below reads a fresh line — fits_on_line judges against the LAST item's rect, and the
+  // judgment it must not inherit is whatever the map region submitted before this child.
+  const std::string identity_label = SelectedClassRowLabelFor(state);
+  if (identity_label.empty()) {
+    ImGui::TextDisabled("(no class selected)");
+  } else {
+    ImGui::TextWrapped("%s", identity_label.c_str());
+  }
+  ImGui::Separator();
   // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
   // float shows the effective value either way; editing it asks the explicit wavelength — a key
   // change the pump turns into a new request (the engine has no warm map: every lambda is a
@@ -1810,14 +1826,21 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::TextDisabled("Legend");
   {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    // Every entry is the Bullet()+TextWrapped pair (the overview's rule: BulletText and
+    // SameLine+Text size a single line and clip at the region's right edge — exactly where the
+    // dispersion entry's honesty qualifier gets interesting at the info floor's 200 pt). The
+    // wrap is the vertical scroll's own overflow channel: no horizontal scrollbar exists here.
     if (legend.anchor_sun) {
-      ImGui::BulletText("sun marker — the delta axis's zero");
+      ImGui::Bullet();
+      ImGui::TextWrapped("sun marker — the delta axis's zero");
     }
     if (legend.anchor_zenith) {
-      ImGui::BulletText("zenith cross");
+      ImGui::Bullet();
+      ImGui::TextWrapped("zenith cross");
     }
     if (legend.anchor_horizon) {
-      ImGui::BulletText("horizon circle");
+      ImGui::Bullet();
+      ImGui::TextWrapped("horizon circle");
     }
     for (const std::string& kind : legend.object_kinds) {
       const OverlayMarkerStyle style = OverlayMarkerStyleFor(kind, LUMICE_PATH_STATE_CERTIFIED);
@@ -1850,12 +1873,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
       ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
       ImGui::SameLine(0.0f, 0.0f);
-      ImGui::TextUnformatted(kind.c_str());
-      ImGui::SameLine();
-      ImGui::TextUnformatted("— the survey's located conclusion");
+      // One wrapped item: the kind and its meaning fold together at the marker's indent — the
+      // old SameLine+TextUnformatted pair pinned the explanation onto the kind's line, where the
+      // info floor clipped its tail exactly when the words carry the shape's meaning.
+      ImGui::TextWrapped("%s — the survey's located conclusion", kind.c_str());
     }
     if (legend.dispersion_red || legend.dispersion_blue) {
-      ImGui::BulletText(
+      ImGui::Bullet();
+      ImGui::TextWrapped(
           "dispersion circles (red inside blue) — the measured minimum-deviation geometry at the two reference "
           "wavelengths; positions, not a whole-circle visibility or contribution claim");
       if (legend.dispersion_partial) {
@@ -1863,7 +1888,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     if (legend.sky_point) {
-      ImGui::BulletText("sky-point marker — the target the point face queries");
+      ImGui::Bullet();
+      ImGui::TextWrapped("sky-point marker — the target the point face queries");
     }
     ImGui::PopStyleColor();
   }
@@ -1901,6 +1927,17 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
   const ImVec2 want_size = ImVec2(UiPx(900.0f), UiPx(560.0f));
   const ImVec2 vp_size = ImGui::GetMainViewport()->Size;
+  // The window-level minimum (the contract's §11 R3 narrowest face, UiPx-scaled like every other
+  // geometry constant): constraints have no Cond — ImGui re-clamps the live size into this bound
+  // at EVERY Begin, so the frames of the user's own border drag cannot carry the window below the
+  // narrowest layout the split floors and the wrap ladder were verified at. Without it, 480x360
+  // is only a size the tests can set; with it, it is the smallest size the user can reach (the
+  // same fact, one mechanism). Clamped to the viewport like the default size: a screen smaller
+  // than the floor shows the largest prefix of it rather than a window whose far edge is stuck
+  // off-screen.
+  const ImVec2 min_size =
+      ImVec2(std::min(UiPx(kRaypathViewMinWidth), vp_size.x), std::min(UiPx(kRaypathViewMinHeight), vp_size.y));
+  ImGui::SetNextWindowSizeConstraints(min_size, ImVec2(FLT_MAX, FLT_MAX));
   ImGui::SetNextWindowSize(ImVec2(std::min(want_size.x, vp_size.x), std::min(want_size.y, vp_size.y)), size_cond);
   // NoDocking: the window is a free-form surface, not shell layout (the contract's §7 boundary
   // note); NoCollapse: a collapsed title bar hides the map without freeing its queries — the

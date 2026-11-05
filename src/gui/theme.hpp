@@ -65,8 +65,9 @@ int UiPxI(int logical_px);
 // Exhaustive audit of every SetNextWindowSize()/SetNextWindowSizeConstraints() call in src/gui/
 // (`grep -rn "SetNextWindowSize" src/gui/*.cpp`, cross-checked against every
 // BeginPopupModal/ImGui::Begin() call so a window with no explicit size call is not missed
-// either). Three windows use this function: defaults_panel.cpp,
-// analysis_panel.cpp, color_window.cpp — all three are non-modal-in-effect floating windows whose
+// either). Four windows use this function: defaults_panel.cpp,
+// analysis_panel.cpp, color_window.cpp, analyze_map_view.cpp (the Raypath view) — all four are
+// non-modal-in-effect floating windows whose
 // ImGui-tracked size is set only on the appearing/first-use frame and can otherwise stay open
 // indefinitely. Every remaining SetNextWindow* call in src/gui/ is exempt, for one of two
 // independently-immune mechanisms, neither of which this function is needed for:
@@ -88,7 +89,11 @@ int UiPxI(int logical_px);
 //     (secondary_window_sizing.hpp's HeightFollowsContentState). edit_modals.cpp's "Edit Entry"
 //     modal has the same two mechanisms and also calls this function — not for its cond, but to
 //     learn that the scale changed, which sends a height the user dragged back to following the
-//     content (its measurement is at the old scale).
+//     content (its measurement is at the old scale). analyze_map_view.cpp's Raypath view window
+//     (the fourth user of WindowResizeCondForScale) is also covered by this mechanism: its
+//     SetNextWindowSizeConstraints(min 480x360, FLT_MAX) re-derives the floor from UiPx() every
+//     frame and clamps at every Begin, which is what makes the contract's narrowest face the
+//     user's reachable boundary rather than a test-only size.
 //   - The five fixed chrome panels (TopBar/LeftPanel/RightPanel/PreviewPanel/StatusBar/LogPanel,
 //     app_panels.cpp via the local SetNextPanelGeometry helper) call SetNextWindowSize with no
 //     Cond argument at all, which ImGui treats as Always — and they do so unconditionally on every

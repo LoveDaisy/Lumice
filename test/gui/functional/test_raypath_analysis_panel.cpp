@@ -1459,6 +1459,13 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
     const ImGuiTestItemInfo set_now = ctx->ItemInfo("**/Set sky point###sky_set", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(set_now.ID != 0, false);
     IM_CHECK_RETV(set_now.RectFull.Max.y <= region->InnerClipRect.Max.y + 0.5f, false);
+    // The Clear button ends the tail, and the identity line (its senior on the region) may push
+    // it past this window's fold — the region's own scroll is the designed reach for everything
+    // past the fold (the degradation ladder's rung, the same rule the with-result pin below
+    // states), so bring the tail in and take the containment there. The scroll resets to the top
+    // afterwards: the pin below reads each region at its top.
+    region->Scroll.y = region->ScrollMax.y;
+    ctx->Yield(2);
     const ImGuiTestItemInfo clear_btn = ctx->ItemInfo("**/Clear##sky", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(clear_btn.ID != 0, false);
     IM_CHECK_RETV(clear_btn.RectFull.Min.x >= region->InnerClipRect.Min.x - 0.5f &&
@@ -1470,6 +1477,8 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     IM_CHECK_RETV(!gui::g_state.analysis.sky_point.valid, false);
     ctx->LogInfo("[map view] Clear click landed; intent cleared");
+    region->Scroll.y = 0.0f;
+    ctx->Yield(2);
   }
 
   // The with-result pin, in its modern form: each region starts at its top (Scroll.y == 0 —
@@ -5112,6 +5121,11 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  // The identity line names the class with the list's own label — the same AnalysisRowLabel
+  // spelling out of the one selection chain (a window that hand-rolled its own text would read
+  // differently from the row the user clicked).
+  const std::string first_label = gui::AnalysisRowLabel(TopChainDisplay(), gui::AnalysisCoreToPoolMap(gui::g_state));
+  IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state) == first_label, false);
   PinRaypathViewOnScreen(ctx);
   ImGuiWindow* map = MapRegionWindow();
   ImGuiWindow* info = MapInfoRegionWindow();
@@ -5173,6 +5187,37 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
                static_cast<double>(gui::UiPx(gui::kRaypathViewMapMinSize)));
   IM_CHECK_RETV(fabsf(info3->Size.x - gui::UiPx(gui::kRaypathViewInfoMinSize)) < 2.0f, false);
   IM_CHECK_RETV(map3->Size.x >= gui::UiPx(gui::kRaypathViewMapMinSize) - 1.5f, false);
+  // The legend's honesty qualifier is READABLE at the 200 pt floor: the entries are the
+  // Bullet()+TextWrapped pair, so the info region's content never exceeds its width —
+  // ScrollMax.x == 0 is the region-wide form of that (a single-line BulletText here reads as
+  // content wider than a region with no horizontal scrollbar, which is exactly how the
+  // dispersion entry's qualifier got clipped before). The adopted map carries the real red/blue
+  // circles, so the longest entry is in the region. Both circle states are pinned: the
+  // post-adoption fit (the in-view arc state) and Full sky (whole circles in view — the main
+  // entry's qualifier is then the ONLY explanation, no partial note behind it).
+  {
+    ImGuiWindow* info_leg = MapInfoRegionWindow();
+    IM_CHECK_RETV(info_leg != nullptr, false);
+    ctx->LogInfo("[legend] at the 200 pt floor: info %.0fx%.0f, ScrollMax (%.1f, %.1f)",
+                 static_cast<double>(info_leg->Size.x), static_cast<double>(info_leg->Size.y),
+                 static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
+    IM_CHECK_RETV(info_leg->ScrollMax.x == 0.0f, false);
+    ctx->SetRef("");
+    ctx->ItemClick("**/Full sky##map");
+    ctx->Yield(3);
+    info_leg = MapInfoRegionWindow();
+    IM_CHECK_RETV(info_leg != nullptr, false);
+    ctx->LogInfo("[legend] Full sky (whole circles): ScrollMax (%.1f, %.1f)",
+                 static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
+    IM_CHECK_RETV(info_leg->ScrollMax.x == 0.0f, false);
+    ctx->ItemClick("**/Fit##map");
+    ctx->Yield(3);
+    info_leg = MapInfoRegionWindow();
+    IM_CHECK_RETV(info_leg != nullptr, false);
+    ctx->LogInfo("[legend] back to the fit (arc state): ScrollMax (%.1f, %.1f)",
+                 static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
+    IM_CHECK_RETV(info_leg->ScrollMax.x == 0.0f, false);
+  }
   IM_CHECK_RETV(drag_strip(-700.0f), false);
   ImGuiWindow* map4 = MapRegionWindow();
   IM_CHECK_RETV(map4 != nullptr, false);
@@ -5189,6 +5234,10 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_info_ratio == clamped_ratio, false);
+  // The identity line follows the class switch: the second row's own label.
+  IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state) ==
+                    gui::AnalysisRowLabel(second_display, gui::AnalysisCoreToPoolMap(gui::g_state)),
+                false);
   // AC3's negative face: selections, the survey and the adopted maps set no sky point — the
   // intent is the user's alone (a typed coordinate or a map pick). After two selections and
   // two adopted maps, the intent is still unset; the auto-Fit that steered the views never
@@ -5220,6 +5269,22 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
                       gui::g_state.analysis.sky_point.dir[2] == dir_before[2],
                   false);
     ctx->LogInfo("[D3 case] ROI change left the sky point verbatim (AC5)");
+  }
+
+  // The identity line survives the workspace switch: in Render mode the list is off-screen and
+  // the open window is the only face naming the class — the label stays the selected row's.
+  {
+    const std::string label_before = gui::SelectedClassRowLabelFor(gui::g_state);
+    IM_CHECK_RETV(!label_before.empty(), false);
+    ctx->ItemClick("##TopBar/Render");
+    ctx->Yield(3);
+    IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kRender, false);
+    IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+    IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state) == label_before, false);
+    ctx->ItemClick("##TopBar/Analyze");
+    ctx->Yield(3);
+    IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state) == label_before, false);
+    ctx->LogInfo("[D3 case] identity line names the class across the Render switch");
   }
 
   // The resize follows proportionally: a smaller window re-derives both widths from the same
@@ -5323,6 +5388,35 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
   // ItemInfo'd — the containment form is the stack's own zero-scroll.)
   IM_CHECK_RETV(map->ScrollMax.y == 0.0f, false);
   IM_CHECK_RETV(map->Scroll.y == 0.0f, false);
+  // The identity line's empty state (no selection here): named honestly, and the wrapped rows
+  // keep the info region's content within its width — ScrollMax.x is the region-wide statement
+  // of "nothing overflows horizontally" (a single-line text item here would read as content
+  // wider than a region that has no horizontal scrollbar to recover it).
+  IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state).empty(), false);
+  IM_CHECK_RETV(info->ScrollMax.x == 0.0f, false);
+  // The narrowest face is the user's reachable boundary, not a test-only size: a real
+  // border-corner drag past the minimum stops at the window-level constraint — the same 480x360
+  // the floors above were verified at, reached this time by the drag ImGui clamps at Begin.
+  ctx->WindowResize("//Raypath view", ImVec2(160.0f, 100.0f));
+  ctx->Yield(3);
+  ImGuiWindow* win_min = ctx->GetWindowByRef("//Raypath view");
+  IM_CHECK_RETV(win_min != nullptr, false);
+  ctx->LogInfo("[narrowest] a 160x100 drag lands at %.0fx%.0f (constraint %.0fx%.0f)",
+               static_cast<double>(win_min->Size.x), static_cast<double>(win_min->Size.y),
+               static_cast<double>(gui::UiPx(gui::kRaypathViewMinWidth)),
+               static_cast<double>(gui::UiPx(gui::kRaypathViewMinHeight)));
+  IM_CHECK_RETV(fabsf(win_min->Size.x - gui::UiPx(gui::kRaypathViewMinWidth)) < 2.0f, false);
+  IM_CHECK_RETV(fabsf(win_min->Size.y - gui::UiPx(gui::kRaypathViewMinHeight)) < 2.0f, false);
+  // The clamped size is the verified layout: floors, canvas floor and the wrap invariant hold
+  // after the drag too.
+  map = MapRegionWindow();
+  info = MapInfoRegionWindow();
+  IM_CHECK_RETV(map != nullptr && info != nullptr, false);
+  IM_CHECK_RETV(fabsf(info->Size.x - gui::UiPx(gui::kRaypathViewInfoMinSize)) < 2.0f, false);
+  const ImGuiTestItemInfo canvas_min = ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas_min.ID != 0, false);
+  IM_CHECK_RETV(canvas_min.RectFull.GetWidth() >= 64.0f, false);
+  IM_CHECK_RETV(info->ScrollMax.x == 0.0f, false);
   gui::g_state.analyze_raypath_view_open = false;
   ctx->Yield(2);
   return true;
