@@ -1604,4 +1604,32 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::EndChild();
 }
 
+void RenderAnalyzeRaypathViewWindow(GuiState& state) {
+  if (!state.analyze_raypath_view_open) {
+    return;
+  }
+  // The Colors window's size recipe (the four-tier table's free-form row): FirstUseEver at the
+  // contract's suggested default, re-applied on a UI-scale change (WindowResizeCondForScale,
+  // theme.hpp) so a scale bump grows the window with its UiPx()-derived content instead of
+  // leaving it pinned at the old pixel size.
+  static float s_sized_for_scale = 0.0f;
+  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(UiPx(900.0f), UiPx(560.0f)), size_cond);
+  // NoDocking: the window is a free-form surface, not shell layout (the contract's §7 boundary
+  // note); NoCollapse: a collapsed title bar hides the map without freeing its queries — the
+  // honest off state is closed, via the same flag the title bar's X writes through `p_open`.
+  if (!ImGui::Begin("Raypath view", &state.analyze_raypath_view_open,
+                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
+    ImGui::End();
+    return;
+  }
+  // The honest empty state (§6): the window can be open with no class selected. The map
+  // region's own no-selection line is the wording this window carries until the region itself
+  // moves in (Step 2) and owns the whole body.
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+  ImGui::TextWrapped("Select a class in the share list; its reference map takes this window.");
+  ImGui::PopStyleColor();
+  ImGui::End();
+}
+
 }  // namespace lumice::gui

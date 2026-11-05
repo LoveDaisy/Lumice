@@ -1946,6 +1946,16 @@ struct GuiState {
   };
   AnalyzeWorkspaceSession workspace;
 
+  // The Raypath view window's open state (analyze-interaction-contract.md §6, §8 ownership
+  // declaration): the class-map window the share list's class rows open. T-session display
+  // state, `left_panel_collapsed`'s family — not document state, never persisted, never in
+  // ConfigSnapshot or the dirty diff. Kept by Open and Revert (ResetFrontendState does not
+  // touch it: which panels are on screen is not document state), reset by DoNew because DoNew
+  // replaces the whole GuiState — the per-reason rule the contract's §8 declaration names.
+  // The window's own geometry (size, position, the D3 split) is ImGui window storage: session
+  // memory inside the process, outside GuiState entirely.
+  bool analyze_raypath_view_open = false;
+
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the
   // background gestures and the analysis window's point pick are all locked out — and the cursor

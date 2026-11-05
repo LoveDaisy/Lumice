@@ -488,6 +488,11 @@ int main(int argc, char** argv) {
     gui::RenderLogPanel(layout_width, layout_height);
     gui::RenderColorWindow(gui::g_state, gui::g_server);
     gui::RenderConfigSummaryWindow(gui::g_state);
+    // The Raypath view floating window (contract §6): mirrored in test_gui_main.cpp the same
+    // frame — a floating window committed in one frame loop but not the other leaves its
+    // ImGui-level widgets zero-covered by that side's tests. Before the status bar: the
+    // window's map face writes the wait-feedback texts the status bar's query segment reads.
+    gui::RenderAnalyzeRaypathViewWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);
     gui::RenderEditModals(gui::g_state, window);
     gui::RenderSpectrumModal(gui::g_state);

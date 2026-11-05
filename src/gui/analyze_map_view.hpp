@@ -237,6 +237,15 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s);
 // caliber line.
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
 
+// The Raypath view floating window (doc/gui/analyze-interaction-contract.md §6): the non-modal
+// container the share list's class rows open. Committed from BOTH frame loops next to the
+// Colors/Summary windows, in every workspace mode — early-return while
+// `state.analyze_raypath_view_open` is false, so a closed window costs one branch. The `bool*`
+// passed to ImGui::Begin is the flag itself: the title-bar X writes it back directly, and the
+// next class-row click reopens. In-flight queries are not touched by opening or closing (the
+// T-session contract, §8).
+void RenderAnalyzeRaypathViewWindow(GuiState& state);
+
 // Releases the region's GL texture (the app's teardown, next to the executor's join).
 void ShutdownMapView();
 

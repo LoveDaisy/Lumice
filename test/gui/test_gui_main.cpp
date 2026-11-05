@@ -953,6 +953,10 @@ int main(int argc, char** argv) {
     // The Summary window, mirrored from src/gui/main.cpp like the Colors window above; a no-op
     // while config_summary_window_open is false.
     gui::RenderConfigSummaryWindow(gui::g_state);
+    // The Raypath view window (contract §6), mirrored from src/gui/main.cpp like the Colors
+    // and Summary windows above — a floating window absent from this loop is zero-covered by
+    // every harness-side test. A no-op while analyze_raypath_view_open is false.
+    gui::RenderAnalyzeRaypathViewWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);
     // Intentional deviation from plan (which suggested nullptr): the test
     // harness owns a real GLFW window (hidden in CI), so passing it yields

@@ -1709,6 +1709,12 @@ void RenderResultList(GuiState& state) {
     const bool selected = state.analysis.selected_entry.has_value() && *state.analysis.selected_entry == e.display;
     if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
       state.analysis.selected_entry = std::string(e.display);
+      // The row click is the window's one open entry (contract §6): selecting a class also
+      // makes sure the Raypath view window is open — an already-selected row re-clicked
+      // reopens it after a manual close (the Selectable fires on every click, selected or
+      // not, so no second path is needed). Opening is a display-state write only: it starts
+      // no query and touches no document field.
+      state.analyze_raypath_view_open = true;
     }
     RowLabelTextTooltip(label);
     // The row rect, captured before the copy menu (an open popup's MenuItems would overwrite

@@ -206,6 +206,11 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // state — one struct, one row, the same grain `analysis` registers at. Never persisted, never
     // dirty; survives document switches (layout is not document state).
     { "workspace",                  FieldTier::kSession,    false },
+    // The Raypath view window's open state (analyze-interaction-contract.md §8): T-session
+    // display state like color_window_open — which panels are open is not document state.
+    // Open/Revert keep it (ResetFrontendState does not touch it), DoNew resets it with the whole
+    // GuiState.
+    { "analyze_raypath_view_open",  FieldTier::kSession,    false },
     { "look_at",                    FieldTier::kSession,    false },
     // An Angular Distance pick in flight (armed + which family) — a gesture, not the document.
     { "angular_dist_picker",        FieldTier::kSession,    false },
