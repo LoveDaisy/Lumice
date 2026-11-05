@@ -6760,16 +6760,41 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ctx->LogInfo(
       "[scopes] first-class request executing across the class switch; adopted doc's faces = the second class's");
 
-  // ---- ③ a sky-point move issued (key gate + the old document standing), then the workspace
-  // switched before adoption: the Render-side pump adopts with the windows open.
+  // ---- ③ target A issued and observed EXECUTING (the per-face running token; A's intent id
+  // saved by value), then target B supersedes it mid-flight — the pump's key swap is the
+  // readback that B's intent now stands — and only then does the case switch workspaces. The
+  // Render-side pump adopts B's answer with the windows open, and the document's own target
+  // echo (alt 30) is the late-arrival judge: had A's answer been adopted after B's intent
+  // stood, the doc would read A's target and fail here. The GUI layer cannot observe A's
+  // completion EVENT itself (the executor's internals are not exposed); the scheduling/
+  // adoption contract behind that ordering is the unit layer's
+  // (SurveyExecutorSupersedesRefusesOnReleaseAndJoins) — this case owns the composition.
+  SetSkyPointTarget(28.0, 8.0);
+  gui::SurveyQueryId target_a_id;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&target_a_id] {
+                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
+                      const bool issued =
+                          p.intent_valid &&
+                          std::fabs(p.key.target_dir[2] - (-std::sin(28.0 * lumice::kDeg2Rad))) < 1e-4 &&
+                          gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                          gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      if (issued) {
+                        target_a_id = p.intent_id;  // A's request id, by value, at its observed execution
+                      }
+                      return issued;
+                    },
+                    30),
+                false);
+  IM_CHECK_RETV(target_a_id.serial != 0 || target_a_id.generation != 0, false);
   SetSkyPointTarget(30.0, 10.0);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
-                    [] {
+                    [&target_a_id] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(30.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) != gui::PointQueryState::kCompleted;
+                      return p.intent_valid && (p.intent_id != target_a_id) &&
+                             std::fabs(p.key.target_dir[2] - (-std::sin(30.0 * lumice::kDeg2Rad))) < 1e-4;
                     },
                     30),
                 false);
@@ -6779,20 +6804,23 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
-                    [] {
-                      if (gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kCompleted ||
-                          gui::g_state.analysis.point.adopted_result == nullptr) {
+                    [&target_a_id] {
+                      // B's adoption: the doc gate passed for the post-supersession intent (its
+                      // id has moved off A's), and the document echo names B's target.
+                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
+                      if (gui::PointQueryStateFor(p) != gui::PointQueryState::kCompleted ||
+                          p.adopted_result == nullptr || !(p.intent_id != target_a_id)) {
                         return false;
                       }
                       LUMICE_PathPointInfo i{};
                       i.struct_size = sizeof(i);
-                      return LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &i) ==
-                                 LUMICE_PATH_READ_OK &&
+                      return LUMICE_PathPointGetInfo(p.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
                              std::fabs(i.target_altitude_deg - 30.0) < 1e-3;
                     },
                     60),
                 false);
-  ctx->LogInfo("[scopes] the issued move's answer landed across the workspace switch (alt 30)");
+  ctx->LogInfo(
+      "[scopes] A executed, B superseded it mid-flight, B's answer landed across the workspace switch (alt 30)");
   ctx->ItemClick("##TopBar/Analyze");
   ctx->Yield(3);
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
@@ -6966,7 +6994,14 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open && !gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(!window_active("Raypath view") && !window_active("Pose & trace"), false);
-  ctx->LogInfo("[scopes] New with a query in flight: faces cleared, windows closed, executor drained");
+  // No-revival over time: several more frames after the drain, the cleared contract still
+  // holds (a late A-answer publish that revived any face would show here).
+  ctx->Yield(20);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == nullptr, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result == nullptr, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
+  ctx->LogInfo("[scopes] New with a query in flight: faces cleared, windows closed, executor drained, no revival");
   return true;
 }
 
