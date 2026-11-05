@@ -6556,9 +6556,12 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
     info.struct_size = sizeof(info);
     IM_CHECK_RETV(
         LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
-    // The completed point document names the EXPECTED class (derived before the click), not
-    // merely "a class with the same crystal".
+    // The completed point document names the EXPECTED class (derived before the click) — its
+    // own face sequence equals the expected identity's, so a stale first-class doc under the
+    // new key (same crystal, different faces) fails right here.
     IM_CHECK_RETV(info.crystal_id == expected_second.core_crystal_id, false);
+    IM_CHECK_RETV(info.face_count == expected_second.faces.size(), false);
+    IM_CHECK_RETV(std::equal(expected_second.faces.begin(), expected_second.faces.end(), info.faces), false);
     const std::string second_label = gui::AnalysisRowLabel(second_display, gui::AnalysisCoreToPoolMap(gui::g_state));
     IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state) == second_label, false);
   }
@@ -6673,7 +6676,8 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                     [] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
                       return p.intent_valid && p.key.wavelength_nm == 600.0 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting;
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
@@ -6695,9 +6699,13 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
   ctx->LogInfo("[scopes] lambda 600 issued in flight, superseded by 0; the adopted doc's echo is not 600");
 
-  // ---- ② the class switch issued while the first class's document still stands. The issued
-  // intent's selection key names the SECOND class by faces — the field the halo's top chains
-  // differ on — and the old document handle stands at that moment (issued, not yet adopted).
+  // ---- ② a first-class request EXECUTING across the class switch: the sky point moves first
+  // (the first class's point query goes out and is observed EXECUTING on the executor's
+  // per-face token — InFlight(kPoint) is the running query, not the queue), and only then does
+  // the second row's click re-key the session. The switch's own request is likewise observed
+  // executing before its answer is read, and the ADOPTED DOCUMENT's own face sequence is the
+  // oracle — LUMICE_PathPointInfo carries the doc's faces, the field the halo's top chains
+  // differ on, so a stale first-class answer adopted under the new key fails here.
   const auto& view = gui::g_state.analysis_result;
   IM_CHECK_RETV(view.display_order.size() >= 2u, false);
   const std::string second_display = view.payload->entries[static_cast<size_t>(view.display_order[1])].display;
@@ -6705,6 +6713,18 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
       IdentityFromPayloadEntry(view.payload->entries[static_cast<size_t>(view.display_order[1])]);
   const std::optional<gui::SelectedClassIdentity> old_identity = gui::SelectedClassIdentityFor(gui::g_state);
   IM_CHECK_RETV(old_identity.has_value() && old_identity->faces != expected_second.faces, false);
+  SetSkyPointTarget(45.0, 5.0);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
+                      return p.intent_valid &&
+                             std::fabs(p.key.target_dir[2] - (-std::sin(45.0 * lumice::kDeg2Rad))) < 1e-4 &&
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                    },
+                    30),
+                false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
@@ -6713,7 +6733,8 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                       return p.intent_valid && p.key.selection.faces == expected_second.faces &&
                              p.key.selection.crystal_id == expected_second.core_crystal_id &&
                              !(p.key.selection.faces == old_identity->faces) &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting;
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
@@ -6727,10 +6748,17 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
     info.struct_size = sizeof(info);
     IM_CHECK_RETV(
         LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    // The adopted document IS the second class's answer: its own face sequence equals the
+    // expected identity's (the negative case — a stale first-class doc under the new key —
+    // carries the old faces and fails this compare, which is the discrimination the oracle
+    // exists for).
     IM_CHECK_RETV(info.crystal_id == expected_second.core_crystal_id, false);
+    IM_CHECK_RETV(info.face_count == expected_second.faces.size(), false);
+    IM_CHECK_RETV(std::equal(expected_second.faces.begin(), expected_second.faces.end(), info.faces), false);
   }
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
-  ctx->LogInfo("[scopes] class switch issued mid-wait; the full-key intent names the second class, the old doc stood");
+  ctx->LogInfo(
+      "[scopes] first-class request executing across the class switch; adopted doc's faces = the second class's");
 
   // ---- ③ a sky-point move issued (key gate + the old document standing), then the workspace
   // switched before adoption: the Render-side pump adopts with the windows open.
@@ -6831,7 +6859,8 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
                       return p.intent_valid &&
                              std::fabs(p.key.target_dir[2] - (-std::sin(33.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting;
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
@@ -6884,12 +6913,16 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                     [] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
                       return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(35.0 * lumice::kDeg2Rad))) < 1e-4;
+                             std::fabs(p.key.target_dir[2] - (-std::sin(35.0 * lumice::kDeg2Rad))) < 1e-4 &&
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
   IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 20), false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, 20), false);
+  // The drain covers the worker AND the GUI pump's consumption of any completion that raced.
+  ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
   IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
@@ -6913,12 +6946,15 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                     [] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
                       return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(31.0 * lumice::kDeg2Rad))) < 1e-4;
+                             std::fabs(p.key.target_dir[2] - (-std::sin(31.0 * lumice::kDeg2Rad))) < 1e-4 &&
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
   gui::DoNew();
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 20), false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, 20), false);
+  ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
   IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
