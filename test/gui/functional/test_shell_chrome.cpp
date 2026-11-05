@@ -53,7 +53,7 @@ const char* const kRunBtn = "##TopBar/" ICON_FA_PLAY " Run";
 const char* const kStopBtn = "##TopBar/" ICON_FA_STOP " Stop";
 const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
 const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
-const char* const kSettingsBtn = "##TopBar/" ICON_FA_GEAR " Settings";
+const char* const kSettingsBtn = "##TopBar/" ICON_FA_GEAR;
 // The workspace switch's two cells — a segmented pair, both drawn every frame. The tint on the
 // current mode's cell is the only mode-dependent part: its click is a no-op, the other's switches.
 const char* const kWorkspaceToAnalyzeBtn = "##TopBar/Analyze";
@@ -68,10 +68,10 @@ const char* const kTopBarButtons[] = {
   "##TopBar/" ICON_FA_CHEVRON_LEFT "##left_panel_toggle",
   kRunBtn,
   kContinueBtn,
-  "##TopBar/" ICON_FA_FILE,
-  "##TopBar/" ICON_FA_FOLDER_OPEN,
-  "##TopBar/" ICON_FA_FLOPPY_DISK,
-  "##TopBar/" ICON_FA_PALETTE " Colors",
+  "##TopBar/" ICON_FA_FILE " New",
+  "##TopBar/" ICON_FA_FOLDER_OPEN " Open",
+  "##TopBar/" ICON_FA_FLOPPY_DISK " Save",
+  "##TopBar/" ICON_FA_PALETTE,
   "##TopBar/" ICON_FA_FILE_LINES,
   kWorkspaceToRenderBtn,
   kWorkspaceToAnalyzeBtn,
@@ -980,7 +980,13 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         IM_CHECK(gui::DeserializeFromJson(json_str, gui::g_state));
       }
       gui::g_state.renderer.sim_resolution_index = 0;
-      gui::g_state.sim.infinite = false;
+      // The run is INFINITE on purpose: this case's subject is the in-flight diagnostics
+      // geometry, and a bounded budget made that in-flight window a wall-clock race — a 0.1M
+      // run completed before the probe on an unloaded machine (probe read sim_state=kDone,
+      // in_progress=0), red wherever the machine was fast, green only under load. An unbounded
+      // run stays simulating until the case's own Stop click / teardown, which is the state
+      // this case actually examines.
+      gui::g_state.sim.infinite = true;
       gui::g_state.sim.ray_num_millions = 0.1f;
       gui::DoRun(/*user_initiated=*/true);
       gui::g_state.analysis.started = true;

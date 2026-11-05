@@ -513,22 +513,25 @@ void RenderTopBar(float window_width) {
   // itself stays enabled so read-only exports (Screenshot / Dual Fisheye Equal Area /
   // Equirectangular / Config JSON) remain reachable.
   //
-  // Icon-only labels: the words they replaced were the bar's widest cheap reclaim, spent on the
-  // workspace group's split (the narrow-window budget is pinned by
-  // shell_chrome/the_top_bar_fits_at_the_minimum_window_width). Each icon's word lives in its
-  // tooltip — read through AllowWhenDisabled for New/Open, since they spend much of their life
-  // behind BeginDisabled(busy), and a tooltip that fired only while enabled would vanish exactly
-  // when the disabled state invites the question "why not now".
-  const float file_op_width = ToolbarGroupButtonWidth({ ICON_FA_FILE, ICON_FA_FOLDER_OPEN, ICON_FA_FLOPPY_DISK });
+  // Icon + word labels (the toolbar-consistency ruling, all four qualifying matrices measured at
+  // the real 1024 frame: icon+word here fit at required=997; word on the window-opener group did
+  // not — 1045/1147 — so the words went back to the file commands and the window openers went
+  // icon-only). One width for the three, still: the group reads as one control and nothing
+  // outside it moves when the labels reflow. Tooltips stay — they explain the command, not just
+  // name it, and New/Open spend much of their life behind BeginDisabled(busy), so a tooltip that
+  // fired only while enabled would vanish exactly when the disabled state invites the question
+  // "why not now".
+  const float file_op_width =
+      ToolbarGroupButtonWidth({ ICON_FA_FILE " New", ICON_FA_FOLDER_OPEN " Open", ICON_FA_FLOPPY_DISK " Save" });
   ImGui::BeginDisabled(busy);
-  if (ImGui::Button(ICON_FA_FILE, ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(ICON_FA_FILE " New", ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kNew);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("New: start a new document.");
   }
   ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_FOLDER_OPEN, ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(ICON_FA_FOLDER_OPEN " Open", ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kOpen);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -537,7 +540,7 @@ void RenderTopBar(float window_width) {
   ImGui::EndDisabled();
   ImGui::SameLine();
   {
-    if (ImGui::Button(ICON_FA_FLOPPY_DISK, ImVec2(file_op_width, 0))) {
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save", ImVec2(file_op_width, 0))) {
       ImGui::OpenPopup("SaveMenu");
     }
     if (ImGui::IsItemHovered()) {
@@ -610,7 +613,7 @@ void RenderTopBar(float window_width) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
   }
-  if (ImGui::Button(ICON_FA_PALETTE " Colors")) {
+  if (ImGui::Button(ICON_FA_PALETTE)) {
     // task-348.3 AC3 (⑦): apply the "default enable on open with no classes" rule
     // ONLY on the false→true transition of color_window_open. Doing it here (inside
     // the click branch, guarded by `opening`) — not per-frame inside RenderColorWindow
@@ -626,11 +629,17 @@ void RenderTopBar(float window_width) {
   if (tint_colors_button) {
     ImGui::PopStyleColor(3);
   }
+  // Icon-only is the window-opener group's one form (the toolbar-consistency ruling: the same
+  // real-frame measurement that returned the words to the file commands took them off this
+  // group — one expression per kind of command). The word lives in the tooltip, same rule the
+  // icon-bearing buttons follow.
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Colors: the raypath colour classes. Opens the Colors window.");
+  }
   // The second occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
-  // like Analysis — the window has no state of its own to set on open. Icon-only like the file
-  // group: its word was the bar's next-widest cheap reclaim after New/Open/Save, spent by owner
-  // ruling on the group-gap rule's narrow-window budget (the same fit pin), and the tooltip
-  // carries the word.
+  // like Analysis — the window has no state of its own to set on open. Icon-only like the rest of
+  // its group (Colors / Summary / Settings, one expression per kind of command — the ruling that
+  // returned the words to the file commands), and the tooltip carries the word.
   ImGui::SameLine();
   if (ImGui::Button(ICON_FA_FILE_LINES)) {
     g_state.config_summary_window_open = !g_state.config_summary_window_open;
@@ -770,8 +779,9 @@ void RenderTopBar(float window_width) {
   // byte-for-byte by workspace_switch_swaps_layout_and_stays_clean, together with the segmented
   // shape itself). The current mode's cell carries the accent — "selected", the same reading as
   // the tinted Colors button — and its click is a no-op; the mode itself is on screen (four
-  // columns vs the render layout) and the tooltips say where the click goes. The file group's
-  // iconified labels are the reclaim that funds the pair (same fit pin). Switching is session
+  // columns vs the render layout) and the tooltips say where the click goes. The window-opener
+  // group's icon-only labels are the headroom that funds the pair (same fit pin; the measured
+  // floor is required=997, headroom=27). Switching is session
   // state: it never dirties, never commits, never cancels or starts a run.
   {
     const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
@@ -837,8 +847,11 @@ void RenderTopBar(float window_width) {
   // The panel's preset library is one section inside it, so retuning a preset is still reachable;
   // it no longer has a menu item of its own pointing straight at that section.
   ToolbarGroupSeparator(window_width);
-  if (ImGui::Button(ICON_FA_GEAR " Settings")) {
+  if (ImGui::Button(ICON_FA_GEAR)) {
     OpenDefaultsPanel(g_state, DefaultsPanelSection::kSettings);
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Settings: personal defaults -- what a new document starts from. Opens the Settings panel.");
   }
 
   // The right toggle's width is needed before it is drawn: the ⚠ + Revert pair below is placed

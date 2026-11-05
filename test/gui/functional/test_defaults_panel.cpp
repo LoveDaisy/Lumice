@@ -601,7 +601,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ScopedPanel panel(ctx, "panel_topbar_entry");
       ctx->Yield(2);
 
-      const char* kSettingsRef = "##TopBar/" ICON_FA_GEAR " Settings";
+      const char* kSettingsRef = "##TopBar/" ICON_FA_GEAR;
       IM_CHECK(ctx->ItemExists(kSettingsRef));
 
       // A simulation running must not take the entry away: settings are not a document operation,
@@ -639,7 +639,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
 
-      ctx->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK);
+      ctx->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK " Save");
       ctx->Yield(2);
       ctx->SetRef("//$FOCUSED");
       IM_CHECK(!ctx->ItemExists("**/Save Current as Defaults..."));
