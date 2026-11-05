@@ -6102,6 +6102,26 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   PinRaypathViewOnScreen(ctx);
   IM_CHECK_RETV(MapRegionWindow() != nullptr && MapInfoRegionWindow() != nullptr, false);
   IM_CHECK_RETV(ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError).ID != 0, false);
+  // The class map's representative frame (the AC7 hand-off's 类图): the window map specifically
+  // — the full-sky map auto-Fits and the refinement view answers behind the first adoption,
+  // whose default slice can legitimately carry no events. Captured here, on the whole-sky
+  // payload, before the cone analysis replaces it (the faithful §12-③ moment: the row click
+  // just opened the window onto the class's own picture).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                        return false;
+                      }
+                      LUMICE_PathMapInfo i{};
+                      i.struct_size = sizeof(i);
+                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                             i.view_full_sky == 0;
+                    },
+                    60),
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("chain_five_ops_class_map.png").string()), false);
   ctx->LogInfo("[five ops] 1: Run -> Analyze -> list -> row click opens the Raypath view = 4 clicks + 2 waits");
 
   // ---- Op ② — one camera drag brings the arc into view (the arbitration's camera face: nothing
@@ -6233,6 +6253,9 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   ctx->ItemClick("**/Stop##globe_play");
   ctx->Yield(2);
   IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+  // Process frame of the populated pose window (the AC7 hand-off's 点姿态): globe, factors and
+  // the completed point document in one window.
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("chain_five_ops_point_pose.png").string()), false);
   ctx->LogInfo(
       "[five ops] 4: map pick -> point wait -> Point detail opens the pose window + playback = 3 clicks + 1 wait");
 
