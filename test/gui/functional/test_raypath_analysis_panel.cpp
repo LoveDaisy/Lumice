@@ -3470,6 +3470,14 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   const std::string top_display = TopChainDisplay();
   IM_CHECK_RETV(SelectRowByDisplay(ctx, top_display.c_str()) != std::nullopt, false);
+  // The row click also opened the Raypath view window (the contract's open entry). This leg's
+  // subject is the WORKSPACE's tier geometry, and a floating window parked in the viewport
+  // owns every click that lands on it (ImGui hit-tests by z-order — for a user, exactly the
+  // product behaving correctly) — so the leg closes it here and after every tier's row click
+  // below, and drives the workspace bare. The window's own open/close/sync contract is pinned
+  // by the dedicated raypath view cases.
+  gui::g_state.analyze_raypath_view_open = false;
+  ctx->Yield(2);
   // Point mode for the Radius row (the picture exists — the radio opens).
   ctx->SetRef(PanoramaRegionRef());
   ctx->ItemClick("Point");
@@ -3573,6 +3581,10 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(
         gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == top_display,
         false);
+    // The row click re-opened the window (the contract's reopen-on-row-click rule); close it
+    // for the same reason as at the selection above — this leg drives the workspace bare.
+    gui::g_state.analyze_raypath_view_open = false;
+    ctx->Yield(2);
     // The button pair: contained on ALL four edges, Exclude enabled for the single-layer
     // selection — and a REAL exclusion: the click writes the filter with this row's chain, and
     // Include-again (with the descriptor the greyed row would carry) reverses it before the
@@ -3627,11 +3639,9 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       ctx->Yield(2);
       ctx->LogInfo("[scale tiers %s] exclude written and reversed", label);
     }
-    // The Radius: scroll the clamped head to it, contain it, then drag its track to BOTH ends
-    // by the real mouse path. The oracle is the request-side range — this leg's payload is
-    // FULL_SKY (cone_radius_rad 0 by contract), and the slider in that branch reads
-    // kAnalysisConeMaxRadiusDeg / the ring count — reading the payload here made the far-end
-    // assert vacuous (the r4 review's catch).
+    // The head: scrolled to its bottom so the symmetry row (just above the search box) is in
+    // view for the symmetry drives below. (The Radius used to be the other resident this scroll
+    // served; it now lives on the main view's operation bar.)
     ImGuiWindow* head_t = nullptr;
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && std::strstr(w->Name, "##analysis_head") != nullptr) {
@@ -3644,18 +3654,29 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     }
     head_t->Scroll.y = head_t->ScrollMax.y;
     ctx->Yield(3);
+    // The Radius: contained in the window that hosts it, then dragged to BOTH ends by the real
+    // mouse path. The oracle is the request-side range — this leg's payload is FULL_SKY
+    // (cone_radius_rad 0 by contract), and the slider in that branch reads
+    // kAnalysisConeMaxRadiusDeg / the ring count — reading the payload here made the far-end
+    // assert vacuous (the r4 review's catch).
+    // The slider is a request control on the operation bar (RenderAnalyzeOperationBar), whose
+    // host is whatever window the bar rendered into this frame — the panorama window directly,
+    // or one of its two bar children at the degraded widths. The item's OWN window (the hook's
+    // Window field) is the one anchor true across all three: containment means "inside the clip
+    // the item was submitted under", which is exactly that window's InnerClipRect.
     // One anchored id across both width branches (the product's "###Radius_narrow"): the narrow
     // branch hides the slider's own display text — its label owns the line above — and the wide
     // branch's trailing label rides the slider's row.
     const ImGuiTestItemInfo radius_t = ctx->ItemInfo("**/Radius###Radius_narrow", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(radius_t.ID != 0, false);
-    IM_CHECK_RETV(radius_t.RectFull.Max.x <= head_t->InnerClipRect.Max.x + 0.5f &&
-                      radius_t.RectFull.Min.x >= head_t->InnerClipRect.Min.x - 0.5f,
+    IM_CHECK_RETV(radius_t.Window != nullptr, false);
+    IM_CHECK_RETV(radius_t.RectFull.Max.x <= radius_t.Window->InnerClipRect.Max.x + 0.5f &&
+                      radius_t.RectFull.Min.x >= radius_t.Window->InnerClipRect.Min.x - 0.5f,
                   false);
     // The visible "Radius" text is not the slider rect's cargo (the hook reports the frame
     // only, so a trailing label could sit past the clip invisibly), and a text item carries
     // id 0 — it cannot be ItemInfo'd at all (the 1024-block's culled-label guess failed here
-    // first). Classify the branch on the product's own arithmetic over the same content width
+    // first). Classify the branch on the product's own arithmetic over the host's content width
     // (InnerClipRect excludes padding and an active scrollbar): wide keeps a 120 pt track floor
     // plus the label on one row — the label's drawn extent (frame_max + ItemInnerSpacing.x, the
     // slider-label convention) is then bound past the track's right edge; narrower, the label
@@ -3663,9 +3684,9 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     // inside the clip the track's own containment proves.
     const float label_w = ImGui::CalcTextSize("Radius").x;
     const float inner_sp = ImGui::GetStyle().ItemInnerSpacing.x;
-    const float content_w = head_t->InnerClipRect.GetWidth();
+    const float content_w = radius_t.Window->InnerClipRect.GetWidth();
     if (content_w - label_w - inner_sp >= gui::UiPx(120.0f)) {
-      IM_CHECK_RETV(radius_t.RectFull.Max.x + inner_sp + label_w <= head_t->InnerClipRect.Max.x + 0.5f, false);
+      IM_CHECK_RETV(radius_t.RectFull.Max.x + inner_sp + label_w <= radius_t.Window->InnerClipRect.Max.x + 0.5f, false);
     } else {
       IM_CHECK_RETV(radius_t.RectFull.GetWidth() >= content_w - 1.5f, false);
     }

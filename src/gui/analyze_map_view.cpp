@@ -1611,10 +1611,15 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   // The Colors window's size recipe (the four-tier table's free-form row): FirstUseEver at the
   // contract's suggested default, re-applied on a UI-scale change (WindowResizeCondForScale,
   // theme.hpp) so a scale bump grows the window with its UiPx()-derived content instead of
-  // leaving it pinned at the old pixel size.
+  // leaving it pinned at the old pixel size. The default is clamped to the viewport: at the 2x
+  // scale the suggested 900x560 pt is 1800x1120 px — past the shortest supported window's own
+  // height — and a first appearance larger than the viewport hides its own edges behind the
+  // screen; the free-form tier's two-axis resize starts from what fits.
   static float s_sized_for_scale = 0.0f;
   const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSize(ImVec2(UiPx(900.0f), UiPx(560.0f)), size_cond);
+  const ImVec2 want_size = ImVec2(UiPx(900.0f), UiPx(560.0f));
+  const ImVec2 vp_size = ImGui::GetMainViewport()->Size;
+  ImGui::SetNextWindowSize(ImVec2(std::min(want_size.x, vp_size.x), std::min(want_size.y, vp_size.y)), size_cond);
   // NoDocking: the window is a free-form surface, not shell layout (the contract's §7 boundary
   // note); NoCollapse: a collapsed title bar hides the map without freeing its queries — the
   // honest off state is closed, via the same flag the title bar's X writes through `p_open`.
