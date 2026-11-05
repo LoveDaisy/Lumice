@@ -285,6 +285,14 @@ std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& st
   return identity;
 }
 
+std::string SelectedClassRowLabelFor(const GuiState& state) {
+  const LUMICE_RaypathHistogramEntry* e = SelectedAnalysisEntry(state);
+  if (e == nullptr) {
+    return std::string();
+  }
+  return AnalysisRowLabel(e->display, AnalysisCoreToPoolMap(state));
+}
+
 LUMICE_PathSurveyRequest MakeSurveyRequestForIdentity(const SelectedClassIdentity& identity, std::vector<int>* faces,
                                                       std::vector<int>* counts) {
   *faces = identity.faces;
@@ -406,44 +414,6 @@ LUMICE_AnnotationView PreviewAnnotationView(const GuiState& state, int canvas_w,
   return BuildAnnotationView(MakeAnnotationViewKey(AnnotationViewInputFor(state, state.renderer), canvas_w, canvas_h));
 }
 
-LUMICE_AnnotationView PanoramaAnnotationView(const GuiState& state, int canvas_w, int canvas_h) {
-  // The Analyze workspace's panorama: the up-looking equal-area fisheye — lens 1 at fov 180 with
-  // the view pitched to +90 (straight up), so the disk centre is the zenith and the rim the
-  // horizon, both sides (shader display and this pick view) camera-framed by the same view
-  // angles. visible=Full on purpose: the lens's own behind-camera sentinel already bounds the
-  // disk, and the half-sky visible values route the annotation projector through a different
-  // domain the panorama does not want. No overlay circles or markers: the key carries only what
-  // will be read.
-  AnnotationViewInput in;
-  in.lens_type = kLensTypeFisheyeEqualArea;
-  in.fov = 180.0f;
-  in.azimuth = 0.0f;
-  // The hemisphere switch pitches the camera: +90 reads the upper sky (zenith at the disk
-  // centre), -90 the lower (nadir at the centre).
-  in.elevation = state.workspace.panorama_upper ? 90.0f : -90.0f;
-  in.roll = 0.0f;
-  in.visible = kVisibleFull;
-  in.front = false;
-  in.sun_altitude_deg = state.sun.altitude;
-  return BuildAnnotationView(MakeAnnotationViewKey(in, canvas_w, canvas_h));
-}
-
-bool PanoramaPickHitsSky(const GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
-  // The up-looking fisheye's square canvas outcorners its disk: outside the rim
-  // LUMICE_UnprojectPixel still answers (the lens inverse carries no rim rejection at fov 180),
-  // with a direction below the horizon. The panorama's pick and drag accept upper-sky directions
-  // only — the disk, not the square.
-  float dir[3] = { 0.0f, 0.0f, 0.0f };
-  int valid = 0;
-  if (LUMICE_UnprojectPixel(&view, px, py, dir, &valid) != LUMICE_OK || valid == 0) {
-    return false;
-  }
-  // Travel convention: sky light travels away from the viewed hemisphere's centre — looking up
-  // (+90), upper-sky light travels downward (z < 0); looking down (-90), lower-sky light travels
-  // upward (z > 0). The slack spans the rim's horizon band (rim pixels sit at |z| <= 0.005).
-  return state.workspace.panorama_upper ? dir[2] < 0.05f : dir[2] > -0.05f;
-}
-
 bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
   float dir[3] = { 0.0f, 0.0f, 0.0f };
   int valid = 0;
@@ -460,6 +430,7 @@ bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, 
   auto& a = state.analysis;
   std::copy(dir, dir + 3, a.cone_center_dir);
   a.cone_center_valid = true;
+  a.cone_center_is_default = false;  // the click owns the centre; resizes never move it
   a.pick_armed = false;
   float alt = 0.0f;
   float az = 0.0f;
@@ -504,6 +475,7 @@ bool DragAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, 
     return false;
   }
   std::copy(dir, dir + 3, state.analysis.cone_center_dir);
+  state.analysis.cone_center_is_default = false;  // a hand on the marker owns the centre from here
   return true;
 }
 
@@ -516,8 +488,21 @@ bool EnsureDefaultConeCenter(GuiState& state, const LUMICE_AnnotationView& view,
     return false;
   }
   auto& a = state.analysis;
+  // The deadline is the FIRST placement's: a size compensation re-places the direction but must
+  // not refresh the frame that ends its own convergence window — otherwise a continuous run of
+  // size changes (each inside the last one's window) could re-derive the direction forever.
+  const bool initial_placement = !a.cone_center_valid;
   std::copy(dir, dir + 3, a.cone_center_dir);
   a.cone_center_valid = true;
+  a.cone_center_is_default = true;
+  a.cone_center_default_vp_w = vp_w;
+  a.cone_center_default_vp_h = vp_h;
+  // The placement's birth frame, for the convergence window that bounds the re-place. Zero when
+  // no ImGui context exists — the logic tests call this function bare, and they never consume
+  // the age; the workspace caller always runs inside a frame.
+  if (initial_placement) {
+    a.cone_center_default_frame = ImGui::GetCurrentContext() != nullptr ? static_cast<int>(ImGui::GetFrameCount()) : 0;
+  }
   float alt = 0.0f;
   float az = 0.0f;
   DirToAltAz(dir, &alt, &az);
@@ -573,7 +558,7 @@ void EnsureDefaultAnalysisRayBudget(GuiState& state) {
   state.analysis.ray_budget_initialized = true;
 }
 
-LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state, int canvas_w, int canvas_h) {
+LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state) {
   LUMICE_RaypathAnalysisRequest req{};
   req.roi_mode = state.analysis.roi_mode;
   // The budget applies to every ROI mode, so it sits outside the switch. Millions -> rays in
@@ -581,10 +566,11 @@ LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state, int ca
   // rounding of it.
   req.infinite = state.analysis.infinite ? 1 : 0;
   req.ray_num = static_cast<LUMICE_RayCount>(static_cast<double>(state.analysis.ray_num_millions) * 1e6);
+  // The GUI's region choices are Whole sky and Point only (the In frame radio retired with the
+  // free-camera main view — analyze-interaction-contract.md §5.3's removal record; the mode's
+  // CLI/C API contract and the engine behind it are untouched). The switch is therefore total
+  // over what the session's roi_mode can hold: no canvas/frame branch to serve.
   switch (state.analysis.roi_mode) {
-    case LUMICE_RAYPATH_ROI_IN_FRAME:
-      req.frame_view = PreviewAnnotationView(state, canvas_w, canvas_h);
-      break;
     case LUMICE_RAYPATH_ROI_CONE:
       std::copy(state.analysis.cone_center_dir, state.analysis.cone_center_dir + 3, req.cone_center);
       req.cone_radius_rad = kAnalysisConeMaxRadiusDeg * kDeg2Rad;
@@ -1303,28 +1289,33 @@ namespace {
 
 
 // The request's parameters that are not the region: the ray budget. Session state, sent with the
-// next Analyze — editing it starts nothing, like the region.
-void RenderRequestParamsControls(GuiState& state) {
+// next Analyze — editing it starts nothing, like the region. Bar form: one inline row whose
+// checkbox joins the previous segment's line when the caller judged it fits, the slider following
+// the checkbox while the line holds a usable track for it (below that it owns the line — a
+// wrapped control, not a clipped one; contract §11 R6's folding judgment).
+void RenderRequestParamsControls(GuiState& state, bool join_line) {
   auto& a = state.analysis;
   EnsureDefaultAnalysisRayBudget(state);
-  // The document's Rays row, re-drawn for the session's own field: a checkbox that turns the
-  // total off and a slider for the total. The RENDERING is kept in step with panels.cpp by hand —
-  // evaluated and not shared, because the two rows read different fields under different enable
-  // gates (the registry's Applicability versus a.infinite), and a helper would need both spelled
-  // as parameters. The DOMAIN is not hand-copied: range, format and scale are the same four symbols
-  // the registry row reads (gui/ray_num_domain.hpp), so the two cannot disagree on what a budget is.
-  PushLabelColumnItemWidth();
+  // The document's Rays row, re-drawn for the session's own field. The RENDERING is kept in step
+  // with panels.cpp by hand — evaluated and not shared, because the two rows read different
+  // fields under different enable gates (the registry's Applicability versus a.infinite), and a
+  // helper would need both spelled as parameters. The DOMAIN is not hand-copied: range, format
+  // and scale are the same four symbols the registry row reads (gui/ray_num_domain.hpp), so the
+  // two cannot disagree on what a budget is.
+  if (join_line) {
+    ImGui::SameLine();
+  }
   Checkbox("Infinite rays", &a.infinite);
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Trace until stopped.");
   }
-  ImGui::PopItemWidth();
-  ImGui::BeginGroup();
+  if (ImGui::GetContentRegionAvail().x >= UiPx(kAnalyzeOpBarSliderTrackMin)) {
+    ImGui::SameLine();
+  }
   ImGui::BeginDisabled(a.infinite);
   SliderWithInput("Rays(M)", &a.ray_num_millions, kRayNumMinMillions, kRayNumMaxMillions, kRayNumSliderFmt,
                   kRayNumSliderScale);
   ImGui::EndDisabled();
-  ImGui::EndGroup();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip(
         "Total rays the analysis traces across all wavelengths, in millions.\n"
@@ -1334,7 +1325,10 @@ void RenderRequestParamsControls(GuiState& state) {
 
 // The persistent "you are in pick mode" line at the top of the window while a pick is armed. A
 // bordered child rather than a bare TextColored, so a test can find it by name — an ImGui text
-// item has no id of its own (ItemInfo cannot address it), a child window does.
+// item has no id of its own (ItemInfo cannot address it), a child window does. AutoResizeY, not
+// a fixed height: the line wraps at the right column's narrow widths, and a fixed frame-height
+// child would clip the wrapped tail — the armed-mode fact is the one thing the banner exists to
+// say.
 void RenderPickBanner(const GuiState& state) {
   if (!state.analysis.pick_armed) {
     return;
@@ -1342,11 +1336,11 @@ void RenderPickBanner(const GuiState& state) {
   ImGui::PushStyleColor(ImGuiCol_ChildBg, AccentColor(0.18f));
   ImGui::PushStyleColor(ImGuiCol_Border, AccentColor(0.9f));
   ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(1.0f));
-  const float h = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y;
-  if (ImGui::BeginChild("##pick_banner", ImVec2(0.0f, h), ImGuiChildFlags_Borders)) {
+  if (ImGui::BeginChild("##pick_banner", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY)) {
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(AccentColor(),
-                       ICON_FA_CROSSHAIRS " Click on the preview to set the centre  \xe2\x80\x94  Esc to cancel");
+    ImGui::PushStyleColor(ImGuiCol_Text, AccentColor());
+    ImGui::TextWrapped(ICON_FA_CROSSHAIRS " Click on the preview to set the centre  \xe2\x80\x94  Esc to cancel");
+    ImGui::PopStyleColor();
   }
   ImGui::EndChild();
   ImGui::PopStyleVar();
@@ -1367,34 +1361,41 @@ void RenderListFreshnessBanner(const GuiState& state) {
   if (ComputeAnalysisListFreshness(has_result, scene_still_matches) != AnalysisListFreshness::kStale) {
     return;
   }
-  ImGui::TextColored(
-      WarningTextColor(), ICON_FA_TRIANGLE_EXCLAMATION
-      " This list is from a configuration that has since changed \xe2\x80\x94 press Analyze to refresh it.");
+  // Wrapped, not clipped: the banner is the one place the stale fact is spelled, and at the right
+  // column's narrow widths a single clipped line would lose exactly the part that says what to do.
+  ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+  ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
+                     " This list is from a configuration that has since changed \xe2\x80\x94 press Analyze to "
+                     "refresh it.");
+  ImGui::PopStyleColor();
 }
 
-void RenderRunControls(GuiState& state, LUMICE_Server* server) {
+void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
   const bool in_progress = state.analysis_run_in_progress;
   const bool needs_centre = state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE && !state.analysis.cone_center_valid;
-  // No frame gate for IN_FRAME: the frame is the document's own view at the preview's canvas
-  // when there is one and at the document's own resolution otherwise (DoAnalyze), so the mode
-  // always names a frame — a mode left selected before the preview went away still analyses.
-  // The one picture condition is CanStartAnalysis's own: the document has shown one at least once.
+  // The one picture condition is CanStartAnalysis's own: the document has shown one at least
+  // once. A mode left selected before the preview went away still analyses — the Whole sky and
+  // Point requests are sky-direction state, nothing about them reads a canvas.
   const bool can_start =
       CanStartAnalysis(server != nullptr, state.sim_state, in_progress, state.run_intent) && !needs_centre;
 
+  if (join_line) {
+    ImGui::SameLine();
+  }
   if (in_progress) {
     PushDestructiveStyle();
     if (ImGui::Button(ICON_FA_STOP " Stop")) {
       DoStop();
     }
     PopDestructiveStyle();
-    ImGui::SameLine();
     LUMICE_RayCount rays = 0;
     if (server != nullptr) {
       LUMICE_GetSimRayCount(server, &rays);
     }
-    ImGui::TextColored(AccentColor(), "Analyzing (%s)... %s rays", RoiModeLabel(state.analysis.roi_mode),
+    ImGui::PushStyleColor(ImGuiCol_Text, AccentColor());
+    ImGui::TextWrapped("Analyzing (%s)... %s rays", RoiModeLabel(state.analysis.roi_mode),
                        FormatThousands(static_cast<std::uint64_t>(rays)).c_str());
+    ImGui::PopStyleColor();
   } else {
     ImGui::BeginDisabled(!can_start);
     PushGoodButtonStyle();
@@ -1417,13 +1418,24 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server) {
       ImGui::SetTooltip("%s", why);
     }
     if (state.analysis_result.payload) {
-      ImGui::SameLine();
+      // SameLine is a judgment, not a default: the readouts follow the Analyze button only while
+      // the line holds them, and drop to their own lines at the 260 pt floor — a clipped count
+      // is a miscounted list.
+      const float count_w = ImGui::CalcTextSize("00,000,000 raypaths (full sky)").x;
+      if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + count_w <=
+          ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+        ImGui::SameLine();
+      }
       ImGui::TextDisabled("%zu raypaths (%s)", state.analysis_result.payload->entries.size(),
                           RoiModeLabel(state.analysis_result.payload->roi_mode));
       // The record is bounded; when it cut something, say so where the row count is, so the
       // count above is not read as "every raypath there was".
       if (state.analysis_result.payload->truncated_chain_count > 0) {
-        ImGui::SameLine();
+        const float trunc_w = ImGui::CalcTextSize("; record full (000,000 hits)").x;
+        if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + trunc_w <=
+            ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+          ImGui::SameLine();
+        }
         ImGui::TextDisabled(
             "; record full (%s hits)",
             FormatThousands(static_cast<std::uint64_t>(state.analysis_result.payload->truncated_chain_count)).c_str());
@@ -1436,10 +1448,13 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server) {
       }
     }
     // The marker moved (a drag, a pick) since the result on show was asked for: the list is
-    // about the old centre. A hint only — Analyze stays the one way to re-run.
+    // about the old centre. A hint only — Analyze stays the one way to re-run. Wrapped: at the
+    // column floor the line exceeds the row the Analyze button left it on.
     if (ConeCenterDriftedFromResult(state)) {
-      ImGui::TextColored(WarningTextColor(), ICON_FA_TRIANGLE_EXCLAMATION
+      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+      ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
                          " Centre has moved \xe2\x80\x94 press Analyze to update the list.");
+      ImGui::PopStyleColor();
     }
   }
   // When the picture on screen is not of the document on the panels, say so here — a line of
@@ -1449,15 +1464,20 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server) {
   // banner's question (RenderListFreshnessBanner), and the two may show together — they answer
   // different questions.
   if (const char* notice = AnalysisPictureNotice(state.run_intent, state.sim_state)) {
-    ImGui::TextDisabled("%s", notice);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", notice);
+    ImGui::PopStyleColor();
   }
 }
 
-void RenderRadiusSlider(GuiState& state) {
+void RenderRadiusSlider(GuiState& state, bool join_line) {
   const auto& payload = state.analysis_result.payload;
   const bool cone_result = payload && payload->roi_mode == LUMICE_RAYPATH_ROI_CONE && payload->cone_ring_count > 0;
   if (state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE && !cone_result) {
     return;
+  }
+  if (join_line) {
+    ImGui::SameLine();
   }
   // The slider's range is the result's cone when there is one, the request's otherwise (they are
   // the same numbers unless the constants changed between the run and now).
@@ -1468,10 +1488,31 @@ void RenderRadiusSlider(GuiState& state) {
   // one, it sizes the ring on the panorama (DrawPanoramaRoiRing's ring reads it every frame) so
   // the user sees the region the list will be summed over; after one, it re-sums the rings on
   // hand. Either way the request is the full cone and nothing here starts a run.
-  ImGui::SetNextItemWidth(UiPx(220.0f));
-  if (ImGui::SliderFloat("Radius", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
-    // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
-    RecomputeAnalysisDisplayOrder(state);
+  //
+  // The width is elastic: the designed 220 pt while the line holds slider AND its visible
+  // label, shrinking to keep both inside the head's real width. When even the 120 pt floor
+  // plus the label cannot fit (the 2x clamped tiers), the label moves to ITS OWN LINE and the
+  // slider takes the full row — a line the head's scroll can reach, instead of a slider whose
+  // right end (and label) sit past the clip. No hidden-label swap in the wide branch: the item
+  // keeps its id, so the test layer's refs stay stable.
+  const float label_w = ImGui::CalcTextSize("Radius").x;
+  const float slider_max = ImGui::GetContentRegionAvail().x - label_w - ImGui::GetStyle().ItemInnerSpacing.x;
+  if (slider_max >= UiPx(120.0f)) {
+    ImGui::SetNextItemWidth(std::min(UiPx(220.0f), slider_max));
+    if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+      // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
+      RecomputeAnalysisDisplayOrder(state);
+    }
+  } else {
+    // The label owns its own line; the slider's display text is empty. "##narrow" kept drawing
+    // a second, clipped "Radius" past the full-width track ("##" only hides its own suffix),
+    // and the test hook's slider rect does not cover a trailing label, so no geometry assert
+    // could see it. "###" anchors one id across both branches — the refs stay stable.
+    ImGui::TextDisabled("Radius");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::SliderFloat("###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+      RecomputeAnalysisDisplayOrder(state);
+    }
   }
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(cone_result ?
@@ -1480,7 +1521,13 @@ void RenderRadiusSlider(GuiState& state) {
                           "The analysis always traces the whole cone; this picks the part the list sums.");
   }
   if (cone_result) {
-    ImGui::SameLine();
+    // The rings readout joins the slider only while the line holds both; it drops to its own
+    // line at the column floor rather than clip.
+    const float rings_w = ImGui::CalcTextSize("000 / 000 rings").x;
+    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + rings_w <=
+        ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+      ImGui::SameLine();
+    }
     ImGui::TextDisabled("%d / %d rings", state.analysis_result.display_ring_count, rings);
   }
 }
@@ -1499,7 +1546,16 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
         "orientation), so one row is one physical class. A filter's P/B/D is different: it\n"
         "merges face labels. Re-reads the result on hand; does not re-run.");
   }
-  ImGui::SameLine();
+  // The first checkbox joins the title's row only while the row holds it — at the compressed
+  // tiers' widths the group wraps below the title instead of clipping (the analysis head's
+  // scrolling child has no horizontal scrollbar; the same judgment guards the checkboxes' own
+  // joins inside RenderSymmetryCheckboxes, with the same footprint: gui::Checkbox is an
+  // ImGui::Checkbox — a frame at the frame height plus the label at ItemInnerSpacing).
+  const float p_unit_w = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("P").x;
+  if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + p_unit_w <=
+      ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+    ImGui::SameLine();
+  }
   // Scene-wide: no single crystal to explain, so no per-crystal hints (the reduction still honours
   // each crystal's own shape and axis).
   RenderSymmetryCheckboxes(a.symmetry_p, a.symmetry_b, a.symmetry_d, SymmetryAvailability{},
@@ -1509,9 +1565,17 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
   // session): say which bits it IS showing rather than let the checkboxes claim otherwise.
   const auto& payload = state.analysis_result.payload;
   if (payload && !payload->entries.empty() && state.analysis_result.entries_symmetry != AnalysisSymmetryBits(state)) {
-    ImGui::SameLine();
-    ImGui::TextColored(WarningTextColor(), ICON_FA_TRIANGLE_EXCLAMATION " List shows %s; analyze again to apply.",
-                       SymmetryBitsLabel(state.analysis_result.entries_symmetry).c_str());
+    // The mismatch note wraps onto its own line when the checkbox row cannot hold it — it is the
+    // one place the list's actual reduction is spelled, never a clipped tail.
+    const std::string note = std::string(ICON_FA_TRIANGLE_EXCLAMATION " List shows ") +
+                             SymmetryBitsLabel(state.analysis_result.entries_symmetry) + "; analyze again to apply.";
+    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(note.c_str()).x <=
+        ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
+      ImGui::SameLine();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    ImGui::TextWrapped("%s", note.c_str());
+    ImGui::PopStyleColor();
   }
 }
 
@@ -1520,15 +1584,58 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
 // label can change without the box losing its text, the same width). "Search", not "Filter": on
 // this window "filter" already means two things — the P/B/D merge above and the raypath filter
 // Exclude writes — and a third would not help.
+//
+// Two forms, one widget, one id. The full form is the designed one: input at its width, the
+// visible label to its right (InputText draws its label right of the box once a width is set;
+// the "###" splits id from display). When the column is too narrow for that row — the right
+// column's 260 floor minus the window padding — the narrow-column form flips only the label's
+// visibility: the box takes the whole row, the display part collapses into the id (the text in
+// the box survives the swap, the id never moves), the "Search" hint inside the empty box stays
+// the findable word, and the tooltip carries what the label said. Row and id identical, so
+// nothing below jumps either way; the threshold reads the column's own content width, not the
+// window's, and everything is UiPx so the flip point does not drift across UI scales.
 void RenderResultSearchBox() {
-  g_analysis_search_filter.Draw(ICON_FA_MAGNIFYING_GLASS " Search###analysis_search", 240.0f);
+  constexpr float kSearchInputWidthPt = 240.0f;
+  const char* const kFullLabel = ICON_FA_MAGNIFYING_GLASS " Search###analysis_search";
+  const float label_w = ImGui::CalcTextSize(ICON_FA_MAGNIFYING_GLASS " Search").x;
+  const float full_row_w = UiPx(kSearchInputWidthPt) + ImGui::GetStyle().ItemInnerSpacing.x + label_w;
+  const bool narrow = ImGui::GetContentRegionAvail().x < full_row_w;
+  if (narrow) {
+    g_analysis_search_filter.Draw("###analysis_search", ImGui::GetContentRegionAvail().x);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("Search");
+    }
+  } else {
+    g_analysis_search_filter.Draw(kFullLabel, UiPx(kSearchInputWidthPt));
+  }
+}
+
+// Whether the action buttons stack at this content width (the buttons' real sizes against the
+// space): the shared fact of RenderResultList's height reservation and RenderActionButtons'
+// SameLine, so the two can never disagree about the row count under them.
+bool AnalysisActionButtonsStack(float avail_w) {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float exclude_w = ImGui::CalcTextSize(ICON_FA_BAN " Exclude this raypath").x + style.FramePadding.x * 2.0f;
+  const float csv_w = ImGui::CalcTextSize(ICON_FA_FILE_CSV " Export CSV").x + style.FramePadding.x * 2.0f;
+  return avail_w < exclude_w + style.ItemSpacing.x + csv_w;
+}
+
+// The result table's floor: the frozen header row plus ONE data row — the least the table can
+// show while still being the list (the "at least one row" the layout slice promises). The head's
+// clamp budget (RenderAnalysisPanelBody) and the table's own yield floor read this same bound,
+// so an over-budget head can never take the data rows away.
+float AnalysisTableMinHeight() {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  return (ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f) * 2.0f;
 }
 
 void RenderResultList(GuiState& state) {
   const auto& view = state.analysis_result;
   if (!view.payload) {
-    ImGui::TextDisabled(state.analysis_run_in_progress ? "Waiting for the first result..." :
-                                                         "No result yet. Choose a region and press Analyze.");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped(state.analysis_run_in_progress ? "Waiting for the first result..." :
+                                                        "No result yet. Choose a region and press Analyze.");
+    ImGui::PopStyleColor();
     return;
   }
   // The document's exclusions, read back as rows (ComputeExcludedRaypathRows): derived here,
@@ -1551,9 +1658,16 @@ void RenderResultList(GuiState& state) {
   }
   const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY |
                                 ImGuiTableFlags_SizingStretchProp;
-  // One row kept back below the table, for the button row that follows it (Exclude and Export CSV
-  // share the line); GetFrameHeightWithSpacing already carries the item spacing between the two.
-  const float avail_h = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+  // One row kept back below the table for the button row that follows it (two when the column is
+  // too narrow for them to share it — AnalysisActionButtonsStack, the same fact the button row
+  // reads); GetFrameHeightWithSpacing already carries the item spacing between the two.
+  const float button_rows_h =
+      ImGui::GetFrameHeightWithSpacing() +
+      (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
+  // The table's share of what is left also yields the gap between the table and the button row
+  // (the clamp above reserves the same gap on its side) — the button row must land inside the
+  // window with room, never flush against its bottom edge.
+  const float avail_h = ImGui::GetContentRegionAvail().y - button_rows_h - ImGui::GetStyle().ItemSpacing.y;
   // No "Rays" column, on purpose: under adaptive ray allocation a row's hit count is how many
   // rays the online deal SENT its crystal, which is proportional neither to the crystal's
   // `proportion` nor to the row's Energy — shown, it only asks "why does this row get many rays
@@ -1561,7 +1675,7 @@ void RenderResultList(GuiState& state) {
   // The table is the window's one scrolling region: it absorbs whatever height is left under the
   // fixed controls and the button row, and when even that is less than its header row needs, it
   // yields to the header instead of pushing the window into scrolling.
-  const float table_min_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+  const float table_min_h = AnalysisTableMinHeight();
   if (!ImGui::BeginTable("##analysis_rows", 4, flags, ImVec2(0.0f, std::max(avail_h, table_min_h)))) {
     return;
   }
@@ -1603,7 +1717,14 @@ void RenderResultList(GuiState& state) {
     const bool selected = state.analysis.selected_entry.has_value() && *state.analysis.selected_entry == e.display;
     if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
       state.analysis.selected_entry = std::string(e.display);
+      // The row click is the window's one open entry (contract §6): selecting a class also
+      // makes sure the Raypath view window is open — an already-selected row re-clicked
+      // reopens it after a manual close (the Selectable fires on every click, selected or
+      // not, so no second path is needed). Opening is a display-state write only: it starts
+      // no query and touches no document field.
+      state.analyze_raypath_view_open = true;
     }
+    RowLabelTextTooltip(label);
     // The row rect, captured before the copy menu (an open popup's MenuItems would overwrite
     // the last-item rect the overlay below needs).
     const ImVec2 row_rect_min = ImGui::GetItemRectMin();
@@ -1687,6 +1808,7 @@ void RenderResultList(GuiState& state) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
     ImGui::PopStyleColor();
+    RowLabelTextTooltip(label);
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Excluded by filter \"%s\" on this crystal. Not in this result; the Energy cell is the\n"
@@ -1771,12 +1893,26 @@ std::string LocalTimeNow() {
 }
 
 // The one row of buttons under the list: Exclude, and Export CSV beside it. One row, not two —
-// RenderResultList keeps exactly one row's height back for them.
+// RenderResultList keeps exactly one row's height back for them. At a column too narrow to hold
+// both, they stack (the one-row height budget is per button row; the table above yields the same
+// way it does for a taller fixed head). Measured against the column's own content width with the
+// buttons' real sizes, so the flip point is the layout itself, not a magic width.
 void RenderActionButtons(GuiState& state) {
   std::string why;
   const ExcludeEligibility elig = EvaluateExcludeEligibility(state, &why);
+  const bool stack = AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x);
+  // The Exclude button's narrow form: at the compressed tiers a single button can exceed the
+  // column outright (the 1280-workspace 2x tier measured 292px of button in a 287px clip) —
+  // stacking cannot fix a control wider than its row. Below the column's width the visible
+  // label shortens to the verb and the tooltip carries the full sentence; the "###" anchor
+  // keeps ONE id across the forms, so the action, the eligibility and every label-addressed
+  // probe are the same button either way (the search box's one-widget-two-forms pattern).
+  const float exclude_full_w =
+      ImGui::CalcTextSize(ICON_FA_BAN " Exclude this raypath").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const bool exclude_narrow = exclude_full_w > ImGui::GetContentRegionAvail().x;
   ImGui::BeginDisabled(elig != ExcludeEligibility::kOk);
-  if (ImGui::Button(ICON_FA_BAN " Exclude this raypath")) {
+  if (ImGui::Button(exclude_narrow ? ICON_FA_BAN " Exclude###action_exclude" :
+                                     ICON_FA_BAN " Exclude this raypath###action_exclude")) {
     ApplyExcludeSelectedRaypath(state);
   }
   ImGui::EndDisabled();
@@ -1794,11 +1930,24 @@ void RenderActionButtons(GuiState& state) {
       ImGui::SetTooltip("%s", why.c_str());
     }
   }
-  ImGui::SameLine();
+  if (!stack) {
+    ImGui::SameLine();
+  }
   const auto& payload = state.analysis_result.payload;
   const bool has_rows = payload && !payload->entries.empty();
+  // The CSV button's forms, the Exclude ladder's shape (one "###" id across all of them): the
+  // full label, the verb, and at the compressed tiers' narrowest widths the icon alone — a
+  // single control wider than its row is unfixable by stacking, and the tooltip carries the
+  // sentence in every form.
+  const float csv_full_w =
+      ImGui::CalcTextSize(ICON_FA_FILE_CSV " Export CSV").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const float csv_verb_w = ImGui::CalcTextSize(ICON_FA_FILE_CSV " CSV").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+  const float csv_avail = ImGui::GetContentRegionAvail().x;
+  const char* csv_label = csv_full_w <= csv_avail ? ICON_FA_FILE_CSV " Export CSV###action_csv" :
+                          csv_verb_w <= csv_avail ? ICON_FA_FILE_CSV " CSV###action_csv" :
+                                                    ICON_FA_FILE_CSV "###action_csv";
   ImGui::BeginDisabled(!has_rows);
-  if (ImGui::Button(ICON_FA_FILE_CSV " Export CSV")) {
+  if (ImGui::Button(csv_label)) {
     const std::filesystem::path path = ShowExportCsvDialog();
     if (!path.empty()) {
       if (ExportAnalysisResultsCsv(path, BuildAnalysisResultsCsv(state, LocalTimeNow()))) {
@@ -1819,45 +1968,119 @@ void RenderActionButtons(GuiState& state) {
 
 }  // namespace
 
+// The reading contract's hover half — contract and commentary on the declaration in
+// analysis_panel.hpp; this is the one implementation both consumers share.
+void RowLabelTextTooltip(const std::string& label) {
+  if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label.c_str()).x > ImGui::GetColumnWidth(-1)) {
+    ImGui::SetTooltip("%s", label.c_str());
+  }
+}
+
 void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   // The analysis tool's sections, hosted by the Analyze workspace's share-list region — no
-  // window of its own any more. The ROI controls live on the panorama side
-  // (RenderPanoramaRoiControls, analyze_workspace.cpp); everything that reads and shapes the
-  // RESULT is here.
-  RenderPickBanner(state);
-  RenderListFreshnessBanner(state);
-  RenderRequestParamsControls(state);
-  RenderRunControls(state, server);
-  RenderRadiusSlider(state);
-  RenderSymmetryControls(state, server);
-  ImGui::Separator();
-  RenderResultSearchBox();
+  // window of its own any more. The request's controls — region, centre, radius, budget,
+  // Analyze/Stop — live on the main view's operation bar (RenderAnalyzeOperationBar,
+  // analyze_workspace.cpp), next to the picture they aim at; everything that reads and shapes
+  // the RESULT stays here.
+  //
+  // The fixed head grows with state — the pick and freshness banners wrap at a narrow column —
+  // and the host window never scrolls (the table is its one scrolling region), so an
+  // over-budget head would push the Exclude / Export CSV row out of the window for good. When
+  // the head's natural height (measured last frame) exceeds what the region can give it while
+  // still holding the table's minimum and the button row, the head moves into its own scrolling
+  // child — the degradation ladder's internal-scroll rung; at every ordinary state the head is
+  // shorter than the space and renders flat, exactly as before. The measurement rides one frame
+  // behind a state change; the states that grow the head persist, so the clamp engages on the
+  // frame after the banner appears.
+  ImGuiStorage* storage = ImGui::GetStateStorage();
+  const ImGuiID head_h_key = ImGui::GetID("analysis_head_natural_h");
+  const float buttons_h =
+      ImGui::GetFrameHeightWithSpacing() +
+      (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
+  const float table_min_h = AnalysisTableMinHeight();
+  // The two inter-block gaps (head→table, table→buttons) ride in the budget too: without them
+  // the clamp sizes the head so the table and the button row land EXACTLY on the window's
+  // bottom edge, and any sub-pixel rounding pushes the buttons past the clip — a floored list
+  // whose controls vanish. The margin is the contract's X5 form: the buttons at the floor are
+  // fully inside, not flush.
+  const float block_gaps = ImGui::GetStyle().ItemSpacing.y * 2.0f;
+  const float max_head_h = ImGui::GetContentRegionAvail().y - buttons_h - table_min_h - block_gaps;
+  const bool clamp_head = storage->GetFloat(head_h_key, 0.0f) > max_head_h;
+  const auto draw_head = [&state, server] {
+    RenderPickBanner(state);
+    RenderListFreshnessBanner(state);
+    RenderSymmetryControls(state, server);
+    ImGui::Separator();
+    RenderResultSearchBox();
+  };
+  float head_natural = 0.0f;
+  if (clamp_head) {
+    ImGui::BeginChild("##analysis_head", ImVec2(0.0f, max_head_h));
+    const float inner_top = ImGui::GetCursorPosY();
+    draw_head();
+    head_natural = ImGui::GetCursorPosY() - inner_top;
+    ImGui::EndChild();
+  } else {
+    const float top = ImGui::GetCursorPosY();
+    draw_head();
+    head_natural = ImGui::GetCursorPosY() - top;
+  }
+  storage->SetFloat(head_h_key, head_natural);
   RenderResultList(state);
   RenderActionButtons(state);
 }
 
+namespace {
+
+// The operation bar's inline-width measures and its one join judgment. Every join on the bar —
+// the region radios', Analyze/Stop's, the budget's, the radius's — is made through the same two
+// helpers and the same FitsOnBarLine, so no two joins measure a row differently.
+float InlineLabelledControlWidth(const char* label) {
+  // A radio and a checkbox draw the same way: square + inner spacing + text.
+  return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+}
+
+float InlineButtonWidth(const char* label) {
+  return ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+// SameLine is a judgment, not a default: the panorama region's width has no floor below the
+// ③ split's share, where a row's full extent no longer fits — the judged item wraps rather than
+// clip (a clipped control is an operation the user cannot reach; contract §11 R6).
+bool FitsOnBarLine(float next_w) {
+  return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <=
+         ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+}
+
+}  // namespace
+
+// The operation bar's region segment: the Whole sky / Point radios — the GUI's whole region
+// choice. The In frame entry retired with the free-camera main view
+// (analyze-interaction-contract.md §5.3's removal record): its region semantics — the frame of
+// the moment of the click — is a moving target under a camera the user drives, against the
+// sky-direction semantics the other two anchor. The mode's CLI/C API contract and the engine
+// behind it are untouched.
 void RenderPanoramaRoiControls(GuiState& state) {
   auto& a = state.analysis;
   ImGui::TextUnformatted("Region");
-  ImGui::SameLine();
+  // The first radio joins the label the same way every later join is judged — the ③ widths
+  // wrap it below instead of clipping the mode selector's first choice.
+  if (FitsOnBarLine(InlineLabelledControlWidth("Whole sky"))) {
+    ImGui::SameLine();
+  }
   const int prev_mode = a.roi_mode;
   ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-  ImGui::SameLine();
-  // "In frame" and "Point" are choices made against a picture of the document, so both radios
-  // wait for the document to have shown one — the same predicate the Analyze button reads
-  // (CanStartAnalysis), so the three cannot disagree on what "no picture yet" means. Not the
-  // preview's own "texture bound" flag: a background photograph alone raises that too, and a
-  // photograph is not a picture of the document. A mode already selected still analyses without
-  // a live preview — DoAnalyze sizes the frame at the document's own resolution then — so this
-  // gates the radio, not the button.
-  const bool has_picture = HasEverShownPicture(state.run_intent);
-  ImGui::BeginDisabled(!has_picture);
-  ImGui::RadioButton("In frame", &a.roi_mode, LUMICE_RAYPATH_ROI_IN_FRAME);
-  ImGui::EndDisabled();
-  if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Needs a picture of this document: press Run once first.");
+  if (FitsOnBarLine(InlineLabelledControlWidth("Point"))) {
+    ImGui::SameLine();
   }
-  ImGui::SameLine();
+  // "Point" is a choice made against a picture of the document, so the radio waits for the
+  // document to have shown one — the same predicate the Analyze button reads
+  // (CanStartAnalysis), so the two cannot disagree on what "no picture yet" means. Not the
+  // preview's own "texture bound" flag: a background photograph alone raises that too, and a
+  // photograph is not a picture of the document. A mode already selected still analyses
+  // without a live preview — a Whole-sky request reads no canvas and a Point request reads the
+  // centre direction, not a rectangle — so this gates the radio, not the button.
+  const bool has_picture = HasEverShownPicture(state.run_intent);
   ImGui::BeginDisabled(!has_picture);
   ImGui::RadioButton("Point", &a.roi_mode, LUMICE_RAYPATH_ROI_CONE);
   ImGui::EndDisabled();
@@ -1870,17 +2093,10 @@ void RenderPanoramaRoiControls(GuiState& state) {
   }
 
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
-    // A centre from the moment the mode is entered, so the marker is on screen to be dragged
-    // before any pick. Level-triggered: "no valid centre and a preview to project on", not "the
-    // frame the radio was clicked" — a switch made before the first picture arrives is served the
-    // frame the picture does. This window renders after the preview panel, so the viewport read
-    // here is this frame's.
-    if (!a.cone_center_valid && g_panorama_vp.active) {
-      EnsureDefaultConeCenter(state, PanoramaAnnotationView(state, g_panorama_vp.vp_w, g_panorama_vp.vp_h),
-                              g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-    }
     // Same predicate as the radio above, not the viewport flag: a background photograph must not
-    // arm a pick on a document that has never been rendered.
+    // arm a pick on a document that has never been rendered. (The default centre is written by
+    // the picture region's gesture block — the one level-triggered writer, reading the picture
+    // this frame was actually drawn with.)
     const bool can_pick = has_picture;
     ImGui::BeginDisabled(!can_pick);
     // Read once: the button below flips pick_armed, and the pop must match the push made
@@ -1890,6 +2106,9 @@ void RenderPanoramaRoiControls(GuiState& state) {
       ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.55f));
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.75f));
       ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.40f));
+    }
+    if (FitsOnBarLine(InlineButtonWidth(ICON_FA_CROSSHAIRS " Pick on the panorama"))) {
+      ImGui::SameLine();
     }
     if (ImGui::Button(ICON_FA_CROSSHAIRS " Pick on the panorama")) {
       a.pick_armed = !a.pick_armed;
@@ -1909,16 +2128,40 @@ void RenderPanoramaRoiControls(GuiState& state) {
                                    "Or drag the marker on the panorama directly." :
                                    "Needs a picture of this document to click on: press Run once first.");
     }
-    ImGui::SameLine();
+    char centre[96];
     if (a.cone_center_valid) {
       float alt = 0.0f;
       float az = 0.0f;
       DirToAltAz(a.cone_center_dir, &alt, &az);
-      ImGui::Text("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+      std::snprintf(centre, sizeof(centre), "Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
     } else {
-      ImGui::TextDisabled("No centre yet");
+      std::snprintf(centre, sizeof(centre), "No centre yet");
+    }
+    if (FitsOnBarLine(ImGui::CalcTextSize(centre).x)) {
+      ImGui::SameLine();
+    }
+    if (a.cone_center_valid) {
+      ImGui::TextWrapped("%s", centre);
+    } else {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("%s", centre);
+      ImGui::PopStyleColor();
     }
   }
+}
+
+// The Analyze main view's operation bar (analyze-interaction-contract.md §2.2): the analysis
+// request's controls — region, cone centre, radius, budget, Analyze/Stop — on one strip below
+// the picture they aim at, so region → Analyze → list reads next to what it operates on. The
+// picture notice rides with the run controls' own line — this bar is the one place in the
+// workspace that draws that fact. Every join is judged (FitsOnBarLine), so the same flow is the
+// contract's single row at the wide widths and folds at the narrow ones, never clips.
+void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
+  ImGui::Separator();
+  RenderPanoramaRoiControls(state);
+  RenderRunControls(state, server, FitsOnBarLine(InlineButtonWidth(ICON_FA_PLAY " Analyze")));
+  RenderRequestParamsControls(state, FitsOnBarLine(InlineLabelledControlWidth("Infinite rays")));
+  RenderRadiusSlider(state, FitsOnBarLine(ImGui::CalcTextSize("Radius").x));
 }
 
 namespace {

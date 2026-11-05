@@ -313,6 +313,12 @@ bool CompletePickLinkAtRow(GuiState& state, int layer_idx, int entry_idx);
 void ReopenEditorOnPickCompletion(GuiState& state, const std::optional<GuiState::EntryRef>& pick_source_at_entry);
 
 // Scene controls (Sun + Simulation) rendered in the right panel Scene group.
+// The Scene group's two segments, split so the Analyze left column can compose them itself:
+// Sun in place, Simulation behind a default-collapsed fold — the render budget stays an
+// in-place entry there without flattening the column. The composition below keeps the Render
+// right panel's shape byte-identical.
+void RenderSunControls(GuiState& state);
+void RenderSimulationControls(GuiState& state);
 void RenderSceneControls(GuiState& state);
 
 // Reset all panel editing state: edit request, selection indices.

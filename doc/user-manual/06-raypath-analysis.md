@@ -4,29 +4,30 @@
 
 The Raypath Analysis window answers "which raypaths make the light in this region of the sky, and how much does each contribute". Unlike the main preview, it does not render a picture — it runs a dedicated, non-rendering pass that groups every outgoing ray by its full raypath and reports each group's share of the total energy.
 
-> **The document must have shown a picture once; it need not match.** Analyze submits the document as it is on the panels — the same scene a Run would render — so it works on a freshly opened `.lmc` that carries its rendered picture, and on a document you have edited since the last run (the picture on screen is then of the previous configuration, and a line under the button says so; the list always describes the configured scene). What it does not do is analyse a scene you have never seen rendered: on a new document, a JSON import, or an `.lmc` saved without its picture, Analyze and the **In frame** / **Point** region choices stay disabled — with a tooltip saying to press Run once — until the first Run. Apart from that, the only thing that keeps the button disabled is a run in progress.
+> **The document must have shown a picture once; it need not match.** Analyze submits the document as it is on the panels — the same scene a Run would render — so it works on a freshly opened `.lmc` that carries its rendered picture, and on a document you have edited since the last run (the picture on screen is then of the previous configuration, and a line under the button says so; the list always describes the configured scene). What it does not do is analyse a scene you have never seen rendered: on a new document, a JSON import, or an `.lmc` saved without its picture, Analyze and the **Point** region choice stay disabled — with a tooltip saying to press Run once — until the first Run. Apart from that, the only thing that keeps the button disabled is a run in progress.
 
 ## 1. Where it is
 
-The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout — the scene editors on the left, and the analysis on the right and in the middle: the **scene panorama** (the committed picture as an equal-area full-sky disk, with the region controls and the cone pick on it) above the **share list** this chapter describes, with a class overview in the bottom-right. The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
+The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout: the scene editors in a fixed left column, the **scene panorama** (the committed picture through the same lens, view and display state the Render workspace shows) as the large main view, the **share list** this chapter describes in the right column's upper half, and the **diagnostics region** (the selection's details, or an entry guide before any result) in the right column's lower half. Under the panorama sits its **operation bar** — the region choice, the cone pick and centre reading, the radius, the analysis budget and the Analyze / Stop buttons, next to the picture they aim at. The two column splits are draggable; the main view fills its whole column — the depths all moved to their own windows (the class map: §7; the pose and trace faces: §8). The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
 
 ## 2. Choosing a region (ROI)
 
-The **Region** row offers three modes:
+The operation bar's **Region** choice offers two modes:
 
 | Mode | What it analyzes |
 |------|-------------------|
 | **Whole sky** | Every ray that leaves the scene, in any direction. No spatial filtering. |
-| **In frame** | Only rays that land inside the picture as currently framed (same lens / view / visible / front settings the preview uses). The choice needs the document to have been rendered once (a background photograph alone does not count); with the mode already selected and no live preview, the frame is the document's own view at its simulation resolution. |
-| **Point** | A cone around a direction, shown on the scene panorama as a marker (and on the render preview in the Render workspace, projected from the same direction). Like In frame, the choice waits for the document's first picture. |
+| **Point** | A cone around a direction, shown on the scene panorama as a marker. The choice waits for the document's first picture. |
 
-**The Point marker**: switching to Point mode places the marker at the centre of the current view by default (if there is a preview to place it on, and no earlier pick to keep). It moves with the view every frame — projected from the direction it represents, not fixed to a screen position — so rotating or panning the view never leaves it behind. The marker, its ring and the pick crosshair are drawn on the preview itself, so any window over the preview — the analysis window, an entry editor — covers them rather than being drawn through. Hover over the marker for a hand cursor and drag it to a new spot to set the centre directly; the altitude/azimuth reading next to **Pick on preview** updates as you drag. Press **Pick on preview** instead for a banner across the top of the window ("Click on the preview to set the centre — Esc to cancel") and a crosshair cursor: click anywhere on the preview to move the marker there, or press Esc to cancel.
+**Why there is no "in frame" mode in the GUI**: an earlier build offered a third choice — only rays landing inside the picture as currently framed. It retired with the free-camera main view: a region defined as "whatever is framed right now" is silently re-defined by every camera move, which contradicts the sky-direction semantics the other two anchor. The CLI's `--roi frame` and the engine behind it keep working unchanged (see §7), so scripts that used it are not affected.
 
-A **Radius** slider is available as soon as there is a centre — even before you press Analyze — and drives the ROI ring drawn on the preview. Before a result exists, dragging it only changes that ring's size; once a result exists, it instead changes how far from the centre the report sums energy, still without re-running the analysis: the underlying pass always records the full cone split into fine angular rings, and the slider only decides, at display time, how many of those rings to add up. This means you can sweep the radius back and forth instantly after a single Analyze click.
+**The Point marker**: switching to Point mode places the marker at the centre of the current view by default (if there is a picture to place it on, and no earlier pick to keep). It moves with the view every frame — projected from the direction it represents, not fixed to a screen position — so rotating or panning the view never leaves it behind (drag the view with the mouse to aim at another part of the sky, exactly as in the Render workspace). The marker, its ring and the pick crosshair are drawn on the scene panorama itself, so anything drawn after them covers them rather than being drawn through. Hover over the marker for a hand cursor and drag it to a new spot to set the centre directly; the altitude/azimuth reading on the operation bar updates as you drag. Press **Pick on the panorama** instead for a banner across the top of the share list ("Click on the preview to set the centre — Esc to cancel") and a crosshair cursor: click anywhere on the panorama to move the marker there, or press Esc to cancel.
+
+A **Radius** slider is available on the operation bar as soon as there is a centre — even before you press Analyze — and drives the ROI ring drawn on the panorama. Before a result exists, dragging it only changes that ring's size; once a result exists, it instead changes how far from the centre the report sums energy, still without re-running the analysis: the underlying pass always records the full cone split into fine angular rings, and the slider only decides, at display time, how many of those rings to add up. This means you can sweep the radius back and forth instantly after a single Analyze click.
 
 ## 3. Running the analysis
 
-Above the Analyze button, **Infinite rays** and **Rays(M)** set how many rays the analysis traces — its own budget, independent of the document's **Rays** setting (it starts from that value the first time you open the window). Turn off **Infinite rays** and drag **Rays(M)** to trace a fixed total, in millions, across every wavelength; turn it on to trace until you press Stop. There is no separate early-stop setting for any region mode — the ray budget and the Stop button are the only two ways a run ends.
+On the operation bar, **Infinite rays** and **Rays(M)** set how many rays the analysis traces — its own budget, independent of the document's **Rays** setting (it starts from that value the first time you open the window). Turn off **Infinite rays** and drag **Rays(M)** to trace a fixed total, in millions, across every wavelength; turn it on to trace until you press Stop. There is no separate early-stop setting for any region mode — the ray budget and the Stop button are the only two ways a run ends.
 
 Press **Analyze**. A dedicated pass traces the scene and groups rays by raypath; while it runs you can press **Stop** to end it early with whatever has accumulated so far — pressing Stop never discards results, it just stops accumulating more. When it finishes (or is stopped), the result list below fills in.
 
@@ -87,7 +88,8 @@ If the crystal already has an **Out** filter instead, the button does not disabl
 
 ## 6. The class overview
 
-Select a row and the **Selection details** card in the bottom-right asks the engine about that
+Select a row and the **Selection details** card in the diagnostics region (the right column's
+lower half) asks the engine about that
 class while you keep working: the query runs in the background (a **Cancel survey** button is
 there while it does), and the card shows one of four honest states — waiting, cancelled, the
 engine's named refusal (a class crossing several crystals answers `multi_layer_unsupported`,
@@ -125,15 +127,18 @@ The header always names the reference wavelength and where it came from, the sun
 read, and whether the survey stopped inside its budget (a partial document says so). Selecting
 another class re-asks; the card never mixes two answers.
 
-## 7. The raypath view (the class reference map)
-
-Select a row and the **Raypath view** region (bottom-left) draws that class's own sky picture —
-the engine's physical class reference map, one single-wavelength brightness disk computed from
-every member of the class (not a representative scaled up). The picture arrives in the
-background like the overview does, and the region states honestly where it stands: waiting,
-cancelled, the engine's named refusal, or the picture — plus a *coarse* note while a newer view
-is still computing (the old picture stays on screen, anchored to the sky, and never passes for
-the newest answer).
+## 7. The raypath view (the class reference map)Select a row in the share list and the **Raypath view window** opens — a floating, non-modal
+window (move and resize it freely; it stays open and in sync while you work elsewhere) that
+draws that class's own sky picture: the engine's physical class reference map, one
+single-wavelength brightness disk computed from every member of the class (not a
+representative scaled up). The picture arrives in the background like the overview does, and
+the region states honestly where it stands: waiting, cancelled, the engine's named refusal, or
+the picture — plus a *coarse* note while a newer view is still computing (the old picture stays
+on screen, anchored to the sky, and never passes for the newest answer). The window is two
+panes separated by a draggable divider: the map on the left, and the wavelength, the Fit /
+Full-sky buttons, the caliber block, the sky-point input and a legend of what the picture
+draws on the right. Clicking another class row re-points the open window at that class;
+clicking an already-selected row again reopens it after you have closed it.
 
 **Reading it.** The disk is centred where you last looked; the yellow dot is the sun (the map's
 zero of deviation), the thin cross is the zenith, the faint arc is the horizon. Brightness is a
@@ -149,62 +154,87 @@ place — the dark cells around it are not "no light".
 cursor, **Fit** frames the distribution the map itself carries, **Full sky** returns to the
 whole sky. Every view change re-asks the engine for that view — zooming is a real
 re-evaluation at the sampled tier, never an upscale of an older raster — and requests settle
-briefly so a wheel burst is one ask. The λ slider names an explicit wavelength (a new
-evaluation per wavelength; the engine keeps no warm map); *reference* returns to the document's
-own choice. **Overlays** toggles the survey's located conclusions on the picture: the positional
-objects as diamonds, and the chromatic dispersion's two inner edges as the red-inside-blue-outside
-pair of circles about the sun, labelled with their own wavelengths — the curves are the survey
-document's values, drawn where they belong; a survey without positional payload draws nothing
-and invents no curve.
+briefly so a wheel burst is one ask. The λ slider (in the right pane) names an explicit
+wavelength (a new evaluation per wavelength; the engine keeps no warm map); *reference* returns
+to the document's own choice. **Overlays** toggles the survey's located conclusions on the
+picture: each positional object draws its own kind's marker (a filled shape when the survey
+certified or bounded it, an outline while it is refused or unevaluated), and the chromatic
+dispersion's two inner edges draw as the red-inside-blue-outside pair of circles about the sun,
+labelled with their own wavelengths — the curves are the survey document's values, drawn where
+they belong; a circle that only partly fits the view says *arc in view*, and the legend spells
+that the circles are positions, not a claim that the whole ring is visible or contributing. A
+survey without positional payload draws no markers and invents no curve, and the legend lists
+only what the picture actually shows. Hovering a marker names every object under the pointer in
+one tooltip — each object's kind, state, coordinates and any named reason; identical objects
+collapse into one line with a count.
 
 **Pointing.** A click on the picture (a press that does not move) sets the **sky point** —
 where you are asking about — marked with a white crosshair you can drag anywhere on the disk,
 dark regions included: the pick is a coordinate, never a brightness threshold. The altitude and
-azimuth fields under the picture do the same without any map at all (type the angles of the sky
+azimuth fields in the right pane do the same without any map at all (type the angles of the sky
 point, azimuth measured as the sun's), so a refused or still-computing map never blocks
 naming a target. The sky point is independent of the scene ROI: clicking the map never changes
 the cone centre or the share list, and pointing the cone on the panorama never moves your sky
-point.
+point. One honest limit: a direction whose class carries no pose samples says so in the window
+(*no valid sample*) rather than drawing an empty guess — click another spot, or type the
+angles, to re-target.
 
-## 8. The point inspector (sun-direction globe, raypath 3D, point detail)
+## 8. The point inspector (the Pose & trace window, point detail)
 
-Where §7 answered "what does this class look like over the whole sky", the three regions fed by
-the **sky point** answer "what is happening at this one direction" — and they keep the three
-spaces apart: the map is directions, the **sun direction globe** is the crystal's poses (the
+Where §7 answered "what does this class look like over the whole sky", the faces fed by the
+**sky point** answer "what is happening at this one direction" — and they keep the spaces
+apart: the map is directions, the **sun direction globe** is the crystal's poses (the
 directions the sun sits in *the crystal's own frame* — a projection of the pose space, not the
-whole of it), and the **Raypath 3D** region is one concrete light path through one crystal.
+whole of it), the **Raypath 3D** region is one concrete light path through one crystal, and the
+**factors readout** is the current pose's per-interface numbers.
 
-**Point detail** (right column, under the class overview) is the anchor. Once a class is
+**Point detail** (in the diagnostics region, under the class overview) is the anchor and the
+window's only opener: clicking its title opens the **Pose & trace window** — a floating,
+non-modal window that gathers the three faces around one adopted point document and follows the
+current selection while it stays open (set a sky point and it does NOT pop open; the window is
+yours to open and close). The block itself keeps the answer and its evidence: once a class is
 selected and a sky point is set, the engine is asked about that exact direction in the
 background (a couple-of-seconds tier; the point queues behind the survey and map on the same
 worker, and the block says so while it waits, with a **Cancel point** button). The answer opens
 with the engine's own echo — the target labels and deviation, the member face sequence, the
 crystal, the wavelength and its source, the refractive index, the sampling tier — then the
-components: the closed loops or arcs of crystal poses that send light to your point, each with
-its end statuses and its fiber integral with its coverage (48/48 points, say). Pick a component
-and the other two regions follow it. A **point mass** answer (a direction-invariant path — the
-sun's own image) is presented as the mass it is: position, target separation, the orbit
-integral and its measure support — no fiber, no playback, no forced curve. A refusal names
-itself; a multi-layer chain names `multi_layer_unsupported` and points at the existing retreat
-(keep only this chain in the filters and re-run).
+component list as evidence rows (kind, end statuses, coverage, integral). A **point mass**
+answer (a direction-invariant path — the sun's own image) is presented as the mass it is:
+position, target separation, the orbit integral and its measure support — no fiber, no
+playback, no forced curve. A refusal names itself; a multi-layer chain names
+`multi_layer_unsupported` and points at the existing retreat (keep only this chain in the
+filters and re-run).
 
-**The sun direction globe** draws the selected component's fiber: each valid sample is one pose
-where the sun sits somewhere in the crystal (the `u` arrow), the polyline walks them in order,
-and the highlighted marker is the current sample. The deviation grid (toggleable) colours the
-sphere by where each sun direction deflected the light — drawn only when the document carries
-the grid, absent otherwise, never painted as zero. Under the disk: the weight bar (each
-sample's ρ·A/a²·T·K — the very quantity the fiber integral sums), the sample slider and
-**Play**. Dragging the slider or playing moves through the poses that already came back in the
-document; the sky point itself never moves — playing changes the pose you are looking at, not
-the direction you asked about.
+In the window, the component selector is the globe region's combo — the one place that moves
+between components. The window's two draggable splits (the 3D region | the right column, the
+globe | the factor readouts) keep their ratios while the window is closed and reopened in the
+same session.
 
-**Raypath 3D** draws the current sample's real path: the crystal's wireframe (its analysis
-shape — distributions flattened to the values the engine used) with the entry leg, every
-internal reflection and the exit leg from the engine's representative-ray recovery, colour-coded
-with a legend, contacts marked. **World** and **Crystal** are the same physical path in two
-frames (drag orbits, wheel zooms). While the path for a fresh pose is computing the region says
-so; a pose with no legal path names why (the corridor's refusal and its measured area); a
-rank-0 point mass has no path and says that instead of drawing one.
+**The sun direction globe** (the window's upper right) draws the selected component's fiber:
+each valid sample is one pose where the sun sits somewhere in the crystal (the `u` arrow), the
+polyline walks them in order, and the highlighted marker is the current sample. The deviation
+grid (toggleable) colours the sphere by where each sun direction deflected the light — drawn
+only when the document carries the grid, absent otherwise, never painted as zero. Under the
+disk: the weight bar (each sample's ρ·A/a²·T·K — the very quantity the fiber integral sums),
+the sample slider and **Play**. Dragging the slider or playing moves through the poses that
+already came back in the document; the sky point itself never moves — playing changes the pose
+you are looking at, not the direction you asked about — and with the window closed the playing
+pauses (the cursor holds where it was and resumes on reopen).
+
+**Raypath 3D** (the window's large left region) draws the current sample's real path: the
+crystal's wireframe (its analysis shape — distributions flattened to the values the engine
+used) with the entry leg, every internal reflection and the exit leg from the engine's
+representative-ray recovery, colour-coded with a legend, contacts marked. **World** and
+**Crystal** are the same physical path in two frames (drag orbits, wheel zooms). While the path
+for a fresh pose is computing the region says so; a pose with no legal path names why (the
+corridor's refusal and its measured area); a rank-0 point mass has no path and says that
+instead of drawing one.
+
+**Current sample factors** (the window's lower right) reads the current pose's own numbers —
+the orientation angles, ρ, the entry measures, the total transmission, the Jacobian with its
+named-unavailable state, K, their product, and each interface's transmittance labelled as
+conditional on this path. The class-level totals stay in the main window's diagnostics; these
+are the per-pose, per-path numbers of the sample the globe's marker names.
 
 ## 9. From the command line
 
@@ -218,7 +248,7 @@ Lumice analyze -f config.json --symmetry none --rays 5M --seed 7       # finest 
 Lumice analyze -f config.json --symmetry none --chain-capacity 32768   # a record twice the default size
 ```
 
-`--roi sky | frame | cone` is the panel's Whole sky / In frame / Point; `--center <alt>,<az>` names the cone's centre as the altitude and azimuth of the sky point (azimuth measured as the sun's, so `--center <sun_altitude>,0` is the sun); `--symmetry` is the P / B / D checkboxes (`PBD` by default, `none` for the finest rows); `--rays` is the window's Rays field (the scene's own `ray_num` by default, `"infinite"` included). Two things the window has no equivalent of: `--seed <N>` fixes the random seed so two runs of one question are the same run on one machine (a seeded run is single-threaded by contract; across platforms, standard libraries, ISA levels or trace backends the same seed is statistically equivalent, not identical — see [`../configuration.md`](../configuration.md) "Seed (`--seed`) and Reproducibility"), and a scene that runs forever is ended with Ctrl-C, which still writes the result accumulated so far. With `--csv` the file is rewritten atomically every second, so it is complete whenever a script reads it; without it the CSV is stdout's alone and progress goes to stderr. The CLI has no radius slider: every ring of the cone is summed, and the head's `cone_rings_summed` line says so. `Lumice analyze -h` is the full option list; see [`03-cli-quickstart.md`](03-cli-quickstart.md) §4.
+`--roi sky | frame | cone` selects the region: the GUI's Whole sky and Point are `sky` and `cone`; the third choice, `frame` — the region the GUI retired with its free-camera main view, as §2 records — stays CLI-only with the same engine support it always had. `--center <alt>,<az>` names the cone's centre as the altitude and azimuth of the sky point (azimuth measured as the sun's, so `--center <sun_altitude>,0` is the sun); `--symmetry` is the P / B / D checkboxes (`PBD` by default, `none` for the finest rows); `--rays` is the window's Rays field (the scene's own `ray_num` by default, `"infinite"` included). Two things the window has no equivalent of: `--seed <N>` fixes the random seed so two runs of one question are the same run on one machine (a seeded run is single-threaded by contract; across platforms, standard libraries, ISA levels or trace backends the same seed is statistically equivalent, not identical — see [`../configuration.md`](../configuration.md) "Seed (`--seed`) and Reproducibility"), and a scene that runs forever is ended with Ctrl-C, which still writes the result accumulated so far. With `--csv` the file is rewritten atomically every second, so it is complete whenever a script reads it; without it the CSV is stdout's alone and progress goes to stderr. The CLI has no radius slider: every ring of the cone is summed, and the head's `cone_rings_summed` line says so. `Lumice analyze -h` is the full option list; see [`03-cli-quickstart.md`](03-cli-quickstart.md) §4.
 
 **`--chain-capacity <N>`** sizes the record limit described in §4 for this one run: how many distinct unreduced raypaths are kept exact before the rest fall into the **other** row. The default, 16384, is the window's fixed size and holds every reference scene shipped here; a `--symmetry none` listing of *every* path through a single crystal can need more — a hexagonal prism's 8-face paths alone number about 29 000, so at the default they are what ends up in **other** (the head's `record_full_hits` line counts how often a path was turned away; 0 means the record was never full). Plain integer, no K/M/G suffix, 1 to 1048576. The cost is memory, roughly `workers × N × 220 bytes` on the trace side plus about as much again once for the listing: 32768 on 10 workers is ~140 MB, the maximum is several GB, and `--workers` above the automatic count multiplies the first term. It has no equivalent in the window, whose record stays at the default.
 

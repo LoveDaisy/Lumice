@@ -48,11 +48,118 @@ constexpr float kLeftPanelWidth = 400.0f;
 constexpr float kRightPanelWidth = 300.0f;
 constexpr float kTopBarHeight = 40.0f;
 constexpr float kStatusBarHeight = 28.0f;
-// The Analyze workspace's outer columns (analyze_workspace.cpp; the plan's four-column skeleton:
-// left 300 / right 400, the middle taking what remains). The Render workspace keeps
-// kLeftPanelWidth/kRightPanelWidth above — the two workspaces' layouts are independent.
+// The Analyze workspace's split geometry (analyze_workspace.cpp; the fixed-left-column +
+// main-view + right-column skeleton of doc/gui/analyze-interaction-contract.md §2/§4). The left
+// column keeps its fixed width; every other split is stored as a ratio on the session
+// (GuiState::AnalyzeWorkspaceSession) and derives its pixels per frame — the constants below are
+// the pixel floors those derivations clamp against, not widths anyone stores. All values are 1x
+// logical px read through UiPx() and carry the contract's render-level calibration duty (§11:
+// suggestions measured from font metrics, to be re-measured against the live CalcTextSize /
+// GetFrameHeight; last calibrated 2026-11-04 against the Roboto Medium 15px theme — FramePadding
+// 6/3, ItemSpacing 8/3 — the same source the contract's §11 table used). The Render workspace
+// keeps kLeftPanelWidth/kRightPanelWidth; the two workspaces' layouts are independent.
 constexpr float kAnalyzeLeftPanelWidth = 300.0f;
-constexpr float kAnalyzeRightPanelWidth = 400.0f;
+// D1: the right column's content floor — the share list's widest fixed row (the search box's full
+// form, contract §11 R2) stays complete above it; below it the panel switches to its narrow-column
+// forms (analysis_panel.cpp).
+constexpr float kAnalyzeRightColMinWidth = 260.0f;
+// D1: the main view's soft floor (§4.2) — the picture keeps a usable width while the right column
+// takes what it asks for; the first two rungs of the contract's clamp order.
+constexpr float kAnalyzeMainViewMinWidth = 360.0f;
+// D1's default: the contract's ≈380 px right column folded to a ratio of the span right of the
+// fixed left column at the default window, so the stored default IS the split it describes.
+constexpr float kAnalyzeRightColumnDefaultRatio =
+    380.0f / (static_cast<float>(kInitWindowWidth) - kAnalyzeLeftPanelWidth);
+// D2: the share list's height floor — the panel's fixed head (the pick and freshness banners,
+// the symmetry row, the separator, the search row) plus the table's header row, one data row and
+// the button row. The window itself never scrolls (the result table is its one scrolling
+// region), so this floor is what keeps every control reachable at the smallest list height.
+// Measured 2026-11-04 for the head that then also carried the request controls — those moved to
+// the main view's operation bar (contract §2.2), so the floor is now conservative: shorter head,
+// same reserve. Re-derived value owes a calibration pass (§11), not a correctness fix.
+constexpr float kAnalyzeShareListMinHeight = 250.0f;
+// The operation bar's slider-wrap judgment (contract §11 R6): the minimum track the bar gives a
+// slider before the slider wraps to its own line instead of joining the current one. Below it
+// the Rays slider's track would crowd its input box unusably; calibrated against the Roboto
+// Medium 15px theme (the same source as the contract's §11 table).
+constexpr float kAnalyzeOpBarSliderTrackMin = 150.0f;
+// The default cone centre's convergence window, in frames: how long after its placement the
+// default may follow the picture rectangle's size (the operation bar's height settles a frame
+// or two after the mode switch that grows it — the one re-place the mechanism exists for).
+// After the window, the direction is the region's: no layout, view or observation change
+// re-derives an effective ROI. Frames, not milliseconds — the count is deterministic under the
+// test harness's fixed-dt clock.
+constexpr int kAnalyzeConeCenterConvergenceFrames = 8;
+// D2: the diagnostics region's height floor — its title plus one wrapped state line.
+// Re-confirmed 2026-11-04 at the proportional split: the scroll child keeps a visible first
+// line (34 px measured) and the wheel reaches the rest (ScrollMax 128 with the idle stack).
+constexpr float kAnalyzeDetailsMinHeight = 64.0f;
+// D2's default: the contract's list ≈45% of the right column's height.
+constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
+// (The depth band's per-cell floors kAnalyzeDepthGlobeMinSize / kAnalyzeDepth3DMinSize retired
+// with the band in 755.5 — the 3D / globe regions are the Pose & trace window's, floored by the
+// kPoseView* constants above. The map cell's floor had already retired with its window in 755.4.)
+
+// D3 — the Raypath view window's reference-map | info split (contract §4.2, the window's own
+// splitter). The floors are the contract's suggested values with the rendering-level duty
+// this window's implementation piece owns: the info region's floor keeps the λ track plus the
+// wrapped sky-point row's wrap ladder alive (the input row may wrap rather than clip), and the
+// map region's floor keeps the square canvas at the code floor it already had in the band
+// (64 px) with headroom — below that the ③ proportional fallback shares the span and both
+// regions take their internal scrolls.
+constexpr float kRaypathViewInfoMinSize = 200.0f;
+constexpr float kRaypathViewMapMinSize = 160.0f;
+// The window-level minimum the contract's narrowest face (§11 R3) names: SetNextWindowSizeConstraints
+// re-clamps the live size at every Begin — including the frames of the user's own border drag — so
+// this bound is the smallest size the user can reach, not a size only the tests can set. The split
+// floors above were verified AT this window size; the constraint is what keeps the user inside the
+// domain those floors were proven over (below it, the D3 fallback formula would shrink the info
+// region under the input rows' wrap ladder and the canvas under its 64 px code floor).
+constexpr float kRaypathViewMinWidth = 480.0f;
+constexpr float kRaypathViewMinHeight = 360.0f;
+// The Pose & trace window's window-level minimum (contract §11 R4's narrowest face, 640x420):
+// SetNextWindowSizeConstraints re-clamps the live size at every Begin, so this bound is the
+// smallest size the user can reach. The D4/D5 split floors below were verified AT this window
+// size — the constraint is what keeps the user inside the domain those floors were proven over
+// (kPoseViewRightFloor / kPoseViewLeftFloor, the same shape the Raypath view's floors and
+// minimum run).
+constexpr float kPoseViewMinWidth = 640.0f;
+constexpr float kPoseViewMinHeight = 420.0f;
+// D4 — the Pose & trace window's split floors (contract §4.2: right column ≥ 220, 3D ≥ 240;
+// suggested values carrying the render-level calibration duty). The right floor is the globe
+// region's fixed interaction stack at its narrow wrap form; the left floor keeps the 3D orbit
+// legible. The window's minimum width (above) is the existence proof that both floors fit the
+// narrowest legal window; the derivation clamps BOTH sides at every frame (§3 of the task plan:
+// either side may be the one pushed toward its bound).
+constexpr float kPoseViewRightFloor = 220.0f;
+constexpr float kPoseViewLeftFloor = 240.0f;
+// D5 — the right column's vertical floors: the globe region keeps its fixed interaction stack
+// (the region's own two-segment form's constant part — title + toggle (its wrapped over-width
+// form) + the component combo + the canvas at its 60 px code floor + the weight bar + the
+// slider/play row, worst case ≈195 pt at 1x measured against the Roboto Medium 15px theme with
+// a live-layout probe) PLUS a scroll-draggable state viewport (≈32 pt: below it ImGui collapses
+// and disables the scrollbar's drag — a state area that shows a range nobody can scroll is the
+// same unreachable fact as no range) and the child's padding — ≈235 pt all told; the factors
+// region keeps its title plus two wrapped rows (§11 R5). The globe floor is what keeps the
+// FIXED STACK fully visible AND the state area scrollable at the D5 drag floor; the
+// whole-region-scroll degradation lives below the floors' reach, not at them. When the two
+// floors cannot share the column, the ③ proportional fallback applies (the workspace
+// splitters' rule).
+constexpr float kPoseViewGlobeFloor = 235.0f;
+constexpr float kPoseViewFactorsFloor = 70.0f;
+// The globe region's canvas floor (the region's own code floor, now named for the region's
+// canvas-sizing judgment to consume).
+constexpr float kPoseViewGlobeCanvasFloor = 60.0f;
+// The state area's bounded-form threshold: the region renders the scrolling child when the
+// cell leaves at least this much room under the fixed stack — a narrower sliver cannot host a
+// draggable scrollbar, so the lines render direct in the region (the region's own scroll, tall
+// enough to drag) instead of a state child nobody can scroll.
+constexpr float kPoseViewStateViewportFloor = 30.0f;
+// The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's
+// two splitters).
+constexpr float kAnalyzeSplitterSize = 8.0f;
+// (The depth band's height rung kAnalyzeDepthBandMinHeightPt and its form-switch hysteresis
+// kAnalyzeDepthBandFormHysteresisPt retired with the band in 755.5.)
 
 // Display brightness baseline, mirroring lumice::kNormScale (core/color_util.hpp). The GUI needs
 // it because absolute exposure mode is computed client-side (mono_exposure_scale.hpp) rather than

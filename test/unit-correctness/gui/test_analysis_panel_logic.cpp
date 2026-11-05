@@ -816,7 +816,7 @@ TEST(AnalysisPanelLogic, RequestCarriesTheFullConeAndTheSessionBudget) {
   state.analysis.cone_radius_deg = 1.0f;  // the slider: must NOT reach the request
   state.analysis.ray_num_millions = 12.5f;
   state.analysis.infinite = false;
-  const LUMICE_RaypathAnalysisRequest req = BuildAnalysisRequest(state, 100, 100);
+  const LUMICE_RaypathAnalysisRequest req = BuildAnalysisRequest(state);
   EXPECT_EQ(req.roi_mode, LUMICE_RAYPATH_ROI_CONE);
   EXPECT_FLOAT_EQ(req.cone_center[0], 0.1f);
   EXPECT_FLOAT_EQ(req.cone_center[2], -0.9f);
@@ -828,23 +828,15 @@ TEST(AnalysisPanelLogic, RequestCarriesTheFullConeAndTheSessionBudget) {
 
   // An unlimited budget reaches the request as such.
   state.analysis.infinite = true;
-  const LUMICE_RaypathAnalysisRequest cone2 = BuildAnalysisRequest(state, 100, 100);
+  const LUMICE_RaypathAnalysisRequest cone2 = BuildAnalysisRequest(state);
   EXPECT_EQ(cone2.infinite, 1);
   state.analysis.infinite = false;
 
-  state.analysis.roi_mode = LUMICE_RAYPATH_ROI_IN_FRAME;
-  state.renderer.lens_type = LUMICE_LENS_TYPE_FISHEYE_EQUAL_AREA;
-  state.renderer.fov = 120.0f;
-  const LUMICE_RaypathAnalysisRequest in_frame = BuildAnalysisRequest(state, 320, 200);
-  EXPECT_EQ(in_frame.roi_mode, LUMICE_RAYPATH_ROI_IN_FRAME);
-  EXPECT_EQ(in_frame.frame_view.width, 320);
-  EXPECT_EQ(in_frame.frame_view.height, 200);
-  EXPECT_EQ(in_frame.frame_view.lens_type, LUMICE_LENS_TYPE_FISHEYE_EQUAL_AREA);
-  EXPECT_FLOAT_EQ(in_frame.frame_view.lens_fov, 120.0f);
-  EXPECT_EQ(in_frame.ray_num, 12500000u) << "the budget is not a CONE-only field";
-
+  // The GUI's whole region choice is Whole sky / Point — the In frame entry retired with the
+  // free-camera main view, and the request builder carries no canvas/frame branch to test: the
+  // IN_FRAME contract lives on (C API / CLI / engine), out of this builder's reach.
   state.analysis.roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
-  const LUMICE_RaypathAnalysisRequest full = BuildAnalysisRequest(state, 1, 1);
+  const LUMICE_RaypathAnalysisRequest full = BuildAnalysisRequest(state);
   EXPECT_EQ(full.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
   EXPECT_EQ(full.ray_num, 12500000u);
   EXPECT_EQ(full.infinite, 0);
@@ -1160,16 +1152,16 @@ TEST(AnalysisPanelLogic, ExcludeWritesOneFilterOutFilterBoundToEveryEntryOfTheCr
   EXPECT_FALSE(state.layers[0].entries[0].filter_id.has_value());
 }
 
-// ---- The panorama's pixel->direction mapping: the equal-area closure ----
+// ---- The pick view's pixel->direction mapping: the equal-area closure ----
 //
-// The panorama is an equal-area azimuthal view of one hemisphere, and the pick family reads
-// directions back through LUMICE_UnprojectPixel under PanoramaAnnotationView. The independent
-// anchor is the AREA PROPERTY, not the projection's own formula: pixels scattered uniformly over
-// the picture disk must be uniform in solid angle — the fraction within a half-angle theta of the
-// axis is (1 - cos theta) — and the azimuth uniform over the circle. Verifying the property, with
-// the axis anchored physically (the disk centre's own direction), is what keeps this from
-// certifying a self-consistent but wrong mapping: a round trip through the projection's maths
-// would pass both if they shared the same mistake.
+// The equal-area fisheye is an azimuthal view of one hemisphere, and the pick family reads
+// directions back through LUMICE_UnprojectPixel under PreviewAnnotationView — the one view both
+// picture faces draw through. The independent anchor is the AREA PROPERTY, not the projection's
+// own formula: pixels scattered uniformly over the picture disk must be uniform in solid angle —
+// the fraction within a half-angle theta of the axis is (1 - cos theta) — and the azimuth uniform
+// over the circle. Verifying the property, with the axis anchored physically (the disk centre's
+// own direction), is what keeps this from certifying a self-consistent but wrong mapping: a
+// round trip through the projection's maths would pass both if they shared the same mistake.
 TEST(AnalysisPanelLogic, PanoramaUnprojectIsEqualAreaOverTheDisk) {
   // The panorama's mapping: the up-looking equal-area fisheye. Over the picture DISK (centre of
   // the square canvas, radius = short edge / 2), uniform pixel area must map to uniform solid
@@ -1180,8 +1172,14 @@ TEST(AnalysisPanelLogic, PanoramaUnprojectIsEqualAreaOverTheDisk) {
   // round trip of the inverse under test.
   constexpr int kSize = 400;
   constexpr float kRadius = kSize * 0.5f;
-  GuiState state;  // default workspace: the upper hemisphere (camera pitched +90)
-  const LUMICE_AnnotationView view = PanoramaAnnotationView(state, kSize, kSize);
+  GuiState state;
+  // The equal-area member as the free camera carries it: the fisheye pitched straight up, the
+  // upper sky visible — the view the main view publishes when the camera points at the zenith.
+  state.renderer.lens_type = kLensTypeFisheyeEqualArea;
+  state.renderer.fov = 180.0f;
+  state.renderer.elevation = 90.0f;
+  state.renderer.visible = kVisibleFull;
+  const LUMICE_AnnotationView view = PreviewAnnotationView(state, kSize, kSize);
 
   std::mt19937 rng(7);  // fixed seed: a property test, not a distribution history
   std::uniform_real_distribution<float> uniform(0.0f, 1.0f);

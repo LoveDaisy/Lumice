@@ -69,21 +69,26 @@ From left to right, the Top Bar exposes:
     has no way to express that clip and the CLI would otherwise render the un-clipped view.
   - `Include Texture in .lmc` — toggle for the next save. Screenshot lines and labels are controlled by the one-shot options window described above; they do not modify the Overlay panel. The two server-side panorama exports do not carry the preview's text-label layer.
 - **Colors / Summary**: two buttons that each open an independent, non-modal window beside the
-  preview — the raypath colour classes and the read-only **Summary** (icon-only, like the file
-  buttons; hover for its word), one page of the current configuration (version, sun, simulation,
+  preview — the raypath colour classes and the read-only **Summary**, one page of the current
+  configuration (version, sun, simulation,
   render settings, then every layer with its entries' crystal, shape, axis and filter) laid out
   in two columns to fit one 1280 × 900 screen and be screenshotted and shared — each row under
   the label the panel itself uses, and only the rows the panel currently shows (Sky Color or
-  Paper Color, never both). The Summary has no image export of its own: take the picture with
+  Paper Color, never both). Window openers are icon-only — one expression per kind of command
+  (Colors, Summary, and Settings below share it) — and each button's word lives in its tooltip.
+  The Summary has no image export of its own: take the picture with
   your operating system's screenshot tool (⌘⇧4 on macOS, Win+Shift+S on Windows, or your
   desktop's equivalent on Linux); **Copy as text** on its version line puts the same page on the
   clipboard as tab-separated text. See [User Manual — Configuration Summary](../user-manual/07-config-summary.md).
 - **Render | Analyze**: the two-cell workspace switch, its own group between the feature buttons
   and Settings. The current mode's cell is highlighted and clicking it does nothing; the other
-  cell moves between the render layout and the Analyze workspace (scene editors left, analysis
-  right and middle — see [User Manual — Raypath Analysis](../user-manual/06-raypath-analysis.md)).
-  Switching is view state: it never dirties the document and never starts or stops a run.
-- **Settings**: the personal-defaults editor — what a *new* document starts from, plus the
+  cell moves between the render layout and the Analyze workspace (scene and observation editors
+  in a fixed left column, the large main view showing the traced sky through the renderer's own
+  lens with the analysis depths beneath it, the analysis request's controls on an operation bar
+  under that view, and the share list and diagnostics in the right column — see
+  [User Manual — Raypath Analysis](../user-manual/06-raypath-analysis.md)). Switching is view
+  state: it never dirties the document and never starts or stops a run.
+- **Settings** (gear icon; hover for its word): the personal-defaults editor — what a *new* document starts from, plus the
   `Application preferences` rows at the top, which describe this machine rather than any document:
   the GPU backend and worker count a new document starts with, and **UI scale**, a multiplier
   (75% – 200%) applied on top of the display's own scaling to every piece of the interface —

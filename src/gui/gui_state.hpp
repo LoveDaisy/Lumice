@@ -1754,6 +1754,25 @@ struct GuiState {
     // picture and the direction the server judges by is the direction the marker shows.
     bool cone_center_valid = false;
     float cone_center_dir[3] = { 0.0f, 0.0f, 0.0f };
+    // Whether the centre on hand is the mode's own default placement (the view's middle pixel,
+    // EnsureDefaultConeCenter) rather than something the user set. The default is re-placed when
+    // the picture rectangle it was computed on changes size — the operation bar's height rides
+    // one frame behind the mode switches that grow it, so the middle of frame N is not the
+    // middle of frame N+1 — but ONLY during the placement's own bounded convergence window
+    // (cone_center_default_frame, kAnalyzeConeCenterConvergenceFrames): after those few frames
+    // the direction is the region's, and no layout, view or observation change re-derives it.
+    // The invariant is the placement lifecycle's, not an enumeration of the entries that might
+    // otherwise move it. An acceptance (DoAnalyze) or a camera press freezes the flag ahead of
+    // the window's expiry as well; a user-picked or user-dragged centre is never moved by
+    // anything but the user (sky-direction state, AC4).
+    bool cone_center_is_default = false;
+    // The picture publication's size the current default was placed on, and the frame of the
+    // FIRST placement — a size compensation re-places the direction but never refreshes the
+    // frame, so the convergence window ends a fixed few frames after the default was born,
+    // however long a resize chain runs. Meaningful only while cone_center_is_default.
+    int cone_center_default_vp_w = 0;
+    int cone_center_default_vp_h = 0;
+    int cone_center_default_frame = -1;
     // The marker is being dragged: set by the press on it, cleared by the release, and while set
     // every frame's mouse position is unprojected into cone_center_dir. Session state because the
     // drag outlives a frame; nothing else reads it.
@@ -1898,16 +1917,72 @@ struct GuiState {
   enum class WorkspaceMode { kRender, kAnalyze };
   struct AnalyzeWorkspaceSession {
     WorkspaceMode mode = WorkspaceMode::kRender;
-    // The middle area's horizontal divider: the upper row's (panorama + share list) share of the
-    // middle height, clamped to [0.15, 0.85] when dragged. Session memory (this session's own
-    // arrangement, not document state); 0.45 puts the near-square panorama the prototype pins
-    // within reach at both acceptance sizes — near-exact at 1600×980, slightly tall at 1280×800.
-    float middle_rows_ratio = 0.45f;
-    // The panorama's hemisphere — a view state of the panorama (the committed texture is always
-    // the full sky; the switch is the display-time `visible` uniform), not document state.
-    bool panorama_upper = true;
+    // D1: the right column's share of the span right of the fixed left column — what the
+    // `##AnalyzeColumnSplitter` drags. Ratio semantics (doc/gui/analyze-interaction-contract.md
+    // §4.2): the split's identity, not a pixel width — the frame derives pixels from it and clamps
+    // those at the content floors (gui_constants.hpp), while the stored value changes only by
+    // dragging. No query result, selection change or content change ever writes it (manual
+    // priority — the first result included), and restoring the window size restores the split.
+    // Session memory like every field here: never persisted, never in the document or
+    // ConfigSnapshot; DoNew resets it with the whole GuiState, Revert/Open keep it.
+    float right_column_ratio = kAnalyzeRightColumnDefaultRatio;
+    // D2: the share list's share of the right column's height — what the
+    // `##AnalyzeRightRowsSplitter` drags. Same semantics and tier as D1 above; no automatic
+    // rewrite path exists (a first result changes neither ratio, contract §9.3).
+    float right_list_ratio = kAnalyzeRightListDefaultRatio;
+    // The main view's camera-drag latch, the third arm of the picture region's gesture
+    // arbitration: once a press is consumed by the camera arm, it stays the camera's for the
+    // whole press — dragging across the cone marker mid-way must not flip arms (the marker's
+    // own cone_marker_dragging is the same rule for its arm). Cleared on release, on leaving
+    // the workspace (the top-bar switch handler), and with the whole session on DoNew. Session
+    // tier like every field here: a gesture in flight, never document state.
+    bool panorama_camera_dragging = false;
   };
   AnalyzeWorkspaceSession workspace;
+
+  // The Raypath view window's open state (analyze-interaction-contract.md §6, §8 ownership
+  // declaration): the class-map window the share list's class rows open. T-session display
+  // state, `left_panel_collapsed`'s family — not document state, never persisted, never in
+  // ConfigSnapshot or the dirty diff. Kept by Open and Revert (ResetFrontendState does not
+  // touch it: which panels are on screen is not document state), reset by DoNew because DoNew
+  // replaces the whole GuiState — the per-reason rule the contract's §8 declaration names.
+  // The window's own geometry (size, position, the D3 split) is ImGui window storage: session
+  // memory inside the process, outside GuiState entirely.
+  bool analyze_raypath_view_open = false;
+  // D3 — the Raypath view window's reference-map | info split (contract §4.2): the INFO
+  // region's share of the window's content width, what the window's own splitter drags. Ratio
+  // semantics like the workspace splitters (AnalyzeWorkspaceSession's fields): the split's
+  // identity, not a pixel width — the frame derives pixels and clamps them at the two floors
+  // (the info floor and the map floor, gui_constants.hpp), while the stored value changes only
+  // by dragging. No query result, selection change or content change ever writes it (manual
+  // priority, §9.3). Session tier like the open flag above: never persisted; DoNew resets it
+  // with the whole GuiState; Open/Revert keep it. The window stores it here (not in ImGui
+  // storage) so the tier table carries one row for the window's session state.
+  float analyze_raypath_view_info_ratio = 0.30f;
+
+  // The Pose & trace window's open state (analyze-interaction-contract.md §7, §8 ownership
+  // declaration): the pose/trace window the point detail block's title opens — and ONLY that
+  // click; the sky-point and wavelength writers must not open it (the user's explicit
+  // negative requirement). T-session display state, `analyze_raypath_view_open`'s family — not
+  // document state, never persisted, never in ConfigSnapshot or the dirty diff. Kept by Open
+  // and Revert (ResetFrontendState does not touch it), reset by DoNew with the whole GuiState.
+  // WRITERS (the audit set): the "Point detail" title click (RenderPointDetailsBlock), the
+  // window's own title bar X through `p_open`, and DoNew's whole-state reset — no other write
+  // path exists by construction.
+  bool analyze_pose_view_open = false;
+  // D4 — the Pose & trace window's 3D | right-column split (contract §4.2): the RIGHT column's
+  // share of the window's content width. Ratio semantics like the Raypath view's D3 field
+  // above: the split's identity, not a pixel width — the frame derives pixels and clamps them
+  // at the two floors (the 3D floor and the right-column floor, gui_constants.hpp), while the
+  // stored value changes only by dragging. No query result, selection change or content change
+  // ever writes it (manual priority, §9.3). Session tier: never persisted; DoNew resets it with
+  // the whole GuiState; Open/Revert keep it — session memory, so closing and reopening the
+  // window keeps the user's split within this process.
+  float analyze_pose_view_right_ratio = 0.333f;
+  // D5 — the Pose & trace window's right column's globe | factors split (contract §4.2): the
+  // globe region's share of the column's height. Same semantics, independence and tier as the
+  // D4 field above (dragging D5 never touches D4 and vice versa — §4.2's 独立不联动).
+  float analyze_pose_view_globe_ratio = 0.55f;
 
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the

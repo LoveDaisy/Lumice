@@ -82,7 +82,7 @@ inline bool HasEverShownPicture(RunIntent intent) {
 // a disabled button rather than as an error line after the click), is a document that has shown
 // a picture at least once: analysing a scene the user has never seen rendered reads as a request
 // out of nowhere, so a fresh / New / JSON-imported / blank-.lmc document waits for its first Run.
-// The In frame and Point region radios read the same predicate, so the three cannot disagree on
+// The Point region radio reads the same predicate, so the two cannot disagree on
 // what "no picture yet" means.
 inline bool CanStartAnalysis(bool has_server, GuiState::SimState state, bool analysis_in_progress, RunIntent intent) {
   return has_server && !IsBackendBusy(state, analysis_in_progress) && HasEverShownPicture(intent);

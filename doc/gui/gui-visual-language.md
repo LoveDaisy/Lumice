@@ -133,31 +133,45 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 **4.8 顶栏：分组、量化、自适应组距与 Continue 的动作色**（as-built，2026-09-26；2026-10-31 组距自适应改版）—— 顶栏（`RenderTopBar`，`src/gui/app_panels.cpp`）
 原先按书写顺序机械排列，用裸字形 `"|"` 分组。现在的规则：
 
-- **分组**（左到右）：左面板折叠 ｜ 执行组（Run/Stop、Continue）｜ 文件组（New/Open/Save，图标化，语义在 tooltip）｜
-  功能组（Colors、Summary + Colored 复选框 + 告警 pip）｜ workspace 切换（**Render | Analyze** 双格 segmented，独立分组）｜
-  Settings …… ⚠ + Revert（右对齐）· 右面板折叠（贴右缘）。workspace 切换自成一组：它是**模式指示**——当前格 accent 高亮、
+- **分组**（左到右）：左面板折叠 ｜ 执行组（Run/Stop、Continue）｜ 文件组（New/Open/Save，图标+文字）｜
+  功能组（Colors、Summary——统一纯图标，词在 tooltip；+ Colored 复选框 + 告警 pip）｜ workspace 切换（**Render | Analyze** 双格 segmented，独立分组）｜
+  Settings（同样纯图标——与 Colors/Summary 同属「开窗命令」类，一类一表达）…… ⚠ + Revert（右对齐）· 右面板折叠（贴右缘）。workspace 切换自成一组：它是**模式指示**——当前格 accent 高亮、
   点击 no-op（accent = 「已配置/被选中」读法，同 Colors 的 tint），不是又一个开窗口的钮；与功能组、与 Settings 两条边界都画竖线，
   免得模态启动器读作视图切换的邻居。旧的单槽目标钮（标签随模式变异 + route 图标）是宽度紧张年代的降级档：
   route 图标只命名「去往」的单方向，与模式指示的读法矛盾。
-- **组边界 = 主题化竖线 + min/max 两档自适应组距**：`ToolbarGroupSeparator(window_width)`（`SeparatorEx(Vertical)`，颜色取
-  `ImGuiCol_Separator`，随色盘走）。⭐可复用条款（不止服务本顶栏）：**组距是窗宽的纯函数**——输入窗宽（设计 pt，
-  调用点除以 `CurrentUiScale()` 归一），在 `[kMinWindowWidth, 锚点窗宽]` 区间内线性插值，两端 clamp：低于最小窗宽读作最小档，
-  达到锚点后封顶不再增长；**盈余归尾部留白，不拉伸按钮**（⚠ + Revert 与右折叠钮始终右对齐贴右缘）。渲染与测试消费同一个
-  纯函数（`src/gui/toolbar_layout.hpp` 的 `TopBarGroupGapPt`，单源——同一语义一个权威实现）；当前值 min 25 pt、max 33 pt、
-  锚点 1600 pt（= `kInitWindowWidth`，测试基座下宽端断言恰好落在 max 上）。base 节奏仍是 `2 × ItemSpacing.x + 1px 竖线`，
-  纯函数给的是目标档，与 base 的差对半摊到边界两侧的两个 item gap 上。
+  **表达矩阵（2026-11-05 裁定，按同类一致准入、真实宽度裁定）**：命令按类各取一种表达——执行类图标+文字、文件类图标+文字、
+  开窗类（Colors/Summary/Settings）纯图标、有态显示开关（Colored/Full Spectrum 复选框）文字复选框、模式切换双格 segmented、
+  面板折叠纯图标。四个合格矩阵全部在真实 1024 帧实测（成品 fit 口径）：双图文 1147 ✗、文件图标+开窗图文 1045 ✗、
+  双纯图标 895 ✓、文件图文+开窗纯图标 997 ✓——在 fit 的矩阵里按「把文字还给被点名的组」裁定为后者（owner 反馈直接点名的文件组
+  拿回了字；开窗组的无字从此是类的统一形态而非单点降级，可懂性由 tooltip + 图标语义承担）。不以宽度接受同类混用矩阵。
+- **组边界 = 主题化竖线 + min/max 两档自适应组距，按不对称分侧摊开**：`ToolbarGroupSeparator(window_width)`
+  （`SeparatorEx(Vertical)`，颜色取 `ImGuiCol_Separator`，随色盘走）。⭐可复用条款（不止服务本顶栏）：**总距与分侧都是窗宽的
+  纯函数**——输入窗宽（设计 pt，调用点除以 `CurrentUiScale()` 归一），在 `[kMinWindowWidth, 锚点窗宽]` 区间内线性插值，两端
+  clamp：低于最小窗宽读作最小档，达到锚点后封顶不再增长；**盈余归尾部留白，不拉伸按钮**（⚠ + Revert 与右折叠钮始终右对齐贴右缘）。
+  渲染与测试消费同一组纯函数（`src/gui/toolbar_layout.hpp`：总距 `TopBarGroupGapPt`，分侧 `TopBarGroupGapLeftExtraPx` /
+  `RightExtraPx`，单源——同一语义一个权威实现）；当前值总距 min 25 pt、max 33 pt、锚点 1600 pt（= `kInitWindowWidth`，测试基座
+  下宽端断言恰好落在 max 上）。base 节奏仍是 `2 × ItemSpacing.x + 1px 竖线`，目标档与 base 的差**不对称摊**：左侧（竖线前的
+  留白）取 `kTopBarGroupGapLeftShare = 0.75`，右侧取余量——下一组贴近竖线而不是悬在正中（owner 反馈：对半摊让竖线左侧大留白、
+  右侧零或很小）。share 是观感工程值（截图校准，recalibrate 只动常数）；分侧和按构造钉在 spare 上，改 share 不动预算。
+  **位置验证不只查总距**：渲染帧中竖线自身的 x 由 DrawList 扫描读出（分割线无 item ID 不可查），两侧间距分别等值于分侧纯函数、
+  左>右，在 1024 与 1600 两基座各钉一次（`the_top_bar_fits_at_the_minimum_window_width`）。
 - **尺寸量化**：全栏按钮同一帧高（Revert 由 `SmallButton` 改为 `Button`，原先矮 6px）；**组内同宽**——
-  执行组取 Run/Stop/Stopping.../Continue 四个标签的最大宽度，文件组取三个图标的最大宽度，workspace 两格取
+  执行组取 Run/Stop/Stopping.../Continue 四个标签的最大宽度，文件组取三个图标+文字标签的最大宽度，workspace 两格取
   Render/Analyze 的最大宽度（`ToolbarGroupButtonWidth()`，一处实现三处调用）。两格 flush 相接（`SameLine(0, 0)`）读作
   一个控件、总宽恒定——「切换不推移邻钮」按构造成立（`workspace_switch_swaps_layout_and_stays_clean` 逐字节钉住）。
   功能组与 Settings **不**拉齐：它们各开一个不同的窗口，拉齐只制造与内容无关的留白。
-- **窄窗口预算**：在 `kMinWindowWidth`（1024）下、最宽内容（有色类 ⇒ `Full Spectrum` 复选框 + pip）实测需 **987px，余量 37px**
-  （fit 钉子的 LogInfo 行，2026-10-31 实测）。本轮改版的宽度账（实测链）：单槽形态基线 1001（余 23）→ New/Open/Save 图标化
-  = 956（余 68，reclaim 实测 45）→ 双格 segmented 独立分组 = 1005（余 19）→ min 档组距接线 = 1045（**缺口 21**，探针口径，
-  触发上抛）→ owner 裁定 Summary 图标化（reclaim 43）定稿 = **987（余 37）**——比按 43 线性外推的 1002 又宽 15，出自探针与
-  成品 fit 测试的口径差，成品测试是权威口径。⚠️ 历史（2026-09-26）：彼时无图标化 reclaim，双格 segmented 需 1036px、
-  溢出 12px 被降级为单槽——超的是当时那条预算；同形态在 reclaim 支付下本次成立。下次往顶栏加东西前先看这个余量。
-  由 `shell_chrome/the_top_bar_fits_at_the_minimum_window_width` 钉住（真实 1024 帧渲染实测，非解析代入）。
+- **窄窗口预算**：在 `kMinWindowWidth`（1024）下按两个最宽真实内容各测一次，均为 fit 钉子的 LogInfo 行（2026-11-05 实测）。
+  无告警配置（有色类 ⇒ `Full Spectrum` 复选框）实测需 **997px，余量 27px**。告警 pip 态是顶栏真正的最宽内容，且在 harness
+  中真实可达——无 server 时信号轮询不跑、信号缓存把新条目 resize 成「matched」，只要有 match 非空且被隐藏（`visible=false`）
+  的类，`NoVisibleMatchedColorClass` 的可见性半边即令 composite 为空、pip 照常渲染（早前「无 server ⇒ pip 不可达」的说法
+  不成立，已按实测更正）——实测需 **1020px，余量 4px**；pip 的占宽由真实帧上 Analyze 格的位移读出（23px = 一个 ItemSpacing +
+  三角字形 15px），非字形核算代证。改版宽度账：2026-10-31 组距自适应定稿 987（余 37）→ 2026-11-05 表达矩阵
+  裁定（文件组文字回归 + 开窗组统一图标）= **997（余 27）**；本轮矩阵实测链（成品 fit 口径）：双图文 1147 ✗ → 开窗图文
+  1045 ✗ → 双纯图标 895 ✓ → 文件图文（裁定）997 ✓。⚠️ 历史（2026-09-26）：彼时无图标化 reclaim，双格
+  segmented 需 1036px、溢出 12px 被降级为单槽——超的是当时那条预算；同形态在 reclaim 支付下本次成立。下次往顶栏加东西前先看这个余量
+  （现役最紧的一档是 pip 态的 4px）。
+  两态由 `shell_chrome/the_top_bar_fits_at_the_minimum_window_width` 钉住（真实 1024 帧渲染实测，非解析代入），
+  pip 态另有整帧归档（`top_bar_rhythm_archived_at_narrow_and_default_bases` 的第三帧）供人审。
 - **常隐藏的状态提示住在栏尾的空白里**：⚠ + Revert 仍是常驻提交、未修改时 alpha=0 + `BeginDisabled` 隐藏（「不跳动」约束：
   它出现/消失时任何按钮都不许平移，由 `shell_chrome/toggling_modified_moves_no_top_bar_button` 钉住）。它原本紧跟 Continue，
   而文档大多数时候是未修改的，于是那块隐藏矩形在栏里最密的一段常驻成一个洞。现在它右对齐贴在右面板折叠钮左侧——
@@ -286,7 +300,14 @@ Settings 每次打开都重置到默认尺寸（`ImGuiCond_Appearing`），Summa
 | Custom Spectrum / 5 个确认对话框 | `edit_modals.cpp` / `app_panels.cpp` | 自动贴合 | `AlwaysAutoResize`，不动 |
 | Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×584 不变，故 `defaults_panel_layout` 参考图不重拍 |
 | Summary | `config_summary_window.cpp` | 半可变 | 宽钉 1200；出现时贴合内容、上限 min(900, 工作区)，之后高可拉到工作区 |
-| Raypath Analysis / Colors | `analysis_panel.cpp` / `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
+| Colors | `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
+| Raypath view | `analyze_map_view.cpp`（`RenderAnalyzeRaypathViewWindow`） | 自由 | `ImGuiCond_FirstUseEver` 给默认 900×560（钳到视口内），双轴可拉，窗级最小 480×360（`SetNextWindowSizeConstraints` 逐帧钳制——§11 R3 的最窄合同是用户可达边界），之后 ImGui 自己记；窗内 D3 分隔（图 | 信息）存会话比例（`GuiState::analyze_raypath_view_info_ratio`），两下限钳制；容器与开窗合同见 [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §6/§8 |
+| Pose & trace | `analyze_point_view.cpp`（`RenderAnalyzePoseViewWindow`，755.5） | 自由 | `ImGuiCond_FirstUseEver` 给默认 960×620（钳到视口内），双轴可拉，窗级最小 640×420（§11 R4 的最窄合同是用户可达边界），之后 ImGui 自己记；窗内 D4（3D | 右列）与 D5（globe | 因素）各存会话比例（`GuiState::analyze_pose_view_right_ratio` / `analyze_pose_view_globe_ratio`），双侧下限钳制、独立不联动；容器与开窗合同见 [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §7/§8 |
+
+> Raypath Analysis 自 742 起并入 Analyze 工作区（`RenderAnalysisPanelBody` 宿主工作区份额列表区，
+> 不再是浮窗），上表原「Raypath Analysis / Colors」自由档行对其不再适用。工作区独立窗口的
+> Raypath view 已于 755.4 落地并按其自由档归档如上；姿态/轨迹窗（合同 §7）已于 755.5 落地并按
+> 其自由档归档如上。
 
 ### 9.3 与 `gui-layout-architecture.md` §8 的边界：可拉尺寸不是重排
 

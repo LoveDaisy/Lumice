@@ -79,7 +79,18 @@ namespace {
 // 90 with workspace, the Render/Analyze workspace selection and the Analyze workspace's own
 // session state. kSession and ineligible like analysis before it: which workspace the frame shows
 // is this session's layout, not part of the document. Not serialized, so no row can reach the panel.
-constexpr std::size_t kExpectedGovernedFieldCount = 90;
+// 92 with the Raypath view window's two session rows (755.4): `analyze_raypath_view_open` (the
+// window's open flag — which panels are open is not part of the document, kSession like
+// config_summary_window_open before it) and `analyze_raypath_view_info_ratio` (the window's own
+// reference-map | info split — a layout choice of this session, kSession like workspace before
+// it). Neither is serialized, so no row can reach the panel; both are ineligible for the same
+// reasons as their family.
+// 95 with the Pose & trace window's three session rows (755.5): `analyze_pose_view_open` (the
+// window's open flag — ineligible like analyze_raypath_view_open for the same reason) and the
+// window's own split ratios `analyze_pose_view_right_ratio` / `analyze_pose_view_globe_ratio`
+// (D4 / D5 — layout choices of this session, ineligible like analyze_raypath_view_info_ratio).
+// None is serialized, so no row can reach the panel.
+constexpr std::size_t kExpectedGovernedFieldCount = 95;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

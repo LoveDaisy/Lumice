@@ -158,6 +158,13 @@ struct SelectedClassIdentity {
 // The selection's identity, or nullopt when nothing — or a row no longer on show — is selected.
 std::optional<SelectedClassIdentity> SelectedClassIdentityFor(const GuiState& state);
 
+// The selected row's label exactly as the list shows it (AnalysisRowLabel under the same
+// core->pool rewrite), or empty when nothing — or a row no longer on show — is selected. The
+// Raypath view's identity line draws this: the window can be open while the list is not on
+// screen (Render workspace, an occluding float), so the class being read must be nameable where
+// it is read, spelled the way the list spells it rather than a second rendering of the selection.
+std::string SelectedClassRowLabelFor(const GuiState& state);
+
 // The survey pump's comparison key: the identity (the same derivation the request builder
 // consumes — one chain, so change detection and issued request cannot drift) plus the
 // generation it belongs to.
@@ -202,18 +209,9 @@ void CanvasPixelToPreviewPoint(int px, int py, float dpi_scale_x, float dpi_scal
 // The LUMICE_AnnotationView describing the preview as drawn NOW on a canvas_w x canvas_h canvas:
 // the same view the overlay anchors are computed for (AnnotationViewInputFor ->
 // MakeAnnotationViewKey -> BuildAnnotationView), so a click is unprojected through the projection
-// the picture under it was drawn with.
+// the picture under it was drawn with. The ONE view the analysis pick family runs against —
+// both workspaces' picture faces draw through it, because both publish the same shared assembly.
 LUMICE_AnnotationView PreviewAnnotationView(const GuiState& state, int canvas_w, int canvas_h);
-
-// The Analyze workspace panorama's view: the up-looking equal-area fisheye (lens 1, fov 180,
-// view pitched to +90) — the same framing the panorama's display params carry, so the pick family
-// below runs against exactly the projection the picture was drawn with.
-LUMICE_AnnotationView PanoramaAnnotationView(const GuiState& state, int canvas_w, int canvas_h);
-
-// Whether the pixel is on the panorama's sky: inside the viewed fisheye's DISK (the square
-// canvas outcorners it, and the lens inverse answers behind-the-hemisphere directions there).
-// The panorama's pick and drag gate their writes on this.
-bool PanoramaPickHitsSky(const GuiState& state, const LUMICE_AnnotationView& view, int px, int py);
 
 // Turn the click at canvas pixel (px, py) into the cone centre: LUMICE_UnprojectPixel through
 // `view`. On sky, writes cone_center_dir / cone_center_valid and disarms the pick; off sky
@@ -286,13 +284,13 @@ std::optional<float> ConeRingRadiusCanvasPx(const LUMICE_AnnotationView& view, i
 // ResetFrontendState) and so re-seeds from the new document.
 void EnsureDefaultAnalysisRayBudget(GuiState& state);
 
-// The LUMICE_RaypathAnalysisRequest for the session's ROI. IN_FRAME takes the preview view on the
-// canvas_w x canvas_h canvas; CONE takes the picked centre with the FULL cone
-// (kAnalysisConeMaxRadiusDeg / kAnalysisConeRingCount) — the slider is applied at display time,
-// never here, and so is the symmetry (the request has none; v4.33). The ray budget is the session's own
-// (ray_num_millions / infinite), always explicit: the GUI never sends LUMICE_RAYPATH_RAY_BUDGET_SCENE_DEFAULT, because
-// it already holds the value the sentinel would stand for.
-LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state, int canvas_w, int canvas_h);
+// The LUMICE_RaypathAnalysisRequest for the session's ROI. CONE takes the picked centre with the
+// FULL cone (kAnalysisConeMaxRadiusDeg / kAnalysisConeRingCount) — the slider is applied at
+// display time, never here, and so is the symmetry (the request has none; v4.33). The ray budget
+// is the session's own (ray_num_millions / infinite), always explicit: the GUI never sends
+// LUMICE_RAYPATH_RAY_BUDGET_SCENE_DEFAULT, because it already holds the value the sentinel would
+// stand for.
+LUMICE_RaypathAnalysisRequest BuildAnalysisRequest(const GuiState& state);
 
 // ---- Exclude this raypath ------------------------------------------------------------------------
 
@@ -382,6 +380,14 @@ std::string AnalysisRowLabel(std::string_view display, const std::map<int, int>&
 std::string WaitActivityDotsFor(double elapsed_s);
 // The dots' rotation period in seconds — the cycle the animation steps through (1 → 2 → 3 → 1).
 inline constexpr double kWaitActivityDotsPeriodSeconds = 0.4;
+
+// The narrow-column reading contract, hover half: a table row's label does not re-wrap inside
+// its column — ImGui table columns do not grow their row height with wrapped content, and a
+// wrapping row would couple the table's height budget and the scroll addressing it feeds — so
+// the clipped row's full identity travels on hover instead. Call right after the row's
+// Selectable: it reads the last item's rect against the column width. The share list's rows and
+// the details block's component rows are the same fact twice, not two facts: one implementation.
+void RowLabelTextTooltip(const std::string& label);
 
 // The exclusion itself, on an eligible selection, reaching every entry that uses the chain's
 // crystal (the histogram counted it wherever it was used). Entries with no filter get one: a
@@ -477,13 +483,19 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 // ---- Rendering -----------------------------------------------------------------------------------
 
 // The analysis tool's sections as the Analyze workspace's share-list region hosts them — called
-// from inside that region's child (analyze_workspace.cpp). No window of its own; the ROI controls
-// are the panorama's (RenderPanoramaRoiControls below).
+// from inside that region's child (analyze_workspace.cpp). No window of its own; the request's
+// controls — region, centre, radius, budget, Analyze/Stop — are the main view's operation bar's
+// (RenderAnalyzeOperationBar below).
 void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server);
 
-// The ROI controls — region radios, cone radius, the pick arming — hosted by the panorama region
-// above the picture: Point mode's gestures aim at THAT picture. The default-centre and pick
-// branches read the panorama's viewport publication.
+// The main view's operation bar (contract §2.2): region radios, the Point pick arming and
+// centre readout, the radius, the budget and Analyze/Stop — one judged-join strip hosted below
+// the picture by the Analyze workspace. The default-centre and pick branches read the
+// panorama's viewport publication.
+void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server);
+
+// The operation bar's region segment: the Whole sky / Point radios, and in Point mode the pick
+// arming and the centre readout. (Exposed for the logic tests; the bar is the only renderer.)
 void RenderPanoramaRoiControls(GuiState& state);
 
 // The marker and ring over the Analyze workspace's panorama: CONE mode with a projectable centre

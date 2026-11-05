@@ -11,7 +11,9 @@
 //     cell colour ramp. Every function is frame-free and holds itself to rules without ImGui.
 //   * The pump and the ImGui half (bottom of this header, GuiState forward-declared):
 //     PumpMapQuery — the survey pump's sibling over the map face's key (selection + view +
-//     wavelength) with the settle gate — and RenderAnalyzeMapRegion, the workspace region.
+//     wavelength) with the settle gate — and RenderAnalyzeMapRegion, the Raypath view window's
+//     left region (RenderAnalyzeRaypathViewWindow is the window; it ran the depth band's map
+//     cell until 755.4 moved it out).
 //
 // Two conventions this file refuses to blur (the M1 probe pinned both ends; see the session
 // struct comments in analyze_survey.hpp):
@@ -25,6 +27,7 @@
 //     header's formula only.
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "gui/analyze_survey.hpp"
@@ -223,6 +226,50 @@ struct MapCaliberInput {
 };
 std::vector<std::string> MapCaliberLines(const MapCaliberInput& in);
 
+// ---- The overlay presentation model (pure; the renderer draws what these name) ----------------------
+
+struct SurveyObjectRow;  // gui/analyze_overview.hpp — the grouping reads its rows by pointer
+
+// One survey object marker's look: a shape per kind (the engine's six-kind vocabulary plus the
+// fallback), a colour per kind, and solid-vs-outline by the claim's state — a certified or
+// finite conclusion draws solid, the refused/unevaluated/unknown states draw outline only (the
+// marker never presents an unevaluated row as if it were an answered one).
+enum class OverlayMarkerShape { kCircle, kSquare, kTriangle, kDiamond, kTriangleDown, kFallbackDiamond };
+struct OverlayMarkerStyle {
+  OverlayMarkerShape shape = OverlayMarkerShape::kFallbackDiamond;
+  unsigned int colour = 0;  // ImU32 (RGBA8); spelled unsigned to keep this header off imgui.h
+  bool filled = false;
+};
+OverlayMarkerStyle OverlayMarkerStyleFor(const std::string& kind_name, int state);
+
+// One tooltip's grouped entries: the objects whose marker rect the pointer is inside, grouped
+// by the row's OBSERVATION key — the row's whole content (kind, state, position, reason AND the
+// evidence fields family_level/blur_deg), because "identical" is a claim about the sources.
+// Identical rows fold into one entry with a count. A display grouping of the model's rows:
+// nothing is dropped (every hit appears, folded or lone), no physical claim changes, and rows
+// differing in ANY carried field stay separate entries. First-seen order is kept (the model's
+// own order). The grouping is pure presentation; the unit layer pins it on observed row shapes
+// plus synthetic same-key and evidence-differing rows.
+struct OverlayHitGroup {
+  const SurveyObjectRow* representative = nullptr;
+  int count = 0;
+};
+void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vector<OverlayHitGroup>* out);
+
+// What the frame actually drew — the legend's one input (a legend describes the drawn picture,
+// so a category absent from this frame draws no entry). The overlay/anchor draws fill it; the
+// info region's legend reads it, same frame.
+struct OverlayLegendState {
+  bool anchor_sun = false;
+  bool anchor_zenith = false;
+  bool anchor_horizon = false;
+  std::vector<std::string> object_kinds;  // unique, in first-draw order
+  bool dispersion_red = false;
+  bool dispersion_blue = false;
+  bool dispersion_partial = false;  // any drawn circle left the view disk (the arc-in-view wording)
+  bool sky_point = false;
+};
+
 // ---- The pump and the renderer (GuiState-dependent, defined in the .cpp) ---------------------------
 
 // The map face's frame pump — the survey pump's sibling (analysis_panel.hpp PumpSurveyQuery):
@@ -231,11 +278,27 @@ std::vector<std::string> MapCaliberLines(const MapCaliberInput& in);
 // Writes only state.analysis's map fields and the executor; no widget, no document field.
 void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s);
 
-// The workspace's raypath-view region — the placeholder's replacement in
-// analyze_workspace.cpp's lower row. Draws the state around the picture (the raster itself is
-// the .cpp's cached GL texture), hosts the gestures, the overlays, the coordinate input and the
-// caliber line.
+// The Raypath view window's body — formerly the depth band's map cell (755.4 moved the whole
+// capability into the window in one piece). Draws the D3 split (contract §4.2): the LEFT
+// region (the raster, its gestures and the query's state line, under the region's own name
+// ##AnalyzeRaypathView — the tests' anchor) and the RIGHT info region (##AnalyzeRaypathInfo:
+// the wavelength, the view buttons, the caliber block, the sky-point input, the legend), with
+// the draggable strip between writing the session ratio
+// GuiState::analyze_raypath_view_info_ratio. The raster itself is the .cpp's cached GL
+// texture; the overlays, the cursor readout and the coordinate input live with their halves.
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
+
+// The Raypath view floating window (doc/gui/analyze-interaction-contract.md §6): the non-modal
+// container the share list's class rows open. Committed from BOTH frame loops next to the
+// Colors/Summary windows, in every workspace mode — early-return while
+// `state.analyze_raypath_view_open` is false, so a closed window costs one branch. The `bool*`
+// passed to ImGui::Begin is the flag itself: the title-bar X writes it back directly, and the
+// next class-row click reopens. In-flight queries are not touched by opening or closing (the
+// T-session contract, §8). In the Render workspace the window's frames run the shared query
+// pumps and clear the map wait-feedback fields (analyze_workspace.hpp PumpAnalyzeQueries) —
+// it is the only analysis face rendering there. The body is RenderAnalyzeMapRegion over the
+// window's content area.
+void RenderAnalyzeRaypathViewWindow(GuiState& state);
 
 // Releases the region's GL texture (the app's teardown, next to the executor's join).
 void ShutdownMapView();

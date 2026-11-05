@@ -14,6 +14,49 @@
 > 期限、按 (代，序号) 采纳），右列显示 waiting / cancelled / 具名拒答 / 完成摘要四态。
 > 「光路分析」整体路线见 [`raypath-analysis.md`](raypath-analysis.md)。
 >
+> **2026-11-04 重排（scrum analyze-gui-rework 755.2）**：上述「四列布局」退役为**固定左栏＋主视图
+> 列＋右列**骨架（`doc/gui/analyze-interaction-contract.md` §2/§4）——左栏 300 固定（晶体/场景编辑
+> 不变）；主视图列＝上方大主图（场景全景，机制不变）＋下方**过渡深度带**（地图/3D/globe 三区的临时
+> 宿主，随各自独立窗落地而清退；带内响应式：并排或垂直堆叠＋带内滚动）；右列＝上份额列表（机制不变）
+> ＋下诊断区（选中类身份＋survey 四态＋点块；未选中时为入口引导＋运行状态＋观察摘要的空态，§9.1）。
+> 新增 D1/D2 两条分隔条（列分隔、右列行分隔），各存会话比例、按内容下限钳制；`middle_rows_ratio`
+> 语义改为「主视图列上下分享」，随深度带清退退役。机制层（查询/采纳/取消/新鲜度）零变化；上文的
+> 机制记录不受影响。
+>
+> **2026-11-05 主视图自由相机＋操作条（scrum analyze-gui-rework 755.3，scene-view-controls）**：
+> 主图从固定等面积半球换为**真实 renderer 视图**——与 Render 预览共用同一份画面装配
+> （`AssemblePreviewPictureParams`：mono 曝光逐帧重算、composite 推送静态基线单份、辅助线/标记/
+> lens border/curve labels/照片按共享显示态发布到 `g_panorama_vp`），手势三臂（marker 拖 >
+> 武装点选 > 相机 orbit，臂间按压消费 latch）；观察控制面（View/Display/Overlay 组）与
+> Sun/Simulation 就地编辑经左栏同一控件函数承载。**请求控件收敛为主图下缘操作条**（合同 §2.2）：
+> Region 两选＋Pick＋锥心读数＋半径＋预算＋Analyze/Stop 一条 judged-join 流，窄宽折行不裁剪；
+> 列表头只余 banner/新鲜度/对称性/搜索。**GUI In frame 入口按 owner 实施裁决退役**
+> （结构性理由与残余缺口的如实记录见合同 §5.3/§5.3.1）——CLI `--roi frame`、C API
+> `LUMICE_RAYPATH_ROI_IN_FRAME`、引擎实现与后端测试不动；`BuildAnalysisRequest` 不再携带
+> canvas/frame 分支。锥心默认位（视图中心）在画面矩形尺寸变化时重放，用户 Pick/拖动接管后
+> 钉死（`cone_center_is_default`）；方向域锚定不变——相机转动不改 `cone_center_dir`。
+> 机制层（查询/采纳/取消/新鲜度/Exclude 循环）零变化。
+>
+> **2026-11-05 地图区迁独立窗（scrum analyze-gui-rework 755.4，raypath-detail-window）**：深度带的
+> 地图格整体迁入显式打开的 **Raypath view 窗**（`RenderAnalyzeRaypathViewWindow`，宿主
+> `RenderAnalyzeMapRegion` 的 D3 两分区——左 raster+手势+状态行、右 λ/视图按钮/caliber/天空点输入/
+> 图例），类行点击开窗、T-session 开合旗标（`analyze_raypath_view_open`）、窗在 Render 工作区也泵
+> （`PumpAnalyzeQueries` 共享入口）。深度带退为两格（3D/globe），overlay 三件套（kind 标记、单位置
+> 组织悬停、等偏折圆诚实标注）随迁落地；容器与开窗合同见
+> [`analyze-interaction-contract.md`](../gui/analyze-interaction-contract.md) §6/§8 的 as-built 节。
+> 机制层（查询/采纳/取消/新鲜度）零变化。
+>
+> **2026-11-05 姿态面迁独立窗（同 scrum 755.5，pose-trace-window）**：深度带余下两格（3D/globe）
+> 迁入 **Pose & trace 窗**（`RenderAnalyzePoseViewWindow`，宿主 `RenderAnalyzeSunGlobeRegion` /
+> `RenderAnalyzeRay3DRegion` 与新 `##AnalyzePoseFactors` 因素区），点摘要块标题行点击开窗、
+> T-session 旗标（`analyze_pose_view_open`）＋ D4/D5 分隔比例；深度带与上下两行分隔整体退役，主视图
+> 占满主列。诊断区的点摘要块保留**答案与证据**（四态＋Cancel、caliber、rank-0 质量、无分量
+> reach＋discovery 注、分量证据清单——分量行改纯证据行，选择交互唯一 owner 是窗内 globe combo）；
+> 当前样本因素归窗内 `##AnalyzePoseFactors`。帧泵上提至 `RenderWorkspacePanels` 入口（每 GUI 帧驱动，
+> 窗开合只是显示态）。容器与开窗合同见
+> [`analyze-interaction-contract.md`](../gui/analyze-interaction-contract.md) §7/§8 的 as-built 节。
+> 机制层（查询/采纳/取消/新鲜度）零变化。
+>
 > 本文是 (i)「识别」已交付形态的机制记录；「光路分析」整体为什么拆成 (i)/(ii)、(ii) 为什么搁置、
 > (i) 路线接下来往哪走，见功能总篇 [`raypath-analysis.md`](raypath-analysis.md)。
 > 本文档结构与 §1/§2 的裁决叙事保持设计阶段原文，§3–§5、§7 的机制描述、§6 诚实边界、§8 开放

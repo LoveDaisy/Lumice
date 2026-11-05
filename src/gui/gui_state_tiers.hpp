@@ -206,6 +206,21 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // state — one struct, one row, the same grain `analysis` registers at. Never persisted, never
     // dirty; survives document switches (layout is not document state).
     { "workspace",                  FieldTier::kSession,    false },
+    // The Raypath view window's open state (analyze-interaction-contract.md §8): T-session
+    // display state like color_window_open — which panels are open is not document state.
+    // Open/Revert keep it (ResetFrontendState does not touch it), DoNew resets it with the whole
+    // GuiState. D3, the window's own reference-map | info split ratio, rides beside it at the
+    // same tier (the split's identity, written only by its drag).
+    { "analyze_raypath_view_open",  FieldTier::kSession,    false },
+    { "analyze_raypath_view_info_ratio", FieldTier::kSession, false },
+    // The Pose & trace window's three session rows (755.5): the open flag (which panels are open
+    // is not document state — the same reason as analyze_raypath_view_open) and the window's own
+    // two split ratios, D4 (3D | right column) and D5 (globe | factors) — layout choices of this
+    // session, written only by their drags. Never persisted; DoNew resets them with the whole
+    // GuiState; Open/Revert keep them.
+    { "analyze_pose_view_open",     FieldTier::kSession,    false },
+    { "analyze_pose_view_right_ratio", FieldTier::kSession, false },
+    { "analyze_pose_view_globe_ratio", FieldTier::kSession, false },
     { "look_at",                    FieldTier::kSession,    false },
     // An Angular Distance pick in flight (armed + which family) — a gesture, not the document.
     { "angular_dist_picker",        FieldTier::kSession,    false },

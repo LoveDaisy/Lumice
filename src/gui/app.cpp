@@ -490,13 +490,13 @@ void DoSaveAs() {
   PerformSaveAs();
 }
 
-// Build PreviewParams for export: copy current preview viewport params, but override
-// intensity_* fields to sample the GUI EV slider live (the viewport copy carries whatever the
-// last rendered frame used, which is a frame behind a just-moved slider). The exposure itself
-// comes from mono_exposure_scale.hpp, so an export lands at the brightness the preview shows
+// Build PreviewParams for export: copy the publication the export renders through, but override
+// intensity_* fields to sample the GUI EV slider live (a viewport copy carries whatever the last
+// rendered frame used, which is a frame behind a just-moved slider). The exposure itself comes
+// from mono_exposure_scale.hpp, so an export lands at the brightness the active picture shows
 // under either mode.
-static PreviewParams BuildExportParams() {
-  PreviewParams params = g_preview_vp.params;
+static PreviewParams BuildExportParams(const PreviewParams& published) {
+  PreviewParams params = published;
   lumice::gui::MonoExposureInput ev_in;
   ev_in.exposure_offset = g_state.renderer.exposure_offset;
   ev_in.ev_auto = g_state.ev_auto;
@@ -522,11 +522,31 @@ ScreenshotFrameFacts CurrentScreenshotFrameFacts() {
 }
 
 ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
-  PreviewParams params = BuildExportParams();
+  // The screenshot belongs to the workspace it is taken in: the ACTIVE picture face's
+  // publication, every fact from the same place. The Analyze main view publishes its own view of
+  // the same committed texture — an export taken while it is live must be ITS picture, at ITS
+  // size, through ITS anchors — and a face with no publication this frame (the operation bar's
+  // takeover degradation leaves the main view unpublished by design) has no picture to export:
+  // refuse, never fall back across faces to another face's stale frame. The Save menu greys the
+  // entry on exactly this predicate.
+  const bool analyze_face_live = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze && g_panorama_vp.active;
+  const bool render_face_live = g_state.workspace.mode != GuiState::WorkspaceMode::kAnalyze && g_preview_vp.active;
+  if (!analyze_face_live && !render_face_live) {
+    GUI_LOG_WARNING("[GUI] RenderScreenshot: no active picture publication in this workspace; refusing");
+    ScreenshotRender empty;
+    return empty;
+  }
+  const bool panorama_live = analyze_face_live;
+  const PreviewParams& published = panorama_live ? g_panorama_vp.params : g_preview_vp.params;
+  const int w = panorama_live ? g_panorama_vp.vp_w : g_preview_vp.vp_w;
+  const int h = panorama_live ? g_panorama_vp.vp_h : g_preview_vp.vp_h;
+  const float dpi_x = panorama_live ? g_panorama_vp.dpi_scale_x : g_preview_vp.dpi_scale_x;
+  const float dpi_y = panorama_live ? g_panorama_vp.dpi_scale_y : g_preview_vp.dpi_scale_y;
+  const gui::AnnotationAnchors& pub_anchors = panorama_live ? g_panorama_vp.anchors : PreviewAnnotationAnchors();
+
+  PreviewParams params = BuildExportParams(published);
   ApplyScreenshotExportSelectionToParams(sel, g_state, CurrentScreenshotFrameFacts(), params);
 
-  int w = g_preview_vp.vp_w;
-  int h = g_preview_vp.vp_h;
   // The FBO is the live viewport's DEVICE pixel size, so the exported PNG is the full-resolution
   // twin of what is on screen (on a Retina display, twice the width of the preview area — that is
   // correct and deliberate, not a bug to normalize away).
@@ -545,12 +565,10 @@ ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
   // one is prefilled from the panel on every open, lives for this one export, gates lines and
   // labels separately, and can only take away what the screen shows, so untouched it IS the
   // screen and it has no state of its own to drift.
-  const float dpi_x = g_preview_vp.dpi_scale_x;
-  const float dpi_y = g_preview_vp.dpi_scale_y;
   const float label_w = DeviceToLogical(w, dpi_x);
   const float label_h = DeviceToLogical(h, dpi_y);
   const std::vector<CurveLabelSet> curve_labels =
-      BuildScreenshotExportLabelSets(PreviewAnnotationAnchors(), g_state, sel, label_w, label_h);
+      BuildScreenshotExportLabelSets(pub_anchors, g_state, sel, label_w, label_h);
   ScreenshotRender out;
   out.w = w;
   out.h = h;
@@ -577,6 +595,20 @@ void PerformScreenshotExport(const ScreenshotExportSelection& sel) {
   GUI_LOG_INFO("[GUI] Export screenshot{}: {}", shot.has_labels ? " (overlay)" : "", PathToU8(path));
 }
 
+// The texture-level panorama exports (dual fisheye, equirectangular) fix their own projection
+// and disable the overlays they cannot draw, but their COLOR state — tone, ground colours,
+// display mode, exposure — is the CURRENT renderer state, assembled fresh: the Analyze left
+// column edits those fields live, and an export must not answer with whatever the last Render
+// visit happened to leave in a publication cache.
+PreviewParams BuildTextureExportBase(int w, int h) {
+  PreviewParams params;
+  std::vector<CurveLabelSet> labels;
+  gui::AnnotationAnchors anchors;
+  const PreviewPictureTarget target{ static_cast<float>(w), static_cast<float>(h), w, h };
+  AssemblePreviewPictureParams(g_state, params, labels, target, anchors);
+  return params;
+}
+
 void DoExportDualFisheyeEqualAreaPng() {
   auto path = ShowExportDualFisheyeEqualAreaDialog();
   if (path.empty()) {
@@ -590,7 +622,7 @@ void DoExportDualFisheyeEqualAreaPng() {
     return;
   }
 
-  PreviewParams params = BuildExportParams();
+  PreviewParams params = BuildTextureExportBase(w, h);
   ConfigureDualFisheyeExportParams(params);
 
   auto rgba = RenderExportToRgba(g_preview, params, w, h);
@@ -626,7 +658,7 @@ void DoExportEquirectangularPng() {
   int dst_w = 2 * short_res;
   int dst_h = short_res;
 
-  PreviewParams params = BuildExportParams();
+  PreviewParams params = BuildTextureExportBase(dst_w, dst_h);
   ConfigureEquirectExportParams(params);
 
   auto rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h);
@@ -1813,15 +1845,11 @@ bool DoAnalyze() {
   if (!scene) {
     return false;
   }
-  // The IN_FRAME canvas is the preview's own when there is one — the frame on screen is what
-  // "in frame" means. Without a preview the frame is still the document's own view, sized at
-  // the resolution the document would render at: PreviewAnnotationView reads only the state
-  // and the canvas size, so this is the same frame a preview of that size would show. (The
-  // other two modes never read the canvas.)
-  const int doc_res = kSimResolutions[g_state.renderer.sim_resolution_index];
-  const int canvas_w = g_preview_vp.active ? g_preview_vp.vp_w : doc_res;
-  const int canvas_h = g_preview_vp.active ? g_preview_vp.vp_h : doc_res;
-  const LUMICE_RaypathAnalysisRequest req = BuildAnalysisRequest(g_state, canvas_w, canvas_h);
+  // The request reads only sky-direction state (Whole sky; a Point centre), never a canvas —
+  // the In frame mode whose assembly read the preview's frame retired with the free-camera
+  // main view (the interaction contract §5.3's removal record; the CLI/C API contract and the
+  // engine behind it are untouched).
+  const LUMICE_RaypathAnalysisRequest req = BuildAnalysisRequest(g_state);
   const LUMICE_ErrorCode err = LUMICE_StartRaypathAnalysis(g_server, scene.get(), &req);
   if (err != LUMICE_OK) {
     GUI_LOG_WARNING("[GUI] DoAnalyze: LUMICE_StartRaypathAnalysis failed with error code {} (roi_mode={})",
@@ -1832,6 +1860,10 @@ bool DoAnalyze() {
   // held generation stays as it was — the run's first snapshot carries a larger one (the
   // counter only grows), so the first result is adopted without any reset of the cursor.
   g_state.analysis.started = true;
+  // The region is accepted: a centre still marked "default" becomes this analysis's direction,
+  // and nothing but the user moves it from here — no layout change or camera orbit re-places an
+  // effective ROI (the sky-direction contract).
+  g_state.analysis.cone_center_is_default = false;
   g_state.analysis.selected_entry.reset();
   // The survey query's bookkeeping dies with the selection it was issued for (R6's re-Analyze
   // row: cancel what is out, void the old generation's attribution — a late result of the old

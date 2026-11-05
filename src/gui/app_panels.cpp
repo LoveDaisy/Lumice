@@ -365,23 +365,26 @@ inline ImVec2 MainVpPos(float x, float y) {
 
 // The top bar's boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
 // follows the palette) whose surrounding gaps carry the adaptive group-gap rule
-// (toolbar_layout.hpp, §4.8) — the rule itself stays the 1 px ImGui draws, and the target gap's
-// difference from the base rhythm (2 × ItemSpacing.x + the rule) is split evenly across the two
-// item gaps by pushing ItemSpacing.x for exactly these two SameLine calls. At kMinWindowWidth the
-// target is the base + 8, and the fit pin (the_top_bar_fits_at_the_minimum_window_width) measures
-// the bar with exactly these gaps; the never-narrower guard only means a miscalibrated target
-// cannot shrink the bar's rhythm below its own base — the gap the theme's ItemSpacing.x already
-// provides.
+// (toolbar_layout.hpp, §4.8) — the rule itself stays the 1 px ImGui draws. The target gap's
+// difference from the base rhythm (2 × ItemSpacing.x + the rule) is split unevenly: the left
+// side takes the larger share, so the next group hugs the rule — the split comes from the one
+// pure pair in toolbar_layout.hpp, which the tests read with the same algebra. The two gaps are
+// passed as SameLine's explicit spacing rather than through a pushed style var: with
+// offset_from_start_x == 0 and a non-negative spacing, SameLine positions the cursor through
+// exactly the value it is handed (it reads the style only when the spacing is negative), so the
+// arithmetic here is the arithmetic ImGui runs, and no style var can leak past the boundary.
+// At kMinWindowWidth the target is the base + 8, and the fit pin
+// (the_top_bar_fits_at_the_minimum_window_width) measures the bar with exactly these gaps —
+// total, and now each side against the rule; the never-narrower guard only means a
+// miscalibrated target cannot shrink the bar's rhythm below its own base — the gap the theme's
+// ItemSpacing.x already provides.
 void ToolbarGroupSeparator(float window_width) {
   const ImGuiStyle& style = ImGui::GetStyle();
   const float gap_px = UiPx(TopBarGroupGapPt(window_width / CurrentUiScale()));
-  const float extra = gap_px - (style.ItemSpacing.x * 2.0f + 1.0f);
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
-                      ImVec2(style.ItemSpacing.x + (extra > 0.0f ? extra * 0.5f : 0.0f), style.ItemSpacing.y));
-  ImGui::SameLine();
+  const float spare = gap_px - (style.ItemSpacing.x * 2.0f + 1.0f);
+  ImGui::SameLine(0.0f, style.ItemSpacing.x + TopBarGroupGapLeftExtraPx(spare));
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-  ImGui::SameLine();
-  ImGui::PopStyleVar();
+  ImGui::SameLine(0.0f, style.ItemSpacing.x + TopBarGroupGapRightExtraPx(spare));
 }
 
 // One width for every button of a top-bar group: the widest label plus the frame padding. A group
@@ -470,7 +473,7 @@ void RenderTopBar(float window_width) {
     PopGoodButtonStyle();
     ImGui::EndDisabled();
     if (g_state.analysis_run_in_progress && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("A raypath analysis is running. Wait for it, or stop it from the Raypath Analysis window.");
+      ImGui::SetTooltip("A raypath analysis is running. Wait for it, or stop it from the Analyze workspace's bar.");
     }
   }
 
@@ -510,22 +513,25 @@ void RenderTopBar(float window_width) {
   // itself stays enabled so read-only exports (Screenshot / Dual Fisheye Equal Area /
   // Equirectangular / Config JSON) remain reachable.
   //
-  // Icon-only labels: the words they replaced were the bar's widest cheap reclaim, spent on the
-  // workspace group's split (the narrow-window budget is pinned by
-  // shell_chrome/the_top_bar_fits_at_the_minimum_window_width). Each icon's word lives in its
-  // tooltip — read through AllowWhenDisabled for New/Open, since they spend much of their life
-  // behind BeginDisabled(busy), and a tooltip that fired only while enabled would vanish exactly
-  // when the disabled state invites the question "why not now".
-  const float file_op_width = ToolbarGroupButtonWidth({ ICON_FA_FILE, ICON_FA_FOLDER_OPEN, ICON_FA_FLOPPY_DISK });
+  // Icon + word labels (the toolbar-consistency ruling, all four qualifying matrices measured at
+  // the real 1024 frame: icon+word here fit at required=997; word on the window-opener group did
+  // not — 1045/1147 — so the words went back to the file commands and the window openers went
+  // icon-only). One width for the three, still: the group reads as one control and nothing
+  // outside it moves when the labels reflow. Tooltips stay — they explain the command, not just
+  // name it, and New/Open spend much of their life behind BeginDisabled(busy), so a tooltip that
+  // fired only while enabled would vanish exactly when the disabled state invites the question
+  // "why not now".
+  const float file_op_width =
+      ToolbarGroupButtonWidth({ ICON_FA_FILE " New", ICON_FA_FOLDER_OPEN " Open", ICON_FA_FLOPPY_DISK " Save" });
   ImGui::BeginDisabled(busy);
-  if (ImGui::Button(ICON_FA_FILE, ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(ICON_FA_FILE " New", ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kNew);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("New: start a new document.");
   }
   ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_FOLDER_OPEN, ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(ICON_FA_FOLDER_OPEN " Open", ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kOpen);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -534,14 +540,13 @@ void RenderTopBar(float window_width) {
   ImGui::EndDisabled();
   ImGui::SameLine();
   {
-    if (ImGui::Button(ICON_FA_FLOPPY_DISK, ImVec2(file_op_width, 0))) {
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save", ImVec2(file_op_width, 0))) {
       ImGui::OpenPopup("SaveMenu");
     }
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("Save: document, copy, image exports, and config JSON.");
     }
     if (ImGui::BeginPopup("SaveMenu")) {
-      bool no_texture = !g_preview.HasTexture();
       bool has_server = g_server != nullptr && g_state.sim_state != GuiState::SimState::kIdle;
       ImGui::BeginDisabled(busy);
       if (ImGui::MenuItem("Save")) {
@@ -552,7 +557,12 @@ void RenderTopBar(float window_width) {
       }
       ImGui::EndDisabled();
       ImGui::Separator();
-      if (ImGui::MenuItem("Screenshot...", nullptr, false, !no_texture)) {
+      // The Screenshot exports the ACTIVE picture face's publication (RenderScreenshot selects
+      // it by the same predicate): in the Analyze workspace the main view's operation-bar
+      // takeover leaves no publication this frame, and the menu says what the consumer would.
+      const bool screenshot_available =
+          g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze ? g_panorama_vp.active : g_preview_vp.active;
+      if (ImGui::MenuItem("Screenshot...", nullptr, false, screenshot_available)) {
         DoExportPreviewPng();
       }
       if (ImGui::MenuItem("Dual Fisheye Equal Area...", nullptr, false, has_server)) {
@@ -603,7 +613,7 @@ void RenderTopBar(float window_width) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
   }
-  if (ImGui::Button(ICON_FA_PALETTE " Colors")) {
+  if (ImGui::Button(ICON_FA_PALETTE)) {
     // task-348.3 AC3 (⑦): apply the "default enable on open with no classes" rule
     // ONLY on the false→true transition of color_window_open. Doing it here (inside
     // the click branch, guarded by `opening`) — not per-frame inside RenderColorWindow
@@ -619,11 +629,17 @@ void RenderTopBar(float window_width) {
   if (tint_colors_button) {
     ImGui::PopStyleColor(3);
   }
+  // Icon-only is the window-opener group's one form (the toolbar-consistency ruling: the same
+  // real-frame measurement that returned the words to the file commands took them off this
+  // group — one expression per kind of command). The word lives in the tooltip, same rule the
+  // icon-bearing buttons follow.
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Colors: the raypath colour classes. Opens the Colors window.");
+  }
   // The second occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
-  // like Analysis — the window has no state of its own to set on open. Icon-only like the file
-  // group: its word was the bar's next-widest cheap reclaim after New/Open/Save, spent by owner
-  // ruling on the group-gap rule's narrow-window budget (the same fit pin), and the tooltip
-  // carries the word.
+  // like Analysis — the window has no state of its own to set on open. Icon-only like the rest of
+  // its group (Colors / Summary / Settings, one expression per kind of command — the ruling that
+  // returned the words to the file commands), and the tooltip carries the word.
   ImGui::SameLine();
   if (ImGui::Button(ICON_FA_FILE_LINES)) {
     g_state.config_summary_window_open = !g_state.config_summary_window_open;
@@ -763,8 +779,9 @@ void RenderTopBar(float window_width) {
   // byte-for-byte by workspace_switch_swaps_layout_and_stays_clean, together with the segmented
   // shape itself). The current mode's cell carries the accent — "selected", the same reading as
   // the tinted Colors button — and its click is a no-op; the mode itself is on screen (four
-  // columns vs the render layout) and the tooltips say where the click goes. The file group's
-  // iconified labels are the reclaim that funds the pair (same fit pin). Switching is session
+  // columns vs the render layout) and the tooltips say where the click goes. The window-opener
+  // group's icon-only labels are the headroom that funds the pair (same fit pin; the measured
+  // floor is required=997, headroom=27). Switching is session
   // state: it never dirties, never commits, never cancels or starts a run.
   {
     const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
@@ -778,8 +795,10 @@ void RenderTopBar(float window_width) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
       // The armed cone pick aims at the panorama, which this mode takes off screen — the same
       // "never leave a click armed for a mode that does not read it" rule the ROI radios follow.
+      // The marker drag and the main view's camera latch are the same rule for their arms.
       g_state.analysis.pick_armed = false;
       g_state.analysis.cone_marker_dragging = false;
+      g_state.workspace.panorama_camera_dragging = false;
     }
     if (!analyze) {
       ImGui::PopStyleColor(3);
@@ -795,6 +814,13 @@ void RenderTopBar(float window_width) {
     }
     if (ImGui::Button("Analyze", ImVec2(cell_width, 0)) && !analyze) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
+      // The eyedropper is a Render-workspace mode (armed from the Display group, reading the
+      // preview's photo geometry); the Analyze main view does not host it, so leaving the mode
+      // armed across the switch would swallow the main view's next click for nothing — the same
+      // rule the Render button above applies to the cone pick. The Angular Distance pick, by
+      // contrast, is hosted over BOTH pictures, so it keeps its armed state across the switch.
+      g_bg_pick.active = false;
+      g_bg_pick.swallow_drag_until_release = false;
     }
     if (analyze) {
       ImGui::PopStyleColor(3);
@@ -821,8 +847,11 @@ void RenderTopBar(float window_width) {
   // The panel's preset library is one section inside it, so retuning a preset is still reachable;
   // it no longer has a menu item of its own pointing straight at that section.
   ToolbarGroupSeparator(window_width);
-  if (ImGui::Button(ICON_FA_GEAR " Settings")) {
+  if (ImGui::Button(ICON_FA_GEAR)) {
     OpenDefaultsPanel(g_state, DefaultsPanelSection::kSettings);
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Settings: personal defaults -- what a new document starts from. Opens the Settings panel.");
   }
 
   // The right toggle's width is needed before it is drawn: the ⚠ + Revert pair below is placed
@@ -1565,7 +1594,10 @@ void RenderMarkersSection() {
 // It replaces four stacked two-row blocks that repeated the word "Alpha" four times and anchored
 // their checkboxes at an x computed from the width of the longest name — an arrangement in which
 // adding a name longer than "Angular Distance" silently overlapped the Line column.
-void RenderOverlaysTab() {
+
+}  // namespace
+
+void RenderOverlayControlsGroup(GuiState& state) {
   const OverlayRowSpec rows[] = {
     { "Horizon", "##horizon_color", g_state.horizon_color, "overlay_horizon_color", "##horizon_line",
       &g_state.show_horizon_line, "##horizon_label", &g_state.show_horizon_label, "##horizon_alpha",
@@ -1605,7 +1637,467 @@ void RenderOverlaysTab() {
   RenderMarkersSection();
 }
 
-}  // namespace
+// The Render right panel's View group (Lens / Visibility / Pose / Look At), extracted so the
+// Analyze left column hosts the SAME controls on the SAME fields — same ids, same semantics,
+// different windows (the two workspaces never render in one frame).
+void RenderViewControlsGroup(GuiState& state) {
+  auto& r = state.renderer;
+  PushLabelColumnItemWidth();
+  ImGui::SeparatorText("Lens");
+  // Use BeginCombo + Selectable to honour kLensTypePresentationOrder (gui_state.hpp).
+  // The enum value (r.lens_type) is preserved unchanged; only the display order differs.
+  // Every label in this group and the Display group below is the registry's (PanelLabel), the
+  // same word the Summary window prints for the field — see panels.cpp's Sun block for why.
+  if (ImGui::BeginCombo(PanelLabel("renderer.lens_type", "view").c_str(), kLensTypeNames[r.lens_type])) {
+    for (int idx : kLensTypePresentationOrder) {
+      bool selected = (r.lens_type == idx);
+      if (ImGui::Selectable(kLensTypeNames[idx], selected)) {
+        // SelectLensType owns both the view transform and session-intent transition. .lmc loading
+        // and tests bypass the control by writing lens_type directly, so they keep their fov.
+        SelectLensType(state, idx);
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  // Domain, format and disabled-when all come from the field editor registry rather than being
+  // written here — same for every slider below whose field is a registered document leaf. The
+  // bound is the lens' own MaxFov (the registry calls LUMICE_MaxFov), and `enabled` is the
+  // full-sky gate that used to be spelled `BeginDisabled(full_sky)` at this line.
+  const FieldEditorConstraint fov_c = ConstraintFor("renderer.fov", state);
+  ImGui::BeginDisabled(!fov_c.enabled);
+  SliderWithInput(PanelLabel("renderer.fov", "view").c_str(), &r.fov, static_cast<float>(fov_c.min_value),
+                  static_cast<float>(fov_c.max_value), fov_c.fmt, fov_c.scale);
+  ImGui::EndDisabled();
+  bool is_globe = (r.lens_type == kLensTypeGlobe);
+  ImGui::SeparatorText("Visibility");
+  // Same registry query as the FOV slider above, for the same reason. What used to stand here was
+  // a hand-paired nest — `BeginDisabled()` under `full_sky` on the outside, `BeginDisabled(
+  // is_globe)` under `!full_sky` on the inside — whose NET effect each widget saw had to be read
+  // off the interleaving of four `if`s. The two gates are already registered (renderer.visible →
+  // NotUnderFullSky, renderer.front → NotUnderFullSkyOrGlobe), and each already folds the
+  // full-sky case in, so the call site needs no nesting: one flat pair per field.
+  const FieldEditorConstraint visible_c = ConstraintFor("renderer.visible", state);
+  ImGui::BeginDisabled(!visible_c.enabled);
+  ImGui::RadioButton("Upper##visible", &r.visible, kVisibleUpper);
+  ImGui::SameLine();
+  ImGui::RadioButton("Full##visible", &r.visible, kVisibleFull);
+  ImGui::SameLine();
+  ImGui::RadioButton("Lower##visible", &r.visible, kVisibleLower);
+  ImGui::EndDisabled();
+  // Between the two pairs rather than inside either: SameLine only moves the draw cursor for the
+  // next widget, so it is unaffected by — and does not affect — the disabled stack.
+  ImGui::SameLine(0.0f, UiPx(20.0f));
+  const FieldEditorConstraint front_c = ConstraintFor("renderer.front", state);
+  ImGui::BeginDisabled(!front_c.enabled);
+  // The tick shows the EFFECTIVE clip, not the stored choice: under a lens the clip does not
+  // apply to it reads unchecked while r.front keeps the choice for switching back
+  // (EffectiveFrontForLens). A click only lands while enabled, where the two agree, so writing it
+  // back to r.front records a real choice. field_editor_registry.cpp's BoolField does the same
+  // for the Settings row through its `effective` argument; change the two together.
+  bool front_effective = EffectiveFrontForLens(r.lens_type, r.front);
+  if (Checkbox(PanelLabel("renderer.front", "visible").c_str(), &front_effective)) {
+    r.front = front_effective;
+  }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", front_c.enabled ? "Show front hemisphere only\n(combine with Upper/Full/Lower)" :
+                                              front_c.disabled_reason);
+  }
+  ImGui::EndDisabled();
+  // The globe's far side, seen through the near one. Only drawn under Globe — the one lens that
+  // looks at the sky from outside and so has a far side at all — rather than greyed under the
+  // ten that do not; the registry gate (WhenGlobe) still states the rule for the defaults panel
+  // and the Summary.
+  if (is_globe) {
+    const FieldEditorConstraint fade_c = ConstraintFor("renderer.globe_back_fade", state);
+    ImGui::BeginDisabled(!fade_c.enabled);
+    SliderWithInput(PanelLabel("renderer.globe_back_fade", "visible").c_str(), &r.globe_back_fade,
+                    static_cast<float>(fade_c.min_value), static_cast<float>(fade_c.max_value), fade_c.fmt,
+                    fade_c.scale);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip(
+          "Let the far side of the sphere, its light and its grid lines, show\n"
+          "through, fading like fog with distance from the camera.\n"
+          "The value is the fog length: larger fades more slowly.\n"
+          "0 shows the near side only; 0.3-0.6 is a light haze.");
+    }
+    ImGui::EndDisabled();
+  }
+  ImGui::SeparatorText("Pose");
+  if (is_globe) {
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "In Globe lens, Az/El/Roll control the observer's orbit\n"
+          "around the sphere, not the camera's own attitude.\n"
+          "Roll is locked to 0 in this mode (slider is greyed out).");
+    }
+  }
+  // The elevation limit backs off one degree from the pole under Globe; that, like the full-sky
+  // gate the two share, is the registry's to state. Both entries carry the SAME gate
+  // (NotUnderFullSky), so which of the two `enabled` values wraps the pair cannot matter.
+  const FieldEditorConstraint el_c = ConstraintFor("renderer.elevation", state);
+  const FieldEditorConstraint az_c = ConstraintFor("renderer.azimuth", state);
+  ImGui::BeginDisabled(!el_c.enabled);
+  bool elevation_committed = false;
+  bool elevation_active = false;
+  const bool elevation_changed =
+      SliderWithInput(PanelLabel("renderer.elevation", "view").c_str(), &r.elevation,
+                      static_cast<float>(el_c.min_value), static_cast<float>(el_c.max_value), el_c.fmt, el_c.scale,
+                      LabelPlacement::kTrailing, &elevation_committed, &elevation_active);
+  bool azimuth_committed = false;
+  bool azimuth_active = false;
+  const bool azimuth_changed =
+      SliderWithInput(PanelLabel("renderer.azimuth", "view").c_str(), &r.azimuth, static_cast<float>(az_c.min_value),
+                      static_cast<float>(az_c.max_value), az_c.fmt, az_c.scale, LabelPlacement::kTrailing,
+                      &azimuth_committed, &azimuth_active);
+  if ((elevation_changed && (elevation_active || elevation_committed)) ||
+      (azimuth_changed && (azimuth_active || azimuth_committed))) {
+    UnlockLookAt(state);
+  }
+  ImGui::EndDisabled();
+  // roll's gate is the wider one (full-sky OR globe) — again read, not restated.
+  const FieldEditorConstraint roll_c = ConstraintFor("renderer.roll", state);
+  ImGui::BeginDisabled(!roll_c.enabled);
+  SliderWithInput(PanelLabel("renderer.roll", "view").c_str(), &r.roll, static_cast<float>(roll_c.min_value),
+                  static_cast<float>(roll_c.max_value), roll_c.fmt, roll_c.scale);
+  ImGui::EndDisabled();
+
+  ImGui::Separator();
+  // One row, three pieces: [Reset][combo][Lock], all full-frame-height widgets so the row reads
+  // as one line rather than a short button between two tall ones. Laid out by hand instead of
+  // through the pushed item width because three widgets share the line — but it answers to the
+  // SAME grid the rows above get from PushLabelColumnItemWidth(): controls end where the label
+  // column begins. Restating that line here (rather than reading GetContentRegionAvail(), which
+  // would run the row to the panel's content edge, off the grid) is the alignment contract; the
+  // test that holds it is look_at_controls_share_one_unclipped_row.
+  const float row_avail = ImGui::GetContentRegionAvail().x;  // before Reset: the whole line
+  if (ImGui::Button("Reset##view")) {
+    UnlockLookAt(state);
+    const ViewDefaults d = DefaultViewParamsFor(r.lens_type);
+    r.fov = d.fov;
+    r.elevation = d.elevation;
+    r.azimuth = d.azimuth;
+    r.roll = d.roll;
+  }
+
+  ImGui::SameLine();
+  constexpr const char* kLookAtId = "###view_look_at";
+  constexpr const char* kLockLabel = "Lock##view_look_at_lock";
+  const char* look_at_preview = LookAtDisplayName(state.look_at.target);
+  if (look_at_preview == nullptr) {
+    look_at_preview = "Sun";
+  }
+  const ImGuiStyle& style = ImGui::GetStyle();
+  // Reset's width is read off the drawn button rather than estimated — the text's pixel width is
+  // ImGui's to know. The Lock checkbox budgets only its square: Checkbox lays itself out as
+  // square frame + ItemInnerSpacing + label, and because LabelColumnGapX() == ItemInnerSpacing.x
+  // (panels.cpp's settled value) the square's right edge lands on the control column's right
+  // edge — the same line the FOV input ends on — and the "Lock" text starts exactly on the
+  // trailing labels' text line. Both alignments are this one formula's consequence; the test
+  // that measures them is look_at_controls_share_one_unclipped_row.
+  const float reset_w = ImGui::GetItemRectSize().x;
+  const float lock_square_w = ImGui::GetFrameHeight();
+  // The width that keeps the longest menu entry unclipped, over the SAME set the popup renders —
+  // a floor taken over a prefix of the ids would quietly stop covering the longest name whenever
+  // it moved out of that prefix. At kRightPanelWidth's shipped value the grid width below always
+  // clears this floor; if a longer name or a style change ever flips that, the floor binds and
+  // the row ends PAST the label line rather than clip an entry — "unclipped" wins over aligned,
+  // the same priority look_at_controls_share_one_unclipped_row asserts, and its right-edge
+  // assertion going red is the signal that kRightPanelWidth is the knob to turn.
+  float preview_floor = 0.0f;
+  for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
+    const char* name = LookAtDisplayName(static_cast<LookAtId>(i));
+    if (name == nullptr) {
+      continue;
+    }
+    preview_floor =
+        std::max(preview_floor, ImGui::CalcTextSize(name).x + ImGui::GetFrameHeight() + style.FramePadding.x);
+  }
+  const float col_right_offset = UiPx(kLabelColWidth) + LabelColumnGapX();
+  const float combo_w =
+      std::max(preview_floor, row_avail - col_right_offset - reset_w - lock_square_w - 2.0f * style.ItemSpacing.x);
+  ImGui::SetNextItemWidth(combo_w);
+  ImGui::BeginDisabled(!el_c.enabled);
+  if (ImGui::BeginCombo(kLookAtId, look_at_preview)) {
+    for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
+      const auto id = static_cast<LookAtId>(i);
+      const char* name = LookAtDisplayName(id);
+      if (name == nullptr) {
+        continue;
+      }
+      if (id == kFirstHorizonLookAt) {
+        ImGui::SeparatorText("Horizon");
+      }
+      const bool selected = id == state.look_at.target;
+      if (ImGui::Selectable(name, selected)) {
+        SelectLookAtTarget(state, id);
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip(
+        "%s", el_c.enabled ? "Choose a named direction; Lock follows it as the scene changes." : el_c.disabled_reason);
+  }
+  ImGui::SameLine();
+  bool locked = state.look_at.locked;
+  if (Checkbox(kLockLabel, &locked)) {
+    SetLookAtLocked(state, locked);
+  }
+  ImGui::EndDisabled();
+
+  ImGui::PopItemWidth();
+}
+
+// The Display group's display-time subset (EV anchor / EV / its readout / tone / the ground
+// the live operator reads / the headroom notice) — the fields both workspaces show about the
+// picture's brightness and colours, on one source. The Render-only rows around it (the
+// re-running resolution combo above, the background photo block below) stay with Render.
+void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
+  auto& r = state.renderer;
+  // The exposure anchor. Display-time only: it changes which anchor the client-side conversion in
+  // mono_exposure_scale.hpp divides by, so the picture re-lights on the next frame with no
+  // commit and no re-run — nothing is discarded, which is why the resolution combo above carries
+  // the re-run tooltip and this one does not.
+  //
+  // Labelled "EV Anchor" rather than "Mode": this section now carries two combos that both
+  // select a mode, and a bare "Mode" on either would leave the other's meaning to be inferred
+  // from position. This one names what it anchors and sits directly above the EV slider it
+  // qualifies, so the two rows read as one pair.
+  ImGui::Combo(PanelLabel("renderer.ev_mode", "display").c_str(), &r.ev_mode, kEvModeNames, kEvModeCount);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+        "Which anchor display brightness is measured against.\n\n"
+        "Relative: each snapshot is re-anchored to its own brightest pixels. This is the "
+        "default and what the preview has always done. Good for looking at one document; "
+        "brightness carries no meaning when compared with another.\n\n"
+        "Absolute: anchored to the energy the light source emitted. EV then reads as stops "
+        "above or below physical, and two scenes at the same EV are directly comparable.\n\n"
+        "Switching only changes how the pixels already simulated are converted. It does not "
+        "re-run the simulation.");
+  }
+
+  ImGui::BeginGroup();
+  const FieldEditorConstraint ev_c = ConstraintFor("renderer.exposure_offset", state);
+  SliderWithInput(PanelLabel("renderer.exposure_offset", "display").c_str(), &r.exposure_offset,
+                  static_cast<float>(ev_c.min_value), static_cast<float>(ev_c.max_value), ev_c.fmt, ev_c.scale);
+  ImGui::EndGroup();
+  if (ImGui::IsItemHovered()) {
+    if (r.ev_mode == 1) {
+      // The auto anchor is still reported, because it is still computed and a user who came
+      // from relative mode will look for it — but it is reported as NOT applied. Leaving it
+      // out would be quieter and worse: in a sparse scene it drifts by many stops, and a
+      // number that moves while the picture does not is what made the old relative-only
+      // readout misleading in the first place.
+      ImGui::SetTooltip(
+          "Exposure in absolute mode: %+.2f stops above physical.\n\n"
+          "This offset is the whole exposure. Brightness is anchored to emitted energy, so two "
+          "documents at the same EV are directly comparable.\n\n"
+          "The auto anchor is NOT applied here (it would read %+.2f EV in relative mode).",
+          r.exposure_offset, state.ev_auto);
+    } else {
+      ImGui::SetTooltip(
+          "Exposure value offset for display brightness.\n\n"
+          "In relative mode this offset sits on top of an auto anchor that re-measures every "
+          "snapshot, currently %+.2f EV, for an effective %+.2f EV. The anchor moves with the "
+          "picture, so this reading is not comparable with another document.",
+          state.ev_auto, r.exposure_offset + state.ev_auto);
+    }
+  }
+
+  // Permanent readout, not a tooltip: exposure_offset is saved per document, so in absolute
+  // mode two open files can sit at different heights on one shared scale. A single-document GUI
+  // cannot compare them for the user, but it can refuse to leave the current height implicit.
+  //
+  // Directly under the EV slider, because it reports the EV slider and nothing else — the two
+  // numbers it prints are this row's value and the auto anchor. It used to sit one row further
+  // down, below the sky swatch, on the reading that the swatch belonged to an exposure trio of
+  // Anchor / EV / Sky and this line was that trio's footer. The swatch has since been paired
+  // with the ground control it alternates with instead (see below), which leaves nothing between
+  // a reading and the row it is a reading of.
+  //
+  // Rendered as a disabled Selectable rather than TextDisabled because an ImGui::Text* submits
+  // with id == 0 and never enters the test engine's item registry — "the value is on screen"
+  // would then not be assertable at all. "##" rather than "###" on purpose: the double form
+  // folds the whole label, text included, into the id, so a test that locates this item by its
+  // rendered string IS asserting the rendered string. The triple form pins the id and throws the
+  // text away, which is the opposite of what needs pinning here.
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::Selectable(
+      (lumice::gui::FormatMonoEvReadout(r.ev_mode, r.exposure_offset, state.ev_auto) + "##display_ev_readout").c_str(),
+      false, ImGuiSelectableFlags_Disabled);
+  ImGui::PopStyleColor();
+
+  // The tone-reproduction operator, and directly under it the ONE ground control that operator
+  // reads. Two rows, not three: `background` and `paper` are separate fields on purpose
+  // (doc/rendering/print-mode-subtractive-ink.md decision D5 — a single field would make "print onto the
+  // default black background" render an all-black page), but at any instant exactly one of them
+  // is live. render.cpp's `if (!print_mode)` at the background term means Screen alone reads the
+  // sky; the paper is read only by the kPrint colour branch and by FillZeroEnergyImage. So the
+  // panel shows the one the current operator reads, and the row's identity changes with the
+  // combo above it.
+  //
+  // This REVERSES an earlier decision recorded here, which was that the paper swatch should not
+  // even be greyed out under Screen because "greying the one the live operator is not reading
+  // would hide a value the user is about to need". Hiding is the stronger form of that same move
+  // and the reversal is deliberate (owner, 2026-09-10). What made the earlier reasoning give way:
+  // nothing is hidden except the control — both fields stay authored state, survive the switch,
+  // go into the .lmc and the Revert baseline, and keep their own rows in the Settings panel — so
+  // the value the user is "about to need" is intact and one combo click away, at the moment they
+  // need it and can see its effect. What the old arrangement cost was paid every frame instead:
+  // two swatches of which one did nothing, with no indication of which.
+  //
+  // Labelled "Mode" now that the exposure combo above is "EV Anchor". Screen/Print is the pair
+  // the user thinks in, and the two entries say what they do without the word "tone", which is
+  // opaque to anyone who has not met tone mapping.
+  ImGui::Combo(PanelLabel("renderer.tone", "display_tone").c_str(), &r.tone, kToneNames, kToneCount);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+        "Which operator turns the simulated light into pixels.\n\n"
+        "Screen: light is ADDED to the sky colour. This is the default and what the preview "
+        "has always done. A light sky can only stay light, which is why a white sky shows no "
+        "halo.\n\n"
+        "Print: light is laid down as INK on the paper below, so the picture darkens where the "
+        "halo is — the way it would come off a printer.");
+  }
+
+  // ColorEdit3 with NoInputs, the same swatch form the overlay rows and the defaults table use.
+  // Its label sits beside the swatch rather than in the panel's right-hand label column, which is
+  // what every fixed-size widget here does (Checkbox included) — ImGui hardcodes that gap at
+  // ItemInnerSpacing.x inside the widget where no caller can reach it.
+  //
+  // The two arms keep their own ids and their own labels rather than sharing one: the ids are
+  // what tests and the defaults panel address, and a single id serving two fields would make
+  // "which field did the user just edit" a question about a mode variable.
+  //
+  // Neither swatch belongs in the Overlays table: those five rows share one data model (a line,
+  // an optional text label, an alpha, sometimes a radius) and are drawn ON TOP of the image. The
+  // ground is the image. Nor in the "Background" block below — that one is the loaded reference
+  // PHOTOGRAPH and its transform; two different things under one word in one screen is how the
+  // word stops meaning anything.
+  //
+  // Which arm is drawn is the registry's call, not a tone comparison made here: the two ground
+  // fields carry complementary applicability gates (WhenScreenTone / WhenPrintTone in
+  // field_editor_registry.cpp), and the Summary page reads the same `enabled` bit to decide which
+  // of the two rows it prints — so the swatch on screen and the row on the page cannot disagree.
+  if (ConstraintFor("renderer.background", state).enabled) {
+    ImGui::ColorEdit3(PanelLabel("renderer.background", "display_sky_color").c_str(), r.background,
+                      ImGuiColorEditFlags_NoInputs);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Colour of the empty sky, added to the halo in linear RGB before the\n"
+          "gamma curve — so an empty pixel renders exactly the colour picked here.\n"
+          "Only where the lens images something: outside the image circle, and\n"
+          "outside the visible hemisphere, stays black.");
+    }
+
+    // Eyedropper: take the sky colour off the imported photograph instead of dialling it. The
+    // point is not convenience alone — the shader composites the photo as
+    // `photo*(1-alpha) + render*alpha`, so where `background` already equals the photo's own sky
+    // that lerp is the identity and the halo arrives as a pure addition rather than washing the
+    // photo out. Which is why the tooltip says to sample SKY: a pixel off the treeline sets the
+    // whole empty sky to dark green.
+    //
+    // Render-host-only (the group's `host_bg_pick`): the press it arms is consumed by THIS
+    // workspace's preview — the photo-sampling gesture, the Esc and photo-gone exits — and no
+    // other face carries that consumer, so a host without it must not offer an armed-but-
+    // unconsumable mode (the shared assembly's own "not reachable there" premise depends on it).
+    //
+    // Inside the Screen arm, and not by mere association with the swatch it follows: the photo it
+    // samples from is itself disabled under Print (doc/rendering/print-mode-subtractive-ink.md §7 instance
+    // 1), so under Print this button could only ever render disabled.
+    if (host_bg_pick) {
+      ImGui::SameLine();
+      const bool bg_pick_ok = BgPhotoOnScreen(state);
+      ImGui::BeginDisabled(!bg_pick_ok);
+      if (ImGui::Button(ICON_FA_EYE_DROPPER "##display_sky_pick")) {
+        g_bg_pick.active = !g_bg_pick.active;
+        if (g_bg_pick.active) {
+          state.angular_dist_picker.armed = false;  // one click-taking mode at a time (gui_state.hpp)
+        }
+      }
+      ImGui::EndDisabled();
+      // AllowWhenDisabled: the disabled case is the one that most needs to say why.
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (!g_preview.HasBackground()) {
+          ImGui::SetTooltip("No background photo loaded — use Load Bg under Background first.");
+        } else if (!state.bg_show) {
+          ImGui::SetTooltip("The background photo is hidden. Tick Show under Background to sample it.");
+        } else {
+          ImGui::SetTooltip(
+              "Pick the sky colour off the background photo.\n"
+              "The preview shows the photo alone while picking; click a patch of\n"
+              "SKY (the halo is composited over the sky, not the ground), or press\n"
+              "Esc to cancel.");
+        }
+      }
+    }
+  } else {
+    // The label is "Paper Color", not "Paper" (field_editor_registry.cpp): it alternates in
+    // place with "Sky Color" and the pair reads as one row wearing two faces only if both name a
+    // colour.
+    ImGui::ColorEdit3(PanelLabel("renderer.paper", "display_paper_color").c_str(), r.paper,
+                      ImGuiColorEditFlags_NoInputs);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Colour of the paper the ink is laid on under Print mode.\n\n"
+          "A separate field from Sky Color, and white rather than black by default: ink\n"
+          "only ever darkens what is beneath it, so black paper would render a black page.\n"
+          "Switch Mode back to Screen to get the sky colour back — it is kept, not reset.");
+    }
+  }
+
+  // doc/rendering/print-mode-subtractive-ink.md §8 (owner decision D6), GUI half. Each operator has one
+  // degenerate ground — a near-white sky under Screen, a near-black paper under Print — and the
+  // shared predicate (gui_state.hpp's ContrastHeadroomIsLowFor over util/contrast_headroom.hpp,
+  // the same one src/server/server.cpp's CommitConfig notice calls) decides which, if either, the
+  // live tone is in.
+  //
+  // Non-blocking, like panels.cpp's LayerProducesNoRays notice and for the same reason: this is a
+  // legitimate state to pass through while picking a colour, and nothing downstream is endangered
+  // by it. It opens no popup and disables nothing; when the predicate is quiet it renders nothing
+  // at all, so the block costs no layout in the common case (unlike the top bar's Revert row,
+  // which holds its space because it sits mid-row in a horizontal toolbar).
+  //
+  // The text says WHY the picture is gone, not just that a colour is extreme. The screen half is
+  // the state the user feedback behind this work came from, and its signature is specific: the
+  // overlay lines stay perfectly crisp while the halo alone disappears, because lines are blended
+  // and light is added. Told only "background too bright", a user looking at visible grid lines has
+  // no reason to believe that is the explanation.
+  if (ContrastHeadroomIsLowFor(r)) {
+    const bool print_tone = IsPrintTone(r);
+    ImGui::TextColored(WarningTextColor(), ICON_FA_CIRCLE_EXCLAMATION "%s",
+                       print_tone ? " Paper is nearly black — ink has nowhere to darken" :
+                                    " Sky is nearly white — the halo has nowhere to brighten");
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", print_tone ?
+                                  "Ink only ever darkens the paper, and never reaches black. With the paper "
+                                  "this dark\nevery feature lands within a few 8-bit levels of the page, so "
+                                  "the image reads as blank.\n\nLighten the paper, or switch Mode back to "
+                                  "Screen." :
+                                  "Light is ADDED to the sky colour and clamps at white, so with the sky this "
+                                  "bright a halo\nhas almost nowhere left to go. Grid and overlay lines are "
+                                  "blended rather than added, so\nthey stay perfectly visible — which is why "
+                                  "this looks like a failed simulation rather than\na colour choice.\n\nDarken "
+                                  "the sky, or switch Mode to Print, which lays ink ON a pale ground instead.");
+    }
+    ImGui::SameLine();
+    // The repair itself lives in gui_state.hpp (ApplyHeadroomFix) rather than here, so that what
+    // it changes is asserted without a window — see its unit tests. The two labels name the field
+    // each arm moves, because "Fix" alone would not say which of the two controls above is about
+    // to change under the user's hand.
+    if (ImGui::SmallButton(print_tone ? "Reset paper to white##display_headroom_fix" :
+                                        "Switch to Print##display_headroom_fix")) {
+      ApplyHeadroomFix(r);
+    }
+  }
+}
 
 void RenderRightPanel(GLFWwindow* window, float window_width, float window_height) {
   float panel_height = window_height - UiPx(kTopBarHeight) - UiPx(kStatusBarHeight);
@@ -1632,217 +2124,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
 
   // ---- View Group ----
   if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {
-    PushLabelColumnItemWidth();
-    ImGui::SeparatorText("Lens");
-    // Use BeginCombo + Selectable to honour kLensTypePresentationOrder (gui_state.hpp).
-    // The enum value (r.lens_type) is preserved unchanged; only the display order differs.
-    // Every label in this group and the Display group below is the registry's (PanelLabel), the
-    // same word the Summary window prints for the field — see panels.cpp's Sun block for why.
-    if (ImGui::BeginCombo(PanelLabel("renderer.lens_type", "view").c_str(), kLensTypeNames[r.lens_type])) {
-      for (int idx : kLensTypePresentationOrder) {
-        bool selected = (r.lens_type == idx);
-        if (ImGui::Selectable(kLensTypeNames[idx], selected)) {
-          // SelectLensType owns both the view transform and session-intent transition. .lmc loading
-          // and tests bypass the control by writing lens_type directly, so they keep their fov.
-          SelectLensType(g_state, idx);
-        }
-        if (selected) {
-          ImGui::SetItemDefaultFocus();
-        }
-      }
-      ImGui::EndCombo();
-    }
-    // Domain, format and disabled-when all come from the field editor registry rather than being
-    // written here — same for every slider below whose field is a registered document leaf. The
-    // bound is the lens' own MaxFov (the registry calls LUMICE_MaxFov), and `enabled` is the
-    // full-sky gate that used to be spelled `BeginDisabled(full_sky)` at this line.
-    const FieldEditorConstraint fov_c = ConstraintFor("renderer.fov", g_state);
-    ImGui::BeginDisabled(!fov_c.enabled);
-    SliderWithInput(PanelLabel("renderer.fov", "view").c_str(), &r.fov, static_cast<float>(fov_c.min_value),
-                    static_cast<float>(fov_c.max_value), fov_c.fmt, fov_c.scale);
-    ImGui::EndDisabled();
-    bool is_globe = (r.lens_type == kLensTypeGlobe);
-    ImGui::SeparatorText("Visibility");
-    // Same registry query as the FOV slider above, for the same reason. What used to stand here was
-    // a hand-paired nest — `BeginDisabled()` under `full_sky` on the outside, `BeginDisabled(
-    // is_globe)` under `!full_sky` on the inside — whose NET effect each widget saw had to be read
-    // off the interleaving of four `if`s. The two gates are already registered (renderer.visible →
-    // NotUnderFullSky, renderer.front → NotUnderFullSkyOrGlobe), and each already folds the
-    // full-sky case in, so the call site needs no nesting: one flat pair per field.
-    const FieldEditorConstraint visible_c = ConstraintFor("renderer.visible", g_state);
-    ImGui::BeginDisabled(!visible_c.enabled);
-    ImGui::RadioButton("Upper##visible", &r.visible, kVisibleUpper);
-    ImGui::SameLine();
-    ImGui::RadioButton("Full##visible", &r.visible, kVisibleFull);
-    ImGui::SameLine();
-    ImGui::RadioButton("Lower##visible", &r.visible, kVisibleLower);
-    ImGui::EndDisabled();
-    // Between the two pairs rather than inside either: SameLine only moves the draw cursor for the
-    // next widget, so it is unaffected by — and does not affect — the disabled stack.
-    ImGui::SameLine(0.0f, UiPx(20.0f));
-    const FieldEditorConstraint front_c = ConstraintFor("renderer.front", g_state);
-    ImGui::BeginDisabled(!front_c.enabled);
-    // The tick shows the EFFECTIVE clip, not the stored choice: under a lens the clip does not
-    // apply to it reads unchecked while r.front keeps the choice for switching back
-    // (EffectiveFrontForLens). A click only lands while enabled, where the two agree, so writing it
-    // back to r.front records a real choice. field_editor_registry.cpp's BoolField does the same
-    // for the Settings row through its `effective` argument; change the two together.
-    bool front_effective = EffectiveFrontForLens(r.lens_type, r.front);
-    if (Checkbox(PanelLabel("renderer.front", "visible").c_str(), &front_effective)) {
-      r.front = front_effective;
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("%s", front_c.enabled ? "Show front hemisphere only\n(combine with Upper/Full/Lower)" :
-                                                front_c.disabled_reason);
-    }
-    ImGui::EndDisabled();
-    // The globe's far side, seen through the near one. Only drawn under Globe — the one lens that
-    // looks at the sky from outside and so has a far side at all — rather than greyed under the
-    // ten that do not; the registry gate (WhenGlobe) still states the rule for the defaults panel
-    // and the Summary.
-    if (is_globe) {
-      const FieldEditorConstraint fade_c = ConstraintFor("renderer.globe_back_fade", g_state);
-      ImGui::BeginDisabled(!fade_c.enabled);
-      SliderWithInput(PanelLabel("renderer.globe_back_fade", "visible").c_str(), &r.globe_back_fade,
-                      static_cast<float>(fade_c.min_value), static_cast<float>(fade_c.max_value), fade_c.fmt,
-                      fade_c.scale);
-      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip(
-            "Let the far side of the sphere, its light and its grid lines, show\n"
-            "through, fading like fog with distance from the camera.\n"
-            "The value is the fog length: larger fades more slowly.\n"
-            "0 shows the near side only; 0.3-0.6 is a light haze.");
-      }
-      ImGui::EndDisabled();
-    }
-    ImGui::SeparatorText("Pose");
-    if (is_globe) {
-      ImGui::TextDisabled("(?)");
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "In Globe lens, Az/El/Roll control the observer's orbit\n"
-            "around the sphere, not the camera's own attitude.\n"
-            "Roll is locked to 0 in this mode (slider is greyed out).");
-      }
-    }
-    // The elevation limit backs off one degree from the pole under Globe; that, like the full-sky
-    // gate the two share, is the registry's to state. Both entries carry the SAME gate
-    // (NotUnderFullSky), so which of the two `enabled` values wraps the pair cannot matter.
-    const FieldEditorConstraint el_c = ConstraintFor("renderer.elevation", g_state);
-    const FieldEditorConstraint az_c = ConstraintFor("renderer.azimuth", g_state);
-    ImGui::BeginDisabled(!el_c.enabled);
-    bool elevation_committed = false;
-    bool elevation_active = false;
-    const bool elevation_changed =
-        SliderWithInput(PanelLabel("renderer.elevation", "view").c_str(), &r.elevation,
-                        static_cast<float>(el_c.min_value), static_cast<float>(el_c.max_value), el_c.fmt, el_c.scale,
-                        LabelPlacement::kTrailing, &elevation_committed, &elevation_active);
-    bool azimuth_committed = false;
-    bool azimuth_active = false;
-    const bool azimuth_changed =
-        SliderWithInput(PanelLabel("renderer.azimuth", "view").c_str(), &r.azimuth, static_cast<float>(az_c.min_value),
-                        static_cast<float>(az_c.max_value), az_c.fmt, az_c.scale, LabelPlacement::kTrailing,
-                        &azimuth_committed, &azimuth_active);
-    if ((elevation_changed && (elevation_active || elevation_committed)) ||
-        (azimuth_changed && (azimuth_active || azimuth_committed))) {
-      UnlockLookAt(g_state);
-    }
-    ImGui::EndDisabled();
-    // roll's gate is the wider one (full-sky OR globe) — again read, not restated.
-    const FieldEditorConstraint roll_c = ConstraintFor("renderer.roll", g_state);
-    ImGui::BeginDisabled(!roll_c.enabled);
-    SliderWithInput(PanelLabel("renderer.roll", "view").c_str(), &r.roll, static_cast<float>(roll_c.min_value),
-                    static_cast<float>(roll_c.max_value), roll_c.fmt, roll_c.scale);
-    ImGui::EndDisabled();
-
-    ImGui::Separator();
-    // One row, three pieces: [Reset][combo][Lock], all full-frame-height widgets so the row reads
-    // as one line rather than a short button between two tall ones. Laid out by hand instead of
-    // through the pushed item width because three widgets share the line — but it answers to the
-    // SAME grid the rows above get from PushLabelColumnItemWidth(): controls end where the label
-    // column begins. Restating that line here (rather than reading GetContentRegionAvail(), which
-    // would run the row to the panel's content edge, off the grid) is the alignment contract; the
-    // test that holds it is look_at_controls_share_one_unclipped_row.
-    const float row_avail = ImGui::GetContentRegionAvail().x;  // before Reset: the whole line
-    if (ImGui::Button("Reset##view")) {
-      UnlockLookAt(g_state);
-      const ViewDefaults d = DefaultViewParamsFor(r.lens_type);
-      r.fov = d.fov;
-      r.elevation = d.elevation;
-      r.azimuth = d.azimuth;
-      r.roll = d.roll;
-    }
-
-    ImGui::SameLine();
-    constexpr const char* kLookAtId = "###view_look_at";
-    constexpr const char* kLockLabel = "Lock##view_look_at_lock";
-    const char* look_at_preview = LookAtDisplayName(g_state.look_at.target);
-    if (look_at_preview == nullptr) {
-      look_at_preview = "Sun";
-    }
-    const ImGuiStyle& style = ImGui::GetStyle();
-    // Reset's width is read off the drawn button rather than estimated — the text's pixel width is
-    // ImGui's to know. The Lock checkbox budgets only its square: Checkbox lays itself out as
-    // square frame + ItemInnerSpacing + label, and because LabelColumnGapX() == ItemInnerSpacing.x
-    // (panels.cpp's settled value) the square's right edge lands on the control column's right
-    // edge — the same line the FOV input ends on — and the "Lock" text starts exactly on the
-    // trailing labels' text line. Both alignments are this one formula's consequence; the test
-    // that measures them is look_at_controls_share_one_unclipped_row.
-    const float reset_w = ImGui::GetItemRectSize().x;
-    const float lock_square_w = ImGui::GetFrameHeight();
-    // The width that keeps the longest menu entry unclipped, over the SAME set the popup renders —
-    // a floor taken over a prefix of the ids would quietly stop covering the longest name whenever
-    // it moved out of that prefix. At kRightPanelWidth's shipped value the grid width below always
-    // clears this floor; if a longer name or a style change ever flips that, the floor binds and
-    // the row ends PAST the label line rather than clip an entry — "unclipped" wins over aligned,
-    // the same priority look_at_controls_share_one_unclipped_row asserts, and its right-edge
-    // assertion going red is the signal that kRightPanelWidth is the knob to turn.
-    float preview_floor = 0.0f;
-    for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
-      const char* name = LookAtDisplayName(static_cast<LookAtId>(i));
-      if (name == nullptr) {
-        continue;
-      }
-      preview_floor =
-          std::max(preview_floor, ImGui::CalcTextSize(name).x + ImGui::GetFrameHeight() + style.FramePadding.x);
-    }
-    const float col_right_offset = UiPx(kLabelColWidth) + LabelColumnGapX();
-    const float combo_w =
-        std::max(preview_floor, row_avail - col_right_offset - reset_w - lock_square_w - 2.0f * style.ItemSpacing.x);
-    ImGui::SetNextItemWidth(combo_w);
-    ImGui::BeginDisabled(!el_c.enabled);
-    if (ImGui::BeginCombo(kLookAtId, look_at_preview)) {
-      for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
-        const auto id = static_cast<LookAtId>(i);
-        const char* name = LookAtDisplayName(id);
-        if (name == nullptr) {
-          continue;
-        }
-        if (id == kFirstHorizonLookAt) {
-          ImGui::SeparatorText("Horizon");
-        }
-        const bool selected = id == g_state.look_at.target;
-        if (ImGui::Selectable(name, selected)) {
-          SelectLookAtTarget(g_state, id);
-        }
-        if (selected) {
-          ImGui::SetItemDefaultFocus();
-        }
-      }
-      ImGui::EndCombo();
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("%s", el_c.enabled ? "Choose a named direction; Lock follows it as the scene changes." :
-                                             el_c.disabled_reason);
-    }
-    ImGui::SameLine();
-    bool locked = g_state.look_at.locked;
-    if (Checkbox(kLockLabel, &locked)) {
-      SetLookAtLocked(g_state, locked);
-    }
-    ImGui::EndDisabled();
-
-    ImGui::PopItemWidth();
+    RenderViewControlsGroup(g_state);
   }
 
   // ---- Display Group ----
@@ -1854,239 +2136,9 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("Re-runs simulation; accumulated rays reset");
     }
-    // The exposure anchor. Display-time only: it changes which anchor the client-side conversion in
-    // mono_exposure_scale.hpp divides by, so the picture re-lights on the next frame with no
-    // commit and no re-run — nothing is discarded, which is why the resolution combo above carries
-    // the re-run tooltip and this one does not.
-    //
-    // Labelled "EV Anchor" rather than "Mode": this section now carries two combos that both
-    // select a mode, and a bare "Mode" on either would leave the other's meaning to be inferred
-    // from position. This one names what it anchors and sits directly above the EV slider it
-    // qualifies, so the two rows read as one pair.
-    ImGui::Combo(PanelLabel("renderer.ev_mode", "display").c_str(), &r.ev_mode, kEvModeNames, kEvModeCount);
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
-          "Which anchor display brightness is measured against.\n\n"
-          "Relative: each snapshot is re-anchored to its own brightest pixels. This is the "
-          "default and what the preview has always done. Good for looking at one document; "
-          "brightness carries no meaning when compared with another.\n\n"
-          "Absolute: anchored to the energy the light source emitted. EV then reads as stops "
-          "above or below physical, and two scenes at the same EV are directly comparable.\n\n"
-          "Switching only changes how the pixels already simulated are converted. It does not "
-          "re-run the simulation.");
-    }
-
-    ImGui::BeginGroup();
-    const FieldEditorConstraint ev_c = ConstraintFor("renderer.exposure_offset", g_state);
-    SliderWithInput(PanelLabel("renderer.exposure_offset", "display").c_str(), &r.exposure_offset,
-                    static_cast<float>(ev_c.min_value), static_cast<float>(ev_c.max_value), ev_c.fmt, ev_c.scale);
-    ImGui::EndGroup();
-    if (ImGui::IsItemHovered()) {
-      if (r.ev_mode == 1) {
-        // The auto anchor is still reported, because it is still computed and a user who came
-        // from relative mode will look for it — but it is reported as NOT applied. Leaving it
-        // out would be quieter and worse: in a sparse scene it drifts by many stops, and a
-        // number that moves while the picture does not is what made the old relative-only
-        // readout misleading in the first place.
-        ImGui::SetTooltip(
-            "Exposure in absolute mode: %+.2f stops above physical.\n\n"
-            "This offset is the whole exposure. Brightness is anchored to emitted energy, so two "
-            "documents at the same EV are directly comparable.\n\n"
-            "The auto anchor is NOT applied here (it would read %+.2f EV in relative mode).",
-            r.exposure_offset, g_state.ev_auto);
-      } else {
-        ImGui::SetTooltip(
-            "Exposure value offset for display brightness.\n\n"
-            "In relative mode this offset sits on top of an auto anchor that re-measures every "
-            "snapshot, currently %+.2f EV, for an effective %+.2f EV. The anchor moves with the "
-            "picture, so this reading is not comparable with another document.",
-            g_state.ev_auto, r.exposure_offset + g_state.ev_auto);
-      }
-    }
-
-    // Permanent readout, not a tooltip: exposure_offset is saved per document, so in absolute
-    // mode two open files can sit at different heights on one shared scale. A single-document GUI
-    // cannot compare them for the user, but it can refuse to leave the current height implicit.
-    //
-    // Directly under the EV slider, because it reports the EV slider and nothing else — the two
-    // numbers it prints are this row's value and the auto anchor. It used to sit one row further
-    // down, below the sky swatch, on the reading that the swatch belonged to an exposure trio of
-    // Anchor / EV / Sky and this line was that trio's footer. The swatch has since been paired
-    // with the ground control it alternates with instead (see below), which leaves nothing between
-    // a reading and the row it is a reading of.
-    //
-    // Rendered as a disabled Selectable rather than TextDisabled because an ImGui::Text* submits
-    // with id == 0 and never enters the test engine's item registry — "the value is on screen"
-    // would then not be assertable at all. "##" rather than "###" on purpose: the double form
-    // folds the whole label, text included, into the id, so a test that locates this item by its
-    // rendered string IS asserting the rendered string. The triple form pins the id and throws the
-    // text away, which is the opposite of what needs pinning here.
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::Selectable(
-        (lumice::gui::FormatMonoEvReadout(r.ev_mode, r.exposure_offset, g_state.ev_auto) + "##display_ev_readout")
-            .c_str(),
-        false, ImGuiSelectableFlags_Disabled);
-    ImGui::PopStyleColor();
-
-    // The tone-reproduction operator, and directly under it the ONE ground control that operator
-    // reads. Two rows, not three: `background` and `paper` are separate fields on purpose
-    // (doc/rendering/print-mode-subtractive-ink.md decision D5 — a single field would make "print onto the
-    // default black background" render an all-black page), but at any instant exactly one of them
-    // is live. render.cpp's `if (!print_mode)` at the background term means Screen alone reads the
-    // sky; the paper is read only by the kPrint colour branch and by FillZeroEnergyImage. So the
-    // panel shows the one the current operator reads, and the row's identity changes with the
-    // combo above it.
-    //
-    // This REVERSES an earlier decision recorded here, which was that the paper swatch should not
-    // even be greyed out under Screen because "greying the one the live operator is not reading
-    // would hide a value the user is about to need". Hiding is the stronger form of that same move
-    // and the reversal is deliberate (owner, 2026-09-10). What made the earlier reasoning give way:
-    // nothing is hidden except the control — both fields stay authored state, survive the switch,
-    // go into the .lmc and the Revert baseline, and keep their own rows in the Settings panel — so
-    // the value the user is "about to need" is intact and one combo click away, at the moment they
-    // need it and can see its effect. What the old arrangement cost was paid every frame instead:
-    // two swatches of which one did nothing, with no indication of which.
-    //
-    // Labelled "Mode" now that the exposure combo above is "EV Anchor". Screen/Print is the pair
-    // the user thinks in, and the two entries say what they do without the word "tone", which is
-    // opaque to anyone who has not met tone mapping.
-    ImGui::Combo(PanelLabel("renderer.tone", "display_tone").c_str(), &r.tone, kToneNames, kToneCount);
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
-          "Which operator turns the simulated light into pixels.\n\n"
-          "Screen: light is ADDED to the sky colour. This is the default and what the preview "
-          "has always done. A light sky can only stay light, which is why a white sky shows no "
-          "halo.\n\n"
-          "Print: light is laid down as INK on the paper below, so the picture darkens where the "
-          "halo is — the way it would come off a printer.");
-    }
-
-    // ColorEdit3 with NoInputs, the same swatch form the overlay rows and the defaults table use.
-    // Its label sits beside the swatch rather than in the panel's right-hand label column, which is
-    // what every fixed-size widget here does (Checkbox included) — ImGui hardcodes that gap at
-    // ItemInnerSpacing.x inside the widget where no caller can reach it.
-    //
-    // The two arms keep their own ids and their own labels rather than sharing one: the ids are
-    // what tests and the defaults panel address, and a single id serving two fields would make
-    // "which field did the user just edit" a question about a mode variable.
-    //
-    // Neither swatch belongs in the Overlays table: those five rows share one data model (a line,
-    // an optional text label, an alpha, sometimes a radius) and are drawn ON TOP of the image. The
-    // ground is the image. Nor in the "Background" block below — that one is the loaded reference
-    // PHOTOGRAPH and its transform; two different things under one word in one screen is how the
-    // word stops meaning anything.
-    //
-    // Which arm is drawn is the registry's call, not a tone comparison made here: the two ground
-    // fields carry complementary applicability gates (WhenScreenTone / WhenPrintTone in
-    // field_editor_registry.cpp), and the Summary page reads the same `enabled` bit to decide which
-    // of the two rows it prints — so the swatch on screen and the row on the page cannot disagree.
-    if (ConstraintFor("renderer.background", g_state).enabled) {
-      ImGui::ColorEdit3(PanelLabel("renderer.background", "display_sky_color").c_str(), r.background,
-                        ImGuiColorEditFlags_NoInputs);
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Colour of the empty sky, added to the halo in linear RGB before the\n"
-            "gamma curve — so an empty pixel renders exactly the colour picked here.\n"
-            "Only where the lens images something: outside the image circle, and\n"
-            "outside the visible hemisphere, stays black.");
-      }
-
-      // Eyedropper: take the sky colour off the imported photograph instead of dialling it. The
-      // point is not convenience alone — the shader composites the photo as
-      // `photo*(1-alpha) + render*alpha`, so where `background` already equals the photo's own sky
-      // that lerp is the identity and the halo arrives as a pure addition rather than washing the
-      // photo out. Which is why the tooltip says to sample SKY: a pixel off the treeline sets the
-      // whole empty sky to dark green.
-      //
-      // Inside the Screen arm, and not by mere association with the swatch it follows: the photo it
-      // samples from is itself disabled under Print (doc/rendering/print-mode-subtractive-ink.md §7 instance
-      // 1), so under Print this button could only ever render disabled.
-      ImGui::SameLine();
-      const bool bg_pick_ok = BgPhotoOnScreen(g_state);
-      ImGui::BeginDisabled(!bg_pick_ok);
-      if (ImGui::Button(ICON_FA_EYE_DROPPER "##display_sky_pick")) {
-        g_bg_pick.active = !g_bg_pick.active;
-        if (g_bg_pick.active) {
-          g_state.angular_dist_picker.armed = false;  // one click-taking mode at a time (gui_state.hpp)
-        }
-      }
-      ImGui::EndDisabled();
-      // AllowWhenDisabled: the disabled case is the one that most needs to say why.
-      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        if (!g_preview.HasBackground()) {
-          ImGui::SetTooltip("No background photo loaded — use Load Bg under Background first.");
-        } else if (!g_state.bg_show) {
-          ImGui::SetTooltip("The background photo is hidden. Tick Show under Background to sample it.");
-        } else {
-          ImGui::SetTooltip(
-              "Pick the sky colour off the background photo.\n"
-              "The preview shows the photo alone while picking; click a patch of\n"
-              "SKY (the halo is composited over the sky, not the ground), or press\n"
-              "Esc to cancel.");
-        }
-      }
-    } else {
-      // The label is "Paper Color", not "Paper" (field_editor_registry.cpp): it alternates in
-      // place with "Sky Color" and the pair reads as one row wearing two faces only if both name a
-      // colour.
-      ImGui::ColorEdit3(PanelLabel("renderer.paper", "display_paper_color").c_str(), r.paper,
-                        ImGuiColorEditFlags_NoInputs);
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Colour of the paper the ink is laid on under Print mode.\n\n"
-            "A separate field from Sky Color, and white rather than black by default: ink\n"
-            "only ever darkens what is beneath it, so black paper would render a black page.\n"
-            "Switch Mode back to Screen to get the sky colour back — it is kept, not reset.");
-      }
-    }
-
-    // doc/rendering/print-mode-subtractive-ink.md §8 (owner decision D6), GUI half. Each operator has one
-    // degenerate ground — a near-white sky under Screen, a near-black paper under Print — and the
-    // shared predicate (gui_state.hpp's ContrastHeadroomIsLowFor over util/contrast_headroom.hpp,
-    // the same one src/server/server.cpp's CommitConfig notice calls) decides which, if either, the
-    // live tone is in.
-    //
-    // Non-blocking, like panels.cpp's LayerProducesNoRays notice and for the same reason: this is a
-    // legitimate state to pass through while picking a colour, and nothing downstream is endangered
-    // by it. It opens no popup and disables nothing; when the predicate is quiet it renders nothing
-    // at all, so the block costs no layout in the common case (unlike the top bar's Revert row,
-    // which holds its space because it sits mid-row in a horizontal toolbar).
-    //
-    // The text says WHY the picture is gone, not just that a colour is extreme. The screen half is
-    // the state the user feedback behind this work came from, and its signature is specific: the
-    // overlay lines stay perfectly crisp while the halo alone disappears, because lines are blended
-    // and light is added. Told only "background too bright", a user looking at visible grid lines has
-    // no reason to believe that is the explanation.
-    if (ContrastHeadroomIsLowFor(r)) {
-      const bool print_tone = IsPrintTone(r);
-      ImGui::TextColored(WarningTextColor(), ICON_FA_CIRCLE_EXCLAMATION "%s",
-                         print_tone ? " Paper is nearly black — ink has nowhere to darken" :
-                                      " Sky is nearly white — the halo has nowhere to brighten");
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", print_tone ?
-                                    "Ink only ever darkens the paper, and never reaches black. With the paper "
-                                    "this dark\nevery feature lands within a few 8-bit levels of the page, so "
-                                    "the image reads as blank.\n\nLighten the paper, or switch Mode back to "
-                                    "Screen." :
-                                    "Light is ADDED to the sky colour and clamps at white, so with the sky this "
-                                    "bright a halo\nhas almost nowhere left to go. Grid and overlay lines are "
-                                    "blended rather than added, so\nthey stay perfectly visible — which is why "
-                                    "this looks like a failed simulation rather than\na colour choice.\n\nDarken "
-                                    "the sky, or switch Mode to Print, which lays ink ON a pale ground instead.");
-      }
-      ImGui::SameLine();
-      // The repair itself lives in gui_state.hpp (ApplyHeadroomFix) rather than here, so that what
-      // it changes is asserted without a window — see its unit tests. The two labels name the field
-      // each arm moves, because "Fix" alone would not say which of the two controls above is about
-      // to change under the user's hand.
-      if (ImGui::SmallButton(print_tone ? "Reset paper to white##display_headroom_fix" :
-                                          "Switch to Print##display_headroom_fix")) {
-        ApplyHeadroomFix(r);
-      }
-    }
-
-    // The display mode (Normal / Channel B-R) is not edited here: its one entry point is the
-    // segmented control in the preview's top-right corner, RenderDisplayModeControl.
+    // The display-time rows below are the shared group — the same function the Analyze left
+    // column hosts (the exposure/ground fields both faces show).
+    RenderDisplayTimeControlsGroup(g_state, /*host_bg_pick=*/true);
 
     ImGui::SeparatorText("Background");
     if (ImGui::Button("Load Bg##display")) {
@@ -2228,28 +2280,28 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
 
   // ---- Overlay Group ----
   if (ImGui::CollapsingHeader("Overlay", ImGuiTreeNodeFlags_DefaultOpen)) {
-    RenderOverlaysTab();
+    RenderOverlayControlsGroup(g_state);
   }
 
   ImGui::End();
 }
 
-namespace {
-
 // The display mode's one entry point: a segmented control, one segment per kDisplayModeNames entry,
-// in the top-right corner of the preview's content region. Display-time — it writes
+// in the top-right corner of the picture region's content. Display-time — it writes
 // renderer.display_mode, which the preview shader reads on the next frame, and re-runs nothing.
 // Its gate is the registry's (DisplayModeUnderScreenTone, via ConstraintFor), the same one the
 // Settings panel and the Summary window read; it greys the control under Print, which has no
 // separate R and B to subtract, and keeps the value.
 //
-// MUST be called before RenderPreviewPanel submits `##preview_interact`, and the order carries
-// weight: ImGui gives the hover to the first item submitted under the cursor, so a press here
-// makes this control the active item and the interaction button below never becomes active — no
-// camera drag, no background pan starts from a click on the control. That covers presses only.
-// IsItemHovered() on the interaction button does not consult which item holds the hover, so the
-// wheel and click-on-hover branches (FOV, background zoom, eyedropper, cone pick) would still fire
-// over the control; the returned "cursor is over the control" is what the caller masks them with.
+// MUST be called before the hosting picture face submits its interaction button —
+// `##preview_interact` in the preview panel, `##panorama_interact` in the Analyze main view — and
+// the order carries weight: ImGui gives the hover to the first item submitted under the cursor, so
+// a press here makes this control the active item and the interaction button below never becomes
+// active — no camera drag, no background pan starts from a click on the control. That covers
+// presses only. IsItemHovered() on the interaction button does not consult which item holds the
+// hover, so the wheel and click-on-hover branches (FOV, background zoom, eyedropper, cone pick)
+// would still fire over the control; the returned "cursor is over the control" is what the caller
+// masks them with.
 //
 // The opacity follows the same rectangle test rather than ImGui's item hover, because it has to be
 // decided before the first segment is drawn. ImGuiStyleVar_Alpha changes what is drawn, not what
@@ -2322,7 +2374,354 @@ bool RenderDisplayModeControl() {
   return over_control;
 }
 
-}  // namespace
+// ---- The shared picture assembly (declared in app.hpp; see there for the contract) ---------------
+
+void ClampRendererViewInvariants(RenderConfig& rc) {
+  // Renderer invariants (previously in RenderViewBar, runs every frame).
+  // Copy-model: GuiState always owns a single renderer, no vector/index bookkeeping needed.
+  const float max_fov = LUMICE_MaxFov(static_cast<LUMICE_LensType>(rc.lens_type));
+  rc.fov = std::min(rc.fov, max_fov);
+  if (LensIsFullSky(rc.lens_type)) {  // Full-sky lenses: force view angles to zero
+    rc.elevation = 0.0f;
+    rc.azimuth = 0.0f;
+    rc.roll = 0.0f;
+  }
+}
+
+void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vector<CurveLabelSet>& curve_labels,
+                                  const PreviewPictureTarget& target, AnnotationAnchors& anchors) {
+  auto& rc = state.renderer;
+  pp.view_proj = BuildPreviewViewProjFromRenderer(rc);
+  // Mono exposure, recomputed every frame from GuiState (mono_exposure_scale.hpp). Computing it
+  // here rather than reading a server-side scale is what makes both the EV slider and the
+  // exposure Mode combo take effect on the very next frame with no commit and no re-run: the
+  // pixels are already in the texture, only the multiplier applied to them changes.
+  lumice::gui::MonoExposureInput mono_ev_in;
+  mono_ev_in.exposure_offset = rc.exposure_offset;
+  mono_ev_in.ev_auto = state.ev_auto;
+  mono_ev_in.snapshot_intensity = state.snapshot_intensity;
+  mono_ev_in.snapshot_emitted_energy = state.snapshot_emitted_energy;
+  mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
+  const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
+  pp.exposure.intensity_factor = mono_ev.intensity_factor;
+
+  // Fix B DECOUPLE: the composite path is now server-side self-
+  // anchored on participating-P99 (see doc/rendering/ev-pipeline-architecture.md §6.6).
+  // GUI must push ONLY the manual `exposure_offset` here — folding `ev_auto`
+  // back in would multiply the auto-anchor by the auto-EV a second time and
+  // reintroduce the double-count that Fix B is meant to eliminate. The mono
+  // shader-uniform path above still uses `ev_total = exposure_offset +
+  // ev_auto` because the mono pipeline anchors off the mono ExposureScale
+  // (integral over the whole image), not off a self-anchored P99.
+  //
+  // Push guard logic (value-changed OR off->on edge) lives in
+  // ShouldPushCompositeExposure (gui/composite_exposure_push.hpp,
+  // code-review round 1 Major #1 + Minor #1) so the four branches are
+  // independently unit-testable rather than only reachable through a full
+  // ImGui frame. See that header for the off->on rationale (plan-review
+  // Minor #2).
+  //
+  // The two statics are the push's memory and live HERE, inside the one shared assembly, rather
+  // than beside a host: the baseline must be single across every face that publishes the
+  // picture, or two hosts would push against each other's idea of "last pushed" (each storing
+  // its own value the other's push would wrongly read as unchanged, or as changed).
+  {
+    static float s_last_pushed_ev = std::numeric_limits<float>::quiet_NaN();
+    static bool s_last_composite_active = false;
+    constexpr float kCompositeEvPushEpsilon = 1e-4f;
+    // Fixed +1.0 EV (2x) brightness boost baked into the composite-mode
+    // exposure baseline (owner-observed perceptual gap, record A1): single-color composite reads
+    // dimmer than full-spectrum at the same manual exposure offset. Stacked on top of
+    // rc.exposure_offset (baseline, not override). Independent of Fix B's "no ev_auto" constraint
+    // — this is a static perceptual compensation, not an auto-anchored term.
+    constexpr float kColorModeEvBoost = 1.0f;
+    const bool composite_active = g_server != nullptr && !state.raypath_color.empty();
+    // Fix B: push value == manual EV offset only (no ev_auto).
+    // + kColorModeEvBoost: static composite-mode brightness baseline (see above).
+    const float composite_ev_push = rc.exposure_offset + kColorModeEvBoost;
+    if (lumice::gui::ShouldPushCompositeExposure(composite_active, s_last_composite_active, composite_ev_push,
+                                                 s_last_pushed_ev, kCompositeEvPushEpsilon) &&
+        // A wake is a calibration join point in principle (app.cpp, JoinPendingCalibration): the
+        // poller must not observe the startup calibration's run on this server. But this is a
+        // display-time refresh on the render path, not a user-initiated command — joining here
+        // would block the whole frame for calibration's up-to-2s worst case (code review round
+        // 1, Major #3). Skip the push entirely while calibration is still actually running
+        // (s_last_pushed_ev is left unset, so this condition is re-evaluated true every frame
+        // until it isn't — no state is lost, the push just lands once calibration finishes).
+        // The async Stop has the same exclusion: do not re-wake the worker it is pausing.
+        !CalibrationPending() && !g_stop_inflight.load()) {
+      LUMICE_SetCompositeExposure(g_server, composite_ev_push);
+      // Wake a paused poller so the next frame can pick up the freshly re-baked
+      // composite even after a finite sim has completed (the same rationale as the
+      // color window's PushDisplayState path in color_window.cpp).
+      // No-op when the poller is already running. WakeForRefresh (not WakeForRestart)
+      // preserves valid=true across the wake edge — same display-time-inert contract
+      // as color/visible/solo/z_order edits.
+      g_server_poller.WakeForRefresh(g_server);
+      s_last_pushed_ev = composite_ev_push;
+    }
+    s_last_composite_active = composite_active;
+
+    // NO background push. It used to ride this same display-time channel, for a reason that has
+    // since stopped being true: the composite image is baked server-side into sRGB bytes, and
+    // there was no shader stage left where a linear background could still be added. There is
+    // now — PreviewRenderer::TextureMode::kSrgbRadiance — and the sky joins the composite there,
+    // in the same line and the same order as it joins the mono path. Adding it server-side as
+    // well would paint it twice; and while it was added server-side, the composite could not
+    // receive the target lens's relative illumination at all, because scaling a texel with the
+    // sky summed into it dims the sky too. The C API surface (LUMICE_SetCompositeBackground)
+    // stays for non-GUI consumers; its all-zero default is an algebraic no-op, which is what the
+    // GUI now relies on.
+  }
+  pp.exposure.intensity_scale = mono_ev.intensity_scale;
+  // Overlap parameters for dual fisheye texture sampling.
+  pp.source.max_abs_dz = kDualFisheyeOverlap;
+  pp.source.r_scale = 1.0f / std::sqrt(1.0f + kDualFisheyeOverlap);
+  // The sky colour behind the halo. Stored in GuiState as sRGB (what the picker shows) and
+  // handed to the shader as linear RGB, because the shader adds it to the halo's radiance
+  // before the transfer curve. This one assignment also feeds all three PNG export entry
+  // points: BuildExportParams copies this struct and overrides only the exposure fields.
+  lumice::SrgbToLinearRgb(rc.background, pp.background_color_linear);
+  // The paper and the operator that reads it, converted and carried the same way and for the
+  // same reason: the shader multiplies the paper by a transmittance in linear, before the
+  // transfer curve.
+  lumice::SrgbToLinearRgb(rc.paper, pp.paper_color_linear);
+  pp.tone = rc.tone;
+  pp.display_mode = rc.display_mode;
+
+  // The predicate's Print term is doc/rendering/print-mode-subtractive-ink.md §7 instance 1, and it is
+  // what makes the exclusion real rather than advisory: `bg_show` is left exactly as the user
+  // set it, so switching Mode back to Screen brings the photograph straight back. Read through
+  // BgPhotoOnScreen rather than spelled out again here, so the eyedropper and the photo gestures
+  // cannot disagree with the frame about whether the photo is in it. See the matching
+  // WhenBackgroundLoaded gate in field_editor_registry.cpp for why additive-over-subtractive is
+  // wrong in kind and not merely in taste.
+  pp.bg.enabled = BgPhotoOnScreen(state);
+  pp.bg.alpha = state.bg_alpha;
+  pp.bg.aspect = g_preview.GetBgAspect();
+  pp.bg.pan_x = state.bg_offset_x;
+  pp.bg.pan_y = state.bg_offset_y;
+  pp.bg.zoom = state.bg_scale;
+
+  // Auxiliary line overlay parameters (line flags only — the label flags are read below, where
+  // core's anchors are turned into draw-list text).
+  pp.overlay.show_horizon = state.show_horizon_line;
+  pp.overlay.show_grid = state.show_grid_line;
+  pp.overlay.show_sun_circles = state.show_sun_circles_line;
+  pp.overlay.show_view_dist = state.show_view_dist_line;
+  std::copy(std::begin(state.horizon_color), std::end(state.horizon_color), std::begin(pp.overlay.horizon_color));
+  std::copy(std::begin(state.grid_color), std::end(state.grid_color), std::begin(pp.overlay.grid_color));
+  std::copy(std::begin(state.sun_circles_color), std::end(state.sun_circles_color),
+            std::begin(pp.overlay.sun_circles_color));
+  std::copy(std::begin(state.view_dist_color), std::end(state.view_dist_color), std::begin(pp.overlay.view_dist_color));
+  pp.overlay.horizon_alpha = state.horizon_alpha;
+  pp.overlay.grid_alpha = state.grid_alpha;
+  pp.overlay.sun_circles_alpha = state.sun_circles_alpha;
+  pp.overlay.view_dist_alpha = state.view_dist_alpha;
+  // WHERE the curves are, as the definition the shader evaluates per fragment, and WHERE their
+  // text and the markers go, as core's answer for this frame — both from the ONE builder
+  // (AnnotationViewInputFor), so the line and the label on it, or the ring and its name, cannot
+  // describe different curves or different views.
+  //
+  // Lines and labels have separate switches per family, and the request is made when ANY of them
+  // is on: a user drawing only the labels still needs the anchors, and one drawing only the lines
+  // still needs the curve definition. Which families the request actually carries is decided
+  // inside AnnotationViewInputFor, off the same switches; each switch then gates its own half.
+  //
+  // EVERY FRAME, unconditionally. The anchors are a curve walk — ~0.1 ms for an ordinary grid,
+  // 2.4 ms at the narrowest field of view with every family LABELLED (a thousand curves) — and
+  // asking on every frame is what makes the text and the rings move with a drag on the frame it
+  // happens, exactly as the shader-drawn lines do. There is deliberately no "has the view
+  // changed" check in front of this: the check would cost about what the call does, and a stale
+  // answer surviving a missed field in the comparison is the defect the per-frame call exists to
+  // rule out. What IS trimmed is the request: a family whose label switch is off is drawn by the
+  // shader and not walked by core (AnnotationAnchorRequestFor).
+  {
+    const AnnotationViewInput curves = AnnotationViewInputFor(state, rc);
+    pp.overlay.elevation_deg = curves.elevation_deg;
+    pp.overlay.longitude_deg = curves.longitude_deg;
+    pp.overlay.angular_dist_deg = curves.angular_dist_deg;
+    pp.overlay.view_dist_deg = curves.view_dist_deg;
+    GuiSunWorldDir(curves.sun_altitude_deg, pp.overlay.reference_dir);
+    anchors.Compute(MakeAnnotationViewKey(AnnotationAnchorRequestFor(state, rc), target.vp_w_px, target.vp_h_px));
+  }
+
+  // The reference-point markers. The APPEARANCE below is the GUI's own state; the POSITIONS come
+  // from core (below the lens-border block), not from a GUI-side projection.
+  pp.overlay.markers_alpha = state.markers_alpha;
+  pp.overlay.markers_radius_px = state.markers_radius_px;
+  for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
+    std::copy(std::begin(state.markers[i].color), std::end(state.markers[i].color), pp.overlay.marker_color[i].begin());
+  }
+  pp.overlay.show_lens_border = state.show_lens_border_line;
+  std::copy(std::begin(state.lens_border_color), std::end(state.lens_border_color),
+            std::begin(pp.overlay.lens_border_color));
+  pp.overlay.lens_border_alpha = state.lens_border_alpha;
+  // WHERE the rings go: core's answer for this frame, from the same LUMICE_ComputeAnnotationAnchors
+  // call the labels below read, converted from its canvas space (top-left origin, y down) into
+  // the shader's (centre origin, y up). Not a GUI-side forward projection of the six world
+  // directions — that would be a second implementation of the placement the labels use. The ring
+  // is rasterized by the shader; only the position comes from core.
+  for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
+    // A marker whose LINE switch is off is handed the default-constructed (invalid) point, which
+    // CanvasPointToShaderScreenPos already turns into the sentinel — the same path an unimaged
+    // marker takes. That is why there is no enable uniform: "switched off" and "not on this
+    // canvas" are the same instruction to the shader, and writing them the same way means the
+    // two cannot disagree. Note the switch read here is `show` alone: a marker with only its
+    // LABEL on is in the request (its name needs an anchor) but must draw no ring.
+    const AnnotationAnchors::Point p = state.markers[i].show ? anchors.MarkerPoint(i) : AnnotationAnchors::Point{};
+    CanvasPointToShaderScreenPos(p, rc.lens_type, target.vp_w_px, target.vp_h_px,
+                                 pp.overlay.marker_screen_pos[i].data());
+  }
+
+  // Overlay labels at viewport edges. Every family's anchors come from core, through the one
+  // AnnotationAnchors result this frame computed above — the GUI walks no curve of its own, so
+  // the preview and the CLI cannot place the same number differently.
+  //
+  // PUBLISHED, NOT DRAWN. The labels are rasterized into the picture's own FBO in the deferred
+  // pass (RenderPreviewFrameAndBlit, called from the frame loop after ImGui::Render()), which is
+  // the same function and the same pixels the screenshot export reads back. That is what makes
+  // "the PNG shows what the screen shows" structural: there is no second drawing path here to
+  // gate differently, scale differently, or forget. Modals still occlude them, now for the same
+  // reason the overlay LINES are occluded — the whole picture is blitted before ImGui's draw
+  // data is rendered on top.
+  //
+  // The rect is (0, 0, canvas_w_pt, canvas_h_pt): FBO-local LOGICAL POINTS. No MainVpPos()
+  // offset any more — the old absolute-OS-screen-space anchoring existed because the labels went
+  // onto an ImGui window draw list under ImGuiConfigFlags_ViewportsEnable; a self-owned draw list
+  // targeting the picture FBO starts at its own origin.
+  //
+  // Logical points, not the device-pixel vp_w/vp_h: the anchors, the collision boxes and the
+  // glyphs must all live in the space the draw list works in, and the DPI enters exactly once,
+  // as the FramebufferScale the backend multiplies by. Feeding device pixels here and scale 1
+  // there also lands the positions correctly, which is why the export path's half-done version
+  // of this conversion looked right while rendering the text at 1/dpi of its size.
+  if (state.show_horizon_label || state.show_grid_label || state.show_sun_circles_label || state.show_view_dist_label ||
+      AnyMarkerLabelShown(state)) {
+    // Every set goes into ONE vector so they take part in one collision pass, which is where
+    // the per-set group is read.
+    if (state.show_horizon_label) {
+      curve_labels.push_back(BuildHorizonLabelSet(anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+    }
+    if (state.show_sun_circles_label) {
+      curve_labels.push_back(BuildSunCirclesLabelSet(anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+    }
+    if (state.show_view_dist_label) {
+      curve_labels.push_back(BuildViewDistLabelSet(anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+    }
+    if (state.show_grid_label) {
+      curve_labels.push_back(BuildGridLabelSet(anchors, state, target.canvas_w_pt, target.canvas_h_pt));
+    }
+    // No outer switch of its own, unlike the three above: each marker carries its own label
+    // switch, so the builder returns an empty vector when none of the six is on.
+    for (CurveLabelSet& set : BuildMarkerLabelSets(anchors, state, target.canvas_w_pt, target.canvas_h_pt)) {
+      curve_labels.push_back(std::move(set));
+    }
+  }
+
+  // Eyedropper mode: what the user is about to sample is what they must be looking at, so this
+  // frame shows the photograph and nothing else. Every line below overwrites a value that was
+  // just derived from GuiState a few dozen lines up; GuiState itself is untouched, so leaving
+  // the mode needs no restore step — the next frame derives the same fields again from the
+  // unchanged document and the picture comes back whole.
+  //
+  // alpha = 0 is exact rather than approximate: the shader's background stage is
+  // `photo*(1-alpha) + render*alpha`, so zero leaves the photo bit for bit.
+  //
+  // The overlay switches are a POSITIVE list, not a master off switch — there is no such switch
+  // in OverlayDecoration. A seventh overlay class added later will keep drawing over the photo
+  // until it is named here too. The mode is armed only from the Render workspace's Display
+  // group, so on an Analyze-frame call site this branch is unreachable — carried anyway, so the
+  // assembly is one honest implementation rather than one that assumes its caller.
+  if (g_bg_pick.active) {
+    pp.bg.alpha = 0.0f;
+    pp.overlay.show_horizon = false;
+    pp.overlay.show_grid = false;
+    pp.overlay.show_sun_circles = false;
+    pp.overlay.show_view_dist = false;
+    pp.overlay.show_lens_border = false;
+    pp.overlay.marker_screen_pos = MakeAllSentinelMarkerPositions();
+    // Not part of `pp`: the curve labels are rasterized by the deferred pass from this vector,
+    // so hiding their lines above does not hide their text.
+    curve_labels.clear();
+  }
+}
+
+void ApplyCameraOrbitDrag(GuiState& state, const ImVec2& delta, int vp_w_px, int vp_h_px) {
+  if (delta.x == 0.0f && delta.y == 0.0f) {
+    return;
+  }
+  auto& rc = state.renderer;
+  UnlockLookAt(state);
+  // Sensitivity is the lens's angular resolution at the frame center, so one pixel of
+  // drag moves the content one pixel whatever the FOV and viewport are. A fixed deg/px
+  // was ~180x too fast at fov=1° and ~70x too slow at fov=179°. vp_w/vp_h are
+  // framebuffer pixels, the same units ProjectWorldDirToScreen works in, which is what makes
+  // this DPI-correct for free.
+  const float gain = ComputeDragGainDegPerPixel(rc.lens_type, rc.fov, vp_w_px, vp_h_px);
+  // Globe is outside-in: u_view_matrix * (0,0,D) yields camera world
+  // position, so +az/+el move the camera and the sphere drifts in the
+  // opposite direction. Flip both signs so a right/down drag moves the
+  // sphere right/down, matching the inside-out lenses' feel.
+  if (rc.lens_type == kLensTypeGlobe) {
+    rc.azimuth += delta.x * gain;
+    rc.elevation -= delta.y * gain;
+  } else {
+    rc.azimuth -= delta.x * gain;
+    rc.elevation += delta.y * gain;
+  }
+  // Wrap azimuth into [-180, 180] so dragging past the slider's clamp
+  // boundary continues seamlessly instead of getting pinned at ±180.
+  if (rc.azimuth > 180.0f) {
+    rc.azimuth -= 360.0f;
+  } else if (rc.azimuth < -180.0f) {
+    rc.azimuth += 360.0f;
+  }
+  // Globe lens needs a tighter clamp to avoid view-matrix degeneracy at
+  // ±90°; inside-out lenses keep the existing ±90° range.
+  const float el_lim = (rc.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
+  rc.elevation = std::max(-el_lim, std::min(el_lim, rc.elevation));
+}
+
+void ApplyAngularDistPickGesture(GuiState& state, PreviewParams& pp, const ImVec2& cursor_rel_pt, float dpi_scale_x,
+                                 float dpi_scale_y, int vp_w_px, int vp_h_px) {
+  auto& picker = state.angular_dist_picker;
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    picker.armed = false;
+    return;
+  }
+  const std::optional<CanvasPixel> px =
+      PreviewPointToCanvasPixel(cursor_rel_pt.x, cursor_rel_pt.y, dpi_scale_x, dpi_scale_y, vp_w_px, vp_h_px);
+  std::optional<float> angle;
+  if (px.has_value()) {
+    angle = AngularDistAtCanvasPixel(picker.family, PreviewAnnotationView(state, vp_w_px, vp_h_px), pp.view_proj,
+                                     state.sun.altitude, px->px, px->py);
+  }
+  if (angle.has_value()) {
+    InjectAngularDistPickPreview(picker.family, *angle, pp.overlay);
+    // On the current window's draw list, like the analysis pick's crosshair: the number describes
+    // a point OF the picture, so it is clipped to the picture. A plate behind it, because
+    // it sits over whatever the sky is.
+    const ImGuiIO& io = ImGui::GetIO();
+    const std::string text = FormatAngularDistPickReadout(*angle);
+    const ImVec2 at(io.MousePos.x + UiPx(kAngularDistPickReadoutOffsetXPt),
+                    io.MousePos.y + UiPx(kAngularDistPickReadoutOffsetYPt));
+    const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+    const float pad = UiPx(2.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(ImVec2(at.x - pad, at.y - pad), ImVec2(at.x + size.x + pad, at.y + size.y + pad),
+                      IM_COL32(0, 0, 0, 170), 2.0f);
+    dl->AddText(at, IM_COL32(255, 255, 255, 255), text.c_str());
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      const bool added = CommitAngularDistPick(AngularDistFamilyAngles(state, picker.family), *angle);
+      GUI_LOG_INFO("[Overlay] angular distance picked: {:.2f} deg ({} family){}", *angle,
+                   picker.family == AngularDistFamily::kSun ? "sun" : "lens-center",
+                   added ? "" : " — already in the list, not added again");
+      picker.armed = false;
+      picker.swallow_drag_until_release = true;
+    }
+  }
+}
 
 void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_height) {
   // Eyedropper mode: two ways out that must be taken before anything else this frame reads the
@@ -2381,18 +2780,8 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // section is expanded, and before this frame assembles any view-dependent inputs.
   UpdateLockedLookAt(g_state);
 
-  // Renderer invariants (previously in RenderViewBar, runs every frame).
-  // Copy-model: GuiState always owns a single renderer, no vector/index bookkeeping needed.
-  {
-    auto& r = g_state.renderer;
-    float max_fov = LUMICE_MaxFov(static_cast<LUMICE_LensType>(r.lens_type));
-    r.fov = std::min(r.fov, max_fov);
-    if (LensIsFullSky(r.lens_type)) {  // Full-sky lenses: force view angles to zero
-      r.elevation = 0.0f;
-      r.azimuth = 0.0f;
-      r.roll = 0.0f;
-    }
-  }
+  // Renderer invariants, every frame (the shared body carries the history).
+  ClampRendererViewInvariants(g_state.renderer);
 
   float preview_height = panel_height;
 
@@ -2412,8 +2801,6 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     float dpi_scale_x = static_cast<float>(fb_w) / window_width;
     float dpi_scale_y = static_cast<float>(fb_h) / window_height;
 
-    auto& rc = g_state.renderer;
-
     // Store viewport for deferred rendering
     g_preview_vp.active = true;
     g_preview_vp.vp_x = static_cast<int>(panel_x * dpi_scale_x);
@@ -2424,261 +2811,16 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     // anchors in the same logical-point space this panel does).
     g_preview_vp.dpi_scale_x = dpi_scale_x;
     g_preview_vp.dpi_scale_y = dpi_scale_y;
-    auto& pp = g_preview_vp.params;
-    pp.view_proj = BuildPreviewViewProjFromRenderer(rc);
-    // Mono exposure, recomputed every frame from GuiState (mono_exposure_scale.hpp). Computing it
-    // here rather than reading a server-side scale is what makes both the EV slider and the
-    // exposure Mode combo take effect on the very next frame with no commit and no re-run: the
-    // pixels are already in the texture, only the multiplier applied to them changes.
-    lumice::gui::MonoExposureInput mono_ev_in;
-    mono_ev_in.exposure_offset = rc.exposure_offset;
-    mono_ev_in.ev_auto = g_state.ev_auto;
-    mono_ev_in.snapshot_intensity = g_state.snapshot_intensity;
-    mono_ev_in.snapshot_emitted_energy = g_state.snapshot_emitted_energy;
-    mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
-    const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
-    pp.exposure.intensity_factor = mono_ev.intensity_factor;
-
-    // task-347 (Fix B) DECOUPLE: the composite path is now server-side self-
-    // anchored on participating-P99 (see doc/rendering/ev-pipeline-architecture.md §6.6).
-    // GUI must push ONLY the manual `exposure_offset` here — folding `ev_auto`
-    // back in would multiply the auto-anchor by the auto-EV a second time and
-    // reintroduce the double-count that Fix B is meant to eliminate. The mono
-    // shader-uniform path above still uses `ev_total = exposure_offset +
-    // ev_auto` because the mono pipeline anchors off the mono ExposureScale
-    // (integral over the whole image), not off a self-anchored P99.
-    //
-    // Push guard logic (value-changed OR off->on edge) lives in
-    // ShouldPushCompositeExposure (gui/composite_exposure_push.hpp,
-    // code-review round 1 Major #1 + Minor #1) so the four branches are
-    // independently unit-testable rather than only reachable through a full
-    // ImGui frame. See that header for the off->on rationale (plan-review
-    // Minor #2).
-    {
-      static float s_last_pushed_ev = std::numeric_limits<float>::quiet_NaN();
-      static bool s_last_composite_active = false;
-      constexpr float kCompositeEvPushEpsilon = 1e-4f;
-      // Fixed +1.0 EV (2x) brightness boost baked into the composite-mode
-      // exposure baseline (task-color-ev-boost / A1). owner-observed perceptual
-      // gap: single-color composite reads dimmer than full-spectrum at the same
-      // manual exposure offset. Stacked on top of rc.exposure_offset (baseline,
-      // not override). Independent of Fix B's "no ev_auto" constraint — this is
-      // a static perceptual compensation, not an auto-anchored term.
-      constexpr float kColorModeEvBoost = 1.0f;
-      const bool composite_active = g_server != nullptr && !g_state.raypath_color.empty();
-      // Fix B: push value == manual EV offset only (no ev_auto).
-      // + kColorModeEvBoost: static composite-mode brightness baseline (see above).
-      const float composite_ev_push = rc.exposure_offset + kColorModeEvBoost;
-      if (lumice::gui::ShouldPushCompositeExposure(composite_active, s_last_composite_active, composite_ev_push,
-                                                   s_last_pushed_ev, kCompositeEvPushEpsilon) &&
-          // A wake is a calibration join point in principle (app.cpp, JoinPendingCalibration): the
-          // poller must not observe the startup calibration's run on this server. But this is a
-          // display-time refresh on the render path, not a user-initiated command — joining here
-          // would block the whole frame for calibration's up-to-2s worst case (code review round
-          // 1, Major #3). Skip the push entirely while calibration is still actually running
-          // (s_last_pushed_ev is left unset, so this condition is re-evaluated true every frame
-          // until it isn't — no state is lost, the push just lands once calibration finishes).
-          // The async Stop has the same exclusion: do not re-wake the worker it is pausing.
-          !CalibrationPending() && !g_stop_inflight.load()) {
-        LUMICE_SetCompositeExposure(g_server, composite_ev_push);
-        // Wake a paused poller so the next frame can pick up the freshly re-baked
-        // composite even after a finite sim has completed (same rationale as the
-        // color-window PushDisplayState path — see task-345.2 (③) in color_window.cpp).
-        // No-op when the poller is already running. WakeForRefresh (not WakeForRestart)
-        // preserves valid=true across the wake edge — same display-time-inert contract
-        // as color/visible/solo/z_order edits (task-color-migration §3 D3).
-        g_server_poller.WakeForRefresh(g_server);
-        s_last_pushed_ev = composite_ev_push;
-      }
-      s_last_composite_active = composite_active;
-
-      // NO background push. It used to ride this same display-time channel, for a reason that has
-      // since stopped being true: the composite image is baked server-side into sRGB bytes, and
-      // there was no shader stage left where a linear background could still be added. There is
-      // now — PreviewRenderer::TextureMode::kSrgbRadiance — and the sky joins the composite there,
-      // in the same line and the same order as it joins the mono path. Adding it server-side as
-      // well would paint it twice; and while it was added server-side, the composite could not
-      // receive the target lens's relative illumination at all, because scaling a texel with the
-      // sky summed into it dims the sky too. The C API surface (LUMICE_SetCompositeBackground)
-      // stays for non-GUI consumers; its all-zero default is an algebraic no-op, which is what the
-      // GUI now relies on.
-    }
-    pp.exposure.intensity_scale = mono_ev.intensity_scale;
-    // Overlap parameters for dual fisheye texture sampling.
-    pp.source.max_abs_dz = kDualFisheyeOverlap;
-    pp.source.r_scale = 1.0f / std::sqrt(1.0f + kDualFisheyeOverlap);
-    // The sky colour behind the halo. Stored in GuiState as sRGB (what the picker shows) and
-    // handed to the shader as linear RGB, because the shader adds it to the halo's radiance
-    // before the transfer curve. This one assignment also feeds all three PNG export entry
-    // points: BuildExportParams copies this struct and overrides only the exposure fields.
-    lumice::SrgbToLinearRgb(rc.background, pp.background_color_linear);
-    // The paper and the operator that reads it, converted and carried the same way and for the
-    // same reason: the shader multiplies the paper by a transmittance in linear, before the
-    // transfer curve.
-    lumice::SrgbToLinearRgb(rc.paper, pp.paper_color_linear);
-    pp.tone = rc.tone;
-    pp.display_mode = rc.display_mode;
-
-    // The predicate's Print term is doc/rendering/print-mode-subtractive-ink.md §7 instance 1, and it is
-    // what makes the exclusion real rather than advisory: `bg_show` is left exactly as the user
-    // set it, so switching Mode back to Screen brings the photograph straight back. Read through
-    // BgPhotoOnScreen rather than spelled out again here, so the eyedropper and the photo gestures
-    // cannot disagree with the frame about whether the photo is in it. See the matching
-    // WhenBackgroundLoaded gate in field_editor_registry.cpp for why additive-over-subtractive is
-    // wrong in kind and not merely in taste.
-    pp.bg.enabled = BgPhotoOnScreen(g_state);
-    pp.bg.alpha = g_state.bg_alpha;
-    pp.bg.aspect = g_preview.GetBgAspect();
-    pp.bg.pan_x = g_state.bg_offset_x;
-    pp.bg.pan_y = g_state.bg_offset_y;
-    pp.bg.zoom = g_state.bg_scale;
-
-    // Auxiliary line overlay parameters (line flags only — the label flags are read below, where
-    // core's anchors are turned into draw-list text).
-    pp.overlay.show_horizon = g_state.show_horizon_line;
-    pp.overlay.show_grid = g_state.show_grid_line;
-    pp.overlay.show_sun_circles = g_state.show_sun_circles_line;
-    pp.overlay.show_view_dist = g_state.show_view_dist_line;
-    std::copy(std::begin(g_state.horizon_color), std::end(g_state.horizon_color), std::begin(pp.overlay.horizon_color));
-    std::copy(std::begin(g_state.grid_color), std::end(g_state.grid_color), std::begin(pp.overlay.grid_color));
-    std::copy(std::begin(g_state.sun_circles_color), std::end(g_state.sun_circles_color),
-              std::begin(pp.overlay.sun_circles_color));
-    std::copy(std::begin(g_state.view_dist_color), std::end(g_state.view_dist_color),
-              std::begin(pp.overlay.view_dist_color));
-    pp.overlay.horizon_alpha = g_state.horizon_alpha;
-    pp.overlay.grid_alpha = g_state.grid_alpha;
-    pp.overlay.sun_circles_alpha = g_state.sun_circles_alpha;
-    pp.overlay.view_dist_alpha = g_state.view_dist_alpha;
-    // WHERE the curves are, as the definition the shader evaluates per fragment, and WHERE their
-    // text and the markers go, as core's answer for this frame — both from the ONE builder
-    // (AnnotationViewInputFor), so the line and the label on it, or the ring and its name, cannot
-    // describe different curves or different views.
-    //
-    // Lines and labels have separate switches per family, and the request is made when ANY of them
-    // is on: a user drawing only the labels still needs the anchors, and one drawing only the lines
-    // still needs the curve definition. Which families the request actually carries is decided
-    // inside AnnotationViewInputFor, off the same switches; each switch then gates its own half.
-    //
-    // EVERY FRAME, unconditionally. The anchors are a curve walk — ~0.1 ms for an ordinary grid,
-    // 2.4 ms at the narrowest field of view with every family LABELLED (a thousand curves) — and
-    // asking on every frame is what makes the text and the rings move with a drag on the frame it
-    // happens, exactly as the shader-drawn lines do. There is deliberately no "has the view
-    // changed" check in front of this: the check would cost about what the call does, and a stale
-    // answer surviving a missed field in the comparison is the defect the per-frame call exists to
-    // rule out. What IS trimmed is the request: a family whose label switch is off is drawn by the
-    // shader and not walked by core (AnnotationAnchorRequestFor).
-    {
-      const AnnotationViewInput curves = AnnotationViewInputFor(g_state, rc);
-      pp.overlay.elevation_deg = curves.elevation_deg;
-      pp.overlay.longitude_deg = curves.longitude_deg;
-      pp.overlay.angular_dist_deg = curves.angular_dist_deg;
-      pp.overlay.view_dist_deg = curves.view_dist_deg;
-      GuiSunWorldDir(curves.sun_altitude_deg, pp.overlay.reference_dir);
-      g_annotation_anchors.Compute(
-          MakeAnnotationViewKey(AnnotationAnchorRequestFor(g_state, rc), g_preview_vp.vp_w, g_preview_vp.vp_h));
-    }
-
-    // The reference-point markers. The APPEARANCE below is the GUI's own state; the POSITIONS come
-    // from core (below the lens-border block), not from a GUI-side projection.
-    pp.overlay.markers_alpha = g_state.markers_alpha;
-    pp.overlay.markers_radius_px = g_state.markers_radius_px;
-    for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
-      std::copy(std::begin(g_state.markers[i].color), std::end(g_state.markers[i].color),
-                pp.overlay.marker_color[i].begin());
-    }
-    pp.overlay.show_lens_border = g_state.show_lens_border_line;
-    std::copy(std::begin(g_state.lens_border_color), std::end(g_state.lens_border_color),
-              std::begin(pp.overlay.lens_border_color));
-    pp.overlay.lens_border_alpha = g_state.lens_border_alpha;
-    // WHERE the rings go: core's answer for this frame, from the same LUMICE_ComputeAnnotationAnchors
-    // call the labels below read, converted from its canvas space (top-left origin, y down) into
-    // the shader's (centre origin, y up). Not a GUI-side forward projection of the six world
-    // directions — that would be a second implementation of the placement the labels use. The ring
-    // is rasterized by the shader; only the position comes from core.
-    for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
-      // A marker whose LINE switch is off is handed the default-constructed (invalid) point, which
-      // CanvasPointToShaderScreenPos already turns into the sentinel — the same path an unimaged
-      // marker takes. That is why there is no enable uniform: "switched off" and "not on this
-      // canvas" are the same instruction to the shader, and writing them the same way means the
-      // two cannot disagree. Note the switch read here is `show` alone: a marker with only its
-      // LABEL on is in the request (its name needs an anchor) but must draw no ring.
-      const AnnotationAnchors::Point p =
-          g_state.markers[i].show ? g_annotation_anchors.MarkerPoint(i) : AnnotationAnchors::Point{};
-      CanvasPointToShaderScreenPos(p, rc.lens_type, g_preview_vp.vp_w, g_preview_vp.vp_h,
-                                   pp.overlay.marker_screen_pos[i].data());
-    }
-
-    // Overlay labels at viewport edges. Every family's anchors come from core, through the one
-    // AnnotationAnchors result this frame computed above — the GUI walks no curve of its own, so
-    // the preview and the CLI cannot place the same number differently.
-    //
-    // PUBLISHED, NOT DRAWN. The labels are rasterized into the preview's own FBO in the deferred
-    // pass (RenderPreviewFrameAndBlit, called from the frame loop after ImGui::Render()), which is
-    // the same function and the same pixels the screenshot export reads back. That is what makes
-    // "the PNG shows what the screen shows" structural: there is no second drawing path here to
-    // gate differently, scale differently, or forget. Modals still occlude them, now for the same
-    // reason the overlay LINES are occluded — the whole preview image is blitted before ImGui's
-    // draw data is rendered on top.
-    //
-    // The rect is (0, 0, panel_width, preview_height): FBO-local LOGICAL POINTS. No MainVpPos()
-    // offset any more — the old absolute-OS-screen-space anchoring existed because the labels went
-    // onto an ImGui window draw list under ImGuiConfigFlags_ViewportsEnable; a self-owned draw list
-    // targeting the preview FBO starts at its own origin.
-    //
-    // Logical points, not the device-pixel vp_w/vp_h: the anchors, the collision boxes and the
-    // glyphs must all live in the space the draw list works in, and the DPI enters exactly once,
-    // as the FramebufferScale the backend multiplies by. Feeding device pixels here and scale 1
-    // there also lands the positions correctly, which is why the export path's half-done version
-    // of this conversion looked right while rendering the text at 1/dpi of its size.
-    if (g_state.show_horizon_label || g_state.show_grid_label || g_state.show_sun_circles_label ||
-        g_state.show_view_dist_label || AnyMarkerLabelShown(g_state)) {
-      const float vp_sw = panel_width;
-      const float vp_sh = preview_height;
-      // Every set goes into ONE vector so they take part in one collision pass, which is where
-      // the per-set group is read.
-      if (g_state.show_horizon_label) {
-        g_preview_vp.curve_labels.push_back(BuildHorizonLabelSet(g_annotation_anchors, g_state, vp_sw, vp_sh));
-      }
-      if (g_state.show_sun_circles_label) {
-        g_preview_vp.curve_labels.push_back(BuildSunCirclesLabelSet(g_annotation_anchors, g_state, vp_sw, vp_sh));
-      }
-      if (g_state.show_view_dist_label) {
-        g_preview_vp.curve_labels.push_back(BuildViewDistLabelSet(g_annotation_anchors, g_state, vp_sw, vp_sh));
-      }
-      if (g_state.show_grid_label) {
-        g_preview_vp.curve_labels.push_back(BuildGridLabelSet(g_annotation_anchors, g_state, vp_sw, vp_sh));
-      }
-      // No outer switch of its own, unlike the three above: each marker carries its own label
-      // switch, so the builder returns an empty vector when none of the six is on.
-      for (CurveLabelSet& set : BuildMarkerLabelSets(g_annotation_anchors, g_state, vp_sw, vp_sh)) {
-        g_preview_vp.curve_labels.push_back(std::move(set));
-      }
-    }
-
-    // Eyedropper mode: what the user is about to sample is what they must be looking at, so this
-    // frame shows the photograph and nothing else. Every line below overwrites a value that was
-    // just derived from GuiState a few dozen lines up; GuiState itself is untouched, so leaving
-    // the mode needs no restore step — the next frame derives the same fields again from the
-    // unchanged document and the picture comes back whole.
-    //
-    // alpha = 0 is exact rather than approximate: the shader's background stage is
-    // `photo*(1-alpha) + render*alpha`, so zero leaves the photo bit for bit.
-    //
-    // The overlay switches are a POSITIVE list, not a master off switch — there is no such switch
-    // in OverlayDecoration. A seventh overlay class added later will keep drawing over the photo
-    // until it is named here too.
-    if (g_bg_pick.active) {
-      pp.bg.alpha = 0.0f;
-      pp.overlay.show_horizon = false;
-      pp.overlay.show_grid = false;
-      pp.overlay.show_sun_circles = false;
-      pp.overlay.show_view_dist = false;
-      pp.overlay.show_lens_border = false;
-      pp.overlay.marker_screen_pos = MakeAllSentinelMarkerPositions();
-      // Not part of `pp`: the curve labels are rasterized by the deferred pass from this vector,
-      // so hiding their lines above does not hide their text.
-      g_preview_vp.curve_labels.clear();
-    }
+    // The picture itself: one shared assembly (the composite push's static baseline inside it is
+    // shared the same way), carrying view_proj, exposure (mono + composite push), tone, display
+    // mode, background photo, overlay lines, the annotation anchors, the marker positions and
+    // the curve labels this viewport publishes.
+    PreviewPictureTarget target;
+    target.canvas_w_pt = panel_width;
+    target.canvas_h_pt = preview_height;
+    target.vp_w_px = g_preview_vp.vp_w;
+    target.vp_h_px = g_preview_vp.vp_h;
+    AssemblePreviewPictureParams(g_state, g_preview_vp.params, g_preview_vp.curve_labels, target, g_annotation_anchors);
 
     // Mouse interaction: orbit with drag, FOV with scroll — or, with the pan/zoom modifier held,
     // the background image instead of the camera.
@@ -2689,6 +2831,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     // to the window rather than seen through the lens — it is composited in NDC by
     // ComputeBgUvTransform, which never consults the view matrix, so panning it means the same
     // thing under a full-sky lens as under any other.
+    auto& rc = g_state.renderer;
     bool full_sky = LensIsFullSky(rc.lens_type);
     // Submitted ahead of `##preview_interact` on purpose — see RenderDisplayModeControl for why the
     // order is what keeps a click on it from orbiting the camera. Do not move it below, and do not
@@ -2771,38 +2914,10 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       }
 
       if (!gestures_locked && !bg_modifier && !full_sky && is_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        const ImVec2 delta = io.MouseDelta;
-        if (delta.x != 0.0f || delta.y != 0.0f) {
-          UnlockLookAt(g_state);
-          // Sensitivity is the lens's angular resolution at the frame center, so one pixel of
-          // drag moves the content one pixel whatever the FOV and viewport are. A fixed deg/px
-          // was ~180x too fast at fov=1° and ~70x too slow at fov=179°. vp_w/vp_h are
-          // framebuffer pixels (set above from the DPI scale), the same units
-          // ProjectWorldDirToScreen works in, which is what makes this DPI-correct for free.
-          const float gain = ComputeDragGainDegPerPixel(rc.lens_type, rc.fov, g_preview_vp.vp_w, g_preview_vp.vp_h);
-          // Globe is outside-in: u_view_matrix * (0,0,D) yields camera world
-          // position, so +az/+el move the camera and the sphere drifts in the
-          // opposite direction. Flip both signs so a right/down drag moves the
-          // sphere right/down, matching the inside-out lenses' feel.
-          if (rc.lens_type == kLensTypeGlobe) {
-            rc.azimuth += delta.x * gain;
-            rc.elevation -= delta.y * gain;
-          } else {
-            rc.azimuth -= delta.x * gain;
-            rc.elevation += delta.y * gain;
-          }
-          // Wrap azimuth into [-180, 180] so dragging past the slider's clamp
-          // boundary continues seamlessly instead of getting pinned at ±180.
-          if (rc.azimuth > 180.0f) {
-            rc.azimuth -= 360.0f;
-          } else if (rc.azimuth < -180.0f) {
-            rc.azimuth += 360.0f;
-          }
-          // Globe lens needs a tighter clamp to avoid view-matrix degeneracy at
-          // ±90°; inside-out lenses keep the existing ±90° range.
-          const float el_lim = (rc.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
-          rc.elevation = std::max(-el_lim, std::min(el_lim, rc.elevation));
-        }
+        // The camera body (UnlockLookAt, the DPI/FOV-correct gain, the Globe sign flip, the
+        // azimuth wrap and the elevation clamp) is the shared ApplyCameraOrbitDrag — the same
+        // function the Analyze main view's camera arm runs.
+        ApplyCameraOrbitDrag(g_state, io.MouseDelta, g_preview_vp.vp_w, g_preview_vp.vp_h);
       }
 
       if (!gestures_locked && !bg_modifier && !full_sky && is_hovered && io.MouseWheel != 0.0f) {
@@ -2812,8 +2927,8 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       }
 
       // The eyedropper's own branch, gated on the flag the four above are gated on the negation of:
-      // exactly one of the seven (the analysis window's two below included) can run in a frame, and while picking, the
-      // click that would have orbited the camera samples a colour instead.
+      // exactly one of the seven (the analysis window's two below included) can run in a frame, and while picking,
+      // the click that would have orbited the camera samples a colour instead.
       if (g_bg_pick.active && is_hovered) {
         BgSampleGeometry geom;
         geom.dpi_scale_x = dpi_scale_x;
@@ -2873,45 +2988,12 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       // run yet), and its value is written beside the cursor. Off sky (letterbox, outside the
       // lens's image, the side `visible` / `front` hides) there is no ring, no number, and a click
       // is inert — not a cancel, for the eyedropper's reason: the miss should not cost a second
-      // trip to the button. A right click over the preview cancels, as Esc does above.
+      // trip to the button. A right click over the preview cancels, as Esc does above. The body
+      // is the shared ApplyAngularDistPickGesture — the same branch the Analyze main view runs.
       if (angular_pick && !g_bg_pick.active && is_hovered) {
-        auto& picker = g_state.angular_dist_picker;
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-          picker.armed = false;
-        } else {
-          const std::optional<CanvasPixel> px =
-              PreviewPointToCanvasPixel(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y, dpi_scale_x,
-                                        dpi_scale_y, g_preview_vp.vp_w, g_preview_vp.vp_h);
-          std::optional<float> angle;
-          if (px.has_value()) {
-            angle = AngularDistAtCanvasPixel(picker.family,
-                                             PreviewAnnotationView(g_state, g_preview_vp.vp_w, g_preview_vp.vp_h),
-                                             pp.view_proj, g_state.sun.altitude, px->px, px->py);
-          }
-          if (angle.has_value()) {
-            InjectAngularDistPickPreview(picker.family, *angle, pp.overlay);
-            // On this window's draw list, like the analysis pick's crosshair: the number describes
-            // a point OF the picture, so it is clipped to the preview. A plate behind it, because
-            // it sits over whatever the sky is.
-            const std::string text = FormatAngularDistPickReadout(*angle);
-            const ImVec2 at(io.MousePos.x + UiPx(kAngularDistPickReadoutOffsetXPt),
-                            io.MousePos.y + UiPx(kAngularDistPickReadoutOffsetYPt));
-            const ImVec2 size = ImGui::CalcTextSize(text.c_str());
-            const float pad = UiPx(2.0f);
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddRectFilled(ImVec2(at.x - pad, at.y - pad), ImVec2(at.x + size.x + pad, at.y + size.y + pad),
-                              IM_COL32(0, 0, 0, 170), 2.0f);
-            dl->AddText(at, IM_COL32(255, 255, 255, 255), text.c_str());
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-              const bool added = CommitAngularDistPick(AngularDistFamilyAngles(g_state, picker.family), *angle);
-              GUI_LOG_INFO("[Overlay] angular distance picked: {:.2f} deg ({} family){}", *angle,
-                           picker.family == AngularDistFamily::kSun ? "sun" : "lens-center",
-                           added ? "" : " — already in the list, not added again");
-              picker.armed = false;
-              picker.swallow_drag_until_release = true;
-            }
-          }
-        }
+        ApplyAngularDistPickGesture(g_state, g_preview_vp.params,
+                                    ImVec2(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y), dpi_scale_x,
+                                    dpi_scale_y, g_preview_vp.vp_w, g_preview_vp.vp_h);
       }
 
       // (The cone pick's crosshair and the ROI marker/ring moved to the panorama with the rest
