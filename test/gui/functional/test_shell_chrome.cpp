@@ -418,14 +418,17 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
   // at least one item gap between Settings and the pair. The bar has no scrollbar and no overflow
   // handling — a bar that did not fit would draw Revert over Settings, or push it off the window.
   //
-  // Measured at its widest real content: with a colour class present the Colored / Full Spectrum
-  // checkbox joins the feature group (showing "Full Spectrum", the longer label). The
-  // empty-composite warning pip does NOT join here, and not only here: with no server the signal
-  // poll never runs and the flags default to matched, so the pip is unreachable in this harness
-  // in any construction — the checkbox alone is the widest state it can render. The pip state
-  // (a server snapshot with a configured-but-unmatched class) adds one ItemSpacing plus the
-  // glyph, 23 px on this font; against headroom=27 it still fits (required 1020), measured once
-  // with the glyph's real width, not assumed.
+  // Measured in its two widest real contents. First the no-warning configuration: with a colour
+  // class present the Colored / Full Spectrum checkbox joins the feature group (showing "Full
+  // Spectrum", the longer label). Then the warning-pip state — the bar's actual widest, not a
+  // priced footnote. It IS reachable in this harness: with no server the signal poll never runs
+  // and the flags resize to matched, so one matched class hidden (visible = false) drives the
+  // empty-composite predicate all by itself and the pip joins the row. An earlier note here
+  // claimed the pip unreachable and priced it by glyph arithmetic; that claim was refuted —
+  // NoVisibleMatchedColorClass also reads effective visibility, and the hidden class needs no
+  // server — so the pip leg below measures the real frame instead: the checkbox disabled (the
+  // one condition that draws the pip), the Analyze cell's displacement, and the required width,
+  // with the same state archived in the capture case's third frame.
   // The left part is read off the rendered frame (the right edge of Settings), and so is the right
   // end from Revert through the right toggle, which at any wider window sit flush together. The ⚠
   // glyph is text, not an item with a rectangle, so its width is the one thing taken from
@@ -593,6 +596,65 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         ctx->LogInfo("[anchor] rule gaps left=%.1f right=%.1f (total %.1f, spare %.1f)", static_cast<double>(left_gap),
                      static_cast<double>(right_gap), static_cast<double>(wide_gap), static_cast<double>(spare));
       }
+
+      // The pip state, on the same real floor frame: one matched class hidden (visible = false)
+      // reaches the empty-composite predicate without a server — the signal cache resizes new
+      // entries to "matched" and the predicate's effective-visibility half does the rest — so
+      // the pip joins the feature group and this, not the checkbox alone, is the bar's widest
+      // state. Disabled checkbox and pip share the one composite_empty local in RenderTopBar,
+      // so the disabled state checked below is the frame the pip is drawn in. The pip's width
+      // is then read off that frame as the Analyze cell's displacement (exact equality: the row
+      // grew by one item spacing plus the glyph, nothing else moved), the boundary right of the
+      // pip keeps its split rhythm, and the required width is measured again — the fit fact the
+      // glyph arithmetic once stood in for.
+      gui::ColorClassConfig hidden_class;
+      hidden_class.visible = false;
+      gui::ColorClassRefConfig hidden_ref;
+      hidden_ref.layer_idx = 0;
+      hidden_ref.crystal_pool_id = gui::g_state.layers[0].entries[0].crystal_id;
+      hidden_ref.match_all = true;
+      hidden_class.match.push_back(hidden_ref);
+      gui::g_state.raypath_color.push_back(hidden_class);
+      g_window_size_test.width = gui::kMinWindowWidth;
+      g_window_size_test.height = gui::kMinWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_window_size_test.done.load());
+      ctx->Yield(3);
+
+      const ImGuiTestItemInfo pip_checkbox =
+          ctx->ItemInfo("##TopBar/Full Spectrum##CompositePreviewToggle", ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo pip_analyze = ctx->ItemInfo(kWorkspaceToAnalyzeBtn, ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo pip_settings = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
+      IM_CHECK_NE(pip_checkbox.ID, 0u);
+      IM_CHECK_NE(pip_analyze.ID, 0u);
+      IM_CHECK_NE(pip_settings.ID, 0u);
+      IM_CHECK(IsDisabled(pip_checkbox));
+      const float pip_glyph_w = ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x;
+      IM_CHECK_EQ(pip_analyze.RectFull.Min.x - analyze_cell.RectFull.Min.x, pip_glyph_w + style.ItemSpacing.x);
+      ctx->LogInfo("[pip] glyph=%.1f, analyze cell displaced by %.1f", static_cast<double>(pip_glyph_w),
+                   static_cast<double>(pip_analyze.RectFull.Min.x - analyze_cell.RectFull.Min.x));
+      {
+        const float spare_pip = min_gap - (style.ItemSpacing.x * 2.0f + 1.0f);
+        const float left_gap_pip = style.ItemSpacing.x + gui::TopBarGroupGapLeftExtraPx(spare_pip);
+        const float right_gap_pip = style.ItemSpacing.x + gui::TopBarGroupGapRightExtraPx(spare_pip);
+        IM_CHECK_GT(left_gap_pip, right_gap_pip);
+        const float rule_x_pip = FindTopBarRuleX(bar, pip_analyze.RectFull.Min.x, pip_settings.RectFull.Max.x,
+                                                 pip_analyze.RectFull.GetHeight());
+        IM_CHECK_GT(rule_x_pip, 0.0f);
+        IM_CHECK_EQ(rule_x_pip - pip_analyze.RectFull.Max.x, left_gap_pip);
+        IM_CHECK_EQ(pip_settings.RectFull.Min.x - (rule_x_pip + 1.0f), right_gap_pip);
+        ctx->LogInfo("[pip] rule gaps left=%.1f right=%.1f", static_cast<double>(left_gap_pip),
+                     static_cast<double>(right_gap_pip));
+      }
+      const float required_pip =
+          (pip_settings.RectFull.Max.x - bar->Pos.x) + style.ItemSpacing.x + right_end_w + style.WindowPadding.x;
+      ctx->LogInfo("required(warning pip)=%.1f min_window=%.1f headroom=%.1f", static_cast<double>(required_pip),
+                   static_cast<double>(floor_width), static_cast<double>(floor_width - required_pip));
+      IM_CHECK_LE(required_pip, floor_width);
     };
   }
 
@@ -1393,10 +1455,12 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The top bar's visual rhythm, archived at its two bases with the widest real content (a
-  // colour class present: the Colored / Full Spectrum checkbox joins the feature group — the
-  // same configuration the fit pin measures; the empty-composite pip is unreachable without a
-  // server, see the fit leg's note). Automation does not sign
+  // The top bar's visual rhythm, archived at its two bases and at the bar's actual widest
+  // state: a colour class present joins the Colored / Full Spectrum checkbox (the fit pin's
+  // first configuration), and one matched class hidden reaches the empty-composite predicate
+  // without a server — the warning pip joins the row, and the narrow basis archives that frame
+  // too (the fit pin's second measurement; see its note for the refuted unreachability claim).
+  // Automation does not sign
   // the rhythm — the fit and split pins prove the geometry, and these frames are what a person
   // actually looks at (owner hands-on, the aesthetic ruling this suite cannot make). The
   // companion numbers ride in the log: at the narrow basis the rule's own left/right gaps are
@@ -1463,6 +1527,22 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       }
 
       capture_top_bar("topbar_rhythm_narrow_1024x640.png");
+
+      // The warning-pip frame: one matched class hidden (visible = false) reaches the
+      // empty-composite predicate without a server — the widest state the bar renders at this
+      // basis and the fit pin's second measurement, archived for the same person the first two
+      // frames are for. The disabled-checkbox check pins the state before the shutter.
+      gui::ColorClassConfig pip_class;
+      pip_class.visible = false;
+      gui::ColorClassRefConfig pip_ref;
+      pip_ref.layer_idx = 0;
+      pip_ref.crystal_pool_id = gui::g_state.layers[0].entries[0].crystal_id;
+      pip_ref.match_all = true;
+      pip_class.match.push_back(pip_ref);
+      gui::g_state.raypath_color.push_back(pip_class);
+      ctx->Yield(4);
+      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/Full Spectrum##CompositePreviewToggle", ImGuiTestOpFlags_NoError)));
+      capture_top_bar("topbar_rhythm_narrow_warning_pip_1024x640.png");
     };
   }
 
