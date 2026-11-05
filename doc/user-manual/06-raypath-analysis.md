@@ -175,7 +175,9 @@ azimuth fields in the right pane do the same without any map at all (type the an
 point, azimuth measured as the sun's), so a refused or still-computing map never blocks
 naming a target. The sky point is independent of the scene ROI: clicking the map never changes
 the cone centre or the share list, and pointing the cone on the panorama never moves your sky
-point.
+point. One honest limit: a direction whose class carries no pose samples says so in the window
+(*no valid sample*) rather than drawing an empty guess — click another spot, or type the
+angles, to re-target.
 
 ## 8. The point inspector (the Pose & trace window, point detail)
 

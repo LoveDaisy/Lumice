@@ -4,7 +4,9 @@
 > 诊断 CLI 五命令面全落地（`analyze` 既有 + `raypath survey`/`point`/`probe`/`report`）、三个设计
 > 缺口全部关闭、typed 结果架构已合入（PR #547，[`typed-results.md`](typed-results.md)）、4.7.5 已
 > 发布（PR #544）；诊断管线的设计权威已提升为
-> [`diagnostic-pipeline.md`](diagnostic-pipeline.md)；GUI 工作区消费进行中。此前 2026-10-14 更新：§1 状态表、§5.1.2/§5.1.6/§5.1.7、§5.1.8 报告段与 §6 对齐
+> [`diagnostic-pipeline.md`](diagnostic-pipeline.md)；GUI 工作区消费 v1 已交付待用户上手
+> （2026-11-06 状态：Analyze 工作区 + 两浮窗的组织重构与组合验收已交付，独立 Contribution
+> Curve 仍为后续）。此前 2026-10-14 更新：§1 状态表、§5.1.2/§5.1.6/§5.1.7、§5.1.8 报告段与 §6 对齐
 > 当前生产状态——schema 3 报告已取代 schema 2 的发现层、`liblumice_analytic` 三波模块 A/B/C 已
 > as-built（API v2–v8）而 GUI 工作区消费未接线、LI 切换未发生；此前 2026-09-28 更新 §5.1.6 仓库
 > 定位、§5.1.8 两期划分修订，同日追加 §5.1.6「两仓计算用的对称性口径」一段，并给 `fn_period_` 实证
@@ -38,7 +40,7 @@
 |---|---|---|---|
 | **(i) 识别**：列出一个区域里各光路成分与占比 | ✅ 已交付（PR #347） | 完整链 id、专用分析运行、CPU 路 | §3；[`raypath-analysis-panel.md`](raypath-analysis-panel.md) |
 | **(ii) 剥离**：在渲染图上即时开关某个桶 | ⏸ 搁置（owner 2026-08-26 裁定） | 每桶真实辐射量（内存墙所在） | §4 |
-| **选定光路后的三功能**：① 光路详情（fiber） ② 单光路全天图（产品形态见 §5.1.8） ③ 预设点 | 🟡 计算面与 CLI 消费面已全交付（2026-10-29 状态）：诊断 CLI 五命令面承载 ①–③ 的计算与查询——`raypath survey`（PR #508 起，对象卡片 + band-sum 地图）/ `point`（PR #538，fiber 因素分解）/ `probe`（PR #539，剖面）/ `report`（schema 3）；typed 结果架构已合入（PR #547，[`typed-results.md`](typed-results.md)）；**GUI 工作区消费进行中**（未合 main），全天图工作区与全域完备枚举仍未交付；设计权威见 [`diagnostic-pipeline.md`](diagnostic-pipeline.md) | 已交付部分：Lumice C++ 单光路反解 / fiber、实际产品输入/物理 L2、几何层枚举与共享数值 API、CLI 五命令面；后续：工作区联动 | §5.1 |
+| **选定光路后的三功能**：① 光路详情（fiber） ② 单光路全天图（产品形态见 §5.1.8） ③ 预设点 | 🟡 计算面与 CLI 消费面已全交付（2026-10-29 状态）：诊断 CLI 五命令面承载 ①–③ 的计算与查询——`raypath survey`（PR #508 起，对象卡片 + band-sum 地图）/ `point`（PR #538，fiber 因素分解）/ `probe`（PR #539，剖面）/ `report`（schema 3）；typed 结果架构已合入（PR #547，[`typed-results.md`](typed-results.md)）；**GUI 工作区消费 v1 已交付待用户上手**（2026-11-06 状态：类级概览/参考图地图/点文档交互与 755 组织重构均已交付，组合验收完成），全天图工作区与全域完备枚举仍未交付；设计权威见 [`diagnostic-pipeline.md`](diagnostic-pipeline.md) | 已交付部分：Lumice C++ 单光路反解 / fiber、实际产品输入/物理 L2、几何层枚举与共享数值 API、CLI 五命令面；后续：工作区联动 | §5.1 |
 | (i) 面板的四个机制级升级点 | 🔜 各有触发条件，未触发 | 同 (i) | §5.2；[`raypath-analysis-panel.md`](raypath-analysis-panel.md) §8 |
 
 ## 2. 拆分决策：(i) 识别 vs (ii) 剥离
@@ -583,9 +585,10 @@ warm 曾沿旧 δ 支撑给当前点误发 `certified` 包含关系，已由 PR 
 [`raypath-feature-diagnostic-acceptance.md`](raypath-feature-diagnostic-acceptance.md)。它的物理观察有明确输入，
 但旧schema-1 detector的功能表与无条件visibility声明不再是当前产品合同，不能据旧报告推断一般场景。
 
-**GUI 工作区消费（进行中，2026-10-29 状态）**：分层诊断交互的第一版范围已由 owner 确认
-（2026-10-28），消费实现在独立分支推进、尚未合入 main；在此之前 GUI 仍不消费 feature report，
-也不得把「亮度分布 + 多个位置化特征 + 对应机制」的联动以 HTML 原型或目标点 fiber 查询冒充交付。
+**GUI 工作区消费（v1 已合入交付；feature-report 联动仍未交付，2026-11-06 状态）**：分层诊断
+交互的第一版范围已由 owner 确认（2026-10-28），已随 742 的交互层与 755 的组织重构交付合入；
+GUI 现消费 engine typed survey / 参考图地图 / 点文档交互面，而 **feature report 仍不被 GUI
+消费**，也不得把「亮度分布 + 多个位置化特征 + 对应机制」的联动以 HTML 原型或目标点 fiber 查询冒充交付。
 三层交互映射（L0 列表 / L1 普查 / L2 查询）与探针共享库的设计权威见
 [`diagnostic-pipeline.md`](diagnostic-pipeline.md) §4；CLI 侧的对应消费面（survey / point /
 probe）已交付（见上）。界面应显示报告的 scope/evidence/coverage 与 unfinished 原因，用户选择
