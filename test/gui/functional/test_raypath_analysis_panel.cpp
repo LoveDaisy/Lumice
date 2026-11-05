@@ -5646,7 +5646,11 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
   };
   IM_CHECK_RETV(drive_narrowest(gui::kFactoryUiScaleMultiplier), false);
   IM_CHECK_RETV(drive_narrowest(2.0f), false);
-  // Restore the factory scale, settled (the basis audit's own rule).
+  // Restore the factory scale, settled — and the shared window's BASIS with it: the ui-scale
+  // rebuild's own semantics grow the shared GLFW window at >=2x and never shrink it back, so a
+  // case that drove a 2x tier restores the basis explicitly (the scale rebuild re-plans the
+  // window, so the explicit size lands AFTER the settle — waited on, leaving the next case's
+  // entry audit nothing to undo).
   gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
   gui::g_ui_scale_dirty = true;
   for (int i = 0; i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > gui::kAnalyzeLeftPanelWidth - 0.5f &&
@@ -5655,7 +5659,16 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     ctx->Yield(1);
   }
   IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - gui::kAnalyzeLeftPanelWidth) < 0.5f, false);
-  ctx->Yield(2);
+  g_window_size_test.apply_aspect = false;
+  g_window_size_test.width = gui::kInitWindowWidth;
+  g_window_size_test.height = gui::kInitWindowHeight;
+  g_window_size_test.done.store(false);
+  g_window_size_test.requested.store(true);
+  for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  IM_CHECK_RETV(g_window_size_test.done.load(), false);
+  ctx->Yield(3);
   return true;
 }
 
