@@ -10,14 +10,18 @@
 // click to ask "what makes this bright arc" — and a cone around it collects real chains.
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -176,9 +180,18 @@ struct ScopedServerGuard {
 
 template <typename Pred>
 bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
+  const auto started = std::chrono::steady_clock::now();
+  const auto deadline = started + std::chrono::seconds(timeout_s);
+  int polls = 0;  // predicate polls that returned false
   while (!pred()) {
+    ++polls;
     if (std::chrono::steady_clock::now() > deadline) {
+      const auto elapsed =
+          std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - started);
+      // Wall-clock telemetry for the gate-budget calibration (time-to-window band). One line per
+      // gate exit; no logging inside the loop body.
+      ctx->LogInfo("[drive-gate] TIMEOUT after %.1fs (budget %ds, %d polls, avg %.0f ms/poll)", elapsed.count(),
+                   timeout_s, polls, polls > 0 ? elapsed.count() * 1000.0 / polls : 0.0);
       return false;
     }
     if (ctx->IsError()) {
@@ -190,8 +203,254 @@ bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
     }
     ctx->Yield();
   }
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - started);
+  ctx->LogInfo("[drive-gate] ok after %.2fs (budget %ds, %d polls)", elapsed.count(), timeout_s, polls);
   return true;
 }
+
+// Waiting budgets of the scopes case's gates and of its shared standing-state entry
+// (BringUpBothWindows) — one named source instead of scattered per-gate literals. The values are
+// SAFETY NETS, not criteria: since the observation-protocol rework (ScopedPointPickupEdgeRecorder)
+// the InFlight gates judge the recorded transition, not a wall wait, so a budget only bounds a
+// genuinely-stuck run and never decides a healthy one — a transient narrower than the sampling
+// interval is exactly the thing a budget cannot calibrate (the race-type-gates section of
+// doc/testing/testing-architecture.md records the measured case). Consumed on the slow path only
+// (DriveUntil returns as soon as the predicate holds), so the green path's wall time does not
+// move with them.
+constexpr int kScopesObserveBudgetS = 30;   // an issued query's execution window must become observable
+constexpr int kScopesCompleteBudgetS = 60;  // a query / analysis finishing
+constexpr int kScopesTightBudgetS = 20;     // a bounded drain / cancel landing
+
+// Labels keyed to gui::PointQueryState's enumerator order (analyze_survey.hpp).
+constexpr const char* kPointQueryStateNames[] = { "NoIntent", "Waiting", "Completed", "Refused", "Cancelled" };
+constexpr unsigned ScopesStateBit(gui::PointQueryState state) {
+  return 1u << static_cast<unsigned>(state);
+}
+
+// Sampled polling history for one observation gate of the scopes case. DIAGNOSTIC AGGREGATE
+// ONLY — this is a SAMPLE history, not the state's true history: an all-false record proves only
+// "never sampled true" (a short true-window can fall between two samples), and non-overlapping
+// per-condition intervals do not prove the conditions were never true simultaneously (the true
+// ordering between two samples is unknowable at this layer). No gate verdict consumes it — the
+// InFlight gates judge the recorded pickup edge (ScopedPointPickupEdgeRecorder), which is why a
+// true-window narrower than the sampling interval cannot fail them; the record only feeds the
+// timeout-path triage line.
+struct ScopesGateTrace {
+  static constexpr int kMaxConditions = 6;
+
+  struct ConditionSlice {
+    const char* name = nullptr;
+    bool ever_true = false;
+    std::chrono::steady_clock::time_point first_seen{};
+    std::chrono::steady_clock::time_point last_seen{};
+  };
+
+  explicit ScopesGateTrace(const char* gate_name) : gate_name_(gate_name) {}
+
+  // One poll's sample: the named conditions' values plus the observed query-state bit.
+  // Per-poll cost is a few bool comparisons and one clock read — noise next to a Yield()'s
+  // whole-frame overhead.
+  void Poll(std::initializer_list<std::pair<const char*, bool>> conditions, unsigned observed_state_bit) {
+    const auto now = std::chrono::steady_clock::now();
+    if (polls_ == 0) {
+      first_poll_ = now;
+    } else {
+      max_poll_interval_ = std::max(max_poll_interval_, now - last_poll_);
+    }
+    last_poll_ = now;
+    ++polls_;
+    observed_state_bits_ |= observed_state_bit;
+    for (const auto& sample : conditions) {
+      ConditionSlice* slice = SliceFor(sample.first);
+      if (sample.second) {
+        if (!slice->ever_true) {
+          slice->ever_true = true;
+          slice->first_seen = now;
+        }
+        slice->last_seen = now;
+      }
+    }
+  }
+
+  // One-shot triage line on the timeout path (a PASS prints only DriveUntil's elapsed line).
+  // The line DESCRIBES the sampled history; per the struct comment it cannot distinguish a
+  // window that opened late from one that fell between two samples.
+  void LogTimeoutSummary(ImGuiTestContext* ctx, int budget_s) const {
+    char line[768];
+    std::string states;
+    for (unsigned bit = 0; bit < sizeof(kPointQueryStateNames) / sizeof(kPointQueryStateNames[0]); ++bit) {
+      if ((observed_state_bits_ & (1u << bit)) != 0) {
+        states += (states.empty() ? "" : "|");
+        states += kPointQueryStateNames[bit];
+      }
+    }
+    int n = std::snprintf(
+        line, sizeof(line), "[scopes-gate] TIMEOUT '%s' budget=%ds polls=%d avg=%.0f ms/poll max_gap=%.0f ms states=%s",
+        gate_name_, budget_s, polls_,
+        polls_ > 1 ? std::chrono::duration_cast<std::chrono::duration<double>>(last_poll_ - first_poll_).count() *
+                         1000.0 / static_cast<double>(polls_ - 1) :
+                     0.0,
+        std::chrono::duration_cast<std::chrono::duration<double>>(max_poll_interval_).count() * 1000.0, states.c_str());
+    for (int i = 0; i < condition_count_ && n > 0 && n < static_cast<int>(sizeof(line)); ++i) {
+      const ConditionSlice& c = conditions_[i];
+      if (c.ever_true) {
+        const auto since_start = [this](std::chrono::steady_clock::time_point tp) {
+          return std::chrono::duration_cast<std::chrono::duration<double>>(tp - first_poll_).count();
+        };
+        n += std::snprintf(line + n, sizeof(line) - static_cast<size_t>(n), " %s=%.1fs..%.1fs", c.name,
+                           since_start(c.first_seen), since_start(c.last_seen));
+      } else {
+        n += std::snprintf(line + n, sizeof(line) - static_cast<size_t>(n), " %s=NEVER", c.name);
+      }
+    }
+    ctx->LogInfo("%s", line);
+  }
+
+ private:
+  ConditionSlice* SliceFor(const char* name) {
+    for (int i = 0; i < condition_count_; ++i) {
+      if (std::strcmp(conditions_[i].name, name) == 0) {
+        return &conditions_[i];
+      }
+    }
+    ConditionSlice* fresh = &conditions_[condition_count_];
+    fresh->name = name;
+    ++condition_count_;
+    return fresh;
+  }
+
+  const char* gate_name_ = nullptr;
+  int polls_ = 0;
+  int condition_count_ = 0;
+  unsigned observed_state_bits_ = 0;
+  std::chrono::steady_clock::time_point first_poll_{};
+  std::chrono::steady_clock::time_point last_poll_{};
+  std::chrono::steady_clock::duration max_poll_interval_{};
+  ConditionSlice conditions_[kMaxConditions]{};
+};
+
+// DriveUntil plus the sampled polling history for one of the scopes case's observation gates:
+// the predicate samples itself into the trace for the timeout-path triage, and its return value
+// is the gate's verdict (for the InFlight gates, the recorded pickup edge — never the sample).
+template <typename Pred>
+bool DriveScopesGate(ImGuiTestContext* ctx, const char* gate_name, Pred pred, int timeout_s) {
+  ScopesGateTrace trace(gate_name);
+  const bool ok = DriveUntil(ctx, [&trace, &pred] { return pred(trace); }, timeout_s);
+  if (!ok) {
+    trace.LogTimeoutSummary(ctx, timeout_s);
+  }
+  return ok;
+}
+
+// The scopes case's observation transport for the InFlight gates: the gates assert "a moment
+// existed when the issued intent was WAITING and the executor's per-face token ran it" — an
+// event, judged from a transition RECORD, not from a level sample. Frame-cadence polling
+// structurally cannot make that observation: the running registration's true window is the
+// engine call itself (the executor clears the token at the engine call's return, before the
+// finish is even posted), and the fixed-dt scenes run a point query to completion between two
+// polls — the measured family-A reds were gates spinning tens of thousands of polls whose
+// window never overlapped a single sample.
+//
+// Why a recorded point pickup PROVES the asserted moment (the structural linkage, stated once
+// here — the gates' verdicts stand on it):
+//  1. SurveyExecutor's query branch registers the job's cancel token as THE running handle under
+//     the lock, then copies the pickup gate, unlocks, and invokes it — so at the instant of a
+//     kPoint pickup, InFlight(kPoint) holds by the executor's own construction.
+//  2. The session-side conditions hold at that same instant because nothing on the GUI thread
+//     can move the point session off the issued intent without also dropping or replacing the
+//     queued job (PumpPointQuery's key-change and identity-death branches, and every document
+//     reset, cancel or overwrite the pending query before it can ever be picked up), while
+//     adoption needs the finish, which needs the engine call, which runs after this gate. A
+//     query that got picked up was still the session's standing intent at pickup: intent_valid,
+//     the issued key and kWaiting all held.
+//
+// OWNERSHIP LAW (the executor copies the gate under its lock and invokes the copy off the lock,
+// so clearing the slot cannot revoke a copy already made): the callback captures its state by
+// VALUE as a shared pointer, never `this` — a copy still in flight after the guard's destructor
+// keeps that state alive, and the destructor only deregisters future pickups. Production never
+// sets the pickup gate; the guard clears it on every exit path — the executor is a process-global
+// and later cases must not inherit a counting callback.
+struct ScopedPointPickupEdgeRecorder {
+  ScopedPointPickupEdgeRecorder() : count_(std::make_shared<std::atomic<int>>(0)) {
+    gui::g_survey_executor.SetPickupGateForTest([count = count_](gui::QueryFace face) {
+      if (face == gui::QueryFace::kPoint) {
+        count->fetch_add(1, std::memory_order_relaxed);
+      }
+    });
+  }
+  ~ScopedPointPickupEdgeRecorder() { gui::g_survey_executor.SetPickupGateForTest(nullptr); }
+  ScopedPointPickupEdgeRecorder(const ScopedPointPickupEdgeRecorder&) = delete;
+  ScopedPointPickupEdgeRecorder& operator=(const ScopedPointPickupEdgeRecorder&) = delete;
+
+  int Baseline() const { return count_->load(std::memory_order_relaxed); }
+  bool PickedUpSince(int baseline) const { return count_->load(std::memory_order_relaxed) > baseline; }
+
+ private:
+  std::shared_ptr<std::atomic<int>> count_;
+};
+
+// The operation-sync counterpart of the recorder, for the arms whose ACTION (withdraw the
+// outstanding face, replace the document, start a new one) requires the query to be outstanding
+// AT the action, not merely to have run: a historical edge cannot carry that premise (the query
+// may complete between two GUI polls — the measured family-A interleaving — and the action would
+// land on an already-finished face). Arming swaps the pickup gate for one that PARKS the worker
+// at the pickup instant — after the running token is registered, before the engine call — so the
+// query stays verifiably computing (InFlight(kPoint) true by the executor's own construction)
+// while the test performs the action on the GUI thread; Release lets the engine call proceed.
+// Release (explicit, or the destructor's on every exit path) must precede anything that needs
+// the worker. The same ownership law applies: the parked copy holds the shared state by value,
+// so a copy still in flight after the guard's death is safe.
+//
+// The worker-side wait is bounded as a LOUD hang net, not a silent one: if the GUI thread stalls
+// past the bound, the worker proceeds unblocked — the "outstanding at the action" premise is
+// void — so the timeout sets Voided() and the arm's gates consume it. A voided hold turns the
+// arm red with an honest shape; it never lets the run look green on a premise it did not hold.
+struct ScopedPointPickupHold {
+  struct State {
+    std::atomic<bool> picked{ false };
+    std::atomic<bool> released{ false };
+    std::atomic<bool> voided{ false };
+    std::mutex mu;
+    std::condition_variable cv;
+  };
+
+  ScopedPointPickupHold() : state_(std::make_shared<State>()) {
+    gui::g_survey_executor.SetPickupGateForTest([st = state_](gui::QueryFace face) {
+      if (face != gui::QueryFace::kPoint) {
+        return;
+      }
+      st->picked.store(true, std::memory_order_release);
+      std::unique_lock<std::mutex> lock(st->mu);
+      const bool released_normally = st->cv.wait_for(lock, std::chrono::seconds(30),
+                                                     [&st] { return st->released.load(std::memory_order_acquire); });
+      if (!released_normally) {
+        st->voided.store(true, std::memory_order_release);  // the premise died with the stall
+      }
+    });
+  }
+  ~ScopedPointPickupHold() { Release(); }
+  ScopedPointPickupHold(const ScopedPointPickupHold&) = delete;
+  ScopedPointPickupHold& operator=(const ScopedPointPickupHold&) = delete;
+
+  bool PickedUp() const { return state_->picked.load(std::memory_order_acquire); }
+  bool Voided() const { return state_->voided.load(std::memory_order_acquire); }
+
+  void Release() {
+    if (!state_) {
+      return;
+    }
+    gui::g_survey_executor.SetPickupGateForTest(nullptr);  // future pickups run free
+    {
+      std::lock_guard<std::mutex> lock(state_->mu);
+      state_->released.store(true, std::memory_order_release);
+    }
+    state_->cv.notify_all();  // the parked copy (if any) proceeds; it owns its state by value
+  }
+
+ private:
+  std::shared_ptr<State> state_;
+};
 
 // The wait lines' " (N.N s)" suffix, read off a render-feedback field; -1.0 when the line is
 // empty or carries no suffix (the caller distinguishes "no wait text" from "a wait text whose
@@ -6581,11 +6840,21 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   // assert the write landed, and that no map refinement reflowed the region behind the click.
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_intent_at_release, false);
-  IM_CHECK_RETV(
-      DriveUntil(
-          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
-      false);
+  // Completion is a persistent state (the adoption keeps its fields), so level polling is the
+  // correct criterion here; the trace only makes a timeout self-identifying — states=NoIntent
+  // throughout means the pump never issued the intent (the known B-shaped failure, tracked
+  // separately from this file's arms), vs. Waiting/Completed churn in a healthy-but-slow frame.
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "bringup_sky_point_completed",
+                    [](ScopesGateTrace& t) {
+                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      t.Poll({ { "intent_valid", p.intent_valid }, { "adopted", p.adopted_result != nullptr } },
+                             ScopesStateBit(state));
+                      return state == gui::PointQueryState::kCompleted;
+                    },
+                    kScopesCompleteBudgetS),
+                false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
   {
     ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
@@ -6871,27 +7140,43 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // The arms' serial analyses exceed the default 60 s watchdog; the scale-tier precedent's
   // raised limits apply for the whole case (restored on every exit).
   ScopedWatchdogGuard watchdog(ctx->EngineIO);
+  // The InFlight gates' verdicts read this recorder's transition record (see the struct's
+  // linkage comment); declared after the guards so it disarms before any teardown runs.
+  ScopedPointPickupEdgeRecorder pickups;
   IM_CHECK_RETV(BringUpBothWindows(ctx), false);
 
-  // ---- ① the shared λ knob, both windows standing: 600 issued and observed waiting, then 0
-  // supersedes it before adoption; the adopted document's wavelength echo is the final judge.
+  // ---- ① the shared λ knob, both windows standing: 600 issued with its execution recorded
+  // (the pickup edge), then 0 supersedes it; the adopted document's wavelength echo is the
+  // final judge.
   gui::g_state.analysis.map_wavelength_nm = 600.0;
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
+  const int arm1_pickup_baseline = pickups.Baseline();
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm1_lambda600_issued",
+                    [&pickups, arm1_pickup_baseline](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      t.Poll({ { "intent_valid", p.intent_valid },
+                               { "key_match", p.key.wavelength_nm == 600.0 },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", gui::g_survey_executor.InFlight(gui::QueryFace::kPoint) } },
+                             ScopesStateBit(state));
+                      // The recorded pickup edge proves the execution window opened with this
+                      // intent standing (the recorder's linkage comment); the two re-sampled
+                      // fields are wide-window states that adoption keeps and nothing re-keys
+                      // inside this gate, so the conjunction's verdict carries no sampling race.
                       return p.intent_valid && p.key.wavelength_nm == 600.0 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                             pickups.PickedUpSince(arm1_pickup_baseline);
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   gui::g_state.analysis.map_wavelength_nm = 0.0;
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.analysis.point.key.wavelength_nm == 0.0; }, 30), false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx, [] { return gui::g_state.analysis.point.key.wavelength_nm == 0.0; }, kScopesObserveBudgetS),
+                false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   {
     LUMICE_PathPointInfo info{};
@@ -6905,12 +7190,12 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ctx->LogInfo("[scopes] lambda 600 issued in flight, superseded by 0; the adopted doc's echo is not 600");
 
   // ---- ② a first-class request EXECUTING across the class switch: the sky point moves first
-  // (the first class's point query goes out and is observed EXECUTING on the executor's
-  // per-face token — InFlight(kPoint) is the running query, not the queue), and only then does
-  // the second row's click re-key the session. The switch's own request is likewise observed
-  // executing before its answer is read, and the ADOPTED DOCUMENT's own face sequence is the
-  // oracle — LUMICE_PathPointInfo carries the doc's faces, the field the halo's top chains
-  // differ on, so a stale first-class answer adopted under the new key fails here.
+  // (the first class's point query goes out with its execution recorded on the executor's
+  // per-face token — the pickup edge; InFlight(kPoint) is the running query, not the queue), and
+  // only then does the second row's click re-key the session. The switch's own request is
+  // likewise recorded executing before its answer is read, and the ADOPTED DOCUMENT's own face
+  // sequence is the oracle — LUMICE_PathPointInfo carries the doc's faces, the field the halo's
+  // top chains differ on, so a stale first-class answer adopted under the new key fails here.
   const auto& view = gui::g_state.analysis_result;
   IM_CHECK_RETV(view.display_order.size() >= 2u, false);
   const std::string second_display = view.payload->entries[static_cast<size_t>(view.display_order[1])].display;
@@ -6919,34 +7204,50 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   const std::optional<gui::SelectedClassIdentity> old_identity = gui::SelectedClassIdentityFor(gui::g_state);
   IM_CHECK_RETV(old_identity.has_value() && old_identity->faces != expected_second.faces, false);
   SetSkyPointTarget(45.0, 5.0);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(45.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
-                    },
-                    30),
-                false);
+  const int arm2_move_pickup_baseline = pickups.Baseline();
+  IM_CHECK_RETV(
+      DriveScopesGate(
+          ctx, "arm2_sky_point_moved",
+          [&pickups, arm2_move_pickup_baseline](ScopesGateTrace& t) {
+            const gui::PointQuerySession& p = gui::g_state.analysis.point;
+            const gui::PointQueryState state = gui::PointQueryStateFor(p);
+            t.Poll({ { "intent_valid", p.intent_valid },
+                     { "key_match", std::fabs(p.key.target_dir[2] - (-std::sin(45.0 * lumice::kDeg2Rad))) < 1e-4 },
+                     { "waiting", state == gui::PointQueryState::kWaiting },
+                     { "point_in_flight", gui::g_survey_executor.InFlight(gui::QueryFace::kPoint) } },
+                   ScopesStateBit(state));
+            return p.intent_valid && std::fabs(p.key.target_dir[2] - (-std::sin(45.0 * lumice::kDeg2Rad))) < 1e-4 &&
+                   pickups.PickedUpSince(arm2_move_pickup_baseline);
+          },
+          kScopesObserveBudgetS),
+      false);
+  // The baseline is read BEFORE the row click: the click's frames may already issue and pick up
+  // the second class's query, and an edge that lands before the baseline would be invisible to
+  // the gate. Every pickup after the baseline belongs to this arm's query — the first class's
+  // query was picked up once, before the move gate above passed.
+  const int arm2_switch_pickup_baseline = pickups.Baseline();
   IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [&expected_second, &old_identity] {
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm2_class_switch_issued",
+                    [&expected_second, &old_identity, &pickups, arm2_switch_pickup_baseline](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid && p.key.selection.faces == expected_second.faces &&
-                             p.key.selection.crystal_id == expected_second.core_crystal_id &&
-                             !(p.key.selection.faces == old_identity->faces) &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      const bool key_match = p.key.selection.faces == expected_second.faces &&
+                                             p.key.selection.crystal_id == expected_second.core_crystal_id &&
+                                             !(p.key.selection.faces == old_identity->faces);
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      t.Poll({ { "intent_valid", p.intent_valid },
+                               { "new_faces_key", key_match },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", gui::g_survey_executor.InFlight(gui::QueryFace::kPoint) } },
+                             ScopesStateBit(state));
+                      return p.intent_valid && key_match && pickups.PickedUpSince(arm2_switch_pickup_baseline);
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   {
     LUMICE_PathPointInfo info{};
@@ -6966,33 +7267,40 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ctx->LogInfo(
       "[scopes] first-class request executing across the class switch; adopted doc's faces = the second class's");
 
-  // ---- ③ target A issued and observed EXECUTING (the per-face running token; A's intent id
-  // saved by value), then target B supersedes it mid-flight — the pump's key swap is the
-  // readback that B's intent now stands — and only then does the case switch workspaces. The
-  // Render-side pump adopts B's answer with the windows open, and the document's own target
-  // echo (alt 30) judges the document that LANDED: had A's answer been the final one, the doc
-  // would read A's target and fail here. What this layer cannot distinguish is a transient
-  // stale-A adoption that B's later answer overwrites — the completion-event ordering and the
-  // refusal behind it are executor-internal contracts, structurally not exposed to the GUI
-  // layer; the unit layer's SurveyExecutorSupersedesRefusesOnReleaseAndJoins carries them, and
-  // no GUI-layer claim is made for that ordering. This case owns the GUI-side composition.
+  // ---- ③ target A issued with its execution recorded (the per-face running token's pickup
+  // edge; A's intent id saved by value), then target B supersedes it mid-flight — the pump's
+  // key swap is the readback that B's intent now stands — and only then does the case switch
+  // workspaces. The Render-side pump adopts B's answer with the windows open, and the
+  // document's own target echo (alt 30) judges the document that LANDED: had A's answer been
+  // the final one, the doc would read A's target and fail here. What this layer cannot
+  // distinguish is a transient stale-A adoption that B's later answer overwrites — the
+  // completion-event ordering and the refusal behind it are executor-internal contracts,
+  // structurally not exposed to the GUI layer; the unit layer's
+  // SurveyExecutorSupersedesRefusesOnReleaseAndJoins carries them, and no GUI-layer claim is
+  // made for that ordering. This case owns the GUI-side composition.
   SetSkyPointTarget(28.0, 8.0);
   gui::SurveyQueryId target_a_id;
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [&target_a_id] {
+  const int arm3_pickup_baseline = pickups.Baseline();
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm3_target_a_issued",
+                    [&target_a_id, &pickups, arm3_pickup_baseline](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const bool issued =
-                          p.intent_valid &&
-                          std::fabs(p.key.target_dir[2] - (-std::sin(28.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                          gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                          gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
-                      if (issued) {
-                        target_a_id = p.intent_id;  // A's request id, by value, at its observed execution
+                      const bool key_match =
+                          std::fabs(p.key.target_dir[2] - (-std::sin(28.0 * lumice::kDeg2Rad))) < 1e-4;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      const bool issued = p.intent_valid && key_match && pickups.PickedUpSince(arm3_pickup_baseline);
+                      if (issued && target_a_id.serial == 0 && target_a_id.generation == 0) {
+                        target_a_id = p.intent_id;  // A's request id, by value — stable from issue through
+                                                    // adoption, and B is not written until this gate passes
                       }
+                      t.Poll({ { "intent_valid", p.intent_valid },
+                               { "key_match", key_match },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", gui::g_survey_executor.InFlight(gui::QueryFace::kPoint) } },
+                             ScopesStateBit(state));
                       return issued;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   IM_CHECK_RETV(target_a_id.serial != 0 || target_a_id.generation != 0, false);
   SetSkyPointTarget(30.0, 10.0);
@@ -7003,7 +7311,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                       return p.intent_valid && (p.intent_id != target_a_id) &&
                              std::fabs(p.key.target_dir[2] - (-std::sin(30.0 * lumice::kDeg2Rad))) < 1e-4;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   ctx->ItemClick("##TopBar/Render");
   ctx->Yield(3);
@@ -7024,7 +7332,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                       return LUMICE_PathPointGetInfo(p.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
                              std::fabs(i.target_altitude_deg - 30.0) < 1e-3;
                     },
-                    60),
+                    kScopesCompleteBudgetS),
                 false);
   ctx->LogInfo(
       "[scopes] A executed, B superseded it mid-flight, B's answer landed across the workspace switch (alt 30)");
@@ -7046,7 +7354,8 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ctx->SetRef("");
   IM_CHECK_RETV(
       DriveUntil(
-          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.sim_state == SimState::kDone; }, 20),
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.sim_state == SimState::kDone; },
+          kScopesTightBudgetS),
       false);
   // The trigger cleared the SELECTION (a synchronous write); the list on show is whatever the
   // stopped run adopted — nothing asserted about it here. The windows stay open.
@@ -7060,7 +7369,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   IM_CHECK_RETV(!gui::g_state.analysis_result.payload->entries.empty(), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
@@ -7070,12 +7379,12 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                       const gui::MapQuerySession& m = gui::g_state.analysis.map;
                       return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
                     },
-                    60),
+                    kScopesCompleteBudgetS),
                 false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   ctx->LogInfo("[scopes] the re-selection re-armed map and point in the standing windows");
 
@@ -7083,28 +7392,28 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // ---- ⑤ the point face verifiably outstanding (kWaiting under the new target), withdrawn by
   // Revert — the cancel-latch face (distinct from Stop's run drain). The withdrawal is per-face
   // (the app latches only a face whose query is out; a face whose answer already arrived keeps
-  // its adopted result), so the arm drives the face whose outstanding phase IS observable at
-  // frame granularity — the point query's own wait window, the same gate ② used. The survey
-  // face's variant stays with the single-piece precedent (survey_survives_a_workspace_switch),
-  // whose digest flight window its own construction catches. The windows stand throughout.
+  // its adopted result), so the arm holds the point query at its pickup — the query is
+  // verifiably computing WHEN DoRevert runs, the premise a historical edge cannot carry (it may
+  // have completed between two polls). The pickup hold IS the execution observation here: it
+  // fires at the same instant the recorder's edge would. The survey face's variant stays with
+  // the single-piece precedent (survey_survives_a_workspace_switch), whose digest flight window
+  // its own construction catches. The windows stand throughout.
   SetSkyPointTarget(33.0, 17.0);
+  ScopedPointPickupHold hold;
+  IM_CHECK_RETV(DriveUntil(ctx, [&hold] { return hold.PickedUp(); }, kScopesObserveBudgetS), false);
+  gui::DoRevert();  // latches kCancelled + cancels the HELD query (it IS outstanding now)
+  hold.Release();
+  // A voided hold (the GUI stalled past the worker's bound — premise lost) fails the arm here,
+  // not silently: the gate accepts it early and the assert below names it.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
-                    [] {
-                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(33.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                    [&hold] {
+                      return hold.Voided() ||
+                             gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled;
                     },
-                    30),
+                    kScopesTightBudgetS),
                 false);
-  gui::DoRevert();
-  IM_CHECK_RETV(
-      DriveUntil(
-          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled; },
-          20),
-      false);
+  IM_CHECK_RETV(!hold.Voided(), false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != nullptr, false);
   // The map face may legitimately be in flight here (the sky-point move re-keys it too); the
   // latch is per-face and only the point face was asserted outstanding.
@@ -7117,17 +7426,45 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != nullptr, false);
   IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result != nullptr, false);
 
   // ---- ⑥ Revert after adoption keeps: every adopted outcome by handle value, the sky point,
-  // the windows (the settled contract — no query in flight here, asserted).
+  // the windows (the settled contract — no query in flight here, asserted). The keep-oracle
+  // snapshots are taken AFTER every execution face has drained AND the pump has consumed any
+  // finish already posted (a posted-but-unconsumed finish adopts on the next frame and would
+  // legitimately move e.g. the map's adopted_result — snapshotting before the drain would misread
+  // that as Revert swapping the result): the drain wait, then the frame that lets the pump catch
+  // up, THEN the snapshots, then the assertion and the Revert.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      // Quiet means the pump has already had its shot and issued whatever the
+                      // view owed: nothing computing or queued on ANY face, AND the map view
+                      // settled with margin. The test coroutine resumes at PostNewFrame — BEFORE
+                      // this frame's pump — so a bare MapViewSettled(ImGui::GetTime(), …) is
+                      // exactly the pump's own crossing condition, and the gate would pass in the
+                      // very frame whose pump then issues the refinement. The pump issues at the
+                      // FIRST frame past kMapSettleSeconds; requiring 2x that here puts the sample
+                      // whole frames past the crossing, so the crossing frame's issue has already
+                      // happened — anything unresolved reads outstanding, and quiet can only be
+                      // the post-issue steady state (no further view change follows: the auto-Fit
+                      // chain is latched and nothing steers the view before the Revert).
+                      return !gui::g_survey_executor.QueryOutstanding() &&
+                             gui::MapViewSettled(ImGui::GetTime(), gui::g_state.analysis.map_view) &&
+                             ImGui::GetTime() - gui::g_state.analysis.map_view.last_view_change_s >=
+                                 2 * gui::kMapSettleSeconds;
+                    },
+                    kScopesCompleteBudgetS),
+                false);
+  ctx->Yield(2);  // the pump's consumption of posted finishes (settled-with-margin + quiet: none pending)
   const gui::SurveyHandle survey_kept = gui::g_state.analysis.survey.adopted_result;
   const gui::MapHandle map_kept = gui::g_state.analysis.map.adopted_result;
   const gui::PointHandle point_kept = gui::g_state.analysis.point.adopted_result;
   IM_CHECK_RETV(survey_kept != nullptr && map_kept != nullptr && point_kept != nullptr, false);
+  // The assertion stays verbatim; the wait protocol above carries the patience.
   IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
   gui::DoRevert();
   ctx->Yield(3);
@@ -7142,20 +7479,19 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
 
   // ---- ⑦ Open (the document replace) with the windows open and a point query verifiably in
   // flight — the executor drains, every face clears, both windows close, nothing revives.
+  // ---- ⑦ Open (the document replace) with the windows open and a point query held outstanding
+  // at its pickup — the executor drains, every face clears, both windows close, nothing revives.
   SetSkyPointTarget(35.0, 20.0);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(35.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
-                    },
-                    30),
-                false);
+  ScopedPointPickupHold hold7;
+  IM_CHECK_RETV(DriveUntil(ctx, [&hold7] { return hold7.PickedUp(); }, kScopesObserveBudgetS), false);
   IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, 20), false);
+  hold7.Release();  // the engine call proceeds against the cancelled/released binding and drains
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [&hold7] { return hold7.Voided() || !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); },
+          kScopesTightBudgetS),
+      false);
+  IM_CHECK_RETV(!hold7.Voided(), false);
   // The drain covers the worker AND the GUI pump's consumption of any completion that raced.
   ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
@@ -7171,24 +7507,21 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(!window_active("Raypath view") && !window_active("Pose & trace"), false);
   ctx->LogInfo("[scopes] Open replaced the document with a query in flight; faces cleared, windows closed, drained");
 
-  // ---- ⑧ New with a verifiably in-flight point query: a fresh standing state (both windows
-  // open, class selected, arc point completed), then the move issued, then DoNew — the
+  // ---- ⑧ New with a point query held outstanding at its pickup (a fresh standing state: both
+  // windows open, class selected, arc point completed, then the move issued) — then DoNew — the
   // executor's binding releases on the worker thread and nothing revives.
   IM_CHECK_RETV(BringUpBothWindows(ctx), false);
   SetSkyPointTarget(31.0, 15.0);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(31.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
-                    },
-                    30),
-                false);
+  ScopedPointPickupHold hold8;
+  IM_CHECK_RETV(DriveUntil(ctx, [&hold8] { return hold8.PickedUp(); }, kScopesObserveBudgetS), false);
   gui::DoNew();
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, 20), false);
+  hold8.Release();
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [&hold8] { return hold8.Voided() || !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); },
+          kScopesTightBudgetS),
+      false);
+  IM_CHECK_RETV(!hold8.Voided(), false);
   ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
