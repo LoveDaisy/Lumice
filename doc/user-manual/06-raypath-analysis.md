@@ -8,11 +8,19 @@ The Raypath Analysis window answers "which raypaths make the light in this regio
 
 ## 1. Where it is
 
-The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout: the scene editors in a fixed left column, the **scene panorama** (the committed picture through the same lens, view and display state the Render workspace shows) as the large main view, the **share list** this chapter describes in the right column's upper half, and the **diagnostics region** (the selection's details, or an entry guide before any result) in the right column's lower half. Under the panorama sits its **operation bar** — the region choice and centre reading, the radius, the analysis budget and the Analyze / Stop buttons, next to the picture they aim at. The two column splits are draggable; the main view fills its whole column — the depths all moved to their own windows (the class map: §7; the pose and trace faces: §8). The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
+The analysis tool lives in the **Analyze workspace**: click the **Analyze** cell of the Top Bar's two-cell **Render | Analyze** switch (the current mode's cell is highlighted; the other cell switches to it). The window then shows the Analyze layout instead of the render layout: the scene editors in a fixed left column, the **scene panorama** (the committed picture through the same lens, view and display state the Render workspace shows) as the large main view, the **share list** this chapter describes in the right column's upper half, and the **diagnostics region** (the selection's details, or an entry guide before any result) in the right column's lower half. Under the panorama sits its **operation bar** — the region choice, the radius, the analysis budget and the Analyze / Stop buttons, next to the picture they aim at. The two column splits are draggable; the main view fills its whole column — the depths all moved to their own windows (the class map: §7; the pose and trace faces: §8). The two workspaces share the one scene document and the same editors; the old floating "Raypath Analysis" window is retired — everything it did happens in the workspace now.
+
+The main picture keeps its full place even before the first render: press **Run in the top bar**
+without leaving Analyze. Analyze still waits for a rendered picture of this document. At a fixed
+window size the picture and operation anchors do not jump as results or warnings arrive. The bar
+uses one row when the full Point controls fit and two rows otherwise, with the same height in
+Whole sky and Point. Counts, centre coordinates and old-picture warnings scroll in the fixed
+status area above the bar; the search and bottom list actions do not move when the list becomes stale.
+At unusually compressed UI scales the controls have their own vertical recovery scroll.
 
 ## 2. Choosing a region (ROI)
 
-The operation bar's **Region** choice offers two modes:
+The operation bar offers two modes:
 
 | Mode | What it analyzes |
 |------|-------------------|
@@ -21,7 +29,7 @@ The operation bar's **Region** choice offers two modes:
 
 **Why there is no "in frame" mode in the GUI**: an earlier build offered a third choice — only rays landing inside the picture as currently framed. It retired with the free-camera main view: a region defined as "whatever is framed right now" is silently re-defined by every camera move, which contradicts the sky-direction semantics the other two anchor. The CLI's `--roi frame` and the engine behind it keep working unchanged (see §7), so scripts that used it are not affected.
 
-**The Point marker**: switching to Point mode places the marker at the centre of the current view by default (if there is a picture to place it on, and no earlier point to keep). Its sky direction stays fixed as the view or layout changes; the marker is projected onto the picture each frame and can go off-screen. Hover over the marker for a hand cursor and drag it to move the centre; the operation bar's altitude/azimuth reading follows. To set another centre directly — even when the marker is off-screen — **Alt+left-click** on the picture (**Option+left-click** on macOS). No Pick button or arming step is needed. A click outside the picture or in a lens's non-sky area leaves the centre unchanged. The marker and its ring are drawn on the panorama itself, so windows over the picture cover them.
+**The Point marker**: switching to Point mode places the marker at the centre of the current view by default (if there is a picture to place it on, and no earlier point to keep). Its sky direction stays fixed as the view or layout changes; the marker is projected onto the picture each frame and can go off-screen. Hover over the marker for a hand cursor and drag it to move the centre; the fixed status area above the operation bar updates its altitude/azimuth reading. To set another centre directly — even when the marker is off-screen — **Alt+left-click** on the picture (**Option+left-click** on macOS). No Pick button or arming step is needed. A click outside the picture or in a lens's non-sky area leaves the centre unchanged. The marker and its ring are drawn on the panorama itself, so windows over the picture cover them.
 
 Drag elsewhere on the picture to orbit the camera. The wheel uses the same camera zoom as Render: positive notches narrow FOV by 5° each, bounded by 1° and the lens's maximum; full-sky lenses do not zoom. Zoom keeps Look At Lock. A press keeps its original action until release, even if you change Alt/Option or move off the picture; a direct click sets the point once, not continuously while held. Angular Distance picking takes priority over a new press. These view and point gestures neither modify the scene nor start a run: after moving the centre, press **Analyze** to update the result. Render's Alt/Option background-photo gestures remain separate.
 
@@ -37,7 +45,7 @@ Press **Analyze**. A dedicated pass traces the scene and groups rays by raypath;
 
 The analysis follows Settings' `sim.ray_allocation` (default `adaptive`, switchable to `proportional`), the same setting that governs the render (`scene.ray_allocation` in `configuration.md`). With it `adaptive` — the default — each Analyze deals rays across crystals by their measured per-ray energy variance rather than by their population share, starting the measurement fresh every time you press the button: the Energy shares it reports have the same expected values either way, but a rare raypath on a low-proportion crystal gets many more of the rays and so a far less noisy row (on a three-crystal scene with proportions 100 / 100 / 0.2, the rare row's noise at one million rays is about ten times lower). With it `proportional` the analysis deals by population share, the reproducible reference behaviour.
 
-If the configuration has changed since your last run, Analyze still works and reports on the edited document — the picture on screen is the older one, and the line under the button says so until you Run again.
+If the configuration has changed since your last run, Analyze still works and reports on the edited document — the picture on screen is the older one, and the fixed status area says so until you Run again.
 
 ## 4. Reading the result list
 
@@ -63,7 +71,7 @@ share recorded or exported before the change was computed under the old weightin
 of the dealt rays — about half, for randomly oriented crystals — are now rejected at entry,
 so at the same ray count each row's **+/-** is somewhat larger than it used to be.
 
-**Record limits.** The analysis keeps a large but fixed number of distinct raypaths — enough that a typical scene never notices — rather than growing without bound as more rays or scattering layers are added. If a scene does produce more distinct raypaths than fit, a grayed-out **other** row appears at the bottom of the list: it is the energy and ray count that did not fit in a named row, and it is what makes the Cumulative % column reach exactly 100 at the last row. It is never selectable and cannot be excluded, since it does not correspond to one raypath. The status line under the button notes when this happened ("record full (N hits)"); for the reference scenes shipped with this tool, and for most real configurations, it does not happen at all.
+**Record limits.** The analysis keeps a large but fixed number of distinct raypaths — enough that a typical scene never notices — rather than growing without bound as more rays or scattering layers are added. If a scene does produce more distinct raypaths than fit, a grayed-out **other** row appears at the bottom of the list: it is the energy and ray count that did not fit in a named row, and it is what makes the Cumulative % column reach exactly 100 at the last row. It is never selectable and cannot be excluded, since it does not correspond to one raypath. The fixed status area notes when this happened ("record full (N hits)"); for the reference scenes shipped with this tool, and for most real configurations, it does not happen at all.
 
 **Symmetry (P / B / D)**. The three checkboxes above the list decide which raypaths count as the same row. They name the same three elements as the filter editor's P, B and D (prism-face rotation, basal-face reflection, mirror symmetry), but here they merge only **physically equivalent** paths, so that one row is one physical class. With all three on (the default) on a regular crystal in random orientation, the six rotations and the mirror image of `3-5` are one row; turn D off and the mirror path `3-7` becomes its own row, turn P off and every rotation does. A checkbox asks; each crystal merges only under the symmetries its shape and its orientation really have — a Parry arc's locked roll keeps the rotations of `3-5` apart even with P on, a plate keeps `1-3` and `2-3` apart even with B on (the conditions are in [`../raypath/raypath-symmetry.md`](../raypath/raypath-symmetry.md) §2b, and the filter editor's `(i)` hints say which applies to a crystal). A filter's P / B / D is different: it relabels face numbers whatever the crystal, so on such a crystal it merges more than a row here does ([`../raypath/raypath-symmetry.md`](../raypath/raypath-symmetry.md) §1.1). This is a display-time choice: the analysis records every path unreduced, and toggling a checkbox regroups the result on hand at once — nothing re-runs, the totals do not change, and a selected row stays selected as long as its raypath is still a row (a row that merged into another is simply deselected). If you have pressed Run since the analysis, the result can no longer be regrouped; the window says which symmetry the list is showing, and the next Analyze applies the checkboxes.
 
@@ -138,14 +146,14 @@ the region states honestly where it stands: waiting, cancelled, the engine's nam
 the picture — plus a *coarse* note while a newer view is still computing (the old picture stays
 on screen, anchored to the sky, and never passes for the newest answer). The window is two
 panes separated by a draggable divider: the map on the left, and the wavelength, the Fit /
-Full-sky buttons, the caliber block, the sky-point input and a legend of what the picture
-draws on the right. Clicking another class row re-points the open window at that class;
+Full-sky buttons and sky-point input in a stable operation stack on the right, followed by
+a scrollable report containing the class identity, caliber and legend. Clicking another class row re-points the open window at that class;
 clicking an already-selected row again reopens it after you have closed it.
 
 **Reading it.** The disk is centred where you last looked; the yellow dot is the sun (the map's
 zero of deviation), the thin cross is the zenith, the faint arc is the horizon. Brightness is a
 diagnostic ramp over the class's per-steradian power at the reference wavelength — it is not
-scene colour, and the line under the picture spells the exact caliber: the wavelength and its
+scene colour, and the right-hand report spells the exact caliber: the wavelength and its
 source, how many of the class's members were evaluated (a budget-stopped map says *truncated*
 and shows its completed prefix), the sampling count, the view's own bounds, and the engine's
 geometry basis. A rank-0 class (a direction-invariant one) has no ring to draw: its sky image
@@ -212,6 +220,11 @@ between components. The window's two draggable splits (the 3D region | the right
 globe | the factor readouts) keep their ratios while the window is closed and reopened in the
 same session.
 
+Waiting, cancelled, refused and sample changes retain the same canvas and control slots. Missing
+components or samples disable the corresponding controls instead of inventing data. Descriptions,
+partial-document notes, legends and factor readouts scroll in each graph's report below it; they do
+not squeeze the graph when they grow. Resize and divider changes still resize the graph normally.
+
 **The sun direction globe** (the window's upper right) draws the selected component's fiber:
 each valid sample is one pose where the sun sits somewhere in the crystal (the `u` arrow), the
 polyline walks them in order, and the highlighted marker is the current sample. The deviation
@@ -243,7 +256,7 @@ stretch or a different component), exact zeros are marked on the zero row under 
 an arm that is zero or unavailable throughout says so in the legend. The **cursor** is the same
 selection everywhere: click or drag on the plot to move the current pose (the slider, the globe
 marker and the 3D path follow; playback stops), and hovering reads out the pose under the hand.
-The title line carries the component's identity and the engine's integral echo verbatim — its
+The report under the curve carries the component's identity and the engine's integral echo verbatim — its
 completeness pair (`available/total`) is the honesty mark, an incomplete sum never masquerades
 as a total, and the caliber line states the convention: these curves read the declared pose
 density in the **angle-Lebesgue** measure. On fixed-axis (plate) scenes ρ — and with it the

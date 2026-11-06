@@ -12,6 +12,7 @@
 #include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
 #include "gui/analyze_workspace.hpp"     // PumpAnalyzeQueries — the pumps this window's Render-mode frames run
 #include "gui/app.hpp"
+#include "gui/canvas_report_layout.hpp"
 #include "gui/gl_common.h"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
@@ -1342,60 +1343,13 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     storage->SetBool(overlay_key, overlays);
   }
 
-  // The state line (the four visible states + the two supersession notes). It reads the
-  // picture's own query state, so it stays with the picture; the controls it names — the
-  // wavelength, the view buttons, the sky-point input — live in the info region beside it.
-  const MapQueryState st = MapQueryStateFor(map);
-  const bool refining = MapRefiningFor(map);
-  if (st == MapQueryState::kNoSelection) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(
-        "Select a class in the share list; its reference map takes this region. The sky-point input in the "
-        "info panel beside it works without a map.");
-    ImGui::PopStyleColor();
-  } else if (st == MapQueryState::kCancelled) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("Map cancelled for this selection (scene restored). Panning or zooming asks anew.");
-    ImGui::PopStyleColor();
-  } else if (st == MapQueryState::kRefused && !refining) {
-    ImGui::TextUnformatted("Map refused:");
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("%s", map.adopted_error.c_str());
-    ImGui::PopStyleColor();
-  } else if (st == MapQueryState::kWaiting && map.adopted_result == nullptr) {
-    // The queue is the truth the wait names (plan risk 4): the selection's survey — whose
-    // chromatic legs run ~15 s on a full-dimensional class — goes first on the one worker, and
-    // this map rides behind it. Only a map asked in that window can honestly say so. The line
-    // is the pure function's output and is reported to the render-feedback field: what the
-    // test reads is what was drawn (AC4).
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    const std::string wait_line =
-        MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey), view.user_moved, ImGui::GetTime(),
-                       g_survey_executor.InflightPollSnapshot());
-    state.analysis.wait_feedback_texts.map_wait_line = wait_line;
-    ImGui::TextWrapped("%s", wait_line.c_str());
-    ImGui::PopStyleColor();
-  } else if (refining) {
-    // The refining note carries its own elapsed — the refinement intent's wait, same epoch the
-    // pump stamps on every re-ask — and the poll's stage clause while the refinement's map
-    // query itself is computing (751; face-matched, so a queued survey's stage never lands here).
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    const std::string note = MapRefiningNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
-    state.analysis.wait_feedback_texts.map_refining_note = note;
-    ImGui::TextWrapped("%s", note.c_str());
-    ImGui::PopStyleColor();
-  }
-
-  // The picture: a square that fits the region, an invisible button over it carrying the
-  // gestures, the raster drawn first, the anchors and overlays over it. The region holds
-  // nothing below the canvas any more (the wavelength, the caliber block and the sky-point
-  // input live in the info region), so the square takes the whole remaining height — capped by
-  // the width, floored where the region itself is tiny. The old 52% share and the tail's
-  // measured reserve retired with the tail's move: the reserve existed to keep the tail's
-  // controls on the region's own budget, and that budget is the info region's now.
+  // The map's square spends only its geometric share. All asynchronous state prose lives
+  // AFTER it in a bounded report; the first waiting frame has the same graph as completion.
   const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
   const float canvas_avail_h = ImGui::GetContentRegionAvail().y;
-  const float pic_px = std::max(24.0f, std::min(canvas_avail_w, canvas_avail_h));
+  const float pic_px = std::max(
+      1.0f, std::min(canvas_avail_w,
+                     CanvasHeightBeforeReport(canvas_avail_h, 0.0f, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y)));
   const ImVec2 pic_min = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##map_canvas", ImVec2(pic_px, pic_px));
   const bool canvas_hovered = ImGui::IsItemHovered();
@@ -1572,6 +1526,52 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
 
+  ImGui::BeginChild("##MapState", RemainingReportSize());
+  // The state line (the four visible states + the two supersession notes). It reads the
+  // picture's own query state, so it stays with the picture; the controls it names — the
+  // wavelength, the view buttons, the sky-point input — live in the info region beside it.
+  const MapQueryState st = MapQueryStateFor(map);
+  const bool refining = MapRefiningFor(map);
+  if (st == MapQueryState::kNoSelection) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped(
+        "Select a class in the share list; its reference map takes this region. The sky-point input in the "
+        "info panel beside it works without a map.");
+    ImGui::PopStyleColor();
+  } else if (st == MapQueryState::kCancelled) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("Map cancelled for this selection (scene restored). Panning or zooming asks anew.");
+    ImGui::PopStyleColor();
+  } else if (st == MapQueryState::kRefused && !refining) {
+    ImGui::TextUnformatted("Map refused:");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", map.adopted_error.c_str());
+    ImGui::PopStyleColor();
+  } else if (st == MapQueryState::kWaiting && map.adopted_result == nullptr) {
+    // The queue is the truth the wait names (plan risk 4): the selection's survey — whose
+    // chromatic legs run ~15 s on a full-dimensional class — goes first on the one worker, and
+    // this map rides behind it. Only a map asked in that window can honestly say so. The line
+    // is the pure function's output and is reported to the render-feedback field: what the
+    // test reads is what was drawn (AC4).
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    const std::string wait_line =
+        MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey), view.user_moved, ImGui::GetTime(),
+                       g_survey_executor.InflightPollSnapshot());
+    state.analysis.wait_feedback_texts.map_wait_line = wait_line;
+    ImGui::TextWrapped("%s", wait_line.c_str());
+    ImGui::PopStyleColor();
+  } else if (refining) {
+    // The refining note carries its own elapsed — the refinement intent's wait, same epoch the
+    // pump stamps on every re-ask — and the poll's stage clause while the refinement's map
+    // query itself is computing (751; face-matched, so a queued survey's stage never lands here).
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    const std::string note = MapRefiningNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+    state.analysis.wait_feedback_texts.map_refining_note = note;
+    ImGui::TextWrapped("%s", note.c_str());
+    ImGui::PopStyleColor();
+  }
+
+  ImGui::EndChild();
   ImGui::EndChild();  // ##AnalyzeRaypathView — the map region
 
   // ---- D3: the draggable strip between the two regions (contract §4.2) ----
@@ -1615,22 +1615,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // the content that decides the measure (the same ladder rung the old single-column region
   // reached through its manual route).
   ImGui::BeginChild("##AnalyzeRaypathInfo", ImVec2(info_w, size.y), ImGuiChildFlags_Borders);
-  // The identity line (contract §6's status summary): the selected class named WHERE it is read.
-  // The list that carries the same label can be off-screen while this window is open (Render
-  // workspace, an occluding float), so the window re-states the list's own text — the one chain
-  // (SelectedClassRowLabelFor, the same AnalysisRowLabel spelling the list shows), not a second
-  // rendering of the selection and not a copy of the overview's report (§2.2: the survey facts
-  // stay in the main window's diagnostics). Wrapped like every legend line below: a long chain
-  // label folds, it does not clip. The Separator ends the line so the λ row's SameLine judgment
-  // below reads a fresh line — fits_on_line judges against the LAST item's rect, and the
-  // judgment it must not inherit is whatever the map region submitted before this child.
-  const std::string identity_label = SelectedClassRowLabelFor(state);
-  if (identity_label.empty()) {
-    ImGui::TextDisabled("(no class selected)");
-  } else {
-    ImGui::TextWrapped("%s", identity_label.c_str());
-  }
-  ImGui::Separator();
   // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
   // float shows the effective value either way; editing it asks the explicit wavelength — a key
   // change the pump turns into a new request (the engine has no warm map: every lambda is a
@@ -1646,11 +1630,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (state.analysis.map_wavelength_nm > 0.0) {
     lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
   }
-  const float lambda_w = UiPx(140.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("λ").x;
-  const bool lambda_same_line = fits_on_line(lambda_w);
-  if (lambda_same_line) {
-    ImGui::SameLine();
-  }
+  const bool lambda_same_line = false;
   // The wrapped case re-spends the FRESH line's whole width: the track shrinks so slider plus
   // its trailing label stay inside the region. The 60 pt floor keeps a usable track at every
   // width the info floor can produce; this child scrolls, so even the wrapped fallback stays
@@ -1665,13 +1645,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
   }
-  if (state.analysis.map_wavelength_nm > 0.0 && ImGui::SmallButton("reference##map_lambda")) {
+  ImGui::BeginDisabled(state.analysis.map_wavelength_nm <= 0.0);
+  if (ImGui::SmallButton("reference##map_lambda")) {
     state.analysis.map_wavelength_nm = 0.0;
-  } else if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("(the engine-chosen reference until a map echoes it)");
-    ImGui::PopStyleColor();
   }
+  ImGui::EndDisabled();
   // The view buttons: the map's two steering verbs, beside the wavelength they steer with.
   // The row joins only while it fits — the info floor's narrowest width wraps them onto their
   // own line rather than clip a view button.
@@ -1708,50 +1686,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     view.centre_pos[2] = 1.0f;
     view.radius_deg = kMapFullSkyRadiusDeg;
     MapViewChanged(&view, now_s, false, /*user_steered=*/true);
-  }
-
-  // The caliber block: every fact read back through the result's own readers into the pure
-  // composer (the unit layer holds it to the readback), then drawn (AC1).
-  if (map.adopted_result != nullptr && have_anchor_info) {
-    MapCaliberInput in;
-    in.info = anchor_info;
-    LUMICE_PathSurveyEvidence evidence{};
-    evidence.struct_size = sizeof(evidence);
-    in.have_evidence = LUMICE_PathMapGetEvidence(map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK;
-    in.evidence = evidence;
-    LUMICE_PathQuantitySpec quantity{};
-    quantity.struct_size = sizeof(quantity);
-    in.have_quantity = LUMICE_PathMapGetQuantity(map.adopted_result.get(), &quantity) == LUMICE_PATH_READ_OK;
-    in.quantity = quantity;
-    if (anchor_info.point_mass_available != 0) {
-      LUMICE_PathMapPointMass mass{};
-      mass.struct_size = sizeof(mass);
-      in.have_mass = LUMICE_PathMapGetPointMass(map.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK;
-      in.mass = mass;
-      for (size_t i = 0; i < mass.method_count && i < kMapCaliberMaxMethods; ++i) {
-        in.methods[i] = mass.methods[i];
-      }
-    }
-    in.completed = MapQueryStateFor(map) == MapQueryState::kCompleted;
-    // The block is the region's explanation, rendered DIRECTLY — no child window: a child's
-    // rect swallows the hover and the click of everything whose flow it spans, and a declared
-    // height computed from last frame's tail measure overran the tail's rows on slice-cut
-    // frames (the Set button died under it while its own rect kept reporting contained).
-    // It is also UNCONDITIONAL — no fold: the lines are a pure function of the adopted result
-    // (the unit and aggregation, the member coverage, the truncated warning that says the
-    // picture is a prefix and not the class, the rank-0 note), so any state that hides them
-    // is an irreversible deletion of the only carrier of exactly those facts. A latch keyed
-    // on the region's own overflow did exactly that: one narrow frame hid the explanation for
-    // the process's remaining life and gave nothing back on a wider one, while the block's
-    // own wrapped bulk was what decided the overflow the latch read — the measure feeding the
-    // state that decides the measure. Where the cell is too short for the block, the region's
-    // own scroll carries it: the rung whose reach does not depend on measuring the content
-    // that decides the measure's own visibility.
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    for (const std::string& line : MapCaliberLines(in)) {
-      ImGui::TextWrapped("%s", line.c_str());
-    }
-    ImGui::PopStyleColor();
   }
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
@@ -1830,25 +1764,66 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   } else {
     std::snprintf(status, sizeof(status), "no sky point set");
   }
-  const float clear_w = ImGui::CalcTextSize("Clear##sky").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  const float status_w = ImGui::CalcTextSize(status).x + (intent.valid ? style_inner_x + clear_w : 0.0f);
-  if (fits_on_line(status_w)) {
+  if (fits_on_line(ImGui::CalcTextSize("Clear").x + style_fp_x * 2.0f)) {
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", status);
-  } else {
-    // Fresh line, and wrapped: at the ③ split the status text alone exceeds the cell, and a
-    // single-line TextDisabled would clip the coordinates it exists to report.
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("%s", status);
-    ImGui::PopStyleColor();
   }
-  if (intent.valid) {
-    if (fits_on_line(clear_w)) {
-      ImGui::SameLine();
+  ImGui::BeginDisabled(!intent.valid);
+  if (ImGui::SmallButton("Clear##sky")) {
+    intent = SkyPointIntent{};
+  }
+  ImGui::EndDisabled();
+
+  ImGui::BeginChild("##MapReport", RemainingReportSize());
+  // The identity line (contract §6's status summary): the selected class named WHERE it is read.
+  // The list that carries the same label can be off-screen while this window is open (Render
+  // workspace, an occluding float), so the window re-states the list's own text — the one chain
+  // (SelectedClassRowLabelFor, the same AnalysisRowLabel spelling the list shows), not a second
+  // rendering of the selection and not a copy of the overview's report (§2.2: the survey facts
+  // stay in the main window's diagnostics). Wrapped like every legend line below: a long chain
+  // label folds, it does not clip. The Separator ends the line so the λ row's SameLine judgment
+  // below reads a fresh line — fits_on_line judges against the LAST item's rect, and the
+  // judgment it must not inherit is whatever the map region submitted before this child.
+  const std::string identity_label = SelectedClassRowLabelFor(state);
+  if (identity_label.empty()) {
+    ImGui::TextDisabled("(no class selected)");
+  } else {
+    ImGui::TextWrapped("%s", identity_label.c_str());
+  }
+  ImGui::Separator();
+  ImGui::TextWrapped("%s", status);
+  if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
+    ImGui::TextWrapped("The engine-chosen reference wavelength is used until a map echoes it.");
+  }
+  // The caliber block: every fact read back through the result's own readers into the pure
+  // composer (the unit layer holds it to the readback), then drawn (AC1).
+  if (map.adopted_result != nullptr && have_anchor_info) {
+    MapCaliberInput in;
+    in.info = anchor_info;
+    LUMICE_PathSurveyEvidence evidence{};
+    evidence.struct_size = sizeof(evidence);
+    in.have_evidence = LUMICE_PathMapGetEvidence(map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK;
+    in.evidence = evidence;
+    LUMICE_PathQuantitySpec quantity{};
+    quantity.struct_size = sizeof(quantity);
+    in.have_quantity = LUMICE_PathMapGetQuantity(map.adopted_result.get(), &quantity) == LUMICE_PATH_READ_OK;
+    in.quantity = quantity;
+    if (anchor_info.point_mass_available != 0) {
+      LUMICE_PathMapPointMass mass{};
+      mass.struct_size = sizeof(mass);
+      in.have_mass = LUMICE_PathMapGetPointMass(map.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK;
+      in.mass = mass;
+      for (size_t i = 0; i < mass.method_count && i < kMapCaliberMaxMethods; ++i) {
+        in.methods[i] = mass.methods[i];
+      }
     }
-    if (ImGui::SmallButton("Clear##sky")) {
-      intent = SkyPointIntent{};
+    in.completed = MapQueryStateFor(map) == MapQueryState::kCompleted;
+    // The report follows every operation. Its native scroll cannot overlap or reposition
+    // the typed-coordinate controls, even while a long caliber or refusal arrives.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    for (const std::string& line : MapCaliberLines(in)) {
+      ImGui::TextWrapped("%s", line.c_str());
     }
+    ImGui::PopStyleColor();
   }
 
   // The legend: one entry per category THIS frame actually drew, each with its one-line
@@ -1937,6 +1912,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     ImGui::PopStyleColor();
   }
 
+  ImGui::EndChild();  // ##MapReport
   ImGui::EndChild();  // ##AnalyzeRaypathInfo — the info region
 }
 
@@ -1982,7 +1958,8 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   // note); NoCollapse: a collapsed title bar hides the map without freeing its queries — the
   // honest off state is closed, via the same flag the title bar's X writes through `p_open`.
   if (!ImGui::Begin("Raypath view", &state.analyze_raypath_view_open,
-                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
+                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar |
+                        ImGuiWindowFlags_NoScrollWithMouse)) {
     ImGui::End();
     return;
   }
@@ -1990,7 +1967,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   // the raster and its gestures, the overlays, the state line, the caliber block, the sky-point
   // tail). The region's own child keeps its name — the tests' addressing anchors to it. Its
   // honest no-selection state (below, in the region) is the window's empty state.
-  RenderAnalyzeMapRegion(state, ImGui::GetContentRegionAvail());
+  RenderAnalyzeMapRegion(state, VisibleContentSize());
   ImGui::End();
 }
 

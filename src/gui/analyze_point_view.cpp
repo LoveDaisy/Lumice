@@ -13,7 +13,8 @@
 #include "app.hpp"                       // g_survey_executor — the cancel button reaches the one executor
 #include "gui/analysis_panel.hpp"        // RowLabelTextTooltip — the component rows' hover identity
 #include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
-#include "gui/crystal_preview.hpp"       // CrystalParamHash — the mesh cache's change key
+#include "gui/canvas_report_layout.hpp"
+#include "gui/crystal_preview.hpp"  // CrystalParamHash — the mesh cache's change key
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state.hpp"
@@ -798,6 +799,35 @@ std::optional<LUMICE_PathPointInfo> ReadPointInfo(const LUMICE_SinglePathResult&
   return info;
 }
 
+// One text line in every state. Detailed reasons remain in the report; the short state is
+// still visible when that report is scrolled to a long legend or the last factor.
+void RenderPointStatus(const PointQuerySession& point) {
+  const char* label = "No target";
+  bool partial = false;
+  switch (PointQueryStateFor(point)) {
+    case PointQueryState::kNoIntent:
+      break;
+    case PointQueryState::kWaiting:
+      label = "Waiting";
+      break;
+    case PointQueryState::kCancelled:
+      label = "Cancelled";
+      break;
+    case PointQueryState::kRefused:
+      label = "Refused";
+      break;
+    case PointQueryState::kCompleted: {
+      const auto info = ReadPointInfo(*point.adopted_result);
+      partial = info && info->execution != LUMICE_PATH_OUTCOME_COMPLETED;
+      label = partial ? "Partial" : "Ready";
+      break;
+    }
+  }
+  ImGui::PushStyleColor(ImGuiCol_Text, partial ? WarningTextColor() : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::TextUnformatted(label);
+  ImGui::PopStyleColor();
+}
+
 // The sample the display currently points at: (component, stored index, the sample itself, the
 // component's valid count). nullopt outside the discovered arm with a usable selection.
 struct CurrentSample {
@@ -950,26 +980,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
   };
 
-  // The state area: ONE scrolling region for everything informational (contract §11 R4's
-  // two-segment form — a fixed interaction stack plus a scrolling state area): the description,
-  // the honest state lines, the partial note, the grid-absence note, the weight note and the
-  // sample readout scroll where the cell runs short — reachable, never deleted. Bounded below
-  // the fixed stack while the cell has room for a viewport; when even the stack cannot fit, the
-  // lines render direct in the region and the region's own native scroll is the reachability
-  // path (the degradation ladder's last rung).
-  const auto render_state_area = [&](auto&& draw_lines) {
-    // The bounded form's threshold is the scroll-draggable floor (gui_constants.hpp): a sliver
-    // between "fits" and this floor would host a scrollbar nobody can drag — the lines then
-    // render direct in the region, whose own scroll is tall enough to use.
-    if (ImGui::GetContentRegionAvail().y > UiPx(kPoseViewStateViewportFloor)) {
-      ImGui::BeginChild("##AnalyzeGlobeState", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
-      draw_lines();
-      ImGui::EndChild();
-    } else {
-      ImGui::Separator();
-      draw_lines();
-    }
-  };
+  // Every result branch writes only the report after the fixed component/canvas/sample stack.
+  const auto render_state_area = [](auto&& draw_lines) { draw_lines(); };
 
   // ---- The fixed interaction stack (R4): the controls a hand must reach are submitted outside
   // any scrolling region at every cell the window's minimum admits — the title and the
@@ -995,314 +1007,305 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     ImGui::PopStyleColor();
   }
 
-  const PointQueryState st = PointQueryStateFor(point);
-  if (st == PointQueryState::kNoIntent) {
-    render_state_area([&] {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-      if (!state.analysis.sky_point.valid) {
-        ImGui::TextWrapped(
-            "Pick a sky point on the raypath view (or type coordinates there); the fiber of poses "
-            "that light it takes this region.");
-      } else {
-        ImGui::TextWrapped("The fiber takes this region once a class is selected.");
-      }
-      ImGui::PopStyleColor();
-    });
-    ImGui::EndChild();
-    return;
-  }
-  if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
-    render_state_area([&] {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-      switch (st) {
-        case PointQueryState::kWaiting: {
-          const std::string wait_line =
-              PointWaitLineFor(point, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
-          state.analysis.wait_feedback_texts.point_wait_line_fiber = wait_line;
-          ImGui::TextWrapped("%s", wait_line.c_str());
-          break;
-        }
-        case PointQueryState::kCancelled:
-          ImGui::TextWrapped(
-              "Point cancelled for this selection. Moving the sky point — or re-picking the class — "
-              "asks anew.");
-          break;
-        default:
-          ImGui::TextWrapped("Point refused: %s", point.adopted_error.c_str());
-          break;
-      }
-      ImGui::PopStyleColor();
-    });
-    ImGui::EndChild();
-    return;
-  }
-
-  // Completed. Either arm reads through the document's own Info.
-  const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
-  if (!info.has_value()) {
-    render_state_area([&] { DisabledWrappedText("The adopted point document did not answer its Info reader."); });
-    ImGui::EndChild();
-    return;
-  }
-  if (info->outcome == LUMICE_PATH_POINT_MASS) {
-    render_state_area([&] {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-      ImGui::TextWrapped("A rank-0 point mass has no fiber to project — the details carry the mass numbers.");
-      ImGui::PopStyleColor();
-    });
-    ImGui::EndChild();
-    return;
-  }
-
-  // The discovered arm: the selected component's fiber, the current sample marker, the weight
-  // bar, the slider and playback. The partial-document note rides EVERY state area this arm can
-  // show — including the empty-payload early returns below: a deadline stopped before the
-  // component walk can legitimately return zero components, and a window open on its own (the
-  // diagnostics region may be off screen or on another workspace) must not present an
-  // unfinished document as a definite physical absence.
-  const bool partial_document = info->execution != LUMICE_PATH_OUTCOME_COMPLETED;
-  const auto draw_partial_note = [&] {
-    if (partial_document) {
-      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-      ImGui::TextWrapped(
-          "Partial document (%s) — what arrived is on show; emptiness here is the run's "
-          "stop, not a physical absence.",
-          ExecutionText(info->execution));
-      ImGui::PopStyleColor();
-    }
-  };
+  const auto info = point.adopted_result ? ReadPointInfo(*point.adopted_result) : std::nullopt;
   std::vector<PointComponentRow> rows;
-  const int component_total = PointComponentRows(*point.adopted_result, &rows);
-  if (component_total == 0) {
-    LUMICE_PathPointReach reach{};
-    reach.struct_size = sizeof(reach);
-    const bool have_reach = LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK;
-    render_state_area([&] {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-      draw_partial_note();
-      if (have_reach && !reach.target_in_range) {
-        ImGui::TextWrapped(
-            "No fiber here: the target's deviation is outside the range of this path's deflection field "
-            "(the reach probe excludes it at its resolution).");
-      } else {
-        ImGui::TextWrapped(
-            "No fiber component at this point: the finite crystal passes no pose along the queried "
-            "deflection.");
-      }
-      ImGui::PopStyleColor();
-    });
-    ImGui::EndChild();
-    return;
-  }
-  if (component_total > 1) {
-    // The component selector (AC2: the user picks a component; separate components are never
-    // joined into one curve — this selector is the only thing that moves between them).
-    int selected = std::clamp(view.component_index, 0, component_total - 1);
-    std::string labels;
-    for (int i = 0; i < component_total; ++i) {
-      char item[64];
-      std::snprintf(item, sizeof(item), "component %d: %s, %d pts%s", i + 1, rows[static_cast<size_t>(i)].kind.c_str(),
-                    rows[static_cast<size_t>(i)].point_count,
-                    rows[static_cast<size_t>(i)].integral_available ? "" : ", integral unavailable");
-      labels += item;
-      labels += '\0';
-    }
+  const int component_total = info ? PointComponentRows(*point.adopted_result, &rows) : 0;
+  int component = component_total > 0 ? std::clamp(view.component_index, 0, component_total - 1) : 0;
+  std::string labels;
+  for (int i = 0; i < component_total; ++i) {
+    char item[96];
+    std::snprintf(item, sizeof(item), "component %d: %s, %d pts%s", i + 1, rows[static_cast<size_t>(i)].kind.c_str(),
+                  rows[static_cast<size_t>(i)].point_count,
+                  rows[static_cast<size_t>(i)].integral_available ? "" : ", integral unavailable");
+    labels += item;
     labels += '\0';
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##globe_component", &selected, labels.c_str())) {
-      view.component_index = selected;
-      view.sample_index = 0;
-      view.playing = false;
-    }
   }
-  const int component = std::clamp(view.component_index, 0, component_total - 1);
-  // The frame's one valid-index scan: the fiber, the weight bar and the cursor reads all share it.
-  const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
+  if (component_total == 0) {
+    labels = std::string("No component\0", 13);
+  }
+  labels += '\0';
+  ImGui::BeginDisabled(component_total <= 1);
+  ImGui::SetNextItemWidth(-1.0f);
+  if (ImGui::Combo("##globe_component", &component, labels.c_str())) {
+    view.component_index = component;
+    view.sample_index = 0;
+    view.playing = false;
+  }
+  ImGui::EndDisabled();
+  const std::vector<int> valid_indices =
+      component_total > 0 ? CollectValidSampleIndices(*point.adopted_result, component) : std::vector<int>{};
   const int valid_count = static_cast<int>(valid_indices.size());
-  if (valid_count == 0) {
-    render_state_area([&] {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-      draw_partial_note();
-      ImGui::TextWrapped("This component carries no valid sample — nothing to project.");
-      ImGui::PopStyleColor();
-    });
-    ImGui::EndChild();
-    return;
+  if (valid_count > 0) {
+    AdvancePointPlayback(&view, valid_count, ImGui::GetTime());
   }
-  // The playback tick: advances the index while playing (the pump's pure step, driven here by the
-  // frame clock — the only place playback touches state).
-  AdvancePointPlayback(&view, valid_count, ImGui::GetTime());
-
-  SunGlobeProjector projector;
-  const bool have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
-
-  // The canvas yields LAST: the fixed stack below it (the slider/play row, ≈34 pt with its
-  // spacing — the weight bar's 14 pt left with 756) and the state area's minimum viewport
-  // (≈64 pt — a few wrapped lines worth of scroll) are budgeted FIRST, and the canvas takes
-  // what remains. The two-segment form is the contract at every cell that can hold stack +
-  // state viewport + the 60 px canvas floor; only a cell genuinely too short for that budget —
-  // below what the canvas floor can coexist with — degrades to the whole-region scroll (the
-  // ladder's last rung, the exceptional shape, not the ordinary form: the first cut budgeted
-  // only the stack and let the canvas swallow the state viewport at ordinary sizes, scrolling
-  // the fixed stack away under every scroll of the state lines).
-  const float controls_px = UiPx(34.0f);
-  const float state_min_px = UiPx(64.0f);
-  const ImVec2 avail = ImGui::GetContentRegionAvail();
-  const float side = std::max(UiPx(kPoseViewGlobeCanvasFloor), std::min(avail.x, avail.y - controls_px - state_min_px));
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
-  ImGui::InvisibleButton("##globe_canvas", ImVec2(side, side));
-  const ImVec2 centre_px(canvas_min.x + side * 0.5f, canvas_min.y + side * 0.5f);
-  const float radius_px = side * 0.5f - UiPx(4.0f);
-  auto to_screen = [&](double x, double y) {
-    return ImVec2(static_cast<float>(centre_px.x + (x - 0.5) * 2.0 * radius_px),
-                  static_cast<float>(centre_px.y + (y - 0.5) * 2.0 * radius_px));
-  };
-  // The disk: rim + interior, dark — the map's own picture convention (the cells carry the data).
-  dl->AddCircleFilled(centre_px, radius_px, IM_COL32(16, 18, 22, 255));
-  dl->AddCircle(centre_px, radius_px, IM_COL32(70, 74, 82, 200), 0, 1.0f);
-
-  // The deviation backdrop: only when the document carries a grid (AC2's named-absence rule) and
-  // the toggle stands.
-  LUMICE_PathSunGrid grid{};
-  grid.struct_size = sizeof(grid);
-  const bool have_grid = view.show_deviation_grid &&
-                         LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK &&
-                         grid.cell_count > 0;
-  if (have_grid) {
-    const double deg_to_rad = 3.14159265358979323846 / 180.0;
-    for (int i = 0; i < grid.lat_count; ++i) {
-      const double lat = (-90.0 + (i + 0.5) * 180.0 / grid.lat_count) * deg_to_rad;
-      for (int j = 0; j < grid.lon_count; ++j) {
-        const double lon = (-180.0 + (j + 0.5) * 360.0 / grid.lon_count) * deg_to_rad;
-        const size_t cell = static_cast<size_t>(i) * static_cast<size_t>(grid.lon_count) + static_cast<size_t>(j);
-        if (cell >= grid.cell_count || grid.valid[cell] == 0) {
-          continue;
-        }
-        const double u[3] = { std::cos(lat) * std::cos(lon), std::cos(lat) * std::sin(lon), std::sin(lat) };
-        double gx = 0.0;
-        double gy = 0.0;
-        SunGlobeProject(projector, u, &gx, &gy);
-        const ImVec2 p = to_screen(gx, gy);
-        const float half = std::max(1.5f, radius_px / 48.0f);
-        dl->AddRectFilled(ImVec2(p.x - half, p.y - half), ImVec2(p.x + half, p.y + half),
-                          SunGridCellColorRgba(grid.deviation_rad[cell], grid.valid[cell]));
-      }
-    }
+  const float play_w =
+      std::max(ImGui::CalcTextSize("Stop").x, ImGui::CalcTextSize("Play").x) + ImGui::GetStyle().FramePadding.x * 2.0f;
+  RenderPointStatus(point);
+  const ImVec2 available = ImGui::GetContentRegionAvail();
+  const bool shared_line = available.x - play_w - ImGui::GetStyle().ItemSpacing.x >= UiPx(80.0f);
+  const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f);
+  const float graph_side = std::min(
+      available.x, CanvasHeightBeforeReport(available.y, controls_h, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
+  const ImVec2 graph_min = ImGui::GetCursorScreenPos();
+  ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
+  if (graph_side > 0.0f) {
+    ImGui::InvisibleButton("##globe_canvas", ImVec2(graph_side, graph_side));
+    graph_draw_list->AddCircle(ImVec2(graph_min.x + graph_side * 0.5f, graph_min.y + graph_side * 0.5f),
+                               std::max(1.0f, graph_side * 0.5f - UiPx(4.0f)), ImGui::GetColorU32(ImGuiCol_Border));
   }
-
-  // The fiber: the selected component's VALID samples, in arclength order, as contiguous runs —
-  // broken where an invalid sample sits (AC2: this component's own valid samples, nothing joined).
-  if (have_projector) {
-    std::vector<ImVec2> run;
-    auto flush_run = [&]() {
-      if (run.size() >= 2) {
-        dl->AddPolyline(run.data(), static_cast<int>(run.size()), ImGui::ColorConvertFloat4ToU32(AccentColor()), 0,
-                        2.0f);
-      }
-      run.clear();
-    };
-    LUMICE_PathPointSample probe{};
-    probe.struct_size = sizeof(probe);
-    for (size_t v = 0; v < valid_indices.size(); ++v) {
-      // A gap in stored indices means an invalid sample sat between: the run breaks there.
-      if (v > 0 && valid_indices[v] != valid_indices[v - 1] + 1) {
-        flush_run();
-      }
-      if (LUMICE_PathPointGetSample(point.adopted_result.get(), static_cast<size_t>(component),
-                                    static_cast<size_t>(valid_indices[v]), &probe) != LUMICE_PATH_READ_OK) {
-        flush_run();
-        continue;
-      }
-      double gx = 0.0;
-      double gy = 0.0;
-      SunGlobeProject(projector, probe.sun_in_crystal, &gx, &gy);
-      run.push_back(to_screen(gx, gy));
-    }
-    flush_run();
-  }
-
-  // The current sample marker (inside the disk; outside means a stale projector — the marker
-  // simply sits at the rim, still honest about the direction it names).
-  if (have_projector) {
-    if (const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
-        current.has_value()) {
-      double gx = 0.0;
-      double gy = 0.0;
-      SunGlobeProject(projector, current->sample.sun_in_crystal, &gx, &gy);
-      const ImVec2 p = to_screen(gx, gy);
-      dl->AddCircleFilled(p, UiPx(4.0f), ImGui::ColorConvertFloat4ToU32(AccentColor()));
-      dl->AddCircle(p, UiPx(6.5f), IM_COL32(255, 255, 255, 210), 0, 1.5f);
-    }
-  }
-  // (The old per-sample weight bar retired here (756): its quantity — the per-sample product —
-  // is the curve region's product arm now, on the true arclength axis instead of the sample
-  // index; the same window drawing it twice was a duplication, not a redundancy.)
-
-  // The slider + playback row: the slider indexes the component's VALID samples (AC3); touching
-  // it stops the playback (a hand on the slider owns the cursor). The row shares the line only
-  // while the track keeps a usable floor after the REAL play button's width — the old fixed
-  // 120 pt reservation exceeded the whole row at the narrowest legal cells (the ③ split under
-  // 2x leaves ~76 pt of content), and ImGui answered a negative width with a 1 px track: sample
-  // selection's mouse travel gone, and no scroll form returns a horizontal reach. Below the
-  // floor the button owns the next line and the track the full row.
-  int pos = std::clamp(view.sample_index, 0, valid_count - 1);
-  const float play_w = ImGui::CalcTextSize(view.playing ? "Stop" : "Play").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  const float content_w = ImGui::GetContentRegionAvail().x;
-  const bool sample_shared_line = content_w - play_w - ImGui::GetStyle().ItemSpacing.x >= UiPx(80.0f);
-  ImGui::SetNextItemWidth(sample_shared_line ? content_w - play_w - ImGui::GetStyle().ItemSpacing.x : content_w);
-  if (ImGui::SliderInt("##globe_sample", &pos, 0, valid_count - 1)) {
+  int pos = valid_count > 0 ? std::clamp(view.sample_index, 0, valid_count - 1) : 0;
+  ImGui::BeginDisabled(valid_count == 0);
+  ImGui::SetNextItemWidth(shared_line ? available.x - play_w - ImGui::GetStyle().ItemSpacing.x : available.x);
+  if (ImGui::SliderInt("##globe_sample", &pos, 0, std::max(0, valid_count - 1), valid_count > 0 ? "%d" : "—")) {
     view.sample_index = pos;
     view.playing = false;
   }
-  if (sample_shared_line) {
+  if (shared_line) {
     ImGui::SameLine();
   }
-  if (ImGui::SmallButton(view.playing ? "Stop##globe_play" : "Play##globe_play")) {
+  if (ImGui::Button(view.playing ? "Stop##globe_play" : "Play##globe_play", ImVec2(play_w, 0.0f))) {
     view.playing = !view.playing;
     view.last_play_step_s = ImGui::GetTime();
   }
+  ImGui::EndDisabled();
+  ImGui::BeginChild("##AnalyzeGlobeState", RemainingReportSize(), ImGuiChildFlags_Borders);
+  const auto render_content = [&] {
+    const PointQueryState st = PointQueryStateFor(point);
+    if (st == PointQueryState::kNoIntent) {
+      render_state_area([&] {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
+        if (!state.analysis.sky_point.valid) {
+          ImGui::TextWrapped(
+              "Pick a sky point on the raypath view (or type coordinates there); the fiber of poses "
+              "that light it takes this region.");
+        } else {
+          ImGui::TextWrapped("The fiber takes this region once a class is selected.");
+        }
+        ImGui::PopStyleColor();
+      });
+      return;
+    }
+    if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
+      render_state_area([&] {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
+        switch (st) {
+          case PointQueryState::kWaiting: {
+            const std::string wait_line =
+                PointWaitLineFor(point, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+            state.analysis.wait_feedback_texts.point_wait_line_fiber = wait_line;
+            ImGui::TextWrapped("%s", wait_line.c_str());
+            break;
+          }
+          case PointQueryState::kCancelled:
+            ImGui::TextWrapped(
+                "Point cancelled for this selection. Moving the sky point — or re-picking the class — "
+                "asks anew.");
+            break;
+          default:
+            ImGui::TextWrapped("Point refused: %s", point.adopted_error.c_str());
+            break;
+        }
+        ImGui::PopStyleColor();
+      });
+      return;
+    }
 
-  // ---- The state area (R4's scroll set): the description, the partial note, the
-  // grid-absence note, the weight note and the sample readout — all reachable by scrolling,
-  // none deleted. The readout's old fits_on_line join is gone with the form: the state area is
-  // where these lines live at every width. ----
-  const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
-  render_state_area([&] {
-    DisabledWrappedText("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-    if (partial_document) {
-      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-      ImGui::TextWrapped("Partial document (%s) — the fiber on show is what arrived.", ExecutionText(info->execution));
-      ImGui::PopStyleColor();
+    // Completed. Either arm reads through the document's own Info.
+    if (!info.has_value()) {
+      render_state_area([&] { DisabledWrappedText("The adopted point document did not answer its Info reader."); });
+      return;
     }
-    if (!have_grid && view.show_deviation_grid) {
-      DisabledWrappedText("(no sun grid in this document — the backdrop is absent, not zero)");
+    if (info->outcome == LUMICE_PATH_POINT_MASS) {
+      render_state_area([&] {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
+        ImGui::TextWrapped("A rank-0 point mass has no fiber to project — the details carry the mass numbers.");
+        ImGui::PopStyleColor();
+      });
+      return;
     }
-    if (current.has_value()) {
-      char readout[128];
-      std::snprintf(readout, sizeof(readout), "sample %d/%d — zenith %.1f, az %.1f, roll %.1f%s",
-                    std::clamp(view.sample_index, 0, valid_count - 1) + 1, valid_count, current->sample.zenith_deg,
-                    current->sample.azimuth_deg, current->sample.roll_deg,
-                    current->sample.angles_degenerate != 0 ? " (degenerate)" : "");
-      DisabledWrappedText("%s", readout);
+
+    // The discovered arm: the selected component's fiber, the current sample marker, the weight
+    // bar, the slider and playback. The partial-document note rides EVERY state area this arm can
+    // show — including the empty-payload early returns below: a deadline stopped before the
+    // component walk can legitimately return zero components, and a window open on its own (the
+    // diagnostics region may be off screen or on another workspace) must not present an
+    // unfinished document as a definite physical absence.
+    const bool partial_document = info->execution != LUMICE_PATH_OUTCOME_COMPLETED;
+    const auto draw_partial_note = [&] {
+      if (partial_document) {
+        ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+        ImGui::TextWrapped(
+            "Partial document (%s) — what arrived is on show; emptiness here is the run's "
+            "stop, not a physical absence.",
+            ExecutionText(info->execution));
+        ImGui::PopStyleColor();
+      }
+    };
+    if (component_total == 0) {
+      LUMICE_PathPointReach reach{};
+      reach.struct_size = sizeof(reach);
+      const bool have_reach = LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK;
+      render_state_area([&] {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
+        draw_partial_note();
+        if (have_reach && !reach.target_in_range) {
+          ImGui::TextWrapped(
+              "No fiber here: the target's deviation is outside the range of this path's deflection field "
+              "(the reach probe excludes it at its resolution).");
+        } else {
+          ImGui::TextWrapped(
+              "No fiber component at this point: the finite crystal passes no pose along the queried "
+              "deflection.");
+        }
+        ImGui::PopStyleColor();
+      });
+      return;
     }
-  });
+    if (valid_count == 0) {
+      render_state_area([&] {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
+        draw_partial_note();
+        ImGui::TextWrapped("This component carries no valid sample — nothing to project.");
+        ImGui::PopStyleColor();
+      });
+      return;
+    }
+    // Payload availability is independent of whether this geometry can show the canvas.
+    LUMICE_PathSunGrid grid{};
+    grid.struct_size = sizeof(grid);
+    const bool have_grid = view.show_deviation_grid &&
+                           LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK &&
+                           grid.cell_count > 0;
+    if (graph_side > 0.0f) {
+      SunGlobeProjector projector;
+      const bool have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
+
+      const float side = graph_side;
+      ImDrawList* dl = graph_draw_list;
+      const ImVec2 canvas_min = graph_min;
+      const ImVec2 centre_px(canvas_min.x + side * 0.5f, canvas_min.y + side * 0.5f);
+      const float radius_px = side * 0.5f - UiPx(4.0f);
+      auto to_screen = [&](double x, double y) {
+        return ImVec2(static_cast<float>(centre_px.x + (x - 0.5) * 2.0 * radius_px),
+                      static_cast<float>(centre_px.y + (y - 0.5) * 2.0 * radius_px));
+      };
+      // The disk: rim + interior, dark — the map's own picture convention (the cells carry the data).
+      dl->AddCircleFilled(centre_px, radius_px, IM_COL32(16, 18, 22, 255));
+      dl->AddCircle(centre_px, radius_px, IM_COL32(70, 74, 82, 200), 0, 1.0f);
+
+      // The deviation backdrop: only when the document carries a grid (AC2's named-absence rule) and
+      // the toggle stands.
+      if (have_grid) {
+        const double deg_to_rad = 3.14159265358979323846 / 180.0;
+        for (int i = 0; i < grid.lat_count; ++i) {
+          const double lat = (-90.0 + (i + 0.5) * 180.0 / grid.lat_count) * deg_to_rad;
+          for (int j = 0; j < grid.lon_count; ++j) {
+            const double lon = (-180.0 + (j + 0.5) * 360.0 / grid.lon_count) * deg_to_rad;
+            const size_t cell = static_cast<size_t>(i) * static_cast<size_t>(grid.lon_count) + static_cast<size_t>(j);
+            if (cell >= grid.cell_count || grid.valid[cell] == 0) {
+              continue;
+            }
+            const double u[3] = { std::cos(lat) * std::cos(lon), std::cos(lat) * std::sin(lon), std::sin(lat) };
+            double gx = 0.0;
+            double gy = 0.0;
+            SunGlobeProject(projector, u, &gx, &gy);
+            const ImVec2 p = to_screen(gx, gy);
+            const float half = std::max(1.5f, radius_px / 48.0f);
+            dl->AddRectFilled(ImVec2(p.x - half, p.y - half), ImVec2(p.x + half, p.y + half),
+                              SunGridCellColorRgba(grid.deviation_rad[cell], grid.valid[cell]));
+          }
+        }
+      }
+
+      // The fiber: the selected component's VALID samples, in arclength order, as contiguous runs —
+      // broken where an invalid sample sits (AC2: this component's own valid samples, nothing joined).
+      if (have_projector) {
+        std::vector<ImVec2> run;
+        auto flush_run = [&]() {
+          if (run.size() >= 2) {
+            dl->AddPolyline(run.data(), static_cast<int>(run.size()), ImGui::ColorConvertFloat4ToU32(AccentColor()), 0,
+                            2.0f);
+          }
+          run.clear();
+        };
+        LUMICE_PathPointSample probe{};
+        probe.struct_size = sizeof(probe);
+        for (size_t v = 0; v < valid_indices.size(); ++v) {
+          // A gap in stored indices means an invalid sample sat between: the run breaks there.
+          if (v > 0 && valid_indices[v] != valid_indices[v - 1] + 1) {
+            flush_run();
+          }
+          if (LUMICE_PathPointGetSample(point.adopted_result.get(), static_cast<size_t>(component),
+                                        static_cast<size_t>(valid_indices[v]), &probe) != LUMICE_PATH_READ_OK) {
+            flush_run();
+            continue;
+          }
+          double gx = 0.0;
+          double gy = 0.0;
+          SunGlobeProject(projector, probe.sun_in_crystal, &gx, &gy);
+          run.push_back(to_screen(gx, gy));
+        }
+        flush_run();
+      }
+
+      // The current sample marker (inside the disk; outside means a stale projector — the marker
+      // simply sits at the rim, still honest about the direction it names).
+      if (have_projector) {
+        if (const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
+            current.has_value()) {
+          double gx = 0.0;
+          double gy = 0.0;
+          SunGlobeProject(projector, current->sample.sun_in_crystal, &gx, &gy);
+          const ImVec2 p = to_screen(gx, gy);
+          dl->AddCircleFilled(p, UiPx(4.0f), ImGui::ColorConvertFloat4ToU32(AccentColor()));
+          dl->AddCircle(p, UiPx(6.5f), IM_COL32(255, 255, 255, 210), 0, 1.5f);
+        }
+      }
+      // (The old per-sample weight bar retired here (756): its quantity — the per-sample product —
+      // is the curve region's product arm now, on the true arclength axis instead of the sample
+      // index; the same window drawing it twice was a duplication, not a redundancy.)
+    }
+    // ---- The state area (R4's scroll set): the description, the partial note, the
+    // grid-absence note, the weight note and the sample readout — all reachable by scrolling,
+    // none deleted. The readout's old fits_on_line join is gone with the form: the state area is
+    // where these lines live at every width. ----
+    const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
+    render_state_area([&] {
+      DisabledWrappedText("Crystal-frame sun directions — a pose projection, not the full SO(3).");
+      if (partial_document) {
+        ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+        ImGui::TextWrapped("Partial document (%s) — the fiber on show is what arrived.",
+                           ExecutionText(info->execution));
+        ImGui::PopStyleColor();
+      }
+      if (!have_grid && view.show_deviation_grid) {
+        DisabledWrappedText("(no sun grid in this document — the backdrop is absent, not zero)");
+      }
+      if (current.has_value()) {
+        char readout[128];
+        std::snprintf(readout, sizeof(readout), "sample %d/%d — zenith %.1f, az %.1f, roll %.1f%s",
+                      std::clamp(view.sample_index, 0, valid_count - 1) + 1, valid_count, current->sample.zenith_deg,
+                      current->sample.azimuth_deg, current->sample.roll_deg,
+                      current->sample.angles_degenerate != 0 ? " (degenerate)" : "");
+        DisabledWrappedText("%s", readout);
+      }
+    });
+  };
+  render_content();
+  ImGui::EndChild();
   ImGui::EndChild();
 }
 
 // ---- The raypath 3D view -----------------------------------------------------------------------------
 
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
-  // The region scrolls where its own budget cannot hold the head, the canvas floor and the
-  // legend (the ladder's internal-scroll rung): the scrollbar is the affordance, the wheel is
-  // hand-routed below — the native dispatch never scrolls this child (NoScrollWithMouse, the
-  // map region's own guard), and the claim arbitration in analyze_region_wheel.hpp decides
-  // which consumer owns the event.
+  // The canvas and frame controls never scroll with result prose. The report scrolls
+  // natively; only the actual canvas registers the orbit wheel claim.
   ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
   PointQuerySession& point = state.analysis.point;
   RayTraceSession& trace = state.analysis.trace;
@@ -1328,428 +1331,377 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   }
   ImGui::RadioButton("Crystal##r3d", &frame, 1);
   view.crystal_frame = frame == 1;
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-  ImGui::TextWrapped(
-      "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
-      "views.");
-  ImGui::PopStyleColor();
-
-  const PointQueryState st = PointQueryStateFor(point);
-  if (st == PointQueryState::kNoIntent) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("Pick a class and a sky point; the current pose's crystal-interior path takes this region.");
-    ImGui::PopStyleColor();
-    ImGui::EndChild();
-    return;
+  RenderPointStatus(point);
+  const ImVec2 remaining = ImGui::GetContentRegionAvail();
+  const float graph_h = CanvasHeightBeforeReport(remaining.y, 0.0f, std::max(UiPx(64.0f), remaining.y * 0.2f),
+                                                 ImGui::GetStyle().ItemSpacing.y);
+  const ImVec2 canvas_size(remaining.x, graph_h);
+  const ImVec2 graph_min = ImGui::GetCursorScreenPos();
+  ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
+  bool graph_hovered = false;
+  bool graph_active = false;
+  if (graph_h > 0.0f) {
+    ImGui::InvisibleButton("##r3d_canvas", canvas_size, ImGuiButtonFlags_MouseButtonLeft);
+    graph_hovered = ImGui::IsItemHovered();
+    graph_active = ImGui::IsItemActive();
+    graph_draw_list->AddRectFilled(graph_min, ImVec2(graph_min.x + canvas_size.x, graph_min.y + graph_h),
+                                   IM_COL32(16, 18, 22, 255));
   }
-  if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    switch (st) {
-      case PointQueryState::kWaiting:
-        ImGui::TextWrapped("The point is computing — the path follows it.");
-        break;
-      case PointQueryState::kCancelled:
-        ImGui::TextWrapped("Point cancelled — no path on show.");
-        break;
-      default:
-        ImGui::TextWrapped("Point refused — no path on show.");
-        break;
-    }
-    ImGui::PopStyleColor();
-    ImGui::EndChild();
-    return;
-  }
-  const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
-  if (!info.has_value()) {
-    DisabledWrappedText("The adopted point document did not answer its Info reader.");
-    ImGui::EndChild();
-    return;
-  }
-  if (info->outcome == LUMICE_PATH_POINT_MASS) {
+  AnalyzeRegionWheelClaim(graph_hovered, AnalyzeRay3DWheelOwnerId());
+  ImGui::BeginChild("##Ray3DReport", RemainingReportSize());
+  const auto render_content = [&] {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
-        "A rank-0 point mass has no crystal-interior path — nothing to draw here (the details carry "
-        "the mass numbers).");
+        "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
+        "views.");
     ImGui::PopStyleColor();
-    ImGui::EndChild();
-    return;
-  }
 
-  // The partial-document note, the globe's sibling: the path on show is what a stopped run
-  // delivered.
-  if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::TextWrapped("Partial document (%s) — the path on show is what arrived.", ExecutionText(info->execution));
-    ImGui::PopStyleColor();
-  }
-  const std::vector<int> valid_indices = CollectValidSampleIndices(
-      *point.adopted_result, std::clamp(view.component_index, 0, static_cast<int>(info->component_count) - 1));
-  const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
-  if (!current.has_value()) {
-    DisabledWrappedText("No valid sample on show — nothing to draw.");
-    ImGui::EndChild();
-    return;
-  }
-  RayTraceKey current_key;
-  current_key.point_id = point.intent_id;
-  current_key.component = current->component;
-  current_key.sample = current->stored;
-  switch (RayTraceDisplayStateFor(trace, current_key)) {
-    case RayTraceDisplayState::kHidden:
-      DisabledWrappedText("No representative path asked for yet.");
-      ImGui::EndChild();
-      return;
-    case RayTraceDisplayState::kComputing:
-      DisabledWrappedText("Computing the representative path for this sample…");
-      ImGui::EndChild();
-      return;
-    case RayTraceDisplayState::kError:
-      ImGui::TextUnformatted("Path query failed:");
+    const PointQueryState st = PointQueryStateFor(point);
+    if (st == PointQueryState::kNoIntent) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("%s", trace.adopted_error.c_str());
+      ImGui::TextWrapped("Pick a class and a sky point; the current pose's crystal-interior path takes this region.");
       ImGui::PopStyleColor();
-      ImGui::EndChild();
       return;
-    case RayTraceDisplayState::kRefused: {
-      LUMICE_RepresentativeRayInfo rinfo{};
-      rinfo.struct_size = sizeof(rinfo);
-      LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
-      ImGui::TextUnformatted("No legal path for this pose:");
+    }
+    if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("reason: %s | entry status: %s%s%s | corridor area %.3e (threshold %.3e)",
-                         PathTextToString(rinfo.reason).c_str(), PathTextToString(rinfo.entry_status).c_str(),
-                         rinfo.chain_failure.length > 0 ? " | chain: " : "",
-                         rinfo.chain_failure.length > 0 ? PathTextToString(rinfo.chain_failure).c_str() : "",
-                         rinfo.area_perp_internal, rinfo.area_threshold);
-      ImGui::PopStyleColor();
-      ImGui::EndChild();
-      return;
-    }
-    case RayTraceDisplayState::kDrawn:
-      break;
-  }
-
-  // The crystal's mesh: the FROZEN binding's config (captured at DoAnalyze), in the analysis
-  // geometry's nominal caliber, true scale. The pool slot comes from the snapshot's own
-  // core->pool map; the mesh source is the frozen copy, so an edit of the live document after
-  // Analyze cannot rebuild the mesh into a shape the trace no longer lies inside (AC4).
-  const std::map<int, int> core_to_pool = AnalysisCoreToPoolMap(state);
-  const auto pool_it = core_to_pool.find(info->crystal_id);
-  if (pool_it == core_to_pool.end() || pool_it->second < 0) {
-    DisabledWrappedText("The analyzed crystal is not in the snapshot's pool map — no mesh to draw it with.");
-    ImGui::EndChild();
-    return;
-  }
-  const int pool = pool_it->second;
-  const CrystalConfig* frozen = FrozenCrystalForPool(state, pool);
-  if (frozen == nullptr) {
-    DisabledWrappedText("The frozen binding carries no crystal for this pool slot — no mesh to draw it with.");
-    ImGui::EndChild();
-    return;
-  }
-  CachedCrystalMesh& cache = PointMeshCache();
-  const int hash = CrystalParamHash(*frozen);
-  // The key moves even on a failed build: a persistently-unbuildable config is one failed
-  // attempt per key change, not one LUMICE_GetCrystalMesh call per frame.
-  if (cache.pool != pool || cache.hash != hash) {
-    cache.pool = pool;
-    cache.hash = hash;
-    cache.valid = BuildPointCrystalMesh(*frozen, &cache.mesh);
-  }
-  if (!cache.valid || cache.mesh.vertex_count <= 0) {
-    DisabledWrappedText("The crystal mesh came back empty for this configuration.");
-    ImGui::EndChild();
-    return;
-  }
-  RayTracePolyline line;
-  if (!BuildRayTracePolyline(*trace.adopted_result, /*extension=*/1.1f, &line)) {
-    DisabledWrappedText("The path's readers answered empty — nothing to draw.");
-    ImGui::EndChild();
-    return;
-  }
-
-  // The frame switch is a display transform (AC4): world view rotates the body-frame mesh to the
-  // pose's world; crystal view rotates the world-frame path back. One physical state, two views.
-  const double* pose = current->sample.pose;
-  auto to_display = [&](const float v[3], float out[3]) {
-    if (view.crystal_frame) {
-      out[0] = v[0];
-      out[1] = v[1];
-      out[2] = v[2];
-    } else {
-      RotateBodyToWorld(pose, v, out);
-    }
-  };
-  auto point_to_display = [&](const float p[3], float out[3]) {
-    if (view.crystal_frame) {
-      float tmp[3] = { p[0], p[1], p[2] };
-      RayTracePointToCrystalFrame(pose, tmp);
-      out[0] = tmp[0];
-      out[1] = tmp[1];
-      out[2] = tmp[2];
-    } else {
-      out[0] = p[0];
-      out[1] = p[1];
-      out[2] = p[2];
-    }
-  };
-
-  // Content bounds over everything on show (mesh + trace), for the fit and the orbit centre.
-  float lo[3] = { 0.0f, 0.0f, 0.0f };
-  float hi[3] = { 0.0f, 0.0f, 0.0f };
-  bool have_bounds = false;
-  auto accumulate = [&](const float p[3]) {
-    if (!have_bounds) {
-      for (int k = 0; k < 3; ++k) {
-        lo[k] = hi[k] = p[k];
+      switch (st) {
+        case PointQueryState::kWaiting:
+          ImGui::TextWrapped("The point is computing — the path follows it.");
+          break;
+        case PointQueryState::kCancelled:
+          ImGui::TextWrapped("Point cancelled — no path on show.");
+          break;
+        default:
+          ImGui::TextWrapped("Point refused — no path on show.");
+          break;
       }
-      have_bounds = true;
+      ImGui::PopStyleColor();
       return;
     }
-    for (int k = 0; k < 3; ++k) {
-      lo[k] = std::min(lo[k], p[k]);
-      hi[k] = std::max(hi[k], p[k]);
+    const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
+    if (!info.has_value()) {
+      DisabledWrappedText("The adopted point document did not answer its Info reader.");
+      return;
     }
-  };
-  for (int v = 0; v < cache.mesh.vertex_count; ++v) {
-    float d[3];
-    to_display(&cache.mesh.vertices[v * 3], d);
-    accumulate(d);
-  }
-  // The crystal's own centre, in the same display frame: the sun arrow's anchor (the crystal-frame
-  // view's u direction radiates from the CRYSTAL, not from a content box the display extensions
-  // inflate).
-  float mesh_lo[3] = { 0.0f, 0.0f, 0.0f };
-  float mesh_hi[3] = { 0.0f, 0.0f, 0.0f };
-  for (int k = 0; k < 3; ++k) {
-    mesh_lo[k] = mesh_hi[k] = lo[k];
-  }
-  {
-    bool have_mesh_bounds = false;
+    if (info->outcome == LUMICE_PATH_POINT_MASS) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped(
+          "A rank-0 point mass has no crystal-interior path — nothing to draw here (the details carry "
+          "the mass numbers).");
+      ImGui::PopStyleColor();
+      return;
+    }
+
+    // The partial-document note, the globe's sibling: the path on show is what a stopped run
+    // delivered.
+    if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+      ImGui::TextWrapped("Partial document (%s) — the path on show is what arrived.", ExecutionText(info->execution));
+      ImGui::PopStyleColor();
+    }
+    if (info->component_count == 0) {
+      DisabledWrappedText("No fiber component — no crystal-interior path to draw.");
+      return;
+    }
+    const std::vector<int> valid_indices = CollectValidSampleIndices(
+        *point.adopted_result, std::clamp(view.component_index, 0, static_cast<int>(info->component_count) - 1));
+    const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
+    if (!current.has_value()) {
+      DisabledWrappedText("No valid sample on show — nothing to draw.");
+      return;
+    }
+    RayTraceKey current_key;
+    current_key.point_id = point.intent_id;
+    current_key.component = current->component;
+    current_key.sample = current->stored;
+    switch (RayTraceDisplayStateFor(trace, current_key)) {
+      case RayTraceDisplayState::kHidden:
+        DisabledWrappedText("No representative path asked for yet.");
+        return;
+      case RayTraceDisplayState::kComputing:
+        DisabledWrappedText("Computing the representative path for this sample…");
+        return;
+      case RayTraceDisplayState::kError:
+        ImGui::TextUnformatted("Path query failed:");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("%s", trace.adopted_error.c_str());
+        ImGui::PopStyleColor();
+        return;
+      case RayTraceDisplayState::kRefused: {
+        LUMICE_RepresentativeRayInfo rinfo{};
+        rinfo.struct_size = sizeof(rinfo);
+        LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
+        ImGui::TextUnformatted("No legal path for this pose:");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("reason: %s | entry status: %s%s%s | corridor area %.3e (threshold %.3e)",
+                           PathTextToString(rinfo.reason).c_str(), PathTextToString(rinfo.entry_status).c_str(),
+                           rinfo.chain_failure.length > 0 ? " | chain: " : "",
+                           rinfo.chain_failure.length > 0 ? PathTextToString(rinfo.chain_failure).c_str() : "",
+                           rinfo.area_perp_internal, rinfo.area_threshold);
+        ImGui::PopStyleColor();
+        return;
+      }
+      case RayTraceDisplayState::kDrawn:
+        break;
+    }
+
+    // The crystal's mesh: the FROZEN binding's config (captured at DoAnalyze), in the analysis
+    // geometry's nominal caliber, true scale. The pool slot comes from the snapshot's own
+    // core->pool map; the mesh source is the frozen copy, so an edit of the live document after
+    // Analyze cannot rebuild the mesh into a shape the trace no longer lies inside (AC4).
+    const std::map<int, int> core_to_pool = AnalysisCoreToPoolMap(state);
+    const auto pool_it = core_to_pool.find(info->crystal_id);
+    if (pool_it == core_to_pool.end() || pool_it->second < 0) {
+      DisabledWrappedText("The analyzed crystal is not in the snapshot's pool map — no mesh to draw it with.");
+      return;
+    }
+    const int pool = pool_it->second;
+    const CrystalConfig* frozen = FrozenCrystalForPool(state, pool);
+    if (frozen == nullptr) {
+      DisabledWrappedText("The frozen binding carries no crystal for this pool slot — no mesh to draw it with.");
+      return;
+    }
+    CachedCrystalMesh& cache = PointMeshCache();
+    const int hash = CrystalParamHash(*frozen);
+    // The key moves even on a failed build: a persistently-unbuildable config is one failed
+    // attempt per key change, not one LUMICE_GetCrystalMesh call per frame.
+    if (cache.pool != pool || cache.hash != hash) {
+      cache.pool = pool;
+      cache.hash = hash;
+      cache.valid = BuildPointCrystalMesh(*frozen, &cache.mesh);
+    }
+    if (!cache.valid || cache.mesh.vertex_count <= 0) {
+      DisabledWrappedText("The crystal mesh came back empty for this configuration.");
+      return;
+    }
+    RayTracePolyline line;
+    if (!BuildRayTracePolyline(*trace.adopted_result, /*extension=*/1.1f, &line)) {
+      DisabledWrappedText("The path's readers answered empty — nothing to draw.");
+      return;
+    }
+
+    // The frame switch is a display transform (AC4): world view rotates the body-frame mesh to the
+    // pose's world; crystal view rotates the world-frame path back. One physical state, two views.
+    const double* pose = current->sample.pose;
+    auto to_display = [&](const float v[3], float out[3]) {
+      if (view.crystal_frame) {
+        out[0] = v[0];
+        out[1] = v[1];
+        out[2] = v[2];
+      } else {
+        RotateBodyToWorld(pose, v, out);
+      }
+    };
+    auto point_to_display = [&](const float p[3], float out[3]) {
+      if (view.crystal_frame) {
+        float tmp[3] = { p[0], p[1], p[2] };
+        RayTracePointToCrystalFrame(pose, tmp);
+        out[0] = tmp[0];
+        out[1] = tmp[1];
+        out[2] = tmp[2];
+      } else {
+        out[0] = p[0];
+        out[1] = p[1];
+        out[2] = p[2];
+      }
+    };
+
+    // Content bounds over everything on show (mesh + trace), for the fit and the orbit centre.
+    float lo[3] = { 0.0f, 0.0f, 0.0f };
+    float hi[3] = { 0.0f, 0.0f, 0.0f };
+    bool have_bounds = false;
+    auto accumulate = [&](const float p[3]) {
+      if (!have_bounds) {
+        for (int k = 0; k < 3; ++k) {
+          lo[k] = hi[k] = p[k];
+        }
+        have_bounds = true;
+        return;
+      }
+      for (int k = 0; k < 3; ++k) {
+        lo[k] = std::min(lo[k], p[k]);
+        hi[k] = std::max(hi[k], p[k]);
+      }
+    };
     for (int v = 0; v < cache.mesh.vertex_count; ++v) {
       float d[3];
       to_display(&cache.mesh.vertices[v * 3], d);
-      if (!have_mesh_bounds) {
-        for (int k = 0; k < 3; ++k) {
-          mesh_lo[k] = mesh_hi[k] = d[k];
+      accumulate(d);
+    }
+    // The crystal's own centre, in the same display frame: the sun arrow's anchor (the crystal-frame
+    // view's u direction radiates from the CRYSTAL, not from a content box the display extensions
+    // inflate).
+    float mesh_lo[3] = { 0.0f, 0.0f, 0.0f };
+    float mesh_hi[3] = { 0.0f, 0.0f, 0.0f };
+    for (int k = 0; k < 3; ++k) {
+      mesh_lo[k] = mesh_hi[k] = lo[k];
+    }
+    {
+      bool have_mesh_bounds = false;
+      for (int v = 0; v < cache.mesh.vertex_count; ++v) {
+        float d[3];
+        to_display(&cache.mesh.vertices[v * 3], d);
+        if (!have_mesh_bounds) {
+          for (int k = 0; k < 3; ++k) {
+            mesh_lo[k] = mesh_hi[k] = d[k];
+          }
+          have_mesh_bounds = true;
+          continue;
         }
-        have_mesh_bounds = true;
-        continue;
-      }
-      for (int k = 0; k < 3; ++k) {
-        mesh_lo[k] = std::min(mesh_lo[k], d[k]);
-        mesh_hi[k] = std::max(mesh_hi[k], d[k]);
+        for (int k = 0; k < 3; ++k) {
+          mesh_lo[k] = std::min(mesh_lo[k], d[k]);
+          mesh_hi[k] = std::max(mesh_hi[k], d[k]);
+        }
       }
     }
-  }
-  const float mesh_centre[3] = { (mesh_lo[0] + mesh_hi[0]) * 0.5f, (mesh_lo[1] + mesh_hi[1]) * 0.5f,
-                                 (mesh_lo[2] + mesh_hi[2]) * 0.5f };
-  for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
-    const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
-    float d[3];
-    point_to_display(p, d);
-    accumulate(d);
-  }
-  if (!have_bounds) {
-    ImGui::TextDisabled("Nothing on show.");
-    ImGui::EndChild();
-    return;
-  }
-  const float centre[3] = { (lo[0] + hi[0]) * 0.5f, (lo[1] + hi[1]) * 0.5f, (lo[2] + hi[2]) * 0.5f };
-  float fit = 0.0f;
-  auto accumulate_radius = [&](const float p[3]) {
-    const float dx = p[0] - centre[0];
-    const float dy = p[1] - centre[1];
-    const float dz = p[2] - centre[2];
-    fit = std::max(fit, std::sqrt(dx * dx + dy * dy + dz * dz));
-  };
-  for (int v = 0; v < cache.mesh.vertex_count; ++v) {
-    float d[3];
-    to_display(&cache.mesh.vertices[v * 3], d);
-    accumulate_radius(d);
-  }
-  for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
-    const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
-    float d[3];
-    point_to_display(p, d);
-    accumulate_radius(d);
-  }
-  fit = std::max(fit, 1e-4f);
-
-  // The canvas + gestures: drag orbits (yaw/pitch), wheel zooms. Pure display state.
-  const ImVec2 avail = ImGui::GetContentRegionAvail();
-  const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
-  // The canvas gives back exactly what the legend actually consumed last frame — a scrolled-out
-  // legend is an unreachable one (the map region's rule), and the legend is AC4's colour key.
-  // The legend's height is measured, not derived (the ##analysis_head pattern): its line count
-  // is a wrap judgment over live widths — a face-transmittance readout joins the row while it
-  // fits, wraps below when it doesn't — and a static arithmetic mirror of that judgment
-  // is exactly the "constant chasing a conditional state" shape the content-adaptation contract
-  // forbids. The cache rides one frame behind a width change; the widths that change it persist.
-  // The canvas holds a FLOOR. The old "yields to zero" absorbed the model out of existence at
-  // the compressed tiers: a canvas that is never submitted cannot be scrolled to, so the
-  // completed result's only spatial view was deleted rather than degraded. Where the fixed
-  // head, this floor and the legend exceed the cell, the region scrolls — the degradation
-  // ladder's internal-scroll rung, the map region's own shape: scrollbar on, the wheel
-  // hand-routed under the workspace's claim arbitration, so every part stays reachable
-  // wherever the cell is too short.
-  static float legend_h_cache = 0.0f;
-  if (legend_h_cache <= 0.0f) {
-    legend_h_cache = ImGui::GetTextLineHeight();  // the first frame's honest default: one line
-  }
-  // The floor is PREFERRED, not absolute. At the row ratio's endpoints the stacked host's own
-  // visible slice is shorter than the floor (1024x640 at rows 0.85 leaves the band ~78px; 2x
-  // halves the logical numbers again), and a canvas taller than its host's visible height can
-  // never sit fully inside the ancestors' clips — the "exists but unrecoverable" shape the
-  // four-edge containment probe caught. So the floor yields to the host's visible height, the
-  // content ladder's last rung (compress the graphic area itself), and still never to zero:
-  // whatever remains of the slice is a real, fully-recoverable orbit. Both caps are
-  // scroll-invariant on purpose: this region's own viewport (Size, not the ancestor-cropped
-  // clip — that one shrinks and grows with where the band's slice happens to sit, and a cap
-  // fed by the scroll it shapes would rescale the canvas under the user's hand), and the
-  // band's own clip (a top-level window, cropped by nothing above it). The vertical scrollbar
-  // deducts width, not height, so neither cap feeds back into itself.
-  const ImGuiWindow* region_win = ImGui::GetCurrentWindow();
-  float host_cap = FLT_MAX;
-  if (region_win->ParentWindow != nullptr) {
-    // One WindowPadding comes off the band's clip: this region's content begins one padding
-    // below the cell's top, so a canvas that spent the band's whole clip height would poke
-    // that much past the clip's bottom before any scroll could raise it.
-    host_cap = std::min(region_win->Size.y - ImGui::GetStyle().WindowPadding.y * 2.0f,
-                        region_win->ParentWindow->InnerClipRect.GetHeight() - ImGui::GetStyle().WindowPadding.y);
-  }
-  const float canvas_floor = UiPx(110.0f);  // the compressed-yield floor: a draggable orbit at every width
-  const float canvas_h = std::max(
-      0.0f, std::min(std::max(avail.y - ImGui::GetStyle().ItemSpacing.y - legend_h_cache, canvas_floor), host_cap));
-  bool canvas_hovered = false;
-  if (canvas_h > 0.0f) {
-    const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
-    ImGui::InvisibleButton("##r3d_canvas", ImVec2(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y),
-                           ImGuiButtonFlags_MouseButtonLeft);
-    canvas_hovered = ImGui::IsItemHovered();
-    const bool active = ImGui::IsItemActive();
-    // The orbit's wheel zoom consumes only while the workspace's wheel claim was standing at
-    // the frame's start (the arbitration in analyze_region_wheel.hpp; the map disk is the
-    // other claimant). The claim is CANVAS-scoped here, plus the region's own rows wherever
-    // the region actually overflows (scroll is useful exactly there); at a fitting cell the
-    // rows still belong to the band, its natural container.
-    AnalyzeRegionWheelClaim(canvas_hovered || (ImGui::IsWindowHovered() && ImGui::GetScrollMaxY() > 0.0f),
-                            AnalyzeRay3DWheelOwnerId());
-    if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-      const ImVec2 delta = ImGui::GetIO().MouseDelta;
-      // Grab convention — the project's one drag metaphor (Render main view inside-out and Globe
-      // alike, the modal preview trackball, this orbit camera; doc/geometry/coordinate-convention.md
-      // §9.8): the content's near face follows the hand. Right drag → yaw decreases; down drag →
-      // pitch decreases.
-      view.orbit_yaw_deg -= delta.x * 0.5f;
-      view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg - delta.y * 0.5f, -88.0f, 88.0f);
-    }
-    if (AnalyzeRegionWheelStanding() && ImGui::IsItemHovered() && std::abs(ImGui::GetIO().MouseWheel) > 0.0f) {
-      view.orbit_zoom =
-          std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
-    }
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
-    const float side = std::min(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y);
-    const float scale = (side * 0.42f / fit) * std::clamp(view.orbit_zoom, 0.25f, 8.0f);
-    const ImVec2 mid((canvas_min.x + canvas_max.x) * 0.5f, (canvas_min.y + canvas_max.y) * 0.5f);
-    double fwd[3];
-    double right[3];
-    double up[3];
-    OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
-    auto project = [&](const float p[3]) {
-      const double dx = static_cast<double>(p[0]) - centre[0];
-      const double dy = static_cast<double>(p[1]) - centre[1];
-      const double dz = static_cast<double>(p[2]) - centre[2];
-      const double sx = dx * right[0] + dy * right[1] + dz * right[2];
-      const double sy = dx * up[0] + dy * up[1] + dz * up[2];
-      return ImVec2(static_cast<float>(mid.x + sx * scale), static_cast<float>(mid.y - sy * scale));
-    };
-
-    // The mesh wireframe (dim), then the trace (full alpha on top).
-    for (int e = 0; e < cache.mesh.edge_count; ++e) {
-      float a[3];
-      float b[3];
-      to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2] * 3], a);
-      to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2 + 1] * 3], b);
-      dl->AddLine(project(a), project(b), IM_COL32(105, 110, 120, 120), 1.0f);
-    }
-    for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
-      const float* p0 = &line.points[s * 6];
-      const float* p1 = p0 + 3;
-      float d0[3];
-      float d1[3];
-      point_to_display(p0, d0);
-      point_to_display(p1, d1);
-      dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
-    }
-    // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
-    // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
-    // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
-    // display synthesis and marked by nothing.
-    for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
-      const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
+    const float mesh_centre[3] = { (mesh_lo[0] + mesh_hi[0]) * 0.5f, (mesh_lo[1] + mesh_hi[1]) * 0.5f,
+                                   (mesh_lo[2] + mesh_hi[2]) * 0.5f };
+    for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
+      const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
       float d[3];
       point_to_display(p, d);
-      dl->AddCircle(project(d), UiPx(2.5f), IM_COL32(240, 240, 240, 190), 0, 1.0f);
+      accumulate(d);
     }
-    // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
-    // centre (the crystal view's own anchor; the world view's entry leg already carries the
-    // incident). The tip rides the content fit's scale, the anchor does not.
-    if (view.crystal_frame) {
-      const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
-                           static_cast<float>(current->sample.sun_in_crystal[1]),
-                           static_cast<float>(current->sample.sun_in_crystal[2]) };
-      const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
-                             mesh_centre[2] + u[2] * fit * 0.6f };
-      dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+    if (!have_bounds) {
+      ImGui::TextDisabled("Nothing on show.");
+      return;
     }
-  }
-  // The legend: every unit joins the previous line only while it fits — SameLine is a
-  // judgment here like everywhere else in the workspace — and the transmittance readout wraps
-  // BELOW only after the labels' line is actually ended. An AddLine between the labels
-  // submits no layout item, so a SameLine left dangling in front of a wrapped text made the
-  // line tail's sliver the wrap width of EVERY line — the legend grew past a thousand pixels
-  // of near-vertical characters at the narrowest cells.
-  const float legend_top_y = ImGui::GetCursorPosY();
-  ImGui::TextDisabled("entry");
-  ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(0, 1.0f), 2.0f);
-  if (fits_on_line(ImGui::CalcTextSize("internal").x)) {
-    ImGui::SameLine();
-  }
-  ImGui::TextDisabled("internal");
-  ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(1, 1.0f), 2.0f);
-  if (fits_on_line(ImGui::CalcTextSize("exit").x)) {
-    ImGui::SameLine();
-  }
-  ImGui::TextDisabled("exit");
-  ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
-  if (current->sample.interface_count >= 2) {
-    char transmittance[96];
-    std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",
-                  current->sample.interface_transmittances[0],
-                  current->sample.interface_transmittances[current->sample.interface_count - 1]);
-    if (fits_on_line(ImGui::CalcTextSize(transmittance).x)) {
+    const float centre[3] = { (lo[0] + hi[0]) * 0.5f, (lo[1] + hi[1]) * 0.5f, (lo[2] + hi[2]) * 0.5f };
+    float fit = 0.0f;
+    auto accumulate_radius = [&](const float p[3]) {
+      const float dx = p[0] - centre[0];
+      const float dy = p[1] - centre[1];
+      const float dz = p[2] - centre[2];
+      fit = std::max(fit, std::sqrt(dx * dx + dy * dy + dz * dz));
+    };
+    for (int v = 0; v < cache.mesh.vertex_count; ++v) {
+      float d[3];
+      to_display(&cache.mesh.vertices[v * 3], d);
+      accumulate_radius(d);
+    }
+    for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
+      const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
+      float d[3];
+      point_to_display(p, d);
+      accumulate_radius(d);
+    }
+    fit = std::max(fit, 1e-4f);
+
+    const ImVec2 avail = canvas_size;
+    const ImVec2 canvas_min = graph_min;
+    const float canvas_h = canvas_size.y;
+    if (canvas_h > 0.0f) {
+      const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
+      const bool active = graph_active;
+      // Consume only the standing canvas claim; the report retains native wheel scrolling.
+      if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        const ImVec2 delta = ImGui::GetIO().MouseDelta;
+        // Grab convention — the project's one drag metaphor (Render main view inside-out and Globe
+        // alike, the modal preview trackball, this orbit camera; doc/geometry/coordinate-convention.md
+        // §9.8): the content's near face follows the hand. Right drag → yaw decreases; down drag →
+        // pitch decreases.
+        view.orbit_yaw_deg -= delta.x * 0.5f;
+        view.orbit_pitch_deg = std::clamp(view.orbit_pitch_deg - delta.y * 0.5f, -88.0f, 88.0f);
+      }
+      if (AnalyzeRegionWheelStanding() && graph_hovered && std::abs(ImGui::GetIO().MouseWheel) > 0.0f) {
+        view.orbit_zoom =
+            std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
+      }
+
+      ImDrawList* dl = graph_draw_list;
+      dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
+      const float side = std::min(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y);
+      const float scale = (side * 0.42f / fit) * std::clamp(view.orbit_zoom, 0.25f, 8.0f);
+      const ImVec2 mid((canvas_min.x + canvas_max.x) * 0.5f, (canvas_min.y + canvas_max.y) * 0.5f);
+      double fwd[3];
+      double right[3];
+      double up[3];
+      OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
+      auto project = [&](const float p[3]) {
+        const double dx = static_cast<double>(p[0]) - centre[0];
+        const double dy = static_cast<double>(p[1]) - centre[1];
+        const double dz = static_cast<double>(p[2]) - centre[2];
+        const double sx = dx * right[0] + dy * right[1] + dz * right[2];
+        const double sy = dx * up[0] + dy * up[1] + dz * up[2];
+        return ImVec2(static_cast<float>(mid.x + sx * scale), static_cast<float>(mid.y - sy * scale));
+      };
+
+      // The mesh wireframe (dim), then the trace (full alpha on top).
+      for (int e = 0; e < cache.mesh.edge_count; ++e) {
+        float a[3];
+        float b[3];
+        to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2] * 3], a);
+        to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2 + 1] * 3], b);
+        dl->AddLine(project(a), project(b), IM_COL32(105, 110, 120, 120), 1.0f);
+      }
+      for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
+        const float* p0 = &line.points[s * 6];
+        const float* p1 = p0 + 3;
+        float d0[3];
+        float d1[3];
+        point_to_display(p0, d0);
+        point_to_display(p1, d1);
+        dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
+      }
+      // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
+      // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
+      // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
+      // display synthesis and marked by nothing.
+      for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
+        const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
+        float d[3];
+        point_to_display(p, d);
+        dl->AddCircle(project(d), UiPx(2.5f), IM_COL32(240, 240, 240, 190), 0, 1.0f);
+      }
+      // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
+      // centre (the crystal view's own anchor; the world view's entry leg already carries the
+      // incident). The tip rides the content fit's scale, the anchor does not.
+      if (view.crystal_frame) {
+        const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
+                             static_cast<float>(current->sample.sun_in_crystal[1]),
+                             static_cast<float>(current->sample.sun_in_crystal[2]) };
+        const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
+                               mesh_centre[2] + u[2] * fit * 0.6f };
+        dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+      }
+    }
+    // The legend: every unit joins the previous line only while it fits — SameLine is a
+    // judgment here like everywhere else in the workspace — and the transmittance readout wraps
+    // BELOW only after the labels' line is actually ended. An AddLine between the labels
+    // submits no layout item, so a SameLine left dangling in front of a wrapped text made the
+    // line tail's sliver the wrap width of EVERY line — the legend grew past a thousand pixels
+    // of near-vertical characters at the narrowest cells.
+    ImGui::TextDisabled("entry");
+    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(0, 1.0f), 2.0f);
+    if (fits_on_line(ImGui::CalcTextSize("internal").x)) {
       ImGui::SameLine();
-      ImGui::TextDisabled("%s", transmittance);
-    } else {
-      ImGui::NewLine();  // end the labels' line — the wrapped readout owns a fresh line, not the tail
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("%s", transmittance);
-      ImGui::PopStyleColor();
     }
-  }
-  legend_h_cache = ImGui::GetCursorPosY() - legend_top_y;
-  // The region's own scroll, hand-routed (the map region's rule): the wheel over the rows —
-  // wherever the region actually overflows, which is exactly when the claim stands for them —
-  // moves content and never the view. The step is the native wheel scroll's own formula.
-  if (!canvas_hovered && AnalyzeRegionWheelStanding() && ImGui::IsWindowHovered() &&
-      ImGui::GetIO().MouseWheel != 0.0f) {
-    const float max_step = ImGui::GetWindowSize().y * 0.67f;
-    const float step = std::floor(std::min(5.0f * ImGui::GetFontSize(), max_step));
-    ImGui::SetScrollY(ImGui::GetScrollY() - ImGui::GetIO().MouseWheel * step);
-  }
+    ImGui::TextDisabled("internal");
+    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(1, 1.0f), 2.0f);
+    if (fits_on_line(ImGui::CalcTextSize("exit").x)) {
+      ImGui::SameLine();
+    }
+    ImGui::TextDisabled("exit");
+    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
+    if (current->sample.interface_count >= 2) {
+      char transmittance[96];
+      std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",
+                    current->sample.interface_transmittances[0],
+                    current->sample.interface_transmittances[current->sample.interface_count - 1]);
+      if (fits_on_line(ImGui::CalcTextSize(transmittance).x)) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", transmittance);
+      } else {
+        ImGui::NewLine();  // end the labels' line — the wrapped readout owns a fresh line, not the tail
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("%s", transmittance);
+        ImGui::PopStyleColor();
+      }
+    }
+  };
+  render_content();
+  ImGui::EndChild();
   ImGui::EndChild();
 }
 
@@ -1846,469 +1798,488 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   };
   ImGui::SeparatorText("Contribution curve");
 
-  const PointQueryState st = PointQueryStateFor(point);
-  if (st == PointQueryState::kNoIntent) {
-    disabled_line("The contribution curve takes this region once a point result is in.");
-    ImGui::EndChild();
-    return;
+  RenderPointStatus(point);
+  const ImVec2 available = ImGui::GetContentRegionAvail();
+  const float graph_h = CanvasHeightBeforeReport(available.y, 0.0f, std::max(UiPx(96.0f), available.y * 0.4f),
+                                                 ImGui::GetStyle().ItemSpacing.y);
+  const ImVec2 graph_size(available.x, graph_h);
+  const ImVec2 graph_min = ImGui::GetCursorScreenPos();
+  ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
+  bool graph_hovered = false;
+  bool graph_active = false;
+  if (graph_h > 0.0f) {
+    ImGui::InvisibleButton("##pose_curve_canvas", graph_size, ImGuiButtonFlags_MouseButtonLeft);
+    graph_hovered = ImGui::IsItemHovered();
+    graph_active = ImGui::IsItemActive();
+    graph_draw_list->AddRectFilled(graph_min, ImVec2(graph_min.x + graph_size.x, graph_min.y + graph_h),
+                                   IM_COL32(16, 18, 22, 255));
   }
-  if (st == PointQueryState::kWaiting) {
-    disabled_line("The point is computing — the curve follows it.");
-    ImGui::EndChild();
-    return;
-  }
-  if (st == PointQueryState::kCancelled) {
-    disabled_line("Point cancelled — the curve waits for a new query.");
-    ImGui::EndChild();
-    return;
-  }
-  if (st == PointQueryState::kRefused) {
-    disabled_line("Point refused — the curve waits for a supported target.");
-    ImGui::EndChild();
-    return;
-  }
-  const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
-  if (!info.has_value()) {
-    DisabledWrappedText("The adopted point document did not answer its Info reader.");
-    ImGui::EndChild();
-    return;
-  }
-  if (info->outcome == LUMICE_PATH_POINT_MASS) {
-    disabled_line("A rank-0 point mass has no fiber curve — the details carry the mass numbers.");
-    ImGui::EndChild();
-    return;
-  }
-  std::vector<PointComponentRow> rows;
-  const int component_total = PointComponentRows(*point.adopted_result, &rows);
-  if (component_total == 0) {
-    LUMICE_PathPointReach reach{};
-    reach.struct_size = sizeof(reach);
-    const bool have_reach = LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK;
-    if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
-      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-      ImGui::TextWrapped(
-          "Partial document (%s) — what arrived is on show; emptiness here is the run's "
-          "stop, not a physical absence.",
-          ExecutionText(info->execution));
-      ImGui::PopStyleColor();
+  ImGui::BeginChild("##PoseCurveScroll", RemainingReportSize());
+  const auto render_content = [&] {
+    const PointQueryState st = PointQueryStateFor(point);
+    if (st == PointQueryState::kNoIntent) {
+      disabled_line("The contribution curve takes this region once a point result is in.");
+      return;
     }
-    if (have_reach && !reach.target_in_range) {
-      disabled_line("No fiber here: the target's deviation is outside the range of this path's deflection field.");
+    if (st == PointQueryState::kWaiting) {
+      disabled_line("The point is computing — the curve follows it.");
+      return;
+    }
+    if (st == PointQueryState::kCancelled) {
+      disabled_line("Point cancelled — the curve waits for a new query.");
+      return;
+    }
+    if (st == PointQueryState::kRefused) {
+      disabled_line("Point refused — the curve waits for a supported target.");
+      return;
+    }
+    const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
+    if (!info.has_value()) {
+      DisabledWrappedText("The adopted point document did not answer its Info reader.");
+      return;
+    }
+    if (info->outcome == LUMICE_PATH_POINT_MASS) {
+      disabled_line("A rank-0 point mass has no fiber curve — the details carry the mass numbers.");
+      return;
+    }
+    std::vector<PointComponentRow> rows;
+    const int component_total = PointComponentRows(*point.adopted_result, &rows);
+    if (component_total == 0) {
+      LUMICE_PathPointReach reach{};
+      reach.struct_size = sizeof(reach);
+      const bool have_reach = LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK;
+      if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+        ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+        ImGui::TextWrapped(
+            "Partial document (%s) — what arrived is on show; emptiness here is the run's "
+            "stop, not a physical absence.",
+            ExecutionText(info->execution));
+        ImGui::PopStyleColor();
+      }
+      if (have_reach && !reach.target_in_range) {
+        disabled_line("No fiber here: the target's deviation is outside the range of this path's deflection field.");
+      } else {
+        disabled_line("No fiber component at this point — nothing to draw a curve along.");
+      }
+      return;
+    }
+    const int component = std::clamp(view.component_index, 0, component_total - 1);
+    PointContributionCurve curve;
+    BuildPointContributionCurve(*point.adopted_result, component, &curve);
+    if (!curve.ok || curve.valid_positions.empty()) {
+      if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+        ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+        ImGui::TextWrapped("Partial document (%s) — the curve on show is what arrived.",
+                           ExecutionText(info->execution));
+        ImGui::PopStyleColor();
+      }
+      disabled_line("This component carries no valid sample — nothing to draw a curve along.");
+      return;
+    }
+    const int valid_count = static_cast<int>(curve.valid_positions.size());
+    const size_t n = curve.points.size();
+
+    // ---- The fixed stack's title: identity, span, integral echo — the component's own words,
+    // the completeness named where it is incomplete. ----
+    const double span_rad = n > 0 ? curve.points[n - 1].x_rad : 0.0;
+    // The echo slot: the engine's integral answer and its completeness pair — "incomplete" named
+    // where the counts differ (available_points counts points, not segments — audit §1; the GUI
+    // echoes, it never renormalizes).
+    char echo[80];
+    if (curve.integral_available) {
+      std::snprintf(echo, sizeof(echo), "int %.3g (%d/%d)%s", curve.fiber_integral, curve.available_points,
+                    curve.total_points, curve.available_points < curve.total_points ? " · incomplete" : "");
     } else {
-      disabled_line("No fiber component at this point — nothing to draw a curve along.");
+      std::snprintf(echo, sizeof(echo), "int unavailable (%d/%d)%s", curve.available_points, curve.total_points,
+                    curve.available_points < curve.total_points ? " · incomplete" : "");
     }
-    ImGui::EndChild();
-    return;
-  }
-  const int component = std::clamp(view.component_index, 0, component_total - 1);
-  PointContributionCurve curve;
-  BuildPointContributionCurve(*point.adopted_result, component, &curve);
-  if (!curve.ok || curve.valid_positions.empty()) {
-    if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
-      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-      ImGui::TextWrapped("Partial document (%s) — the curve on show is what arrived.", ExecutionText(info->execution));
-      ImGui::PopStyleColor();
+    char title[192];
+    if (curve.seed_index == 0) {
+      // Closed loop: the axis zero IS the seed (first and last poses coincide — audit §5.1).
+      std::snprintf(title, sizeof(title), "%s · %d pts · loop %.3f rad · %s", curve.kind.c_str(), static_cast<int>(n),
+                    span_rad, echo);
+    } else {
+      // Arc: the zero sits at the backward far-end boundary event; the seed rides mid-curve.
+      const double seed_x = curve.seed_index >= 0 && curve.seed_index < static_cast<int>(n) ?
+                                curve.points[static_cast<size_t>(curve.seed_index)].x_rad :
+                                0.0;
+      std::snprintf(title, sizeof(title), "%s · %d pts · arc %.3f rad · seed %.3f · %s", curve.kind.c_str(),
+                    static_cast<int>(n), span_rad, seed_x, echo);
     }
-    disabled_line("This component carries no valid sample — nothing to draw a curve along.");
-    ImGui::EndChild();
-    return;
-  }
-  const int valid_count = static_cast<int>(curve.valid_positions.size());
-  const size_t n = curve.points.size();
+    disabled_line("%s", title);
+    // J7's constant: the caliber is DECLARED, never inferred — on plate-family scenes rho (and
+    // the product and the integral with it) reads identically zero in this convention, while the
+    // other arms stay informative per their own flags (audit §4).
+    disabled_line("angle-Lebesgue · arclength axis in rad");
 
-  // ---- The fixed stack's title: identity, span, integral echo — the component's own words,
-  // the completeness named where it is incomplete. ----
-  const double span_rad = n > 0 ? curve.points[n - 1].x_rad : 0.0;
-  // The echo slot: the engine's integral answer and its completeness pair — "incomplete" named
-  // where the counts differ (available_points counts points, not segments — audit §1; the GUI
-  // echoes, it never renormalizes).
-  char echo[80];
-  if (curve.integral_available) {
-    std::snprintf(echo, sizeof(echo), "int %.3g (%d/%d)%s", curve.fiber_integral, curve.available_points,
-                  curve.total_points, curve.available_points < curve.total_points ? " · incomplete" : "");
-  } else {
-    std::snprintf(echo, sizeof(echo), "int unavailable (%d/%d)%s", curve.available_points, curve.total_points,
-                  curve.available_points < curve.total_points ? " · incomplete" : "");
-  }
-  char title[192];
-  if (curve.seed_index == 0) {
-    // Closed loop: the axis zero IS the seed (first and last poses coincide — audit §5.1).
-    std::snprintf(title, sizeof(title), "%s · %d pts · loop %.3f rad · %s", curve.kind.c_str(), static_cast<int>(n),
-                  span_rad, echo);
-  } else {
-    // Arc: the zero sits at the backward far-end boundary event; the seed rides mid-curve.
-    const double seed_x = curve.seed_index >= 0 && curve.seed_index < static_cast<int>(n) ?
-                              curve.points[static_cast<size_t>(curve.seed_index)].x_rad :
-                              0.0;
-    std::snprintf(title, sizeof(title), "%s · %d pts · arc %.3f rad · seed %.3f · %s", curve.kind.c_str(),
-                  static_cast<int>(n), span_rad, seed_x, echo);
-  }
-  disabled_line("%s", title);
-  // J7's constant: the caliber is DECLARED, never inferred — on plate-family scenes rho (and
-  // the product and the integral with it) reads identically zero in this convention, while the
-  // other arms stay informative per their own flags (audit §4).
-  disabled_line("angle-Lebesgue · arclength axis in rad");
-
-  // ---- The legend: one swatch + short symbol per arm, the units in the factor readouts' own
-  // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
-  // a judgment (the 3D legend's rule): an entry wraps below when it no longer fits. ----
-  const ImU32 arm_colors[kCurveArms] = {
-    IM_COL32(96, 165, 250, 255),   // rho — blue
-    IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
-    IM_COL32(74, 222, 128, 255),   // T — green
-    IM_COL32(232, 121, 249, 255),  // K — fuchsia
-    IM_COL32(250, 250, 250, 255),  // product — the headline quantity, brightest
-  };
-  const char* arm_labels[kCurveArms] = { "rho rad^-3", "A/a^2", "T total", "K 1/(J+eps)", "rho*A/a^2*T*K" };
-  const auto value_of = [&](int arm, size_t i) -> double {
-    const PointCurvePoint& p = curve.points[i];
-    switch (arm) {
-      case 0:
-        return p.rho;
-      case 1:
-        return p.area;
-      case 2:
-        return p.transmission;
-      case 3:
-        return p.k_carea;
-      default:
-        return p.product;
-    }
-  };
-  const auto kind_of = [&](int arm, size_t i) -> PointCurveValueKind {
-    const PointCurvePoint& p = curve.points[i];
-    switch (arm) {
-      case 0:
-        return p.rho_kind;
-      case 1:
-        return p.area_kind;
-      case 2:
-        return p.transmission_kind;
-      case 3:
-        return p.k_kind;
-      default:
-        return p.product_kind;
-    }
-  };
-  int positive_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
-  int zero_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
-  for (size_t i = 0; i < n; ++i) {
-    for (int arm = 0; arm < kCurveArms; ++arm) {
-      if (kind_of(arm, i) == PointCurveValueKind::kPositive) {
-        ++positive_seen[arm];
-      } else if (kind_of(arm, i) == PointCurveValueKind::kExactZero) {
-        ++zero_seen[arm];
+    // ---- The legend: one swatch + short symbol per arm, the units in the factor readouts' own
+    // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
+    // a judgment (the 3D legend's rule): an entry wraps below when it no longer fits. ----
+    const ImU32 arm_colors[kCurveArms] = {
+      IM_COL32(96, 165, 250, 255),   // rho — blue
+      IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
+      IM_COL32(74, 222, 128, 255),   // T — green
+      IM_COL32(232, 121, 249, 255),  // K — fuchsia
+      IM_COL32(250, 250, 250, 255),  // product — the headline quantity, brightest
+    };
+    const char* arm_labels[kCurveArms] = { "rho rad^-3", "A/a^2", "T total", "K 1/(J+eps)", "rho*A/a^2*T*K" };
+    const auto value_of = [&](int arm, size_t i) -> double {
+      const PointCurvePoint& p = curve.points[i];
+      switch (arm) {
+        case 0:
+          return p.rho;
+        case 1:
+          return p.area;
+        case 2:
+          return p.transmission;
+        case 3:
+          return p.k_carea;
+        default:
+          return p.product;
       }
-    }
-  }
-  {
-    const float swatch = UiPx(9.0f);
-    // The fit is judged where the entry would LAND — the previous entry's text rect end (the
-    // cursor has already dropped to the next line by then; a cursor-position check would read
-    // the fresh line's left edge and glue every entry onto one overflowing row).
-    const float region_max_x = ImGui::GetWindowPos().x + ImGui::GetContentRegionMax().x;
-    for (int arm = 0; arm < kCurveArms; ++arm) {
-      std::string label = arm_labels[arm];
-      if (positive_seen[arm] == 0) {
-        label += zero_seen[arm] > 0 ? " (0 throughout)" : " (unavailable)";
+    };
+    const auto kind_of = [&](int arm, size_t i) -> PointCurveValueKind {
+      const PointCurvePoint& p = curve.points[i];
+      switch (arm) {
+        case 0:
+          return p.rho_kind;
+        case 1:
+          return p.area_kind;
+        case 2:
+          return p.transmission_kind;
+        case 3:
+          return p.k_kind;
+        default:
+          return p.product_kind;
       }
-      const float text_w = ImGui::CalcTextSize(label.c_str()).x;
-      bool fits = false;
-      if (arm > 0) {
-        const float prev_end = ImGui::GetItemRectMax().x;  // the previous entry's text, screen coords
-        fits = prev_end + ImGui::GetStyle().ItemSpacing.x + swatch + ImGui::GetStyle().ItemSpacing.x + text_w <=
-               region_max_x;
-      }
-      if (arm > 0 && fits) {
-        ImGui::SameLine();
-      }
-      const ImVec2 sp = ImGui::GetCursorScreenPos();
-      ImGui::GetWindowDrawList()->AddRectFilled(sp, ImVec2(sp.x + swatch, sp.y + swatch), arm_colors[arm]);
-      ImGui::Dummy(ImVec2(swatch, swatch));
-      ImGui::SameLine();
-      ImGui::TextUnformatted(label.c_str());
-    }
-  }
-
-  // ---- The readout's words: one arm's value at its honest state — the number, "0" for the
-  // exact zero, "n/a" for unavailable. The curve holds the engine's number; this only spells it.
-  const auto arm_readout = [&](int arm, size_t i) -> std::string {
-    const PointCurveValueKind kind = kind_of(arm, i);
-    if (kind == PointCurveValueKind::kUnavailable) {
-      return "n/a";
-    }
-    if (kind == PointCurveValueKind::kExactZero) {
-      return "0";
-    }
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.3g", value_of(arm, i));
-    return buf;
-  };
-  const auto sample_readout = [&](int position) -> std::string {
-    const int stored = PointCurveStoredAt(curve, position);
-    if (stored < 0) {
-      return std::string();
-    }
-    const PointCurvePoint& p = curve.points[static_cast<size_t>(stored)];
-    char head[64];
-    std::snprintf(head, sizeof(head), "sample %d/%d @ %.3f rad", position + 1, valid_count, p.x_rad);
-    std::string out = head;
-    const char* names[kCurveArms] = { "rho", "A/a^2", "T", "K", "product" };
-    for (int arm = 0; arm < kCurveArms; ++arm) {
-      out += " · ";
-      out += names[arm];
-      out += " ";
-      out += arm_readout(arm, static_cast<size_t>(stored));
-    }
-    return out;
-  };
-
-  // ---- The canvas + readout + scroll: the two-segment form at any cell that can hold the
-  // canvas floor, the readout's wrapped line and a draggable scroll viewport; below that, the
-  // ladder's last rung — no canvas, everything in the region's own scroll (the globe's rule:
-  // a canvas that cannot exist must not swallow the lines nobody could then reach). ----
-  const ImVec2 avail = ImGui::GetContentRegionAvail();
-  // The readout's wrapped worst case: the hover form carries the prefix and all five arms —
-  // three lines at the narrowest column. Under-budgeting here would silently squeeze the
-  // scroll region below its draggable floor at exactly the hover state.
-  const float readout_h = ImGui::GetTextLineHeight() * 3.0f + ImGui::GetStyle().ItemSpacing.y;
-  const float scroll_min = UiPx(32.0f);
-  const float wanted_canvas = avail.y - readout_h - scroll_min - ImGui::GetStyle().ItemSpacing.y;
-  const float canvas_min_slice = UiPx(kPoseViewCurveCanvasMinSlice);
-  const bool canvas_fits = wanted_canvas >= canvas_min_slice;
-  int hover_position = -1;
-  if (canvas_fits) {
-    // The canvas takes what the two-segment form gives: the floor is the full form's budget
-    // line (the D5 drag floor), not a sizing minimum — in the fallback's squeezed shares the
-    // canvas yields down to a real slice instead of pushing the readout and the scroll region
-    // out of the cell (the 3D region's compressed-yield rule).
-    const float canvas_h = wanted_canvas;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
-    const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
-    ImGui::InvisibleButton("##pose_curve_canvas", ImVec2(canvas_max.x - canvas_min.x, canvas_h),
-                           ImGuiButtonFlags_MouseButtonLeft);
-    const bool canvas_hovered = ImGui::IsItemHovered();
-    const bool canvas_active = ImGui::IsItemActive();
-    const double x_hi = n > 0 ? curve.points[n - 1].x_rad : 0.0;
-    // The shared log range: decade bounds over the union of ALL arms' usable positives — no
-    // per-arm normalization (AC1: the arms' actual magnitudes stay comparable). Computed FIRST
-    // so the left pad can budget the labels it will actually draw (a real fiber can span
-    // hundreds of decades; "1e-213" is far wider than "1e-6").
-    double v_min = 0.0;
-    double v_max = 0.0;
-    bool have_range = false;
-    for (size_t i = 0; i < n && x_hi > 0.0; ++i) {
+    };
+    int positive_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
+    int zero_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
+    for (size_t i = 0; i < n; ++i) {
       for (int arm = 0; arm < kCurveArms; ++arm) {
-        if (kind_of(arm, i) != PointCurveValueKind::kPositive) {
-          continue;
-        }
-        const double v = value_of(arm, i);
-        if (!have_range || v < v_min) {
-          v_min = v;
-        }
-        if (!have_range || v > v_max) {
-          v_max = v;
-        }
-        have_range = true;
-      }
-    }
-    // How many decades sit between LABELLED majors: plot height and font size decide, so a
-    // 213-decade range labels ~8 evenly spaced exponents instead of 213 overlapping texts.
-    const float line_h = ImGui::GetTextLineHeight();
-    const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - UiPx(28.0f));
-    const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
-    float widest_lab = 0.0f;
-    if (have_range) {
-      for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
-        const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
-        if (!tick.major || exp10 % label_step != 0) {
-          continue;
-        }
-        char lab[16];
-        std::snprintf(lab, sizeof(lab), "%.0e", tick.value);
-        widest_lab = std::max(widest_lab, ImGui::CalcTextSize(lab).x);
-      }
-    }
-    const float pad_l = std::max(UiPx(34.0f), widest_lab + UiPx(10.0f));  // decade labels live left of the plot
-    const float pad_r = UiPx(10.0f);
-    const float pad_t = UiPx(10.0f);  // the seed mark rides above the plot
-    const float pad_b = UiPx(28.0f);  // the zero row, then the x labels' strip
-    const ImVec2 plot_min(canvas_min.x + pad_l, canvas_min.y + pad_t);
-    const ImVec2 plot_max(canvas_max.x - pad_r, canvas_max.y - pad_b);
-    const float plot_w = std::max(1.0f, plot_max.x - plot_min.x);
-    const float plot_h = std::max(1.0f, plot_max.y - plot_min.y);
-    const auto x_to_px = [&](double x) {
-      const double t = x_hi > 0.0 ? x / x_hi : 0.0;
-      return plot_min.x + static_cast<float>(t * plot_w);
-    };
-    const auto x_at_px = [&](float px) {
-      const float t = std::clamp((px - plot_min.x) / plot_w, 0.0f, 1.0f);
-      return static_cast<double>(t) * x_hi;
-    };
-
-    dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
-    dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
-
-    const auto v_to_py = [&](double v) {
-      const double log_lo = have_range ? std::log10(v_min) : 0.0;
-      double log_hi = have_range ? std::log10(v_max) : 0.0;
-      if (log_hi <= log_lo) {
-        log_hi = log_lo + 1.0;  // a single decade, so one value draws inside a range
-      }
-      const double t = (std::log10(v) - log_lo) / (log_hi - log_lo);
-      return plot_min.y + static_cast<float>((1.0 - std::clamp(t, 0.0, 1.0)) * plot_h);
-    };
-    if (have_range) {
-      const bool minors_fit =
-          label_step == 1 && plot_h / std::max(1.0, std::log10(v_max) - std::log10(v_min)) >= UiPx(12.0f);
-      for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
-        const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
-        const bool labelled = tick.major && exp10 % label_step == 0;
-        if (tick.major && !labelled) {
-          continue;  // an unlabelled decade would only crowd the plot at this density
-        }
-        const float py = v_to_py(tick.value);
-        if (tick.major) {
-          dl->AddLine(ImVec2(plot_min.x, py), ImVec2(plot_max.x, py), IM_COL32(60, 64, 72, 110), 1.0f);
-          char lab[16];
-          std::snprintf(lab, sizeof(lab), "%.0e", tick.value);
-          const ImVec2 ts = ImGui::CalcTextSize(lab);
-          dl->AddText(ImVec2(plot_min.x - ts.x - UiPx(5.0f), py - ts.y * 0.5f),
-                      ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
-        } else if (minors_fit) {
-          dl->AddLine(ImVec2(plot_min.x - UiPx(3.0f), py), ImVec2(plot_min.x, py), IM_COL32(90, 94, 102, 140), 1.0f);
+        if (kind_of(arm, i) == PointCurveValueKind::kPositive) {
+          ++positive_seen[arm];
+        } else if (kind_of(arm, i) == PointCurveValueKind::kExactZero) {
+          ++zero_seen[arm];
         }
       }
-    }
-    // The plot's frame, the x labels and the axis unit (the caliber line names rad; the axis
-    // shows where its numbers sit).
-    dl->AddRect(plot_min, plot_max, IM_COL32(90, 94, 102, 120), 0.0f, 0, 1.0f);
-    if (x_hi > 0.0) {
-      char lab[24];
-      const char* fmt = x_hi < 10.0 ? "%.2f" : (x_hi < 100.0 ? "%.1f" : "%.0f");
-      const float axis_lab_y = plot_max.y + UiPx(13.0f);
-      std::snprintf(lab, sizeof(lab), fmt, 0.0);
-      dl->AddText(ImVec2(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y),
-                  ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
-      std::snprintf(lab, sizeof(lab), fmt, x_hi * 0.5);
-      dl->AddText(ImVec2(x_to_px(x_hi * 0.5) - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y),
-                  ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
-      std::snprintf(lab, sizeof(lab), fmt, x_hi);
-      dl->AddText(ImVec2(plot_max.x - ImGui::CalcTextSize(lab).x, axis_lab_y),
-                  ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
     }
     {
-      const char* unit = "rad";
-      dl->AddText(ImVec2(canvas_max.x - ImGui::CalcTextSize(unit).x - UiPx(6.0f), canvas_min.y + UiPx(4.0f)),
-                  ImGui::GetColorU32(ImGuiCol_TextDisabled), unit);
+      const float swatch = UiPx(9.0f);
+      // The fit is judged where the entry would LAND — the previous entry's text rect end (the
+      // cursor has already dropped to the next line by then; a cursor-position check would read
+      // the fresh line's left edge and glue every entry onto one overflowing row).
+      const float region_max_x = ImGui::GetWindowPos().x + ImGui::GetContentRegionMax().x;
+      for (int arm = 0; arm < kCurveArms; ++arm) {
+        std::string label = arm_labels[arm];
+        if (positive_seen[arm] == 0) {
+          label += zero_seen[arm] > 0 ? " (0 throughout)" : " (unavailable)";
+        }
+        const float text_w = ImGui::CalcTextSize(label.c_str()).x;
+        bool fits = false;
+        if (arm > 0) {
+          const float prev_end = ImGui::GetItemRectMax().x;  // the previous entry's text, screen coords
+          fits = prev_end + ImGui::GetStyle().ItemSpacing.x + swatch + ImGui::GetStyle().ItemSpacing.x + text_w <=
+                 region_max_x;
+        }
+        if (arm > 0 && fits) {
+          ImGui::SameLine();
+        }
+        const ImVec2 sp = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddRectFilled(sp, ImVec2(sp.x + swatch, sp.y + swatch), arm_colors[arm]);
+        ImGui::Dummy(ImVec2(swatch, swatch));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(label.c_str());
+      }
     }
 
-    // The zero row: the exact zeros sit here, in their arm's colour — never mapped onto the
-    // log axis, never patched with an epsilon (J4).
-    if (x_hi > 0.0) {
-      const float zero_y = plot_max.y + UiPx(5.0f);
-      dl->AddLine(ImVec2(plot_min.x, zero_y), ImVec2(plot_max.x, zero_y), IM_COL32(60, 64, 72, 90), 1.0f);
+    // ---- The readout's words: one arm's value at its honest state — the number, "0" for the
+    // exact zero, "n/a" for unavailable. The curve holds the engine's number; this only spells it.
+    const auto arm_readout = [&](int arm, size_t i) -> std::string {
+      const PointCurveValueKind kind = kind_of(arm, i);
+      if (kind == PointCurveValueKind::kUnavailable) {
+        return "n/a";
+      }
+      if (kind == PointCurveValueKind::kExactZero) {
+        return "0";
+      }
+      char buf[32];
+      std::snprintf(buf, sizeof(buf), "%.3g", value_of(arm, i));
+      return buf;
+    };
+    const auto sample_readout = [&](int position) -> std::string {
+      const int stored = PointCurveStoredAt(curve, position);
+      if (stored < 0) {
+        return std::string();
+      }
+      const PointCurvePoint& p = curve.points[static_cast<size_t>(stored)];
+      char head[64];
+      std::snprintf(head, sizeof(head), "sample %d/%d @ %.3f rad", position + 1, valid_count, p.x_rad);
+      std::string out = head;
+      const char* names[kCurveArms] = { "rho", "A/a^2", "T", "K", "product" };
       for (int arm = 0; arm < kCurveArms; ++arm) {
-        for (size_t i = 0; i < n; ++i) {
-          if (kind_of(arm, i) != PointCurveValueKind::kExactZero) {
+        out += " · ";
+        out += names[arm];
+        out += " ";
+        out += arm_readout(arm, static_cast<size_t>(stored));
+      }
+      return out;
+    };
+
+    const ImVec2 avail = graph_size;
+    int hover_position = -1;
+    if (graph_size.y > 0.0f) {
+      const float canvas_h = graph_size.y;
+      ImDrawList* dl = graph_draw_list;
+      const ImVec2 canvas_min = graph_min;
+      const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
+      const bool canvas_hovered = graph_hovered;
+      const bool canvas_active = graph_active;
+      const double x_hi = n > 0 ? curve.points[n - 1].x_rad : 0.0;
+      // The shared log range: decade bounds over the union of ALL arms' usable positives — no
+      // per-arm normalization (AC1: the arms' actual magnitudes stay comparable). Computed FIRST
+      // so the left pad can budget the labels it will actually draw (a real fiber can span
+      // hundreds of decades; "1e-213" is far wider than "1e-6").
+      double v_min = 0.0;
+      double v_max = 0.0;
+      bool have_range = false;
+      for (size_t i = 0; i < n && x_hi > 0.0; ++i) {
+        for (int arm = 0; arm < kCurveArms; ++arm) {
+          if (kind_of(arm, i) != PointCurveValueKind::kPositive) {
             continue;
           }
-          const float px = x_to_px(curve.points[i].x_rad);
-          dl->AddRectFilled(ImVec2(px - UiPx(1.5f), zero_y - UiPx(2.0f)), ImVec2(px + UiPx(1.5f), zero_y + UiPx(2.0f)),
-                            arm_colors[arm]);
+          const double v = value_of(arm, i);
+          if (!have_range || v < v_min) {
+            v_min = v;
+          }
+          if (!have_range || v > v_max) {
+            v_max = v;
+          }
+          have_range = true;
         }
       }
-      // The seed mark: the title names its arclength; the canvas shows where it sits (an arc's
-      // seed rides mid-curve — its axis zero is the backward far end, not the seed).
-      if (curve.seed_index > 0 && curve.seed_index < static_cast<int>(n)) {
-        const float seed_px = x_to_px(curve.points[static_cast<size_t>(curve.seed_index)].x_rad);
-        const ImU32 accent = ImGui::ColorConvertFloat4ToU32(AccentColor());
-        dl->AddTriangleFilled(ImVec2(seed_px - UiPx(4.0f), plot_min.y), ImVec2(seed_px + UiPx(4.0f), plot_min.y),
-                              ImVec2(seed_px, plot_min.y + UiPx(5.0f)), accent);
-        dl->AddText(ImVec2(seed_px + UiPx(5.0f), plot_min.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), "seed");
-      }
-      // The five arms: drawn run by run over PointCurvePositiveRuns — unavailable gaps and
-      // exact-zero stretches break a run and are never bridged (AC3), and a run of ONE point
-      // is an isolated positive contribution drawn as a marker, never dropped (AC6: discrete
-      // data stays visible while the legend keeps claiming the arm).
-      for (int arm = 0; arm < kCurveArms; ++arm) {
-        std::vector<PointCurveValueKind> kinds(static_cast<size_t>(n));
-        for (size_t i = 0; i < n; ++i) {
-          kinds[i] = kind_of(arm, i);
+      // How many decades sit between LABELLED majors: plot height and font size decide, so a
+      // 213-decade range labels ~8 evenly spaced exponents instead of 213 overlapping texts.
+      const float line_h = ImGui::GetTextLineHeight();
+      const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - UiPx(28.0f));
+      const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
+      float widest_lab = 0.0f;
+      if (have_range) {
+        for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
+          const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
+          if (!tick.major || exp10 % label_step != 0) {
+            continue;
+          }
+          char lab[16];
+          std::snprintf(lab, sizeof(lab), "%.0e", tick.value);
+          widest_lab = std::max(widest_lab, ImGui::CalcTextSize(lab).x);
         }
-        const float thickness = arm == 4 ? 2.0f : 1.5f;
-        for (const PointCurveRun& run : PointCurvePositiveRuns(kinds.data(), n)) {
-          if (run.end - run.begin >= 2) {
-            std::vector<ImVec2> line;
-            line.reserve(static_cast<size_t>(run.end - run.begin));
-            for (int i = run.begin; i < run.end; ++i) {
-              line.push_back(ImVec2(x_to_px(curve.points[static_cast<size_t>(i)].x_rad),
-                                    v_to_py(value_of(arm, static_cast<size_t>(i)))));
-            }
-            dl->AddPolyline(line.data(), static_cast<int>(line.size()), arm_colors[arm], 0, thickness);
-          } else {
-            const ImVec2 p(x_to_px(curve.points[static_cast<size_t>(run.begin)].x_rad),
-                           v_to_py(value_of(arm, static_cast<size_t>(run.begin))));
-            dl->AddCircleFilled(p, UiPx(2.5f), arm_colors[arm]);
+      }
+      const float pad_l = std::max(UiPx(34.0f), widest_lab + UiPx(10.0f));  // decade labels live left of the plot
+      const float pad_r = UiPx(10.0f);
+      const float pad_t = UiPx(10.0f);  // the seed mark rides above the plot
+      const float pad_b = UiPx(28.0f);  // the zero row, then the x labels' strip
+      const ImVec2 plot_min(canvas_min.x + pad_l, canvas_min.y + pad_t);
+      const ImVec2 plot_max(canvas_max.x - pad_r, canvas_max.y - pad_b);
+      const float plot_w = std::max(1.0f, plot_max.x - plot_min.x);
+      const float plot_h = std::max(1.0f, plot_max.y - plot_min.y);
+      const auto x_to_px = [&](double x) {
+        const double t = x_hi > 0.0 ? x / x_hi : 0.0;
+        return plot_min.x + static_cast<float>(t * plot_w);
+      };
+      const auto x_at_px = [&](float px) {
+        const float t = std::clamp((px - plot_min.x) / plot_w, 0.0f, 1.0f);
+        return static_cast<double>(t) * x_hi;
+      };
+
+      dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
+      dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
+
+      const auto v_to_py = [&](double v) {
+        const double log_lo = have_range ? std::log10(v_min) : 0.0;
+        double log_hi = have_range ? std::log10(v_max) : 0.0;
+        if (log_hi <= log_lo) {
+          log_hi = log_lo + 1.0;  // a single decade, so one value draws inside a range
+        }
+        const double t = (std::log10(v) - log_lo) / (log_hi - log_lo);
+        return plot_min.y + static_cast<float>((1.0 - std::clamp(t, 0.0, 1.0)) * plot_h);
+      };
+      if (have_range) {
+        const bool minors_fit =
+            label_step == 1 && plot_h / std::max(1.0, std::log10(v_max) - std::log10(v_min)) >= UiPx(12.0f);
+        for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
+          const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
+          const bool labelled = tick.major && exp10 % label_step == 0;
+          if (tick.major && !labelled) {
+            continue;  // an unlabelled decade would only crowd the plot at this density
+          }
+          const float py = v_to_py(tick.value);
+          if (tick.major) {
+            dl->AddLine(ImVec2(plot_min.x, py), ImVec2(plot_max.x, py), IM_COL32(60, 64, 72, 110), 1.0f);
+            char lab[16];
+            std::snprintf(lab, sizeof(lab), "%.0e", tick.value);
+            const ImVec2 ts = ImGui::CalcTextSize(lab);
+            dl->AddText(ImVec2(plot_min.x - ts.x - UiPx(5.0f), py - ts.y * 0.5f),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+          } else if (minors_fit) {
+            dl->AddLine(ImVec2(plot_min.x - UiPx(3.0f), py), ImVec2(plot_min.x, py), IM_COL32(90, 94, 102, 140), 1.0f);
           }
         }
       }
-      // The cursor: the CURRENT sample's arclength — the same selection the slider, the globe
-      // marker and the 3D trace follow (AC4's one selection).
-      const int cursor_stored = PointCurveStoredAt(curve, std::clamp(view.sample_index, 0, valid_count - 1));
-      if (cursor_stored >= 0) {
-        const float cpx = x_to_px(curve.points[static_cast<size_t>(cursor_stored)].x_rad);
-        dl->AddLine(ImVec2(cpx, plot_min.y), ImVec2(cpx, plot_max.y), ImGui::ColorConvertFloat4ToU32(AccentColor()),
-                    1.5f);
+      // The plot's frame, the x labels and the axis unit (the caliber line names rad; the axis
+      // shows where its numbers sit).
+      dl->AddRect(plot_min, plot_max, IM_COL32(90, 94, 102, 120), 0.0f, 0, 1.0f);
+      if (x_hi > 0.0) {
+        char lab[24];
+        const char* fmt = x_hi < 10.0 ? "%.2f" : (x_hi < 100.0 ? "%.1f" : "%.0f");
+        const float axis_lab_y = plot_max.y + UiPx(13.0f);
+        std::snprintf(lab, sizeof(lab), fmt, 0.0);
+        dl->AddText(ImVec2(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+        std::snprintf(lab, sizeof(lab), fmt, x_hi * 0.5);
+        dl->AddText(ImVec2(x_to_px(x_hi * 0.5) - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+        std::snprintf(lab, sizeof(lab), fmt, x_hi);
+        dl->AddText(ImVec2(plot_max.x - ImGui::CalcTextSize(lab).x, axis_lab_y),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
       }
-    } else {
-      const char* note = "no positive value on this component — the log axis has no range";
-      const ImVec2 ts = ImGui::CalcTextSize(note);
-      dl->AddText(ImVec2(canvas_min.x + (avail.x - ts.x) * 0.5f, canvas_min.y + (canvas_h - ts.y) * 0.5f),
-                  ImGui::GetColorU32(ImGuiCol_TextDisabled), note);
-    }
+      {
+        const char* unit = "rad";
+        dl->AddText(ImVec2(canvas_max.x - ImGui::CalcTextSize(unit).x - UiPx(6.0f), canvas_min.y + UiPx(4.0f)),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), unit);
+      }
 
-    // The canvas writes the ONE selection: click or drag maps the mouse's x to the nearest
-    // VALID sample (invalid points are unreachable, the slider's domain) and stops the
-    // playback — the slider's own write discipline, no second cursor state (J3).
-    if (x_hi > 0.0) {
-      if (canvas_hovered) {
-        hover_position = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
-      }
-      const auto write_cursor_from_mouse = [&]() {
-        const int v = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
-        if (v < 0) {
-          return;
+      // The zero row: the exact zeros sit here, in their arm's colour — never mapped onto the
+      // log axis, never patched with an epsilon (J4).
+      if (x_hi > 0.0) {
+        const float zero_y = plot_max.y + UiPx(5.0f);
+        dl->AddLine(ImVec2(plot_min.x, zero_y), ImVec2(plot_max.x, zero_y), IM_COL32(60, 64, 72, 90), 1.0f);
+        for (int arm = 0; arm < kCurveArms; ++arm) {
+          for (size_t i = 0; i < n; ++i) {
+            if (kind_of(arm, i) != PointCurveValueKind::kExactZero) {
+              continue;
+            }
+            const float px = x_to_px(curve.points[i].x_rad);
+            dl->AddRectFilled(ImVec2(px - UiPx(1.5f), zero_y - UiPx(2.0f)),
+                              ImVec2(px + UiPx(1.5f), zero_y + UiPx(2.0f)), arm_colors[arm]);
+          }
         }
-        // A resolved click stops the playback even when the index does not change — clicking
-        // the pose already on screen must pin it where it is, not let playback run on (J3).
-        if (v != view.sample_index) {
-          view.sample_index = v;
+        // The seed mark: the title names its arclength; the canvas shows where it sits (an arc's
+        // seed rides mid-curve — its axis zero is the backward far end, not the seed).
+        if (curve.seed_index > 0 && curve.seed_index < static_cast<int>(n)) {
+          const float seed_px = x_to_px(curve.points[static_cast<size_t>(curve.seed_index)].x_rad);
+          const ImU32 accent = ImGui::ColorConvertFloat4ToU32(AccentColor());
+          dl->AddTriangleFilled(ImVec2(seed_px - UiPx(4.0f), plot_min.y), ImVec2(seed_px + UiPx(4.0f), plot_min.y),
+                                ImVec2(seed_px, plot_min.y + UiPx(5.0f)), accent);
+          dl->AddText(ImVec2(seed_px + UiPx(5.0f), plot_min.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), "seed");
         }
-        view.playing = false;
-      };
-      if (ImGui::IsItemClicked(ImGuiMouseButton_Left) ||
-          (canvas_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
-        write_cursor_from_mouse();
+        // The five arms: drawn run by run over PointCurvePositiveRuns — unavailable gaps and
+        // exact-zero stretches break a run and are never bridged (AC3), and a run of ONE point
+        // is an isolated positive contribution drawn as a marker, never dropped (AC6: discrete
+        // data stays visible while the legend keeps claiming the arm).
+        for (int arm = 0; arm < kCurveArms; ++arm) {
+          std::vector<PointCurveValueKind> kinds(static_cast<size_t>(n));
+          for (size_t i = 0; i < n; ++i) {
+            kinds[i] = kind_of(arm, i);
+          }
+          const float thickness = arm == 4 ? 2.0f : 1.5f;
+          for (const PointCurveRun& run : PointCurvePositiveRuns(kinds.data(), n)) {
+            if (run.end - run.begin >= 2) {
+              std::vector<ImVec2> line;
+              line.reserve(static_cast<size_t>(run.end - run.begin));
+              for (int i = run.begin; i < run.end; ++i) {
+                line.push_back(ImVec2(x_to_px(curve.points[static_cast<size_t>(i)].x_rad),
+                                      v_to_py(value_of(arm, static_cast<size_t>(i)))));
+              }
+              dl->AddPolyline(line.data(), static_cast<int>(line.size()), arm_colors[arm], 0, thickness);
+            } else {
+              const ImVec2 p(x_to_px(curve.points[static_cast<size_t>(run.begin)].x_rad),
+                             v_to_py(value_of(arm, static_cast<size_t>(run.begin))));
+              dl->AddCircleFilled(p, UiPx(2.5f), arm_colors[arm]);
+            }
+          }
+        }
+        // The cursor: the CURRENT sample's arclength — the same selection the slider, the globe
+        // marker and the 3D trace follow (AC4's one selection).
+        const int cursor_stored = PointCurveStoredAt(curve, std::clamp(view.sample_index, 0, valid_count - 1));
+        if (cursor_stored >= 0) {
+          const float cpx = x_to_px(curve.points[static_cast<size_t>(cursor_stored)].x_rad);
+          dl->AddLine(ImVec2(cpx, plot_min.y), ImVec2(cpx, plot_max.y), ImGui::ColorConvertFloat4ToU32(AccentColor()),
+                      1.5f);
+        }
+      } else {
+        const char* note = "no positive value on this component — the log axis has no range";
+        const ImVec2 ts = ImGui::CalcTextSize(note);
+        dl->AddText(ImVec2(canvas_min.x + (avail.x - ts.x) * 0.5f, canvas_min.y + (canvas_h - ts.y) * 0.5f),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), note);
       }
+
+      // The canvas writes the ONE selection: click or drag maps the mouse's x to the nearest
+      // VALID sample (invalid points are unreachable, the slider's domain) and stops the
+      // playback — the slider's own write discipline, no second cursor state (J3).
+      if (x_hi > 0.0) {
+        if (canvas_hovered) {
+          hover_position = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
+        }
+        const auto write_cursor_from_mouse = [&]() {
+          const int v = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
+          if (v < 0) {
+            return;
+          }
+          // A resolved click stops the playback even when the index does not change — clicking
+          // the pose already on screen must pin it where it is, not let playback run on (J3).
+          if (v != view.sample_index) {
+            view.sample_index = v;
+          }
+          view.playing = false;
+        };
+        if ((canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
+            (canvas_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
+          write_cursor_from_mouse();
+        }
+      }
+      // The readout line: the hovered sample while the hand is on the canvas, otherwise the
+      // current one — a real ImGui text row (wraps, is test-addressable; not a drawlist painting).
+      if (hover_position >= 0) {
+        ImGui::TextWrapped("hover: %s", sample_readout(hover_position).c_str());
+      } else {
+        ImGui::TextWrapped("%s", sample_readout(std::clamp(view.sample_index, 0, valid_count - 1)).c_str());
+      }
+      // ---- The scroll region: the partial note, the measure registration's note verbatim when
+      // the engine's gap flag stands (J7 — the GUI never paraphrases the support semantics), and
+      // the current sample's full factor readouts (the factors face, retained in-window). ----
+      if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+        ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+        ImGui::TextWrapped("Partial document (%s) — the curve on show is what arrived.",
+                           ExecutionText(info->execution));
+        ImGui::PopStyleColor();
+      }
+      LUMICE_PathMeasureRegistration reg{};
+      reg.struct_size = sizeof(reg);
+      if (LUMICE_PathPointGetMeasureRegistration(point.adopted_result.get(), &reg) == LUMICE_PATH_READ_OK &&
+          reg.registered_gap != 0 && reg.note.data != nullptr && reg.note.length > 0) {
+        disabled_line("measure registration: %.*s", static_cast<int>(reg.note.length), reg.note.data);
+      }
+      if (const std::optional<CurrentSample> current =
+              CurrentSampleOf(*point.adopted_result, view, curve.valid_positions);
+          current.has_value()) {
+        disabled_line("Current sample:");
+        for (const std::string& line_text : PointFactorLines(current->sample)) {
+          ImGui::Bullet();
+          ImGui::TextWrapped("%s", line_text.c_str());
+        }
+      }
+      return;
     }
-    // The readout line: the hovered sample while the hand is on the canvas, otherwise the
-    // current one — a real ImGui text row (wraps, is test-addressable; not a drawlist painting).
-    if (hover_position >= 0) {
-      ImGui::TextWrapped("hover: %s", sample_readout(hover_position).c_str());
-    } else {
-      ImGui::TextWrapped("%s", sample_readout(std::clamp(view.sample_index, 0, valid_count - 1)).c_str());
-    }
-    // ---- The scroll region: the partial note, the measure registration's note verbatim when
-    // the engine's gap flag stands (J7 — the GUI never paraphrases the support semantics), and
-    // the current sample's full factor readouts (the factors face, retained in-window). ----
-    ImGui::BeginChild("##PoseCurveScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+    // The degraded form: no canvas — the readout and the lines render direct in the region, the
+    // region's own scrollbar carries them (the content budget's answer at a cell too short for
+    // the two-segment form).
     if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
       ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
       ImGui::TextWrapped("Partial document (%s) — the curve on show is what arrived.", ExecutionText(info->execution));
       ImGui::PopStyleColor();
     }
+    ImGui::TextWrapped("%s", sample_readout(std::clamp(view.sample_index, 0, valid_count - 1)).c_str());
     LUMICE_PathMeasureRegistration reg{};
     reg.struct_size = sizeof(reg);
     if (LUMICE_PathPointGetMeasureRegistration(point.adopted_result.get(), &reg) == LUMICE_PATH_READ_OK &&
@@ -2324,33 +2295,9 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         ImGui::TextWrapped("%s", line_text.c_str());
       }
     }
-    ImGui::EndChild();
-    ImGui::EndChild();
-    return;
-  }
-  // The degraded form: no canvas — the readout and the lines render direct in the region, the
-  // region's own scrollbar carries them (the content budget's answer at a cell too short for
-  // the two-segment form).
-  if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::TextWrapped("Partial document (%s) — the curve on show is what arrived.", ExecutionText(info->execution));
-    ImGui::PopStyleColor();
-  }
-  ImGui::TextWrapped("%s", sample_readout(std::clamp(view.sample_index, 0, valid_count - 1)).c_str());
-  LUMICE_PathMeasureRegistration reg{};
-  reg.struct_size = sizeof(reg);
-  if (LUMICE_PathPointGetMeasureRegistration(point.adopted_result.get(), &reg) == LUMICE_PATH_READ_OK &&
-      reg.registered_gap != 0 && reg.note.data != nullptr && reg.note.length > 0) {
-    disabled_line("measure registration: %.*s", static_cast<int>(reg.note.length), reg.note.data);
-  }
-  if (const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, curve.valid_positions);
-      current.has_value()) {
-    disabled_line("Current sample:");
-    for (const std::string& line_text : PointFactorLines(current->sample)) {
-      ImGui::Bullet();
-      ImGui::TextWrapped("%s", line_text.c_str());
-    }
-  }
+  };
+  render_content();
+  ImGui::EndChild();
   ImGui::EndChild();
 }
 
@@ -2393,7 +2340,8 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   // collapsed title bar hides the pose faces without freeing their queries — the honest off
   // state is closed, via the same flag the title bar's X writes through `p_open`.
   if (!ImGui::Begin("Pose & trace", &state.analyze_pose_view_open,
-                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
+                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar |
+                        ImGuiWindowFlags_NoScrollWithMouse)) {
     ImGui::End();
     return;
   }
@@ -2404,7 +2352,7 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   // its bound by a drag to an end or a resize under a kept ratio); only when the two floors
   // cannot share the span does the ③ proportional fallback apply. ----
   const float splitter_w = UiPx(kAnalyzeSplitterSize);
-  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  const ImVec2 avail = VisibleContentSize();
   const float avail_w = std::max(0.0f, avail.x);
   const float right_floor = UiPx(kPoseViewRightFloor);
   const float left_floor = UiPx(kPoseViewLeftFloor);

@@ -472,13 +472,15 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 // (RenderAnalyzeOperationBar below).
 void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server);
 
-// The main view's operation bar (contract §2.2): region radios, the Point centre readout,
-// the radius, the budget and Analyze/Stop — one judged-join strip hosted below the picture.
+// The main view's geometry-driven operation templates. Both ROI modes use the complete Point
+// budget; status prose belongs to the separate fixed viewport, never to the control flow.
+float AnalyzeOperationBarHeight(float width);
+bool AnalyzeOperationBarNeedsScroll(float width);
 void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server);
+void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server);
 
-// The operation bar's region segment: the Whole sky / Point radios with gesture guidance,
-// and in Point mode the centre readout. The bar is the only renderer.
-void RenderPanoramaRoiControls(GuiState& state);
+// The operation bar's Whole sky / Point radios with direct-gesture guidance.
+void RenderPanoramaRoiControls(GuiState& state, bool join_point);
 
 // The marker and ring over the Analyze workspace's panorama: CONE mode with a projectable centre
 // draws through the one DrawRoiRingImpl. (The preview-side twin retired with the analysis

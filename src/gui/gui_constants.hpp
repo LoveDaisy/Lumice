@@ -78,11 +78,6 @@ constexpr float kAnalyzeRightColumnDefaultRatio =
 // the main view's operation bar (contract §2.2), so the floor is now conservative: shorter head,
 // same reserve. Re-derived value owes a calibration pass (§11), not a correctness fix.
 constexpr float kAnalyzeShareListMinHeight = 250.0f;
-// The operation bar's slider-wrap judgment (contract §11 R6): the minimum track the bar gives a
-// slider before the slider wraps to its own line instead of joining the current one. Below it
-// the Rays slider's track would crowd its input box unusably; calibrated against the Roboto
-// Medium 15px theme (the same source as the contract's §11 table).
-constexpr float kAnalyzeOpBarSliderTrackMin = 150.0f;
 // The default cone centre's convergence window, in frames: how long after its placement the
 // default may follow the picture rectangle's size (the operation bar's height settles a frame
 // or two after the mode switch that grows it — the one re-place the mechanism exists for).
@@ -133,35 +128,11 @@ constexpr float kPoseViewMinHeight = 680.0f;
 // either side may be the one pushed toward its bound).
 constexpr float kPoseViewRightFloor = 220.0f;
 constexpr float kPoseViewLeftFloor = 240.0f;
-// D5 — the right column's vertical floors. The globe region keeps its fixed interaction stack
-// (the region's own two-segment form's constant part — title + toggle (its wrapped over-width
-// form) + the component combo + the canvas at its 60 px code floor + the slider/play row,
-// ≈181 pt at 1x measured against the Roboto Medium 15px theme with a live-layout probe; the
-// weight bar's 14 pt left with 756) PLUS a scroll-draggable state viewport (≈32 pt: below it
-// ImGui collapses and disables the scrollbar's drag — a state area that shows a range nobody
-// can scroll is the same unreachable fact as no range) and the child's padding — ≈221 pt all
-// told. The curve region (756) floors on its full two-segment form: title + integral echo, the
-// caliber line, the legend (two wrapped rows at the narrow column), the canvas (plot ≈46 +
-// the label strips ≈38), the readout's wrapped worst case (3 lines), the scroll viewport and
-// the child's padding — ≈330 pt (the probe leg logs the live geometry; the default D5 ratio
-// sits inside the resulting clamp band). The globe floor keeps its FIXED STACK fully visible
-// AND its state area scrollable at the D5 drag floor; the curve floor keeps the canvas-on form
-// at that floor and yields its canvas (never below a real slice) in the ③ fallback below —
-// the whole-region-scroll degradation lives under the floors' reach, not at them.
+// D5's established full-region floors remain conservative interaction bounds after moving
+// variable titles/legends into reports. Keep the user's split semantics: clamp above the joint
+// floors, proportionally compress below them. Report content never changes these bounds.
 constexpr float kPoseViewGlobeFloor = 221.0f;
 constexpr float kPoseViewFactorsFloor = 330.0f;
-// The globe region's canvas floor (the region's own code floor, now named for the region's
-// canvas-sizing judgment to consume).
-constexpr float kPoseViewGlobeCanvasFloor = 60.0f;
-// The contribution-curve region's canvas minimum slice: below this the two-segment form cannot
-// host a plot anyone can read, and the region degrades to its scroll form (the globe ladder's
-// last rung) instead of showing a canvas nobody can recover.
-constexpr float kPoseViewCurveCanvasMinSlice = 40.0f;
-// The state area's bounded-form threshold: the region renders the scrolling child when the
-// cell leaves at least this much room under the fixed stack — a narrower sliver cannot host a
-// draggable scrollbar, so the lines render direct in the region (the region's own scroll, tall
-// enough to drag) instead of a state child nobody can scroll.
-constexpr float kPoseViewStateViewportFloor = 30.0f;
 // The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's
 // two splitters).
 constexpr float kAnalyzeSplitterSize = 8.0f;
