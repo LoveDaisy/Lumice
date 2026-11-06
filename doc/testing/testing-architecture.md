@@ -1451,8 +1451,9 @@ The measured instance had all three shapes at once:
   issued intent was WAITING and the executor's per-face running token held" — but the token clears
   at the engine call's return, before the finish is even posted, so the true window is the engine
   call itself (~a frame in the fixed-dt scenes, i.e. ~2.5 ms against a ~2 ms/poll cadence). Red
-  runs spun 12k–143k polls without ever overlapping it; green runs caught it at poll 1. Merged red
-  rate was ~44% (8/18), all of it this lottery.
+  runs spun 12k–143k polls without ever overlapping it; green runs caught it at poll 1. The merged
+  red rate was ~44% (8/18): 7 of those were this lottery, 1 was the drain race below (family C) —
+  do not read the pooled rate as one root cause's evidence.
 - **The false repair (budgets).** Raising the gate budgets 30 s → 300 s → 600 s left the red
   shape field-for-field identical (a 300 s red spun 143,210 polls) — the window was never "late",
   it was narrow. No distribution of pass-elapsed ever formed: every green pass read ≈ 0 s, so a
@@ -1464,30 +1465,45 @@ The measured instance had all three shapes at once:
   overturned: the negative result is the finding. Before crediting or blaming machine load for a
   flaky gate, run the tier ladder; do not tune budgets to a load level.
 
-**The fix shape: judge the recorded transition, not the sample.** The gates now consume an EDGE
-RECORD installed before the query is issued (case-side `ScopedPointPickupEdgeRecorder` in
-`test/gui/functional/test_raypath_analysis_panel.cpp`, fed by the executor's existing
-`SetPickupGateForTest` test face — a pickup fires after the running token is registered and before
-the engine call). A recorded pickup PROVES the asserted moment by structure, not by sampling: the
-token is registered before the gate is invoked, and nothing on the GUI thread can move the session
-off the issued intent without dropping or replacing the queued query, so a query that got picked up
-still had the session standing on it — the conjunction held at that instant. The full linkage is
-stated once at the recorder; per-gate verdicts read "edge landed since this arm's baseline (read
-BEFORE any frame-running trigger) and the wide-window session fields still stand". The
-`ScopesGateTrace` per-poll history stays as a timeout-path triage line only — a SAMPLE history is
-never the true history (an all-false record proves only "never sampled true"), so it must not
-carry a verdict.
+**The fix shape: judge the recorded transition, not the sample — and pick the transport by what the
+gate asserts.** The dichotomy the review rounds forced (it is the criterion, not a detail):
+
+- **The gate asserts "a moment EXISTED when ..."** (arms ①/②/③) → an EDGE RECORD: a case-side
+  `ScopedPointPickupEdgeRecorder` (fed by the executor's existing `SetPickupGateForTest` test
+  face — a pickup fires after the running token is registered and before the engine call), and
+  the verdict reads "edge landed since this arm's baseline (read BEFORE any frame-running
+  trigger) and the wide-window session fields still stand". A recorded pickup PROVES the asserted
+  moment by structure: the token is registered before the gate is invoked, and nothing on the GUI
+  thread can move the session off the issued intent without dropping or replacing the queued
+  query — a query that got picked up still had the session standing on it.
+- **The arm's ACTION requires the query outstanding NOW** (withdraw the face, replace the
+  document, start a new one — arms ⑤/⑦/⑧) → a PICKUP HOLD handshake (`ScopedPointPickupHold`):
+  the worker parks at the pickup instant (token registered, engine call not yet started), the
+  action lands on a verifiably-computing query, then release. A historical edge CANNOT carry this
+  premise — the query may complete between two polls, and the action would land on an
+  already-finished face. The hold's bounded wait voids LOUDLY: an expiry sets `Voided()` and the
+  arm's gates consume it, so a lost premise turns the arm red instead of green.
+
+Both transports share the ownership law (the executor copies the gate under its lock and invokes
+the copy off the lock, so clearing the slot cannot revoke a copy already made): the callback
+captures its state by VALUE as a shared pointer, never `this`. Both keep the `ScopesGateTrace`
+per-poll history as a timeout-path triage line only — a SAMPLE history is never the true history
+(an all-false record proves only "never sampled true"), so it must not carry a verdict.
 
 **Where the transport exists but no edge does** (the drain face): a settled-state assertion
 ("nothing is in flight") that another face's completion gate does not cover gets a WAIT PROTOCOL,
 not a budget — wait until every execution face is drained (`QueryOutstanding()`, computing +
 queued) before asserting `!InFlight()`. The assertion's semantics stay verbatim; the patience
-moves into the protocol ahead of it.
+moves into the protocol ahead of it. And "quiet" must mean the pump cannot issue anything new
+EITHER: this frame's pump runs after the test's sample (the coroutine resumes at PostNewFrame), so
+a gate that passes exactly at the pump's own threshold-crossing races the query it is about to
+issue (the measured case: an auto-Fit schedules its map refinement only after `kMapSettleSeconds`
+— the drain required settle-with-margin, 2x the threshold, to sit whole frames past the crossing).
 
-**Post-fix acceptance, for the record**: 13/13 single runs green (10 ambient + 3 under a 12-core
-`yes` injection), zero gate timeouts, vs. ~44% merged red before. Machine-level telemetry and the
-full tier tables live with the task's characterization notes; the numbers above are the durable
-summary.
+**Post-fix acceptance, for the record**: the final form runs 13/13 single runs green (10 ambient +
+3 under a 12-core `yes` injection), zero gate timeouts, vs. ~44% merged red before; each fix round
+passed its own 11–13-run matrix under the same tiers. Machine-level telemetry and the full tier
+tables live with the task's characterization notes; the numbers above are the durable summary.
 
 ---
 
