@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793985170491,
+  "lastUpdate": 1793985172574,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "b6107e0c78b94e37fde81d77d8b596e16a2d3452",
-          "message": "Merge pull request #467 from LoveDaisy/fix/pytest-performance-pool-isolation\n\nfix(testing): isolate local slow pytest performance pool",
-          "timestamp": "2026-10-03T22:58:56+08:00",
-          "tree_id": "2bb7504b7cfd61fc451738fe5ed1567077d8d80b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/b6107e0c78b94e37fde81d77d8b596e16a2d3452"
-        },
-        "date": 1791039682147,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 96.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 97.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "928b8accd21aa950eeb249c13ad4bd8b4028b1b9",
           "message": "Merge pull request #468 from LoveDaisy/scrum/raypath-general-diagnostics-v2\n\nfeat(raypath): phase-1 raypath feature diagnostics (scrum-649)",
           "timestamp": "2026-10-05T12:17:39+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 90.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "54df3277d002f0ba3e76f30952c881890c7d37e2",
+          "message": "Merge pull request #571 from LoveDaisy/feat/font-glyph-lambda-range\n\nfix(gui): load missing delta and lambda glyphs",
+          "timestamp": "2026-11-07T01:09:00+08:00",
+          "tree_id": "ac9a9b1bfa0453c3aa3be2ae737295fa67cd70bb",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/54df3277d002f0ba3e76f30952c881890c7d37e2"
+        },
+        "date": 1793985171998,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 84.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.1,
             "unit": "%"
           }
         ]
