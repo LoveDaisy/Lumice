@@ -1947,6 +1947,81 @@ TEST(AnalysisPanelLogic, SurveyExecutorSupersedeRefusesOldIntentAndDeliversNewes
   EXPECT_FALSE(executor.TakeFinished(QueryFace::kSurvey).has_value());  // nothing after B
 }
 
+// A face's cancellation completion is not global idle: the same worker can already be
+// computing a different face. Fence both pickups to compare the old/new observers in ONE
+// persistent state, then check the two immutable execution tags (not merely the GUI latch).
+TEST(AnalysisPanelLogic, SurveyExecutorCancelCompletesWhileMapRemainsOutstanding) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kSurveySceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+
+  PickupGateMachine machine;
+  SurveyExecutor executor;
+  PickupGateTeardown teardown{ &machine, &executor };
+  executor.SetScene(std::move(scene));
+  machine.Install(executor);
+  GuiState state;
+  state.analysis_result.payload = PayloadWithRows(3, { "1-2" }, { { 1, 2 } });
+  state.analysis.selected_entry = "1-2";
+  PumpSurveyQuery(state, executor, 100.0);
+  ASSERT_TRUE(machine.WaitForSignal(1, 15000));
+  ASSERT_TRUE(executor.InFlight(QueryFace::kSurvey));
+  const SurveyQueryId survey_id = state.analysis.survey.intent_id;
+
+  LUMICE_PathMapRequest map_request{};
+  map_request.struct_size = sizeof(map_request);
+  map_request.crystal_id = 1;
+  map_request.face_count = 2;
+  map_request.layer_count = 1;
+  map_request.full_sky = 1;
+  map_request.sample_count = 4096;
+  const SurveyQueryId map_id = executor.NextId(3);
+  executor.IssueMapQuery(map_id, map_request, { 1, 2 }, { 2 }, {});
+  ASSERT_TRUE(executor.QueryOutstanding(QueryFace::kMap));
+  ASSERT_FALSE(executor.InFlight(QueryFace::kMap));  // queued behind the fenced survey
+
+  executor.CancelInFlight(QueryFace::kSurvey);
+  state.analysis.survey.cancelled_for_key = true;
+  machine.Release(1);
+  ASSERT_TRUE(machine.WaitForSignal(2, 30000));
+  ASSERT_TRUE(executor.InFlight(QueryFace::kMap));  // the same queued map is now fenced
+
+  // This is the regression witness, NOT a claim about which face a historical timeout ran.
+  EXPECT_TRUE(!executor.QueryOutstanding(QueryFace::kSurvey));  // the corrected observer
+  EXPECT_FALSE(!executor.InFlight());                           // the old observer rejects it
+  ASSERT_TRUE(executor.QueryOutstanding(QueryFace::kMap));
+  std::optional<SurveyExecutor::Finished> survey_finish = executor.TakeFinished(QueryFace::kSurvey);
+  ASSERT_TRUE(survey_finish.has_value());
+  ASSERT_EQ(survey_finish->id, survey_id);
+  ASSERT_TRUE(survey_finish->ok);
+  ASSERT_EQ(SurveyExecutionTagOf(*survey_finish), LUMICE_PATH_OUTCOME_CANCELLED);
+
+  // The GUI case covers late mailbox draining through continued frames; here the document
+  // was drained for the independent execution oracle. Continued pumps must not re-issue.
+  for (int i = 0; i < 20; ++i) {
+    PumpSurveyQuery(state, executor, 101.0 + i / 60.0);
+  }
+  EXPECT_EQ(state.analysis.survey.intent_id, survey_id);
+  EXPECT_EQ(SurveyOverviewStateFor(state.analysis.survey), SurveyOverviewState::kCancelled);
+  EXPECT_EQ(state.analysis.survey.adopted_result, nullptr);
+  EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kSurvey));
+  ASSERT_TRUE(executor.InFlight(QueryFace::kMap));
+
+  machine.Release(2);
+  ASSERT_TRUE(WaitForAllSettled(executor, 25000));
+  std::optional<SurveyExecutor::Finished> map_finish = executor.TakeFinished(QueryFace::kMap);
+  ASSERT_TRUE(map_finish.has_value());
+  ASSERT_EQ(map_finish->id, map_id);  // a replacement request cannot conceal collateral cancel
+  ASSERT_TRUE(map_finish->ok);
+  ASSERT_TRUE(map_finish->map_result != nullptr);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathMapGetInfo(map_finish->map_result.get(), &info), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(info.crystal_id, 1);
+  EXPECT_NE(info.execution, LUMICE_PATH_OUTCOME_CANCELLED);
+  EXPECT_FALSE(executor.TakeFinished(QueryFace::kMap).has_value());
+}
+
 // AC1, both arms, one TEST: explicit ShutdownAndJoin while a query is genuinely computing
 // (main), and the destructor's safety-net form over an already-cancelled, still-parked query
 // (destructor). The main arm's proof is the drained CANCELLED form — "the cancel hit an
