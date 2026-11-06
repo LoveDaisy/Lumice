@@ -1666,6 +1666,8 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
 }
 
 
+bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx);
+
 // The map region's face (742.5, AC1/AC3/AC6): on the fully random prism, the selected class's
 // reference map arrives through the real chain — share list selection -> survey and map queued
 // on the one worker -> the full-sky map -> the auto-Fit -> the refinement window — and the
@@ -1729,6 +1731,7 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
                info.view_rows, info.view_cols, info.members_evaluated, info.member_count, info.wavelength_nm,
                info.kept_count);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analyze_map_region.png").string()), false);
+  IM_CHECK_RETV(CheckMapGlyphsAcrossUiScale(ctx), false);
 
   // The pick on the real mouse path: a click on the canvas centre sets the sky point, and the
   // panorama's ROI state and the share list's selection stay exactly what they were (AC3 — the
@@ -6920,6 +6923,87 @@ struct ScopedUiScaleAndBasisLease {
     ctx->Yield(3);
   }
 };
+
+// The completed C01 map's actual text, after the same frame-boundary rebuild/GL upload the
+// product uses. The standalone font case pins the full audited character set; this leg owns the
+// rendered window and rebuild lifetime. Never retain an ImFont pointer across a Yield/rebuild.
+bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
+  ScopedUiScaleAndBasisLease ui_lease(ctx);
+  const auto check_scale = [ctx](float scale, const char* suffix) -> bool {
+    gui::SetUiScaleMultiplierImmediate(scale);
+    IM_CHECK_RETV(
+        DriveUntil(ctx, [scale] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5), false);
+    ctx->Yield(2);  // completed upload AND rendered frames, not just a cleared dirty flag
+    PinRaypathViewOnScreen(ctx);
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    IM_CHECK_RETV(atlas != nullptr && atlas->IsBuilt() && atlas->TexID != 0 && atlas->Fonts.Size == 1, false);
+    ImFont* body = atlas->Fonts[0];
+    IM_CHECK_RETV(body->FontSize == std::round(15.0f * scale), false);
+    const ImFontGlyph* lambda = body->FindGlyphNoFallback(0x03BB);
+    const ImFontGlyph* delta = body->FindGlyphNoFallback(0x03B4);
+    IM_CHECK_RETV(lambda != nullptr && delta != nullptr, false);
+    IM_CHECK_RETV(body->FindGlyphNoFallback(0x2014) != nullptr && body->FindGlyphNoFallback(0x203A) != nullptr &&
+                      body->FindGlyphNoFallback(0x00BB) != nullptr && body->FindGlyphNoFallback(0xF061) != nullptr,
+                  false);
+    ctx->LogInfo(
+        "[map glyphs] scale %.1f atlas %dx%d glyphs %d font %.0f texture %llu; lambda %.3f delta %.3f "
+        "fallback %.3f",
+        scale, atlas->TexWidth, atlas->TexHeight, body->Glyphs.Size, body->FontSize,
+        static_cast<unsigned long long>(atlas->TexID), lambda->AdvanceX, delta->AdvanceX, body->FallbackAdvanceX);
+    ctx->SetRef("//Raypath view");
+    // This independent UTF-8 anchor also tests the compiled slider label's encoding.
+    const ImGuiTestItemInfo slider = ctx->ItemInfo("**/\xCE\xBB##map", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(slider.ID != 0, false);
+    ImGuiWindow* info_region = MapInfoRegionWindow();
+    IM_CHECK_RETV(info_region != nullptr, false);
+    IM_CHECK_RETV(slider.RectFull.Min.x >= info_region->InnerClipRect.Min.x &&
+                      slider.RectFull.Max.x <= info_region->InnerClipRect.Max.x &&
+                      slider.RectFull.Min.y >= info_region->InnerClipRect.Min.y &&
+                      slider.RectFull.Max.y <= info_region->InnerClipRect.Max.y,
+                  false);
+    gui::MapCaliberInput caliber;
+    caliber.info.struct_size = sizeof(caliber.info);
+    IM_CHECK_RETV(
+        LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &caliber.info) == LUMICE_PATH_READ_OK &&
+            caliber.info.kept_count > 0,
+        false);
+    const std::string metrics = gui::MapCaliberLines(caliber).front();
+    IM_CHECK_RETV(metrics.rfind("\xCE\xBB", 0) == 0, false);
+    std::string old_metrics = metrics;
+    for (const char* glyph : { "\xCE\xBB", "\xCE\xB4" }) {
+      const size_t at = old_metrics.find(glyph);
+      if (at != std::string::npos) {
+        old_metrics.replace(at, 2, "?");
+      }
+    }
+    ctx->LogInfo("[map glyphs] label width %.3f -> %.3f; metrics width %.3f -> %.3f: %s", ImGui::CalcTextSize("?").x,
+                 ImGui::CalcTextSize("\xCE\xBB").x, ImGui::CalcTextSize(old_metrics.c_str()).x,
+                 ImGui::CalcTextSize(metrics.c_str()).x, metrics.c_str());
+    ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+    ctx->Yield(2);
+    const std::string stem = std::string("map_glyphs_") + suffix;
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(stem + ".png").string()), false);
+    // Preserve the full application frame as well as the window crop for offline inspection.
+    g_fullframe_capture.Reset();
+    g_fullframe_capture.requested.store(true);
+    for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+    IM_CHECK_RETV(g_fullframe_capture.width > 0 && g_fullframe_capture.height > 0, false);
+    const auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                              g_fullframe_capture.height);
+    IM_CHECK_RETV(lumice::test::SavePng(GuiTestTempPath(stem + "_full.png").string().c_str(), rgb.data(),
+                                        g_fullframe_capture.width, g_fullframe_capture.height, 3),
+                  false);
+    ctx->SetRef("");
+    return true;
+  };
+  IM_CHECK_RETV(check_scale(1.0f, "100"), false);
+  IM_CHECK_RETV(check_scale(1.5f, "150"), false);
+  IM_CHECK_RETV(check_scale(1.0f, "100_return"), false);
+  return true;
+}
 
 // AC2's window-combo faces (755.7 Step 2), each with BOTH floating windows standing — the
 // composition the per-window cases leave out:
