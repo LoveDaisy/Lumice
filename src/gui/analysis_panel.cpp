@@ -1282,34 +1282,12 @@ namespace {
 // checkbox joins the previous segment's line when the caller judged it fits, the slider following
 // the checkbox while the line holds a usable track for it (below that it owns the line — a
 // wrapped control, not a clipped one; contract §11 R6's folding judgment).
-void RenderRequestParamsControls(GuiState& state, bool join_line) {
-  auto& a = state.analysis;
+void RenderRequestParamsControls(GuiState& state, float width) {
   EnsureDefaultAnalysisRayBudget(state);
-  // The document's Rays row, re-drawn for the session's own field. The RENDERING is kept in step
-  // with panels.cpp by hand — evaluated and not shared, because the two rows read different
-  // fields under different enable gates (the registry's Applicability versus a.infinite), and a
-  // helper would need both spelled as parameters. The DOMAIN is not hand-copied: range, format
-  // and scale are the same four symbols the registry row reads (gui/ray_num_domain.hpp), so the
-  // two cannot disagree on what a budget is.
-  if (join_line) {
-    ImGui::SameLine();
-  }
-  Checkbox("Infinite rays", &a.infinite);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Trace until stopped.");
-  }
-  if (ImGui::GetContentRegionAvail().x >= UiPx(kAnalyzeOpBarSliderTrackMin)) {
-    ImGui::SameLine();
-  }
-  ImGui::BeginDisabled(a.infinite);
-  SliderWithInput("Rays(M)", &a.ray_num_millions, kRayNumMinMillions, kRayNumMaxMillions, kRayNumSliderFmt,
-                  kRayNumSliderScale);
+  ImGui::BeginDisabled(state.analysis.infinite);
+  SliderWithInput("Rays(M)", &state.analysis.ray_num_millions, kRayNumMinMillions, kRayNumMaxMillions, kRayNumSliderFmt,
+                  kRayNumSliderScale, LabelPlacement::kTrailing, nullptr, nullptr, width);
   ImGui::EndDisabled();
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(
-        "Total rays the analysis traces across all wavelengths, in millions.\n"
-        "Starts from the document's Rays; independent of it from then on.");
-  }
 }
 
 // The top line of the window when the list on show no longer describes the document on the
@@ -1349,18 +1327,12 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
   }
   if (in_progress) {
     PushDestructiveStyle();
-    if (ImGui::Button(ICON_FA_STOP " Stop")) {
+    if (ImGui::Button(
+            ICON_FA_STOP " Stop",
+            ImVec2(ImGui::CalcTextSize(ICON_FA_PLAY " Analyze").x + ImGui::GetStyle().FramePadding.x * 2.0f, 0.0f))) {
       DoStop();
     }
     PopDestructiveStyle();
-    LUMICE_RayCount rays = 0;
-    if (server != nullptr) {
-      LUMICE_GetSimRayCount(server, &rays);
-    }
-    ImGui::PushStyleColor(ImGuiCol_Text, AccentColor());
-    ImGui::TextWrapped("Analyzing (%s)... %s rays", RoiModeLabel(state.analysis.roi_mode),
-                       FormatThousands(static_cast<std::uint64_t>(rays)).c_str());
-    ImGui::PopStyleColor();
   } else {
     ImGui::BeginDisabled(!can_start);
     PushGoodButtonStyle();
@@ -1382,67 +1354,15 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
       }
       ImGui::SetTooltip("%s", why);
     }
-    if (state.analysis_result.payload) {
-      // SameLine is a judgment, not a default: the readouts follow the Analyze button only while
-      // the line holds them, and drop to their own lines at the 260 pt floor — a clipped count
-      // is a miscounted list.
-      const float count_w = ImGui::CalcTextSize("00,000,000 raypaths (full sky)").x;
-      if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + count_w <=
-          ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
-        ImGui::SameLine();
-      }
-      ImGui::TextDisabled("%zu raypaths (%s)", state.analysis_result.payload->entries.size(),
-                          RoiModeLabel(state.analysis_result.payload->roi_mode));
-      // The record is bounded; when it cut something, say so where the row count is, so the
-      // count above is not read as "every raypath there was".
-      if (state.analysis_result.payload->truncated_chain_count > 0) {
-        const float trunc_w = ImGui::CalcTextSize("; record full (000,000 hits)").x;
-        if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + trunc_w <=
-            ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
-          ImGui::SameLine();
-        }
-        ImGui::TextDisabled(
-            "; record full (%s hits)",
-            FormatThousands(static_cast<std::uint64_t>(state.analysis_result.payload->truncated_chain_count)).c_str());
-        if (ImGui::IsItemHovered()) {
-          ImGui::SetTooltip(
-              "The record keeps a fixed number of distinct raypaths per worker. This many times a ray reached a\n"
-              "raypath the record had no room for; those rays' energy is the list's \"other\" line, so the\n"
-              "percentages still add up to 100.");
-        }
-      }
-    }
-    // The marker moved (a drag, a pick) since the result on show was asked for: the list is
-    // about the old centre. A hint only — Analyze stays the one way to re-run. Wrapped: at the
-    // column floor the line exceeds the row the Analyze button left it on.
-    if (ConeCenterDriftedFromResult(state)) {
-      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-      ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
-                         " Centre has moved \xe2\x80\x94 press Analyze to update the list.");
-      ImGui::PopStyleColor();
-    }
-  }
-  // When the picture on screen is not of the document on the panels, say so here — a line of
-  // its own that needs no hover, not a tooltip, and not a reason to refuse
-  // (AnalysisPictureNotice says which two cases there are). Shown in progress too. This line is
-  // about the picture only; whether the LIST still describes the document is the freshness
-  // banner's question (RenderListFreshnessBanner), and the two may show together — they answer
-  // different questions.
-  if (const char* notice = AnalysisPictureNotice(state.run_intent, state.sim_state)) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("%s", notice);
-    ImGui::PopStyleColor();
   }
 }
 
-void RenderRadiusSlider(GuiState& state, bool join_line) {
+
+void RenderRadiusSlider(GuiState& state, float width) {
   const auto& payload = state.analysis_result.payload;
   const bool cone_result = payload && payload->roi_mode == LUMICE_RAYPATH_ROI_CONE && payload->cone_ring_count > 0;
   if (state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE && !cone_result) {
     return;
-  }
-  if (join_line) {
-    ImGui::SameLine();
   }
   // The slider's range is the result's cone when there is one, the request's otherwise (they are
   // the same numbers unless the constants changed between the run and now).
@@ -1461,39 +1381,15 @@ void RenderRadiusSlider(GuiState& state, bool join_line) {
   // right end (and label) sit past the clip. No hidden-label swap in the wide branch: the item
   // keeps its id, so the test layer's refs stay stable.
   const float label_w = ImGui::CalcTextSize("Radius").x;
-  const float slider_max = ImGui::GetContentRegionAvail().x - label_w - ImGui::GetStyle().ItemInnerSpacing.x;
-  if (slider_max >= UiPx(120.0f)) {
-    ImGui::SetNextItemWidth(std::min(UiPx(220.0f), slider_max));
-    if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
-      // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
-      RecomputeAnalysisDisplayOrder(state);
-    }
-  } else {
-    // The label owns its own line; the slider's display text is empty. "##narrow" kept drawing
-    // a second, clipped "Radius" past the full-width track ("##" only hides its own suffix),
-    // and the test hook's slider rect does not cover a trailing label, so no geometry assert
-    // could see it. "###" anchors one id across both branches — the refs stay stable.
-    ImGui::TextDisabled("Radius");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    if (ImGui::SliderFloat("###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
-      RecomputeAnalysisDisplayOrder(state);
-    }
+  ImGui::SetNextItemWidth(std::max(UiPx(40.0f), width - label_w - ImGui::GetStyle().ItemInnerSpacing.x));
+  if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+    RecomputeAnalysisDisplayOrder(state);
   }
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(cone_result ?
                           "How far from the picked point counts. Re-sums the result on hand; does not re-run." :
                           "How far from the picked point will count, shown as the ring on the preview.\n"
                           "The analysis always traces the whole cone; this picks the part the list sums.");
-  }
-  if (cone_result) {
-    // The rings readout joins the slider only while the line holds both; it drops to its own
-    // line at the column floor rather than clip.
-    const float rings_w = ImGui::CalcTextSize("000 / 000 rings").x;
-    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + rings_w <=
-        ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
-      ImGui::SameLine();
-    }
-    ImGui::TextDisabled("%d / %d rings", state.analysis_result.display_ring_count, rings);
   }
 }
 
@@ -1526,6 +1422,10 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
   RenderSymmetryCheckboxes(a.symmetry_p, a.symmetry_b, a.symmetry_d, SymmetryAvailability{},
                            SymmetryCheckboxMeaning::kAnalysisPhysical, "analysis_symmetry");
   RefreshAnalysisEntries(state, server);
+}
+
+void RenderListStatus(const GuiState& state) {
+  RenderListFreshnessBanner(state);
   // The list could not be re-read under the bits asked for (the server has left the analysis
   // session): say which bits it IS showing rather than let the checkboxes claim otherwise.
   const auto& payload = state.analysis_result.payload;
@@ -1534,10 +1434,6 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
     // one place the list's actual reduction is spelled, never a clipped tail.
     const std::string note = std::string(ICON_FA_TRIANGLE_EXCLAMATION " List shows ") +
                              SymmetryBitsLabel(state.analysis_result.entries_symmetry) + "; analyze again to apply.";
-    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(note.c_str()).x <=
-        ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x) {
-      ImGui::SameLine();
-    }
     ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
     ImGui::TextWrapped("%s", note.c_str());
     ImGui::PopStyleColor();
@@ -1948,49 +1844,25 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   // analyze_workspace.cpp), next to the picture they aim at; everything that reads and shapes
   // the RESULT stays here.
   //
-  // The fixed head grows with state — the pick and freshness banners wrap at a narrow column —
-  // and the host window never scrolls (the table is its one scrolling region), so an
-  // over-budget head would push the Exclude / Export CSV row out of the window for good. When
-  // the head's natural height (measured last frame) exceeds what the region can give it while
-  // still holding the table's minimum and the button row, the head moves into its own scrolling
-  // child — the degradation ladder's internal-scroll rung; at every ordinary state the head is
-  // shorter than the space and renders flat, exactly as before. The measurement rides one frame
-  // behind a state change; the states that grow the head persist, so the clamp engages on the
-  // frame after the banner appears.
-  ImGuiStorage* storage = ImGui::GetStateStorage();
-  const ImGuiID head_h_key = ImGui::GetID("analysis_head_natural_h");
+  RenderSymmetryControls(state, server);
+  ImGui::Separator();
+  RenderResultSearchBox();
+  const float gap = ImGui::GetStyle().ItemSpacing.y;
+  const float status_h = ImGui::GetTextLineHeight() * 2.0f + gap;
+  ImGui::BeginChild("##analysis_status", ImVec2(0.0f, status_h));
+  RenderListStatus(state);
+  ImGui::EndChild();
   const float buttons_h =
       ImGui::GetFrameHeightWithSpacing() +
       (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
-  const float table_min_h = AnalysisTableMinHeight();
-  // The two inter-block gaps (head→table, table→buttons) ride in the budget too: without them
-  // the clamp sizes the head so the table and the button row land EXACTLY on the window's
-  // bottom edge, and any sub-pixel rounding pushes the buttons past the clip — a floored list
-  // whose controls vanish. The margin is the contract's X5 form: the buttons at the floor are
-  // fully inside, not flush.
-  const float block_gaps = ImGui::GetStyle().ItemSpacing.y * 2.0f;
-  const float max_head_h = ImGui::GetContentRegionAvail().y - buttons_h - table_min_h - block_gaps;
-  const bool clamp_head = storage->GetFloat(head_h_key, 0.0f) > max_head_h;
-  const auto draw_head = [&state, server] {
-    RenderListFreshnessBanner(state);
-    RenderSymmetryControls(state, server);
-    ImGui::Separator();
-    RenderResultSearchBox();
-  };
-  float head_natural = 0.0f;
-  if (clamp_head) {
-    ImGui::BeginChild("##analysis_head", ImVec2(0.0f, max_head_h));
-    const float inner_top = ImGui::GetCursorPosY();
-    draw_head();
-    head_natural = ImGui::GetCursorPosY() - inner_top;
+  const float table_h = std::max(1.0f, ImGui::GetContentRegionAvail().y - buttons_h - gap);
+  if (!state.analysis_result.payload || state.analysis_result.payload->entries.empty()) {
+    ImGui::BeginChild("##analysis_empty_rows", ImVec2(0.0f, table_h));
+    RenderResultList(state);
     ImGui::EndChild();
   } else {
-    const float top = ImGui::GetCursorPosY();
-    draw_head();
-    head_natural = ImGui::GetCursorPosY() - top;
+    RenderResultList(state);
   }
-  storage->SetFloat(head_h_key, head_natural);
-  RenderResultList(state);
   RenderActionButtons(state);
 }
 
@@ -2026,12 +1898,6 @@ bool FitsOnBarLine(float next_w) {
 // behind it are untouched.
 void RenderPanoramaRoiControls(GuiState& state) {
   auto& a = state.analysis;
-  ImGui::TextUnformatted("Region");
-  // The first radio joins the label the same way every later join is judged — the ③ widths
-  // wrap it below instead of clipping the mode selector's first choice.
-  if (FitsOnBarLine(InlineLabelledControlWidth("Whole sky"))) {
-    ImGui::SameLine();
-  }
   const int prev_mode = a.roi_mode;
   ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
   if (FitsOnBarLine(InlineLabelledControlWidth("Point"))) {
@@ -2064,42 +1930,95 @@ void RenderPanoramaRoiControls(GuiState& state) {
       state.workspace.panorama_press_owner = Owner::kCancelled;
     }
   }
+}
 
-  if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
-    char centre[96];
-    if (a.cone_center_valid) {
-      float alt = 0.0f;
-      float az = 0.0f;
-      DirToAltAz(a.cone_center_dir, &alt, &az);
-      std::snprintf(centre, sizeof(centre), "Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
-    } else {
-      std::snprintf(centre, sizeof(centre), "No centre yet");
-    }
-    if (FitsOnBarLine(ImGui::CalcTextSize(centre).x)) {
-      ImGui::SameLine();
-    }
-    if (a.cone_center_valid) {
-      ImGui::TextWrapped("%s", centre);
-    } else {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("%s", centre);
-      ImGui::PopStyleColor();
-    }
+namespace {
+struct OperationWidths {
+  float first;
+  float budget;
+  float radius;
+  float single;
+};
+OperationWidths MeasureOperationWidths() {
+  const float gap = ImGui::GetStyle().ItemSpacing.x;
+  OperationWidths w;
+  w.first = InlineLabelledControlWidth("Whole sky") + InlineLabelledControlWidth("Point") +
+            InlineButtonWidth(ICON_FA_PLAY " Analyze") + InlineLabelledControlWidth("Infinite rays") + gap * 3.0f;
+  w.budget = UiPx(40.0f + kInputWidth + kLabelColWidth) + gap + LabelColumnGapX();
+  w.radius = UiPx(80.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
+  w.single = w.first + w.budget + w.radius + gap * 2.0f;
+  return w;
+}
+}  // namespace
+
+float AnalyzeOperationBarHeight(float width) {
+  const bool single = width >= MeasureOperationWidths().single;
+  return ImGui::GetFrameHeight() * (single ? 1.0f : 2.0f) + ImGui::GetStyle().ItemSpacing.y * (single ? 1.0f : 2.0f);
+}
+
+void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
+  const float width = ImGui::GetContentRegionAvail().x;
+  const OperationWidths w = MeasureOperationWidths();
+  const bool single = width >= w.single;
+  RenderPanoramaRoiControls(state);
+  RenderRunControls(state, server, FitsOnBarLine(InlineButtonWidth(ICON_FA_PLAY " Analyze")));
+  if (FitsOnBarLine(InlineLabelledControlWidth("Infinite rays"))) {
+    ImGui::SameLine();
+  }
+  Checkbox("Infinite rays", &state.analysis.infinite);
+  if (single) {
+    ImGui::SameLine();
+  }
+  RenderRequestParamsControls(state, w.budget);
+  if (FitsOnBarLine(w.radius)) {
+    ImGui::SameLine();
+  }
+  // The absent Point control owns its slot too; it never lends height back to the picture.
+  if (state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE ||
+      (state.analysis_result.payload && state.analysis_result.payload->roi_mode == LUMICE_RAYPATH_ROI_CONE)) {
+    RenderRadiusSlider(state, w.radius);
+  } else {
+    ImGui::Dummy(ImVec2(w.radius, ImGui::GetFrameHeight()));
   }
 }
 
-// The Analyze main view's operation bar (analyze-interaction-contract.md §2.2): the analysis
-// request's controls — region, cone centre, radius, budget, Analyze/Stop — on one strip below
-// the picture they aim at, so region → Analyze → list reads next to what it operates on. The
-// picture notice rides with the run controls' own line — this bar is the one place in the
-// workspace that draws that fact. Every join is judged (FitsOnBarLine), so the same flow is the
-// contract's single row at the wide widths and folds at the narrow ones, never clips.
-void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
-  ImGui::Separator();
-  RenderPanoramaRoiControls(state);
-  RenderRunControls(state, server, FitsOnBarLine(InlineButtonWidth(ICON_FA_PLAY " Analyze")));
-  RenderRequestParamsControls(state, FitsOnBarLine(InlineLabelledControlWidth("Infinite rays")));
-  RenderRadiusSlider(state, FitsOnBarLine(ImGui::CalcTextSize("Radius").x));
+void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
+  if (state.analysis_run_in_progress) {
+    LUMICE_RayCount rays = 0;
+    if (server != nullptr) {
+      LUMICE_GetSimRayCount(server, &rays);
+    }
+    ImGui::TextWrapped("Analyzing (%s)... %s rays", RoiModeLabel(state.analysis.roi_mode),
+                       FormatThousands(static_cast<std::uint64_t>(rays)).c_str());
+  }
+  if (const auto& payload = state.analysis_result.payload) {
+    ImGui::TextWrapped("%zu raypaths (%s)", payload->entries.size(), RoiModeLabel(payload->roi_mode));
+    if (payload->truncated_chain_count > 0) {
+      ImGui::TextWrapped("Record full (%s hits). Unrecorded chains contribute to other; percentages still sum to 100.",
+                         FormatThousands(static_cast<std::uint64_t>(payload->truncated_chain_count)).c_str());
+    }
+    if (payload->roi_mode == LUMICE_RAYPATH_ROI_CONE) {
+      ImGui::TextWrapped("%d / %d rings", state.analysis_result.display_ring_count, payload->cone_ring_count);
+    }
+  }
+  if (state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
+    float alt = 0.0f;
+    float az = 0.0f;
+    DirToAltAz(state.analysis.cone_center_dir, &alt, &az);
+    if (state.analysis.cone_center_valid) {
+      ImGui::TextWrapped("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+    } else {
+      ImGui::TextWrapped("No centre yet.");
+    }
+  }
+  if (ConeCenterDriftedFromResult(state)) {
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION " Centre has moved — press Analyze to update the list.");
+    ImGui::PopStyleColor();
+  }
+  if (const char* notice = AnalysisPictureNotice(state.run_intent, state.sim_state)) {
+    ImGui::TextWrapped("%s", notice);
+  }
 }
 
 namespace {

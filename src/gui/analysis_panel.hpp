@@ -474,7 +474,9 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server);
 
 // The main view's operation bar (contract §2.2): region radios, the Point centre readout,
 // the radius, the budget and Analyze/Stop — one judged-join strip hosted below the picture.
+float AnalyzeOperationBarHeight(float width);
 void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server);
+void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server);
 
 // The operation bar's region segment: the Whole sky / Point radios with gesture guidance,
 // and in Point mode the centre readout. The bar is the only renderer.

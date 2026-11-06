@@ -34,7 +34,7 @@ namespace {
 
 // The diagnostics region's idle state (analyze-interaction-contract.md §9.1 — a first-class
 // design, not an empty placeholder): the entry guidance (the list's own empty-state line, plus
-// the next step — no picture yet points at the Render workspace's Run, a picture points at the
+// the next step — no picture yet points at the top bar's Run, a picture points at the
 // main view's operation bar: region there, Analyze there), the analysis's own run status while
 // one is in flight (the same state machine and Stop the bar's controls drive — two faces of one
 // truth, the contract's cancel entry for this region), and the observation summary (the request
@@ -67,7 +67,7 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
     disabled_wrapped("No result yet. Choose a region and press Analyze.");
   }
   // The same branch logic as the panorama's empty state: without a picture of the document the
-  // first step is the Render workspace's Run; with one, the main view's operation bar is the
+  // first step is the top bar's Run; with one, the main view's operation bar is the
   // path — the guidance names the real places (the bar below the picture, both region and
   // Analyze button on it).
   // Each branch is its own named child (the pick banner's reason: a text item has no id a test
@@ -75,8 +75,8 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
   if (!HasEverShownPicture(state.run_intent)) {
     ImGui::BeginChild("##AnalyzeIdleNoPictureGuide", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
     ImGui::TextWrapped(
-        "No rendered image for this document yet — press Run once in the Render "
-        "workspace; an analysis needs a picture of the document to aim at.");
+        "No rendered image for this document yet — press Run in the top bar; "
+        "an analysis needs a picture of the document to aim at.");
     ImGui::EndChild();
   } else {
     ImGui::BeginChild("##AnalyzeIdlePictureGuide", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
@@ -273,6 +273,13 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
   const ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, picture_h);
   ImGui::BeginChild("##AnalyzePanoramaPicture", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoBackground);
   const ImVec2 region_min = ImGui::GetWindowPos();
+  if (!g_preview.HasTexture()) {
+    ImGui::TextWrapped(
+        "No rendered image for this document yet — press Run in the top bar; "
+        "the main view shows the traced sky here.");
+    ImGui::EndChild();
+    return;
+  }
 
   // Submitted ahead of `##panorama_interact` on purpose — RenderDisplayModeControl's own
   // comment carries the press-order rule.
@@ -478,82 +485,24 @@ void RenderScenePanorama(GLFWwindow* window) {
   UpdateLockedLookAt(g_state);
   ClampRendererViewInvariants(g_state.renderer);
 
-  // The bar's height, as measured last frame (the one-frame-lag recipe the share list's head
-  // clamp runs): the states that change it — Point mode's centre readout, a fold of the bar's judged
-  // joins at a narrow width, a run's in-progress line — persist, so the reserve is right from
-  // the frame after the change. The floor keeps the bar's first row reachable on the very first
-  // frame, before any measurement exists.
-  ImGuiStorage* storage = ImGui::GetStateStorage();
-  const ImGuiID bar_h_key = ImGui::GetID("panorama_opbar_natural_h");
-  const float bar_reserve =
-      std::max(storage->GetFloat(bar_h_key, 0.0f), ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y);
   const ImVec2 avail = ImGui::GetContentRegionAvail();
-  if (!g_preview.HasTexture()) {
-    // The bar still renders below this — its Analyze side carries the same no-picture refusals
-    // and its run controls draw the picture notice, so the empty state guides and refuses in
-    // one place. The notice counts toward the column the same way the picture does: when the
-    // notice AND the bar cannot both fit, the same scrolling degradation engages on this path —
-    // the host window is NoScrollbar / NoScrollWithMouse by design, so content pushed past its
-    // edge is unreachable, and on a fresh document at the smallest window the analysis budget
-    // rows (Infinite rays, Rays(M)) sat exactly there, past a clip rect no wheel could move.
-    // The notice's height rides the same one-frame-lag recipe as the bar's, and both paths
-    // below write the true measured value back, so the judgment converges on current content.
-    const ImGuiID notice_h_key = ImGui::GetID("panorama_empty_notice_h");
-    const float notice_reserve = std::max(storage->GetFloat(notice_h_key, 0.0f), ImGui::GetTextLineHeight());
-    const float content_wanted = notice_reserve + ImGui::GetStyle().ItemSpacing.y + bar_reserve;
-    if (content_wanted > avail.y) {
-      ImGui::BeginChild("##AnalyzeOpBarScroll", avail, 0.0f);
-      const float notice_top = ImGui::GetCursorPosY();
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped(
-          "No rendered image for this document yet — press Run once in the Render workspace; the "
-          "main view shows the traced sky here.");
-      ImGui::PopStyleColor();
-      storage->SetFloat(notice_h_key, ImGui::GetCursorPosY() - notice_top);
-      const float bar_top = ImGui::GetCursorPosY();
-      RenderAnalyzeOperationBar(g_state, g_server);
-      storage->SetFloat(bar_h_key, ImGui::GetCursorPosY() - bar_top);
-      ImGui::EndChild();
-      return;
-    }
-    const float notice_top = ImGui::GetCursorPosY();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(
-        "No rendered image for this document yet — press Run once in the Render workspace; the "
-        "main view shows the traced sky here.");
-    ImGui::PopStyleColor();
-    storage->SetFloat(notice_h_key, ImGui::GetCursorPosY() - notice_top);
+  const float gap = ImGui::GetStyle().ItemSpacing.y;
+  const float bar_h = AnalyzeOperationBarHeight(avail.x);
+  const float status_h = ImGui::GetTextLineHeight() * 2.0f + gap;
+  const float picture_h = std::max(1.0f, avail.y - bar_h - status_h - gap * 2.0f);
+  RenderAnalyzeMainPicture(window, picture_h);
+  ImGui::BeginChild("##AnalyzePictureStatus", ImVec2(0.0f, status_h));
+  RenderAnalyzeStatus(g_state, g_server);
+  ImGui::EndChild();
+  // Only genuinely compressed geometry scrolls controls. The normal two templates render flat,
+  // preserving the controls' existing IDs; query state never enters this decision.
+  if (avail.x < UiPx(340.0f) || picture_h + status_h + bar_h + gap * 2.0f > avail.y) {
+    ImGui::BeginChild("##AnalyzeOpBarScroll", ImVec2(0.0f, std::max(1.0f, bar_h)));
+    RenderAnalyzeOperationBar(g_state, g_server);
+    ImGui::EndChild();
   } else {
-    const float picture_h = avail.y - bar_reserve - ImGui::GetStyle().ItemSpacing.y;
-    if (picture_h > 0.0f) {
-      RenderAnalyzeMainPicture(window, picture_h);
-    }
-    // The column cannot hold the picture AND the bar: the bar takes the whole column in its own
-    // scrolling child — every control stays reachable — and the picture region is not submitted
-    // at all this frame (a zero-height BeginChild would mean "fill what is left", handing the
-    // space straight back to the picture and clipping the bar out for good: a state the
-    // 0.15-clamped row split at the smallest supported window reaches with the Point bar up).
-    // No picture, no publication: the deferred pass skips, honestly. The bar's TRUE height is
-    // measured here — unclipped, the one fact the exit judgment needs — and written to the same
-    // budget key the normal path uses, so a later state (a shorter bar, a wider window) is
-    // judged on current content, never on whatever the pre-takeover frames clipped to.
-    if (picture_h <= 0.0f) {
-      ImGui::BeginChild("##AnalyzeOpBarScroll", avail, 0.0f);
-      const float content_top = ImGui::GetCursorPosY();
-      RenderAnalyzeOperationBar(g_state, g_server);
-      const float content_h = ImGui::GetCursorPosY() - content_top;
-      ImGui::EndChild();
-      storage->SetFloat(bar_h_key, content_h);
-      return;
-    }
+    RenderAnalyzeOperationBar(g_state, g_server);
   }
-
-  // The operation bar, drawn directly in this window — no child, so the tests' bare-name item
-  // lookups from the window ref keep resolving, and the height is a cursor delta rather than a
-  // child measurement.
-  const float bar_top = ImGui::GetCursorPosY();
-  RenderAnalyzeOperationBar(g_state, g_server);
-  storage->SetFloat(bar_h_key, ImGui::GetCursorPosY() - bar_top);
 }
 
 // ---- The class overview (742.4) ---------------------------------------------------------------------
