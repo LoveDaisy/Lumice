@@ -3789,8 +3789,32 @@ struct ScopedWatchdogGuard {
   }
 };
 
+struct ScopedUiScaleAndBasisLease {
+  ImGuiTestContext* ctx;
+  explicit ScopedUiScaleAndBasisLease(ImGuiTestContext* c) : ctx(c) {}
+  ~ScopedUiScaleAndBasisLease() {
+    gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
+    gui::g_ui_scale_dirty = true;
+    for (int i = 0; i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                                gui::UiPx(gui::kAnalyzeLeftPanelWidth) < gui::kAnalyzeLeftPanelWidth + 0.5f);
+         ++i) {
+      ctx->Yield(1);
+    }
+    g_window_size_test.apply_aspect = false;
+    g_window_size_test.width = gui::kInitWindowWidth;
+    g_window_size_test.height = gui::kInitWindowHeight;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    ctx->Yield(3);
+  }
+};
+
 bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
+  const ScopedUiScaleAndBasisLease geometry_lease(ctx);
   ScopedWatchdogGuard watchdog(ctx->EngineIO);
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
@@ -4568,6 +4592,23 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     const ImGuiTestItemInfo canvas_640 = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas_640.ID != 0, false);
+    const auto log_geometry = [ctx](const char* label, const ImRect& rect) {
+      ctx->LogInfo("[pose-min geometry] %s (%.2f,%.2f)-(%.2f,%.2f)", label, rect.Min.x, rect.Min.y, rect.Max.x,
+                   rect.Max.y);
+    };
+    log_geometry("canvas", canvas_640.RectFull);
+    for (const ImGuiWindow* w = r3d_640; w != nullptr; w = w->ParentWindow) {
+      ctx->LogInfo("[pose-min geometry] host=%s size=(%.2f,%.2f) scroll=(%.2f,%.2f) max=(%.2f,%.2f)", w->Name,
+                   w->Size.x, w->Size.y, w->Scroll.x, w->Scroll.y, w->ScrollMax.x, w->ScrollMax.y);
+      log_geometry("inner clip", w->InnerClipRect);
+      log_geometry("clip", w->ClipRect);
+    }
+    ctx->LogInfo("[pose-min geometry] request scroll=%.2f scale=%.2f D4=%.3f D5=%.3f point=%llu sample=%d trace=%d",
+                 region_scroll_request_640, gui::CurrentUiScale(), gui::g_state.analyze_pose_view_right_ratio,
+                 gui::g_state.analyze_pose_view_globe_ratio,
+                 static_cast<unsigned long long>(gui::g_state.analysis.point.intent_id.serial),
+                 gui::g_state.analysis.point_view.sample_index,
+                 static_cast<int>(gui::g_state.analysis.trace.intent_valid));
     IM_CHECK_RETV(canvas_640.RectFull.Min.x >= r3d_640->InnerClipRect.Min.x - 0.5f &&
                       canvas_640.RectFull.Max.x <= r3d_640->InnerClipRect.Max.x + 0.5f &&
                       canvas_640.RectFull.Min.y >= r3d_640->InnerClipRect.Min.y - 0.5f &&
@@ -6894,35 +6935,6 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   return true;
 }
-
-// The scale-tier leg's shared-state lease (the reviewer's early-exit lesson): any
-// IM_CHECK_RETV past the tier switch can return out of the case with the UI scale and the
-// shared window's basis still switched — ScopedServerGuard does not own either. The lease
-// restores both on every exit path; the settle waits inside are best-effort bounded loops
-// (a destructor cannot assert), so a truly wedged rebuild still shows up as the NEXT case's
-// entry audit rather than as silent leakage.
-struct ScopedUiScaleAndBasisLease {
-  ImGuiTestContext* ctx;
-  explicit ScopedUiScaleAndBasisLease(ImGuiTestContext* c) : ctx(c) {}
-  ~ScopedUiScaleAndBasisLease() {
-    gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
-    gui::g_ui_scale_dirty = true;
-    for (int i = 0; i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > gui::kAnalyzeLeftPanelWidth - 0.5f &&
-                                gui::UiPx(gui::kAnalyzeLeftPanelWidth) < gui::kAnalyzeLeftPanelWidth + 0.5f);
-         ++i) {
-      ctx->Yield(1);
-    }
-    g_window_size_test.apply_aspect = false;
-    g_window_size_test.width = gui::kInitWindowWidth;
-    g_window_size_test.height = gui::kInitWindowHeight;
-    g_window_size_test.done.store(false);
-    g_window_size_test.requested.store(true);
-    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-      ctx->Yield(1);
-    }
-    ctx->Yield(3);
-  }
-};
 
 namespace {
 
