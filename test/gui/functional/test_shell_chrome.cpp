@@ -1914,8 +1914,10 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       // controls — the display-mode control and the interaction button — live inside it).
       ImGuiWindow* pano = nullptr;
       for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzePanorama") != nullptr) {
+        if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+            std::strstr(w->Name, "##AnalyzePanoramaPicture") != nullptr) {
           pano = w;
+          break;
         }
       }
       IM_CHECK(pano != nullptr);

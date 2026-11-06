@@ -624,6 +624,15 @@ ImGuiWindow* MapRegionWindow() {
 ImGuiWindow* MapInfoRegionWindow() {
   return RegionWindowUnder("Raypath view", "##AnalyzeRaypathInfo");
 }
+ImGuiWindow* MapReportWindow() {
+  const ImGuiWindow* info = MapInfoRegionWindow();
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->Active && w->ParentWindow == info && std::strstr(w->Name, "##MapReport") != nullptr) {
+      return w;
+    }
+  }
+  return nullptr;
+}
 // The Pose & trace window's two regions (755.5): the 3D orbit (##AnalyzeRaypath3D) and the
 // sun-direction globe (##AnalyzeSunGlobe) moved under the pose window's top level — the same
 // region names, a new host; they exist only while the window is open.
@@ -5278,7 +5287,7 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
   // post-adoption fit (the in-view arc state) and Full sky (whole circles in view — the main
   // entry's qualifier is then the ONLY explanation, no partial note behind it).
   {
-    ImGuiWindow* info_leg = MapInfoRegionWindow();
+    ImGuiWindow* info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] at the 200 pt floor: info %.0fx%.0f, ScrollMax (%.1f, %.1f)",
                  static_cast<double>(info_leg->Size.x), static_cast<double>(info_leg->Size.y),
@@ -5287,14 +5296,14 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     ctx->SetRef("");
     ctx->ItemClick("**/Full sky##map");
     ctx->Yield(3);
-    info_leg = MapInfoRegionWindow();
+    info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] Full sky (whole circles): ScrollMax (%.1f, %.1f)",
                  static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
     IM_CHECK_RETV(info_leg->ScrollMax.x == 0.0f, false);
     ctx->ItemClick("**/Fit##map");
     ctx->Yield(3);
-    info_leg = MapInfoRegionWindow();
+    info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] back to the fit (arc state): ScrollMax (%.1f, %.1f)",
                  static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
@@ -5308,7 +5317,7 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(win_leg != nullptr, false);
     ImGui::SetWindowSize(win_leg, ImVec2(480.0f, 360.0f), ImGuiCond_Always);
     ctx->Yield(3);
-    info_leg = MapInfoRegionWindow();
+    info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     const float sm_present = info_leg->ScrollMax.y;
     ctx->LogInfo("[legend] short window, arcs drawn: ScrollMax.y %.1f", static_cast<double>(sm_present));
@@ -5318,13 +5327,13 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     gui::g_state.analysis.map_view.centre_pos[2] = -1.0f;
     gui::g_state.analysis.map_view.radius_deg = 5.0f;
     ctx->Yield(4);
-    info_leg = MapInfoRegionWindow();
+    info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] circles out of the disk: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
     IM_CHECK_RETV(info_leg->ScrollMax.y < sm_present, false);
     ctx->ItemClick("**/Full sky##map");
     ctx->Yield(3);
-    info_leg = MapInfoRegionWindow();
+    info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] full sky brings them back: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
     IM_CHECK_RETV(fabsf(info_leg->ScrollMax.y - sm_present) < 1.0f, false);
@@ -6303,9 +6312,10 @@ bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   // The pose window above the map window: the pick lands on the map canvas at a point the pose
   // window does not cover (the map window sits at (8,60), the pose at (8,40) — park the pose
-  // window lower-left so both canvases stay pressable).
+  // window lower-right but entirely on-screen so both canvases stay pressable and D5
+  // has actual space above its two floors, rather than a nominal off-screen suffix).
   if (ImGuiWindow* pose_m = ctx->GetWindowByRef("//Pose & trace")) {
-    ImGui::SetWindowPos(pose_m, ImVec2(360.0f, 380.0f), ImGuiCond_Always);
+    ImGui::SetWindowPos(pose_m, ImVec2(360.0f, 240.0f), ImGuiCond_Always);
     ctx->Yield(2);
   }
   IM_CHECK_RETV(DriveUntil(
@@ -6985,7 +6995,7 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
   PinPoseViewOnScreen(ctx);
   if (ImGuiWindow* pose_m = ctx->GetWindowByRef("//Pose & trace")) {
-    ImGui::SetWindowPos(pose_m, ImVec2(360.0f, 380.0f), ImGuiCond_Always);
+    ImGui::SetWindowPos(pose_m, ImVec2(360.0f, 240.0f), ImGuiCond_Always);
   }
   ctx->Yield(2);
   return true;
@@ -10964,6 +10974,46 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("layout_map_refused_fixture.png").string()));
       IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kRefused);
       IM_CHECK(gui::PointQueryStateFor(probe.analysis.point) == gui::PointQueryState::kRefused);
+      // A real engine-produced partial document, not a fabricated Info field. The published
+      // interrupted-request contract returns what it has with the stopped execution named.
+      gui::GuiState query_scene;
+      IM_CHECK(gui::DeserializeFromJson(kFullyRandomJson, query_scene));
+      const auto scene = gui::BuildScene(query_scene, gui::SceneIntent::kSimCommit);
+      IM_CHECK(scene != nullptr);
+      const int faces[] = { 3, 5 };
+      const int count = 2;
+      volatile int interrupted = 1;
+      LUMICE_SinglePathRequest request{};
+      request.struct_size = sizeof(request);
+      request.crystal_id = gui::ComputeCrystalPoolToCoreIdMap(query_scene).begin()->second;
+      request.faces = faces;
+      request.face_count = 2;
+      request.layer_face_counts = &count;
+      request.layer_count = 1;
+      request.target_altitude_deg = 20.0;
+      request.target_azimuth_deg = 25.0;
+      request.sample_count = 2000;
+      request.interrupted = &interrupted;
+      LUMICE_SinglePathResult* raw_partial = nullptr;
+      char error[256] = {};
+      IM_CHECK_EQ(LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw_partial, error, sizeof(error)), LUMICE_OK);
+      const gui::PointHandle partial(raw_partial, gui::PointDeleter{});
+      LUMICE_PathPointInfo partial_info{};
+      partial_info.struct_size = sizeof(partial_info);
+      IM_CHECK_EQ(LUMICE_PathPointGetInfo(partial.get(), &partial_info), LUMICE_PATH_READ_OK);
+      IM_CHECK_NE(partial_info.execution, LUMICE_PATH_OUTCOME_COMPLETED);
+      expected_frame = ctx->ItemInfo(anchor_ids[0]).TimestampMain + 1;
+      probe.analysis.point.adopted_result = partial;
+      probe.analysis.point.adopted_error.clear();
+      ctx->Yield(1);
+      IM_CHECK(compare());
+      ++expected_frame;
+      ctx->Yield(1);
+      IM_CHECK(compare());
+      IM_CHECK(gui::PointQueryStateFor(probe.analysis.point) == gui::PointQueryState::kCompleted);
+      IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_partial.png").string()));
+      probe.analysis.point.adopted_result.reset();
+      expected_frame = -1;
       // Put the map above the pose for an actual typing/click chain while the status changes.
       ctx->SetRef("//Layout map probe");
       ctx->WindowFocus("//Layout map probe");
@@ -11043,6 +11093,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_RETV(std::abs(whole_run.RectFull.Min.x - run.RectFull.Min.x) < 0.5f &&
                           std::abs(whole_run.RectFull.Min.y - run.RectFull.Min.y) < 0.5f,
                       false);
+        ctx->MouseMoveToPos(ImVec2(0.0f, 0.0f));
+        ctx->Yield(2);  // keep unrelated top-bar tooltips out of the geometry capture
         IM_CHECK_RETV(
             SaveWindowPng(ctx, PanoramaRegionRef(),
                           GuiTestTempPath(single ? "layout_main_single.png" : "layout_main_double.png").string()),
