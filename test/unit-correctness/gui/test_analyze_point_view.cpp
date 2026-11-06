@@ -408,6 +408,53 @@ TEST(AnalyzePointView, CurveMappingHelpersAnswerSafelyOnAnEmptyCurve) {
   EXPECT_EQ(PointCurveValidPositionNearX(empty, 2.01), 1);
 }
 
+TEST(AnalyzePointView, CurveLogLabelStepBoundsVisibleLabels) {
+  // The live worst case (review round 1): a real fiber spanning ~213 decades on a ~200px plot
+  // must collapse to a handful of evenly spaced labelled exponents, not 213 overlapping texts.
+  const int step = PointCurveLogLabelStep(1.1287457567142152e-213, 1.6273993240820983, 200.0f, 15.0f);
+  EXPECT_GE(step, 20);
+  EXPECT_LE(step, 30);
+  // A three-decade band labels every decade; degenerate and out-of-domain bands answer 1.
+  EXPECT_EQ(PointCurveLogLabelStep(1e-6, 1e-3, 200.0f, 15.0f), 1);
+  EXPECT_EQ(PointCurveLogLabelStep(2.5, 2.5, 200.0f, 15.0f), 1);
+  EXPECT_EQ(PointCurveLogLabelStep(0.0, 1.0, 200.0f, 15.0f), 1);
+  // A shorter plot labels fewer decades: the step grows as the plot shrinks.
+  const int tall = PointCurveLogLabelStep(1e-6, 1e6, 300.0f, 15.0f);
+  const int short_plot = PointCurveLogLabelStep(1e-6, 1e6, 60.0f, 15.0f);
+  EXPECT_GE(short_plot, tall);
+}
+
+TEST(AnalyzePointView, CurvePositiveRunsKeepIsolatedPositivesAndBreakAtGaps) {
+  using K = PointCurveValueKind;
+  // P P U P: one 2-point run plus one isolated positive — nothing dropped.
+  const K a[] = { K::kPositive, K::kPositive, K::kUnavailable, K::kPositive };
+  const std::vector<PointCurveRun> ra = PointCurvePositiveRuns(a, 4);
+  ASSERT_EQ(ra.size(), 2U);
+  EXPECT_EQ(ra[0].begin, 0);
+  EXPECT_EQ(ra[0].end, 2);
+  EXPECT_EQ(ra[1].begin, 3);
+  EXPECT_EQ(ra[1].end, 4);
+  // U P U (the review's disappearing-contribution pattern): exactly one isolated run.
+  const K b[] = { K::kUnavailable, K::kPositive, K::kUnavailable };
+  const std::vector<PointCurveRun> rb = PointCurvePositiveRuns(b, 3);
+  ASSERT_EQ(rb.size(), 1U);
+  EXPECT_EQ(rb[0].begin, 1);
+  EXPECT_EQ(rb[0].end, 2);
+  // P U P: two isolated runs — a gap is never bridged.
+  const K c[] = { K::kPositive, K::kUnavailable, K::kPositive };
+  const std::vector<PointCurveRun> rc = PointCurvePositiveRuns(c, 3);
+  ASSERT_EQ(rc.size(), 2U);
+  EXPECT_EQ(rc[0].begin, 0);
+  EXPECT_EQ(rc[1].begin, 2);
+  // An exact zero breaks a run too: zeros live on the zero row, not on the log axis.
+  const K d[] = { K::kPositive, K::kExactZero, K::kPositive };
+  EXPECT_EQ(PointCurvePositiveRuns(d, 3).size(), 2U);
+  // No positives, no runs; null kinds answer empty.
+  const K e[] = { K::kUnavailable, K::kExactZero };
+  EXPECT_EQ(PointCurvePositiveRuns(e, 2).size(), 0U);
+  EXPECT_EQ(PointCurvePositiveRuns(nullptr, 3).size(), 0U);
+}
+
 TEST(AnalyzePointView, CrystalFrameTransformIsTheInverseRotation) {
   // The pose: a 90-degree rotation about world x (row-major body->world). The crystal-frame
   // transform is its transpose; applying it, then applying it to the transposed pose, round-trips.

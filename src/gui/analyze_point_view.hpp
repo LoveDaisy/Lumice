@@ -209,6 +209,22 @@ struct PointCurveLogTick {
 // still draws inside a range rather than on an edge; nothing positive to span answers empty.
 std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi);
 
+// The exponent stride between LABELLED decade majors so labels cannot overlap: a real fiber
+// can span hundreds of decades (live: 1e-213 .. 1.6), and labelling every decade on a ~200 px
+// plot draws hundreds of overlapping texts. Returns 1 when every decade can carry a label;
+// above that, only every Nth exponent is labelled and the rest stay unlabelled.
+int PointCurveLogLabelStep(double lo, double hi, float plot_h_px, float line_h_px);
+
+// One run of consecutive stored indices whose arm value is a usable positive: half-open
+// [begin, end) over the stored points. Gaps (unavailable or exact-zero points) break runs and
+// are never bridged; a run of length 1 is an isolated positive contribution the renderer must
+// draw as a point marker — never dropped (AC3/AC6: discrete data stays visible).
+struct PointCurveRun {
+  int begin = 0;
+  int end = 0;
+};
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count);
+
 // ---- The u-globe (crystal-frame sun-direction sphere) -----------------------------------------------
 
 // The disk projection of the crystal-frame sun-direction sphere: Lambert azimuthal equal-area

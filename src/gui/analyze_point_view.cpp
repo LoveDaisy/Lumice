@@ -439,6 +439,36 @@ std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi) {
   return ticks;
 }
 
+int PointCurveLogLabelStep(double lo, double hi, float plot_h_px, float line_h_px) {
+  if (!(lo > 0.0) || !(hi > 0.0) || hi <= lo) {
+    return 1;
+  }
+  const int decades = std::max(1, static_cast<int>(std::ceil(std::log10(hi) - std::log10(lo))));
+  const float usable_line = std::max(1.0f, line_h_px * 1.5f);
+  const int max_labels = std::max(1, static_cast<int>(std::floor(plot_h_px / usable_line)));
+  return std::max(1, static_cast<int>(std::ceil(static_cast<double>(decades) / static_cast<double>(max_labels))));
+}
+
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count) {
+  std::vector<PointCurveRun> runs;
+  if (kinds == nullptr) {
+    return runs;
+  }
+  size_t i = 0;
+  while (i < count) {
+    if (kinds[i] != PointCurveValueKind::kPositive) {
+      ++i;
+      continue;
+    }
+    const size_t begin = i;
+    while (i < count && kinds[i] == PointCurveValueKind::kPositive) {
+      ++i;
+    }
+    runs.push_back(PointCurveRun{ static_cast<int>(begin), static_cast<int>(i) });
+  }
+  return runs;
+}
+
 // ---- The u-globe -------------------------------------------------------------------------------------
 
 bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component, SunGlobeProjector* out) {
@@ -2054,29 +2084,11 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
                            ImGuiButtonFlags_MouseButtonLeft);
     const bool canvas_hovered = ImGui::IsItemHovered();
     const bool canvas_active = ImGui::IsItemActive();
-    const float pad_l = UiPx(34.0f);  // the decade labels live left of the plot
-    const float pad_r = UiPx(10.0f);
-    const float pad_t = UiPx(10.0f);  // the seed mark rides above the plot
-    const float pad_b = UiPx(28.0f);  // the zero row, then the x labels' strip
-    const ImVec2 plot_min(canvas_min.x + pad_l, canvas_min.y + pad_t);
-    const ImVec2 plot_max(canvas_max.x - pad_r, canvas_max.y - pad_b);
-    const float plot_w = std::max(1.0f, plot_max.x - plot_min.x);
-    const float plot_h = std::max(1.0f, plot_max.y - plot_min.y);
     const double x_hi = n > 0 ? curve.points[n - 1].x_rad : 0.0;
-    const auto x_to_px = [&](double x) {
-      const double t = x_hi > 0.0 ? x / x_hi : 0.0;
-      return plot_min.x + static_cast<float>(t * plot_w);
-    };
-    const auto x_at_px = [&](float px) {
-      const float t = std::clamp((px - plot_min.x) / plot_w, 0.0f, 1.0f);
-      return static_cast<double>(t) * x_hi;
-    };
-
-    dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
-    dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
-
     // The shared log range: decade bounds over the union of ALL arms' usable positives — no
-    // per-arm normalization (AC1: the arms' actual magnitudes stay comparable).
+    // per-arm normalization (AC1: the arms' actual magnitudes stay comparable). Computed FIRST
+    // so the left pad can budget the labels it will actually draw (a real fiber can span
+    // hundreds of decades; "1e-213" is far wider than "1e-6").
     double v_min = 0.0;
     double v_max = 0.0;
     bool have_range = false;
@@ -2095,6 +2107,43 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         have_range = true;
       }
     }
+    // How many decades sit between LABELLED majors: plot height and font size decide, so a
+    // 213-decade range labels ~8 evenly spaced exponents instead of 213 overlapping texts.
+    const float line_h = ImGui::GetTextLineHeight();
+    const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - UiPx(28.0f));
+    const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
+    float widest_lab = 0.0f;
+    if (have_range) {
+      for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
+        const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
+        if (!tick.major || exp10 % label_step != 0) {
+          continue;
+        }
+        char lab[16];
+        std::snprintf(lab, sizeof(lab), "%.0e", tick.value);
+        widest_lab = std::max(widest_lab, ImGui::CalcTextSize(lab).x);
+      }
+    }
+    const float pad_l = std::max(UiPx(34.0f), widest_lab + UiPx(10.0f));  // decade labels live left of the plot
+    const float pad_r = UiPx(10.0f);
+    const float pad_t = UiPx(10.0f);  // the seed mark rides above the plot
+    const float pad_b = UiPx(28.0f);  // the zero row, then the x labels' strip
+    const ImVec2 plot_min(canvas_min.x + pad_l, canvas_min.y + pad_t);
+    const ImVec2 plot_max(canvas_max.x - pad_r, canvas_max.y - pad_b);
+    const float plot_w = std::max(1.0f, plot_max.x - plot_min.x);
+    const float plot_h = std::max(1.0f, plot_max.y - plot_min.y);
+    const auto x_to_px = [&](double x) {
+      const double t = x_hi > 0.0 ? x / x_hi : 0.0;
+      return plot_min.x + static_cast<float>(t * plot_w);
+    };
+    const auto x_at_px = [&](float px) {
+      const float t = std::clamp((px - plot_min.x) / plot_w, 0.0f, 1.0f);
+      return static_cast<double>(t) * x_hi;
+    };
+
+    dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
+    dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
+
     const auto v_to_py = [&](double v) {
       const double log_lo = have_range ? std::log10(v_min) : 0.0;
       double log_hi = have_range ? std::log10(v_max) : 0.0;
@@ -2105,7 +2154,14 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       return plot_min.y + static_cast<float>((1.0 - std::clamp(t, 0.0, 1.0)) * plot_h);
     };
     if (have_range) {
+      const bool minors_fit =
+          label_step == 1 && plot_h / std::max(1.0, std::log10(v_max) - std::log10(v_min)) >= UiPx(12.0f);
       for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
+        const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
+        const bool labelled = tick.major && exp10 % label_step == 0;
+        if (tick.major && !labelled) {
+          continue;  // an unlabelled decade would only crowd the plot at this density
+        }
         const float py = v_to_py(tick.value);
         if (tick.major) {
           dl->AddLine(ImVec2(plot_min.x, py), ImVec2(plot_max.x, py), IM_COL32(60, 64, 72, 110), 1.0f);
@@ -2114,7 +2170,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           const ImVec2 ts = ImGui::CalcTextSize(lab);
           dl->AddText(ImVec2(plot_min.x - ts.x - UiPx(5.0f), py - ts.y * 0.5f),
                       ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
-        } else {
+        } else if (minors_fit) {
           dl->AddLine(ImVec2(plot_min.x - UiPx(3.0f), py), ImVec2(plot_min.x, py), IM_COL32(90, 94, 102, 140), 1.0f);
         }
       }
@@ -2166,25 +2222,31 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
                               ImVec2(seed_px, plot_min.y + UiPx(5.0f)), accent);
         dl->AddText(ImVec2(seed_px + UiPx(5.0f), plot_min.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), "seed");
       }
-      // The five polylines: drawn run by run, broken at any point whose arm is not a usable
-      // positive — unavailable gaps and exact-zero stretches are never bridged (AC3).
+      // The five arms: drawn run by run over PointCurvePositiveRuns — unavailable gaps and
+      // exact-zero stretches break a run and are never bridged (AC3), and a run of ONE point
+      // is an isolated positive contribution drawn as a marker, never dropped (AC6: discrete
+      // data stays visible while the legend keeps claiming the arm).
       for (int arm = 0; arm < kCurveArms; ++arm) {
-        std::vector<ImVec2> run;
-        const float thickness = arm == 4 ? 2.0f : 1.5f;
-        const auto flush_run = [&]() {
-          if (run.size() >= 2) {
-            dl->AddPolyline(run.data(), static_cast<int>(run.size()), arm_colors[arm], 0, thickness);
-          }
-          run.clear();
-        };
+        std::vector<PointCurveValueKind> kinds(static_cast<size_t>(n));
         for (size_t i = 0; i < n; ++i) {
-          if (kind_of(arm, i) == PointCurveValueKind::kPositive) {
-            run.push_back(ImVec2(x_to_px(curve.points[i].x_rad), v_to_py(value_of(arm, i))));
+          kinds[i] = kind_of(arm, i);
+        }
+        const float thickness = arm == 4 ? 2.0f : 1.5f;
+        for (const PointCurveRun& run : PointCurvePositiveRuns(kinds.data(), n)) {
+          if (run.end - run.begin >= 2) {
+            std::vector<ImVec2> line;
+            line.reserve(static_cast<size_t>(run.end - run.begin));
+            for (int i = run.begin; i < run.end; ++i) {
+              line.push_back(ImVec2(x_to_px(curve.points[static_cast<size_t>(i)].x_rad),
+                                    v_to_py(value_of(arm, static_cast<size_t>(i)))));
+            }
+            dl->AddPolyline(line.data(), static_cast<int>(line.size()), arm_colors[arm], 0, thickness);
           } else {
-            flush_run();
+            const ImVec2 p(x_to_px(curve.points[static_cast<size_t>(run.begin)].x_rad),
+                           v_to_py(value_of(arm, static_cast<size_t>(run.begin))));
+            dl->AddCircleFilled(p, UiPx(2.5f), arm_colors[arm]);
           }
         }
-        flush_run();
       }
       // The cursor: the CURRENT sample's arclength — the same selection the slider, the globe
       // marker and the 3D trace follow (AC4's one selection).
@@ -2210,10 +2272,15 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       }
       const auto write_cursor_from_mouse = [&]() {
         const int v = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
-        if (v >= 0 && v != view.sample_index) {
-          view.sample_index = v;
-          view.playing = false;
+        if (v < 0) {
+          return;
         }
+        // A resolved click stops the playback even when the index does not change — clicking
+        // the pose already on screen must pin it where it is, not let playback run on (J3).
+        if (v != view.sample_index) {
+          view.sample_index = v;
+        }
+        view.playing = false;
       };
       if (ImGui::IsItemClicked(ImGuiMouseButton_Left) ||
           (canvas_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {

@@ -5832,6 +5832,19 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == cursor_after_click, false);
 
+  // Clicking the pose ALREADY on screen still stops the playback (review r1 Major: a resolved
+  // click pins the cursor even when the index does not change — without this, a click on the
+  // current position lets playback run on and the user cannot freeze the pose in view).
+  gui::g_state.analysis.point_view.playing = true;
+  ctx->Yield(2);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.8f, canvas.RectFull.GetCenter().y));
+  ctx->Yield(2);
+  ctx->MouseClick(0);
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == cursor_after_click, false);
+  ctx->LogInfo("[pose curve] click on the current position stopped playback, index held at %d", cursor_after_click);
+
   // The narrowest face: the D5 floors' promise — the canvas on, nothing clipped, the canvas
   // answering through the real mouse path. The geometry lines are the live-layout probe the
   // floor constants are tuned from (a red here is a floor budget that no longer holds).
