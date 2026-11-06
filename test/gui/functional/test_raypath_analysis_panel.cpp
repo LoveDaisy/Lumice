@@ -5083,6 +5083,17 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(r3d != nullptr && globe != nullptr, false);
   const float ratio_d4 = gui::g_state.analyze_pose_view_right_ratio;
   const float ratio_d5 = gui::g_state.analyze_pose_view_globe_ratio;
+  // The D5 drag legs need a known starting geometry: the window's live size depends on which
+  // earlier case last sized it (the workspace scroll-pins case runs the pose window at a
+  // 640-tall basis; the minimum-height clamp then re-raises it to 680, where the D5 clamp
+  // band's headroom above the default ratio is 18pt — under this leg's 20pt growth threshold).
+  // Pin the contract default the way the FirstUseEver path would apply it.
+  {
+    const ImVec2 vp0 = ImGui::GetMainViewport()->Size;
+    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp0.x), std::min(gui::UiPx(720.0f), vp0.y)),
+                         ImGuiCond_Always);
+    ctx->Yield(3);
+  }
   // The windows are LIVE objects: every ->Size read below runs after the drags, so the
   // pre-drag geometry must be copied out here (the same reason the D3 case snapshots first).
   const float r3d_w0 = r3d->Size.x;
@@ -5868,6 +5879,11 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   }
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_region_min.png").string()), false);
 
+  // Restore the default geometry before closing: this leg's min-size write must not become the
+  // persisted size a later case inherits (the cross-case window-geometry lesson).
+  ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp.x), std::min(gui::UiPx(720.0f), vp.y)),
+                       ImGuiCond_Always);
+  ctx->Yield(2);
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
   return true;
