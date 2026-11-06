@@ -6924,6 +6924,8 @@ struct ScopedUiScaleAndBasisLease {
   }
 };
 
+namespace {
+
 // The completed C01 map's actual text, after the same frame-boundary rebuild/GL upload the
 // product uses. The standalone font case pins the full audited character set; this leg owns the
 // rendered window and rebuild lifetime. Never retain an ImFont pointer across a Yield/rebuild.
@@ -7004,6 +7006,8 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(check_scale(1.0f, "100_return"), false);
   return true;
 }
+
+}  // namespace
 
 // AC2's window-combo faces (755.7 Step 2), each with BOTH floating windows standing — the
 // composition the per-window cases leave out:
