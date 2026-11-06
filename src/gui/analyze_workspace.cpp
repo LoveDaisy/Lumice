@@ -13,6 +13,7 @@
 #include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
+#include "gui/analyze_region_wheel.hpp"
 #include "gui/analyze_workspace.hpp"
 #include "gui/app.hpp"
 #include "gui/destructive_style.hpp"
@@ -342,6 +343,7 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
   // the camera orbiting through the very click that set a circle's angle.
   const bool angular_pick_owns =
       g_state.angular_dist_picker.armed || g_state.angular_dist_picker.swallow_drag_until_release;
+  const bool explicit_pick_owns = angular_pick_owns || g_bg_pick.active || g_bg_pick.swallow_drag_until_release;
 
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
     // The annotation view the picture was drawn with — the pick family's one view (both
@@ -384,86 +386,71 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
         marker_hover = dx * dx + dy * dy <= hit_r * hit_r;
       }
     }
-    // Three arms — marker drag > armed pick > camera orbit — with an owner latch per arm that
-    // has taken a press: the camera's (workspace.panorama_camera_dragging — a press it consumed
-    // keeps it through a drag across the marker), the marker's (cone_marker_dragging), the
-    // pick's own disarm-on-click. The camera latch read here overrides the arbitration for the
-    // whole press it owns; the other two keep their arms the same way.
-    if (!angular_pick_owns) {
-      const ConeInputOwner owner = g_state.workspace.panorama_camera_dragging ?
-                                       ConeInputOwner::kCamera :
-                                       ArbitrateConeInput(marker_hover || a.cone_marker_dragging, a.pick_armed);
-      if (owner == ConeInputOwner::kMarkerDrag) {
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        if (interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-          a.cone_marker_dragging = true;
-          a.pick_armed = false;
-        }
-        if (a.cone_marker_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-          // The drag's own gate is LUMICE_UnprojectPixel's valid semantics (inside
-          // DragAnalysisConeCenter): off the picture (letterbox, outside the lens's image, the
-          // clipped hemisphere) the write is skipped and the last on-sky direction stands.
-          if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
-                  io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
-                  g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-              px.has_value()) {
-            DragAnalysisConeCenter(g_state, view, px->px, px->py);
-          }
-        }
-        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-          a.cone_marker_dragging = false;
-        }
-      }
-      if (owner == ConeInputOwner::kPickClick && interact_hovered) {
-        // The armed crosshair, drawn on this window's list like the ring below.
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
-        const ImVec2 m = io.MousePos;
-        const float arm = UiPx(kAnalysisPickCrosshairArmPt);
-        dl->AddLine(ImVec2(m.x - arm, m.y), ImVec2(m.x + arm, m.y), colour, 1.5f);
-        dl->AddLine(ImVec2(m.x, m.y - arm), ImVec2(m.x, m.y + arm), colour, 1.5f);
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-          // The pick's own gate is the same valid semantics: a click off the picture leaves the
-          // pick armed — a miss should not cost a second trip to the button.
-          if (const std::optional<CanvasPixel> px = PreviewPointToCanvasPixel(
-                  io.MousePos.x - region_min.x, io.MousePos.y - region_min.y, g_panorama_vp.dpi_scale_x,
-                  g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-              px.has_value()) {
-            PickAnalysisConeCenter(g_state, view, px->px, px->py);
-          }
-        }
-      }
-      if (owner == ConeInputOwner::kCamera && interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        g_state.workspace.panorama_camera_dragging = true;
-        // The view is the user's from this press on: a default centre the user has orbited away
-        // from stops following the picture's rectangle (the sky-direction contract — an
-        // effective region never moves under an observation or layout operation).
-        a.cone_center_is_default = false;
-      }
+    if ((marker_hover ||
+         g_state.workspace.panorama_press_owner == GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kMarker) &&
+        !angular_pick_owns) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+      ImGui::SetTooltip("Drag the marker to move the centre.\n%s+click on the picture to set it directly.",
+                        kBgModifierName);
     }
     DrawPanoramaRoiRing(g_state, view, region_min, g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y);
-  } else if (!angular_pick_owns && interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-    // Outside CONE mode the camera owns the region outright (ArbitrateConeInput's comment).
-    g_state.workspace.panorama_camera_dragging = true;
-    g_state.analysis.cone_center_is_default = false;  // same freeze as the CONE branch's camera arm
+
+    // Only the mouse-down chooses an arm. Neither a modifier change nor crossing the marker
+    // can reclassify a held press. Even a direct-point miss owns its press until release.
+    if (interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+        g_state.workspace.panorama_press_owner == GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone) {
+      using Owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+      auto& owner = g_state.workspace.panorama_press_owner;
+      owner = explicit_pick_owns ? Owner::kExplicitPick :
+              io.KeyAlt          ? Owner::kDirectPoint :
+              marker_hover       ? Owner::kMarker :
+                                   Owner::kCamera;
+      if (owner == Owner::kCamera) {
+        a.cone_center_is_default = false;
+      }
+      if (owner == Owner::kDirectPoint) {
+        if (const auto px = PreviewPointToCanvasPixel(io.MousePos.x - region_min.x, io.MousePos.y - region_min.y,
+                                                      g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y,
+                                                      g_panorama_vp.vp_w, g_panorama_vp.vp_h)) {
+          PickAnalysisConeCenter(g_state, view, px->px, px->py);
+        }
+      }
+    }
+    using Owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+    if (g_state.workspace.panorama_press_owner == Owner::kMarker && interact_active && region_hovered &&
+        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      if (const auto px = PreviewPointToCanvasPixel(io.MousePos.x - region_min.x, io.MousePos.y - region_min.y,
+                                                    g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y,
+                                                    g_panorama_vp.vp_w, g_panorama_vp.vp_h)) {
+        DragAnalysisConeCenter(g_state, view, px->px, px->py);
+      }
+    }
+  } else if (interact_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    using Owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+    if (g_state.workspace.panorama_press_owner == Owner::kNone) {
+      g_state.workspace.panorama_press_owner = explicit_pick_owns ? Owner::kExplicitPick : Owner::kCamera;
+      a.cone_center_is_default = false;
+    }
   }
 
-  // The camera arm's drag, in every ROI mode: display-tier — the view angles move, nothing in
-  // the document does, and no analysis state is touched. The latch still ends with the press
-  // under a full-sky lens, where the drag body is gated off (no visual response to feed).
-  if (g_state.workspace.panorama_camera_dragging) {
-    if (!full_sky && interact_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-      ApplyCameraOrbitDrag(g_state, io.MouseDelta, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
-    }
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-      g_state.workspace.panorama_camera_dragging = false;
-    }
+  using Owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+  const Owner owner = g_state.workspace.panorama_press_owner;
+  const bool wheel_standing = AnalyzeRegionWheelStanding();
+  AnalyzeRegionWheelClaim(interact_hovered, MainPictureWheelOwnerId());
+  if (wheel_standing && interact_hovered && !angular_pick_owns && !g_bg_pick.active &&
+      !g_bg_pick.swallow_drag_until_release && (owner == Owner::kNone || owner == Owner::kCamera) &&
+      io.MouseWheel != 0.0f) {
+    ApplyCameraWheelZoom(g_state, io.MouseWheel);
+    a.cone_center_is_default = false;
+  }
+  if (owner == Owner::kCamera && !full_sky && interact_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    ApplyCameraOrbitDrag(g_state, io.MouseDelta, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
   }
 
-  // The Angular Distance pick, hosted over this picture like the preview hosts it over its own
-  // (the overlay group's Pick buttons arm it in both workspaces; it reads whichever picture is
-  // live). The injection lands on THIS frame's published params — the deferred pass has not run.
-  if (g_state.angular_dist_picker.armed && !g_bg_pick.active && interact_hovered) {
+  // A later arming cannot steal a camera/marker/direct press. With no press, the explicit
+  // picker still previews its readout; after mouse-down it alone can consume that press.
+  if (g_state.angular_dist_picker.armed && !g_bg_pick.active && interact_hovered &&
+      (owner == Owner::kExplicitPick || (owner == Owner::kNone && !ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
     ApplyAngularDistPickGesture(
         g_state, g_panorama_vp.params, ImVec2(io.MousePos.x - region_min.x, io.MousePos.y - region_min.y),
         g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y, g_panorama_vp.vp_w, g_panorama_vp.vp_h);
@@ -492,7 +479,7 @@ void RenderScenePanorama(GLFWwindow* window) {
   ClampRendererViewInvariants(g_state.renderer);
 
   // The bar's height, as measured last frame (the one-frame-lag recipe the share list's head
-  // clamp runs): the states that change it — Point mode's pick row, a fold of the bar's judged
+  // clamp runs): the states that change it — Point mode's centre readout, a fold of the bar's judged
   // joins at a narrow width, a run's in-progress line — persist, so the reserve is right from
   // the frame after the change. The floor keeps the bar's first row reachable on the very first
   // frame, before any measurement exists.
@@ -688,12 +675,6 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   }
   std::optional<GuiState::EntryRef> pick_source_at_entry =
       pick_active_at_entry ? g_state.pick_link_source : std::nullopt;
-  // The armed analysis pick's Esc cancel — the same ahead-of-widgets rule as the picker above;
-  // the picture-gone half reads the main view's own texture gate, because the armed pick aims at
-  // THIS workspace's picture. (The Render panel carries the same reads for its own frames.)
-  if (g_state.analysis.pick_armed && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-    g_state.analysis.pick_armed = false;
-  }
   // The Angular Distance pick is hosted over both workspaces' pictures; this side's two exits
   // are Esc and the committed texture going away under it.
   if (g_state.angular_dist_picker.armed && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !g_preview.HasTexture())) {
@@ -901,6 +882,15 @@ void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_
   // by the pump). Cost: a drain-and-compare pass over four sessions on every frame — the same
   // order of work the Analyze frames have always paid, and empty on the Render frames where no
   // intent is outstanding.
+  // Snapshot before any face claims the key: native dispatch already ran in NewFrame.
+  AnalyzeRegionWheelStanding();
+  using Owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+  auto& press_owner = g_state.workspace.panorama_press_owner;
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    press_owner = Owner::kNone;
+  } else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && press_owner != Owner::kNone) {
+    press_owner = Owner::kCancelled;
+  }
   PumpAnalyzeQueries(g_state, g_survey_executor, ImGui::GetTime());
 
   // The frame's viewport publications, cleared once at the ONE dispatch point. Both halves of
@@ -920,6 +910,9 @@ void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_
     RenderLeftPanel(window_height);
     RenderRightPanel(window, window_width, window_height);
     RenderPreviewPanel(window, window_width, window_height);
+  }
+  if (!g_panorama_vp.active && press_owner != Owner::kNone) {
+    press_owner = Owner::kCancelled;
   }
 }
 

@@ -1773,10 +1773,6 @@ struct GuiState {
     int cone_center_default_vp_w = 0;
     int cone_center_default_vp_h = 0;
     int cone_center_default_frame = -1;
-    // The marker is being dragged: set by the press on it, cleared by the release, and while set
-    // every frame's mouse position is unprojected into cone_center_dir. Session state because the
-    // drag outlives a frame; nothing else reads it.
-    bool cone_marker_dragging = false;
     // The centre the analysis on show was REQUESTED with — a copy DoAnalyze takes of
     // cone_center_dir at the moment it builds the request (the result itself does not carry it:
     // LUMICE_RaypathAnalysisInfo has no cone field). Compared against cone_center_dir at display
@@ -1796,10 +1792,6 @@ struct GuiState {
     float ray_num_millions = 5.0f;
     bool infinite = false;
     bool ray_budget_initialized = false;
-    // "The next left click on the preview picks the cone centre." Armed by the panel's button in
-    // CONE mode, disarmed by the click that consumes it, by Esc, and by leaving CONE mode — never
-    // left armed across a mode switch, or a later click would write a centre no mode reads.
-    bool pick_armed = false;
     // The P/B/D symmetry the list is reduced under — a DISPLAY-time choice (v4.33): the run
     // records every chain unreduced, and every read of the result asks the server to reduce and
     // merge under these bits (analysis_panel.hpp RefreshAnalysisEntries), so toggling one re-reads
@@ -1930,13 +1922,10 @@ struct GuiState {
     // `##AnalyzeRightRowsSplitter` drags. Same semantics and tier as D1 above; no automatic
     // rewrite path exists (a first result changes neither ratio, contract §9.3).
     float right_list_ratio = kAnalyzeRightListDefaultRatio;
-    // The main view's camera-drag latch, the third arm of the picture region's gesture
-    // arbitration: once a press is consumed by the camera arm, it stays the camera's for the
-    // whole press — dragging across the cone marker mid-way must not flip arms (the marker's
-    // own cone_marker_dragging is the same rule for its arm). Cleared on release, on leaving
-    // the workspace (the top-bar switch handler), and with the whole session on DoNew. Session
-    // tier like every field here: a gesture in flight, never document state.
-    bool panorama_camera_dragging = false;
+    // Chosen only at mouse-down on the main picture, held until release. Cancellation stops
+    // writes but keeps the press consumed, even if its host disappears and comes back.
+    enum class PanoramaPressOwner { kNone, kCamera, kMarker, kDirectPoint, kExplicitPick, kCancelled };
+    PanoramaPressOwner panorama_press_owner = PanoramaPressOwner::kNone;
   };
   AnalyzeWorkspaceSession workspace;
 
@@ -2000,10 +1989,8 @@ struct GuiState {
   // the rest; ResetFrontendState additionally disarms it by name for the reasons that keep the
   // struct (Open, Revert).
   //
-  // One of three modes that take the preview's next click — with the eyedropper (g_bg_pick) and
-  // the analysis window's point pick (analysis.pick_armed) — and arming any one disarms the other
-  // two, so at most one is ever armed and "which of them does this click belong to" has no case
-  // to decide.
+  // Mutually exclusive with the eyedropper (g_bg_pick). The Analyze host also preserves
+  // any main-picture press already owned when this picker is armed.
   struct AngularDistPicker {
     bool armed = false;
     AngularDistFamily family = AngularDistFamily::kSun;

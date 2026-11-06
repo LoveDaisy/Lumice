@@ -40,6 +40,20 @@ class LookAtSessionChain : public ::testing::Test {
   }
 };
 
+TEST(MainPicturePressLifecycle, DocumentResetCancelsWithoutReleasingAConsumedPress) {
+  using Owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+  for (const auto reason : { FrontendResetReason::kNewDocument, FrontendResetReason::kOpenLmcBlank,
+                             FrontendResetReason::kOpenJson, FrontendResetReason::kRevert }) {
+    g_state = MakeNewDocumentState();
+    g_state.workspace.panorama_press_owner = Owner::kMarker;
+    ResetFrontendState(g_state, reason);
+    EXPECT_EQ(g_state.workspace.panorama_press_owner, Owner::kCancelled);
+    g_state.workspace.panorama_press_owner = Owner::kNone;
+    ResetFrontendState(g_state, reason);
+    EXPECT_EQ(g_state.workspace.panorama_press_owner, Owner::kNone);
+  }
+}
+
 TEST_F(LookAtSessionChain, NewDocumentClearsIntentWithoutChangingTheInstalledCamera) {
   ExpectReset(FrontendResetReason::kNewDocument);
 }

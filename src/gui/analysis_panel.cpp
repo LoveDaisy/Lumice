@@ -424,14 +424,13 @@ bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, 
     return false;
   }
   if (valid == 0) {
-    GUI_LOG_INFO("[Analysis] pick at ({},{}) is not on the sky; still armed — click on the picture", px, py);
+    GUI_LOG_INFO("[Analysis] point at ({},{}) is not on the sky; centre unchanged", px, py);
     return false;
   }
   auto& a = state.analysis;
   std::copy(dir, dir + 3, a.cone_center_dir);
   a.cone_center_valid = true;
   a.cone_center_is_default = false;  // the click owns the centre; resizes never move it
-  a.pick_armed = false;
   float alt = 0.0f;
   float az = 0.0f;
   DirToAltAz(dir, &alt, &az);
@@ -456,16 +455,6 @@ std::optional<CanvasPixel> ProjectConeCenterMarker(const GuiState& state, const 
   const int px = std::max(0, std::min(view.width - 1, static_cast<int>(std::lround(fx))));
   const int py = std::max(0, std::min(view.height - 1, static_cast<int>(std::lround(fy))));
   return CanvasPixel{ px, py };
-}
-
-ConeInputOwner ArbitrateConeInput(bool marker_hover_or_dragging, bool pick_armed) {
-  if (marker_hover_or_dragging) {
-    return ConeInputOwner::kMarkerDrag;
-  }
-  if (pick_armed) {
-    return ConeInputOwner::kPickClick;
-  }
-  return ConeInputOwner::kCamera;
 }
 
 bool DragAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, int px, int py) {
@@ -1323,30 +1312,6 @@ void RenderRequestParamsControls(GuiState& state, bool join_line) {
   }
 }
 
-// The persistent "you are in pick mode" line at the top of the window while a pick is armed. A
-// bordered child rather than a bare TextColored, so a test can find it by name — an ImGui text
-// item has no id of its own (ItemInfo cannot address it), a child window does. AutoResizeY, not
-// a fixed height: the line wraps at the right column's narrow widths, and a fixed frame-height
-// child would clip the wrapped tail — the armed-mode fact is the one thing the banner exists to
-// say.
-void RenderPickBanner(const GuiState& state) {
-  if (!state.analysis.pick_armed) {
-    return;
-  }
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, AccentColor(0.18f));
-  ImGui::PushStyleColor(ImGuiCol_Border, AccentColor(0.9f));
-  ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(1.0f));
-  if (ImGui::BeginChild("##pick_banner", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY)) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::PushStyleColor(ImGuiCol_Text, AccentColor());
-    ImGui::TextWrapped(ICON_FA_CROSSHAIRS " Click on the preview to set the centre  \xe2\x80\x94  Esc to cancel");
-    ImGui::PopStyleColor();
-  }
-  ImGui::EndChild();
-  ImGui::PopStyleVar();
-  ImGui::PopStyleColor(2);
-}
-
 // The top line of the window when the list on show no longer describes the document on the
 // panels: the freshness predicate's kStale, and nothing for its other two values. Same voice as
 // the main window's "Modified" chip (warning colour, the same icon the centre-moved hint uses),
@@ -2007,7 +1972,6 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   const float max_head_h = ImGui::GetContentRegionAvail().y - buttons_h - table_min_h - block_gaps;
   const bool clamp_head = storage->GetFloat(head_h_key, 0.0f) > max_head_h;
   const auto draw_head = [&state, server] {
-    RenderPickBanner(state);
     RenderListFreshnessBanner(state);
     RenderSymmetryControls(state, server);
     ImGui::Separator();
@@ -2087,47 +2051,21 @@ void RenderPanoramaRoiControls(GuiState& state) {
   if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("Needs a picture of this document to pick a point on: press Run once first.");
   }
+  if (has_picture && ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+        "Drag the marker to move the centre.\n%s+click on the picture to set it directly, even off-marker.\n"
+        "Then press Analyze to update the result.",
+        kBgModifierName);
+  }
   if (a.roi_mode != LUMICE_RAYPATH_ROI_CONE && prev_mode == LUMICE_RAYPATH_ROI_CONE) {
-    a.pick_armed = false;  // never leave a click armed for a mode that does not read it
-    a.cone_marker_dragging = false;
+    using Owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+    if (state.workspace.panorama_press_owner == Owner::kMarker ||
+        state.workspace.panorama_press_owner == Owner::kDirectPoint) {
+      state.workspace.panorama_press_owner = Owner::kCancelled;
+    }
   }
 
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
-    // Same predicate as the radio above, not the viewport flag: a background photograph must not
-    // arm a pick on a document that has never been rendered. (The default centre is written by
-    // the picture region's gesture block — the one level-triggered writer, reading the picture
-    // this frame was actually drawn with.)
-    const bool can_pick = has_picture;
-    ImGui::BeginDisabled(!can_pick);
-    // Read once: the button below flips pick_armed, and the pop must match the push made
-    // for the value the frame STARTED with, not the one the click just wrote.
-    const bool armed_style = a.pick_armed;
-    if (armed_style) {
-      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.55f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.75f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.40f));
-    }
-    if (FitsOnBarLine(InlineButtonWidth(ICON_FA_CROSSHAIRS " Pick on the panorama"))) {
-      ImGui::SameLine();
-    }
-    if (ImGui::Button(ICON_FA_CROSSHAIRS " Pick on the panorama")) {
-      a.pick_armed = !a.pick_armed;
-      if (a.pick_armed) {
-        // One click-taking mode at a time with the Angular Distance picker
-        // (GuiState::AngularDistPicker). The eyedropper/pick pairing is left as it was: in the
-        // preview the eyedropper's branch already takes precedence over this one.
-        state.angular_dist_picker.armed = false;
-      }
-    }
-    if (armed_style) {
-      ImGui::PopStyleColor(3);
-    }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip(can_pick ? "Then click a point on the panorama. Esc cancels.\n"
-                                   "Or drag the marker on the panorama directly." :
-                                   "Needs a picture of this document to click on: press Run once first.");
-    }
     char centre[96];
     if (a.cone_center_valid) {
       float alt = 0.0f;
@@ -2193,8 +2131,9 @@ void DrawRoiRingImpl(const GuiState& state, const LUMICE_AnnotationView& view, c
   const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
   // The centre mark is always drawn; the ring only when the local scale could be measured. A drag
   // in flight draws the dot larger, so the grab reads as taken.
-  dl->AddCircleFilled(centre, UiPx(a.cone_marker_dragging ? kRoiMarkerDotRadiusPt * 1.6f : kRoiMarkerDotRadiusPt),
-                      colour);
+  const bool dragging =
+      state.workspace.panorama_press_owner == GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kMarker;
+  dl->AddCircleFilled(centre, UiPx(dragging ? kRoiMarkerDotRadiusPt * 1.6f : kRoiMarkerDotRadiusPt), colour);
   if (radius_px.has_value()) {
     dl->AddCircle(centre, *radius_px / dpi_scale_x, colour, kRoiRingSegments, UiPx(kRoiRingThicknessPt));
   }

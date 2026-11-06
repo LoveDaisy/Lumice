@@ -37,6 +37,15 @@
 > 钉死（`cone_center_is_default`）；方向域锚定不变——相机转动不改 `cone_center_dir`。
 > 机制层（查询/采纳/取消/新鲜度/Exclude 循环）零变化。
 >
+> **2026-11-06 主图直接手势修订**：上述主图自由相机记录中的 ROI 武装形态已退役：没有 Pick 按钮、
+> armed 字段、持久横幅或十字线。Point 下拖 marker，或 Alt＋左键单击（macOS 为 Option）直接定位；
+> Point 选项/marker tooltip 提供说明，离屏标记也能重定位。主图 press owner 只在按下时决定、释放时
+> 清空，取消/宿主消失吞压到释放，显式拾取优先但不倒抢已取得的按压。wheel 与 Render 实际共用
+> `ApplyCameraWheelZoom`（每单位正向减 FOV 5°、1°/镜头上限、full-sky no-op、不解除 Look At Lock），
+> 沿既有帧首 claim 防原生滚动双消费；照片/地图/3D 的局部手势不变。有效中心停止默认放置，布局或
+> 相机变化不改天空方向；只改显示/会话，不 dirty/不起跑，结果漂移仍提示显式 Analyze。完整现行合同
+> 见 `doc/gui/analyze-interaction-contract.md` §5.2；下文有日期的旧控件记录保留为历史。
+>
 > **2026-11-05 地图区迁独立窗（scrum analyze-gui-rework 755.4，raypath-detail-window）**：深度带的
 > 地图格整体迁入显式打开的 **Raypath view 窗**（`RenderAnalyzeRaypathViewWindow`，宿主
 > `RenderAnalyzeMapRegion` 的 D3 两分区——左 raster+手势+状态行、右 λ/视图按钮/caliber/天空点输入/

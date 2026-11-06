@@ -769,6 +769,9 @@ void RenderOverlayControlsGroup(GuiState& state);
 // correct gain, the Globe sign flip, the azimuth wrap and the elevation clamp), shared with the
 // Analyze main view's camera arm. `delta_pt` is ImGui's MouseDelta for this frame; the viewport
 // sizes are the DEVICE pixels the gain is computed against.
+// Camera wheel's one rule for both picture hosts: positive notches narrow FOV by 5 degrees,
+// lens bounds apply, full-sky is a no-op. Zoom preserves Look At Lock.
+void ApplyCameraWheelZoom(GuiState& state, float wheel);
 void ApplyCameraOrbitDrag(GuiState& state, const ImVec2& delta_pt, int vp_w_px, int vp_h_px);
 
 // The Angular Distance picker's gesture branch over a picture region — the body of the preview

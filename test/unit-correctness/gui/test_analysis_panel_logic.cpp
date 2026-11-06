@@ -628,10 +628,8 @@ TEST(AnalysisPanelLogic, PickWritesTheCentreOnSkyAndNothingOffSky) {
   state.renderer.elevation = 30.0f;
   state.renderer.roll = 0.0f;
   const LUMICE_AnnotationView view = PreviewAnnotationView(state, 200, 100);
-  state.analysis.pick_armed = true;
   ASSERT_TRUE(PickAnalysisConeCenter(state, view, 100, 50));
   EXPECT_TRUE(state.analysis.cone_center_valid);
-  EXPECT_FALSE(state.analysis.pick_armed) << "the click that picks disarms";
   // The same pixel through the C API directly: identical direction (AC2's "the centre direction
   // is the click's unprojection", stated as equality with the oracle rather than as a property).
   float expect[3] = { 0.0f, 0.0f, 0.0f };
@@ -644,12 +642,10 @@ TEST(AnalysisPanelLogic, PickWritesTheCentreOnSkyAndNothingOffSky) {
   // The frame centre at elevation 30 looks 30 degrees up: altitude = asin(-z).
   EXPECT_NEAR(std::asin(-state.analysis.cone_center_dir[2]) * 180.0f / 3.14159265f, 30.0f, 0.5f);
 
-  // Off sky: a pixel outside the canvas writes nothing and leaves the pick armed.
-  state.analysis.pick_armed = true;
+  // Off sky: a pixel outside the canvas writes nothing.
   const float before[3] = { state.analysis.cone_center_dir[0], state.analysis.cone_center_dir[1],
                             state.analysis.cone_center_dir[2] };
   EXPECT_FALSE(PickAnalysisConeCenter(state, view, 5000, 50));
-  EXPECT_TRUE(state.analysis.pick_armed);
   for (int i = 0; i < 3; ++i) {
     EXPECT_FLOAT_EQ(state.analysis.cone_center_dir[i], before[i]);
   }
@@ -696,15 +692,6 @@ TEST(AnalysisPanelLogic, MarkerIsThePickedPixelAndFollowsTheView) {
   EXPECT_TRUE(state.analysis.cone_center_valid);
 }
 
-// AC5: the arbiter's truth table. Three inputs combinations that matter, three exclusive owners,
-// and the one ruling worth pinning on its own — hover beats an armed pick.
-TEST(AnalysisPanelLogic, ConeInputArbiterTruthTable) {
-  EXPECT_EQ(ArbitrateConeInput(false, false), ConeInputOwner::kCamera);
-  EXPECT_EQ(ArbitrateConeInput(false, true), ConeInputOwner::kPickClick);
-  EXPECT_EQ(ArbitrateConeInput(true, false), ConeInputOwner::kMarkerDrag);
-  EXPECT_EQ(ArbitrateConeInput(true, true), ConeInputOwner::kMarkerDrag) << "the marker under the cursor wins";
-}
-
 TEST(AnalysisPanelLogic, DragWritesTheDirectionOnSkyAndNothingElse) {
   // A linear lens on the horizon showing the upper hemisphere only: the top half of the canvas
   // is sky, the bottom half is clipped — a drag that crosses the horizon must stop writing.
@@ -714,9 +701,7 @@ TEST(AnalysisPanelLogic, DragWritesTheDirectionOnSkyAndNothingElse) {
   state.renderer.elevation = 0.0f;
   state.renderer.visible = LUMICE_VISIBLE_UPPER;
   const LUMICE_AnnotationView view = PreviewAnnotationView(state, 200, 100);
-  state.analysis.pick_armed = true;
   ASSERT_TRUE(PickAnalysisConeCenter(state, view, 100, 20));
-  state.analysis.pick_armed = true;  // a drag must leave an armed pick armed
   float want[3] = { 0.0f, 0.0f, 0.0f };
   int valid = 0;
   ASSERT_EQ(LUMICE_UnprojectPixel(&view, 130, 30, want, &valid), LUMICE_OK);
@@ -725,7 +710,6 @@ TEST(AnalysisPanelLogic, DragWritesTheDirectionOnSkyAndNothingElse) {
   for (int i = 0; i < 3; ++i) {
     EXPECT_FLOAT_EQ(state.analysis.cone_center_dir[i], want[i]) << "the drag is the pixel's unprojection, verbatim";
   }
-  EXPECT_TRUE(state.analysis.pick_armed);
   EXPECT_TRUE(state.analysis.cone_center_valid);
   // Below the horizon (clipped by `upper`): nothing written, the last sky direction kept.
   int below_valid = 1;

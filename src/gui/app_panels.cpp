@@ -13,6 +13,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_region_wheel.hpp"
 #include "gui/angular_dist_picker.hpp"
 #include "gui/angular_dist_rules.hpp"
 #include "gui/annotation_anchors.hpp"
@@ -793,12 +794,7 @@ void RenderTopBar(float window_width) {
     }
     if (ImGui::Button("Render", ImVec2(cell_width, 0)) && analyze) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
-      // The armed cone pick aims at the panorama, which this mode takes off screen — the same
-      // "never leave a click armed for a mode that does not read it" rule the ROI radios follow.
-      // The marker drag and the main view's camera latch are the same rule for their arms.
-      g_state.analysis.pick_armed = false;
-      g_state.analysis.cone_marker_dragging = false;
-      g_state.workspace.panorama_camera_dragging = false;
+      // The main-picture press is cancelled centrally when its host disappears.
     }
     if (!analyze) {
       ImGui::PopStyleColor(3);
@@ -2647,6 +2643,14 @@ void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vecto
   }
 }
 
+void ApplyCameraWheelZoom(GuiState& state, float wheel) {
+  auto& rc = state.renderer;
+  if (wheel == 0.0f || LensIsFullSky(rc.lens_type)) {
+    return;
+  }
+  rc.fov = std::clamp(rc.fov - wheel * 5.0f, 1.0f, LUMICE_MaxFov(static_cast<LUMICE_LensType>(rc.lens_type)));
+}
+
 void ApplyCameraOrbitDrag(GuiState& state, const ImVec2& delta, int vp_w_px, int vp_h_px) {
   if (delta.x == 0.0f && delta.y == 0.0f) {
     return;
@@ -2739,20 +2743,6 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // The post-confirm latch ends with the press that set it, whatever happened in between.
   if (g_bg_pick.swallow_drag_until_release && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
     g_bg_pick.swallow_drag_until_release = false;
-  }
-  // The analysis panel's "pick a point" mode has the same two ways out, for the same reasons:
-  // Esc, read here ahead of any widget; and the picture going away under it. The picture the
-  // armed pick aims at is the Analyze workspace's panorama, so leaving that workspace is the
-  // "gone" case (the switch itself disarms too — the mode reads this only in Render frames,
-  // which an armed pick cannot reach except across the switch).
-  if (g_state.analysis.pick_armed &&
-      (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || g_state.workspace.mode != GuiState::WorkspaceMode::kAnalyze)) {
-    g_state.analysis.pick_armed = false;
-  }
-  // A marker drag ends with the button, wherever the release happens (off the picture, over
-  // another window): the same latch shape as the eyedropper's swallow above.
-  if (g_state.analysis.cone_marker_dragging && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-    g_state.analysis.cone_marker_dragging = false;
   }
   // The Angular Distance picker (angular_dist_picker.hpp) has the same two ways out, for the same
   // reasons: Esc, read here ahead of any widget; and the picture going away under it (a document
@@ -2858,10 +2848,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       // branches too, which is wider than the defect requires — a wheel notch carries no leftover
       // motion from the press that took the colour. Conservative on purpose; not a condition the
       // bug imposes, so it can be narrowed without reopening that defect.
-      // The analysis window in Point mode is a third owner of the click, locking the camera the
-      // (The analysis cone's gestures used to share this surface — marker drag and armed pick
-      // arbitrated against the camera. They moved to the Analyze workspace's panorama, which is
-      // the picture that mode aims at; nothing here reads the analysis state any more.)
+      // ROI gestures belong to Analyze's main picture, not this Render surface.
       const ImVec2 vp_origin = ImGui::GetWindowPos();
       // An armed Angular Distance pick owns the click outright: the user is aiming a ring.
       const bool angular_pick = g_state.angular_dist_picker.armed;
@@ -2904,7 +2891,9 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
                      std::min(static_cast<float>(oy_c.max_value), g_state.bg_offset_y - dndc.y * t.scale_y));
       }
 
-      if (!gestures_locked && bg_active && bg_modifier && is_hovered && io.MouseWheel != 0.0f) {
+      const bool wheel_standing = AnalyzeRegionWheelStanding();
+      AnalyzeRegionWheelClaim(is_hovered, RenderPictureWheelOwnerId());
+      if (!gestures_locked && wheel_standing && bg_active && bg_modifier && is_hovered && io.MouseWheel != 0.0f) {
         // Multiplicative, so one notch is the same proportional change everywhere on the range —
         // matching the kLog slider the same field is edited by.
         const FieldEditorConstraint scale_c = ConstraintFor("bg_scale", g_state);
@@ -2920,15 +2909,11 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         ApplyCameraOrbitDrag(g_state, io.MouseDelta, g_preview_vp.vp_w, g_preview_vp.vp_h);
       }
 
-      if (!gestures_locked && !bg_modifier && !full_sky && is_hovered && io.MouseWheel != 0.0f) {
-        float fov_max = LUMICE_MaxFov(static_cast<LUMICE_LensType>(rc.lens_type));
-        rc.fov -= io.MouseWheel * 5.0f;
-        rc.fov = std::max(1.0f, std::min(fov_max, rc.fov));
+      if (!gestures_locked && wheel_standing && !bg_modifier && is_hovered && io.MouseWheel != 0.0f) {
+        ApplyCameraWheelZoom(g_state, io.MouseWheel);
       }
 
-      // The eyedropper's own branch, gated on the flag the four above are gated on the negation of:
-      // exactly one of the seven (the analysis window's two below included) can run in a frame, and while picking,
-      // the click that would have orbited the camera samples a colour instead.
+      // The eyedropper owns this click instead of the camera/background gestures above.
       if (g_bg_pick.active && is_hovered) {
         BgSampleGeometry geom;
         geom.dpi_scale_x = dpi_scale_x;

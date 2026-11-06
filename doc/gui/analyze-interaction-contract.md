@@ -111,7 +111,7 @@ coordinates」，归属事实）；各查询面自己的等待/取消/拒答态�
 | 分类 | 内容 | Analyze 内形态 | 默认展开 | 可达入口 |
 |---|---|---|---|---|
 | **场景编辑**（sim-tier 文档） | Sun（高度角/直径/光谱）；晶体与滤镜（层/条目）；Rays/Max hits/GPU（渲染运行预算） | Sun 组就地展开可编辑；晶体/滤镜 = **入口行**（身份＋编辑入口），参数控件只在 Entry Edit；Simulation（渲染运行预算）= **默认折叠的就地编辑组**（同控件函数、同 id 语义；已落地） | Sun 展开；晶体列表展开；Simulation 折叠（打开即就地编辑，编辑仍走显式 Run 合同：kModified、无自动重跑） | Sun 滑条就地；晶体行点击开 Entry Edit（现路径：`analyze_workspace.cpp:104`→`panels.cpp:2095`→`panels.cpp:2077`，模态形态不变）；Simulation 折叠组就地 |
-| **运行设置**（分析请求参数） | 区域选择、锥心、分析半径、分析 Rays 预算、Analyze/Stop | 主视图下缘操作条（已落地：区域两选＋Pick＋锥心读数＋半径＋预算＋Analyze/Stop 一条 judged-join 流，窄宽折行不裁剪；列表头只余 banner/新鲜度/对称性/搜索） | 操作条常驻（一条，可折行） | 主视图下缘 |
+| **运行设置**（分析请求参数） | 区域选择、锥心、分析半径、分析 Rays 预算、Analyze/Stop | 主视图下缘操作条（已落地：区域两选＋锥心读数＋半径＋预算＋Analyze/Stop 一条 judged-join 流，窄宽折行不裁剪；列表头只余 banner/新鲜度/对称性/搜索） | 操作条常驻（一条，可折行） | 主视图下缘 |
 | **观察/辅助线**（display-tier） | 镜头类型/FOV/视角/曝光/背景；辅助线组（网格/地平线/太阳路径/标注圆） | 左栏观察组；与 Render 共用同一显示状态源（§5.4），不新造第二套 | 镜头＋辅助线常用组展开；其余组折叠；折叠态会话内保留 | 左栏 |
 
 **晶体入口与参数控件的区别表达**（验收约束）：左栏晶体行是**入口与身份**（一行一条目，点击开
@@ -170,15 +170,22 @@ Render workspace」）。
 
 | 手势 | 语义 | 条件与仲裁 |
 |---|---|---|
-| 空手拖拽 | 相机 orbit（grab 约定 = 项目唯一拖拽隐喻） | 无 marker 悬停、无武装点选时 |
-| marker 拖拽 | 移动锥心 | Point 模式且命中 marker（命中半径沿用 `kAnalysisConeMarkerHitRadiusPt`，`gui_constants.hpp:216`） |
-| 武装点选 | 点图设锥心 | Pick 按钮武装后；Esc 撤武装（`analyze_workspace.cpp:288-290` 沿用） |
-| 滚轮 | 不占用 | 缩放语义的 owner 是 FOV 控制（与 Render 一致，不发明第二套缩放） |
+| 空手拖拽 | 相机 orbit（grab 约定 = 项目唯一拖拽隐喻） | 新按压未归显式拾取、marker 或直接定位时 |
+| marker 拖拽 | 移动锥心 | Point 模式且命中 marker（命中半径沿用 `kAnalysisConeMarkerHitRadiusPt`） |
+| Alt/Option＋左键单击 | 直接设锥心 | Point 模式；macOS 显示 Option，其余平台 Alt；无武装步骤，marker 离屏也可用；图外/镜头无效区不改方向 |
+| 滚轮 | 与 Render 同源的相机 FOV 缩放 | 每单位正 wheel 减 FOV 5°，钳制 `[1°, LUMICE_MaxFov(lens)]`；full-sky no-op，不解除 Look At Lock |
 
-仲裁顺序：**marker 拖拽 > 武装点选 > 相机 orbit**——现 panorama 的两臂仲裁
-（`ArbitrateConeInput`，`analyze_workspace.cpp:248-283`）加相机臂扩为三臂；新增分支时同一次按压的
-消费归属遵循既有手势锁纪律（learnings：确认/消费类状态标志的清除契约须覆盖所有能消费同一次点击
-的分支）。相机拖拽是 display-tier 操作：不 dirty、不触发重仿真、不改分析请求。
+2026-11-06 手势修订：**已活跃显式拾取 > Alt/Option 定位 > marker 拖拽 > 相机 orbit**，仅在按下时
+决定归属；持有到释放，中途改键、跨 marker、离图均不换臂。直接定位只写一次，无效点击也不回退 orbit。
+已取得的相机/marker/直接定位按压不被后起显式拾取倒抢；Esc 或宿主消失停止动作但吞压至释放。
+主图交互面尊重模态、浮窗与 display-mode control 的遮挡。Point 选项与 marker 悬停说明手势；旧 ROI
+Pick 按钮、armed 状态、横幅和十字线整体退役，不影响晶体 share pick 或 Angular Distance。
+
+两工作区实际调用同一个 `ApplyCameraWheelZoom`；输入归属仍留面内，Render 的 Alt/Option 照片缩放及
+无可操作照片时 no-op 不变。手动画布沿用帧首 standing wheel claim：原生分发在 NewFrame，刚被滚入
+指针下的首帧不再手动二次消费；主图外仍归控件/宿主，地图/3D 保留自己的缩放数量语义。显式拾取及
+其吞拖 latch 期间不接管相机 wheel。上述操作均不 dirty、不重仿真、不自动 Analyze；ROI 结果仍对应
+请求时中心，移动后提示显式 Analyze。
 
 ### 5.3 ROI：GUI 收敛为 Whole sky / Point
 
@@ -292,12 +299,12 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | fiber 内移动姿态（滑条/播放/曲线画布点击拖拽） | 只改当前姿态样本：globe marker、3D 路径、曲线游标、因素读数同步；天空点不动、点查询不重发；播放只推进样本索引，画布写游标即停播放 | `PointViewState` 契约（`analyze_survey.hpp:381-401,404-414`）；曲线画布写路径 `RenderPoseCurveRegion`（`analyze_point_view.cpp`，756） |
 | 切换 λ（窗右区滑条） | 地图面新意图：旧图保留在天空锚位＋「refining」注（用户正在 steering 时不白屏）；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；跨视图 supersession 保旧图（185-215）；`PointIntentKey.wavelength_nm`（228） |
 | 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
-| 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；武装点选/pick 链在离开时解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
+| 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；主图按压在离开时取消（未释放仍吞压）、pick 链沿原规则解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
 | New | 全前端状态重置（含 analysis 会话、查询绑定释放）；**755.4 as-built**：两窗随整 GuiState 重置而关闭（开/合是 T-session 旗标），再次类行点击重开显示诚实空态；窗几何保留 | `DoNew`（`app.cpp`）；4 文档切换 reason 整体清空（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
 | Open | 同 New 的重置路径＋文档载入 | 同上（per-reason reset owner） |
 | Revert | 分析列表**保留**＋新鲜度横幅如实（stale 指令：press Analyze）；analysis 会话保留（请求参数不属于文档）；查询绑定不变 | kRevert 跳过 analysis 清空（`gui-state-governance.md` §10.1/10.2）；横幅 `analysis_panel.cpp:1363-1373` |
 | 取消（survey/point） | 面级取消按钮：意图失效＋latch（同选择不重发）；完成态显示「cancelled」行；迟到结果按 id 丢弃 | survey 取消（`analyze_workspace.cpp:327-335`）；point 取消（`analyze_point_view.cpp:1470-1478`）；`cancelled_for_key`（`analyze_survey.hpp:117-118,247-249`） |
-| 取消（意图撤回） | Esc 撤武装点选/锥心拖拽/pick 链；map/ray 面无取消按钮（亚秒/微秒查询，撤销=latch 随 reset）；Esc 不取消在途查询（后台语义，取消走按钮） | Esc 分支（`analyze_workspace.cpp:288-290,407-409`）；map/ray latch 语义（`analyze_survey.hpp:195-198,369-372`） |
+| 取消（意图撤回） | Esc 取消主图动作（吞压至释放）/pick 链；map/ray 面无取消按钮（亚秒/微秒查询，撤销=latch 随 reset）；Esc 不取消在途查询（后台语义，取消走按钮） | 主图 press owner 清理（`RenderWorkspacePanels`）；map/ray latch 语义（`analyze_survey.hpp:195-198,369-372`） |
 | 编辑场景后 | 三个位置各自如实：列表横幅（stale 不清列表）、主视图旧图注（分析图是编辑前配置）、状态栏 Modified＋顶栏 ⚠/Revert；分析触发显式（无自动重跑） | 新鲜度谓词（`gui-state-governance.md` §10.1）；`AnalysisPictureNotice`（`analyze_workspace.cpp:295-299`）；ReconcileSimState |
 
 窗口开合状态的归属声明：两窗的开/合是 **T-session 显示态**（`left_panel_collapsed` 同族——不是文档
@@ -426,18 +433,18 @@ Analyze 按钮、In frame/Point 单选共用该门控，`analysis_panel.cpp:1383
 | # | 操作 | 当前路径（步数） | 当前覆盖 | 新路径预测（步数） | 新覆盖预测 | 显式开窗的价值与代价 |
 |---|---|---|---|---|---|---|
 | ① | 首次运行并查看全天贡献 | Run（顶栏）→ 等图 → 切 Analyze → Analyze → 等列表 → 点类行 = **4 点击＋2 等待** | 5/5（区域/触发/列表/概览/身份同屏；渲染 Run 在另一工作区） | 同形：Run → 切 Analyze → 操作条 Analyze → 点类行 = **4 点击＋2 等待** | 5/5 | 无涉（两窗不参与） |
-| ② | 定位亮弧并分析局部贡献（Point 臂） | Point → 半球试错（固定鱼眼无相机，Upper/Lower 切换 1–2 次）→ 拖 marker 或 Pick＋点图 → Analyze → （可选）Radius = **3–5 动作＋半球试错**；冷启动另加 ①的 4 点击 | 5/5（区域/锥心/半径/触发/列表同屏） | Point → 相机拖到弧（1–2 次拖拽，替代半球试错）→ 拖 marker 至弧 **或** Pick＋点图设中心（§5.2 手势合同的两条合法路径）→ Analyze（操作条） → Radius = **5–7 动作**（Radius 必选统一口径：拖 marker 路径 5–6，Pick＋点图路径 6–7，相机定位拖拽计入；见 §12.2 回填） | 5/5 | 无涉；定位从「半球切换试错」变「所见即所得」，步数持平（统一口径下两侧均 5–7，见 §12.2），定位确定性提升（推演） |
+| ② | 定位亮弧并分析局部贡献（Point 臂） | Point → 半球试错（固定鱼眼无相机，Upper/Lower 切换 1–2 次）→ 拖 marker 或 Pick＋点图 → Analyze → （可选）Radius = **3–5 动作＋半球试错**；冷启动另加 ①的 4 点击 | 5/5（区域/锥心/半径/触发/列表同屏） | Point → 相机拖到弧（1–2 次拖拽，替代半球试错）→ 拖 marker 至弧 **或** Alt/Option＋左键设中心（§5.2）→ Analyze（操作条） → Radius = **5–6 动作**（Radius 必选统一口径；相机定位拖拽计入；旧控件实测见 §12.2，新输入证据见 §12.3） | 5/5 | 无涉；定位从「半球切换试错」变「所见即所得」，新侧少掉武装动作（旧控件基线见 §12.2），定位确定性提升（推演） |
 | ②′ | 同上（In frame 臂，当前侧记录） | In frame → Analyze = **2 动作** | 4/5（无半径/锥心） | **移除**（§5.3 结构性理由）；CLI/C API 保留 | — | 移除换取 ROI 语义不随画幅漂移 |
 | ③ | 选光路，仅研究天空分布 | 点类行 → 地图在下方常驻区呈现 → 滚轮/拖拽研究 = **1 点击＋n 手势**（地图面积固定 ≈446×494 @默认窗，与 3D 对半不可调） | 1/1（列表↔地图同屏常驻） | 点类行 → 窗打开并同步 → 手势研究 = **1 点击＋n 手势＋窗管理**（窗内图面 ≈520 见方可调） | 1/1（列表↔窗同屏并存，单屏允许遮挡） | 代价：窗管理（首次摆位/聚焦）是新增自由度成本；价值：图面更大、可调、多屏并存。步数不虚报减少（同 1 点击） |
 | ④ | 进一步选点，看姿态变化与晶体内轨迹 | map 点选天空点 → 等点查询（~2s）→ 读三处：globe（右列上 40% 高）＋3D（下行右半）＋Point detail（右列下）= **1 点击＋等待**；分量/样本/播放/orbit 交互分散三处 | 4/4（点输入/globe/3D/详情同屏，但各占小区） | map 点选 → 等待 → 点右下点结果块开窗 → 窗内 globe＋3D＋因素集中交互 = **2 点击＋等待** | 4/4（三处合并一窗，单屏允许遮挡） | 代价：**+1 点击开窗**（如实呈现）；价值：三个固定小区域（globe 仅 ≈400×~245）合并为可调窗内大区域，姿态族/路径/因素同现场 |
 | ⑤ | 修改太阳或晶体，再更新比较 | 左栏 Sun 滑条（就地）→ 观察 Modified＋列表横幅＋旧图注 → Analyze → 等待 = **2 动作＋1 等待**；晶体经 Entry Edit（模态开合另计）；新鲜度三处如实 | 4/4（编辑/新鲜度组/触发/状态同屏） | 同形：左栏滑条 → 操作条 Analyze = **2 动作＋1 等待**；新鲜度三处不变（§8） | 4/4 | 无涉 |
 
-如实声明（统一口径后的修正，见 §12.2）：五操作中①⑤步数不变，②按「Radius 必选计入」两侧统一
-后步数持平（相机定位替代半球试错，设中心仍走 §5.2 的武装/拖 marker 合同），③④以窗管理成本换
+旧控件基线的如实声明（§12.2；不是修订后手势的实测计数）：五操作中①⑤步数不变，②按「Radius 必选计入」两侧统一
+后步数持平（相机定位替代半球试错，设中心当时走武装/拖 marker 合同），③④以窗管理成本换
 取面积与专注（③步数不变但新增窗管理自由度成本，④+1 点击）——**不存在全项减少**；减少的是
 「长期无用占位」（现中区两行四区与右列 globe 的常驻空置，用户反馈的组织病灶）。
 
-### 12.2 组合验收实测回填（2026-11-06）
+### 12.2 组合验收实测回填（2026-11-06，直接手势修订前的历史基线）
 
 §0 复测条款的回填：五操作在真实新 GUI 上一条文档会话内串行实测（组合验收片交付的组合腿
 `five_operations_chain_in_one_session`，同一会话含 ①–⑤ 与全程中间态断言；双浮窗并存与在飞生命
@@ -455,9 +462,18 @@ Minor 的收口动作）：**Radius 按必选计入两侧动作数**。当前侧
 | ⑤ | 2 动作＋1 等待 | 2 动作＋1 等待（左栏 Sun 键入 → 操作条 Analyze）；新鲜度三处（列表横幅/主图旧图注/状态栏 Modified＋顶栏 Revert）在双浮窗开启态实测如实 | 吻合 |
 
 设计漂移信号（不构成门槛；§0 的豁免边界仅适用于 §12 的对比数值）：④ 的「地图点选即所得」在
-点选方向不携带姿态样本时不是终点——用户需改用键入路径重定向再读窗。§5.2 的两条设中心路径与
-④ 的两条天空点输入路径（点选/键入）仍都成立；窗内交互、多窗并存、在飞切换、Revert 与 New 的
+点选方向不携带姿态样本时不是终点——用户需改用键入路径重定向再读窗。当时的两条设中心路径与
+④ 的两条天空点输入路径（点选/键入）在该基线都成立；窗内交互、多窗并存、在飞切换、Revert 与 New 的
 实测证据由另两条组合腿承载，预测与实测无冲突。
+
+### 12.3 直接手势的输入证据（2026-11-06）
+
+§12.2 保留原来带 Pick 按钮的动作计数，不以新输入结果倒改历史。修订后的控件不再包含该武装步骤；
+本节记录行为证据，而非重做五操作计数：`gui_test` 的 `direct_point_press_has_one_owner`、
+`invalid_direct_point_never_becomes_orbit`、`picture_hosts_share_camera_wheel` 以真实 Alt/Option、鼠标和
+wheel 驱动，分别验证离屏恢复/方向锚定/单次定位、无效点击不换臂、两宿主独立数值锚；旧 Point 分析、
+marker 拖动与 Angular Distance 路径沿原功能用例迁移。平台执行边界：本地 macOS 输入验证，不宣称
+Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些用例名是可重复的验证入口。
 
 ## 13. 与既有布局裁决的关系
 

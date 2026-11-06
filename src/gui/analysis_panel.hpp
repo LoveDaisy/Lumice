@@ -1,11 +1,9 @@
 #ifndef LUMICE_GUI_ANALYSIS_PANEL_HPP
 #define LUMICE_GUI_ANALYSIS_PANEL_HPP
 
-// The "Raypath Analysis" window (doc/raypath/raypath-analysis-panel.md): a non-modal window beside the
-// preview that starts an analysis run on the committed scene, lets the user say WHERE in the sky
-// they are asking about (the whole sky, the frame on screen, or a cone around a point they click
-// on the preview), lists the raypath chains that delivered energy there, and turns a selected
-// single-crystal chain into a filter that excludes it.
+// The Analyze workspace's share list and ROI controls (doc/raypath/raypath-analysis-panel.md):
+// starts an analysis on the configured scene, for the whole sky or a cone around a direction,
+// lists the raypath chains that delivered energy there, and can exclude a selected class.
 //
 // Pure C API consumer. Everything the window does reaches core through the C API headers — the run
 // (LUMICE_StartRaypathAnalysis), the result (LUMICE_FrameGetRaypathAnalysis, read on the main
@@ -214,9 +212,9 @@ void CanvasPixelToPreviewPoint(int px, int py, float dpi_scale_x, float dpi_scal
 LUMICE_AnnotationView PreviewAnnotationView(const GuiState& state, int canvas_w, int canvas_h);
 
 // Turn the click at canvas pixel (px, py) into the cone centre: LUMICE_UnprojectPixel through
-// `view`. On sky, writes cone_center_dir / cone_center_valid and disarms the pick; off sky
-// (letterbox, outside the lens's image circle, the clipped hemisphere) writes nothing and leaves
-// the pick armed, so the user can aim again. Returns whether it hit sky.
+// `view`. On sky, writes cone_center_dir / cone_center_valid and freezes default placement;
+// off sky (letterbox, outside the lens's image circle, the clipped hemisphere) writes nothing.
+// Returns whether it hit sky. No input-mode side effects.
 bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, int px, int py);
 
 // Where the cone centre sits on the canvas THIS frame: cone_center_dir forward-projected through
@@ -229,25 +227,11 @@ bool PickAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, 
 // under a 3-point dot.
 std::optional<CanvasPixel> ProjectConeCenterMarker(const GuiState& state, const LUMICE_AnnotationView& view);
 
-// Who owns the mouse over the preview while the analysis window is in CONE mode. ONE arbiter
-// for three gestures that share the same rectangle, evaluated once per frame and read by every
-// branch: the marker under the cursor (or a drag already in flight) wins over an armed pick,
-// which wins over the camera. Hover-over-pick is the ruling stated in the design (a cursor on
-// the old marker while a new pick is armed grabs the marker: the two overlap only there, and
-// dragging what is under the cursor is the less surprising outcome). Outside CONE mode the
-// caller does not consult this and the camera owns the preview as it always did.
-enum class ConeInputOwner {
-  kMarkerDrag,  // hover on the marker, or a drag in progress
-  kPickClick,   // pick armed: the next click sets the centre
-  kCamera,      // neither: orbit / zoom / background gestures as before
-};
-ConeInputOwner ArbitrateConeInput(bool marker_hover_or_dragging, bool pick_armed);
-
 // Move the centre to the direction under canvas pixel (px, py) — the drag's per-frame write.
 // The sibling of PickAnalysisConeCenter: the same LUMICE_UnprojectPixel through the same view,
 // the same "on sky writes, off sky writes nothing" rule (a drag past the picture's edge keeps the
 // last direction that was sky rather than parking the centre on garbage). Touches nothing else:
-// not pick_armed, not cone_center_valid (a drag can only start on a marker, which only exists
+// not cone_center_valid (a drag can only start on a marker, which only exists
 // while the centre is valid), and it does not log per frame. Returns whether it hit sky.
 bool DragAnalysisConeCenter(GuiState& state, const LUMICE_AnnotationView& view, int px, int py);
 
@@ -488,14 +472,12 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 // (RenderAnalyzeOperationBar below).
 void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server);
 
-// The main view's operation bar (contract §2.2): region radios, the Point pick arming and
-// centre readout, the radius, the budget and Analyze/Stop — one judged-join strip hosted below
-// the picture by the Analyze workspace. The default-centre and pick branches read the
-// panorama's viewport publication.
+// The main view's operation bar (contract §2.2): region radios, the Point centre readout,
+// the radius, the budget and Analyze/Stop — one judged-join strip hosted below the picture.
 void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server);
 
-// The operation bar's region segment: the Whole sky / Point radios, and in Point mode the pick
-// arming and the centre readout. (Exposed for the logic tests; the bar is the only renderer.)
+// The operation bar's region segment: the Whole sky / Point radios with gesture guidance,
+// and in Point mode the centre readout. The bar is the only renderer.
 void RenderPanoramaRoiControls(GuiState& state);
 
 // The marker and ring over the Analyze workspace's panorama: CONE mode with a projectable centre

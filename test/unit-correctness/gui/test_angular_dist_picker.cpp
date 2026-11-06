@@ -297,19 +297,17 @@ TEST(AngularDistPicker, PreviewInjectionTouchesTheFramesCopyAndOnlyTheArmedFamil
   EXPECT_TRUE(ov2.angular_dist_deg.empty());
 }
 
-TEST(AngularDistPicker, ArmingSwitchesTheFamilysLineOnAndDisarmsTheAnalysisPick) {
+TEST(AngularDistPicker, ArmingSwitchesTheFamilysLineOn) {
   GuiState state;
   state.show_sun_circles_line = false;
   state.show_sun_circles_label = false;
   state.show_view_dist_line = false;
-  state.analysis.pick_armed = true;
   ArmAngularDistPicker(state, AngularDistFamily::kSun);
   EXPECT_TRUE(state.angular_dist_picker.armed);
   EXPECT_EQ(state.angular_dist_picker.family, AngularDistFamily::kSun);
   EXPECT_TRUE(state.show_sun_circles_line);
   EXPECT_FALSE(state.show_sun_circles_label) << "the label switch is the user's alone";
   EXPECT_FALSE(state.show_view_dist_line) << "the other family is left alone";
-  EXPECT_FALSE(state.analysis.pick_armed);
   EXPECT_EQ(&AngularDistFamilyAngles(state, AngularDistFamily::kSun), &state.sun_circle_angles);
   EXPECT_EQ(&AngularDistFamilyAngles(state, AngularDistFamily::kView), &state.view_dist_angles);
 }

@@ -768,7 +768,6 @@ TEST(AnalyzeMapView, MapFaceNeverTouchesTheRoiState) {
   state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
   state.analysis.cone_center_valid = true;
   state.analysis.cone_center_dir[0] = 0.25f;
-  state.analysis.pick_armed = true;
 
   ASSERT_TRUE(
       PumpBothUntil(state, executor, 100.0, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
@@ -784,7 +783,6 @@ TEST(AnalyzeMapView, MapFaceNeverTouchesTheRoiState) {
   EXPECT_EQ(state.analysis.roi_mode, LUMICE_RAYPATH_ROI_CONE);
   EXPECT_TRUE(state.analysis.cone_center_valid);
   EXPECT_NEAR(state.analysis.cone_center_dir[0], 0.25f, 1e-9);
-  EXPECT_TRUE(state.analysis.pick_armed);
   executor.ShutdownAndJoin();
 }
 

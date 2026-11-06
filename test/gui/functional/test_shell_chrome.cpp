@@ -716,15 +716,11 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(settings_after.RectFull.Min.x, settings_before.RectFull.Min.x);
       IM_CHECK_EQ(settings_after.RectFull.Max.x, settings_before.RectFull.Max.x);
 
-      gui::g_state.analysis.pick_armed = true;
-      gui::g_state.analysis.cone_marker_dragging = true;
       ctx->ItemClick(kWorkspaceToRenderBtn);
       ctx->Yield(3);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
       IM_CHECK(left != nullptr && left->Active);
       IM_CHECK(middle != nullptr && !middle->Active);
-      IM_CHECK_EQ(gui::g_state.analysis.pick_armed, false);
-      IM_CHECK_EQ(gui::g_state.analysis.cone_marker_dragging, false);
     };
   }
 
@@ -1952,16 +1948,16 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       gui::g_state.renderer.elevation = 90.0f;
       gui::g_state.renderer.visible = gui::kVisibleFull;
       gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
-      gui::g_state.analysis.pick_armed = true;
       ctx->Yield(2);
       const ImVec2 disk_centre((pano->Pos.x + pano->Size.x * 0.5f), (pano->Pos.y + pano->Size.y * 0.5f));
       const float disk_radius = std::min(pano->Size.x, pano->Size.y) * 0.5f;
       ctx->MouseMoveToPos(ImVec2(disk_centre.x + disk_radius * 0.5f, disk_centre.y));
       ctx->Yield(2);
+      ctx->KeyDown(ImGuiMod_Alt);
       ctx->MouseClick(0);
+      ctx->KeyUp(ImGuiMod_Alt);
       ctx->Yield(3);
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
-      IM_CHECK(!gui::g_state.analysis.pick_armed);
       // The closed-form anchor: a click at half the disk's radius sits at
       // theta = 2*asin(r_norm * sin(45 deg)) from the zenith — derived from the equal-area rim
       // at theta = fov/2, NOT from the inverse under test.
