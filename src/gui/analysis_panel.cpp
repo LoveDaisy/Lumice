@@ -1842,9 +1842,23 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
       (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
   const float head_limit =
       std::max(1.0f, ImGui::GetContentRegionAvail().y - status_h - buttons_h - AnalysisTableMinHeight() - gap * 3.0f);
-  // A geometry-only recovery rung for compressed scale tiers: title, P, B, D and search
-  // occupy at most five fixed control rows, plus the separator gap.
-  const bool scroll_head = ImGui::GetFrameHeightWithSpacing() * 5.0f + gap > head_limit;
+  // Only the static controls' footprints enter this budget. The title and search need one
+  // row each; P/B/D join the title/preceding checkbox by the same native-widget footprint
+  // used by their renderer. Do not reserve five worst-case rows at ordinary fitting widths.
+  int head_rows = 2;
+  float row_width = ImGui::CalcTextSize("Symmetry").x;
+  const float width = ImGui::GetContentRegionAvail().x;
+  for (const char* letter : { "P", "B", "D" }) {
+    const float unit_width =
+        ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(letter).x;
+    if (row_width + ImGui::GetStyle().ItemSpacing.x + unit_width > width) {
+      ++head_rows;
+      row_width = unit_width;
+    } else {
+      row_width += ImGui::GetStyle().ItemSpacing.x + unit_width;
+    }
+  }
+  const bool scroll_head = ImGui::GetFrameHeightWithSpacing() * static_cast<float>(head_rows) + gap + 1.0f > head_limit;
   if (scroll_head) {
     ImGui::BeginChild("##analysis_head", ImVec2(0.0f, head_limit));
   }
