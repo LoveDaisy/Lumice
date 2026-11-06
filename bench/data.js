@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793944741448,
+  "lastUpdate": 1793944745961,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "0abb8e9bdc05a0db2723e33dd75904da10092d52",
-          "message": "Merge pull request #463 from LoveDaisy/scrum/ci-time-governance-acceptance\n\ndocs(ci): close time-governance acceptance",
-          "timestamp": "2026-10-01T18:29:14+08:00",
-          "tree_id": "ad1f485ce54ff636e4d44ade48dbe43ca58fc4ff",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/0abb8e9bdc05a0db2723e33dd75904da10092d52"
-        },
-        "date": 1790850729021,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1005199.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1024676.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 734686.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 592120.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "4f133865f5df1f6ebbca26757196056d78e762bc",
           "message": "Merge pull request #464 from LoveDaisy/scrum/raypath-feature-diagnostics\n\nAdd target-free raypath feature diagnostics and scientific acceptance",
           "timestamp": "2026-10-02T13:12:28+08:00",
@@ -9590,6 +9542,54 @@ window.BENCHMARK_DATA = {
             "value": 610629.2,
             "unit": "rays/sec",
             "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9e6d278e623a50ba610259478331d5ee90c34408",
+          "message": "Merge pull request #567 from LoveDaisy/feat/analysis-pump-sky-intent-pickup\n\ntest(gui): the map wait streaks, the Set input asserts, and broken preconditions fail fast",
+          "timestamp": "2026-11-06T13:55:02+08:00",
+          "tree_id": "8aa0628662045bfe715965f94e9b5fa16ad7c406",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/9e6d278e623a50ba610259478331d5ee90c34408"
+        },
+        "date": 1793944745460,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1175191.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1011516.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 722800.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 590581.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
