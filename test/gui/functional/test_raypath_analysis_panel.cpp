@@ -592,7 +592,7 @@ void OpenWindow(ImGuiTestContext* ctx) {
 ImGuiWindow* PanoramaPictureWindow() {
   for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
     if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-        std::strstr(w->Name, "##AnalyzePanorama") != nullptr) {
+        std::strstr(w->Name, "##AnalyzePanoramaPicture") != nullptr) {
       return w;
     }
   }
@@ -11034,6 +11034,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "operation_anchors_ignore_roi_and_messages");
     t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard server_guard;
       ResetTestState();
       OpenWindow(ctx);
       ctx->SetRef(PanoramaRegionRef());
@@ -11108,6 +11109,61 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(at_width(gui::UiPx(gui::kAnalyzeMainViewMinWidth) - padding, false));
       gui::g_state.workspace.right_column_ratio = gui::kAnalyzeRightColumnDefaultRatio;
       ctx->SetRef("");
+      // A real Run from Analyze: record every completed GUI frame, including the first
+      // uploaded picture, without a polling API that could skip that transition frame.
+      gui::g_server = LUMICE_CreateServer();
+      IM_CHECK(gui::g_server != nullptr);
+      gui::ResetServerConstructionTrackers();
+      IM_CHECK(gui::DeserializeFromJson(kHalo22Json, gui::g_state));
+      gui::g_state.renderer.sim_resolution_index = 0;
+      gui::g_state.sim.infinite = false;
+      gui::g_state.sim.ray_num_millions = 0.1f;
+      OpenWindow(ctx);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK(PanoramaPictureWindow() != nullptr);
+      struct PictureFrames {
+        ImRect expected;
+        bool saw_empty = false;
+        bool saw_picture = false;
+        bool moved = false;
+        int first_picture_frame = -1;
+      } frames{ PanoramaPictureWindow()->Rect() };
+      ImGuiContextHook hook;
+      hook.Type = ImGuiContextHookType_EndFramePost;
+      hook.UserData = &frames;
+      hook.Callback = [](ImGuiContext*, ImGuiContextHook* h) {
+        auto& f = *static_cast<PictureFrames*>(h->UserData);
+        if (ImGuiWindow* picture = PanoramaPictureWindow()) {
+          const ImRect actual = picture->Rect();
+          f.moved = f.moved || std::abs(actual.Min.x - f.expected.Min.x) > 0.5f ||
+                    std::abs(actual.Min.y - f.expected.Min.y) > 0.5f ||
+                    std::abs(actual.Max.x - f.expected.Max.x) > 0.5f ||
+                    std::abs(actual.Max.y - f.expected.Max.y) > 0.5f;
+          if (gui::g_preview.HasTexture()) {
+            f.saw_picture = true;
+            if (f.first_picture_frame < 0) {
+              f.first_picture_frame = ImGui::GetFrameCount();
+            }
+          } else {
+            f.saw_empty = true;
+          }
+        } else {
+          f.moved = true;
+        }
+      };
+      const ImGuiID hook_id = ImGui::AddContextHook(ImGui::GetCurrentContext(), &hook);
+      struct HookLease {
+        ImGuiID id;
+        ~HookLease() { ImGui::RemoveContextHook(ImGui::GetCurrentContext(), id); }
+      } hook_lease{ hook_id };
+      ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+      IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kDone; }, 60));
+      ctx->Yield(2);
+      IM_CHECK(frames.saw_empty && frames.saw_picture && !frames.moved);
+      ctx->LogInfo("[first picture] Run in Analyze; frame %d and every intermediate frame kept (%.0f,%.0f)-(%.0f,%.0f)",
+                   frames.first_picture_frame, frames.expected.Min.x, frames.expected.Min.y, frames.expected.Max.x,
+                   frames.expected.Max.y);
+      IM_CHECK(SaveWindowPng(ctx, PanoramaRegionRef(), GuiTestTempPath("layout_main_first_picture.png").string()));
     };
   }
   {
