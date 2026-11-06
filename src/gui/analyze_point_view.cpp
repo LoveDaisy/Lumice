@@ -1757,6 +1757,13 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
 
 namespace {
 
+// The curve's arm count: one authoritative constant for the whole Pose & trace section (legend,
+// per-arm readouts, canvas series and the per-arm colors all index by it). It lives at namespace
+// scope — a function-local constexpr used as an array bound inside a nested lambda reads as a
+// captured runtime value to MSVC (C2131), while clang folds it, so the two compilers disagree
+// unless the constant is unambiguously namespace-scope.
+constexpr int kCurveArms = 5;
+
 // D4 — the Pose & trace window's vertical strip between the 3D region and the right column
 // (contract §4.2): the D3 splitter's recipe (invisible button + hover/active line + the one
 // affordance line + a delta-only write from the DISPLAYED boundary — never from the raw stored
@@ -1945,7 +1952,6 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   // ---- The legend: one swatch + short symbol per arm, the units in the factor readouts' own
   // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
   // a judgment (the 3D legend's rule): an entry wraps below when it no longer fits. ----
-  constexpr int kCurveArms = 5;
   const ImU32 arm_colors[kCurveArms] = {
     IM_COL32(96, 165, 250, 255),   // rho — blue
     IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
