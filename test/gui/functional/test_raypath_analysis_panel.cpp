@@ -2097,6 +2097,8 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   ImGuiWindow* same_pose_window = ctx->GetWindowByRef("//Pose & trace");
   IM_CHECK_RETV(same_pose_window != nullptr && same_pose_window->Active, false);
+  ctx->WindowFocus("//Raypath view");
+  ctx->ItemClick("**/Pose & trace###pose_open");  // ensure-open, not a toggle or cursor reset
   ctx->WindowClose("//Pose & trace");
   ctx->Yield(2);
   IM_CHECK_RETV(!same_pose_window->Active && !gui::g_state.analyze_pose_view_open, false);
@@ -6663,6 +6665,19 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
     ImGuiWindow* report = MapReportWindow();
     IM_CHECK_RETV(report != nullptr && report->Size.y > 0.0f && report->Pos.y >= entry.RectFull.Max.y, false);
     ctx->WindowFocus("//Raypath view");
+    if (report->ScrollMax.y > 0.0f) {
+      ctx->MouseMoveToPos(report->InnerClipRect.GetCenter());
+      ctx->Yield(2);
+      ctx->MouseWheelY(-3.0f);
+      ctx->Yield(3);
+      IM_CHECK_RETV(report->Scroll.y > 0.0f, false);
+      const auto scrolled_entry = ctx->ItemInfo(entry_id);
+      IM_CHECK_RETV(std::abs(scrolled_entry.RectFull.Min.x - entry.RectFull.Min.x) < 0.5f &&
+                        std::abs(scrolled_entry.RectFull.Min.y - entry.RectFull.Min.y) < 0.5f &&
+                        std::abs(scrolled_entry.RectFull.Max.x - entry.RectFull.Max.x) < 0.5f &&
+                        std::abs(scrolled_entry.RectFull.Max.y - entry.RectFull.Max.y) < 0.5f,
+                    false);
+    }
     ctx->ItemClick(entry_id);
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
@@ -11086,6 +11101,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(probe.analyze_pose_view_open);
       IM_CHECK(!pose_text.empty());
       IM_CHECK(pose_text.find("Pick a sky point") != std::string::npos);
+      ctx->WindowFocus("//Layout map probe");
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(2);
       IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("pose_entry_empty.png").string()));
       ctx->SetRef("");
       PinPoseViewOnScreen(ctx);
@@ -11174,6 +11192,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       }
       expected_frame = -1;
       IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_refused.png").string()));
+      ctx->WindowFocus("//Layout map probe");
+      ctx->Yield(2);
       IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("layout_map_refused_fixture.png").string()));
       IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kRefused);
       IM_CHECK(gui::PointQueryStateFor(probe.analysis.point) == gui::PointQueryState::kRefused);
@@ -11236,6 +11256,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::PointQueryStateFor(probe.analysis.point) == gui::PointQueryState::kCompleted);
       IM_CHECK_EQ(partial_info.component_count, 0u);
       IM_CHECK(!pose_text.empty() && pose_text.find("No fiber") != std::string::npos);
+      ctx->WindowClose("//Pose & trace");
+      ctx->Yield(2);
+      IM_CHECK(!probe.analyze_pose_view_open);
+      ctx->SetRef("//Layout map probe");
+      ctx->WindowFocus("//Layout map probe");
+      ctx->ItemClick("**/Pose & trace###pose_open");
+      ctx->Yield(2);
+      IM_CHECK(probe.analyze_pose_view_open);
+      IM_CHECK(!pose_text.empty() && pose_text.find("No fiber") != std::string::npos);
+      ctx->SetRef("");
       IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_partial.png").string()));
       probe.analysis.point.adopted_result.reset();
       expected_frame = -1;
