@@ -6873,18 +6873,16 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ScopedWatchdogGuard watchdog(ctx->EngineIO);
   IM_CHECK_RETV(BringUpBothWindows(ctx), false);
 
-  // ---- ① the shared λ knob, both windows standing: 600 issued and observed waiting (or
-  // already completed — the wait accepts the pump's either reaction; see leg ③), then 0
-  // supersedes it; the adopted document's wavelength echo is the final judge, and the key swap
-  // drops the adoption either way (AC5), so the echo reads 0 in both shapes.
+  // ---- ① the shared λ knob, both windows standing: 600 issued and observed waiting, then 0
+  // supersedes it before adoption; the adopted document's wavelength echo is the final judge.
   gui::g_state.analysis.map_wavelength_nm = 600.0;
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
                       return p.intent_valid && p.key.wavelength_nm == 600.0 &&
-                             (state == gui::PointQueryState::kWaiting || state == gui::PointQueryState::kCompleted);
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
@@ -6925,10 +6923,10 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                     ctx,
                     [] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
                       return p.intent_valid &&
                              std::fabs(p.key.target_dir[2] - (-std::sin(45.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             (state == gui::PointQueryState::kWaiting || state == gui::PointQueryState::kCompleted);
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
@@ -6937,11 +6935,11 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                     ctx,
                     [&expected_second, &old_identity] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
                       return p.intent_valid && p.key.selection.faces == expected_second.faces &&
                              p.key.selection.crystal_id == expected_second.core_crystal_id &&
                              !(p.key.selection.faces == old_identity->faces) &&
-                             (state == gui::PointQueryState::kWaiting || state == gui::PointQueryState::kCompleted);
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
@@ -6966,8 +6964,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   }
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
   ctx->LogInfo(
-      "[scopes] first-class request issued across the class switch (executing or completed in-window); adopted "
-      "doc's faces = the second class's");
+      "[scopes] first-class request executing across the class switch; adopted doc's faces = the second class's");
 
   // ---- ③ target A issued against a direct sky-point write (A's intent id saved at the pump's
   // observed reaction), then target B supersedes it — the pump's key swap is the readback that
@@ -6977,9 +6974,8 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // time, and on a fast, quiet machine a point query can run its full course inside the one
   // frame between two polls, a shape the leg-3 probe runs measured directly. When the
   // completed shape wins, B supersedes a COMPLETED A rather than a mid-flight one; the
-  // mid-flight supersession composition is exercised whenever the executing shape lands, and
-  // degrades to a post-completion supersession otherwise — every downstream oracle in the case
-  // holds in both shapes. The Render-side pump adopts B's answer with the
+  // unconditional mid-flight supersession composition is carried by legs ① and ②, whose waits
+  // start with their intent already issued. The Render-side pump adopts B's answer with the
   // windows open, and the document's own target echo (alt 30) judges the document that LANDED:
   // had A's answer been the final one, the doc would read A's target and fail here. What this
   // layer cannot distinguish is a transient stale-A adoption that B's later answer overwrites
@@ -7100,49 +7096,29 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // face's variant stays with the single-piece precedent (survey_survives_a_workspace_switch),
   // whose digest flight window its own construction catches. The windows stand throughout.
   SetSkyPointTarget(33.0, 17.0);
-  bool revert_targets_an_outstanding_query = false;
   IM_CHECK_RETV(DriveUntil(
                     ctx,
-                    [&revert_targets_an_outstanding_query] {
+                    [] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
-                      const bool issued =
-                          p.intent_valid &&
-                          std::fabs(p.key.target_dir[2] - (-std::sin(33.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                          (state == gui::PointQueryState::kWaiting || state == gui::PointQueryState::kCompleted);
-                      if (issued && state == gui::PointQueryState::kWaiting) {
-                        revert_targets_an_outstanding_query = true;
-                      }
-                      return issued;
+                      return p.intent_valid &&
+                             std::fabs(p.key.target_dir[2] - (-std::sin(33.0 * lumice::kDeg2Rad))) < 1e-4 &&
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
   gui::DoRevert();
-  if (revert_targets_an_outstanding_query) {
-    // The outstanding shape (executing or queued): the revert withdraws the query and latches
-    // the face — R6's Revert row. The gap between the observing poll and the revert is a few
-    // test-thread instructions with no Yield in between; the worker finishing exactly there
-    // would show up as a kCancelled timeout, not as a wrong adoption.
-    IM_CHECK_RETV(
-        DriveUntil(
-            ctx,
-            [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled; },
-            20),
-        false);
-  } else {
-    // The arrived shape (a fast, quiet machine runs the whole query inside one poll gap): the
-    // revert's own contract keeps an ARRIVED answer — ResetFrontendState latches a face only
-    // when something is outstanding, because latching an arrived answer would turn an intact,
-    // adopted result into a false "cancelled". Assert the completed document persists.
-    IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted, false);
-  }
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled; },
+          20),
+      false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != nullptr, false);
   // The map face may legitimately be in flight here (the sky-point move re-keys it too); the
   // latch is per-face and only the point face was asserted outstanding.
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
   ctx->LogInfo(
-      "[scopes] Revert met the point face per its state (outstanding → withdrawn under the latch; arrived → kept); "
-      "the other faces and windows stood");
+      "[scopes] Revert withdrew the outstanding point face under its latch; the other faces and windows stood");
   // The moved sky point re-arms the point face (the latch clears with the changed key) — the
   // standing windows refill, and the settled state feeds ⑥'s keep arm.
   SetSkyPointTarget(42.0, 0.0);
@@ -7172,18 +7148,17 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
   ctx->LogInfo("[scopes] settled Revert kept the faces, the sky point and both standing windows");
 
-  // ---- ⑦ Open (the document replace) with the windows open and a point query verifiably
-  // outstanding (or just arrived — the fast-machine shape; the switch clears the session
-  // either way) — the executor drains, every face clears, both windows close, nothing revives.
+  // ---- ⑦ Open (the document replace) with the windows open and a point query verifiably in
+  // flight — the executor drains, every face clears, both windows close, nothing revives.
   SetSkyPointTarget(35.0, 20.0);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
                       return p.intent_valid &&
                              std::fabs(p.key.target_dir[2] - (-std::sin(35.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             (state == gui::PointQueryState::kWaiting || state == gui::PointQueryState::kCompleted);
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
@@ -7202,23 +7177,21 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open && !gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(!window_active("Raypath view") && !window_active("Pose & trace"), false);
-  ctx->LogInfo(
-      "[scopes] Open replaced the document with the point face outstanding or just arrived; faces cleared, "
-      "windows closed, drained");
+  ctx->LogInfo("[scopes] Open replaced the document with a query in flight; faces cleared, windows closed, drained");
 
-  // ---- ⑧ New with a verifiably outstanding (or just arrived) point query: a fresh standing
-  // state (both windows open, class selected, arc point completed), then the move issued, then
-  // DoNew — the executor's binding releases on the worker thread and nothing revives.
+  // ---- ⑧ New with a verifiably in-flight point query: a fresh standing state (both windows
+  // open, class selected, arc point completed), then the move issued, then DoNew — the
+  // executor's binding releases on the worker thread and nothing revives.
   IM_CHECK_RETV(BringUpBothWindows(ctx), false);
   SetSkyPointTarget(31.0, 15.0);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
                       return p.intent_valid &&
                              std::fabs(p.key.target_dir[2] - (-std::sin(31.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             (state == gui::PointQueryState::kWaiting || state == gui::PointQueryState::kCompleted);
+                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
                     },
                     30),
                 false);
