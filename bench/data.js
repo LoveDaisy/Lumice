@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793946582450,
+  "lastUpdate": 1793946584704,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "4f133865f5df1f6ebbca26757196056d78e762bc",
-          "message": "Merge pull request #464 from LoveDaisy/scrum/raypath-feature-diagnostics\n\nAdd target-free raypath feature diagnostics and scientific acceptance",
-          "timestamp": "2026-10-02T13:12:28+08:00",
-          "tree_id": "e5a02d2855e8ff1e8e73ae6d2a5f6ad04f028841",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/4f133865f5df1f6ebbca26757196056d78e762bc"
-        },
-        "date": 1790918107588,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 87.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 96.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "5fd26ee965155e74cedf143214fd9a1c3a9a0314",
           "message": "Merge pull request #465 from LoveDaisy/fix/ui-scale-window-geometry\n\nfix(gui): keep background aspect ratios consistent across UI scales",
           "timestamp": "2026-10-03T10:47:02+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.7,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c1149fe20a40b4a978bc47b42a60b971ac3f9f5d",
+          "message": "Merge pull request #568 from LoveDaisy/feat/scopes-gate-load-budget\n\ntest(gui): scopes gates judge recorded edges, hold in-flight actions, and drain the whole board",
+          "timestamp": "2026-11-06T14:25:57+08:00",
+          "tree_id": "f625921baa7c96bf5f98fc7163267e9f1701e8ac",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c1149fe20a40b4a978bc47b42a60b971ac3f9f5d"
+        },
+        "date": 1793946584081,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 81.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 96.8,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 96,
             "unit": "%"
           }
         ]
