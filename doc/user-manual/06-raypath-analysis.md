@@ -215,11 +215,10 @@ each valid sample is one pose where the sun sits somewhere in the crystal (the `
 polyline walks them in order, and the highlighted marker is the current sample. The deviation
 grid (toggleable) colours the sphere by where each sun direction deflected the light — drawn
 only when the document carries the grid, absent otherwise, never painted as zero. Under the
-disk: the weight bar (each sample's ρ·A/a²·T·K — the very quantity the fiber integral sums),
-the sample slider and **Play**. Dragging the slider or playing moves through the poses that
-already came back in the document; the sky point itself never moves — playing changes the pose
-you are looking at, not the direction you asked about — and with the window closed the playing
-pauses (the cursor holds where it was and resumes on reopen).
+disk: the sample slider and **Play**. Dragging the slider or playing moves through the poses
+that already came back in the document; the sky point itself never moves — playing changes the
+pose you are looking at, not the direction you asked about — and with the window closed the
+playing pauses (the cursor holds where it was and resumes on reopen).
 
 **Raypath 3D** (the window's large left region) draws the current sample's real path: the
 crystal's wireframe (its analysis shape — distributions flattened to the values the engine
@@ -230,11 +229,33 @@ for a fresh pose is computing the region says so; a pose with no legal path name
 corridor's refusal and its measured area); a rank-0 point mass has no path and says that
 instead of drawing one.
 
-**Current sample factors** (the window's lower right) reads the current pose's own numbers —
-the orientation angles, ρ, the entry measures, the total transmission, the Jacobian with its
-named-unavailable state, K, their product, and each interface's transmittance labelled as
-conditional on this path. The class-level totals stay in the main window's diagnostics; these
-are the per-pose, per-path numbers of the sample the globe's marker names.
+**Contribution curve** (the window's lower right) draws the selected component's five named
+factors — ρ (the declared pose density, `rad^-3`), A/a² (the entry area over the crystal
+length unit squared), T (the total transmission), K = 1/(J+ε), and their product ρ·A/a²·T·K —
+along the component's own SO(3) **arclength** (the horizontal axis, in rad; a closed loop
+starts at its seed, an arc starts at its backward far end with a **seed** mark mid-curve). One
+shared logarithmic vertical axis carries all five curves at their actual magnitudes — nothing
+is normalized per curve, so the arms stay comparable and the product visibly rides on its
+factors. Points the engine could not produce stay gaps (a curve never bridges an unavailable
+stretch or a different component), exact zeros are marked on the zero row under the plot, and
+an arm that is zero or unavailable throughout says so in the legend. The **cursor** is the same
+selection everywhere: click or drag on the plot to move the current pose (the slider, the globe
+marker and the 3D path follow; playback stops), and hovering reads out the pose under the hand.
+The title line carries the component's identity and the engine's integral echo verbatim — its
+completeness pair (`available/total`) is the honesty mark, an incomplete sum never masquerades
+as a total, and the caliber line states the convention: these curves read the declared pose
+density in the **angle-Lebesgue** measure. On fixed-axis (plate) scenes ρ — and with it the
+product and the integral — reads identically zero in this convention (the declared measure
+lives on a spin orbit), while A/a², T and K stay informative per their own availability; that
+is the declared measure's honest answer, not missing data. The readouts are not an attribution
+chart: the arms do not sum to 100 %, and a drawable curve is not a completeness claim about
+the class.
+
+**Current sample factors** (the scrollable list under the curve) reads the current pose's own
+numbers — the orientation angles, ρ, the entry measures, the total transmission, the Jacobian
+with its named-unavailable state, K, their product, and each interface's transmittance
+labelled as conditional on this path. The class-level totals stay in the main window's
+diagnostics; these are the per-pose, per-path numbers of the sample the globe's marker names.
 
 ## 9. From the command line
 

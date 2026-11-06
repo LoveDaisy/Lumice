@@ -302,7 +302,7 @@ Settings 每次打开都重置到默认尺寸（`ImGuiCond_Appearing`），Summa
 | Summary | `config_summary_window.cpp` | 半可变 | 宽钉 1200；出现时贴合内容、上限 min(900, 工作区)，之后高可拉到工作区 |
 | Colors | `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
 | Raypath view | `analyze_map_view.cpp`（`RenderAnalyzeRaypathViewWindow`） | 自由 | `ImGuiCond_FirstUseEver` 给默认 900×560（钳到视口内），双轴可拉，窗级最小 480×360（`SetNextWindowSizeConstraints` 逐帧钳制——§11 R3 的最窄合同是用户可达边界），之后 ImGui 自己记；窗内 D3 分隔（图 | 信息）存会话比例（`GuiState::analyze_raypath_view_info_ratio`），两下限钳制；容器与开窗合同见 [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §6/§8 |
-| Pose & trace | `analyze_point_view.cpp`（`RenderAnalyzePoseViewWindow`，755.5） | 自由 | `ImGuiCond_FirstUseEver` 给默认 960×620（钳到视口内），双轴可拉，窗级最小 640×420（§11 R4 的最窄合同是用户可达边界），之后 ImGui 自己记；窗内 D4（3D | 右列）与 D5（globe | 因素）各存会话比例（`GuiState::analyze_pose_view_right_ratio` / `analyze_pose_view_globe_ratio`），双侧下限钳制、独立不联动；容器与开窗合同见 [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §7/§8 |
+| Pose & trace | `analyze_point_view.cpp`（`RenderAnalyzePoseViewWindow`，755.5） | 自由 | `ImGuiCond_FirstUseEver` 给默认 960×720（钳到视口内；756 随 D5 曲线区上调，原 960×620），双轴可拉，窗级最小 640×680（§11 R4 的最窄合同是用户可达边界；756 随 D5 两区全形上调，原 640×420），之后 ImGui 自己记；窗内 D4（3D | 右列）与 D5（globe | 曲线）各存会话比例（`GuiState::analyze_pose_view_right_ratio` / `analyze_pose_view_globe_ratio`，D5 默认 0.45——落在钳制带内），双侧下限钳制、独立不联动；容器与开窗合同见 [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §7/§8 |
 
 > Raypath Analysis 自 742 起并入 Analyze 工作区（`RenderAnalysisPanelBody` 宿主工作区份额列表区，
 > 不再是浮窗），上表原「Raypath Analysis / Colors」自由档行对其不再适用。工作区独立窗口的

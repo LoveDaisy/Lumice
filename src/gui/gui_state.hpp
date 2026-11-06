@@ -1979,10 +1979,13 @@ struct GuiState {
   // the whole GuiState; Open/Revert keep it — session memory, so closing and reopening the
   // window keeps the user's split within this process.
   float analyze_pose_view_right_ratio = 0.333f;
-  // D5 — the Pose & trace window's right column's globe | factors split (contract §4.2): the
+  // D5 — the Pose & trace window's right column's globe | curve split (contract §4.2): the
   // globe region's share of the column's height. Same semantics, independence and tier as the
-  // D4 field above (dragging D5 never touches D4 and vice versa — §4.2's 独立不联动).
-  float analyze_pose_view_globe_ratio = 0.55f;
+  // D4 field above (dragging D5 never touches D4 and vice versa — §4.2's 独立不联动). The
+  // default sits INSIDE the D5 clamp band at the default window (756: the curve region's full
+  // form took most of the column; a default above the band's ceiling would drag "down" into a
+  // downward correction — the band's ceiling is the curve region's floor).
+  float analyze_pose_view_globe_ratio = 0.45f;
 
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the

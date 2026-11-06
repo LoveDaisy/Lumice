@@ -394,7 +394,7 @@ void PinPoseViewOnScreen(ImGuiTestContext* ctx) {
     // viewport it lands in. A leg that wants a specific geometry (the minimum-size legs) sets
     // its own size AFTER the pin.
     const ImVec2 vp = ImGui::GetMainViewport()->Size;
-    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp.x), std::min(gui::UiPx(620.0f), vp.y)),
+    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp.x), std::min(gui::UiPx(720.0f), vp.y)),
                          ImGuiCond_Always);
     ctx->Yield(2);
   }
@@ -5739,6 +5739,140 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
   return true;
 }
 
+// 756 — the contribution-curve region: the drawn curve faces over a REAL adopted point, the
+// canvas's real write path (a click moves the shared cursor, stops the playback it finds
+// running, leaves the point intent and the sky point untouched; the ray face re-keys to the
+// clicked sample), the hover-only readout discipline, and the fixed stack + canvas at the
+// narrowest face (the D5 floors' promise, with the geometry logged — the live-layout probe the
+// floor constants are tuned from). The screenshots are the readability record (the issue's
+// shared-log-axis hypothesis): five curves, the legend, the zero row and the cursor at both
+// geometries.
+bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+
+  // Pre-adoption: the region answers its honest no-intent line and submits no canvas.
+  SetSkyPointTarget(42.0, 0.0);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzePoseCurve") != nullptr, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError).ID == 0, false);
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
+  IM_CHECK_RETV(valid_count > 3, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  ImGuiWindow* curve = PoseRegionWindow("##AnalyzePoseCurve");
+  IM_CHECK_RETV(curve != nullptr, false);
+  const ImGuiTestItemInfo canvas = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas.ID != 0, false);
+  IM_CHECK_RETV(canvas.RectFull.Max.y <= curve->InnerClipRect.Max.y + 0.5f, false);
+  ctx->LogInfo("[pose curve] region %.0fx%.0f SM %.1f, canvas %.0fx%.0f", static_cast<double>(curve->Size.x),
+               static_cast<double>(curve->Size.y), static_cast<double>(curve->ScrollMax.y),
+               static_cast<double>(canvas.RectFull.GetWidth()), static_cast<double>(canvas.RectFull.GetHeight()));
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_region_default.png").string()), false);
+
+  // The canvas writes the ONE selection: a click at 80% width moves the cursor to a late valid
+  // sample, stops the playback it finds running, and leaves the point intent untouched (AC4).
+  const gui::PointIntentKey key_before = gui::g_state.analysis.point.key;
+  gui::g_state.analysis.point_view.playing = true;
+  ctx->Yield(2);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.8f, canvas.RectFull.GetCenter().y));
+  ctx->Yield(2);
+  ctx->MouseClick(0);
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+  const int clicked = gui::g_state.analysis.point_view.sample_index;
+  ctx->LogInfo("[pose curve] click at 80%% width -> sample %d of %d valid", clicked, valid_count);
+  IM_CHECK_RETV(clicked > 0 && clicked < valid_count, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  // The ray face follows the moved cursor (the trace re-keys to the clicked sample).
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [clicked] {
+                      const gui::RayTraceSession& t = gui::g_state.analysis.trace;
+                      if (!t.adopted_result || !t.intent_valid) {
+                        return false;
+                      }
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, clicked);
+                      return t.key.sample == stored;
+                    },
+                    30),
+                false);
+
+  // Hover writes nothing: a move over the canvas leaves the selection where the click put it.
+  const int cursor_after_click = gui::g_state.analysis.point_view.sample_index;
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == cursor_after_click, false);
+
+  // The narrowest face: the D5 floors' promise — the canvas on, nothing clipped, the canvas
+  // answering through the real mouse path. The geometry lines are the live-layout probe the
+  // floor constants are tuned from (a red here is a floor budget that no longer holds).
+  ImGuiWindow* win = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(win != nullptr, false);
+  const ImVec2 vp = ImGui::GetMainViewport()->Size;
+  ImGui::SetWindowSize(
+      win,
+      ImVec2(std::min(gui::UiPx(gui::kPoseViewMinWidth), vp.x), std::min(gui::UiPx(gui::kPoseViewMinHeight), vp.y)),
+      ImGuiCond_Always);
+  ctx->Yield(3);
+  ImGuiWindow* curve_n = PoseRegionWindow("##AnalyzePoseCurve");
+  ImGuiWindow* globe_n = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(curve_n != nullptr && globe_n != nullptr, false);
+  const ImGuiTestItemInfo canvas_n = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  ctx->LogInfo(
+      "[pose curve min] window %.0fx%.0f | globe h %.0f (floor %.0f) | curve h %.0f (floor %.0f) SM %.1f | "
+      "canvas %s h %.0f",
+      static_cast<double>(win->Size.x), static_cast<double>(win->Size.y), static_cast<double>(globe_n->Size.y),
+      static_cast<double>(gui::UiPx(gui::kPoseViewGlobeFloor)), static_cast<double>(curve_n->Size.y),
+      static_cast<double>(gui::UiPx(gui::kPoseViewFactorsFloor)), static_cast<double>(curve_n->ScrollMax.y),
+      canvas_n.ID != 0 ? "yes" : "NO", canvas_n.ID != 0 ? static_cast<double>(canvas_n.RectFull.GetHeight()) : 0.0);
+  // The full form at the narrowest face is the floors' promise only while the viewport can
+  // host the true minimum (the min(min, viewport) clamp rule); on a shorter viewport the
+  // clamp's degraded share is the honest form — assert reachability instead.
+  const bool true_minimum = win->Size.y >= gui::UiPx(gui::kPoseViewMinHeight) - 1.0f;
+  if (true_minimum) {
+    IM_CHECK_RETV(canvas_n.ID != 0, false);
+    IM_CHECK_RETV(canvas_n.RectFull.Max.y <= curve_n->InnerClipRect.Max.y + 0.5f, false);
+    const int before_min_click = gui::g_state.analysis.point_view.sample_index;
+    ctx->MouseMoveToPos(
+        ImVec2(canvas_n.RectFull.Min.x + canvas_n.RectFull.GetWidth() * 0.25f, canvas_n.RectFull.GetCenter().y));
+    ctx->Yield(2);
+    ctx->MouseClick(0);
+    ctx->Yield(3);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index != before_min_click, false);
+    ctx->LogInfo("[pose curve min] canvas click moved the cursor %d -> %d", before_min_click,
+                 gui::g_state.analysis.point_view.sample_index);
+  } else {
+    ctx->LogInfo(
+        "[pose curve min] viewport %.0f shorter than the minimum %.0f: the clamp's share rules; region SM %.1f",
+        static_cast<double>(vp.y), static_cast<double>(gui::UiPx(gui::kPoseViewMinHeight)),
+        static_cast<double>(curve_n->ScrollMax.y));
+    IM_CHECK_RETV(curve_n->ScrollMax.y >= 0.0f, false);
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_region_min.png").string()), false);
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
 // ⑧ — the multi-window real mouse chain: Raypath view, the pose window and the Entry Edit modal
 // are open in the same frame, and a real mouse action in each writes its own state — the map
 // pick sets the sky point, the pose D5 drag writes its ratio, the modal's edit writes its field.
@@ -7611,6 +7745,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_operates_at_a_moved_window_origin");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOperatesAtAMovedWindowOrigin(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_region_draws_and_moves_the_shared_cursor");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveRegionDrawsAndMovesTheSharedCursor(ctx)); };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip

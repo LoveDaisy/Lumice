@@ -117,14 +117,14 @@ constexpr float kRaypathViewMapMinSize = 160.0f;
 // region under the input rows' wrap ladder and the canvas under its 64 px code floor).
 constexpr float kRaypathViewMinWidth = 480.0f;
 constexpr float kRaypathViewMinHeight = 360.0f;
-// The Pose & trace window's window-level minimum (contract §11 R4's narrowest face, 640x420):
-// SetNextWindowSizeConstraints re-clamps the live size at every Begin, so this bound is the
-// smallest size the user can reach. The D4/D5 split floors below were verified AT this window
-// size — the constraint is what keeps the user inside the domain those floors were proven over
-// (kPoseViewRightFloor / kPoseViewLeftFloor, the same shape the Raypath view's floors and
-// minimum run).
+// The Pose & trace window's window-level minimum (contract §11 R4's narrowest face): the D5
+// column now carries the curve region's full form (756) beside the globe's, so the height the
+// two floors were proven over rose with them — 640x420 was the pre-curve window's narrowest
+// face; the constraint below is the smallest size the user can reach and the domain the D4/D5
+// floors were verified over (the ③ fallback below the floors' reach degrades the curve region
+// to its scroll form, by design).
 constexpr float kPoseViewMinWidth = 640.0f;
-constexpr float kPoseViewMinHeight = 420.0f;
+constexpr float kPoseViewMinHeight = 680.0f;
 // D4 — the Pose & trace window's split floors (contract §4.2: right column ≥ 220, 3D ≥ 240;
 // suggested values carrying the render-level calibration duty). The right floor is the globe
 // region's fixed interaction stack at its narrow wrap form; the left floor keeps the 3D orbit
@@ -133,23 +133,30 @@ constexpr float kPoseViewMinHeight = 420.0f;
 // either side may be the one pushed toward its bound).
 constexpr float kPoseViewRightFloor = 220.0f;
 constexpr float kPoseViewLeftFloor = 240.0f;
-// D5 — the right column's vertical floors: the globe region keeps its fixed interaction stack
+// D5 — the right column's vertical floors. The globe region keeps its fixed interaction stack
 // (the region's own two-segment form's constant part — title + toggle (its wrapped over-width
-// form) + the component combo + the canvas at its 60 px code floor + the weight bar + the
-// slider/play row, worst case ≈195 pt at 1x measured against the Roboto Medium 15px theme with
-// a live-layout probe) PLUS a scroll-draggable state viewport (≈32 pt: below it ImGui collapses
-// and disables the scrollbar's drag — a state area that shows a range nobody can scroll is the
-// same unreachable fact as no range) and the child's padding — ≈235 pt all told; the factors
-// region keeps its title plus two wrapped rows (§11 R5). The globe floor is what keeps the
-// FIXED STACK fully visible AND the state area scrollable at the D5 drag floor; the
-// whole-region-scroll degradation lives below the floors' reach, not at them. When the two
-// floors cannot share the column, the ③ proportional fallback applies (the workspace
-// splitters' rule).
-constexpr float kPoseViewGlobeFloor = 235.0f;
-constexpr float kPoseViewFactorsFloor = 70.0f;
+// form) + the component combo + the canvas at its 60 px code floor + the slider/play row,
+// ≈181 pt at 1x measured against the Roboto Medium 15px theme with a live-layout probe; the
+// weight bar's 14 pt left with 756) PLUS a scroll-draggable state viewport (≈32 pt: below it
+// ImGui collapses and disables the scrollbar's drag — a state area that shows a range nobody
+// can scroll is the same unreachable fact as no range) and the child's padding — ≈221 pt all
+// told. The curve region (756) floors on its full two-segment form: title + integral echo, the
+// caliber line, the legend (two wrapped rows at the narrow column), the canvas (plot ≈46 +
+// the label strips ≈38), the readout's wrapped worst case (3 lines), the scroll viewport and
+// the child's padding — ≈330 pt (the probe leg logs the live geometry; the default D5 ratio
+// sits inside the resulting clamp band). The globe floor keeps its FIXED STACK fully visible
+// AND its state area scrollable at the D5 drag floor; the curve floor keeps the canvas-on form
+// at that floor and yields its canvas (never below a real slice) in the ③ fallback below —
+// the whole-region-scroll degradation lives under the floors' reach, not at them.
+constexpr float kPoseViewGlobeFloor = 221.0f;
+constexpr float kPoseViewFactorsFloor = 330.0f;
 // The globe region's canvas floor (the region's own code floor, now named for the region's
 // canvas-sizing judgment to consume).
 constexpr float kPoseViewGlobeCanvasFloor = 60.0f;
+// The contribution-curve region's canvas minimum slice: below this the two-segment form cannot
+// host a plot anyone can read, and the region degrades to its scroll form (the globe ladder's
+// last rung) instead of showing a canvas nobody can recover.
+constexpr float kPoseViewCurveCanvasMinSlice = 40.0f;
 // The state area's bounded-form threshold: the region renders the scrolling child when the
 // cell leaves at least this much room under the fixed stack — a narrower sliver cannot host a
 // draggable scrollbar, so the lines render direct in the region (the region's own scroll, tall
