@@ -125,5 +125,10 @@ actual work and accuracy rather than by the name of a function it calls. The aud
 a fresh C01/C16-column probe: exact retained-event replay with cached event rows preserved the
 original estimator, yet repeated each visited event 360–400 times and still took about 0.9–4.3 s
 for the column's fine/full native observation chain, before GUI coloring/upload. This rejects
-that direct candidate as an established interactive representation, not all possible representations;
-no shared-camera product or replacement C contract is claimed.
+that direct candidate as an established interactive representation, not all possible representations.
+The subsequent §4.5 structural probe reused the same captured events: a positive range tree preserved
+C01's values and detail, while C16's block spectral-prefix response greatly reduced density-call
+repetition but corrupted weak positive values and true zeros. Strong-domain accuracy alone did not
+preserve dark-direction peaks or widths; the candidate failed quality before interaction timing.
+Neither experiment establishes an all-density representation. No shared-camera product or replacement
+C contract is claimed.
