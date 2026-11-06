@@ -90,6 +90,13 @@ PR #271 之前，产品与 `gui_test` 各自初始化 ImGui 默认字体与 `Sty
 > 仿真分辨率或光学参数。背景拖动/取色、annotation 命中和 screenshot 因而继续消费 framebuffer
 > scale，而不是再次乘 `CurrentUiScale()`。
 
+**正文字符覆盖**：构建期嵌入 ImGui 自带的 `Roboto-Medium.ttf`，图标沿用 FontAwesome Solid 合并，
+不增加正文 fallback 来源。`theme.cpp::AddBodyFont` 唯一持有持久化 glyph-range 声明：默认 Latin/Latin-1、
+General Punctuation，加实际内置地图文案需要的 `δ`（U+03B4，偏折角）与 `λ`（U+03BB，波长），
+不加载整个 Greek block。启动和 `RebuildForUiScale` 均复用此声明；字体 cmap 含字不等于 atlas 已加载，
+应以活字体的 `FindGlyphNoFallback` 及真实窗口渲染复核。Roboto 不含 U+2192，链标签继续使用既有
+FA 箭头；这不是任意用户名称、路径或日志的全 Unicode 保证。
+
 **4.2 尺寸节奏（量化）** —— 全部取值为 4 的倍数；关键在于**行距比现状更紧而非更松**，以抵消更大字号：
 
 ```

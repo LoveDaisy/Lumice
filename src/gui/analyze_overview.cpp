@@ -585,9 +585,9 @@ void DispersionBlock(const SurveyDispersionView& d) {
   if (!d.followed.empty()) {
     if (ImGui::TreeNode("##ov_disp_followed", "Followed onsets (%zu)", d.followed.size())) {
       for (const SurveyFollowedOnsetView& row : d.followed) {
-        // ASCII spellings throughout: the body font's glyph ranges carry Latin plus the
-        // punctuation block only (theme.cpp), so Greek deltas, math relations and arrows would
-        // rasterize to "?" — the same fact that gave the analysis list its icon joiner.
+        // Keep these multi-part diagnostics in readable ASCII prose. The body font loads
+        // the observed map delta/lambda, not arbitrary mathematical relations or arrows;
+        // the analysis list's arrow is a separately merged icon.
         ImGui::Bullet();
         ImGui::TextWrapped("%s/%s: %s to %s (shift %s, %s)", row.source.c_str(), row.profile.c_str(),
                            FormatDeg(row.value_red_deg).c_str(), FormatDeg(row.value_blue_deg).c_str(),
