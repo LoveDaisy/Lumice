@@ -10799,6 +10799,29 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // the result-state key operations per tier. Real-timing pool: the analysis plus the point
   // query run once, the tier switches are rebuilds.
   {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "operation_anchors_ignore_roi_and_messages");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      const ImRect before = ctx->ItemInfo(kAnalyzeBtn).RectFull;
+      gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
+      gui::g_state.analysis.cone_center_valid = false;
+      ctx->Yield(1);
+      const ImRect first = ctx->ItemInfo(kAnalyzeBtn).RectFull;
+      ctx->LogInfo("[operation geometry] Whole sky (%.1f,%.1f)-(%.1f,%.1f), Point first (%.1f,%.1f)-(%.1f,%.1f)",
+                   before.Min.x, before.Min.y, before.Max.x, before.Max.y, first.Min.x, first.Min.y, first.Max.x,
+                   first.Max.y);
+      IM_CHECK_FLOAT_NEAR(first.Min.x, before.Min.x, 0.5f);
+      IM_CHECK_FLOAT_NEAR(first.Min.y, before.Min.y, 0.5f);
+      ctx->Yield(2);
+      const ImRect settled = ctx->ItemInfo(kAnalyzeBtn).RectFull;
+      IM_CHECK_FLOAT_NEAR(settled.Min.x, before.Min.x, 0.5f);
+      IM_CHECK_FLOAT_NEAR(settled.Min.y, before.Min.y, 0.5f);
+      ctx->SetRef("");
+    };
+  }
+  {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analyze_result_carries_across_scale_tiers");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(AnalyzeResultCarriesAcrossScaleTiers(ctx)); };
   }
