@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -6938,22 +6939,45 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // no GUI-layer claim is made for that ordering. This case owns the GUI-side composition.
   SetSkyPointTarget(28.0, 8.0);
   gui::SurveyQueryId target_a_id;
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [&target_a_id] {
-                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const bool issued =
-                          p.intent_valid &&
-                          std::fabs(p.key.target_dir[2] - (-std::sin(28.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                          gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                          gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
-                      if (issued) {
-                        target_a_id = p.intent_id;  // A's request id, by value, at its observed execution
-                      }
-                      return issued;
-                    },
-                    30),
-                false);
+  // [760-probe] TEMPORARY instrumentation (task 760, M1b): sample the point session across the
+  // wait and print the final state — discriminates "intent never issued (session reset /
+  // precondition gate)" from "issued and completed inside one poll gap (observation miss)".
+  // Reverted before review; red-state probe committed first per discipline.
+  int probe_polls = 0;
+  const bool issued_a = DriveUntil(
+      ctx,
+      [&target_a_id, &probe_polls] {
+        const gui::PointQuerySession& p = gui::g_state.analysis.point;
+        const bool issued = p.intent_valid &&
+                            std::fabs(p.key.target_dir[2] - (-std::sin(28.0 * lumice::kDeg2Rad))) < 1e-4 &&
+                            gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
+                            gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+        if (issued) {
+          target_a_id = p.intent_id;  // A's request id, by value, at its observed execution
+        }
+        if (++probe_polls % 500 == 0) {
+          std::fprintf(stdout,
+                       "[760-probe] leg3 poll=%d issued=%d valid=%d state=%d inflight=%d key_z=%.6f sky_valid=%d "
+                       "sky_z=%.6f\n",
+                       probe_polls, (int)issued, (int)p.intent_valid, (int)gui::PointQueryStateFor(p),
+                       (int)gui::g_survey_executor.InFlight(gui::QueryFace::kPoint), (double)p.key.target_dir[2],
+                       (int)gui::g_state.analysis.sky_point.valid, (double)gui::g_state.analysis.sky_point.dir[2]);
+          std::fflush(stdout);
+        }
+        return issued;
+      },
+      30);
+  {
+    const gui::PointQuerySession& p = gui::g_state.analysis.point;
+    std::fprintf(stdout,
+                 "[760-probe] leg3 FINAL polls=%d issued=%d valid=%d state=%d inflight=%d key_z=%.6f "
+                 "sky_valid=%d sky_z=%.6f\n",
+                 probe_polls, (int)issued_a, (int)p.intent_valid, (int)gui::PointQueryStateFor(p),
+                 (int)gui::g_survey_executor.InFlight(gui::QueryFace::kPoint), (double)p.key.target_dir[2],
+                 (int)gui::g_state.analysis.sky_point.valid, (double)gui::g_state.analysis.sky_point.dir[2]);
+    std::fflush(stdout);
+  }
+  IM_CHECK_RETV(issued_a, false);
   IM_CHECK_RETV(target_a_id.serial != 0 || target_a_id.generation != 0, false);
   SetSkyPointTarget(30.0, 10.0);
   IM_CHECK_RETV(DriveUntil(
