@@ -1714,6 +1714,26 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   const ImRect map_wait_rect = ctx->ItemInfo("**/##map_canvas").RectFull;
   const ImRect sky_wait_rect = ctx->ItemInfo("**/alt°##sky").RectFull;
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("layout_map_waiting.png").string()), false);
+  // A real map click while the selection's survey still owns the worker. Navigation is
+  // available before the queued point has any drawable sample, and must not replace its id.
+  ctx->SetRef("//Raypath view");
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kWaiting, false);
+  const auto pending_point_id = gui::g_state.analysis.point.intent_id;
+  ctx->ItemClick("**/Pose & trace###pose_open");
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kWaiting, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == pending_point_id, false);
+  ctx->LogInfo("[pose navigation] opened during real queued point; same intent, still waiting");
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_entry_waiting.png").string()), false);
+  ctx->WindowClose("//Pose & trace");
+  ctx->Yield(2);
+  ctx->WindowFocus("//Raypath view");
   ctx->ItemInputValue("**/alt°##sky", 30.0f);
   ctx->ItemInputValue("**/az°##sky", 180.0f);
   ctx->ItemClick("**/Set sky point###sky_set");
@@ -2060,10 +2080,48 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
                     },
                     30),
                 false);
-  // The pose window is the 3D / globe regions' only host now: opened here, it carries the
-  // screenshot evidence and every region-side leg below.
-  gui::g_state.analyze_pose_view_open = true;
+  // Reuse the completed real fiber to test navigation without another physical query fixture.
+  const auto point_before_nav = point.adopted_result;
+  const auto point_id_before_nav = point.intent_id;
+  const auto trace_before_nav = gui::g_state.analysis.trace.adopted_result;
+  const auto trace_id_before_nav = gui::g_state.analysis.trace.intent_id;
+  const auto map_id_before_nav = gui::g_state.analysis.map.intent_id;
+  const auto survey_id_before_nav = gui::g_state.analysis.survey.intent_id;
+  const auto selected_before_nav = gui::g_state.analysis.selected_entry;
+  const auto sky_before_nav = gui::g_state.analysis.sky_point;
+  const auto sim_before_nav = gui::g_state.sim_state;
+  const auto dirty_before_nav = gui::g_state.dirty;
+  ctx->SetRef("//Raypath view");
+  ctx->ItemClick("**/Pose & trace###pose_open");
   PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  ImGuiWindow* same_pose_window = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(same_pose_window != nullptr && same_pose_window->Active, false);
+  ctx->WindowClose("//Pose & trace");
+  ctx->Yield(2);
+  IM_CHECK_RETV(!same_pose_window->Active && !gui::g_state.analyze_pose_view_open, false);
+  ctx->WindowFocus("//Raypath view");
+  ctx->ItemClick("**/Pose & trace###pose_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(ctx->GetWindowByRef("//Pose & trace") == same_pose_window && same_pose_window->Active, false);
+  IM_CHECK_RETV(point.adopted_result == point_before_nav && point.intent_id == point_id_before_nav, false);
+  IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == trace_before_nav &&
+                    gui::g_state.analysis.trace.intent_id == trace_id_before_nav &&
+                    gui::g_state.analysis.map.intent_id == map_id_before_nav &&
+                    gui::g_state.analysis.survey.intent_id == survey_id_before_nav,
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.component_index == 0 &&
+                    gui::g_state.analysis.point_view.sample_index == 1 && !gui::g_state.analysis.point_view.playing,
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry == selected_before_nav &&
+                    gui::g_state.analysis.sky_point.dir[0] == sky_before_nav.dir[0] &&
+                    gui::g_state.analysis.sky_point.dir[1] == sky_before_nav.dir[1] &&
+                    gui::g_state.analysis.sky_point.dir[2] == sky_before_nav.dir[2],
+                false);
+  IM_CHECK_RETV(gui::g_state.sim_state == sim_before_nav && gui::g_state.dirty == dirty_before_nav, false);
+  ctx->LogInfo(
+      "[pose navigation] completed fiber/trace, four request ids and sample 1 survived title-bar close/reopen");
+  ctx->SetRef("");
   ctx->Yield(1);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_raypath_3d.png").string()), false);
 
@@ -5604,12 +5662,9 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   return true;
 }
 
-// The Pose & trace window's open entry (contract §7): the point detail block's title click is
-// the ONE opener — a class row click opens the Raypath view and never the pose window, a typed
-// sky point (the coordinate input writer) never opens it, and re-clicking the title after a
-// manual close reopens. All display-state writes; the assertions read the flag and the live
-// window, no document field.
-bool PoseViewOpensFromThePointDetailTitleOnly(ImGuiTestContext* ctx) {
+// Both explicit entries open the same display surface (contract §7). Class selection and
+// coordinate Set never open it; an actual map pick followed by the nearby button does.
+bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
   const auto window_active = [](const char* fragment) {
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
@@ -5642,7 +5697,34 @@ bool PoseViewOpensFromThePointDetailTitleOnly(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(!window_active("Pose & trace"), false);
   ctx->LogInfo("[pose open] typed sky point left the pose window closed");
 
-  // Positive — the title click opens the window (the state write the entry performs). The
+  ctx->SetRef("//Raypath view");
+  ctx->ItemClick("**/##map_canvas");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open && !window_active("Pose & trace"), false);
+  const auto picked = gui::g_state.analysis.sky_point;
+  const auto point_id = gui::g_state.analysis.point.intent_id;
+  ctx->ItemClick("**/Pose & trace###pose_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_id, false);
+  ctx->WindowClose("//Pose & trace");
+  ctx->Yield(2);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open && !window_active("Pose & trace"), false);
+  ctx->WindowFocus("//Raypath view");
+  ctx->ItemClick("**/Pose & trace###pose_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_id, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.dir[0] == picked.dir[0] &&
+                    gui::g_state.analysis.sky_point.dir[1] == picked.dir[1] &&
+                    gui::g_state.analysis.sky_point.dir[2] == picked.dir[2],
+                false);
+  ctx->WindowClose("//Pose & trace");
+  ctx->Yield(2);
+  ctx->SetRef("");
+
+  // The retained title entry opens that same window. The
   // title sits below the survey overview in the diagnostics scroll region: at the default
   // split it can be past the fold, and a clipped item registers no ID for the engine to find —
   // scroll the region to its bottom first (the block is the scroll content's tail).
@@ -5656,8 +5738,8 @@ bool PoseViewOpensFromThePointDetailTitleOnly(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(window_active("Pose & trace"), false);
-  // Reopen after a manual close: the click fires on every press, selected or not.
-  gui::g_state.analyze_pose_view_open = false;
+  // Reopen after a title-bar close: the click fires on every press, selected or not.
+  ctx->WindowClose("//Pose & trace");
   ctx->Yield(2);
   IM_CHECK_RETV(!window_active("Pose & trace"), false);
   {
@@ -6566,6 +6648,52 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(canvas_min.ID != 0, false);
   IM_CHECK_RETV(canvas_min.RectFull.GetWidth() >= 64.0f, false);
   IM_CHECK_RETV(info->ScrollMax.x == 0.0f, false);
+  const auto check_pose_entry = [ctx](const char* screenshot) -> bool {
+    ImGuiWindow* region = MapInfoRegionWindow();
+    IM_CHECK_RETV(region != nullptr, false);
+    const ImGuiID entry_id = region->GetID("###pose_open");
+    const auto entry = ctx->ItemInfo(entry_id);
+    IM_CHECK_RETV(entry.ID != 0, false);
+    ImRect clip = region->InnerClipRect;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    clip.ClipWith(
+        ImRect(viewport->Pos, ImVec2(viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y)));
+    IM_CHECK_RETV(clip.Contains(entry.RectFull), false);
+    IM_CHECK_RETV(region->ScrollMax.y == 0.0f && region->Scroll.y == 0.0f, false);
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr && report->Size.y > 0.0f && report->Pos.y >= entry.RectFull.Max.y, false);
+    ctx->WindowFocus("//Raypath view");
+    ctx->ItemClick(entry_id);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
+    ImGuiWindow* pose = ctx->GetWindowByRef("//Pose & trace");
+    IM_CHECK_RETV(pose != nullptr && pose->Active, false);
+    ctx->WindowClose("//Pose & trace");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!pose->Active && !gui::g_state.analyze_pose_view_open, false);
+    ctx->WindowFocus("//Raypath view");
+    ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+    ctx->Yield(2);
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(screenshot).string()), false);
+    ctx->LogInfo("[pose entry reach] scale %.1f, button (%.0f,%.0f)-(%.0f,%.0f), clip bottom %.0f report %.0f",
+                 gui::CurrentUiScale(), entry.RectFull.Min.x, entry.RectFull.Min.y, entry.RectFull.Max.x,
+                 entry.RectFull.Max.y, clip.Max.y, report->Size.y);
+    return true;
+  };
+  IM_CHECK_RETV(check_pose_entry("pose_entry_narrow.png"), false);
+  {
+    ScopedUiScaleAndBasisLease scale_lease(ctx);
+    gui::SetUiScaleMultiplierImmediate(2.0f);
+    IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == 2.0f; }, 5), false);
+    g_window_size_test.width = 1024;
+    g_window_size_test.height = 640;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    IM_CHECK_RETV(DriveUntil(ctx, [] { return g_window_size_test.done.load(); }, 5), false);
+    PinRaypathViewOnScreen(ctx);
+    ctx->Yield(3);
+    IM_CHECK_RETV(check_pose_entry("pose_entry_compressed_200.png"), false);
+  }
   gui::g_state.analyze_raypath_view_open = false;
   ctx->Yield(2);
   return true;
@@ -8530,8 +8658,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewSplitsAreManualIndependentAndFloored(ctx)); };
   }
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_opens_from_the_point_detail_title_only");
-    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOpensFromThePointDetailTitleOnly(ctx)); };
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_opens_from_both_explicit_entries");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOpensFromBothExplicitEntries(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_follows_the_selection_chain");
@@ -10921,6 +11049,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "layout_slots_ignore_transient_states");
     static gui::GuiState probe;
     static bool draw_probe = false;
+    static std::string map_text;
+    static std::string pose_text;
     t->GuiFunc = [](ImGuiTestContext*) {
       if (!draw_probe) {
         return;
@@ -10928,19 +11058,36 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ImGui::SetNextWindowPos(ImVec2(8.0f, 60.0f), ImGuiCond_Always);
       ImGui::SetNextWindowSize(ImVec2(gui::UiPx(480.0f), gui::UiPx(360.0f)), ImGuiCond_Always);
       ImGui::Begin("Layout map probe", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+      ImGui::LogToBuffer();
       gui::RenderAnalyzeMapRegion(probe, ImGui::GetContentRegionAvail());
+      map_text = ImGui::GetCurrentContext()->LogBuffer.c_str();
+      ImGui::LogFinish();
       ImGui::End();
+      ImGui::LogToBuffer();
       gui::RenderAnalyzePoseViewWindow(probe);
+      pose_text = ImGui::GetCurrentContext()->LogBuffer.c_str();
+      ImGui::LogFinish();
     };
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       probe = gui::GuiState{};
-      probe.analyze_pose_view_open = true;
       draw_probe = true;
       struct DrawLease {
         ~DrawLease() { draw_probe = false; }
       } lease;
       ctx->Yield(3);
+      IM_CHECK(!map_text.empty());
+      IM_CHECK(map_text.find("3D ray & pose.") != std::string::npos);
+      IM_CHECK(map_text.find("Select class + sky point.") != std::string::npos);
+      ctx->SetRef("//Layout map probe");
+      IM_CHECK(!probe.analyze_pose_view_open);
+      ctx->ItemClick("**/Pose & trace###pose_open");
+      ctx->Yield(2);
+      IM_CHECK(probe.analyze_pose_view_open);
+      IM_CHECK(!pose_text.empty());
+      IM_CHECK(pose_text.find("Pick a sky point") != std::string::npos);
+      IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("pose_entry_empty.png").string()));
+      ctx->SetRef("");
       PinPoseViewOnScreen(ctx);
       // The separate fake state exercises layout branches only. Actual query adoption and
       // physical interaction remain the real-consumer cases' responsibility.
@@ -10950,6 +11097,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
                              "**/az°##sky",
                              "**/Set sky point###sky_set",
                              "**/Clear##sky",
+                             "**/Pose & trace###pose_open",
                              "**/##globe_canvas",
                              "**/##globe_component",
                              "**/##globe_sample",
@@ -11006,6 +11154,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       };
       for (int state = 0; state < 3; ++state) {
         expected_frame = ctx->ItemInfo(anchor_ids[0]).TimestampMain + 1;
+        probe.analysis.sky_point.valid = true;
         probe.analysis.map.intent_valid = true;
         probe.analysis.point.intent_valid = true;
         probe.analysis.map.cancelled_for_key = state == 1;
@@ -11028,6 +11177,17 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("layout_map_refused_fixture.png").string()));
       IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kRefused);
       IM_CHECK(gui::PointQueryStateFor(probe.analysis.point) == gui::PointQueryState::kRefused);
+      IM_CHECK(!pose_text.empty() && pose_text.find("Point refused") != std::string::npos);
+      ctx->WindowClose("//Pose & trace");
+      ctx->Yield(2);
+      IM_CHECK(!probe.analyze_pose_view_open);
+      ctx->SetRef("//Layout map probe");
+      ctx->WindowFocus("//Layout map probe");
+      ctx->ItemClick("**/Pose & trace###pose_open");
+      ctx->Yield(2);
+      IM_CHECK(probe.analyze_pose_view_open);
+      IM_CHECK(!pose_text.empty() && pose_text.find("Point refused") != std::string::npos);
+      ctx->SetRef("");
       // A real engine-produced partial document, not a fabricated Info field. The published
       // interrupted-request contract returns what it has with the stopped execution named.
       gui::GuiState query_scene;
@@ -11056,6 +11216,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       partial_info.struct_size = sizeof(partial_info);
       IM_CHECK_EQ(LUMICE_PathPointGetInfo(partial.get(), &partial_info), LUMICE_PATH_READ_OK);
       IM_CHECK_NE(partial_info.execution, LUMICE_PATH_OUTCOME_COMPLETED);
+      // The explicit close/reopen chain above outlives the engine's item-info leases.
+      // Renew all IDs before starting another same-frame transition observation.
+      for (ImGuiID id : anchor_ids) {
+        ctx->ItemInfo(id);
+      }
+      ctx->Yield(1);
+      for (ImGuiID id : anchor_ids) {
+        ctx->ItemInfo(id);
+      }
       expected_frame = ctx->ItemInfo(anchor_ids[0]).TimestampMain + 1;
       probe.analysis.point.adopted_result = partial;
       probe.analysis.point.adopted_error.clear();
@@ -11065,6 +11234,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(1);
       IM_CHECK(compare());
       IM_CHECK(gui::PointQueryStateFor(probe.analysis.point) == gui::PointQueryState::kCompleted);
+      IM_CHECK_EQ(partial_info.component_count, 0u);
+      IM_CHECK(!pose_text.empty() && pose_text.find("No fiber") != std::string::npos);
       IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_partial.png").string()));
       probe.analysis.point.adopted_result.reset();
       expected_frame = -1;

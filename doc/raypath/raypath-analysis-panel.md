@@ -58,7 +58,8 @@
 > **2026-11-05 姿态面迁独立窗（同 scrum 755.5，pose-trace-window）**：深度带余下两格（3D/globe）
 > 迁入 **Pose & trace 窗**（`RenderAnalyzePoseViewWindow`，宿主 `RenderAnalyzeSunGlobeRegion` /
 > `RenderAnalyzeRay3DRegion`；右列下区 756 起为 `##AnalyzePoseCurve` Contribution Curve 区，因素读
-> 数并入其滚动区），点摘要块标题行点击开窗、
+> 数并入其滚动区），点摘要块标题行点击开窗（Raypath view 天空点旁也有常驻 **Pose & trace** 入口，
+> 标明 3D 光路/姿态用途；无点/计算中/无样本亦可显式打开同一窗，不自动弹出、不新增查询），
 > T-session 旗标（`analyze_pose_view_open`）＋ D4/D5 分隔比例；深度带与上下两行分隔整体退役，主视图
 > 占满主列。诊断区的点摘要块保留**答案与证据**（四态＋Cancel、caliber、rank-0 质量、无分量
 > reach＋discovery 注、分量证据清单——分量行改纯证据行，选择交互唯一 owner 是窗内 globe combo）；
