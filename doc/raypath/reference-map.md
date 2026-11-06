@@ -120,4 +120,10 @@ quality- and cost-bounded all-sky representation for every supported pose densit
 implemented or approved shared-camera blueprint. The view-dependent execution and frozen-result
 contracts above remain the current behavior. Retaining optical events alone would avoid new
 sampling, but evaluating their direction-dependent density is not a pure reprojection of the
-already-completed map.
+already-completed map. Bounded observation derivation is a valid research candidate, judged by
+actual work and accuracy rather than by the name of a function it calls. The audit's §4.4 records
+a fresh C01/C16-column probe: exact retained-event replay with cached event rows preserved the
+original estimator, yet repeated each visited event 360–400 times and still took about 0.9–4.3 s
+for the column's fine/full native observation chain, before GUI coloring/upload. This rejects
+that direct candidate as an established interactive representation, not all possible representations;
+no shared-camera product or replacement C contract is claimed.
