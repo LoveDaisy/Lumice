@@ -1312,9 +1312,8 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
 
   // Document switch inside the Analyze workspace behaves as in Render: the open editor closes
   // with the frontend reset (one ResetFrontendState, both modes), the fresh document's single
-  // entry shows up in the list. DoNew resets the workspace selection along with the whole
-  // GuiState (every session field's clean-slate rule — the analysis window closes the same way),
-  // so the fresh document starts in Render and the case re-enters Analyze to check the list.
+  // entry shows up in the list without leaving Analyze. The mode is session intent, not part
+  // of the old document being discarded; the editor and its bound entry are document-local.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_document_switch_closes_the_editor");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -1331,9 +1330,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->Yield(4);
       IM_CHECK_EQ(gui::IsEditModalOpen(), false);
       IM_CHECK_EQ(static_cast<int>(gui::g_state.layers.size()), 1);
-      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
-      ctx->ItemClick(kWorkspaceToAnalyzeBtn);
-      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
       const ImGuiTestItemInfo fresh = ctx->ItemInfo("**/Layer 1, entry 1: Crystal##crys_0_0", ImGuiTestOpFlags_NoError);
       IM_CHECK_NE(fresh.ID, 0u);
     };

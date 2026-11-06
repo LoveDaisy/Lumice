@@ -495,6 +495,9 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->Yield(2);
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(2);
+      gui::g_state.current_file_path = GuiTestTempPath("cancel_keeps_this.lmc");
       gui::g_state.layers[0].entries.push_back(gui::EntryCard{});
       gui::g_state.dirty = true;
       ctx->Yield();
@@ -506,6 +509,18 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
 
       IM_CHECK(gui::g_state.dirty);
       IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 2);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK(gui::g_state.current_file_path == GuiTestTempPath("cancel_keeps_this.lmc"));
+      IM_CHECK_EQ(static_cast<int>(gui::g_pending_action), static_cast<int>(gui::PendingAction::kNone));
+
+      ctx->ItemClick("##TopBar/" ICON_FA_FOLDER_OPEN " Open");
+      ctx->Yield(2);
+      ctx->ItemClick("Unsaved Changes/Cancel");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.dirty);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 2);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK(gui::g_state.current_file_path == GuiTestTempPath("cancel_keeps_this.lmc"));
       IM_CHECK_EQ(static_cast<int>(gui::g_pending_action), static_cast<int>(gui::PendingAction::kNone));
     };
   }
@@ -517,6 +532,9 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->Yield(2);
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(2);
+      gui::g_state.current_file_path = GuiTestTempPath("new_discards_this.lmc");
       gui::g_state.layers[0].entries.push_back(gui::EntryCard{});
       gui::g_state.dirty = true;
       ctx->Yield();
@@ -527,7 +545,11 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
 
       IM_CHECK(!gui::g_state.dirty);
+      IM_CHECK(gui::g_state.current_file_path.empty());
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
       IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 1);
+      const ImGuiTestItemInfo fresh = ctx->ItemInfo("**/Layer 1, entry 1: Crystal##crys_0_0");
+      IM_CHECK_NE(fresh.ID, 0u);
       IM_CHECK_EQ(static_cast<int>(gui::g_pending_action), static_cast<int>(gui::PendingAction::kNone));
     };
   }
@@ -880,12 +902,22 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       // A plain config with no colour classes, so the document being opened cannot be confused
       // with the coloured one already on screen.
       std::string json;
-      IM_CHECK(gui::BuildExportJsonOrWarn(gui::InitDefaultState(), &json, nullptr));
+      auto target = gui::InitDefaultState();
+      target.sun.altitude = 37.0f;
+      IM_CHECK(gui::BuildExportJsonOrWarn(target, &json, nullptr));
       const std::string path = GuiTestTempPath("lumice_switch_open.json").string();
       IM_CHECK(gui::ExportConfigJson(path, json));
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
 
       gui::DoOpen(path);  // CPU-only on this branch; the GL blank is consumed by the next render
       ExpectPreviousDocumentGone(ctx, serial);
+      IM_CHECK_EQ(gui::g_state.sun.altitude, 37.0f);
+      IM_CHECK(gui::g_state.current_file_path.empty());
+      IM_CHECK(gui::g_state.dirty);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK(gui::g_panorama_vp.active);
 
       std::remove(path.c_str());
     };
@@ -897,15 +929,25 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const std::string path = GuiTestTempPath("lumice_switch_blank.lmc").string();
+      gui::g_state.sun.altitude = 38.0f;
       IM_CHECK(gui::SaveLmcFile(path, gui::g_state, gui::g_preview, /*save_texture=*/false));
+      gui::g_state.sun.altitude = 12.0f;
 
       ScopedStagedDocument previous(ctx);
       IM_CHECK(previous.staged);
       const auto serial = previous.staged_serial();
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
 
       gui::DoOpen(path);
       IM_CHECK(gui::PeekLoadNotice().empty());
       ExpectPreviousDocumentGone(ctx, serial);
+      IM_CHECK_EQ(gui::g_state.sun.altitude, 38.0f);
+      IM_CHECK(gui::g_state.current_file_path == path);
+      IM_CHECK(!gui::g_state.dirty);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK(gui::g_panorama_vp.active);
       IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
 
       std::remove(path.c_str());
@@ -941,11 +983,16 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       FillSolid(baked, kBakedW, kBakedH, kFreshCyan);
       gui::g_preview.UpdateCpuTextureData(baked.data(), kBakedW, kBakedH);
       const std::string path = GuiTestTempPath("lumice_switch_baked.lmc").string();
+      gui::g_state.sun.altitude = 39.0f;
       IM_CHECK(gui::SaveLmcFile(path, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      gui::g_state.sun.altitude = 12.0f;
 
       ScopedStagedDocument previous(ctx);
       IM_CHECK(previous.staged);
       const auto serial = previous.staged_serial();
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
       gui::g_state.look_at = { gui::LookAtId::kSubsun, true };
 
       s_open_path = path;
@@ -960,6 +1007,11 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("Load Notice/OK");
       ctx->Yield(2);
       IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
+      IM_CHECK_EQ(gui::g_state.sun.altitude, 39.0f);
+      IM_CHECK(gui::g_state.current_file_path == path);
+      IM_CHECK(!gui::g_state.dirty);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK(gui::g_panorama_vp.active);
 
       // The staged composite is fenced, exactly as on the branches that blank the screen...
       const auto snap = gui::g_server_poller.LoadSnapshot();
