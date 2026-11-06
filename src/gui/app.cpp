@@ -866,6 +866,12 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   // would otherwise survive into the next document, with the next click adding a ring to a list
   // the user never aimed at.
   state.angular_dist_picker.armed = false;
+  // A main-picture press names the old interaction, even if a baked Open or Revert keeps a
+  // picture continuously present. Stop its writes without making the held press reusable.
+  using PressOwner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+  if (state.workspace.panorama_press_owner != PressOwner::kNone) {
+    state.workspace.panorama_press_owner = PressOwner::kCancelled;
+  }
 
   // Preview texture / background — as-built subset per reason. `.lmc` variants both call
   // ClearBackground (post-branch shared line in the pre-refactor DoOpen); the DoOpen(.lmc)
