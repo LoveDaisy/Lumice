@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793985172574,
+  "lastUpdate": 1793990599447,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "420585b02a80634fd511794a5f91d5a046d31cbf",
-          "message": "Merge pull request #469 from LoveDaisy/refactor/raypath-module-design-cleanup\n\nrefactor(raypath): module design cleanup — role-based naming, detail/ demote, JSON single-owner",
-          "timestamp": "2026-10-06T00:39:09+08:00",
-          "tree_id": "752b69ce57a148874846e24ba5b179f26440e1b0",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/420585b02a80634fd511794a5f91d5a046d31cbf"
-        },
-        "date": 1791218526195,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 283910.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 511413.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 334025.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 313601.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4794,6 +4746,54 @@ window.BENCHMARK_DATA = {
             "value": 468610.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "347a4e5c5821ff1a77061706e0e80a16f985bafc",
+          "message": "Merge pull request #572 from LoveDaisy/test/map-pump-fixture-query-isolation\n\ntest(gui): remove unrelated survey work from map fixtures",
+          "timestamp": "2026-11-07T02:39:25+08:00",
+          "tree_id": "17372e67756c5e4a76ebad72e1ecba46bbf68e83",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/347a4e5c5821ff1a77061706e0e80a16f985bafc"
+        },
+        "date": 1793990597817,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 355329.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 504766.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 425387.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 310874.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
