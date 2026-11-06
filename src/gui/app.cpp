@@ -1019,6 +1019,13 @@ std::string TextureLoadNotice(const LmcTexture& texture) {
          "the file. Saving alone cannot recover it.";
 }
 
+// Only the workspace mode crosses document boundaries. Everything else in the incoming
+// state belongs to the new document or follows ResetFrontendState's per-reason cleanup.
+static void ReplaceDocumentState(GuiState state) {
+  state.workspace.mode = g_state.workspace.mode;
+  g_state = std::move(state);
+}
+
 void DoOpen() {
   DoOpen(ShowOpenDialog());
 }
@@ -1053,7 +1060,7 @@ void DoOpen(const std::filesystem::path& path) {
     if (DeserializeFromJson(json_str, new_state)) {
       // Data restore + command-semantic fields (path/dirty/run_intent stay in handler per
       // plan §2 — they are command intent, not frontend reset).
-      g_state = new_state;
+      ReplaceDocumentState(std::move(new_state));
       g_state.current_file_path.clear();  // Don't set .json path as save target
       g_state.dirty = true;               // Unsaved new project
       // Intent: no server run behind this import (→ kIdle via ReconcileSimState).
@@ -1083,7 +1090,9 @@ void DoOpen(const std::filesystem::path& path) {
   TakeShapeDistDowngradeCount();
   TakeFilterNoPredicateDowngradeCount();
   TakeInvalidSummandRowCount();
-  if (LoadLmcFile(path, g_state, tex)) {
+  GuiState new_state;
+  if (LoadLmcFile(path, new_state, tex)) {
+    ReplaceDocumentState(std::move(new_state));
     // Data restore + command-semantic fields (path/dirty/run_intent stay in handler).
     g_state.current_file_path = path;
     g_state.dirty = false;
@@ -1161,7 +1170,7 @@ void SurfaceUserDefaultsDowngrades() {
 void DoNew() {
   // Data reset (default state), then delegate every frontend reset (preview clear + poller
   // fence + mesh-hash zero + trackball) to the single owner.
-  g_state = MakeNewDocumentState();
+  ReplaceDocumentState(MakeNewDocumentState());
   SurfaceUserDefaultsDowngrades();
   ResetFrontendState(g_state, FrontendResetReason::kNewDocument);
   LoadBackgroundWithDegrade(g_state);

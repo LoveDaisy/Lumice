@@ -203,21 +203,21 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // The analysis tool's own state (window, ROI, selection, intent) — one struct, one row.
     { "analysis",                   FieldTier::kSession,    false },
     // The shell's workspace selection (Render | Analyze) and the Analyze workspace's own session
-    // state — one struct, one row, the same grain `analysis` registers at. Never persisted, never
-    // dirty; survives document switches (layout is not document state).
+    // state — one struct, one row, the same grain `analysis` registers at. Never persisted or
+    // dirty. New/successful Open preserve mode only; other members reset. Revert keeps them.
     { "workspace",                  FieldTier::kSession,    false },
     // The Raypath view window's open state (analyze-interaction-contract.md §8): T-session
     // display state like color_window_open — which panels are open is not document state.
-    // Open/Revert keep it (ResetFrontendState does not touch it), DoNew resets it with the whole
-    // GuiState. D3, the window's own reference-map | info split ratio, rides beside it at the
+    // Revert keeps it; New/successful Open reset it with the incoming GuiState. D3, the
+    // window's own reference-map | info split ratio, rides beside it at the
     // same tier (the split's identity, written only by its drag).
     { "analyze_raypath_view_open",  FieldTier::kSession,    false },
     { "analyze_raypath_view_info_ratio", FieldTier::kSession, false },
     // The Pose & trace window's three session rows (755.5): the open flag (which panels are open
     // is not document state — the same reason as analyze_raypath_view_open) and the window's own
     // two split ratios, D4 (3D | right column) and D5 (globe | factors) — layout choices of this
-    // session, written only by their drags. Never persisted; DoNew resets them with the whole
-    // GuiState; Open/Revert keep them.
+    // session, written only by their drags. Never persisted; New/successful Open reset them
+    // with the incoming GuiState; Revert keeps them.
     { "analyze_pose_view_open",     FieldTier::kSession,    false },
     { "analyze_pose_view_right_ratio", FieldTier::kSession, false },
     { "analyze_pose_view_globe_ratio", FieldTier::kSession, false },

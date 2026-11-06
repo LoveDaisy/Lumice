@@ -1892,20 +1892,14 @@ struct GuiState {
   };
   RaypathAnalysisSession analysis;
 
-  // Which of the shell's two workspaces the frame shows — the Render/Analyze top-bar switch's
-  // state (the Analyze workspace shell, analyze_workspace.cpp). Session tier: a layout choice of
-  // this session, never persisted, never in the document, never in ConfigSnapshot. Open and
-  // Revert keep it (ResetFrontendState does not touch it — which panels are on screen is not
-  // document state, the same rule that keeps analysis.window_open); DoNew resets it, because
-  // DoNew replaces the whole GuiState with a fresh document's clean slate — the rule every
-  // session field already follows. Switching workspaces is pure view: it never dirties, never
-  // commits or cancels anything, and shares the one scene document with the Render workspace —
-  // the same editors write the same fields in both.
+  // Which workspace the shell shows. Session intent: New and successful Open preserve only
+  // this mode at the command's document-replacement boundary; Revert never captures or restores
+  // it. Never persisted in a document, user defaults or ConfigSnapshot; a cold start is Render.
+  // Switching workspaces is pure view: it never dirties, commits or cancels queries, and both
+  // workspaces edit the same scene document. Other workspace members keep their own reset rules.
   //
-  // The workspace's own session state (the middle columns' split ratio, the panorama's view
-  // state, later the background query bookkeeping) grows inside AnalyzeWorkspaceSession rather
-  // than beside it, so the tier table stays at one row for the workspace the way `analysis` is
-  // one row for the analysis tool.
+  // The workspace's own session state grows inside AnalyzeWorkspaceSession rather than beside
+  // it, so the tier table stays at one row, like the analysis tool's session.
   enum class WorkspaceMode { kRender, kAnalyze };
   struct AnalyzeWorkspaceSession {
     WorkspaceMode mode = WorkspaceMode::kRender;
@@ -1916,7 +1910,7 @@ struct GuiState {
     // dragging. No query result, selection change or content change ever writes it (manual
     // priority — the first result included), and restoring the window size restores the split.
     // Session memory like every field here: never persisted, never in the document or
-    // ConfigSnapshot; DoNew resets it with the whole GuiState, Revert/Open keep it.
+    // ConfigSnapshot; New and successful Open reset the ratios, Revert keeps them.
     float right_column_ratio = kAnalyzeRightColumnDefaultRatio;
     // D2: the share list's share of the right column's height — what the
     // `##AnalyzeRightRowsSplitter` drags. Same semantics and tier as D1 above; no automatic
@@ -1932,9 +1926,8 @@ struct GuiState {
   // The Raypath view window's open state (analyze-interaction-contract.md §6, §8 ownership
   // declaration): the class-map window the share list's class rows open. T-session display
   // state, `left_panel_collapsed`'s family — not document state, never persisted, never in
-  // ConfigSnapshot or the dirty diff. Kept by Open and Revert (ResetFrontendState does not
-  // touch it: which panels are on screen is not document state), reset by DoNew because DoNew
-  // replaces the whole GuiState — the per-reason rule the contract's §8 declaration names.
+  // ConfigSnapshot or the dirty diff. New and successful Open reset it with the incoming
+  // GuiState; Revert keeps it. Workspace mode retention does not retain window-open flags.
   // The window's own geometry (size, position, the D3 split) is ImGui window storage: session
   // memory inside the process, outside GuiState entirely.
   bool analyze_raypath_view_open = false;
@@ -1944,8 +1937,8 @@ struct GuiState {
   // identity, not a pixel width — the frame derives pixels and clamps them at the two floors
   // (the info floor and the map floor, gui_constants.hpp), while the stored value changes only
   // by dragging. No query result, selection change or content change ever writes it (manual
-  // priority, §9.3). Session tier like the open flag above: never persisted; DoNew resets it
-  // with the whole GuiState; Open/Revert keep it. The window stores it here (not in ImGui
+  // priority, §9.3). Session tier like the open flag above: never persisted; New/successful
+  // Open reset it, Revert keeps it. The window stores it here (not in ImGui
   // storage) so the tier table carries one row for the window's session state.
   float analyze_raypath_view_info_ratio = 0.30f;
 
@@ -1953,10 +1946,10 @@ struct GuiState {
   // declaration): the pose/trace window the point detail block's title opens — and ONLY that
   // click; the sky-point and wavelength writers must not open it (the user's explicit
   // negative requirement). T-session display state, `analyze_raypath_view_open`'s family — not
-  // document state, never persisted, never in ConfigSnapshot or the dirty diff. Kept by Open
-  // and Revert (ResetFrontendState does not touch it), reset by DoNew with the whole GuiState.
+  // document state, never persisted, never in ConfigSnapshot or the dirty diff. Revert keeps
+  // it; New and successful Open reset it with the incoming GuiState.
   // WRITERS (the audit set): the "Point detail" title click (RenderPointDetailsBlock), the
-  // window's own title bar X through `p_open`, and DoNew's whole-state reset — no other write
+  // window's own title bar X through `p_open`, and document replacement — no other write
   // path exists by construction.
   bool analyze_pose_view_open = false;
   // D4 — the Pose & trace window's 3D | right-column split (contract §4.2): the RIGHT column's
@@ -1964,8 +1957,8 @@ struct GuiState {
   // above: the split's identity, not a pixel width — the frame derives pixels and clamps them
   // at the two floors (the 3D floor and the right-column floor, gui_constants.hpp), while the
   // stored value changes only by dragging. No query result, selection change or content change
-  // ever writes it (manual priority, §9.3). Session tier: never persisted; DoNew resets it with
-  // the whole GuiState; Open/Revert keep it — session memory, so closing and reopening the
+  // ever writes it (manual priority, §9.3). Session tier: never persisted; New/successful Open
+  // reset it, Revert keeps it — closing and reopening the
   // window keeps the user's split within this process.
   float analyze_pose_view_right_ratio = 0.333f;
   // D5 — the Pose & trace window's right column's globe | curve split (contract §4.2): the

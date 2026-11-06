@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -7659,14 +7660,24 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
   ctx->LogInfo("[scopes] settled Revert kept the faces, the sky point and both standing windows");
 
-  // ---- ⑦ Open (the document replace) with the windows open and a point query verifiably in
-  // flight — the executor drains, every face clears, both windows close, nothing revives.
-  // ---- ⑦ Open (the document replace) with the windows open and a point query held outstanding
-  // at its pickup — the executor drains, every face clears, both windows close, nothing revives.
+  // ---- Open with a point query held at pickup: the real JSON command replaces the document,
+  // keeps the workspace mode, clears every face and closes both analysis windows.
+  const auto open_path = GuiTestTempPath("workspace_scope_open.json");
+  struct OpenFileCleanup {
+    std::filesystem::path path;
+    ~OpenFileCleanup() {
+      std::error_code ec;
+      std::filesystem::remove(path, ec);
+    }
+  } open_cleanup{ open_path };
+  IM_CHECK_RETV(gui::ExportConfigJson(open_path, kHalo22Json), false);
   SetSkyPointTarget(35.0, 20.0);
   ScopedPointPickupHold hold7;
   IM_CHECK_RETV(DriveUntil(ctx, [&hold7] { return hold7.PickedUp(); }, kScopesObserveBudgetS), false);
-  IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kAnalyze, false);
+  gui::DoOpen(open_path);
+  IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kAnalyze, false);
+  IM_CHECK_RETV(gui::g_state.current_file_path.empty() && gui::g_state.dirty, false);
   hold7.Release();  // the engine call proceeds against the cancelled/released binding and drains
   IM_CHECK_RETV(
       DriveUntil(
@@ -7697,6 +7708,8 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ScopedPointPickupHold hold8;
   IM_CHECK_RETV(DriveUntil(ctx, [&hold8] { return hold8.PickedUp(); }, kScopesObserveBudgetS), false);
   gui::DoNew();
+  IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kAnalyze, false);
+  IM_CHECK_RETV(gui::g_state.current_file_path.empty() && !gui::g_state.dirty, false);
   hold8.Release();
   IM_CHECK_RETV(
       DriveUntil(
