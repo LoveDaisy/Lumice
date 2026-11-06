@@ -315,6 +315,130 @@ std::vector<std::string> PointMassLines(const LUMICE_PathPointMass& mass) {
   return lines;
 }
 
+// ---- The contribution curve (756, audit §5's consumption contract) -----------------------------------
+
+PointCurveValueKind PointCurveClassify(double value, bool gated) {
+  if (!gated) {
+    // The gate decides availability (audit §3: the flag-clear cell's C zero is the clear, not
+    // data — a value comparison here would read that zero as a legal zero).
+    return PointCurveValueKind::kUnavailable;
+  }
+  if (!std::isfinite(value) || value < 0.0) {
+    // Not drawable: storage's NaN copied through a half-open gate, or a physically impossible
+    // negative — named unavailable, never drawn, never patched (J4).
+    return PointCurveValueKind::kUnavailable;
+  }
+  return value == 0.0 ? PointCurveValueKind::kExactZero : PointCurveValueKind::kPositive;
+}
+
+bool BuildPointContributionCurve(const LUMICE_SinglePathResult& result, int component, PointContributionCurve* out) {
+  *out = PointContributionCurve{};
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathPointGetInfo(&result, &info) != LUMICE_PATH_READ_OK || info.outcome != LUMICE_PATH_POINT_DISCOVERED ||
+      component < 0 || component >= static_cast<int>(info.component_count)) {
+    return false;
+  }
+  LUMICE_PathPointComponent head{};
+  head.struct_size = sizeof(head);
+  if (LUMICE_PathPointGetComponent(&result, static_cast<size_t>(component), &head) != LUMICE_PATH_READ_OK) {
+    return false;
+  }
+  out->ok = true;
+  out->kind = PathTextToString(head.kind);
+  out->seed_index = head.seed_index;
+  out->integral_available = head.integral_available != 0;
+  out->available_points = static_cast<int>(head.available_points);
+  out->total_points = static_cast<int>(head.total_points);
+  out->fiber_integral = head.fiber_integral;
+  const size_t n = head.point_count;
+  out->points.resize(n);
+  // The axis first (audit §5.1): x[0] = 0, x[i+1] = x[i] + increments[i] — N points over N-1
+  // per-step increments, each point keeping its ORIGINAL index and x whatever its availability.
+  // A count short of the point walk leaves the axis flat from there (monotone non-negative by
+  // construction); the renderer guards a zero-span axis with its honest note.
+  double x = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    out->points[static_cast<size_t>(i)].x_rad = x;
+    if (i + 1 < n && i < head.arclength_count) {
+      x += head.arclength_increments[i];
+    }
+  }
+  out->valid_positions.reserve(n);
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  for (size_t i = 0; i < n; ++i) {
+    PointCurvePoint& p = out->points[i];
+    if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), i, &sample) != LUMICE_PATH_READ_OK) {
+      continue;  // the honest hole: every arm stays kUnavailable, the point stays unreachable
+    }
+    p.valid = sample.valid != 0;
+    p.jacobian_available = sample.jacobian_available != 0;
+    p.rho = sample.rho;
+    p.area = sample.entry_measure_a2;
+    p.transmission = sample.total_transmission;
+    p.k_carea = sample.k_carea;
+    p.product = sample.factor_product;
+    p.rho_kind = PointCurveClassify(sample.rho, /*gated=*/true);  // rho is produced unconditionally
+    p.area_kind = PointCurveClassify(sample.entry_measure_a2, p.valid);
+    p.transmission_kind = PointCurveClassify(sample.total_transmission, p.valid);
+    p.k_kind = PointCurveClassify(sample.k_carea, p.jacobian_available);
+    p.product_kind = PointCurveClassify(sample.factor_product, p.valid && p.jacobian_available);
+    if (p.valid) {
+      out->valid_positions.push_back(static_cast<int>(i));
+    }
+  }
+  return true;
+}
+
+int PointCurveStoredAt(const PointContributionCurve& curve, int valid_position) {
+  if (!curve.ok || valid_position < 0 || valid_position >= static_cast<int>(curve.valid_positions.size())) {
+    return -1;
+  }
+  return curve.valid_positions[static_cast<size_t>(valid_position)];
+}
+
+double PointCurveXAt(const PointContributionCurve& curve, int valid_position) {
+  const int stored = PointCurveStoredAt(curve, valid_position);
+  return stored < 0 ? 0.0 : curve.points[static_cast<size_t>(stored)].x_rad;
+}
+
+int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_rad) {
+  int best = -1;
+  double best_distance = 0.0;
+  for (size_t v = 0; v < curve.valid_positions.size(); ++v) {
+    const double distance = std::abs(curve.points[static_cast<size_t>(curve.valid_positions[v])].x_rad - x_rad);
+    if (best < 0 || distance < best_distance) {
+      best = static_cast<int>(v);
+      best_distance = distance;
+    }
+  }
+  return best;
+}
+
+std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi) {
+  std::vector<PointCurveLogTick> ticks;
+  if (!(lo > 0.0) || !(hi > 0.0) || lo > hi) {
+    return ticks;
+  }
+  if (hi <= lo) {
+    hi = lo * 10.0;  // a single value still draws inside one decade, not on an edge
+  }
+  const int first_exp = static_cast<int>(std::floor(std::log10(lo)));
+  const int last_exp = static_cast<int>(std::ceil(std::log10(hi)));
+  for (int e = first_exp; e <= last_exp; ++e) {
+    const double decade = std::pow(10.0, static_cast<double>(e));
+    for (const double mantissa : { 1.0, 2.0, 5.0 }) {
+      const double value = decade * mantissa;
+      if (value < lo || value > hi) {
+        continue;
+      }
+      ticks.push_back(PointCurveLogTick{ value, mantissa == 1.0 });
+    }
+  }
+  return ticks;
+}
+
 // ---- The u-globe -------------------------------------------------------------------------------------
 
 bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component, SunGlobeProjector* out) {

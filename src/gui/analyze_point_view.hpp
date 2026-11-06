@@ -125,6 +125,90 @@ std::vector<std::string> PointCaliberLines(const LUMICE_PathPointInfo& info);
 // forced into the discovered arm's widgets.
 std::vector<std::string> PointMassLines(const LUMICE_PathPointMass& mass);
 
+// ---- The contribution curve (the Pose & trace window's D5 lower region, 756) ------------------------
+// The multi-factor curve along ONE component's real SO(3) arclength — rho, A/a^2, T, K and their
+// product read verbatim from the adopted document's per-pose payload (the audit's verdict:
+// `doc/raypath/fiber-arclength-payload-audit.md`; drawing needs no engine change). The
+// consumption contract this model implements (audit §5): the axis is built from the component's
+// own increments BEFORE any filtering (a point keeps its original index and x whatever its
+// availability), availability is decided by the gate flags ONLY (never a value comparison —
+// the flag-clear cell shows the BeginRead zero, the valid-fail cell shows storage's NaN copied
+// through), and the angle-Lebesgue caliber is declared, not inferred: on plate-family scenes
+// rho — and with it the product and the integral — read identically zero (a legal declared
+// zero, not absence), while the other arms stay informative per their own flags.
+
+// One arm's honest state at one point: a finite positive value (drawn on the log axis), an
+// exact zero the engine itself produced (a plate's declared-measure rho, a legal zero-area
+// endpoint — marked on the dedicated zero row, never mapped onto log), or unavailable (the
+// gate flag clear, or the value is not drawable: non-finite, negative) — a gap, never a zero.
+enum class PointCurveValueKind { kUnavailable, kExactZero, kPositive };
+
+// One arm's classification: `gated` carries the arm's own availability predicate (rho: always
+// produced; A/a^2 and T: `valid`; K: `jacobian_available`; product: both — audit §3's matrix).
+// Behind a true gate the value decides positive/zero; a non-finite or negative value is
+// physically impossible here and names unavailable instead of drawing.
+PointCurveValueKind PointCurveClassify(double value, bool gated);
+
+// One stored point of the curve: its axis position plus the five arms, each with its own
+// three-state classification, and the point's own gate flags (the renderer's gap/cursor
+// bookkeeping).
+struct PointCurvePoint {
+  double x_rad = 0.0;  // SO(3) arclength from the component's own zero (audit §5.1's construction)
+  double rho = 0.0;
+  double area = 0.0;          // A/a^2
+  double transmission = 0.0;  // T (total)
+  double k_carea = 0.0;       // K = 1/(J+eps)
+  double product = 0.0;       // rho*A/a^2*T*K
+  PointCurveValueKind rho_kind = PointCurveValueKind::kUnavailable;
+  PointCurveValueKind area_kind = PointCurveValueKind::kUnavailable;
+  PointCurveValueKind transmission_kind = PointCurveValueKind::kUnavailable;
+  PointCurveValueKind k_kind = PointCurveValueKind::kUnavailable;
+  PointCurveValueKind product_kind = PointCurveValueKind::kUnavailable;
+  bool valid = false;
+  bool jacobian_available = false;
+};
+
+// The selected component's contribution curve, built per frame from the adopted document
+// through the C readers (the document is immutable behind the adoption gate — the same
+// per-frame-build rule the valid-index map follows). `ok` false: outside the discovered arm
+// or the component did not read — the caller renders the honest state, never a fabricated axis.
+struct PointContributionCurve {
+  bool ok = false;
+  // The component's identity and completeness, its own words verbatim (the integral echo is
+  // the engine's left-endpoint rule's answer — the GUI re-displays it, never recomputes).
+  std::string kind;
+  int seed_index = -1;
+  int available_points = 0;
+  int total_points = 0;
+  bool integral_available = false;
+  double fiber_integral = 0.0;
+  // The stored points, in arclength order; size == the component's point_count when ok.
+  std::vector<PointCurvePoint> points;
+  // The v-th valid sample's stored index (the cursor's domain — the same walk the slider and
+  // the globe marker follow, so one selection owns every view).
+  std::vector<int> valid_positions;
+};
+
+bool BuildPointContributionCurve(const LUMICE_SinglePathResult& result, int component, PointContributionCurve* out);
+
+// The stored index of the v-th valid sample over the curve's own walk (-1 out of range).
+int PointCurveStoredAt(const PointContributionCurve& curve, int valid_position);
+// The arclength of the v-th valid sample (0.0 out of range).
+double PointCurveXAt(const PointContributionCurve& curve, int valid_position);
+// The nearest VALID sample's position to `x_rad` — the canvas click/drag's inverse mapping.
+// Invalid samples are unreachable (the slider's domain); ties pick the lower position.
+int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_rad);
+
+// One log-axis tick: a decade boundary (major) or its 2x/5x sub-multiple (minor).
+struct PointCurveLogTick {
+  double value = 0.0;
+  bool major = false;
+};
+// Decades and sub ticks spanning [lo, hi]: majors at every power of ten inside, minors at the
+// 2 and 5 multiples. A band degenerate to lo == hi widens to one decade, so a single value
+// still draws inside a range rather than on an edge; nothing positive to span answers empty.
+std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi);
+
 // ---- The u-globe (crystal-frame sun-direction sphere) -----------------------------------------------
 
 // The disk projection of the crystal-frame sun-direction sphere: Lambert azimuthal equal-area
