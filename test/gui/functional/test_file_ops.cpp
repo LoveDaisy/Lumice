@@ -35,6 +35,7 @@
 #include "gui/export_fbo_renderer.hpp"  // RenderExportToRgba — the non-proxy view of the sim layer
 #include "gui/gui_state.hpp"
 #include "gui/server_poller.hpp"
+#include "imgui_internal.h"
 #include "support/scoped_result_frame.hpp"
 #include "test_gui_shared.hpp"
 
@@ -55,6 +56,11 @@ void YieldUntilTrue(ImGuiTestContext* ctx, int max_yields, Fn&& condition) {
 bool FileExists(const std::string& path) {
   std::ifstream f(path);
   return f.good();
+}
+
+bool WorkspaceHostActive(ImGuiTestContext* ctx, const char* name) {
+  const ImGuiWindow* window = ctx->GetWindowByRef(name);
+  return window != nullptr && window->Active;
 }
 
 // IM_CHECK returns immediately: remove command fixtures on failed assertions too.
@@ -542,6 +548,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("##TopBar/Analyze");
       ctx->Yield(2);
       gui::g_state.current_file_path = GuiTestTempPath("new_discards_this.lmc");
+      gui::g_state.workspace.right_column_ratio = 0.45f;
       gui::g_state.layers[0].entries.push_back(gui::EntryCard{});
       gui::g_state.dirty = true;
       ctx->Yield();
@@ -554,6 +561,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK(!gui::g_state.dirty);
       IM_CHECK(gui::g_state.current_file_path.empty());
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, gui::kAnalyzeRightColumnDefaultRatio);
       IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 1);
       const ImGuiTestItemInfo fresh = ctx->ItemInfo("**/Layer 1, entry 1: Crystal##crys_0_0");
       IM_CHECK_NE(fresh.ID, 0u);
@@ -918,6 +926,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("##TopBar/Analyze");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      gui::g_state.workspace.right_column_ratio = 0.45f;
 
       gui::DoOpen(path);  // CPU-only on this branch; the GL blank is consumed by the next render
       ExpectPreviousDocumentGone(ctx, serial);
@@ -925,7 +934,8 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.current_file_path.empty());
       IM_CHECK(gui::g_state.dirty);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
-      IM_CHECK(gui::g_panorama_vp.active);
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, gui::kAnalyzeRightColumnDefaultRatio);
+      IM_CHECK(WorkspaceHostActive(ctx, "##AnalyzeShareList"));
 
       std::remove(path.c_str());
     };
@@ -956,7 +966,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.current_file_path == path);
       IM_CHECK(!gui::g_state.dirty);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
-      IM_CHECK(gui::g_panorama_vp.active);
+      IM_CHECK(WorkspaceHostActive(ctx, "##AnalyzeShareList"));
       IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
 
       std::remove(path.c_str());
@@ -1021,7 +1031,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.current_file_path == path);
       IM_CHECK(!gui::g_state.dirty);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
-      IM_CHECK(gui::g_panorama_vp.active);
+      IM_CHECK(WorkspaceHostActive(ctx, "##AnalyzeShareList"));
 
       // The staged composite is fenced, exactly as on the branches that blank the screen...
       const auto snap = gui::g_server_poller.LoadSnapshot();
@@ -1124,7 +1134,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.sun.altitude, gui::InitDefaultState().sun.altitude);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
       IM_CHECK(!gui::g_panorama_vp.active);
-      IM_CHECK_NE(ctx->ItemInfo("**/Sun").ID, 0u);
+      IM_CHECK(WorkspaceHostActive(ctx, "##LeftPanel"));
     };
   }
 
@@ -1176,7 +1186,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.analysis.selected_entry, std::string("kept selection"));
       IM_CHECK(gui::g_state.analysis.sky_point.valid);
       IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, 0.45f);
-      IM_CHECK(gui::g_panorama_vp.active);
+      IM_CHECK(WorkspaceHostActive(ctx, "##AnalyzeShareList"));
     };
   }
 
