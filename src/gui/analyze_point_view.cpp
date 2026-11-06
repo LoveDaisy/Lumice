@@ -2413,7 +2413,9 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
   // This title and the Raypath view's Pose & trace button ensure the same window is open.
   // Both write display state only: neither starts a query nor touches a document field.
   // Sky-point writers (map pick, marker drag, coordinate Set) remain separate from navigation:
-  // setting a sky point never pops the window open.
+  // setting a sky point never pops the window open. With navigation now also in the map TU,
+  // the negative contract is input-test guarded, not enforced by TU separation:
+  // pose_view_opens_from_both_explicit_entries and map_region_shows_the_class_map_and_takes_the_pick.
   if (ImGui::Selectable("Point detail")) {
     state.analyze_pose_view_open = true;
   }

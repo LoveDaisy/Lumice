@@ -6650,7 +6650,8 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(canvas_min.ID != 0, false);
   IM_CHECK_RETV(canvas_min.RectFull.GetWidth() >= 64.0f, false);
   IM_CHECK_RETV(info->ScrollMax.x == 0.0f, false);
-  const auto check_pose_entry = [ctx](const char* screenshot) -> bool {
+  bool exercised_report_scroll = false;
+  const auto check_pose_entry = [ctx, &exercised_report_scroll](const char* screenshot) -> bool {
     ImGuiWindow* region = MapInfoRegionWindow();
     IM_CHECK_RETV(region != nullptr, false);
     const ImGuiID entry_id = region->GetID("###pose_open");
@@ -6663,7 +6664,8 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(clip.Contains(entry.RectFull), false);
     IM_CHECK_RETV(region->ScrollMax.y == 0.0f && region->Scroll.y == 0.0f, false);
     ImGuiWindow* report = MapReportWindow();
-    IM_CHECK_RETV(report != nullptr && report->Size.y > 0.0f && report->Pos.y >= entry.RectFull.Max.y, false);
+    IM_CHECK_RETV(report != nullptr && report->Pos.y >= entry.RectFull.Max.y, false);
+    IM_CHECK_RETV(report->InnerClipRect.GetHeight() >= ImGui::GetTextLineHeight(), false);
     ctx->WindowFocus("//Raypath view");
     if (report->ScrollMax.y > 0.0f) {
       ctx->MouseMoveToPos(report->InnerClipRect.GetCenter());
@@ -6671,12 +6673,18 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
       ctx->MouseWheelY(-3.0f);
       ctx->Yield(3);
       IM_CHECK_RETV(report->Scroll.y > 0.0f, false);
+      exercised_report_scroll = true;
+      ctx->LogInfo("[pose entry scroll] scale %.1f: wheel consumed by report (scroll %.0f / %.0f)",
+                   gui::CurrentUiScale(), report->Scroll.y, report->ScrollMax.y);
       const auto scrolled_entry = ctx->ItemInfo(entry_id);
       IM_CHECK_RETV(std::abs(scrolled_entry.RectFull.Min.x - entry.RectFull.Min.x) < 0.5f &&
                         std::abs(scrolled_entry.RectFull.Min.y - entry.RectFull.Min.y) < 0.5f &&
                         std::abs(scrolled_entry.RectFull.Max.x - entry.RectFull.Max.x) < 0.5f &&
                         std::abs(scrolled_entry.RectFull.Max.y - entry.RectFull.Max.y) < 0.5f,
                     false);
+    } else {
+      ctx->LogInfo("[pose entry scroll] scale %.1f: report fits without scroll; other geometry must exercise wheel",
+                   gui::CurrentUiScale());
     }
     ctx->ItemClick(entry_id);
     ctx->Yield(2);
@@ -6709,6 +6717,7 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
     ctx->Yield(3);
     IM_CHECK_RETV(check_pose_entry("pose_entry_compressed_200.png"), false);
   }
+  IM_CHECK_RETV(exercised_report_scroll, false);
   gui::g_state.analyze_raypath_view_open = false;
   ctx->Yield(2);
   return true;
