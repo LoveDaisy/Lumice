@@ -140,17 +140,18 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 **4.8 顶栏：分组、量化、自适应组距与 Continue 的动作色**（as-built，2026-09-26；2026-10-31 组距自适应改版）—— 顶栏（`RenderTopBar`，`src/gui/app_panels.cpp`）
 原先按书写顺序机械排列，用裸字形 `"|"` 分组。现在的规则：
 
-- **分组**（左到右）：左面板折叠 ｜ 执行组（Run/Stop、Continue）｜ 文件组（New/Open/Save，图标+文字）｜
-  功能组（Colors、Summary——统一纯图标，词在 tooltip；+ Colored 复选框 + 告警 pip）｜ workspace 切换（**Render | Analyze** 双格 segmented，独立分组）｜
-  Settings（同样纯图标——与 Colors/Summary 同属「开窗命令」类，一类一表达）…… ⚠ + Revert（右对齐）· 右面板折叠（贴右缘）。workspace 切换自成一组：它是**模式指示**——当前格 accent 高亮、
-  点击 no-op（accent = 「已配置/被选中」读法，同 Colors 的 tint），不是又一个开窗口的钮；与功能组、与 Settings 两条边界都画竖线，
-  免得模态启动器读作视图切换的邻居。旧的单槽目标钮（标签随模式变异 + route 图标）是宽度紧张年代的降级档：
-  route 图标只命名「去往」的单方向，与模式指示的读法矛盾。
-  **表达矩阵（2026-11-05 裁定，按同类一致准入、真实宽度裁定）**：命令按类各取一种表达——执行类图标+文字、文件类图标+文字、
-  开窗类（Colors/Summary/Settings）纯图标、有态显示开关（Colored/Full Spectrum 复选框）文字复选框、模式切换双格 segmented、
-  面板折叠纯图标。四个合格矩阵全部在真实 1024 帧实测（成品 fit 口径）：双图文 1147 ✗、文件图标+开窗图文 1045 ✗、
-  双纯图标 895 ✓、文件图文+开窗纯图标 997 ✓——在 fit 的矩阵里按「把文字还给被点名的组」裁定为后者（owner 反馈直接点名的文件组
-  拿回了字；开窗组的无字从此是类的统一形态而非单点降级，可懂性由 tooltip + 图标语义承担）。不以宽度接受同类混用矩阵。
+- **分组**（左到右）：左面板折叠 ｜ 执行组（Run/Stop、Continue）｜ 文件组（New/Open/Save）｜
+  功能组（Colors、Summary；+ Colored 复选框 + 告警 pip）｜ workspace 切换（**Render | Analyze** 纯文字双格 segmented，独立分组）｜
+  Settings …… ⚠ + Revert（右对齐）· 右面板折叠（贴右缘）。
+  **统一宽窄表达**（2026-11-07）：New/Open/Save/Colors/Summary/Settings 六命令共同切档——宽档全为图标＋文字，
+  窄档全为纯图标，词义与动作说明始终在 tooltip（New/Open 禁用时仍可读）。执行组保持图文、显示开关保持文字复选框、
+  面板折叠保持图标、模式双格始终纯文字。两档不隐藏任何命令、不缩字体或组距、不按同类单钮分别降级。
+  选档来自活字体/样式、实际窗宽及 UI 倍率下的**完整最宽需求**：左右折叠、最长执行标签、六命令图文、最长通道＋pip、
+  模式双格、五条原组边界、隐藏状态角和 padding 全部计入；业务状态与当帧剩余空白不参与判定，不增加持久或会话偏好字段。
+  **当前模式**用与 Entry Edit axis 已选 chip 相同的实填 `AccentColor()`＋`ImGuiCol_WindowBg` 字色，hover/active 不撤回选中，
+  与 Colors 的低 alpha「已配置」徽章区分；当前格点击 no-op，另一格只切工作区，不 dirty/提交/启停运行。
+  **历史基线**：2026-11-05 的固定矩阵为文件图文＋开窗纯图标；其 997/1020px 预算只描述当时的布局，
+  不再是当前两档的 fit 证据或「开窗永久无字」裁决。
 - **组边界 = 主题化竖线 + min/max 两档自适应组距，按不对称分侧摊开**：`ToolbarGroupSeparator(window_width)`
   （`SeparatorEx(Vertical)`，颜色取 `ImGuiCol_Separator`，随色盘走）。⭐可复用条款（不止服务本顶栏）：**总距与分侧都是窗宽的
   纯函数**——输入窗宽（设计 pt，调用点除以 `CurrentUiScale()` 归一），在 `[kMinWindowWidth, 锚点窗宽]` 区间内线性插值，两端
@@ -163,28 +164,21 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
   **位置验证不只查总距**：渲染帧中竖线自身的 x 由 DrawList 扫描读出（分割线无 item ID 不可查），两侧间距分别等值于分侧纯函数、
   左>右，在 1024 与 1600 两基座各钉一次（`the_top_bar_fits_at_the_minimum_window_width`）。
 - **尺寸量化**：全栏按钮同一帧高（Revert 由 `SmallButton` 改为 `Button`，原先矮 6px）；**组内同宽**——
-  执行组取 Run/Stop/Stopping.../Continue 四个标签的最大宽度，文件组取三个图标+文字标签的最大宽度，workspace 两格取
+  执行组取 Run/Stop/Stopping.../Continue 四个标签的最大宽度，文件组取当前档三个标签的最大宽度，workspace 两格取
   Render/Analyze 的最大宽度（`ToolbarGroupButtonWidth()`，一处实现三处调用）。两格 flush 相接（`SameLine(0, 0)`）读作
   一个控件、总宽恒定——「切换不推移邻钮」按构造成立（`workspace_switch_swaps_layout_and_stays_clean` 逐字节钉住）。
   功能组与 Settings **不**拉齐：它们各开一个不同的窗口，拉齐只制造与内容无关的留白。
-- **窄窗口预算**：在 `kMinWindowWidth`（1024）下按两个最宽真实内容各测一次，均为 fit 钉子的 LogInfo 行（2026-11-05 实测）。
-  无告警配置（有色类 ⇒ `Full Spectrum` 复选框）实测需 **997px，余量 27px**。告警 pip 态是顶栏真正的最宽内容，且在 harness
-  中真实可达——无 server 时信号轮询不跑、信号缓存把新条目 resize 成「matched」，只要有 match 非空且被隐藏（`visible=false`）
-  的类，`NoVisibleMatchedColorClass` 的可见性半边即令 composite 为空、pip 照常渲染（早前「无 server ⇒ pip 不可达」的说法
-  不成立，已按实测更正）——实测需 **1020px，余量 4px**；pip 的占宽由真实帧上 Analyze 格的位移读出（23px = 一个 ItemSpacing +
-  三角字形 15px），非字形核算代证。改版宽度账：2026-10-31 组距自适应定稿 987（余 37）→ 2026-11-05 表达矩阵
-  裁定（文件组文字回归 + 开窗组统一图标）= **997（余 27）**；本轮矩阵实测链（成品 fit 口径）：双图文 1147 ✗ → 开窗图文
-  1045 ✗ → 双纯图标 895 ✓ → 文件图文（裁定）997 ✓。⚠️ 历史（2026-09-26）：彼时无图标化 reclaim，双格
-  segmented 需 1036px、溢出 12px 被降级为单槽——超的是当时那条预算；同形态在 reclaim 支付下本次成立。下次往顶栏加东西前先看这个余量
-  （现役最紧的一档是 pip 态的 4px）。
-  两态由 `shell_chrome/the_top_bar_fits_at_the_minimum_window_width` 钉住（真实 1024 帧渲染实测，非解析代入），
-  pip 态另有整帧归档（`top_bar_rhythm_archived_at_narrow_and_default_bases` 的第三帧）供人审。
+- **稳定槽与真实 fit**：显示通道始终保留最长 `Full Spectrum` 复选框＋pip 的槽位；没有颜色类时不绘制控件，
+  短 `Colored` 标签、告警出现/消失及信号刷新只换槽内内容，不改变模式、Settings 或右状态角的位置，也不改变标签档位。
+  执行组最长标签同槽、Modified/Revert 隐藏槽继续保留。`shell_chrome` 的 `adaptive_toolbar_*` 从实际渲染逐像素
+  搜索换档边界，并在边界两侧、1024/1600 及倍率重建后检查完整矩形、文字宽度、邻接与状态转换首帧；
+  告警有真实 warning 色字形绘出断言，不能靠「没有走到告警路径」通过。组距的总距和左右分侧仍由原 fit 用例钉住。
 - **常隐藏的状态提示住在栏尾的空白里**：⚠ + Revert 仍是常驻提交、未修改时 alpha=0 + `BeginDisabled` 隐藏（「不跳动」约束：
   它出现/消失时任何按钮都不许平移，由 `shell_chrome/toggling_modified_moves_no_top_bar_button` 钉住）。它原本紧跟 Continue，
   而文档大多数时候是未修改的，于是那块隐藏矩形在栏里最密的一段常驻成一个洞。现在它右对齐贴在右面板折叠钮左侧——
   Settings 与右折叠钮之间在最小窗宽以上本来就是空白，隐藏态藏进的是本就空着的地方；右对齐而非紧跟 Settings，
   是为了读作栏尾的「状态角」而不是 Settings 组的一员（文档状态不属于偏好设置），也让它的 x 不随 Colored 复选框的有无而变。
-  总宽预算不变（同一组控件只是换了位置，窄窗口仍需 1004px）。⭐可迁移判据：**常驻占位、但多数时间隐藏的控件，放在布局本就空闲的
+  旧迁移的 1004px 是历史预算，不适用于新的宽窄表达。⭐可迁移判据：**常驻占位、但多数时间隐藏的控件，放在布局本就空闲的
   位置，而不是操作流中间**——占位的代价只有在它占的是本来有用的地方时才付。
 
 **Continue 的动作色**：`semantic_colors.hpp` 的 `PushContinueButtonStyle()`。它**不是** good/warning/destructive 任何一档

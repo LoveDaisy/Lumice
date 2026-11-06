@@ -27,6 +27,13 @@
 | **T-view** | 纯客户端，仅 preview shader 实时重投影 / 合成 | 无 server 下发（仿真投影固定全天空 dual-fisheye） | lens / fov / view / exposure / background |
 | **T-session** | 会话偏好，不持久、不 dirty、不进 ConfigSnapshot | 直接改字段 | show_composite_preview / color_window_open / trackball / look_at |
 
+**顶栏表达是几何派生，不是状态档位**：New/Open/Save/Colors/Summary/Settings 的图文/纯图标档位仅由实际窗宽、
+当前活字体/样式与 UI 倍率的完整最宽需求决定，每帧重算，不进入 `GuiState`、`.lmc`、用户默认值或配置快照。
+Run/Stopping、Full Spectrum/Colored、信号告警与 Modified 的转换只更新固定槽内的内容，不能触发同宽换档或推动邻钮。
+跨档保留命令身份及打开中的 Save 菜单；该呈现转换不 dirty、不提交、不重跑、不触发查询。
+Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填选中、点击 no-op，另一格仍只切换工作区，
+不把它降格为「窗口是否打开」的徽章。表达与组距合同见 `gui-visual-language.md` §4.8。
+
 **Look At 跟随（as-built）**：`GuiState::look_at` 只保存所选具名目标与跟随意图，是 T-session，不是相机姿态的第二份副本。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，再保留本次输入；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁；`Reset` 解除 Lock 但保留目标。`ResetFrontendState` 对 New / 成功 Open / Revert 都恢复 `Sun + unlocked`，失败或取消的 Open 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim；太阳高度本身原有的 sim effect 不变。
 
 > `renderer.background`（画面天空色，与 `bg_show` / `bg_path` 的背景照片 overlay 不同）当前是客户端 shader 的 display-time 输入：编辑后立即进入 `PreviewParams::background_color_linear`，不 dirty、不 bump epoch、也不下发 server。它仍由 `ConfigSnapshot::renderer_background` 独立记录，因而 Revert 可以恢复；这说明“纯客户端显示字段”与“是否可被 Revert 撤销”是两个正交维度。

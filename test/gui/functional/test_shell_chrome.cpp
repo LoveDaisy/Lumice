@@ -313,6 +313,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "adaptive_toolbar_boundary_and_state_slots");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
+      struct StopLatchRestore {
+        ~StopLatchRestore() { gui::g_stop_inflight.store(false); }
+      } stop_latch_restore;
       const ScopedWindowBasis basis(ctx);
       const int boundary = FindToolbarTextBoundary(ctx, 1.0f);
       IM_CHECK(boundary > 1024 && boundary < 1600);
@@ -340,6 +343,13 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
           if (ctx->IsError()) {
             return;
           }
+          if (width == boundary || width == boundary - 1) {
+            CaptureToolbarEvidence(ctx,
+                                   text ? "toolbar_text_warning_before.png" : "toolbar_compact_warning_before.png");
+            if (ctx->IsError()) {
+              return;
+            }
+          }
           gui::g_state.raypath_color[0].visible = false;
           ctx->Yield(1);
           CheckToolbarUnmoved(ctx, before, text);
@@ -351,7 +361,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
             return;
           }
           if (width == boundary || width == boundary - 1) {
-            CaptureToolbarEvidence(ctx, text ? "toolbar_text_warning_first.png" : "toolbar_compact_warning_first.png");
+            CaptureToolbarEvidence(ctx, text ? "toolbar_text_warning_shown.png" : "toolbar_compact_warning_shown.png");
             if (ctx->IsError()) {
               return;
             }
