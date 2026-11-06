@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793990605358,
+  "lastUpdate": 1793990607747,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "928b8accd21aa950eeb249c13ad4bd8b4028b1b9",
-          "message": "Merge pull request #468 from LoveDaisy/scrum/raypath-general-diagnostics-v2\n\nfeat(raypath): phase-1 raypath feature diagnostics (scrum-649)",
-          "timestamp": "2026-10-05T12:17:39+08:00",
-          "tree_id": "b9531b058ecf0cc3746ac4253f6cbb3fd2ee8930",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/928b8accd21aa950eeb249c13ad4bd8b4028b1b9"
-        },
-        "date": 1791174025668,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 94.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6abcd36409158fd01a12b110cb2c89ba688dc8a1",
           "message": "Merge pull request #470 from LoveDaisy/fix/sky-direction-convention-mismatch\n\nfix(sky-direction): resolve convention-mismatch investigation — call sites proven correct, defense lines landed",
           "timestamp": "2026-10-06T05:26:14+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "347a4e5c5821ff1a77061706e0e80a16f985bafc",
+          "message": "Merge pull request #572 from LoveDaisy/test/map-pump-fixture-query-isolation\n\ntest(gui): remove unrelated survey work from map fixtures",
+          "timestamp": "2026-11-07T02:39:25+08:00",
+          "tree_id": "17372e67756c5e4a76ebad72e1ecba46bbf68e83",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/347a4e5c5821ff1a77061706e0e80a16f985bafc"
+        },
+        "date": 1793990607107,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 100.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.2,
             "unit": "%"
           }
         ]
