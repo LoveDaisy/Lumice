@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793997667359,
+  "lastUpdate": 1793997669507,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6abcd36409158fd01a12b110cb2c89ba688dc8a1",
-          "message": "Merge pull request #470 from LoveDaisy/fix/sky-direction-convention-mismatch\n\nfix(sky-direction): resolve convention-mismatch investigation — call sites proven correct, defense lines landed",
-          "timestamp": "2026-10-06T05:26:14+08:00",
-          "tree_id": "bc8d78bd7c6d3609d7eccaeeaf39dcb4e38e96f7",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/6abcd36409158fd01a12b110cb2c89ba688dc8a1"
-        },
-        "date": 1791235738621,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 93.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "236483fc270669e06b5b472f997c6e03974f82f5",
           "message": "Merge pull request #471 from LoveDaisy/docs/raypath-case-corpus\n\ndocs(cases): add raypath analysis scenario-case corpus index",
           "timestamp": "2026-10-06T11:07:25+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3d2c4f05d9f464d164acf08e609a75a356daeb49",
+          "message": "Merge pull request #573 from LoveDaisy/feat/analyze-layout-stability\n\nfix(gui): stabilize Analyze canvases and transient status layout",
+          "timestamp": "2026-11-07T04:37:00+08:00",
+          "tree_id": "2400774c1f61f029a64f97fb2880a3281f427dc2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/3d2c4f05d9f464d164acf08e609a75a356daeb49"
+        },
+        "date": 1793997668926,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 92.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.5,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.1,
             "unit": "%"
           }
         ]
