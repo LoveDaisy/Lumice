@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794008102620,
+  "lastUpdate": 1794008104972,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "236483fc270669e06b5b472f997c6e03974f82f5",
-          "message": "Merge pull request #471 from LoveDaisy/docs/raypath-case-corpus\n\ndocs(cases): add raypath analysis scenario-case corpus index",
-          "timestamp": "2026-10-06T11:07:25+08:00",
-          "tree_id": "05675d1c473a536b58ff6c00a95dbda93a7db23c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/236483fc270669e06b5b472f997c6e03974f82f5"
-        },
-        "date": 1791256192193,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 88.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "0c45b96ea97e477e6973097a68acbf4e6e7e3825",
           "message": "Merge pull request #472 from LoveDaisy/fix/outward-child-selfhit-leak\n\nfix(core): classify outward children at birth in CPU/Metal slab traversal",
           "timestamp": "2026-10-06T15:02:49+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "824e978f0926f336217b4856d55086907fca8aa5",
+          "message": "Merge pull request #574 from LoveDaisy/feat/doc-switch-keeps-workspace-mode\n\nfix(gui): preserve workspace mode across document switches",
+          "timestamp": "2026-11-07T07:30:56+08:00",
+          "tree_id": "932431bb0a545f9c1c9ae5f6ed910a71b8e28706",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/824e978f0926f336217b4856d55086907fca8aa5"
+        },
+        "date": 1794008104365,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.7,
             "unit": "%"
           }
         ]
