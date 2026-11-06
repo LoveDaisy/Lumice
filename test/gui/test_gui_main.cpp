@@ -195,7 +195,8 @@ void ResetTestState() {
   // What the previous case copied must not be what this case's copy assertion reads back.
   g_test_clipboard.clear();
 
-  // UI view state
+  // UI view state: unlike a document command, a case boundary starts a fresh workspace choice.
+  gui::g_state.workspace.mode = gui::GuiState::WorkspaceMode::kRender;
   gui::ResetCrystalView();
   gui::g_crystal_style = 1;
   gui::g_state.left_panel_collapsed = false;

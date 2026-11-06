@@ -57,6 +57,13 @@ bool FileExists(const std::string& path) {
   return f.good();
 }
 
+// IM_CHECK returns immediately: remove command fixtures on failed assertions too.
+struct ScopedDocumentFile {
+  std::string path;
+  explicit ScopedDocumentFile(const char* name) : path(GuiTestTempPath(name).string()) {}
+  ~ScopedDocumentFile() { std::remove(path.c_str()); }
+};
+
 // ---------------------------------------------------------------------------------------------
 // GL scaffolding.
 //
@@ -905,7 +912,8 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       auto target = gui::InitDefaultState();
       target.sun.altitude = 37.0f;
       IM_CHECK(gui::BuildExportJsonOrWarn(target, &json, nullptr));
-      const std::string path = GuiTestTempPath("lumice_switch_open.json").string();
+      const ScopedDocumentFile file("lumice_switch_open.json");
+      const auto& path = file.path;
       IM_CHECK(gui::ExportConfigJson(path, json));
       ctx->ItemClick("##TopBar/Analyze");
       ctx->Yield(2);
@@ -928,7 +936,8 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
     t->GuiFunc = GlOpGuiFunc;
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
-      const std::string path = GuiTestTempPath("lumice_switch_blank.lmc").string();
+      const ScopedDocumentFile file("lumice_switch_blank.lmc");
+      const auto& path = file.path;
       gui::g_state.sun.altitude = 38.0f;
       IM_CHECK(gui::SaveLmcFile(path, gui::g_state, gui::g_preview, /*save_texture=*/false));
       gui::g_state.sun.altitude = 12.0f;
@@ -982,7 +991,8 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       std::vector<unsigned char> baked;
       FillSolid(baked, kBakedW, kBakedH, kFreshCyan);
       gui::g_preview.UpdateCpuTextureData(baked.data(), kBakedW, kBakedH);
-      const std::string path = GuiTestTempPath("lumice_switch_baked.lmc").string();
+      const ScopedDocumentFile file("lumice_switch_baked.lmc");
+      const auto& path = file.path;
       gui::g_state.sun.altitude = 39.0f;
       IM_CHECK(gui::SaveLmcFile(path, gui::g_state, gui::g_preview, /*save_texture=*/true));
       gui::g_state.sun.altitude = 12.0f;
@@ -1072,6 +1082,101 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(static_cast<int>(g_gl_op.center_r), 0xFF);
       IM_CHECK_EQ(static_cast<int>(g_gl_op.center_g), 0x00);
       IM_CHECK_EQ(static_cast<int>(g_gl_op.center_b), 0xFF);
+    };
+  }
+
+  // A Render-mode control against accidentally hard-coding Analyze at the shared replacement
+  // boundary. Each command must really replace the document, not just leave mode untouched.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "file_ops", "render_mode_survives_new_and_open");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->ItemClick("##TopBar/Render");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+      auto target = gui::InitDefaultState();
+      target.sun.altitude = 41.0f;
+      const ScopedDocumentFile json_file("mode_render.json");
+      const ScopedDocumentFile lmc_file("mode_render.lmc");
+      std::string json;
+      IM_CHECK(gui::BuildExportJsonOrWarn(target, &json, nullptr));
+      IM_CHECK(gui::ExportConfigJson(json_file.path, json));
+      IM_CHECK(gui::SaveLmcFile(lmc_file.path, target, gui::g_preview, false));
+      gui::g_state.sun.altitude = 12.0f;
+      gui::DoOpen(json_file.path);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.sun.altitude, 41.0f);
+      IM_CHECK(gui::g_state.current_file_path.empty() && gui::g_state.dirty);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+      gui::ClearLoadNotice();
+      ctx->ItemClick("Load Notice/OK");
+      gui::g_state.sun.altitude = 13.0f;
+      gui::DoOpen(lmc_file.path);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.sun.altitude, 41.0f);
+      IM_CHECK(gui::g_state.current_file_path == lmc_file.path && !gui::g_state.dirty);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+      ctx->ItemClick("##TopBar/" ICON_FA_FILE " New");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.current_file_path.empty() && !gui::g_state.dirty);
+      IM_CHECK_EQ(gui::g_state.sun.altitude, gui::InitDefaultState().sun.altitude);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+      IM_CHECK(!gui::g_panorama_vp.active);
+      IM_CHECK_NE(ctx->ItemInfo("**/Sun").ID, 0u);
+    };
+  }
+
+  // Cancellation and failures must not call the successful document-reset path. The window,
+  // split and selected sky point distinguish retaining mode from restoring a whole workspace.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "file_ops", "cancelled_and_failed_open_keep_workspace_and_document");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      ctx->ItemClick("##TopBar/Analyze");
+      ctx->Yield(2);
+      gui::g_state.sun.altitude = 42.0f;
+      gui::g_state.current_file_path = GuiTestTempPath("kept_document.lmc");
+      gui::g_state.analysis.selected_entry = "kept selection";
+      gui::g_state.analysis.sky_point.valid = true;
+      gui::g_state.workspace.right_column_ratio = 0.45f;
+      gui::DoOpen(std::filesystem::path{});  // native-dialog cancellation's production boundary
+      gui::DoOpen(GuiTestTempPath("missing_config.json"));
+      const ScopedDocumentFile json_file("broken_mode.json");
+      const ScopedDocumentFile lmc_file("broken_mode.lmc");
+      {
+        std::ofstream out(json_file.path);
+        out << "{broken";
+      }
+      {
+        std::ofstream out(lmc_file.path, std::ios::binary);
+        out << "not an lmc";
+      }
+      gui::DoOpen(json_file.path);
+      gui::DoOpen(lmc_file.path);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK_EQ(gui::g_state.sun.altitude, 42.0f);
+      IM_CHECK(gui::g_state.current_file_path == GuiTestTempPath("kept_document.lmc"));
+      IM_CHECK_EQ(gui::g_state.analysis.selected_entry, std::string("kept selection"));
+      IM_CHECK(gui::g_state.analysis.sky_point.valid);
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, 0.45f);
+      gui::DoRevert();  // no baseline: the whole command is a no-op
+      IM_CHECK_EQ(gui::g_state.sun.altitude, 42.0f);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      gui::g_state.last_committed_state = gui::GuiState::ConfigSnapshot::From(gui::g_state);
+      gui::g_state.sun.altitude = 43.0f;
+      gui::DoRevert();
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.sun.altitude, 42.0f);
+      IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+      IM_CHECK(gui::g_state.current_file_path == GuiTestTempPath("kept_document.lmc"));
+      IM_CHECK_EQ(gui::g_state.analysis.selected_entry, std::string("kept selection"));
+      IM_CHECK(gui::g_state.analysis.sky_point.valid);
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, 0.45f);
+      IM_CHECK(gui::g_panorama_vp.active);
     };
   }
 

@@ -86,6 +86,8 @@
 ### 文档重置 owner（as-built）
 `ResetFrontendState(reason)` 已是 New / Open(.lmc±baked) / Open(.json) / Revert 的单一前端重置 owner。它按 reason 重置预览纹理、poller staged、epoch/display 基线、trackball、分析/编辑器会话态等；Revert 只执行其有意的保留子集并通过 `InvalidateEffectsBaselines` 重推显示态。新增文档切换路径必须进入这个 owner，不能重新手写一份重置字段集。
 
+**工作区模式是独立的会话意图**：New 与成功 Open（JSON、blank/baked LMC）在 `app.cpp::ReplaceDocumentState` 这一命令接受边界只将原 `workspace.mode` 带入新状态，然后照常执行上述 reset；不是保留整份 `workspace` 或 `analysis`。旧分析列表、选择、天空点、查询意图和执行器绑定仍随文档清理；分隔比例与分析窗口开合仍按原整体替换规则重置。Revert 不捕获/恢复 mode，保留已采纳分析状态和绑定，只撤回各面 outstanding 查询；没有快照时不执行恢复。未保存提示 Cancel、空路径和加载失败不接受新文档，因此不改模式或旧文档身份。解析器仍从工厂状态解码，不负责会话迁移；mode 不进文档、导出、用户默认值或 `ConfigSnapshot`，冷启动仍为 Render。
+
 ### 与既有蓝图自洽
 - §5#25 re-sim/display-time 边界 = 支柱 1 的 field→tier 分类器（形式化，不改语义）。
 - I2（单一 owner 派生 sim_state）= 支柱 3 所外扩的范式；latch 是 I1（弃陈旧 / 电平触发）的精化（latch COMPLETED 边沿）。
