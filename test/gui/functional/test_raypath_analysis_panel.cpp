@@ -10901,6 +10901,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         return ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
       };
       std::vector<ImRect> anchors;
+      std::vector<ImGuiID> anchor_ids;
       for (const char* ref : refs) {
         const auto item = read_anchor(ref);
         if (item.ID == 0) {
@@ -10908,10 +10909,27 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
           return;
         }
         anchors.push_back(item.RectFull);
+        anchor_ids.push_back(item.ID);
       }
+      // Wildcard discovery yields while it searches. Renew the resolved ID tasks before a
+      // transition, then read those cached IDs without yielding: all anchors must carry the
+      // same fresh frame stamp, including the very first rendered frame of the new state.
+      for (ImGuiID id : anchor_ids) {
+        ctx->ItemInfo(id);
+      }
+      ctx->Yield(1);
+      for (ImGuiID id : anchor_ids) {
+        ctx->ItemInfo(id);
+      }
+      int expected_frame = -1;
       const auto compare = [&]() -> bool {
         for (size_t i = 0; i < anchors.size(); ++i) {
-          const auto item = read_anchor(refs[i]);
+          const auto item = ctx->ItemInfo(anchor_ids[i], ImGuiTestOpFlags_NoError);
+          if (expected_frame >= 0 && item.TimestampMain != expected_frame) {
+            IM_ERRORF("Stale or late geometry for %s: frame %d, expected %d", refs[i], item.TimestampMain,
+                      expected_frame);
+            return false;
+          }
           if (item.ID == 0 || std::abs(item.RectFull.Min.x - anchors[i].Min.x) > 0.5f ||
               std::abs(item.RectFull.Min.y - anchors[i].Min.y) > 0.5f ||
               std::abs(item.RectFull.Max.x - anchors[i].Max.x) > 0.5f ||
@@ -10923,6 +10941,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         return true;
       };
       for (int state = 0; state < 3; ++state) {
+        expected_frame = ctx->ItemInfo(anchor_ids[0]).TimestampMain + 1;
         probe.analysis.map.intent_valid = true;
         probe.analysis.point.intent_valid = true;
         probe.analysis.map.cancelled_for_key = state == 1;
@@ -10933,12 +10952,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         if (!compare()) {
           return;
         }
-        ctx->Yield(2);
+        ctx->Yield(1);
+        ++expected_frame;
         if (!compare()) {
           return;
         }
         ctx->LogInfo("[layout state] waiting/cancelled/refused arm %d: first and intermediate frames stable", state);
       }
+      expected_frame = -1;
       IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_refused.png").string()));
       IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("layout_map_refused_fixture.png").string()));
       IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kRefused);
@@ -10966,11 +10987,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ResetTestState();
       OpenWindow(ctx);
       ctx->SetRef(PanoramaRegionRef());
-      const ImRect before = ctx->ItemInfo(kAnalyzeButton).RectFull;
+      const auto before_item = ctx->ItemInfo(kAnalyzeButton);
+      const ImRect before = before_item.RectFull;
       gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
       gui::g_state.analysis.cone_center_valid = false;
       ctx->Yield(1);
-      const ImRect first = ctx->ItemInfo(kAnalyzeButton).RectFull;
+      const auto first_item = ctx->ItemInfo(kAnalyzeButton);
+      IM_CHECK_EQ(first_item.TimestampMain, before_item.TimestampMain + 1);
+      const ImRect first = first_item.RectFull;
       ctx->LogInfo("[operation geometry] Whole sky (%.1f,%.1f)-(%.1f,%.1f), Point first (%.1f,%.1f)-(%.1f,%.1f)",
                    before.Min.x, before.Min.y, before.Max.x, before.Max.y, first.Min.x, first.Min.y, first.Max.x,
                    first.Max.y);

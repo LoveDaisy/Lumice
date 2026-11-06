@@ -1842,9 +1842,9 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
       (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
   const float head_limit =
       std::max(1.0f, ImGui::GetContentRegionAvail().y - status_h - buttons_h - AnalysisTableMinHeight() - gap * 3.0f);
-  // A geometry-only recovery rung for compressed scale tiers. Four fixed control rows are a
-  // safe upper bound (title/P/B/D plus search use at most four rows at the supported widths).
-  const bool scroll_head = ImGui::GetFrameHeightWithSpacing() * 4.0f > head_limit;
+  // A geometry-only recovery rung for compressed scale tiers: title, P, B, D and search
+  // occupy at most five fixed control rows, plus the separator gap.
+  const bool scroll_head = ImGui::GetFrameHeightWithSpacing() * 5.0f + gap > head_limit;
   if (scroll_head) {
     ImGui::BeginChild("##analysis_head", ImVec2(0.0f, head_limit));
   }
