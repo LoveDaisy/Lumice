@@ -367,3 +367,10 @@ InputText 缓冲之外的第四个：Size）。
 二级窗口维持 §9.2 的既有策略：Settings、Analysis、Colors 的 `WindowResizeCondForScale` 会在 scale
 变化时重新应用 `UiPx()` 尺寸；Edit Entry 的 tracker 回到内容跟随；Summary 每帧按最新 `UiPx()` 和
 工作区高度计算约束；`AlwaysAutoResize` 与主 shell 每帧无条件定位的窗口天然不持有旧 scale 尺寸。
+
+### 9.6 图形工作区的内容稳定性
+
+Analyze 的具体空间合同见 `analyze-interaction-contract.md` §15。窗口尺寸与内部内容预算是两件事：
+保留自由档外窗及既有下限，不用增大外窗来遮盖瞬态文字推动画布的缺陷。画布/操作/状态报告先按
+可见几何分份额，再填入查询状态；长身份、图例、partial/拒答正文在报告内滚，不影响主要锚点。
+主图宽单行/窄双行按 Point 控制集合定档，两 ROI 同档同高；只有用户 resize/分隔/倍率可以改变档位。

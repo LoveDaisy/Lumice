@@ -407,7 +407,7 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
 |---|---|---|
 | 记录「分析所描述的场景」 | `GuiState::AnalysisSceneIdentity`（`src/gui/gui_state.hpp`）+ `AnalysisResultView::analyzed_scene` | `DoAnalyze` 在清空 view 之后紧接 `From(g_state)` 捕获——与 `BuildCommitSceneOrWarn` 读的是同一份 state，中间没有写操作 |
 | 判定新鲜度 | `ComputeAnalysisListFreshness(has_result, scene_still_matches)`（`src/gui/sim_state_rules.hpp`） | `{kNone, kFresh, kStale}`；只吃两个 bool，遵循该文件「谓词不吃 GuiState」的约定，2×2 可枚举 |
-| 展示 | `RenderListFreshnessBanner`（`src/gui/analysis_panel.cpp`） | 面板顶行，`WarningTextColor` + 三角叹号（与主窗口 Modified 芯片同视觉语言）；**只在 kStale 画，且不清列表**——「选一行→Exclude→重跑」是面板主路径，清空会切断它 |
+| 展示 | `RenderListFreshnessBanner`（`src/gui/analysis_panel.cpp`） | 搜索之后的固定状态视口，`WarningTextColor` + 三角叹号（与主窗口 Modified 芯片同视觉语言）；**只在 kStale 画正文（视口常驻），且不清列表**——「选一行→Exclude→重跑」是面板主路径，清空会切断它 |
 
 三条设计决定，每条都有一个反面选项被否决：
 
@@ -439,7 +439,7 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
 |---|---|---|---|
 | `window_open`（**已退役**，2026-10-30 浮窗迁移） | 曾为 T-session | 不写主文档 | 曾所有 reason 保留（哪些面板开着不是文档状态）；字段随浮窗删除 |
 | `roi_mode` / `cone_center_valid` / `cone_center_dir` / `cone_radius_deg` / `ray_num_millions` / `infinite` / `ray_budget_initialized` / `symmetry_p/b/d` / `selected_entry` / `fetched_once` / `fetched_generation` / `fetched_symmetry` | T-session（分析**请求**参数与列表读取游标） | 不写主文档（`RaypathAnalysisSession` 注释「none of it reaches the sim commit」，逐字段 grep 零写路径） | 4 个文档切换 reason 整体清空；`kRevert` 保留（请求参数不属于文档） |
-| `workspace.panorama_press_owner` | T-session（主图一次按压的消费归属） | 只决定相机、marker、直接定位或显式拾取哪一臂可消费，不写文档 | mouse-down 决定、release 清空；Esc/宿主消失/成功文档重置只改 cancelled，未释放前不能换臂。ROI 武装字段与按钮已退役；方向写入继续使用 C API valid 语义，成功后冻结默认中心 |
+| `workspace.panorama_press_owner` | T-session（主图一次按压的消费归属） | 只决定相机、marker、直接定位或显式拾取哪一臂可消费，不写文档 | mouse-down 决定、release 清空；Esc/宿主消失/成功文档重置，以及 ROI 从 CONE 切出时取消 marker/direct-point 归属，都只改 cancelled，未释放前不能换臂。ROI 武装字段与按钮已退役；方向写入继续使用 C API valid 语义，成功后冻结默认中心 |
 | `analyzed_cone_center_dir` | T-session（派生：请求时刻的锥心副本） | 不写主文档 | 有独立漂移检测 `ConeCenterDriftedFromResult`——它回答「锥心 vs 结果」，与本节谓词正交，不合并 |
 | `started` | reconcile 输入（`run_intent` 的分析侧孪生） | 不写主文档 | `DoRun` 清（server 转回渲染会话）；文档切换清 |
 | `excluded_memory` / `excluded_seq` | T-session（记忆：Exclude 点击时该行的 `share_pct` + 读取时的 symmetry 位 + 单调序号，键 `(pool 槽位, filter 行 token)`） | 不写主文档——它是关于**已排除的链**曾经显示过什么的记录；排除本身（filter）才是文档的 | 4 个文档切换 reason 随整体清空；`kRevert` 保留（结果也保留）；Include again 删对应键 |

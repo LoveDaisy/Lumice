@@ -1277,11 +1277,7 @@ std::string BuildAnalysisResultsCsv(const GuiState& state, std::string_view expo
 namespace {
 
 
-// The request's parameters that are not the region: the ray budget. Session state, sent with the
-// next Analyze — editing it starts nothing, like the region. Bar form: one inline row whose
-// checkbox joins the previous segment's line when the caller judged it fits, the slider following
-// the checkbox while the line holds a usable track for it (below that it owns the line — a
-// wrapped control, not a clipped one; contract §11 R6's folding judgment).
+// The budget's existing slider + precise input pair, within the operation template's slot.
 void RenderRequestParamsControls(GuiState& state, float width) {
   EnsureDefaultAnalysisRayBudget(state);
   ImGui::BeginDisabled(state.analysis.infinite);
@@ -1374,12 +1370,7 @@ void RenderRadiusSlider(GuiState& state, float width) {
   // the user sees the region the list will be summed over; after one, it re-sums the rings on
   // hand. Either way the request is the full cone and nothing here starts a run.
   //
-  // The width is elastic: the designed 220 pt while the line holds slider AND its visible
-  // label, shrinking to keep both inside the head's real width. When even the 120 pt floor
-  // plus the label cannot fit (the 2x clamped tiers), the label moves to ITS OWN LINE and the
-  // slider takes the full row — a line the head's scroll can reach, instead of a slider whose
-  // right end (and label) sit past the clip. No hidden-label swap in the wide branch: the item
-  // keeps its id, so the test layer's refs stay stable.
+  // Track and visible label share the template's complete footprint, independent of payload.
   const float label_w = ImGui::CalcTextSize("Radius").x;
   ImGui::SetNextItemWidth(std::max(UiPx(40.0f), width - label_w - ImGui::GetStyle().ItemInnerSpacing.x));
   if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
@@ -1844,19 +1835,31 @@ void RenderAnalysisPanelBody(GuiState& state, LUMICE_Server* server) {
   // analyze_workspace.cpp), next to the picture they aim at; everything that reads and shapes
   // the RESULT stays here.
   //
-  RenderSymmetryControls(state, server);
-  ImGui::Separator();
-  RenderResultSearchBox();
   const float gap = ImGui::GetStyle().ItemSpacing.y;
   const float status_h = ImGui::GetTextLineHeight() * 2.0f + gap;
-  ImGui::BeginChild("##analysis_status", ImVec2(0.0f, status_h));
-  RenderListStatus(state);
-  ImGui::EndChild();
   const float buttons_h =
       ImGui::GetFrameHeightWithSpacing() +
       (AnalysisActionButtonsStack(ImGui::GetContentRegionAvail().x) ? ImGui::GetFrameHeight() : 0.0f);
+  const float head_limit =
+      std::max(1.0f, ImGui::GetContentRegionAvail().y - status_h - buttons_h - AnalysisTableMinHeight() - gap * 3.0f);
+  // A geometry-only recovery rung for compressed scale tiers. Four fixed control rows are a
+  // safe upper bound (title/P/B/D plus search use at most four rows at the supported widths).
+  const bool scroll_head = ImGui::GetFrameHeightWithSpacing() * 4.0f > head_limit;
+  if (scroll_head) {
+    ImGui::BeginChild("##analysis_head", ImVec2(0.0f, head_limit));
+  }
+  RenderSymmetryControls(state, server);
+  ImGui::Separator();
+  RenderResultSearchBox();
+  if (scroll_head) {
+    ImGui::EndChild();
+  }
+  ImGui::BeginChild("##analysis_status", ImVec2(0.0f, status_h));
+  RenderListStatus(state);
+  ImGui::EndChild();
   const float table_h = std::max(1.0f, ImGui::GetContentRegionAvail().y - buttons_h - gap);
-  if (!state.analysis_result.payload || state.analysis_result.payload->entries.empty()) {
+  if (!state.analysis_result.payload ||
+      (state.analysis_result.payload->entries.empty() && ComputeExcludedRaypathRows(state).empty())) {
     ImGui::BeginChild("##analysis_empty_rows", ImVec2(0.0f, table_h));
     RenderResultList(state);
     ImGui::EndChild();
@@ -1956,6 +1959,11 @@ float AnalyzeOperationBarHeight(float width) {
   return ImGui::GetFrameHeight() * (single ? 1.0f : 2.0f) + ImGui::GetStyle().ItemSpacing.y * (single ? 1.0f : 2.0f);
 }
 
+bool AnalyzeOperationBarNeedsScroll(float width) {
+  const OperationWidths w = MeasureOperationWidths();
+  return width < std::max(w.first, w.budget + w.radius + ImGui::GetStyle().ItemSpacing.x);
+}
+
 void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
   const float width = ImGui::GetContentRegionAvail().x;
   const OperationWidths w = MeasureOperationWidths();
@@ -1969,16 +1977,18 @@ void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
   if (single) {
     ImGui::SameLine();
   }
-  RenderRequestParamsControls(state, w.budget);
-  if (FitsOnBarLine(w.radius)) {
+  const ImVec2 budget_origin = ImGui::GetCursorScreenPos();
+  RenderRequestParamsControls(state, std::min(w.budget, width));
+  if (width >= w.budget + w.radius + ImGui::GetStyle().ItemSpacing.x) {
     ImGui::SameLine();
+    ImGui::SetCursorScreenPos(ImVec2(budget_origin.x + w.budget + ImGui::GetStyle().ItemSpacing.x, budget_origin.y));
   }
   // The absent Point control owns its slot too; it never lends height back to the picture.
   if (state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE ||
       (state.analysis_result.payload && state.analysis_result.payload->roi_mode == LUMICE_RAYPATH_ROI_CONE)) {
-    RenderRadiusSlider(state, w.radius);
+    RenderRadiusSlider(state, std::min(w.radius, width));
   } else {
-    ImGui::Dummy(ImVec2(w.radius, ImGui::GetFrameHeight()));
+    ImGui::Dummy(ImVec2(std::min(w.radius, width), ImGui::GetFrameHeight()));
   }
 }
 

@@ -1701,6 +1701,14 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(region->ScrollMax.y == 0.0f, false);
     IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
   }
+  const ImRect map_wait_rect = ctx->ItemInfo("**/##map_canvas").RectFull;
+  const ImRect sky_wait_rect = ctx->ItemInfo("**/alt°##sky").RectFull;
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("layout_map_waiting.png").string()), false);
+  ctx->ItemInputValue("**/alt°##sky", 30.0f);
+  ctx->ItemInputValue("**/az°##sky", 180.0f);
+  ctx->ItemClick("**/Set sky point###sky_set");
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid && !gui::g_state.analysis.sky_point.from_map_pick, false);
+  IM_CHECK_RETV(std::abs(gui::g_state.analysis.sky_point.dir[2] + 0.5f) < 1e-4f, false);
   // The map answers behind the survey's chromatic legs (one worker, queue by face), then the
   // default view chain runs: the full-sky map auto-Fits and the refinement window answers —
   // the test waits for the WINDOW map specifically.
@@ -1718,6 +1726,12 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
+  const auto same_rect = [](const ImRect& a, const ImRect& b) {
+    return std::abs(a.Min.x - b.Min.x) <= 0.5f && std::abs(a.Min.y - b.Min.y) <= 0.5f &&
+           std::abs(a.Max.x - b.Max.x) <= 0.5f && std::abs(a.Max.y - b.Max.y) <= 0.5f;
+  };
+  IM_CHECK_RETV(same_rect(map_wait_rect, ctx->ItemInfo("**/##map_canvas").RectFull), false);
+  IM_CHECK_RETV(same_rect(sky_wait_rect, ctx->ItemInfo("**/alt°##sky").RectFull), false);
   const gui::MapQuerySession& map = gui::g_state.analysis.map;
   LUMICE_PathMapInfo info{};
   info.struct_size = sizeof(info);
@@ -3789,6 +3803,28 @@ struct ScopedWatchdogGuard {
   }
 };
 
+bool CurrentTraceIsDrawn() {
+  const auto& point = gui::g_state.analysis.point;
+  const auto& view = gui::g_state.analysis.point_view;
+  if (gui::PointQueryStateFor(point) != gui::PointQueryState::kCompleted || !point.adopted_result) {
+    return false;
+  }
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) != LUMICE_PATH_READ_OK || info.component_count == 0) {
+    return false;
+  }
+  const int component = std::clamp(view.component_index, 0, static_cast<int>(info.component_count) - 1);
+  const int count = gui::PointValidSampleCount(*point.adopted_result, component);
+  if (count == 0) {
+    return false;
+  }
+  const int stored =
+      gui::PointValidSampleIndexAt(*point.adopted_result, component, std::clamp(view.sample_index, 0, count - 1));
+  return gui::RayTraceDisplayStateFor(gui::g_state.analysis.trace, { point.intent_id, component, stored }) ==
+         gui::RayTraceDisplayState::kDrawn;
+}
+
 struct ScopedUiScaleAndBasisLease {
   ImGuiTestContext* ctx;
   explicit ScopedUiScaleAndBasisLease(ImGuiTestContext* c) : ctx(c) {}
@@ -4154,7 +4190,8 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
                             break;
                           }
                         }
-                        return ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError).ID != 0;
+                        const auto sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
+                        return sample.ID != 0 && !IsDisabled(sample);
                       },
                       30),
                   false);
@@ -4236,7 +4273,12 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     // fast enough. Wait for the canvas — its existence is the leg's real precondition, and it
     // subsumes the whole ladder (point completed, sample shown, trace drawn).
     IM_CHECK_RETV(DriveUntil(
-                      ctx, [ctx] { return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0; }, 30),
+                      ctx,
+                      [ctx] {
+                        return CurrentTraceIsDrawn() &&
+                               ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0;
+                      },
+                      30),
                   false);
     const ImGuiTestItemInfo r3d_canvas = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(r3d_canvas.ID != 0, false);
@@ -4435,20 +4477,23 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     // The panorama's own fixed rows at this width: Region→Whole sky and Upper→Lower join by
     // judgment too. A clipped radio whose center still answers a click is exactly the shape
     // containment exists to catch — clickability is not the contract, the full rectangle is.
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr) {
+        w->Scroll.y = 0.0f;
+      }
+    }
+    ctx->Yield(2);
     const ImGuiTestItemInfo whole_sky_e = ctx->ItemInfo("**/Whole sky", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(whole_sky_e.ID != 0, false);
     IM_CHECK_RETV(whole_sky_e.RectFull.Max.x <= whole_sky_e.Window->InnerClipRect.Max.x + 0.5f &&
                       whole_sky_e.RectFull.Min.x >= whole_sky_e.Window->InnerClipRect.Min.x - 0.5f,
                   false);
     const ImGuiTestItemInfo point_e = [&] {
-      // The Point radio sits at the wrapped ROI stack's tail: at this width the joins wrap,
-      // the stack grows past the panel's visible slice, and the panel — a scrolling window, the
-      // contract's internal-scroll rung — carries the row behind its own scroll.
       for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzePanorama") != nullptr) {
-          w->Scroll.y = w->ScrollMax.y;
-          ctx->Yield(3);
-          break;
+        if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr) {
+          ctx->ScrollToItemY(w->GetID("Point"));
+          ctx->Yield(2);
+          return ctx->ItemInfo(w->GetID("Point"), ImGuiTestOpFlags_NoError);
         }
       }
       return ctx->ItemInfo("**/Point", ImGuiTestOpFlags_NoError);
@@ -4582,7 +4627,12 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     // Wait, then frame the canvas whole through the region's own scroll: the window's minimum
     // leaves the 3D region below its content, so the region scrolls and the framing is real.
     IM_CHECK_RETV(DriveUntil(
-                      ctx, [ctx] { return ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0; }, 30),
+                      ctx,
+                      [ctx] {
+                        return CurrentTraceIsDrawn() &&
+                               ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError).ID != 0;
+                      },
+                      30),
                   false);
     const ImGuiTestItemInfo found_640 = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(found_640.ID != 0, false);
@@ -6094,15 +6144,20 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
 
-  // Pre-adoption: the region answers its honest no-intent line and submits no canvas.
-  SetSkyPointTarget(42.0, 0.0);
+  // Pre-adoption retains the exact canvas but carries no stale series or sample.
   gui::g_state.analyze_pose_view_open = true;
   PinPoseViewOnScreen(ctx);
   ctx->Yield(2);
   IM_CHECK_RETV(PoseRegionWindow("##AnalyzePoseCurve") != nullptr, false);
-  IM_CHECK_RETV(ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError).ID == 0, false);
-  gui::g_state.analyze_pose_view_open = false;
-  ctx->Yield(2);
+  const ImGuiTestItemInfo empty_canvas = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(empty_canvas.ID != 0, false);
+  const ImRect empty_rect = empty_canvas.RectFull;
+  SetSkyPointTarget(42.0, 0.0);
+  ctx->Yield(1);
+  const ImRect first_wait_rect = ctx->ItemInfo("**/##pose_curve_canvas").RectFull;
+  IM_CHECK_RETV(first_wait_rect.Min.x == empty_rect.Min.x && first_wait_rect.Min.y == empty_rect.Min.y &&
+                    first_wait_rect.Max.x == empty_rect.Max.x && first_wait_rect.Max.y == empty_rect.Max.y,
+                false);
 
   IM_CHECK_RETV(
       DriveUntil(
@@ -10799,6 +10854,113 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // the result-state key operations per tier. Real-timing pool: the analysis plus the point
   // query run once, the tier switches are rebuilds.
   {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "layout_slots_ignore_transient_states");
+    static gui::GuiState probe;
+    static bool draw_probe = false;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (!draw_probe) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(8.0f, 60.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(gui::UiPx(480.0f), gui::UiPx(360.0f)), ImGuiCond_Always);
+      ImGui::Begin("Layout map probe", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+      gui::RenderAnalyzeMapRegion(probe, ImGui::GetContentRegionAvail());
+      ImGui::End();
+      gui::RenderAnalyzePoseViewWindow(probe);
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      probe = gui::GuiState{};
+      probe.analyze_pose_view_open = true;
+      draw_probe = true;
+      struct DrawLease {
+        ~DrawLease() { draw_probe = false; }
+      } lease;
+      ctx->Yield(3);
+      PinPoseViewOnScreen(ctx);
+      // The separate fake state exercises layout branches only. Actual query adoption and
+      // physical interaction remain the real-consumer cases' responsibility.
+      const char* refs[] = { "**/##map_canvas",
+                             "**/λ##map",
+                             "**/alt°##sky",
+                             "**/az°##sky",
+                             "**/Set sky point###sky_set",
+                             "**/Clear##sky",
+                             "**/##globe_canvas",
+                             "**/##globe_component",
+                             "**/##globe_sample",
+                             "**/Play##globe_play",
+                             "**/##r3d_canvas",
+                             "**/##pose_curve_canvas" };
+      const auto read_anchor = [ctx](const char* ref) {
+        if (std::strcmp(ref, "**/##globe_component") == 0) {
+          ImGuiWindow* globe = PoseRegionWindow("##AnalyzeSunGlobe");
+          return globe != nullptr ? ctx->ItemInfo(globe->GetID("##globe_component"), ImGuiTestOpFlags_NoError) :
+                                    ctx->ItemInfoNull();
+        }
+        return ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
+      };
+      std::vector<ImRect> anchors;
+      for (const char* ref : refs) {
+        const auto item = read_anchor(ref);
+        if (item.ID == 0) {
+          IM_ERRORF("Missing layout anchor: %s", ref);
+          return;
+        }
+        anchors.push_back(item.RectFull);
+      }
+      const auto compare = [&]() -> bool {
+        for (size_t i = 0; i < anchors.size(); ++i) {
+          const auto item = read_anchor(refs[i]);
+          if (item.ID == 0 || std::abs(item.RectFull.Min.x - anchors[i].Min.x) > 0.5f ||
+              std::abs(item.RectFull.Min.y - anchors[i].Min.y) > 0.5f ||
+              std::abs(item.RectFull.Max.x - anchors[i].Max.x) > 0.5f ||
+              std::abs(item.RectFull.Max.y - anchors[i].Max.y) > 0.5f) {
+            IM_ERRORF("Transient state moved %s", refs[i]);
+            return false;
+          }
+        }
+        return true;
+      };
+      for (int state = 0; state < 3; ++state) {
+        probe.analysis.map.intent_valid = true;
+        probe.analysis.point.intent_valid = true;
+        probe.analysis.map.cancelled_for_key = state == 1;
+        probe.analysis.point.cancelled_for_key = state == 1;
+        probe.analysis.map.adopted_error = state == 2 ? std::string(1000, 'X') : "";
+        probe.analysis.point.adopted_error = state == 2 ? std::string(1000, 'X') : "";
+        ctx->Yield(1);
+        if (!compare()) {
+          return;
+        }
+        ctx->Yield(2);
+        if (!compare()) {
+          return;
+        }
+        ctx->LogInfo("[layout state] waiting/cancelled/refused arm %d: first and intermediate frames stable", state);
+      }
+      IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_refused.png").string()));
+      IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("layout_map_refused_fixture.png").string()));
+      IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kRefused);
+      IM_CHECK(gui::PointQueryStateFor(probe.analysis.point) == gui::PointQueryState::kRefused);
+      // Put the map above the pose for an actual typing/click chain while the status changes.
+      ctx->SetRef("//Layout map probe");
+      ctx->WindowFocus("//Layout map probe");
+      ctx->ItemInputValue("**/alt°##sky", 30.0f);
+      probe.analysis.map.adopted_error.clear();
+      probe.analysis.point.adopted_error.clear();
+      ctx->Yield(1);
+      IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kWaiting);
+      ctx->ItemInputValue("**/az°##sky", 180.0f);
+      ctx->ItemClick("**/Set sky point###sky_set");
+      IM_CHECK(probe.analysis.sky_point.valid);
+      IM_CHECK_FLOAT_NEAR(probe.analysis.sky_point.dir[2], -0.5f, 1e-4f);
+      IM_CHECK(!probe.analysis.sky_point.from_map_pick);
+      ctx->SetRef("");
+      IM_CHECK(compare());
+    };
+  }
+  {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "operation_anchors_ignore_roi_and_messages");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
@@ -10818,6 +10980,57 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       const ImRect settled = ctx->ItemInfo(kAnalyzeButton).RectFull;
       IM_CHECK_FLOAT_NEAR(settled.Min.x, before.Min.x, 0.5f);
       IM_CHECK_FLOAT_NEAR(settled.Min.y, before.Min.y, 0.5f);
+      // Calibrate the boundary from complete rendered item footprints, not the product's
+      // template formula. The label probe includes the budget pair's trailing label column.
+      const float span = ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
+      gui::g_state.workspace.right_column_ratio = 0.2f;
+      ctx->Yield(3);
+      const auto whole = ctx->ItemInfo("Whole sky");
+      const auto radius = ctx->ItemInfo("Radius###Radius_narrow");
+      IM_CHECK_FLOAT_NEAR(whole.RectFull.Min.y, radius.RectFull.Min.y, 0.5f);
+      // The test engine exposes a scalar slider's frame, not its trailing label. Include
+      // the actual font advance too; a frame-only ruler misses the clipped control name.
+      const float radius_label_width = ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
+      const float full_footprint = radius.RectFull.Max.x - whole.RectFull.Min.x + radius_label_width;
+      const float padding = ImGui::GetStyle().WindowPadding.x * 2.0f;
+      const auto at_width = [&](float content_width, bool single) -> bool {
+        gui::g_state.workspace.right_column_ratio =
+            (span - gui::UiPx(gui::kAnalyzeSplitterSize) - content_width - padding) / span;
+        ctx->Yield(2);
+        gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
+        ctx->Yield(1);
+        const auto run = ctx->ItemInfo(kAnalyzeButton);
+        const auto budget = ctx->ItemInfo("##Rays(M)_input");
+        const auto ring = ctx->ItemInfo("Radius###Radius_narrow");
+        ImGuiWindow* host = ctx->GetWindowByRef(PanoramaRegionRef());
+        IM_CHECK_RETV(host != nullptr, false);
+        const bool one_row = std::abs(run.RectFull.Min.y - budget.RectFull.Min.y) < 0.5f;
+        ctx->LogInfo("[operation boundary diagnostic] width=%.1f run-y=%.1f budget-y=%.1f radius-y=%.1f height=%.1f",
+                     host->Size.x - padding, run.RectFull.Min.y, budget.RectFull.Min.y, ring.RectFull.Min.y,
+                     gui::AnalyzeOperationBarHeight(host->Size.x - padding));
+        IM_CHECK_RETV(one_row == single, false);
+        IM_CHECK_RETV(ring.RectFull.Max.x + radius_label_width <= host->InnerClipRect.Max.x + 0.5f, false);
+        const ImRect point_picture = PanoramaPictureWindow()->Rect();
+        gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
+        ctx->Yield(1);
+        const ImRect whole_picture = PanoramaPictureWindow()->Rect();
+        const auto whole_run = ctx->ItemInfo(kAnalyzeButton);
+        IM_CHECK_RETV(std::abs(point_picture.GetHeight() - whole_picture.GetHeight()) < 0.5f, false);
+        IM_CHECK_RETV(std::abs(whole_run.RectFull.Min.x - run.RectFull.Min.x) < 0.5f &&
+                          std::abs(whole_run.RectFull.Min.y - run.RectFull.Min.y) < 0.5f,
+                      false);
+        IM_CHECK_RETV(
+            SaveWindowPng(ctx, PanoramaRegionRef(),
+                          GuiTestTempPath(single ? "layout_main_single.png" : "layout_main_double.png").string()),
+            false);
+        ctx->LogInfo("[operation boundary] actual content %.1f, measured footprint %.1f, rows=%d, picture h=%.1f",
+                     host->Size.x - padding, full_footprint, one_row ? 1 : 2, whole_picture.GetHeight());
+        return true;
+      };
+      IM_CHECK(at_width(full_footprint - 1.0f, false));
+      IM_CHECK(at_width(full_footprint + 1.0f, true));
+      IM_CHECK(at_width(gui::UiPx(gui::kAnalyzeMainViewMinWidth) - padding, false));
+      gui::g_state.workspace.right_column_ratio = gui::kAnalyzeRightColumnDefaultRatio;
       ctx->SetRef("");
     };
   }

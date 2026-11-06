@@ -496,7 +496,7 @@ void RenderScenePanorama(GLFWwindow* window) {
   ImGui::EndChild();
   // Only genuinely compressed geometry scrolls controls. The normal two templates render flat,
   // preserving the controls' existing IDs; query state never enters this decision.
-  if (avail.x < UiPx(340.0f) || picture_h + status_h + bar_h + gap * 2.0f > avail.y) {
+  if (AnalyzeOperationBarNeedsScroll(avail.x) || picture_h + status_h + bar_h + gap * 2.0f > avail.y) {
     ImGui::BeginChild("##AnalyzeOpBarScroll", ImVec2(0.0f, std::max(1.0f, bar_h)));
     RenderAnalyzeOperationBar(g_state, g_server);
     ImGui::EndChild();
