@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -6559,20 +6560,36 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   // wait out into an explicit red; every current caller runs a canonical scene where the map
   // completes.
   int map_settle_streak = 0;
+  // [760-probe] TEMPORARY (task 760, M3 controlled check): per-poll record of the five settle
+  // conditions, the streak and the map intent id across first-adoption → release. Reverted
+  // before review; committed first per the red-state-probe discipline.
+  int probe_settle_polls = 0;
   IM_CHECK_RETV(DriveUntil(
                     ctx,
-                    [&map_settle_streak] {
+                    [&map_settle_streak, &probe_settle_polls] {
                       const gui::MapQuerySession& map = gui::g_state.analysis.map;
                       const gui::MapViewState& view = gui::g_state.analysis.map_view;
-                      const bool quiet = map.adopted_result != nullptr && map.adopted_id == map.intent_id &&
-                                         view.auto_fit_done && gui::MapViewSettled(ImGui::GetTime(), view) &&
-                                         !gui::g_survey_executor.InFlight(gui::QueryFace::kMap);
+                      const bool c_adopted = map.adopted_result != nullptr;
+                      const bool c_current = map.adopted_id == map.intent_id;
+                      const bool c_autofit = view.auto_fit_done;
+                      const bool c_settled = gui::MapViewSettled(ImGui::GetTime(), view);
+                      const bool c_quiet = !gui::g_survey_executor.InFlight(gui::QueryFace::kMap);
+                      const bool quiet = c_adopted && c_current && c_autofit && c_settled && c_quiet;
                       map_settle_streak = quiet ? map_settle_streak + 1 : 0;
+                      std::fprintf(stdout,
+                                   "[760-probe] settle poll=%d adopted=%d current=%d autofit=%d settled=%d quiet=%d "
+                                   "streak=%d intent=%llu/%llu\n",
+                                   ++probe_settle_polls, (int)c_adopted, (int)c_current, (int)c_autofit, (int)c_settled,
+                                   (int)c_quiet, map_settle_streak, map.intent_id.generation, map.intent_id.serial);
+                      std::fflush(stdout);
                       return map_settle_streak >= 3;
                     },
                     60),
                 false);
   const gui::SurveyQueryId map_intent_at_release = gui::g_state.analysis.map.intent_id;
+  std::fprintf(stdout, "[760-probe] settle RELEASED streak=%d intent=%llu/%llu\n", map_settle_streak,
+               map_intent_at_release.generation, map_intent_at_release.serial);
+  std::fflush(stdout);
   ctx->ItemInputValue("**/alt°##sky", 42.0f);
   ctx->ItemInputValue("**/az°##sky", 0.0f);
   ctx->ItemClick("**/Set sky point###sky_set");
@@ -6581,6 +6598,10 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   // assert the write landed, and that no map refinement reflowed the region behind the click.
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_intent_at_release, false);
+  std::fprintf(stdout, "[760-probe] settle POST-INPUT intent=%llu/%llu sky_valid=%d\n",
+               gui::g_state.analysis.map.intent_id.generation, gui::g_state.analysis.map.intent_id.serial,
+               (int)gui::g_state.analysis.sky_point.valid);
+  std::fflush(stdout);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
