@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793969708292,
+  "lastUpdate": 1793969714001,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5fd26ee965155e74cedf143214fd9a1c3a9a0314",
-          "message": "Merge pull request #465 from LoveDaisy/fix/ui-scale-window-geometry\n\nfix(gui): keep background aspect ratios consistent across UI scales",
-          "timestamp": "2026-10-03T10:47:02+08:00",
-          "tree_id": "2223b1e6369a418cca96f536688a1de685794a1c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/5fd26ee965155e74cedf143214fd9a1c3a9a0314"
-        },
-        "date": 1790995801206,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 819798.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1023683.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 725381.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 946820.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "008837c9802a7b770cb84375e081eaa995c9a7ea",
           "message": "Merge pull request #466 from LoveDaisy/fix/channel-br-background-free\n\nfix(render): exclude sky background from B-R diagnostic",
           "timestamp": "2026-10-03T20:14:42+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 704956.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "da8dbd629fdc05ea5ef7dc6ed218130409569f00",
+          "message": "Merge pull request #569 from LoveDaisy/feat/analyze-main-direct-gestures\n\nfix(gui): direct point gestures and shared main-view zoom",
+          "timestamp": "2026-11-06T20:51:42+08:00",
+          "tree_id": "1034a6db0ddbe12f966cb71f61d31b197e9a04f3",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/da8dbd629fdc05ea5ef7dc6ed218130409569f00"
+        },
+        "date": 1793969713348,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 915487.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1009743.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 767141.9,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 702449.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
