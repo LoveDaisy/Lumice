@@ -2410,13 +2410,10 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
   PointViewState& view = state.analysis.point_view;
 
   ImGui::Separator();
-  // The title row is the Pose & trace window's one open entry (contract §7): clicking it makes
-  // sure the window is open — an already-open window re-clicked reopens after a manual close
-  // (the class row's own open-entry shape, analysis_panel.cpp). Opening is a display-state
-  // write only: it starts no query and touches no document field. The NEGATIVE half of the
-  // entry is structural: the sky-point writers (map pick, marker drag, coordinate input) and
-  // the λ writer live in the map TU, which holds no reference to this flag — setting a sky
-  // point never pops the window open (the user's explicit requirement).
+  // This title and the Raypath view's Pose & trace button ensure the same window is open.
+  // Both write display state only: neither starts a query nor touches a document field.
+  // Sky-point writers (map pick, marker drag, coordinate Set) remain separate from navigation:
+  // setting a sky point never pops the window open.
   if (ImGui::Selectable("Point detail")) {
     state.analyze_pose_view_open = true;
   }

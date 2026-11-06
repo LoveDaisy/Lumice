@@ -1773,6 +1773,20 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   ImGui::EndDisabled();
 
+  // Navigation is display-only, like the Point detail title in the main window. Keep it
+  // outside the growing report, available even before a class/point or drawable result exists.
+  // Only geometry chooses the label's line break; query states never move this operation stack.
+  ImGui::Separator();
+  const float pose_label_w = ImGui::CalcTextSize("Pose & trace").x + style_fp_x * 2.0f;
+  const char* pose_label =
+      pose_label_w <= ImGui::GetContentRegionAvail().x ? "Pose & trace###pose_open" : "Pose &\ntrace###pose_open";
+  if (ImGui::Button(pose_label)) {
+    state.analyze_pose_view_open = true;
+  }
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+  ImGui::TextWrapped("3D ray & pose.\nSelect class + sky point.");
+  ImGui::PopStyleColor();
+
   ImGui::BeginChild("##MapReport", RemainingReportSize());
   // The identity line (contract §6's status summary): the selected class named WHERE it is read.
   // The list that carries the same label can be off-screen while this window is open (Render
