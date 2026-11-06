@@ -36,6 +36,14 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 
 **Look At 跟随（as-built）**：`GuiState::look_at` 只保存所选具名目标与跟随意图，是 T-session，不是相机姿态的第二份副本。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，再保留本次输入；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁；`Reset` 解除 Lock 但保留目标。`ResetFrontendState` 对 New / 成功 Open / Revert 都恢复 `Sun + unlocked`，失败或取消的 Open 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim；太阳高度本身原有的 sim effect 不变。
 
+> **Raypath view 的共享相机后续合同（尚未实施）**：见 [raypath-view-camera.md](raypath-view-camera.md) §6–8。
+> 它把当前 map 私有圆盘替换为上述 T-view 的同一权威，不以相机副本互抄实现“同步”；Look At 仍由既有 owner
+> 解析，两个画面装配前统一更新。map 计算意图与冻结 full/detail 源归 T-session，原格/帧/完成前缀是只读结果，
+> 不是 live renderer 的副本；观察只失效投影/overlay，显式质量或真实捕获身份变化才改变数据意图。
+> 数据到达不写相机，不触发 auto-Fit；窗口开合不拥有结果寿命。New/成功 Open/新 capture 沿现 reset/binding
+> 边界失效，Revert 保留原 analysis capture 并如实标旧。具体动作、覆盖/标尺与取消/迟到门只在该蓝图定义，
+> 不将其读作今天已落地的 GUI 行为。
+
 > `renderer.background`（画面天空色，与 `bg_show` / `bg_path` 的背景照片 overlay 不同）当前是客户端 shader 的 display-time 输入：编辑后立即进入 `PreviewParams::background_color_linear`，不 dirty、不 bump epoch、也不下发 server。它仍由 `ConfigSnapshot::renderer_background` 独立记录，因而 Revert 可以恢复；这说明“纯客户端显示字段”与“是否可被 Revert 撤销”是两个正交维度。
 
 > 关键机制：**auto-commit 只在 kSimulating 下发生**（`main.cpp` 的 live-edit block：`dirty && sim_state==kSimulating` 每 `kCommitIntervalMs` 自动 `DoRun`）。**kModified（kDone+dirty）不会自动重跑**——用户必须手点 Run。

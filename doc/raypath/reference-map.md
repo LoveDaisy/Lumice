@@ -112,27 +112,22 @@ that fails the intent's id is dropped, never shown. The consumer-side rules live
 `raypath-analysis.md` §5.1.8 (the 742.5 as-built and the 742.6 handover); this file stays the
 map's own contract.
 
-## Shared-camera feasibility audit (not a replacement contract)
+## Shared-camera display blueprint (not yet implemented)
 
-The computation/display separation and the limits of the retained map payload are audited in
-[raypath-view-camera.md](../gui/raypath-view-camera.md). That record has not established a
-quality- and cost-bounded all-sky representation for every supported pose density; it is not an
-implemented or approved shared-camera blueprint. The view-dependent execution and frozen-result
-contracts above remain the current behavior. Retaining optical events alone would avoid new
-sampling, but evaluating their direction-dependent density is not a pure reprojection of the
-already-completed map. Bounded observation derivation is a valid research candidate, judged by
-actual work and accuracy rather than by the name of a function it calls. The audit's §4.4 records
-a fresh C01/C16-column probe: exact retained-event replay with cached event rows preserved the
-original estimator, yet repeated each visited event 360–400 times and still took about 0.9–4.3 s
-for the column's fine/full native observation chain, before GUI coloring/upload. This rejects
-that direct candidate as an established interactive representation, not all possible representations.
-The subsequent §4.5 structural probe reused the same captured events: a positive range tree preserved
-C01's values and detail, while C16's block spectral-prefix response greatly reduced density-call
-repetition but corrupted weak positive values and true zeros. Strong-domain accuracy alone did not
-preserve dark-direction peaks or widths; the candidate failed quality before interaction timing.
-The §4.6 local positive/log response probe recovered sampled weak/zero semantics without a bitwise
-all-magnitudes requirement, but §4.7's full-tree extension exceeded the 256 MiB research payload
-line before completing even the bottom response level. This is a representation-growth rejection,
-not another spectral-sign failure or an all-algorithm impossibility result. No full positive-tree
-observation timing or all-density representation is established; no shared-camera product or
-replacement C contract is claimed.
+[raypath-view-camera.md](../gui/raypath-view-camera.md) records the current rescan chain,
+rejected continuous-response candidates and the verified frozen-result display alternative.
+Its §6–8 prescribe a single shared camera, a frozen full-sky reference plus one explicitly
+computed detail domain, truthful source-cell readings, completion-prefix compatibility,
+result lifetime and bounded quality/cost acceptance. Camera changes reproject existing
+cells; they do not answer a new statistical band or implicitly run a new map request.
+Obtaining a new fine domain requires an explicit quality action, with its additional click
+and original-query wait stated rather than hidden. A narrow result never supplies all-sky
+coverage and a coarse result never claims fine resolution.
+
+This changes the proposed GUI scheduling/display contract, not the engine estimator,
+view-dependent query, public ABI or frozen ownership above. The existing GUI still uses its
+independent disk and view-change supersession until that blueprint is implemented. The
+blueprint's §4 retains the event-replay, weak/zero spectral-response and full-tree growth
+failures; none is retrospectively declared successful. Its §4.9 establishes independent
+C01/C16 projection/coverage/detail evidence and offscreen GL headroom, not final two-window
+input-to-presentation performance or a continuous all-density response cache.
