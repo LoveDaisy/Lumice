@@ -17,6 +17,12 @@ inline float CanvasHeightBeforeReport(float available, float controls, float rep
   return std::floor(std::max(0.0f, available - controls - report - gap));
 }
 
+// Reports take the remaining vertical slice, but never pass zero to BeginChild: zero there
+// means "fill", not "absent". Keep this container rule with the allocation it protects.
+inline ImVec2 RemainingReportSize() {
+  return ImVec2(0.0f, std::max(1.0f, ImGui::GetContentRegionAvail().y));
+}
+
 // A floating host can keep its nominal minimum while extending beyond the viewport. Its
 // unscrolled content may then fit nominally (ScrollMax == 0) but be impossible to recover on
 // screen. Partition the actual visible client rectangle, rather than the invisible suffix.

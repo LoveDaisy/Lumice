@@ -1284,6 +1284,11 @@ void RenderRequestParamsControls(GuiState& state, float width) {
   SliderWithInput("Rays(M)", &state.analysis.ray_num_millions, kRayNumMinMillions, kRayNumMaxMillions, kRayNumSliderFmt,
                   kRayNumSliderScale, LabelPlacement::kTrailing, nullptr, nullptr, width);
   ImGui::EndDisabled();
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip(
+        "Total rays the analysis traces across all wavelengths, in millions.\n"
+        "Starts from the document's Rays; independent of it from then on.");
+  }
 }
 
 // The top line of the window when the list on show no longer describes the document on the
@@ -1887,7 +1892,7 @@ namespace {
 
 // The operation bar's inline-width measures and its one join judgment. Every join on the bar —
 // the region radios', Analyze/Stop's, the budget's, the radius's — is made through the same two
-// helpers and the same FitsOnBarLine, so no two joins measure a row differently.
+// helpers; the template below owns both the joins and the reserved height.
 float InlineLabelledControlWidth(const char* label) {
   // A radio and a checkbox draw the same way: square + inner spacing + text.
   return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
@@ -1897,13 +1902,6 @@ float InlineButtonWidth(const char* label) {
   return ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 
-// SameLine is a judgment, not a default: the panorama region's width has no floor below the
-// ③ split's share, where a row's full extent no longer fits — the judged item wraps rather than
-// clip (a clipped control is an operation the user cannot reach; contract §11 R6).
-bool FitsOnBarLine(float next_w) {
-  return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <=
-         ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
-}
 
 }  // namespace
 
@@ -1913,11 +1911,11 @@ bool FitsOnBarLine(float next_w) {
 // the moment of the click — is a moving target under a camera the user drives, against the
 // sky-direction semantics the other two anchor. The mode's CLI/C API contract and the engine
 // behind it are untouched.
-void RenderPanoramaRoiControls(GuiState& state) {
+void RenderPanoramaRoiControls(GuiState& state, bool join_point) {
   auto& a = state.analysis;
   const int prev_mode = a.roi_mode;
   ImGui::RadioButton("Whole sky", &a.roi_mode, LUMICE_RAYPATH_ROI_FULL_SKY);
-  if (FitsOnBarLine(InlineLabelledControlWidth("Point"))) {
+  if (join_point) {
     ImGui::SameLine();
   }
   // "Point" is a choice made against a picture of the document, so the radio waits for the
@@ -1951,6 +1949,8 @@ void RenderPanoramaRoiControls(GuiState& state) {
 
 namespace {
 struct OperationWidths {
+  float modes;
+  float with_run;
   float first;
   float budget;
   float radius;
@@ -1959,8 +1959,9 @@ struct OperationWidths {
 OperationWidths MeasureOperationWidths() {
   const float gap = ImGui::GetStyle().ItemSpacing.x;
   OperationWidths w;
-  w.first = InlineLabelledControlWidth("Whole sky") + InlineLabelledControlWidth("Point") +
-            InlineButtonWidth(ICON_FA_PLAY " Analyze") + InlineLabelledControlWidth("Infinite rays") + gap * 3.0f;
+  w.modes = InlineLabelledControlWidth("Whole sky") + InlineLabelledControlWidth("Point") + gap;
+  w.with_run = w.modes + InlineButtonWidth(ICON_FA_PLAY " Analyze") + gap;
+  w.first = w.with_run + InlineLabelledControlWidth("Infinite rays") + gap;
   w.budget = UiPx(40.0f + kInputWidth + kLabelColWidth) + gap + LabelColumnGapX();
   w.radius = UiPx(80.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
   w.single = w.first + w.budget + w.radius + gap * 2.0f;
@@ -1982,12 +1983,15 @@ void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
   const float width = ImGui::GetContentRegionAvail().x;
   const OperationWidths w = MeasureOperationWidths();
   const bool single = width >= w.single;
-  RenderPanoramaRoiControls(state);
-  RenderRunControls(state, server, FitsOnBarLine(InlineButtonWidth(ICON_FA_PLAY " Analyze")));
-  if (FitsOnBarLine(InlineLabelledControlWidth("Infinite rays"))) {
+  RenderPanoramaRoiControls(state, width >= w.modes);
+  RenderRunControls(state, server, width >= w.with_run);
+  if (width >= w.first) {
     ImGui::SameLine();
   }
   Checkbox("Infinite rays", &state.analysis.infinite);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Trace until stopped.");
+  }
   if (single) {
     ImGui::SameLine();
   }
@@ -2021,7 +2025,7 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
       ImGui::TextWrapped("Record full (%s hits). Unrecorded chains contribute to other; percentages still sum to 100.",
                          FormatThousands(static_cast<std::uint64_t>(payload->truncated_chain_count)).c_str());
     }
-    if (payload->roi_mode == LUMICE_RAYPATH_ROI_CONE) {
+    if (payload->roi_mode == LUMICE_RAYPATH_ROI_CONE && payload->cone_ring_count > 0) {
       ImGui::TextWrapped("%d / %d rings", state.analysis_result.display_ring_count, payload->cone_ring_count);
     }
   }

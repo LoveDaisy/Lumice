@@ -480,7 +480,7 @@ void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server);
 void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server);
 
 // The operation bar's Whole sky / Point radios with direct-gesture guidance.
-void RenderPanoramaRoiControls(GuiState& state);
+void RenderPanoramaRoiControls(GuiState& state, bool join_point);
 
 // The marker and ring over the Analyze workspace's panorama: CONE mode with a projectable centre
 // draws through the one DrawRoiRingImpl. (The preview-side twin retired with the analysis

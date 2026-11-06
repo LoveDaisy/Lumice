@@ -1068,8 +1068,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     view.last_play_step_s = ImGui::GetTime();
   }
   ImGui::EndDisabled();
-  ImGui::BeginChild("##AnalyzeGlobeState", ImVec2(0.0f, std::max(1.0f, ImGui::GetContentRegionAvail().y)),
-                    ImGuiChildFlags_Borders);
+  ImGui::BeginChild("##AnalyzeGlobeState", RemainingReportSize(), ImGuiChildFlags_Borders);
   const auto render_content = [&] {
     const PointQueryState st = PointQueryStateFor(point);
     if (st == PointQueryState::kNoIntent) {
@@ -1176,7 +1175,12 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       });
       return;
     }
-    bool have_grid = false;
+    // Payload availability is independent of whether this geometry can show the canvas.
+    LUMICE_PathSunGrid grid{};
+    grid.struct_size = sizeof(grid);
+    const bool have_grid = view.show_deviation_grid &&
+                           LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK &&
+                           grid.cell_count > 0;
     if (graph_side > 0.0f) {
       SunGlobeProjector projector;
       const bool have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
@@ -1196,11 +1200,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 
       // The deviation backdrop: only when the document carries a grid (AC2's named-absence rule) and
       // the toggle stands.
-      LUMICE_PathSunGrid grid{};
-      grid.struct_size = sizeof(grid);
-      have_grid = view.show_deviation_grid &&
-                  LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK &&
-                  grid.cell_count > 0;
       if (have_grid) {
         const double deg_to_rad = 3.14159265358979323846 / 180.0;
         for (int i = 0; i < grid.lat_count; ++i) {
@@ -1349,7 +1348,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                                    IM_COL32(16, 18, 22, 255));
   }
   AnalyzeRegionWheelClaim(graph_hovered, AnalyzeRay3DWheelOwnerId());
-  ImGui::BeginChild("##Ray3DReport", ImVec2(0.0f, std::max(1.0f, ImGui::GetContentRegionAvail().y)));
+  ImGui::BeginChild("##Ray3DReport", RemainingReportSize());
   const auto render_content = [&] {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
@@ -1815,7 +1814,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     graph_draw_list->AddRectFilled(graph_min, ImVec2(graph_min.x + graph_size.x, graph_min.y + graph_h),
                                    IM_COL32(16, 18, 22, 255));
   }
-  ImGui::BeginChild("##PoseCurveScroll", ImVec2(0.0f, std::max(1.0f, ImGui::GetContentRegionAvail().y)));
+  ImGui::BeginChild("##PoseCurveScroll", RemainingReportSize());
   const auto render_content = [&] {
     const PointQueryState st = PointQueryStateFor(point);
     if (st == PointQueryState::kNoIntent) {

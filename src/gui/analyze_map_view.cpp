@@ -1526,7 +1526,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
 
-  ImGui::BeginChild("##MapState", ImVec2(0.0f, std::max(1.0f, ImGui::GetContentRegionAvail().y)));
+  ImGui::BeginChild("##MapState", RemainingReportSize());
   // The state line (the four visible states + the two supersession notes). It reads the
   // picture's own query state, so it stays with the picture; the controls it names — the
   // wavelength, the view buttons, the sky-point input — live in the info region beside it.
@@ -1773,7 +1773,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   ImGui::EndDisabled();
 
-  ImGui::BeginChild("##MapReport", ImVec2(0.0f, std::max(1.0f, ImGui::GetContentRegionAvail().y)));
+  ImGui::BeginChild("##MapReport", RemainingReportSize());
   // The identity line (contract §6's status summary): the selected class named WHERE it is read.
   // The list that carries the same label can be off-screen while this window is open (Render
   // workspace, an occluding float), so the window re-states the list's own text — the one chain
