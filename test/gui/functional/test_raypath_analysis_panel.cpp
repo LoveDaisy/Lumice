@@ -181,6 +181,13 @@ bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
     if (std::chrono::steady_clock::now() > deadline) {
       return false;
     }
+    if (ctx->IsError()) {
+      // A poisoned context cannot complete any wait — every later op short-circuits on the
+      // sticky error (the poison-cascade note at ScopedWatchdogGuard describes the same shape),
+      // so spinning the full budget only buries the engine's error line under a timeout. Fail
+      // now; the error line already names the cause.
+      return false;
+    }
     ctx->Yield();
   }
   return true;
@@ -6538,9 +6545,42 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
   PinRaypathViewOnScreen(ctx);
+  // The row click keyed the map session and its default auto-Fit chain: the query lands
+  // sub-second, the once-per-selection auto-Fit fires a refinement right after (a new view key
+  // the pump re-asks past its settle window), and each adopted answer renders a caliber block
+  // above the info region's sky row — the altitude/azimuth inputs reflow under it. Typing
+  // through that reflow moves an item between the hover and the click, the engine records a
+  // hover error, and the sticky error silently skips the Set click (the input chain then looks
+  // like a pump that never picked the intent up). Wait out the WHOLE chain before typing: the
+  // adopted answer on show, no refinement owed (adopted_id == intent_id), the auto-Fit latch
+  // spent, the view past its settle window, nothing in flight — held across 3 consecutive
+  // polls, so a pending resend (which would surface as InFlight / adopted_id movement right
+  // after the settle window) cannot slip through a single-frame gap. Refused maps time this
+  // wait out into an explicit red; every current caller runs a canonical scene where the map
+  // completes.
+  int map_settle_streak = 0;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&map_settle_streak] {
+                      const gui::MapQuerySession& map = gui::g_state.analysis.map;
+                      const gui::MapViewState& view = gui::g_state.analysis.map_view;
+                      const bool quiet = map.adopted_result != nullptr && map.adopted_id == map.intent_id &&
+                                         view.auto_fit_done && gui::MapViewSettled(ImGui::GetTime(), view) &&
+                                         !gui::g_survey_executor.InFlight(gui::QueryFace::kMap);
+                      map_settle_streak = quiet ? map_settle_streak + 1 : 0;
+                      return map_settle_streak >= 3;
+                    },
+                    60),
+                false);
+  const gui::SurveyQueryId map_intent_at_release = gui::g_state.analysis.map.intent_id;
   ctx->ItemInputValue("**/alt°##sky", 42.0f);
   ctx->ItemInputValue("**/az°##sky", 0.0f);
   ctx->ItemClick("**/Set sky point###sky_set");
+  // The input chain's own completion evidence: a Set click the engine skipped (any sticky
+  // error from the ops above) would leave the sky point unwritten and the pump honestly idle —
+  // assert the write landed, and that no map refinement reflowed the region behind the click.
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_intent_at_release, false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
@@ -6926,29 +6966,36 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ctx->LogInfo(
       "[scopes] first-class request executing across the class switch; adopted doc's faces = the second class's");
 
-  // ---- ③ target A issued and observed EXECUTING (the per-face running token; A's intent id
-  // saved by value), then target B supersedes it mid-flight — the pump's key swap is the
-  // readback that B's intent now stands — and only then does the case switch workspaces. The
-  // Render-side pump adopts B's answer with the windows open, and the document's own target
-  // echo (alt 30) judges the document that LANDED: had A's answer been the final one, the doc
-  // would read A's target and fail here. What this layer cannot distinguish is a transient
-  // stale-A adoption that B's later answer overwrites — the completion-event ordering and the
-  // refusal behind it are executor-internal contracts, structurally not exposed to the GUI
-  // layer; the unit layer's SurveyExecutorSupersedesRefusesOnReleaseAndJoins carries them, and
-  // no GUI-layer claim is made for that ordering. This case owns the GUI-side composition.
+  // ---- ③ target A issued against a direct sky-point write (A's intent id saved at the pump's
+  // observed reaction), then target B supersedes it — the pump's key swap is the readback that
+  // B's intent now stands — and only then does the case switch workspaces. The wait accepts
+  // BOTH of the pump's honest reactions: the intent observed executing (the per-face running
+  // token), or the intent already completed and adopted — the executor runs one query at a
+  // time, and on a fast, quiet machine a point query can run its full course inside the one
+  // frame between two polls, a shape the leg-3 probe runs measured directly. When the
+  // completed shape wins, B supersedes a COMPLETED A rather than a mid-flight one; the
+  // unconditional mid-flight supersession composition is carried by legs ① and ②, whose waits
+  // start with their intent already issued. The Render-side pump adopts B's answer with the
+  // windows open, and the document's own target echo (alt 30) judges the document that LANDED:
+  // had A's answer been the final one, the doc would read A's target and fail here. What this
+  // layer cannot distinguish is a transient stale-A adoption that B's later answer overwrites
+  // — the completion-event ordering and the refusal behind it are executor-internal contracts,
+  // structurally not exposed to the GUI layer; the unit layer's
+  // SurveyExecutorSupersedesRefusesOnReleaseAndJoins carries them, and no GUI-layer claim is
+  // made for that ordering. This case owns the GUI-side composition.
   SetSkyPointTarget(28.0, 8.0);
   gui::SurveyQueryId target_a_id;
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [&target_a_id] {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
                       const bool issued =
                           p.intent_valid &&
                           std::fabs(p.key.target_dir[2] - (-std::sin(28.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                          gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                          gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                          (state == gui::PointQueryState::kWaiting || state == gui::PointQueryState::kCompleted);
                       if (issued) {
-                        target_a_id = p.intent_id;  // A's request id, by value, at its observed execution
+                        target_a_id = p.intent_id;  // A's request id, by value, at the pump's observed reaction
                       }
                       return issued;
                     },
@@ -6987,7 +7034,8 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                     60),
                 false);
   ctx->LogInfo(
-      "[scopes] A executed, B superseded it mid-flight, B's answer landed across the workspace switch (alt 30)");
+      "[scopes] A issued (observed executing or completed in-window), B's intent stands (id moved), B's answer "
+      "landed across the workspace switch (alt 30)");
   ctx->ItemClick("##TopBar/Analyze");
   ctx->Yield(3);
   IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
