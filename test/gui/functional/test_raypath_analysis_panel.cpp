@@ -3633,6 +3633,8 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id != cancelled_id, false);
+  IM_CHECK_RETV(!gui::g_state.analysis.survey.cancelled_for_key, false);
   ctx->LogInfo("[v1 cancel] a changed selection cleared the latch and answered");
   // The stage's render run keeps going from here — the guard tears the server down with it, the
   // same hand-off the unbounded preview-animation legs leave behind (the run-lifecycle suite
