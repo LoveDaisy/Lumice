@@ -130,5 +130,9 @@ The subsequent §4.5 structural probe reused the same captured events: a positiv
 C01's values and detail, while C16's block spectral-prefix response greatly reduced density-call
 repetition but corrupted weak positive values and true zeros. Strong-domain accuracy alone did not
 preserve dark-direction peaks or widths; the candidate failed quality before interaction timing.
-Neither experiment establishes an all-density representation. No shared-camera product or replacement
-C contract is claimed.
+The §4.6 local positive/log response probe recovered sampled weak/zero semantics without a bitwise
+all-magnitudes requirement, but §4.7's full-tree extension exceeded the 256 MiB research payload
+line before completing even the bottom response level. This is a representation-growth rejection,
+not another spectral-sign failure or an all-algorithm impossibility result. No full positive-tree
+observation timing or all-density representation is established; no shared-camera product or
+replacement C contract is claimed.
