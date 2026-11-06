@@ -38,7 +38,15 @@ inline ImGuiID AnalyzeRay3DWheelOwnerId() {
   return ImHashStr("analyze-wheel-ray3d");
 }
 
-// True when a claim of one of this workspace's regions was standing at the frame's start.
+inline ImGuiID MainPictureWheelOwnerId() {
+  return ImHashStr("main-picture-wheel");
+}
+
+inline ImGuiID RenderPictureWheelOwnerId() {
+  return ImHashStr("render-picture-wheel");
+}
+
+// True when a manual picture/analysis region claim was standing at frame start.
 inline bool AnalyzeRegionWheelStanding() {
   static int latch_frame = -1;
   static bool latch_standing = false;
@@ -47,7 +55,8 @@ inline bool AnalyzeRegionWheelStanding() {
     const ImGuiKeyOwnerData& data =
         ImGui::GetCurrentContext()->KeysOwnerData[ImGuiKey_MouseWheelY - ImGuiKey_NamedKey_BEGIN];
     latch_frame = frame;
-    latch_standing = data.OwnerCurr == AnalyzeMapWheelOwnerId() || data.OwnerCurr == AnalyzeRay3DWheelOwnerId();
+    latch_standing = data.OwnerCurr == AnalyzeMapWheelOwnerId() || data.OwnerCurr == AnalyzeRay3DWheelOwnerId() ||
+                     data.OwnerCurr == MainPictureWheelOwnerId() || data.OwnerCurr == RenderPictureWheelOwnerId();
   }
   return latch_standing;
 }

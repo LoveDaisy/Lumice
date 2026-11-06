@@ -17,7 +17,8 @@
 #include <array>
 #include <cmath>
 
-#include "gui/annotation_anchors.hpp"     // GuiSunWorldDir — the sun as the code under test spells it
+#include "gui/annotation_anchors.hpp"  // GuiSunWorldDir — the sun as the code under test spells it
+#include "gui/app.hpp"
 #include "gui/field_editor_registry.hpp"  // ConstraintFor — the gate and bounds the menu borrows
 #include "gui/gui_state.hpp"              // kMarkerDisplayNames — the Overlay list this menu must agree with
 #include "gui/view_look_at.hpp"
@@ -63,6 +64,33 @@ std::array<float, 3> ForwardOfPreset(LookAtId id, float sun_altitude_deg, bool* 
 // ---------------------------------------------------------------------------------------------
 // WorldDirToAzEl — the pose half, pinned at hand-computed points.
 // ---------------------------------------------------------------------------------------------
+
+TEST(CameraWheelZoom, UsesNotchesAndLensBoundsWithoutChangingLookAtOrLifecycle) {
+  lumice::gui::GuiState state;
+  state.look_at.locked = true;
+  // Each lens has a user-facing FOV bound; the full-sky ids are an independent explicit list
+  // here, so changing the production gate alone cannot make this expectation follow it.
+  for (int lens = 0; lens <= 10; ++lens) {
+    SCOPED_TRACE(lens);
+    state.renderer.lens_type = lens;
+    state.renderer.fov = 90.0f;
+    const bool full_sky = lens == 4 || lens == 5 || lens == 6 || lens == 7 || lens == 9;
+    lumice::gui::ApplyCameraWheelZoom(state, 0.5f);
+    EXPECT_FLOAT_EQ(state.renderer.fov, full_sky ? 90.0f : 87.5f);
+    lumice::gui::ApplyCameraWheelZoom(state, -0.5f);
+    EXPECT_FLOAT_EQ(state.renderer.fov, 90.0f);
+    state.renderer.fov = 2.0f;
+    lumice::gui::ApplyCameraWheelZoom(state, 1.0f);
+    EXPECT_FLOAT_EQ(state.renderer.fov, full_sky ? 2.0f : 1.0f);
+    const float maximum = LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens));
+    state.renderer.fov = maximum - 1.0f;
+    lumice::gui::ApplyCameraWheelZoom(state, -1.0f);
+    EXPECT_FLOAT_EQ(state.renderer.fov, full_sky ? maximum - 1.0f : maximum);
+  }
+  EXPECT_TRUE(state.look_at.locked);
+  EXPECT_FALSE(state.dirty);
+  EXPECT_EQ(state.committed_epoch, 0u);
+}
 
 TEST(ViewLookAtMath, InvertsTheCameraForwardAtHandComputedPoints) {
   // Each row is read straight off forward = (-cos(el)cos(az), -cos(el)sin(az), -sin(el)):

@@ -67,9 +67,8 @@ std::vector<float>& AngularDistFamilyAngles(GuiState& state, AngularDistFamily f
 void ArmAngularDistPicker(GuiState& state, AngularDistFamily family) {
   state.angular_dist_picker.armed = true;
   state.angular_dist_picker.family = family;
-  // One click-taking mode at a time (GuiState::AngularDistPicker). The eyedropper's flag is not
-  // GuiState's, so the caller that owns it clears it.
-  state.analysis.pick_armed = false;
+  // The picture host preserves an already owned press; this intent applies to the next one.
+  // The eyedropper's flag is not GuiState's, so the caller that owns it clears it.
   if (family == AngularDistFamily::kSun) {
     state.show_sun_circles_line = true;
   } else {
