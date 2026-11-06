@@ -8551,7 +8551,48 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_region_draws_and_moves_the_shared_cursor");
-    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveRegionDrawsAndMovesTheSharedCursor(ctx)); };
+    static gui::GuiState grid_probe;
+    static bool draw_grid_probe = false;
+    static std::string grid_report;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (!draw_grid_probe) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(40.0f, 60.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(320.0f, 170.0f), ImGuiCond_Always);
+      ImGui::Begin("Compressed grid probe", nullptr, ImGuiWindowFlags_NoResize);
+      ImGui::LogToBuffer();
+      gui::RenderAnalyzeSunGlobeRegion(grid_probe, ImGui::GetContentRegionAvail());
+      ImGui::LogFinish();
+      grid_report = ImGui::GetCurrentContext()->LogBuffer.c_str();
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      IM_CHECK(PoseCurveRegionDrawsAndMovesTheSharedCursor(ctx));
+      grid_probe = gui::GuiState{};
+      grid_probe.analysis.point = gui::g_state.analysis.point;
+      grid_probe.analysis.point_view = gui::g_state.analysis.point_view;
+      grid_probe.analysis.point_view.show_deviation_grid = true;
+      IM_CHECK(grid_probe.analysis.point.adopted_result != nullptr);
+      LUMICE_PathSunGrid grid{};
+      grid.struct_size = sizeof(grid);
+      IM_CHECK_EQ(LUMICE_PathPointGetSunGrid(grid_probe.analysis.point.adopted_result.get(), &grid),
+                  LUMICE_PATH_READ_OK);
+      IM_CHECK_GT(grid.cell_count, 0u);
+      draw_grid_probe = true;
+      struct GridLease {
+        ~GridLease() {
+          draw_grid_probe = false;
+          grid_probe = gui::GuiState{};
+        }
+      } grid_lease;
+      ctx->Yield(3);
+      ctx->SetRef("//Compressed grid probe");
+      IM_CHECK(!ctx->ItemExists("**/##globe_canvas"));
+      IM_CHECK(grid_report.find("Crystal-frame sun directions") != std::string::npos);
+      IM_CHECK(grid_report.find("no sun grid in this document") == std::string::npos);
+      ctx->SetRef("");
+    };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip
