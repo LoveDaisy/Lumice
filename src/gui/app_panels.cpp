@@ -398,6 +398,33 @@ float ToolbarGroupButtonWidth(std::initializer_list<const char*> labels) {
   }
   return widest + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
+// Both expressions hash to the same identity, including while SaveMenu is open during a resize.
+struct ToolbarCommand {
+  const char* full;
+  const char* compact;
+  const char* Label(bool show_text) const { return show_text ? full : compact; }
+};
+constexpr ToolbarCommand kToolbarNew{ ICON_FA_FILE " New###toolbar_new", ICON_FA_FILE "###toolbar_new" };
+constexpr ToolbarCommand kToolbarOpen{ ICON_FA_FOLDER_OPEN " Open###toolbar_open",
+                                       ICON_FA_FOLDER_OPEN "###toolbar_open" };
+constexpr ToolbarCommand kToolbarSave{ ICON_FA_FLOPPY_DISK " Save###toolbar_save",
+                                       ICON_FA_FLOPPY_DISK "###toolbar_save" };
+constexpr ToolbarCommand kToolbarColors{ ICON_FA_PALETTE " Colors###toolbar_colors",
+                                         ICON_FA_PALETTE "###toolbar_colors" };
+constexpr ToolbarCommand kToolbarSummary{ ICON_FA_FILE_LINES " Summary###toolbar_summary",
+                                          ICON_FA_FILE_LINES "###toolbar_summary" };
+constexpr ToolbarCommand kToolbarSettings{ ICON_FA_GEAR " Settings###toolbar_settings",
+                                           ICON_FA_GEAR "###toolbar_settings" };
+
+// Selected mode, not a configured-content badge: the same solid accent / contrasting text as the
+// Axis label chips. Hover and press keep the selection visible rather than restoring a neutral fill.
+void PushToolbarCurrentModeStyle() {
+  const ImVec4 accent = AccentColor();
+  ImGui::PushStyleColor(ImGuiCol_Button, accent);
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, accent);
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+}
 }  // namespace
 
 // Pin a chrome panel to the main viewport so ImGui never promotes it to an
@@ -424,6 +451,37 @@ void RenderTopBar(float window_width) {
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
+  const auto& style = ImGui::GetStyle();
+  const char* kRunLabel = ICON_FA_PLAY " Run";
+  const char* kStopLabel = ICON_FA_STOP " Stop";
+  const char* kStoppingLabel = ICON_FA_STOP " Stopping...";
+  const char* kContinueLabel = ICON_FA_FORWARD " Continue";
+  const float run_stop_width = ToolbarGroupButtonWidth({ kRunLabel, kStopLabel, kStoppingLabel, kContinueLabel });
+  const float cell_width = ToolbarGroupButtonWidth({ "Render", "Analyze" });
+  const float toggle_width = ToolbarGroupButtonWidth({ ICON_FA_CHEVRON_LEFT, ICON_FA_CHEVRON_RIGHT });
+  const float full_file_width = ToolbarGroupButtonWidth({ kToolbarNew.full, kToolbarOpen.full, kToolbarSave.full });
+  const float checkbox_width = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
+                               std::max(ImGui::CalcTextSize("Full Spectrum").x, ImGui::CalcTextSize("Colored").x);
+  const float pip_width = ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x;
+  const float channel_width = checkbox_width + style.ItemSpacing.x + pip_width;
+  const float revert_pair_width =
+      ImGui::CalcTextSize(ICON_FA_CIRCLE_EXCLAMATION).x + style.ItemSpacing.x + ToolbarGroupButtonWidth({ "Revert" });
+  const float group_gap =
+      std::max(UiPx(TopBarGroupGapPt(window_width / CurrentUiScale())), style.ItemSpacing.x * 2.0f + 1.0f);
+  // Full-row demand, never this frame's remaining whitespace. The two toggles, five group
+  // boundaries, longest execution labels, longest channel + pip and hidden status corner all
+  // take part even when their content is absent. Recomputed from the LIVE font/style each frame,
+  // so a font rebuild needs no cache invalidation and no business state can change this decision.
+  const float full_required =
+      style.WindowPadding.x * 2.0f + toggle_width * 2.0f + group_gap * 5.0f + run_stop_width * 2.0f +
+      full_file_width * 3.0f + ToolbarGroupButtonWidth({ kToolbarColors.full }) +
+      ToolbarGroupButtonWidth({ kToolbarSummary.full }) + channel_width + cell_width * 2.0f +
+      ToolbarGroupButtonWidth({ kToolbarSettings.full }) + revert_pair_width + style.ItemSpacing.x * 7.0f;
+  const bool show_command_text = full_required <= window_width;
+  const float file_op_width =
+      show_command_text ? full_file_width :
+                          ToolbarGroupButtonWidth({ kToolbarNew.compact, kToolbarOpen.compact, kToolbarSave.compact });
+
   // Left-panel collapse toggle (placed before Run/Stop; owns the leftmost slot of the top bar
   // so it can never overlap with panel-internal headers).
   {
@@ -443,12 +501,6 @@ void RenderTopBar(float window_width) {
   // Counts the analysis run: while one is tracing, a render commit would be refused by the server
   // and New / Open would tear down the backend under it, so all three stay shut until it ends.
   bool busy = IsBackendBusy(g_state.sim_state, g_state.analysis_run_in_progress);
-  const auto& style = ImGui::GetStyle();
-  const char* kRunLabel = ICON_FA_PLAY " Run";
-  const char* kStopLabel = ICON_FA_STOP " Stop";
-  const char* kStoppingLabel = ICON_FA_STOP " Stopping...";
-  const char* kContinueLabel = ICON_FA_FORWARD " Continue";
-  const float run_stop_width = ToolbarGroupButtonWidth({ kRunLabel, kStopLabel, kStoppingLabel, kContinueLabel });
   if (simulating) {
     // Stop is a destructive action in the same sense as delete/remove — it shares their palette
     // rather than keeping a second, slightly different red of its own.
@@ -514,25 +566,17 @@ void RenderTopBar(float window_width) {
   // itself stays enabled so read-only exports (Screenshot / Dual Fisheye Equal Area /
   // Equirectangular / Config JSON) remain reachable.
   //
-  // Icon + word labels (the toolbar-consistency ruling, all four qualifying matrices measured at
-  // the real 1024 frame: icon+word here fit at required=997; word on the window-opener group did
-  // not — 1045/1147 — so the words went back to the file commands and the window openers went
-  // icon-only). One width for the three, still: the group reads as one control and nothing
-  // outside it moves when the labels reflow. Tooltips stay — they explain the command, not just
-  // name it, and New/Open spend much of their life behind BeginDisabled(busy), so a tooltip that
-  // fired only while enabled would vanish exactly when the disabled state invites the question
-  // "why not now".
-  const float file_op_width =
-      ToolbarGroupButtonWidth({ ICON_FA_FILE " New", ICON_FA_FOLDER_OPEN " Open", ICON_FA_FLOPPY_DISK " Save" });
+  // Six commands share one width-derived expression. File buttons retain their group width;
+  // tooltips explain the commands even while New/Open are disabled.
   ImGui::BeginDisabled(busy);
-  if (ImGui::Button(ICON_FA_FILE " New", ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(kToolbarNew.Label(show_command_text), ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kNew);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("New: start a new document.");
   }
   ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_FOLDER_OPEN " Open", ImVec2(file_op_width, 0))) {
+  if (ImGui::Button(kToolbarOpen.Label(show_command_text), ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kOpen);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -541,7 +585,7 @@ void RenderTopBar(float window_width) {
   ImGui::EndDisabled();
   ImGui::SameLine();
   {
-    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save", ImVec2(file_op_width, 0))) {
+    if (ImGui::Button(kToolbarSave.Label(show_command_text), ImVec2(file_op_width, 0))) {
       ImGui::OpenPopup("SaveMenu");
     }
     if (ImGui::IsItemHovered()) {
@@ -614,7 +658,7 @@ void RenderTopBar(float window_width) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
   }
-  if (ImGui::Button(ICON_FA_PALETTE)) {
+  if (ImGui::Button(kToolbarColors.Label(show_command_text))) {
     // task-348.3 AC3 (⑦): apply the "default enable on open with no classes" rule
     // ONLY on the false→true transition of color_window_open. Doing it here (inside
     // the click branch, guarded by `opening`) — not per-frame inside RenderColorWindow
@@ -630,19 +674,12 @@ void RenderTopBar(float window_width) {
   if (tint_colors_button) {
     ImGui::PopStyleColor(3);
   }
-  // Icon-only is the window-opener group's one form (the toolbar-consistency ruling: the same
-  // real-frame measurement that returned the words to the file commands took them off this
-  // group — one expression per kind of command). The word lives in the tooltip, same rule the
-  // icon-bearing buttons follow.
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Colors: the raypath colour classes. Opens the Colors window.");
   }
-  // The second occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
-  // like Analysis — the window has no state of its own to set on open. Icon-only like the rest of
-  // its group (Colors / Summary / Settings, one expression per kind of command — the ruling that
-  // returned the words to the file commands), and the tooltip carries the word.
+  // The read-only Summary window has no state of its own to set on open.
   ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_FILE_LINES)) {
+  if (ImGui::Button(kToolbarSummary.Label(show_command_text))) {
     g_state.config_summary_window_open = !g_state.config_summary_window_open;
   }
   if (ImGui::IsItemHovered()) {
@@ -660,8 +697,9 @@ void RenderTopBar(float window_width) {
   // independent of the Colors window's own render call) is itself the
   // persistent "currently in colored mode" marker required by AC3: closing
   // Colors does not touch this window.
+  ImGui::SameLine();
+  const float channel_start_x = ImGui::GetCursorPosX();
   if (!g_state.raypath_color.empty()) {
-    ImGui::SameLine();
     // task-349.3 (#4): revert 348.3 icon-only Button back to a plain-text Checkbox
     // (no ICON_FA_PALETTE prefix) so this display-time toggle reads visually
     // distinct from the icon-bearing "Colors" open-window button one slot to the
@@ -748,8 +786,10 @@ void RenderTopBar(float window_width) {
     // by composite_empty) — the two indicators are complementary, not redundant:
     // the button greying is the immediate visual cue "cannot toggle now", the
     // pip is the persistent per-row / aggregate warning surface.
+    // Keep both the shorter Colored label and a silent warning inside the same fixed slot.
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::SetCursorPosX(channel_start_x + checkbox_width + style.ItemSpacing.x);
     if (composite_empty) {
-      ImGui::SameLine();
       ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
       ImGui::TextUnformatted(ICON_FA_TRIANGLE_EXCLAMATION);
       ImGui::PopStyleColor();
@@ -759,7 +799,12 @@ void RenderTopBar(float window_width) {
             "Either no rays match (they may be blocked by a physical filter), or every matching\n"
             "class is currently hidden. Open the Colors window to inspect per-class details.");
       }
+    } else {
+      ImGui::Dummy(ImVec2(pip_width, ImGui::GetFrameHeight()));
     }
+  } else {
+    // The control is absent (and cannot be hit) with no colour classes, but its slot remains.
+    ImGui::Dummy(ImVec2(channel_width, ImGui::GetFrameHeight()));
   }
 
   // The workspace switch: its own group, on the feature group's right. The Colored checkbox and
@@ -769,44 +814,27 @@ void RenderTopBar(float window_width) {
   // from a view switch) and must not read as the switch's neighbour.
   ToolbarGroupSeparator(window_width);
 
-  // The Render/Analyze workspace switch as a two-cell segmented control — the bar's one mode
-  // indicator. The single destination slot this replaces was a degradation rung: its first
-  // segmented drawing measured +32 px over the then-20 px narrow-window headroom (required 1036
-  // vs 1024, the_top_bar_fits_at_the_minimum_window_width), and its route icon named only the
-  // way there ("go to Analyze") while a mode switch reads both ways. Both cells are drawn every
-  // frame with one quantized width — the wider label, ToolbarGroupButtonWidth — flush together
-  // (SameLine(0, 0)) so the pair reads as one control and its total width never changes, which
-  // is what makes "switching cannot move the neighbours" true by construction (pinned
-  // byte-for-byte by workspace_switch_swaps_layout_and_stays_clean, together with the segmented
-  // shape itself). The current mode's cell carries the accent — "selected", the same reading as
-  // the tinted Colors button — and its click is a no-op; the mode itself is on screen (four
-  // columns vs the render layout) and the tooltips say where the click goes. The window-opener
-  // group's icon-only labels are the headroom that funds the pair (same fit pin; the measured
-  // floor is required=997, headroom=27). Switching is session
-  // state: it never dirties, never commits, never cancels or starts a run.
+  // Pure-text segmented mode indicator: equal cells, flush together, fixed across mode changes.
+  // Its filled current cell is distinct from the Colors configured-content tint. Switching is
+  // session state only: no dirty/commit/run side effects; the current cell's click remains a no-op.
   {
     const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
-    const float cell_width = ToolbarGroupButtonWidth({ "Render", "Analyze" });
     if (!analyze) {
-      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.35f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
+      PushToolbarCurrentModeStyle();
     }
     if (ImGui::Button("Render", ImVec2(cell_width, 0)) && analyze) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
       // The main-picture press is cancelled centrally when its host disappears.
     }
     if (!analyze) {
-      ImGui::PopStyleColor(3);
+      ImGui::PopStyleColor(4);
     }
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(analyze ? "Switch back to the Render workspace." : "The Render workspace is current.");
     }
     ImGui::SameLine(0.0f, 0.0f);
     if (analyze) {
-      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.35f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.50f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.25f));
+      PushToolbarCurrentModeStyle();
     }
     if (ImGui::Button("Analyze", ImVec2(cell_width, 0)) && !analyze) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
@@ -819,7 +847,7 @@ void RenderTopBar(float window_width) {
       g_bg_pick.swallow_drag_until_release = false;
     }
     if (analyze) {
-      ImGui::PopStyleColor(3);
+      ImGui::PopStyleColor(4);
     }
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(analyze ?
@@ -843,7 +871,7 @@ void RenderTopBar(float window_width) {
   // The panel's preset library is one section inside it, so retuning a preset is still reachable;
   // it no longer has a menu item of its own pointing straight at that section.
   ToolbarGroupSeparator(window_width);
-  if (ImGui::Button(ICON_FA_GEAR)) {
+  if (ImGui::Button(kToolbarSettings.Label(show_command_text))) {
     OpenDefaultsPanel(g_state, DefaultsPanelSection::kSettings);
   }
   if (ImGui::IsItemHovered()) {
@@ -852,10 +880,7 @@ void RenderTopBar(float window_width) {
 
   // The right toggle's width is needed before it is drawn: the ⚠ + Revert pair below is placed
   // against it. The max of both label states, so the button's left edge does not jitter when toggled.
-  const float right_toggle_w =
-      std::max(ImGui::CalcTextSize(ICON_FA_CHEVRON_RIGHT "##right_panel_toggle", nullptr, true).x,
-               ImGui::CalcTextSize(ICON_FA_CHEVRON_LEFT "##right_panel_toggle", nullptr, true).x) +
-      style.FramePadding.x * 2.0f;
+  const float right_toggle_w = toggle_width;
   const float right_edge = ImGui::GetWindowContentRegionMax().x;
 
   // ⚠ + Revert — the "changed since the last run" status, at the bar's trailing end, flush against
@@ -873,8 +898,7 @@ void RenderTopBar(float window_width) {
   // ever narrower than the bar's budget; at kMinWindowWidth it fits (the_top_bar_fits_… pins it).
   {
     const bool modified = IsModified(g_state.sim_state);
-    const float revert_pair_w = ImGui::CalcTextSize(ICON_FA_CIRCLE_EXCLAMATION).x + style.ItemSpacing.x +
-                                ImGui::CalcTextSize("Revert").x + style.FramePadding.x * 2.0f;
+    const float revert_pair_w = revert_pair_width;
     ImGui::SameLine();
     ImGui::SetCursorPosX(
         std::max(ImGui::GetCursorPosX(), right_edge - right_toggle_w - style.ItemSpacing.x - revert_pair_w));
