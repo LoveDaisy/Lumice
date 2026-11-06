@@ -181,6 +181,13 @@ bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
     if (std::chrono::steady_clock::now() > deadline) {
       return false;
     }
+    if (ctx->IsError()) {
+      // A poisoned context cannot complete any wait — every later op short-circuits on the
+      // sticky error (the poison-cascade note at ScopedWatchdogGuard describes the same shape),
+      // so spinning the full budget only buries the engine's error line under a timeout. Fail
+      // now; the error line already names the cause.
+      return false;
+    }
     ctx->Yield();
   }
   return true;
@@ -6538,9 +6545,42 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
   PinRaypathViewOnScreen(ctx);
+  // The row click keyed the map session and its default auto-Fit chain: the query lands
+  // sub-second, the once-per-selection auto-Fit fires a refinement right after (a new view key
+  // the pump re-asks past its settle window), and each adopted answer renders a caliber block
+  // above the info region's sky row — the altitude/azimuth inputs reflow under it. Typing
+  // through that reflow moves an item between the hover and the click, the engine records a
+  // hover error, and the sticky error silently skips the Set click (the input chain then looks
+  // like a pump that never picked the intent up). Wait out the WHOLE chain before typing: the
+  // adopted answer on show, no refinement owed (adopted_id == intent_id), the auto-Fit latch
+  // spent, the view past its settle window, nothing in flight — held across 3 consecutive
+  // polls, so a pending resend (which would surface as InFlight / adopted_id movement right
+  // after the settle window) cannot slip through a single-frame gap. Refused maps time this
+  // wait out into an explicit red; every current caller runs a canonical scene where the map
+  // completes.
+  int map_settle_streak = 0;
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&map_settle_streak] {
+                      const gui::MapQuerySession& map = gui::g_state.analysis.map;
+                      const gui::MapViewState& view = gui::g_state.analysis.map_view;
+                      const bool quiet = map.adopted_result != nullptr && map.adopted_id == map.intent_id &&
+                                         view.auto_fit_done && gui::MapViewSettled(ImGui::GetTime(), view) &&
+                                         !gui::g_survey_executor.InFlight(gui::QueryFace::kMap);
+                      map_settle_streak = quiet ? map_settle_streak + 1 : 0;
+                      return map_settle_streak >= 3;
+                    },
+                    60),
+                false);
+  const gui::SurveyQueryId map_intent_at_release = gui::g_state.analysis.map.intent_id;
   ctx->ItemInputValue("**/alt°##sky", 42.0f);
   ctx->ItemInputValue("**/az°##sky", 0.0f);
   ctx->ItemClick("**/Set sky point###sky_set");
+  // The input chain's own completion evidence: a Set click the engine skipped (any sticky
+  // error from the ops above) would leave the sky point unwritten and the pump honestly idle —
+  // assert the write landed, and that no map refinement reflowed the region behind the click.
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_intent_at_release, false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
