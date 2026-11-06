@@ -417,9 +417,11 @@ struct ScopedPointPickupHold {
     std::condition_variable cv;
   };
 
-  ScopedPointPickupHold() : state_(std::make_shared<State>()) {
-    gui::g_survey_executor.SetPickupGateForTest([st = state_](gui::QueryFace face) {
-      if (face != gui::QueryFace::kPoint) {
+  // Point by default for the scopes arms; survey cancellation needs the same action-time fence.
+  explicit ScopedPointPickupHold(gui::QueryFace held_face = gui::QueryFace::kPoint)
+      : state_(std::make_shared<State>()) {
+    gui::g_survey_executor.SetPickupGateForTest([st = state_, held_face](gui::QueryFace face) {
+      if (face != held_face) {
         return;
       }
       st->picked.store(true, std::memory_order_release);
@@ -3520,16 +3522,12 @@ bool SceneEditFollowsTheExplicitAcceptContract(ImGuiTestContext* ctx) {
   return true;
 }
 
-// Part two: the Cancel survey / Cancel point buttons withdraw their own faces to the named
-// cancelled states with the latch, a changed selection re-arms, and a document switch (the
-// open path's mechanism) clears every face. The halo scene's seconds-scale survey provides the
-// in-flight windows; fixed-dt pool.
+// The Cancel survey button withdraws only its face; a changed selection re-arms it.
+// A pickup fence makes the action-time premise deterministic in the fixed-dt pool.
 bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
-  // The fully random scene, deliberately: its dominant class routes full-dimensional, so the
-  // survey's in-flight window is seconds wide (the halo scene's dominant class routes to the
-  // fast refused arm — its kWaiting window is a click-race) and a cancel during the delta
-  // phase posts back without waiting on the chromatic legs.
+  // The fully random scene's dominant class routes full-dimensional. Hold its pickup so
+  // the button cannot race a natural completion, regardless of the machine's query speed.
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
@@ -3543,14 +3541,14 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
   IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10), false);
 
-  // The Cancel survey button: withdraw while the full-dimensional survey runs its delta phase,
-  // and the named cancelled state latches until a new selection. The withdraw is prompt from
-  // any phase now — the quantification legs (the witness lattice, the TIR row pipeline) poll
-  // the same token the delta phase always did — so the named state's bound is a pump bound,
-  // not a phase-boundary bound.
+  // The action requires survey computing NOW, not merely a historical waiting display.
+  ScopedPointPickupHold survey_hold(gui::QueryFace::kSurvey);
   SetListRef(ctx);
   ctx->ItemClick((std::string("**/") + TopChainDisplay()).c_str());
   ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(ctx, [&survey_hold] { return survey_hold.PickedUp(); }, 20), false);
+  IM_CHECK_RETV(!survey_hold.Voided(), false);
+  IM_CHECK_RETV(gui::g_survey_executor.InFlight(gui::QueryFace::kSurvey), false);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -3559,6 +3557,7 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
                     },
                     20),
                 false);
+  const gui::SurveyQueryId cancelled_id = gui::g_state.analysis.survey.intent_id;
   // The wait displays (AC1/AC2/AC3 of the wait-feedback layer), read off the render-feedback
   // fields — the same strings the render drew this frame. The overview wait line carries a live
   // elapsed; the status bar names a query as live; the selected row carries the activity dots.
@@ -3582,7 +3581,11 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   ctx->SetRef("");
   ctx->LogInfo("[v1 cancel] wait line %.1f->%.1f s, segment on, dots on; the marked row still addresses", first_elapsed,
                ParseWaitElapsed(survey_line));
+  IM_CHECK_RETV(!survey_hold.Voided(), false);
+  IM_CHECK_RETV(gui::g_survey_executor.InFlight(gui::QueryFace::kSurvey), false);
   ctx->ItemClick("**/Cancel survey");
+  IM_CHECK_RETV(!survey_hold.Voided(), false);
+  survey_hold.Release();
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -3597,10 +3600,22 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   // bar's segment follows every face, not this one (the map may still be settling).
   IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.survey_wait_line.empty(), false);
   IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.share_list_busy_dots.empty(), false);
-  // The state flips when the pump adopts the cancellation; the worker clears its own in-flight
-  // bookkeeping a frame or two later — wait for it bounded rather than asserting the race.
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 20), false);
-  ctx->LogInfo("[v1 cancel] Cancel survey withdrew the intent under the latch; the executor is idle");
+  // The latch withdraws the intent before the worker posts its cancellation. Wait for THIS
+  // face's queued/running work to end, not global idle: map refinement remains legitimate.
+  IM_CHECK_RETV(
+      DriveUntil(ctx, [] { return !gui::g_survey_executor.QueryOutstanding(gui::QueryFace::kSurvey); }, 20), false);
+  // Keep pumping the unchanged selection: neither a late finish nor a resend may revive it.
+  ctx->Yield(20);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id == cancelled_id, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.cancelled_for_key, false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kCancelled,
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
+  IM_CHECK_RETV(!gui::g_survey_executor.QueryOutstanding(gui::QueryFace::kSurvey), false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.survey_wait_line.empty(), false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.share_list_busy_dots.empty(), false);
+  IM_CHECK_RETV(gui::g_state.sim_state == SimState::kSimulating, false);
+  ctx->LogInfo("[v1 cancel] survey work ended; latch and wait cleanup persist while other faces remain independent");
   // A changed selection clears the latch and re-arms — the probe-verified fast identity chain
   // (`1-3-6-2` early-stops on this scene, no chromatic legs) proves the re-arm without making
   // the pool-context wall-clock budget the leg's long pole. The rekey overwrites the wait
