@@ -237,6 +237,10 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 ## 6. Raypath view 窗（光路层）
 
+> **共享相机后续方向（尚未实施）**：Raypath view 与主图同源、同交互、双向同步且纯观察不启动新 scan。
+> [计算边界审计](raypath-view-camera.md) 解释当前重扫及保留数据的限制；全密度表示的质量/成本前提尚未证成，
+> 不是可直接实施的蓝图，也不将下述现有独立圆盘/auto-Fit 行为追溯改写成已交付的共享相机。
+
 > **755.4 as-built**：本节已落地（`RenderAnalyzeRaypathViewWindow`，`analyze_map_view.cpp`）。开窗
 > 入口、常开同步、诚实空态、左右分区与关闭重开全部照合同实现；as-built 补充——D3 分隔落在窗内
 > （信息区比例存会话 `GuiState::analyze_raypath_view_info_ratio`，两下限 200/160 钳制，§4.2 的

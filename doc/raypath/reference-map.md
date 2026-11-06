@@ -111,3 +111,13 @@ queued per face behind the survey; a view change supersedes only the map face, a
 that fails the intent's id is dropped, never shown. The consumer-side rules live in
 `raypath-analysis.md` §5.1.8 (the 742.5 as-built and the 742.6 handover); this file stays the
 map's own contract.
+
+## Shared-camera feasibility audit (not a replacement contract)
+
+The computation/display separation and the limits of the retained map payload are audited in
+[raypath-view-camera.md](../gui/raypath-view-camera.md). That record has not established a
+quality- and cost-bounded all-sky representation for every supported pose density; it is not an
+implemented or approved shared-camera blueprint. The view-dependent execution and frozen-result
+contracts above remain the current behavior. Retaining optical events alone would avoid new
+sampling, but evaluating their direction-dependent density is not a pure reprojection of the
+already-completed map.
