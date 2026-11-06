@@ -400,12 +400,17 @@ struct ScopedPointPickupEdgeRecorder {
 // while the test performs the action on the GUI thread; Release lets the engine call proceed.
 // Release (explicit, or the destructor's on every exit path) must precede anything that needs
 // the worker. The same ownership law applies: the parked copy holds the shared state by value,
-// so a copy still in flight after the guard's death is safe. The worker-side wait is bounded as
-// a hang net: a lost Release costs the arm's assertions, not the process.
+// so a copy still in flight after the guard's death is safe.
+//
+// The worker-side wait is bounded as a LOUD hang net, not a silent one: if the GUI thread stalls
+// past the bound, the worker proceeds unblocked — the "outstanding at the action" premise is
+// void — so the timeout sets Voided() and the arm's gates consume it. A voided hold turns the
+// arm red with an honest shape; it never lets the run look green on a premise it did not hold.
 struct ScopedPointPickupHold {
   struct State {
     std::atomic<bool> picked{ false };
     std::atomic<bool> released{ false };
+    std::atomic<bool> voided{ false };
     std::mutex mu;
     std::condition_variable cv;
   };
@@ -417,7 +422,11 @@ struct ScopedPointPickupHold {
       }
       st->picked.store(true, std::memory_order_release);
       std::unique_lock<std::mutex> lock(st->mu);
-      st->cv.wait_for(lock, std::chrono::seconds(30), [&st] { return st->released.load(std::memory_order_acquire); });
+      const bool released_normally = st->cv.wait_for(lock, std::chrono::seconds(30),
+                                                     [&st] { return st->released.load(std::memory_order_acquire); });
+      if (!released_normally) {
+        st->voided.store(true, std::memory_order_release);  // the premise died with the stall
+      }
     });
   }
   ~ScopedPointPickupHold() { Release(); }
@@ -425,6 +434,7 @@ struct ScopedPointPickupHold {
   ScopedPointPickupHold& operator=(const ScopedPointPickupHold&) = delete;
 
   bool PickedUp() const { return state_->picked.load(std::memory_order_acquire); }
+  bool Voided() const { return state_->voided.load(std::memory_order_acquire); }
 
   void Release() {
     if (!state_) {
@@ -7389,17 +7399,21 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // the single-piece precedent (survey_survives_a_workspace_switch), whose digest flight window
   // its own construction catches. The windows stand throughout.
   SetSkyPointTarget(33.0, 17.0);
-  {
-    ScopedPointPickupHold hold;
-    IM_CHECK_RETV(DriveUntil(ctx, [&hold] { return hold.PickedUp(); }, kScopesObserveBudgetS), false);
-    gui::DoRevert();  // latches kCancelled + cancels the HELD query (it IS outstanding now)
-    hold.Release();
-  }
-  IM_CHECK_RETV(
-      DriveUntil(
-          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled; },
-          kScopesTightBudgetS),
-      false);
+  ScopedPointPickupHold hold;
+  IM_CHECK_RETV(DriveUntil(ctx, [&hold] { return hold.PickedUp(); }, kScopesObserveBudgetS), false);
+  gui::DoRevert();  // latches kCancelled + cancels the HELD query (it IS outstanding now)
+  hold.Release();
+  // A voided hold (the GUI stalled past the worker's bound — premise lost) fails the arm here,
+  // not silently: the gate accepts it early and the assert below names it.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&hold] {
+                      return hold.Voided() ||
+                             gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled;
+                    },
+                    kScopesTightBudgetS),
+                false);
+  IM_CHECK_RETV(!hold.Voided(), false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != nullptr, false);
   // The map face may legitimately be in flight here (the sky-point move re-keys it too); the
   // latch is per-face and only the point face was asserted outstanding.
@@ -7424,8 +7438,20 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // legitimately move e.g. the map's adopted_result — snapshotting before the drain would misread
   // that as Revert swapping the result): the drain wait, then the frame that lets the pump catch
   // up, THEN the snapshots, then the assertion and the Revert.
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.QueryOutstanding(); }, kScopesTightBudgetS), false);
-  ctx->Yield(2);  // the pump's consumption of posted finishes (nothing re-keys here, so no new issue follows)
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      // Quiet means the pump cannot ISSUE anything new next frame either: nothing computing
+                      // or queued on ANY face, AND the map view past its settle window. A view change (the
+                      // auto-Fit chain) schedules its refinement query only after kMapSettleSeconds, so
+                      // "nothing outstanding" alone can pass inside the gap before that refinement is even
+                      // issued — the snapshot would then race a query the pump had not sent yet.
+                      return !gui::g_survey_executor.QueryOutstanding() &&
+                             gui::MapViewSettled(ImGui::GetTime(), gui::g_state.analysis.map_view);
+                    },
+                    kScopesCompleteBudgetS),
+                false);
+  ctx->Yield(2);  // the pump's consumption of posted finishes (settled + quiet: no new issue follows)
   const gui::SurveyHandle survey_kept = gui::g_state.analysis.survey.adopted_result;
   const gui::MapHandle map_kept = gui::g_state.analysis.map.adopted_result;
   const gui::PointHandle point_kept = gui::g_state.analysis.point.adopted_result;
@@ -7448,15 +7474,16 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // ---- ⑦ Open (the document replace) with the windows open and a point query held outstanding
   // at its pickup — the executor drains, every face clears, both windows close, nothing revives.
   SetSkyPointTarget(35.0, 20.0);
-  {
-    ScopedPointPickupHold hold;
-    IM_CHECK_RETV(DriveUntil(ctx, [&hold] { return hold.PickedUp(); }, kScopesObserveBudgetS), false);
-    IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
-    hold.Release();  // the engine call proceeds against the cancelled/released binding and drains
-  }
-  IM_CHECK_RETV(DriveUntil(
-                    ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, kScopesTightBudgetS),
-                false);
+  ScopedPointPickupHold hold7;
+  IM_CHECK_RETV(DriveUntil(ctx, [&hold7] { return hold7.PickedUp(); }, kScopesObserveBudgetS), false);
+  IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  hold7.Release();  // the engine call proceeds against the cancelled/released binding and drains
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [&hold7] { return hold7.Voided() || !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); },
+          kScopesTightBudgetS),
+      false);
+  IM_CHECK_RETV(!hold.Voided(), false);
   // The drain covers the worker AND the GUI pump's consumption of any completion that raced.
   ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
@@ -7477,15 +7504,16 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // executor's binding releases on the worker thread and nothing revives.
   IM_CHECK_RETV(BringUpBothWindows(ctx), false);
   SetSkyPointTarget(31.0, 15.0);
-  {
-    ScopedPointPickupHold hold;
-    IM_CHECK_RETV(DriveUntil(ctx, [&hold] { return hold.PickedUp(); }, kScopesObserveBudgetS), false);
-    gui::DoNew();
-    hold.Release();
-  }
-  IM_CHECK_RETV(DriveUntil(
-                    ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, kScopesTightBudgetS),
-                false);
+  ScopedPointPickupHold hold8;
+  IM_CHECK_RETV(DriveUntil(ctx, [&hold8] { return hold8.PickedUp(); }, kScopesObserveBudgetS), false);
+  gui::DoNew();
+  hold8.Release();
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [&hold8] { return hold8.Voided() || !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); },
+          kScopesTightBudgetS),
+      false);
+  IM_CHECK_RETV(!hold8.Voided(), false);
   ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
