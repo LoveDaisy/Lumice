@@ -668,7 +668,7 @@ void PinPoseViewOnScreen(ImGuiTestContext* ctx) {
   }
 }
 
-// Click the main view's picture with the pick armed; returns the canvas pixel the click
+// Alt/Option-click the main picture; returns the canvas pixel the click
 // landed on (the picture's own canvas, g_panorama_vp). The pick's picture is the Analyze
 // workspace's main view — the preview never hosted the cone gestures.
 gui::CanvasPixel PickPanoramaCentre(ImGuiTestContext* ctx) {
@@ -826,7 +826,7 @@ bool PickBannerVisible(ImGuiTestContext* ctx) {
 }
 
 // Point mode, a centre picked on the panorama, Analyze pressed: the run is in progress on
-// return. The whole request — region radios, the pick arming, Analyze — sits on the main view's
+// return. The request controls — region radios, centre reading, Analyze — sit on the main view's
 // operation bar (contract §2.2). The pick targets the halo's own centre — the direction the
 // document's
 // camera looks (22 degrees above the sun on its azimuth), the point the OLD default centre (the
@@ -6566,7 +6566,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   ctx->LogInfo("[five ops] 1: Run -> Analyze -> list -> row click opens the Raypath view = 4 clicks + 2 waits");
 
   // ---- Op ② — one camera drag brings the arc into view (the arbitration's camera face: nothing
-  // armed, Whole sky owns no press, so the drag orbits), then the Pick+点图 path sets the centre
+  // active, so the drag orbits), then an Alt/Option-click sets the centre
   // from the moved camera, the operation bar re-runs the cone, Radius re-sums display-time.
   const float az_before = gui::g_state.renderer.azimuth;
   const float el_before = gui::g_state.renderer.elevation;
@@ -6593,7 +6593,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.renderer.azimuth != az_before || gui::g_state.renderer.elevation != el_before, false);
   IM_CHECK_RETV(gui::g_state.workspace.panorama_press_owner == PressOwner::kNone, false);
 
-  IM_CHECK_RETV(StartPointAnalysis(ctx), false);  // radio, arm, click, Analyze = 3 clicks + 1 press
+  IM_CHECK_RETV(StartPointAnalysis(ctx), false);  // radio, direct click, Analyze = 3 clicks
   IM_CHECK_RETV(gui::g_state.analysis_run_in_progress, false);
   // DoAnalyze cleared the previous (whole-sky) view — the list is empty while the cone runs, the
   // contract's own kNone face. The cone payload's arrival is the wait below.
@@ -6906,7 +6906,7 @@ struct ScopedUiScaleAndBasisLease {
 
 // AC2's window-combo faces (755.7 Step 2), each with BOTH floating windows standing — the
 // composition the per-window cases leave out:
-// ① the main view's ROI pick lands through the windows (the pick banner arms and is consumed;
+// ① the main view's direct ROI click lands between the windows (no arming step;
 //    neither window's map, point doc nor the list's selection moves — one press, one consumer);
 // ② a list selection switch re-keys both windows in the same frame they re-key the list;
 // ③ closing both through their title bars and reopening both through their real entries —
@@ -7791,7 +7791,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->SetRef("");
 
       const gui::CanvasPixel px = PickPanoramaCentre(ctx);
-      // The ROI is placed: the pick is consumed, the centre is valid, and this frame's marker
+      // The ROI is placed: the centre is valid, and this frame's marker
       // projects back onto the pixel that was clicked.
       IM_CHECK(gui::g_state.analysis.cone_center_valid);
       const LUMICE_AnnotationView view =
@@ -7958,7 +7958,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         // the main view's operation bar (contract §2.2), so the head that remains (banners,
         // symmetry, search) is shorter than before: at this floor it fits flat, and the search
         // row answers without any scroll. (The head's own scroll rung stays live behind the
-        // wrapping banners — the freshness/pick states that grow it are the other cases' to
+        // wrapping banners — the freshness states that grow it are the other cases' to
         // evidence.)
         ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
         IM_CHECK(share != nullptr);
@@ -8035,7 +8035,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
       // A selection turns the diagnostics region from the idle block to the identity block: the
       // idle children leave (the guidance branches and the observation summary are named windows
-      // — the pick banner's testability shape), the query region takes over as the named scroll
+      // — a named-child testability shape), the query region takes over as the named scroll
       // child under the identity head.
       const std::string top_display = TopChainDisplay();
       SetListRef(ctx);
@@ -8983,10 +8983,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The display-mode control is not a ROI surface: with the analysis pick armed, a click on the
-  // Channel B-R segment changes the display channel and nothing else — the pick stays armed,
-  // the centre stands. (The press surface the ROI arms read excludes the control; a press on a
-  // control is the control's.)
+  // The display-mode control is not a ROI surface: Alt/Option-click changes the channel,
+  // not the centre, and wheel over it does not zoom the underlying picture.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "display_mode_click_does_not_take_the_roi");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -9002,8 +9000,17 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       std::copy(gui::g_state.analysis.cone_center_dir, gui::g_state.analysis.cone_center_dir + 3, centre_before);
       IM_CHECK_EQ(gui::g_state.renderer.display_mode, 0);
       ctx->SetRef(PanoramaRegionRef());
-      ctx->Yield(1);
-      ctx->ItemClick("**/Channel B-R##preview_display_mode");
+      const auto control = ctx->ItemInfo("**/Channel B-R##preview_display_mode");
+      IM_CHECK(control.ID != 0);
+      const float fov_before = gui::g_state.renderer.fov;
+      ctx->MouseMoveToPos(control.RectFull.GetCenter());
+      ctx->Yield(2);
+      ctx->MouseWheelY(1.0f);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.fov, fov_before);
+      ctx->KeyDown(ImGuiMod_Alt);
+      ctx->MouseClick(0);
+      ctx->KeyUp(ImGuiMod_Alt);
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.renderer.display_mode, 1);  // the channel changed
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], centre_before[0]);
