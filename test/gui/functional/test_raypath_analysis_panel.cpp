@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -176,9 +177,18 @@ struct ScopedServerGuard {
 
 template <typename Pred>
 bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
+  const auto started = std::chrono::steady_clock::now();
+  const auto deadline = started + std::chrono::seconds(timeout_s);
+  int polls = 0;  // predicate polls that returned false
   while (!pred()) {
+    ++polls;
     if (std::chrono::steady_clock::now() > deadline) {
+      const auto elapsed =
+          std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - started);
+      // Wall-clock telemetry for the gate-budget calibration (time-to-window band). One line per
+      // gate exit; no logging inside the loop body.
+      ctx->LogInfo("[drive-gate] TIMEOUT after %.1fs (budget %ds, %d polls, avg %.0f ms/poll)", elapsed.count(),
+                   timeout_s, polls, polls > 0 ? elapsed.count() * 1000.0 / polls : 0.0);
       return false;
     }
     if (ctx->IsError()) {
@@ -190,7 +200,141 @@ bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
     }
     ctx->Yield();
   }
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - started);
+  ctx->LogInfo("[drive-gate] ok after %.2fs (budget %ds, %d polls)", elapsed.count(), timeout_s, polls);
   return true;
+}
+
+// Waiting budgets of the scopes case's gates and of its shared standing-state entry
+// (BringUpBothWindows) — one named source instead of scattered per-gate literals. Final values
+// follow the measured time-to-window band under controlled shared-machine load; the band and its
+// provenance are recorded in doc/testing/testing-architecture.md's gate-budget section and in the
+// arms of WindowsStandThroughInFlightAndDocumentScopes. Budgets are consumed on the slow path
+// only (DriveUntil returns as soon as the predicate holds), so the green path's wall time does
+// not move with them.
+constexpr int kScopesObserveBudgetS = 30;   // an issued query's execution window must become observable
+constexpr int kScopesCompleteBudgetS = 60;  // a query / analysis finishing
+constexpr int kScopesTightBudgetS = 20;     // a bounded drain / cancel landing
+
+// Labels keyed to gui::PointQueryState's enumerator order (analyze_survey.hpp).
+constexpr const char* kPointQueryStateNames[] = { "NoIntent", "Waiting", "Completed", "Refused", "Cancelled" };
+constexpr unsigned ScopesStateBit(gui::PointQueryState state) {
+  return 1u << static_cast<unsigned>(state);
+}
+
+// Sampled polling history for one observation gate of the scopes case. DIAGNOSTIC AGGREGATE
+// ONLY — this is a SAMPLE history, not the state's true history: an all-false record proves only
+// "never sampled true" (a short true-window can fall between two samples), and non-overlapping
+// per-condition intervals do not prove the conditions were never true simultaneously (the true
+// ordering between two samples is unknowable at this layer). The record feeds the timeout-path
+// triage line and nothing else: no assertion consumes it, and each gate's predicate stays the
+// plain conjunction, so arm semantics are untouched.
+struct ScopesGateTrace {
+  static constexpr int kMaxConditions = 6;
+
+  struct ConditionSlice {
+    const char* name = nullptr;
+    bool ever_true = false;
+    std::chrono::steady_clock::time_point first_seen{};
+    std::chrono::steady_clock::time_point last_seen{};
+  };
+
+  explicit ScopesGateTrace(const char* gate_name) : gate_name_(gate_name) {}
+
+  // One poll's sample: the named conditions' values plus the observed query-state bit.
+  // Per-poll cost is a few bool comparisons and one clock read — noise next to a Yield()'s
+  // whole-frame overhead.
+  void Poll(std::initializer_list<std::pair<const char*, bool>> conditions, unsigned observed_state_bit) {
+    const auto now = std::chrono::steady_clock::now();
+    if (polls_ == 0) {
+      first_poll_ = now;
+    } else {
+      max_poll_interval_ = std::max(max_poll_interval_, now - last_poll_);
+    }
+    last_poll_ = now;
+    ++polls_;
+    observed_state_bits_ |= observed_state_bit;
+    for (const auto& sample : conditions) {
+      ConditionSlice* slice = SliceFor(sample.first);
+      if (sample.second) {
+        if (!slice->ever_true) {
+          slice->ever_true = true;
+          slice->first_seen = now;
+        }
+        slice->last_seen = now;
+      }
+    }
+  }
+
+  // One-shot triage line on the timeout path (a PASS prints only DriveUntil's elapsed line).
+  // The line DESCRIBES the sampled history; per the struct comment it cannot distinguish a
+  // window that opened late from one that fell between two samples.
+  void LogTimeoutSummary(ImGuiTestContext* ctx, int budget_s) const {
+    char line[768];
+    std::string states;
+    for (unsigned bit = 0; bit < sizeof(kPointQueryStateNames) / sizeof(kPointQueryStateNames[0]); ++bit) {
+      if ((observed_state_bits_ & (1u << bit)) != 0) {
+        states += (states.empty() ? "" : "|");
+        states += kPointQueryStateNames[bit];
+      }
+    }
+    int n = std::snprintf(
+        line, sizeof(line), "[scopes-gate] TIMEOUT '%s' budget=%ds polls=%d avg=%.0f ms/poll max_gap=%.0f ms states=%s",
+        gate_name_, budget_s, polls_,
+        polls_ > 1 ? std::chrono::duration_cast<std::chrono::duration<double>>(last_poll_ - first_poll_).count() *
+                         1000.0 / static_cast<double>(polls_ - 1) :
+                     0.0,
+        std::chrono::duration_cast<std::chrono::duration<double>>(max_poll_interval_).count() * 1000.0, states.c_str());
+    for (int i = 0; i < condition_count_ && n > 0 && n < static_cast<int>(sizeof(line)); ++i) {
+      const ConditionSlice& c = conditions_[i];
+      if (c.ever_true) {
+        const auto since_start = [this](std::chrono::steady_clock::time_point tp) {
+          return std::chrono::duration_cast<std::chrono::duration<double>>(tp - first_poll_).count();
+        };
+        n += std::snprintf(line + n, sizeof(line) - static_cast<size_t>(n), " %s=%.1fs..%.1fs", c.name,
+                           since_start(c.first_seen), since_start(c.last_seen));
+      } else {
+        n += std::snprintf(line + n, sizeof(line) - static_cast<size_t>(n), " %s=NEVER", c.name);
+      }
+    }
+    ctx->LogInfo("%s", line);
+  }
+
+ private:
+  ConditionSlice* SliceFor(const char* name) {
+    for (int i = 0; i < condition_count_; ++i) {
+      if (std::strcmp(conditions_[i].name, name) == 0) {
+        return &conditions_[i];
+      }
+    }
+    ConditionSlice* fresh = &conditions_[condition_count_];
+    fresh->name = name;
+    ++condition_count_;
+    return fresh;
+  }
+
+  const char* gate_name_ = nullptr;
+  int polls_ = 0;
+  int condition_count_ = 0;
+  unsigned observed_state_bits_ = 0;
+  std::chrono::steady_clock::time_point first_poll_{};
+  std::chrono::steady_clock::time_point last_poll_{};
+  std::chrono::steady_clock::duration max_poll_interval_{};
+  ConditionSlice conditions_[kMaxConditions]{};
+};
+
+// DriveUntil plus the sampled polling history for one of the scopes case's InFlight observation
+// gates: the predicate samples itself into the trace and its return value stays the gate's plain
+// conjunction. On timeout the sampled history is logged once as a triage line.
+template <typename Pred>
+bool DriveScopesGate(ImGuiTestContext* ctx, const char* gate_name, Pred pred, int timeout_s) {
+  ScopesGateTrace trace(gate_name);
+  const bool ok = DriveUntil(ctx, [&trace, &pred] { return pred(trace); }, timeout_s);
+  if (!ok) {
+    trace.LogTimeoutSummary(ctx, timeout_s);
+  }
+  return ok;
 }
 
 // The wait lines' " (N.N s)" suffix, read off a render-feedback field; -1.0 when the line is
@@ -1717,7 +1861,7 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   const gui::PointQuerySession& point = gui::g_state.analysis.point;
   LUMICE_PathPointInfo info{};
@@ -2433,7 +2577,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   // The pick's own document is a real terminal state and gets pinned as one: the discovery arm's
   // outcome is read back honestly (on-fiber or not), its component count logged — this step
@@ -2456,7 +2600,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   {
     const gui::PointQuerySession& point = gui::g_state.analysis.point;
@@ -2611,7 +2755,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   // The pick's own document read back honestly (outcome + component count logged) — an empty
   // discovery at the centroid is a real terminal state, not a failure the leg papers over.
@@ -2632,7 +2776,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   const gui::PointQuerySession& point = gui::g_state.analysis.point;
   LUMICE_PathPointInfo info{};
@@ -3044,7 +3188,7 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   {
     LUMICE_PathPointInfo info{};
@@ -3182,7 +3326,7 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   {
     LUMICE_PathPointInfo info{};
@@ -3529,7 +3673,7 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
 
   // The map's own state on the way: the selection asks for the map behind the survey. Assert
@@ -5310,7 +5454,7 @@ bool PoseViewFollowsTheSelectionChain(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   gui::g_state.analyze_pose_view_open = true;
   PinPoseViewOnScreen(ctx);
@@ -5357,7 +5501,7 @@ bool PoseViewFollowsTheSelectionChain(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   gui::g_state.analysis.map_wavelength_nm = 0.0;
   IM_CHECK_RETV(
@@ -5368,7 +5512,7 @@ bool PoseViewFollowsTheSelectionChain(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   // A class switch: the point face re-keys (a new class's answer must not linger under the old
   // selection) — the window shows the new class's completed document, its crystal id matching
@@ -5386,7 +5530,7 @@ bool PoseViewFollowsTheSelectionChain(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   LUMICE_PathPointInfo info_c{};
   info_c.struct_size = sizeof(info_c);
@@ -5416,7 +5560,7 @@ bool PoseViewPlaybackPausesWhenClosedAndResumes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
   IM_CHECK_RETV(valid_count > 2, false);
@@ -5564,7 +5708,7 @@ bool PoseViewDoNewClosesAndReopensHonest(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   gui::g_state.analyze_pose_view_open = true;
   PinPoseViewOnScreen(ctx);
@@ -5606,7 +5750,7 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
   IM_CHECK_RETV(valid_count > 1, false);
@@ -6040,7 +6184,7 @@ bool PoseViewOperatesAtAMovedWindowOrigin(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
 
   gui::g_state.analyze_pose_view_open = true;
@@ -6386,7 +6530,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
 
@@ -6407,7 +6551,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
 
@@ -6584,7 +6728,7 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
   {
@@ -6752,7 +6896,7 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   {
     LUMICE_PathPointInfo info{};
@@ -6876,22 +7020,31 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // ---- ① the shared λ knob, both windows standing: 600 issued and observed waiting, then 0
   // supersedes it before adoption; the adopted document's wavelength echo is the final judge.
   gui::g_state.analysis.map_wavelength_nm = 600.0;
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm1_lambda600_issued",
+                    [](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid && p.key.wavelength_nm == 600.0 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      const bool intent_valid = p.intent_valid;
+                      const bool key_match = p.key.wavelength_nm == 600.0;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      const bool in_flight = gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      t.Poll({ { "intent_valid", intent_valid },
+                               { "key_match", key_match },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", in_flight } },
+                             ScopesStateBit(state));
+                      return intent_valid && key_match && state == gui::PointQueryState::kWaiting && in_flight;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   gui::g_state.analysis.map_wavelength_nm = 0.0;
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.analysis.point.key.wavelength_nm == 0.0; }, 30), false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx, [] { return gui::g_state.analysis.point.key.wavelength_nm == 0.0; }, kScopesObserveBudgetS),
+                false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   {
     LUMICE_PathPointInfo info{};
@@ -6919,34 +7072,48 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   const std::optional<gui::SelectedClassIdentity> old_identity = gui::SelectedClassIdentityFor(gui::g_state);
   IM_CHECK_RETV(old_identity.has_value() && old_identity->faces != expected_second.faces, false);
   SetSkyPointTarget(45.0, 5.0);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm2_sky_point_moved",
+                    [](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(45.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      const bool intent_valid = p.intent_valid;
+                      const bool key_match =
+                          std::fabs(p.key.target_dir[2] - (-std::sin(45.0 * lumice::kDeg2Rad))) < 1e-4;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      const bool in_flight = gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      t.Poll({ { "intent_valid", intent_valid },
+                               { "key_match", key_match },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", in_flight } },
+                             ScopesStateBit(state));
+                      return intent_valid && key_match && state == gui::PointQueryState::kWaiting && in_flight;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [&expected_second, &old_identity] {
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm2_class_switch_issued",
+                    [&expected_second, &old_identity](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid && p.key.selection.faces == expected_second.faces &&
-                             p.key.selection.crystal_id == expected_second.core_crystal_id &&
-                             !(p.key.selection.faces == old_identity->faces) &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      const bool intent_valid = p.intent_valid;
+                      const bool key_match = p.key.selection.faces == expected_second.faces &&
+                                             p.key.selection.crystal_id == expected_second.core_crystal_id &&
+                                             !(p.key.selection.faces == old_identity->faces);
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      const bool in_flight = gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      t.Poll({ { "intent_valid", intent_valid },
+                               { "new_faces_key", key_match },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", in_flight } },
+                             ScopesStateBit(state));
+                      return intent_valid && key_match && state == gui::PointQueryState::kWaiting && in_flight;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   {
     LUMICE_PathPointInfo info{};
@@ -6978,22 +7145,28 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // no GUI-layer claim is made for that ordering. This case owns the GUI-side composition.
   SetSkyPointTarget(28.0, 8.0);
   gui::SurveyQueryId target_a_id;
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [&target_a_id] {
-                      const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      const bool issued =
-                          p.intent_valid &&
-                          std::fabs(p.key.target_dir[2] - (-std::sin(28.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                          gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                          gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
-                      if (issued) {
-                        target_a_id = p.intent_id;  // A's request id, by value, at its observed execution
-                      }
-                      return issued;
-                    },
-                    30),
-                false);
+  IM_CHECK_RETV(
+      DriveScopesGate(
+          ctx, "arm3_target_a_issued",
+          [&target_a_id](ScopesGateTrace& t) {
+            const gui::PointQuerySession& p = gui::g_state.analysis.point;
+            const bool intent_valid = p.intent_valid;
+            const bool key_match = std::fabs(p.key.target_dir[2] - (-std::sin(28.0 * lumice::kDeg2Rad))) < 1e-4;
+            const gui::PointQueryState state = gui::PointQueryStateFor(p);
+            const bool in_flight = gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+            const bool issued = intent_valid && key_match && state == gui::PointQueryState::kWaiting && in_flight;
+            if (issued) {
+              target_a_id = p.intent_id;  // A's request id, by value, at its observed execution
+            }
+            t.Poll({ { "intent_valid", intent_valid },
+                     { "key_match", key_match },
+                     { "waiting", state == gui::PointQueryState::kWaiting },
+                     { "point_in_flight", in_flight } },
+                   ScopesStateBit(state));
+            return issued;
+          },
+          kScopesObserveBudgetS),
+      false);
   IM_CHECK_RETV(target_a_id.serial != 0 || target_a_id.generation != 0, false);
   SetSkyPointTarget(30.0, 10.0);
   IM_CHECK_RETV(DriveUntil(
@@ -7003,7 +7176,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                       return p.intent_valid && (p.intent_id != target_a_id) &&
                              std::fabs(p.key.target_dir[2] - (-std::sin(30.0 * lumice::kDeg2Rad))) < 1e-4;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   ctx->ItemClick("##TopBar/Render");
   ctx->Yield(3);
@@ -7024,7 +7197,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                       return LUMICE_PathPointGetInfo(p.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
                              std::fabs(i.target_altitude_deg - 30.0) < 1e-3;
                     },
-                    60),
+                    kScopesCompleteBudgetS),
                 false);
   ctx->LogInfo(
       "[scopes] A executed, B superseded it mid-flight, B's answer landed across the workspace switch (alt 30)");
@@ -7046,7 +7219,8 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ctx->SetRef("");
   IM_CHECK_RETV(
       DriveUntil(
-          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.sim_state == SimState::kDone; }, 20),
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.sim_state == SimState::kDone; },
+          kScopesTightBudgetS),
       false);
   // The trigger cleared the SELECTION (a synchronous write); the list on show is whatever the
   // stopped run adopted — nothing asserted about it here. The windows stay open.
@@ -7060,7 +7234,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   IM_CHECK_RETV(!gui::g_state.analysis_result.payload->entries.empty(), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
@@ -7070,12 +7244,12 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
                       const gui::MapQuerySession& m = gui::g_state.analysis.map;
                       return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
                     },
-                    60),
+                    kScopesCompleteBudgetS),
                 false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   ctx->LogInfo("[scopes] the re-selection re-armed map and point in the standing windows");
 
@@ -7088,22 +7262,29 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // face's variant stays with the single-piece precedent (survey_survives_a_workspace_switch),
   // whose digest flight window its own construction catches. The windows stand throughout.
   SetSkyPointTarget(33.0, 17.0);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm5_point_outstanding",
+                    [](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(33.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      const bool intent_valid = p.intent_valid;
+                      const bool key_match =
+                          std::fabs(p.key.target_dir[2] - (-std::sin(33.0 * lumice::kDeg2Rad))) < 1e-4;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      const bool in_flight = gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      t.Poll({ { "intent_valid", intent_valid },
+                               { "key_match", key_match },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", in_flight } },
+                             ScopesStateBit(state));
+                      return intent_valid && key_match && state == gui::PointQueryState::kWaiting && in_flight;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   gui::DoRevert();
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled; },
-          20),
+          kScopesTightBudgetS),
       false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != nullptr, false);
   // The map face may legitimately be in flight here (the sky-point move re-keys it too); the
@@ -7117,7 +7298,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
+          kScopesCompleteBudgetS),
       false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != nullptr, false);
   IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result != nullptr, false);
@@ -7143,19 +7324,28 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // ---- ⑦ Open (the document replace) with the windows open and a point query verifiably in
   // flight — the executor drains, every face clears, both windows close, nothing revives.
   SetSkyPointTarget(35.0, 20.0);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm7_open_in_flight",
+                    [](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(35.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      const bool intent_valid = p.intent_valid;
+                      const bool key_match =
+                          std::fabs(p.key.target_dir[2] - (-std::sin(35.0 * lumice::kDeg2Rad))) < 1e-4;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      const bool in_flight = gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      t.Poll({ { "intent_valid", intent_valid },
+                               { "key_match", key_match },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", in_flight } },
+                             ScopesStateBit(state));
+                      return intent_valid && key_match && state == gui::PointQueryState::kWaiting && in_flight;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, 20), false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, kScopesTightBudgetS),
+                false);
   // The drain covers the worker AND the GUI pump's consumption of any completion that raced.
   ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
@@ -7176,19 +7366,28 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   // executor's binding releases on the worker thread and nothing revives.
   IM_CHECK_RETV(BringUpBothWindows(ctx), false);
   SetSkyPointTarget(31.0, 15.0);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
+  IM_CHECK_RETV(DriveScopesGate(
+                    ctx, "arm8_new_in_flight",
+                    [](ScopesGateTrace& t) {
                       const gui::PointQuerySession& p = gui::g_state.analysis.point;
-                      return p.intent_valid &&
-                             std::fabs(p.key.target_dir[2] - (-std::sin(31.0 * lumice::kDeg2Rad))) < 1e-4 &&
-                             gui::PointQueryStateFor(p) == gui::PointQueryState::kWaiting &&
-                             gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      const bool intent_valid = p.intent_valid;
+                      const bool key_match =
+                          std::fabs(p.key.target_dir[2] - (-std::sin(31.0 * lumice::kDeg2Rad))) < 1e-4;
+                      const gui::PointQueryState state = gui::PointQueryStateFor(p);
+                      const bool in_flight = gui::g_survey_executor.InFlight(gui::QueryFace::kPoint);
+                      t.Poll({ { "intent_valid", intent_valid },
+                               { "key_match", key_match },
+                               { "waiting", state == gui::PointQueryState::kWaiting },
+                               { "point_in_flight", in_flight } },
+                             ScopesStateBit(state));
+                      return intent_valid && key_match && state == gui::PointQueryState::kWaiting && in_flight;
                     },
-                    30),
+                    kScopesObserveBudgetS),
                 false);
   gui::DoNew();
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, 20), false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx, [] { return !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); }, kScopesTightBudgetS),
+                false);
   ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result == nullptr, false);
