@@ -67,6 +67,14 @@ and the ledger contract: the checker's constants and testing-architecture.md
 §7.9. A threshold change is a re-calibration (constant comment + §7.9
 together), never a silent bump.
 
+Waiting-gate shape, before you write one that polls: a wall-clock gate whose
+predicate samples a TRANSIENT (narrower than the sampling interval — an
+executor's running token is the measured instance) must judge a recorded
+edge, not the sample, and its budget is a safety net, never the criterion;
+level polling stays correct for states that persist once true. The rule, the
+measured case, and the observation-transport pattern:
+testing-architecture.md §4.12.
+
 ## Platform matrix and the llvmpipe leg
 
 - CLI, core, and unit-test flows stay cross-platform.
