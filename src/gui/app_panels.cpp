@@ -2848,10 +2848,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       // branches too, which is wider than the defect requires — a wheel notch carries no leftover
       // motion from the press that took the colour. Conservative on purpose; not a condition the
       // bug imposes, so it can be narrowed without reopening that defect.
-      // The analysis window in Point mode is a third owner of the click, locking the camera the
-      // (The analysis cone's gestures used to share this surface — marker drag and armed pick
-      // arbitrated against the camera. They moved to the Analyze workspace's panorama, which is
-      // the picture that mode aims at; nothing here reads the analysis state any more.)
+      // ROI gestures belong to Analyze's main picture, not this Render surface.
       const ImVec2 vp_origin = ImGui::GetWindowPos();
       // An armed Angular Distance pick owns the click outright: the user is aiming a ring.
       const bool angular_pick = g_state.angular_dist_picker.armed;
@@ -2916,9 +2913,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         ApplyCameraWheelZoom(g_state, io.MouseWheel);
       }
 
-      // The eyedropper's own branch, gated on the flag the four above are gated on the negation of:
-      // exactly one of the seven (the analysis window's two below included) can run in a frame, and while picking,
-      // the click that would have orbited the camera samples a colour instead.
+      // The eyedropper owns this click instead of the camera/background gestures above.
       if (g_bg_pick.active && is_hovered) {
         BgSampleGeometry geom;
         geom.dpi_scale_x = dpi_scale_x;

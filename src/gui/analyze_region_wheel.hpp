@@ -1,5 +1,5 @@
-// The Analyze workspace's wheel arbitration, shared by every region that reads the wheel for
-// a gesture (the map disk's zoom, the raypath 3D's orbit zoom). One rule, two claimants:
+// Manual picture/analysis wheel arbitration, shared by every region that reads the wheel for
+// a gesture (main-picture FOV, Render photo scale, map disk and raypath 3D zoom). One rule:
 //
 //  - A region CLAIMS the wheel key (SetKeyOwner, one owner id per region) for exactly the
 //    frames its claiming zone is hovered, and releases only its own claim (or an empty one).

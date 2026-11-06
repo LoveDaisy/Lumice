@@ -32,6 +32,7 @@
 #include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
+#include "gui/angular_dist_picker.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/file_io.hpp"
@@ -7591,6 +7592,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(std::memcmp(a.cone_center_dir, want, sizeof(want)) == 0);
       IM_CHECK_EQ(gui::g_state.renderer.azimuth, az);
       IM_CHECK_EQ(gui::g_state.renderer.elevation, el);
+      // A late explicit intent is fixture setup (there is no second mouse-down available
+      // during a held press); the real held input must remain the original owner's.
+      const size_t angle_count = gui::g_state.sun_circle_angles.size();
+      gui::ArmAngularDistPicker(gui::g_state, gui::AngularDistFamily::kSun);
+      ctx->MouseMoveToPos(ImVec2(at.x + 20.0f, at.y - 10.0f));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.workspace.panorama_press_owner, PressOwner::kDirectPoint);
+      IM_CHECK_EQ(gui::g_state.sun_circle_angles.size(), angle_count);
+      IM_CHECK(gui::g_state.angular_dist_picker.armed);
       ctx->KeyPress(ImGuiKey_Escape);
       ctx->Yield(1);
       IM_CHECK_EQ(gui::g_state.workspace.panorama_press_owner, PressOwner::kCancelled);
@@ -7634,6 +7644,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.committed_epoch, epoch);
       IM_CHECK_EQ(gui::g_state.sim_state, sim);
       IM_CHECK(!a.started && !gui::g_state.analysis_run_in_progress);
+      IM_CHECK(SaveWindowPng(ctx, PanoramaRegionRef(), GuiTestTempPath("direct_point_gestures.png").string()));
+      ctx->LogInfo("[direct point] capture: %s", GuiTestTempPath("direct_point_gestures.png").string().c_str());
     };
   }
 
@@ -7697,6 +7709,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
             analyze ? gui::GuiState::WorkspaceMode::kAnalyze : gui::GuiState::WorkspaceMode::kRender;
         gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
         gui::g_state.renderer.fov = 90.0f;
+        gui::g_state.look_at.locked = true;
         ctx->Yield(3);
         ImGuiWindow* picture = analyze ? PanoramaPictureWindow() : ImGui::FindWindowByName("##PreviewPanel");
         IM_CHECK_RETV(picture != nullptr && picture->Active, false);
@@ -7707,6 +7720,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->MouseWheelY(1.0f);
         ctx->Yield(2);
         IM_CHECK_RETV(gui::g_state.renderer.fov == 85.0f, false);
+        IM_CHECK_RETV(gui::g_state.look_at.locked, false);
         IM_CHECK_RETV(picture->Scroll.y == scroll, false);
         ctx->MouseWheelY(-1.0f);
         ctx->Yield(2);
@@ -7728,6 +7742,25 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->MouseWheelY(2.0f);
         ctx->Yield(2);
         IM_CHECK_RETV(gui::g_state.renderer.fov == full_fov, false);
+        gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
+        gui::g_state.renderer.fov = 90.0f;
+        ctx->Yield(2);
+        // Explicit picking and its completed-press latch must both keep the wheel.
+        gui::g_state.angular_dist_picker.armed = true;
+        ctx->MouseWheelY(1.0f);
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.renderer.fov == 90.0f, false);
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.angular_dist_picker.swallow_drag_until_release, false);
+        ctx->MouseWheelY(1.0f);
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.renderer.fov == 90.0f, false);
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+        ctx->MouseWheelY(1.0f);
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.renderer.fov == 85.0f, false);
         return true;
       };
       IM_CHECK(check_host(false));
@@ -8708,8 +8741,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->MouseDown(0);
       ctx->Yield(2);
+      ctx->KeyDown(ImGuiMod_Alt);
       ctx->MouseMoveToPos(ImVec2(drag_from.x + 150.0f, drag_from.y - 110.0f));
       ctx->Yield(3);
+      ctx->KeyUp(ImGuiMod_Alt);
       ctx->MouseUp(0);
       ctx->Yield(3);
       IM_CHECK_EQ(gui::g_state.analysis.cone_center_dir[0], dir_before[0]);
@@ -8776,6 +8811,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       const ScopedPopups popup_guard(ctx);
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->SetRef("");
+      ctx->Yield(3);
+      const float centre_before[3] = { gui::g_state.analysis.cone_center_dir[0],
+                                       gui::g_state.analysis.cone_center_dir[1],
+                                       gui::g_state.analysis.cone_center_dir[2] };
+      const float fov_before = gui::g_state.renderer.fov;
       const float az_before = gui::g_state.renderer.azimuth;
       const float el_before = gui::g_state.renderer.elevation;
       ImGuiWindow* pano = PanoramaPictureWindow();
@@ -8800,6 +8843,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.renderer.azimuth, az_before);
       IM_CHECK_EQ(gui::g_state.renderer.elevation, el_before);
       IM_CHECK(gui::g_state.workspace.panorama_press_owner == PressOwner::kNone);
+      ctx->KeyDown(ImGuiMod_Alt);
+      ctx->MouseMoveToPos(drag_from);
+      ctx->MouseClick(0);
+      ctx->MouseWheelY(1.0f);
+      ctx->KeyUp(ImGuiMod_Alt);
+      ctx->Yield(2);
+      IM_CHECK(std::memcmp(centre_before, gui::g_state.analysis.cone_center_dir, sizeof(centre_before)) == 0);
+      IM_CHECK_EQ(gui::g_state.renderer.fov, fov_before);
     };
   }
 
@@ -9546,10 +9597,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.workspace.panorama_press_owner == PressOwner::kMarker);
       ctx->MouseMoveToPos(ImVec2(marker->x + 45.0f, marker->y - 30.0f));
       ctx->Yield(1);
-      IM_CHECK(gui::g_state.workspace.panorama_press_owner == PressOwner::kMarker);
+      IM_CHECK_EQ(gui::g_state.workspace.panorama_press_owner, PressOwner::kMarker);
       IM_CHECK_EQ(ImGui::GetMouseCursor(), ImGuiMouseCursor_Hand);
+      ctx->KeyDown(ImGuiMod_Alt);
+      ctx->MouseMoveToPos(ImVec2(marker->x + 60.0f, marker->y - 40.0f));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.workspace.panorama_press_owner, PressOwner::kMarker);
       float want[3] = { 0.0f, 0.0f, 0.0f };
       IM_CHECK(UnprojectMouse(want));
+      ctx->KeyUp(ImGuiMod_Alt);
       ctx->MouseUp(0);
       ctx->Yield(2);
       IM_CHECK(gui::g_state.workspace.panorama_press_owner == PressOwner::kNone);

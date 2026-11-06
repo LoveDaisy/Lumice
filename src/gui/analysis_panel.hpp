@@ -1,11 +1,9 @@
 #ifndef LUMICE_GUI_ANALYSIS_PANEL_HPP
 #define LUMICE_GUI_ANALYSIS_PANEL_HPP
 
-// The "Raypath Analysis" window (doc/raypath/raypath-analysis-panel.md): a non-modal window beside the
-// preview that starts an analysis run on the committed scene, lets the user say WHERE in the sky
-// they are asking about (the whole sky, the frame on screen, or a cone around a point they click
-// on the preview), lists the raypath chains that delivered energy there, and turns a selected
-// single-crystal chain into a filter that excludes it.
+// The Analyze workspace's share list and ROI controls (doc/raypath/raypath-analysis-panel.md):
+// starts an analysis on the configured scene, for the whole sky or a cone around a direction,
+// lists the raypath chains that delivered energy there, and can exclude a selected class.
 //
 // Pure C API consumer. Everything the window does reaches core through the C API headers — the run
 // (LUMICE_StartRaypathAnalysis), the result (LUMICE_FrameGetRaypathAnalysis, read on the main

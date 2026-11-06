@@ -479,7 +479,7 @@ void RenderScenePanorama(GLFWwindow* window) {
   ClampRendererViewInvariants(g_state.renderer);
 
   // The bar's height, as measured last frame (the one-frame-lag recipe the share list's head
-  // clamp runs): the states that change it — Point mode's pick row, a fold of the bar's judged
+  // clamp runs): the states that change it — Point mode's centre readout, a fold of the bar's judged
   // joins at a narrow width, a run's in-progress line — persist, so the reserve is right from
   // the frame after the change. The floor keeps the bar's first row reachable on the very first
   // frame, before any measurement exists.
