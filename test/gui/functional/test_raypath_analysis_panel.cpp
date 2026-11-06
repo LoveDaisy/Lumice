@@ -8563,8 +8563,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ImGui::Begin("Compressed grid probe", nullptr, ImGuiWindowFlags_NoResize);
       ImGui::LogToBuffer();
       gui::RenderAnalyzeSunGlobeRegion(grid_probe, ImGui::GetContentRegionAvail());
-      ImGui::LogFinish();
       grid_report = ImGui::GetCurrentContext()->LogBuffer.c_str();
+      ImGui::LogFinish();
       ImGui::End();
     };
     t->TestFunc = [](ImGuiTestContext* ctx) {
