@@ -7441,17 +7441,25 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
-                      // Quiet means the pump cannot ISSUE anything new next frame either: nothing computing
-                      // or queued on ANY face, AND the map view past its settle window. A view change (the
-                      // auto-Fit chain) schedules its refinement query only after kMapSettleSeconds, so
-                      // "nothing outstanding" alone can pass inside the gap before that refinement is even
-                      // issued — the snapshot would then race a query the pump had not sent yet.
+                      // Quiet means the pump has already had its shot and issued whatever the
+                      // view owed: nothing computing or queued on ANY face, AND the map view
+                      // settled with margin. The test coroutine resumes at PostNewFrame — BEFORE
+                      // this frame's pump — so a bare MapViewSettled(ImGui::GetTime(), …) is
+                      // exactly the pump's own crossing condition, and the gate would pass in the
+                      // very frame whose pump then issues the refinement. The pump issues at the
+                      // FIRST frame past kMapSettleSeconds; requiring 2x that here puts the sample
+                      // whole frames past the crossing, so the crossing frame's issue has already
+                      // happened — anything unresolved reads outstanding, and quiet can only be
+                      // the post-issue steady state (no further view change follows: the auto-Fit
+                      // chain is latched and nothing steers the view before the Revert).
                       return !gui::g_survey_executor.QueryOutstanding() &&
-                             gui::MapViewSettled(ImGui::GetTime(), gui::g_state.analysis.map_view);
+                             gui::MapViewSettled(ImGui::GetTime(), gui::g_state.analysis.map_view) &&
+                             ImGui::GetTime() - gui::g_state.analysis.map_view.last_view_change_s >=
+                                 2 * gui::kMapSettleSeconds;
                     },
                     kScopesCompleteBudgetS),
                 false);
-  ctx->Yield(2);  // the pump's consumption of posted finishes (settled + quiet: no new issue follows)
+  ctx->Yield(2);  // the pump's consumption of posted finishes (settled-with-margin + quiet: none pending)
   const gui::SurveyHandle survey_kept = gui::g_state.analysis.survey.adopted_result;
   const gui::MapHandle map_kept = gui::g_state.analysis.map.adopted_result;
   const gui::PointHandle point_kept = gui::g_state.analysis.point.adopted_result;
@@ -7483,7 +7491,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
           ctx, [&hold7] { return hold7.Voided() || !gui::g_survey_executor.InFlight(gui::QueryFace::kPoint); },
           kScopesTightBudgetS),
       false);
-  IM_CHECK_RETV(!hold.Voided(), false);
+  IM_CHECK_RETV(!hold7.Voided(), false);
   // The drain covers the worker AND the GUI pump's consumption of any completion that raced.
   ctx->Yield(6);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_valid == false, false);
