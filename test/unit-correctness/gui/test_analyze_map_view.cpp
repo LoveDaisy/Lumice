@@ -586,23 +586,75 @@ std::shared_ptr<const AnalysisPayload> Rows(unsigned long long generation, const
   return payload;
 }
 
-// The headless frame loop: both pumps, at a clock the loop ADVANCES (a frame every ~50 ms, like
-// the real app's — the settle gate consumes it, so a view change settles after a few frames).
+// SetScene builds the real workspace independently of the survey face. These cases consume
+// only maps; advancing the frame clock still exercises the real settle gate. Keep the clock
+// across waits and stop at the observed adoption, without an extra pump changing its identity.
 template <typename Pred>
-bool PumpBothUntil(GuiState& state, SurveyExecutor& executor, double now, Pred pred, int timeout_ms) {
+bool PumpMapUntil(GuiState& state, SurveyExecutor& executor, double& now, Pred pred, int timeout_ms) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   while (!pred()) {
     if (std::chrono::steady_clock::now() > deadline) {
       return false;
     }
-    PumpSurveyQuery(state, executor, now);
     PumpMapQuery(state, executor, now);
+    if (!state.analysis.map.adopted_error.empty()) {
+      ADD_FAILURE() << state.analysis.map.adopted_error;
+      return false;
+    }
     now += 0.05;
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
-  PumpSurveyQuery(state, executor, now);
-  PumpMapQuery(state, executor, now);
   return true;
+}
+
+// The request's fallback anchor must describe the same frozen scene as the executor, not
+// GuiState's unrelated live-document defaults (nor a survey computed just to obtain its sun).
+void FreezeMapSun(GuiState& state) {
+  state.analysis.frozen_sun_valid = true;
+  state.analysis.frozen_sun_altitude = 20.0f;
+}
+
+void ExpectAdoptedMap(const GuiState& state, const std::vector<int>& faces, bool full_sky) {
+  const MapQuerySession& map = state.analysis.map;
+  EXPECT_FALSE(state.analysis.survey.intent_valid);
+  ASSERT_NE(map.adopted_result, nullptr) << map.adopted_error;
+  EXPECT_TRUE(map.adopted_error.empty());
+  EXPECT_EQ(map.adopted_id, map.intent_id);
+  EXPECT_EQ(map.adopted_id.generation, 7u);
+  EXPECT_EQ(map.key.selection.crystal_id, 1);
+  EXPECT_EQ(map.key.selection.faces, faces);
+  EXPECT_EQ(map.key.selection.layer_face_counts, (std::vector<int>{ static_cast<int>(faces.size()) }));
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathMapGetInfo(map.adopted_result.get(), &info), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(info.execution, LUMICE_PATH_OUTCOME_COMPLETED);
+  EXPECT_EQ(info.state, LUMICE_PATH_STATE_FINITE);
+  EXPECT_EQ(info.crystal_id, 1);
+  ASSERT_NE(info.faces, nullptr);
+  EXPECT_EQ(std::vector<int>(info.faces, info.faces + info.face_count), faces);
+  EXPECT_DOUBLE_EQ(info.sun_altitude_deg, 20.0);
+  EXPECT_DOUBLE_EQ(info.sun_azimuth_deg, 0.0);
+  EXPECT_EQ(info.sample_count, kMapQuerySampleCount);
+  EXPECT_GT(info.member_count, 0);
+  EXPECT_EQ(info.members_evaluated, info.member_count);
+  EXPECT_EQ(info.truncated, 0);
+  EXPECT_EQ(info.view_full_sky, full_sky ? 1 : 0);
+  LUMICE_PathMapPixels pixels{};
+  pixels.struct_size = sizeof(pixels);
+  ASSERT_EQ(LUMICE_PathMapGetPixels(map.adopted_result.get(), &pixels), LUMICE_PATH_READ_OK);
+  ASSERT_GT(pixels.pixel_count, 0u);
+  EXPECT_EQ(pixels.pixel_count, info.pixel_count);
+  ASSERT_NE(pixels.values, nullptr);
+  ASSERT_NE(pixels.status, nullptr);
+  // A valid zero-valued window is possible; the full-sky fit fixture must actually carry light.
+  if (full_sky) {
+    EXPECT_GT(info.kept_count, 0);
+    bool positive = false;
+    for (size_t i = 0; i < pixels.pixel_count; ++i) {
+      positive = positive || (std::isfinite(pixels.values[i]) && pixels.values[i] > 0.0);
+    }
+    EXPECT_TRUE(positive);
+  }
 }
 
 }  // namespace
@@ -617,29 +669,30 @@ TEST(AnalyzeMapView, PumpIssuesAdoptsAndRefinesThroughTheSettleGate) {
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2", "1-3-2" }, { { 1, 2 }, { 1, 3, 2 } });
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  FreezeMapSun(state);
   state.analysis.selected_entry = "1-2";
-  const double now = 100.0;  // the view starts settled: last_view_change 0, kMapSettleSeconds met
+  double now = 100.0;  // the view starts settled: last_view_change 0, kMapSettleSeconds met
 
   // The first intent is the full sky (the default view chain); the arrival adopts.
-  ASSERT_TRUE(PumpBothUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
-  const SurveyQueryId full_id = state.analysis.map.intent_id;
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, true));
+  const SurveyQueryId full_id = state.analysis.map.adopted_id;
   EXPECT_EQ(state.analysis.map.key.radius_deg, kMapFullSkyRadiusDeg);
   EXPECT_EQ(MapQueryStateFor(state.analysis.map), MapQueryState::kCompleted);
   EXPECT_FALSE(MapRefiningFor(state.analysis.map));
   // The default view chain's auto-Fit fired once for this selection: the view moved off the
   // zenith and the refinement intent stands after the settle window.
-  ASSERT_TRUE(PumpBothUntil(state, executor, now, [&] { return state.analysis.map.intent_id != full_id; }, 30000));
+  EXPECT_TRUE(state.analysis.map_view.auto_fit_done);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.intent_id != full_id; }, 30000));
   EXPECT_TRUE(MapRefiningFor(state.analysis.map));  // the old picture shows while refining
+  EXPECT_EQ(state.analysis.map.adopted_id, full_id);
   EXPECT_LT(state.analysis.map_view.radius_deg, kMapFullSkyRadiusDeg);
 
   // The refinement arrives: the picture on show answers the standing intent.
-  ASSERT_TRUE(PumpBothUntil(
+  ASSERT_TRUE(PumpMapUntil(
       state, executor, now, [&] { return state.analysis.map.adopted_id == state.analysis.map.intent_id; }, 30000));
   EXPECT_FALSE(MapRefiningFor(state.analysis.map));
-  LUMICE_PathMapInfo info{};
-  info.struct_size = sizeof(info);
-  ASSERT_EQ(LUMICE_PathMapGetInfo(state.analysis.map.adopted_result.get(), &info), LUMICE_PATH_READ_OK);
-  EXPECT_EQ(info.view_full_sky, 0);  // a real window map, not a mock
+  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, false));  // a real window map
   executor.ShutdownAndJoin();
 }
 
@@ -653,6 +706,7 @@ TEST(AnalyzeMapView, PumpWaitsForTheSettleBeforeIssuing) {
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  FreezeMapSun(state);
   state.analysis.selected_entry = "1-2";
   const double gesture_time = 200.0;
   MapViewState& view = state.analysis.map_view;
@@ -681,21 +735,22 @@ TEST(AnalyzeMapView, SelectionChangeKillsTheWholeMapSession) {
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2", "1-3-2" }, { { 1, 2 }, { 1, 3, 2 } });
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  FreezeMapSun(state);
   state.analysis.selected_entry = "1-2";
-  ASSERT_TRUE(
-      PumpBothUntil(state, executor, 100.0, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
-  ASSERT_TRUE(state.analysis.map.adopted_result != nullptr);
+  double now = 100.0;
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, true));
+  const SurveyQueryId old_id = state.analysis.map.adopted_id;
 
   // Another class: the adopted map is gone with the selection's session — no lingering picture.
-  // (The same-pump call has not re-issued yet: the auto-Fit left the view inside its settle
-  // window at this clock, so the honest state is the pre-issue one.)
+  // Auto-Fit just changed the view: the same clock is still inside its settle window.
   state.analysis.selected_entry = "1-3-2";
-  PumpMapQuery(state, executor, 100.0);
+  PumpMapQuery(state, executor, now);
   EXPECT_FALSE(state.analysis.map.adopted_result != nullptr);
   EXPECT_FALSE(state.analysis.map.intent_valid);
-  ASSERT_TRUE(
-      PumpBothUntil(state, executor, 100.0, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
-  EXPECT_NE(state.analysis.map.key.selection.faces, (std::vector<int>{ 1, 2 }));  // the new class
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 3, 2 }, true));
+  EXPECT_NE(state.analysis.map.adopted_id, old_id);
   executor.ShutdownAndJoin();
 }
 
@@ -712,6 +767,7 @@ TEST(AnalyzeMapView, UserSteeredViewDisarmsTheAutoFit) {
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  FreezeMapSun(state);
   state.analysis.selected_entry = "1-2";
   // The user pans and zooms while the first map is still in flight.
   MapViewState& view = state.analysis.map_view;
@@ -722,8 +778,11 @@ TEST(AnalyzeMapView, UserSteeredViewDisarmsTheAutoFit) {
   }
   view.radius_deg = 30.0f;
   view.user_moved = true;
-  ASSERT_TRUE(
-      PumpBothUntil(state, executor, 100.0, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  double now = 100.0;
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, false));
+  EXPECT_FALSE(view.auto_fit_done);
+  EXPECT_FALSE(MapRefiningFor(state.analysis.map));
   // The arrival changed nothing: the view stands where the user put it, and no refinement
   // intent superseded it.
   double got[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
@@ -764,13 +823,17 @@ TEST(AnalyzeMapView, MapFaceNeverTouchesTheRoiState) {
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  FreezeMapSun(state);
   state.analysis.selected_entry = "1-2";
   state.analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
   state.analysis.cone_center_valid = true;
-  state.analysis.cone_center_dir[0] = 0.25f;
+  state.analysis.cone_center_dir[0] = 0.6f;
+  state.analysis.cone_center_dir[1] = 0.0f;
+  state.analysis.cone_center_dir[2] = 0.8f;
 
-  ASSERT_TRUE(
-      PumpBothUntil(state, executor, 100.0, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  double now = 100.0;
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, true));
   // A map pick (the renderer's write, spelled here): the intent moves, the ROI state does not.
   double pos[3];
   ASSERT_TRUE(MapPickPositionAtDiskCoords(state.analysis.map_view, 0.5, 0.4, pos));
@@ -782,7 +845,9 @@ TEST(AnalyzeMapView, MapFaceNeverTouchesTheRoiState) {
 
   EXPECT_EQ(state.analysis.roi_mode, LUMICE_RAYPATH_ROI_CONE);
   EXPECT_TRUE(state.analysis.cone_center_valid);
-  EXPECT_NEAR(state.analysis.cone_center_dir[0], 0.25f, 1e-9);
+  EXPECT_FLOAT_EQ(state.analysis.cone_center_dir[0], 0.6f);
+  EXPECT_FLOAT_EQ(state.analysis.cone_center_dir[1], 0.0f);
+  EXPECT_FLOAT_EQ(state.analysis.cone_center_dir[2], 0.8f);
   executor.ShutdownAndJoin();
 }
 
