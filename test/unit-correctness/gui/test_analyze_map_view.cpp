@@ -637,6 +637,7 @@ void ExpectAdoptedMap(const GuiState& state, const std::vector<int>& faces, bool
   EXPECT_EQ(info.sample_count, kMapQuerySampleCount);
   EXPECT_GT(info.member_count, 0);
   EXPECT_EQ(info.members_evaluated, info.member_count);
+  EXPECT_GT(info.kept_count, 0);
   EXPECT_EQ(info.truncated, 0);
   EXPECT_EQ(info.view_full_sky, full_sky ? 1 : 0);
   LUMICE_PathMapPixels pixels{};
@@ -648,7 +649,6 @@ void ExpectAdoptedMap(const GuiState& state, const std::vector<int>& faces, bool
   ASSERT_NE(pixels.status, nullptr);
   // A valid zero-valued window is possible; the full-sky fit fixture must actually carry light.
   if (full_sky) {
-    EXPECT_GT(info.kept_count, 0);
     bool positive = false;
     for (size_t i = 0; i < pixels.pixel_count; ++i) {
       positive = positive || (std::isfinite(pixels.values[i]) && pixels.values[i] > 0.0);
@@ -781,6 +781,13 @@ TEST(AnalyzeMapView, UserSteeredViewDisarmsTheAutoFit) {
   double now = 100.0;
   ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
   ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, false));
+  // This steered window excludes the identity path's sun spot. Its zero texture is an
+  // out-of-view positive mass, not a fixture that avoids evaluating any light.
+  LUMICE_PathMapPointMass mass{};
+  mass.struct_size = sizeof(mass);
+  ASSERT_EQ(LUMICE_PathMapGetPointMass(state.analysis.map.adopted_result.get(), &mass), LUMICE_PATH_READ_OK);
+  EXPECT_GT(mass.m, 0.0);
+  EXPECT_EQ(mass.pixel, -1);
   EXPECT_FALSE(view.auto_fit_done);
   EXPECT_FALSE(MapRefiningFor(state.analysis.map));
   // The arrival changed nothing: the view stands where the user put it, and no refinement
