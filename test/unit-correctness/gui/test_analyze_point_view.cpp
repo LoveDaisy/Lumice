@@ -345,6 +345,116 @@ TEST(AnalyzePointView, MassLinesSpellTheOrbitWords) {
   EXPECT_NE(joined.find("unavailable (measure_support_not_spin_orbit)"), std::string::npos);
 }
 
+// ---- The contribution curve (756): the pure model ----------------------------------------------------
+
+TEST(AnalyzePointView, CurveClassifySplitsTheFlagQuadrants) {
+  using K = PointCurveValueKind;
+  // The gate decides availability; the value decides positive/zero only behind a true gate
+  // (audit §3: a C caller never tests usability by comparing the value — the flag-clear cell
+  // shows the BeginRead zero, the valid-fail cell shows storage's NaN copied through).
+  EXPECT_EQ(PointCurveClassify(0.25, false), K::kUnavailable);
+  EXPECT_EQ(PointCurveClassify(0.0, false), K::kUnavailable);  // the BeginRead zero is NOT data
+  EXPECT_EQ(PointCurveClassify(std::nan(""), false), K::kUnavailable);
+  EXPECT_EQ(PointCurveClassify(0.25, true), K::kPositive);
+  EXPECT_EQ(PointCurveClassify(0.0, true), K::kExactZero);             // the legal zero (plate rho, C10 area)
+  EXPECT_EQ(PointCurveClassify(std::nan(""), true), K::kUnavailable);  // NaN passthrough: not drawable
+  EXPECT_EQ(PointCurveClassify(-1.0, true), K::kUnavailable);          // physically impossible: named, not drawn
+}
+
+TEST(AnalyzePointView, CurveLogTicksSpanDecadesWithSubTicks) {
+  const std::vector<PointCurveLogTick> ticks = PointCurveLogTicks(1e-6, 1e-3);
+  int majors = 0;
+  int minors = 0;
+  for (size_t i = 0; i < ticks.size(); ++i) {
+    EXPECT_GT(ticks[i].value, i > 0 ? ticks[i - 1].value : 0.0);  // monotone increasing
+    EXPECT_GE(ticks[i].value, 1e-6);
+    EXPECT_LE(ticks[i].value, 1e-3);
+    ticks[i].major ? ++majors : ++minors;
+  }
+  EXPECT_EQ(majors, 4);  // 1e-6, 1e-5, 1e-4, 1e-3
+  EXPECT_EQ(minors, 6);  // the 2x/5x inside the band: 1e-3's own 2x and 5x sit above hi — clipped
+  EXPECT_NEAR(ticks[0].value, 1e-6, 1e-30);
+  EXPECT_TRUE(ticks[0].major);
+  // A band degenerate to lo == hi widens to one decade: a single value draws inside a range.
+  const std::vector<PointCurveLogTick> one = PointCurveLogTicks(2.5, 2.5);
+  ASSERT_FALSE(one.empty());
+  EXPECT_GE(one.size(), 2U);
+  // Nothing positive to span answers empty — the renderer's honest no-range note.
+  EXPECT_TRUE(PointCurveLogTicks(0.0, 1.0).empty());
+  EXPECT_TRUE(PointCurveLogTicks(-1.0, 1.0).empty());
+  EXPECT_TRUE(PointCurveLogTicks(5.0, 1.0).empty());
+}
+
+TEST(AnalyzePointView, CurveMappingHelpersAnswerSafelyOnAnEmptyCurve) {
+  PointContributionCurve empty;
+  EXPECT_EQ(PointCurveStoredAt(empty, 0), -1);
+  EXPECT_EQ(PointCurveXAt(empty, 0), 0.0);
+  EXPECT_EQ(PointCurveValidPositionNearX(empty, 1.0), -1);
+  // Out-of-range positions on a real-shaped but empty-of-points curve answer the same way.
+  empty.ok = true;
+  empty.valid_positions = { 3 };
+  empty.points.resize(5);
+  empty.points[3].x_rad = 2.0;
+  EXPECT_EQ(PointCurveStoredAt(empty, 0), 3);
+  EXPECT_NEAR(PointCurveXAt(empty, 0), 2.0, 1e-12);
+  EXPECT_EQ(PointCurveStoredAt(empty, 1), -1);
+  EXPECT_EQ(PointCurveStoredAt(empty, -1), -1);
+  EXPECT_EQ(PointCurveValidPositionNearX(empty, 100.0), 0);  // the only valid sample wins
+  // Ties pick the lower valid position (strict less-than in the walk).
+  empty.valid_positions = { 0, 4 };
+  empty.points[0].x_rad = 0.0;
+  empty.points[4].x_rad = 4.0;
+  EXPECT_EQ(PointCurveValidPositionNearX(empty, 2.0), 0);
+  EXPECT_EQ(PointCurveValidPositionNearX(empty, 2.01), 1);
+}
+
+TEST(AnalyzePointView, CurveLogLabelStepBoundsVisibleLabels) {
+  // The live worst case (review round 1): a real fiber spanning ~213 decades on a ~200px plot
+  // must collapse to a handful of evenly spaced labelled exponents, not 213 overlapping texts.
+  const int step = PointCurveLogLabelStep(1.1287457567142152e-213, 1.6273993240820983, 200.0f, 15.0f);
+  EXPECT_GE(step, 20);
+  EXPECT_LE(step, 30);
+  // A three-decade band labels every decade; degenerate and out-of-domain bands answer 1.
+  EXPECT_EQ(PointCurveLogLabelStep(1e-6, 1e-3, 200.0f, 15.0f), 1);
+  EXPECT_EQ(PointCurveLogLabelStep(2.5, 2.5, 200.0f, 15.0f), 1);
+  EXPECT_EQ(PointCurveLogLabelStep(0.0, 1.0, 200.0f, 15.0f), 1);
+  // A shorter plot labels fewer decades: the step grows as the plot shrinks.
+  const int tall = PointCurveLogLabelStep(1e-6, 1e6, 300.0f, 15.0f);
+  const int short_plot = PointCurveLogLabelStep(1e-6, 1e6, 60.0f, 15.0f);
+  EXPECT_GE(short_plot, tall);
+}
+
+TEST(AnalyzePointView, CurvePositiveRunsKeepIsolatedPositivesAndBreakAtGaps) {
+  using K = PointCurveValueKind;
+  // P P U P: one 2-point run plus one isolated positive — nothing dropped.
+  const K a[] = { K::kPositive, K::kPositive, K::kUnavailable, K::kPositive };
+  const std::vector<PointCurveRun> ra = PointCurvePositiveRuns(a, 4);
+  ASSERT_EQ(ra.size(), 2U);
+  EXPECT_EQ(ra[0].begin, 0);
+  EXPECT_EQ(ra[0].end, 2);
+  EXPECT_EQ(ra[1].begin, 3);
+  EXPECT_EQ(ra[1].end, 4);
+  // U P U (the review's disappearing-contribution pattern): exactly one isolated run.
+  const K b[] = { K::kUnavailable, K::kPositive, K::kUnavailable };
+  const std::vector<PointCurveRun> rb = PointCurvePositiveRuns(b, 3);
+  ASSERT_EQ(rb.size(), 1U);
+  EXPECT_EQ(rb[0].begin, 1);
+  EXPECT_EQ(rb[0].end, 2);
+  // P U P: two isolated runs — a gap is never bridged.
+  const K c[] = { K::kPositive, K::kUnavailable, K::kPositive };
+  const std::vector<PointCurveRun> rc = PointCurvePositiveRuns(c, 3);
+  ASSERT_EQ(rc.size(), 2U);
+  EXPECT_EQ(rc[0].begin, 0);
+  EXPECT_EQ(rc[1].begin, 2);
+  // An exact zero breaks a run too: zeros live on the zero row, not on the log axis.
+  const K d[] = { K::kPositive, K::kExactZero, K::kPositive };
+  EXPECT_EQ(PointCurvePositiveRuns(d, 3).size(), 2U);
+  // No positives, no runs; null kinds answer empty.
+  const K e[] = { K::kUnavailable, K::kExactZero };
+  EXPECT_EQ(PointCurvePositiveRuns(e, 2).size(), 0U);
+  EXPECT_EQ(PointCurvePositiveRuns(nullptr, 3).size(), 0U);
+}
+
 TEST(AnalyzePointView, CrystalFrameTransformIsTheInverseRotation) {
   // The pose: a 90-degree rotation about world x (row-major body->world). The crystal-frame
   // transform is its transpose; applying it, then applying it to the transposed pose, round-trips.
@@ -864,6 +974,193 @@ TEST(AnalyzePointView, PartialDocumentAdoptsAndReadsAsPartial) {
     joined += l + "\n";
   }
   EXPECT_NE(joined.find("(partial)"), std::string::npos);
+}
+
+// ---- The contribution curve over REAL engine documents (756, audit §5's contract) --------------------
+
+// The axis/echo/classification contract on the C01 random prism (angle-Lebesgue measure, rho > 0):
+// the axis is the increments' cumsum with x[0]=0, the valid walk agrees with the slider's own
+// map, the classification invariants hold per point, the model's product is coherent with its
+// own arms at all-positive points (a model-internal identity — the physics is the engine's),
+// and the cursor mapping round-trips through the real x values.
+TEST(AnalyzePointView, ContributionCurveBuildsFromTheRandomPrismDocument) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kPointSceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  state.analysis_result.payload = Rows(7, { "3-5" }, { { 3, 5 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "3-5";
+  SetSkyPoint(state, 22.0, 0.0);
+  const double now = 100.0;
+  ASSERT_TRUE(
+      PumpAllUntil(state, executor, now, [&] { return state.analysis.point.adopted_result != nullptr; }, 60000));
+  const LUMICE_SinglePathResult& result = *state.analysis.point.adopted_result;
+
+  PointContributionCurve curve;
+  ASSERT_TRUE(BuildPointContributionCurve(result, 0, &curve));
+  ASSERT_TRUE(curve.ok);
+  ASSERT_FALSE(curve.points.empty());
+  // The echo: the component row's own words, verbatim on both faces.
+  std::vector<PointComponentRow> rows;
+  ASSERT_GE(PointComponentRows(result, &rows), 1);
+  EXPECT_EQ(curve.kind, rows[0].kind);
+  EXPECT_EQ(curve.total_points, rows[0].total_points);
+  EXPECT_EQ(curve.available_points, rows[0].available_points);
+  EXPECT_EQ(curve.integral_available, rows[0].integral_available);
+
+  // The axis: x[0]=0, monotone non-negative, exactly N entries, equal to the increments' cumsum
+  // read back from the component itself (N points over N-1 per-step increments).
+  EXPECT_EQ(curve.points[0].x_rad, 0.0);
+  LUMICE_PathPointComponent head{};
+  head.struct_size = sizeof(head);
+  ASSERT_EQ(LUMICE_PathPointGetComponent(&result, 0, &head), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(curve.points.size(), head.point_count);
+  ASSERT_EQ(head.arclength_count + 1, head.point_count);
+  double cumsum = 0.0;
+  for (size_t i = 0; i < head.arclength_count; ++i) {
+    cumsum += head.arclength_increments[i];
+    EXPECT_NEAR(curve.points[i + 1].x_rad, cumsum, 1e-12) << "point " << i + 1;
+    EXPECT_GE(curve.points[i + 1].x_rad, curve.points[i].x_rad) << "monotone at " << i + 1;
+  }
+  EXPECT_EQ(curve.seed_index, head.seed_index);
+
+  // The valid walk: one truth with the slider's own map.
+  EXPECT_EQ(curve.valid_positions, CollectValidSampleIndices(result, 0));
+
+  // Per-point classification invariants (the flags decide availability; the arms stay coherent).
+  bool any_positive_rho = false;
+  bool any_positive_product = false;
+  for (const PointCurvePoint& p : curve.points) {
+    EXPECT_NE(p.rho_kind, PointCurveValueKind::kUnavailable);  // rho is produced unconditionally
+    any_positive_rho = any_positive_rho || p.rho_kind == PointCurveValueKind::kPositive;
+    if (p.product_kind == PointCurveValueKind::kPositive) {
+      any_positive_product = true;
+      EXPECT_TRUE(p.valid);
+      EXPECT_NE(p.jacobian_available, 0);
+      EXPECT_TRUE(p.product_kind == PointCurveClassify(p.product, p.valid && p.jacobian_available));
+    }
+    if (p.area_kind == PointCurveValueKind::kExactZero) {
+      EXPECT_TRUE(p.valid);  // a zero behind a clear gate is the clear, never this classification
+      EXPECT_EQ(p.area, 0.0);
+    }
+  }
+  EXPECT_TRUE(any_positive_rho);
+  EXPECT_TRUE(any_positive_product);
+
+  // Model-internal coherence at all-positive points: the engine's product identity against the
+  // arms the SAME document carries (not a physics recomputation — the engine's own arithmetic).
+  for (const PointCurvePoint& p : curve.points) {
+    if (p.rho_kind == PointCurveValueKind::kPositive && p.area_kind == PointCurveValueKind::kPositive &&
+        p.transmission_kind == PointCurveValueKind::kPositive && p.k_kind == PointCurveValueKind::kPositive) {
+      EXPECT_EQ(p.product_kind, PointCurveValueKind::kPositive);
+      const double expect = p.rho * p.area * p.transmission * p.k_carea;
+      EXPECT_NEAR(p.product, expect, std::abs(expect) * 1e-9 + 1e-300);
+    }
+  }
+
+  // The cursor mapping round-trips through the real x values (sampled; midpoints biased toward
+  // the lower neighbour land on it while the axis is strictly increasing there).
+  const int valid_count = static_cast<int>(curve.valid_positions.size());
+  const int step = std::max(1, valid_count / 8);
+  for (int v = 0; v < valid_count; v += step) {
+    EXPECT_EQ(PointCurveValidPositionNearX(curve, PointCurveXAt(curve, v)), v) << "position " << v;
+    if (v + 1 < valid_count) {
+      const double x_lo = PointCurveXAt(curve, v);
+      const double x_hi = PointCurveXAt(curve, v + 1);
+      if (x_hi > x_lo) {
+        EXPECT_EQ(PointCurveValidPositionNearX(curve, x_lo + 0.25 * (x_hi - x_lo)), v);
+      }
+    }
+  }
+  // The random prism's declared measure registers no read-as-zero gap (J7's negative arm).
+  LUMICE_PathMeasureRegistration reg{};
+  reg.struct_size = sizeof(reg);
+  ASSERT_EQ(LUMICE_PathPointGetMeasureRegistration(&result, &reg), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(reg.registered_gap, 0);
+  executor.ShutdownAndJoin();
+}
+
+// The plate family (fixed axis, the C11 corpus shape): the angle-Lebesgue caliber's declared
+// honesty — rho reads identically zero (the legal exact zero, never absence), the product
+// inherits it, the other arms stay informative per their own flags, the measure registration's
+// note is retrievable verbatim (J7's trigger), and the arc's seed sits mid-curve.
+TEST(AnalyzePointView, ContributionCurveReadsThePlateMeasureHonestly) {
+  constexpr const char* kPlateSceneJson = R"({
+    "crystal": [ { "id": 1, "type": "prism",
+                   "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                   "axis": { "zenith": 0,
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                             "roll": 0 } } ],
+    "filter": [],
+    "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
+                                 "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
+               "ray_num": 1000, "max_hits": 7,
+               "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+    "render": []
+  })";
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kPlateSceneJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+
+  GuiState state;
+  state.analysis_result.payload = Rows(7, { "1-4-5-2" }, { { 1, 4, 5, 2 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "1-4-5-2";
+  SetSkyPoint(state, 20.0, 120.0);  // the C11 corpus anchor (20, 120)
+  const double now = 100.0;
+  ASSERT_TRUE(
+      PumpAllUntil(state, executor, now, [&] { return state.analysis.point.adopted_result != nullptr; }, 60000));
+  const LUMICE_SinglePathResult& result = *state.analysis.point.adopted_result;
+
+  PointContributionCurve curve;
+  ASSERT_TRUE(BuildPointContributionCurve(result, 0, &curve));
+  ASSERT_TRUE(curve.ok);
+  ASSERT_FALSE(curve.points.empty());
+  EXPECT_GT(curve.points.back().x_rad, 0.0);  // an arc's axis spans a positive length
+  EXPECT_GT(curve.seed_index, 0);             // the arc's seed sits mid-curve, not at the zero
+
+  int positive_area = 0;
+  int zero_area = 0;
+  int positive_k = 0;
+  int positive_t = 0;
+  for (const PointCurvePoint& p : curve.points) {
+    // The declared measure's rho: identically zero — the legal exact zero, never unavailable,
+    // never absent (audit §4's plate row).
+    EXPECT_EQ(p.rho_kind, PointCurveValueKind::kExactZero) << "rho at a plate point";
+    // The product inherits the zero wherever its gate stands; it is never positive here.
+    EXPECT_NE(p.product_kind, PointCurveValueKind::kPositive);
+    if (p.product_kind == PointCurveValueKind::kExactZero) {
+      EXPECT_TRUE(p.valid);
+      EXPECT_NE(p.jacobian_available, 0);
+    }
+    // The other arms per their own flags (audit §4 live: T and K strictly positive on the arc,
+    // A/a^2 zero exactly at the valid endpoints).
+    positive_area += p.area_kind == PointCurveValueKind::kPositive ? 1 : 0;
+    zero_area += p.area_kind == PointCurveValueKind::kExactZero ? 1 : 0;
+    positive_k += p.k_kind == PointCurveValueKind::kPositive ? 1 : 0;
+    positive_t += p.transmission_kind == PointCurveValueKind::kPositive ? 1 : 0;
+  }
+  EXPECT_GE(zero_area, 2);  // the arc's two valid endpoints carry the legal zero-area
+  EXPECT_GE(positive_area, 1);
+  EXPECT_GE(positive_k, 1);
+  EXPECT_GE(positive_t, 1);
+
+  // The measure registration answers its reader with a named support (J7's data source). The
+  // registration's `registered_gap`/`note` pair carries the engine's v1 read-as-zero gap list,
+  // which does not name this C11 shape (zenith Dirac at a pole + uniform spin) — the live fact
+  // is that rho still reads identically zero (pinned above); the renderer's note trigger stays
+  // the engine's own gap flag, never a GUI-side plate detector.
+  LUMICE_PathMeasureRegistration reg{};
+  reg.struct_size = sizeof(reg);
+  ASSERT_EQ(LUMICE_PathPointGetMeasureRegistration(&result, &reg), LUMICE_PATH_READ_OK);
+  EXPECT_GT(reg.support_kind.length, 0U);
+  executor.ShutdownAndJoin();
 }
 
 // Bounded churn (AC6's resource bound, the session-level leg): five point moves pumped back to

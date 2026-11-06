@@ -44,3 +44,6 @@ __pycache__/
 # Windows remote test output
 win_stdout.txt
 win_stderr.txt
+
+# ctest run from the repo root drops its cost log here; tests always run via scripts/test.sh
+Testing/
