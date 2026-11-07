@@ -1380,7 +1380,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
           ImGui::Text("%s r%zu c%zu · status %u", cell->detail ? "Detail" : "Reference", i / info.view_cols,
                       i % info.view_cols, static_cast<unsigned>(cell->pixels.status[i]));
           ImGui::Text("%.17g per sr · count %d", cell->pixels.values[i], cell->pixels.counts[i]);
-          ImGui::Text("cell δ %.7g° × az %.7g° · %d/%d · λ %.1f · n=%d",
+          ImGui::Text("Δδ %.7g° × Δaz %.7g° · %d/%d · λ %.1f · n=%d",
                       (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
                       (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.members_evaluated,
                       info.member_count, info.wavelength_nm, info.sample_count);
@@ -1545,7 +1545,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       ImGui::SetTooltip(
           "One explicit calculation and its wait; capture this target once.\n%sTarget %.6g° diameter; %d×%d cells; "
           "n=%d.\n"
-          "Actual cell δ %.7g°; grid cap %d. Move/resize while waiting without another request.",
+          "Actual Δδ %.7g°; grid cap %d. Move/resize while waiting without another request.",
           view.camera.lens_type == kLensTypeGlobe ? "NEAR SIDE ONLY. Far side keeps its own precision.\n" : "",
           2.0 * quality_target.radius_deg, spec.rows, spec.cols, kMapQuerySampleCount,
           spec.rows ? spec.actual_delta_span_deg / spec.rows : 1.0, LUMICE_PATH_MAP_MAX_PIXELS);
@@ -1745,7 +1745,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     info.struct_size = sizeof(info);
     if (!source || LUMICE_PathMapGetInfo(source.get(), &info) != LUMICE_PATH_READ_OK)
       continue;
-    ImGui::TextWrapped("%s cell δ %.7g° × az %.7g° · %d/%d%s · λ %.1f · n=%d", slot == 0 ? "Reference" : "Detail",
+    ImGui::TextWrapped("%s Δδ %.7g° × Δaz %.7g° · %d/%d%s · λ %.1f · n=%d", slot == 0 ? "Reference" : "Detail",
                        (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
                        (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.members_evaluated,
                        info.member_count, info.truncated ? " partial" : "", info.wavelength_nm, info.sample_count);

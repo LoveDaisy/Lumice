@@ -7230,6 +7230,9 @@ std::string CaptureMapFrameText(ImGuiTestContext* ctx) {
     ImGuiID begin_hook = 0;
     ImGuiID end_hook = 0;
     ~Capture() {
+      // The test coroutine resumes in the engine's earlier EndFramePre hook. Finish THIS
+      // frame's open logging before removing our later hook, or it leaks into future frames.
+      ImGui::LogFinish();
       ImGui::RemoveContextHook(ImGui::GetCurrentContext(), begin_hook);
       ImGui::RemoveContextHook(ImGui::GetCurrentContext(), end_hook);
     }
@@ -7262,7 +7265,12 @@ std::string CaptureMapFrameText(ImGuiTestContext* ctx) {
     std::ofstream output(GuiTestTempPath("map_text_frame_" + std::to_string(capture.frame) + ".txt"));
     output << capture.text;
   }
-  return capture.text;
+  const size_t window_at = capture.text.find("Raypath view\n");
+  if (window_at == std::string::npos || capture.text.find("Raypath view\n", window_at + 1) != std::string::npos) {
+    ctx->LogError("[map text] expected exactly one Raypath view submission in frame %d", capture.frame);
+    return {};
+  }
+  return capture.text.substr(window_at);
 }
 
 std::string MapTextLine(const std::string& text, const char* marker, const char* field) {
