@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794010484391,
+  "lastUpdate": 1794010486775,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "0c45b96ea97e477e6973097a68acbf4e6e7e3825",
-          "message": "Merge pull request #472 from LoveDaisy/fix/outward-child-selfhit-leak\n\nfix(core): classify outward children at birth in CPU/Metal slab traversal",
-          "timestamp": "2026-10-06T15:02:49+08:00",
-          "tree_id": "5a3cb903bdbd5960d3ed2fddfb7201cfe72a62d2",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/0c45b96ea97e477e6973097a68acbf4e6e7e3825"
-        },
-        "date": 1791270325652,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "148248ccbf3b62682cd8191b787af84268d788d7",
           "message": "Merge pull request #473 from LoveDaisy/docs/corpus-c12-tint-caliber\n\ndocs(corpus): C12 tint multi-caliber + C06 LI closed-form anchor",
           "timestamp": "2026-10-07T17:57:54+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.7,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4719d5178481cc9a506c71cbab37271f585e3f2",
+          "message": "Merge pull request #575 from LoveDaisy/feat/raypath-pose-entry\n\nfeat(gui): open Pose & trace beside sky-point controls",
+          "timestamp": "2026-11-07T08:10:47+08:00",
+          "tree_id": "2b3fa8c58803976a6f6537a96676351f3eb5cb61",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a4719d5178481cc9a506c71cbab37271f585e3f2"
+        },
+        "date": 1794010486139,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 89.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.8,
             "unit": "%"
           }
         ]
