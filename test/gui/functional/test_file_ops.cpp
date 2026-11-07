@@ -526,7 +526,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.current_file_path == GuiTestTempPath("cancel_keeps_this.lmc"));
       IM_CHECK_EQ(static_cast<int>(gui::g_pending_action), static_cast<int>(gui::PendingAction::kNone));
 
-      ctx->ItemClick("##TopBar/" ICON_FA_FOLDER_OPEN " Open");
+      ctx->ItemClick("##TopBar/###toolbar_open");
       ctx->Yield(2);
       ctx->ItemClick("Unsaved Changes/Cancel");
       ctx->Yield(2);
@@ -1128,7 +1128,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.sun.altitude, 41.0f);
       IM_CHECK(gui::g_state.current_file_path == lmc_file.path && !gui::g_state.dirty);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
-      ctx->ItemClick("##TopBar/" ICON_FA_FILE " New");
+      ctx->ItemClick("##TopBar/###toolbar_new");
       ctx->Yield(2);
       IM_CHECK(gui::g_state.current_file_path.empty() && !gui::g_state.dirty);
       IM_CHECK_EQ(gui::g_state.sun.altitude, gui::InitDefaultState().sun.altitude);
