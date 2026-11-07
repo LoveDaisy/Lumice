@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794015115561,
+  "lastUpdate": 1794015118174,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "148248ccbf3b62682cd8191b787af84268d788d7",
-          "message": "Merge pull request #473 from LoveDaisy/docs/corpus-c12-tint-caliber\n\ndocs(corpus): C12 tint multi-caliber + C06 LI closed-form anchor",
-          "timestamp": "2026-10-07T17:57:54+08:00",
-          "tree_id": "87b8eff64500a3715263acfc8706ee01d3846e00",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/148248ccbf3b62682cd8191b787af84268d788d7"
-        },
-        "date": 1791367471375,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 85.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "215a850397ac9dd42e2eb7b30ebcb657294c11f2",
           "message": "Merge pull request #474 from LoveDaisy/chore/release-4.7.2\n\nchore(release): cut 4.7.2",
           "timestamp": "2026-10-07T18:13:09+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0dc0fc9d40c4357238282b96410646dbeab7def7",
+          "message": "Merge pull request #576 from LoveDaisy/feat/toolbar-adaptive-labels\n\nfeat(gui): adapt toolbar labels consistently to available width",
+          "timestamp": "2026-11-07T09:27:47+08:00",
+          "tree_id": "e7f3582dec340d9a9f0787308d3de5d68c9f2051",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/0dc0fc9d40c4357238282b96410646dbeab7def7"
+        },
+        "date": 1794015117392,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 95.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.8,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.1,
             "unit": "%"
           }
         ]
