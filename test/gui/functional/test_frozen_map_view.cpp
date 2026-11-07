@@ -873,6 +873,17 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(g_pressure.replaced && !g_pressure.failed && g_pressure.old_released, false);
   scene.reset();
+  const ScopedWindowBasis native_basis(ctx);
+  const auto framebuffer_scale = ImGui::GetIO().DisplayFramebufferScale;
+  g_window_size_test.width = std::max(gui::kInitWindowWidth, static_cast<int>(std::ceil(2560.0 / framebuffer_scale.x)));
+  g_window_size_test.height =
+      std::max(gui::kInitWindowHeight, static_cast<int>(std::ceil(1600.0 / framebuffer_scale.y)));
+  g_window_size_test.done.store(false);
+  g_window_size_test.requested.store(true);
+  for (int frame = 0; frame < 30 && !g_window_size_test.done.load(); ++frame)
+    ctx->Yield(1);
+  IM_CHECK_RETV(g_window_size_test.done.load(), false);
+  ctx->Yield(3);
   gui::g_state.analyze_raypath_view_open = true;
   ctx->Yield(3);
   ImGuiWindow* window = ctx->GetWindowByRef("//Raypath view");
@@ -887,7 +898,7 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
     }
   } restore_window{ window, old_pos, old_size };
   const auto origin = ImGui::GetMainViewport()->Pos;
-  ImGui::SetWindowPos(window, ImVec2(origin.x + 400, origin.y + 45), ImGuiCond_Always);
+  ImGui::SetWindowPos(window, ImVec2(origin.x + 8, origin.y + 45), ImGuiCond_Always);
   ImGui::SetWindowSize(window, ImVec2(1180, 730), ImGuiCond_Always);
   ctx->SetRef("//Raypath view");
   for (int adjustment = 0; adjustment < 4; ++adjustment) {
@@ -907,6 +918,9 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
   }
   ctx->Yield(3);
   const auto timing = gui::LastMapObservationTiming();
+  ctx->LogInfo("[maximum geometry] canvas %dx%d; viewport %.0fx%.0f; native %.0fx%.0f", timing.width, timing.height,
+               ImGui::GetMainViewport()->Size.x, ImGui::GetMainViewport()->Size.y, ImGui::GetIO().DisplaySize.x,
+               ImGui::GetIO().DisplaySize.y);
   IM_CHECK_RETV(timing.width <= 1600 && timing.height <= 1200 && timing.width >= 1598 && timing.height >= 1198, false);
   const auto legend = gui::LastMapOverlayLegend();
   IM_CHECK_RETV(legend.anchor_sun || legend.anchor_horizon || legend.dispersion_red, false);
