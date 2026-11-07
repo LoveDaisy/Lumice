@@ -210,6 +210,11 @@ The central area shows the live, lens-projected halo image. While idle the area 
 
 ![Render Preview with halo](../figs/gui_screenshot_example_04.jpg)
 
+The **Raypath view** map shares this same camera: a drag/wheel or shared Fit/Full-sky preset
+in either picture affects both. Observation only reprojects frozen cells; use **Refine** for
+new data detail, **Alt/Option+click** for a sky point, and the report for original resolution,
+coverage and partial status. See [the analysis manual](../user-manual/06-raypath-analysis.md#7-the-raypath-view-the-class-reference-map).
+
 ## Popup Editor
 
 `Edit` buttons on a crystal card open one **Edit Entry** window holding Crystal, Axis, and Filter plus a crystal preview that redraws every frame. Its top area shows sharing state, then a full-width entry bar with the participation toggle and Weight control; these entry-private values are not shared by Link. Two independent controls on the bottom row choose layout and commit mode.

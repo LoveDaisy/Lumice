@@ -189,6 +189,10 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 
 ![Render Preview 渲染示例](../figs/gui_screenshot_example_04.jpg)
 
+**Raypath view** 地图与这里共用一份相机：任一图的拖动/滚轮或共享 Fit/Full sky 都影响两图。
+观察只重投影冻结格；新细节须点 **Refine**，天空点用 **Alt/Option＋单击**，原分辨率、覆盖与 partial 在报告中读取。
+详见[光路分析手册](../user-manual/06-raypath-analysis_zh.md#7-光路视图类参考图)。
+
 ## Popup Editor（编辑弹窗）
 
 晶体卡片上的 `Edit` 按钮会打开一个 **Edit Entry** 窗口，包含 Crystal / Axis / Filter 与每帧重画的晶体预览。顶部先显示共享状态，再是一条全宽 entry bar，包含参与开关与 Weight；这两个 entry 私有值不参与 Link 共享。底栏上的两个独立控件分别选择布局与提交模式。
