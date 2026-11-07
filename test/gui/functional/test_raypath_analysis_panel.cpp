@@ -7332,6 +7332,7 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
       IM_CHECK_RETV(info.view_az_max_deg - info.view_az_min_deg == 360.0, false);
     }
     IM_CHECK_RETV(CheckMapTextGlyphs(ctx, source, line), false);
+    IM_CHECK_RETV(line.find("cell δ ") != std::string::npos, false);
     return true;
   };
   IM_CHECK_RETV(check_source(0), false);
