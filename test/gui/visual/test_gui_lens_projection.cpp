@@ -522,6 +522,18 @@ void RegisterLensProjectionTests(ImGuiTestEngine* engine) {
       // every machine and every rerun — that is the property the capture inherits.
       IM_CHECK_EQ((unsigned long long)gui::g_state.stats_sim_ray_num, ExpectedSimRayNum(scene.ray_num_millions));
 
+      // Retain the actual coherent source until the comparison, including on the failure path.
+      // A terminal stats count alone cannot establish which payload the GL texture contains.
+      const auto final_snapshot = gui::g_server_poller.LoadSnapshot();
+      const auto uploaded_serial = gui::g_state.last_uploaded_texture_serial;
+      const float captured_ev = gui::g_state.ev_auto;
+      if (final_snapshot && final_snapshot->payload) {
+        ctx->LogInfo("[lens-source] %s stats=%llu texture=%llu serial=%llu uploaded=%llu epoch=%llu payload=%llu",
+                     scene.name, (unsigned long long)final_snapshot->stats_sim_ray_num,
+                     (unsigned long long)final_snapshot->payload->texture_ray_count, final_snapshot->texture_serial,
+                     uploaded_serial, final_snapshot->epoch, final_snapshot->payload->payload_epoch);
+      }
+
       guard.server_owned = false;
       gui::g_server_poller.Stop();
       LUMICE_StopServer(gui::g_server);
@@ -646,7 +658,27 @@ void RegisterLensProjectionTests(ImGuiTestEngine* engine) {
       const std::string ref_path = std::string(LUMICE_TEST_REF_DIR) + "/lens_proj_" + scene.name + ".jpg";
       IM_CHECK(RequestAndWaitPreviewExport(ctx, vp, tmp_path));
 
-      IM_CHECK(lumice::test::CheckAgainstReference("lens_proj", scene.name, tmp_path, ref_path, g_keep_export_png));
+      const bool passed =
+          lumice::test::CheckAgainstReference("lens_proj", scene.name, tmp_path, ref_path, g_keep_export_png);
+      if (!passed && final_snapshot && final_snapshot->payload) {
+        const auto& source = *final_snapshot->payload;
+        const std::string prefix = GuiTestTempPath(std::string("lens_source_") + scene.name).string();
+        std::ofstream metadata(prefix + ".txt");
+        metadata << "stats_rays=" << final_snapshot->stats_sim_ray_num << "\ntexture_rays=" << source.texture_ray_count
+                 << "\nserial=" << final_snapshot->texture_serial << "\nuploaded=" << uploaded_serial
+                 << "\nepoch=" << final_snapshot->epoch << "\npayload_epoch=" << source.payload_epoch
+                 << "\nwidth=" << source.width << "\nheight=" << source.height
+                 << "\nintensity=" << source.snapshot_intensity << "\nanchor=" << source.anchor_l99_sky
+                 << "\naxis_solid_angle=" << source.axis_solid_angle << "\npre_stop_ev=" << captured_ev
+                 << "\ncapture_ev=" << ev << '\n';
+        if (source.xyz_buffer && source.width > 0 && source.height > 0) {
+          std::ofstream raw(prefix + ".xyz", std::ios::binary);
+          raw.write(reinterpret_cast<const char*>(source.xyz_buffer),
+                    static_cast<std::streamsize>(source.width) * source.height * 3 * sizeof(float));
+        }
+        ctx->LogInfo("[lens-source] failed capture source retained at %s.{txt,xyz}", prefix.c_str());
+      }
+      IM_CHECK(passed);
     };
   }
 }

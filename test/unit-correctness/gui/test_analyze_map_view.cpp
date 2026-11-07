@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -45,146 +48,17 @@ double AngleBetween(const double a[3], const double b[3]) {
   return std::acos(std::max(-1.0, std::min(1.0, DotOf(a, b))));
 }
 
-// ---- The disk projection (the prototype's contract, held to independent anchors) -------------------
-
-TEST(AnalyzeMapView, ZenithFullSkyProjectsTheSunByTheHandDerivedSpot) {
-  // Zenith-centred full sky: the zenith is the disk centre, and the sun at (alt 20, az 0)
-  // sits 70 degrees out — at rho = sin(35°)/sin(90°) of the half-radius, in the fallback basis's
-  // own screen down-direction (the basis is (−1,0,0) up by the prototype's rule; spelled here,
-  // not read from the implementation).
-  const float centre[3] = { 0.0f, 0.0f, 1.0f };
-  const MapDiskProjector proj = MakeMapDiskProjector(centre, 180.0f);
-  double sun[3];
-  SkyPositionOf(20.0, 0.0, sun);
-  double x = 0.0;
-  double y = 0.0;
-  ASSERT_TRUE(MapDiskProject(proj, sun, &x, &y));
-  const double rho = std::sin(35.0 * kD2R);
-  EXPECT_NEAR(x, 0.5, 1e-12);
-  EXPECT_NEAR(y, 0.5 + 0.5 * rho, 1e-12);
-  // And the zenith itself is the centre.
-  double zenith[3] = { 0.0, 0.0, 1.0 };
-  ASSERT_TRUE(MapDiskProject(proj, zenith, &x, &y));
-  EXPECT_NEAR(x, 0.5, 1e-12);
-  EXPECT_NEAR(y, 0.5, 1e-12);
-}
-
-TEST(AnalyzeMapView, DiskRoundtripsAndRejectsTheCorners) {
-  // The centre here is off the world axis, so the basis is the zenith projection — and the
-  // roundtrip must hold for directions across the view disk.
-  double centre_d[3];
-  SkyPositionOf(40.0, 30.0, centre_d);
-  const float centre[3] = { static_cast<float>(centre_d[0]), static_cast<float>(centre_d[1]),
-                            static_cast<float>(centre_d[2]) };
-  const MapDiskProjector proj = MakeMapDiskProjector(centre, 25.0f);
-  const double kOffsets[][2] = { { 0, 0 },   { 10, 0 },    { 0, 15 }, { -8, 12 },
-                                 { 18, -6 }, { -20, -10 }, { 5, 5 },  { 0, 24.9 } };
-  for (const auto& offset : kOffsets) {
-    // A direction at the given (toward-zenith, toward-east) offsets from the centre, spelled by
-    // the spherical offset formula the prototype's basis induces: the tangent plane steps.
-    double base[3];
-    SkyPositionOf(40.0, 30.0, base);
-    double up[3] = { -base[0] * base[2], -base[1] * base[2], 1.0 - base[2] * base[2] };
-    const double n = std::sqrt(DotOf(up, up));
-    for (int k = 0; k < 3; ++k) {
-      up[k] /= n;
-    }
-    double right[3] = { base[1] * up[2] - base[2] * up[1], base[2] * up[0] - base[0] * up[2],
-                        base[0] * up[1] - base[1] * up[0] };
-    const double a = offset[0] * kD2R;
-    const double b = offset[1] * kD2R;
-    double pos[3];
-    for (int k = 0; k < 3; ++k) {
-      pos[k] = std::cos(a) * (std::cos(b) * base[k] + std::sin(b) * right[k]) + std::sin(a) * up[k];
-    }
-    double x = 0.0;
-    double y = 0.0;
-    if (!MapDiskProject(proj, pos, &x, &y)) {
-      ADD_FAILURE() << "projection refused an in-disk offset " << offset[0] << "," << offset[1];
-      continue;
-    }
-    double back[3];
-    if (!MapDiskUnproject(proj, x, y, back)) {
-      ADD_FAILURE() << "unproject refused its own projection at offset " << offset[0] << "," << offset[1];
-      continue;
-    }
-    // The projector's centre is float-quantized (the view state's own precision), so the
-    // roundtrip carries a ~1e-7 rad ceiling — far under anything a pixel can express.
-    EXPECT_NEAR(AngleBetween(pos, back), 0.0, 1e-6) << "offset " << offset[0] << "," << offset[1];
-    // Past the view radius, the projection refuses.
-    double far_pos[3];
-    for (int k = 0; k < 3; ++k) {
-      far_pos[k] = std::cos(30.0 * kD2R) * base[k] + std::sin(30.0 * kD2R) * up[k];
-    }
-    if (offset[0] == 0 && offset[1] == 0) {
-      double fx = 0.0;
-      double fy = 0.0;
-      EXPECT_FALSE(MapDiskProject(proj, far_pos, &fx, &fy));
-    }
-  }
-  // The bounding square's corners are outside the disk.
-  double out[3];
-  EXPECT_FALSE(MapDiskUnproject(proj, 0.02, 0.02, out));
-  EXPECT_FALSE(MapDiskUnproject(proj, 0.98, 0.98, out));
-}
-
-TEST(AnalyzeMapView, PanMakesTheGrabbedSkyPointFollowTheCursor) {
-  MapViewState view;
-  double centre[3];
-  SkyPositionOf(40.0, 30.0, centre);
-  for (int k = 0; k < 3; ++k) {
-    view.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  view.radius_deg = 25.0f;
-  // A drag to the right by a fifth of the disk: the new centre is the sky point that was LEFT of
-  // the centre by that step (the grab follows the cursor) — spelled through the same unproject.
-  const MapDiskProjector proj = MakeMapDiskProjector(view.centre_pos, view.radius_deg);
-  double expected[3];
-  ASSERT_TRUE(MapDiskUnproject(proj, 0.5 - 0.1, 0.5, expected));
-  MapPanViewByDiskCoords(&view, 0.1, 0.0);
-  double got[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
-  // The expected direction itself came through a float-centred unproject, and the result is
-  // float-stored: a ~1e-4 rad band is what two quantizations actually promise.
-  EXPECT_NEAR(AngleBetween(got, expected), 0.0, 1e-3);
-}
-
-TEST(AnalyzeMapView, ZoomClampsAndAnchorsAtTheCentre) {
-  MapViewState view;
-  double centre[3];
-  SkyPositionOf(10.0, 10.0, centre);
-  for (int k = 0; k < 3; ++k) {
-    view.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  view.radius_deg = 3.0f;
-  // Zoom at the centre moves only the radius.
-  double at_centre[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
-  MapZoomViewAtPoint(&view, at_centre, 1.0f / kMapZoomWheelFactor);
-  EXPECT_NEAR(view.radius_deg, 3.0f / kMapZoomWheelFactor, 1e-5);
-  for (int k = 0; k < 3; ++k) {
-    EXPECT_NEAR(view.centre_pos[k], at_centre[k], 1e-5);
-  }
-  // The radius clamps at both ends.
-  for (int i = 0; i < 40; ++i) {
-    MapZoomViewAtPoint(&view, at_centre, 1.0f / kMapZoomWheelFactor);
-  }
-  EXPECT_EQ(view.radius_deg, kMapMinRadiusDeg);
-  for (int i = 0; i < 40; ++i) {
-    MapZoomViewAtPoint(&view, at_centre, kMapZoomWheelFactor);
-  }
-  EXPECT_EQ(view.radius_deg, kMapFullSkyRadiusDeg);
-}
-
 // ---- The view -> window derivation (the spans derived by hand here) --------------------------------
 
 TEST(AnalyzeMapView, WindowSpecBoundsTheDiskInTheSunFrame) {
-  MapViewState view;
+  MapCaptureTarget view;
   double centre[3];
   SkyPositionOf(40.0, 0.0, centre);  // 20 degrees from the sun (alt 20, az 0)
   for (int k = 0; k < 3; ++k) {
     view.centre_pos[k] = static_cast<float>(centre[k]);
   }
   view.radius_deg = 10.0f;
-  const MapWindowSpec spec = MapWindowSpecForView(view, 20.0, 0.0);
+  const MapWindowSpec spec = MapWindowSpecForTarget(view, 20.0, 0.0);
   EXPECT_FALSE(spec.full_sky);
   EXPECT_NEAR(spec.centre_altitude_deg, 40.0, 1e-5);  // the float-quantized centre
   EXPECT_NEAR(spec.centre_azimuth_deg, 0.0, 1e-5);
@@ -200,18 +74,18 @@ TEST(AnalyzeMapView, WindowSpecBoundsTheDiskInTheSunFrame) {
 }
 
 TEST(AnalyzeMapView, DiskAtAPoleTakesTheFullAzimuthCircle) {
-  MapViewState view;
+  MapCaptureTarget view;
   double centre[3];
   SkyPositionOf(20.0, 0.0, centre);  // the disk of radius 30 contains the sun frame's pole
   for (int k = 0; k < 3; ++k) {
     view.centre_pos[k] = static_cast<float>(centre[k]);
   }
   view.radius_deg = 30.0f;
-  const MapWindowSpec spec = MapWindowSpecForView(view, 20.0, 0.0);
+  const MapWindowSpec spec = MapWindowSpecForTarget(view, 20.0, 0.0);
   EXPECT_NEAR(spec.azimuth_span_deg, 360.0, 1e-9);
   // And a full-sky view stays the engine's named all-sky view with the zero grid.
-  MapViewState full;
-  const MapWindowSpec full_spec = MapWindowSpecForView(full, 20.0, 0.0);
+  MapCaptureTarget full;
+  const MapWindowSpec full_spec = MapWindowSpecForTarget(full, 20.0, 0.0);
   EXPECT_TRUE(full_spec.full_sky);
   EXPECT_EQ(full_spec.rows, 0);
   EXPECT_EQ(full_spec.cols, 0);
@@ -659,70 +533,235 @@ void ExpectAdoptedMap(const GuiState& state, const std::vector<int>& faces, bool
 
 }  // namespace
 
-TEST(AnalyzeMapView, PumpIssuesAdoptsAndRefinesThroughTheSettleGate) {
+TEST(AnalyzeMapView, ObservationNeverIssuesAndOnlyExplicitRefineCapturesTarget) {
   LUMICE_Scene* raw_scene = nullptr;
   ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
-  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
   SurveyExecutor executor;
-  executor.SetScene(std::move(scene));
-
-  GuiState state;
-  state.analysis_result.payload = Rows(7, { "1-2", "1-3-2" }, { { 1, 2 }, { 1, 3, 2 } });
-  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
-  FreezeMapSun(state);
-  state.analysis.selected_entry = "1-2";
-  double now = 100.0;  // the view starts settled: last_view_change 0, kMapSettleSeconds met
-
-  // The first intent is the full sky (the default view chain); the arrival adopts.
-  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
-  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, true));
-  const SurveyQueryId full_id = state.analysis.map.adopted_id;
-  EXPECT_EQ(state.analysis.map.key.radius_deg, kMapFullSkyRadiusDeg);
-  EXPECT_EQ(MapQueryStateFor(state.analysis.map), MapQueryState::kCompleted);
-  EXPECT_FALSE(MapRefiningFor(state.analysis.map));
-  // The default view chain's auto-Fit fired once for this selection: the view moved off the
-  // zenith and the refinement intent stands after the settle window.
-  EXPECT_TRUE(state.analysis.map_view.auto_fit_done);
-  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.intent_id != full_id; }, 30000));
-  EXPECT_TRUE(MapRefiningFor(state.analysis.map));  // the old picture shows while refining
-  EXPECT_EQ(state.analysis.map.adopted_id, full_id);
-  EXPECT_LT(state.analysis.map_view.radius_deg, kMapFullSkyRadiusDeg);
-
-  // The refinement arrives: the picture on show answers the standing intent.
-  ASSERT_TRUE(PumpMapUntil(
-      state, executor, now, [&] { return state.analysis.map.adopted_id == state.analysis.map.intent_id; }, 30000));
-  EXPECT_FALSE(MapRefiningFor(state.analysis.map));
-  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, false));  // a real window map
-  executor.ShutdownAndJoin();
-}
-
-TEST(AnalyzeMapView, PumpWaitsForTheSettleBeforeIssuing) {
-  LUMICE_Scene* raw_scene = nullptr;
-  ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
-  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
-  SurveyExecutor executor;
-  executor.SetScene(std::move(scene));
-
+  executor.SetScene(std::unique_ptr<LUMICE_Scene, SceneDeleter>(raw_scene));
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
   FreezeMapSun(state);
   state.analysis.selected_entry = "1-2";
-  const double gesture_time = 200.0;
-  MapViewState& view = state.analysis.map_view;
-  // A gesture frame changes the view but the request waits: mid-gesture nothing issues, the
-  // settle window holds, and the burst ends as ONE request for the final view.
-  double zoom_target[3] = { 0.0, 0.0, 1.0 };
-  MapZoomViewAtPoint(&view, zoom_target, 1.0f / kMapZoomWheelFactor);
-  MapViewChanged(&view, gesture_time, true, /*user_steered=*/true);
-  PumpMapQuery(state, executor, gesture_time);
-  EXPECT_FALSE(state.analysis.map.intent_valid);                       // mid-gesture: nothing issued
-  MapViewChanged(&view, gesture_time, false, /*user_steered=*/false);  // the gesture ends
-  PumpMapQuery(state, executor, gesture_time);
-  EXPECT_FALSE(state.analysis.map.intent_valid);  // still inside the settle window
-  PumpMapQuery(state, executor, gesture_time + kMapSettleSeconds + 0.01);
-  EXPECT_TRUE(state.analysis.map.intent_valid);  // one request for the whole burst
+  double now = 100.0;
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
+  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, true));
+  const auto full = state.analysis.map.adopted_result;
+  const auto full_id = state.analysis.map.intent_id;
+  const auto renderer = state.renderer;
+  for (int i = 0; i < 20; ++i) {
+    state.renderer.fov = 1.0f + i;
+    state.renderer.azimuth = i * 17.0f;
+    PumpMapQuery(state, executor, now + 1.0 + i);
+  }
+  EXPECT_EQ(state.analysis.map.intent_id, full_id);
+  EXPECT_EQ(state.analysis.map.adopted_result, full);
+  EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kMap));
+  EXPECT_FALSE(MapRefiningFor(state.analysis.map));
+  // The first adoption itself never changed the actual observation camera.
+  EXPECT_EQ(renderer.fov, GuiState{}.renderer.fov);
+  MapCaptureTarget target;
+  target.centre_pos[0] = 1.0;
+  target.centre_pos[2] = 0.0;
+  target.radius_deg = 1.5;
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  const auto detail_id = state.analysis.map.intent_id;
+  EXPECT_NE(detail_id, full_id);
+  state.renderer.fov = 80.0f;
+  state.renderer.azimuth = 97.0f;
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.detail_result != nullptr; }, 30000));
+  EXPECT_EQ(state.analysis.map.intent_id, detail_id);
+  EXPECT_EQ(state.analysis.map.detail_id, detail_id);
+  EXPECT_EQ(state.analysis.map.adopted_result, full);
+  EXPECT_FLOAT_EQ(state.renderer.fov, 80.0f);
+  EXPECT_FLOAT_EQ(state.renderer.azimuth, 97.0f);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathMapGetInfo(state.analysis.map.detail_result.get(), &info), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(info.view_full_sky, 0);
+  EXPECT_NEAR(info.view_delta_max_deg - info.view_delta_min_deg, 3.0, 1e-6);
+  EXPECT_EQ(info.sample_count, 500000);
+  EXPECT_FALSE(MapRefiningFor(state.analysis.map));
   executor.ShutdownAndJoin();
+}
+
+TEST(AnalyzeMapView, DeterministicLateGateCameraMotionAndMailboxPeak) {
+  struct Gate {
+    std::mutex mu;
+    std::condition_variable cv;
+    int entered = 0, allowed = 0;
+    void Pickup(QueryFace face) {
+      if (face != QueryFace::kMap)
+        return;
+      std::unique_lock<std::mutex> lock(mu);
+      const int phase = ++entered;
+      cv.notify_all();
+      cv.wait(lock, [&] { return allowed >= phase; });
+    }
+    bool Wait(int phase) {
+      std::unique_lock<std::mutex> lock(mu);
+      return cv.wait_for(lock, std::chrono::seconds(15), [&] { return entered >= phase; });
+    }
+    bool At(int phase) {
+      std::lock_guard<std::mutex> lock(mu);
+      return entered >= phase;
+    }
+    void Release(int phase) {
+      std::lock_guard<std::mutex> lock(mu);
+      allowed = phase;
+      cv.notify_all();
+    }
+  } gate;
+  struct Ledger {
+    std::mutex mu;
+    std::vector<std::weak_ptr<const LUMICE_PathMap>> handles;
+    size_t peak = 0;
+    void Observe(const SurveyExecutor::Finished& result) {
+      if (!result.map_result)
+        return;
+      std::lock_guard<std::mutex> lock(mu);
+      handles.push_back(result.map_result);
+      const size_t live = static_cast<size_t>(
+          std::count_if(handles.begin(), handles.end(), [](const auto& h) { return !h.expired(); }));
+      peak = std::max(peak, live);
+    }
+    size_t Peak() {
+      std::lock_guard<std::mutex> lock(mu);
+      return peak;
+    }
+  } ledger;
+  SurveyExecutor executor;
+  struct Teardown {
+    Gate& gate;
+    SurveyExecutor& executor;
+    ~Teardown() {
+      gate.Release(1 << 30);
+      executor.SetPickupGateForTest(nullptr);
+      executor.SetCompletionObserverForTest(nullptr);
+    }
+  } teardown{ gate, executor };
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
+  executor.SetScene(std::unique_ptr<LUMICE_Scene, SceneDeleter>(raw_scene));
+  executor.SetPickupGateForTest([&](QueryFace face) { gate.Pickup(face); });
+  executor.SetCompletionObserverForTest([&](const auto& result) { ledger.Observe(result); });
+  GuiState state;
+  state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "1-2";
+  FreezeMapSun(state);
+  double now = 100.0;
+  PumpMapQuery(state, executor, now);
+  ASSERT_TRUE(gate.Wait(1));
+  const auto old = state.analysis.map.intent_id;
+  state.analysis.map_wavelength_nm = 650.0;
+  PumpMapQuery(state, executor, now);
+  const auto current = state.analysis.map.intent_id;
+  ASSERT_NE(old, current);
+  gate.Release(1);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return gate.At(2); }, 15000));
+  EXPECT_EQ(state.analysis.map.adopted_result, nullptr);
+  EXPECT_TRUE(state.analysis.map.adopted_error.empty());
+  gate.Release(2);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_id == current; }, 15000));
+  const auto* reference = state.analysis.map.adopted_result.get();
+  ASSERT_NE(reference, nullptr);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathMapGetInfo(reference, &info), LUMICE_PATH_READ_OK);
+  EXPECT_DOUBLE_EQ(info.wavelength_nm, 650.0);
+  MapCaptureTarget target;
+  target.centre_pos[0] = 1.0;
+  target.centre_pos[2] = 0.0;
+  target.radius_deg = 1.5;
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  ASSERT_TRUE(gate.Wait(3));
+  const auto camera_legal = state.analysis.map.intent_id;
+  state.renderer.fov = 23.0f;
+  state.renderer.azimuth = 73.0f;
+  gate.Release(3);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.detail_id == camera_legal; }, 15000));
+  EXPECT_FLOAT_EQ(state.renderer.fov, 23.0f);
+  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
+  const auto previous_detail = std::weak_ptr<const LUMICE_PathMap>(state.analysis.map.detail_result);
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  ASSERT_TRUE(gate.Wait(4));
+  const auto withdrawn = state.analysis.map.intent_id;
+  target.centre_pos[0] = 0.0;
+  target.centre_pos[2] = 1.0;
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  const auto successor = state.analysis.map.intent_id;
+  ASSERT_NE(successor, withdrawn);
+  // A ray completion is an execution barrier: map has priority only if its drain gate opens.
+  // With the undrained D result, a correct worker reaches this ray BEFORE producing E. A
+  // broken gate produces E while D still lives, and the independent weak-handle ledger sees 4.
+  LUMICE_RepresentativeRayRequest ray{};
+  ray.struct_size = sizeof(ray);
+  ray.crystal_id = 1;
+  ray.face_count = 2;
+  ray.layer_count = 1;
+  const double identity_pose[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  const double ray_wavelength = 650.0;
+  ray.pose = identity_pose;
+  ray.wavelengths_nm = &ray_wavelength;
+  ray.wavelength_count = 1;
+  const auto ray_id = executor.NextId(7);
+  executor.IssueRayQuery(ray_id, ray, { 1, 2 }, { 2 });
+  gate.Release(1 << 30);
+  std::optional<SurveyExecutor::Finished> barrier;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (!barrier && std::chrono::steady_clock::now() < deadline) {
+    barrier = executor.TakeFinished(QueryFace::kRay);
+    if (!barrier)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_TRUE(barrier.has_value());
+  EXPECT_EQ(barrier->id, ray_id);
+  EXPECT_EQ(ledger.Peak(), 3u);
+  PumpMapQuery(state, executor, now);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.detail_id == successor; }, 15000));
+  EXPECT_TRUE(previous_detail.expired());
+  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
+  EXPECT_EQ(ledger.Peak(), 3u);
+  const auto* detail = state.analysis.map.detail_result.get();
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  const auto cancelled = state.analysis.map.intent_id;
+  CancelMap(state, executor);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return !executor.QueryOutstanding(QueryFace::kMap); }, 15000));
+  PumpMapQuery(state, executor, now);
+  EXPECT_TRUE(state.analysis.map.cancelled_for_key);
+  EXPECT_EQ(state.analysis.map.intent_id, cancelled);
+  EXPECT_EQ(state.analysis.map.detail_result.get(), detail);
+  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
+  RecordProperty("map_peak_live_result_handles", static_cast<int>(ledger.Peak()));
+  executor.ShutdownAndJoin();
+}
+
+TEST(AnalyzeMapView, SourceCompatibilityRequiresSameOrderedCompletedPrefix) {
+  LUMICE_PathMapInfo full{};
+  full.state = LUMICE_PATH_STATE_FINITE;
+  full.member_count = 12;
+  full.members_evaluated = 4;
+  full.truncated = 1;
+  full.wavelength_nm = 550.0;
+  full.sample_count = 500000;
+  auto detail = full;
+  detail.view_rows = 220;
+  detail.view_cols = 400;
+  EXPECT_TRUE(MapSourcesCompatible(full, detail));  // two partials may compose
+  detail.members_evaluated = 12;
+  detail.truncated = 0;
+  EXPECT_FALSE(MapSourcesCompatible(full, detail));  // partial full / complete detail
+  EXPECT_FALSE(MapSourcesCompatible(detail, full));  // complete full / partial detail
+  detail = full;
+  detail.view_e1[0] = 1.0;
+  EXPECT_FALSE(MapSourcesCompatible(full, detail));
+  detail = full;
+  detail.wavelength_nm = 650.0;
+  EXPECT_FALSE(MapSourcesCompatible(full, detail));
+  detail = full;
+  detail.sample_count = 250000;
+  EXPECT_FALSE(MapSourcesCompatible(full, detail));
 }
 
 TEST(AnalyzeMapView, SelectionChangeKillsTheWholeMapSession) {
@@ -747,54 +786,36 @@ TEST(AnalyzeMapView, SelectionChangeKillsTheWholeMapSession) {
   state.analysis.selected_entry = "1-3-2";
   PumpMapQuery(state, executor, now);
   EXPECT_FALSE(state.analysis.map.adopted_result != nullptr);
-  EXPECT_FALSE(state.analysis.map.intent_valid);
+  EXPECT_TRUE(state.analysis.map.intent_valid);
   ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
   ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 3, 2 }, true));
   EXPECT_NE(state.analysis.map.adopted_id, old_id);
   executor.ShutdownAndJoin();
 }
 
-// A hand on the view disarms the default chain: the first adopted map must not yank a view the
-// user is already driving (r2 Major: auto-Fit used to fire on the first adoption whatever the
-// user had done in the queueing window).
-TEST(AnalyzeMapView, UserSteeredViewDisarmsTheAutoFit) {
-  LUMICE_Scene* raw_scene = nullptr;
-  ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
-  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+TEST(AnalyzeMapView, IdentityChangesClearBothSourcesAndCancellationNeverAutoRetries) {
   SurveyExecutor executor;
-  executor.SetScene(std::move(scene));
-
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
-  FreezeMapSun(state);
   state.analysis.selected_entry = "1-2";
-  // The user pans and zooms while the first map is still in flight.
-  MapViewState& view = state.analysis.map_view;
-  double centre[3];
-  SkyPositionOf(40.0, 30.0, centre);
-  for (int k = 0; k < 3; ++k) {
-    view.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  view.radius_deg = 30.0f;
-  view.user_moved = true;
-  double now = 100.0;
-  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_result != nullptr; }, 30000));
-  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, false));
-  // This steered window excludes the identity path's sun spot. Its zero texture is an
-  // out-of-view positive mass, not a fixture that avoids evaluating any light.
-  LUMICE_PathMapPointMass mass{};
-  mass.struct_size = sizeof(mass);
-  ASSERT_EQ(LUMICE_PathMapGetPointMass(state.analysis.map.adopted_result.get(), &mass), LUMICE_PATH_READ_OK);
-  EXPECT_GT(mass.m, 0.0);
-  EXPECT_EQ(mass.pixel, -1);
-  EXPECT_FALSE(view.auto_fit_done);
-  EXPECT_FALSE(MapRefiningFor(state.analysis.map));
-  // The arrival changed nothing: the view stands where the user put it, and no refinement
-  // intent superseded it.
-  double got[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
-  EXPECT_NEAR(AngleBetween(got, centre), 0.0, 1e-6);
-  EXPECT_NEAR(view.radius_deg, 30.0f, 1e-5);
+  PumpMapQuery(state, executor, 100.0);
+  const auto old = state.analysis.map.intent_id;
+  CancelMap(state, executor);
+  PumpMapQuery(state, executor, 1000.0);
+  EXPECT_EQ(state.analysis.map.intent_id, old);
+  EXPECT_TRUE(state.analysis.map.cancelled_for_key);
+  RetryMap(state, executor, 1001.0);
+  EXPECT_NE(state.analysis.map.intent_id, old);
+  EXPECT_FALSE(state.analysis.map.cancelled_for_key);
+  const auto retry = state.analysis.map.intent_id;
+  state.analysis.map_wavelength_nm = 650.0;
+  PumpMapQuery(state, executor, 1002.0);
+  EXPECT_NE(state.analysis.map.intent_id, retry);
+  EXPECT_EQ(state.analysis.map.key.wavelength_nm, 650.0);
+  EXPECT_EQ(state.analysis.map.adopted_result, nullptr);
+  EXPECT_EQ(state.analysis.map.detail_result, nullptr);
+  EXPECT_EQ(state.analysis.map.key.radius_deg, 180.0f);
   executor.ShutdownAndJoin();
 }
 
@@ -843,7 +864,7 @@ TEST(AnalyzeMapView, MapFaceNeverTouchesTheRoiState) {
   ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, true));
   // A map pick (the renderer's write, spelled here): the intent moves, the ROI state does not.
   double pos[3];
-  ASSERT_TRUE(MapPickPositionAtDiskCoords(state.analysis.map_view, 0.5, 0.4, pos));
+  SkyPositionOf(23.0, 37.0, pos);
   state.analysis.sky_point.valid = true;
   state.analysis.sky_point.from_map_pick = true;
   state.analysis.sky_point.dir[0] = static_cast<float>(-pos[0]);
@@ -887,23 +908,24 @@ TEST(AnalyzeMapView, MapWaitLineNamesTheQueueAndCarriesTheElapsed) {
   const double now = 6.5;
   const std::string elapsed = " (1.5 s)";
 
-  const std::string queued_default = MapWaitLineFor(map, /*survey_outstanding=*/true, /*user_moved=*/false, now);
+  const std::string queued_default = MapWaitLineFor(map, /*survey_outstanding=*/true, now);
   EXPECT_NE(queued_default.find("queues behind this class's survey"), std::string::npos);
   EXPECT_NE(queued_default.find("the all-sky map"), std::string::npos);
   EXPECT_EQ(queued_default.substr(queued_default.size() - elapsed.size()), elapsed);
 
-  const std::string queued_moved = MapWaitLineFor(map, true, /*user_moved=*/true, now);
-  EXPECT_NE(queued_moved.find("The map for the view you asked for answers after it"), std::string::npos);
+  map.key.radius_deg = 3.0f;
+  const std::string queued_moved = MapWaitLineFor(map, true, now);
+  EXPECT_NE(queued_moved.find("captured detail map"), std::string::npos);
   EXPECT_EQ(queued_moved.substr(queued_moved.size() - elapsed.size()), elapsed);
 
-  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, /*user_moved=*/false, now);
-  EXPECT_NE(direct.find("sub-second at the interaction tier"), std::string::npos);
+  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, now);
+  EXPECT_NE(direct.find("camera movement does not refine"), std::string::npos);
   EXPECT_EQ(direct.substr(direct.size() - elapsed.size()), elapsed);
 
   // A later frame-time advances the number; a restarted epoch (the rekey rule) rolls it back.
-  EXPECT_NE(MapWaitLineFor(map, true, false, now + 1.0).find(" (2.5 s)"), std::string::npos);
+  EXPECT_NE(MapWaitLineFor(map, true, now + 1.0).find(" (2.5 s)"), std::string::npos);
   map.intent_start_s = 8.0;
-  EXPECT_NE(MapWaitLineFor(map, true, false, now).find(" (0.0 s)"), std::string::npos);
+  EXPECT_NE(MapWaitLineFor(map, true, now).find(" (0.0 s)"), std::string::npos);
 }
 
 // The stage clause on the map line (751): only the MAP face's own computing names a stage —
@@ -920,7 +942,7 @@ TEST(AnalyzeMapView, MapWaitLineCarriesTheStageOnlyForItsOwnFace) {
   survey_running.face = QueryFace::kSurvey;
   survey_running.stage = LUMICE_PATH_POLL_STAGE_CHROMATIC_LEG;
   survey_running.ticks = 3;
-  const std::string queued = MapWaitLineFor(map, true, false, now, survey_running);
+  const std::string queued = MapWaitLineFor(map, true, now, survey_running);
   EXPECT_NE(queued.find("queues behind this class's survey"), std::string::npos);
   EXPECT_EQ(queued.find("running the chromatic pair"), std::string::npos)
       << "another face's stage must not hang on the map's queue line";
@@ -930,8 +952,8 @@ TEST(AnalyzeMapView, MapWaitLineCarriesTheStageOnlyForItsOwnFace) {
   map_running.face = QueryFace::kMap;
   map_running.stage = LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
   map_running.ticks = 9;
-  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, /*user_moved=*/false, now, map_running);
-  EXPECT_NE(direct.find(" — summing the map members… (1.5 s)"), std::string::npos);
+  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, now, map_running);
+  EXPECT_NE(direct.find(" — summing the map members (1.5 s)"), std::string::npos);
 }
 
 // The refining note carries the stage clause too (751, same mechanism): while the refinement's
@@ -945,7 +967,7 @@ TEST(AnalyzeMapView, MapRefiningNoteCarriesTheStageWhileTheMapComputes) {
   poll.face = QueryFace::kMap;
   poll.stage = LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
   const std::string note = MapRefiningNoteFor(map, 4.0, poll);
-  EXPECT_NE(note.find("refining for the current one"), std::string::npos);
+  EXPECT_NE(note.find("computing the captured target"), std::string::npos);
   EXPECT_NE(note.find("summing the map members"), std::string::npos);
   EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
 }
@@ -957,7 +979,7 @@ TEST(AnalyzeMapView, MapRefiningNoteCarriesTheElapsed) {
   map.intent_valid = true;
   map.intent_start_s = 3.0;
   const std::string note = MapRefiningNoteFor(map, 4.0);
-  EXPECT_NE(note.find("Coarse map of the previous view"), std::string::npos);
+  EXPECT_NE(note.find("Frozen sources remain"), std::string::npos);
   EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
 }
 

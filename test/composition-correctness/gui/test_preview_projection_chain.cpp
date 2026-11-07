@@ -19,14 +19,22 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <string>
+#include <unordered_set>
 
+#include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_view.hpp"
 #include "gui/app.hpp"  // AnnotationViewInputFor
 #include "gui/gui_state.hpp"
 #include "gui/overlay_labels.hpp"
 #include "gui/preview_renderer.hpp"
+#include "include/lumice_scene.h"
+#include "nlohmann/json.hpp"
+#include "server/c_api_map_storage.hpp"
+#include "support/map_stress_fixture.hpp"
 
 namespace lumice::gui {
 namespace {
@@ -47,6 +55,110 @@ RenderConfig LensAt(int lens_type, float fov_deg, float elevation_deg) {
   return rc;
 }
 
+template <class T>
+size_t CapacityBytes(const std::vector<T>& values) {
+  return values.capacity() * sizeof(T);
+}
+size_t MemberCapacity(const raypath::MemberScope& members) {
+  size_t bytes = CapacityBytes(members.members);
+  for (const auto& member : members.members)
+    bytes += CapacityBytes(member);
+  return bytes;
+}
+size_t ContextCapacity(const std::shared_ptr<const raypath::QuantityContext>& context,
+                       std::unordered_set<const void*>& visited) {
+  if (!context || !visited.insert(context.get()).second)
+    return 0;
+  size_t bytes = sizeof(*context) + MemberCapacity(context->members);
+  if (const auto* spectrum = std::get_if<std::vector<WlParam>>(&context->light.spectrum_))
+    bytes += CapacityBytes(*spectrum);
+  return bytes;
+}
+size_t QuantityCapacity(const raypath::QuantitySpec& spec, std::unordered_set<const void*>& visited) {
+  return CapacityBytes(spec.wavelengths_nm) + ContextCapacity(spec.context, visited);
+}
+nlohmann::json MapCapacityRow(const LUMICE_PathMap* handle) {
+  const auto& data = handle->result.Data();
+  const auto& finite = std::get<raypath::Finite<raypath::MapValues>>(data.claim);
+  const auto& map = finite.value.map;
+  std::unordered_set<const void*> contexts;
+  size_t meta = sizeof(*handle) + sizeof(data) + sizeof(raypath::ResultIdentity) + sizeof(LUMICE_PathMapPixelColumns);
+  meta += MemberCapacity(data.members) + CapacityBytes(data.meta.faces) + CapacityBytes(data.meta.shape);
+  meta += data.meta.crystal_kind.capacity() + 1;
+  for (const auto& scalar : data.meta.shape)
+    meta += scalar.name.capacity() + 1;
+  meta += CapacityBytes(map.member_kept_counts) + finite.coverage.geometry_basis.capacity() + 1;
+  meta += QuantityCapacity(finite.value.quantity, contexts) + MemberCapacity(finite.scope.members);
+  if (finite.scope.quantity)
+    meta += QuantityCapacity(*finite.scope.quantity, contexts);
+  meta += ContextCapacity(finite.scope.input, contexts);
+  if (map.point_mass) {
+    meta += CapacityBytes(map.point_mass->methods);
+    for (const auto& method : map.point_mass->methods)
+      meta += method.capacity() + 1;
+  }
+  if (handle->method_pointers)
+    meta += sizeof(*handle->method_pointers) + CapacityBytes(*handle->method_pointers);
+  const auto& c = *handle->pixels;
+  const size_t columns = CapacityBytes(c.delta_deg) + CapacityBytes(c.azimuth_deg) + CapacityBytes(c.values) +
+                         CapacityBytes(c.counts) + CapacityBytes(c.status);
+  // Capacities are actual owners. String SSO is conservatively counted again; allocator and
+  // shared_ptr control blocks are separately reserved, not pretended to be measured RSS.
+  return { { "cell_size", sizeof(map.pixels[0]) },
+           { "typed_capacity", map.pixels.capacity() },
+           { "typed_bytes", CapacityBytes(map.pixels) },
+           { "column_capacities",
+             { c.delta_deg.capacity(), c.azimuth_deg.capacity(), c.values.capacity(), c.counts.capacity(),
+               c.status.capacity() } },
+           { "column_bytes", columns },
+           { "metadata_object_and_capacity_bytes", meta },
+           { "control_reserve_bytes", 4096 },
+           { "payload_capacity_bound_bytes", CapacityBytes(map.pixels) + columns + meta + 4096 } };
+}
+
+TEST(FrozenMapStorageChain, ActualMaximumSourceOwnersHaveBoundedCapacity) {
+  LUMICE_Scene* raw_scene = nullptr;
+  const std::string path = std::string(LUMICE_E2E_CONFIG_DIR) + "/raypath_feature_random_regular.json";
+  ASSERT_EQ(LUMICE_SceneFromJsonFile(path.c_str(), &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, decltype(&LUMICE_SceneDestroy)> scene(raw_scene, LUMICE_SceneDestroy);
+  std::vector<MapHandle> sources;
+  nlohmann::json rows = nlohmann::json::array();
+  size_t total = 0;
+  for (int slot = 0; slot < 3; ++slot) {
+    const auto request = lumice::test::MaximumMapRequest(slot);
+    const auto measure = [&]() -> bool {
+      LUMICE_PathMap* raw = nullptr;
+      char error[512]{};
+      const auto code = LUMICE_AnalyzePathMap(scene.get(), &request, &raw, error, sizeof(error));
+      if (code != LUMICE_OK) {
+        ADD_FAILURE() << error;
+        return false;
+      }
+      sources.emplace_back(raw, MapDeleter{});
+      LUMICE_PathMapPixels pixels{};
+      pixels.struct_size = sizeof(pixels);
+      EXPECT_EQ(LUMICE_PathMapGetPixels(raw, &pixels), LUMICE_PATH_READ_OK);
+      if (pixels.pixel_count != LUMICE_PATH_MAP_MAX_PIXELS) {
+        ADD_FAILURE() << pixels.pixel_count;
+        return false;
+      }
+      auto row = MapCapacityRow(raw);
+      total += row["payload_capacity_bound_bytes"].get<size_t>();
+      rows.push_back(std::move(row));
+      return true;
+    };
+    if (!measure())
+      return;
+  }
+  scene.reset();
+  const nlohmann::json report = { { "scope", "three actual maximum C result owners; net payload, not process RSS" },
+                                  { "sources", rows },
+                                  { "quantity_capacity_bound_bytes", total } };
+  RecordProperty("map_storage_metrics", report.dump());
+  EXPECT_GT(total, 0u);
+  EXPECT_LT(total, 96u * 1024u * 1024u);  // display resources and temporaries are measured in the GL leg
+}
+
 // ---------------------------------------------------------------------------------------------
 // E13 — the overlay's inverse and the marker projection's forward are inverses of each other.
 //
@@ -58,6 +170,96 @@ RenderConfig LensAt(int lens_type, float fov_deg, float elevation_deg) {
 //
 // Round-tripping through both is the check neither unit can make on its own, which is what puts it
 // in this layer rather than in either unit's own tests.
+
+TEST(PreviewProjectionChain, CapturedMapCapContainsEffectiveCanvasAndFinalRequestWindow) {
+  constexpr double kR2D = 180.0 / 3.14159265358979323846;
+  const int sizes[][2] = { { 64, 48 }, { 96, 48 }, { 48, 192 } };
+  for (int lens = 0; lens < kLensTypeCount; ++lens) {
+    for (const auto& size : sizes) {
+      for (const float fov : { 1.0f, 30.0f, 120.0f, 179.0f }) {
+        GuiState state;
+        state.renderer = LensAt(lens, std::min(fov, LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens))), 23.0f);
+        state.renderer.azimuth = 137.0f;
+        state.renderer.roll = 21.0f;
+        state.renderer.visible = kVisibleFull;
+        const auto vp = BuildPreviewViewProjFromRenderer(state.renderer);
+        const auto cap = CaptureMapTarget(vp, size[0], size[1]);
+        const auto spec = MapWindowSpecForTarget(cap, 20.0, 0.0);
+        const auto view = PreviewAnnotationView(state, size[0], size[1]);
+        int checked = 0;
+        double centre_travel[3];
+        double norm = 0.0;
+        for (int k = 0; k < 3; ++k) {
+          centre_travel[k] = -cap.centre_pos[k];
+          norm += centre_travel[k] * centre_travel[k];
+        }
+        norm = std::sqrt(norm);
+        const double sun[3] = { -std::cos(20.0 / kR2D), 0.0, -std::sin(20.0 / kR2D) };
+        const double e1[3] = { -std::sin(20.0 / kR2D), 0.0, std::cos(20.0 / kR2D) };
+        const double dc =
+            std::acos(std::clamp((centre_travel[0] * sun[0] + centre_travel[2] * sun[2]) / norm, -1.0, 1.0)) * kR2D;
+        const double ac = std::atan2(centre_travel[1], centre_travel[0] * e1[0] + centre_travel[2] * e1[2]) * kR2D;
+        for (int y = 0; y < size[1]; ++y) {
+          for (int x = 0; x < size[0]; ++x) {
+            float d[3]{};
+            int valid = 0;
+            const auto err = LUMICE_UnprojectPixel(&view, x, y, d, &valid);
+            EXPECT_EQ(err, LUMICE_OK);
+            if (!valid) {
+              continue;
+            }
+            ++checked;
+            const double n = std::sqrt(static_cast<double>(d[0]) * d[0] + static_cast<double>(d[1]) * d[1] +
+                                       static_cast<double>(d[2]) * d[2]);
+            double dot = 0.0;
+            for (int k = 0; k < 3; ++k) {
+              dot += -d[k] * cap.centre_pos[k] / n;
+            }
+            const double angle = std::acos(std::clamp(dot, -1.0, 1.0)) * kR2D;
+            if (angle > cap.radius_deg + 0.0001) {
+              ADD_FAILURE() << "cap misses lens=" << lens << " fov=" << fov << " x/y=" << x << '/' << y
+                            << " angle=" << angle << " radius=" << cap.radius_deg;
+              return;
+            }
+            if (!spec.full_sky) {
+              const double delta = std::acos(std::clamp((d[0] * sun[0] + d[2] * sun[2]) / n, -1.0, 1.0)) * kR2D;
+              const double az = std::atan2(d[1], d[0] * e1[0] + d[2] * e1[2]) * kR2D;
+              const double az_offset = std::remainder(az - ac, 360.0);
+              EXPECT_LE(std::abs(delta - dc), spec.delta_span_deg * 0.5 + 0.0002);
+              EXPECT_LE(std::abs(az_offset), spec.azimuth_span_deg * 0.5 + 0.0002);
+            }
+          }
+        }
+        EXPECT_GT(checked, 0) << "lens=" << lens;
+        if (!spec.full_sky) {
+          EXPECT_LE(static_cast<long long>(spec.rows) * spec.cols, LUMICE_PATH_MAP_MAX_PIXELS);
+        }
+      }
+    }
+  }
+}
+
+TEST(PreviewProjectionChain, CapturedMinimumDetailRetainsThreeDegreeWindow) {
+  ViewProjection view;
+  view.lens_type = kLensTypeLinear;
+  view.fov = 1.0f;
+  view.elevation = 23.0f;
+  view.azimuth = 37.0f;
+  const auto cap = CaptureMapTarget(view, 640, 480);
+  EXPECT_DOUBLE_EQ(cap.radius_deg, 1.5);
+  const auto spec = MapWindowSpecForTarget(cap, 20.0, 0.0);
+  EXPECT_FALSE(spec.full_sky);
+  EXPECT_DOUBLE_EQ(spec.delta_span_deg, 3.0);
+  EXPECT_EQ(spec.rows, kMapTargetCellsAcross);
+  EXPECT_NEAR(spec.delta_span_deg / spec.rows, 3.0 / 220.0, 1e-12);
+  view.lens_type = kLensTypeFisheyeOrthographic;
+  view.fov = 179.0f;
+  EXPECT_NEAR(CaptureMapTarget(view, 960, 480).radius_deg, 90.0001, 1e-8);
+  view.lens_type = kLensTypeGlobe;
+  view.fov = 30.0f;
+  EXPECT_NEAR(CaptureMapTarget(view, 960, 480).radius_deg, std::acos(0.25) * 180.0 / 3.14159265358979323846 + 0.0001,
+              1e-8);
+}
 
 TEST(PreviewProjectionChain, PixelToDirectionAndDirectionToPixelAreInverses) {
   constexpr float kResX = 800.0f;

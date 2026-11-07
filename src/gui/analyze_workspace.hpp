@@ -44,7 +44,9 @@ class SurveyExecutor;
 // closed) — an in-flight query's completion adopts regardless of which window is on screen;
 // the pump's window-independence is the AC, not an optimization. Per-frame idempotent: a drain
 // clears its slot, a key-match re-asks nothing.
-void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s);
+// The real GL frame owner passes prepare_map_sources=true so source resources are ready
+// before adoption; frame-free callers keep the default and perform no GL work.
+void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s, bool prepare_map_sources = false);
 
 // The Analyze workspace's frame layout. `window` is the host GLFW window (unused by the
 // placeholders, part of the Render*Panel signature family the frame loop calls).

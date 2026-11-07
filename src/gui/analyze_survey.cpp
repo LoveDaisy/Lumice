@@ -59,18 +59,18 @@ MapQueryState MapQueryStateFor(const MapQuerySession& map) {
   if (map.cancelled_for_key) {
     return MapQueryState::kCancelled;
   }
-  if (map.adopted_result) {
-    return MapQueryState::kCompleted;
-  }
   if (!map.adopted_error.empty()) {
     return MapQueryState::kRefused;
+  }
+  if (map.adopted_result || map.detail_result) {
+    return MapQueryState::kCompleted;
   }
   return MapQueryState::kWaiting;
 }
 
 bool MapRefiningFor(const MapQuerySession& map) {
   return map.intent_valid && !map.cancelled_for_key && map.adopted_result != nullptr &&
-         !(map.adopted_id == map.intent_id);
+         map.adopted_id != map.intent_id && map.detail_id != map.intent_id && map.answered_id != map.intent_id;
 }
 
 PointQueryState PointQueryStateFor(const PointQuerySession& point) {
@@ -153,31 +153,17 @@ std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s, co
   return line;
 }
 
-std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s,
+std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, double now_s,
                            const InflightPoll& poll) {
-  const std::string elapsed = FormatWaitElapsedSuffix(now_s - map.intent_start_s);
-  // The stage clause is face-matched to the map: while the survey ahead of it runs, the clause
-  // is empty and the queue texts stand alone — another face's stage never hangs on this line.
-  const std::string stage = StageClauseFor(poll, QueryFace::kMap);
-  if (survey_outstanding) {
-    // The prediction says only what the standing intent will deliver: a hand on the view has
-    // superseded the default chain's all-sky request with the view you asked for.
-    if (user_moved) {
-      return "Computing the class map in the background — it queues behind this class's survey, whose "
-             "chromatic legs take ~15 s. The map for the view you asked for answers after it." +
-             stage + elapsed;
-    }
-    return "Computing the class map in the background — it queues behind this class's survey, whose "
-           "chromatic legs take ~15 s. What arrives first is the all-sky map; the view refines for you "
-           "after that." +
-           stage + elapsed;
-  }
-  return "Computing the class map in the background (sub-second at the interaction tier)" + stage + "…" + elapsed;
+  std::string line = map.key.radius_deg < 180.0 ? "Computing captured detail map" : "Computing the all-sky map";
+  if (survey_outstanding)
+    line += " — queues behind this class's survey";
+  line += "; camera movement does not refine";
+  return line + StageClauseFor(poll, QueryFace::kMap) + FormatWaitElapsedSuffix(now_s - map.intent_start_s);
 }
 
 std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s, const InflightPoll& poll) {
-  return "Coarse map of the previous view — refining for the current one; the picture is anchored to "
-         "the sky, not upscaled." +
+  return "Frozen sources remain — computing the captured target, not following the camera." +
          StageClauseFor(poll, QueryFace::kMap) + FormatWaitElapsedSuffix(now_s - map.intent_start_s);
 }
 
@@ -238,7 +224,8 @@ struct SurveyExecutor::Impl {
                                        // bookkeeping stays uniform across faces.
   QueryFace inflight_face = QueryFace::kSurvey;
   std::optional<Finished> finished_survey;  // per-face single slot: the newest finish of THAT face
-  std::optional<Finished> finished_map;     // overwrites an older one the GUI has not drained
+  std::optional<Finished> finished_map;
+  bool map_drain_blocked = false;  // no fourth map while the GUI replaces one of its two sources
   std::optional<Finished> finished_point;
   std::optional<Finished> finished_ray;
   unsigned long long next_serial = 0;
@@ -253,7 +240,8 @@ struct SurveyExecutor::Impl {
   // The gate is a std::function, so the worker copies it out under mu and invokes the copy off
   // the lock: SetPickupGateForTest may swap or clear it while a callback is blocked in its own
   // copy, and the blocked copy keeps the target alive.
-  std::function<void(QueryFace)> pickup_gate;  // guarded by mu
+  std::function<void(QueryFace)> pickup_gate;     // guarded by mu
+  CompletionObserverForTest completion_observer;  // guarded by mu; read-only, non-blocking inspection
   // Set inside ShutdownAndJoin's lock section, strictly after the in-flight cancel request —
   // the write point IS the confirmation semantics (see the header). Atomic so the read needs no
   // mutex and cannot lag the write's intent.
@@ -271,8 +259,9 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
     std::unique_lock<std::mutex> lock(impl->mu);
     for (;;) {
       impl->cv.wait(lock, [impl] {
-        return impl->pending_binding.has_value() || impl->pending_survey.has_value() || impl->pending_map.has_value() ||
-               impl->pending_point.has_value() || impl->pending_ray.has_value();
+        return impl->pending_binding.has_value() || impl->pending_survey.has_value() ||
+               (impl->pending_map.has_value() && !impl->map_drain_blocked) || impl->pending_point.has_value() ||
+               impl->pending_ray.has_value();
       });
 
       // Binding first (a queued query always runs against the binding it was issued for — or,
@@ -324,7 +313,7 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
       if (impl->pending_survey.has_value()) {
         job_slot = std::move(*impl->pending_survey);
         impl->pending_survey.reset();
-      } else if (impl->pending_map.has_value()) {
+      } else if (impl->pending_map.has_value() && !impl->map_drain_blocked) {
         job_slot = std::move(*impl->pending_map);
         impl->pending_map.reset();
       } else if (impl->pending_point.has_value()) {
@@ -429,10 +418,13 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
                        std::move(map_result),
                        std::move(point_result),
                        std::move(ray_result) };
+      if (impl->completion_observer)
+        impl->completion_observer(finish);
       if (job.face == QueryFace::kSurvey) {
         impl->finished_survey = std::move(finish);
       } else if (job.face == QueryFace::kMap) {
         impl->finished_map = std::move(finish);
+        impl->map_drain_blocked = true;
       } else if (job.face == QueryFace::kPoint) {
         impl->finished_point = std::move(finish);
       } else {
@@ -621,7 +613,7 @@ void SurveyExecutor::ReleaseScene() {
   impl_->cv.notify_one();
 }
 
-std::optional<SurveyExecutor::Finished> SurveyExecutor::TakeFinished(QueryFace face) {
+std::optional<SurveyExecutor::Finished> SurveyExecutor::TakeFinished(QueryFace face, bool defer_map_ack) {
   std::lock_guard<std::mutex> lock(impl_->mu);
   std::optional<Finished> out;
   std::optional<Finished>& slot = face == QueryFace::kSurvey ? impl_->finished_survey :
@@ -632,7 +624,19 @@ std::optional<SurveyExecutor::Finished> SurveyExecutor::TakeFinished(QueryFace f
     out = std::move(*slot);
     slot.reset();
   }
+  if (face == QueryFace::kMap && !defer_map_ack) {
+    impl_->map_drain_blocked = false;
+    impl_->cv.notify_one();
+  }
   return out;
+}
+
+void SurveyExecutor::CompleteMapDrain() {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  if (!impl_->finished_map) {
+    impl_->map_drain_blocked = false;
+    impl_->cv.notify_one();
+  }
 }
 
 bool SurveyExecutor::InFlight() const {
@@ -700,6 +704,11 @@ InflightPoll SurveyExecutor::InflightPollSnapshot() const {
 void SurveyExecutor::SetPickupGateForTest(PickupGateForTest gate) {
   std::lock_guard<std::mutex> lock(impl_->mu);
   impl_->pickup_gate = std::move(gate);
+}
+
+void SurveyExecutor::SetCompletionObserverForTest(CompletionObserverForTest observer) {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  impl_->completion_observer = std::move(observer);
 }
 
 bool SurveyExecutor::ShutdownCancelRequestedForTest() const {

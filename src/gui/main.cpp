@@ -346,9 +346,9 @@ int main(int argc, char** argv) {
     gui::g_state.core_log_level = static_cast<int>(core_level);
   }
 
-  // Initialize preview renderer
-  if (!gui::g_preview.Init()) {
-    GUI_LOG_ERROR("Failed to initialize preview renderer");
+  // Compile display programs at GL startup, never on an observation/adoption frame.
+  if (!gui::g_preview.Init() || !gui::InitMapView()) {
+    GUI_LOG_ERROR("Failed to initialize picture renderers");
     return 1;
   }
 

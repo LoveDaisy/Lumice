@@ -28,7 +28,8 @@
 #include "raypath/survey_report.hpp"
 #include "raypath/workspace.hpp"
 #include "server/c_api_engine_internal.hpp"  // lumice::capi::ToCApiErrorCode
-#include "server/c_api_scene_internal.hpp"   // SceneRoot
+#include "server/c_api_map_storage.hpp"
+#include "server/c_api_scene_internal.hpp"  // SceneRoot
 #include "server/server.hpp"
 #include "util/logger.hpp"
 
@@ -94,23 +95,6 @@ struct LUMICE_PathProbe_ {
 // owns its C-facing projection and fills it once, lazily, under the handle's mutex (the
 // mutable/mutex shape of the derived-JSON caches), so every read hands out the same pointers
 // into handle-owned storage, valid until Destroy — whatever order the caller reads in.
-struct LUMICE_PathMapPixelColumns {
-  std::vector<double> delta_deg;
-  std::vector<double> azimuth_deg;
-  std::vector<double> values;
-  std::vector<int> counts;
-  std::vector<uint8_t> status;
-};
-
-struct LUMICE_PathMap_ {
-  lumice::raypath::MapResult result;
-  mutable std::mutex cache_mutex;
-  mutable std::unique_ptr<LUMICE_PathMapPixelColumns> pixels;         // GetPixels' own projection
-  mutable std::unique_ptr<std::vector<const char*>> method_pointers;  // GetPointMass' own
-                                                                      // projection (into the
-                                                                      // frozen result's strings)
-};
-
 // The ray ships typed readers only (the map's shape): the two bulk readers own one C-facing
 // projection each, filled once, lazily, under the handle's mutex.
 struct LUMICE_PathRayContactColumns {

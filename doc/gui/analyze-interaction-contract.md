@@ -188,7 +188,7 @@ Pick 按钮、armed 状态、横幅和十字线整体退役，不影响晶体 sh
 
 两工作区实际调用同一个 `ApplyCameraWheelZoom`；输入归属仍留面内，Render 的 Alt/Option 照片缩放及
 无可操作照片时 no-op 不变。手动画布沿用帧首 standing wheel claim：原生分发在 NewFrame，刚被滚入
-指针下的首帧不再手动二次消费；主图外仍归控件/宿主，地图/3D 保留自己的缩放数量语义。显式拾取及
+指针下的首帧不再手动二次消费；主图外仍归控件/宿主，地图复用主相机缩放，3D保留姿态窗自己的缩放数量语义。显式拾取及
 其吞拖 latch 期间不接管相机 wheel。上述操作均不 dirty、不重仿真、不自动 Analyze；ROI 结果仍对应
 请求时中心，移动后提示显式 Analyze。
 
@@ -237,15 +237,11 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 ## 6. Raypath view 窗（光路层）
 
-> **共享相机蓝图（尚未实施）**：[共享相机与冻结结果显示](raypath-view-camera.md) §6–8 是后续实施合同：
-> 两画面共用主相机/输入语义，纯观察只重投影冻结全天参考＋一个有覆盖标识的细化源；新细格由显式 Refine
-> 取得。Fit/Full sky 保留为会影响主图的共享预设，首次 auto-Fit 及其隐式第二次查询退役；当前角宽/标尺/覆盖
-> 可辨，原格读数不随相机改变。真实 C01/C16 的多镜头离屏消费已有质量/成本证据，最终双窗呈现仍须产品验收。
-> 蓝图 §1–4 的源码锚属于 `c1149fe20` 历史基线，保留重扫机制及直接重放/谱响应/全树物化的具名失败；不要求先完成连续全天响应表示。
-> 下述圆盘/auto-Fit、λ supersession及请求行为仍是当前实现，不能把蓝图追改成已交付。
-> 后续实施在已批准的稳定操作区放 Refine/Retry/Cancel，状态/覆盖进预留状态位、详细标尺与完成说明进报告内滚，
-> 不借质量动作新增临时行挤画布、不改 §2.1 共享顶栏；现役 §7/§8 的 Pose & trace 按钮与 Point detail 标题
-> 仍打开同一个窗，设点不自动开窗。本蓝图沿用双入口，不是新增导航交付或可发现性验收。
+> **现役共享相机/冻结源合同**：[共享相机与冻结结果显示](raypath-view-camera.md) §6–8为唯一规则。
+> 两图同源镜头与输入，纯观察重投影当前reference＋latest detail；新统计细格由固定槽Refine/Retry/Cancel取得，
+> 原角宽/covered-outside/完成前缀/λ/n可辨。Fit/Full sky是会影响主图的共享预设；首图auto-Fit及隐式第二次查询已退役。
+> 正确性/资源持有证据与未签成本边界见该文§10，不把设计离屏数据当最终双窗呈现证书。
+> 本节仍拥有稳定操作/状态/报告区域与Pose双入口，新增质量动作不进入共享顶栏、不推挤画布。
 
 > **755.4 as-built**：本节已落地（`RenderAnalyzeRaypathViewWindow`，`analyze_map_view.cpp`）。开窗
 > 入口、常开同步、诚实空态、左右分区与关闭重开全部照合同实现；as-built 补充——D3 分隔落在窗内
@@ -263,7 +259,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 打开目标 | **光路列表类行点击** = 选中该类并确保窗口打开（已打开则同步内容）。同型先例：晶体卡片点击开 Entry Edit（用户举例的「自然的内容点击」）。关闭后再次点击类行重新打开 |
 | 常开同步 | 打开期间跟随当前选中类：切类 → 窗内容同步（地图面按既有机制丢弃旧类会话、新意图重发，`analyze_survey.hpp:157-163`）；不要求关闭再打开 |
 | 未选中类时 | 窗可开着但显示诚实空态（无选择态文案沿用） |
-| 内容 | 左区 = 类天空分布参考图（raster + 叠加对象 + 手势：滚轮锚点缩放/拖拽平移/点选天空点）；右区 = 图面读数与操作：λ 控制、Fit/Full sky、天空点输入、Pose & trace 就地入口及 3D 用途/前置说明，后接身份/caliber/图例的滚动报告（cursor 读数留在画布——画布反馈归画布的既有裁决） |
+| 内容 | 左区 = 类天空分布参考图（raster + 叠加对象 + 手势：同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker）；右区 = 图面读数与操作：λ 控制、Fit/Full sky、天空点输入、Pose & trace 就地入口及 3D 用途/前置说明，后接身份/caliber/图例的滚动报告（cursor 读数留在画布——画布反馈归画布的既有裁决） |
 | Overlay 整理 | 图例先行（标记含义可理解）；悬停按对象组织（每对象一条，重叠对象聚合为一组说明）；同位置同含义聚合展示、不同来源保留可检索信息——具体标记形状、聚合与选中交互是 §14 自由度 |
 | 与主窗分工 | 右区只放图面伴读信息；survey 报告/类概览只在主窗右下（§2.2 不重复堆放） |
 | 关闭重开 | 关窗不关文档、不取消在途查询（§8）；重开显示当前采纳结果或如实等待态 |
@@ -312,14 +308,14 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 切换光路类（点另一行） | survey 面新意图（类概览刷新/等待）；Raypath view 窗同步到新类（旧地图不残留）；点面随选择键重发、旧点结果丢弃；姿态窗同步 | `SurveySelectionKey` 比较（`analyze_survey.hpp:84-95`）；地图选类变更丢会话（157-163）；点面丢弃（249-257）；泵序 `analyze_workspace.cpp:378-383` |
 | 切换天空点（map 点选/拖 marker/输入坐标） | 点面新意图（~2s 预算，`analyze_survey.hpp:155`）；旧点结果即弃（新点的答案不残留）；ray 面随 (点文档, 分量, 样本) 跟进 | `PointIntentKey`（225-235）；采纳门 (代,序号)（74-79）；ray 键（354-362） |
 | fiber 内移动姿态（滑条/播放/曲线画布点击拖拽） | 只改当前姿态样本：globe marker、3D 路径、曲线游标、因素读数同步；天空点不动、点查询不重发；播放只推进样本索引，画布写游标即停播放 | `PointViewState` 契约（`analyze_survey.hpp:381-401,404-414`）；曲线画布写路径 `RenderPoseCurveRegion`（`analyze_point_view.cpp`，756） |
-| 切换 λ（窗右区滑条） | 地图面新意图：旧图保留在天空锚位＋「refining」注（用户正在 steering 时不白屏）；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；跨视图 supersession 保旧图（185-215）；`PointIntentKey.wavelength_nm`（228） |
+| 切换 λ（窗右区滑条） | 地图面真实数据身份改变：旧full/detail撤有效，建立新full等待态；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；跨视图 supersession 保旧图（185-215）；`PointIntentKey.wavelength_nm`（228） |
 | 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；Raypath view 的 Pose & trace 按钮与主窗 Point detail 标题共用同一开窗旗标，不新增查询/选择/游标；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
 | 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；主图按压在离开时取消（未释放仍吞压）、pick 链沿原规则解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
 | New | 保留当前 Render/Analyze **mode**；新文档其余状态仍按原规则重置（含 analysis 列表、选择、天空点、查询意图与绑定释放）。两窗随新 GuiState 关闭，分隔比例回到默认；再次类行点击重开显示诚实空态；窗几何保留 | `DoNew` → `ReplaceDocumentState` 只迁移 mode（`app.cpp`）；4 文档切换 reason 清空 analysis（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
 | Open | 成功 JSON/blank LMC/baked LMC 同样保留 mode，其他重置仍按原原因；blank 清旧图，baked 显示文件图。未保存提示 Cancel、空路径与加载失败不改模式或旧文档身份；不新增跨启动记忆 | `DoOpen` → `ReplaceDocumentState` → per-reason reset owner；解析器不迁移会话 |
 | Revert | 分析列表**保留**＋新鲜度横幅如实（stale 指令：press Analyze）；analysis 会话保留（请求参数不属于文档）；查询绑定不变 | kRevert 跳过 analysis 清空（`gui-state-governance.md` §10.1/10.2）；横幅 `analysis_panel.cpp:1363-1373` |
-| 取消（survey/point） | 面级取消按钮：意图失效＋latch（同选择不重发）；完成态显示「cancelled」行；迟到结果按 id 丢弃 | survey 取消（`analyze_workspace.cpp:327-335`）；point 取消（`analyze_point_view.cpp:1470-1478`）；`cancelled_for_key`（`analyze_survey.hpp:117-118,247-249`） |
-| 取消（意图撤回） | Esc 取消主图动作（吞压至释放）/pick 链；map/ray 面无取消按钮（亚秒/微秒查询，撤销=latch 随 reset）；Esc 不取消在途查询（后台语义，取消走按钮） | 主图 press owner 清理（`RenderWorkspacePanels`）；map/ray latch 语义（`analyze_survey.hpp:195-198,369-372`） |
+| 取消（survey/map/point） | 面级取消按钮：意图失效＋latch（同选择不重发）；完成态显示「cancelled」行；迟到结果按 id 丢弃 | survey 取消（`analyze_workspace.cpp:327-335`）；point 取消（`analyze_point_view.cpp:1470-1478`）；`cancelled_for_key`（`analyze_survey.hpp:117-118,247-249`） |
+| 取消（意图撤回） | Esc 取消主图动作（吞压至释放）/pick 链；map质量槽有Cancel/Retry，ray面仍无取消按钮（撤销=latch随reset）；Esc 不取消在途查询（后台语义，取消走按钮） | 主图 press owner 清理（`RenderWorkspacePanels`）；map/ray latch 语义（`analyze_survey.hpp:195-198,369-372`） |
 | 编辑场景后 | 三个位置各自如实：列表横幅（stale 不清列表）、主视图旧图注（分析图是编辑前配置）、状态栏 Modified＋顶栏 ⚠/Revert；分析触发显式（无自动重跑） | 新鲜度谓词（`gui-state-governance.md` §10.1）；`AnalysisPictureNotice`（`analyze_workspace.cpp:295-299`）；ReconcileSimState |
 
 窗口开合状态的归属声明：两窗的开/合是 **T-session 显示态**（`left_panel_collapsed` 同族——不是文档
@@ -435,7 +431,7 @@ Analyze 按钮、In frame/Point 单选共用该门控，`analysis_panel.cpp:1383
 | ② 半球试错 | panorama 固定 dual equal-area 180°，定位仅靠 Upper/Lower 切换 | `analyze_workspace.cpp:133-137,210-216` |
 | ② 半径 | Radius 滑条（显示期重求和，不起跑） | `analysis_panel.cpp:1456-1486` |
 | ②′ In frame 区域语义 | 画幅 = 点击时刻预览画幅（无预览时文档分辨率） | `app.cpp:1816-1824` |
-| ③ 地图呈现与手势 | 类行选中后地图自动呈现于下行左半；滚轮锚点缩放/拖拽平移/点选天空点；Fit/Full sky；λ 滑条 | `analyze_map_view.cpp:1076-1078,1121-1147,1243-1316` |
+| ③ 地图呈现与手势 | 类行选中后地图自动呈现于下行左半；同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker；Fit/Full sky；λ 滑条 | `analyze_map_view.cpp:1076-1078,1121-1147,1243-1316` |
 | ④ 天空点输入 | 地图点选/拖 marker；alt-az 输入 Set sky point | `analyze_map_view.cpp:1257-1313,1381-1419` |
 | ④ 姿态呈现与交互 | globe（右列上 40% 高）＋Raypath 3D（下行右半）＋Point detail（右列下）；分量/样本/播放/帧/orbit | `analyze_workspace.cpp:513-514`；`analyze_point_view.cpp:771,1073,1441,881,1051-1059,1082-1086,1348-1360` |
 | ⑤ 场景编辑 | 左栏 Sun/Simulation 组就地；晶体行点击开 Entry Edit | `panels.cpp:2162-2258`；`analyze_workspace.cpp:80-112`；`panels.cpp:2077-2095` |

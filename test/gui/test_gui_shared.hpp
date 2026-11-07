@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,15 @@
 #include "test_screenshot.hpp"
 
 namespace gui = lumice::gui;
+
+// Optional observation of the native test frame. Empty in ordinary cases; timing cases use
+// the real input admission and swap boundaries rather than measuring a CPU camera setter.
+struct GuiFrameObserver {
+  std::function<void()> before_new_frame;
+  std::function<void()> before_swap;
+  std::function<void()> after_swap;
+};
+extern GuiFrameObserver g_frame_observer;
 
 // ========== Shared state structs ==========
 
@@ -219,6 +229,8 @@ extern int g_gui_log_level;
 extern bool g_enable_visible;
 extern bool g_enable_vsync;
 extern bool g_enable_frame_limit;
+extern bool g_enable_fixed_dt;
+extern const char* g_export_dir;
 extern bool g_enable_main_loop_commit;
 extern bool g_enable_log_panel;
 extern int g_dorun_delay_ms;
@@ -717,6 +729,7 @@ void RegisterPreviewAnimationTests(ImGuiTestEngine* engine);
 void RegisterCaptureHarnessTests(ImGuiTestEngine* engine);
 void RegisterSimE2eSmokeTests(ImGuiTestEngine* engine);
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine);
+void RegisterFrozenMapTests(ImGuiTestEngine* engine);
 void RegisterLensProjectionTests(ImGuiTestEngine* engine);
 void RegisterModalLayoutTests(ImGuiTestEngine* engine);
 void RegisterDefaultsPanelTests(ImGuiTestEngine* engine);

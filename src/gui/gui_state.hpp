@@ -1858,7 +1858,6 @@ struct GuiState {
     // intent and the wavelength survive a re-Analyze — a named sky direction and a chosen
     // wavelength carry no analysis generation; only the sessions do.
     MapQuerySession map;
-    MapViewState map_view;
     SkyPointIntent sky_point;
     double map_wavelength_nm = 0.0;
     // The point face's session state (742.6): the same tier and the same per-reason rules as the
@@ -1920,6 +1919,7 @@ struct GuiState {
     // writes but keeps the press consumed, even if its host disappears and comes back.
     enum class PanoramaPressOwner { kNone, kCamera, kMarker, kDirectPoint, kExplicitPick, kCancelled };
     PanoramaPressOwner panorama_press_owner = PanoramaPressOwner::kNone;
+    PanoramaPressOwner map_press_owner = PanoramaPressOwner::kNone;
   };
   AnalyzeWorkspaceSession workspace;
 

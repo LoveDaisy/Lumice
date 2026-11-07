@@ -413,6 +413,12 @@ of One Bit Set」定义的两种口径中的一种，而不是同一口径的两
 
 #### 5.1.8 产品形态
 
+> **现役入口（2026-11-07）**：工作区/ROI/窗口交互归[Analyze交互合同](../gui/analyze-interaction-contract.md)，
+> 共享相机、冻结full/latest detail、显式质量与原格读取归[共享相机合同](../gui/raypath-view-camera.md) §6–8。
+> 下述D1–D9保留原型裁定时点；其中独立圆盘、裸点选、auto-Fit、手势重算及吸附不是现役合同或todo，
+> 已由共享取景＋显式Refine＋真实方向拾取替代。ROI与天空点的独立归属仍保留；不要从历史形态重建第二相机。
+
+
 **2026-09-27 owner 裁定**：光路分析升级为 Lumice 的**第二产品核心**，与渲染并列——点击
 Analyze 后出现与主窗口同级大小的界面，不是嵌在预览旁的一块面板。
 
@@ -627,28 +633,14 @@ tint 块（引擎 caliber 串原文呈现）+ 参考剖面块（内嵌 solar rad
 （1e-4° 带内，实测 1e-14 级）；真实上屏证据在 gui_test real-timing 池（色散腿的两次 λ 功率和
 约 14 s，fixed-dt 池的看门狗装不下它——`run_after_analysis_renders_gpu` 同型先例）。
 
-**742.5 as-built（参考图地图交互层，2026-10-30）**：`##AnalyzeRaypathView` 占位替换为真实参考图
-区域（`src/gui/analyze_map_view.{hpp,cpp}`）——采纳 map 以单圆盘等面积投影上屏（原型 `makeView`
-合同：屏幕上=天顶投影，`ρ=2sin(θ/2)`；格心方向经 Info 帧公式换算、位置=−travel 的 §12 取反在拾取
-与显示两处各一次具名转换），拖移平移、光标锚点滚轮缩放、Fit（采纳图自身的质量加权范围：值加权
-质心 + 95% 质量半径 ×1.4）、全景、λ 控制（显式 [350,900] 或引擎参考解析，回显来源）全部接真实
-重求值：视图键 = 选择身份 + 视图（中心+角半径）+ λ，settle 0.3 s 合并手势突发，请求走
-`SurveyExecutor` map 面（同 worker、按 face 排队不互取消、采纳门键含视图+λ）。默认视图链 = 选类 →
-full_sky（n=500k 交互档，M1 实测全天 0.88 s）→ 到达自动 Fit 一次 → 细化窗口请求；细化到达前旧图
-锚定天空显示并标注（`MapRefiningFor` 具名），迟到旧视图结果由 id 门丢弃。口径行逐字读取器直读
-（λ+来源、成员 x/y、n、视图界、kept 数、quantity spec、geometry_basis），截断/拒答/取消/有限零/
-rank-0（点质量臂 m±err+方法+零格注记）状态分立。天空点意图（`SkyPointIntent`，travel 语义与
-`cone_center` 同约定）由图上点击/拖标记或无图坐标输入两条路径写入，随 `analysis` 档 per-reason
-规则走；map 代码不引用 ROI 状态、ROI 手势不写点意图（结构隔离，state 级与真实鼠标路径双钉）。
-叠加消费 `BuildSurveyOverviewModel` 同源载荷（概览组织规则单源，不写第二份「文档→事实」映射，
-不经 JSON 第二拼装，不建第二份结果缓存）：位置对象标记（survey 文档
-`LUMICE_PathSurveyGetObject` 的 `position_available` alt/az）+ 色散 min 行双 λ 等 δ 曲线
-（`LUMICE_PathSurveyGetDispersion`/`GetFollowedOnset` 的 δ 值，红内蓝外，标注引擎 λ 标签），
-缺载荷如实空缺，拒答图上仍可画有载荷的结构。真实上屏证据在 gui_test real-timing 池
-（`map_region_shows_the_class_map_and_takes_the_pick`：真实链 + 真实点击 + ROI 不变量），组合/纯
-规则在 `test/unit-correctness/gui/test_analyze_map_view.cpp`（投影对独立天空锚、窗口 span 手推导、
-Fit/归一化/颜色状态、真实 executor 泵）。v1 未交付（后续 face，非本片欠账）：per-λ 彩色底图族、
-分离亮斑智能 Fit、交互中连续细化、点查询消费（见下）。
+**参考图GUI当前消费（2026-11-07）**：`analyze_map_view`承载交互与质量、`analyze_map_renderer`承载冻结原格显示。
+map与主图共享`GuiState::renderer`的有效帧输入，没有私有圆盘或auto-Fit/settle查询。首次数据身份建立full，
+显式Refine捕获目标；原单worker/generation+serial采纳门保持，full/latest detail按相同有序完成前缀与覆盖选择。
+数据到达不写相机，观察不计算；光标从实际方向读同一原源格，rank-0/mixed/finite-zero/singular/unknown/partial独立。
+
+动作、Fit取数、兼容/单源、取消/重试、帧与句柄寿命的唯一规则在上述共享相机合同，不在此复写。
+验证边界也由该文§10记录：C01/C16原列/FBO、真实partial与结果峰值有实证，明示域双窗时间/96MiB签证也在该节，不外推未测机器/画布。
+位置对象与色散曲线继续消费`BuildSurveyOverviewModel`同源载荷，不另组一份文档事实；天空点与ROI仍结构隔离。
 
 **742.6 的交接合同（点意图与选择状态，无需重建）**：选择身份 = `SelectedClassIdentityFor` /
 `SurveySelectionKey`（742.3，map 与 survey 同源派生）；点意图 =
@@ -698,7 +690,7 @@ contacts/legs，延伸是展示约定）；帧变换 = `RayTracePointToCrystalFr
 
 **742.7 as-built（跨片组合验收，2026-10-31，R2 评审后收口）**：组合证据由十一条集成腿承载
 （`test/gui/functional/test_raypath_analysis_panel.cpp`，前四片零重建、零新增 TU）——
-`analyze_full_chain_one_session`（一会话连续主链：选类→概览无抢点→双 λ 色散读数→图平移+细化→真
+`analyze_full_chain_one_session`（一会话连续主链：选类→概览无抢点→双 λ 色散读数→共享取景+显式Refine→真
 画布拾取（拾取自身文档诚实读回）→锚定点文档→滑杆→轨迹重键，C readers 钉 2 contacts/3 legs）、
 `internal_reflection_trace_from_the_real_consumer`（语料 C03 型 `3-5-6-7` 从真实消费者（点检视
 器 3D 区）看见完整合法折线：4 contacts/5 segments，kinds 入射+3 内部+出射；锚点 (38,180)=太阳

@@ -47,6 +47,7 @@ add_executable(gui_test
     functional/test_view_display_controls.cpp
     functional/test_gui_sim_smoke.cpp
     functional/test_raypath_analysis_panel.cpp
+    functional/test_frozen_map_view.cpp
     functional/test_config_summary_window.cpp
     visual/test_preview_pixels.cpp
     visual/test_gui_capture_smoke.cpp

@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <map>
 #include <memory>
@@ -570,8 +571,12 @@ ImGuiID FindListRowScrolling(ImGuiTestContext* ctx, const std::string& label) {
     if (table_child->Scroll.y >= table_child->ScrollMax.y) {
       return 0;
     }
-    table_child->Scroll.y =
-        std::min(table_child->ScrollMax.y, table_child->Scroll.y + table_child->InnerRect.GetHeight());
+    // InnerRect includes the frozen header. A full-height jump can move a row from below
+    // the old viewport entirely underneath that header. Overlap the header plus one data row
+    // so every row has a fully visible position, including fractional-height page boundaries.
+    const float row_h = ImGui::GetTextLineHeight() + 2.0f * ImGui::GetStyle().CellPadding.y;
+    const float page_h = std::max(1.0f, table_child->InnerRect.GetHeight() - 2.0f * row_h);
+    table_child->Scroll.y = std::min(table_child->ScrollMax.y, table_child->Scroll.y + page_h);
     ctx->Yield(2);
   }
 }
@@ -1084,6 +1089,47 @@ std::optional<gui::SelectedClassIdentity> SelectRowByDisplay(ImGuiTestContext* c
   ctx->ItemClick(row);
   ctx->SetRef("");
   return gui::SelectedClassIdentityFor(gui::g_state);
+}
+
+// Pin the old pagination blind spot without relying on a stochastic class rank: the first
+// row wholly below page one can land entirely under the frozen header after a full-height jump.
+bool ListScrollFindsTheRowUnderTheNextFrozenHeader(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
+  IM_CHECK_RETV(share != nullptr, false);
+  ImGuiWindow* table_child = nullptr;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w->ParentWindow == share && std::strstr(w->Name, "##analysis_rows") != nullptr) {
+      table_child = w;
+      break;
+    }
+  }
+  IM_CHECK_RETV(table_child != nullptr, false);
+  const float row_h = ImGui::GetTextLineHeight() + 2.0f * ImGui::GetStyle().CellPadding.y;
+  const int seam_ordinal = static_cast<int>(std::ceil(table_child->InnerRect.GetHeight() / row_h)) - 1;
+  const auto& view = gui::g_state.analysis_result;
+  std::vector<int> rendered;
+  for (const int idx : view.display_order) {
+    if (view.display_energy[static_cast<size_t>(idx)] > 0.0) {
+      rendered.push_back(idx);
+    }
+  }
+  IM_CHECK_RETV(seam_ordinal >= 0 && seam_ordinal < static_cast<int>(rendered.size()), false);
+  const std::string display = view.payload->entries[static_cast<size_t>(rendered[seam_ordinal])].display;
+  const std::string label = gui::AnalysisRowLabel(display, gui::AnalysisCoreToPoolMap(gui::g_state));
+  ctx->LogInfo("[row-seam] ordinal=%d row_h=%.1f viewport=%.1f display='%s'", seam_ordinal, row_h,
+               table_child->InnerRect.GetHeight(), display.c_str());
+  const ImGuiID row = FindListRowScrolling(ctx, label);
+  IM_CHECK_RETV(row != 0, false);
+  ctx->ItemClick(row);
+  ctx->SetRef("");
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == display,
+                false);
+  return true;
 }
 
 // A sink of our own on the GUI logger for the duration of a case, so what DoRun logs can be read
@@ -1684,6 +1730,27 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx);
 // region takes a real click as the sky point while the panorama's ROI state stands untouched.
 // The assertions read the adopted result the picture is drawn from, so the screenshot a human
 // reads and the checks below cannot both be mock.
+// The engine's watchdog measures SIMULATED time (frame_count × the injected dt — the
+// lens-projection and cli-export guards' lesson), and this test legitimately spans more frames
+// than the default 60 simulated seconds: five tiers of real engine recomputes, each answered
+// over real frames. When the default kill fires mid-run it also poisons every later engine call
+// (IsError short-circuits ItemInfo), so each remaining wait spins to its own timeout as a
+// cascade — the widened budget must cover the WHOLE test, and be restored on every early path.
+struct ScopedWatchdogGuard {
+  ImGuiTestEngineIO* engine_io;
+  float saved_warn;
+  float saved_kill;
+  explicit ScopedWatchdogGuard(ImGuiTestEngineIO* io)
+      : engine_io(io), saved_warn(io->ConfigWatchdogWarning), saved_kill(io->ConfigWatchdogKillTest) {
+    engine_io->ConfigWatchdogWarning = 50000.0f;
+    engine_io->ConfigWatchdogKillTest = 100000.0f;
+  }
+  ~ScopedWatchdogGuard() {
+    engine_io->ConfigWatchdogWarning = saved_warn;
+    engine_io->ConfigWatchdogKillTest = saved_kill;
+  }
+};
+
 bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -1717,7 +1784,9 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   // A real map click while the selection's survey still owns the worker. Navigation is
   // available before the queued point has any drawable sample, and must not replace its id.
   ctx->SetRef("//Raypath view");
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(1);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
@@ -1739,9 +1808,8 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   ctx->ItemClick("**/Set sky point###sky_set");
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid && !gui::g_state.analysis.sky_point.from_map_pick, false);
   IM_CHECK_RETV(std::abs(gui::g_state.analysis.sky_point.dir[2] + 0.5f) < 1e-4f, false);
-  // The map answers behind the survey's chromatic legs (one worker, queue by face), then the
-  // default view chain runs: the full-sky map auto-Fits and the refinement window answers —
-  // the test waits for the WINDOW map specifically.
+  // A single reference answers behind the survey. Adoption neither auto-Fits nor issues a
+  // second calculation; explicit quality actions own all subsequent detail requests.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -1752,7 +1820,7 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -1785,7 +1853,9 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   const float roi_dir_before[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
                                     gui::g_state.analysis.cone_center_dir[2] };
   const std::string selected_before = gui::g_state.analysis.selected_entry.value_or("");
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
@@ -1858,11 +1928,10 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(full_sky.RectFull.Max.y <= info->InnerClipRect.Max.y + 0.5f, false);
     ctx->ItemClick("**/Fit##map");
     ctx->Yield(3);
-    ctx->LogInfo("[map view] after the Fit click: radius %.1f centre [%.2f, %.2f, %.2f]",
-                 static_cast<double>(gui::g_state.analysis.map_view.radius_deg),
-                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[0]),
-                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[1]),
-                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[2]));
+    ctx->LogInfo("[map view] shared camera after Fit: lens %d FOV %.1f el/az %.1f/%.1f",
+                 gui::g_state.renderer.lens_type, static_cast<double>(gui::g_state.renderer.fov),
+                 static_cast<double>(gui::g_state.renderer.elevation),
+                 static_cast<double>(gui::g_state.renderer.azimuth));
   }
 
   // The flip falsifier: a full-sky view puts the sun far off the disk's centre, so the halo
@@ -1871,12 +1940,9 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   // (The view arrives by the same write the Full sky button performs — the gesture click paths
   // are already covered by the pick above; the test engine's hover on this chrome layout is
   // addressed separately.)
-  for (int k = 0; k < 3; ++k) {
-    gui::g_state.analysis.map_view.centre_pos[k] = k == 2 ? 1.0f : 0.0f;
-  }
-  gui::g_state.analysis.map_view.radius_deg = gui::kMapFullSkyRadiusDeg;
-  gui::g_state.analysis.map_view.user_moved = true;
-  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
+  ctx->ItemClick("**/Full sky##map");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.renderer.lens_type == gui::kLensTypeRectangular, false);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -2015,7 +2081,9 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kNoIntent, false);
@@ -2024,11 +2092,17 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   // document the rest of the chain asserts on — the 742.5 leg's "the same write the button
   // performs" shape): (42, 0) sits on this scene's halo fiber.
   SetSkyPointTarget(42.0, 0.0);
-  IM_CHECK_RETV(
-      DriveUntil(
-          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
-      false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const auto& point = gui::g_state.analysis.point;
+                      const auto& intent = gui::g_state.analysis.sky_point;
+                      return gui::PointQueryStateFor(point) == gui::PointQueryState::kCompleted &&
+                             std::equal(point.key.target_dir, point.key.target_dir + 3, intent.dir) &&
+                             point.key.wavelength_nm == gui::g_state.analysis.map_wavelength_nm;
+                    },
+                    60),
+                false);
   const gui::PointQuerySession& point = gui::g_state.analysis.point;
   LUMICE_PathPointInfo info{};
   info.struct_size = sizeof(info);
@@ -2717,7 +2791,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -2731,44 +2805,24 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
     ctx->LogInfo("[v1 chain] map lambda %.1f, kept %lld, window delta[%.1f,%.1f]", info.wavelength_nm, info.kept_count,
                  info.view_delta_min_deg, info.view_delta_max_deg);
   }
-  // One pan, then one zoom-in view change (the gesture writes' shape — the 742.5 leg's
-  // precedent): the map re-asks under the new centre and then the new window, and each
-  // refinement lands while the session stays coherent.
-  gui::g_state.analysis.map_view.centre_pos[0] += 0.1f;  // a pan off the mass centre
-  gui::g_state.analysis.map_view.user_moved = true;
-  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
+  // Pure observation preserves the reference identity; fine quality is an explicit request.
+  const auto reference_id = gui::g_state.analysis.map.adopted_id;
+  gui::g_state.renderer.azimuth += 15.0f;
+  gui::g_state.renderer.fov = 10.0f;
+  ctx->Yield(30);
+  IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == reference_id, false);
+  ctx->ItemClick("**/Refine###map_quality");
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
-                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
-                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
-                        return false;
-                      }
-                      LUMICE_PathMapInfo i{};
-                      i.struct_size = sizeof(i);
-                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                      const auto& m = gui::g_state.analysis.map;
+                      return m.detail_result && m.detail_id == m.intent_id;
                     },
                     30),
                 false);
-  gui::g_state.analysis.map_view.radius_deg = 10.0f;
-  gui::g_state.analysis.map_view.user_moved = true;
-  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
-                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
-                        return false;
-                      }
-                      LUMICE_PathMapInfo i{};
-                      i.struct_size = sizeof(i);
-                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0 && i.view_delta_max_deg < 12.0;
-                    },
-                    30),
-                false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.adopted_id == reference_id, false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analyze_v1_chain_map.png").string()), false);
+  IM_CHECK_RETV(CheckMapGlyphsAcrossUiScale(ctx), false);
 
   // The real pick on the canvas centre: the point intent arms through the real mouse path (the
   // pick's outcome is the discovery arm's own honest answer at whatever spot the class's mass
@@ -2776,7 +2830,9 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
   // named-empty state, not a failure). The document the chain then asserts on is pinned by the
   // anchor write below — the 742.6 leg's verified on-fiber target for this scene's halo fiber,
   // written through the same state the pick path writes ("the same write the button performs").
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
@@ -2944,7 +3000,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -2955,7 +3011,9 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   // concentration band; CLI probe on this exact geometry), written through the same state the
   // pick path writes. Not (-20, 180): that point IS the sun's antipode, where the engine
   // honestly refuses the target (kInvalidTarget) instead of answering.
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(
@@ -3047,8 +3105,9 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
 // the worker costs inside the correctness pool's fixed-dt window (the workspace-switch leg's
 // precedent); the claim is the rekeying, not the physics.
 bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
 
@@ -3087,7 +3146,7 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -3139,7 +3198,7 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0 && i.wavelength_nm == 450.0f;
+                             i.view_full_sky == 1 && i.wavelength_nm == 450.0f;
                     },
                     60),
                 false);
@@ -3169,7 +3228,7 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0 && i.wavelength_nm == reference_lambda;
+                             i.view_full_sky == 1 && i.wavelength_nm == reference_lambda;
                     },
                     60),
                 false);
@@ -3198,8 +3257,9 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
 // the sky-point intent with them, the executor left idle; Revert keeps the adopted outcomes and
 // the intent, re-issuing nothing. The halo scene, fixed-dt pool — same reasons as the rekey leg.
 bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
 
@@ -3248,7 +3308,7 @@ bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
 
   // Revert keeps: rebuild the faces, then revert — every adopted outcome and the intent stay,
   // nothing re-issues (the analysis-tired per-reason rules, now across all four faces).
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   SetListRef(ctx);
@@ -3852,26 +3912,6 @@ bool DocumentOpenClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
 // (contained, and its track dragged to the range's far end by the real mouse path — the drag
 // is what proves the track's ends are reachable, an ItemInputValue cannot), and the completed
 // globe's sample controls (contained + Play/Stop real clicks).
-// The engine's watchdog measures SIMULATED time (frame_count × the injected dt — the
-// lens-projection and cli-export guards' lesson), and this test legitimately spans more frames
-// than the default 60 simulated seconds: five tiers of real engine recomputes, each answered
-// over real frames. When the default kill fires mid-run it also poisons every later engine call
-// (IsError short-circuits ItemInfo), so each remaining wait spins to its own timeout as a
-// cascade — the widened budget must cover the WHOLE test, and be restored on every early path.
-struct ScopedWatchdogGuard {
-  ImGuiTestEngineIO* engine_io;
-  float saved_warn;
-  float saved_kill;
-  explicit ScopedWatchdogGuard(ImGuiTestEngineIO* io)
-      : engine_io(io), saved_warn(io->ConfigWatchdogWarning), saved_kill(io->ConfigWatchdogKillTest) {
-    engine_io->ConfigWatchdogWarning = 50000.0f;
-    engine_io->ConfigWatchdogKillTest = 100000.0f;
-  }
-  ~ScopedWatchdogGuard() {
-    engine_io->ConfigWatchdogWarning = saved_warn;
-    engine_io->ConfigWatchdogKillTest = saved_kill;
-  }
-};
 
 bool CurrentTraceIsDrawn() {
   const auto& point = gui::g_state.analysis.point;
@@ -3922,7 +3962,7 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   const ScopedUiScaleAndBasisLease geometry_lease(ctx);
   ScopedWatchdogGuard watchdog(ctx->EngineIO);
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   const std::string top_display = TopChainDisplay();
@@ -4461,15 +4501,18 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     const ImGuiTestItemInfo canvas_e = ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas_e.ID != 0, false);
-    const float radius_before_e = gui::g_state.analysis.map_view.radius_deg;
+    gui::g_state.renderer.lens_type = gui::kLensTypeFisheyeEquidist;
+    gui::g_state.renderer.fov = 80.0f;
+    ctx->Yield(2);
+    const float radius_before_e = gui::g_state.renderer.fov;
     const float scroll_set_e = map_e->Scroll.y;
     ctx->MouseMoveToPos(canvas_e.RectFull.GetCenter());
     ctx->Yield(2);
     ctx->MouseWheelY(1.0f);  // wheel up over the picture: zoom in, nothing scrolls
     ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.analysis.map_view.radius_deg < radius_before_e, false);
+    IM_CHECK_RETV(gui::g_state.renderer.fov < radius_before_e, false);
     IM_CHECK_RETV(map_e->Scroll.y == scroll_set_e, false);
-    const float radius_zoomed_e = gui::g_state.analysis.map_view.radius_deg;
+    const float radius_zoomed_e = gui::g_state.renderer.fov;
     ctx->LogInfo("[scale tiers 1024 clamped] wheel held: radius %.1f -> %.1f, region scroll %.0f held",
                  static_cast<double>(radius_before_e), static_cast<double>(radius_zoomed_e),
                  static_cast<double>(map_e->Scroll.y));
@@ -5268,15 +5311,16 @@ bool RaypathViewOpenIsDisplayState(ImGuiTestContext* ctx) {
 // close/reopen keeps it. Real analysis + two selections: the selection-change leg needs a
 // second row.
 bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
-  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-5") != std::nullopt, false);
   // The identity line names the class with the list's own label — the same AnalysisRowLabel
   // spelling out of the one selection chain (a window that hand-rolled its own text would read
   // differently from the row the user clicked).
-  const std::string first_label = gui::AnalysisRowLabel(TopChainDisplay(), gui::AnalysisCoreToPoolMap(gui::g_state));
+  const std::string first_label = gui::AnalysisRowLabel("3-5", gui::AnalysisCoreToPoolMap(gui::g_state));
   IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state) == first_label, false);
   PinRaypathViewOnScreen(ctx);
   ImGuiWindow* map = MapRegionWindow();
@@ -5339,6 +5383,18 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
                static_cast<double>(gui::UiPx(gui::kRaypathViewMapMinSize)));
   IM_CHECK_RETV(fabsf(info3->Size.x - gui::UiPx(gui::kRaypathViewInfoMinSize)) < 2.0f, false);
   IM_CHECK_RETV(map3->Size.x >= gui::UiPx(gui::kRaypathViewMapMinSize) - 1.5f, false);
+  // A real C01 dispersion payload is required; a refused but non-null survey cannot
+  // witness the legend's drawn arcs, and report height is not a proxy for their presence.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      if (!gui::g_state.analysis.survey.adopted_result || !gui::g_state.analysis.map.adopted_result)
+                        return false;
+                      const auto model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+                      return model.dispersion.available && model.dispersion.min_row_available;
+                    },
+                    60),
+                false);
   // The legend's honesty qualifier is READABLE at the 200 pt floor: the entries are the
   // Bullet()+TextWrapped pair, so the info region's content never exceeds its width —
   // ScrollMax.x == 0 is the region-wide form of that (a single-line BulletText here reads as
@@ -5383,21 +5439,23 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     const float sm_present = info_leg->ScrollMax.y;
     ctx->LogInfo("[legend] short window, arcs drawn: ScrollMax.y %.1f", static_cast<double>(sm_present));
     IM_CHECK_RETV(sm_present > 0.0f, false);
-    gui::g_state.analysis.map_view.centre_pos[0] = 0.0f;
-    gui::g_state.analysis.map_view.centre_pos[1] = 0.0f;
-    gui::g_state.analysis.map_view.centre_pos[2] = -1.0f;
-    gui::g_state.analysis.map_view.radius_deg = 5.0f;
+    gui::g_state.renderer.lens_type = gui::kLensTypeFisheyeEquidist;
+    gui::g_state.renderer.elevation = -90.0f;
+    gui::g_state.renderer.azimuth = 0.0f;
+    gui::g_state.renderer.fov = 5.0f;
     ctx->Yield(4);
     info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] circles out of the disk: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
-    IM_CHECK_RETV(info_leg->ScrollMax.y < sm_present, false);
+    const auto hidden_legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(!hidden_legend.dispersion_red && !hidden_legend.dispersion_blue, false);
     ctx->ItemClick("**/Full sky##map");
     ctx->Yield(3);
     info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] full sky brings them back: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
-    IM_CHECK_RETV(fabsf(info_leg->ScrollMax.y - sm_present) < 1.0f, false);
+    const auto restored_legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(restored_legend.dispersion_red && restored_legend.dispersion_blue, false);
   }
   IM_CHECK_RETV(drag_strip(-700.0f), false);
   ImGuiWindow* map4 = MapRegionWindow();
@@ -5700,7 +5758,9 @@ bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
   ctx->LogInfo("[pose open] typed sky point left the pose window closed");
 
   ctx->SetRef("//Raypath view");
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open && !window_active("Pose & trace"), false);
@@ -6384,8 +6444,9 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
 // are open in the same frame, and a real mouse action in each writes its own state — the map
 // pick sets the sky point, the pose D5 drag writes its ratio, the modal's edit writes its field.
 bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
@@ -6411,7 +6472,9 @@ bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   ctx->LogInfo("[pose multiwindow] map pick set the sky point with both windows open");
@@ -6742,6 +6805,7 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
 // pins — here the waiting fact is the bar's Stop face and the run's flags, observables that do
 // not depend on winning a race against fixed-dt completion.
 bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   const auto window_active = [](const char* fragment) {
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
@@ -6759,7 +6823,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_server != nullptr, false);
   gui::ResetServerConstructionTrackers();
   LUMICE_SetLogLevel(gui::g_server, static_cast<LUMICE_LogLevel>(g_core_log_level));
-  IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  IM_CHECK_RETV(gui::DeserializeFromJson(kFullyRandomJson, gui::g_state), false);
   gui::g_state.renderer.sim_resolution_index = 0;
   gui::g_state.sim.infinite = false;
   gui::g_state.sim.ray_num_millions = 0.1f;
@@ -6837,7 +6901,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -6920,7 +6984,9 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(
@@ -7079,7 +7145,7 @@ static gui::SelectedClassIdentity IdentityFromPayloadEntry(const LUMICE_RaypathH
 // windows standing — the pose window parked lower-left so the main view's right half stays
 // pressable (the multi-window chain's parking shape).
 bool BringUpBothWindows(ImGuiTestContext* ctx) {
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
@@ -7103,9 +7169,7 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
                     ctx,
                     [&map_settle_streak] {
                       const gui::MapQuerySession& map = gui::g_state.analysis.map;
-                      const gui::MapViewState& view = gui::g_state.analysis.map_view;
                       const bool quiet = map.adopted_result != nullptr && map.adopted_id == map.intent_id &&
-                                         view.auto_fit_done && gui::MapViewSettled(ImGui::GetTime(), view) &&
                                          !gui::g_survey_executor.InFlight(gui::QueryFace::kMap);
                       map_settle_streak = quiet ? map_settle_streak + 1 : 0;
                       return map_settle_streak >= 3;
@@ -7155,6 +7219,203 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
 }
 
 namespace {
+
+// Capture one submitted application frame, before LogFinish clears its buffer. LogWindow is
+// deliberately unbound from the fallback window: child/window End() must not clear this read.
+// Keep normal item clipping; screenshots below are taken on ordinary, non-logging frames.
+std::string CaptureMapFrameText(ImGuiTestContext* ctx) {
+  struct Capture {
+    std::string text;
+    int frame = -1;
+    ImGuiID begin_hook = 0;
+    ImGuiID end_hook = 0;
+    ~Capture() {
+      // The test coroutine resumes in the engine's earlier EndFramePre hook. Finish THIS
+      // frame's open logging before removing our later hook, or it leaks into future frames.
+      ImGui::LogFinish();
+      ImGui::RemoveContextHook(ImGui::GetCurrentContext(), begin_hook);
+      ImGui::RemoveContextHook(ImGui::GetCurrentContext(), end_hook);
+    }
+  } capture;
+  ImGuiContextHook hook;
+  hook.UserData = &capture;
+  hook.Type = ImGuiContextHookType_NewFramePost;
+  hook.Callback = [](ImGuiContext* g, ImGuiContextHook*) {
+    ImGui::LogToBuffer();
+    g->LogWindow = nullptr;
+    g->ItemUnclipByLog = false;
+  };
+  capture.begin_hook = ImGui::AddContextHook(ImGui::GetCurrentContext(), &hook);
+  hook.Type = ImGuiContextHookType_EndFramePre;
+  hook.Callback = [](ImGuiContext* g, ImGuiContextHook* h) {
+    auto& c = *static_cast<Capture*>(h->UserData);
+    c.text = g->LogBuffer.c_str();
+    c.frame = g->FrameCount;
+    ImGui::LogFinish();
+  };
+  capture.end_hook = ImGui::AddContextHook(ImGui::GetCurrentContext(), &hook);
+  const int before = ImGui::GetFrameCount();
+  ctx->Yield(2);
+  if (capture.frame <= before) {
+    ctx->LogError("[map text] no submitted frame after %d", before);
+    return {};
+  }
+  ctx->LogInfo("[map text] captured frame %d, %zu bytes", capture.frame, capture.text.size());
+  if (g_export_dir) {
+    std::ofstream output(GuiTestTempPath("map_text_frame_" + std::to_string(capture.frame) + ".txt"));
+    output << capture.text;
+  }
+  const size_t window_at = capture.text.find("Raypath view\n");
+  if (window_at == std::string::npos || capture.text.find("Raypath view\n", window_at + 1) != std::string::npos) {
+    ctx->LogError("[map text] expected exactly one Raypath view submission in frame %d", capture.frame);
+    return {};
+  }
+  return capture.text.substr(window_at);
+}
+
+std::string MapTextLine(const std::string& text, const char* marker, const char* field) {
+  size_t at = 0;
+  while ((at = text.find(marker, at)) != std::string::npos) {
+    const size_t previous_line = text.rfind('\n', at);
+    const size_t start = previous_line == std::string::npos ? 0 : previous_line + 1;
+    const std::string line = text.substr(start, text.find('\n', at) - start);
+    if (line.find(field) != std::string::npos)
+      return line.substr(line.find_first_not_of(" \t"));
+    ++at;
+  }
+  return {};
+}
+
+bool CheckMapTextGlyphs(ImGuiTestContext* ctx, const char* surface, const std::string& text) {
+  IM_CHECK_RETV(!text.empty(), false);
+  ctx->LogInfo("[map text] %s: %s", surface, text.c_str());
+  // Decode what production submitted, not a second inventory of anticipated codepoints.
+  ImFont* body = ImGui::GetIO().Fonts->Fonts[0];
+  for (const char* p = text.c_str(); *p;) {
+    unsigned int codepoint = 0;
+    const int bytes = ImTextCharFromUtf8(&codepoint, p, nullptr);
+    if (bytes <= 0) {
+      ctx->LogError("[map text] %s invalid UTF-8", surface);
+      return false;
+    }
+    if (codepoint > 32 && body->FindGlyphNoFallback(static_cast<ImWchar>(codepoint)) == nullptr) {
+      ctx->LogError("[map text] %s missing U+%04X in live atlas: %s", surface, codepoint, text.c_str());
+      return false;
+    }
+    p += bytes;
+  }
+  return true;
+}
+
+bool CheckMapCellSteps(ImGuiTestContext* ctx, const std::string& text, const LUMICE_PathMapInfo& info) {
+  IM_CHECK_RETV(!text.empty(), false);
+  const auto check_axis = [&](const char* axis, double expected) -> bool {
+    const size_t at = text.find(axis);
+    IM_CHECK_RETV(at != std::string::npos, false);
+    char* end = nullptr;
+    const double value = std::strtod(text.c_str() + at + std::strlen(axis), &end);
+    IM_CHECK_RETV(end != nullptr && std::strncmp(end, "°", std::strlen("°")) == 0, false);
+    IM_CHECK_RETV(std::isfinite(value) && std::abs(value - expected) <= std::abs(expected) * 1e-6, false);
+    return true;
+  };
+  IM_CHECK_RETV(check_axis("δ ", (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows), false);
+  IM_CHECK_RETV(check_axis("az ", (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols), false);
+  return true;
+}
+
+bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
+  const auto& map = gui::g_state.analysis.map;
+  const auto reference = map.adopted_result;
+  const auto detail = map.detail_result;
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ImGuiWindow* report = MapReportWindow();
+  IM_CHECK_RETV(report != nullptr, false);
+  report->Scroll.y = 0.0f;
+  ctx->Yield(2);
+  const std::string report_text = CaptureMapFrameText(ctx);
+  const auto check_source = [&](int slot) -> bool {
+    const char* source = slot == 0 ? "Reference" : "Detail";
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo((slot == 0 ? reference : detail).get(), &info) == LUMICE_PATH_READ_OK, false);
+    const std::string line = MapTextLine(report_text, source, "δ ");
+    IM_CHECK_RETV(CheckMapCellSteps(ctx, line, info), false);
+    // The full-sky reader's known one-degree grid is an anchor independent of display formatting.
+    if (slot == 0) {
+      IM_CHECK_RETV(info.view_rows == 180 && info.view_cols == 360, false);
+      IM_CHECK_RETV(info.view_delta_max_deg - info.view_delta_min_deg == 180.0, false);
+      IM_CHECK_RETV(info.view_az_max_deg - info.view_az_min_deg == 360.0, false);
+    }
+    IM_CHECK_RETV(CheckMapTextGlyphs(ctx, source, line), false);
+    IM_CHECK_RETV(line.find("cell δ ") != std::string::npos, false);
+    return true;
+  };
+  IM_CHECK_RETV(check_source(0), false);
+  if (detail) {
+    IM_CHECK_RETV(check_source(1), false);
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(stem + "_steps.png").string()), false);
+  const ImRect canvas = ctx->ItemInfo("**/##map_canvas").RectFull;
+  ctx->MouseMoveToPos(canvas.GetCenter());
+  ctx->Yield(3);
+  const std::string cursor_frame = CaptureMapFrameText(ctx);
+  const size_t near_at = cursor_frame.find("Near / pick direction");
+  IM_CHECK_RETV(near_at != std::string::npos, false);
+  const std::string cursor_text = cursor_frame.substr(near_at);
+  const char* cursor_source = detail ? "Detail r" : "Reference r";
+  IM_CHECK_RETV(cursor_text.find("Near / pick direction") != std::string::npos, false);
+  IM_CHECK_RETV(cursor_text.find(cursor_source) != std::string::npos, false);
+  LUMICE_PathMapInfo cursor_info{};
+  cursor_info.struct_size = sizeof(cursor_info);
+  IM_CHECK_RETV(LUMICE_PathMapGetInfo((detail ? detail : reference).get(), &cursor_info) == LUMICE_PATH_READ_OK, false);
+  const std::string cursor_line = MapTextLine(cursor_text, "δ ", "az ");
+  IM_CHECK_RETV(CheckMapCellSteps(ctx, cursor_line, cursor_info), false);
+  IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "cursor", cursor_line), false);
+  const auto save_tooltip = [&](const char* suffix) -> bool {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w->Active && (w->Flags & ImGuiWindowFlags_Tooltip)) {
+        const std::string ref = std::string("//") + w->Name;
+        return SaveWindowPng(ctx, ref.c_str(), GuiTestTempPath(stem + suffix).string());
+      }
+    }
+    return false;
+  };
+  IM_CHECK_RETV(save_tooltip("_cursor.png"), false);
+  ctx->MouseMove("**/Refine###map_quality");
+  ctx->Yield(3);
+  const std::string refine_text = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(refine_text.find("One explicit calculation") != std::string::npos, false);
+  const std::string actual = MapTextLine(refine_text, "Actual ", "δ ");
+  IM_CHECK_RETV(actual.find("°; grid cap 262144") != std::string::npos, false);
+  const std::string target = MapTextLine(refine_text, "Target ", "diameter");
+  double diameter = 0.0;
+  int rows = 0, cols = 0;
+  IM_CHECK_RETV(std::sscanf(target.c_str(), "Target %lf° diameter; %d×%d cells", &diameter, &rows, &cols) == 3, false);
+  IM_CHECK_RETV(diameter > 0.0 && rows > 0 && cols > 0, false);
+  const size_t delta_at = actual.find("δ ");
+  IM_CHECK_RETV(delta_at != std::string::npos, false);
+  const double preview_step = std::strtod(actual.c_str() + delta_at + std::strlen("δ "), nullptr);
+  IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "Refine", target + "\n" + actual), false);
+  // The target may straddle the sun-frame pole. Its actual delta span is clipped to [0,180],
+  // not necessarily the printed diameter. This independent spherical separation uses the C
+  // result's sun and the known linear camera, never the production request/label formatter.
+  IM_CHECK_RETV(gui::g_state.renderer.lens_type == gui::kLensTypeLinear, false);
+  const double radians = std::acos(-1.0) / 180.0;
+  const double elevation = gui::g_state.renderer.elevation * radians;
+  const double sun = cursor_info.sun_altitude_deg * radians;
+  const double azimuth = (gui::g_state.renderer.azimuth - cursor_info.sun_azimuth_deg) * radians;
+  const double centre =
+      std::acos(std::clamp(
+          std::sin(elevation) * std::sin(sun) + std::cos(elevation) * std::cos(sun) * std::cos(azimuth), -1.0, 1.0)) /
+      radians;
+  const double span = std::min(180.0, centre + diameter * 0.5) - std::max(0.0, centre - diameter * 0.5);
+  IM_CHECK_RETV(preview_step > 0.0 && std::abs(preview_step * rows - span) < diameter * 1e-5, false);
+  IM_CHECK_RETV(save_tooltip("_refine.png"), false);
+  IM_CHECK_RETV(map.adopted_result == reference && map.detail_result == detail, false);
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ctx->Yield(2);
+  return true;
+}
 
 // The completed C01 map's actual text, after the same frame-boundary rebuild/GL upload the
 // product uses. The standalone font case pins the full audited character set; this leg owns the
@@ -7213,7 +7474,9 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
                  ImGui::CalcTextSize(metrics.c_str()).x, metrics.c_str());
     ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
     ctx->Yield(2);
-    const std::string stem = std::string("map_glyphs_") + suffix;
+    const std::string stem =
+        std::string(gui::g_state.analysis.map.detail_result ? "map_detail_glyphs_" : "map_glyphs_") + suffix;
+    IM_CHECK_RETV(CheckMapQualityText(ctx, stem), false);
     IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(stem + ".png").string()), false);
     // Preserve the full application frame as well as the window crop for offline inspection.
     g_fullframe_capture.Reset();
@@ -7249,6 +7512,7 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
 // ④ the 150% scale at the narrowest 1024x640 basis keeps both windows structurally present
 //    (the fit promises themselves are the per-window cases'), then the factory state restores.
 bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   const auto window_active = [](const char* fragment) {
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
@@ -7776,21 +8040,9 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
-                      // Quiet means the pump has already had its shot and issued whatever the
-                      // view owed: nothing computing or queued on ANY face, AND the map view
-                      // settled with margin. The test coroutine resumes at PostNewFrame — BEFORE
-                      // this frame's pump — so a bare MapViewSettled(ImGui::GetTime(), …) is
-                      // exactly the pump's own crossing condition, and the gate would pass in the
-                      // very frame whose pump then issues the refinement. The pump issues at the
-                      // FIRST frame past kMapSettleSeconds; requiring 2x that here puts the sample
-                      // whole frames past the crossing, so the crossing frame's issue has already
-                      // happened — anything unresolved reads outstanding, and quiet can only be
-                      // the post-issue steady state (no further view change follows: the auto-Fit
-                      // chain is latched and nothing steers the view before the Revert).
-                      return !gui::g_survey_executor.QueryOutstanding() &&
-                             gui::MapViewSettled(ImGui::GetTime(), gui::g_state.analysis.map_view) &&
-                             ImGui::GetTime() - gui::g_state.analysis.map_view.last_view_change_s >=
-                                 2 * gui::kMapSettleSeconds;
+                      // No observation or adoption can owe a hidden refinement. All faces
+                      // quiet plus the following frame drain is the completion boundary.
+                      return !gui::g_survey_executor.QueryOutstanding();
                     },
                     kScopesCompleteBudgetS),
                 false);
@@ -11033,6 +11285,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "raypath_analysis", "identity_class_shows_the_mass_arm_and_the_map_answers");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(IdentityClassShowsTheMassArmAndTheMapAnswers(ctx)); };
+  }
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "list_scroll_finds_the_row_under_the_next_frozen_header");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(ListScrollFindsTheRowUnderTheNextFrozenHeader(ctx)); };
   }
   {
     ImGuiTest* t =

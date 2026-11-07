@@ -44,8 +44,9 @@ d = cos(delta) * incident + sin(delta) * (cos(azimuth) * e1 + sin(azimuth) * e2)
 
 and the inverse reading maps a direction through the same frame. A GUI maps pixel indices to
 sky directions (and back for point picks) through these fields alone — it derives no second
-convention. Every request rebuilds the PixelTable and re-runs the class: zooming is a real
-re-evaluation, never an upscale of an older raster.
+convention. Every request rebuilds the PixelTable and re-runs the class. A client camera change is not
+a new request: it may reproject frozen cells, but obtaining a new fine statistical band remains
+an explicit re-evaluation, not an upscale of an older raster.
 
 ## Units and reading the cells
 
@@ -96,38 +97,17 @@ closed-form minimum-deviation edge (`2*asin(n/2) - 60`) contained in the first n
 with the probe-consistency leg on the same kernel. The typed ABI e2e adds the independent C
 consumer leg (installed headers, product library, cross-destroy reads).
 
-## The GUI consumer (742.5)
+## The GUI consumer
 
-The Analyze workspace's raypath view is the first GUI consumer, and its shape is the reference
-for later ones. It derives no second convention: the picture and every pick convert through the
-Info-echoed frame alone (cell direction -> sky position by the §12 display rule, position ->
-travel for a pick), the view's window requests are the disk's bounding rectangle in the
-(delta, azimuth-about-sun) plane — the tangent-cone azimuth bound off the poles, the full
-circle with a quasi-uniform grid when the disk contains a pole, where the azimuth's reference
-deviation no longer exists — and the display tier samples every request at n = 500k (the
-measured interaction arm: full sky ~0.9 s, narrow windows sub-second, the pole-containing
-refinement shape ~2 s), with the caliber line echoing the Info's own count. Requests ride the workspace entry on the GUI's one background worker,
-queued per face behind the survey; a view change supersedes only the map face, and an outcome
-that fails the intent's id is dropped, never shown. The consumer-side rules live in
-`raypath-analysis.md` §5.1.8 (the 742.5 as-built and the 742.6 handover); this file stays the
-map's own contract.
+The Analyze map consumes this capability through the engine C API, using the result's frame,
+original columns and lifetime. Observation and calculation are separate: first selection/data
+identity establishes one all-sky reference; explicit Refine captures a new bounded window, while
+camera/lens/FOV/resize/open-close only reproject frozen cells. The existing tangent-cone/pole
+window grid and n=500000 remain; no estimator, public ABI or event cache is introduced.
 
-## Shared-camera display blueprint (not yet implemented)
-
-[raypath-view-camera.md](../gui/raypath-view-camera.md) records the historical rescan chain
-at `c1149fe20`, rejected continuous-response candidates and the verified frozen-result display alternative.
-Its §6–8 prescribe a single shared camera, a frozen full-sky reference plus one explicitly
-computed detail domain, truthful source-cell readings, completion-prefix compatibility,
-result lifetime and bounded quality/cost acceptance. Camera changes reproject existing
-cells; they do not answer a new statistical band or implicitly run a new map request.
-Obtaining a new fine domain requires an explicit Refine action, with its additional click
-and original-query wait stated rather than hidden. A narrow result never supplies all-sky
-coverage and a coarse result never claims fine resolution.
-
-This changes the proposed GUI scheduling/display contract, not the engine estimator,
-view-dependent query, public ABI or frozen ownership above. The existing GUI still uses its
-independent disk and view-change supersession until that blueprint is implemented. The
-blueprint's §4 retains the event-replay, weak/zero spectral-response and full-tree growth
-failures; none is retrospectively declared successful. Its §4.9 establishes independent
-C01/C16 projection/coverage/detail evidence and offscreen GL headroom, not final two-window
-input-to-presentation performance or a continuous all-density response cache.
+The unique GUI camera, quality, two-current-source compatibility, coverage, readout and lifetime
+contract is [raypath-view-camera.md](../gui/raypath-view-camera.md) §6–8; its §10 records current
+mechanisms and the exact boundary of verified evidence. Full plus latest detail composes only
+for the same ordered completed member prefix, replacing rather than adding. An unknown domain
+never becomes a written zero; different prefixes require explicit single-source viewing.
+The engine quantity semantics above are unchanged by any display interpolation or screen area.

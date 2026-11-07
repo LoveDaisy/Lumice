@@ -137,57 +137,68 @@ The header always names the reference wavelength and where it came from, the sun
 read, and whether the survey stopped inside its budget (a partial document says so). Selecting
 another class re-asks; the card never mixes two answers.
 
-## 7. The raypath view (the class reference map)Select a row in the share list and the **Raypath view window** opens — a floating, non-modal
-window (move and resize it freely; it stays open and in sync while you work elsewhere) that
-draws that class's own sky picture: the engine's physical class reference map, one
-single-wavelength brightness disk computed from every member of the class (not a
-representative scaled up). The picture arrives in the background like the overview does, and
-the region states honestly where it stands: waiting, cancelled, the engine's named refusal, or
-the picture — plus a *coarse* note while a newer view is still computing (the old picture stays
-on screen, anchored to the sky, and never passes for the newest answer). The window is two
-panes separated by a draggable divider: the map on the left, and the wavelength, the Fit /
-Full-sky buttons and sky-point input in a stable operation stack on the right, followed by
-a scrollable report containing the class identity, caliber and legend. Clicking another class row re-points the open window at that class;
-clicking an already-selected row again reopens it after you have closed it.
+## 7. The raypath view (the class reference map)
 
-**Reading it.** The disk is centred where you last looked; the yellow dot is the sun (the map's
-zero of deviation), the thin cross is the zenith, the faint arc is the horizon. Brightness is a
-diagnostic ramp over the class's per-steradian power at the reference wavelength — it is not
-scene colour, and the right-hand report spells the exact caliber: the wavelength and its
-source, how many of the class's members were evaluated (a budget-stopped map says *truncated*
-and shows its completed prefix), the sampling count, the view's own bounds, and the engine's
-geometry basis. A rank-0 class (a direction-invariant one) has no ring to draw: its sky image
-is the point mass at the sun, shown as the amber cell, with its measured mass readable in
-place — the dark cells around it are not "no light".
+Selecting a share-list row opens **Raypath view**, a movable, non-modal window following the
+selected physical class. The left pane is its scalar sky map; the right pane keeps the quality
+action, wavelength, shared presets, sky-point controls and **Pose & trace** entry above an
+independently scrolling identity/caliber/legend report. Closing a window only hides it: results
+and in-flight work survive. Clicking the selected row opens it again.
 
-**Operating it.** Drag pans (the sky follows the cursor), the wheel zooms anchored at the
-cursor, **Fit** frames the distribution the map itself carries, **Full sky** returns to the
-whole sky. Every view change re-asks the engine for that view — zooming is a real
-re-evaluation at the sampled tier, never an upscale of an older raster — and requests settle
-briefly so a wheel burst is one ask. The λ slider (in the right pane) names an explicit
-wavelength (a new evaluation per wavelength; the engine keeps no warm map); *reference* returns
-to the document's own choice. **Overlays** toggles the survey's located conclusions on the
-picture: each positional object draws its own kind's marker (a filled shape when the survey
-certified or bounded it, an outline while it is refused or unevaluated), and the chromatic
-dispersion's two inner edges draw as the red-inside-blue-outside pair of circles about the sun,
-labelled with their own wavelengths — the curves are the survey document's values, drawn where
-they belong; a circle that only partly fits the view says *arc in view*, and the legend spells
-that the circles are positions, not a claim that the whole ring is visible or contributing. A
-survey without positional payload draws no markers and invents no curve, and the legend lists
-only what the picture actually shows. Hovering a marker names every object under the pointer in
-one tooltip — each object's kind, state, coordinates and any named reason; identical objects
-collapse into one line with a count.
+**One camera, two pictures.** The main picture and the map use the same lens, FOV, orientation
+and display clips. Drag bare sky to orbit that camera; the wheel applies the main picture's
+5°-per-notch FOV change. Both pictures respond, but neither action requests another map. Each
+canvas keeps its own aspect ratio and physical pixel size: a wider canvas sees more sky rather
+than stretching a second camera. Fixed all-sky lenses cannot orbit/zoom; globe keeps its
+outside-in grab, zero effective roll and independent far-side hint.
 
-**Pointing.** A click on the picture (a press that does not move) sets the **sky point** —
-where you are asking about — marked with a white crosshair you can drag anywhere on the disk,
-dark regions included: the pick is a coordinate, never a brightness threshold. The altitude and
-azimuth fields in the right pane do the same without any map at all (type the angles of the sky
-point, azimuth measured as the sun's), so a refused or still-computing map never blocks
-naming a target. The sky point is independent of the scene ROI: clicking the map never changes
-the cone centre or the share list, and pointing the cone on the panorama never moves your sky
-point. One honest limit: a direction whose class carries no pose samples says so in the window
-(*no valid sample*) rather than drawing an empty guess — click another spot, or type the
-angles, to re-target.
+**Fit** means *Fit sampled map*: a shared preset, not a certificate of the class's complete
+support. In composition it fits the existing reference; explicitly select Detail to fit that
+source instead. Zero/no-band or unfittable sources disable Fit. **Full sky** selects the shared
+rectangular, full-visible, zero-pose preset. Both affect the main picture, unlock Look At while
+keeping its target, and perform no map calculation. First arrivals and class changes never
+auto-Fit or launch an implicit second refinement.
+
+**Quality is explicit.** First selection produces one full-sky **Reference**. Zooming only
+reprojects its original cells; it does not create finer statistical bands. Narrow a zoomable
+lens to the desired region and click **Refine** once to calculate a **Detail**. The same fixed
+slot shows **Cancel** while computing, or **Retry** after cancellation/error. Refine captures
+that click's map-canvas domain, grid and quality; moving/resizing while it runs does not chase
+the camera, reissue, or pull the camera back when it arrives. Retry repeats the captured target,
+not a new current view. Full-sky-equivalent targets ask you to narrow the lens first. Globe's
+action covers its **near side only**; the far hint has its own actual source precision.
+
+Only the current reference and **latest** detail are retained. Compatible detail cells replace,
+never add to, the reference; outside detail the reference remains at its original precision.
+Returning to an unreplaced detail domain needs no calculation. A new detail replaces the old
+one: returning to an old-only domain is reference resolution again, not a hidden high-resolution
+patch cache. Obtaining a new region therefore costs **one quality click plus the original
+query wait**; a fixed all-sky lens also requires switching to a zoomable lens. Changing
+wavelength/class/capture invalidates old sources and establishes a new reference.
+
+**Read the source, not the colour.** The report names Reference/Detail original Δδ×Δaz, completed
+members K/N, λ, n and bounds; the centre line says covered/outside and which source is shown.
+The cursor reads the actual direction's original binary64 value, count and status from that
+same source cell. Source-fixed colour scales and nearest-cell display do not change the
+quantities. Dashed boundaries mark detail coverage; stripes mean **unknown**, not zero, and
+singular cells stay distinct. Globe gives separate near/pick and far-hint readings; a clipped
+near side cannot turn a far hint into a point pick.
+
+Composition also requires the same captured scene/class, frame, wavelength, sampling and
+**ordered completed member prefix**. Two matching K/N partial sources may compose, but the whole
+picture remains **partial**. Different prefixes never combine, in either direction: default
+composition keeps the reference; choose **Detail only** explicitly to inspect it, with unknown
+outside its bounds. Refusals do not overwrite a valid frozen picture with a zero image. A rank-0
+arm is a separate sun-position mass marker with original-cell m/Ω; changing screen area does
+not change it, and a mixed class retains its band arm.
+
+**Pointing.** Use **Alt/Option+click** to set a sky point, or drag its marker. A bare camera press
+never becomes a point pick at release. Ownership lasts until release, including modifier
+changes; explicit pickers have priority. Coordinates and **Set sky point** work without a
+finite map. These actions do not move the scene ROI, calculate a map, or open Pose & trace
+implicitly. The report scroll never zooms either camera. **Overlays** still consumes the
+survey's own located objects and dispersion circles, with one grouped tooltip and a legend
+of what was actually drawn; geometry positions are not whole-circle contribution claims.
 
 ## 8. The point inspector (the Pose & trace window, point detail)
 
@@ -358,11 +369,10 @@ migration are in
   playback, no curve forced where the physics has none. Near-pole and exact-antisolar targets
   keep their existing named refusals.
 - Deferred by the confirmed first-version scope, not regressions: per-wavelength colour map
-  families, smart Fit for detached bright patches, continuous refinement during a gesture,
-  full-sky curves (Parry/Lowitz), full-spectrum / solar-disk images, energy cross-checks,
+  families, smart Fit for detached bright patches,   full-sky curves (Parry/Lowitz), full-spectrum / solar-disk images, energy cross-checks,
   backward pose dragging, interpolation between arbitrary pose samples, and multi-layer
   inversion (the existing keep-one-chain retreat applies).
-- The map is a single-disk equal-area projection; the sun-direction globe is a projection of the
+- The map shares the main picture’s effective lens; the sun-direction globe is a projection of the
   crystal's pose space, not the whole of it.
 
 ## Further reading
