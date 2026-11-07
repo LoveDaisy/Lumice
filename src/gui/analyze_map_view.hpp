@@ -141,6 +141,17 @@ void MapViewChanged(MapViewState* view, double now_s, bool gesture_active, bool 
 
 // ---- View -> request derivation --------------------------------------------------------------------
 
+struct ViewProjection;
+
+// An immutable calculation target, NOT an observation camera. Captured only by an explicit
+// quality action; subsequent camera/viewport changes cannot mutate it. The cap conservatively
+// contains the effective canvas (the globe's near root only).
+struct MapCaptureTarget {
+  double centre_pos[3] = { 0.0, 0.0, 1.0 };
+  double radius_deg = 180.0;
+};
+MapCaptureTarget CaptureMapTarget(const ViewProjection& view, int width_px, int height_px);
+
 // The sun label the request derivation (and the on-picture sun marker and the delta readout)
 // anchor to: the adopted map's own Info echo when one is on show, else the adopted survey's
 // scope, else the live document's sun (the analyzed snapshot is always the better anchor —
@@ -168,6 +179,7 @@ struct MapWindowSpec {
   int cols = 0;
 };
 MapWindowSpec MapWindowSpecForView(const MapViewState& view, double sun_altitude_deg, double sun_azimuth_deg);
+MapWindowSpec MapWindowSpecForTarget(const MapCaptureTarget& target, double sun_altitude_deg, double sun_azimuth_deg);
 
 // The engine request for an outstanding intent (the survey request builder's sibling): the
 // key's selection fills the class fields, the view fills the window (against `sun` — the

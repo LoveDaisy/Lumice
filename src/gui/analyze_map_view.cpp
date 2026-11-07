@@ -17,6 +17,7 @@
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state.hpp"
+#include "gui/preview_renderer.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
 #include "util/sky_direction.hpp"
@@ -335,13 +336,81 @@ void MapViewChanged(MapViewState* view, double now_s, bool gesture_active, bool 
 
 // ---- View -> request derivation --------------------------------------------------------------------
 
+MapCaptureTarget CaptureMapTarget(const ViewProjection& view, int width_px, int height_px) {
+  MapCaptureTarget target;
+  if (width_px <= 0 || height_px <= 0 || LensIsFullSky(view.lens_type)) {
+    return target;
+  }
+  // Radial inverse laws are monotone on their valid domains. The rectangle's largest radius
+  // is its half-diagonal; if a lens domain ends earlier, its circular boundary is the maximum.
+  // This includes truncated boundary arcs, not just valid corners. See the camera contract.
+  const double half_fov = static_cast<double>(view.fov) * kDeg2RadD * 0.5;
+  const double r =
+      std::hypot(static_cast<double>(width_px), static_cast<double>(height_px)) / std::min(width_px, height_px);
+  double theta = kPiD;
+  switch (view.lens_type) {
+    case kLensTypeLinear:
+      theta = std::atan(r * std::tan(half_fov));
+      break;
+    case kLensTypeFisheyeEqualArea:
+      theta = 2.0 * std::asin(std::min(1.0, r * std::sin(half_fov * 0.5)));
+      break;
+    case kLensTypeFisheyeEquidist:
+      theta = std::min(kPiD, r * half_fov);
+      break;
+    case kLensTypeFisheyeStereographic:
+      theta = 2.0 * std::atan(r * std::tan(half_fov * 0.5));
+      break;
+    case kLensTypeFisheyeOrthographic:
+      theta = std::asin(std::min(1.0, r * std::sin(half_fov)));
+      break;
+    case kLensTypeGlobe: {
+      const double limb = 1.0 / std::sqrt(kGlobeCameraD * kGlobeCameraD - 1.0);
+      const double k = r * std::tan(half_fov);
+      if (k >= limb) {
+        theta = std::acos(1.0 / kGlobeCameraD);
+        break;
+      }
+      // The near root runs monotonically from mu=1 at the centre to mu=1/D at the limb.
+      const double mu =
+          (kGlobeCameraD * k * k + std::sqrt(std::max(0.0, 1.0 - (kGlobeCameraD * kGlobeCameraD - 1.0) * k * k))) /
+          (1.0 + k * k);
+      theta = std::acos(Clamp1(mu));
+      break;
+    }
+    default:
+      return target;
+  }
+  float matrix[9];
+  BuildViewMatrix(view.elevation, view.azimuth, view.roll, matrix);
+  // Inside-out POSITION is +forward's negation; globe hit POSITION is -hit_world.
+  const double sign = view.lens_type == kLensTypeGlobe ? -1.0 : 1.0;
+  for (int k = 0; k < 3; ++k) {
+    target.centre_pos[k] = sign * matrix[6 + k];
+  }
+  Normalize3(target.centre_pos);
+  // 0.0001 degree covers the single-precision view matrix/angle conversion error. It is an
+  // angular, unit-normalized bound, not a world-coordinate epsilon. The 1.5 degree floor is
+  // the existing minimum calculation cap; it does not constrain the observation camera.
+  target.radius_deg = std::min(180.0, std::max(1.5, theta * kRad2DegD + 0.0001));
+  return target;
+}
+
 MapWindowSpec MapWindowSpecForView(const MapViewState& view, double sun_altitude_deg, double sun_azimuth_deg) {
+  MapCaptureTarget target;
+  std::copy(view.centre_pos, view.centre_pos + 3, target.centre_pos);
+  target.radius_deg = view.radius_deg;
+  return MapWindowSpecForTarget(target, sun_altitude_deg, sun_azimuth_deg);
+}
+
+MapWindowSpec MapWindowSpecForTarget(const MapCaptureTarget& view, double sun_altitude_deg, double sun_azimuth_deg) {
   MapWindowSpec spec;
-  if (view.radius_deg >= kMapFullSkyRadiusDeg - 0.01f) {
+  if (view.radius_deg >= 180.0) {
     return spec;  // full_sky true, grid zero — the engine's named all-sky view
   }
   spec.full_sky = false;
-  const double c[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
+  double c[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
+  Normalize3(c);
   spec.centre_altitude_deg = std::asin(Clamp1(c[2])) * kRad2DegD;
   spec.centre_azimuth_deg = std::atan2(c[1], c[0]) * kRad2DegD;
 
