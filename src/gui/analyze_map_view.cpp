@@ -1,6 +1,9 @@
 #include "gui/analyze_map_view.hpp"
 
+#include <GLFW/glfw3.h>
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -28,6 +31,12 @@ namespace lumice::gui {
 
 
 namespace {
+
+OverlayLegendState g_map_legend;
+MapObservationTiming g_map_observation_timing;
+double ObservationClockSeconds() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 constexpr double kPiD = 3.14159265358979323846;
 constexpr double kDeg2RadD = kPiD / 180.0;
@@ -177,7 +186,7 @@ std::vector<std::string> MapCaliberLines(const MapCaliberInput& in) {
       methods += in.methods[i];
     }
     std::snprintf(line, sizeof(line),
-                  "Rank-0 arm: m = %.6g ± %.2g (%s) at the sun's cell%s — this class's sky image IS the mass; the "
+                  "Rank-0 arm: m = %.6g ± %.2g (%s) at the sun's cell%s — mass is separate from any band arm; "
                   "zero cells are not no-light.",
                   in.mass.m, in.mass.m_error, methods.c_str(), in.mass.pixel < 0 ? " (outside this view)" : "");
     lines.emplace_back(line);
@@ -270,6 +279,8 @@ MapWindowSpec MapWindowSpecForTarget(const MapCaptureTarget& view, double sun_al
   } else {
     spec.azimuth_span_deg = 2.0 * std::asin(std::min(1.0, std::sin(rad) / std::sin(delta_c))) * kRad2DegD;
   }
+  spec.actual_delta_span_deg = (std::min(kPiD, delta_c + rad) - std::max(0.0, delta_c - rad)) * kRad2DegD;
+  spec.subsky_target = spec.actual_delta_span_deg < 180.0 || spec.azimuth_span_deg < 360.0;
   // The grid: kMapTargetCellsAcross across the delta span. Off the poles the azimuth columns
   // match the sky spacing at the centre's deviation (an az degree near the sun is a small sky
   // distance); a disk that contains a pole of the sun frame has no such reference deviation —
@@ -301,10 +312,12 @@ bool SkySunAnchorFor(const GuiState& state, SkySunAnchor* out) {
   // The adopted map's own echo is the best anchor (the picture's sun). Then the adopted
   // survey's scope (the digest's sun). The live document last — an edited scene's sun may
   // differ from what any adopted document described.
-  if (state.analysis.map.adopted_result != nullptr) {
+  const auto& source =
+      state.analysis.map.adopted_result ? state.analysis.map.adopted_result : state.analysis.map.detail_result;
+  if (source != nullptr) {
     LUMICE_PathMapInfo info{};
     info.struct_size = sizeof(info);
-    if (LUMICE_PathMapGetInfo(state.analysis.map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK) {
+    if (LUMICE_PathMapGetInfo(source.get(), &info) == LUMICE_PATH_READ_OK) {
       out->altitude_deg = info.sun_altitude_deg;
       out->azimuth_deg = info.sun_azimuth_deg;
       return true;
@@ -364,7 +377,10 @@ LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, const SkySun
 
 // ---- Fit, normalization, colour --------------------------------------------------------------------
 
-MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMICE_PathMapInfo& info) {
+MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMICE_PathMapInfo& info,
+                                  size_t* temporary_bytes) {
+  if (temporary_bytes)
+    *temporary_bytes = 0;
   MapFitResult fit;
   double cx = 0.0;
   double cy = 0.0;
@@ -372,7 +388,7 @@ MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMI
   double total = 0.0;
   std::vector<double> weights;
   std::vector<double> distances;  // angular distance from the centroid, same order (filled later)
-  weights.reserve(pixels.pixel_count);
+  size_t positive_count = 0;
   for (size_t i = 0; i < pixels.pixel_count; ++i) {
     const uint8_t status = pixels.status[i];
     if (status != LUMICE_PATH_MAP_PIXEL_OK) {
@@ -388,13 +404,17 @@ MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMI
     cy += pos[1] * v;
     cz += pos[2] * v;
     total += v;
+    ++positive_count;
   }
   if (total <= 0.0) {
     return fit;  // ok=false: an honest all-zero map asks for no Fit
   }
   double centre[3] = { cx / total, cy / total, cz / total };
   Normalize3(centre);
-  weights.clear();
+  if (Len3(centre) < 1e-12)
+    return fit;
+  weights.reserve(positive_count);
+  distances.reserve(positive_count);
   for (size_t i = 0; i < pixels.pixel_count; ++i) {
     const uint8_t status = pixels.status[i];
     if (status != LUMICE_PATH_MAP_PIXEL_OK) {
@@ -412,6 +432,8 @@ MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMI
   }
   // 95% of the value mass, by ascending distance (the prototype's radius95).
   std::vector<size_t> order(weights.size());
+  if (temporary_bytes)
+    *temporary_bytes = (weights.capacity() + distances.capacity()) * sizeof(double) + order.capacity() * sizeof(size_t);
   for (size_t i = 0; i < order.size(); ++i) {
     order[i] = i;
   }
@@ -434,10 +456,12 @@ MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMI
   return fit;
 }
 
-MapDisplayNorm MapDisplayNormFor(const LUMICE_PathMapPixels& pixels) {
+MapDisplayNorm MapDisplayNormFor(const LUMICE_PathMapPixels& pixels, size_t* temporary_bytes) {
   MapDisplayNorm norm;
   std::vector<double> positive;
   positive.reserve(pixels.pixel_count);
+  if (temporary_bytes)
+    *temporary_bytes = positive.capacity() * sizeof(double);
   for (size_t i = 0; i < pixels.pixel_count; ++i) {
     if (pixels.status[i] == LUMICE_PATH_MAP_PIXEL_SINGULAR) {
       continue;
@@ -577,6 +601,10 @@ bool RefineMap(GuiState& state, SurveyExecutor& executor, const MapCaptureTarget
   if (!map.intent_valid || !map.adopted_result || target.radius_deg >= 180.0) {
     return false;
   }
+  SkySunAnchor sun;
+  SkySunAnchorFor(state, &sun);
+  if (!MapWindowSpecForTarget(target, sun.altitude_deg, sun.azimuth_deg).subsky_target)
+    return false;
   executor.CancelInFlight(QueryFace::kMap);
   std::copy(target.centre_pos, target.centre_pos + 3, map.key.centre_pos);
   map.key.radius_deg = static_cast<float>(target.radius_deg);
@@ -632,8 +660,21 @@ bool MapSourcesCompatible(const LUMICE_PathMapInfo& reference, const LUMICE_Path
   return true;
 }
 
+MapObservationTiming LastMapObservationTiming() {
+  return g_map_observation_timing;
+}
+
+OverlayLegendState LastMapOverlayLegend() {
+  return g_map_legend;
+}
+
+bool InitMapView() {
+  return InitializeFrozenMapDisplay();
+}
+
 void ShutdownMapView() {
   DestroyFrozenMapDisplay();
+  g_map_legend = {};
 }
 
 // ---- The renderer -----------------------------------------------------------------------------------
@@ -1095,6 +1136,7 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
 }  // namespace
 
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
+  g_map_observation_timing.began_seconds = ObservationClockSeconds();
   // D3 — the reference-map | info split (contract §4.2), drawn by this function: the window's
   // content area splits into the LEFT region (the raster, its gestures and its state line,
   // under the region's own name ##AnalyzeRaypathView) and the RIGHT region (the wavelength,
@@ -1174,7 +1216,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   const bool canvas_hovered = ImGui::IsItemHovered();
   const bool canvas_active = ImGui::IsItemActive();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  const auto dpi = ImGui::GetIO().DisplayFramebufferScale;
+  auto dpi = ImGui::GetIO().DisplayFramebufferScale;
+  // A detached map may live on another monitor. Its GLFW framebuffer, not the main
+  // viewport's global IO scale, owns the conversion from this window's points to pixels.
+  if (const auto* viewport = ImGui::GetWindowViewport(); viewport && viewport->PlatformHandle) {
+    auto* host = static_cast<GLFWwindow*>(viewport->PlatformHandle);
+    int width = 0, height = 0, fb_width = 0, fb_height = 0;
+    glfwGetWindowSize(host, &width, &height);
+    glfwGetFramebufferSize(host, &fb_width, &fb_height);
+    if (width > 0 && height > 0 && fb_width > 0 && fb_height > 0)
+      dpi = ImVec2(static_cast<float>(fb_width) / width, static_cast<float>(fb_height) / height);
+  }
   MapCanvasProjection view;
   // The published main picture is this frame's pre-gesture view. Taking that same snapshot
   // avoids a one-frame fork when its input handler already wrote the next frame's camera.
@@ -1185,6 +1237,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   view.height = std::max(1, static_cast<int>(std::round(pic_h * dpi.y)));
   view.width_pt = pic_px;
   view.height_pt = pic_h;
+  g_map_observation_timing.width = view.width;
+  g_map_observation_timing.height = view.height;
   const auto display = DrawFrozenMap(map, view.camera, view.width, view.height);
   if (display.texture) {
     dl->AddImage(static_cast<ImTextureID>(static_cast<uintptr_t>(display.texture)), pic_min,
@@ -1198,8 +1252,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The frame anchors (sun / zenith / horizon) need the adopted map's own sun echo.
   LUMICE_PathMapInfo anchor_info{};
   anchor_info.struct_size = sizeof(anchor_info);
-  const bool have_anchor_info = map.adopted_result != nullptr &&
-                                LUMICE_PathMapGetInfo(map.adopted_result.get(), &anchor_info) == LUMICE_PATH_READ_OK;
+  const auto& caliber_source = map.source_mode == 2 || !map.adopted_result ? map.detail_result : map.adopted_result;
+  const bool have_anchor_info =
+      caliber_source && LUMICE_PathMapGetInfo(caliber_source.get(), &anchor_info) == LUMICE_PATH_READ_OK;
   // What this frame drew — the legend's input (the legend describes the drawn picture; absent
   // categories draw no entry). Filled by the anchor/overlay/marker draws below, read by the
   // info region's legend section.
@@ -1222,6 +1277,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (marker_px >= 0.0f) {
     legend.sky_point = true;
   }
+
+  g_map_legend = legend;
 
   LUMICE_AnnotationView pick_view = PreviewAnnotationView(state, view.width, view.height);
   pick_view.lens_type = view.camera.lens_type;
@@ -1289,12 +1346,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
                                 dpi.y, view.width, view.height);
   }
   if (canvas_hovered) {
-    const auto near = pick_cursor();
-    std::optional<std::array<double, 3>> far;
+    const auto near_sample = pick_cursor();
+    std::optional<std::array<double, 3>> far_sample;
     if (const auto pixel = PreviewPointToCanvasPixel(io.MousePos.x - pic_min.x, io.MousePos.y - pic_min.y, dpi.x, dpi.y,
                                                      view.width, view.height))
-      far = FrozenMapFarTravel(view.camera, view.width, view.height, pixel->px, pixel->py);
-    if ((near || far) && ImGui::BeginTooltip()) {
+      far_sample = FrozenMapFarTravel(view.camera, view.width, view.height, pixel->px, pixel->py);
+    if ((near_sample || far_sample) && ImGui::BeginTooltip()) {
       const auto show_reading = [&](const char* label, const double travel[3]) {
         const float direction[3] = { static_cast<float>(travel[0]), static_cast<float>(travel[1]),
                                      static_cast<float>(travel[2]) };
@@ -1315,14 +1372,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         } else
           ImGui::TextUnformatted("Outside selected source coverage — unknown, not zero");
       };
-      if (near) {
-        const double d[3] = { (*near)[0], (*near)[1], (*near)[2] };
+      if (near_sample) {
+        const double d[3] = { (*near_sample)[0], (*near_sample)[1], (*near_sample)[2] };
         show_reading("Near / pick direction", d);
       } else
         ImGui::TextUnformatted("Near side clipped — no point selection here");
-      if (far) {
+      if (far_sample) {
         ImGui::Separator();
-        show_reading("Far-side hint — separate direction, not a sum", far->data());
+        show_reading("Far-side hint — separate direction, not a sum", far_sample->data());
       }
       ImGui::EndTooltip();
     }
@@ -1332,6 +1389,26 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The state line (the four visible states + the two supersession notes). It reads the
   // picture's own query state, so it stays with the picture; the controls it names — the
   // wavelength, the view buttons, the sky-point input — live in the info region beside it.
+  if (display.partial)
+    ImGui::TextWrapped("Partial sources: %d/%d completed members%s", display.members_evaluated, display.member_count,
+                       display.compatible ? " · same-prefix composition" : "");
+  if (map.detail_result) {
+    float centre_dir[3]{};
+    int centre_valid = 0;
+    LUMICE_UnprojectPixel(&pick_view, view.width / 2, view.height / 2, centre_dir, &centre_valid);
+    if (centre_valid) {
+      const double direction[3] = { centre_dir[0], centre_dir[1], centre_dir[2] };
+      LUMICE_PathMapInfo detail_info{};
+      detail_info.struct_size = sizeof(detail_info);
+      if (LUMICE_PathMapGetInfo(map.detail_result.get(), &detail_info) == LUMICE_PATH_READ_OK) {
+        const bool covered = MapCellIndex(detail_info, direction).has_value();
+        const auto reading = ReadFrozenMapDirection(map, direction);
+        ImGui::TextWrapped("Detail centre: %s · shown %s", covered ? "covered" : "outside",
+                           reading ? (reading->detail ? "Detail" : "Reference") : "unknown");
+      }
+    } else
+      ImGui::TextWrapped("Canvas centre near side clipped; far side is only a hint.");
+  }
   const MapQueryState st = MapQueryStateFor(map);
   const bool refining = MapRefiningFor(map);
   if (st == MapQueryState::kNoSelection) {
@@ -1418,14 +1495,19 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // reached through its manual route).
   ImGui::BeginChild("##AnalyzeRaypathInfo", ImVec2(info_w, size.y), ImGuiChildFlags_Borders);
   const auto quality_target = CaptureMapTarget(view.camera, view.width, view.height);
+  SkySunAnchor quality_sun;
+  SkySunAnchorFor(state, &quality_sun);
+  const auto quality_spec = MapWindowSpecForTarget(quality_target, quality_sun.altitude_deg, quality_sun.azimuth_deg);
   const bool quality_busy = map.intent_valid && !map.cancelled_for_key && map.answered_id != map.intent_id &&
                             map.adopted_id != map.intent_id && map.detail_id != map.intent_id;
   const bool quality_retry = map.cancelled_for_key || !map.adopted_error.empty();
   const char* quality_label = quality_busy  ? "Cancel###map_quality" :
                               quality_retry ? "Retry###map_quality" :
                                               "Refine###map_quality";
-  const float quality_width = ImGui::CalcTextSize("Refine").x + 2.0f * ImGui::GetStyle().FramePadding.x;
-  ImGui::BeginDisabled(!quality_busy && !quality_retry && (!map.adopted_result || quality_target.radius_deg >= 180.0));
+  const float quality_width =
+      std::max({ ImGui::CalcTextSize("Refine").x, ImGui::CalcTextSize("Retry").x, ImGui::CalcTextSize("Cancel").x }) +
+      2.0f * ImGui::GetStyle().FramePadding.x;
+  ImGui::BeginDisabled(!quality_busy && !quality_retry && (!map.adopted_result || !quality_spec.subsky_target));
   if (ImGui::Button(quality_label, ImVec2(quality_width, ImGui::GetFrameHeight()))) {
     if (quality_busy)
       CancelMap(state, g_survey_executor);
@@ -1440,7 +1522,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       ImGui::SetTooltip("Cancel only this map calculation; keep current frozen sources.");
     else if (quality_retry)
       ImGui::SetTooltip("Retry the captured target and quality, NOT the current camera.");
-    else if (quality_target.radius_deg >= 180.0)
+    else if (!quality_spec.subsky_target)
       ImGui::SetTooltip("Choose a zoomable lens and narrow the target before Refine. Full-sky is not fine detail.");
     else {
       const auto spec = MapWindowSpecForTarget(quality_target, have_anchor_info ? anchor_info.sun_altitude_deg : 0.0,
@@ -1448,16 +1530,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       ImGui::SetTooltip(
           "One explicit calculation and its wait; capture this target once.\n%sTarget %.6g° diameter; %d×%d cells; "
           "n=%d.\n"
-          "Nominal Δδ %.7g°; grid cap %d. Move/resize while waiting without another request.",
+          "Actual Δδ %.7g°; grid cap %d. Move/resize while waiting without another request.",
           view.camera.lens_type == kLensTypeGlobe ? "NEAR SIDE ONLY. Far side keeps its own precision.\n" : "",
           2.0 * quality_target.radius_deg, spec.rows, spec.cols, kMapQuerySampleCount,
-          spec.rows ? spec.delta_span_deg / spec.rows : 1.0, LUMICE_PATH_MAP_MAX_PIXELS);
+          spec.rows ? spec.actual_delta_span_deg / spec.rows : 1.0, LUMICE_PATH_MAP_MAX_PIXELS);
     }
   }
   // One reserved short status line: asynchronous prose belongs in the scrolling report below.
   ImGui::TextDisabled("%s", quality_busy  ? "Computing captured target" :
                             quality_retry ? "Retry captured target" :
-                                            "Observation does not calculate");
+                                            "Observe · no calculation");
 
   // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
   // float shows the effective value either way; editing it asks the explicit wavelength — a key
@@ -1683,27 +1765,28 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   // The caliber block: every fact read back through the result's own readers into the pure
   // composer (the unit layer holds it to the readback), then drawn (AC1).
-  if (map.adopted_result != nullptr && have_anchor_info) {
+  if (caliber_source && have_anchor_info) {
+    ImGui::TextDisabled("%s caliber", caliber_source == map.detail_result ? "Detail" : "Reference");
     MapCaliberInput in;
     in.info = anchor_info;
     LUMICE_PathSurveyEvidence evidence{};
     evidence.struct_size = sizeof(evidence);
-    in.have_evidence = LUMICE_PathMapGetEvidence(map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK;
+    in.have_evidence = LUMICE_PathMapGetEvidence(caliber_source.get(), &evidence) == LUMICE_PATH_READ_OK;
     in.evidence = evidence;
     LUMICE_PathQuantitySpec quantity{};
     quantity.struct_size = sizeof(quantity);
-    in.have_quantity = LUMICE_PathMapGetQuantity(map.adopted_result.get(), &quantity) == LUMICE_PATH_READ_OK;
+    in.have_quantity = LUMICE_PathMapGetQuantity(caliber_source.get(), &quantity) == LUMICE_PATH_READ_OK;
     in.quantity = quantity;
     if (anchor_info.point_mass_available != 0) {
       LUMICE_PathMapPointMass mass{};
       mass.struct_size = sizeof(mass);
-      in.have_mass = LUMICE_PathMapGetPointMass(map.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK;
+      in.have_mass = LUMICE_PathMapGetPointMass(caliber_source.get(), &mass) == LUMICE_PATH_READ_OK;
       in.mass = mass;
       for (size_t i = 0; i < mass.method_count && i < kMapCaliberMaxMethods; ++i) {
         in.methods[i] = mass.methods[i];
       }
     }
-    in.completed = MapQueryStateFor(map) == MapQueryState::kCompleted;
+    in.completed = true;  // the named finite source completed, independently of a newer intent
     // The report follows every operation. Its native scroll cannot overlap or reposition
     // the typed-coordinate controls, even while a long caliber or refusal arrives.
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
@@ -1801,6 +1884,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
 
   ImGui::EndChild();  // ##MapReport
   ImGui::EndChild();  // ##AnalyzeRaypathInfo — the info region
+  g_map_observation_timing.cpu_finished_seconds = ObservationClockSeconds();
 }
 
 void RenderAnalyzeRaypathViewWindow(GuiState& state) {

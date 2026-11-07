@@ -80,6 +80,8 @@ bool SkySunAnchorFor(const GuiState& state, SkySunAnchor* out);
 // full-sky view takes the engine's named all-sky view and the grid zero (the engine's default).
 struct MapWindowSpec {
   bool full_sky = true;
+  bool subsky_target = false;
+  double actual_delta_span_deg = 180.0;
   double centre_altitude_deg = 0.0;
   double centre_azimuth_deg = 0.0;
   double delta_span_deg = 0.0;
@@ -109,7 +111,8 @@ struct MapFitResult {
   float centre_pos[3] = { 0.0f, 0.0f, 1.0f };
   float radius_deg = kMapFullSkyRadiusDeg;
 };
-MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMICE_PathMapInfo& info);
+MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMICE_PathMapInfo& info,
+                                  size_t* temporary_bytes = nullptr);
 
 // The display normalization: the robust maximum of the map's own finite positive values (99th
 // percentile — the halo's peak must not grey out its whole ring system). valid=false when the
@@ -119,7 +122,7 @@ struct MapDisplayNorm {
   bool valid = false;
   double vmax = 0.0;
 };
-MapDisplayNorm MapDisplayNormFor(const LUMICE_PathMapPixels& pixels);
+MapDisplayNorm MapDisplayNormFor(const LUMICE_PathMapPixels& pixels, size_t* temporary_bytes = nullptr);
 
 // One cell's display colour, RGBA8. `t` is the normalized value (value / norm.vmax); statuses
 // map as the honesty rules demand: OK cells ramp dark-to-light, POINT_MASS gets the fixed
@@ -191,6 +194,16 @@ struct OverlayLegendState {
   bool sky_point = false;
 };
 
+// Last actually drawn overlay legend, not a second camera/availability model.
+OverlayLegendState LastMapOverlayLegend();
+struct MapObservationTiming {
+  double began_seconds = 0.0;
+  double cpu_finished_seconds = 0.0;
+  int width = 0;
+  int height = 0;
+};
+MapObservationTiming LastMapObservationTiming();
+
 // ---- The pump and the renderer (GuiState-dependent, defined in the .cpp) ---------------------------
 
 // The map face's frame pump — the survey pump's sibling (analysis_panel.hpp PumpSurveyQuery):
@@ -230,6 +243,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
 void RenderAnalyzeRaypathViewWindow(GuiState& state);
 
 // Releases the region's GL texture (the app's teardown, next to the executor's join).
+bool InitMapView();
 void ShutdownMapView();
 
 }  // namespace lumice::gui

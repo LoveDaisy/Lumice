@@ -240,7 +240,8 @@ struct SurveyExecutor::Impl {
   // The gate is a std::function, so the worker copies it out under mu and invokes the copy off
   // the lock: SetPickupGateForTest may swap or clear it while a callback is blocked in its own
   // copy, and the blocked copy keeps the target alive.
-  std::function<void(QueryFace)> pickup_gate;  // guarded by mu
+  std::function<void(QueryFace)> pickup_gate;     // guarded by mu
+  CompletionObserverForTest completion_observer;  // guarded by mu; read-only, non-blocking inspection
   // Set inside ShutdownAndJoin's lock section, strictly after the in-flight cancel request —
   // the write point IS the confirmation semantics (see the header). Atomic so the read needs no
   // mutex and cannot lag the write's intent.
@@ -417,6 +418,8 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
                        std::move(map_result),
                        std::move(point_result),
                        std::move(ray_result) };
+      if (impl->completion_observer)
+        impl->completion_observer(finish);
       if (job.face == QueryFace::kSurvey) {
         impl->finished_survey = std::move(finish);
       } else if (job.face == QueryFace::kMap) {
@@ -701,6 +704,11 @@ InflightPoll SurveyExecutor::InflightPollSnapshot() const {
 void SurveyExecutor::SetPickupGateForTest(PickupGateForTest gate) {
   std::lock_guard<std::mutex> lock(impl_->mu);
   impl_->pickup_gate = std::move(gate);
+}
+
+void SurveyExecutor::SetCompletionObserverForTest(CompletionObserverForTest observer) {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  impl_->completion_observer = std::move(observer);
 }
 
 bool SurveyExecutor::ShutdownCancelRequestedForTest() const {

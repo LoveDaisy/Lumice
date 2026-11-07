@@ -2738,7 +2738,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
   gui::g_state.renderer.fov = 10.0f;
   ctx->Yield(30);
   IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == reference_id, false);
-  ctx->ItemClick("**/map_quality");
+  ctx->ItemClick("**/Refine###map_quality");
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -5256,14 +5256,14 @@ bool RaypathViewOpenIsDisplayState(ImGuiTestContext* ctx) {
 // second row.
 bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
-  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-5") != std::nullopt, false);
   // The identity line names the class with the list's own label — the same AnalysisRowLabel
   // spelling out of the one selection chain (a window that hand-rolled its own text would read
   // differently from the row the user clicked).
-  const std::string first_label = gui::AnalysisRowLabel(TopChainDisplay(), gui::AnalysisCoreToPoolMap(gui::g_state));
+  const std::string first_label = gui::AnalysisRowLabel("3-5", gui::AnalysisCoreToPoolMap(gui::g_state));
   IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state) == first_label, false);
   PinRaypathViewOnScreen(ctx);
   ImGuiWindow* map = MapRegionWindow();
@@ -5326,6 +5326,18 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
                static_cast<double>(gui::UiPx(gui::kRaypathViewMapMinSize)));
   IM_CHECK_RETV(fabsf(info3->Size.x - gui::UiPx(gui::kRaypathViewInfoMinSize)) < 2.0f, false);
   IM_CHECK_RETV(map3->Size.x >= gui::UiPx(gui::kRaypathViewMapMinSize) - 1.5f, false);
+  // A real C01 dispersion payload is required; a refused but non-null survey cannot
+  // witness the legend's drawn arcs, and report height is not a proxy for their presence.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      if (!gui::g_state.analysis.survey.adopted_result || !gui::g_state.analysis.map.adopted_result)
+                        return false;
+                      const auto model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+                      return model.dispersion.available && model.dispersion.min_row_available;
+                    },
+                    60),
+                false);
   // The legend's honesty qualifier is READABLE at the 200 pt floor: the entries are the
   // Bullet()+TextWrapped pair, so the info region's content never exceeds its width —
   // ScrollMax.x == 0 is the region-wide form of that (a single-line BulletText here reads as
@@ -5378,13 +5390,15 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] circles out of the disk: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
-    IM_CHECK_RETV(info_leg->ScrollMax.y < sm_present, false);
+    const auto hidden_legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(!hidden_legend.dispersion_red && !hidden_legend.dispersion_blue, false);
     ctx->ItemClick("**/Full sky##map");
     ctx->Yield(3);
     info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
     ctx->LogInfo("[legend] full sky brings them back: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
-    IM_CHECK_RETV(fabsf(info_leg->ScrollMax.y - sm_present) < 1.0f, false);
+    const auto restored_legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(restored_legend.dispersion_red && restored_legend.dispersion_blue, false);
   }
   IM_CHECK_RETV(drag_strip(-700.0f), false);
   ImGuiWindow* map4 = MapRegionWindow();
@@ -6750,7 +6764,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_server != nullptr, false);
   gui::ResetServerConstructionTrackers();
   LUMICE_SetLogLevel(gui::g_server, static_cast<LUMICE_LogLevel>(g_core_log_level));
-  IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  IM_CHECK_RETV(gui::DeserializeFromJson(kFullyRandomJson, gui::g_state), false);
   gui::g_state.renderer.sim_resolution_index = 0;
   gui::g_state.sim.infinite = false;
   gui::g_state.sim.ray_num_millions = 0.1f;

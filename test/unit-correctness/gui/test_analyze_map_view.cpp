@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -579,6 +582,158 @@ TEST(AnalyzeMapView, ObservationNeverIssuesAndOnlyExplicitRefineCapturesTarget) 
   EXPECT_NEAR(info.view_delta_max_deg - info.view_delta_min_deg, 3.0, 1e-6);
   EXPECT_EQ(info.sample_count, 500000);
   EXPECT_FALSE(MapRefiningFor(state.analysis.map));
+  executor.ShutdownAndJoin();
+}
+
+TEST(AnalyzeMapView, DeterministicLateGateCameraMotionAndMailboxPeak) {
+  struct Gate {
+    std::mutex mu;
+    std::condition_variable cv;
+    int entered = 0, allowed = 0;
+    void Pickup(QueryFace face) {
+      if (face != QueryFace::kMap)
+        return;
+      std::unique_lock<std::mutex> lock(mu);
+      const int phase = ++entered;
+      cv.notify_all();
+      cv.wait(lock, [&] { return allowed >= phase; });
+    }
+    bool Wait(int phase) {
+      std::unique_lock<std::mutex> lock(mu);
+      return cv.wait_for(lock, std::chrono::seconds(15), [&] { return entered >= phase; });
+    }
+    bool At(int phase) {
+      std::lock_guard<std::mutex> lock(mu);
+      return entered >= phase;
+    }
+    void Release(int phase) {
+      std::lock_guard<std::mutex> lock(mu);
+      allowed = phase;
+      cv.notify_all();
+    }
+  } gate;
+  struct Ledger {
+    std::mutex mu;
+    std::vector<std::weak_ptr<const LUMICE_PathMap>> handles;
+    size_t peak = 0;
+    void Observe(const SurveyExecutor::Finished& result) {
+      if (!result.map_result)
+        return;
+      std::lock_guard<std::mutex> lock(mu);
+      handles.push_back(result.map_result);
+      const size_t live = static_cast<size_t>(
+          std::count_if(handles.begin(), handles.end(), [](const auto& h) { return !h.expired(); }));
+      peak = std::max(peak, live);
+    }
+    size_t Peak() {
+      std::lock_guard<std::mutex> lock(mu);
+      return peak;
+    }
+  } ledger;
+  SurveyExecutor executor;
+  struct Teardown {
+    Gate& gate;
+    SurveyExecutor& executor;
+    ~Teardown() {
+      gate.Release(1 << 30);
+      executor.SetPickupGateForTest(nullptr);
+      executor.SetCompletionObserverForTest(nullptr);
+    }
+  } teardown{ gate, executor };
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
+  executor.SetScene(std::unique_ptr<LUMICE_Scene, SceneDeleter>(raw_scene));
+  executor.SetPickupGateForTest([&](QueryFace face) { gate.Pickup(face); });
+  executor.SetCompletionObserverForTest([&](const auto& result) { ledger.Observe(result); });
+  GuiState state;
+  state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+  state.analysis.selected_entry = "1-2";
+  FreezeMapSun(state);
+  double now = 100.0;
+  PumpMapQuery(state, executor, now);
+  ASSERT_TRUE(gate.Wait(1));
+  const auto old = state.analysis.map.intent_id;
+  state.analysis.map_wavelength_nm = 650.0;
+  PumpMapQuery(state, executor, now);
+  const auto current = state.analysis.map.intent_id;
+  ASSERT_NE(old, current);
+  gate.Release(1);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return gate.At(2); }, 15000));
+  EXPECT_EQ(state.analysis.map.adopted_result, nullptr);
+  EXPECT_TRUE(state.analysis.map.adopted_error.empty());
+  gate.Release(2);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_id == current; }, 15000));
+  const auto* reference = state.analysis.map.adopted_result.get();
+  ASSERT_NE(reference, nullptr);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathMapGetInfo(reference, &info), LUMICE_PATH_READ_OK);
+  EXPECT_DOUBLE_EQ(info.wavelength_nm, 650.0);
+  MapCaptureTarget target;
+  target.centre_pos[0] = 1.0;
+  target.centre_pos[2] = 0.0;
+  target.radius_deg = 1.5;
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  ASSERT_TRUE(gate.Wait(3));
+  const auto camera_legal = state.analysis.map.intent_id;
+  state.renderer.fov = 23.0f;
+  state.renderer.azimuth = 73.0f;
+  gate.Release(3);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.detail_id == camera_legal; }, 15000));
+  EXPECT_FLOAT_EQ(state.renderer.fov, 23.0f);
+  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
+  const auto previous_detail = std::weak_ptr<const LUMICE_PathMap>(state.analysis.map.detail_result);
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  ASSERT_TRUE(gate.Wait(4));
+  const auto withdrawn = state.analysis.map.intent_id;
+  target.centre_pos[0] = 0.0;
+  target.centre_pos[2] = 1.0;
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  const auto successor = state.analysis.map.intent_id;
+  ASSERT_NE(successor, withdrawn);
+  // A ray completion is an execution barrier: map has priority only if its drain gate opens.
+  // With the undrained D result, a correct worker reaches this ray BEFORE producing E. A
+  // broken gate produces E while D still lives, and the independent weak-handle ledger sees 4.
+  LUMICE_RepresentativeRayRequest ray{};
+  ray.struct_size = sizeof(ray);
+  ray.crystal_id = 1;
+  ray.face_count = 2;
+  ray.layer_count = 1;
+  const double identity_pose[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  const double ray_wavelength = 650.0;
+  ray.pose = identity_pose;
+  ray.wavelengths_nm = &ray_wavelength;
+  ray.wavelength_count = 1;
+  const auto ray_id = executor.NextId(7);
+  executor.IssueRayQuery(ray_id, ray, { 1, 2 }, { 2 });
+  gate.Release(1 << 30);
+  std::optional<SurveyExecutor::Finished> barrier;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (!barrier && std::chrono::steady_clock::now() < deadline) {
+    barrier = executor.TakeFinished(QueryFace::kRay);
+    if (!barrier)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_TRUE(barrier.has_value());
+  EXPECT_EQ(barrier->id, ray_id);
+  EXPECT_EQ(ledger.Peak(), 3u);
+  PumpMapQuery(state, executor, now);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.detail_id == successor; }, 15000));
+  EXPECT_TRUE(previous_detail.expired());
+  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
+  EXPECT_EQ(ledger.Peak(), 3u);
+  const auto* detail = state.analysis.map.detail_result.get();
+  ASSERT_TRUE(RefineMap(state, executor, target, now));
+  const auto cancelled = state.analysis.map.intent_id;
+  CancelMap(state, executor);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return !executor.QueryOutstanding(QueryFace::kMap); }, 15000));
+  PumpMapQuery(state, executor, now);
+  EXPECT_TRUE(state.analysis.map.cancelled_for_key);
+  EXPECT_EQ(state.analysis.map.intent_id, cancelled);
+  EXPECT_EQ(state.analysis.map.detail_result.get(), detail);
+  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
+  RecordProperty("map_peak_live_result_handles", static_cast<int>(ledger.Peak()));
   executor.ShutdownAndJoin();
 }
 

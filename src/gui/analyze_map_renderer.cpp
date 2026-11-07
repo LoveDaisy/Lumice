@@ -164,19 +164,20 @@ bool cellAt(vec3 d, mat3 frame, vec4 bounds, ivec2 size, out ivec2 cell) {
   cell = clamp(ivec2(floor(uv*vec2(size))), ivec2(0), size-ivec2(1));
   return true;
 }
+ivec2 packedIndex(int index, int width) { return ivec2(index % width,index / width); }
 vec4 sampleMap(vec3 d, out vec3 identity) {
   ivec2 cell;
   vec4 value;
   identity = vec3(0,-1,0);
   bool detail_selected = u_source_mode == 2 || (u_source_mode == 0 && (u_compatible != 0 || u_have_reference == 0));
   if (detail_selected && u_have_detail != 0 && cellAt(d,u_detail_frame,u_detail_bounds,u_detail_size,cell)) {
-    value = texelFetch(u_detail,cell,0);
+    value = texelFetch(u_detail,packedIndex(cell.y*u_detail_size.x+cell.x,textureSize(u_detail,0).x),0);
     identity = vec3(2,cell.y*u_detail_size.x+cell.x,value.a);
     return value;
   }
   if (u_source_mode != 2 && u_have_reference != 0 &&
       cellAt(d,u_reference_frame,u_reference_bounds,u_reference_size,cell)) {
-    value = texelFetch(u_reference,cell,0);
+    value = texelFetch(u_reference,packedIndex(cell.y*u_reference_size.x+cell.x,textureSize(u_reference,0).x),0);
     identity = vec3(1,cell.y*u_reference_size.x+cell.x,value.a);
     return value;
   }
@@ -285,9 +286,16 @@ bool UploadSource(SourceTexture& slot, const MapHandle& source, SurveyQueryId id
       pixels.pixel_count != static_cast<size_t>(info.view_rows) * info.view_cols) {
     return false;
   }
-  const auto norm = MapDisplayNormFor(pixels);
-  const auto fit = FitMapViewFromPixels(pixels, info);
-  std::vector<std::array<float, 4>> colors(pixels.pixel_count);
+  size_t norm_temporary = 0, fit_temporary = 0;
+  const auto norm = MapDisplayNormFor(pixels, &norm_temporary);
+  const auto fit = FitMapViewFromPixels(pixels, info, &fit_temporary);
+  frame->sort_peak_bytes = std::max({ frame->sort_peak_bytes, norm_temporary, fit_temporary });
+  // Grid dimensions are mathematical metadata, not GL allocation dimensions. A legal narrow
+  // grid can have thousands of azimuth columns; pack the immutable row-major cells so every
+  // <=262144-cell source also fits the minimum supported 2D texture-size guarantee.
+  const int texture_width = static_cast<int>(std::min<size_t>(1024, pixels.pixel_count));
+  const int texture_height = static_cast<int>((pixels.pixel_count + texture_width - 1) / texture_width);
+  std::vector<std::array<float, 4>> colors(static_cast<size_t>(texture_width) * texture_height);
   frame->staging_peak_bytes = std::max(frame->staging_peak_bytes, colors.capacity() * sizeof(colors[0]));
   for (size_t i = 0; i < pixels.pixel_count; ++i) {
     const auto color = MapCellColor(pixels.values[i], pixels.status[i], norm);
@@ -305,11 +313,22 @@ bool UploadSource(SourceTexture& slot, const MapHandle& source, SurveyQueryId id
   glBindTexture(GL_TEXTURE_2D, prepared.texture);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, info.view_cols, info.view_rows, 0, GL_RGBA, GL_FLOAT, colors.data());
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, texture_width, texture_height, 0, GL_RGBA, GL_FLOAT, colors.data());
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  int allocated_width = 0, allocated_height = 0, allocated_format = 0;
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &allocated_width);
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &allocated_height);
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &allocated_format);
+  if (allocated_width != texture_width || allocated_height != texture_height || allocated_format != GL_RGBA32F) {
+    DestroySource(prepared);
+    return false;
+  }
+  prepared.bytes = static_cast<size_t>(allocated_width) * allocated_height * 4 * sizeof(float);
+  frame->source_gpu_peak_bytes =
+      std::max(frame->source_gpu_peak_bytes, g_display.reference.bytes + g_display.detail.bytes + prepared.bytes);
   if (glGetError() != GL_NO_ERROR) {
     DestroySource(prepared);
     return false;
@@ -423,6 +442,10 @@ std::optional<std::array<double, 3>> FrozenMapFarTravel(const ViewProjection& vi
   return travel;
 }
 
+bool InitializeFrozenMapDisplay() {
+  return InitProgram();
+}
+
 bool PrepareFrozenMapSource(const MapHandle& source, SurveyQueryId id, bool detail) {
   ScopedMapTransferState transfer;
   if (!InitProgram())
@@ -504,8 +527,11 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
   frame.compatible = g_display.reference.texture && g_display.detail.texture &&
                      MapSourcesCompatible(g_display.reference.info, g_display.detail.info);
   if (g_display.width != frame.width || g_display.height != frame.height) {
-    if (g_display.target)
+    if (g_display.target) {
+      // Geometry-only replacement: do not accumulate driver-retained targets across resizes.
+      glFinish();
       glDeleteTextures(1, &g_display.target);
+    }
     glGenTextures(1, &g_display.target);
     glBindTexture(GL_TEXTURE_2D, g_display.target);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, frame.width, frame.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -533,6 +559,15 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
     const unsigned int buffer = GL_COLOR_ATTACHMENT0;
     glDrawBuffers(1, &buffer);
   }
+  const auto& selected_source =
+      map.source_mode == 2 || !g_display.reference.texture ? g_display.detail : g_display.reference;
+  if (selected_source.texture) {
+    frame.members_evaluated = selected_source.info.members_evaluated;
+    frame.member_count = selected_source.info.member_count;
+    frame.partial = selected_source.info.truncated || frame.members_evaluated < frame.member_count;
+    if (map.source_mode == 0 && frame.compatible)
+      frame.partial = frame.partial || g_display.detail.info.truncated;
+  }
   frame.fit = map.source_mode == 2 || !g_display.reference.texture ? g_display.detail.fit : g_display.reference.fit;
   const auto start = Clock::now();
   glBindFramebuffer(GL_FRAMEBUFFER, g_display.fbo);
@@ -543,7 +578,7 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
     float matrix[9];
     BuildViewMatrix(view.elevation, view.azimuth, view.roll, matrix);
     glUniformMatrix3fv(uniform("u_view_matrix"), 1, GL_FALSE, matrix);
-    glUniform2f(uniform("u_resolution"), static_cast<float>(frame.width), static_cast<float>(frame.height));
+    glUniform2f(uniform("u_resolution"), static_cast<float>(width), static_cast<float>(height));
     glUniform1i(uniform("u_lens_type"), view.lens_type);
     glUniform1f(uniform("u_fov"), view.fov);
     glUniform1i(uniform("u_visible"), view.visible);
@@ -567,7 +602,7 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
       frame.texture = g_display.target;
   }
   if (probe) {
-    std::vector<std::array<float, 4>>* destinations[] = { &probe->near, &probe->far, &probe->color };
+    std::vector<std::array<float, 4>>* destinations[] = { &probe->near_cells, &probe->far_cells, &probe->color };
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     for (size_t i = 0; i < diagnostic_textures.size(); ++i) {

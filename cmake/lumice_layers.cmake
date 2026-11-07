@@ -404,6 +404,7 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/single_path_json.cpp
   raypath/single_path_json.hpp
   server/c_api_raypath.cpp
+  server/c_api_map_storage.hpp
 )
 
 set(LUMICE_LAYER_capi_FILES

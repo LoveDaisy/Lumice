@@ -540,6 +540,10 @@ class SurveyExecutor {
   // clears the gate.
   using PickupGateForTest = std::function<void(QueryFace)>;
   void SetPickupGateForTest(PickupGateForTest gate);
+  // Read-only completion inspection, under the executor mutex before mailbox publication.
+  // It must return without blocking or re-entering the executor. Unset in production.
+  using CompletionObserverForTest = std::function<void(const Finished&)>;
+  void SetCompletionObserverForTest(CompletionObserverForTest observer);
 
   // True once ShutdownAndJoin has EXECUTED its in-flight cancel request: the flag is set inside
   // ShutdownAndJoin's lock section, immediately after LUMICE_PathCancelTokenRequest returns, so

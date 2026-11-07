@@ -70,6 +70,7 @@ WindowSizeTestState g_window_size_test;
 WindowBasisAudit g_window_basis_audit;
 int g_core_log_level = LUMICE_LOG_INFO;
 int g_gui_log_level = LUMICE_LOG_INFO;
+GuiFrameObserver g_frame_observer;
 bool g_enable_visible = false;
 bool g_enable_vsync = false;
 bool g_enable_frame_limit = true;
@@ -188,6 +189,7 @@ std::string g_test_clipboard;
 }  // namespace
 
 void ResetTestState() {
+  g_frame_observer = {};
   // A withdrawn intent is not task completion; join before resetting state or dropping g_server.
   lumice::test::JoinGuiServerTasksForTeardown();
   // Document state (delegates to DoNew: g_state, g_preview, g_crystal_mesh_id/hash)
@@ -656,8 +658,8 @@ int main(int argc, char** argv) {
   // Initialize GUI state
   gui::g_state = gui::InitDefaultState();
 
-  if (!gui::g_preview.Init()) {
-    fprintf(stderr, "Failed to initialize preview renderer\n");
+  if (!gui::g_preview.Init() || !gui::InitMapView()) {
+    fprintf(stderr, "Failed to initialize picture renderers\n");
     return 1;
   }
   if (!gui::g_crystal_renderer.Init(256, 256)) {
@@ -928,6 +930,8 @@ int main(int argc, char** argv) {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
+    if (g_frame_observer.before_new_frame)
+      g_frame_observer.before_new_frame();
     ImGui::NewFrame();
 
     // Render GUI panels (needed for test engine to find widgets)
@@ -1096,7 +1100,11 @@ int main(int argc, char** argv) {
       g_auto_ev_export.done.store(true);
     }
 
+    if (g_frame_observer.before_swap)
+      g_frame_observer.before_swap();
     glfwSwapBuffers(window);
+    if (g_frame_observer.after_swap)
+      g_frame_observer.after_swap();
 
     ImGuiTestEngine_PostSwap(engine);
 

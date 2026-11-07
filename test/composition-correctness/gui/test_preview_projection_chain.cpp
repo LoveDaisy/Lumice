@@ -23,6 +23,7 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <unordered_set>
 
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_map_view.hpp"
@@ -30,6 +31,10 @@
 #include "gui/gui_state.hpp"
 #include "gui/overlay_labels.hpp"
 #include "gui/preview_renderer.hpp"
+#include "include/lumice_scene.h"
+#include "nlohmann/json.hpp"
+#include "server/c_api_map_storage.hpp"
+#include "support/map_stress_fixture.hpp"
 
 namespace lumice::gui {
 namespace {
@@ -48,6 +53,110 @@ RenderConfig LensAt(int lens_type, float fov_deg, float elevation_deg) {
   rc.azimuth = 0.0f;
   rc.roll = 0.0f;
   return rc;
+}
+
+template <class T>
+size_t CapacityBytes(const std::vector<T>& values) {
+  return values.capacity() * sizeof(T);
+}
+size_t MemberCapacity(const raypath::MemberScope& members) {
+  size_t bytes = CapacityBytes(members.members);
+  for (const auto& member : members.members)
+    bytes += CapacityBytes(member);
+  return bytes;
+}
+size_t ContextCapacity(const std::shared_ptr<const raypath::QuantityContext>& context,
+                       std::unordered_set<const void*>& visited) {
+  if (!context || !visited.insert(context.get()).second)
+    return 0;
+  size_t bytes = sizeof(*context) + MemberCapacity(context->members);
+  if (const auto* spectrum = std::get_if<std::vector<WlParam>>(&context->light.spectrum_))
+    bytes += CapacityBytes(*spectrum);
+  return bytes;
+}
+size_t QuantityCapacity(const raypath::QuantitySpec& spec, std::unordered_set<const void*>& visited) {
+  return CapacityBytes(spec.wavelengths_nm) + ContextCapacity(spec.context, visited);
+}
+nlohmann::json MapCapacityRow(const LUMICE_PathMap* handle) {
+  const auto& data = handle->result.Data();
+  const auto& finite = std::get<raypath::Finite<raypath::MapValues>>(data.claim);
+  const auto& map = finite.value.map;
+  std::unordered_set<const void*> contexts;
+  size_t meta = sizeof(*handle) + sizeof(data) + sizeof(raypath::ResultIdentity) + sizeof(LUMICE_PathMapPixelColumns);
+  meta += MemberCapacity(data.members) + CapacityBytes(data.meta.faces) + CapacityBytes(data.meta.shape);
+  meta += data.meta.crystal_kind.capacity() + 1;
+  for (const auto& scalar : data.meta.shape)
+    meta += scalar.name.capacity() + 1;
+  meta += CapacityBytes(map.member_kept_counts) + finite.coverage.geometry_basis.capacity() + 1;
+  meta += QuantityCapacity(finite.value.quantity, contexts) + MemberCapacity(finite.scope.members);
+  if (finite.scope.quantity)
+    meta += QuantityCapacity(*finite.scope.quantity, contexts);
+  meta += ContextCapacity(finite.scope.input, contexts);
+  if (map.point_mass) {
+    meta += CapacityBytes(map.point_mass->methods);
+    for (const auto& method : map.point_mass->methods)
+      meta += method.capacity() + 1;
+  }
+  if (handle->method_pointers)
+    meta += sizeof(*handle->method_pointers) + CapacityBytes(*handle->method_pointers);
+  const auto& c = *handle->pixels;
+  const size_t columns = CapacityBytes(c.delta_deg) + CapacityBytes(c.azimuth_deg) + CapacityBytes(c.values) +
+                         CapacityBytes(c.counts) + CapacityBytes(c.status);
+  // Capacities are actual owners. String SSO is conservatively counted again; allocator and
+  // shared_ptr control blocks are separately reserved, not pretended to be measured RSS.
+  return { { "cell_size", sizeof(map.pixels[0]) },
+           { "typed_capacity", map.pixels.capacity() },
+           { "typed_bytes", CapacityBytes(map.pixels) },
+           { "column_capacities",
+             { c.delta_deg.capacity(), c.azimuth_deg.capacity(), c.values.capacity(), c.counts.capacity(),
+               c.status.capacity() } },
+           { "column_bytes", columns },
+           { "metadata_object_and_capacity_bytes", meta },
+           { "control_reserve_bytes", 4096 },
+           { "payload_capacity_bound_bytes", CapacityBytes(map.pixels) + columns + meta + 4096 } };
+}
+
+TEST(FrozenMapStorageChain, ActualMaximumSourceOwnersHaveBoundedCapacity) {
+  LUMICE_Scene* raw_scene = nullptr;
+  const std::string path = std::string(LUMICE_E2E_CONFIG_DIR) + "/raypath_feature_random_regular.json";
+  ASSERT_EQ(LUMICE_SceneFromJsonFile(path.c_str(), &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, decltype(&LUMICE_SceneDestroy)> scene(raw_scene, LUMICE_SceneDestroy);
+  std::vector<MapHandle> sources;
+  nlohmann::json rows = nlohmann::json::array();
+  size_t total = 0;
+  for (int slot = 0; slot < 3; ++slot) {
+    const auto request = lumice::test::MaximumMapRequest(slot);
+    const auto measure = [&]() -> bool {
+      LUMICE_PathMap* raw = nullptr;
+      char error[512]{};
+      const auto code = LUMICE_AnalyzePathMap(scene.get(), &request, &raw, error, sizeof(error));
+      if (code != LUMICE_OK) {
+        ADD_FAILURE() << error;
+        return false;
+      }
+      sources.emplace_back(raw, MapDeleter{});
+      LUMICE_PathMapPixels pixels{};
+      pixels.struct_size = sizeof(pixels);
+      EXPECT_EQ(LUMICE_PathMapGetPixels(raw, &pixels), LUMICE_PATH_READ_OK);
+      if (pixels.pixel_count != LUMICE_PATH_MAP_MAX_PIXELS) {
+        ADD_FAILURE() << pixels.pixel_count;
+        return false;
+      }
+      auto row = MapCapacityRow(raw);
+      total += row["payload_capacity_bound_bytes"].get<size_t>();
+      rows.push_back(std::move(row));
+      return true;
+    };
+    if (!measure())
+      return;
+  }
+  scene.reset();
+  const nlohmann::json report = { { "scope", "three actual maximum C result owners; net payload, not process RSS" },
+                                  { "sources", rows },
+                                  { "quantity_capacity_bound_bytes", total } };
+  RecordProperty("map_storage_metrics", report.dump());
+  EXPECT_GT(total, 0u);
+  EXPECT_LT(total, 96u * 1024u * 1024u);  // display resources and temporaries are measured in the GL leg
 }
 
 // ---------------------------------------------------------------------------------------------

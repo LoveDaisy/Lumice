@@ -30,11 +30,16 @@ struct MapDisplayFrame {
   int height = 0;
   bool display_sampled = false;
   bool compatible = false;
+  bool partial = false;
+  int members_evaluated = 0;
+  int member_count = 0;
   MapFitResult fit;
   double adoption_ms = 0.0;
   SurveyQueryId source_adopted_id;
   double observation_ms = 0.0;
   size_t source_gpu_bytes = 0;
+  size_t source_gpu_peak_bytes = 0;
+  size_t sort_peak_bytes = 0;
   size_t target_gpu_bytes = 0;
   size_t staging_peak_bytes = 0;
 };
@@ -44,12 +49,13 @@ struct MapDisplayFrame {
 // Optional caller-owned FBO readback for direction/source/index/status and floating colour.
 // Normal display does not allocate these attachments or retain any readback arrays.
 struct MapDisplayProbe {
-  std::vector<std::array<float, 4>> near;
-  std::vector<std::array<float, 4>> far;
+  std::vector<std::array<float, 4>> near_cells;
+  std::vector<std::array<float, 4>> far_cells;
   std::vector<std::array<float, 4>> color;
 };
 MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& view, int width, int height,
                               MapDisplayProbe* probe = nullptr);
+bool InitializeFrozenMapDisplay();
 bool PrepareFrozenMapSource(const MapHandle& source, SurveyQueryId id, bool detail);
 const ViewProjection& LastFrozenMapView();
 MapDisplayFrame LastFrozenMapAdoption();
