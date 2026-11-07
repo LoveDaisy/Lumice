@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794073407261,
+  "lastUpdate": 1794073412755,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "e6ca36f9b55e42a684caa58bff4213abf37f4cd0",
-          "message": "Merge pull request #475 from LoveDaisy/feat/schema3-measure-layer\n\nfeat(raypath): schema3 measure layer (task-661)",
-          "timestamp": "2026-10-08T01:15:42+08:00",
-          "tree_id": "eecb54e33af022f4804aa681db1b25ae0dc6cdf4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/e6ca36f9b55e42a684caa58bff4213abf37f4cd0"
-        },
-        "date": 1791393521595,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 882638.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1013516.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 728975.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 636125.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "ff81cb51f24df08becce17e67dc341e7acd0ddf7",
           "message": "Merge pull request #476 from LoveDaisy/fix/config-silent-noop-guards\n\nfix(config): warn on the two silent no-op config shapes",
           "timestamp": "2026-10-08T07:38:14+08:00",
@@ -9590,6 +9542,54 @@ window.BENCHMARK_DATA = {
             "value": 640373.7,
             "unit": "rays/sec",
             "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e1a1cfbb394c00fcaf0d05c19e737facd8edab6",
+          "message": "Merge pull request #578 from LoveDaisy/feat/raypath-view-camera-unify\n\nfeat(gui): share raypath camera and make map refinement explicit",
+          "timestamp": "2026-11-08T01:39:29+08:00",
+          "tree_id": "fd7e92e0a2fc8277d0b09a6dbc81e07e36b2cc63",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1e1a1cfbb394c00fcaf0d05c19e737facd8edab6"
+        },
+        "date": 1794073412037,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 749877.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1013154.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1147742.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 875041.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
