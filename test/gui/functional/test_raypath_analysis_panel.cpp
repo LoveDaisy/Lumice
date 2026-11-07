@@ -570,8 +570,12 @@ ImGuiID FindListRowScrolling(ImGuiTestContext* ctx, const std::string& label) {
     if (table_child->Scroll.y >= table_child->ScrollMax.y) {
       return 0;
     }
-    table_child->Scroll.y =
-        std::min(table_child->ScrollMax.y, table_child->Scroll.y + table_child->InnerRect.GetHeight());
+    // InnerRect includes the frozen header. A full-height jump can move a row from below
+    // the old viewport entirely underneath that header. Overlap the header plus one data row
+    // so every row has a fully visible position, including fractional-height page boundaries.
+    const float row_h = ImGui::GetTextLineHeight() + 2.0f * ImGui::GetStyle().CellPadding.y;
+    const float page_h = std::max(1.0f, table_child->InnerRect.GetHeight() - 2.0f * row_h);
+    table_child->Scroll.y = std::min(table_child->ScrollMax.y, table_child->Scroll.y + page_h);
     ctx->Yield(2);
   }
 }
@@ -1084,6 +1088,47 @@ std::optional<gui::SelectedClassIdentity> SelectRowByDisplay(ImGuiTestContext* c
   ctx->ItemClick(row);
   ctx->SetRef("");
   return gui::SelectedClassIdentityFor(gui::g_state);
+}
+
+// Pin the old pagination blind spot without relying on a stochastic class rank: the first
+// row wholly below page one can land entirely under the frozen header after a full-height jump.
+bool ListScrollFindsTheRowUnderTheNextFrozenHeader(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  ImGuiWindow* share = ctx->GetWindowByRef(kWindowRef);
+  IM_CHECK_RETV(share != nullptr, false);
+  ImGuiWindow* table_child = nullptr;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w->ParentWindow == share && std::strstr(w->Name, "##analysis_rows") != nullptr) {
+      table_child = w;
+      break;
+    }
+  }
+  IM_CHECK_RETV(table_child != nullptr, false);
+  const float row_h = ImGui::GetTextLineHeight() + 2.0f * ImGui::GetStyle().CellPadding.y;
+  const int seam_ordinal = static_cast<int>(std::ceil(table_child->InnerRect.GetHeight() / row_h)) - 1;
+  const auto& view = gui::g_state.analysis_result;
+  std::vector<int> rendered;
+  for (const int idx : view.display_order) {
+    if (view.display_energy[static_cast<size_t>(idx)] > 0.0) {
+      rendered.push_back(idx);
+    }
+  }
+  IM_CHECK_RETV(seam_ordinal >= 0 && seam_ordinal < static_cast<int>(rendered.size()), false);
+  const std::string display = view.payload->entries[static_cast<size_t>(rendered[seam_ordinal])].display;
+  const std::string label = gui::AnalysisRowLabel(display, gui::AnalysisCoreToPoolMap(gui::g_state));
+  ctx->LogInfo("[row-seam] ordinal=%d row_h=%.1f viewport=%.1f display='%s'", seam_ordinal, row_h,
+               table_child->InnerRect.GetHeight(), display.c_str());
+  const ImGuiID row = FindListRowScrolling(ctx, label);
+  IM_CHECK_RETV(row != 0, false);
+  ctx->ItemClick(row);
+  ctx->SetRef("");
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == display,
+                false);
+  return true;
 }
 
 // A sink of our own on the GUI logger for the duration of a case, so what DoRun logs can be read
@@ -11039,6 +11084,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "raypath_analysis", "identity_class_shows_the_mass_arm_and_the_map_answers");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(IdentityClassShowsTheMassArmAndTheMapAnswers(ctx)); };
+  }
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "list_scroll_finds_the_row_under_the_next_frozen_header");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(ListScrollFindsTheRowUnderTheNextFrozenHeader(ctx)); };
   }
   {
     ImGuiTest* t =
