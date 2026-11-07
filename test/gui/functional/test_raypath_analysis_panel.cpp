@@ -7275,7 +7275,7 @@ bool CheckMapTextGlyphs(ImGuiTestContext* ctx, const char* surface, const std::s
   IM_CHECK_RETV(!text.empty(), false);
   ctx->LogInfo("[map text] %s: %s", surface, text.c_str());
   // Decode what production submitted, not a second inventory of anticipated codepoints.
-  const ImFont* body = ImGui::GetIO().Fonts->Fonts[0];
+  ImFont* body = ImGui::GetIO().Fonts->Fonts[0];
   for (const char* p = text.c_str(); *p;) {
     unsigned int codepoint = 0;
     const int bytes = ImTextCharFromUtf8(&codepoint, p, nullptr);
