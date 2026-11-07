@@ -18,6 +18,7 @@
 
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_map_renderer.hpp"
+#include "gui/analyze_overview.hpp"
 #include "gui/gl_common.h"
 #include "gui/preview_renderer.hpp"
 #include "imgui_internal.h"
@@ -734,6 +735,58 @@ bool PartialPrefixWitness(ImGuiTestContext* ctx) {
   return true;
 }
 
+size_t ModelCapacityBytes(const gui::SurveyOverviewModel& model) {
+  const auto text = [](const std::string& value) { return value.capacity() + 1; };
+  const auto texts = [&](const std::vector<std::string>& values) {
+    size_t bytes = values.capacity() * sizeof(std::string);
+    for (const auto& value : values)
+      bytes += text(value);
+    return bytes;
+  };
+  size_t bytes = sizeof(model) + text(model.evidence_mode) + text(model.wavelength_source) +
+                 text(model.chromatic_note) + texts(model.conclusions);
+  const auto& d = model.dispersion;
+  bytes +=
+      text(d.red_label) + text(d.blue_label) + text(d.direction) + text(d.evidence_basis) + text(d.certificate_formula);
+  bytes += d.followed.capacity() * sizeof(gui::SurveyFollowedOnsetView);
+  for (const auto& row : d.followed)
+    bytes += text(row.source) + text(row.profile) + text(row.direction);
+  bytes += text(model.diagnose.verdict_kind) + text(model.diagnose.color) + text(model.diagnose.evidence_basis) +
+           texts(model.diagnose.notes);
+  bytes += text(model.probe.mode) +
+           (model.probe.sample_delta_deg.capacity() + model.probe.sample_value.capacity()) * sizeof(double);
+  bytes += text(model.family.refusal_mode) + model.family.levels.capacity() * sizeof(gui::SurveyFamilyLevelView);
+  for (const auto& level : model.family.levels)
+    bytes += texts(level.frozen_dims) + texts(level.free_dims);
+  bytes += text(model.tint.direction) + text(model.tint.caliber) + text(model.tir.mode) +
+           model.objects.capacity() * sizeof(gui::SurveyObjectRow);
+  for (const auto& row : model.objects)
+    bytes += text(row.kind_name) + text(row.state_name) + text(row.reason);
+  return bytes;
+}
+size_t MapGuiCapacityBytes(ImGuiWindow* root) {
+  size_t bytes = 0;
+  for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows) {
+    bool belongs = false;
+    for (auto* parent = window; parent; parent = parent->ParentWindow)
+      if (parent == root)
+        belongs = true;
+    if (!belongs)
+      continue;
+    bytes += sizeof(*window) + window->NameBufLen + window->IDStack.Capacity * sizeof(ImGuiID) +
+             window->StateStorage.Data.Capacity * sizeof(ImGuiStoragePair);
+    const auto* list = window->DrawList;
+    bytes += sizeof(*list) + list->VtxBuffer.Capacity * sizeof(ImDrawVert) +
+             list->IdxBuffer.Capacity * sizeof(ImDrawIdx) + list->CmdBuffer.Capacity * sizeof(ImDrawCmd) +
+             list->_Path.Capacity * sizeof(ImVec2) + list->_ClipRectStack.Capacity * sizeof(ImVec4) +
+             list->_TextureIdStack.Capacity * sizeof(ImTextureID);
+    bytes += list->_Splitter._Channels.Capacity * sizeof(ImDrawChannel);
+    for (const auto& channel : list->_Splitter._Channels)
+      bytes += channel._CmdBuffer.Capacity * sizeof(ImDrawCmd) + channel._IdxBuffer.Capacity * sizeof(ImDrawIdx);
+  }
+  return bytes;
+}
+
 struct PressureHarness {
   gui::MapQuerySession map;
   gui::MapHandle candidate;
@@ -933,11 +986,14 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
   struct Sample {
     int ordinal = 0;
     ImVec2 pointer{};
-    double input = 0, present = 0, observe_ms = 0;
+    double input = 0, consumed = 0, present = 0, observe_ms = 0;
     gui::ViewProjection expected;
     bool moved = false;
   };
   std::vector<Sample> samples;
+  std::vector<double> frame_observation;
+  size_t gui_capacity_peak = 0;
+  nlohmann::json frame_trace = nlohmann::json::array();
   int issued = 0;
   bool measuring = true;
   const auto same = [](const gui::ViewProjection& a, const gui::ViewProjection& b) {
@@ -977,15 +1033,35 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
       return;
     glFinish();  // actual map+overlay+main+ImGui GPU completion, not a CPU setter timestamp
     const double end = NativeSeconds();
-    auto& sample = samples.back();
+    gui_capacity_peak = std::max(gui_capacity_peak, MapGuiCapacityBytes(window));
     const auto cost = gui::LastMapObservationTiming();
-    if (sample.expected.lens_type != gui::kLensTypeGlobe) {
-      sample.expected = gui::BuildPreviewViewProjFromRenderer(gui::g_state.renderer);
-      sample.moved = !same(sample.expected, gui::LastFrozenMapView()) &&
-                     std::abs(ImGui::GetIO().MousePos.x - sample.pointer.x) < 0.1f &&
-                     std::abs(ImGui::GetIO().MousePos.y - sample.pointer.y) < 0.1f;
-      sample.observe_ms = (end - cost.began_seconds) * 1000.0;
-    }
+    const double elapsed = (end - cost.began_seconds) * 1000.0;
+    frame_observation.push_back(elapsed);
+    const auto actual = gui::BuildPreviewViewProjFromRenderer(gui::g_state.renderer);
+    const auto& io = ImGui::GetIO();
+    // Match the event actually consumed by IO, not simply the newest queued event. The
+    // queue may defer admission across a frame; that waiting time remains in input->present.
+    for (auto& sample : samples)
+      if (sample.consumed == 0 && std::abs(io.MousePos.x - sample.pointer.x) < 0.1f &&
+          std::abs(io.MousePos.y - sample.pointer.y) < 0.1f) {
+        sample.consumed = end;
+        sample.expected = actual;
+        sample.moved = !same(actual, gui::LastFrozenMapView());
+        sample.observe_ms = elapsed;
+        break;
+      }
+    if (frame_trace.size() < 160)
+      frame_trace.push_back({ { "io_x", io.MousePos.x },
+                              { "io_y", io.MousePos.y },
+                              { "delta_x", io.MouseDelta.x },
+                              { "delta_y", io.MouseDelta.y },
+                              { "down", io.MouseDown[0] },
+                              { "owner", static_cast<int>(gui::g_state.workspace.map_press_owner) },
+                              { "active_id", ImGui::GetCurrentContext()->ActiveId },
+                              { "pose_az", actual.azimuth },
+                              { "pose_el", actual.elevation },
+                              { "drawn_az", gui::LastFrozenMapView().azimuth },
+                              { "drawn_el", gui::LastFrozenMapView().elevation } });
   };
   g_frame_observer.after_swap = [&] {
     if (!measuring)
@@ -1012,7 +1088,10 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
     observation.push_back(sample.observe_ms);
     raw.push_back({ { "ordinal", sample.ordinal },
                     { "input_s", sample.input },
+                    { "consumed_s", sample.consumed },
                     { "present_s", sample.present },
+                    { "requested_x", sample.pointer.x },
+                    { "requested_y", sample.pointer.y },
                     { "moved", sample.moved },
                     { "observation_upper_ms", sample.observe_ms } });
   }
@@ -1026,7 +1105,8 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
   std::sort(latencies.begin(), latencies.end());
   const double p95 = latencies.empty() ? 1e9 : latencies[static_cast<size_t>(std::ceil(latencies.size() * 0.95)) - 1];
   const double max_latency = latencies.empty() ? 1e9 : latencies.back();
-  const double max_observe = observation.empty() ? 1e9 : *std::max_element(observation.begin(), observation.end());
+  const double max_observe =
+      frame_observation.empty() ? 1e9 : *std::max_element(frame_observation.begin(), frame_observation.end());
   nlohmann::json report = {
     { "scope", "maximum C-result consumer fixture; actual shared frame + visible-window input/swap path" },
     { "endpoint",
@@ -1042,12 +1122,15 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
     { "map_height", timing.height },
     { "source_cells", dense.pixel_count },
     { "dense_positive_cells", positive },
+    { "map_gui_capacity_peak_bytes", gui_capacity_peak },
+    { "overlay_model_capacity_bytes", ModelCapacityBytes(gui::BuildSurveyOverviewModel(*g_pressure.survey)) },
     { "adoptions", adoptions },
     { "input_frames", latencies.size() },
     { "latency_p95_ms", p95 },
     { "latency_max_ms", max_latency },
     { "observation_max_upper_ms", max_observe },
     { "old_detail_released", g_pressure.old_released },
+    { "frame_trace", frame_trace },
     { "samples", raw }
   };
   report["peak_rss_bytes"] = nullptr;
