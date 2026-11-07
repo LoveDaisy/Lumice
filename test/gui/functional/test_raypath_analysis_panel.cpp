@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <map>
 #include <memory>
@@ -7257,15 +7258,21 @@ std::string CaptureMapFrameText(ImGuiTestContext* ctx) {
     return {};
   }
   ctx->LogInfo("[map text] captured frame %d, %zu bytes", capture.frame, capture.text.size());
+  if (g_export_dir) {
+    std::ofstream output(GuiTestTempPath("map_text_frame_" + std::to_string(capture.frame) + ".txt"));
+    output << capture.text;
+  }
   return capture.text;
 }
 
 std::string MapTextLine(const std::string& text, const char* marker, const char* field) {
   size_t at = 0;
   while ((at = text.find(marker, at)) != std::string::npos) {
-    const std::string line = text.substr(at, text.find('\n', at) - at);
+    const size_t previous_line = text.rfind('\n', at);
+    const size_t start = previous_line == std::string::npos ? 0 : previous_line + 1;
+    const std::string line = text.substr(start, text.find('\n', at) - start);
     if (line.find(field) != std::string::npos)
-      return line;
+      return line.substr(line.find_first_not_of(" \t"));
     ++at;
   }
   return {};
@@ -7380,9 +7387,21 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   const size_t delta_at = actual.find("δ ");
   IM_CHECK_RETV(delta_at != std::string::npos, false);
   const double preview_step = std::strtod(actual.c_str() + delta_at + std::strlen("δ "), nullptr);
-  // For this off-pole target, the printed diameter/rows independently checks the preview step.
-  IM_CHECK_RETV(preview_step > 0.0 && std::abs(preview_step * rows - diameter) < diameter * 1e-5, false);
   IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "Refine", target + "\n" + actual), false);
+  // The target may straddle the sun-frame pole. Its actual delta span is clipped to [0,180],
+  // not necessarily the printed diameter. This independent spherical separation uses the C
+  // result's sun and the known linear camera, never the production request/label formatter.
+  IM_CHECK_RETV(gui::g_state.renderer.lens_type == gui::kLensTypeLinear, false);
+  const double radians = std::acos(-1.0) / 180.0;
+  const double elevation = gui::g_state.renderer.elevation * radians;
+  const double sun = cursor_info.sun_altitude_deg * radians;
+  const double azimuth = (gui::g_state.renderer.azimuth - cursor_info.sun_azimuth_deg) * radians;
+  const double centre =
+      std::acos(std::clamp(
+          std::sin(elevation) * std::sin(sun) + std::cos(elevation) * std::cos(sun) * std::cos(azimuth), -1.0, 1.0)) /
+      radians;
+  const double span = std::min(180.0, centre + diameter * 0.5) - std::max(0.0, centre - diameter * 0.5);
+  IM_CHECK_RETV(preview_step > 0.0 && std::abs(preview_step * rows - span) < diameter * 1e-5, false);
   IM_CHECK_RETV(save_tooltip("_refine.png"), false);
   IM_CHECK_RETV(map.adopted_result == reference && map.detail_result == detail, false);
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
