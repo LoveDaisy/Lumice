@@ -1016,7 +1016,10 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
     const float angle = issued * 0.071f;
     Sample sample;
     sample.ordinal = issued++;
-    sample.pointer = ImVec2(centre.x + 35.0f * std::cos(angle), centre.y + 23.0f * std::sin(angle));
+    // ImGui::UpdateMouseInputs floors logical coordinates. Admit that exact integer event
+    // rather than matching a fractional request against a different IO coordinate.
+    sample.pointer =
+        ImVec2(std::floor(centre.x + 35.0f * std::cos(angle)), std::floor(centre.y + 23.0f * std::sin(angle)));
     sample.input = NativeSeconds();
     samples.push_back(sample);
     auto& context = *ImGui::GetCurrentContext();
