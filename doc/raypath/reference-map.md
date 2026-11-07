@@ -111,3 +111,23 @@ queued per face behind the survey; a view change supersedes only the map face, a
 that fails the intent's id is dropped, never shown. The consumer-side rules live in
 `raypath-analysis.md` §5.1.8 (the 742.5 as-built and the 742.6 handover); this file stays the
 map's own contract.
+
+## Shared-camera display blueprint (not yet implemented)
+
+[raypath-view-camera.md](../gui/raypath-view-camera.md) records the historical rescan chain
+at `c1149fe20`, rejected continuous-response candidates and the verified frozen-result display alternative.
+Its §6–8 prescribe a single shared camera, a frozen full-sky reference plus one explicitly
+computed detail domain, truthful source-cell readings, completion-prefix compatibility,
+result lifetime and bounded quality/cost acceptance. Camera changes reproject existing
+cells; they do not answer a new statistical band or implicitly run a new map request.
+Obtaining a new fine domain requires an explicit Refine action, with its additional click
+and original-query wait stated rather than hidden. A narrow result never supplies all-sky
+coverage and a coarse result never claims fine resolution.
+
+This changes the proposed GUI scheduling/display contract, not the engine estimator,
+view-dependent query, public ABI or frozen ownership above. The existing GUI still uses its
+independent disk and view-change supersession until that blueprint is implemented. The
+blueprint's §4 retains the event-replay, weak/zero spectral-response and full-tree growth
+failures; none is retrospectively declared successful. Its §4.9 establishes independent
+C01/C16 projection/coverage/detail evidence and offscreen GL headroom, not final two-window
+input-to-presentation performance or a continuous all-density response cache.
