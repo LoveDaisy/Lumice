@@ -114,13 +114,13 @@ map's own contract.
 
 ## Shared-camera display blueprint (not yet implemented)
 
-[raypath-view-camera.md](../gui/raypath-view-camera.md) records the current rescan chain,
-rejected continuous-response candidates and the verified frozen-result display alternative.
+[raypath-view-camera.md](../gui/raypath-view-camera.md) records the historical rescan chain
+at `c1149fe20`, rejected continuous-response candidates and the verified frozen-result display alternative.
 Its §6–8 prescribe a single shared camera, a frozen full-sky reference plus one explicitly
 computed detail domain, truthful source-cell readings, completion-prefix compatibility,
 result lifetime and bounded quality/cost acceptance. Camera changes reproject existing
 cells; they do not answer a new statistical band or implicitly run a new map request.
-Obtaining a new fine domain requires an explicit quality action, with its additional click
+Obtaining a new fine domain requires an explicit Refine action, with its additional click
 and original-query wait stated rather than hidden. A narrow result never supplies all-sky
 coverage and a coarse result never claims fine resolution.
 

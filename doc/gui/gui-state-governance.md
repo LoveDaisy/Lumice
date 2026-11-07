@@ -41,8 +41,9 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 > 解析，两个画面装配前统一更新。map 计算意图与冻结 full/detail 源归 T-session，原格/帧/完成前缀是只读结果，
 > 不是 live renderer 的副本；观察只失效投影/overlay，显式质量或真实捕获身份变化才改变数据意图。
 > 数据到达不写相机，不触发 auto-Fit；窗口开合不拥有结果寿命。New/成功 Open/新 capture 沿现 reset/binding
-> 边界失效，Revert 保留原 analysis capture 并如实标旧。具体动作、覆盖/标尺与取消/迟到门只在该蓝图定义，
-> 不将其读作今天已落地的 GUI 行为。
+> 边界失效；New/Open 仅保留 workspace.mode（§4），不保留旧 analysis 或冻结源。Revert/live 编辑仍沿原
+> capture 与新鲜度规则，不隐式换源；重新 Analyze 替换 capture 才失效旧源。具体动作、覆盖/标尺与取消/迟到门
+> 只在该蓝图定义，不将其读作今天已落地的 GUI 行为；现役顶栏仍按本节几何派生合同，不承载新增质量槽。
 
 > `renderer.background`（画面天空色，与 `bg_show` / `bg_path` 的背景照片 overlay 不同）当前是客户端 shader 的 display-time 输入：编辑后立即进入 `PreviewParams::background_color_linear`，不 dirty、不 bump epoch、也不下发 server。它仍由 `ConfigSnapshot::renderer_background` 独立记录，因而 Revert 可以恢复；这说明“纯客户端显示字段”与“是否可被 Revert 撤销”是两个正交维度。
 
