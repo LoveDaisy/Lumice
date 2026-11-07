@@ -408,6 +408,23 @@ bool ProjectionWitness(ImGuiTestContext* ctx, bool column = false) {
       }
     }
   }
+  // Oversized display pressure changes only the raster sampling. The logical camera and
+  // original cells stay unchanged; no source or query is replaced to fit the display budget.
+  const auto source_id = g_probe.map.adopted_id, detail_id = g_probe.map.detail_id;
+  g_probe.width = 3200;
+  g_probe.height = 2400;
+  g_probe.requested = true;
+  g_probe.done = false;
+  ctx->Yield(2);
+  IM_CHECK_RETV(g_probe.done && g_probe.frame.texture && g_probe.frame.display_sampled, false);
+  IM_CHECK_RETV(g_probe.frame.width <= 1600 && g_probe.frame.height <= 1200, false);
+  IM_CHECK_RETV(g_probe.map.adopted_id == source_id && g_probe.map.detail_id == detail_id, false);
+  const Direction sky_anchor = { -0.7351478631379983, -0.5539736496920532, -0.39073112848927377 };
+  const auto original_index = OracleIndex(full_source, sky_anchor);
+  const auto raw_direction = gui::ReadFrozenMapDirection(g_probe.map, sky_anchor.data());
+  IM_CHECK_RETV(original_index && raw_direction && raw_direction->source == full_source.handle &&
+                    raw_direction->index == *original_index,
+                false);
   IM_CHECK_RETV(verified > 100000 && detail_seen > 1000 && far_seen > 1000, false);
   IM_CHECK_RETV(max_color_error <= 1e-6 && raw_checked > 1000, false);
   IM_CHECK_RETV(RawHash(full_source.pixels) == full_source.hash && RawHash(detail_source.pixels) == detail_source.hash,

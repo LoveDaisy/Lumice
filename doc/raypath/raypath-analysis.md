@@ -639,7 +639,7 @@ map与主图共享`GuiState::renderer`的有效帧输入，没有私有圆盘或
 数据到达不写相机，观察不计算；光标从实际方向读同一原源格，rank-0/mixed/finite-zero/singular/unknown/partial独立。
 
 动作、Fit取数、兼容/单源、取消/重试、帧与句柄寿命的唯一规则在上述共享相机合同，不在此复写。
-验证边界也由该文§10记录：C01/C16原列/FBO、真实partial与结果峰值有实证，完整双窗时间/96MiB仍须相同源码下签证。
+验证边界也由该文§10记录：C01/C16原列/FBO、真实partial与结果峰值有实证，明示域双窗时间/96MiB签证也在该节，不外推未测机器/画布。
 位置对象与色散曲线继续消费`BuildSurveyOverviewModel`同源载荷，不另组一份文档事实；天空点与ROI仍结构隔离。
 
 **742.6 的交接合同（点意图与选择状态，无需重建）**：选择身份 = `SelectedClassIdentityFor` /
