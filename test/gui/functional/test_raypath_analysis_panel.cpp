@@ -2821,6 +2821,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
                 false);
   IM_CHECK_RETV(gui::g_state.analysis.map.adopted_id == reference_id, false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analyze_v1_chain_map.png").string()), false);
+  IM_CHECK_RETV(CheckMapGlyphsAcrossUiScale(ctx), false);
 
   // The real pick on the canvas centre: the point intent arms through the real mouse path (the
   // pick's outcome is the discovery arm's own honest answer at whatever spot the class's mass
@@ -7218,6 +7219,176 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
 
 namespace {
 
+// Capture one submitted application frame, before LogFinish clears its buffer. LogWindow is
+// deliberately unbound from the fallback window: child/window End() must not clear this read.
+// Keep normal item clipping; screenshots below are taken on ordinary, non-logging frames.
+std::string CaptureMapFrameText(ImGuiTestContext* ctx) {
+  struct Capture {
+    std::string text;
+    int frame = -1;
+    ImGuiID begin_hook = 0;
+    ImGuiID end_hook = 0;
+    ~Capture() {
+      ImGui::RemoveContextHook(ImGui::GetCurrentContext(), begin_hook);
+      ImGui::RemoveContextHook(ImGui::GetCurrentContext(), end_hook);
+    }
+  } capture;
+  ImGuiContextHook hook;
+  hook.UserData = &capture;
+  hook.Type = ImGuiContextHookType_NewFramePost;
+  hook.Callback = [](ImGuiContext* g, ImGuiContextHook*) {
+    ImGui::LogToBuffer();
+    g->LogWindow = nullptr;
+    g->ItemUnclipByLog = false;
+  };
+  capture.begin_hook = ImGui::AddContextHook(ImGui::GetCurrentContext(), &hook);
+  hook.Type = ImGuiContextHookType_EndFramePre;
+  hook.Callback = [](ImGuiContext* g, ImGuiContextHook* h) {
+    auto& c = *static_cast<Capture*>(h->UserData);
+    c.text = g->LogBuffer.c_str();
+    c.frame = g->FrameCount;
+    ImGui::LogFinish();
+  };
+  capture.end_hook = ImGui::AddContextHook(ImGui::GetCurrentContext(), &hook);
+  const int before = ImGui::GetFrameCount();
+  ctx->Yield(2);
+  if (capture.frame <= before) {
+    ctx->LogError("[map text] no submitted frame after %d", before);
+    return {};
+  }
+  ctx->LogInfo("[map text] captured frame %d, %zu bytes", capture.frame, capture.text.size());
+  return capture.text;
+}
+
+std::string MapTextLine(const std::string& text, const char* marker, const char* field) {
+  size_t at = 0;
+  while ((at = text.find(marker, at)) != std::string::npos) {
+    const std::string line = text.substr(at, text.find('\n', at) - at);
+    if (line.find(field) != std::string::npos)
+      return line;
+    ++at;
+  }
+  return {};
+}
+
+bool CheckMapTextGlyphs(ImGuiTestContext* ctx, const char* surface, const std::string& text) {
+  IM_CHECK_RETV(!text.empty(), false);
+  ctx->LogInfo("[map text] %s: %s", surface, text.c_str());
+  // Decode what production submitted, not a second inventory of anticipated codepoints.
+  const ImFont* body = ImGui::GetIO().Fonts->Fonts[0];
+  for (const char* p = text.c_str(); *p;) {
+    unsigned int codepoint = 0;
+    const int bytes = ImTextCharFromUtf8(&codepoint, p, nullptr);
+    if (bytes <= 0) {
+      ctx->LogError("[map text] %s invalid UTF-8", surface);
+      return false;
+    }
+    if (codepoint > 32 && body->FindGlyphNoFallback(static_cast<ImWchar>(codepoint)) == nullptr) {
+      ctx->LogError("[map text] %s missing U+%04X in live atlas: %s", surface, codepoint, text.c_str());
+      return false;
+    }
+    p += bytes;
+  }
+  return true;
+}
+
+bool CheckMapCellSteps(ImGuiTestContext* ctx, const std::string& text, const LUMICE_PathMapInfo& info) {
+  IM_CHECK_RETV(!text.empty(), false);
+  const auto check_axis = [&](const char* axis, double expected) -> bool {
+    const size_t at = text.find(axis);
+    IM_CHECK_RETV(at != std::string::npos, false);
+    char* end = nullptr;
+    const double value = std::strtod(text.c_str() + at + std::strlen(axis), &end);
+    IM_CHECK_RETV(end != nullptr && std::strncmp(end, "°", std::strlen("°")) == 0, false);
+    IM_CHECK_RETV(std::isfinite(value) && std::abs(value - expected) <= std::abs(expected) * 1e-6, false);
+    return true;
+  };
+  IM_CHECK_RETV(check_axis("δ ", (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows), false);
+  IM_CHECK_RETV(check_axis("az ", (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols), false);
+  return true;
+}
+
+bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
+  const auto& map = gui::g_state.analysis.map;
+  const auto reference = map.adopted_result;
+  const auto detail = map.detail_result;
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ImGuiWindow* report = MapReportWindow();
+  IM_CHECK_RETV(report != nullptr, false);
+  report->Scroll.y = 0.0f;
+  ctx->Yield(2);
+  const std::string report_text = CaptureMapFrameText(ctx);
+  const auto check_source = [&](int slot) -> bool {
+    const char* source = slot == 0 ? "Reference" : "Detail";
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo((slot == 0 ? reference : detail).get(), &info) == LUMICE_PATH_READ_OK, false);
+    const std::string line = MapTextLine(report_text, source, "δ ");
+    IM_CHECK_RETV(CheckMapCellSteps(ctx, line, info), false);
+    // The full-sky reader's known one-degree grid is an anchor independent of display formatting.
+    if (slot == 0) {
+      IM_CHECK_RETV(info.view_rows == 180 && info.view_cols == 360, false);
+      IM_CHECK_RETV(info.view_delta_max_deg - info.view_delta_min_deg == 180.0, false);
+      IM_CHECK_RETV(info.view_az_max_deg - info.view_az_min_deg == 360.0, false);
+    }
+    IM_CHECK_RETV(CheckMapTextGlyphs(ctx, source, line), false);
+    return true;
+  };
+  IM_CHECK_RETV(check_source(0), false);
+  if (detail) {
+    IM_CHECK_RETV(check_source(1), false);
+  }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(stem + "_steps.png").string()), false);
+  const ImRect canvas = ctx->ItemInfo("**/##map_canvas").RectFull;
+  ctx->MouseMoveToPos(canvas.GetCenter());
+  ctx->Yield(3);
+  const std::string cursor_frame = CaptureMapFrameText(ctx);
+  const size_t near_at = cursor_frame.find("Near / pick direction");
+  IM_CHECK_RETV(near_at != std::string::npos, false);
+  const std::string cursor_text = cursor_frame.substr(near_at);
+  const char* cursor_source = detail ? "Detail r" : "Reference r";
+  IM_CHECK_RETV(cursor_text.find("Near / pick direction") != std::string::npos, false);
+  IM_CHECK_RETV(cursor_text.find(cursor_source) != std::string::npos, false);
+  LUMICE_PathMapInfo cursor_info{};
+  cursor_info.struct_size = sizeof(cursor_info);
+  IM_CHECK_RETV(LUMICE_PathMapGetInfo((detail ? detail : reference).get(), &cursor_info) == LUMICE_PATH_READ_OK, false);
+  const std::string cursor_line = MapTextLine(cursor_text, "δ ", "az ");
+  IM_CHECK_RETV(CheckMapCellSteps(ctx, cursor_line, cursor_info), false);
+  IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "cursor", cursor_line), false);
+  const auto save_tooltip = [&](const char* suffix) -> bool {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w->Active && (w->Flags & ImGuiWindowFlags_Tooltip)) {
+        const std::string ref = std::string("//") + w->Name;
+        return SaveWindowPng(ctx, ref.c_str(), GuiTestTempPath(stem + suffix).string());
+      }
+    }
+    return false;
+  };
+  IM_CHECK_RETV(save_tooltip("_cursor.png"), false);
+  ctx->MouseMove("**/Refine###map_quality");
+  ctx->Yield(3);
+  const std::string refine_text = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(refine_text.find("One explicit calculation") != std::string::npos, false);
+  const std::string actual = MapTextLine(refine_text, "Actual ", "δ ");
+  IM_CHECK_RETV(actual.find("°; grid cap 262144") != std::string::npos, false);
+  const std::string target = MapTextLine(refine_text, "Target ", "diameter");
+  double diameter = 0.0;
+  int rows = 0, cols = 0;
+  IM_CHECK_RETV(std::sscanf(target.c_str(), "Target %lf° diameter; %d×%d cells", &diameter, &rows, &cols) == 3, false);
+  IM_CHECK_RETV(diameter > 0.0 && rows > 0 && cols > 0, false);
+  const size_t delta_at = actual.find("δ ");
+  IM_CHECK_RETV(delta_at != std::string::npos, false);
+  const double preview_step = std::strtod(actual.c_str() + delta_at + std::strlen("δ "), nullptr);
+  // For this off-pole target, the printed diameter/rows independently checks the preview step.
+  IM_CHECK_RETV(preview_step > 0.0 && std::abs(preview_step * rows - diameter) < diameter * 1e-5, false);
+  IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "Refine", target + "\n" + actual), false);
+  IM_CHECK_RETV(save_tooltip("_refine.png"), false);
+  IM_CHECK_RETV(map.adopted_result == reference && map.detail_result == detail, false);
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ctx->Yield(2);
+  return true;
+}
+
 // The completed C01 map's actual text, after the same frame-boundary rebuild/GL upload the
 // product uses. The standalone font case pins the full audited character set; this leg owns the
 // rendered window and rebuild lifetime. Never retain an ImFont pointer across a Yield/rebuild.
@@ -7275,7 +7446,9 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
                  ImGui::CalcTextSize(metrics.c_str()).x, metrics.c_str());
     ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
     ctx->Yield(2);
-    const std::string stem = std::string("map_glyphs_") + suffix;
+    const std::string stem =
+        std::string(gui::g_state.analysis.map.detail_result ? "map_detail_glyphs_" : "map_glyphs_") + suffix;
+    IM_CHECK_RETV(CheckMapQualityText(ctx, stem), false);
     IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(stem + ".png").string()), false);
     // Preserve the full application frame as well as the window crop for offline inspection.
     g_fullframe_capture.Reset();
