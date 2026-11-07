@@ -198,11 +198,18 @@ directions the sun sits in *the crystal's own frame* — a projection of the pos
 whole of it), the **Raypath 3D** region is one concrete light path through one crystal, and the
 **factors readout** is the current pose's per-interface numbers.
 
-**Point detail** (in the diagnostics region, under the class overview) is the anchor and the
-window's only opener: clicking its title opens the **Pose & trace window** — a floating,
-non-modal window that gathers the three faces around one adopted point document and follows the
-current selection while it stays open (set a sky point and it does NOT pop open; the window is
-yours to open and close). The block itself keeps the answer and its evidence: once a class is
+Open **Pose & trace** beside the sky-point controls in **Raypath view** to inspect the
+**3D ray and pose**. This button stays above the scrolling report, including before a point is
+set, while it computes, and when no drawable sample exists; the window explains the current
+empty, waiting or refused state. Select a class and pick a direction on the map (or type
+coordinates and press **Set sky point**), then click **Pose & trace**. Picking or setting a sky
+point does **not** open the window automatically. Close it with its title-bar close button and
+use the same entry to reopen it.
+
+**Point detail** (in the diagnostics region, under the class overview) remains another opener:
+clicking its title opens the **same floating, non-modal window**, with the same current selection,
+point document and pose cursor. Opening or reopening it starts no query and does not reset the
+cursor. The block itself keeps the answer and its evidence: once a class is
 selected and a sky point is set, the engine is asked about that exact direction in the
 background (a couple-of-seconds tier; the point queues behind the survey and map on the same
 worker, and the block says so while it waits, with a **Cancel point** button). The answer opens
