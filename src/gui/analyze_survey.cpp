@@ -59,18 +59,18 @@ MapQueryState MapQueryStateFor(const MapQuerySession& map) {
   if (map.cancelled_for_key) {
     return MapQueryState::kCancelled;
   }
-  if (map.adopted_result) {
-    return MapQueryState::kCompleted;
-  }
   if (!map.adopted_error.empty()) {
     return MapQueryState::kRefused;
+  }
+  if (map.adopted_result || map.detail_result) {
+    return MapQueryState::kCompleted;
   }
   return MapQueryState::kWaiting;
 }
 
 bool MapRefiningFor(const MapQuerySession& map) {
   return map.intent_valid && !map.cancelled_for_key && map.adopted_result != nullptr &&
-         !(map.adopted_id == map.intent_id);
+         map.adopted_id != map.intent_id && map.detail_id != map.intent_id && map.answered_id != map.intent_id;
 }
 
 PointQueryState PointQueryStateFor(const PointQuerySession& point) {
@@ -238,7 +238,8 @@ struct SurveyExecutor::Impl {
                                        // bookkeeping stays uniform across faces.
   QueryFace inflight_face = QueryFace::kSurvey;
   std::optional<Finished> finished_survey;  // per-face single slot: the newest finish of THAT face
-  std::optional<Finished> finished_map;     // overwrites an older one the GUI has not drained
+  std::optional<Finished> finished_map;
+  bool map_drain_blocked = false;  // no fourth map while the GUI replaces one of its two sources
   std::optional<Finished> finished_point;
   std::optional<Finished> finished_ray;
   unsigned long long next_serial = 0;
@@ -271,8 +272,9 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
     std::unique_lock<std::mutex> lock(impl->mu);
     for (;;) {
       impl->cv.wait(lock, [impl] {
-        return impl->pending_binding.has_value() || impl->pending_survey.has_value() || impl->pending_map.has_value() ||
-               impl->pending_point.has_value() || impl->pending_ray.has_value();
+        return impl->pending_binding.has_value() || impl->pending_survey.has_value() ||
+               (impl->pending_map.has_value() && !impl->map_drain_blocked) || impl->pending_point.has_value() ||
+               impl->pending_ray.has_value();
       });
 
       // Binding first (a queued query always runs against the binding it was issued for — or,
@@ -324,7 +326,7 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
       if (impl->pending_survey.has_value()) {
         job_slot = std::move(*impl->pending_survey);
         impl->pending_survey.reset();
-      } else if (impl->pending_map.has_value()) {
+      } else if (impl->pending_map.has_value() && !impl->map_drain_blocked) {
         job_slot = std::move(*impl->pending_map);
         impl->pending_map.reset();
       } else if (impl->pending_point.has_value()) {
@@ -433,6 +435,7 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
         impl->finished_survey = std::move(finish);
       } else if (job.face == QueryFace::kMap) {
         impl->finished_map = std::move(finish);
+        impl->map_drain_blocked = true;
       } else if (job.face == QueryFace::kPoint) {
         impl->finished_point = std::move(finish);
       } else {
@@ -621,7 +624,7 @@ void SurveyExecutor::ReleaseScene() {
   impl_->cv.notify_one();
 }
 
-std::optional<SurveyExecutor::Finished> SurveyExecutor::TakeFinished(QueryFace face) {
+std::optional<SurveyExecutor::Finished> SurveyExecutor::TakeFinished(QueryFace face, bool defer_map_ack) {
   std::lock_guard<std::mutex> lock(impl_->mu);
   std::optional<Finished> out;
   std::optional<Finished>& slot = face == QueryFace::kSurvey ? impl_->finished_survey :
@@ -632,7 +635,19 @@ std::optional<SurveyExecutor::Finished> SurveyExecutor::TakeFinished(QueryFace f
     out = std::move(*slot);
     slot.reset();
   }
+  if (face == QueryFace::kMap && !defer_map_ack) {
+    impl_->map_drain_blocked = false;
+    impl_->cv.notify_one();
+  }
   return out;
+}
+
+void SurveyExecutor::CompleteMapDrain() {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  if (!impl_->finished_map) {
+    impl_->map_drain_blocked = false;
+    impl_->cv.notify_one();
+  }
 }
 
 bool SurveyExecutor::InFlight() const {

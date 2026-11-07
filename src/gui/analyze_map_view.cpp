@@ -651,17 +651,6 @@ uint32_t MapCellColorRgba(double value, uint8_t status, const MapDisplayNorm& no
 
 namespace {
 
-// The default view chain's starting view (zenith-centred full sky): what a fresh selection's
-// first request asks for, and what the view returns to when the selection changes.
-void ResetMapViewForNewSelection(MapViewState* view) {
-  view->centre_pos[0] = 0.0f;
-  view->centre_pos[1] = 0.0f;
-  view->centre_pos[2] = 1.0f;
-  view->radius_deg = kMapFullSkyRadiusDeg;
-  view->auto_fit_done = false;
-  view->user_moved = false;
-}
-
 // The issuing half of the pump (the survey pump's IssueSurveyQuery shape): build the request for
 // `key` and hand it to the executor with the id the pump already assigned. Buffers move into the
 // executor's job.
@@ -679,108 +668,114 @@ void IssueMapIntent(GuiState& state, SurveyExecutor& executor, const SurveyQuery
 
 void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
   MapQuerySession& map = state.analysis.map;
-  MapViewState& view = state.analysis.map_view;
-
-  // 1. Drain: adopt the finished map iff it still answers the CURRENT intent and the intent
-  //    stands (the survey gate's own rule — a cancelled intent accepts no outcome, and the
-  //    engine answers a cancel with a truncated-but-OK map, exactly the document the user
-  //    withdrew). A refusal is an answer for a standing intent.
-  while (std::optional<SurveyExecutor::Finished> finished = executor.TakeFinished(QueryFace::kMap)) {
-    if (map.intent_valid && !map.cancelled_for_key && finished->id == map.intent_id) {
-      map.adopted_result = finished->ok ? finished->map_result : nullptr;
-      map.adopted_error = finished->ok ? std::string() : std::move(finished->error);
-      map.adopted_id = finished->id;
-    }
+  const auto identity = SelectedClassIdentityFor(state);
+  const bool selected = identity.has_value() && state.analysis_result.payload != nullptr;
+  SurveySelectionKey selection;
+  if (selected) {
+    selection = SurveySelectionKeyFor(*identity, state.analysis_result.payload->snapshot_generation);
   }
-
-  // 2. The default view chain's auto-Fit: the first adopted map of this selection fits the
-  //    picture once (the fitted view then asks its refinement through the settle gate below).
-  //    Latched per selection — a failed Fit (an honest all-zero map) must not loop — and it
-  //    stands down the moment the user has steered the view by hand: the chain serves a passive
-  //    selection, never a yank of navigation the user has already begun.
-  if (!view.auto_fit_done && !view.user_moved && map.adopted_result != nullptr) {
-    view.auto_fit_done = true;
-    LUMICE_PathMapInfo info{};
-    info.struct_size = sizeof(info);
-    LUMICE_PathMapPixels pixels{};
-    pixels.struct_size = sizeof(pixels);
-    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK &&
-        LUMICE_PathMapGetPixels(map.adopted_result.get(), &pixels) == LUMICE_PATH_READ_OK) {
-      const MapFitResult fit = FitMapViewFromPixels(pixels, info);
-      if (fit.ok) {
-        for (int k = 0; k < 3; ++k) {
-          view.centre_pos[k] = fit.centre_pos[k];
-        }
-        view.radius_deg = fit.radius_deg;
-        MapViewChanged(&view, now_s, false, /*user_steered=*/false);
-        GUI_LOG_VERBOSE("[MapView] auto-Fit: radius {:.1f} deg", view.radius_deg);
-      }
-    }
-  }
-
-  // 3. The live selection through the ONE identity chain (a56 — the same derivation the survey
-  //    pump consumes; map and survey cannot disagree about what class is on show).
-  const std::optional<SelectedClassIdentity> identity = SelectedClassIdentityFor(state);
-  if (!identity.has_value() || !state.analysis_result.payload) {
-    if (map.intent_valid) {
-      // The selection died: the intent dies with it, adopted outcome included — another
-      // class's map must not linger under a new selection.
-      executor.CancelInFlight(QueryFace::kMap);
-      map = MapQuerySession{};
-    }
-    ResetMapViewForNewSelection(&view);
-    return;
-  }
-  const SurveySelectionKey selection =
-      SurveySelectionKeyFor(*identity, state.analysis_result.payload->snapshot_generation);
-
-  // 4. A selection change (identity or analysis generation) kills the whole map session —
-  //    picture included — and the view returns to the default chain's full sky: the default
-  //    view chain is per selection, so the next class's first picture is its own whole-sky
-  //    view, not the previous class's framing (whose auto-Fit would be a window map fitting
-  //    itself). A view/wavelength change within one selection only supersedes the intent.
-  if (map.intent_valid && !(map.key.selection == selection)) {
+  // Invalidate before draining: no old capture/lambda may acquire the new labels, even for a
+  // frame. Camera fields are deliberately absent from this effect chain.
+  if (map.intent_valid &&
+      (!selected || map.key.selection != selection || map.key.wavelength_nm != state.analysis.map_wavelength_nm)) {
     executor.CancelInFlight(QueryFace::kMap);
     map = MapQuerySession{};
-    ResetMapViewForNewSelection(&view);
   }
-
-  MapIntentKey key;
-  key.selection = selection;
-  for (int k = 0; k < 3; ++k) {
-    key.centre_pos[k] = view.centre_pos[k];
-  }
-  key.radius_deg = view.radius_deg;
-  key.wavelength_nm = state.analysis.map_wavelength_nm;
-
-  // 5. Issue or supersede — never mid-gesture or before the settle window (a wheel burst is one
-  //    request, not one per notch).
-  if (!map.intent_valid) {
-    if (!MapViewSettled(now_s, view)) {
-      return;
+  while (auto finished = executor.TakeFinished(QueryFace::kMap, /*defer_map_ack=*/true)) {
+    if (!map.intent_valid || map.cancelled_for_key || finished->id != map.intent_id) {
+      continue;
     }
-    map = MapQuerySession{};
+    map.answered_id = finished->id;
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    if (!finished->ok || !finished->map_result ||
+        LUMICE_PathMapGetInfo(finished->map_result.get(), &info) != LUMICE_PATH_READ_OK ||
+        info.state != LUMICE_PATH_STATE_FINITE) {
+      map.adopted_error = finished->error;
+      if (map.adopted_error.empty()) {
+        map.adopted_error =
+            info.reason.length ? std::string(info.reason.data, info.reason.length) : "Map result is unavailable";
+      }
+      continue;  // a refusal never replaces an existing finite source with zero
+    }
+    map.adopted_error.clear();
+    if (map.key.radius_deg >= kMapFullSkyRadiusDeg) {
+      map.adopted_result = std::move(finished->map_result);
+      map.adopted_id = finished->id;
+    } else {
+      map.detail_result = std::move(finished->map_result);
+      map.detail_id = finished->id;
+    }
+  }
+  executor.CompleteMapDrain();  // all temporary results and previous-source readers have left scope
+  if (selected && !map.intent_valid) {
     map.intent_valid = true;
-    map.key = key;
+    map.key.selection = selection;
+    map.key.wavelength_nm = state.analysis.map_wavelength_nm;
     map.intent_id = executor.NextId(selection.generation);
-    map.intent_start_s = now_s;  // the wait display's epoch — this frame (plan §3.1)
-    IssueMapIntent(state, executor, map.intent_id, key);
+    map.intent_start_s = now_s;
+    IssueMapIntent(state, executor, map.intent_id, map.key);  // once, all sky
+  }
+}
+
+bool RefineMap(GuiState& state, SurveyExecutor& executor, const MapCaptureTarget& target, double now_s) {
+  auto& map = state.analysis.map;
+  if (!map.intent_valid || !map.adopted_result || target.radius_deg >= 180.0) {
+    return false;
+  }
+  executor.CancelInFlight(QueryFace::kMap);
+  std::copy(target.centre_pos, target.centre_pos + 3, map.key.centre_pos);
+  map.key.radius_deg = static_cast<float>(target.radius_deg);
+  map.cancelled_for_key = false;
+  map.adopted_error.clear();
+  map.intent_id = executor.NextId(map.key.selection.generation);
+  map.intent_start_s = now_s;
+  IssueMapIntent(state, executor, map.intent_id, map.key);
+  return true;
+}
+
+void RetryMap(GuiState& state, SurveyExecutor& executor, double now_s) {
+  auto& map = state.analysis.map;
+  if (!map.intent_valid || (!map.cancelled_for_key && map.adopted_error.empty())) {
     return;
   }
-  if (map.key != key) {
-    if (!MapViewSettled(now_s, view)) {
-      return;
-    }
-    executor.CancelInFlight(QueryFace::kMap);  // the map face's own supersession
-    // The old PICTURE stays on show (MapRefiningFor names it); the old REFUSAL goes — it
-    // answered a view that no longer stands.
-    map.adopted_error.clear();
-    map.cancelled_for_key = false;
-    map.key = key;
-    map.intent_id = executor.NextId(selection.generation);
-    map.intent_start_s = now_s;  // a rekey restarts the wait clock (plan §3.1)
-    IssueMapIntent(state, executor, map.intent_id, key);
+  executor.CancelInFlight(QueryFace::kMap);
+  map.cancelled_for_key = false;
+  map.adopted_error.clear();
+  map.intent_id = executor.NextId(map.key.selection.generation);
+  map.intent_start_s = now_s;
+  IssueMapIntent(state, executor, map.intent_id, map.key);
+}
+
+void CancelMap(GuiState& state, SurveyExecutor& executor) {
+  executor.CancelInFlight(QueryFace::kMap);
+  state.analysis.map.cancelled_for_key = true;
+}
+
+bool MapSourcesCompatible(const LUMICE_PathMapInfo& reference, const LUMICE_PathMapInfo& detail) {
+  // Session ownership already establishes the SAME captured scene and ordered class expansion.
+  // These echoes additionally guard the evaluated prefix, quantity and coordinate frame.
+  if (reference.state != LUMICE_PATH_STATE_FINITE || detail.state != LUMICE_PATH_STATE_FINITE ||
+      reference.crystal_id != detail.crystal_id || reference.wavelength_nm != detail.wavelength_nm ||
+      reference.refractive_index != detail.refractive_index || reference.sample_count != detail.sample_count ||
+      reference.member_count != detail.member_count || reference.members_evaluated != detail.members_evaluated ||
+      reference.face_count != detail.face_count || reference.shape_count != detail.shape_count ||
+      reference.shape_is_nominal != detail.shape_is_nominal || reference.sun_altitude_deg != detail.sun_altitude_deg ||
+      reference.sun_azimuth_deg != detail.sun_azimuth_deg) {
+    return false;
   }
+  for (size_t i = 0; i < reference.face_count; ++i) {
+    if (reference.faces[i] != detail.faces[i]) {
+      return false;
+    }
+  }
+  for (int k = 0; k < 3; ++k) {
+    if (reference.view_incident[k] != detail.view_incident[k] || reference.view_e1[k] != detail.view_e1[k] ||
+        reference.view_e2[k] != detail.view_e2[k]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // ---- The raster ------------------------------------------------------------------------------------

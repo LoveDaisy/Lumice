@@ -285,10 +285,15 @@ struct OverlayLegendState {
 // ---- The pump and the renderer (GuiState-dependent, defined in the .cpp) ---------------------------
 
 // The map face's frame pump — the survey pump's sibling (analysis_panel.hpp PumpSurveyQuery):
-// drains the executor's map mailbox through the adoption gate, then keeps the intent
-// level-triggered against the live selection + view + wavelength, gated by the settle rule.
+// drains the map mailbox through generation/serial/data identity gates. Only a new data
+// identity establishes an all-sky intent; observation never issues a request.
 // Writes only state.analysis's map fields and the executor; no widget, no document field.
 void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s);
+// Explicit quality actions. Refine captures the target once; Retry reuses that exact request.
+bool RefineMap(GuiState& state, SurveyExecutor& executor, const MapCaptureTarget& target, double now_s);
+void RetryMap(GuiState& state, SurveyExecutor& executor, double now_s);
+void CancelMap(GuiState& state, SurveyExecutor& executor);
+bool MapSourcesCompatible(const LUMICE_PathMapInfo& reference, const LUMICE_PathMapInfo& detail);
 
 // The Raypath view window's body — formerly the depth band's map cell (755.4 moved the whole
 // capability into the window in one piece). Draws the D3 split (contract §4.2): the LEFT

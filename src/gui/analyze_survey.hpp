@@ -155,21 +155,10 @@ enum class QueryFace { kSurvey, kMap, kPoint, kRay };
 // heavier classes.
 inline constexpr int kPointQueryBudgetMs = 2000;
 
-// The map face's session state — the survey session's sibling (same tier, same per-reason
-// rules), with two deltas 742.5 owns. The key adds the view and the wavelength: a view or
-// wavelength change is a new intent over the SAME selection, and a selection change still kills
-// the whole session. And the adopted outcome is KEPT across a view supersession — the picture on
-// show may sit one refinement behind the standing intent (what MapRefiningFor names), because a
-// view change must not blank the region the user is currently steering; a selection change drops
-// it (another class's map must not linger under a new selection).
-
-// What an outstanding map intent was issued for: the selection key (the survey's own — one
-// derivation, so map and survey cannot disagree about what class is on show) plus the view the
-// display is showing (centre and angular radius; a request spans exactly that disk) plus the
-// reference wavelength. centre_pos is the POSITION vector pointing at the view's sky centre —
-// display-space semantics (it projects the picture); the request builder is where it becomes the
-// engine's (altitude, azimuth) label. Equality is exact and bitwise: any gesture-frame change is
-// a different view, and the pump's settle gate decides when that becomes a request.
+// A captured calculation intent, not the observation camera. The initial intent is all sky;
+// explicit quality actions capture a cap. Only selection/capture or wavelength changes invalidate
+// the source identity; observation never rekeys this value. POSITION becomes a sky label in the
+// request builder. The current reference and latest detail share this captured identity.
 struct MapIntentKey {
   SurveySelectionKey selection;
   float centre_pos[3] = { 0.0f, 0.0f, 1.0f };
@@ -191,11 +180,11 @@ struct MapQuerySession {
   // pump writes it at both issue sites: the first issue and the view/wavelength supersession,
   // so a refinement re-ask restarts the wait clock with the intent it belongs to).
   double intent_start_s = 0.0;
-  // The key the intent was issued for; the pump compares it against the live view+selection.
+  // The captured request. The pump compares only its data identity with the current selection.
+  // Refine/Retry are the only writers of its spatial target.
   MapIntentKey key;
-  // The Revert row's latch (the map has no cancel button of its own — its queries are
-  // sub-second; a withdrawn map intent comes only from a reset). Cleared with the intent: a
-  // key change starts fresh.
+  // Cancel/Revert latch: observation does not clear it; an explicit quality action or a real
+  // data identity change does.
   bool cancelled_for_key = false;
   // The newest gate-passed outcome: a completed map, or the engine's named refusal. Kept across
   // view supersession (the display decides what an older map is allowed to claim); dropped with
@@ -203,6 +192,12 @@ struct MapQuerySession {
   MapHandle adopted_result;
   std::string adopted_error;
   SurveyQueryId adopted_id;
+  // The reference and the latest detail are the only persistent map results. Both belong to
+  // key.selection and key.wavelength_nm; changing either clears the entire session.
+  MapHandle detail_result;
+  SurveyQueryId detail_id;
+  SurveyQueryId answered_id;  // includes refused outcomes; an error must end waiting too
+  int source_mode = 0;        // 0 = compatible composition, 1 = reference, 2 = detail only
 };
 
 // The map region's four visible states — the survey vocabulary, over the map session (R7: the
@@ -501,7 +496,10 @@ class SurveyExecutor {
   // overwrites an older one of the same face that the GUI has not drained — sound because the
   // older one's intent was necessarily superseded before a newer query of the same face could
   // run (see the class comment). GUI thread.
-  std::optional<Finished> TakeFinished(QueryFace face);
+  std::optional<Finished> TakeFinished(QueryFace face, bool defer_map_ack = false);
+  // A GUI drain defers map pickup until source replacement and borrowed-column uses finish.
+  // Other faces remain schedulable. Direct callers use TakeFinished's immediate-ack default.
+  void CompleteMapDrain();
 
   // Whether a query is COMPUTING on `face` (picked up, not yet finished — the worker's own
   // registration; a queued-but-unpicked query reads false). The no-arg form asks about EITHER
