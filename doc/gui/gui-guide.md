@@ -74,21 +74,22 @@ From left to right, the Top Bar exposes:
   render settings, then every layer with its entries' crystal, shape, axis and filter) laid out
   in two columns to fit one 1280 × 900 screen and be screenshotted and shared — each row under
   the label the panel itself uses, and only the rows the panel currently shows (Sky Color or
-  Paper Color, never both). Window openers are icon-only — one expression per kind of command
-  (Colors, Summary, and Settings below share it) — and each button's word lives in its tooltip.
+  Paper Color, never both). New/Open/Save/Colors/Summary/Settings share one width tier:
+  all show icon + word when the complete bar fits, all show only their icons in a narrow window.
+  Tooltips keep every command's name and explanation, including disabled New/Open.
   The Summary has no image export of its own: take the picture with
   your operating system's screenshot tool (⌘⇧4 on macOS, Win+Shift+S on Windows, or your
   desktop's equivalent on Linux); **Copy as text** on its version line puts the same page on the
   clipboard as tab-separated text. See [User Manual — Configuration Summary](../user-manual/07-config-summary.md).
 - **Render | Analyze**: the two-cell workspace switch, its own group between the feature buttons
-  and Settings. The current mode's cell is highlighted and clicking it does nothing; the other
-  cell moves between the render layout and the Analyze workspace (scene and observation editors
+  and Settings. The current mode's cell has a solid accent fill and contrasting text (as on the
+  Axis label chips); clicking it does nothing. The other cell moves between the render layout and the Analyze workspace (scene and observation editors
   in a fixed left column, the large main view showing the traced sky through the renderer's own
   lens with the analysis depths beneath it, the analysis request's controls on an operation bar
   under that view, and the share list and diagnostics in the right column — see
   [User Manual — Raypath Analysis](../user-manual/06-raypath-analysis.md)). Switching is view
   state: it never dirties the document and never starts or stops a run.
-- **Settings** (gear icon; hover for its word): the personal-defaults editor — what a *new* document starts from, plus the
+- **Settings** (gear icon, with its word when wide; always named in its tooltip): the personal-defaults editor — what a *new* document starts from, plus the
   `Application preferences` rows at the top, which describe this machine rather than any document:
   the GPU backend and worker count a new document starts with, and **UI scale**, a multiplier
   (75% – 200%) applied on top of the display's own scaling to every piece of the interface —
@@ -99,6 +100,7 @@ From left to right, the Top Bar exposes:
   `user_defaults.json`), and a value tried but not saved stays in force until the program exits —
   the `(this window: N%)` note beside the control shows what the window is actually using.
 - **⚠ Revert**: at the right end of the bar, beside the right panel toggle. Appears only after parameters have been changed since the last simulation finished (status `Modified`); restores the configuration that produced the last result. Its slot is held while it is hidden, so nothing else on the bar moves when it appears.
+  The Colored/Full Spectrum control and warning reserve a fixed slot, so signal or run-state updates never move neighbouring commands or change the label tier.
 - **Right panel collapse**: `<` / `>` mirror the left toggle (also bound to the `]` key).
 
 ## Left Panel — Crystal Parameters

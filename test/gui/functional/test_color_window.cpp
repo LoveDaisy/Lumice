@@ -288,7 +288,7 @@ void RegisterColorWindowTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.raypath_color.empty());
       IM_CHECK(!gui::g_state.color_window_open);
 
-      ctx->ItemClick("##TopBar/" ICON_FA_PALETTE);
+      ctx->ItemClick("##TopBar/###toolbar_colors");
       ctx->Yield(2);
       IM_CHECK(gui::g_state.color_window_open);
       IM_CHECK(gui::g_state.show_composite_preview);  // armed on the false->true edge
@@ -298,7 +298,7 @@ void RegisterColorWindowTests(ImGuiTestEngine* engine) {
       ctx->Yield(8);
       IM_CHECK(!gui::g_state.show_composite_preview);
 
-      ctx->ItemClick("##TopBar/" ICON_FA_PALETTE);
+      ctx->ItemClick("##TopBar/###toolbar_colors");
       ctx->Yield(2);
       IM_CHECK(!gui::g_state.color_window_open);
     };
@@ -316,7 +316,7 @@ void RegisterColorWindowTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
       IM_CHECK(gui::g_state.raypath_color.empty());  // untinted branch
-      IM_CHECK(ctx->ItemExists("##TopBar/" ICON_FA_PALETTE));
+      IM_CHECK(ctx->ItemExists("##TopBar/###toolbar_colors"));
 
       gui::g_state.raypath_color.push_back(MakeMatchAllClass(1.0f, 0.0f, 0.0f, /*z_order=*/0));
       // Four frames is the ordinary settle used throughout this file, and it is safe here for a
@@ -325,10 +325,10 @@ void RegisterColorWindowTests(ImGuiTestEngine* engine) {
       // harder. Any settle ≥ 1 frame would do; 4 just keeps it uniform with its neighbours.
       ctx->Yield(4);  // tinted branch now active
 
-      ctx->ItemClick("##TopBar/" ICON_FA_PALETTE);
+      ctx->ItemClick("##TopBar/###toolbar_colors");
       ctx->Yield(2);
       IM_CHECK(gui::g_state.color_window_open);  // the styled button is still a live control
-      ctx->ItemClick("##TopBar/" ICON_FA_PALETTE);
+      ctx->ItemClick("##TopBar/###toolbar_colors");
       ctx->Yield(2);
       IM_CHECK(!gui::g_state.color_window_open);
 
@@ -336,7 +336,7 @@ void RegisterColorWindowTests(ImGuiTestEngine* engine) {
       // move items, but it does leave the rest of the bar drawing under a colour that was never
       // meant for it, and a stack underflow is what would take the neighbours down with it.
       IM_CHECK(ctx->ItemExists(TopBarToggleRef(/*composite_now=*/false).c_str()));
-      IM_CHECK(ctx->ItemExists("##TopBar/" ICON_FA_GEAR));
+      IM_CHECK(ctx->ItemExists("##TopBar/###toolbar_settings"));
     };
   }
 

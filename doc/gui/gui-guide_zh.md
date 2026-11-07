@@ -62,16 +62,16 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
     config 格式无法表达这个裁剪，否则 CLI 会渲出未裁剪的画面。
   - `Include Texture in .lmc` —— 控制下次保存的 toggle。Screenshot 的线与文字由上面所述的一次性选项窗口控制，不会改写 Overlay 面板；两个服务端全景导出不携带预览的文字 label 层。
 - **Colors / Summary**：两个按钮各自打开一个独立的非模态窗口，可与预览并排——光路染色类，以及只读的
-  **Summary**（开窗命令统一纯图标——Colors、Summary 与下面的 Settings 一类一表达，词在悬停提示里）：把当前配置摊成一页（版本号、太阳、仿真、渲染设置，
+  **Summary**（New/Open/Save/Colors/Summary/Settings 统一按宽度切档：宽档全部图标＋文字，窄档全部纯图标；悬停始终可读名称与动作说明，禁用的 New/Open 也不例外）：把当前配置摊成一页（版本号、太阳、仿真、渲染设置，
   再逐层列出每个条目的晶体、形状、朝向与 filter），左右两栏排版、一屏 1280 × 900 看全，专为截图分享而排——每一行用面板自己的标签，
   且只印面板此刻显示的行（Sky Color 与 Paper Color 二者取一）。Summary 没有自己的图片导出：用操作系统自带的截图工具截取即可
   （macOS ⌘⇧4、Windows Win+Shift+S、Linux 用桌面环境的等价快捷键）；版本行上的 **Copy as text**
   把同一页以制表符分隔的纯文本放进剪贴板。详见
   [用户手册 — 配置总结](../user-manual/07-config-summary_zh.md)。
-- **Render | Analyze**：双格工作区切换，自成一组，位于功能按钮与 Settings 之间。当前模式的格高亮、点击无动作；
+- **Render | Analyze**：双格工作区切换，自成一组，位于功能按钮与 Settings 之间。当前模式的格以 axis 标签同款实填强调色和对比字色高亮、点击无动作；
   另一格在渲染布局与 Analyze 工作区（左侧场景编辑器、中间与右侧分析，见
   [用户手册 — 光路分析](../user-manual/06-raypath-analysis_zh.md)）之间移动。切换是纯视图状态：不置 dirty、不启停任何运行。
-- **Settings**（齿轮图标，词在悬停提示里）：个人默认值编辑器——决定**新**文档从什么起步，另加顶部的 `Application preferences`
+- **Settings**（齿轮图标，宽档显示文字，悬停始终有名称）：个人默认值编辑器——决定**新**文档从什么起步，另加顶部的 `Application preferences`
   几行，它们描述的是这台机器而不是任何文档：新文档起步用的 GPU 后端与 worker 数，以及 **UI scale**——
   一个叠在显示器自身缩放之上的倍率（75% – 200%），作用于整套界面：文字、控件、面板一起放大缩小。
   显示器自身的缩放（Windows 125% / 150%、Retina 屏）会自动检测，不需要设置；这个倍率是在那之上再调。
@@ -79,6 +79,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
   使用（`user_defaults.json` 里的 `app.ui_scale_multiplier`），试过但没保存的值会一直生效到程序退出——
   控件旁的 `(this window: N%)` 标注显示的就是当前窗口实际在用的值。
 - **⚠ Revert**：位于顶栏右端、右面板折叠按钮左侧。仅当模拟结束后又改了参数（状态 `Modified`）时出现；用于把配置还原到产生上次结果时的状态。隐藏时它的位置仍被保留，所以它出现时栏上其他按钮都不会移动。
+  Colored/Full Spectrum 与告警也保留固定槽位，信号刷新或运行态变化不会推动邻钮或触发标签换档。
 - **右面板折叠按钮**：`<` / `>` 与左侧对称（也可用快捷键 `]`）。
 
 ## Left Panel — Crystal Parameters（左侧面板）

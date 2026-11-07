@@ -330,7 +330,7 @@ void SeedModifiedDocument(ImGuiTestContext* ctx, const std::string& path) {
 // RenderSaveModifiedPopup — called right after RenderUnsavedPopup in both the product's loop and
 // this harness's — consumes to open the second modal.
 void DriveNewIntoTheModifiedPrompt(ImGuiTestContext* ctx) {
-  ctx->ItemClick("##TopBar/" ICON_FA_FILE " New");
+  ctx->ItemClick("##TopBar/###toolbar_new");
   ctx->Yield(2);
   ctx->ItemClick("Unsaved Changes/Save");
   ctx->Yield(3);
@@ -353,14 +353,14 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
 
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FILE " New")));
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FOLDER_OPEN " Open")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/###toolbar_new")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/###toolbar_open")));
 
       gui::g_state.run_intent = gui::RunIntent::kRunning;
       ctx->Yield(2);
-      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FILE " New")));
-      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FOLDER_OPEN " Open")));
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_FLOPPY_DISK " Save")));
+      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/###toolbar_new")));
+      IM_CHECK(IsDisabled(ctx->ItemInfo("##TopBar/###toolbar_open")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##TopBar/###toolbar_save")));
 
       gui::g_state.run_intent = gui::RunIntent::kNone;
       ctx->Yield(2);
@@ -407,7 +407,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       // assertion here returns with the popup still up, and an open popup eats every click the
       // next case makes.
       const auto check = [](ImGuiTestContext* c, const char* scenario, const Item* items, int n) {
-        c->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK " Save");
+        c->ItemClick("##TopBar/###toolbar_save");
         c->Yield(2);
         c->SetRef("//$FOCUSED");
         for (int i = 0; i < n; ++i) {
@@ -480,14 +480,14 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
 
       const bool texture_before = gui::g_state.save_texture;
 
-      ctx->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK " Save");
+      ctx->ItemClick("##TopBar/###toolbar_save");
       ctx->Yield(2);
       ctx->ItemClick("**/Include Texture in .lmc");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.save_texture, !texture_before);
 
       // Reopen and read the mark back: the edit survived closing and reopening the menu.
-      ctx->ItemClick("##TopBar/" ICON_FA_FLOPPY_DISK " Save");
+      ctx->ItemClick("##TopBar/###toolbar_save");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.save_texture, !texture_before);
       ctx->ItemClick("**/Include Texture in .lmc");  // back off, and observe it move
@@ -515,7 +515,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       gui::g_state.dirty = true;
       ctx->Yield();
 
-      ctx->ItemClick("##TopBar/" ICON_FA_FILE " New");
+      ctx->ItemClick("##TopBar/###toolbar_new");
       ctx->Yield(2);
       ctx->ItemClick("Unsaved Changes/Cancel");
       ctx->Yield(2);
@@ -526,7 +526,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.current_file_path == GuiTestTempPath("cancel_keeps_this.lmc"));
       IM_CHECK_EQ(static_cast<int>(gui::g_pending_action), static_cast<int>(gui::PendingAction::kNone));
 
-      ctx->ItemClick("##TopBar/" ICON_FA_FOLDER_OPEN " Open");
+      ctx->ItemClick("##TopBar/###toolbar_open");
       ctx->Yield(2);
       ctx->ItemClick("Unsaved Changes/Cancel");
       ctx->Yield(2);
@@ -553,7 +553,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       gui::g_state.dirty = true;
       ctx->Yield();
 
-      ctx->ItemClick("##TopBar/" ICON_FA_FILE " New");
+      ctx->ItemClick("##TopBar/###toolbar_new");
       ctx->Yield(2);
       ctx->ItemClick("Unsaved Changes/Don't Save");
       ctx->Yield(2);
@@ -588,7 +588,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       gui::g_state.dirty = true;
       ctx->Yield();
 
-      ctx->ItemClick("##TopBar/" ICON_FA_FILE " New");
+      ctx->ItemClick("##TopBar/###toolbar_new");
       ctx->Yield(2);
       ctx->ItemClick("Unsaved Changes/Save");
       ctx->Yield(2);
@@ -1128,7 +1128,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.sun.altitude, 41.0f);
       IM_CHECK(gui::g_state.current_file_path == lmc_file.path && !gui::g_state.dirty);
       IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
-      ctx->ItemClick("##TopBar/" ICON_FA_FILE " New");
+      ctx->ItemClick("##TopBar/###toolbar_new");
       ctx->Yield(2);
       IM_CHECK(gui::g_state.current_file_path.empty() && !gui::g_state.dirty);
       IM_CHECK_EQ(gui::g_state.sun.altitude, gui::InitDefaultState().sun.altitude);

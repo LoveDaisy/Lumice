@@ -44,7 +44,7 @@ const char* const kRunBtn = "##TopBar/" ICON_FA_PLAY " Run";
 const char* const kStopBtn = "##TopBar/" ICON_FA_STOP " Stop";
 const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
 const char* const kRevertBtn = "##TopBar/Revert";
-const char* const kNewBtn = "##TopBar/" ICON_FA_FILE " New";
+const char* const kNewBtn = "##TopBar/###toolbar_new";
 const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
 
 // A live server for the duration of one case, torn down on EVERY exit path. Held by an object
@@ -337,6 +337,24 @@ void RegisterRunLifecycleTests(ImGuiTestEngine* engine) {
     IM_CHECK(scene.ok());
     SeedInfiniteRun();  // infinite, so the run is still going when Stop is pressed
     ctx->Yield(2);
+    // Archive actual input-driven process frames as well as the chrome suite's fixed-state probes.
+    const auto archive_run_frame = [&](const char* filename) {
+      ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+      g_fullframe_capture.Reset();
+      g_fullframe_capture.requested.store(true);
+      for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK(g_fullframe_capture.done.load());
+      const auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                                g_fullframe_capture.height);
+      const std::string path = GuiTestTempPath(filename).string();
+      IM_CHECK(
+          lumice::test::SavePng(path.c_str(), rgb.data(), g_fullframe_capture.width, g_fullframe_capture.height, 3));
+      ctx->LogInfo("[run process] %s actual=%.0fx%.0f capture=%dx%d intent=%d", filename, ImGui::GetIO().DisplaySize.x,
+                   ImGui::GetIO().DisplaySize.y, g_fullframe_capture.width, g_fullframe_capture.height,
+                   static_cast<int>(gui::g_state.run_intent));
+    };
 
     ctx->ItemClick(kRunBtn);
     ctx->Yield(2);
@@ -344,6 +362,8 @@ void RegisterRunLifecycleTests(ImGuiTestEngine* engine) {
     IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kSimulating; }, 10));
     IM_CHECK(ctx->ItemExists(kStopBtn));
     IM_CHECK(!ctx->ItemExists(kRunBtn));
+    archive_run_frame("toolbar_real_running.png");
+    IM_CHECK(!ctx->IsError());
 
     // Stop is optimistic: the intent leaves kRunning on the click itself, without waiting for the
     // drain. What the click cannot promise is that kStopping is still the value by the time this
@@ -366,6 +386,7 @@ void RegisterRunLifecycleTests(ImGuiTestEngine* engine) {
     IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.run_intent == RunIntent::kStopped; }, 10));
     ctx->Yield(2);
     IM_CHECK(ctx->ItemExists(kRunBtn));  // the slot is offering to run again
+    archive_run_frame("toolbar_real_stopped.png");
   };
 
   // Revert throws away the edits made since the last run and puts the result back on screen (P5).

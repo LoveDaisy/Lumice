@@ -18,6 +18,7 @@
 // collapsed panel they cannot get back, or a log panel that vanishes behind the side panels as soon
 // as they touch anything.
 
+#include <array>
 #include <cfloat>
 #include <chrono>
 #include <cmath>
@@ -32,7 +33,9 @@
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"  // DeserializeFromJson — the panorama case loads a scene like the GUI does
 #include "gui/gui_constants.hpp"
-#include "gui/log_sink.hpp"        // ImGuiLogSink — the panel's second gate
+#include "gui/log_sink.hpp"  // ImGuiLogSink — the panel's second gate
+#include "gui/semantic_colors.hpp"
+#include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"           // UiPx — the rendered gap reads the rule through the one outlet
 #include "gui/toolbar_layout.hpp"  // TopBarGroupGapPt — the fit pin reads the rule's own function
 #include "gui/user_defaults.hpp"   // kFactoryUiScaleMultiplier — the scale leg restores through it
@@ -53,7 +56,7 @@ const char* const kRunBtn = "##TopBar/" ICON_FA_PLAY " Run";
 const char* const kStopBtn = "##TopBar/" ICON_FA_STOP " Stop";
 const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
 const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
-const char* const kSettingsBtn = "##TopBar/" ICON_FA_GEAR;
+const char* const kSettingsBtn = "##TopBar/###toolbar_settings";
 // The workspace switch's two cells — a segmented pair, both drawn every frame. The tint on the
 // current mode's cell is the only mode-dependent part: its click is a no-op, the other's switches.
 const char* const kWorkspaceToAnalyzeBtn = "##TopBar/Analyze";
@@ -68,11 +71,11 @@ const char* const kTopBarButtons[] = {
   "##TopBar/" ICON_FA_CHEVRON_LEFT "##left_panel_toggle",
   kRunBtn,
   kContinueBtn,
-  "##TopBar/" ICON_FA_FILE " New",
-  "##TopBar/" ICON_FA_FOLDER_OPEN " Open",
-  "##TopBar/" ICON_FA_FLOPPY_DISK " Save",
-  "##TopBar/" ICON_FA_PALETTE,
-  "##TopBar/" ICON_FA_FILE_LINES,
+  "##TopBar/###toolbar_new",
+  "##TopBar/###toolbar_open",
+  "##TopBar/###toolbar_save",
+  "##TopBar/###toolbar_colors",
+  "##TopBar/###toolbar_summary",
   kWorkspaceToRenderBtn,
   kWorkspaceToAnalyzeBtn,
   kSettingsBtn,
@@ -166,9 +169,512 @@ float FindTopBarRuleX(ImGuiWindow* bar, float min_x, float max_x, float height) 
   return -1.0f;
 }
 
+using ToolbarFrame = std::array<ImGuiTestItemInfo, kTopBarButtonCount>;
+
+bool ToolbarHasText(ImGuiTestContext* ctx) {
+  return std::strstr(ctx->ItemInfo("##TopBar/###toolbar_new").DebugLabel, " New") != nullptr;
+}
+
+// Independent acceptance: inspect submitted items and their FULL rectangles, not the renderer's
+// width budget. Stable IDs avoid wildcard discovery yielding into a different frame.
+ToolbarFrame ReadToolbarFrame(ImGuiTestContext* ctx, bool text) {
+  ToolbarFrame frame{};
+  ImGuiWindow* bar = ctx->GetWindowByRef("##TopBar");
+  IM_CHECK_RETV(bar != nullptr, frame);
+  for (int i = 0; i < kTopBarButtonCount; ++i) {
+    const auto check_item = [&]() -> bool {
+      const char* ref = i == 1 ? (gui::IsSimulating(gui::g_state.sim_state) ? kStopBtn :
+                                  gui::IsStopping(gui::g_state.sim_state)   ? kStoppingBtn :
+                                                                              kRunBtn) :
+                                 kTopBarButtons[i];
+      frame[i] = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
+      IM_CHECK_RETV(frame[i].ID != 0, false);
+      IM_CHECK_RETV(frame[i].TimestampMain >= ImGui::GetFrameCount() - 1, false);
+      const ImRect& r = frame[i].RectFull;
+      IM_CHECK_RETV(r.Min.x >= bar->InnerClipRect.Min.x - 0.5f && r.Max.x <= bar->InnerClipRect.Max.x + 0.5f, false);
+      IM_CHECK_RETV(r.Min.y >= bar->InnerClipRect.Min.y - 0.5f && r.Max.y <= bar->InnerClipRect.Max.y + 0.5f, false);
+      IM_CHECK_RETV(r.GetWidth() > 0.0f && r.GetHeight() > 0.0f, false);
+      if (i > 0) {
+        IM_CHECK_RETV(r.Min.x >= frame[i - 1].RectFull.Max.x, false);
+      }
+
+      return true;
+    };
+    if (!check_item()) {
+      return frame;
+    }
+  }
+  constexpr int kCommandIndices[] = { 3, 4, 5, 6, 7, 10 };
+  const char* const words[] = { " New", " Open", " Save", " Colors", " Summary", " Settings" };
+  for (int j = 0; j < 6; ++j) {
+    const auto check_item = [&]() -> bool {
+      const auto& item = frame[kCommandIndices[j]];
+      IM_CHECK_RETV((std::strstr(item.DebugLabel, words[j]) != nullptr) == text, false);
+      // All six still have their original icon; the visible prefix ends at the identity suffix.
+      IM_CHECK_RETV(static_cast<unsigned char>(item.DebugLabel[0]) >= 0xe0, false);
+      const float ink = ImGui::CalcTextSize(item.DebugLabel, nullptr, true).x;
+      IM_CHECK_RETV(ink + ImGui::GetStyle().FramePadding.x * 2.0f <= item.RectFull.GetWidth() + 0.5f, false);
+
+      return true;
+    };
+    if (!check_item()) {
+      return frame;
+    }
+  }
+  IM_CHECK_RETV(std::strcmp(frame[8].DebugLabel, "Render") == 0, frame);
+  IM_CHECK_RETV(std::strcmp(frame[9].DebugLabel, "Analyze") == 0, frame);
+  IM_CHECK_RETV(frame[8].RectFull.Max.x == frame[9].RectFull.Min.x, frame);
+  // Settings must clear the whole right status pair, not just the Revert button.
+  const float status_start =
+      frame[11].RectFull.Min.x - ImGui::CalcTextSize(ICON_FA_CIRCLE_EXCLAMATION).x - ImGui::GetStyle().ItemSpacing.x;
+  IM_CHECK_RETV(status_start - frame[10].RectFull.Max.x >= ImGui::GetStyle().ItemSpacing.x - 0.5f, frame);
+  return frame;
+}
+
+void CheckToolbarUnmoved(ImGuiTestContext* ctx, const ToolbarFrame& before, bool text) {
+  const ToolbarFrame after = ReadToolbarFrame(ctx, text);
+  IM_CHECK(!ctx->IsError());
+  // Run's label (and thus ID) can change; every rectangle, including its slot, must not.
+  for (int i = 0; i < kTopBarButtonCount; ++i) {
+    const ImGuiTestItemInfo& item = after[i];
+    if (item.RectFull.Min.x != before[i].RectFull.Min.x || item.RectFull.Max.x != before[i].RectFull.Max.x) {
+      IM_ERRORF("toolbar slot %d moved: [%.1f,%.1f] -> [%.1f,%.1f]", i, before[i].RectFull.Min.x,
+                before[i].RectFull.Max.x, item.RectFull.Min.x, item.RectFull.Max.x);
+      return;
+    }
+  }
+}
+
+bool ToolbarWarningPainted(ImGuiTestContext* ctx) {
+  const auto mode = ctx->ItemInfo(kWorkspaceToRenderBtn);
+  const auto summary = ctx->ItemInfo("##TopBar/###toolbar_summary");
+  const ImU32 warning = ImGui::GetColorU32(gui::WarningTextColor());
+  for (const ImDrawVert& v : mode.Window->DrawList->VtxBuffer) {
+    if (v.col == warning && v.pos.x > summary.RectFull.Max.x && v.pos.x < mode.RectFull.Min.x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool CaptureToolbarEvidence(ImGuiTestContext* ctx, const char* name, bool move_mouse = true) {
+  if (move_mouse) {
+    ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  }
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+  const auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                            g_fullframe_capture.height);
+  const std::string path = GuiTestTempPath(name).string();
+  IM_CHECK_RETV(
+      lumice::test::SavePng(path.c_str(), rgb.data(), g_fullframe_capture.width, g_fullframe_capture.height, 3), false);
+  const auto& io = ImGui::GetIO();
+  ctx->LogInfo(
+      "[toolbar evidence] %s actual=%.0fx%.0f layout_scale=%.2f fb_scale=%.1fx%.1f capture=%dx%d text=%d warning=%d "
+      "mode=%d",
+      name, io.DisplaySize.x, io.DisplaySize.y, gui::CurrentUiScale(), io.DisplayFramebufferScale.x,
+      io.DisplayFramebufferScale.y, g_fullframe_capture.width, g_fullframe_capture.height, ToolbarHasText(ctx),
+      ToolbarWarningPainted(ctx), static_cast<int>(gui::g_state.workspace.mode));
+  return true;
+}
+
+// Discover the first real integer width that renders words, without calling the production budget.
+int FindToolbarTextBoundary(ImGuiTestContext* ctx, float scale) {
+  int lo = static_cast<int>(1024 * scale);
+  int hi = static_cast<int>(1600 * scale);
+  ApplyWindowBasis(ctx, lo, static_cast<int>(640 * scale));
+  IM_CHECK_RETV(!ToolbarHasText(ctx), 0);
+  ApplyWindowBasis(ctx, hi, static_cast<int>(640 * scale));
+  IM_CHECK_RETV(ToolbarHasText(ctx), 0);
+  while (hi - lo > 1 && !ctx->IsError()) {
+    const int mid = (lo + hi) / 2;
+    ApplyWindowBasis(ctx, mid, static_cast<int>(640 * scale));
+    if (ToolbarHasText(ctx)) {
+      hi = mid;
+    } else {
+      lo = mid;
+    }
+  }
+  ctx->LogInfo("[toolbar boundary] scale=%.2f compact=%d text=%d actual=%.0f", scale, lo, hi,
+               ImGui::GetIO().DisplaySize.x);
+  return hi;
+}
+
 }  // namespace
 
 void RegisterShellChromeTests(ImGuiTestEngine* engine) {
+  // The discontinuity is the valuable sample: one pixel below/at the real text boundary,
+  // then first and settled frames of each business-state change. No state sets the label tier.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "adaptive_toolbar_boundary_and_state_slots");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      struct StopLatchRestore {
+        ~StopLatchRestore() { gui::g_stop_inflight.store(false); }
+      } stop_latch_restore;
+      const ScopedWindowBasis basis(ctx);
+      const int boundary = FindToolbarTextBoundary(ctx, 1.0f);
+      IM_CHECK(boundary > 1024 && boundary < 1600);
+      for (const int width : { 1024, 1600, boundary - 1, boundary }) {
+        const auto check_basis = [&]() {
+          ApplyWindowBasis(ctx, width, 640);
+          const bool text = width >= boundary;
+          const ToolbarFrame before = ReadToolbarFrame(ctx, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          gui::ColorClassConfig cls;
+          gui::ColorClassRefConfig ref;
+          ref.layer_idx = 0;
+          ref.crystal_pool_id = gui::g_state.layers[0].entries[0].crystal_id;
+          ref.match_all = true;
+          cls.match.push_back(ref);
+          gui::g_state.raypath_color = { cls };
+          ctx->Yield(1);
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          IM_CHECK(!ToolbarWarningPainted(ctx));
+          if (ctx->IsError()) {
+            return;
+          }
+          if (width == boundary || width == boundary - 1) {
+            CaptureToolbarEvidence(ctx,
+                                   text ? "toolbar_text_warning_before.png" : "toolbar_compact_warning_before.png");
+            if (ctx->IsError()) {
+              return;
+            }
+          }
+          gui::g_state.raypath_color[0].visible = false;
+          ctx->Yield(1);
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          IM_CHECK(ToolbarWarningPainted(ctx));
+          if (ctx->IsError()) {
+            return;
+          }
+          if (width == boundary || width == boundary - 1) {
+            CaptureToolbarEvidence(ctx, text ? "toolbar_text_warning_shown.png" : "toolbar_compact_warning_shown.png");
+            if (ctx->IsError()) {
+              return;
+            }
+          }
+          ctx->Yield(3);
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          gui::g_state.raypath_color[0].visible = true;
+          gui::g_state.last_uploaded_as_composite = true;
+          ctx->Yield(1);
+          IM_CHECK(!ToolbarWarningPainted(ctx));
+          if (ctx->IsError()) {
+            return;
+          }
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          AssertRectContained(ctx, "##TopBar/Colored##CompositePreviewToggle", ctx->GetWindowByRef("##TopBar"));
+          if (ctx->IsError()) {
+            return;
+          }
+          // Fixed state probes cover the otherwise short async Stop label; actual Run/Stop input
+          // is separately driven by run_lifecycle, not claimed by these deterministic frames.
+          gui::g_state.run_intent = gui::RunIntent::kRunning;
+          ctx->Yield(1);
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          gui::g_state.run_intent = gui::RunIntent::kStopping;
+          gui::g_stop_inflight.store(true);
+          ctx->Yield(1);
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          gui::g_stop_inflight.store(false);
+          gui::g_state.run_intent = gui::RunIntent::kLoaded;
+          gui::g_state.dirty = true;
+          ctx->Yield(1);
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          IM_CHECK_EQ(gui::g_state.sim_state, gui::GuiState::SimState::kModified);
+          if (ctx->IsError()) {
+            return;
+          }
+          gui::g_state.dirty = false;
+          gui::g_state.run_intent = gui::RunIntent::kNone;
+          gui::g_state.last_uploaded_as_composite = false;
+          gui::g_state.raypath_color.clear();
+          ctx->Yield(3);
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          IM_CHECK(IsDisabled(ctx->ItemInfo(kRevertBtn)));
+          if (ctx->IsError()) {
+            return;
+          }
+          CaptureToolbarEvidence(ctx, width == 1024 ? "toolbar_compact_render.png" :
+                                      width == 1600 ? "toolbar_text_render.png" :
+                                      text          ? "toolbar_text_warning_cleared.png" :
+                                                      "toolbar_compact_warning_cleared.png");
+          if (ctx->IsError()) {
+            return;
+          }
+        };
+        check_basis();
+        if (ctx->IsError()) {
+          return;
+        }
+      }
+    };
+  }
+
+  // Presentation changes must not change identity, actions or disabled explanations. Native Open
+  // is stopped at the real unsaved prompt; no OS file dialog is automated or bypassed here.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "adaptive_toolbar_actions_and_save_menu_resize");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedWindowBasis basis(ctx);
+      const ScopedPopups popups(ctx);
+      for (const int width : { 1024, 1600 }) {
+        const auto check_basis = [&]() {
+          ApplyWindowBasis(ctx, width, 640);
+          const bool text = width == 1600;
+          const ToolbarFrame before = ReadToolbarFrame(ctx, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          for (const char* ref : { "##TopBar/###toolbar_colors", "##TopBar/###toolbar_summary" }) {
+            const auto check_action = [&]() {
+              const bool colors = std::strstr(ref, "colors") != nullptr;
+              ctx->ItemClick(ref);
+              IM_CHECK(colors ? gui::g_state.color_window_open : gui::g_state.config_summary_window_open);
+              if (ctx->IsError()) {
+                return;
+              }
+              ctx->ItemClick(ref);
+              IM_CHECK(colors ? !gui::g_state.color_window_open : !gui::g_state.config_summary_window_open);
+              if (ctx->IsError()) {
+                return;
+              }
+            };
+            check_action();
+            if (ctx->IsError()) {
+              return;
+            }
+          }
+          if (ctx->IsError()) {
+            return;
+          }
+          ctx->ItemClick(kSettingsBtn);
+          IM_CHECK(gui::g_state.defaults_panel_open);
+          if (ctx->IsError()) {
+            return;
+          }
+          gui::g_state.defaults_panel_open = false;
+          ctx->PopupCloseAll();
+          ctx->Yield(3);
+          const auto intent = gui::g_state.run_intent;
+          const bool dirty = gui::g_state.dirty;
+          ctx->ItemClick(kWorkspaceToRenderBtn);
+          IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kRender);
+          if (ctx->IsError()) {
+            return;
+          }
+          ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+          ctx->ItemClick(kWorkspaceToAnalyzeBtn);
+          IM_CHECK_EQ(gui::g_state.workspace.mode, gui::GuiState::WorkspaceMode::kAnalyze);
+          IM_CHECK_EQ(gui::g_state.run_intent, intent);
+          IM_CHECK_EQ(gui::g_state.dirty, dirty);
+          if (ctx->IsError()) {
+            return;
+          }
+          CaptureToolbarEvidence(ctx, text ? "toolbar_text_analyze.png" : "toolbar_compact_analyze.png");
+          if (ctx->IsError()) {
+            return;
+          }
+          ctx->ItemClick(kWorkspaceToRenderBtn);
+          CheckToolbarUnmoved(ctx, before, text);
+          if (ctx->IsError()) {
+            return;
+          }
+          gui::g_state.run_intent = gui::RunIntent::kRunning;
+          ctx->Yield(2);
+          for (const char* ref : { "##TopBar/###toolbar_new", "##TopBar/###toolbar_open", "##TopBar/###toolbar_save",
+                                   "##TopBar/###toolbar_colors", "##TopBar/###toolbar_summary", kSettingsBtn }) {
+            const auto check_action = [&]() {
+              const bool disabled = std::strstr(ref, "_new") != nullptr || std::strstr(ref, "_open") != nullptr;
+              IM_CHECK_EQ(IsDisabled(ctx->ItemInfo(ref)), disabled);
+              if (ctx->IsError()) {
+                return;
+              }
+              ctx->MouseMove(ref);
+              ctx->Yield(2);
+              bool tooltip = false;
+              for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+                tooltip |= w->Active && std::strstr(w->Name, "##Tooltip") != nullptr;
+              }
+              IM_CHECK(tooltip);
+              if (ctx->IsError()) {
+                return;
+              }
+            };
+            check_action();
+            if (ctx->IsError()) {
+              return;
+            }
+          }
+          if (ctx->IsError()) {
+            return;
+          }
+          CaptureToolbarEvidence(ctx,
+                                 text ? "toolbar_text_disabled_tooltip.png" : "toolbar_compact_disabled_tooltip.png");
+          if (ctx->IsError()) {
+            return;
+          }
+          ctx->ItemClick("##TopBar/###toolbar_save");
+          ctx->SetRef("//$FOCUSED");
+          IM_CHECK(!IsDisabled(ctx->ItemInfo("**/Config JSON...")));
+          if (ctx->IsError()) {
+            return;
+          }
+          const ImGuiID popup = ImGui::GetCurrentContext()->OpenPopupStack.back().PopupId;
+          ApplyWindowBasis(ctx, width == 1024 ? 1600 : 1024, 640);
+          IM_CHECK(!ImGui::GetCurrentContext()->OpenPopupStack.empty());
+          IM_CHECK_EQ(ImGui::GetCurrentContext()->OpenPopupStack.back().PopupId, popup);
+          if (ctx->IsError()) {
+            return;
+          }
+          IM_CHECK(ctx->ItemExists("**/Config JSON..."));
+          if (ctx->IsError()) {
+            return;
+          }
+          ctx->SetRef("");
+          ctx->PopupCloseAll();
+          gui::g_state.run_intent = gui::RunIntent::kNone;
+          ApplyWindowBasis(ctx, width, 640);
+          gui::g_state.dirty = true;
+          ctx->ItemClick("##TopBar/###toolbar_open");
+          IM_CHECK_EQ(gui::g_pending_action, gui::PendingAction::kOpen);
+          if (ctx->IsError()) {
+            return;
+          }
+          ctx->ItemClick("Unsaved Changes/Cancel");
+          gui::g_state.dirty = false;
+          gui::g_state.sun.altitude = 12.0f;
+          ctx->ItemClick("##TopBar/###toolbar_new");
+          IM_CHECK_NE(gui::g_state.sun.altitude, 12.0f);
+          if (ctx->IsError()) {
+            return;
+          }
+        };
+        check_basis();
+        if (ctx->IsError()) {
+          return;
+        }
+      }
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "adaptive_toolbar_live_font_rebuilds");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedWindowBasis basis(ctx);
+      struct ScaleRestore {
+        ImGuiTestContext* ctx;
+        ~ScaleRestore() {
+          gui::g_ui_scale_multiplier = 1.0f;
+          gui::g_ui_scale_dirty = true;
+          for (int i = 0; i < 60 && (gui::g_ui_scale_dirty || std::fabs(gui::CurrentUiScale() - 1.0f) > 0.01f); ++i) {
+            ctx->Yield(1);
+          }
+        }
+      } restore{ ctx };
+      for (float scale : { 1.0f, 1.5f, 1.0f, 0.75f, 1.25f, 2.0f }) {
+        const auto check_basis = [&]() {
+          gui::g_ui_scale_multiplier = scale;
+          gui::g_ui_scale_dirty = true;
+          for (int i = 0; i < 60 && (gui::g_ui_scale_dirty || std::fabs(gui::CurrentUiScale() - scale) > 0.01f); ++i) {
+            ctx->Yield(1);
+          }
+          IM_CHECK_FLOAT_NEAR(gui::CurrentUiScale(), scale, 0.01f);
+          if (ctx->IsError()) {
+            return;
+          }
+          ApplyWindowBasis(ctx, static_cast<int>(1024 * scale), static_cast<int>(640 * scale));
+          ctx->LogInfo("[scale floor] request=%dx%d actual=%.0fx%.0f scale=%.2f", static_cast<int>(1024 * scale),
+                       static_cast<int>(640 * scale), ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y,
+                       scale);
+          ReadToolbarFrame(ctx, false);
+          if (ctx->IsError()) {
+            return;
+          }
+          gui::ColorClassConfig cls;
+          cls.visible = false;
+          gui::ColorClassRefConfig ref;
+          ref.layer_idx = 0;
+          ref.crystal_pool_id = gui::g_state.layers[0].entries[0].crystal_id;
+          ref.match_all = true;
+          cls.match.push_back(ref);
+          gui::g_state.raypath_color = { cls };
+          ctx->Yield(1);
+          ReadToolbarFrame(ctx, false);
+          if (ctx->IsError()) {
+            return;
+          }
+          IM_CHECK(ToolbarWarningPainted(ctx));
+          if (ctx->IsError()) {
+            return;
+          }
+          if (scale == 1.5f) {
+            const int boundary = FindToolbarTextBoundary(ctx, scale);
+            if (ctx->IsError()) {
+              return;
+            }
+            ApplyWindowBasis(ctx, boundary - 1, 960);
+            ReadToolbarFrame(ctx, false);
+            if (ctx->IsError()) {
+              return;
+            }
+            CaptureToolbarEvidence(ctx, "toolbar_150_compact_warning.png");
+            if (ctx->IsError()) {
+              return;
+            }
+            ApplyWindowBasis(ctx, boundary, 960);
+            ReadToolbarFrame(ctx, true);
+            if (ctx->IsError()) {
+              return;
+            }
+            CaptureToolbarEvidence(ctx, "toolbar_150_text_warning.png");
+            if (ctx->IsError()) {
+              return;
+            }
+          }
+          gui::g_state.raypath_color.clear();
+        };
+        check_basis();
+        if (ctx->IsError()) {
+          return;
+        }
+      }
+    };
+  }
+
   // P1 / P13. The collapse toggle and the strip that brings the panel back, as one round trip —
   // half of it is not a feature: a panel that collapses and cannot be restored is a panel the user
   // has lost.
@@ -254,7 +760,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
         }
         // The neighbour is what the user actually notices moving: New, the first control to the
         // right of the execution group (Continue sits between, and is measured with the slot).
-        const ImGuiTestItemInfo neighbour = ctx->ItemInfo("##TopBar/" ICON_FA_FILE, ImGuiTestOpFlags_NoError);
+        const ImGuiTestItemInfo neighbour = ctx->ItemInfo("##TopBar/###toolbar_new", ImGuiTestOpFlags_NoError);
         if (width < 0.0f) {
           width = btn.RectFull.GetWidth();
           right_neighbour_x = neighbour.RectFull.Min.x;
@@ -413,40 +919,8 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // P3c. At the narrowest window the app allows, the whole bar fits: every group from the left
-  // toggle through Settings, then the ⚠ + Revert pair and the right toggle at the right edge, with
-  // at least one item gap between Settings and the pair. The bar has no scrollbar and no overflow
-  // handling — a bar that did not fit would draw Revert over Settings, or push it off the window.
-  //
-  // Measured in its two widest real contents. First the no-warning configuration: with a colour
-  // class present the Colored / Full Spectrum checkbox joins the feature group (showing "Full
-  // Spectrum", the longer label). Then the warning-pip state — the bar's actual widest, not a
-  // priced footnote. It IS reachable in this harness: with no server the signal poll never runs
-  // and the flags resize to matched, so one matched class hidden (visible = false) drives the
-  // empty-composite predicate all by itself and the pip joins the row. An earlier note here
-  // claimed the pip unreachable and priced it by glyph arithmetic; that claim was refuted —
-  // NoVisibleMatchedColorClass also reads effective visibility, and the hidden class needs no
-  // server — so the pip leg below measures the real frame instead: the checkbox disabled (the
-  // one condition that draws the pip), the Analyze cell's displacement, and the required width,
-  // with the same state archived in the capture case's third frame.
-  // The left part is read off the rendered frame (the right edge of Settings), and so is the right
-  // end from Revert through the right toggle, which at any wider window sit flush together. The ⚠
-  // glyph is text, not an item with a rectangle, so its width is the one thing taken from
-  // CalcTextSize.
-  //
-  // Measured at the REAL minimum, not analytically at the test basis: the shared window is
-  // resized to kMinWindowWidth through the main-thread handshake (GLFW is main-thread-only; the
-  // request waits for the reply and the resize is ScopedWindowBasis-guarded, so a red below never
-  // leaks the basis), and the frame's own item gaps are the adaptive rule's minimum — the same
-  // gaps the fit budget must absorb. The wide end is pinned right after: back at the test basis
-  // (= kTopBarGroupGapAnchorWidthPt), the same boundary measures the maximum. The boundary read
-  // is Analyze-cell → Settings, the one separator whose two neighbours are always drawn (every
-  // other boundary has a conditional member on one side).
-  //
-  // Each boundary's gap is split unevenly around its rule (toolbar_layout.hpp: the larger left,
-  // the next group hugging the rule), so the total alone is not the fact — both bases above also
-  // read the rule's own x off the bar's DrawList (the separator has no item ID to query) and pin
-  // each side to the pure split pair's output.
+  // The real minimum frame and the group-rule anchor retain the existing total and asymmetric
+  // side gaps. All transient channel contents share a slot, so the warning changes no neighbour.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "the_top_bar_fits_at_the_minimum_window_width");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -597,16 +1071,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
                      static_cast<double>(right_gap), static_cast<double>(wide_gap), static_cast<double>(spare));
       }
 
-      // The pip state, on the same real floor frame: one matched class hidden (visible = false)
-      // reaches the empty-composite predicate without a server — the signal cache resizes new
-      // entries to "matched" and the predicate's effective-visibility half does the rest — so
-      // the pip joins the feature group and this, not the checkbox alone, is the bar's widest
-      // state. Disabled checkbox and pip share the one composite_empty local in RenderTopBar,
-      // so the disabled state checked below is the frame the pip is drawn in. The pip's width
-      // is then read off that frame as the Analyze cell's displacement (exact equality: the row
-      // grew by one item spacing plus the glyph, nothing else moved), the boundary right of the
-      // pip keeps its split rhythm, and the required width is measured again — the fit fact the
-      // glyph arithmetic once stood in for.
+      // Hidden matched class: the real empty-composite warning path, now inside a reserved slot.
       gui::ColorClassConfig hidden_class;
       hidden_class.visible = false;
       gui::ColorClassRefConfig hidden_ref;
@@ -634,7 +1099,8 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_NE(pip_settings.ID, 0u);
       IM_CHECK(IsDisabled(pip_checkbox));
       const float pip_glyph_w = ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x;
-      IM_CHECK_EQ(pip_analyze.RectFull.Min.x - analyze_cell.RectFull.Min.x, pip_glyph_w + style.ItemSpacing.x);
+      IM_CHECK_EQ(pip_analyze.RectFull.Min.x, analyze_cell.RectFull.Min.x);
+      IM_CHECK(ToolbarWarningPainted(ctx));
       ctx->LogInfo("[pip] glyph=%.1f, analyze cell displaced by %.1f", static_cast<double>(pip_glyph_w),
                    static_cast<double>(pip_analyze.RectFull.Min.x - analyze_cell.RectFull.Min.x));
       {
