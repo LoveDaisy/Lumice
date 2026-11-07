@@ -1684,6 +1684,27 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx);
 // region takes a real click as the sky point while the panorama's ROI state stands untouched.
 // The assertions read the adopted result the picture is drawn from, so the screenshot a human
 // reads and the checks below cannot both be mock.
+// The engine's watchdog measures SIMULATED time (frame_count × the injected dt — the
+// lens-projection and cli-export guards' lesson), and this test legitimately spans more frames
+// than the default 60 simulated seconds: five tiers of real engine recomputes, each answered
+// over real frames. When the default kill fires mid-run it also poisons every later engine call
+// (IsError short-circuits ItemInfo), so each remaining wait spins to its own timeout as a
+// cascade — the widened budget must cover the WHOLE test, and be restored on every early path.
+struct ScopedWatchdogGuard {
+  ImGuiTestEngineIO* engine_io;
+  float saved_warn;
+  float saved_kill;
+  explicit ScopedWatchdogGuard(ImGuiTestEngineIO* io)
+      : engine_io(io), saved_warn(io->ConfigWatchdogWarning), saved_kill(io->ConfigWatchdogKillTest) {
+    engine_io->ConfigWatchdogWarning = 50000.0f;
+    engine_io->ConfigWatchdogKillTest = 100000.0f;
+  }
+  ~ScopedWatchdogGuard() {
+    engine_io->ConfigWatchdogWarning = saved_warn;
+    engine_io->ConfigWatchdogKillTest = saved_kill;
+  }
+};
+
 bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -3031,6 +3052,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
 // the worker costs inside the correctness pool's fixed-dt window (the workspace-switch leg's
 // precedent); the claim is the rekeying, not the physics.
 bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
@@ -3182,6 +3204,7 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
 // the sky-point intent with them, the executor left idle; Revert keeps the adopted outcomes and
 // the intent, re-issuing nothing. The halo scene, fixed-dt pool — same reasons as the rekey leg.
 bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
@@ -3836,26 +3859,6 @@ bool DocumentOpenClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
 // (contained, and its track dragged to the range's far end by the real mouse path — the drag
 // is what proves the track's ends are reachable, an ItemInputValue cannot), and the completed
 // globe's sample controls (contained + Play/Stop real clicks).
-// The engine's watchdog measures SIMULATED time (frame_count × the injected dt — the
-// lens-projection and cli-export guards' lesson), and this test legitimately spans more frames
-// than the default 60 simulated seconds: five tiers of real engine recomputes, each answered
-// over real frames. When the default kill fires mid-run it also poisons every later engine call
-// (IsError short-circuits ItemInfo), so each remaining wait spins to its own timeout as a
-// cascade — the widened budget must cover the WHOLE test, and be restored on every early path.
-struct ScopedWatchdogGuard {
-  ImGuiTestEngineIO* engine_io;
-  float saved_warn;
-  float saved_kill;
-  explicit ScopedWatchdogGuard(ImGuiTestEngineIO* io)
-      : engine_io(io), saved_warn(io->ConfigWatchdogWarning), saved_kill(io->ConfigWatchdogKillTest) {
-    engine_io->ConfigWatchdogWarning = 50000.0f;
-    engine_io->ConfigWatchdogKillTest = 100000.0f;
-  }
-  ~ScopedWatchdogGuard() {
-    engine_io->ConfigWatchdogWarning = saved_warn;
-    engine_io->ConfigWatchdogKillTest = saved_kill;
-  }
-};
 
 bool CurrentTraceIsDrawn() {
   const auto& point = gui::g_state.analysis.point;
@@ -5255,6 +5258,7 @@ bool RaypathViewOpenIsDisplayState(ImGuiTestContext* ctx) {
 // close/reopen keeps it. Real analysis + two selections: the selection-change leg needs a
 // second row.
 bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
@@ -6387,6 +6391,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
 // are open in the same frame, and a real mouse action in each writes its own state — the map
 // pick sets the sky point, the pose D5 drag writes its ratio, the modal's edit writes its field.
 bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
@@ -6747,6 +6752,7 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
 // pins — here the waiting fact is the bar's Stop face and the run's flags, observables that do
 // not depend on winning a race against fixed-dt completion.
 bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   const auto window_active = [](const char* fragment) {
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
@@ -7254,6 +7260,7 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
 // ④ the 150% scale at the narrowest 1024x640 basis keeps both windows structurally present
 //    (the fit promises themselves are the per-window cases'), then the factory state restores.
 bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   const auto window_active = [](const char* fragment) {
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
