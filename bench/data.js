@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794019027618,
+  "lastUpdate": 1794019029992,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "215a850397ac9dd42e2eb7b30ebcb657294c11f2",
-          "message": "Merge pull request #474 from LoveDaisy/chore/release-4.7.2\n\nchore(release): cut 4.7.2",
-          "timestamp": "2026-10-07T18:13:09+08:00",
-          "tree_id": "b9ed9fbd7711749ea472f0e75e9c4ad8a572d253",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/215a850397ac9dd42e2eb7b30ebcb657294c11f2"
-        },
-        "date": 1791368221675,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 87.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e6ca36f9b55e42a684caa58bff4213abf37f4cd0",
           "message": "Merge pull request #475 from LoveDaisy/feat/schema3-measure-layer\n\nfeat(raypath): schema3 measure layer (task-661)",
           "timestamp": "2026-10-08T01:15:42+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b3c067009d90d6d135d8cc1147f1ff371ecac4dd",
+          "message": "Merge pull request #577 from LoveDaisy/feat/raypath-view-camera-unify-design\n\ndocs(gui): define shared camera and explicit map refinement contract",
+          "timestamp": "2026-11-07T10:32:16+08:00",
+          "tree_id": "86cb59a0680c1e62ab39c628b9b72f127da479e9",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/b3c067009d90d6d135d8cc1147f1ff371ecac4dd"
+        },
+        "date": 1794019029319,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 87.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.7,
             "unit": "%"
           }
         ]
