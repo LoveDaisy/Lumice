@@ -2163,10 +2163,11 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK(map != nullptr);
       AssertRectContained(ctx, "**/Fit##map", map);
       AssertRectContained(ctx, "**/Full sky##map", map);
-      gui::g_state.analysis.map_view.radius_deg = 12.0f;
+      gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
+      gui::g_state.renderer.fov = 12.0f;
       ctx->ItemClick("**/Full sky##map");
       ctx->Yield(2);
-      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.map_view.radius_deg, gui::kMapFullSkyRadiusDeg, 0.5f);
+      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeRectangular);
       ctx->SetRef("");
       ctx->ItemInputValue("**/alt°##sky", 15.0f);
       ctx->ItemClick("**/Set sky point###sky_set");
@@ -2294,10 +2295,11 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/reference##map_lambda");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.analysis.map_wavelength_nm, 0.0);
-      gui::g_state.analysis.map_view.radius_deg = 12.0f;
+      gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
+      gui::g_state.renderer.fov = 12.0f;
       ctx->ItemClick("**/Full sky##map");
       ctx->Yield(2);
-      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.map_view.radius_deg, gui::kMapFullSkyRadiusDeg, 0.5f);
+      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeRectangular);
       gui::g_state.analyze_raypath_view_open = false;
       ctx->Yield(2);
     };

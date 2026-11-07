@@ -1,31 +1,11 @@
 #ifndef LUMICE_GUI_ANALYZE_MAP_VIEW_HPP
 #define LUMICE_GUI_ANALYZE_MAP_VIEW_HPP
 
-// The Analyze workspace's raypath reference-map view (742.5): the single-disk equal-area picture
-// of the adopted class map, its pan/zoom/Fit gestures, the sky-point intent and the survey
-// payload overlays. Two halves, the overview's shape:
-//
-//   * The pure half below: the view state and its math — the disk projection (the prototype's
-//     Lambert-azimuthal contract, any centre), the gestures (pan, anchored zoom, Fit, full sky),
-//     the view->window-request derivation, the map-driven Fit, the display normalization and the
-//     cell colour ramp. Every function is frame-free and holds itself to rules without ImGui.
-//   * The pump and the ImGui half (bottom of this header, GuiState forward-declared):
-//     PumpMapQuery — the survey pump's sibling over the map face's key (selection + view +
-//     wavelength) with the settle gate — and RenderAnalyzeMapRegion, the Raypath view window's
-//     left region (RenderAnalyzeRaypathViewWindow is the window; it ran the depth band's map
-//     cell until 755.4 moved it out).
-//
-// Two conventions this file refuses to blur (the M1 probe pinned both ends; see the session
-// struct comments in analyze_survey.hpp):
-//   * POSITION vs TRAVEL. MapViewState::centre_pos and every projection/pick here speak
-//     POSITION (the vector pointing AT the sky point — what a picture projects). Engine fields
-//     (the map request's centre, the sky-point intent's dir) speak TRAVEL (light's propagation =
-//     the negated position, the §12 display rule). The conversions are one-liners and named:
-//     the request builder negates; the pick writes intent.dir = -pos.
-//   * The map's own (delta, azimuth) grid lives in the probe frame the result's Info echoes; this
-//     file derives no second frame — it reads view_incident/e1/e2 and converts through the
-//     header's formula only.
+// Frozen class-map display, immutable quality targets and sky-point intent. The observation
+// camera is exclusively GuiState::renderer; no disk camera or settle-triggered query exists.
+// Raw result frames/columns remain engine-owned under their immutable handles.
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -43,14 +23,8 @@ struct GuiState;  // gui/gui_state.hpp — the pump and the renderer take it; th
 
 // ---- The view's own constants (spelled before the session types that default to them) --------------
 
-// The settle window after the last view change before the pump issues (plan §3.2-4: gestures do
-// not fire; the settle does — a wheel burst is one request, not one per notch).
-inline constexpr double kMapSettleSeconds = 0.3;
-// The zoom floor (the prototype's) and the full-sky radius.
 inline constexpr float kMapMinRadiusDeg = 1.5f;
 inline constexpr float kMapFullSkyRadiusDeg = 180.0f;
-// The wheel's zoom factor per notch (the prototype's).
-inline constexpr float kMapZoomWheelFactor = 1.2f;
 // Every map request samples at this lattice n (the M1 ruling): the interaction tier, sub-second
 // at both the full-sky and the window shapes on the 742.1 envelope. The caliber line echoes the
 // count from the result's Info — the picture never claims a finer sample than it ran.
@@ -73,71 +47,6 @@ struct SkyPointIntent {
   float dir[3] = { 0.0f, 0.0f, 0.0f };
   bool from_map_pick = false;
 };
-
-// The map display's view state: which disk of sky the region shows. Session tier (the tool's own
-// bookkeeping), next to the map query session it drives. The centre is a POSITION vector —
-// display space; the radius is the disk's angular half-size in degrees, full sky at
-// kMapFullSkyRadiusDeg. gesture_active / last_view_change_s are the settle gate's inputs: a
-// gesture frame changes the view but the request fires only after the gesture ends and the view
-// has stood still for kMapSettleSeconds. auto_fit_done is the once-per-selection auto-Fit latch
-// (the default view chain: the first full-sky map fits the picture once, which fires the first
-// refinement request).
-struct MapViewState {
-  float centre_pos[3] = { 0.0f, 0.0f, 1.0f };
-  float radius_deg = kMapFullSkyRadiusDeg;
-  bool gesture_active = false;
-  bool point_dragging = false;  // the press grabbed the sky-point marker, not the view
-  double last_view_change_s = 0.0;
-  bool auto_fit_done = false;
-  // The user has steered this view by hand since the selection (pan, zoom, Fit, full sky): the
-  // default view chain's auto-Fit stands down — the first arrival must not yank a view the
-  // user is already driving.
-  bool user_moved = false;
-};
-
-// ---- Pure view math -------------------------------------------------------------------------------
-
-bool MapViewSettled(double now_s, const MapViewState& view);
-
-// The disk projection: Lambert azimuthal equal-area about the view centre, the prototype's
-// makeView contract — screen up is the world zenith projected orthogonal to the centre (the
-// (−1,0,0) fallback when the centre is the zenith), screen right the cross product, radius
-// rho = 2 sin(theta/2) scaled so the disk's rim is the view radius. Coordinates below are
-// normalized: [0,1]x[0,1] over the disk's bounding square, (0,0) the top-left, y down.
-struct MapDiskProjector {
-  double centre[3];
-  double up[3];
-  double right[3];
-  double radius_rad;  // the view's angular half-size, radians
-};
-
-MapDiskProjector MakeMapDiskProjector(const float centre_pos[3], float radius_deg);
-
-// The sky POSITION `pos` -> normalized disk coordinates. False when it falls outside the view
-// disk (angle from the centre past the view radius).
-bool MapDiskProject(const MapDiskProjector& projector, const double pos[3], double* out_x, double* out_y);
-
-// Normalized disk coordinates -> the sky POSITION under them. False outside the disk (the
-// bounding square's corners).
-bool MapDiskUnproject(const MapDiskProjector& projector, double x, double y, double out_pos[3]);
-
-// Pan: the sky point under the grab follows the cursor (the prototype's drag rule) — the centre
-// moves by the NEGATED delta, in normalized disk coordinates. A pan that would carry the centre
-// off the globe clamps at the antipode of the drag direction's end (the unproject miss writes
-// nothing and the view stands).
-void MapPanViewByDiskCoords(MapViewState* view, double dx, double dy);
-
-// Zoom: the radius scales by `factor` (clamped to [kMapMinRadiusDeg, kMapFullSkyRadiusDeg]) and
-// the centre slerps toward `cursor_pos` (the sky position under the cursor) by exactly the
-// fraction that keeps that point fixed on screen — the prototype's anchored zoom. A cursor at
-// the centre moves nothing but the radius.
-void MapZoomViewAtPoint(MapViewState* view, const double cursor_pos[3], float factor);
-
-// Marks a view change for the settle gate (gesture bookkeeping: the caller stamps its own
-// clock). `user_steered` is the ONE channel a hand-driven change declares itself through — it
-// disarms the default view chain's auto-Fit, so a gesture site that forgets it cannot silently
-// re-arm the yank r2's review caught.
-void MapViewChanged(MapViewState* view, double now_s, bool gesture_active, bool user_steered);
 
 // ---- View -> request derivation --------------------------------------------------------------------
 
@@ -178,7 +87,6 @@ struct MapWindowSpec {
   int rows = 0;
   int cols = 0;
 };
-MapWindowSpec MapWindowSpecForView(const MapViewState& view, double sun_altitude_deg, double sun_azimuth_deg);
 MapWindowSpec MapWindowSpecForTarget(const MapCaptureTarget& target, double sun_altitude_deg, double sun_azimuth_deg);
 
 // The engine request for an outstanding intent (the survey request builder's sibling): the
@@ -217,6 +125,7 @@ MapDisplayNorm MapDisplayNormFor(const LUMICE_PathMapPixels& pixels);
 // map as the honesty rules demand: OK cells ramp dark-to-light, POINT_MASS gets the fixed
 // mass-marker colour, SINGULAR (and any out-of-normalization cell) gets alpha 0 — the picture
 // shows data, never a written zero where nothing was computed.
+std::array<double, 4> MapCellColor(double value, uint8_t status, const MapDisplayNorm& norm);
 uint32_t MapCellColorRgba(double value, uint8_t status, const MapDisplayNorm& norm);
 
 // ---- The caliber composer (pure; the unit layer holds it to the readback) --------------------------
@@ -288,7 +197,10 @@ struct OverlayLegendState {
 // drains the map mailbox through generation/serial/data identity gates. Only a new data
 // identity establishes an all-sky intent; observation never issues a request.
 // Writes only state.analysis's map fields and the executor; no widget, no document field.
-void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s);
+// The GL frame owner supplies preparation explicitly; frame-free consumers leave it unset.
+// Preparation succeeds before a finite slot changes, keeping raw readers and images attached.
+using MapSourcePreparer = bool (*)(const MapHandle&, SurveyQueryId, bool);
+void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s, MapSourcePreparer prepare = nullptr);
 // Explicit quality actions. Refine captures the target once; Retry reuses that exact request.
 bool RefineMap(GuiState& state, SurveyExecutor& executor, const MapCaptureTarget& target, double now_s);
 void RetryMap(GuiState& state, SurveyExecutor& executor, double now_s);
@@ -319,11 +231,6 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state);
 
 // Releases the region's GL texture (the app's teardown, next to the executor's join).
 void ShutdownMapView();
-
-// The pick the unit layer drives without a frame: the sky position under a disk coordinate, or
-// nullopt outside the disk. The renderer's click path goes through this one function — the
-// same conversion the tests pin.
-bool MapPickPositionAtDiskCoords(const MapViewState& view, double x, double y, double out_pos[3]);
 
 }  // namespace lumice::gui
 

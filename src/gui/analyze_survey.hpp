@@ -306,7 +306,7 @@ std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s, co
 // pure. The stage clause only applies when the MAP face itself is computing — while the survey
 // ahead of it runs, another face's stage must not hang on this line (queueing keeps its own
 // text). Same waiting-state precondition as SurveyWaitLineFor. Pure.
-std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s,
+std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, double now_s,
                            const InflightPoll& poll = {});
 
 // The map's refining note — the "old picture anchored on the sky" annotation plus the poll's

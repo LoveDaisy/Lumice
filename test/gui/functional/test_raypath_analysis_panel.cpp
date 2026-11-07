@@ -1717,7 +1717,9 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   // A real map click while the selection's survey still owns the worker. Navigation is
   // available before the queued point has any drawable sample, and must not replace its id.
   ctx->SetRef("//Raypath view");
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(1);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
@@ -1739,9 +1741,8 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   ctx->ItemClick("**/Set sky point###sky_set");
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid && !gui::g_state.analysis.sky_point.from_map_pick, false);
   IM_CHECK_RETV(std::abs(gui::g_state.analysis.sky_point.dir[2] + 0.5f) < 1e-4f, false);
-  // The map answers behind the survey's chromatic legs (one worker, queue by face), then the
-  // default view chain runs: the full-sky map auto-Fits and the refinement window answers —
-  // the test waits for the WINDOW map specifically.
+  // A single reference answers behind the survey. Adoption neither auto-Fits nor issues a
+  // second calculation; explicit quality actions own all subsequent detail requests.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -1752,7 +1753,7 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -1785,7 +1786,9 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   const float roi_dir_before[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
                                     gui::g_state.analysis.cone_center_dir[2] };
   const std::string selected_before = gui::g_state.analysis.selected_entry.value_or("");
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
@@ -1858,11 +1861,10 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(full_sky.RectFull.Max.y <= info->InnerClipRect.Max.y + 0.5f, false);
     ctx->ItemClick("**/Fit##map");
     ctx->Yield(3);
-    ctx->LogInfo("[map view] after the Fit click: radius %.1f centre [%.2f, %.2f, %.2f]",
-                 static_cast<double>(gui::g_state.analysis.map_view.radius_deg),
-                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[0]),
-                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[1]),
-                 static_cast<double>(gui::g_state.analysis.map_view.centre_pos[2]));
+    ctx->LogInfo("[map view] shared camera after Fit: lens %d FOV %.1f el/az %.1f/%.1f",
+                 gui::g_state.renderer.lens_type, static_cast<double>(gui::g_state.renderer.fov),
+                 static_cast<double>(gui::g_state.renderer.elevation),
+                 static_cast<double>(gui::g_state.renderer.azimuth));
   }
 
   // The flip falsifier: a full-sky view puts the sun far off the disk's centre, so the halo
@@ -1871,12 +1873,9 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   // (The view arrives by the same write the Full sky button performs — the gesture click paths
   // are already covered by the pick above; the test engine's hover on this chrome layout is
   // addressed separately.)
-  for (int k = 0; k < 3; ++k) {
-    gui::g_state.analysis.map_view.centre_pos[k] = k == 2 ? 1.0f : 0.0f;
-  }
-  gui::g_state.analysis.map_view.radius_deg = gui::kMapFullSkyRadiusDeg;
-  gui::g_state.analysis.map_view.user_moved = true;
-  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
+  ctx->ItemClick("**/Full sky##map");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.renderer.lens_type == gui::kLensTypeRectangular, false);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -2015,7 +2014,9 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kNoIntent, false);
@@ -2717,7 +2718,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -2731,43 +2732,22 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
     ctx->LogInfo("[v1 chain] map lambda %.1f, kept %lld, window delta[%.1f,%.1f]", info.wavelength_nm, info.kept_count,
                  info.view_delta_min_deg, info.view_delta_max_deg);
   }
-  // One pan, then one zoom-in view change (the gesture writes' shape — the 742.5 leg's
-  // precedent): the map re-asks under the new centre and then the new window, and each
-  // refinement lands while the session stays coherent.
-  gui::g_state.analysis.map_view.centre_pos[0] += 0.1f;  // a pan off the mass centre
-  gui::g_state.analysis.map_view.user_moved = true;
-  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
+  // Pure observation preserves the reference identity; fine quality is an explicit request.
+  const auto reference_id = gui::g_state.analysis.map.adopted_id;
+  gui::g_state.renderer.azimuth += 15.0f;
+  gui::g_state.renderer.fov = 10.0f;
+  ctx->Yield(30);
+  IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == reference_id, false);
+  ctx->ItemClick("**/map_quality");
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
-                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
-                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
-                        return false;
-                      }
-                      LUMICE_PathMapInfo i{};
-                      i.struct_size = sizeof(i);
-                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                      const auto& m = gui::g_state.analysis.map;
+                      return m.detail_result && m.detail_id == m.intent_id;
                     },
                     30),
                 false);
-  gui::g_state.analysis.map_view.radius_deg = 10.0f;
-  gui::g_state.analysis.map_view.user_moved = true;
-  gui::MapViewChanged(&gui::g_state.analysis.map_view, ImGui::GetTime(), false, /*user_steered=*/true);
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
-                      if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
-                        return false;
-                      }
-                      LUMICE_PathMapInfo i{};
-                      i.struct_size = sizeof(i);
-                      return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0 && i.view_delta_max_deg < 12.0;
-                    },
-                    30),
-                false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.adopted_id == reference_id, false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analyze_v1_chain_map.png").string()), false);
 
   // The real pick on the canvas centre: the point intent arms through the real mouse path (the
@@ -2776,7 +2756,9 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
   // named-empty state, not a failure). The document the chain then asserts on is pinned by the
   // anchor write below — the 742.6 leg's verified on-fiber target for this scene's halo fiber,
   // written through the same state the pick path writes ("the same write the button performs").
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
@@ -2944,7 +2926,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -2955,7 +2937,9 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   // concentration band; CLI probe on this exact geometry), written through the same state the
   // pick path writes. Not (-20, 180): that point IS the sun's antipode, where the engine
   // honestly refuses the target (kInvalidTarget) instead of answering.
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(
@@ -3048,7 +3032,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
 // precedent); the claim is the rekeying, not the physics.
 bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
 
@@ -3087,7 +3071,7 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -3139,7 +3123,7 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0 && i.wavelength_nm == 450.0f;
+                             i.view_full_sky == 1 && i.wavelength_nm == 450.0f;
                     },
                     60),
                 false);
@@ -3169,7 +3153,7 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0 && i.wavelength_nm == reference_lambda;
+                             i.view_full_sky == 1 && i.wavelength_nm == reference_lambda;
                     },
                     60),
                 false);
@@ -3199,7 +3183,7 @@ bool AnalyzeFacesRekeyOnRowSwitch(ImGuiTestContext* ctx) {
 // the intent, re-issuing nothing. The halo scene, fixed-dt pool — same reasons as the rekey leg.
 bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
 
@@ -3248,7 +3232,7 @@ bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
 
   // Revert keeps: rebuild the faces, then revert — every adopted outcome and the intent stay,
   // nothing re-issues (the analysis-tired per-reason rules, now across all four faces).
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   SetListRef(ctx);
@@ -4461,15 +4445,18 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     const ImGuiTestItemInfo canvas_e = ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas_e.ID != 0, false);
-    const float radius_before_e = gui::g_state.analysis.map_view.radius_deg;
+    gui::g_state.renderer.lens_type = gui::kLensTypeFisheyeEquidist;
+    gui::g_state.renderer.fov = 80.0f;
+    ctx->Yield(2);
+    const float radius_before_e = gui::g_state.renderer.fov;
     const float scroll_set_e = map_e->Scroll.y;
     ctx->MouseMoveToPos(canvas_e.RectFull.GetCenter());
     ctx->Yield(2);
     ctx->MouseWheelY(1.0f);  // wheel up over the picture: zoom in, nothing scrolls
     ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.analysis.map_view.radius_deg < radius_before_e, false);
+    IM_CHECK_RETV(gui::g_state.renderer.fov < radius_before_e, false);
     IM_CHECK_RETV(map_e->Scroll.y == scroll_set_e, false);
-    const float radius_zoomed_e = gui::g_state.analysis.map_view.radius_deg;
+    const float radius_zoomed_e = gui::g_state.renderer.fov;
     ctx->LogInfo("[scale tiers 1024 clamped] wheel held: radius %.1f -> %.1f, region scroll %.0f held",
                  static_cast<double>(radius_before_e), static_cast<double>(radius_zoomed_e),
                  static_cast<double>(map_e->Scroll.y));
@@ -5383,10 +5370,10 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     const float sm_present = info_leg->ScrollMax.y;
     ctx->LogInfo("[legend] short window, arcs drawn: ScrollMax.y %.1f", static_cast<double>(sm_present));
     IM_CHECK_RETV(sm_present > 0.0f, false);
-    gui::g_state.analysis.map_view.centre_pos[0] = 0.0f;
-    gui::g_state.analysis.map_view.centre_pos[1] = 0.0f;
-    gui::g_state.analysis.map_view.centre_pos[2] = -1.0f;
-    gui::g_state.analysis.map_view.radius_deg = 5.0f;
+    gui::g_state.renderer.lens_type = gui::kLensTypeFisheyeEquidist;
+    gui::g_state.renderer.elevation = -90.0f;
+    gui::g_state.renderer.azimuth = 0.0f;
+    gui::g_state.renderer.fov = 5.0f;
     ctx->Yield(4);
     info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
@@ -5700,7 +5687,9 @@ bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
   ctx->LogInfo("[pose open] typed sky point left the pose window closed");
 
   ctx->SetRef("//Raypath view");
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open && !window_active("Pose & trace"), false);
@@ -6385,7 +6374,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
 // pick sets the sky point, the pose D5 drag writes its ratio, the modal's edit writes its field.
 bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
@@ -6411,7 +6400,9 @@ bool PoseViewJoinsAMultiWindowRealMouseChain(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   ctx->LogInfo("[pose multiwindow] map pick set the sky point with both windows open");
@@ -6837,7 +6828,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
                       LUMICE_PathMapInfo i{};
                       i.struct_size = sizeof(i);
                       return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
-                             i.view_full_sky == 0;
+                             i.view_full_sky == 1;
                     },
                     60),
                 false);
@@ -6920,7 +6911,9 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
+  ctx->KeyDown(ImGuiMod_Alt);
   ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(
@@ -7079,7 +7072,7 @@ static gui::SelectedClassIdentity IdentityFromPayloadEntry(const LUMICE_RaypathH
 // windows standing — the pose window parked lower-left so the main view's right half stays
 // pressable (the multi-window chain's parking shape).
 bool BringUpBothWindows(ImGuiTestContext* ctx) {
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
@@ -7103,9 +7096,7 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
                     ctx,
                     [&map_settle_streak] {
                       const gui::MapQuerySession& map = gui::g_state.analysis.map;
-                      const gui::MapViewState& view = gui::g_state.analysis.map_view;
                       const bool quiet = map.adopted_result != nullptr && map.adopted_id == map.intent_id &&
-                                         view.auto_fit_done && gui::MapViewSettled(ImGui::GetTime(), view) &&
                                          !gui::g_survey_executor.InFlight(gui::QueryFace::kMap);
                       map_settle_streak = quiet ? map_settle_streak + 1 : 0;
                       return map_settle_streak >= 3;
@@ -7776,21 +7767,9 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
-                      // Quiet means the pump has already had its shot and issued whatever the
-                      // view owed: nothing computing or queued on ANY face, AND the map view
-                      // settled with margin. The test coroutine resumes at PostNewFrame — BEFORE
-                      // this frame's pump — so a bare MapViewSettled(ImGui::GetTime(), …) is
-                      // exactly the pump's own crossing condition, and the gate would pass in the
-                      // very frame whose pump then issues the refinement. The pump issues at the
-                      // FIRST frame past kMapSettleSeconds; requiring 2x that here puts the sample
-                      // whole frames past the crossing, so the crossing frame's issue has already
-                      // happened — anything unresolved reads outstanding, and quiet can only be
-                      // the post-issue steady state (no further view change follows: the auto-Fit
-                      // chain is latched and nothing steers the view before the Revert).
-                      return !gui::g_survey_executor.QueryOutstanding() &&
-                             gui::MapViewSettled(ImGui::GetTime(), gui::g_state.analysis.map_view) &&
-                             ImGui::GetTime() - gui::g_state.analysis.map_view.last_view_change_s >=
-                                 2 * gui::kMapSettleSeconds;
+                      // No observation or adoption can owe a hidden refinement. All faces
+                      // quiet plus the following frame drain is the completion boundary.
+                      return !gui::g_survey_executor.QueryOutstanding();
                     },
                     kScopesCompleteBudgetS),
                 false);

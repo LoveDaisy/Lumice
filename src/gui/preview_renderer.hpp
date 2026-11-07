@@ -353,6 +353,10 @@ class PreviewRenderer {
   float bg_aspect_ = 1.0f;
 };
 
+// The inverse/clip/near-far GLSL functions used verbatim by preview and scalar-map programs.
+// Callers declare the existing projection uniforms and PI before inserting this source.
+const char* PreviewProjectionGlsl();
+
 // Build view-to-world 3x3 rotation matrix from camera orientation (degrees).
 // OpenGL column-major layout: out[col*3 + row].
 // Synced with shader u_view_matrix usage (preview_renderer.cpp).

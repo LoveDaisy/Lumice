@@ -10,6 +10,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_renderer.hpp"
 #include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
@@ -575,11 +576,11 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
   }
 }
 
-void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s) {
+void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s, bool prepare_map_sources) {
   // The point face's pumps run in dependency order: the point query first, then the ray trace
   // it feeds (the ray intent reads the adopted point document and the display cursor).
   PumpSurveyQuery(state, executor, now_s);
-  PumpMapQuery(state, executor, now_s);
+  PumpMapQuery(state, executor, now_s, prepare_map_sources ? PrepareFrozenMapSource : nullptr);
   PumpPointQuery(state, executor, now_s);
   PumpRayTrace(state, executor);
 }
@@ -840,7 +841,13 @@ void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_
   } else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && press_owner != Owner::kNone) {
     press_owner = Owner::kCancelled;
   }
-  PumpAnalyzeQueries(g_state, g_survey_executor, ImGui::GetTime());
+  auto& map_owner = g_state.workspace.map_press_owner;
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    map_owner = Owner::kNone;
+  } else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && map_owner != Owner::kNone) {
+    map_owner = Owner::kCancelled;
+  }
+  PumpAnalyzeQueries(g_state, g_survey_executor, ImGui::GetTime(), /*prepare_map_sources=*/true);
 
   // The frame's viewport publications, cleared once at the ONE dispatch point. Both halves of
   // each publication are level-triggered (PreviewViewport in app.hpp), so the frame that does

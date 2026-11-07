@@ -153,31 +153,17 @@ std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s, co
   return line;
 }
 
-std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, bool user_moved, double now_s,
+std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, double now_s,
                            const InflightPoll& poll) {
-  const std::string elapsed = FormatWaitElapsedSuffix(now_s - map.intent_start_s);
-  // The stage clause is face-matched to the map: while the survey ahead of it runs, the clause
-  // is empty and the queue texts stand alone — another face's stage never hangs on this line.
-  const std::string stage = StageClauseFor(poll, QueryFace::kMap);
-  if (survey_outstanding) {
-    // The prediction says only what the standing intent will deliver: a hand on the view has
-    // superseded the default chain's all-sky request with the view you asked for.
-    if (user_moved) {
-      return "Computing the class map in the background — it queues behind this class's survey, whose "
-             "chromatic legs take ~15 s. The map for the view you asked for answers after it." +
-             stage + elapsed;
-    }
-    return "Computing the class map in the background — it queues behind this class's survey, whose "
-           "chromatic legs take ~15 s. What arrives first is the all-sky map; the view refines for you "
-           "after that." +
-           stage + elapsed;
-  }
-  return "Computing the class map in the background (sub-second at the interaction tier)" + stage + "…" + elapsed;
+  std::string line = map.key.radius_deg < 180.0 ? "Computing captured detail map" : "Computing the all-sky map";
+  if (survey_outstanding)
+    line += " — queues behind this class's survey";
+  line += "; camera movement does not refine";
+  return line + StageClauseFor(poll, QueryFace::kMap) + FormatWaitElapsedSuffix(now_s - map.intent_start_s);
 }
 
 std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s, const InflightPoll& poll) {
-  return "Coarse map of the previous view — refining for the current one; the picture is anchored to "
-         "the sky, not upscaled." +
+  return "Frozen sources remain — computing the captured target, not following the camera." +
          StageClauseFor(poll, QueryFace::kMap) + FormatWaitElapsedSuffix(now_s - map.intent_start_s);
 }
 

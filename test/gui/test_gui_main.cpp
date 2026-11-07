@@ -760,6 +760,7 @@ int main(int argc, char** argv) {
   RegisterCaptureHarnessTests(engine);
   RegisterSimE2eSmokeTests(engine);
   RegisterRaypathAnalysisPanelTests(engine);
+  RegisterFrozenMapTests(engine);
   RegisterDefaultsPanelTests(engine);
   RegisterDefaultsPanelLayoutTests(engine);
   RegisterConfigSummaryWindowTests(engine);

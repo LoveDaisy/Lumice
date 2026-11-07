@@ -45,146 +45,17 @@ double AngleBetween(const double a[3], const double b[3]) {
   return std::acos(std::max(-1.0, std::min(1.0, DotOf(a, b))));
 }
 
-// ---- The disk projection (the prototype's contract, held to independent anchors) -------------------
-
-TEST(AnalyzeMapView, ZenithFullSkyProjectsTheSunByTheHandDerivedSpot) {
-  // Zenith-centred full sky: the zenith is the disk centre, and the sun at (alt 20, az 0)
-  // sits 70 degrees out — at rho = sin(35°)/sin(90°) of the half-radius, in the fallback basis's
-  // own screen down-direction (the basis is (−1,0,0) up by the prototype's rule; spelled here,
-  // not read from the implementation).
-  const float centre[3] = { 0.0f, 0.0f, 1.0f };
-  const MapDiskProjector proj = MakeMapDiskProjector(centre, 180.0f);
-  double sun[3];
-  SkyPositionOf(20.0, 0.0, sun);
-  double x = 0.0;
-  double y = 0.0;
-  ASSERT_TRUE(MapDiskProject(proj, sun, &x, &y));
-  const double rho = std::sin(35.0 * kD2R);
-  EXPECT_NEAR(x, 0.5, 1e-12);
-  EXPECT_NEAR(y, 0.5 + 0.5 * rho, 1e-12);
-  // And the zenith itself is the centre.
-  double zenith[3] = { 0.0, 0.0, 1.0 };
-  ASSERT_TRUE(MapDiskProject(proj, zenith, &x, &y));
-  EXPECT_NEAR(x, 0.5, 1e-12);
-  EXPECT_NEAR(y, 0.5, 1e-12);
-}
-
-TEST(AnalyzeMapView, DiskRoundtripsAndRejectsTheCorners) {
-  // The centre here is off the world axis, so the basis is the zenith projection — and the
-  // roundtrip must hold for directions across the view disk.
-  double centre_d[3];
-  SkyPositionOf(40.0, 30.0, centre_d);
-  const float centre[3] = { static_cast<float>(centre_d[0]), static_cast<float>(centre_d[1]),
-                            static_cast<float>(centre_d[2]) };
-  const MapDiskProjector proj = MakeMapDiskProjector(centre, 25.0f);
-  const double kOffsets[][2] = { { 0, 0 },   { 10, 0 },    { 0, 15 }, { -8, 12 },
-                                 { 18, -6 }, { -20, -10 }, { 5, 5 },  { 0, 24.9 } };
-  for (const auto& offset : kOffsets) {
-    // A direction at the given (toward-zenith, toward-east) offsets from the centre, spelled by
-    // the spherical offset formula the prototype's basis induces: the tangent plane steps.
-    double base[3];
-    SkyPositionOf(40.0, 30.0, base);
-    double up[3] = { -base[0] * base[2], -base[1] * base[2], 1.0 - base[2] * base[2] };
-    const double n = std::sqrt(DotOf(up, up));
-    for (int k = 0; k < 3; ++k) {
-      up[k] /= n;
-    }
-    double right[3] = { base[1] * up[2] - base[2] * up[1], base[2] * up[0] - base[0] * up[2],
-                        base[0] * up[1] - base[1] * up[0] };
-    const double a = offset[0] * kD2R;
-    const double b = offset[1] * kD2R;
-    double pos[3];
-    for (int k = 0; k < 3; ++k) {
-      pos[k] = std::cos(a) * (std::cos(b) * base[k] + std::sin(b) * right[k]) + std::sin(a) * up[k];
-    }
-    double x = 0.0;
-    double y = 0.0;
-    if (!MapDiskProject(proj, pos, &x, &y)) {
-      ADD_FAILURE() << "projection refused an in-disk offset " << offset[0] << "," << offset[1];
-      continue;
-    }
-    double back[3];
-    if (!MapDiskUnproject(proj, x, y, back)) {
-      ADD_FAILURE() << "unproject refused its own projection at offset " << offset[0] << "," << offset[1];
-      continue;
-    }
-    // The projector's centre is float-quantized (the view state's own precision), so the
-    // roundtrip carries a ~1e-7 rad ceiling — far under anything a pixel can express.
-    EXPECT_NEAR(AngleBetween(pos, back), 0.0, 1e-6) << "offset " << offset[0] << "," << offset[1];
-    // Past the view radius, the projection refuses.
-    double far_pos[3];
-    for (int k = 0; k < 3; ++k) {
-      far_pos[k] = std::cos(30.0 * kD2R) * base[k] + std::sin(30.0 * kD2R) * up[k];
-    }
-    if (offset[0] == 0 && offset[1] == 0) {
-      double fx = 0.0;
-      double fy = 0.0;
-      EXPECT_FALSE(MapDiskProject(proj, far_pos, &fx, &fy));
-    }
-  }
-  // The bounding square's corners are outside the disk.
-  double out[3];
-  EXPECT_FALSE(MapDiskUnproject(proj, 0.02, 0.02, out));
-  EXPECT_FALSE(MapDiskUnproject(proj, 0.98, 0.98, out));
-}
-
-TEST(AnalyzeMapView, PanMakesTheGrabbedSkyPointFollowTheCursor) {
-  MapViewState view;
-  double centre[3];
-  SkyPositionOf(40.0, 30.0, centre);
-  for (int k = 0; k < 3; ++k) {
-    view.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  view.radius_deg = 25.0f;
-  // A drag to the right by a fifth of the disk: the new centre is the sky point that was LEFT of
-  // the centre by that step (the grab follows the cursor) — spelled through the same unproject.
-  const MapDiskProjector proj = MakeMapDiskProjector(view.centre_pos, view.radius_deg);
-  double expected[3];
-  ASSERT_TRUE(MapDiskUnproject(proj, 0.5 - 0.1, 0.5, expected));
-  MapPanViewByDiskCoords(&view, 0.1, 0.0);
-  double got[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
-  // The expected direction itself came through a float-centred unproject, and the result is
-  // float-stored: a ~1e-4 rad band is what two quantizations actually promise.
-  EXPECT_NEAR(AngleBetween(got, expected), 0.0, 1e-3);
-}
-
-TEST(AnalyzeMapView, ZoomClampsAndAnchorsAtTheCentre) {
-  MapViewState view;
-  double centre[3];
-  SkyPositionOf(10.0, 10.0, centre);
-  for (int k = 0; k < 3; ++k) {
-    view.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  view.radius_deg = 3.0f;
-  // Zoom at the centre moves only the radius.
-  double at_centre[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
-  MapZoomViewAtPoint(&view, at_centre, 1.0f / kMapZoomWheelFactor);
-  EXPECT_NEAR(view.radius_deg, 3.0f / kMapZoomWheelFactor, 1e-5);
-  for (int k = 0; k < 3; ++k) {
-    EXPECT_NEAR(view.centre_pos[k], at_centre[k], 1e-5);
-  }
-  // The radius clamps at both ends.
-  for (int i = 0; i < 40; ++i) {
-    MapZoomViewAtPoint(&view, at_centre, 1.0f / kMapZoomWheelFactor);
-  }
-  EXPECT_EQ(view.radius_deg, kMapMinRadiusDeg);
-  for (int i = 0; i < 40; ++i) {
-    MapZoomViewAtPoint(&view, at_centre, kMapZoomWheelFactor);
-  }
-  EXPECT_EQ(view.radius_deg, kMapFullSkyRadiusDeg);
-}
-
 // ---- The view -> window derivation (the spans derived by hand here) --------------------------------
 
 TEST(AnalyzeMapView, WindowSpecBoundsTheDiskInTheSunFrame) {
-  MapViewState view;
+  MapCaptureTarget view;
   double centre[3];
   SkyPositionOf(40.0, 0.0, centre);  // 20 degrees from the sun (alt 20, az 0)
   for (int k = 0; k < 3; ++k) {
     view.centre_pos[k] = static_cast<float>(centre[k]);
   }
   view.radius_deg = 10.0f;
-  const MapWindowSpec spec = MapWindowSpecForView(view, 20.0, 0.0);
+  const MapWindowSpec spec = MapWindowSpecForTarget(view, 20.0, 0.0);
   EXPECT_FALSE(spec.full_sky);
   EXPECT_NEAR(spec.centre_altitude_deg, 40.0, 1e-5);  // the float-quantized centre
   EXPECT_NEAR(spec.centre_azimuth_deg, 0.0, 1e-5);
@@ -200,18 +71,18 @@ TEST(AnalyzeMapView, WindowSpecBoundsTheDiskInTheSunFrame) {
 }
 
 TEST(AnalyzeMapView, DiskAtAPoleTakesTheFullAzimuthCircle) {
-  MapViewState view;
+  MapCaptureTarget view;
   double centre[3];
   SkyPositionOf(20.0, 0.0, centre);  // the disk of radius 30 contains the sun frame's pole
   for (int k = 0; k < 3; ++k) {
     view.centre_pos[k] = static_cast<float>(centre[k]);
   }
   view.radius_deg = 30.0f;
-  const MapWindowSpec spec = MapWindowSpecForView(view, 20.0, 0.0);
+  const MapWindowSpec spec = MapWindowSpecForTarget(view, 20.0, 0.0);
   EXPECT_NEAR(spec.azimuth_span_deg, 360.0, 1e-9);
   // And a full-sky view stays the engine's named all-sky view with the zero grid.
-  MapViewState full;
-  const MapWindowSpec full_spec = MapWindowSpecForView(full, 20.0, 0.0);
+  MapCaptureTarget full;
+  const MapWindowSpec full_spec = MapWindowSpecForTarget(full, 20.0, 0.0);
   EXPECT_TRUE(full_spec.full_sky);
   EXPECT_EQ(full_spec.rows, 0);
   EXPECT_EQ(full_spec.cols, 0);
@@ -678,7 +549,6 @@ TEST(AnalyzeMapView, ObservationNeverIssuesAndOnlyExplicitRefineCapturesTarget) 
   for (int i = 0; i < 20; ++i) {
     state.renderer.fov = 1.0f + i;
     state.renderer.azimuth = i * 17.0f;
-    state.analysis.map_view.radius_deg = 1.5f + i;
     PumpMapQuery(state, executor, now + 1.0 + i);
   }
   EXPECT_EQ(state.analysis.map.intent_id, full_id);
@@ -839,7 +709,7 @@ TEST(AnalyzeMapView, MapFaceNeverTouchesTheRoiState) {
   ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, true));
   // A map pick (the renderer's write, spelled here): the intent moves, the ROI state does not.
   double pos[3];
-  ASSERT_TRUE(MapPickPositionAtDiskCoords(state.analysis.map_view, 0.5, 0.4, pos));
+  SkyPositionOf(23.0, 37.0, pos);
   state.analysis.sky_point.valid = true;
   state.analysis.sky_point.from_map_pick = true;
   state.analysis.sky_point.dir[0] = static_cast<float>(-pos[0]);
@@ -883,23 +753,24 @@ TEST(AnalyzeMapView, MapWaitLineNamesTheQueueAndCarriesTheElapsed) {
   const double now = 6.5;
   const std::string elapsed = " (1.5 s)";
 
-  const std::string queued_default = MapWaitLineFor(map, /*survey_outstanding=*/true, /*user_moved=*/false, now);
+  const std::string queued_default = MapWaitLineFor(map, /*survey_outstanding=*/true, now);
   EXPECT_NE(queued_default.find("queues behind this class's survey"), std::string::npos);
   EXPECT_NE(queued_default.find("the all-sky map"), std::string::npos);
   EXPECT_EQ(queued_default.substr(queued_default.size() - elapsed.size()), elapsed);
 
-  const std::string queued_moved = MapWaitLineFor(map, true, /*user_moved=*/true, now);
-  EXPECT_NE(queued_moved.find("The map for the view you asked for answers after it"), std::string::npos);
+  map.key.radius_deg = 3.0f;
+  const std::string queued_moved = MapWaitLineFor(map, true, now);
+  EXPECT_NE(queued_moved.find("captured detail map"), std::string::npos);
   EXPECT_EQ(queued_moved.substr(queued_moved.size() - elapsed.size()), elapsed);
 
-  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, /*user_moved=*/false, now);
-  EXPECT_NE(direct.find("sub-second at the interaction tier"), std::string::npos);
+  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, now);
+  EXPECT_NE(direct.find("camera movement does not refine"), std::string::npos);
   EXPECT_EQ(direct.substr(direct.size() - elapsed.size()), elapsed);
 
   // A later frame-time advances the number; a restarted epoch (the rekey rule) rolls it back.
-  EXPECT_NE(MapWaitLineFor(map, true, false, now + 1.0).find(" (2.5 s)"), std::string::npos);
+  EXPECT_NE(MapWaitLineFor(map, true, now + 1.0).find(" (2.5 s)"), std::string::npos);
   map.intent_start_s = 8.0;
-  EXPECT_NE(MapWaitLineFor(map, true, false, now).find(" (0.0 s)"), std::string::npos);
+  EXPECT_NE(MapWaitLineFor(map, true, now).find(" (0.0 s)"), std::string::npos);
 }
 
 // The stage clause on the map line (751): only the MAP face's own computing names a stage —
@@ -916,7 +787,7 @@ TEST(AnalyzeMapView, MapWaitLineCarriesTheStageOnlyForItsOwnFace) {
   survey_running.face = QueryFace::kSurvey;
   survey_running.stage = LUMICE_PATH_POLL_STAGE_CHROMATIC_LEG;
   survey_running.ticks = 3;
-  const std::string queued = MapWaitLineFor(map, true, false, now, survey_running);
+  const std::string queued = MapWaitLineFor(map, true, now, survey_running);
   EXPECT_NE(queued.find("queues behind this class's survey"), std::string::npos);
   EXPECT_EQ(queued.find("running the chromatic pair"), std::string::npos)
       << "another face's stage must not hang on the map's queue line";
@@ -926,8 +797,8 @@ TEST(AnalyzeMapView, MapWaitLineCarriesTheStageOnlyForItsOwnFace) {
   map_running.face = QueryFace::kMap;
   map_running.stage = LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
   map_running.ticks = 9;
-  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, /*user_moved=*/false, now, map_running);
-  EXPECT_NE(direct.find(" — summing the map members… (1.5 s)"), std::string::npos);
+  const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, now, map_running);
+  EXPECT_NE(direct.find(" — summing the map members (1.5 s)"), std::string::npos);
 }
 
 // The refining note carries the stage clause too (751, same mechanism): while the refinement's
@@ -941,7 +812,7 @@ TEST(AnalyzeMapView, MapRefiningNoteCarriesTheStageWhileTheMapComputes) {
   poll.face = QueryFace::kMap;
   poll.stage = LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
   const std::string note = MapRefiningNoteFor(map, 4.0, poll);
-  EXPECT_NE(note.find("refining for the current one"), std::string::npos);
+  EXPECT_NE(note.find("computing the captured target"), std::string::npos);
   EXPECT_NE(note.find("summing the map members"), std::string::npos);
   EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
 }
@@ -953,7 +824,7 @@ TEST(AnalyzeMapView, MapRefiningNoteCarriesTheElapsed) {
   map.intent_valid = true;
   map.intent_start_s = 3.0;
   const std::string note = MapRefiningNoteFor(map, 4.0);
-  EXPECT_NE(note.find("Coarse map of the previous view"), std::string::npos);
+  EXPECT_NE(note.find("Frozen sources remain"), std::string::npos);
   EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
 }
 

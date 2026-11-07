@@ -872,6 +872,9 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   if (state.workspace.panorama_press_owner != PressOwner::kNone) {
     state.workspace.panorama_press_owner = PressOwner::kCancelled;
   }
+  if (state.workspace.map_press_owner != PressOwner::kNone) {
+    state.workspace.map_press_owner = PressOwner::kCancelled;
+  }
 
   // Preview texture / background — as-built subset per reason. `.lmc` variants both call
   // ClearBackground (post-branch shared line in the pre-refactor DoOpen); the DoOpen(.lmc)

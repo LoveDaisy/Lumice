@@ -360,6 +360,9 @@ vec3 sampleDualFisheye(vec3 world_dir) {
   return texture(u_texture, uv).rgb;
 }
 
+)glsl";
+
+static const char* kProjectionShader = R"glsl(
 // ============================ Relative illumination ==========================================
 //
 // The target lens's per-pixel solid angle, normalized to its on-axis value. The CLI bins rays into
@@ -686,6 +689,9 @@ vec4 inverseWorldDir(vec2 pos, float half_fov, out float ri, out vec2 pos_ovl) {
   return result;
 }
 
+)glsl";
+
+static const char* kFragmentAfterProjection = R"glsl(
 // The local gradient of an angle field, clamped as src/util/annotation_line_width.hpp's rule
 // clamps it — the one number the line's width and its edge are both measured in. `fw` is the
 // caller's forward-difference sum against the right/bottom neighbour pixels (NOT the hardware
@@ -1310,8 +1316,9 @@ static unsigned int CompileShader(unsigned int type, const char* source) {
 // The fragment shader from its parts — version, optional define, body; see kFragmentShader.
 static unsigned int CompileFragmentShader(bool globe_back_fade) {
   unsigned int shader = glCreateShader(GL_FRAGMENT_SHADER);
-  const char* parts[3] = { kFragmentShaderVersion, globe_back_fade ? kGlobeBackFadeDefine : "", kFragmentShader };
-  glShaderSource(shader, 3, parts, nullptr);
+  const char* parts[5] = { kFragmentShaderVersion, globe_back_fade ? kGlobeBackFadeDefine : "", kFragmentShader,
+                           kProjectionShader, kFragmentAfterProjection };
+  glShaderSource(shader, 5, parts, nullptr);
   glCompileShader(shader);
   return CheckCompiledShader(shader);
 }
@@ -1686,6 +1693,12 @@ void PreviewRenderer::ClearBackground() {
   bg_width_ = 0;
   bg_height_ = 0;
   bg_aspect_ = 1.0f;
+}
+
+// Shared with the diagnostic scalar-map renderer. The source is inserted verbatim in both
+// programs; the map does not consume illumination, exposure or the simulation texture.
+const char* PreviewProjectionGlsl() {
+  return kProjectionShader;
 }
 
 // Build view-to-world rotation matrix from elevation, azimuth, roll (degrees).
