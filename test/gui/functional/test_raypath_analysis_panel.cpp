@@ -2046,11 +2046,17 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   // document the rest of the chain asserts on — the 742.5 leg's "the same write the button
   // performs" shape): (42, 0) sits on this scene's halo fiber.
   SetSkyPointTarget(42.0, 0.0);
-  IM_CHECK_RETV(
-      DriveUntil(
-          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
-          60),
-      false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const auto& point = gui::g_state.analysis.point;
+                      const auto& intent = gui::g_state.analysis.sky_point;
+                      return gui::PointQueryStateFor(point) == gui::PointQueryState::kCompleted &&
+                             std::equal(point.key.target_dir, point.key.target_dir + 3, intent.dir) &&
+                             point.key.wavelength_nm == gui::g_state.analysis.map_wavelength_nm;
+                    },
+                    60),
+                false);
   const gui::PointQuerySession& point = gui::g_state.analysis.point;
   LUMICE_PathPointInfo info{};
   info.struct_size = sizeof(info);
@@ -3909,7 +3915,7 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   const ScopedUiScaleAndBasisLease geometry_lease(ctx);
   ScopedWatchdogGuard watchdog(ctx->EngineIO);
-  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   const std::string top_display = TopChainDisplay();

@@ -901,6 +901,13 @@ void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vect
 
 namespace {
 
+struct SurveyOverlayCache {
+  std::weak_ptr<const LUMICE_PathSurvey> source;
+  SurveyQueryId id;
+  SurveyOverviewModel model;
+};
+SurveyOverlayCache g_survey_overlay_cache;
+
 void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjection& view, const ImVec2& pic_min,
                         float pic_px, OverlayLegendState* legend) {
   SurveyQuerySession& survey = state.analysis.survey;
@@ -909,7 +916,15 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   }
   // The payloads read through the ONE document->facts mapping (§5.1.8: the overview model is the
   // single organizer; the map overlays consume its object rows and dispersion block verbatim).
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey.adopted_result);
+  auto& cache = g_survey_overlay_cache;
+  if (cache.source.lock() != survey.adopted_result || cache.id != survey.intent_id) {
+    // The document is immutable. Build once per adopted identity, not once per observation.
+    cache = {};
+    cache.model = BuildSurveyOverviewModel(*survey.adopted_result);
+    cache.source = survey.adopted_result;
+    cache.id = survey.intent_id;
+  }
+  const SurveyOverviewModel& model = cache.model;
   // Positional objects: the survey's own located conclusions, drawn where the document puts
   // them — one marker per object, styled by kind and claim state; the frame's hits collect for
   // ONE organized tooltip (every object under the pointer, grouped by the observation key),
@@ -1889,6 +1904,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
 
 void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   PruneFrozenMapDisplay(state.analysis.map);
+  if (g_survey_overlay_cache.source.lock() != state.analysis.survey.adopted_result ||
+      g_survey_overlay_cache.id != state.analysis.survey.intent_id)
+    g_survey_overlay_cache = {};
   if (!state.analyze_raypath_view_open) {
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;
