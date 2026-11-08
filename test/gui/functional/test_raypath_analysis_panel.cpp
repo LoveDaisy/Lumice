@@ -36,6 +36,7 @@
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
 #include "gui/angular_dist_picker.hpp"
+#include "gui/crystal_renderer.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/file_io.hpp"
@@ -50,6 +51,7 @@
 #include "gui/view_look_at.hpp"   // WorldDirToAzEl — the camera-aim inverse the Look At presets run
 #include "imgui_internal.h"
 #include "include/lumice_base.h"
+#include "include/lumice_editor.h"
 #include "include/lumice_engine.h"
 #include "include/lumice_render.h"
 #include "support/gui_server_lifetime.hpp"
@@ -2964,8 +2966,9 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
 // entry, three internal, exit), read back through the C readers, not a screenshot's looks.
 // Real-timing pool: the class survey's chromatic legs queue the map and the point on the one
 // worker, the standing shape.
-// Inspect the actual canvas primitives, not a second projection of the input points. This
-// region's draw list owns only the canvas; its legend is in the separate report child.
+// Inspect actual overlay primitives, never a second projection of the contact input. The GL
+// mesh is no longer in this draw list: its oracle below uses the frozen C mesh and submitted MVP.
+// The legend stays in the separate report child.
 std::vector<ImVec2> TraceCanvasVertices(ImU32 color) {
   std::vector<ImVec2> points;
   if (const ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D")) {
@@ -3011,9 +3014,136 @@ std::vector<ImVec2> TraceMeshSilhouette(std::vector<ImVec2> points) {
   return hull;
 }
 
+ImVec2 TraceOracleProject(const gui::Ray3DFrameInfo& frame, const float display[3]) {
+  double scene[3];
+  for (int k = 0; k < 3; ++k) {
+    scene[k] = (static_cast<double>(display[k]) - frame.centre[k]) / frame.fit;
+  }
+  double clip[4];
+  for (int row = 0; row < 4; ++row) {
+    clip[row] = frame.mvp[12 + row];
+    for (int k = 0; k < 3; ++k) {
+      clip[row] += frame.mvp[k * 4 + row] * scene[k];
+    }
+  }
+  return ImVec2(frame.canvas_min.x + static_cast<float>((clip[0] / clip[3] + 1.0) * 0.5) * frame.canvas_size.x,
+                frame.canvas_min.y + static_cast<float>((1.0 - clip[1] / clip[3]) * 0.5) * frame.canvas_size.y);
+}
+
+bool TraceTextureQuadPresent(ImGuiTestContext* ctx) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount() && frame.texture_id != 0, false);
+  const ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const bool has_quad =
+      std::any_of(region->DrawList->CmdBuffer.begin(), region->DrawList->CmdBuffer.end(), [&](const ImDrawCmd& cmd) {
+        return cmd.GetTexID() == static_cast<ImTextureID>(frame.texture_id) && cmd.ElemCount >= 6;
+      });
+  IM_CHECK_RETV(has_quad, false);
+  return true;
+}
+
+bool TraceOracleMesh(ImGuiTestContext* ctx, LUMICE_CrystalMesh* mesh, std::vector<ImVec2>* pixels) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+  const auto* crystal = gui::FrozenCrystalForPool(gui::g_state, frame.pool);
+  IM_CHECK_RETV(crystal != nullptr, false);
+  // Independent reader path: nominal shape, no preview normalization or Y/Z swap. Display
+  // rotation is the public row-major body->world convention, not the app's mesh-upload helper.
+  const auto nominal = [](const gui::ShapeDist& d) {
+    return LUMICE_Distribution{ static_cast<int>(d.type), d.center, 0.0f };
+  };
+  LUMICE_CrystalParam param{};
+  param.type = crystal->type == gui::CrystalType::kPrism ? 0 : 1;
+  param.height = nominal(crystal->height);
+  param.prism_h = nominal(crystal->prism_h);
+  param.upper_h = nominal(crystal->upper_h);
+  param.lower_h = nominal(crystal->lower_h);
+  param.upper_wedge_angle = crystal->upper_alpha;
+  param.lower_wedge_angle = crystal->lower_alpha;
+  for (int i = 0; i < 6; ++i) {
+    param.face_distance[i] = nominal(crystal->face_distance[i]);
+  }
+  gui::FillSyncGroupArray(*crystal, param.sync_group);
+  IM_CHECK_RETV(LUMICE_GetCrystalMesh(&param, 0, mesh) == LUMICE_OK && mesh->vertex_count > 0, false);
+  pixels->clear();
+  for (int v = 0; v < mesh->vertex_count; ++v) {
+    const float* body = &mesh->vertices[v * 3];
+    float display[3];
+    for (int row = 0; row < 3; ++row) {
+      display[row] = frame.crystal_frame ?
+                         body[row] :
+                         static_cast<float>(frame.pose[row * 3] * body[0] + frame.pose[row * 3 + 1] * body[1] +
+                                            frame.pose[row * 3 + 2] * body[2]);
+    }
+    pixels->push_back(TraceOracleProject(frame, display));
+  }
+  return true;
+}
+
+bool TraceProjectionHasOrbitHandedness(ImGuiTestContext* ctx) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  const auto& orbit = gui::g_state.analysis.point_view;
+  double fwd[3], right[3], up[3];
+  gui::OrbitBasis(orbit.orbit_yaw_deg, orbit.orbit_pitch_deg, fwd, right, up);
+  const auto project_basis = [&](double x, double y, double z) {
+    float display[3];
+    for (int k = 0; k < 3; ++k) {
+      display[k] = frame.centre[k] + frame.fit * static_cast<float>(x * right[k] + y * up[k] - z * fwd[k]);
+    }
+    return TraceOracleProject(frame, display);
+  };
+  const ImVec2 origin = project_basis(0, 0, 0);
+  const ImVec2 r = project_basis(0.2, 0, 0);
+  const ImVec2 u = project_basis(0, 0.2, 0);
+  IM_CHECK_RETV(r.x > origin.x && std::abs(r.y - origin.y) < 0.01f, false);
+  IM_CHECK_RETV(u.y < origin.y && std::abs(u.x - origin.x) < 0.01f, false);
+  const ImVec2 near = project_basis(0.2, 0, 0.5);
+  const ImVec2 far = project_basis(0.2, 0, -0.5);
+  IM_CHECK_RETV(near.x - origin.x > far.x - origin.x, false);
+  ctx->LogInfo("[trace projection] right -> +x, up -> -y, -fwd -> nearer/larger");
+  return true;
+}
+
+bool TraceMeshHasVisiblePerspective(ImGuiTestContext* ctx) {
+  LUMICE_CrystalMesh mesh{};
+  std::vector<ImVec2> pixels;
+  IM_CHECK_RETV(TraceOracleMesh(ctx, &mesh, &pixels), false);
+  // On the symmetric prism fixture, centrally opposite edges have identical physical length
+  // and orthographic projected length. Perspective alone makes their screen lengths differ.
+  double max_ratio = 1.0;
+  for (int e = 0; e < mesh.edge_count; ++e) {
+    const int a = mesh.edges[e * 2], b = mesh.edges[e * 2 + 1];
+    for (int other = e + 1; other < mesh.edge_count; ++other) {
+      const int c = mesh.edges[other * 2], d = mesh.edges[other * 2 + 1];
+      const auto opposite = [&](int i, int j) {
+        double sum = 0, norm = 0;
+        for (int k = 0; k < 3; ++k) {
+          sum += std::pow(mesh.vertices[i * 3 + k] + mesh.vertices[j * 3 + k], 2);
+          norm += std::pow(mesh.vertices[i * 3 + k], 2);
+        }
+        return sum <= norm * 1e-8;
+      };
+      if (!((opposite(a, c) && opposite(b, d)) || (opposite(a, d) && opposite(b, c)))) {
+        continue;
+      }
+      const double l0 = std::hypot(pixels[a].x - pixels[b].x, pixels[a].y - pixels[b].y);
+      const double l1 = std::hypot(pixels[c].x - pixels[d].x, pixels[c].y - pixels[d].y);
+      if (std::min(l0, l1) > gui::UiPx(5.0f)) {
+        max_ratio = std::max(max_ratio, std::max(l0, l1) / std::min(l0, l1));
+      }
+    }
+  }
+  ctx->LogInfo("[trace perspective] opposite-edge screen-length ratio=%.4f (minimum 1.05)", max_ratio);
+  IM_CHECK_RETV(max_ratio >= 1.05, false);
+  return true;
+}
+
 bool TraceContactsInsideMeshSilhouette(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(PoseRegionWindow("##AnalyzeRaypath3D") != nullptr, false);
-  const auto mesh = TraceCanvasVertices(gui::kRayTraceMeshColor);
+  LUMICE_CrystalMesh raw_mesh{};
+  std::vector<ImVec2> mesh;
+  IM_CHECK_RETV(TraceOracleMesh(ctx, &raw_mesh, &mesh), false);
   const auto contacts = TraceCanvasVertices(gui::kRayTraceContactColor);
   IM_CHECK_RETV(!mesh.empty(), false);
   IM_CHECK_RETV(!contacts.empty(), false);
@@ -3133,7 +3263,7 @@ bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedC
   IM_CHECK_RETV(gui::RayTraceDisplayStateFor(gui::g_state.analysis.trace, restore.trace.key) ==
                     gui::RayTraceDisplayState::kRefused,
                 false);
-  IM_CHECK_RETV(!TraceCanvasVertices(gui::kRayTraceMeshColor).empty(), false);
+  IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
   IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceContactColor).empty(), false);
   const bool has_segments = std::any_of(std::begin(gui::kRayTraceSegmentColors), std::end(gui::kRayTraceSegmentColors),
                                         [](ImU32 color) { return !TraceCanvasVertices(color).empty(); });
@@ -3281,7 +3411,31 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   ctx->Yield(1);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_v1_c03_trace.png").string()), false);
   IM_CHECK_RETV(TraceContactsInsideMeshSilhouette(ctx), false);
+  IM_CHECK_RETV(TraceProjectionHasOrbitHandedness(ctx), false);
+  IM_CHECK_RETV(TraceMeshHasVisiblePerspective(ctx), false);
   IM_CHECK_RETV(TraceLegendSwatchesAvoidText(ctx), false);
+  gui::g_state.analysis.point_view.crystal_frame = true;
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceContactsInsideMeshSilhouette(ctx), false);
+  IM_CHECK_RETV(TraceProjectionHasOrbitHandedness(ctx), false);
+  IM_CHECK_RETV(TraceMeshHasVisiblePerspective(ctx), false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_crystal.png").string()), false);
+  // The wheel's full supported range stays outside the normalized content sphere. Exercise
+  // its rendered endpoints as well, preserving the existing input-state orbit pins verbatim.
+  gui::g_state.analysis.point_view.orbit_zoom = 0.25f;
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+  IM_CHECK_RETV(TraceProjectionHasOrbitHandedness(ctx), false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_zoom_min.png").string()),
+                false);
+  gui::g_state.analysis.point_view.orbit_zoom = 8.0f;
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+  IM_CHECK_RETV(TraceProjectionHasOrbitHandedness(ctx), false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_zoom_max.png").string()),
+                false);
+  gui::g_state.analysis.point_view.orbit_zoom = 1.0f;
+  ctx->Yield(2);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
   IM_CHECK_RETV(RefusedTraceKeepsCrystalVisible(ctx, *identity), false);
   return true;

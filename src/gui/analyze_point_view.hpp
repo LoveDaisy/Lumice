@@ -255,7 +255,6 @@ uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid);
 // ---- The representative-ray display -----------------------------------------------------------------
 
 // Canvas and legend share the segment palette; frame tests inspect the submitted draw primitives.
-inline constexpr ImU32 kRayTraceMeshColor = IM_COL32(105, 110, 120, 120);
 inline constexpr ImU32 kRayTraceContactColor = IM_COL32(240, 240, 240, 190);
 inline constexpr ImU32 kRayTraceSegmentColors[] = { IM_COL32(90, 160, 255, 255), IM_COL32(255, 165, 60, 255),
                                                     IM_COL32(90, 220, 120, 255) };
@@ -290,7 +289,7 @@ RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const
 
 // ---- The raypath 3D orbit camera ---------------------------------------------------------------------
 
-// The 3D region's orthographic orbit basis in the display frame, z-up (the crystal's c-axis
+// The 3D region's orbit basis in the display frame, z-up (the crystal's c-axis
 // display convention): `yaw_deg` sweeps the horizontal plane from +x toward +y, `pitch_deg`
 // rises from that plane toward +z (clamped to ±88°, short of the pole). `fwd` is the view
 // direction, from the viewer INTO the scene — the eye and the visible near face sit on the
@@ -301,6 +300,23 @@ RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const
 // the SAME basis the renderer draws with (the convention's single authority; the test never
 // re-derives it).
 void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]);
+
+// The last submitted GL canvas frame, invalidated on every region submission before any early
+// return. Tests independently project the frozen C-API mesh using these exact render parameters.
+struct Ray3DFrameInfo {
+  float mvp[16] = {};
+  ImVec2 canvas_min;
+  ImVec2 canvas_size;
+  float centre[3] = {};
+  float fit = 1.0f;
+  double pose[9] = {};
+  int pool = -1;
+  int frame_count = -1;
+  uintptr_t texture_id = 0;
+  bool crystal_frame = false;
+  bool valid = false;
+};
+const Ray3DFrameInfo& LastRay3DFrameInfo();
 
 // ---- The pumps and renderers (GuiState-dependent, defined in the .cpp) ------------------------------
 
@@ -329,7 +345,7 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
 void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size);
 
 // The raypath 3D region — the ##AnalyzeRaypath3D placeholder's replacement: the crystal's
-// true-scale wireframe (nominal shape — the analysis geometry's own口径) + the current sample's
+// true-scale crystal rendered with the shared perspective/x-ray renderer + the current sample's
 // trace polyline, the world/crystal frame switch, the orbit camera, and the named
 // computing/refused/empty states.
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size);

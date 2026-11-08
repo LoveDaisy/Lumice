@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <optional>
+#include <tuple>
 #include <utility>
 
 #include "app.hpp"                       // g_survey_executor — the cancel button reaches the one executor
@@ -15,6 +17,7 @@
 #include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
 #include "gui/canvas_report_layout.hpp"
 #include "gui/crystal_preview.hpp"  // CrystalParamHash — the mesh cache's change key
+#include "gui/crystal_renderer.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state.hpp"
@@ -877,6 +880,40 @@ CachedCrystalMesh& PointMeshCache() {
   return cache;
 }
 
+// Uploaded geometry is a pure function of the complete display state: frozen config hash,
+// pool, pose[9], crystal_frame, centre[3], fit. In particular centre/fit can stay unchanged
+// while a symmetric crystal rotates, so neither pose nor frame may be omitted from the key.
+using PointMeshUploadKey = std::tuple<int, int, std::array<double, 9>, bool, std::array<float, 3>, float>;
+struct PointCrystalRenderer {
+  CrystalRenderer renderer;
+  std::optional<PointMeshUploadKey> uploaded;
+  bool ready = false;
+};
+
+PointCrystalRenderer& PointRenderer() {
+  static PointCrystalRenderer renderer;
+  return renderer;
+}
+
+Ray3DFrameInfo g_ray3d_frame;
+
+std::array<float, 3> ToRay3DScene(const float display[3], const Ray3DFrameInfo& frame) {
+  return { (display[0] - frame.centre[0]) / frame.fit, (display[1] - frame.centre[1]) / frame.fit,
+           (display[2] - frame.centre[2]) / frame.fit };
+}
+
+ImVec2 ProjectSceneToPixel(const float display[3], const Ray3DFrameInfo& frame) {
+  const auto p = ToRay3DScene(display, frame);
+  const float* m = frame.mvp;
+  const float w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
+  // All content is inside the unit bounding sphere; the nearest allowed eye distance is
+  // 2.4 / 8 / tan(15deg) > 1. Thus every submitted point has positive perspective w.
+  const float x = (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]) / w;
+  const float y = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / w;
+  return ImVec2(frame.canvas_min.x + (x + 1.0f) * 0.5f * frame.canvas_size.x,
+                frame.canvas_min.y + (1.0f - y) * 0.5f * frame.canvas_size.y);
+}
+
 // The crystal param in the analysis geometry's OWN caliber (scene_to_analytic's Nominal rule):
 // every shape distribution flattened to its centre — the mesh on show is the mesh the queries ran
 // against, not a fresh sample of the document's randomized shape.
@@ -917,7 +954,11 @@ ImU32 SegmentColor(int kind, float alpha) {
 
 }  // namespace
 
-// The 3D view's orthographic orbit basis in the display frame (declared in the hpp for the
+const Ray3DFrameInfo& LastRay3DFrameInfo() {
+  return g_ray3d_frame;
+}
+
+// The 3D view's orbit basis in the display frame (declared in the hpp for the
 // gui_test pin to consume the same basis the renderer draws with; the convention is doc'd in
 // doc/geometry/coordinate-convention.md §9.8).
 void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]) {
@@ -1298,6 +1339,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 // ---- The raypath 3D view -----------------------------------------------------------------------------
 
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
+  g_ray3d_frame.valid = false;
   // The canvas and frame controls never scroll with result prose. The report scrolls
   // natively; only the actual canvas registers the orbit wheel claim.
   ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
@@ -1557,7 +1599,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     const ImVec2 avail = canvas_size;
     const ImVec2 canvas_min = graph_min;
     const float canvas_h = canvas_size.y;
-    if (canvas_h > 0.0f) {
+    if (canvas_h > 0.0f && avail.x > 0.0f) {
       const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
       const bool active = graph_active;
       // Consume only the standing canvas claim; the report retains native wheel scrolling.
@@ -1575,32 +1617,82 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
             std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
       }
 
-      ImDrawList* dl = graph_draw_list;
-      dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
-      const float side = std::min(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y);
-      const float scale = (side * 0.42f / fit) * std::clamp(view.orbit_zoom, 0.25f, 8.0f);
-      const ImVec2 mid((canvas_min.x + canvas_max.x) * 0.5f, (canvas_min.y + canvas_max.y) * 0.5f);
+      PointCrystalRenderer& gl = PointRenderer();
+      const ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+      const float pixel_w = std::max(1.0f, canvas_size.x * fb_scale.x);
+      const float pixel_h = std::max(1.0f, canvas_size.y * fb_scale.y);
+      const float downscale = std::min(1.0f, 1024.0f / std::max(pixel_w, pixel_h));
+      const int width = std::max(1, static_cast<int>(std::lround(pixel_w * downscale)));
+      const int height = std::max(1, static_cast<int>(std::lround(pixel_h * downscale)));
+      if (!gl.ready || gl.renderer.Width() != width || gl.renderer.Height() != height) {
+        gl.renderer.Destroy();
+        gl.uploaded.reset();
+        gl.ready = gl.renderer.Init(width, height);
+      }
+      if (!gl.ready) {
+        DisabledWrappedText("The crystal renderer could not initialize — no 3D canvas available.");
+        return;
+      }
+
+      Ray3DFrameInfo& rendered = g_ray3d_frame;
+      rendered.canvas_min = canvas_min;
+      rendered.canvas_size = canvas_size;
+      std::copy_n(centre, 3, rendered.centre);
+      rendered.fit = fit;
+      std::copy_n(pose, 9, rendered.pose);
+      rendered.pool = pool;
+      rendered.crystal_frame = view.crystal_frame;
+      rendered.frame_count = ImGui::GetFrameCount();
+      rendered.texture_id = gl.renderer.GetTextureId();
+      std::array<double, 9> pose_key;
+      std::copy_n(pose, 9, pose_key.begin());
+      const PointMeshUploadKey upload_key{
+        pool, hash, pose_key, view.crystal_frame, { centre[0], centre[1], centre[2] }, fit
+      };
+      if (!gl.uploaded.has_value() || *gl.uploaded != upload_key) {
+        LUMICE_CrystalMesh display_mesh = cache.mesh;
+        for (int v = 0; v < display_mesh.vertex_count; ++v) {
+          float display[3];
+          to_display(&cache.mesh.vertices[v * 3], display);
+          const auto scene = ToRay3DScene(display, rendered);
+          std::copy(scene.begin(), scene.end(), &display_mesh.vertices[v * 3]);
+        }
+        // A normal follows the display rotation, but never the centring or uniform scale.
+        for (int n = 0; n < display_mesh.edge_count * 2; ++n) {
+          to_display(&cache.mesh.edge_face_normals[n * 3], &display_mesh.edge_face_normals[n * 3]);
+        }
+        gl.renderer.UpdateMesh(display_mesh.vertices, display_mesh.vertex_count, display_mesh.edges,
+                               display_mesh.edge_count, display_mesh.triangles, display_mesh.triangle_count,
+                               display_mesh.edge_face_normals);
+        gl.uploaded = upload_key;
+      }
       double fwd[3];
       double right[3];
       double up[3];
       OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
-      auto project = [&](const float p[3]) {
-        const double dx = static_cast<double>(p[0]) - centre[0];
-        const double dy = static_cast<double>(p[1]) - centre[1];
-        const double dz = static_cast<double>(p[2]) - centre[2];
-        const double sx = dx * right[0] + dy * right[1] + dz * right[2];
-        const double sy = dx * up[0] + dy * up[1] + dz * up[2];
-        return ImVec2(static_cast<float>(mid.x + sx * scale), static_cast<float>(mid.y - sy * scale));
-      };
-
-      // The mesh wireframe (dim), then the trace (full alpha on top).
-      for (int e = 0; e < cache.mesh.edge_count; ++e) {
-        float a[3];
-        float b[3];
-        to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2] * 3], a);
-        to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2 + 1] * 3], b);
-        dl->AddLine(project(a), project(b), kRayTraceMeshColor, 1.0f);
+      float view_rotation[16] = {};
+      for (int k = 0; k < 3; ++k) {
+        view_rotation[k * 4] = static_cast<float>(right[k]);
+        view_rotation[k * 4 + 1] = static_cast<float>(up[k]);
+        view_rotation[k * 4 + 2] = static_cast<float>(-fwd[k]);
       }
+      view_rotation[15] = 1.0f;
+      constexpr float kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+      // The mesh and overlay are now in a unit bounding sphere. Zoom is its focal-plane
+      // half-height; compensate portrait aspect to preserve the old short-side fit.
+      const float zoom =
+          2.4f * std::max(1.0f, static_cast<float>(height) / width) / std::clamp(view.orbit_zoom, 0.25f, 8.0f);
+      gl.renderer.Render(kIdentity, zoom, CrystalStyle::kXRay, view_rotation);
+      // Use the ACTUAL integer FBO dimensions on both sides. Its aspect only differs from the
+      // logical canvas by pixel quantization; both texture and overlay undergo the same stretch.
+      CrystalRenderer::ComputeMvp(kIdentity, zoom, width, height, rendered.mvp, view_rotation);
+      rendered.valid = true;
+      ImDrawList* dl = graph_draw_list;
+      dl->PushClipRect(canvas_min, canvas_max, true);
+      // AddImage is the Image quad without a second layout item: the existing InvisibleButton
+      // remains the sole canvas interaction target, at its existing ##r3d_canvas identity.
+      dl->AddImage(static_cast<ImTextureID>(rendered.texture_id), canvas_min, canvas_max, ImVec2(0, 1), ImVec2(1, 0));
+      const auto project = [&](const float p[3]) { return ProjectSceneToPixel(p, rendered); };
       for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
         const float* p0 = &line.points[s * 6];
         const float* p1 = p0 + 3;
@@ -1631,6 +1723,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                                mesh_centre[2] + u[2] * fit * 0.6f };
         dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
       }
+      dl->PopClipRect();
     }
     // The current pose's crystal remains visible even when its trace has no drawable path.
     switch (display_state) {
