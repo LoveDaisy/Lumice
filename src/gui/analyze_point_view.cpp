@@ -1617,119 +1617,128 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
             std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
       }
 
-      PointCrystalRenderer& gl = PointRenderer();
-      const ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
-      const float pixel_w = std::max(1.0f, canvas_size.x * fb_scale.x);
-      const float pixel_h = std::max(1.0f, canvas_size.y * fb_scale.y);
-      const float downscale = std::min(1.0f, 1024.0f / std::max(pixel_w, pixel_h));
-      const int width = std::max(1, static_cast<int>(std::lround(pixel_w * downscale)));
-      const int height = std::max(1, static_cast<int>(std::lround(pixel_h * downscale)));
-      if (!gl.ready || gl.renderer.Width() != width || gl.renderer.Height() != height) {
-        gl.renderer.Destroy();
-        gl.uploaded.reset();
-        gl.ready = gl.renderer.Init(width, height);
-      }
-      if (!gl.ready) {
-        DisabledWrappedText("The crystal renderer could not initialize — no 3D canvas available.");
-        return;
-      }
+      // Canvas failures must not suppress the independent status/legend report below.
+      const auto render_canvas = [&] {
+        PointCrystalRenderer& gl = PointRenderer();
+        const ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+        const float pixel_w = std::max(1.0f, canvas_size.x * fb_scale.x);
+        const float pixel_h = std::max(1.0f, canvas_size.y * fb_scale.y);
+        const float downscale = std::min(1.0f, 1024.0f / std::max(pixel_w, pixel_h));
+        const int width = std::max(1, static_cast<int>(std::lround(pixel_w * downscale)));
+        const int height = std::max(1, static_cast<int>(std::lround(pixel_h * downscale)));
+        // Init records its dimensions even on failure. Retry only on a size change, rather
+        // than compiling shaders and allocating partial FBOs again on every failed frame.
+        if (gl.renderer.Width() != width || gl.renderer.Height() != height) {
+          gl.renderer.Destroy();
+          gl.uploaded.reset();
+          gl.ready = gl.renderer.Init(width, height);
+          if (!gl.ready) {
+            gl.renderer.Destroy();
+          }
+        }
+        if (!gl.ready) {
+          DisabledWrappedText("The crystal renderer could not initialize — no 3D canvas available.");
+          return;
+        }
 
-      Ray3DFrameInfo& rendered = g_ray3d_frame;
-      rendered.canvas_min = canvas_min;
-      rendered.canvas_size = canvas_size;
-      std::copy_n(centre, 3, rendered.centre);
-      rendered.fit = fit;
-      std::copy_n(pose, 9, rendered.pose);
-      rendered.pool = pool;
-      rendered.crystal_frame = view.crystal_frame;
-      rendered.frame_count = ImGui::GetFrameCount();
-      rendered.texture_id = gl.renderer.GetTextureId();
-      std::array<double, 9> pose_key;
-      std::copy_n(pose, 9, pose_key.begin());
-      const PointMeshUploadKey upload_key{
-        pool, hash, pose_key, view.crystal_frame, { centre[0], centre[1], centre[2] }, fit
+        Ray3DFrameInfo& rendered = g_ray3d_frame;
+        rendered.canvas_min = canvas_min;
+        rendered.canvas_size = canvas_size;
+        std::copy_n(centre, 3, rendered.centre);
+        rendered.fit = fit;
+        std::copy_n(pose, 9, rendered.pose);
+        rendered.pool = pool;
+        rendered.crystal_frame = view.crystal_frame;
+        rendered.frame_count = ImGui::GetFrameCount();
+        rendered.texture_id = gl.renderer.GetTextureId();
+        std::array<double, 9> pose_key;
+        std::copy_n(pose, 9, pose_key.begin());
+        const PointMeshUploadKey upload_key{
+          pool, hash, pose_key, view.crystal_frame, { centre[0], centre[1], centre[2] }, fit
+        };
+        if (!gl.uploaded.has_value() || *gl.uploaded != upload_key) {
+          LUMICE_CrystalMesh display_mesh = cache.mesh;
+          for (int v = 0; v < display_mesh.vertex_count; ++v) {
+            float display[3];
+            to_display(&cache.mesh.vertices[v * 3], display);
+            const auto scene = ToRay3DScene(display, rendered);
+            std::copy(scene.begin(), scene.end(), &display_mesh.vertices[v * 3]);
+          }
+          // A normal follows the display rotation, but never the centring or uniform scale.
+          for (int n = 0; n < display_mesh.edge_count * 2; ++n) {
+            to_display(&cache.mesh.edge_face_normals[n * 3], &display_mesh.edge_face_normals[n * 3]);
+          }
+          gl.renderer.UpdateMesh(display_mesh.vertices, display_mesh.vertex_count, display_mesh.edges,
+                                 display_mesh.edge_count, display_mesh.triangles, display_mesh.triangle_count,
+                                 display_mesh.edge_face_normals);
+          gl.uploaded = upload_key;
+        }
+        double fwd[3];
+        double right[3];
+        double up[3];
+        OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
+        float view_rotation[16] = {};
+        for (int k = 0; k < 3; ++k) {
+          view_rotation[k * 4] = static_cast<float>(right[k]);
+          view_rotation[k * 4 + 1] = static_cast<float>(up[k]);
+          view_rotation[k * 4 + 2] = static_cast<float>(-fwd[k]);
+        }
+        view_rotation[15] = 1.0f;
+        constexpr float kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        // The mesh and overlay are now in a unit bounding sphere. Zoom is its focal-plane
+        // half-height; compensate portrait aspect to preserve the old short-side fit.
+        // At zoom=1, a focal-plane radius spans 42% of the short side, matching the old fit.
+        // A positive stand-off keeps the eye outside the unit sphere at every zoom without a
+        // clamp plateau; wheel magnification remains strictly monotone across the full range.
+        constexpr float kFitHalfHeight = 0.5f / 0.42f;
+        constexpr float kCameraStandOff = 0.3f;
+        const float zoom =
+            (kCameraStandOff + (kFitHalfHeight - kCameraStandOff) / std::clamp(view.orbit_zoom, 0.25f, 8.0f)) *
+            std::max(1.0f, static_cast<float>(height) / width);
+        gl.renderer.Render(kIdentity, zoom, CrystalStyle::kXRay, view_rotation);
+        // Use the ACTUAL integer FBO dimensions on both sides. Its aspect only differs from the
+        // logical canvas by pixel quantization; both texture and overlay undergo the same stretch.
+        CrystalRenderer::ComputeMvp(kIdentity, zoom, width, height, rendered.mvp, view_rotation);
+        rendered.valid = true;
+        ImDrawList* dl = graph_draw_list;
+        dl->PushClipRect(canvas_min, canvas_max, true);
+        // AddImage is the Image quad without a second layout item: the existing InvisibleButton
+        // remains the sole canvas interaction target, at its existing ##r3d_canvas identity.
+        dl->AddImage(static_cast<ImTextureID>(rendered.texture_id), canvas_min, canvas_max, ImVec2(0, 1), ImVec2(1, 0));
+        const auto project = [&](const float p[3]) { return ProjectSceneToPixel(p, rendered); };
+        for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
+          const float* p0 = &line.points[s * 6];
+          const float* p1 = p0 + 3;
+          float d0[3];
+          float d1[3];
+          point_to_display(p0, d0);
+          point_to_display(p1, d1);
+          dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
+        }
+        // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
+        // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
+        // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
+        // display synthesis and marked by nothing.
+        for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
+          const float* p = &line.points[idx * 3];
+          float d[3];
+          point_to_display(p, d);
+          dl->AddCircle(project(d), UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
+        }
+        // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
+        // centre (the crystal view's own anchor; the world view's entry leg already carries the
+        // incident). The tip rides the content fit's scale, the anchor does not.
+        if (display_state == RayTraceDisplayState::kDrawn && view.crystal_frame) {
+          const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
+                               static_cast<float>(current->sample.sun_in_crystal[1]),
+                               static_cast<float>(current->sample.sun_in_crystal[2]) };
+          const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
+                                 mesh_centre[2] + u[2] * fit * 0.6f };
+          dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+        }
+        dl->PopClipRect();
       };
-      if (!gl.uploaded.has_value() || *gl.uploaded != upload_key) {
-        LUMICE_CrystalMesh display_mesh = cache.mesh;
-        for (int v = 0; v < display_mesh.vertex_count; ++v) {
-          float display[3];
-          to_display(&cache.mesh.vertices[v * 3], display);
-          const auto scene = ToRay3DScene(display, rendered);
-          std::copy(scene.begin(), scene.end(), &display_mesh.vertices[v * 3]);
-        }
-        // A normal follows the display rotation, but never the centring or uniform scale.
-        for (int n = 0; n < display_mesh.edge_count * 2; ++n) {
-          to_display(&cache.mesh.edge_face_normals[n * 3], &display_mesh.edge_face_normals[n * 3]);
-        }
-        gl.renderer.UpdateMesh(display_mesh.vertices, display_mesh.vertex_count, display_mesh.edges,
-                               display_mesh.edge_count, display_mesh.triangles, display_mesh.triangle_count,
-                               display_mesh.edge_face_normals);
-        gl.uploaded = upload_key;
-      }
-      double fwd[3];
-      double right[3];
-      double up[3];
-      OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
-      float view_rotation[16] = {};
-      for (int k = 0; k < 3; ++k) {
-        view_rotation[k * 4] = static_cast<float>(right[k]);
-        view_rotation[k * 4 + 1] = static_cast<float>(up[k]);
-        view_rotation[k * 4 + 2] = static_cast<float>(-fwd[k]);
-      }
-      view_rotation[15] = 1.0f;
-      constexpr float kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-      // The mesh and overlay are now in a unit bounding sphere. Zoom is its focal-plane
-      // half-height; compensate portrait aspect to preserve the old short-side fit.
-      // At zoom=1, a focal-plane radius spans 42% of the short side, matching the old fit.
-      // A positive stand-off keeps the eye outside the unit sphere at every zoom without a
-      // clamp plateau; wheel magnification remains strictly monotone across the full range.
-      constexpr float kFitHalfHeight = 0.5f / 0.42f;
-      constexpr float kCameraStandOff = 0.3f;
-      const float zoom =
-          (kCameraStandOff + (kFitHalfHeight - kCameraStandOff) / std::clamp(view.orbit_zoom, 0.25f, 8.0f)) *
-          std::max(1.0f, static_cast<float>(height) / width);
-      gl.renderer.Render(kIdentity, zoom, CrystalStyle::kXRay, view_rotation);
-      // Use the ACTUAL integer FBO dimensions on both sides. Its aspect only differs from the
-      // logical canvas by pixel quantization; both texture and overlay undergo the same stretch.
-      CrystalRenderer::ComputeMvp(kIdentity, zoom, width, height, rendered.mvp, view_rotation);
-      rendered.valid = true;
-      ImDrawList* dl = graph_draw_list;
-      dl->PushClipRect(canvas_min, canvas_max, true);
-      // AddImage is the Image quad without a second layout item: the existing InvisibleButton
-      // remains the sole canvas interaction target, at its existing ##r3d_canvas identity.
-      dl->AddImage(static_cast<ImTextureID>(rendered.texture_id), canvas_min, canvas_max, ImVec2(0, 1), ImVec2(1, 0));
-      const auto project = [&](const float p[3]) { return ProjectSceneToPixel(p, rendered); };
-      for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
-        const float* p0 = &line.points[s * 6];
-        const float* p1 = p0 + 3;
-        float d0[3];
-        float d1[3];
-        point_to_display(p0, d0);
-        point_to_display(p1, d1);
-        dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
-      }
-      // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
-      // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
-      // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
-      // display synthesis and marked by nothing.
-      for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
-        const float* p = &line.points[idx * 3];
-        float d[3];
-        point_to_display(p, d);
-        dl->AddCircle(project(d), UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
-      }
-      // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
-      // centre (the crystal view's own anchor; the world view's entry leg already carries the
-      // incident). The tip rides the content fit's scale, the anchor does not.
-      if (display_state == RayTraceDisplayState::kDrawn && view.crystal_frame) {
-        const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
-                             static_cast<float>(current->sample.sun_in_crystal[1]),
-                             static_cast<float>(current->sample.sun_in_crystal[2]) };
-        const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
-                               mesh_centre[2] + u[2] * fit * 0.6f };
-        dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
-      }
-      dl->PopClipRect();
+      render_canvas();
     }
     // The current pose's crystal remains visible even when its trace has no drawable path.
     switch (display_state) {

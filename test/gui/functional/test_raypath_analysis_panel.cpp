@@ -3165,10 +3165,12 @@ bool TraceContactsInsideMeshSilhouette(ImGuiTestContext* ctx) {
       worst_outside_px = std::max(worst_outside_px, -ScreenTurn(a, b, p) / length);
     }
   }
-  // Pixel-distance tolerance covers the 2.5 px marker radius and AA fringe, not world geometry.
-  const double tolerance_px = gui::UiPx(4.0f);
-  ctx->LogInfo("[trace silhouette] mesh=%zu marker=%zu hull=%zu outside=%.3f px, tolerance=%.3f px", mesh.size(),
-               contacts.size(), hull.size(), worst_outside_px, tolerance_px);
+  // Pixel-distance tolerance covers the UiPx(2.5) marker radius plus UiPx(1.5) stroke/AA
+  // envelope, not world geometry. Markers stay screen-sized under perspective.
+  const double tolerance_px = gui::UiPx(2.5f) + gui::UiPx(1.5f);
+  ctx->LogInfo("[trace silhouette] mesh=%zu marker=%zu hull=%zu outside=%.3f px, tolerance=%.3f px, margin=%.3f px",
+               mesh.size(), contacts.size(), hull.size(), worst_outside_px, tolerance_px,
+               tolerance_px - worst_outside_px);
   IM_CHECK_RETV(worst_outside_px <= tolerance_px, false);
   return true;
 }
@@ -3410,6 +3412,20 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                       line.seg_kinds[3] == 1 && line.seg_kinds[4] == 2,
                   false);
   }
+  // Restore orbit/frame fields on both success and any assertion's early return.
+  struct RestoreTraceView {
+    bool crystal_frame = gui::g_state.analysis.point_view.crystal_frame;
+    float yaw = gui::g_state.analysis.point_view.orbit_yaw_deg;
+    float pitch = gui::g_state.analysis.point_view.orbit_pitch_deg;
+    float zoom = gui::g_state.analysis.point_view.orbit_zoom;
+    ~RestoreTraceView() {
+      auto& view = gui::g_state.analysis.point_view;
+      view.crystal_frame = crystal_frame;
+      view.orbit_yaw_deg = yaw;
+      view.orbit_pitch_deg = pitch;
+      view.orbit_zoom = zoom;
+    }
+  } restore_view;
   gui::g_state.analyze_pose_view_open = true;
   gui::g_state.analysis.point_view.orbit_yaw_deg = 143.0f;
   gui::g_state.analysis.point_view.orbit_pitch_deg = -37.0f;
@@ -3440,7 +3456,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(TraceProjectionHasOrbitHandedness(ctx), false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_zoom_max.png").string()),
                 false);
-  gui::g_state.analysis.point_view.orbit_zoom = 1.0f;
+  gui::g_state.analysis.point_view.orbit_zoom = restore_view.zoom;
   ctx->Yield(2);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
   IM_CHECK_RETV(RefusedTraceKeepsCrystalVisible(ctx, *identity), false);
