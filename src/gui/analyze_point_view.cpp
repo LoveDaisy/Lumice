@@ -1660,24 +1660,20 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
       }
     }
-    // The legend: every unit joins the previous line only while it fits — SameLine is a
-    // judgment here like everywhere else in the workspace — and the transmittance readout wraps
-    // BELOW only after the labels' line is actually ended. An AddLine between the labels
-    // submits no layout item, so a SameLine left dangling in front of a wrapped text made the
-    // line tail's sliver the wrap width of EVERY line — the legend grew past a thousand pixels
-    // of near-vertical characters at the narrowest cells.
-    ImGui::TextDisabled("entry");
-    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(0, 1.0f), 2.0f);
-    if (fits_on_line(ImGui::CalcTextSize("internal").x)) {
+    // Each legend unit owns a swatch item and its label; test the whole unit before SameLine.
+    const float swatch = UiPx(9.0f);
+    const char* labels[] = { "entry", "internal", "exit" };
+    for (int kind = 0; kind < 3; ++kind) {
+      const float unit_w = swatch + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(labels[kind]).x;
+      if (kind > 0 && fits_on_line(unit_w)) {
+        ImGui::SameLine();
+      }
+      const ImVec2 pos = ImGui::GetCursorScreenPos();
+      ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + swatch, pos.y + swatch), SegmentColor(kind, 1.0f));
+      ImGui::Dummy(ImVec2(swatch, ImGui::GetTextLineHeight()));
       ImGui::SameLine();
+      ImGui::TextDisabled("%s", labels[kind]);
     }
-    ImGui::TextDisabled("internal");
-    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(1, 1.0f), 2.0f);
-    if (fits_on_line(ImGui::CalcTextSize("exit").x)) {
-      ImGui::SameLine();
-    }
-    ImGui::TextDisabled("exit");
-    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
     if (current->sample.interface_count >= 2) {
       char transmittance[96];
       std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -3036,6 +3037,62 @@ bool TraceContactsInsideMeshSilhouette(ImGuiTestContext* ctx) {
   return true;
 }
 
+ImGuiWindow* TraceReportWindow() {
+  const ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w->Active && w->ParentWindow == region && std::strstr(w->Name, "##Ray3DReport") != nullptr) {
+      return w;
+    }
+  }
+  return nullptr;
+}
+
+bool TraceLegendSwatchesAvoidText(ImGuiTestContext* ctx) {
+  const ImGuiWindow* report = TraceReportWindow();
+  IM_CHECK_RETV(report != nullptr, false);
+  const auto& vertices = report->DrawList->VtxBuffer;
+  const ImU32 text_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+  std::vector<ImRect> glyphs;
+  for (int i = 0; i + 3 < vertices.Size;) {
+    if (vertices[i].col != text_color) {
+      ++i;
+      continue;
+    }
+    ImRect rect(vertices[i].pos, vertices[i].pos);
+    for (int k = 1; k < 4; ++k) {
+      rect.Add(vertices[i + k].pos);
+    }
+    glyphs.push_back(rect);
+    i += 4;
+  }
+  IM_CHECK_RETV(!glyphs.empty(), false);
+  const auto check_swatch = [&](ImU32 color) -> bool {
+    ImRect rect(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+    int count = 0;
+    for (const ImDrawVert& vertex : vertices) {
+      if (vertex.col == color) {
+        rect.Add(vertex.pos);
+        ++count;
+      }
+    }
+    // AddRectFilled emits a real four-vertex swatch, unlike the old diagonal AA line.
+    IM_CHECK_RETV(count == 4, false);
+    IM_CHECK_RETV(std::abs(rect.GetWidth() - gui::UiPx(9.0f)) < 0.1f, false);
+    IM_CHECK_RETV(std::abs(rect.GetHeight() - gui::UiPx(9.0f)) < 0.1f, false);
+    const bool overlaps =
+        std::any_of(glyphs.begin(), glyphs.end(), [&](const ImRect& glyph) { return rect.Overlaps(glyph); });
+    IM_CHECK_RETV(!overlaps, false);
+    return true;
+  };
+  for (ImU32 color : gui::kRayTraceSegmentColors) {
+    if (!check_swatch(color)) {
+      return false;
+    }
+  }
+  ctx->LogInfo("[trace legend] three 9px swatches, no overlap with %zu text glyphs", glyphs.size());
+  return true;
+}
+
 bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -3171,6 +3228,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   ctx->Yield(1);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_v1_c03_trace.png").string()), false);
   IM_CHECK_RETV(TraceContactsInsideMeshSilhouette(ctx), false);
+  IM_CHECK_RETV(TraceLegendSwatchesAvoidText(ctx), false);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
   return true;
 }
