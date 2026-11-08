@@ -465,13 +465,13 @@ TEST(AnalyzePointView, CurveWindowZoomsAtAnchorClampsAndResetsOnAdoption) {
   PointCurveZoom decimal_zoom;
   for (int i = 0; i < 3; ++i) {
     const auto still_fit = PointCurveVisibleRange(decimal_fit, &decimal_zoom);
-    EXPECT_DOUBLE_EQ(still_fit.lo, decimal_fit.lo);
-    EXPECT_DOUBLE_EQ(still_fit.hi, decimal_fit.hi);
+    EXPECT_EQ(still_fit.lo, decimal_fit.lo);
+    EXPECT_EQ(still_fit.hi, decimal_fit.hi);
   }
   PointCurveVisibleRange(decimal_fit, &decimal_zoom, 1.0);
   const auto round_trip = PointCurveVisibleRange(decimal_fit, &decimal_zoom, -1.0);
-  EXPECT_DOUBLE_EQ(round_trip.lo, decimal_fit.lo);
-  EXPECT_DOUBLE_EQ(round_trip.hi, decimal_fit.hi);
+  EXPECT_EQ(round_trip.lo, decimal_fit.lo);
+  EXPECT_EQ(round_trip.hi, decimal_fit.hi);
   view.orbit_zoom = 2.0f;
   ResetPointViewStateForNewAdoption(&view);
   EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, 0.0);

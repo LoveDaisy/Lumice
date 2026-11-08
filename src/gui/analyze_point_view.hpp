@@ -200,6 +200,9 @@ double PointCurveXAt(const PointContributionCurve& curve, int valid_position);
 // Invalid samples are unreachable (the slider's domain); ties pick the lower position.
 int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_rad);
 
+inline constexpr ImU32 kPointCurveProductColor = IM_COL32(250, 250, 250, 255);
+inline constexpr ImU32 kPointCurvePlotBorderColor = IM_COL32(90, 94, 102, 120);
+
 // The shared axis pools only kPositive values across all five arms. The nearest-rank P1
 // lower bound and the relative noise floor keep tiny tails from consuming the log axis.
 inline constexpr double kCurveAxisLowerQuantile = 0.01;

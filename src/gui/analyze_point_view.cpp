@@ -476,12 +476,12 @@ PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, Point
     span = full_span;
   }
   span = std::clamp(span, std::min(0.25, full_span), full_span);
-  zoom->log_lo = std::clamp(zoom->log_lo, fit_lo, fit_hi - span);
+  zoom->log_lo = std::clamp(zoom->log_lo, fit_lo, std::max(fit_lo, fit_hi - span));
   if (wheel != 0.0) {
     anchor = std::clamp(anchor, 0.0, 1.0);
     const double new_span =
         std::clamp(span / std::pow(kCurveAxisZoomFactor, wheel), std::min(0.25, full_span), full_span);
-    zoom->log_lo = std::clamp(zoom->log_lo + anchor * (span - new_span), fit_lo, fit_hi - new_span);
+    zoom->log_lo = std::clamp(zoom->log_lo + anchor * (span - new_span), fit_lo, std::max(fit_lo, fit_hi - new_span));
     span = new_span;
   }
   // log subtraction and a wheel-in/out round trip can leave the full span one ULP short.
@@ -1935,7 +1935,7 @@ namespace {
 // scope — a function-local constexpr used as an array bound inside a nested lambda reads as a
 // captured runtime value to MSVC (C2131), while clang folds it, so the two compilers disagree
 // unless the constant is unambiguously namespace-scope.
-constexpr int kCurveArms = 5;
+constexpr int kCurveArms = static_cast<int>(std::size(kCurveArmFields));
 
 // D4 — the Pose & trace window's vertical strip between the 3D region and the right column
 // (contract §4.2): the D3 splitter's recipe (invisible button + hover/active line + the one
@@ -2143,7 +2143,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
       IM_COL32(74, 222, 128, 255),   // T — green
       IM_COL32(232, 121, 249, 255),  // K — fuchsia
-      IM_COL32(250, 250, 250, 255),  // product — the headline quantity, brightest
+      kPointCurveProductColor,       // product — the headline quantity, brightest
     };
     const char* arm_labels[kCurveArms] = { "rho rad^-3", "A/a^2", "T total", "K 1/(J+eps)", "rho*A/a^2*T*K" };
     const auto value_of = [&](int arm, size_t i) -> double { return curve.points[i].*kCurveArmFields[arm].value; };
@@ -2332,7 +2332,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           dl->AddText(ImVec2(x, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
         }
       };
-      dl->AddRect(plot_min, plot_max, IM_COL32(90, 94, 102, 120), 0.0f, 0, 1.0f);
+      dl->AddRect(plot_min, plot_max, kPointCurvePlotBorderColor, 0.0f, 0, 1.0f);
       if (x_hi > 0.0) {
         char lab[24];
         const char* fmt = x_hi < 10.0 ? "%.2f" : (x_hi < 100.0 ? "%.1f" : "%.0f");

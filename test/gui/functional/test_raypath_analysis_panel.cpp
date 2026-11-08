@@ -6707,11 +6707,48 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   const double span_before = curve_view.curve_axis.log_hi - curve_view.curve_axis.log_lo;
   const float scroll_before = curve->Scroll.y;
   IM_CHECK_RETV(span_before > 0.25, false);
-  ctx->MouseWheelY(1.0f);
+  // Independent render oracle: read submitted product and frame vertices, then predict the
+  // product's top from C-reader data and the current log window (not renderer helpers).
+  const auto product_tracks_axis = [&]() -> bool {
+    float product_top = FLT_MAX;
+    float plot_top = FLT_MAX;
+    float plot_bottom = -FLT_MAX;
+    for (const ImDrawVert& vertex : curve->DrawList->VtxBuffer) {
+      if (!canvas.RectFull.Contains(vertex.pos) || (vertex.col & IM_COL32_A_MASK) == 0) {
+        continue;
+      }
+      if ((vertex.col & ~IM_COL32_A_MASK) == (gui::kPointCurveProductColor & ~IM_COL32_A_MASK)) {
+        product_top = std::min(product_top, vertex.pos.y);
+      }
+      if (vertex.col == gui::kPointCurvePlotBorderColor) {
+        plot_top = std::min(plot_top, vertex.pos.y);
+        plot_bottom = std::max(plot_bottom, vertex.pos.y);
+      }
+    }
+    IM_CHECK_RETV(product_top < FLT_MAX && plot_top < plot_bottom, false);
+    gui::PointContributionCurve model;
+    IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &model), false);
+    double product_max = 0.0;
+    for (const gui::PointCurvePoint& point : model.points) {
+      if (point.product_kind == gui::PointCurveValueKind::kPositive) {
+        product_max = std::max(product_max, point.product);
+      }
+    }
+    IM_CHECK_RETV(product_max > 0.0, false);
+    const double expected = plot_top + (curve_view.curve_axis.log_hi - std::log10(product_max)) /
+                                           (curve_view.curve_axis.log_hi - curve_view.curve_axis.log_lo) *
+                                           (plot_bottom - plot_top);
+    ctx->LogInfo("[curve render] product top %.2f, independently predicted %.2f", (double)product_top, expected);
+    IM_CHECK_RETV(std::abs(product_top - expected) < 2.5, false);  // stroke + frame AA widths
+    return true;
+  };
+  IM_CHECK_RETV(product_tracks_axis(), false);
+  ctx->MouseWheelY(6.0f);
   ctx->Yield(3);
   const double zoom_span = curve_view.curve_axis.log_hi - curve_view.curve_axis.log_lo;
   IM_CHECK_RETV(zoom_span < span_before, false);
-  IM_CHECK_RETV(std::abs(zoom_span - span_before / 1.12) < 1e-8, false);
+  IM_CHECK_RETV(std::abs(zoom_span - span_before / std::pow(1.12, 6.0)) < 1e-8, false);
+  IM_CHECK_RETV(product_tracks_axis(), false);
   IM_CHECK_RETV(curve_view.sample_index == cursor_before_wheel, false);
   IM_CHECK_RETV(gui::g_state.analysis.point.key == key_before, false);
   IM_CHECK_RETV(curve->Scroll.y == scroll_before, false);
@@ -6776,7 +6813,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(curve_view.sample_index != cursor_after_click, false);
   const int dragged = curve_view.sample_index;
   IM_CHECK_RETV(!curve_view.playing, false);
-  ctx->MouseWheelY(-1.0f);
+  ctx->MouseWheelY(-6.0f);
   ctx->Yield(3);
   IM_CHECK_RETV(std::abs(curve_view.curve_axis.log_hi - curve_view.curve_axis.log_lo - span_before) < 1e-8, false);
   IM_CHECK_RETV(curve_view.sample_index == dragged, false);
@@ -6828,6 +6865,15 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(curve_n->ScrollMax.y >= 0.0f, false);
   }
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_region_min.png").string()), false);
+  if (canvas_n.ID != 0) {
+    ctx->MouseMoveToPos(canvas_n.RectFull.GetCenter());
+    ctx->Yield(3);
+    ctx->MouseWheelY(1.0f);
+    ctx->Yield(3);
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_zoom_min.png").string()), false);
+    ctx->MouseWheelY(-1.0f);
+    ctx->Yield(3);
+  }
 
   // Restore the default geometry before closing: this leg's min-size write must not become the
   // persisted size a later case inherits (the cross-case window-geometry lesson).
