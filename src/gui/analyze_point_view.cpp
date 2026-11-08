@@ -906,8 +906,8 @@ ImVec2 ProjectSceneToPixel(const float display[3], const Ray3DFrameInfo& frame) 
   const auto p = ToRay3DScene(display, frame);
   const float* m = frame.mvp;
   const float w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
-  // All content is inside the unit bounding sphere; the nearest allowed eye distance is
-  // 2.4 / 8 / tan(15deg) > 1. Thus every submitted point has positive perspective w.
+  // All content is inside the unit bounding sphere. The camera's focal half-height stays
+  // above 0.3, so its eye distance exceeds 0.3 / tan(15deg) > 1 and perspective w is positive.
   const float x = (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]) / w;
   const float y = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / w;
   return ImVec2(frame.canvas_min.x + (x + 1.0f) * 0.5f * frame.canvas_size.x,
@@ -1680,8 +1680,14 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       constexpr float kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
       // The mesh and overlay are now in a unit bounding sphere. Zoom is its focal-plane
       // half-height; compensate portrait aspect to preserve the old short-side fit.
+      // At zoom=1, a focal-plane radius spans 42% of the short side, matching the old fit.
+      // A positive stand-off keeps the eye outside the unit sphere at every zoom without a
+      // clamp plateau; wheel magnification remains strictly monotone across the full range.
+      constexpr float kFitHalfHeight = 0.5f / 0.42f;
+      constexpr float kCameraStandOff = 0.3f;
       const float zoom =
-          2.4f * std::max(1.0f, static_cast<float>(height) / width) / std::clamp(view.orbit_zoom, 0.25f, 8.0f);
+          (kCameraStandOff + (kFitHalfHeight - kCameraStandOff) / std::clamp(view.orbit_zoom, 0.25f, 8.0f)) *
+          std::max(1.0f, static_cast<float>(height) / width);
       gl.renderer.Render(kIdentity, zoom, CrystalStyle::kXRay, view_rotation);
       // Use the ACTUAL integer FBO dimensions on both sides. Its aspect only differs from the
       // logical canvas by pixel quantization; both texture and overlay undergo the same stretch.
