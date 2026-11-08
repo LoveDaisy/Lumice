@@ -36,7 +36,6 @@
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
 #include "gui/angular_dist_picker.hpp"
-#include "gui/crystal_renderer.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/file_io.hpp"
@@ -3098,6 +3097,13 @@ bool TraceProjectionHasOrbitHandedness(ImGuiTestContext* ctx) {
   const ImVec2 u = project_basis(0, 0.2, 0);
   IM_CHECK_RETV(r.x > origin.x && std::abs(r.y - origin.y) < 0.01f, false);
   IM_CHECK_RETV(u.y < origin.y && std::abs(u.x - origin.x) < 0.01f, false);
+  if (orbit.orbit_zoom == 1.0f) {
+    // The legacy fit puts one bounding radius at 42% of the canvas short side. Project a
+    // known focal-plane displacement to measure that rendered scale, not just the zoom field.
+    const float expected = 0.2f * 0.42f * std::min(frame.canvas_size.x, frame.canvas_size.y);
+    ctx->LogInfo("[trace default fit] focal-plane delta %.3f px, legacy %.3f px", r.x - origin.x, expected);
+    IM_CHECK_RETV(std::abs((r.x - origin.x) / expected - 1.0f) < 0.01f, false);
+  }
   const ImVec2 near = project_basis(0.2, 0, 0.5);
   const ImVec2 far = project_basis(0.2, 0, -0.5);
   IM_CHECK_RETV(near.x - origin.x > far.x - origin.x, false);
