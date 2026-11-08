@@ -1643,7 +1643,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
       // display synthesis and marked by nothing.
       for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
-        const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
+        const float* p = &line.points[idx * 3];
         float d[3];
         point_to_display(p, d);
         dl->AddCircle(project(d), UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
