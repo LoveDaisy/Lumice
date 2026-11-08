@@ -436,6 +436,52 @@ TEST(AnalyzePointView, CurveOutsideCountsPointsNotArmsAndKeepsHonestExtrema) {
   EXPECT_TRUE(PointCurveOutsideLabel({}).empty());
 }
 
+TEST(AnalyzePointView, CurveWindowZoomsAtAnchorClampsAndResetsOnAdoption) {
+  const PointCurveAxisRange fit{ true, 1e-6, 1.0 };
+  PointViewState view;
+  const PointCurveAxisRange initial = PointCurveVisibleRange(fit, &view.curve_axis);
+  EXPECT_DOUBLE_EQ(initial.lo, fit.lo);
+  EXPECT_DOUBLE_EQ(initial.hi, fit.hi);
+  const double initial_span = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  const PointCurveAxisRange zoomed = PointCurveVisibleRange(fit, &view.curve_axis, 1.0, 0.25);
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, initial_span / 1.12, 1e-12);
+  EXPECT_NEAR(view.curve_axis.log_lo + 0.25 * (view.curve_axis.log_hi - view.curve_axis.log_lo), -4.5, 1e-12);
+  EXPECT_GT(zoomed.lo, fit.lo);
+  EXPECT_LT(zoomed.hi, fit.hi);
+  PointCurveVisibleRange(fit, &view.curve_axis, 10000.0, 0.0);
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, 0.25, 1e-12);
+  const PointCurveAxisRange restored = PointCurveVisibleRange(fit, &view.curve_axis, -10000.0);
+  EXPECT_DOUBLE_EQ(restored.lo, fit.lo);
+  EXPECT_DOUBLE_EQ(restored.hi, fit.hi);
+  // Component changes reconcile in place, including a new span narrower than the zoom floor.
+  const PointCurveAxisRange narrow{ true, 10.0, 11.0 };
+  EXPECT_DOUBLE_EQ(PointCurveVisibleRange(narrow, &view.curve_axis).lo, 10.0);
+  EXPECT_DOUBLE_EQ(PointCurveVisibleRange(narrow, &view.curve_axis, 1000.0).hi, 11.0);
+  const PointCurveAxisRange one = PointCurveVisibleRange({ true, 2.0, 2.0 }, &view.curve_axis, 10.0);
+  EXPECT_DOUBLE_EQ(one.lo, 2.0);
+  EXPECT_DOUBLE_EQ(one.hi, 2.0);
+  view.orbit_zoom = 2.0f;
+  ResetPointViewStateForNewAdoption(&view);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, 0.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_hi, 0.0);
+  EXPECT_FLOAT_EQ(view.orbit_zoom, 2.0f);  // the 3D camera still survives
+  EXPECT_FALSE(PointCurveVisibleRange({}, &view.curve_axis).valid);
+}
+
+TEST(AnalyzePointView, CurveWindowBreaksRunsAtBothBoundsWithoutDroppingSingletons) {
+  using K = PointCurveValueKind;
+  const K kinds[] = { K::kPositive, K::kPositive, K::kPositive, K::kPositive, K::kPositive, K::kExactZero };
+  const double values[] = { 1.0, 1e-260, 2.0, 10.0, 4.0, 0.0 };
+  const auto runs = PointCurvePositiveRuns(kinds, 6, values, 1.0, 4.0);
+  ASSERT_EQ(runs.size(), 3U);
+  EXPECT_EQ(runs[0].begin, 0);
+  EXPECT_EQ(runs[0].end, 1);
+  EXPECT_EQ(runs[1].begin, 2);
+  EXPECT_EQ(runs[1].end, 3);
+  EXPECT_EQ(runs[2].begin, 4);
+  EXPECT_EQ(runs[2].end, 5);
+}
+
 TEST(AnalyzePointView, CurveLogTicksSpanDecadesWithSubTicks) {
   const std::vector<PointCurveLogTick> ticks = PointCurveLogTicks(1e-6, 1e-3);
   int majors = 0;

@@ -38,6 +38,10 @@ inline ImGuiID AnalyzeRay3DWheelOwnerId() {
   return ImHashStr("analyze-wheel-ray3d");
 }
 
+inline ImGuiID AnalyzeCurveWheelOwnerId() {
+  return ImHashStr("analyze-wheel-curve");
+}
+
 inline ImGuiID MainPictureWheelOwnerId() {
   return ImHashStr("main-picture-wheel");
 }
@@ -56,7 +60,8 @@ inline bool AnalyzeRegionWheelStanding() {
         ImGui::GetCurrentContext()->KeysOwnerData[ImGuiKey_MouseWheelY - ImGuiKey_NamedKey_BEGIN];
     latch_frame = frame;
     latch_standing = data.OwnerCurr == AnalyzeMapWheelOwnerId() || data.OwnerCurr == AnalyzeRay3DWheelOwnerId() ||
-                     data.OwnerCurr == MainPictureWheelOwnerId() || data.OwnerCurr == RenderPictureWheelOwnerId();
+                     data.OwnerCurr == MainPictureWheelOwnerId() || data.OwnerCurr == RenderPictureWheelOwnerId() ||
+                     data.OwnerCurr == AnalyzeCurveWheelOwnerId();
   }
   return latch_standing;
 }

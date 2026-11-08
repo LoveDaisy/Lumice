@@ -6697,9 +6697,29 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
                static_cast<double>(canvas.RectFull.GetWidth()), static_cast<double>(canvas.RectFull.GetHeight()));
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_region_default.png").string()), false);
 
+  // Wheel zoom owns only the Y window: neither the cursor nor the query changes. Let the
+  // existing region claim stand before sending input, as for the map/orbit gestures.
+  const gui::PointIntentKey key_before = gui::g_state.analysis.point.key;
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(3);
+  gui::PointViewState& curve_view = gui::g_state.analysis.point_view;
+  const int cursor_before_wheel = curve_view.sample_index;
+  const double span_before = curve_view.curve_axis.log_hi - curve_view.curve_axis.log_lo;
+  const float scroll_before = curve->Scroll.y;
+  IM_CHECK_RETV(span_before > 0.25, false);
+  ctx->MouseWheelY(1.0f);
+  ctx->Yield(3);
+  const double zoom_span = curve_view.curve_axis.log_hi - curve_view.curve_axis.log_lo;
+  IM_CHECK_RETV(zoom_span < span_before, false);
+  IM_CHECK_RETV(std::abs(zoom_span - span_before / 1.12) < 1e-8, false);
+  IM_CHECK_RETV(curve_view.sample_index == cursor_before_wheel, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_before, false);
+  IM_CHECK_RETV(curve->Scroll.y == scroll_before, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##pose_curve_canvas").RectFull.Min.y == canvas.RectFull.Min.y, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_zoom.png").string()), false);
+
   // The canvas writes the ONE selection: a click at 80% width moves the cursor to a late valid
   // sample, stops the playback it finds running, and leaves the point intent untouched (AC4).
-  const gui::PointIntentKey key_before = gui::g_state.analysis.point.key;
   gui::g_state.analysis.point_view.playing = true;
   ctx->Yield(2);
   ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.8f, canvas.RectFull.GetCenter().y));
@@ -6746,6 +6766,21 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
   IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == cursor_after_click, false);
   ctx->LogInfo("[pose curve] click on the current position stopped playback, index held at %d", cursor_after_click);
+
+  // Dragging after zoom follows the same X mapping, while wheel-out restores fit without
+  // moving the sample that the drag selected.
+  ctx->MouseDown(0);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.4f, canvas.RectFull.GetCenter().y));
+  ctx->MouseUp(0);
+  ctx->Yield(3);
+  IM_CHECK_RETV(curve_view.sample_index != cursor_after_click, false);
+  const int dragged = curve_view.sample_index;
+  IM_CHECK_RETV(!curve_view.playing, false);
+  ctx->MouseWheelY(-1.0f);
+  ctx->Yield(3);
+  IM_CHECK_RETV(std::abs(curve_view.curve_axis.log_hi - curve_view.curve_axis.log_lo - span_before) < 1e-8, false);
+  IM_CHECK_RETV(curve_view.sample_index == dragged, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_before, false);
 
   // The narrowest face: the D5 floors' promise — the canvas on, nothing clipped, the canvas
   // answering through the real mouse path. The geometry lines are the live-layout probe the

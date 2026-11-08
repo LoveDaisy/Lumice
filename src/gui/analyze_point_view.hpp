@@ -210,6 +210,11 @@ struct PointCurveAxisRange {
   double hi = 0.0;
 };
 PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve);
+inline constexpr double kCurveAxisZoomFactor = 1.12;
+// Reconcile the view window with the current fit, then zoom around anchor (0 = bottom, 1 = top).
+// The window never extends beyond the fit; spans stop at 0.25 decade or the full fit span.
+PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel = 0.0,
+                                           double anchor = 0.5);
 
 // Counts stored points, not (arm, point) pairs: multiple hidden arms at one point count once.
 // The extrema cover only hidden positive values; zeros and unavailable cells never count.
@@ -246,7 +251,9 @@ struct PointCurveRun {
   int begin = 0;
   int end = 0;
 };
-std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count);
+// Optional values restrict runs to the inclusive visible window; outside values break runs.
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count,
+                                                  const double* values = nullptr, double lo = 0.0, double hi = 0.0);
 
 // ---- The u-globe (crystal-frame sun-direction sphere) -----------------------------------------------
 

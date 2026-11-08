@@ -98,6 +98,7 @@ void ResetPointViewStateForNewAdoption(PointViewState* view) {
   view->sample_index = 0;
   view->playing = false;
   view->last_play_step_s = 0.0;
+  view->curve_axis = {};
   // The toggles and the camera survive: they are the user's display preferences for THIS
   // session, not per-document state.
 }
@@ -451,6 +452,39 @@ PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve) {
   return { true, std::max(positives[rank], hi * kCurveAxisNoiseRatio), hi };
 }
 
+PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel,
+                                           double anchor) {
+  if (!fit.valid) {
+    return {};
+  }
+  const double fit_lo = std::log10(fit.lo);
+  if (fit.hi == fit.lo) {
+    zoom->log_lo = fit_lo;
+    zoom->log_hi = fit_lo + 1.0;
+    return fit;  // one value has no smaller data window; the plot still gives it a full decade
+  }
+  const double fit_hi = std::log10(fit.hi);
+  const double full_span = fit_hi - fit_lo;
+  double span = zoom->log_hi - zoom->log_lo;
+  if (!(span > 0.0)) {
+    zoom->log_lo = fit_lo;
+    span = full_span;
+  }
+  span = std::clamp(span, std::min(0.25, full_span), full_span);
+  zoom->log_lo = std::clamp(zoom->log_lo, fit_lo, fit_hi - span);
+  if (wheel != 0.0) {
+    anchor = std::clamp(anchor, 0.0, 1.0);
+    const double new_span =
+        std::clamp(span / std::pow(kCurveAxisZoomFactor, wheel), std::min(0.25, full_span), full_span);
+    zoom->log_lo = std::clamp(zoom->log_lo + anchor * (span - new_span), fit_lo, fit_hi - new_span);
+    span = new_span;
+  }
+  zoom->log_hi = zoom->log_lo + span;
+  // Keep exact fit endpoints: a log/pow round trip must not hide a boundary value as "outside".
+  return { true, zoom->log_lo <= fit_lo ? fit.lo : std::pow(10.0, zoom->log_lo),
+           zoom->log_hi >= fit_hi ? fit.hi : std::pow(10.0, zoom->log_hi) };
+}
+
 PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi) {
   PointCurveOutsideCount outside;
   for (const PointCurvePoint& point : curve.points) {
@@ -521,19 +555,24 @@ int PointCurveLogLabelStep(double lo, double hi, float plot_h_px, float line_h_p
   return std::max(1, static_cast<int>(std::ceil(static_cast<double>(decades) / static_cast<double>(max_labels))));
 }
 
-std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count) {
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count, const double* values,
+                                                  double lo, double hi) {
   std::vector<PointCurveRun> runs;
   if (kinds == nullptr) {
     return runs;
   }
+  const auto drawable = [&](size_t index) {
+    return kinds[index] == PointCurveValueKind::kPositive &&
+           (values == nullptr || (values[index] >= lo && values[index] <= hi));
+  };
   size_t i = 0;
   while (i < count) {
-    if (kinds[i] != PointCurveValueKind::kPositive) {
+    if (!drawable(i)) {
       ++i;
       continue;
     }
     const size_t begin = i;
-    while (i < count && kinds[i] == PointCurveValueKind::kPositive) {
+    while (i < count && drawable(i)) {
       ++i;
     }
     runs.push_back(PointCurveRun{ static_cast<int>(begin), static_cast<int>(i) });
@@ -1984,6 +2023,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     graph_draw_list->AddRectFilled(graph_min, ImVec2(graph_min.x + graph_size.x, graph_min.y + graph_h),
                                    IM_COL32(16, 18, 22, 255));
   }
+  AnalyzeRegionWheelStanding();  // latch before this region writes its claim
+  AnalyzeRegionWheelClaim(graph_hovered, AnalyzeCurveWheelOwnerId());
   ImGui::BeginChild("##PoseCurveScroll", RemainingReportSize());
   const auto render_content = [&] {
     const PointQueryState st = PointQueryStateFor(point);
@@ -2093,36 +2134,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       IM_COL32(250, 250, 250, 255),  // product — the headline quantity, brightest
     };
     const char* arm_labels[kCurveArms] = { "rho rad^-3", "A/a^2", "T total", "K 1/(J+eps)", "rho*A/a^2*T*K" };
-    const auto value_of = [&](int arm, size_t i) -> double {
-      const PointCurvePoint& p = curve.points[i];
-      switch (arm) {
-        case 0:
-          return p.rho;
-        case 1:
-          return p.area;
-        case 2:
-          return p.transmission;
-        case 3:
-          return p.k_carea;
-        default:
-          return p.product;
-      }
-    };
-    const auto kind_of = [&](int arm, size_t i) -> PointCurveValueKind {
-      const PointCurvePoint& p = curve.points[i];
-      switch (arm) {
-        case 0:
-          return p.rho_kind;
-        case 1:
-          return p.area_kind;
-        case 2:
-          return p.transmission_kind;
-        case 3:
-          return p.k_kind;
-        default:
-          return p.product_kind;
-      }
-    };
+    const auto value_of = [&](int arm, size_t i) -> double { return curve.points[i].*kCurveArmFields[arm].value; };
+    const auto kind_of = [&](int arm, size_t i) { return curve.points[i].*kCurveArmFields[arm].kind; };
     int positive_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
     int zero_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
     for (size_t i = 0; i < n; ++i) {
@@ -2206,32 +2219,17 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const bool canvas_hovered = graph_hovered;
       const bool canvas_active = graph_active;
       const double x_hi = n > 0 ? curve.points[n - 1].x_rad : 0.0;
-      // The shared log range: decade bounds over the union of ALL arms' usable positives — no
-      // per-arm normalization (AC1: the arms' actual magnitudes stay comparable). Computed FIRST
-      // so the left pad can budget the labels it will actually draw (a real fiber can span
-      // hundreds of decades; "1e-213" is far wider than "1e-6").
-      double v_min = 0.0;
-      double v_max = 0.0;
-      bool have_range = false;
-      for (size_t i = 0; i < n && x_hi > 0.0; ++i) {
-        for (int arm = 0; arm < kCurveArms; ++arm) {
-          if (kind_of(arm, i) != PointCurveValueKind::kPositive) {
-            continue;
-          }
-          const double v = value_of(arm, i);
-          if (!have_range || v < v_min) {
-            v_min = v;
-          }
-          if (!have_range || v > v_max) {
-            v_max = v;
-          }
-          have_range = true;
-        }
-      }
-      // How many decades sit between LABELLED majors: plot height and font size decide, so a
-      // 213-decade range labels ~8 evenly spaced exponents instead of 213 overlapping texts.
+      // One shared fit over all positive arms, followed by the session's log-domain window.
+      const PointCurveAxisRange fit = PointCurveAxisFit(curve);
       const float line_h = ImGui::GetTextLineHeight();
       const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - UiPx(28.0f));
+      const double mouse_anchor = 1.0 - (ImGui::GetIO().MousePos.y - canvas_min.y - UiPx(10.0f)) / rough_plot_h;
+      const double anchor = mouse_anchor >= 0.0 && mouse_anchor <= 1.0 ? mouse_anchor : 0.5;
+      const double wheel = AnalyzeRegionWheelStanding() && canvas_hovered ? ImGui::GetIO().MouseWheel : 0.0;
+      const PointCurveAxisRange visible = PointCurveVisibleRange(fit, &view.curve_axis, wheel, anchor);
+      const double v_min = visible.lo;
+      const double v_max = visible.hi;
+      const bool have_range = visible.valid && x_hi > 0.0;
       const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
       float widest_lab = 0.0f;
       if (have_range) {
@@ -2296,22 +2294,32 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           }
         }
       }
+      // Fit the honest tail summary beside the x labels, leaving the zero markers untouched.
+      const std::string outside_label =
+          have_range ? PointCurveOutsideLabel(PointCurveCountOutside(curve, v_min, v_max)) : "";
+      const float summary_x = canvas_max.x - UiPx(6.0f) - ImGui::CalcTextSize(outside_label.c_str()).x;
+      if (!outside_label.empty()) {
+        dl->AddText(ImVec2(summary_x, plot_max.y + UiPx(13.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                    outside_label.c_str());
+      }
       // The plot's frame, the x labels and the axis unit (the caliber line names rad; the axis
-      // shows where its numbers sit).
+      // shows where its numbers sit). The summary owns its strip; omit colliding x labels.
+      const auto x_label = [&](float x, float y, const char* text) {
+        if (outside_label.empty() || x + ImGui::CalcTextSize(text).x + UiPx(5.0f) < summary_x) {
+          dl->AddText(ImVec2(x, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
+        }
+      };
       dl->AddRect(plot_min, plot_max, IM_COL32(90, 94, 102, 120), 0.0f, 0, 1.0f);
       if (x_hi > 0.0) {
         char lab[24];
         const char* fmt = x_hi < 10.0 ? "%.2f" : (x_hi < 100.0 ? "%.1f" : "%.0f");
         const float axis_lab_y = plot_max.y + UiPx(13.0f);
         std::snprintf(lab, sizeof(lab), fmt, 0.0);
-        dl->AddText(ImVec2(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y),
-                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+        x_label(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
         std::snprintf(lab, sizeof(lab), fmt, x_hi * 0.5);
-        dl->AddText(ImVec2(x_to_px(x_hi * 0.5) - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y),
-                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+        x_label(x_to_px(x_hi * 0.5) - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
         std::snprintf(lab, sizeof(lab), fmt, x_hi);
-        dl->AddText(ImVec2(plot_max.x - ImGui::CalcTextSize(lab).x, axis_lab_y),
-                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+        x_label(plot_max.x - ImGui::CalcTextSize(lab).x, axis_lab_y, lab);
       }
       {
         const char* unit = "rad";
@@ -2349,11 +2357,13 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         // data stays visible while the legend keeps claiming the arm).
         for (int arm = 0; arm < kCurveArms; ++arm) {
           std::vector<PointCurveValueKind> kinds(static_cast<size_t>(n));
+          std::vector<double> values(n);
           for (size_t i = 0; i < n; ++i) {
             kinds[i] = kind_of(arm, i);
+            values[i] = value_of(arm, i);
           }
           const float thickness = arm == 4 ? 2.0f : 1.5f;
-          for (const PointCurveRun& run : PointCurvePositiveRuns(kinds.data(), n)) {
+          for (const PointCurveRun& run : PointCurvePositiveRuns(kinds.data(), n, values.data(), v_min, v_max)) {
             if (run.end - run.begin >= 2) {
               std::vector<ImVec2> line;
               line.reserve(static_cast<size_t>(run.end - run.begin));

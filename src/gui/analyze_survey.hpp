@@ -383,6 +383,12 @@ struct RayTraceSession {
 // The sample index is an index into the SELECTED COMPONENT's VALID samples (the slider's
 // contract, AC3); the readers map it to the stored row. Playback writes the sample index and
 // nothing else — the sky point intent is untouched by construction (AC3).
+// A log-domain view window; equal endpoints mean fit-to-content. New point adoption resets it.
+struct PointCurveZoom {
+  double log_lo = 0.0;
+  double log_hi = 0.0;
+};
+
 struct PointViewState {
   int component_index = 0;  // the selected component of the adopted document (clamped on adoption)
   int sample_index = 0;     // index into that component's VALID samples
@@ -393,13 +399,14 @@ struct PointViewState {
                                     // physical state, two views — a display transform, nothing else)
   float orbit_yaw_deg = 35.0f;      // the 3D orbit camera (drag to rotate, wheel to zoom)
   float orbit_pitch_deg = 22.0f;
-  float orbit_zoom = 1.0f;  // 1 = the fit-to-content default
+  float orbit_zoom = 1.0f;    // 1 = the fit-to-content default
+  PointCurveZoom curve_axis;  // session view state, clamped to the current component's fit range
 };
 
 // Resets the display cursor for a NEW adoption: the component/sample selection belongs to the
 // document it was read from. Playback stops — a new document must not inherit a running cursor.
-// The toggles and the camera survive: they are the user's display preferences for THIS session,
-// not per-document state. (Defined in analyze_point_view.cpp.)
+// The curve axis refits. The toggles and 3D camera survive as session display preferences.
+// (Defined in analyze_point_view.cpp.)
 void ResetPointViewStateForNewAdoption(PointViewState* view);
 
 // Playback tick: advances sample_index by one valid sample per step while playing, restarting a
