@@ -3165,8 +3165,8 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                   false);
   }
   gui::g_state.analyze_pose_view_open = true;
-  gui::g_state.analysis.point_view.orbit_yaw_deg = 53.0f;
-  gui::g_state.analysis.point_view.orbit_pitch_deg = 27.0f;
+  gui::g_state.analysis.point_view.orbit_yaw_deg = 143.0f;
+  gui::g_state.analysis.point_view.orbit_pitch_deg = -37.0f;
   PinPoseViewOnScreen(ctx);
   ctx->Yield(1);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_v1_c03_trace.png").string()), false);
