@@ -3093,6 +3093,60 @@ bool TraceLegendSwatchesAvoidText(ImGuiTestContext* ctx) {
   return true;
 }
 
+std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name);
+
+// A renderer-state fixture, not another async adoption test: the real consumer above has
+// already reached a stable drawn sample. Substitute the analytic suite's entry-backface pose
+// under the same display key, and restore the real trace on every exit. Crystal-frame mesh
+// geometry is pose-independent; no fabricated contacts or point-document edits are needed.
+bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedClassIdentity& identity) {
+  LUMICE_Scene* raw_scene = nullptr;
+  IM_CHECK_RETV(LUMICE_SceneFromJson(kFullyRandomJson, &raw_scene) == LUMICE_OK, false);
+  gui::ScenePtr scene(raw_scene);
+  constexpr double kBackface[9] = { -0.5108181656453654, -0.8569178335521683,  -0.06896831291950242,
+                                    0.6557541851097652,  -0.3365085527995817,  -0.6758316673578998,
+                                    0.5559237810687107,  -0.39045335244173474, 0.7338221373120865 };
+  std::vector<int> faces;
+  std::vector<int> counts;
+  std::vector<double> wavelengths;
+  const auto request = gui::MakeRayRequestForSample(identity, kBackface, 0.0, &faces, &counts, &wavelengths);
+  LUMICE_RepresentativeRay* raw_ray = nullptr;
+  char error[256] = {};
+  IM_CHECK_RETV(LUMICE_AnalyzeRepresentativeRay(scene.get(), &request, &raw_ray, error, sizeof(error)) == LUMICE_OK,
+                false);
+  gui::RepresentativeRayHandle ray(raw_ray, gui::RepresentativeRayDeleter{});
+  LUMICE_RepresentativeRayInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_RepresentativeRayGetInfo(ray.get(), &info) == LUMICE_PATH_READ_OK && info.produced == 0, false);
+  const std::string reason(info.reason.data, info.reason.length);
+  IM_CHECK_RETV(reason == "entry_backface", false);
+  struct Restore {
+    gui::RayTraceSession trace = gui::g_state.analysis.trace;
+    bool crystal_frame = gui::g_state.analysis.point_view.crystal_frame;
+    ~Restore() {
+      gui::g_state.analysis.trace = std::move(trace);
+      gui::g_state.analysis.point_view.crystal_frame = crystal_frame;
+    }
+  } restore;
+  gui::g_state.analysis.trace.adopted_result = ray;
+  gui::g_state.analysis.point_view.crystal_frame = true;
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::RayTraceDisplayStateFor(gui::g_state.analysis.trace, restore.trace.key) ==
+                    gui::RayTraceDisplayState::kRefused,
+                false);
+  IM_CHECK_RETV(!TraceCanvasVertices(gui::kRayTraceMeshColor).empty(), false);
+  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceContactColor).empty(), false);
+  const bool has_segments = std::any_of(std::begin(gui::kRayTraceSegmentColors), std::end(gui::kRayTraceSegmentColors),
+                                        [](ImU32 color) { return !TraceCanvasVertices(color).empty(); });
+  IM_CHECK_RETV(!has_segments, false);
+  const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(text.find("No legal path for this pose:") != std::string::npos, false);
+  IM_CHECK_RETV(text.find(reason) != std::string::npos, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_refused.png").string()), false);
+  ctx->LogInfo("[trace refusal] %s: mesh visible, no segments or markers, named refusal text", reason.c_str());
+  return true;
+}
+
 bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -3230,6 +3284,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(TraceContactsInsideMeshSilhouette(ctx), false);
   IM_CHECK_RETV(TraceLegendSwatchesAvoidText(ctx), false);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
+  IM_CHECK_RETV(RefusedTraceKeepsCrystalVisible(ctx, *identity), false);
   return true;
 }
 
@@ -7357,7 +7412,7 @@ namespace {
 // Capture one submitted application frame, before LogFinish clears its buffer. LogWindow is
 // deliberately unbound from the fallback window: child/window End() must not clear this read.
 // Keep normal item clipping; screenshots below are taken on ordinary, non-logging frames.
-std::string CaptureMapFrameText(ImGuiTestContext* ctx) {
+std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name) {
   struct Capture {
     std::string text;
     int frame = -1;
@@ -7399,12 +7454,17 @@ std::string CaptureMapFrameText(ImGuiTestContext* ctx) {
     std::ofstream output(GuiTestTempPath("map_text_frame_" + std::to_string(capture.frame) + ".txt"));
     output << capture.text;
   }
-  const size_t window_at = capture.text.find("Raypath view\n");
-  if (window_at == std::string::npos || capture.text.find("Raypath view\n", window_at + 1) != std::string::npos) {
-    ctx->LogError("[map text] expected exactly one Raypath view submission in frame %d", capture.frame);
+  const std::string window_marker = std::string(window_name) + '\n';
+  const size_t window_at = capture.text.find(window_marker);
+  if (window_at == std::string::npos || capture.text.find(window_marker, window_at + 1) != std::string::npos) {
+    ctx->LogError("[frame text] expected exactly one %s submission in frame %d", window_name, capture.frame);
     return {};
   }
   return capture.text.substr(window_at);
+}
+
+std::string CaptureMapFrameText(ImGuiTestContext* ctx) {
+  return CaptureWindowFrameText(ctx, "Raypath view");
 }
 
 std::string MapTextLine(const std::string& text, const char* marker, const char* field) {

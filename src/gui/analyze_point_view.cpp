@@ -1409,36 +1409,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     current_key.point_id = point.intent_id;
     current_key.component = current->component;
     current_key.sample = current->stored;
-    switch (RayTraceDisplayStateFor(trace, current_key)) {
-      case RayTraceDisplayState::kHidden:
-        DisabledWrappedText("No representative path asked for yet.");
-        return;
-      case RayTraceDisplayState::kComputing:
-        DisabledWrappedText("Computing the representative path for this sample…");
-        return;
-      case RayTraceDisplayState::kError:
-        ImGui::TextUnformatted("Path query failed:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("%s", trace.adopted_error.c_str());
-        ImGui::PopStyleColor();
-        return;
-      case RayTraceDisplayState::kRefused: {
-        LUMICE_RepresentativeRayInfo rinfo{};
-        rinfo.struct_size = sizeof(rinfo);
-        LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
-        ImGui::TextUnformatted("No legal path for this pose:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("reason: %s | entry status: %s%s%s | corridor area %.3e (threshold %.3e)",
-                           PathTextToString(rinfo.reason).c_str(), PathTextToString(rinfo.entry_status).c_str(),
-                           rinfo.chain_failure.length > 0 ? " | chain: " : "",
-                           rinfo.chain_failure.length > 0 ? PathTextToString(rinfo.chain_failure).c_str() : "",
-                           rinfo.area_perp_internal, rinfo.area_threshold);
-        ImGui::PopStyleColor();
-        return;
-      }
-      case RayTraceDisplayState::kDrawn:
-        break;
-    }
+    const RayTraceDisplayState display_state = RayTraceDisplayStateFor(trace, current_key);
 
     // The crystal's mesh: the FROZEN binding's config (captured at DoAnalyze), in the analysis
     // geometry's nominal caliber, true scale. The pool slot comes from the snapshot's own
@@ -1470,7 +1441,8 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     RayTracePolyline line;
-    if (!BuildRayTracePolyline(*trace.adopted_result, /*extension=*/1.1f, &line)) {
+    if (display_state == RayTraceDisplayState::kDrawn &&
+        !BuildRayTracePolyline(*trace.adopted_result, /*extension=*/1.1f, &line)) {
       DisabledWrappedText("The path's readers answered empty — nothing to draw.");
       return;
     }
@@ -1651,7 +1623,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
       // centre (the crystal view's own anchor; the world view's entry leg already carries the
       // incident). The tip rides the content fit's scale, the anchor does not.
-      if (view.crystal_frame) {
+      if (display_state == RayTraceDisplayState::kDrawn && view.crystal_frame) {
         const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
                              static_cast<float>(current->sample.sun_in_crystal[1]),
                              static_cast<float>(current->sample.sun_in_crystal[2]) };
@@ -1660,6 +1632,38 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
       }
     }
+    // The current pose's crystal remains visible even when its trace has no drawable path.
+    switch (display_state) {
+      case RayTraceDisplayState::kHidden:
+        DisabledWrappedText("No representative path asked for yet.");
+        return;
+      case RayTraceDisplayState::kComputing:
+        DisabledWrappedText("Computing the representative path for this sample…");
+        return;
+      case RayTraceDisplayState::kError:
+        ImGui::TextUnformatted("Path query failed:");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("%s", trace.adopted_error.c_str());
+        ImGui::PopStyleColor();
+        return;
+      case RayTraceDisplayState::kRefused: {
+        LUMICE_RepresentativeRayInfo rinfo{};
+        rinfo.struct_size = sizeof(rinfo);
+        LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
+        ImGui::TextUnformatted("No legal path for this pose:");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("reason: %s | entry status: %s%s%s | corridor area %.3e (threshold %.3e)",
+                           PathTextToString(rinfo.reason).c_str(), PathTextToString(rinfo.entry_status).c_str(),
+                           rinfo.chain_failure.length > 0 ? " | chain: " : "",
+                           rinfo.chain_failure.length > 0 ? PathTextToString(rinfo.chain_failure).c_str() : "",
+                           rinfo.area_perp_internal, rinfo.area_threshold);
+        ImGui::PopStyleColor();
+        return;
+      }
+      case RayTraceDisplayState::kDrawn:
+        break;
+    }
+
     // Each legend unit owns a swatch item and its label; test the whole unit before SameLine.
     const float swatch = UiPx(9.0f);
     const char* labels[] = { "entry", "internal", "exit" };
