@@ -336,7 +336,17 @@ float CrystalRenderer::ComputeDist(float zoom) {
   return zoom / half_tan;
 }
 
-void CrystalRenderer::ComputeMvp(const float model_rotation[16], float zoom, int width, int height, float out_mvp[16]) {
+// Resolve the view once for both the GPU projection and eye-space classification.
+static void ResolveEyeRotation(const float model[16], const float* view_rotation, float out[16]) {
+  if (view_rotation != nullptr) {
+    Mul4x4Rot(view_rotation, model, out);
+  } else {
+    CrystalRenderer::ComputeEyeRotation(model, out);
+  }
+}
+
+void CrystalRenderer::ComputeMvp(const float model_rotation[16], float zoom, int width, int height, float out_mvp[16],
+                                 const float* view_rotation) {
   // Build perspective projection
   float aspect = static_cast<float>(width) / static_cast<float>(height);
   float fov_rad = kFovDeg * kDeg2Rad;
@@ -362,8 +372,8 @@ void CrystalRenderer::ComputeMvp(const float model_rotation[16], float zoom, int
   // coordinates. Mouse-drag mutates the model matrix (left-multiplied by
   // world-axis Rodrigues), so the camera stays put.
   float view[16];
-  ComputeEyeRotation(model_rotation, view);  // 3x3 rotation; translation=0
-  view[14] = -dist;                          // append camera-back translation
+  ResolveEyeRotation(model_rotation, view_rotation, view);  // 3x3 rotation; translation=0
+  view[14] = -dist;                                         // append camera-back translation
 
   // MVP = proj * view
   for (int i = 0; i < 4; i++) {
@@ -377,7 +387,7 @@ void CrystalRenderer::ComputeMvp(const float model_rotation[16], float zoom, int
   }
 }
 
-void CrystalRenderer::Render(const float rotation[16], float zoom, CrystalStyle style) {
+void CrystalRenderer::Render(const float rotation[16], float zoom, CrystalStyle style, const float* view_rotation) {
   if (total_edge_count_ <= 0) {
     return;
   }
@@ -399,7 +409,7 @@ void CrystalRenderer::Render(const float rotation[16], float zoom, CrystalStyle 
 
   // MVP shared with face-number overlay (see ComputeMvp).
   float mvp[16] = {};
-  ComputeMvp(rotation, zoom, width_, height_, mvp);
+  ComputeMvp(rotation, zoom, width_, height_, mvp, view_rotation);
 
   // Compose model->eye rotation (V_rot · model). Used below for edge
   // classification (eye-space midpoint + normal) and as u_rotation for the
@@ -409,7 +419,7 @@ void CrystalRenderer::Render(const float rotation[16], float zoom, CrystalStyle 
   // translation-invariant.
   float dist = ComputeDist(zoom);
   float m_eye[16];
-  ComputeEyeRotation(rotation, m_eye);  // 3x3 rotation, translation=0
+  ResolveEyeRotation(rotation, view_rotation, m_eye);  // 3x3 rotation, translation=0
   float view[16];
   std::memcpy(view, m_eye, 16 * sizeof(float));
   view[14] = -dist;  // append camera-back translation for eye-space midpoint
