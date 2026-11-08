@@ -3100,9 +3100,8 @@ std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_nam
 // under the same display key, and restore the real trace on every exit. Crystal-frame mesh
 // geometry is pose-independent; no fabricated contacts or point-document edits are needed.
 bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedClassIdentity& identity) {
-  LUMICE_Scene* raw_scene = nullptr;
-  IM_CHECK_RETV(LUMICE_SceneFromJson(kFullyRandomJson, &raw_scene) == LUMICE_OK, false);
-  gui::ScenePtr scene(raw_scene);
+  const gui::ScenePtr scene = gui::BuildScene(gui::g_state, gui::SceneIntent::kSimCommit);
+  IM_CHECK_RETV(scene != nullptr, false);
   constexpr double kBackface[9] = { -0.5108181656453654, -0.8569178335521683,  -0.06896831291950242,
                                     0.6557541851097652,  -0.3365085527995817,  -0.6758316673578998,
                                     0.5559237810687107,  -0.39045335244173474, 0.7338221373120865 };
