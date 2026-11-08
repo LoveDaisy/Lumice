@@ -36,6 +36,7 @@
 
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_survey.hpp"
+#include "imgui.h"
 #include "include/lumice_raypath.h"
 
 struct ImDrawList;
@@ -252,6 +253,12 @@ void SunGlobeProject(const SunGlobeProjector& projector, const double u[3], doub
 uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid);
 
 // ---- The representative-ray display -----------------------------------------------------------------
+
+// Canvas and legend share the segment palette; frame tests inspect the submitted draw primitives.
+inline constexpr ImU32 kRayTraceMeshColor = IM_COL32(105, 110, 120, 120);
+inline constexpr ImU32 kRayTraceContactColor = IM_COL32(240, 240, 240, 190);
+inline constexpr ImU32 kRayTraceSegmentColors[] = { IM_COL32(90, 160, 255, 255), IM_COL32(255, 165, 60, 255),
+                                                    IM_COL32(90, 220, 120, 255) };
 
 // The polyline the 3D view draws, straight from the 742.2 readers: entry leg (incident direction,
 // drawn from outside), the contacts' internal legs, the exit leg. The incident/exit segments'

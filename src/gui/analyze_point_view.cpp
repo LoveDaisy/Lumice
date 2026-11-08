@@ -911,14 +911,8 @@ void RotateBodyToWorld(const double pose[9], const float v[3], float out[3]) {
 }
 
 ImU32 SegmentColor(int kind, float alpha) {
-  switch (kind) {
-    case 0:
-      return IM_COL32(90, 160, 255, static_cast<int>(255 * alpha));  // entry: blue
-    case 1:
-      return IM_COL32(255, 165, 60, static_cast<int>(255 * alpha));  // internal: orange
-    default:
-      return IM_COL32(90, 220, 120, static_cast<int>(255 * alpha));  // exit: green
-  }
+  const ImU32 color = kRayTraceSegmentColors[kind == 0 ? 0 : kind == 1 ? 1 : 2];
+  return (color & ~IM_COL32_A_MASK) | (static_cast<ImU32>(255 * alpha) << IM_COL32_A_SHIFT);
 }
 
 }  // namespace
@@ -1633,7 +1627,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         float b[3];
         to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2] * 3], a);
         to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2 + 1] * 3], b);
-        dl->AddLine(project(a), project(b), IM_COL32(105, 110, 120, 120), 1.0f);
+        dl->AddLine(project(a), project(b), kRayTraceMeshColor, 1.0f);
       }
       for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
         const float* p0 = &line.points[s * 6];
@@ -1652,7 +1646,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
         float d[3];
         point_to_display(p, d);
-        dl->AddCircle(project(d), UiPx(2.5f), IM_COL32(240, 240, 240, 190), 0, 1.0f);
+        dl->AddCircle(project(d), UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
       }
       // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
       // centre (the crystal view's own anchor; the world view's entry leg already carries the

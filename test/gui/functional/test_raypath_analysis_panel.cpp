@@ -2963,6 +2963,79 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
 // entry, three internal, exit), read back through the C readers, not a screenshot's looks.
 // Real-timing pool: the class survey's chromatic legs queue the map and the point on the one
 // worker, the standing shape.
+// Inspect the actual canvas primitives, not a second projection of the input points. This
+// region's draw list owns only the canvas; its legend is in the separate report child.
+std::vector<ImVec2> TraceCanvasVertices(ImU32 color) {
+  std::vector<ImVec2> points;
+  if (const ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D")) {
+    for (const ImDrawVert& vertex : region->DrawList->VtxBuffer) {
+      if (vertex.col == color) {
+        points.push_back(vertex.pos);
+      }
+    }
+  }
+  return points;
+}
+
+double ScreenTurn(const ImVec2& a, const ImVec2& b, const ImVec2& c) {
+  return (static_cast<double>(b.x) - a.x) * (static_cast<double>(c.y) - a.y) -
+         (static_cast<double>(b.y) - a.y) * (static_cast<double>(c.x) - a.x);
+}
+
+std::vector<ImVec2> TraceMeshSilhouette(std::vector<ImVec2> points) {
+  std::sort(points.begin(), points.end(),
+            [](const ImVec2& a, const ImVec2& b) { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+  points.erase(std::unique(points.begin(), points.end(),
+                           [](const ImVec2& a, const ImVec2& b) { return a.x == b.x && a.y == b.y; }),
+               points.end());
+  if (points.size() < 3) {
+    return {};
+  }
+  std::vector<ImVec2> hull;
+  for (const ImVec2& p : points) {
+    while (hull.size() >= 2 && ScreenTurn(hull[hull.size() - 2], hull.back(), p) <= 0.0) {
+      hull.pop_back();
+    }
+    hull.push_back(p);
+  }
+  const size_t lower_size = hull.size();
+  for (size_t i = points.size() - 1; i-- > 0;) {
+    const ImVec2& p = points[i];
+    while (hull.size() > lower_size && ScreenTurn(hull[hull.size() - 2], hull.back(), p) <= 0.0) {
+      hull.pop_back();
+    }
+    hull.push_back(p);
+  }
+  hull.pop_back();
+  return hull;
+}
+
+bool TraceContactsInsideMeshSilhouette(ImGuiTestContext* ctx) {
+  IM_CHECK_RETV(PoseRegionWindow("##AnalyzeRaypath3D") != nullptr, false);
+  const auto mesh = TraceCanvasVertices(gui::kRayTraceMeshColor);
+  const auto contacts = TraceCanvasVertices(gui::kRayTraceContactColor);
+  IM_CHECK_RETV(!mesh.empty(), false);
+  IM_CHECK_RETV(!contacts.empty(), false);
+  const auto hull = TraceMeshSilhouette(mesh);
+  IM_CHECK_RETV(hull.size() >= 3, false);
+  double worst_outside_px = 0.0;
+  for (const ImVec2& p : contacts) {
+    for (size_t i = 0; i < hull.size(); ++i) {
+      const ImVec2& a = hull[i];
+      const ImVec2& b = hull[(i + 1) % hull.size()];
+      const double length = std::hypot(static_cast<double>(b.x) - a.x, static_cast<double>(b.y) - a.y);
+      // The hull's exact duplicate removal guarantees distinct adjacent vertices.
+      worst_outside_px = std::max(worst_outside_px, -ScreenTurn(a, b, p) / length);
+    }
+  }
+  // Pixel-distance tolerance covers the 2.5 px marker radius and AA fringe, not world geometry.
+  const double tolerance_px = gui::UiPx(4.0f);
+  ctx->LogInfo("[trace silhouette] mesh=%zu marker=%zu hull=%zu outside=%.3f px, tolerance=%.3f px", mesh.size(),
+               contacts.size(), hull.size(), worst_outside_px, tolerance_px);
+  IM_CHECK_RETV(worst_outside_px <= tolerance_px, false);
+  return true;
+}
+
 bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -3092,9 +3165,12 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                   false);
   }
   gui::g_state.analyze_pose_view_open = true;
+  gui::g_state.analysis.point_view.orbit_yaw_deg = 53.0f;
+  gui::g_state.analysis.point_view.orbit_pitch_deg = 27.0f;
   PinPoseViewOnScreen(ctx);
   ctx->Yield(1);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_v1_c03_trace.png").string()), false);
+  IM_CHECK_RETV(TraceContactsInsideMeshSilhouette(ctx), false);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
   return true;
 }
