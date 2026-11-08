@@ -2251,6 +2251,9 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         return text;
       };
       const auto footer_height = [&](const std::string& text) {
+        if (text.empty()) {
+          return UiPx(28.0f);
+        }
         return std::max(UiPx(28.0f), UiPx(16.0f) + ImGui::CalcTextSize(text.c_str(), nullptr, false, summary_wrap).y);
       };
       const PointCurveAxisRange before_wheel = PointCurveVisibleRange(fit, &view.curve_axis);
