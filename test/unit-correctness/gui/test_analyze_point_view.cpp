@@ -361,6 +361,81 @@ TEST(AnalyzePointView, CurveClassifySplitsTheFlagQuadrants) {
   EXPECT_EQ(PointCurveClassify(-1.0, true), K::kUnavailable);          // physically impossible: named, not drawn
 }
 
+TEST(AnalyzePointView, CurveAxisFitsOnlyPositiveValuesAcrossAllArms) {
+  using K = PointCurveValueKind;
+  PointContributionCurve curve;
+  curve.points.resize(101);
+  for (PointCurvePoint& point : curve.points) {
+    point.rho = 2.0;
+    point.rho_kind = K::kPositive;
+    point.area = 1e200;  // unavailable values must not affect the union
+    point.transmission_kind = K::kExactZero;
+  }
+  curve.points[0].rho = 1e-260;
+  curve.points[1].product = 20.0;
+  curve.points[1].product_kind = K::kPositive;
+  const PointCurveAxisRange fit = PointCurveAxisFit(curve);
+  ASSERT_TRUE(fit.valid);
+  EXPECT_DOUBLE_EQ(fit.lo, 2.0);  // rank 2 of 102 positives
+  EXPECT_DOUBLE_EQ(fit.hi, 20.0);
+  const PointCurveOutsideCount outside = PointCurveCountOutside(curve, fit.lo, fit.hi);
+  EXPECT_EQ(outside.points, 1);
+  EXPECT_DOUBLE_EQ(outside.min, 1e-260);
+  EXPECT_FALSE(outside.above);
+  EXPECT_EQ(PointCurveOutsideLabel(outside), "1 points below axis · min 1e-260");
+
+  // With more than 1% in the tiny tail, the relative noise floor wins instead of P1.
+  curve.points[2].rho = 1e-260;
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 20.0 * 1e-15);
+}
+
+TEST(AnalyzePointView, CurveAxisPreservesNarrowSmallSamplesAndDegenerateInputs) {
+  using K = PointCurveValueKind;
+  PointContributionCurve curve;
+  EXPECT_FALSE(PointCurveAxisFit(curve).valid);
+  curve.points.resize(100);
+  for (size_t i = 0; i < curve.points.size(); ++i) {
+    curve.points[i].area = 2.0 + static_cast<double>(i) * 0.001;
+    curve.points[i].area_kind = K::kPositive;
+  }
+  const PointCurveAxisRange narrow = PointCurveAxisFit(curve);
+  EXPECT_DOUBLE_EQ(narrow.lo, 2.0);
+  EXPECT_DOUBLE_EQ(narrow.hi, 2.099);
+  EXPECT_EQ(PointCurveCountOutside(curve, narrow.lo, narrow.hi).points, 0);
+  curve.points.resize(1);
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 2.0);
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).hi, 2.0);
+  curve.points[0].area = 1e-320;  // underflow of the relative floor must not erase real positives
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 1e-320);
+  curve.points[0].area_kind = K::kExactZero;
+  EXPECT_FALSE(PointCurveAxisFit(curve).valid);
+}
+
+TEST(AnalyzePointView, CurveOutsideCountsPointsNotArmsAndKeepsHonestExtrema) {
+  using K = PointCurveValueKind;
+  PointContributionCurve curve;
+  curve.points.resize(3);
+  curve.points[0].rho_kind = curve.points[0].product_kind = K::kPositive;
+  curve.points[0].rho = 1e-260;
+  curve.points[0].product = 1e-100;
+  curve.points[1].area_kind = K::kPositive;
+  curve.points[1].area = 8.0;
+  curve.points[2].rho_kind = K::kExactZero;
+  curve.points[2].product = 1e-300;  // unavailable, not counted
+  const PointCurveOutsideCount fit = PointCurveCountOutside(curve, 1.0, 8.0);
+  EXPECT_EQ(fit.points, 1);
+  EXPECT_DOUBLE_EQ(fit.min, 1e-260);
+  EXPECT_DOUBLE_EQ(fit.max, 1e-100);
+  EXPECT_FALSE(fit.above);
+  const PointCurveOutsideCount zoom = PointCurveCountOutside(curve, 1.0, 4.0);
+  EXPECT_EQ(zoom.points, 2);
+  EXPECT_DOUBLE_EQ(zoom.min, 1e-260);
+  EXPECT_DOUBLE_EQ(zoom.max, 8.0);
+  EXPECT_TRUE(zoom.above);
+  EXPECT_EQ(PointCurveOutsideLabel(zoom), "2 points outside axis · min 1e-260 · max 8");
+  EXPECT_TRUE(PointCurveOutsideLabel({}).empty());
+}
+
 TEST(AnalyzePointView, CurveLogTicksSpanDecadesWithSubTicks) {
   const std::vector<PointCurveLogTick> ticks = PointCurveLogTicks(1e-6, 1e-3);
   int majors = 0;

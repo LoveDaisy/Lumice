@@ -77,6 +77,18 @@ const char* ExecutionText(int execution) {
 
 constexpr int kMaxRenderComponents = 64;
 
+struct CurveArm {
+  double PointCurvePoint::*value;
+  PointCurveValueKind PointCurvePoint::*kind;
+};
+constexpr CurveArm kCurveArmFields[] = {
+  { &PointCurvePoint::rho, &PointCurvePoint::rho_kind },
+  { &PointCurvePoint::area, &PointCurvePoint::area_kind },
+  { &PointCurvePoint::transmission, &PointCurvePoint::transmission_kind },
+  { &PointCurvePoint::k_carea, &PointCurvePoint::k_kind },
+  { &PointCurvePoint::product, &PointCurvePoint::product_kind },
+};
+
 }  // namespace
 
 // ---- Display state ---------------------------------------------------------------------------------
@@ -418,6 +430,62 @@ int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_r
     }
   }
   return best;
+}
+
+PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve) {
+  std::vector<double> positives;
+  positives.reserve(curve.points.size() * std::size(kCurveArmFields));
+  for (const PointCurvePoint& point : curve.points) {
+    for (const CurveArm& arm : kCurveArmFields) {
+      if (point.*arm.kind == PointCurveValueKind::kPositive) {
+        positives.push_back(point.*arm.value);
+      }
+    }
+  }
+  if (positives.empty()) {
+    return {};
+  }
+  const double hi = *std::max_element(positives.begin(), positives.end());
+  const size_t rank = static_cast<size_t>(std::ceil(kCurveAxisLowerQuantile * positives.size())) - 1;
+  std::nth_element(positives.begin(), positives.begin() + rank, positives.end());
+  return { true, std::max(positives[rank], hi * kCurveAxisNoiseRatio), hi };
+}
+
+PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi) {
+  PointCurveOutsideCount outside;
+  for (const PointCurvePoint& point : curve.points) {
+    bool hidden = false;
+    for (const CurveArm& arm : kCurveArmFields) {
+      const double value = point.*arm.value;
+      if (point.*arm.kind != PointCurveValueKind::kPositive || (value >= lo && value <= hi)) {
+        continue;
+      }
+      if (outside.points == 0 && !hidden) {
+        outside.min = value;
+        outside.max = value;
+      }
+      outside.min = std::min(outside.min, value);
+      outside.max = std::max(outside.max, value);
+      outside.above = outside.above || value > hi;
+      hidden = true;
+    }
+    outside.points += hidden ? 1 : 0;
+  }
+  return outside;
+}
+
+std::string PointCurveOutsideLabel(const PointCurveOutsideCount& outside) {
+  if (outside.points == 0) {
+    return {};
+  }
+  char text[160];
+  if (outside.above) {
+    std::snprintf(text, sizeof(text), "%d points outside axis · min %.3g · max %.3g", outside.points, outside.min,
+                  outside.max);
+  } else {
+    std::snprintf(text, sizeof(text), "%d points below axis · min %.3g", outside.points, outside.min);
+  }
+  return text;
 }
 
 std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi) {

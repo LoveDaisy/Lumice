@@ -200,6 +200,28 @@ double PointCurveXAt(const PointContributionCurve& curve, int valid_position);
 // Invalid samples are unreachable (the slider's domain); ties pick the lower position.
 int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_rad);
 
+// The shared axis pools only kPositive values across all five arms. The nearest-rank P1
+// lower bound and the relative noise floor keep tiny tails from consuming the log axis.
+inline constexpr double kCurveAxisLowerQuantile = 0.01;
+inline constexpr double kCurveAxisNoiseRatio = 1e-15;
+struct PointCurveAxisRange {
+  bool valid = false;
+  double lo = 0.0;
+  double hi = 0.0;
+};
+PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve);
+
+// Counts stored points, not (arm, point) pairs: multiple hidden arms at one point count once.
+// The extrema cover only hidden positive values; zeros and unavailable cells never count.
+struct PointCurveOutsideCount {
+  int points = 0;
+  double min = 0.0;
+  double max = 0.0;
+  bool above = false;
+};
+PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi);
+std::string PointCurveOutsideLabel(const PointCurveOutsideCount& outside);
+
 // One log-axis tick: a decade boundary (major) or its 2x/5x sub-multiple (minor).
 struct PointCurveLogTick {
   double value = 0.0;
