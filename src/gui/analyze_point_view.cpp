@@ -2236,7 +2236,19 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const float line_h = ImGui::GetTextLineHeight();
       const float summary_wrap = std::max(1.0f, avail.x - UiPx(12.0f));
       const auto summary_for = [&](const PointCurveAxisRange& range) {
-        return range.valid ? PointCurveOutsideLabel(PointCurveCountOutside(curve, range.lo, range.hi)) : "";
+        std::string text = range.valid ? PointCurveOutsideLabel(PointCurveCountOutside(curve, range.lo, range.hi)) : "";
+        if (ImGui::CalcTextSize(text.c_str()).x > summary_wrap) {
+          // Break between fields, not inside a decimal/exponent (ImGui also wraps at '.').
+          const size_t min_field = text.find(" · min ");
+          if (min_field != std::string::npos) {
+            text.replace(min_field, std::strlen(" · "), "\n");
+            const size_t max_field = text.find(" · max ");
+            if (max_field != std::string::npos && ImGui::CalcTextSize(text.c_str() + min_field + 1).x > summary_wrap) {
+              text.replace(max_field, std::strlen(" · "), "\n");
+            }
+          }
+        }
+        return text;
       };
       const auto footer_height = [&](const std::string& text) {
         return std::max(UiPx(28.0f), UiPx(16.0f) + ImGui::CalcTextSize(text.c_str(), nullptr, false, summary_wrap).y);
