@@ -446,7 +446,12 @@ PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve) {
   if (positives.empty()) {
     return {};
   }
-  const double hi = *std::max_element(positives.begin(), positives.end());
+  const auto extrema = std::minmax_element(positives.begin(), positives.end());
+  const double lo = *extrema.first;
+  const double hi = *extrema.second;
+  if (lo >= hi / kCurveAxisNarrowRatio) {
+    return { true, lo, hi };
+  }
   const size_t rank = static_cast<size_t>(std::ceil(kCurveAxisLowerQuantile * positives.size())) - 1;
   std::nth_element(positives.begin(), positives.begin() + rank, positives.end());
   return { true, std::max(positives[rank], hi * kCurveAxisNoiseRatio), hi };
@@ -478,6 +483,13 @@ PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, Point
         std::clamp(span / std::pow(kCurveAxisZoomFactor, wheel), std::min(0.25, full_span), full_span);
     zoom->log_lo = std::clamp(zoom->log_lo + anchor * (span - new_span), fit_lo, fit_hi - new_span);
     span = new_span;
+  }
+  // log subtraction and a wheel-in/out round trip can leave the full span one ULP short.
+  // Snap only the window, never the sample values, so the exact fit boundary stays included.
+  if (full_span - span <= full_span * 1e-12) {
+    zoom->log_lo = fit_lo;
+    zoom->log_hi = fit_hi;
+    return fit;
   }
   zoom->log_hi = zoom->log_lo + span;
   // Keep exact fit endpoints: a log/pow round trip must not hide a boundary value as "outside".
@@ -2222,14 +2234,26 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       // One shared fit over all positive arms, followed by the session's log-domain window.
       const PointCurveAxisRange fit = PointCurveAxisFit(curve);
       const float line_h = ImGui::GetTextLineHeight();
-      const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - UiPx(28.0f));
-      const double mouse_anchor = 1.0 - (ImGui::GetIO().MousePos.y - canvas_min.y - UiPx(10.0f)) / rough_plot_h;
+      const float summary_wrap = std::max(1.0f, avail.x - UiPx(12.0f));
+      const auto summary_for = [&](const PointCurveAxisRange& range) {
+        return range.valid ? PointCurveOutsideLabel(PointCurveCountOutside(curve, range.lo, range.hi)) : "";
+      };
+      const auto footer_height = [&](const std::string& text) {
+        return std::max(UiPx(28.0f), UiPx(16.0f) + ImGui::CalcTextSize(text.c_str(), nullptr, false, summary_wrap).y);
+      };
+      const PointCurveAxisRange before_wheel = PointCurveVisibleRange(fit, &view.curve_axis);
+      const std::string before_summary = summary_for(before_wheel);
+      const float before_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - footer_height(before_summary));
+      const double mouse_anchor = 1.0 - (ImGui::GetIO().MousePos.y - canvas_min.y - UiPx(10.0f)) / before_plot_h;
       const double anchor = mouse_anchor >= 0.0 && mouse_anchor <= 1.0 ? mouse_anchor : 0.5;
       const double wheel = AnalyzeRegionWheelStanding() && canvas_hovered ? ImGui::GetIO().MouseWheel : 0.0;
       const PointCurveAxisRange visible = PointCurveVisibleRange(fit, &view.curve_axis, wheel, anchor);
       const double v_min = visible.lo;
       const double v_max = visible.hi;
       const bool have_range = visible.valid && x_hi > 0.0;
+      const std::string outside_label = wheel == 0.0 ? before_summary : summary_for(visible);
+      const float pad_b = footer_height(outside_label);
+      const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - pad_b);
       const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
       float widest_lab = 0.0f;
       if (have_range) {
@@ -2246,7 +2270,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const float pad_l = std::max(UiPx(34.0f), widest_lab + UiPx(10.0f));  // decade labels live left of the plot
       const float pad_r = UiPx(10.0f);
       const float pad_t = UiPx(10.0f);  // the seed mark rides above the plot
-      const float pad_b = UiPx(28.0f);  // the zero row, then the x labels' strip
+      // The footer leaves the zero row intact and wraps the summary inside the same canvas.
       const ImVec2 plot_min(canvas_min.x + pad_l, canvas_min.y + pad_t);
       const ImVec2 plot_max(canvas_max.x - pad_r, canvas_max.y - pad_b);
       const float plot_w = std::max(1.0f, plot_max.x - plot_min.x);
@@ -2295,12 +2319,11 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         }
       }
       // Fit the honest tail summary beside the x labels, leaving the zero markers untouched.
-      const std::string outside_label =
-          have_range ? PointCurveOutsideLabel(PointCurveCountOutside(curve, v_min, v_max)) : "";
-      const float summary_x = canvas_max.x - UiPx(6.0f) - ImGui::CalcTextSize(outside_label.c_str()).x;
+      const ImVec2 summary_size = ImGui::CalcTextSize(outside_label.c_str(), nullptr, false, summary_wrap);
+      const float summary_x = canvas_max.x - UiPx(6.0f) - summary_size.x;
       if (!outside_label.empty()) {
-        dl->AddText(ImVec2(summary_x, plot_max.y + UiPx(13.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled),
-                    outside_label.c_str());
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(summary_x, plot_max.y + UiPx(13.0f)),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), outside_label.c_str(), nullptr, summary_wrap);
       }
       // The plot's frame, the x labels and the axis unit (the caliber line names rad; the axis
       // shows where its numbers sit). The summary owns its strip; omit colliding x labels.

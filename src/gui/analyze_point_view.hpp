@@ -204,6 +204,8 @@ int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_r
 // lower bound and the relative noise floor keep tiny tails from consuming the log axis.
 inline constexpr double kCurveAxisLowerQuantile = 0.01;
 inline constexpr double kCurveAxisNoiseRatio = 1e-15;
+// A band within one decade has no extreme tail to trim; preserve its original endpoints.
+inline constexpr double kCurveAxisNarrowRatio = 10.0;
 struct PointCurveAxisRange {
   bool valid = false;
   double lo = 0.0;

@@ -389,18 +389,18 @@ TEST(AnalyzePointView, CurveAxisFitsOnlyPositiveValuesAcrossAllArms) {
   EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 20.0 * 1e-15);
 }
 
-TEST(AnalyzePointView, CurveAxisPreservesNarrowSmallSamplesAndDegenerateInputs) {
+TEST(AnalyzePointView, CurveAxisPreservesNarrowBandsRegardlessOfSampleCount) {
   using K = PointCurveValueKind;
   PointContributionCurve curve;
   EXPECT_FALSE(PointCurveAxisFit(curve).valid);
-  curve.points.resize(100);
+  curve.points.resize(1001);
   for (size_t i = 0; i < curve.points.size(); ++i) {
     curve.points[i].area = 2.0 + static_cast<double>(i) * 0.001;
     curve.points[i].area_kind = K::kPositive;
   }
   const PointCurveAxisRange narrow = PointCurveAxisFit(curve);
   EXPECT_DOUBLE_EQ(narrow.lo, 2.0);
-  EXPECT_DOUBLE_EQ(narrow.hi, 2.099);
+  EXPECT_DOUBLE_EQ(narrow.hi, 3.0);
   EXPECT_EQ(PointCurveCountOutside(curve, narrow.lo, narrow.hi).points, 0);
   curve.points.resize(1);
   EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 2.0);
@@ -460,6 +460,18 @@ TEST(AnalyzePointView, CurveWindowZoomsAtAnchorClampsAndResetsOnAdoption) {
   const PointCurveAxisRange one = PointCurveVisibleRange({ true, 2.0, 2.0 }, &view.curve_axis, 10.0);
   EXPECT_DOUBLE_EQ(one.lo, 2.0);
   EXPECT_DOUBLE_EQ(one.hi, 2.0);
+  // Non-power-of-ten endpoints must survive every no-op frame and a wheel round trip exactly.
+  const PointCurveAxisRange decimal_fit{ true, 0.0127281216, 83.6119873 };
+  PointCurveZoom decimal_zoom;
+  for (int i = 0; i < 3; ++i) {
+    const auto still_fit = PointCurveVisibleRange(decimal_fit, &decimal_zoom);
+    EXPECT_DOUBLE_EQ(still_fit.lo, decimal_fit.lo);
+    EXPECT_DOUBLE_EQ(still_fit.hi, decimal_fit.hi);
+  }
+  PointCurveVisibleRange(decimal_fit, &decimal_zoom, 1.0);
+  const auto round_trip = PointCurveVisibleRange(decimal_fit, &decimal_zoom, -1.0);
+  EXPECT_DOUBLE_EQ(round_trip.lo, decimal_fit.lo);
+  EXPECT_DOUBLE_EQ(round_trip.hi, decimal_fit.hi);
   view.orbit_zoom = 2.0f;
   ResetPointViewStateForNewAdoption(&view);
   EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, 0.0);
