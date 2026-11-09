@@ -2557,7 +2557,7 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   // NoDocking: a free-form surface, not shell layout (§7's boundary note); NoCollapse: a
   // collapsed title bar hides the pose faces without freeing their queries — the honest off
   // state is closed, via the same flag the title bar's X writes through `p_open`.
-  if (!ImGui::Begin("Pose & trace", &state.analyze_pose_view_open,
+  if (!ImGui::Begin(kPoseViewWindowTitle, &state.analyze_pose_view_open,
                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse)) {
     ImGui::End();

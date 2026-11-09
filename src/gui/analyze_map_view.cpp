@@ -1470,9 +1470,21 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // outside the growing report, available even before a class/point or drawable result exists.
   // Only geometry chooses the label's line break; query states never move this operation stack.
   ImGui::Separator();
-  const float pose_label_w = ImGui::CalcTextSize("Pose & trace").x + style_fp_x * 2.0f;
+  // The labels derive from the window-title constant (the display spelling has one source). The
+  // narrow-column form is the constant's LAST space turned into the line break — the unambiguous
+  // derivation for the only multi-space spelling; a functional test pins the submitted label's
+  // lines so a wrong derivation cannot pass green.
+  static const std::string kPoseButtonLabel = std::string(kPoseViewWindowTitle) + "###pose_open";
+  static const std::string kPoseButtonWrappedLabel = [] {
+    std::string wrapped = kPoseViewWindowTitle;
+    const size_t last_space = wrapped.find_last_of(' ');
+    if (last_space != std::string::npos)
+      wrapped[last_space] = '\n';
+    return wrapped + "###pose_open";
+  }();
+  const float pose_label_w = ImGui::CalcTextSize(kPoseViewWindowTitle).x + style_fp_x * 2.0f;
   const char* pose_label =
-      pose_label_w <= ImGui::GetContentRegionAvail().x ? "Pose & trace###pose_open" : "Pose &\ntrace###pose_open";
+      pose_label_w <= ImGui::GetContentRegionAvail().x ? kPoseButtonLabel.c_str() : kPoseButtonWrappedLabel.c_str();
   if (ImGui::Button(pose_label)) {
     state.analyze_pose_view_open = true;
   }
@@ -1683,7 +1695,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   // NoDocking: the window is a free-form surface, not shell layout (the contract's §7 boundary
   // note); NoCollapse: a collapsed title bar hides the map without freeing its queries — the
   // honest off state is closed, via the same flag the title bar's X writes through `p_open`.
-  if (!ImGui::Begin("Raypath view", &state.analyze_raypath_view_open,
+  if (!ImGui::Begin(kRaypathViewWindowTitle, &state.analyze_raypath_view_open,
                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse)) {
     ImGui::End();

@@ -85,10 +85,15 @@ constexpr float kAnalyzeShareListMinHeight = 250.0f;
 // re-derives an effective ROI. Frames, not milliseconds — the count is deterministic under the
 // test harness's fixed-dt clock.
 constexpr int kAnalyzeConeCenterConvergenceFrames = 8;
-// D2: the diagnostics region's height floor — its title plus one wrapped state line.
-// Re-confirmed 2026-11-04 at the proportional split: the scroll child keeps a visible first
-// line (34 px measured) and the wheel reaches the rest (ScrollMax 128 with the idle stack).
-constexpr float kAnalyzeDetailsMinHeight = 64.0f;
+// D2: the diagnostics region's height floor — the double-entry header's budget (contract §16.3):
+// the title row, the entry button pair at its vertical tier (two full-height rows — the worst
+// layout the header can take), the row gaps, the window padding and one visible first line of
+// the scroll region, with headroom. A same-row layout renders one button row, but the floor
+// covers the vertical tier so state changes never resize the header. The invariant the number
+// serves: both entry buttons fully reachable and the scroll region's first line visible at the
+// smallest permitted diagnostics height (the derivation's itemized account and its live-frame
+// calibration are contract §16.3's as-built record).
+constexpr float kAnalyzeDetailsMinHeight = 110.0f;
 // D2's default: the contract's list ≈45% of the right column's height.
 constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
 // (The depth band's per-cell floors kAnalyzeDepthGlobeMinSize / kAnalyzeDepth3DMinSize retired
@@ -133,6 +138,15 @@ constexpr float kPoseViewLeftFloor = 240.0f;
 // floors, proportionally compress below them. Report content never changes these bounds.
 constexpr float kPoseViewGlobeFloor = 221.0f;
 constexpr float kPoseViewFactorsFloor = 330.0f;
+// The two analysis windows' title display spellings, the ONE source for every consumer of those
+// spellings: the windows' own Begin calls, the Raypath view window's in-place Pose button (the
+// constant plus the button's `###pose_open` addressing suffix), and the main window's Selection
+// header entry buttons (contract §16.3 — the header buttons and the windows must not be able to
+// drift apart in what they are called). The map button's narrow-column wrap form derives from the
+// constant mechanically (the LAST space becomes the line break — the unambiguous rule for the
+// only multi-space spelling); it never re-spells the words.
+constexpr const char* kRaypathViewWindowTitle = "Raypath view";
+constexpr const char* kPoseViewWindowTitle = "Pose & trace";
 // The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's
 // two splitters).
 constexpr float kAnalyzeSplitterSize = 8.0f;
