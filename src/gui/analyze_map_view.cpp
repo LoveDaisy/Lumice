@@ -133,7 +133,28 @@ const char* UnitName(int unit) {
   }
 }
 
+// The in-place Pose button's two labels derive from the window-title constant (the display
+// spelling has one source). The narrow-column form is the constant's LAST space turned into the
+// line break — the unambiguous derivation for the only multi-space spelling; the byte-pin test
+// reads the exact submitted strings through the accessors below.
+const std::string kPoseButtonLabelStorage = std::string(kPoseViewWindowTitle) + "###pose_open";
+const std::string kPoseButtonWrappedLabelStorage = [] {
+  std::string wrapped = kPoseViewWindowTitle;
+  const size_t last_space = wrapped.find_last_of(' ');
+  if (last_space != std::string::npos)
+    wrapped[last_space] = '\n';
+  return wrapped + "###pose_open";
+}();
+
 }  // namespace
+
+const char* PoseButtonLabel() {
+  return kPoseButtonLabelStorage.c_str();
+}
+
+const char* PoseButtonWrappedLabel() {
+  return kPoseButtonWrappedLabelStorage.c_str();
+}
 
 // ---- The caliber composer (pure; the unit layer holds it to the readback) -------------------------
 
@@ -1466,25 +1487,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   ImGui::EndDisabled();
 
-  // Navigation is display-only, like the Point detail title in the main window. Keep it
-  // outside the growing report, available even before a class/point or drawable result exists.
-  // Only geometry chooses the label's line break; query states never move this operation stack.
+  // Navigation is display-only, like the main window's Selection header entry buttons (§16.3):
+  // every state's entry into the pose window sits outside the growing report, available before
+  // a class/point or drawable result exists. Only geometry chooses the label's line break;
+  // query states never move this operation stack.
   ImGui::Separator();
-  // The labels derive from the window-title constant (the display spelling has one source). The
-  // narrow-column form is the constant's LAST space turned into the line break — the unambiguous
-  // derivation for the only multi-space spelling; a functional test pins the submitted label's
-  // lines so a wrong derivation cannot pass green.
-  static const std::string kPoseButtonLabel = std::string(kPoseViewWindowTitle) + "###pose_open";
-  static const std::string kPoseButtonWrappedLabel = [] {
-    std::string wrapped = kPoseViewWindowTitle;
-    const size_t last_space = wrapped.find_last_of(' ');
-    if (last_space != std::string::npos)
-      wrapped[last_space] = '\n';
-    return wrapped + "###pose_open";
-  }();
   const float pose_label_w = ImGui::CalcTextSize(kPoseViewWindowTitle).x + style_fp_x * 2.0f;
   const char* pose_label =
-      pose_label_w <= ImGui::GetContentRegionAvail().x ? kPoseButtonLabel.c_str() : kPoseButtonWrappedLabel.c_str();
+      pose_label_w <= ImGui::GetContentRegionAvail().x ? PoseButtonLabel() : PoseButtonWrappedLabel();
   if (ImGui::Button(pose_label)) {
     state.analyze_pose_view_open = true;
   }

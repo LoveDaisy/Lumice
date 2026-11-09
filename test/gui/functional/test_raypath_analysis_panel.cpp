@@ -6149,35 +6149,22 @@ bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   ctx->SetRef("");
 
-  // The retained title entry opens that same window. The
-  // title sits below the survey overview in the diagnostics scroll region: at the default
-  // split it can be past the fold, and a clipped item registers no ID for the engine to find —
-  // scroll the region to its bottom first (the block is the scroll content's tail).
-  {
-    ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
-    IM_CHECK_RETV(details_scroll != nullptr, false);
-    details_scroll->Scroll.y = details_scroll->ScrollMax.y;
-    ctx->Yield(2);
-  }
-  ctx->ItemClick("**/Point detail");
+  // The Selection header's named button opens that same window: the button lives in the fixed
+  // head, outside the scroll region — no scroll-to-bottom preamble, reachable in every state.
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(window_active("Pose & trace"), false);
-  // Reopen after a title-bar close: the click fires on every press, selected or not.
+  // Reopen after a title-bar close: the click fires on every press — closed, the header button
+  // opens; open, it focuses (the same widget, both halves of the §16.3 entry semantics).
   ctx->WindowClose("//Pose & trace");
   ctx->Yield(2);
   IM_CHECK_RETV(!window_active("Pose & trace"), false);
-  {
-    ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
-    IM_CHECK_RETV(details_scroll != nullptr, false);
-    details_scroll->Scroll.y = details_scroll->ScrollMax.y;
-    ctx->Yield(2);
-  }
-  ctx->ItemClick("**/Point detail");
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(window_active("Pose & trace"), false);
-  ctx->LogInfo("[pose open] title click reopened after a manual close");
+  ctx->LogInfo("[pose open] header button reopened after a manual close");
 
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
@@ -7461,17 +7448,11 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
       false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
 
-  // ---- Op ④'s second half — the Point detail block's title opens the pose window (closed
-  // before it), and a window-interior control answers over the real mouse path.
+  // ---- Op ④'s second half — the Selection header's named button opens the pose window
+  // (closed before it), and a window-interior control answers over the real mouse path.
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(!window_active("Pose & trace"), false);
-  {
-    ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
-    IM_CHECK_RETV(details_scroll != nullptr, false);
-    details_scroll->Scroll.y = details_scroll->ScrollMax.y;
-    ctx->Yield(2);
-  }
-  ctx->ItemClick("**/Point detail");
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(window_active("Pose & trace"), false);
@@ -7487,7 +7468,8 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   // the completed point document in one window.
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("chain_five_ops_point_pose.png").string()), false);
   ctx->LogInfo(
-      "[five ops] 4: map pick -> point wait -> Point detail opens the pose window + playback = 3 clicks + 1 wait");
+      "[five ops] 4: map pick -> point wait -> the header pose button opens the pose window + playback = 3 clicks + 1 "
+      "wait");
 
   // ---- Op ⑤ — the left column's Sun input, with BOTH floating windows standing: the freshness
   // three-some is read in exactly the composition a user has after ①–④, and the windows follow
@@ -7635,13 +7617,7 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
                     kScopesCompleteBudgetS),
                 false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
-  {
-    ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
-    IM_CHECK_RETV(details_scroll != nullptr, false);
-    details_scroll->Scroll.y = details_scroll->ScrollMax.y;
-    ctx->Yield(2);
-  }
-  ctx->ItemClick("**/Point detail");
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
   PinPoseViewOnScreen(ctx);
@@ -7911,13 +7887,115 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
 
 }  // namespace
 
+// The Selection header's double entry (contract §16.3): both named buttons live in the fixed
+// head — visible and clickable in BOTH branches (no selection yet, then a class selected) — and
+// clicking one opens its window with zero writes outside the open flag: the selection, the
+// document's dirty bit, the sky point and the point intent stay as they were. Clicking a button
+// whose window is already open focuses that window instead (no second instance exists by
+// construction; both windows Begin with NoCollapse, so there is no collapsed tier to consider).
+bool SelectionHeaderEntryButtonsOpenAndFocus(ImGuiTestContext* ctx) {
+  const auto window_active = [](const char* fragment) {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+        return true;
+      }
+    }
+    return false;
+  };
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  ctx->Yield(2);
+
+  // The idle branch (no class selected): the same operation stack stands — §16.3's no-class row.
+  IM_CHECK_RETV(!gui::g_state.analysis.selected_entry.has_value(), false);
+  const auto button_inside_clip = [ctx](const char* ref) {
+    const ImGuiTestItemInfo item = ctx->ItemInfo(ref, ImGuiTestOpFlags_NoError);
+    ImGuiWindow* details = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && w->ParentWindow == nullptr && std::strcmp(w->Name, "##AnalyzeDetails") == 0) {
+        details = w;
+      }
+    }
+    return item.ID != 0 && details != nullptr && details->InnerRect.Contains(item.RectFull.Min) &&
+           details->InnerRect.Contains(item.RectFull.Max);
+  };
+  IM_CHECK_RETV(button_inside_clip("**/Raypath view###main_raypath_open"), false);
+  IM_CHECK_RETV(button_inside_clip("**/Pose & trace###main_pose_open"), false);
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  ctx->WindowClose("//Pose & trace");
+  ctx->Yield(1);
+
+  // The identity branch: selecting the row selects AND opens the Raypath view (the content
+  // shortcut, untouched); the header buttons then address the open windows' state again.
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  IM_CHECK_RETV(button_inside_clip("**/Raypath view###main_raypath_open"), false);
+  IM_CHECK_RETV(button_inside_clip("**/Pose & trace###main_pose_open"), false);
+
+  // The Pose button opens its window; every write the click makes is the flag.
+  const std::string selection_before = gui::g_state.analysis.selected_entry.value_or("");
+  const bool dirty_before = gui::g_state.dirty;
+  const bool sky_before = gui::g_state.analysis.sky_point.valid;
+  const auto point_id_before = gui::g_state.analysis.point.intent_id;
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selection_before, false);
+  IM_CHECK_RETV(gui::g_state.dirty == dirty_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == sky_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_id_before, false);
+
+  // Already-open clicks focus, not re-open: put the pose window front and focused, click the
+  // header's Raypath view button, and the raypath window is the focused one again. The floats
+  // move aside first so the header button's click lands on the details window, not on a float.
+  PinPoseViewOnScreen(ctx);
+  if (ImGuiWindow* pose_m = ctx->GetWindowByRef("//Pose & trace")) {
+    ImGui::SetWindowPos(pose_m, ImVec2(360.0f, 240.0f), ImGuiCond_Always);
+  }
+  if (ImGuiWindow* raypath_m = ctx->GetWindowByRef("//Raypath view")) {
+    ImGui::SetWindowPos(raypath_m, ImVec2(40.0f, 80.0f), ImGuiCond_Always);
+  }
+  ctx->Yield(2);
+  ctx->WindowFocus("//Pose & trace");
+  ctx->Yield(2);
+  IM_CHECK_RETV(ImGui::GetCurrentContext()->NavWindow != nullptr &&
+                    std::strcmp(ImGui::GetCurrentContext()->NavWindow->Name, gui::kPoseViewWindowTitle) == 0,
+                false);
+  ctx->ItemClick("**/Raypath view###main_raypath_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && window_active("Raypath view"), false);
+  IM_CHECK_RETV(ImGui::GetCurrentContext()->NavWindow != nullptr &&
+                    std::strcmp(ImGui::GetCurrentContext()->NavWindow->Name, gui::kRaypathViewWindowTitle) == 0,
+                false);
+  ctx->LogInfo("[header entries] both branches addressable, zero writes outside the flags, focus on already-open");
+  return true;
+}
+
+// The map window's in-place Pose button's labels derive mechanically from the window-title
+// constants: the plain form is the constant + `###pose_open`, the narrow-column form is the
+// constant's LAST space turned into the line break. The pin holds the exact submitted bytes,
+// so a wrong derivation rule or a re-spelled title cannot pass green — the wrap carve-out's
+// "byte-identical" is test-carried, not self-attested.
+bool MapPoseButtonLabelsDeriveFromTheWindowTitle(ImGuiTestContext* ctx) {
+  ctx->Yield(1);
+  IM_CHECK_RETV(std::strcmp(gui::PoseButtonLabel(), "Pose & trace###pose_open") == 0, false);
+  IM_CHECK_RETV(std::strcmp(gui::PoseButtonWrappedLabel(), "Pose &\ntrace###pose_open") == 0, false);
+  ctx->LogInfo("[header entries] map pose button labels pin the title-constant derivation bytes");
+  return true;
+}
+
 // AC2's window-combo faces (755.7 Step 2), each with BOTH floating windows standing — the
 // composition the per-window cases leave out:
 // ① the main view's direct ROI click lands between the windows (no arming step;
 //    neither window's map, point doc nor the list's selection moves — one press, one consumer);
 // ② a list selection switch re-keys both windows in the same frame they re-key the list;
 // ③ closing both through their title bars and reopening both through their real entries —
-//    the row click and the Point detail title — brings both back with their regions;
+//    the row click and the Selection header's pose button — brings both back with their regions;
 // ④ the 150% scale at the narrowest 1024x640 basis keeps both windows structurally present
 //    (the fit promises themselves are the per-window cases'), then the factory state restores.
 bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
@@ -8059,13 +8137,7 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(!window_active("Raypath view") && !window_active("Pose & trace"), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);  // the row click reopens
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && window_active("Raypath view"), false);
-  {
-    ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
-    IM_CHECK_RETV(details_scroll != nullptr, false);
-    details_scroll->Scroll.y = details_scroll->ScrollMax.y;
-    ctx->Yield(2);
-  }
-  ctx->ItemClick("**/Point detail");
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
   PinPoseViewOnScreen(ctx);
@@ -12119,5 +12191,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "windows_stand_through_in_flight_and_document_scopes");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(WindowsStandThroughInFlightAndDocumentScopes(ctx)); };
+  }
+  // §16.3's Selection header double entry: both branches addressable, zero writes outside the
+  // open flags, and the already-open click's focus face. Fixed-dt pool, standard waits.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "selection_header_entry_buttons_open_and_focus");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SelectionHeaderEntryButtonsOpenAndFocus(ctx)); };
+  }
+  // The map window's pose-button labels: the byte-pin of the title-constant derivation rule.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_pose_button_labels_derive_from_the_window_title");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MapPoseButtonLabelsDeriveFromTheWindowTitle(ctx)); };
   }
 }

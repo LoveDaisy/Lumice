@@ -373,6 +373,13 @@ void PumpRayTrace(GuiState& state, SurveyExecutor& executor);
 // survey's shape).
 void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& identity);
 
+// The point session's one-line state word — the short status RenderPointStatus draws, and the
+// main window's Selection header hint reuses (the mapping has one owner, two readers).
+// *partial, when non-null, is set iff the word is the partial completion's: the status row
+// paints that word in the warning color, and the completed read happens inside so the word and
+// its flag cannot disagree.
+const char* PointStatusLabelFor(const PointQuerySession& point, bool* partial = nullptr);
+
 // The sun-direction globe region — the ##AnalyzeSunGlobe placeholder's replacement: the u-sphere
 // disk (deviation backdrop when the document carries the grid, the selected component's fiber
 // polyline, the current sample marker), the weight bar, the slider and the play/stop row.

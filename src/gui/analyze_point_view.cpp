@@ -924,27 +924,8 @@ std::optional<LUMICE_PathPointInfo> ReadPointInfo(const LUMICE_SinglePathResult&
 // One text line in every state. Detailed reasons remain in the report; the short state is
 // still visible when that report is scrolled to a long legend or the last factor.
 void RenderPointStatus(const PointQuerySession& point) {
-  const char* label = "No target";
   bool partial = false;
-  switch (PointQueryStateFor(point)) {
-    case PointQueryState::kNoIntent:
-      break;
-    case PointQueryState::kWaiting:
-      label = "Waiting";
-      break;
-    case PointQueryState::kCancelled:
-      label = "Cancelled";
-      break;
-    case PointQueryState::kRefused:
-      label = "Refused";
-      break;
-    case PointQueryState::kCompleted: {
-      const auto info = ReadPointInfo(*point.adopted_result);
-      partial = info && info->execution != LUMICE_PATH_OUTCOME_COMPLETED;
-      label = partial ? "Partial" : "Ready";
-      break;
-    }
-  }
+  const char* label = PointStatusLabelFor(point, &partial);
   ImGui::PushStyleColor(ImGuiCol_Text, partial ? WarningTextColor() : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
   ImGui::TextUnformatted(label);
   ImGui::PopStyleColor();
@@ -1072,6 +1053,40 @@ ImU32 SegmentColor(int kind, float alpha) {
 }
 
 }  // namespace
+
+// The point session's one-line state word (the hpp comment carries the contract). The mapping's
+// one definition lives at namespace scope so the main window's hint and the TU-local status row
+// read the same words; the completed read happens here so the word and its partial flag cannot
+// disagree.
+const char* PointStatusLabelFor(const PointQuerySession& point, bool* partial) {
+  if (partial != nullptr) {
+    *partial = false;
+  }
+  const char* label = "No target";
+  switch (PointQueryStateFor(point)) {
+    case PointQueryState::kNoIntent:
+      break;
+    case PointQueryState::kWaiting:
+      label = "Waiting";
+      break;
+    case PointQueryState::kCancelled:
+      label = "Cancelled";
+      break;
+    case PointQueryState::kRefused:
+      label = "Refused";
+      break;
+    case PointQueryState::kCompleted: {
+      const auto info = ReadPointInfo(*point.adopted_result);
+      const bool is_partial = info && info->execution != LUMICE_PATH_OUTCOME_COMPLETED;
+      if (partial != nullptr) {
+        *partial = is_partial;
+      }
+      label = is_partial ? "Partial" : "Ready";
+      break;
+    }
+  }
+  return label;
+}
 
 const Ray3DFrameInfo& LastRay3DFrameInfo() {
   return g_ray3d_frame;
@@ -2627,16 +2642,10 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
   PointQuerySession& point = state.analysis.point;
   PointViewState& view = state.analysis.point_view;
 
-  ImGui::Separator();
-  // This title and the Raypath view's Pose & trace button ensure the same window is open.
-  // Both write display state only: neither starts a query nor touches a document field.
-  // Sky-point writers (map pick, marker drag, coordinate Set) remain separate from navigation:
-  // setting a sky point never pops the window open. With navigation now also in the map TU,
-  // the negative contract is input-test guarded, not enforced by TU separation:
-  // pose_view_opens_from_both_explicit_entries and map_region_shows_the_class_map_and_takes_the_pick.
-  if (ImGui::Selectable("Point detail")) {
-    state.analyze_pose_view_open = true;
-  }
+  // The scroll region's content starts with this block's first fact (§16.3: the main window's
+  // window-entry buttons live in the fixed head above, and the block itself carries no entry —
+  // the retired in-report link's contract, display-writes-only navigation with sky-point
+  // writers kept separate, now lives with the entry buttons that own it).
   if (identity.layer_face_counts.size() > 1) {
     // The request-level refusal the point face will name for this selection, spelled before it
     // is asked for (the survey block states the same fact for its own face).

@@ -191,6 +191,15 @@ void CancelMap(GuiState& state, SurveyExecutor& executor);
 // texture; the overlays, the cursor readout and the coordinate input live with their halves.
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
 
+// The map window's in-place Pose & trace button's two labels (contract §6's stable operation
+// stack). Both derive from kPoseViewWindowTitle — the plain form appends the button's
+// `###pose_open` addressing suffix; the narrow-column form is the constant's LAST space turned
+// into the line break, the unambiguous derivation rule for the only multi-space spelling.
+// Surfaced as functions so the byte-pin test reads the exact submitted strings: a wrong
+// derivation or a re-spelled title cannot pass green.
+const char* PoseButtonLabel();
+const char* PoseButtonWrappedLabel();
+
 // The Raypath view floating window (doc/gui/analyze-interaction-contract.md §6): the non-modal
 // container the share list's class rows open. Committed from BOTH frame loops next to the
 // Colors/Summary windows, in every workspace mode — early-return while

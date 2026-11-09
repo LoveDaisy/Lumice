@@ -26,6 +26,7 @@
 #include "gui/theme.hpp"
 #include "gui/view_look_at.hpp"  // UpdateLockedLookAt — the camera reconciliation the picture is built from
 #include "imgui.h"
+#include "imgui_internal.h"  // FindWindowByName + FocusWindow — the already-open entry click's focus-and-raise (§16.3)
 #include "util/raypath_analysis_display.hpp"  // RoiModeLabel — the diagnostics summary's region line
 #include "util/sky_direction.hpp"             // DirToAltAz — the diagnostics summary's centre line
 #include "util/thousands_format.hpp"          // FormatThousands — the diagnostics run-status line
@@ -585,6 +586,179 @@ void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s,
   PumpRayTrace(state, executor);
 }
 
+// ---- The Selection header's double entry (contract §16.3) -------------------------------------------
+
+// Clicking an entry whose window is already open cannot open a second instance (the flag is a
+// bool — a second window is impossible by construction); the click instead focuses the existing
+// window and brings it to display front (imgui's FocusWindow: the one-call raise+focus). Both
+// windows Begin with NoCollapse, so the already-open state has no collapsed tier — focus is the
+// whole of §16.3's "already open presents/focuses the same window". Display-only either way:
+// the write starts no query and touches no document field, and the sky-point / class-row
+// writers stay separate from navigation — setting a sky point never pops either window open
+// (the negative contract is input-test guarded, not enforced by TU separation:
+// pose_view_opens_from_both_explicit_entries and map_region_shows_the_class_map_and_takes_the_pick).
+void OpenOrFocusAnalysisWindow(bool* open_flag, const char* window_title) {
+  if (!*open_flag) {
+    *open_flag = true;
+    return;
+  }
+  if (ImGuiWindow* window = ImGui::FindWindowByName(window_title)) {
+    ImGui::FocusWindow(window);
+  }
+}
+
+// The bounded one-line hint the header shows beside the entry buttons: a navigation prompt,
+// not a content copy. Waiting and refusal texts reuse the query faces' own single-source lines
+// (the same pure functions the scroll region draws — never re-spelled here), the point face's
+// short state word comes from PointStatusLabelFor, and the states with no existing short text
+// carry their own one-liners: the no-selection guidance echoes the idle block's own wording,
+// the needs-sky-point line names both windows by their title constants, and the special
+// completions (rank-0 mass / no components) point at the Raypath view, where §16.2 places the
+// complete answer. Empty means the state names no navigation — a fully answered point draws
+// nothing. The per-component no-valid-sample state stays the details block's row: classifying
+// it needs the per-sample enumeration the block already owns, and the hint slot does not pay
+// that per frame for a navigation word.
+std::string AnalyzeEntryHintFor(const GuiState& state) {
+  const auto& analysis = state.analysis;
+  if (!analysis.selected_entry.has_value()) {
+    return "Select a class in the list above, or press Analyze.";
+  }
+  // Survey first — the scroll region stacks the survey block above the point block, and the
+  // hint mirrors that order.
+  switch (SurveyOverviewStateFor(analysis.survey)) {
+    case SurveyOverviewState::kWaiting:
+      return SurveyWaitLineFor(analysis.survey, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+    case SurveyOverviewState::kRefused:
+      return analysis.survey.adopted_error;
+    case SurveyOverviewState::kCancelled:
+      // The survey face's cancelled text is the scroll region's sentence — no short word exists
+      // to reuse — so the hint shows the one-word shape the point face's status row established
+      // for the same fact.
+      return "Cancelled";
+    case SurveyOverviewState::kNoSelection:
+    case SurveyOverviewState::kCompleted:
+      break;  // fall through to the point face
+  }
+  bool point_partial = false;
+  const char* point_word = PointStatusLabelFor(analysis.point, &point_partial);
+  switch (PointQueryStateFor(analysis.point)) {
+    case PointQueryState::kNoIntent:
+      return std::string("Pick a sky point on the ") + kRaypathViewWindowTitle + " — " + kPoseViewWindowTitle +
+             " draws the ray.";
+    case PointQueryState::kWaiting:
+      return PointWaitLineFor(analysis.point, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+    case PointQueryState::kRefused:
+      return analysis.point.adopted_error;
+    case PointQueryState::kCancelled:
+      return point_word;  // the point face's own short state word
+    case PointQueryState::kCompleted: {
+      if (point_partial) {
+        return point_word;  // "Partial" — the face's own word for the partial banner
+      }
+      LUMICE_PathPointInfo info{};
+      info.struct_size = sizeof(info);
+      if (LUMICE_PathPointGetInfo(analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK &&
+          (info.outcome == LUMICE_PATH_POINT_MASS || info.component_count == 0)) {
+        return std::string("The complete answer is in the ") + kRaypathViewWindowTitle + ".";
+      }
+      return "";
+    }
+  }
+  return "";
+}
+
+// The hint slot's fit rule (§16.3's bounded line): the whole text when it fits the row's
+// remaining space; otherwise its longest UTF-8-safe prefix that fits with an ellipsis — the
+// same glyph the wait-line texts themselves end in (analyze_survey.cpp) — and empty (the slot
+// omits) when even the ellipsis does not fit. Single line by construction: no wrap, no growth.
+std::string AnalyzeEntryHintFitToWidth(const std::string& hint, float max_w) {
+  if (ImGui::CalcTextSize(hint.c_str()).x <= max_w) {
+    return hint;
+  }
+  const std::string ellipsis = "…";
+  const float ellipsis_w = ImGui::CalcTextSize(ellipsis.c_str()).x;
+  if (ellipsis_w > max_w) {
+    return "";
+  }
+  // One pass over character boundaries (continuation bytes never start a cut). Bounded by the
+  // hint's own length — one call per frame for one line of text.
+  std::string fitted;
+  for (size_t i = 0; i < hint.size();) {
+    const size_t begin = i;
+    ++i;
+    while (i < hint.size() && (static_cast<unsigned char>(hint[i]) & 0xC0) == 0x80) {
+      ++i;
+    }
+    const std::string candidate = hint.substr(0, begin) + ellipsis;
+    if (ImGui::CalcTextSize(candidate.c_str()).x > max_w) {
+      break;
+    }
+    fitted.assign(hint, 0, i);
+  }
+  if (fitted.empty()) {
+    return "";
+  }
+  return fitted + ellipsis;
+}
+
+// The Selection header's entry buttons: two named buttons living in the fixed head, outside the
+// scroll region — query states and report growth never move them (geometry before content,
+// §15). Equal width at the live font (the toolbar's group-width grammar without the segmented
+// look: these are two independent display actions, not a mode switch — §16.3). Same row when
+// the pair's full footprint fits the column; the vertical tier (Raypath view above) otherwise.
+// The bounded hint rides the first row's right end when the whole line fits and is omitted when
+// it does not — geometry decides, never state; the hint is measured and placed after its row's
+// buttons are submitted, so a longer or shorter hint never moves them.
+void RenderAnalyzeEntryActions(GuiState& state) {
+  ImGuiStyle& style = ImGui::GetStyle();
+  const std::string raypath_id = std::string(kRaypathViewWindowTitle) + "###main_raypath_open";
+  const std::string pose_id = std::string(kPoseViewWindowTitle) + "###main_pose_open";
+  const float button_w =
+      std::max(ImGui::CalcTextSize(kRaypathViewWindowTitle).x, ImGui::CalcTextSize(kPoseViewWindowTitle).x) +
+      style.FramePadding.x * 2.0f;
+  const bool same_row = button_w * 2.0f + style.ItemSpacing.x <= ImGui::GetContentRegionAvail().x;
+  const std::string hint = AnalyzeEntryHintFor(state);
+
+  // Draws the hint right-aligned at the current row's end, fitted to the space left of the
+  // just-submitted button (the whole line, its ellipsis-truncated prefix, or nothing when the
+  // space cannot carry even that — geometry decides, never state).
+  const auto draw_hint = [&hint, &style]() -> bool {
+    if (hint.empty()) {
+      return false;
+    }
+    const float space_left = ImGui::GetContentRegionMax().x - (ImGui::GetItemRectMax().x + style.ItemSpacing.x);
+    const std::string fitted = AnalyzeEntryHintFitToWidth(hint, space_left);
+    if (fitted.empty()) {
+      return false;
+    }
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(fitted.c_str()).x);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextUnformatted(fitted.c_str());
+    ImGui::PopStyleColor();
+    return true;
+  };
+
+  if (ImGui::Button(raypath_id.c_str(), ImVec2(button_w, 0.0f))) {
+    OpenOrFocusAnalysisWindow(&state.analyze_raypath_view_open, kRaypathViewWindowTitle);
+  }
+  if (!same_row) {
+    // Vertical tier: the hint rides the FIRST row (right of the Raypath view button).
+    if (draw_hint()) {
+      ImGui::NewLine();
+    }
+  } else {
+    ImGui::SameLine(0.0f, style.ItemSpacing.x);
+  }
+  if (ImGui::Button(pose_id.c_str(), ImVec2(button_w, 0.0f))) {
+    OpenOrFocusAnalysisWindow(&state.analyze_pose_view_open, kPoseViewWindowTitle);
+  }
+  if (same_row) {
+    draw_hint();  // same-row tier: the hint shares the single row's right end
+  }
+}
+
+
 void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height) {
   // The background queries' frame pumps run at RenderWorkspacePanels' entry since 755.5 — every
   // GUI frame drains the mailboxes, applies the adoption gates and keeps the intents
@@ -770,12 +944,12 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   // ---- Right column, lower: the diagnostics region — the selection's identity facts, the
   // survey's four visible states and the point block when a class is selected; the idle state's
   // entry guidance, run status and observation summary when none is (§9.1). The window itself
-  // never scrolls: the query content is its one scrolling region, the identity facts its fixed
-  // head — the window's own head is exactly one line (the title), the region's whole D2-floor
-  // budget promise: everything else — identity facts, query states, the idle guidance / run
-  // status / observation summary — grows inside the ONE scrolling region, so the smallest
-  // permitted diagnostics height still shows the title and a visible first line, and the wheel
-  // reaches the rest. ----
+  // never scrolls: the query content is its one scrolling region, the fixed head the title plus
+  // the double entry's button row (contract §16.3) — the region's whole D2-floor budget
+  // promise: everything else — identity facts, query states, the idle guidance / run status /
+  // observation summary — grows inside the ONE scrolling region, so the smallest permitted
+  // diagnostics height still shows the title, both entry buttons and a visible first line, and
+  // the wheel reaches the rest. ----
   SetNextPanelGeometry(right_x, details_y, right_w, details_h);
   ImGui::Begin("##AnalyzeDetails", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -789,10 +963,12 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     // engine-answered digest when one was adopted, the named refusal where the engine says
     // no, waiting and cancelled spelled as such. The point-level block (742.6) follows as the
     // second level of the two-level information contract (D6). The identity facts scroll WITH
-    // the query content: at the D2 floor a multi-row fixed head would push the query region's
-    // own start below the clip, and the facts are information, not controls — nothing here
-    // needs to stay under the hand.
+    // the query content — they are information, not controls; the fixed head's only controls
+    // are the two entry buttons rendered above (contract §16.3), whose floor budget covers the
+    // button pair even at its vertical tier, so nothing in the scroll region needs to stay
+    // under the hand.
     ImGui::TextUnformatted("Selection details");
+    RenderAnalyzeEntryActions(g_state);
     ImGui::BeginChild("##AnalyzeDetailsScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
     // Identity facts wrap like the region's other text (BulletText is a single clipped line).
     ImGui::Bullet();
@@ -810,7 +986,10 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     RenderPointDetailsBlock(g_state, *identity);
     ImGui::EndChild();
   } else {
+    // The no-selection branch keeps the same operation stack (§16.3: no class does not remove
+    // the entries — the idle state's first action is reachable from the same two buttons).
     ImGui::TextUnformatted("Diagnostics");
+    RenderAnalyzeEntryActions(g_state);
     ImGui::BeginChild("##AnalyzeDetailsScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
     RenderAnalysisIdleDiagnostics(g_state);
     ImGui::EndChild();

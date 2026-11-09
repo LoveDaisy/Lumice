@@ -1924,9 +1924,10 @@ struct GuiState {
   AnalyzeWorkspaceSession workspace;
 
   // The Raypath view window's open state (analyze-interaction-contract.md §6, §8 ownership
-  // declaration): the class-map window the share list's class rows open. T-session display
-  // state, `left_panel_collapsed`'s family — not document state, never persisted, never in
-  // ConfigSnapshot or the dirty diff. New and successful Open reset it with the incoming
+  // declaration): the class-map window the share list's class rows open (the content shortcut)
+  // and the main window's Selection header opens with its named button (§16.3). T-session
+  // display state, `left_panel_collapsed`'s family — not document state, never persisted, never
+  // in ConfigSnapshot or the dirty diff. New and successful Open reset it with the incoming
   // GuiState; Revert keeps it. Workspace mode retention does not retain window-open flags.
   // The window's own geometry (size, position, the D3 split) is ImGui window storage: session
   // memory inside the process, outside GuiState entirely.
@@ -1943,14 +1944,16 @@ struct GuiState {
   float analyze_raypath_view_info_ratio = 0.30f;
 
   // The Pose & trace window's open state (analyze-interaction-contract.md §7, §8 ownership
-  // declaration): the pose/trace window the point detail block's title opens — and ONLY that
-  // click; the sky-point and wavelength writers must not open it (the user's explicit
-  // negative requirement). T-session display state, `analyze_raypath_view_open`'s family — not
-  // document state, never persisted, never in ConfigSnapshot or the dirty diff. Revert keeps
-  // it; New and successful Open reset it with the incoming GuiState.
-  // WRITERS (the audit set): the "Point detail" title click (RenderPointDetailsBlock), the
-  // window's own title bar X through `p_open`, and document replacement — no other write
-  // path exists by construction.
+  // declaration): the pose/trace window the main window's Selection header opens with its named
+  // button, alongside the Raypath view window's own in-place Pose & trace button. The sky-point
+  // and wavelength writers must not open it (the user's explicit negative requirement).
+  // T-session display state, `analyze_raypath_view_open`'s family — not document state, never
+  // persisted, never in ConfigSnapshot or the dirty diff. Revert keeps it; New and successful
+  // Open reset it with the incoming GuiState.
+  // WRITERS (the audit set, per the assignment-site enumeration): the Selection header's
+  // `Pose & trace` button (RenderAnalyzeEntryActions, analyze_workspace.cpp), the Raypath view
+  // window's in-place Pose & trace button (analyze_map_view.cpp), the window's own title bar X
+  // through `p_open`, and document replacement — no other write path exists by construction.
   bool analyze_pose_view_open = false;
   // D4 — the Pose & trace window's 3D | right-column split (contract §4.2): the RIGHT column's
   // share of the window's content width. Ratio semantics like the Raypath view's D3 field
