@@ -3914,6 +3914,16 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
   const std::string identity_report = CaptureMapFrameText(ctx);
   IM_CHECK_RETV(identity_report.find("Class answer") != std::string::npos, false);
   IM_CHECK_RETV(identity_report.find("member(s)") == std::string::npos, false);
+  {
+    // λ single-owner (the ledger's L5): the slider row's echo is the window's only λ glyph —
+    // the survey and point answers spell "wavelength", the caliber carries none, the legend none.
+    size_t lambda_count = 0;
+    for (size_t at = identity_report.find("\xCE\xBB"); at != std::string::npos;
+         at = identity_report.find("\xCE\xBB", at + 2)) {
+      ++lambda_count;
+    }
+    IM_CHECK_RETV(lambda_count == 1, false);
+  }
   IM_CHECK_RETV(ctx->ItemInfo("**/Physics details##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
   IM_CHECK_RETV(ctx->ItemInfo("**/Calculation details##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
   ctx->ItemClick("**/Calculation details##sv_answer");

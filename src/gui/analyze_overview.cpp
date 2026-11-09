@@ -560,17 +560,6 @@ void DisabledWrapped(const char* fmt, ...) {
   ImGui::PopStyleColor();
 }
 
-// A fold group's header: the display spelling comes from the ONE label constant; the ID suffix
-// keeps same-label groups apart inside one window (the Raypath view hosts the survey answer and
-// the point answer side by side, each with its own Physics/Calculation pair — identical visible
-// labels would collide in the window's ID space and share one expansion state). No
-// DefaultOpen: closed by default, expansion in the host window's storage — session-sticky,
-// restart-reset (io.IniFilename is null), independent per window.
-bool FoldOpen(const char* label, const char* suffix_id) {
-  const std::string id = std::string(label) + "##" + suffix_id;
-  return ImGui::CollapsingHeader(id.c_str());
-}
-
 // The default layer (the disposition ladder's L1/L2): the answers, their limits and their
 // premises — everything that must stay readable with the fold groups closed (the coverage law:
 // an L1 fact is never demoted into a fold for space). Shared verbatim by the complete answer

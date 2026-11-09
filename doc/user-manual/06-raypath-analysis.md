@@ -107,42 +107,49 @@ which is the answer, not an error), or the completed overview. Nothing is comput
 interface thread, and nothing is invented: a refused or unevaluated part shows the engine's own
 words.
 
-The completed overview is organized by the class's routing arm, a few main conclusions first
-with the details behind expanders:
+The completed overview in the card is the class's **summary**: a few main conclusions, the
+limits that qualify them, and a pointer to the complete answer (which lives in the Raypath
+view's class-answer section, sorted into two closed-by-default fold groups — **Physics
+details** for the optical premises and evidence methods, **Calculation details** for the
+sampling and execution numbers):
 
 - **A direction-invariant class** (every pose sends its light back to the sun's own direction)
   shows the certified **source image** at the sun, the **weight tint** reading (e.g.
   "blue-tinted") with the exact measurement caliber spelled out, and the statement that
   wavelength moves no edge here — the colour question is the tint, not a shift.
 - **A full-dimensional class** shows the **support** (the deviation range the class covers), the
-  **sharp edge** with its closed-form certificate when the geometry certifies one, the
-  brightness peak as a **finite-resolution probe reading** (distinct from the geometric edge),
-  and the **chromatic dispersion** block: the inner edge at 650 nm and at 450 nm, how far apart
-  they sit and which way (for the classic two-face halo, red inner and blue outer), followed by
-  every other onset the table carried, and the basis — the engine's own geometry string and the
-  certificate's formula, apex angle and cross-check — readable in place. The **weight colour
-  reading**, the **weight tint** and the **reference profile** (the class's brightness along the
-  solar radial line at the document's reference wavelength, drawn with empty bins as gaps, not
-  zeros) sit behind their own expanders. A class without a sharp structure renders exactly that:
-  a support and a probe reading, no fabricated "brightest point".
-- **A family-restricted class** (a directed crystal) shows the **freezing ladder**: which
-  orientation dimension each level froze, at what centre and width, how many candidate images
-  each level proposed and how many the survival filter killed.
+  **sharp edge**, the brightness peak as a **finite-resolution probe reading** (distinct from
+  the geometric edge), and the **chromatic dispersion** line: how far the 650 nm inner edge sits
+  inside the 450 nm one and which way. The colour verdict, the tint reading and the
+  internal-reflection share sit beside the conclusions; a partial document says so, and the
+  reference wavelength and sun the positions read are always named. The followed-onset table,
+  the refractive indices, the certificate's formula and cross-check, the profile curve (drawn
+  with empty bins as gaps, not zeros), the tint's measurement caliber and the object cards live
+  in the Raypath view's fold groups.
+- **A family-restricted class** (a directed crystal) summarizes the ladder's outcome in one
+  line — how many candidate images survive and how many the survival filter killed; which
+  dimension each level froze, and each level's sample counts, are in the Raypath view's fold
+  groups.
 - **A refused class** says so in the engine's words — the delta axis could not partition this
   geometry, which is a statement about the partition, not that the class carries no light — and
-  keeps the independent facts readable beside it: the **independent witness** (the declared
-  source's own positive events on this class) and the **internal-reflection share**.
+  keeps the independent facts readable beside it: the **independent witness** sentence and the
+  **internal-reflection share**.
 
-The header always names the reference wavelength and where it came from, the sun the positions
-read, and whether the survey stopped inside its budget (a partial document says so). Selecting
-another class re-asks; the card never mixes two answers.
+Selecting another class re-asks; the card never mixes two answers.
 
 ## 7. The raypath view (the class reference map)
 
 Selecting a share-list row opens **Raypath view**, a movable, non-modal window following the
-selected physical class. The left pane is its scalar sky map; the right pane keeps the quality
-action, wavelength, shared presets, sky-point controls and **Pose & trace** entry above an
-independently scrolling identity/caliber/legend report. Closing a window only hides it: results
+selected physical class. The left pane is its scalar sky map; the right pane names the selected
+class first, then keeps the quality action with its state beside it, the wavelength row (the λ
+slider echoes the reading; its tooltip names whether an explicit value or the engine's
+reference is in force), the shared-view presets, the sky-point controls with the current
+target beside them, and the **Pose & trace** entry — all above an independently scrolling
+report that carries, in order: the **class answer** (the complete survey, with its Physics
+details / Calculation details fold groups), the **sky-point answer** (the complete point
+document, with its own fold pair), the map's caliber (the short quantity and its limits, the
+grid and execution numbers in folds), and a legend of short shape keys whose longer meanings
+sit behind a **Legend explanations** fold. Closing a window only hides it: results
 and in-flight work survive. Clicking the selected row opens it again.
 
 **One camera, two pictures.** The main picture and the map use the same lens, FOV, orientation
@@ -204,16 +211,17 @@ The **Selection header** at the top of the diagnostics region carries two named 
 **Raypath view** and **Pose & trace** — that stay reachable in every state, before any analysis,
 while queries run and after refusals; clicking one opens that window (or focuses it when it is
 already open). A short hint beside the buttons names the current state's next step. The point
-block below keeps the answer and its evidence: once a class is
+block below keeps the answer's summary: once a class is
 selected and a sky point is set, the engine is asked about that exact direction in the
 background (a couple-of-seconds tier; the point queues behind the survey and map on the same
-worker, and the block says so while it waits, with a **Cancel point** button). The answer opens
-with the engine's own echo — the target labels and deviation, the member face sequence, the
-crystal, the wavelength and its source, the refractive index, the sampling tier — then the
-component list as evidence rows (kind, end statuses, coverage, integral). A **point mass**
+worker, and the block says so while it waits, with a **Cancel point** button). The completed
+summary names the target and its deviation, the component count with any unavailable-integral
+limits, and the selected component's no-valid-sample fact; a **point mass**
 answer (a direction-invariant path — the sun's own image) is presented as the mass it is:
 position, target separation, the orbit integral and its measure support — no fiber, no
-playback, no forced curve. A refusal names itself; a multi-layer chain names
+playback, no forced curve. The complete answer — the member face sequence, the per-component
+evidence rows (kind, end statuses, coverage, integral), the sampling tier — lives in the
+Raypath view's sky-point answer section. A refusal names itself; a multi-layer chain names
 `multi_layer_unsupported` and points at the existing retreat (keep only this chain in the
 filters and re-run).
 

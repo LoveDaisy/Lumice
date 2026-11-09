@@ -601,83 +601,140 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 > 证据来源：`6b7763705` 源码阅读（下列符号/行号）；布局、动作数与尺寸均为**推演（合同推导）**，
 > 无新 GUI 实拍或运行时量测。本轮复用既有字体、主题、语义色与控件语言，不另造视觉系统。
 
-### 16.1 信息层级：默认回答用户问题，按需查看证据
+### 16.1 信息层级：默认回答用户问题，按需查看证据（as-built 2026-11-10）
 
-建议统一三种处置，不以字段数量等权分配常驻空间：
+> 本节随 scrum 778 片 A1（ia-layering-text）落地翻为 as-built：下列为已交付形态，不再是建议。
+> 证据锚点以符号定位（`analyze_overview.cpp` 的 `RenderSurveyOverviewModel` /
+> `RenderSurveyDefaultLayer`、`analyze_map_view.cpp` 的右栏槽序与 `MapCaliber{Default,Physics,
+> Calculation}Lines`、`analyze_point_view.cpp` 的 `RenderPointDetailsBlock` /
+> `RenderPointAnswerBlock`）；处置账附录（§16.1.2）收录判据梯未覆盖边缘的逐项处置，owner
+> 上手批量复核。
+
+统一三种处置，不以字段数量等权分配常驻空间：
 
 - **默认层保留**：当前对象、光学结论、必要量纲、结论适用范围、下一步操作。固定操作栈之外的
-  默认答案仍可在自己的报告内滚动；“默认”不是无限堆成固定头。
-- **次级层收纳**：以两种默认关闭的就地折叠组区分用途——`Physics details` 解释物理证据；
-  `Calculation details` 供核查采样/数值/执行信息。不是新窗口、tab 或模式；展开不挤画布和导航槽。
-- **删除呈现**：重复回显、线程/内部机制自述、不影响结论的常驻无事发生说明。只删 UI 冗余，
-  不删结果载荷，不以静默隐藏替代失败说明。
+  默认答案仍可在自己的报告内滚动；"默认"不是无限堆成固定头。已交付的默认层 = 采纳文档的
+  L1/L2 读法（`RenderSurveyDefaultLayer` / 点答案的 target/λ/质量或分量摘要）：partial 与
+  unevaluated 限定、λ/太阳前提、结论行、色彩 verdict、色调与 TIR 读数、截断/有限零/质量
+  说明、分量计数与不可用限定、无有效样本事实。
+- **次级层收纳**：两组默认关闭的就地折叠组——`Physics details`（光学前提/证据方法/完整
+  定义/证据行）与 `Calculation details`（数值核查/执行计数/预算/容差）。拼写单源
+  （`gui_constants.hpp` 的 `kSurveyPhysicsDetailsLabel` / `kSurveyCalculationDetailsLabel` /
+  `kMapLegendExplanationsLabel`）；无 `DefaultOpen`：默认关，展开态存宿主 window 的 ImGui
+  storage——会话内 sticky、重启重置（`io.IniFilename = nullptr`），两窗各自 window 天然
+  独立计态，无 GuiState 字段。同窗多份答案（survey + point + 地图口径）以 `##sv_answer` /
+  `##pt_answer` / `##map_caliber` 后缀分隔 ID，各自独立计态。主窗摘要不带任何折叠组——
+  省略的明细全部在 Raypath view。
+- **删除呈现**：重复回显、线程/内部机制自述、不影响结论的常驻无事发生说明。已删：接口线程
+  自述句、idle 常驻 "Observe · no calculation" 句、报告内身份行与 sky-point 回显、caliber
+  首行的 λ 回显（λ 的唯一 owner = λ 行同控件回显，来源规则进 λ tooltip）、图例长词典（进
+  `Legend explanations` 折叠）。只删 UI 冗余，不删结果载荷，不以静默隐藏替代失败说明。
 
 **状态诚实性覆盖两层**：waiting/cancelled/refused/error、partial、未知、未评估、无有效样本、
 不适用的物理量必须有默认可见的短说明；详细阶段码/计数才进次级层。partial 空载荷不得显示成
-“没有这种光路”；几何结论的 certified/finite/refused/unevaluated 限定不得被折叠掉。
-证据细分词可解释成用户能读懂的短语，但不得把 finite 改称严格证明、拒答改称无光。
+"没有这种光路"；几何结论的 certified/finite/refused/unevaluated 限定不得被折叠掉。已交付：
+四态壳保留主窗（waiting 行 + Cancel、cancelled 说明、具名拒答）；partial 限定与 unevaluated
+计数在默认层；截断/有限零/奇异（图例短键）在默认层；分量不可用积分与无有效样本在默认层。
 
-#### 16.1.1 Raypath view 右栏逐项处置账（无额外取景捕获机制的基线）
+#### 16.1.1 Raypath view 右栏逐项处置账（as-built 落位）
 
-本表裸 `:N` 与 `MapCaliberLines:N` 都指 `analyze_map_view.cpp` 的**文件行号**，
-基线 `6b7763705`，不是函数内偏移；函数名仅补语义定位。
+右栏固定槽序（已交付）：**身份 → 短状态/Cancel或Retry（同一行）→ λ/reference → Fit/Full sky
+＋"· shared view" → 天空点输入/Set/Clear/target → Pose & trace → 可滚动答案区**。答案区内先
+类结论、再已设天空点答案，随后地图口径、短图例与各自折叠详情。图侧与右侧状态投影同一结果，
+不复制执行日志；partial/error/旧图限制同时成立不互相覆盖。小窗按完整操作足迹换行/几何退化，
+不靠隐藏按钮省空间（最窄 480×360 实测 `ScrollMax == 0`，由
+`raypath_view_narrowest_window_keeps_controls_reachable` 持有）。
 
-| 现状语义与源码锚点 | 建议归属/触发形态 | 保留或减法的用户理由 |
+| 处置账行（原提案基线 `6b7763705`，符号锚 = 当前交付） | 交付归属 | 落位说明 |
 |---|---|---|
-| 类身份（`analyze_map_view.cpp:1504–1508`） | **默认**，移到右栏第一行；不再在长报告重复 | 即使主窗被挡住，也能确认正在看哪条光路；同列表身份词源 |
-| Cancel/Retry＋状态（`:1282–1305`） | **默认**，身份后固定状态/动作槽；忙时 Cancel、取消/错误后 Retry，idle 保禁用槽 | 能停止或恢复当前地图计算；不以结果能否画出决定导航。删 idle 的常驻 `Observe · no calculation` 句，静态无重算解释进 tooltip |
-| λ / reference（`:1311–1341`） | **默认**；有效波长同控件回显，reference 动作保留 | 波长是光学输入，不是执行细节；尚无结果回显时只写 reference，不能把 slider 临时 550 当引擎已答 |
-| Fit / Full sky（`:1345–1382`） | **默认**；同组标一次“shared view”，tooltip 解释影响两图且不重算 | 用户能直接选取观察范围；不暗示 Fit 覆盖整类支持域 |
-| alt/az、Set/Clear（`:1384–1467`） | **默认**输入组，当前目标紧邻；结果仍在计算旧目标时显式区分输入与结果 | 选点是任务动作；typed/picked 来源退到输入组 tooltip，报告中重复的 sky-point 回显**删除** |
-| Pose & trace 与用途长文（`:1473–1481`） | **默认**按钮；无类/无点时给短下一步，恒定长用途文移 tooltip | 从天空位置进入姿态/轨迹；不让固定说明抢占操作面积 |
-| reference cell δ/az 角宽、网格尺寸、sample_count、kept events、member 前缀计数（`:1488–1491`；`MapCaliberLines:140–172`） | **次级 Calculation details**，同一结果内完整保留数值 | 是分辨率/执行核查数据而非默认答案；“仅完成部分光路成员，非全类”必须拆出为**默认**限定，不能随计数藏走 |
-| reference λ 重复回显、engine reference 来源句（`:1488,1512–1513`） | 重复 λ **删除**；真实来源进 λ tooltip，尚未回显的未知性**默认** | 消除多个似乎独立的波长读数；不能把 map/point/survey 三个不同波长上下文合并冒充相同 |
-| source-fixed scale / cells do not interpolate（`:1494`） | **次级 Calculation details**；当前颜色尺度对应什么物理量及单位仍**默认** | 不要求用户理解栅格实现才能看图；放大不增加已算信息的限制在详情解释 |
-| stripes = unknown / purple = singular（`:1494`） | **默认短图例**，详细解释可展开 | 未知/奇异与零不同；是读图的必要条件，不是可隐藏的实现细节 |
-| quantity kind / aggregation / unit（`MapCaliberLines:158–162`） | **默认短量名＋单位＋类和/代表成员限定**；完整定义进 Physics details | 没有量纲/聚合范围无法比较亮度；质量与密度不得混成一个读数 |
-| sun / scene-vs-nominal shape / geometry basis（`:159–165`） | **次级 Physics details**；名义几何、冻结场景与当前编辑不同时，相关限定**默认** | 解释当前答案对应什么物理前提；不能用当前 live 配置伪装结果的冻结来源 |
-| truncated / finite-zero / rank-0 mass（`:167–192`） | **默认答案**：不完整限定；完整有限计算为零的限定；m±error 与质量不同于 band density 的说明。methods 进 Physics details | 都改变“有没有光、数值代表什么”的理解。有限零不升级成无光证明，零 band 格不抹掉点质量 |
-| sun/zenith/horizon/kind/dispersion/sky-point 图例（`:1553–1631`） | **默认**短形状/颜色键；长词典进折叠 `Legend explanations` | 帮用户读图；只列本帧实际绘制类别，保留位置≠整圈可见及 arc-in-view 限定，不以长文淹没键 |
-| canvas 内 cursor、Overlays 与状态（`analyze_map_view.cpp:1013,1151–1188,1191–1236`） | **保持原 owner**；cursor 留画布，Overlays 留图侧；状态不得被右栏折叠吞掉 | 指针反馈贴近观察对象；无第二套 cursor，也不因右栏报告增长移动画布 |
+| 类身份 | **默认**，右栏第一行 | `SelectedClassRowLabelFor` 词源不变；报告内旧副本删除 |
+| Cancel/Retry＋状态 | **默认**，同一行 | 按钮＋SameLine 状态文本；行高=按钮高恒定（§15 稳定空间）；idle 画按钮本身（禁用槽），常驻句删除、解释进 tooltip |
+| λ / reference | **默认**；λ 行同控件回显为唯一 owner | slider 回显＋tooltip 名来源规则；"尚未回显"句默认保留在报告；caliber 各行不再含 λ |
+| Fit / Full sky | **默认**；同组标一次 "· shared view" | 标记 fits 可容则同行、不容则换行（几何，不隐藏）；两 tooltip 各自解释影响两图且不重算 |
+| alt/az、Set/Clear | **默认**输入组，当前目标紧邻 | target 行紧邻（意图与已采纳答案的区分保留：输入组 target = 意图，答案区 target = 采纳文档）；picked/typed 来源词进 target 行 tooltip；报告内回显删除 |
+| Pose & trace 与用途长文 | **默认**按钮；无类/无点短下一步 | 用途文进 tooltip（字节 pin `PoseButtonTooltip()`）；短下一步一行（"Select a class first." / "Set a sky point above."） |
+| reference cell δ/az 角宽、网格尺寸、sample_count、kept events、member 计数 | **Calculation details**（`##map_caliber`） | `MapCaliberCalculationLines`：cell+view+lattice 一行、members+kept 一行；数值完整保留 |
+| reference λ 重复回显、engine reference 来源句 | λ 回显**删除**；来源进 λ tooltip；"尚未回显"默认 | 见 λ 行 |
+| source-fixed scale / cells do not interpolate | **Calculation details** | 颜色尺度对应物理量及单位默认（短量名行带单位） |
+| stripes = unknown / purple = singular | **默认短图例**；详细解释可展开 | 短句保留默认；图例长释义进 `Legend explanations` |
+| quantity kind / aggregation / unit | **默认短量名＋单位**；完整定义进 Physics | `MapCaliberDefaultLines`："kind, unit."；`MapCaliberPhysicsLines` 首行带 aggregation 全名 |
+| sun / scene-vs-nominal shape / geometry basis | **Physics details**；名义≠场景的限定**默认** | sun+shape 进 Physics；shape≠nominal 时 "Scene geometry — …" 限定默认 |
+| truncated / finite-zero / rank-0 mass | **默认答案** | 三行文本未改（结论+限定+量纲已成形）；methods 随 mass 行 |
+| sun/zenith/horizon/kind/dispersion/sky-point 图例 | **默认**短形状/颜色键；长词典进 `Legend explanations` | 键=形状+名称；两条短形式限定默认（positions-not-visibility、arc-in-view）；释义进折叠 |
+| canvas cursor / Overlays | **保持原 owner** | 未动 |
 
-建议右侧槽序：**身份 → 短状态/Cancel或Retry → λ/reference → Fit/Full sky → 天空点输入/Set/Clear →
-Pose & trace → 可滚动答案区**。答案区内先类结论、再已设天空点答案，随后短图例和各自折叠详情。
-图侧与右侧状态可投影同一结果，但不复制一整套执行日志；同时成立的 partial/error/旧图限制不得互相覆盖。
-小窗按完整操作足迹换行/几何退化，不能靠隐藏按钮或把 partial 塞进折叠组来“省空间”。
+#### 16.1.2 处置账附录（判据梯未覆盖边缘的逐项处置，owner 上手批量复核）
 
-### 16.2 诊断归属：建议“主窗摘要＋Raypath view 完整答案”
+判据梯未明判的边缘，逐项按"偏向默认可见"落位；每条一句话理由：
 
-**建议采用混合分层，不建议把主窗诊断整块清空，也不建议复制两份完整报告。** 主窗仍回答
-“选了什么、有什么现象、此结论可靠吗、下一步去哪”；Raypath view 聚合一条光路的地图、类答案和
-天空点答案；Pose & trace 专注一个姿态的图与因素，不变成第二个类报告窗。
+1. **survey scope 行留在默认层**（λ＋source＋n 一行、太阳一行）：§16.2 的 execution 行把
+   member/object/budget/execution 计数送进 Calculation details，但 λ/太阳前提明文"随答案"
+   ——scope 行按后者整体保留默认，plan 压缩里的 "scope" 归 Calc 一词按处置账原文裁定。
+2. **probe 边/峰/separation 读数只在非全维臂浮默认层**：全维臂的结论行已经过对象卡承载同一
+   事实，默认层再画一遍即 L5 回显；拒答臂与族臂的默认层需要它们（边与峰的区分）。
+3. **identity 臂的色调读数不重复浮层**：结论行已带 ratio 与方向；其余臂的色调读数浮默认层。
+4. **witness 定量读数只在非拒答臂浮默认层**：拒答臂结论行已带见证句（含 ≠支持域限定原文）。
+5. **freezing-ladder 句从结论删除**：机制原文退场；存活后果句（用户语言）保留默认层；冻结/
+   自由维度进 Physics、各级采样/存活计数进 Calc——处置账逐行分拆优先于 owner 示例的单层措辞。
+6. **survey 摘要指针无条件显示**（含 identity 臂——默认层即全部答案时也显示）：§16.2 的
+   指针规则要求省略即提示；"省略了什么"的判断交 owner 上手，不在现场裁量。
+7. **PointMassLines 整行保留**："(N/M samples kept)" 计数随默认轨道积分行同行，两臂共享同一
+   纯函数不拆分——把这一小计数拆进 Calc 需要分叉共享行格式，代价高于其层级收益。
+8. **地图口径的成员比、kept 数进 Calc，"9/12" 不作默认限定**：截断行默认承载"非整类"限定
+   （处置账原文），完整比在 Calc 可查。
+9. **点答案的分量行保留 "N pts" 计数**：原始点数/可用点计数明文进 Calc（选中分量的
+   valid/total），行内 "N pts" 随行——拆行代价高于收益。
+10. **主窗不带任何折叠组**：§16.5 "多窗口" 行的隔离以更强形式交付（主窗摘要无折叠可隔离）。
+11. **survey 答案在 map view 无四态臂**：等待/取消/拒答画不出任何内容（D3 的字面执行——
+    答案区只承载答案）。
+12. **identity survey 的 partial 限定行保留既有行为**：early_stopped 文档显示 "stopped
+    inside its budget — partial"，对"身份臂即完整答案"的文档该措辞偏保守——保留原样，owner
+    上手复核再裁。
+13. **Pose 短下一步的两档文案**："Select a class first."（无类）/ "Set a sky point above."
+    （有类无点）；更长的去处说明在按钮 tooltip（紧凑冲突缩措辞不降级）。
+14. **状态槽与 λ/reference 槽的行合并**：处置账两行各为"一个槽"，行合并是槽内紧凑（按钮行高
+    恒定，状态更替不移行）；"λ/reference" 同理但 **禁用态 reference 按钮不与 slider 同行**
+    ——SameLine 接禁用按钮会静默吞掉后续折叠头的点击（已实测，见 `identity_class…` 用例），
+    该行保持两行。
 
-| 信息单元（基线源码） | 默认 owner 与保留理由 | 次级/删除处置 |
+### 16.2 诊断归属：主窗摘要＋Raypath view 完整答案（as-built 2026-11-10）
+
+> 原"建议"随片 A1 落地翻为 as-built。§2.2 的旧归属（点答案 owner=主窗）由本节显式修订：
+> **完整答案 owner=Raypath view，主窗=摘要投影，Pose=样本因素**。都读同一采纳文档，
+> 不另存答案、无第二套查询/选择状态、关窗不是采纳条件（开窗/关窗零查询副作用由
+> `raypath_view_open_is_display_state` 等既有用例持有）。
+
+主窗回答"选了什么、有什么现象、此结论可靠吗、下一步去哪"；Raypath view 聚合一条光路的地图、
+类答案和天空点答案；Pose & trace 专注一个姿态的图与因素。
+
+| 信息单元 | 交付归属与摘要口径 | 次级/删除处置（交付） |
 |---|---|---|
-| 主窗身份：链、晶体、layers/faces（`analyze_workspace.cpp:795–805`） | 主窗与两窗都可有对象身份（辨认当前对象），multi-layer 限制默认 | snapshot 内部 crystal id、结构计数进 Calculation details；主窗用人可识别的晶体身份，不伪造不存在的名称 |
-| survey 物理结论（`analyze_overview.cpp:279–369,850–853`） | 主窗留类结论摘要；Raypath view 是完整类答案 owner。摘要保 support/edge/peak/色散/色调等已得到的关键结论及证据限定 | 长结论/所有物理条目在 Raypath view 展开，不在主窗再次复制；family 的 proposed/killed 等算法计数不作摘要 |
-| survey execution/counts/budget/scope（`:825–844`） | 不完整、未评估、代表成员而非整类的限制默认；必要 λ/太阳/几何前提随答案 | member/object/sample/budget/原始 execution 进 Calculation details；“接口线程外计算”自述（`analyze_workspace.cpp:531`）删除 |
-| Dispersion / Diagnose（`analyze_overview.cpp:571–632`） | 边位置、红蓝方向/位移、可见性/色彩主结论默认；coverage 不完整默认 | followed onsets、折射率、证据 basis、物理解释 notes 进 Physics details；cross-check/tolerance 进 Calculation details |
-| Probe / Tint / Witness（`:635–737`） | 主摘要保边与峰的区分、色调结论；拒答后仍有正见证时保“有光见证≠已知支持域”限定 | 完整剖面、峰边距离、ratio口径、见证权重与来源进 Physics details；kept/lattice计数进 Calculation details；空 bin 是缺测不是零的限定不隐藏 |
-| TIR / Family / Objects（`:739–815`） | 相关主结论与拒答/未评估限制默认；不暗示摘要列全所有对象 | TIR 份额/接口数、冻结/自由物理维度、对象kind/state/位置/原因进 Physics details；路由级号和各级采样/存活计数进 Calculation details；显示上限的 +N 提示在清单处保留 |
-| 点 target/deviation、member/λ/n/source（`PointCaliberLines:291–314`） | Raypath view 的天空点答案带 target、λ、必要量纲；主窗短摘要带点坐标和出处 | 完整 member/折射率/来源进 Physics details，sample_count/budget/execution码进 Calculation details；输入与采纳target不一致时默认标明，不能回显新输入却展示旧答案 |
-| rank-0（`analyze_point_view.cpp:2712–2725`；`PointMassLines:317–332`） | **主窗摘要必须给位置、可用的 orbit integral/其测度或 unavailable；Raypath view 给完整质量答案**，不是“去姿态窗看图” | kept/sample计数进 Calculation details；质量适用测度/不适用原因不隐藏。无 fiber 不等于无答案 |
-| 无分量 reach 与 discovery 完备性（`:2731–2755`） | 主窗与 Raypath view 都保短结论及完备性限定；只有结果真的排除目标才说范围外 | reach tolerance 及长证据进次级；不能只藏 completeness_note 原文而丢掉其影响结论的限制 |
-| 分量清单、端点、积分、覆盖、无有效样本（`:2763–2802`） | 主窗给分量摘要/不可用或不完整限定，Raypath view 给完整点答案；分量选择唯一 owner 仍为 Pose 的 combo | kind/端点/积分值与可用性进 Physics details；原始点数/可用点计数进 Calculation details。不完整积分的限制、无有效样本不降为无光。cap 提示在被截清单处保留 |
-| 当前姿态因素/各接口透射（`RenderPoseCurveRegion` / `PointFactorLines`） | Pose 右下文字区，说明当前姿态为何有此贡献；当前/hover读数按 §16.4 区分 | 不复制到主窗或类报告；曲线保自身短读数/图例，完整因素不再跟曲线搬来搬去 |
+| 主窗身份：链、晶体、layers/faces | 主窗与两窗都可有对象身份；multi-layer 限制默认 | snapshot 内部 crystal id、结构计数不另列（身份行已是人可读形态） |
+| survey 物理结论 | 主窗摘要 = `RenderSurveyDefaultLayer` 的同一默认层＋指针；conclusions 逐行 | 完整报告（折叠组）在 Raypath view 的 "Class answer" 区 |
+| survey execution/counts/budget | 限制默认（partial/unevaluated 行） | 计数行进 Calc；线程自述句已删 |
+| Dispersion / Diagnose | 色散结论在 conclusions；色彩 verdict、位置、coverage 限定浮默认层 | 折射率/followed onsets/basis/notes 进 Physics；certificate 公式与顶角 Physics、cross-check/tolerance 进 Calc |
+| Probe / Tint / Witness | 边与峰的区分在 conclusions（全维臂）；色调读数其余臂浮默认；见证句在拒答 conclusions | 剖面曲线+量程进 Physics；kept 计数进 Calc；tint caliber 进 Physics；见证权重与来源进 Physics、lattice 计数进 Calc |
+| TIR / Family / Objects | TIR 份额读数+拒答态默认；族臂存活后果句默认；对象+N 提示在清单处 | 接口数/维度枚举 Physics；各级计数 Calc；对象卡整块 Physics |
+| 点 target/deviation、member/λ/n/source | 主窗摘要带 target 行；Raypath view 答案带 target＋λ（默认层前两行） | member faces 进 pt Physics；n/source 随 λ 行默认（量纲）；execution 三元组进 pt Calc |
+| rank-0 | 主窗摘要必须给位置＋orbit integral/测度或 unavailable（整段 `PointMassLines` 默认层） | 完整质量答案同段在 Raypath view；无 fiber 不等于无答案 |
+| 无分量 reach 与 discovery 完备性 | 两窗都保短结论及完备性限定（共享 `DrawPointNoComponentConclusions`） | reach tolerance 数值随短结论行 |
+| 分量清单、端点、积分、覆盖、无有效样本 | 主窗：分量计数＋kinds＋不可用限定＋选中分量无有效样本 | Raypath view：完整证据行+tooltip、选中分量 fiber integral、cap 提示在 pt Physics；valid/total 计数在 pt Calc；无有效样本默认 |
+| 当前姿态因素/各接口透射 | Pose 右下文字区（未动） | 不复制到主窗或类报告 |
 
-**主窗关窗场景**：两窗都关闭时，Selection 区仍有类结论与点答案摘要、各自的短状态及必要取消动作，
-包括 rank-0 数值、reach/完备性和无有效样本。摘要长时在本区内滚；一旦省略物理条目，明确提示
-“完整答案见 Raypath view”，不冒充全报告已显示。开窗不必先等结果；关窗不改变摘要或查询生命期。
+**主窗关窗场景（交付形态）**：两窗都关闭时，Selection 区仍有类结论摘要、点答案摘要、各自短
+状态及必要取消动作，包括 rank-0 数值、reach/完备性和无有效样本。摘要长时在本区内滚；省略
+物理条目时明确提示 "The complete answer is in the Raypath view."（`kRaypathViewWindowTitle`
+插值），不冒充全报告已显示。开窗不必先等结果；关窗不改变摘要或查询生命期。逐腿断言由
+`identity_class_shows_the_mass_arm_and_the_map_answers`（主窗摘要列 + 关窗捕获）与
+`survey_overview_shows_dispersion_and_profile`（全维臂摘要列 + 无折叠独有项 absence）持有。
 
-这是对 §2.2 原归属的**显式修订建议**：旧条款把全部点答案 owner 放主窗，新方案改为
-**完整答案 owner=Raypath view，主窗=摘要投影，Pose=样本因素**。不重复堆放从“survey只在主窗”
-改为“不复制完整报告”。身份、结论摘要、就地状态是有目的的重复；都读同一采纳文档，
-不另存一份答案、不增第二套查询/选择状态、不让关窗成为采纳条件。
-
-实施影响面（本轮仅说明）：`analyze_workspace.cpp` 的 details 区由大报告宿主变为固定导航＋摘要；
-`RenderPointDetailsBlock` 的非样本型完整答案移到 Raypath view，保留主窗摘要投影，去掉伪装标题的开窗链接。
-`RenderSurveyOverview` 的完整报告同迁，摘要不再直接复用一整块长渲染输出；结果语义仍单源。
-`analyze_map_view.cpp` 接纳该完整答案区，不能只把原有嘈杂长字符串机械搬过去；须逐项按本节拆层。
+实施落位（as-built）：`analyze_workspace.cpp` details 区 = 固定头（标题＋双入口按钮）＋滚动
+区（身份 facts、survey 摘要投影、point 摘要臂）；`RenderPointDetailsBlock` = 四态壳＋摘要臂，
+`RenderPointAnswerBlock` = Raypath view 的完整答案臂；`RenderSurveyOverviewModel` = 默认层＋
+两折叠组，`RenderSurveySummary` = 同一默认层＋指针；`analyze_map_view.cpp` 答案区按
+"类结论 → 天空点答案 → 地图口径 → 图例" 序收纳，非机械搬迁——逐项按 §16.1.1 处置账拆层
+（λ 回显、身份/目标回显、长释义均已删除而非搬运）。结果语义单源：两窗读同一 adopted
+survey/point 文档，模型为纯读回投影，无第二套查询/选择状态。
 
 ### 16.3 主窗双入口：可发现、全态可开、开窗不触发分析（as-built 2026-11-10）
 
