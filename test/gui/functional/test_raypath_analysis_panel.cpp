@@ -3907,6 +3907,10 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("Physics details") == std::string::npos, false);
+    // The point summary's own closed-windows legs (§16.2): the mass answer in full, the target
+    // line, and the pointer naming where its omitted caliber detail lives.
+    IM_CHECK_RETV(frame_text.find("Rank-0 point mass") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("target: alt 20.000 deg") != std::string::npos, false);
   }
   ctx->ItemClick("**/Raypath view###main_raypath_open");
   ctx->Yield(2);
@@ -3942,6 +3946,13 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
   {
     const std::string reopened_text = CaptureMapFrameText(ctx);
     IM_CHECK_RETV(reopened_text.find("member(s)") != std::string::npos, false);
+    // The sky-point answer rides the same report: present at the default layer (the λ premise
+    // line), its own Calculation fold still closed — the execution triple is one fold away,
+    // and "Selected component" (a Physics-tier phrase) exists nowhere in this mass arm.
+    IM_CHECK_RETV(reopened_text.find("Sky point answer") != std::string::npos, false);
+    IM_CHECK_RETV(reopened_text.find("wavelength 550.00 nm") != std::string::npos, false);
+    IM_CHECK_RETV(reopened_text.find("discovery sample_count") == std::string::npos, false);
+    IM_CHECK_RETV(reopened_text.find("Selected component") == std::string::npos, false);
   }
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
@@ -4074,6 +4085,40 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
     const int components = gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &rows);
     IM_CHECK_RETV(components >= 1, false);
     ctx->LogInfo("[v1 c17] point query independent of the survey refusal: discovered, %d component(s)", components);
+  }
+
+  // The point answer's split (§16.2), the component arm: the map window (open since the row
+  // click) carries "Sky point answer" with its default-layer premise lines and BOTH fold
+  // groups closed — the evidence rows are the Physics tier's, and the frame text proves the
+  // closed state mechanically (a closed CollapsingHeader submits no body). The fold's rendered
+  // response to expansion is then read by writing the same window-storage key a user click
+  // writes (the click wiring itself is the identity case's Calculation-details leg).
+  {
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    const std::string report_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(report_text.find("Sky point answer") != std::string::npos, false);
+    IM_CHECK_RETV(report_text.find("wavelength 550.00 nm") != std::string::npos, false);
+    IM_CHECK_RETV(report_text.find("Selected component") == std::string::npos, false);
+    IM_CHECK_RETV(report_text.find("discovery sample_count") == std::string::npos, false);
+    report->StateStorage.SetInt(report->GetID("Physics details##pt_answer"), 1);
+    ctx->Yield(2);
+    const std::string opened_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(opened_text.find("Selected component") != std::string::npos, false);
+    IM_CHECK_RETV(opened_text.find("member faces") != std::string::npos, false);
+    report->StateStorage.SetInt(report->GetID("Physics details##pt_answer"), 0);
+    ctx->Yield(1);
+  }
+  // The main window's summary arm, both windows closed: the component count with its kinds,
+  // the target line, the pointer — and none of the per-component evidence rows.
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
+  {
+    const std::string frame_text = CaptureFrameText(ctx);
+    IM_CHECK_RETV(frame_text.find("component(s):") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("target: alt 38.000 deg") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("1: ") == std::string::npos, false);
   }
   return true;
 }
@@ -7837,9 +7882,17 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   IM_CHECK_RETV(report != nullptr, false);
   report->Scroll.y = 0.0f;
   // The reference-cell line lives in the caliber's Calculation fold now (the ledger's L4
-  // tier) — open it so the capture carries the numbers the checks read.
-  ctx->ItemClick("**/Calculation details##map_caliber");
-  ctx->Yield(2);
+  // tier) — open it IDEMPOTENTLY so the capture carries the numbers the checks read: the
+  // header is a toggle, and check_scale calls this helper three times (1x / 1.5x / back), so
+  // a blind click would close it on the second leg. The header's open state is the report
+  // child's own tree storage.
+  const ImGuiID calc_fold_id = report->GetID("Calculation details##map_caliber");
+  ImGuiStorage* fold_storage = &report->StateStorage;
+  const bool calc_fold_open = fold_storage->GetInt(calc_fold_id, 0) != 0;
+  if (!calc_fold_open) {
+    ctx->ItemClick("**/Calculation details##map_caliber");
+    ctx->Yield(2);
+  }
   const std::string report_text = CaptureMapFrameText(ctx);
   const auto check_source = [&]() -> bool {
     const char* source = "Reference";
@@ -7892,6 +7945,12 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   IM_CHECK_RETV(retry_text.find("Retry the current full-sky request") != std::string::npos, false);
   IM_CHECK_RETV(save_tooltip("_retry.png"), false);
   IM_CHECK_RETV(map.adopted_result == reference, false);
+  // Leave the fold as we found it: the report child's storage outlives this helper, and a
+  // later case asserting the closed-by-default state must not inherit our open tier.
+  if (!calc_fold_open && fold_storage->GetInt(calc_fold_id, 0) != 0) {
+    ctx->ItemClick("**/Calculation details##map_caliber");
+    ctx->Yield(2);
+  }
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
   ctx->Yield(2);
   return true;
@@ -7945,10 +8004,10 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
     // the glyph audit reads the cell line's δ and the slider's λ label for the two codepoints.
     const std::string metrics = gui::MapCaliberCalculationLines(caliber).front();
     IM_CHECK_RETV(metrics.find("\xCE\xBB") == std::string::npos, false);
-    IM_CHECK_RETV(metrics.find("\xCE\B4") != std::string::npos, false);
+    IM_CHECK_RETV(metrics.find("\xCE\xB4") != std::string::npos, false);
     std::string old_metrics = metrics;
     {
-      const size_t at = old_metrics.find("\xCE\B4");
+      const size_t at = old_metrics.find("\xCE\xB4");
       if (at != std::string::npos) {
         old_metrics.replace(at, 2, "?");
       }

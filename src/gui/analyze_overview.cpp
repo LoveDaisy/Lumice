@@ -620,24 +620,25 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model) {
     ImGui::Bullet();
     ImGui::TextWrapped("Blue/red ratio %.3f — %s.", model.tint.ratio, DirectionProse(model.tint.direction).c_str());
   }
-  // The probe's readings for the arms whose conclusions don't carry the edge/peak facts (the
-  // full-dimensional arm's object cards name both); a refused probe's named mode is a limit.
-  if (model.probe.available && model.arm != SurveyArm::kFullDimensional) {
-    if (model.probe.state == LUMICE_PATH_STATE_REFUSED) {
-      DisabledWrapped("Probe refused (%s) — no readings claimed.", model.probe.mode.c_str());
-    } else {
-      if (model.probe.edge_available) {
-        ImGui::Bullet();
-        ImGui::TextWrapped("Profile edge %s", FormatDeg(model.probe.edge_deg).c_str());
-      }
-      if (model.probe.peak_available) {
-        ImGui::Bullet();
-        ImGui::TextWrapped("Profile peak %s", FormatDeg(model.probe.peak_deg).c_str());
-      }
-      if (model.probe.separation_available) {
-        ImGui::Bullet();
-        ImGui::TextWrapped("Peak–edge separation %s", FormatDeg(model.probe.separation_deg).c_str());
-      }
+  // The probe's refused mode is a limit — default at EVERY arm (§16.1's state honesty: a
+  // refusal must not be readable only through a fold, and the full-dimensional arm's object
+  // cards cannot speak for it). The readings stay arm-gated: the full-dimensional arm's
+  // conclusions already carry the edge/peak facts, and repeating them here is the echo the
+  // ledger deletes.
+  if (model.probe.available && model.probe.state == LUMICE_PATH_STATE_REFUSED) {
+    DisabledWrapped("Probe refused (%s) — no readings claimed.", model.probe.mode.c_str());
+  } else if (model.probe.available && model.arm != SurveyArm::kFullDimensional) {
+    if (model.probe.edge_available) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("Profile edge %s", FormatDeg(model.probe.edge_deg).c_str());
+    }
+    if (model.probe.peak_available) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("Profile peak %s", FormatDeg(model.probe.peak_deg).c_str());
+    }
+    if (model.probe.separation_available) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("Peak–edge separation %s", FormatDeg(model.probe.separation_deg).c_str());
     }
   }
   // The witness's quantitative reading on the arms whose conclusions don't carry the witness

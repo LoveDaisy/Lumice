@@ -2724,6 +2724,8 @@ void DrawPointSummaryCompleted(GuiState& state, const LUMICE_PathPointInfo& info
     } else {
       ImGui::TextDisabled("The mass block did not answer its reader.");
     }
+    // The caliber detail (member faces, execution tier) is omitted here — same pointer leg.
+    DisabledWrappedText("The complete answer is in the %s.", kRaypathViewWindowTitle);
     return;
   }
 
@@ -2731,6 +2733,7 @@ void DrawPointSummaryCompleted(GuiState& state, const LUMICE_PathPointInfo& info
   const int component_total = PointComponentRows(*point.adopted_result, &rows);
   if (component_total == 0) {
     DrawPointNoComponentConclusions(point);
+    DisabledWrappedText("The complete answer is in the %s.", kRaypathViewWindowTitle);
     return;
   }
   // The component summary: the count, the kinds, and the availability limits — an L1 fact set
@@ -2757,6 +2760,10 @@ void DrawPointSummaryCompleted(GuiState& state, const LUMICE_PathPointInfo& info
   if (detail_valid_indices.empty()) {
     ImGui::TextDisabled("No valid sample on show for this component.");
   }
+  // §16.2's pointer rule, the point summary's own leg: the evidence rows, integrals and
+  // premise lines are omitted here, and the omission names its home — the same spelling the
+  // survey summary closes with (one constant, one sentence).
+  DisabledWrappedText("The complete answer is in the %s.", kRaypathViewWindowTitle);
 }
 
 }  // namespace
@@ -2941,6 +2948,10 @@ void RenderPointAnswerBlock(GuiState& state) {
   if (detail_valid_indices.empty()) {
     ImGui::TextDisabled("No valid sample on show for this component.");
   }
+  // §16.2's pointer rule, the point summary's own leg: the evidence rows, integrals and
+  // premise lines are omitted here, and the omission names its home — the same spelling the
+  // survey summary closes with (one constant, one sentence).
+  DisabledWrappedText("The complete answer is in the %s.", kRaypathViewWindowTitle);
 }
 
 }  // namespace lumice::gui
