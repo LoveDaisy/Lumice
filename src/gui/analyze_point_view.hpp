@@ -394,8 +394,9 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size);
 // The Pose & trace window (analyze-interaction-contract.md §7, 755.5): the free-floating
 // non-modal window that gathers the sky point's three faces — the sun-direction globe, the
 // raypath 3D view and the current sample's factor readouts — around ONE adopted point document.
-// Opened ONLY by the point detail block's title click (and closed by its own title bar X /
-// DoNew's whole-state reset); the sky-point and wavelength writers never open it. The open flag
+// Opened by the named entry buttons only — the main window's Selection header and the Raypath
+// view window's in-place one (§16.3; closed by its own title bar X / DoNew's whole-state
+// reset); the sky-point and wavelength writers never open it. The open flag
 // and the two split ratios are T-session display state (GuiState::analyze_pose_view_*). The
 // frame pump is NOT this window's concern — it runs at RenderWorkspacePanels' entry on every
 // GUI frame; this function keeps only the window skeleton (size recipe, minimum constraint)

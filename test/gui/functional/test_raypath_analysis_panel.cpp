@@ -35,6 +35,7 @@
 #include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
+#include "gui/analyze_workspace.hpp"
 #include "gui/angular_dist_picker.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
@@ -7989,6 +7990,366 @@ bool MapPoseButtonLabelsDeriveFromTheWindowTitle(ImGuiTestContext* ctx) {
   return true;
 }
 
+// The entry buttons' arc across the halo scene's query states (contract §16.3's table, the
+// states this scene reaches): clickable while the point query is in flight — and a click then
+// writes the open flag ONLY (the in-flight intent is untouched: an entry is a display action,
+// never a query trigger); the normal completion names no navigation; the cancelled state's
+// one-word hint shows at the default geometry without moving the buttons or the scroll region.
+// The hint's assertion substrings are ones no scroll-region text carries ("Cancelled"
+// capital-C is the slot's word alone; "The complete" is the mass-arm slot line alone) — the
+// other states' hint texts reuse scroll-region wording, where a substring assert cannot
+// isolate the slot.
+bool SelectionHeaderEntriesTrackTheQueryStates(ImGuiTestContext* ctx) {
+  const auto window_active = [](const char* fragment) {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const auto details_window = [] {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && w->ParentWindow == nullptr && std::strcmp(w->Name, "##AnalyzeDetails") == 0) {
+        return w;
+      }
+    }
+    return static_cast<ImGuiWindow*>(nullptr);
+  };
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  ctx->Yield(2);
+
+  // Completed survey, no sky point yet: the pose entry answers, and the click writes the flag
+  // alone — neither query's intent moves. The slot names the next step (the hint field is what
+  // the slot drew, AC4's channel: what the test reads is what the user saw).
+  const auto survey_id_before = gui::g_state.analysis.survey.intent_id;
+  const auto point_id_before = gui::g_state.analysis.point.intent_id;
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id == survey_id_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_id_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.entry_hint_line.find("Pick a sky point") == 0, false);
+  ctx->WindowClose("//Pose & trace");
+  ctx->Yield(1);
+
+  // The point in flight: the entries still answer, and the click does not touch the flight.
+  SetSkyPointTarget(42.0, 0.0);
+  ctx->Yield(1);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kWaiting; },
+          30),
+      false);
+  const auto flight_id = gui::g_state.analysis.point.intent_id;
+  ctx->ItemClick("**/Raypath view###main_raypath_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && window_active("Raypath view"), false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == flight_id, false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  // The float moves aside: the cancel click below must land on the details block, not on it.
+  if (ImGuiWindow* raypath_m = ctx->GetWindowByRef("//Raypath view")) {
+    ImGui::SetWindowPos(raypath_m, ImVec2(40.0f, 80.0f), ImGuiCond_Always);
+  }
+  ctx->Yield(1);
+
+  // Normal completion: the answer is on show — the slot names no navigation. The buttons' row
+  // and the scroll child's origin are the slot-absent reference geometry for the cancelled leg.
+  ImGuiWindow* details = details_window();
+  IM_CHECK_RETV(details != nullptr, false);
+  const ImGuiTestItemInfo raypath_item = ctx->ItemInfo("**/Raypath view###main_raypath_open", ImGuiTestOpFlags_NoError);
+  const ImGuiTestItemInfo pose_item = ctx->ItemInfo("**/Pose & trace###main_pose_open", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(raypath_item.ID != 0 && pose_item.ID != 0, false);
+  ImGuiWindow* scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
+  IM_CHECK_RETV(scroll != nullptr, false);
+  const ImVec2 raypath_min_before = raypath_item.RectFull.Min;
+  const ImVec2 pose_min_before = pose_item.RectFull.Min;
+  const float scroll_top_before = scroll->Pos.y;
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.entry_hint_line.empty(), false);
+
+  // Cancel the point's next flight through the block's own cancel row; the cancelled state's
+  // slot shows the one-word hint, and neither the buttons nor the scroll child move for it
+  // (the hint is a single bounded line, never growth).
+  SetSkyPointTarget(33.0, 0.0);
+  ctx->Yield(1);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kWaiting; },
+          30),
+      false);
+  // The block's cancel row lives in the scroll content: the halo survey's full summary puts it
+  // below the fold at the default split, and a clipped item registers no ID for the engine to
+  // find — scroll the region to its bottom first (the header buttons above need no such
+  // preamble; this one is about the scrolled row itself).
+  {
+    ImGuiWindow* details_scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
+    IM_CHECK_RETV(details_scroll != nullptr, false);
+    details_scroll->Scroll.y = details_scroll->ScrollMax.y;
+    ctx->Yield(2);
+  }
+  ctx->ItemClick("**/Cancel point");
+  ctx->SetRef("");
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCancelled; },
+          30),
+      false);
+  const ImGuiTestItemInfo raypath_after =
+      ctx->ItemInfo("**/Raypath view###main_raypath_open", ImGuiTestOpFlags_NoError);
+  const ImGuiTestItemInfo pose_after = ctx->ItemInfo("**/Pose & trace###main_pose_open", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(raypath_after.ID != 0 && pose_after.ID != 0, false);
+  IM_CHECK_RETV(
+      raypath_after.RectFull.Min.x == raypath_min_before.x && raypath_after.RectFull.Min.y == raypath_min_before.y,
+      false);
+  IM_CHECK_RETV(pose_after.RectFull.Min.x == pose_min_before.x && pose_after.RectFull.Min.y == pose_min_before.y,
+                false);
+  scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
+  IM_CHECK_RETV(scroll != nullptr && scroll->Pos.y == scroll_top_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.entry_hint_line == "Cancelled", false);
+  ctx->LogInfo("[header entries] flight-time click kept the intent, completion omits the slot, cancelled slot drew it");
+  return true;
+}
+
+// The refusal and the mass arms (contract §16.3's remaining rows): the refused survey's hint
+// reuses the engine's own reason text and the slot truncates it — the refusal state's details
+// window carries exactly one ellipsis (the slot's; the scroll region draws the error wrapped,
+// and no other text in that window ends in one). The identity class's rank-0 point answer
+// names the Raypath view as the complete answer's owner — the slot line only (the block's own
+// mass arm says "the mass is the whole answer").
+bool SelectionHeaderEntriesNameRefusalAndMassArms(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+
+  // The multi-layer refusal: the slot truncates the engine's reason (one ellipsis in the window).
+  IM_CHECK_RETV(BringUpScene(ctx, kPcTwoLayerJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  std::string multi_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strstr(e.display, " -> ") != nullptr) {
+      multi_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!multi_display.empty(), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, multi_display.c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kRefused;
+                    },
+                    60),
+                false);
+  const std::string& refused_hint = gui::g_state.analysis.wait_feedback_texts.entry_hint_line;
+  IM_CHECK_RETV(refused_hint.find("multi_layer") != std::string::npos, false);
+  IM_CHECK_RETV(refused_hint.find("…") != std::string::npos, false);
+  ctx->ItemClick("**/Raypath view###main_raypath_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  ctx->LogInfo("[header entries] refused state: the slot carries the engine reason, truncated");
+
+  // The identity class's mass arm at the sun's own image: the slot points at the Raypath view.
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  std::string c15_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strcmp(e.display, "1-3-6-2") == 0) {
+      c15_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!c15_display.empty(), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, c15_display.c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  SetSkyPointTarget(20.0, 0.0);
+  ctx->Yield(1);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.entry_hint_line.find("The complete") != std::string::npos,
+                false);
+  ctx->LogInfo("[header entries] mass arm: the slot names the Raypath view as the complete answer's owner");
+  return true;
+}
+
+// AC3 at the narrowest basis: the diagnostics region pinned at its D2 floor still shows both
+// entry buttons fully inside its clip — after the scroll region is REALLY scrolled to its end
+// (the buttons are fixed head, but the promise is measured, not assumed) — and the pose entry
+// still opens its window from a click there. The slot omits at this width (the mass-arm line's
+// prefix appears at the default basis and disappears here), state changes do not move the
+// buttons, and the header's measured composition lands in the log: the §16.3 derivation's
+// live-frame calibration (推演 103/110 vs 实测), itemized by the rects the log carries.
+bool SelectionHeaderEntriesReachAtTheNarrowestBasis(ImGuiTestContext* ctx) {
+  const auto window_active = [](const char* fragment) {
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const auto request_basis = [&](int width, int height, const char* label) {
+    g_window_size_test.width = width;
+    g_window_size_test.height = height;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK(g_window_size_test.done.load());
+    ctx->Yield(3);
+    ctx->LogInfo("[header entries] basis %s", label);
+  };
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+
+  const ScopedWindowBasis window_basis(ctx);
+  request_basis(1024, 640, "1024x640");
+  const float panel_h = ImGui::GetIO().DisplaySize.y - gui::UiPx(gui::kTopBarHeight) - gui::UiPx(gui::kStatusBarHeight);
+  const float list_saved = gui::g_state.workspace.right_list_ratio;
+  // The list absorbs the span above the diagnostics floor: the region reaches ITS floor — the
+  // construction that shows the D2 floor is reachable at the narrowest basis (the list stays
+  // above its own 250 floor meanwhile: floors coexist, §16.3's 368 ≤ 572).
+  gui::g_state.workspace.right_list_ratio =
+      (panel_h - gui::UiPx(gui::kAnalyzeSplitterSize) - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) / panel_h;
+  ctx->Yield(3);
+  {
+    ImGuiWindow* details = ctx->GetWindowByRef("##AnalyzeDetails");
+    IM_CHECK_RETV(details != nullptr, false);
+    IM_CHECK_RETV(fabsf(details->Size.y - gui::UiPx(gui::kAnalyzeDetailsMinHeight)) <= 1.0f, false);
+    // The floor's budget promise at 1x, itemized: window height, the header's share (title row
+    // + button row + gaps + padding), the scroll child's. The live-frame numbers the as-built
+    // records — the derivation's 推演 103/105/110 meets its measured counterpart here.
+    ImGuiWindow* scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
+    IM_CHECK_RETV(scroll != nullptr, false);
+    const float header_h = scroll->Pos.y - details->Pos.y;
+    const ImGuiTestItemInfo raypath_item =
+        ctx->ItemInfo("**/Raypath view###main_raypath_open", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo pose_item = ctx->ItemInfo("**/Pose & trace###main_pose_open", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(raypath_item.ID != 0 && pose_item.ID != 0, false);
+    ctx->LogInfo(
+        "[header entries] calibration: details %.1f px (floor %.1f), header %.1f px, buttons %.1fx%.1f / %.1fx%.1f",
+        details->Size.y, gui::UiPx(gui::kAnalyzeDetailsMinHeight), header_h, raypath_item.RectFull.GetWidth(),
+        raypath_item.RectFull.GetHeight(), pose_item.RectFull.GetWidth(), pose_item.RectFull.GetHeight());
+    // Both buttons fully inside the region's clip (visible rectangles, not submitted-only).
+    IM_CHECK_RETV(details->InnerRect.Contains(raypath_item.RectFull.Min) &&
+                      details->InnerRect.Contains(raypath_item.RectFull.Max),
+                  false);
+    IM_CHECK_RETV(
+        details->InnerRect.Contains(pose_item.RectFull.Min) && details->InnerRect.Contains(pose_item.RectFull.Max),
+        false);
+  }
+
+  // The identity class's mass arm at this basis: the slot omits (the space after the buttons
+  // cannot carry even the ellipsis), the buttons hold their rectangles across the state
+  // changes, and the scroll region really reaches its end with the buttons still in the clip.
+  std::string c15_display;
+  for (const int idx : gui::g_state.analysis_result.display_order) {
+    const auto& e = gui::g_state.analysis_result.payload->entries[static_cast<size_t>(idx)];
+    if (std::strcmp(e.display, "1-3-6-2") == 0) {
+      c15_display = e.display;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!c15_display.empty(), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, c15_display.c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  const ImGuiTestItemInfo raypath_before =
+      ctx->ItemInfo("**/Raypath view###main_raypath_open", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(raypath_before.ID != 0, false);
+  SetSkyPointTarget(20.0, 0.0);
+  ctx->Yield(1);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  const ImGuiTestItemInfo raypath_after =
+      ctx->ItemInfo("**/Raypath view###main_raypath_open", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(raypath_after.ID != 0, false);
+  IM_CHECK_RETV(raypath_after.RectFull.Min.x == raypath_before.RectFull.Min.x &&
+                    raypath_after.RectFull.Min.y == raypath_before.RectFull.Min.y,
+                false);
+  {
+    // The measured narrowest form: the slot draws its minimal truncation ("The com…" — the
+    // calibration above logs the real leftover the truncation fills). The whole-line omission
+    // the plan's derivation expected is NOT reachable here: the live buttons are 88 pt (not the
+    // derived ~100-110), the 260 pt column leaves 52 pt, and even the vertical tier leaves
+    // more — the omit path is a defensive corner, pinned directly below through the fit seam.
+    const std::string& narrow_hint = gui::g_state.analysis.wait_feedback_texts.entry_hint_line;
+    IM_CHECK_RETV(narrow_hint.find("The com") == 0, false);
+    IM_CHECK_RETV(narrow_hint.find("…") != std::string::npos, false);
+    ctx->LogInfo("[header entries] narrowest: the slot drew its minimal truncation '%s'", narrow_hint.c_str());
+    // The omit branch, exercised directly (it cannot fire through legal UI geometry): no width
+    // carries even the ellipsis, and the whole text rides when the width allows it.
+    IM_CHECK_RETV(gui::AnalyzeEntryHintFitToWidth("Pick a sky point", 0.0f).empty(), false);
+    IM_CHECK_RETV(gui::AnalyzeEntryHintFitToWidth("Cancelled", 10000.0f) == "Cancelled", false);
+  }
+  {
+    ImGuiWindow* details = ctx->GetWindowByRef("##AnalyzeDetails");
+    IM_CHECK_RETV(details != nullptr, false);
+    ImGuiWindow* scroll = RegionWindowUnder("##AnalyzeDetails", "##AnalyzeDetailsScroll");
+    IM_CHECK_RETV(scroll != nullptr, false);
+    scroll->Scroll.y = scroll->ScrollMax.y;
+    ctx->Yield(2);
+    const ImGuiTestItemInfo raypath_item =
+        ctx->ItemInfo("**/Raypath view###main_raypath_open", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo pose_item = ctx->ItemInfo("**/Pose & trace###main_pose_open", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(raypath_item.ID != 0 && pose_item.ID != 0, false);
+    IM_CHECK_RETV(details->InnerRect.Contains(raypath_item.RectFull.Min) &&
+                      details->InnerRect.Contains(raypath_item.RectFull.Max),
+                  false);
+    IM_CHECK_RETV(
+        details->InnerRect.Contains(pose_item.RectFull.Min) && details->InnerRect.Contains(pose_item.RectFull.Max),
+        false);
+  }
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  ctx->WindowClose("//Pose & trace");
+  gui::g_state.workspace.right_list_ratio = list_saved;
+  ctx->Yield(2);
+  ctx->LogInfo("[header entries] narrowest basis: floor geometry, scrolled-to-end reachability, click answers");
+  return true;
+}
+
 // AC2's window-combo faces (755.7 Step 2), each with BOTH floating windows standing — the
 // composition the per-window cases leave out:
 // ① the main view's direct ROI click lands between the windows (no arming step;
@@ -12202,5 +12563,24 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_pose_button_labels_derive_from_the_window_title");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MapPoseButtonLabelsDeriveFromTheWindowTitle(ctx)); };
+  }
+  // §16.3's entry arc across the halo scene's states: flight-time clicks keep the intents,
+  // completion omits the slot, cancelled draws the one-word hint without moving the buttons.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "selection_header_entries_track_the_query_states");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SelectionHeaderEntriesTrackTheQueryStates(ctx)); };
+  }
+  // The refusal and mass arms: the slot carries the engine reason (truncated) and names the
+  // Raypath view as the complete answer's owner.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "selection_header_entries_name_refusal_and_mass_arms");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SelectionHeaderEntriesNameRefusalAndMassArms(ctx)); };
+  }
+  // AC3 at the narrowest basis: floor geometry, scrolled-to-end reachability, the slot's
+  // omission form, rect determinism, and the header's live-frame calibration in the log.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "selection_header_entries_reach_at_the_narrowest_basis");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SelectionHeaderEntriesReachAtTheNarrowestBasis(ctx)); };
   }
 }

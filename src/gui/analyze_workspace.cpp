@@ -721,13 +721,18 @@ void RenderAnalyzeEntryActions(GuiState& state) {
 
   // Draws the hint right-aligned at the current row's end, fitted to the space left of the
   // just-submitted button (the whole line, its ellipsis-truncated prefix, or nothing when the
-  // space cannot carry even that — geometry decides, never state).
-  const auto draw_hint = [&hint, &style]() -> bool {
-    if (hint.empty()) {
+  // space cannot carry even that — geometry decides, never state). What was drawn is reported
+  // to the hint field (AC4's channel: what the test reads is what the user saw).
+  const auto draw_hint = [&](const std::string& slot_hint) -> bool {
+    if (slot_hint.empty()) {
       return false;
     }
-    const float space_left = ImGui::GetContentRegionMax().x - (ImGui::GetItemRectMax().x + style.ItemSpacing.x);
-    const std::string fitted = AnalyzeEntryHintFitToWidth(hint, space_left);
+    // Screen-space arithmetic: GetItemRectMax is in screen coordinates, GetContentRegionMax in
+    // window-local ones — the right edge the slot may reach is the window's origin plus its
+    // content-region max.
+    const float row_right = ImGui::GetWindowPos().x + ImGui::GetContentRegionMax().x;
+    const float space_left = row_right - (ImGui::GetItemRectMax().x + style.ItemSpacing.x);
+    const std::string fitted = AnalyzeEntryHintFitToWidth(slot_hint, space_left);
     if (fitted.empty()) {
       return false;
     }
@@ -736,6 +741,7 @@ void RenderAnalyzeEntryActions(GuiState& state) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextUnformatted(fitted.c_str());
     ImGui::PopStyleColor();
+    state.analysis.wait_feedback_texts.entry_hint_line = fitted;
     return true;
   };
 
@@ -744,7 +750,7 @@ void RenderAnalyzeEntryActions(GuiState& state) {
   }
   if (!same_row) {
     // Vertical tier: the hint rides the FIRST row (right of the Raypath view button).
-    if (draw_hint()) {
+    if (draw_hint(hint)) {
       ImGui::NewLine();
     }
   } else {
@@ -754,7 +760,7 @@ void RenderAnalyzeEntryActions(GuiState& state) {
     OpenOrFocusAnalysisWindow(&state.analyze_pose_view_open, kPoseViewWindowTitle);
   }
   if (same_row) {
-    draw_hint();  // same-row tier: the hint shares the single row's right end
+    draw_hint(hint);  // same-row tier: the hint shares the single row's right end
   }
 }
 
@@ -785,6 +791,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     feedback.point_wait_line_fiber.clear();
     feedback.point_wait_line_details.clear();
     feedback.share_list_busy_dots.clear();
+    feedback.entry_hint_line.clear();
   }
 
   // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);
