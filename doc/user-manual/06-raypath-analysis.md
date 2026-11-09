@@ -200,10 +200,11 @@ coordinates and press **Set sky point**), then click **Pose & trace**. Picking o
 point does **not** open the window automatically. Close it with its title-bar close button and
 use the same entry to reopen it.
 
-**Point detail** (in the diagnostics region, under the class overview) remains another opener:
-clicking its title opens the **same floating, non-modal window**, with the same current selection,
-point document and pose cursor. Opening or reopening it starts no query and does not reset the
-cursor. The block itself keeps the answer and its evidence: once a class is
+The **Selection header** at the top of the diagnostics region carries two named buttons —
+**Raypath view** and **Pose & trace** — that stay reachable in every state, before any analysis,
+while queries run and after refusals; clicking one opens that window (or focuses it when it is
+already open). A short hint beside the buttons names the current state's next step. The point
+block below keeps the answer and its evidence: once a class is
 selected and a sky point is set, the engine is asked about that exact direction in the
 background (a couple-of-seconds tier; the point queues behind the survey and map on the same
 worker, and the block says so while it waits, with a **Cancel point** button). The answer opens

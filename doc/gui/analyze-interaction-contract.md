@@ -312,7 +312,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 | 项 | 合同 |
 |---|---|
-| 打开目标 | **Raypath view 天空点操作旁的 Pose & trace 按钮**（用途说明：3D 光路/姿态），以及保留的**主窗 Point detail 标题点击**，都确保同一个窗口打开。前者在增长报告外常驻，无类/无点/计算中/拒答/无样本均可点击。**不因设置天空点自动弹出**（用户显式要求）；类行点击同样不打开它 |
+| 打开目标 | **Raypath view 天空点操作旁的 Pose & trace 按钮**（用途说明：3D 光路/姿态），以及**主窗 Selection 头部的两只命名按钮**（`Raypath view` / `Pose & trace`，§16.3 双入口 as-built），都确保同一个窗口打开。这些入口在增长报告外常驻，无类/无点/计算中/拒答/无样本均可点击，已开则聚焦置顶同一窗。**不因设置天空点自动弹出**（用户显式要求）；类行点击同样不打开它 |
 | 绘图前置与导航 | 光路选中＋天空点已设＋点面有适用结果是**绘图前置，不是开窗条件**。未选类/未设点时入口旁说明下一步；窗内沿用诚实空态、等待/拒答/无样本说明，不以可绘制性阻断导航 |
 | 内容 | 左区 = 3D 主区：当前姿态晶体内代表路径＋晶体线框、orbit 拖拽/滚轮缩放、World/Crystal 帧切换（现 `analyze_point_view.cpp:1073-1437` 的能力整体迁入）；右列上 = Sun direction globe：fiber 投影、偏差网格、分量选择、样本滑条/播放（现 `analyze_point_view.cpp:771-1069` 迁入；756 移除权重条——其数量成为曲线区乘积臂）；右列下 = Contribution Curve 区（756 落地，见下表该行；当前样本具名因素读数归其滚动区）。**特殊完成态的归属**（迁移时的答案完整性合同）：rank-0 点质量与无分量/无有效样本的判定与完备性注不迁入本窗——它们是点文档的答案与证据，owner 是主窗诊断区（§2.2）；本窗对它们只画诚实空态（现文案沿用：rank-0「A rank-0 point mass has no fiber to project」，`analyze_point_view.cpp:828-834,1124-1132`；无分量「No fiber here…」＋reach 判定，`analyze_point_view.cpp:848-865`），窗口本身仍可打开并可关 |
 | Contribution Curve | **756 as-built**：D5 下区 = `##AnalyzePoseCurve`（`RenderPoseCurveRegion`）。固定栈＝单行区域标题＋画布（共享对数纵轴五 polyline，不可用点断开不桥接；精确零画轴下 0 行；seed 三角标记；accent 游标线）；滚动报告＝分量 kind/点数/环长或 seed 弧长/积分回显＋incomplete 命名、口径（angle-Lebesgue · arclength rad）、五臂图例（无正值臂命名「0 throughout/unavailable」）、读数行（当前样本；悬停样本临时覆盖）、partial 注＋测度注册注（`registered_gap != 0` 时逐字引引擎 note）＋当前样本因素读数（原 `##AnalyzePoseFactors` 面）。画布点击/拖拽写 `view.sample_index`＋停播放（与滑条同一写纪律）；engine 侧零改动（audit 判定） |
@@ -327,8 +327,9 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 ## 8. 更新关系合同
 
-> §16.3 建议以主窗命名按钮替代 Point detail 标题入口；其余更新/开窗旗标的机制不变。
-> 该提案未实施，不把新按钮写作当前已存在的入口。
+> §16.3 已落地（2026-11-10）：主窗 Selection 固定头部的两只命名按钮（`Raypath view` /
+> `Pose & trace`）是两窗的常驻开窗入口，正文内的 Point detail 标题入口退役；其余更新/开窗
+> 旗标的机制不变（共用既有两个开窗旗标，只写 T-session 显示态）。
 
 每条用户操作的可见行为映射既有治理机制；**不新造选择或物理 key**。锚点为机制名/`file:line`。
 
@@ -338,7 +339,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 切换天空点（map 点选/拖 marker/输入坐标） | 点面新意图（~2s 预算，`analyze_survey.hpp:155`）；旧点结果即弃（新点的答案不残留）；ray 面随 (点文档, 分量, 样本) 跟进 | `PointIntentKey`（225-235）；采纳门 (代,序号)（74-79）；ray 键（354-362） |
 | fiber 内移动姿态（滑条/播放/曲线画布点击拖拽） | 只改当前姿态样本：globe marker、3D 路径、曲线游标、因素读数同步；天空点不动、点查询不重发；播放只推进样本索引，画布写游标即停播放 | `PointViewState` 契约（`analyze_survey.hpp:381-401,404-414`）；曲线画布写路径 `RenderPoseCurveRegion`（`analyze_point_view.cpp`，756） |
 | 切换 λ（窗右区滑条） | 地图面真实数据身份改变：旧全天空源撤有效，建立新全天空等待态；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；Retry 同身份等待保旧图；λ变化清源；`PointIntentKey.wavelength_nm`（228） |
-| 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；Raypath view 的 Pose & trace 按钮与主窗 Point detail 标题共用同一开窗旗标，不新增查询/选择/游标；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
+| 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；Raypath view 的就地 Pose & trace 按钮与主窗 Selection 头部的两只命名按钮共用同一开窗旗标（已开点击=聚焦置顶，不造第二实例），不新增查询/选择/游标；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
 | 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；主图按压在离开时取消（未释放仍吞压）、pick 链沿原规则解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
 | New | 保留当前 Render/Analyze **mode**；新文档其余状态仍按原规则重置（含 analysis 列表、选择、天空点、查询意图与绑定释放）。两窗随新 GuiState 关闭，分隔比例回到默认；再次类行点击重开显示诚实空态；窗几何保留 | `DoNew` → `ReplaceDocumentState` 只迁移 mode（`app.cpp`）；4 文档切换 reason 清空 analysis（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
 | Open | 成功 JSON/blank LMC/baked LMC 同样保留 mode，其他重置仍按原原因；blank 清旧图，baked 显示文件图。未保存提示 Cancel、空路径与加载失败不改模式或旧文档身份；不新增跨启动记忆 | `DoOpen` → `ReplaceDocumentState` → per-reason reset owner；解析器不迁移会话 |
@@ -473,7 +474,7 @@ Analyze 按钮、In frame/Point 单选共用该门控，`analysis_panel.cpp:1383
 | ②′ In frame 区域语义 | 画幅 = 点击时刻预览画幅（无预览时文档分辨率） | `app.cpp:1816-1824` |
 | ③ 地图呈现与手势 | 类行选中后地图自动呈现于下行左半；同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker；Fit/Full sky；λ 滑条 | `analyze_map_view.cpp:1076-1078,1121-1147,1243-1316` |
 | ④ 天空点输入 | 地图点选/拖 marker；alt-az 输入 Set sky point | `analyze_map_view.cpp:1257-1313,1381-1419` |
-| ④ 姿态呈现与交互 | globe（右列上 40% 高）＋Raypath 3D（下行右半）＋Point detail（右列下）；分量/样本/播放/帧/orbit | `analyze_workspace.cpp:513-514`；`analyze_point_view.cpp:771,1073,1441,881,1051-1059,1082-1086,1348-1360` |
+| ④ 姿态呈现与交互 | globe＋Raypath 3D＋因素读数聚于 Pose & trace 窗（755.5 起，§16.4）；窗入口=主窗 Selection 头部与 Raypath view 就位的两只命名按钮（§16.3 as-built），Point detail 正文链接退役；分量/样本/播放/帧/orbit | `analyze_workspace.cpp`（RenderAnalyzeEntryActions）；`analyze_map_view.cpp`（就地按钮）；`analyze_point_view.cpp`（窗体与三面） |
 | ⑤ 场景编辑 | 左栏 Sun/Simulation 组就地；晶体行点击开 Entry Edit | `panels.cpp:2162-2258`；`analyze_workspace.cpp:80-112`；`panels.cpp:2077-2095` |
 | ⑤ 新鲜度三处 | 列表横幅（kStale 不清列表）；主视图旧图注；状态栏 Modified＋顶栏 ⚠/Revert | `analysis_panel.cpp:1363-1373`；`analyze_workspace.cpp:295-299`；`app_panels.cpp:849-880,2964` |
 | 通用：查询面与采纳 | 四槽单 worker；(代,序号) 采纳门；点预算 2s | `analyze_survey.hpp:147,74-79,155` |
@@ -678,21 +679,49 @@ Pose & trace → 可滚动答案区**。答案区内先类结论、再已设天�
 `RenderSurveyOverview` 的完整报告同迁，摘要不再直接复用一整块长渲染输出；结果语义仍单源。
 `analyze_map_view.cpp` 接纳该完整答案区，不能只把原有嘈杂长字符串机械搬过去；须逐项按本节拆层。
 
-### 16.3 主窗双入口：可发现、全态可开、开窗不触发分析
+### 16.3 主窗双入口：可发现、全态可开、开窗不触发分析（as-built 2026-11-10）
 
-建议在主窗右下 Selection 区的**固定头部**（标题下、增长摘要/报告外）常驻两只文字按钮：
-`Raypath view` 与 `Pose & trace`，尾端可配同一种开窗图标；图标只是导航提示，不能替代可读名称。
-默认同排，最窄右列完整足迹不够时纵排；无类时也不撤掉这一操作栈。标题可用 `Selection`，
-不再靠 `Point detail` 像正文的一行承载第二个弹窗入口。
+> 本节原为提案（2026-11-09），现随落地翻为 as-built：下列为已交付形态与实帧校准值，
+> 不再是建议。§16.6 的条款账记录这次修订本身。
 
-- 光路列表行点击**继续**选择并开 Raypath view，作为内容快捷入口，但不再是唯一入口。
-  新按钮无选择副作用；已开则呈现/聚焦同一窗，不造第二实例。
-- 主窗 Pose 按钮**替代**旧 Point detail 标题点击；Raypath view 的就地 Pose 按钮继续保留。
-  所有入口共用原先的两个开窗旗标，只有 T-session 显示变化；无 dirty、无隐式 Analyze/Retry。
-- 设天空点仍不自动弹 Pose；类行点击仍不弹 Pose。一个显示入口不变成新查询触发器。
-- 入口旁保一个有界短提示槽；状态更替不改按钮位置，原始阶段/elapsed明细进 Calculation details。
+主窗右下 Selection 区的**固定头部**（标题下、增长摘要/报告外）常驻两只命名文字按钮：
+`Raypath view` 与 `Pose & trace`，标题下滚动区外，与选择/状态/摘要增长正交（几何先于内容，§15）。
+拼写单源：两窗标题常量（`kRaypathViewWindowTitle` / `kPoseViewWindowTitle`，gui_constants.hpp）是
+全部显示拼写的唯一来源——两窗 Begin、map 窗就地按钮（窄列换行档=常量最后一个空格→`\n` 的机械
+派生，字节由测试钉住）、主窗两只按钮与其寻址后缀（`###main_raypath_open` / `###main_pose_open`）。
+控件为整高 `ImGui::Button`、组内同宽、活字体逐帧测量；**实测 1x 下 88×21pt/只**（§16.4.1 的
+按钮推演 ~100–110pt 被实帧推翻，以实测为准）。
 
-| 选择/结果态 | 两只主窗按钮 | 提示与窗内行为（建议） |
+**排布档（实测）**：同排判据=两钮足迹＋ItemSpacing ≤ 列可用宽。260pt 最窄右列实测余量 **52pt**
+（推演的 8pt 来自按钮宽度估算误差）——同排是 260pt 的实际档；纵排档（Raypath view 行在上）是
+防御性存在，1x 合法列宽下未触发。两钮间留 ItemSpacing，**有意不用 752 的 segmented 双格**
+（`SameLine(0,0)` flush）：segmented 读作互斥模式切换，而这是两个可并存的独立显示动作——对
+752 表面语法的有意偏离，不是遗漏。
+
+**已开点击=聚焦置顶**：旗标是 bool，第二实例按构造不可能；点击已开的入口把该窗聚焦并置于
+显示前端（imgui `FocusWindow`）。两窗 Begin 均带 `NoCollapse`，已开态不存在折叠分支，
+聚焦即「呈现/聚焦同一窗」的全部语义。显示动作只写既有两个开窗旗标：无 dirty、无隐式
+Analyze/Retry、不动 selection/文档字段。**不因设置天空点自动弹出**（用户显式要求）；类行点击
+同样只开 Raypath view（内容快捷入口，不再是唯一入口；行点击语义不变）。
+
+**有界短提示槽（as-built 形态）**：按钮行行尾右对齐、单行、`TextDisabled` 色；fit 规则=
+整行容得下→原文，容不下→UTF-8 安全截断前缀＋「…」（与等待行同款省略号），连首字符＋省略号
+都放不下→整条省略（防御性角落：实测 88pt 按钮下 260 列余 52pt、纵排档余量更大，合法几何
+下该分支不可达，由 fit 函数的测试 seam 直接钉住）。所画文本经 AC4 通道回报
+（`WaitFeedbackTexts::entry_hint_line`，画即写、帧首清空——测试读到的是用户看到的）。文本
+单源：等待=`SurveyWaitLineFor`/`PointWaitLineFor`，拒答/错误=`adopted_error`，取消与 partial
+短词=点面状态词函数（`PointStatusLabelFor`，状态行同源消费）；三条新短文案为
+「Select a class in the list above, or press Analyze.」（无类，沿用空闲引导措辞）、
+「Pick a sky point on the Raypath view — Pose & trace draws the ray.」（有类无点，窗名从常量
+插值）、「The complete answer is in the Raypath view.」（特殊完成态）；survey 取消无既有短词，
+提示用单词「Cancelled」（点面状态行的词形）。**无有效样本态不进头部提示**：分类需逐样本枚举，
+明细行的所有权仍在块内（成本裁定；其提示为空，块内明细行照常承载）。图标未配（本片范围裁决，
+非几何结论）：不配图标的原推演余量数字（标签直加 202pt 口径 / 组内同宽 208pt 口径，两口径下
+36pt 图标分别余 6pt/0pt）已被实测按钮宽度（88pt，足迹 184pt）取代——图标是否放得下是任何
+后续请求面前的开放问题，不得引用旧推演数字作禁配依据；「必然翻纵排档」的因果不成立，同样
+不得当判据引用。
+
+| 选择/结果态 | 两只主窗按钮 | 提示与窗内行为（as-built） |
 |---|---|---|
 | 无类（也含未分析） | 都可点击 | 提示先 Analyze/选择光路；窗内诚实无选择，绝不伪造默认类 |
 | 有类、无天空点 | 都可点击 | Raypath view 可研究分布并输入点；Pose 内引导先设点，不阻断开窗 |
@@ -700,19 +729,24 @@ Pose & trace → 可滚动答案区**。答案区内先类结论、再已设天�
 | 拒答/错误/取消/partial | 都可点击 | 原因及适用限制可见；地图 Retry 只重发原身份，导航不偷做重试 |
 | rank-0/无分量/无有效样本 | 都可点击 | 完整答案在 Raypath view；Pose 保晶体及诚实无轨迹/无 fiber 说明，不以可绘制性屏蔽入口 |
 
-**D2 头部预算修订**：旧“标题＋一态行”的下限不够承载双入口，建议新头至少
-标题21＋窄列按钮2×21＋行间距3×3＋padding12＋可见摘要首行19 = **103pt**，取建议下限 **110pt**。
-同排可少一行但同档状态不改变槽高；不能把双按钮塞进旧的极薄头而称常驻可达。
-主窗最窄高572时，既有列表floor250（`gui_constants.hpp:80`）＋新D2 floor110＋条8=**368≤572**，
-存在共存空间；这是两区最小分配之和，不是把整个列表250都当固定头。未运行引导、运行状态与
-增长摘要继续进入各自既有滚动区，不新增固定高度（现 `analyze_workspace.cpp:770–777` 的分工）。
-不改列表floor，派生比例须用新下限夹定，而非只换按钮。空间不足只按几何退化到
-可恢复内滚，不能让最窄态滚动停在按钮之后。真实控件及祖先 clip 校准归实施。
+> 上表七态的行为矩阵由 functional 用例逐态承载（开窗成功＋查询侧零副作用）；partial 态在
+> 测试座内不可达（引擎 deadline 依机器时序），其入口可点性由同排的拒答/取消腿与「入口代码
+> 无任何按态禁用」的构造共同承载，如实记录、不冒充已逐态实测。
+
+**D2 头部预算（实测）**：floor 常量 64→110（`kAnalyzeDetailsMinHeight`，gui_constants.hpp），
+构成口径=标题行＋按钮对纵排最坏档两行＋行距＋padding＋滚动区可见首行＋余量；**实帧校准：
+最小可容纳几何下 details 恰为 110.0px（UiPx 精确落位）、头部 48px、按钮 88×21**——110 是
+校准后的落地值，不是「推演 103/105」的照抄（该推演的按钮宽项已被实测取代）。同档状态更替
+不改槽高；主窗最窄高 572 时 250＋110＋8=**368≤572**，两 floor 共存。派生比例用新下限夹定；
+空间不足只按几何退化到可恢复内滚，最窄态滚动不停在按钮之后。
 
 **五操作④的新预测（2026-11-09）**：地图设点＋任一显式 Pose 按钮 = 仍为 **2点击＋等待**，
 已开姿态窗则只需1次设点；不宣称少一次开窗。价值是主窗可发现、可先开后等，不必寻找正文标题。
 对从主窗直接开地图而言，有选择时新增1按钮路径，与再次点类行同为1点击；无选择时能先开空窗，
 不等于省掉 Analyze/选类。§12/§12.2 的历史计数保留不改。
+
+**标题文本保留**：`Selection details` / `Diagnostics` 未改名（「标题可用 Selection」为许可非
+强制）；标题文本属 A1 details 区重构面，本片避免两次 churn。
 
 ### 16.4 Pose & trace：左列形态与曲线，右列姿态选择与解释
 

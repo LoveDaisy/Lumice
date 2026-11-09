@@ -636,8 +636,8 @@ Fit输出只写现有镜头能力允许的相机参数；其按钮提示不是�
 - GUI只include其engine capability headers，原map C能力已包含域、frame、原列、质量与寿命，不增ABI、不新增库，
   不从GUI直连analytic。显示投影的现有GLSL/CPU镜像须与主图共源或继续由既有parity闸约束，不复制旧圆盘相机。
 - 显式Pose导航已落地：[analyze-interaction-contract.md](analyze-interaction-contract.md) §7/§8 的Raypath view
-  稳定操作区Pose & trace按钮与主窗Point detail标题，打开同一个窗口；设点/点类不自动开Pose窗，绘图前置不阻断开窗。
-  本设计沿用这两个入口，不新增入口、不代签导航可发现性或用户上手验收。
+  稳定操作区Pose & trace按钮与主窗Selection头部的两只命名按钮（§16.3 as-built），打开同一个窗口；设点/点类不自动开Pose窗，绘图前置不阻断开窗。
+  本设计沿用这些入口，不新增入口、不代签导航可发现性或用户上手验收。
 
 </details>
 
