@@ -188,12 +188,12 @@ TEST(PreviewJacobian, GlobeFarSideMatchesNumericalJacobian) {
     const double rho_limb = focal / std::sqrt(kGlobeCameraD * kGlobeCameraD - 1.0);
     const double h = 1e-6 * rho_limb;
     const double rho_axis = 1e-4 * rho_limb;
-    const auto near = [focal](double r) { return PsiGlobe(r, focal); };
-    const auto far = [focal](double r) { return PsiGlobe(r, focal, true); };
-    const double omega_axis = NumericOmega(near, rho_axis, h);
+    const auto near_psi = [focal](double r) { return PsiGlobe(r, focal); };
+    const auto far_psi = [focal](double r) { return PsiGlobe(r, focal, true); };
+    const double omega_axis = NumericOmega(near_psi, rho_axis, h);
     for (double frac : { 0.05, 0.25, 0.5, 0.75, 0.9 }) {
       const double rho = frac * rho_limb;
-      const double expect = std::fabs(NumericOmega(far, rho, h)) / omega_axis;
+      const double expect = std::fabs(NumericOmega(far_psi, rho, h)) / omega_axis;
       const double got = lumice::gui::RelIllumGlobeFar(static_cast<float>(rho), static_cast<float>(focal));
       EXPECT_NEAR(got, expect, 1e-3 * expect) << "fov=" << fov_deg << " rho/limb=" << frac;
     }

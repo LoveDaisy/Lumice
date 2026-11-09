@@ -185,16 +185,19 @@ fails the check.
   reference-regeneration workflow. Which groups tolerate a software rasterizer is measured — before
   widening the CI filter or dispositioning a visual-regression failure, follow the checklist in
   `doc/testing/testing-architecture.md` §4.6.
-- Three more diff-scoped checkers beside `check_new_refs.py` (same "checker is the rule" discipline;
+- Four more diff-scoped checkers beside `check_new_refs.py` (same "checker is the rule" discipline;
   pre-commit hook on the staged diff, CI `new-refs` job vs merge-base): `scripts/check_new_gui_tests.py`
   rejects a newly registered gui_test case that does not use its `ImGuiTestContext`;
   `scripts/check_loop_fatal_asserts.py` rejects a fatal assert (or non-fatal report) followed by code
   that keeps driving the same test context in a repeatedly-executing scope of `test/`;
   `scripts/check_new_test_tus.py` rejects a PR adding more than five test TUs unless the same diff
   appends declaration entries to the append-only ledger `test/tu_cost_ledger.json` (its hub-closure
-  half is notice-only, on the `build` job's judging leg). Full rule statements: the scripts'
-  docstrings, testing-architecture.md §4.9, and §7.9.
-- **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** `test/duration_registry.json`
+  half is notice-only, on the `build` job's judging leg);
+  `scripts/check_near_far_macros.py` rejects new bare `near`/`far` identifiers erased by windows.h's
+  empty macros — use descriptive suffixes such as `near_pt` / `far_dir`. Full rule statements and
+  exemptions: the scripts' docstrings (near/far's single authority), testing-architecture.md §4.9
+  and §7.9 for the test-specific rules.
+- **Test-duration registry — a runtime gate, not a diff-scoped checker.** `test/duration_registry.json`
   is the single authority for two kinds of quantity — per-test time and phase budgets — and its v4
   shape adds the build phase's adaptive per-miss ruler beside the absolute backstop, and the ctest
   phase's machine-speed normalization (`machine_factor`: the budget scales by the median

@@ -440,8 +440,8 @@ TEST(FiberContinuation, C08DomainEventIsOnlyBelievedInsideTheTrustRegion) {
   EXPECT_EQ(o.reason, FiberReason::kCorrectorFailure);
   EXPECT_NEAR(o.advance, 0.5, 1e-9);
   // The same cap crossed inside the trust region is the event.
-  const Mat near = Exp(0.0, 0.0, 0.15);
-  o = fiber_detail::CorrectTrial(map, chart, p, kIdentity.data(), near.data(), kE3, 1000);
+  const Mat near_mat = Exp(0.0, 0.0, 0.15);
+  o = fiber_detail::CorrectTrial(map, chart, p, kIdentity.data(), near_mat.data(), kE3, 1000);
   EXPECT_FALSE(o.accepted);
   EXPECT_EQ(o.reason, FiberReason::kTirBoundary);
 }
