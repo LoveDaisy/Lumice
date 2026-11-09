@@ -1343,21 +1343,25 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
           "Observation never recomputes: the map answers only an explicit full-sky request, independent of the "
           "observation camera.");
   }
-  // One reserved short status line, reserved at EVERY tier — the stable-space contract (§15):
-  // a state change must not move the rows below it, so the idle tier keeps the line and leaves
-  // it empty (its static explanation lives in the button's tooltip; the old constant
-  // "Observe · no calculation" is deleted — a nothing-happened line is presentation noise, an
-  // empty slot is geometry). Asynchronous prose belongs in the scrolling report below.
+  // The disposition ledger's slot is ONE row — action and state side by side ("Cancel/Retry＋
+  // 状态"). The row's height is the button's at every tier, so the stable-space contract (§15:
+  // a state change must not move the rows below) holds without an empty stand-in line; the
+  // idle tier draws the button alone (its static explanation in the tooltip; the old constant
+  // "Observe · no calculation" is deleted — a nothing-happened line is presentation noise).
+  // Asynchronous prose belongs in the scrolling report below.
   if (quality_busy || quality_retry) {
-    ImGui::TextDisabled("%s", quality_busy ? "Computing full sky" : "Retry full sky");
-  } else {
-    ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextUnformatted(quality_busy ? "Computing full sky" : "Retry full sky");
+    ImGui::PopStyleColor();
   }
 
   // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
   // float shows the effective value either way; editing it asks the explicit wavelength — a key
   // change the pump turns into a new request (the engine has no warm map: every lambda is a
-  // real re-evaluation).
+  // real re-evaluation). One ledger slot ("λ / reference"): the track yields to the reference
+  // button while both fit one line — the 60 pt floor keeps a usable track at every width the
+  // info floor can produce — and the button wraps below at whatever cannot fit.
   float lambda_scratch = 550.0f;
   if (map.adopted_result != nullptr) {
     LUMICE_PathMapInfo info{};
@@ -1369,17 +1373,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (state.analysis.map_wavelength_nm > 0.0) {
     lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
   }
-  const bool lambda_same_line = false;
-  // The wrapped case re-spends the FRESH line's whole width: the track shrinks so slider plus
-  // its trailing label stay inside the region. The 60 pt floor keeps a usable track at every
-  // width the info floor can produce; this child scrolls, so even the wrapped fallback stays
-  // reachable.
+  const float reference_w = ImGui::CalcTextSize("reference").x + ImGui::GetStyle().FramePadding.x * 2.0f;
   float lambda_track = UiPx(140.0f);
-  if (!lambda_same_line) {
-    lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("λ").x -
-                                              ImGui::GetStyle().ItemInnerSpacing.x);
-    lambda_track = std::max(lambda_track, UiPx(60.0f));
-  }
+  lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("λ").x -
+                                            ImGui::GetStyle().ItemInnerSpacing.x);
+  lambda_track = std::max(lambda_track, UiPx(60.0f));
   ImGui::SetNextItemWidth(lambda_track);
   if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
@@ -1516,16 +1514,24 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // user is typing until Set is pressed, so a still-computing older target reads as the intent
   // it is, never as the new input. The pick/typed source words live in this line's tooltip (the
   // input group's), and the report's second echo of the target is deleted with the move.
+  // Wrapped like every prose line here: the narrowest info floor folds the row, it does not
+  // clip it.
   if (intent.valid) {
     float target_alt = 0.0f;
     float target_az = 0.0f;
     DirToAltAz(intent.dir, &target_alt, &target_az);
-    ImGui::TextDisabled("target: alt %.2f° az %.2f°", target_alt, target_az);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("target: alt %.2f° az %.2f°", target_alt, target_az);
+    ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(intent.from_map_pick ? "Set from a map pick." : "Set from typed coordinates.");
     }
   } else {
-    ImGui::TextDisabled("no sky point set");
+    // The row is reserved at every tier (the stable-space contract: setting a first target
+    // must not move the slots below it — the probe test holds the Pose button's rect across
+    // exactly that transition). No label in the empty tier: the widgets above already say the
+    // empty state.
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
   }
 
   // Navigation is display-only, like the main window's Selection header entry buttons (§16.3):
@@ -1544,12 +1550,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   // The constant purpose text moved into the tooltip (the disposition ledger's slot 6 — a fixed
   // explanation must not occupy operation area); the column carries instead only a next step
-  // when one exists: no class, then no point. With both present the stack stays quiet.
+  // when one exists: no class, then no point. With both present the stack stays quiet. The
+  // wording is the compact-without-demotion form (the ladder's L1/L2 rule): one line at the
+  // narrowest info floor, the longer where-withal riding the button's tooltip.
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
   if (identity_label.empty()) {
-    ImGui::TextDisabled("Select a class first — the list is in the main window.");
+    ImGui::TextWrapped("Select a class first.");
   } else if (!intent.valid) {
-    ImGui::TextDisabled("Set a sky point above to trace the ray.");
+    ImGui::TextWrapped("Set a sky point above.");
   }
+  ImGui::PopStyleColor();
 
   ImGui::BeginChild("##MapReport", RemainingReportSize());
   // The class answer (contract §16.2): the adopted survey document, drawn by the
