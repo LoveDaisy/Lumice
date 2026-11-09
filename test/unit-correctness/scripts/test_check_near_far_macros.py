@@ -83,6 +83,26 @@ def test_exempt_regions_do_not_block_commits(repo: Path, source: str) -> None:
     assert gate.diff_verdict(["--cached"], "")[0] == []
 
 
+@pytest.mark.parametrize("directive", ["#undef near", "#define far 1"])
+def test_file_initial_bom_does_not_hide_preprocessor_directive(
+    repo: Path, directive: str
+) -> None:
+    path = repo / "sample.cpp"
+    path.write_text(f"﻿{directive}\nint near;\n", encoding="utf-8")
+    git(repo, "add", ".")
+    violations, _ = gate.diff_verdict(["--cached"], "")
+    assert [v.line for v in violations] == [2]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("", 0), ("int a\fb;\nint c;", 2), ("int a\vb;\nint c;\n", 2),
+])
+def test_tree_diagnostic_counts_physical_lines(repo: Path, text: str, expected: int) -> None:
+    (repo / "sample.cpp").write_text(text, encoding="utf-8")
+    git(repo, "add", ".")
+    assert gate.tree_verdict(repo) == ([], expected)
+
+
 @pytest.mark.parametrize("space", ["\f", "\v"])
 def test_directive_exemption_uses_git_physical_lines(repo: Path, space: str) -> None:
     path = repo / "sample.cpp"

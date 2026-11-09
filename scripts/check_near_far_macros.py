@@ -84,6 +84,8 @@ def find_violations_in_text(rel: str, text: str) -> list[Violation]:
     # Git hunks and diagnostics count physical LF lines, not Python's broader
     # splitlines separators (form-feed/vertical-tab are C++ whitespace).
     for lineno, (line, original) in enumerate(zip(code.split("\n"), text.split("\n")), 1):
+        if lineno == 1:
+            line = line.removeprefix("﻿")
         directive = continued or line.lstrip().startswith("#")
         if directive:
             directive_lines.add(lineno)
@@ -138,7 +140,7 @@ def tree_verdict(root: Path) -> tuple[list[Violation], int]:
         if PurePosixPath(rel).suffix not in C_FAMILY_SUFFIXES:
             continue
         text = blob(None, rel)
-        scanned += len(text.splitlines())
+        scanned += text.count("\n") + int(bool(text) and not text.endswith("\n"))
         violations.extend(find_violations_in_text(rel, text))
     return violations, scanned
 
