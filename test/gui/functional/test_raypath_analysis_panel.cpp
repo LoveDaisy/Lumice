@@ -8265,15 +8265,18 @@ bool SelectionHeaderEntriesReachAtTheNarrowestBasis(ImGuiTestContext* ctx) {
     // The measured narrowest form: the slot draws its minimal truncation — asserted by FORM,
     // not by any pinned prefix (a wrong-fit implementation must not be nailed into the assert):
     // the line starts the mass-arm sentence, carries the ellipsis, and MEASURES to fit the
-    // row's real leftover (the same arithmetic draw_hint used: window right edge minus the
-    // Pose button's right edge minus the item spacing).
+    // row's real leftover — the same right edge draw_hint resolves inside the window.
     const std::string& narrow_hint = gui::g_state.analysis.wait_feedback_texts.entry_hint_line;
     IM_CHECK_RETV(narrow_hint.find("The") == 0, false);
     IM_CHECK_RETV(narrow_hint.find("…") != std::string::npos, false);
     ImGuiWindow* details_win = ctx->GetWindowByRef("##AnalyzeDetails");
     const ImGuiTestItemInfo pose_now = ctx->ItemInfo("**/Pose & trace###main_pose_open", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(details_win != nullptr && pose_now.ID != 0, false);
-    const float leftover = (details_win->Pos.x + ImGui::GetContentRegionMax().x) -
+    // The leftover reads the DETAILS WINDOW's own fields: ContentRegionRect is absolute
+    // (GetWindowContentRegionMax subtracts Pos), Scroll stays 0 on the NoScrollbar window.
+    // ImGui::GetContentRegionMax() is NOT callable at the test coroutine's resume point —
+    // g.CurrentWindow there is the frame-end Debug fallback window, not this one.
+    const float leftover = details_win->ContentRegionRect.Max.x - details_win->Scroll.x -
                            (pose_now.RectFull.Max.x + ImGui::GetStyle().ItemSpacing.x);
     IM_CHECK_RETV(ImGui::CalcTextSize(narrow_hint.c_str()).x <= leftover, false);
     ctx->LogInfo("[header entries] narrowest: minimal truncation '%s' (%.0f pt <= leftover %.0f pt)",
