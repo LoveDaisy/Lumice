@@ -238,8 +238,8 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 ## 6. Raypath view 窗（光路层）
 
 > **现役共享相机/冻结源合同**：[共享相机与冻结结果显示](raypath-view-camera.md) §6–8为唯一规则。
-> 两图同源镜头与输入，纯观察重投影当前reference＋latest detail；新统计细格由固定槽Refine/Retry/Cancel取得，
-> 原角宽/covered-outside/完成前缀/λ/n可辨。Fit/Full sky是会影响主图的共享预设；首图auto-Fit及隐式第二次查询已退役。
+> 两图同源镜头与输入，纯观察重投影单一全天空 reference；固定槽忙时 Cancel，取消/错误后 Retry，idle 禁用 Retry。
+> 原角宽/完成前缀/λ/n可辨。2026-11-08 owner 决定移除 refine 整链（设计史与理由见相机合同§7），不再捕获取景。Fit/Full sky是会影响主图的共享预设；首图auto-Fit及隐式第二次查询已退役。
 > 正确性/资源持有证据与未签成本边界见该文§10，不把设计离屏数据当最终双窗呈现证书。
 > 本节仍拥有稳定操作/状态/报告区域与Pose双入口，新增质量动作不进入共享顶栏、不推挤画布。
 
@@ -308,7 +308,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 切换光路类（点另一行） | survey 面新意图（类概览刷新/等待）；Raypath view 窗同步到新类（旧地图不残留）；点面随选择键重发、旧点结果丢弃；姿态窗同步 | `SurveySelectionKey` 比较（`analyze_survey.hpp:84-95`）；地图选类变更丢会话（157-163）；点面丢弃（249-257）；泵序 `analyze_workspace.cpp:378-383` |
 | 切换天空点（map 点选/拖 marker/输入坐标） | 点面新意图（~2s 预算，`analyze_survey.hpp:155`）；旧点结果即弃（新点的答案不残留）；ray 面随 (点文档, 分量, 样本) 跟进 | `PointIntentKey`（225-235）；采纳门 (代,序号)（74-79）；ray 键（354-362） |
 | fiber 内移动姿态（滑条/播放/曲线画布点击拖拽） | 只改当前姿态样本：globe marker、3D 路径、曲线游标、因素读数同步；天空点不动、点查询不重发；播放只推进样本索引，画布写游标即停播放 | `PointViewState` 契约（`analyze_survey.hpp:381-401,404-414`）；曲线画布写路径 `RenderPoseCurveRegion`（`analyze_point_view.cpp`，756） |
-| 切换 λ（窗右区滑条） | 地图面真实数据身份改变：旧full/detail撤有效，建立新full等待态；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；跨视图 supersession 保旧图（185-215）；`PointIntentKey.wavelength_nm`（228） |
+| 切换 λ（窗右区滑条） | 地图面真实数据身份改变：旧全天空源撤有效，建立新全天空等待态；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；Retry 同身份等待保旧图；λ变化清源；`PointIntentKey.wavelength_nm`（228） |
 | 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；Raypath view 的 Pose & trace 按钮与主窗 Point detail 标题共用同一开窗旗标，不新增查询/选择/游标；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
 | 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；主图按压在离开时取消（未释放仍吞压）、pick 链沿原规则解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
 | New | 保留当前 Render/Analyze **mode**；新文档其余状态仍按原规则重置（含 analysis 列表、选择、天空点、查询意图与绑定释放）。两窗随新 GuiState 关闭，分隔比例回到默认；再次类行点击重开显示诚实空态；窗几何保留 | `DoNew` → `ReplaceDocumentState` 只迁移 mode（`app.cpp`）；4 文档切换 reason 清空 analysis（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
@@ -521,7 +521,7 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 本节是 §3/§6/§7 的当前空间规则。§11 的带日期高度测量保留为前一形态的预算记录，
 不再作为「结果文字在画布前、自然高决定画布」的实施配方。五处分隔、外窗下限与查询/物理语义不变。
 
-- **几何先于内容**：相同窗口可见几何、UI scale 和分隔比例下，空态/等待/首结果/细化/partial/
+- **几何先于内容**：相同窗口可见几何、UI scale 和分隔比例下，空态/等待/首结果/重试/partial/
   拒答/取消不移动画布承载矩形与主要操作锚点。可变内容只能在自己的报告中换行/内滚；不读上帧
   消息高度决定本帧画布。零高不传给 BeginChild（它意味着填满剩余区，而非没有区域）。
 - **主图**：无纹理仍提交完整 picture child，Run 指引在其中；状态视口与操作带位于图下，操作贴底。
@@ -533,10 +533,10 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 - **列表**：对称/搜索是稳定头；stale 和实际对称口径在其后独立状态视口，不插到搜索前。
   表格吸收中间份额，空结果保留该份额，Exclude/CSV 贴底。极端倍率只按几何把固定头移入可恢复内滚，
   不由 stale 文案决定是否滚动。
-- **地图**：左侧 Overlays、方形 canvas、状态报告依次分配；waiting/refining 不在 canvas 前加行。
+- **地图**：左侧 Overlays、方形 canvas、状态报告依次分配；waiting/retrying 不在 canvas 前加行。
   右侧先 λ/reference、Fit/Full sky、alt/az、Set/Clear、Pose & trace 入口与常驻 3D 用途/类＋天空点说明；
   后接身份/caliber/图例报告。入口的标签分行只按可见列宽决定；查询状态与报告滚动不改变其槽位。
-  reference 与 Clear 不适用时保留禁用槽。cursor 仍是画布内非流式读数；地图在 refinement 时的保旧图与身份门不变。
+  reference 与 Clear 不适用时保留禁用槽。cursor 仍是画布内非流式读数；地图在同身份 Retry 时保旧图，身份门不变。
 - **Pose**：globe 的分量槽（单分量禁用、无分量诚实占位）、canvas、样本/播放槽常驻；无样本时禁用，
   不以 0 假装有样本。3D 的帧选择与 canvas 常驻，描述/partial/拒答/图例/transmittance 进报告。
   曲线的可变身份/积分/图例与读数也在报告；图仍保留五臂、对数轴、精确零行、不可用断线与同一游标语义。
