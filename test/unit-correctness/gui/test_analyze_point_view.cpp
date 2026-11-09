@@ -361,6 +361,139 @@ TEST(AnalyzePointView, CurveClassifySplitsTheFlagQuadrants) {
   EXPECT_EQ(PointCurveClassify(-1.0, true), K::kUnavailable);          // physically impossible: named, not drawn
 }
 
+TEST(AnalyzePointView, CurveAxisFitsOnlyPositiveValuesAcrossAllArms) {
+  using K = PointCurveValueKind;
+  PointContributionCurve curve;
+  curve.points.resize(101);
+  for (PointCurvePoint& point : curve.points) {
+    point.rho = 2.0;
+    point.rho_kind = K::kPositive;
+    point.area = 1e200;  // unavailable values must not affect the union
+    point.transmission_kind = K::kExactZero;
+  }
+  curve.points[0].rho = 1e-260;
+  curve.points[1].product = 20.0;
+  curve.points[1].product_kind = K::kPositive;
+  const PointCurveAxisRange fit = PointCurveAxisFit(curve);
+  ASSERT_TRUE(fit.valid);
+  EXPECT_DOUBLE_EQ(fit.lo, 2.0);  // rank 2 of 102 positives
+  EXPECT_DOUBLE_EQ(fit.hi, 20.0);
+  const PointCurveOutsideCount outside = PointCurveCountOutside(curve, fit.lo, fit.hi);
+  EXPECT_EQ(outside.points, 1);
+  EXPECT_DOUBLE_EQ(outside.min, 1e-260);
+  EXPECT_FALSE(outside.above);
+  EXPECT_EQ(PointCurveOutsideLabel(outside), "1 points below axis · min 1e-260");
+
+  // With more than 1% in the tiny tail, the relative noise floor wins instead of P1.
+  curve.points[2].rho = 1e-260;
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 20.0 * 1e-15);
+}
+
+TEST(AnalyzePointView, CurveAxisPreservesNarrowBandsRegardlessOfSampleCount) {
+  using K = PointCurveValueKind;
+  PointContributionCurve curve;
+  EXPECT_FALSE(PointCurveAxisFit(curve).valid);
+  curve.points.resize(1001);
+  for (size_t i = 0; i < curve.points.size(); ++i) {
+    curve.points[i].area = 2.0 + static_cast<double>(i) * 0.001;
+    curve.points[i].area_kind = K::kPositive;
+  }
+  const PointCurveAxisRange narrow = PointCurveAxisFit(curve);
+  EXPECT_DOUBLE_EQ(narrow.lo, 2.0);
+  EXPECT_DOUBLE_EQ(narrow.hi, 3.0);
+  EXPECT_EQ(PointCurveCountOutside(curve, narrow.lo, narrow.hi).points, 0);
+  curve.points.resize(1);
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 2.0);
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).hi, 2.0);
+  curve.points[0].area = 1e-320;  // underflow of the relative floor must not erase real positives
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 1e-320);
+  curve.points[0].area_kind = K::kExactZero;
+  EXPECT_FALSE(PointCurveAxisFit(curve).valid);
+}
+
+TEST(AnalyzePointView, CurveOutsideCountsPointsNotArmsAndKeepsHonestExtrema) {
+  using K = PointCurveValueKind;
+  PointContributionCurve curve;
+  curve.points.resize(3);
+  curve.points[0].rho_kind = curve.points[0].product_kind = K::kPositive;
+  curve.points[0].rho = 1e-260;
+  curve.points[0].product = 1e-100;
+  curve.points[1].area_kind = K::kPositive;
+  curve.points[1].area = 8.0;
+  curve.points[2].rho_kind = K::kExactZero;
+  curve.points[2].product = 1e-300;  // unavailable, not counted
+  const PointCurveOutsideCount fit = PointCurveCountOutside(curve, 1.0, 8.0);
+  EXPECT_EQ(fit.points, 1);
+  EXPECT_DOUBLE_EQ(fit.min, 1e-260);
+  EXPECT_DOUBLE_EQ(fit.max, 1e-100);
+  EXPECT_FALSE(fit.above);
+  const PointCurveOutsideCount zoom = PointCurveCountOutside(curve, 1.0, 4.0);
+  EXPECT_EQ(zoom.points, 2);
+  EXPECT_DOUBLE_EQ(zoom.min, 1e-260);
+  EXPECT_DOUBLE_EQ(zoom.max, 8.0);
+  EXPECT_TRUE(zoom.above);
+  EXPECT_EQ(PointCurveOutsideLabel(zoom), "2 points outside axis · min 1e-260 · max 8");
+  EXPECT_TRUE(PointCurveOutsideLabel({}).empty());
+}
+
+TEST(AnalyzePointView, CurveWindowZoomsAtAnchorClampsAndResetsOnAdoption) {
+  const PointCurveAxisRange fit{ true, 1e-6, 1.0 };
+  PointViewState view;
+  const PointCurveAxisRange initial = PointCurveVisibleRange(fit, &view.curve_axis);
+  EXPECT_DOUBLE_EQ(initial.lo, fit.lo);
+  EXPECT_DOUBLE_EQ(initial.hi, fit.hi);
+  const double initial_span = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  const PointCurveAxisRange zoomed = PointCurveVisibleRange(fit, &view.curve_axis, 1.0, 0.25);
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, initial_span / 1.12, 1e-12);
+  EXPECT_NEAR(view.curve_axis.log_lo + 0.25 * (view.curve_axis.log_hi - view.curve_axis.log_lo), -4.5, 1e-12);
+  EXPECT_GT(zoomed.lo, fit.lo);
+  EXPECT_LT(zoomed.hi, fit.hi);
+  PointCurveVisibleRange(fit, &view.curve_axis, 10000.0, 0.0);
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, 0.25, 1e-12);
+  const PointCurveAxisRange restored = PointCurveVisibleRange(fit, &view.curve_axis, -10000.0);
+  EXPECT_DOUBLE_EQ(restored.lo, fit.lo);
+  EXPECT_DOUBLE_EQ(restored.hi, fit.hi);
+  // Component changes reconcile in place, including a new span narrower than the zoom floor.
+  const PointCurveAxisRange narrow{ true, 10.0, 11.0 };
+  EXPECT_DOUBLE_EQ(PointCurveVisibleRange(narrow, &view.curve_axis).lo, 10.0);
+  EXPECT_DOUBLE_EQ(PointCurveVisibleRange(narrow, &view.curve_axis, 1000.0).hi, 11.0);
+  const PointCurveAxisRange one = PointCurveVisibleRange({ true, 2.0, 2.0 }, &view.curve_axis, 10.0);
+  EXPECT_DOUBLE_EQ(one.lo, 2.0);
+  EXPECT_DOUBLE_EQ(one.hi, 2.0);
+  // Non-power-of-ten endpoints must survive every no-op frame and a wheel round trip exactly.
+  const PointCurveAxisRange decimal_fit{ true, 0.0127281216, 83.6119873 };
+  PointCurveZoom decimal_zoom;
+  for (int i = 0; i < 3; ++i) {
+    const auto still_fit = PointCurveVisibleRange(decimal_fit, &decimal_zoom);
+    EXPECT_EQ(still_fit.lo, decimal_fit.lo);
+    EXPECT_EQ(still_fit.hi, decimal_fit.hi);
+  }
+  PointCurveVisibleRange(decimal_fit, &decimal_zoom, 1.0);
+  const auto round_trip = PointCurveVisibleRange(decimal_fit, &decimal_zoom, -1.0);
+  EXPECT_EQ(round_trip.lo, decimal_fit.lo);
+  EXPECT_EQ(round_trip.hi, decimal_fit.hi);
+  view.orbit_zoom = 2.0f;
+  ResetPointViewStateForNewAdoption(&view);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, 0.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_hi, 0.0);
+  EXPECT_FLOAT_EQ(view.orbit_zoom, 2.0f);  // the 3D camera still survives
+  EXPECT_FALSE(PointCurveVisibleRange({}, &view.curve_axis).valid);
+}
+
+TEST(AnalyzePointView, CurveWindowBreaksRunsAtBothBoundsWithoutDroppingSingletons) {
+  using K = PointCurveValueKind;
+  const K kinds[] = { K::kPositive, K::kPositive, K::kPositive, K::kPositive, K::kPositive, K::kExactZero };
+  const double values[] = { 1.0, 1e-260, 2.0, 10.0, 4.0, 0.0 };
+  const auto runs = PointCurvePositiveRuns(kinds, 6, values, 1.0, 4.0);
+  ASSERT_EQ(runs.size(), 3U);
+  EXPECT_EQ(runs[0].begin, 0);
+  EXPECT_EQ(runs[0].end, 1);
+  EXPECT_EQ(runs[1].begin, 2);
+  EXPECT_EQ(runs[1].end, 3);
+  EXPECT_EQ(runs[2].begin, 4);
+  EXPECT_EQ(runs[2].end, 5);
+}
+
 TEST(AnalyzePointView, CurveLogTicksSpanDecadesWithSubTicks) {
   const std::vector<PointCurveLogTick> ticks = PointCurveLogTicks(1e-6, 1e-3);
   int majors = 0;

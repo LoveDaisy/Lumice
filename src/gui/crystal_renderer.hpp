@@ -22,8 +22,10 @@ class CrystalRenderer {
   void UpdateMesh(const float* vertices, int vertex_count, const int* edges, int edge_count, const int* triangles,
                   int triangle_count, const float* edge_face_normals);
 
-  // Render with given rotation, zoom, and style
-  void Render(const float rotation[16], float zoom, CrystalStyle style);
+  // Legacy meshes use BuildCrystalMeshData's y-up frame and the fixed camera tilt.
+  // An optional column-major view rotation instead accepts any self-consistent scene frame;
+  // projection, eye-space edge classification and face shading all consume that same view.
+  void Render(const float rotation[16], float zoom, CrystalStyle style, const float* view_rotation = nullptr);
 
   // Shared camera constants: ComputeMvp and Render must agree on FOV / near-
   // far distances so the face-number overlay aligns pixel-for-pixel with the
@@ -39,7 +41,8 @@ class CrystalRenderer {
   // Build the same MVP matrix (column-major) used inside Render().
   // Exposed so overlays can project CPU-side points to the identical screen
   // coordinates; changing this function must keep Render's internal use in sync.
-  static void ComputeMvp(const float rotation[16], float zoom, int width, int height, float out_mvp[16]);
+  static void ComputeMvp(const float rotation[16], float zoom, int width, int height, float out_mvp[16],
+                         const float* view_rotation = nullptr);
 
   // Compose the model → eye rotation used for eye-space front/back classification.
   // out_m_eye = V_rot(Rx(+kCameraTiltDeg)) · model_rotation (3×3 rotation part;

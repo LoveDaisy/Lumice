@@ -36,6 +36,7 @@
 
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_survey.hpp"
+#include "imgui.h"
 #include "include/lumice_raypath.h"
 
 struct ImDrawList;
@@ -199,6 +200,38 @@ double PointCurveXAt(const PointContributionCurve& curve, int valid_position);
 // Invalid samples are unreachable (the slider's domain); ties pick the lower position.
 int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_rad);
 
+inline constexpr ImU32 kPointCurveProductColor = IM_COL32(250, 250, 250, 255);
+inline constexpr ImU32 kPointCurvePlotBorderColor = IM_COL32(90, 94, 102, 120);
+
+// The shared axis pools only kPositive values across all five arms. The nearest-rank P1
+// lower bound and the relative noise floor keep tiny tails from consuming the log axis.
+inline constexpr double kCurveAxisLowerQuantile = 0.01;
+inline constexpr double kCurveAxisNoiseRatio = 1e-15;
+// A band within one decade has no extreme tail to trim; preserve its original endpoints.
+inline constexpr double kCurveAxisNarrowRatio = 10.0;
+struct PointCurveAxisRange {
+  bool valid = false;
+  double lo = 0.0;
+  double hi = 0.0;
+};
+PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve);
+inline constexpr double kCurveAxisZoomFactor = 1.12;
+// Reconcile the view window with the current fit, then zoom around anchor (0 = bottom, 1 = top).
+// The window never extends beyond the fit; spans stop at 0.25 decade or the full fit span.
+PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel = 0.0,
+                                           double anchor = 0.5);
+
+// Counts stored points, not (arm, point) pairs: multiple hidden arms at one point count once.
+// The extrema cover only hidden positive values; zeros and unavailable cells never count.
+struct PointCurveOutsideCount {
+  int points = 0;
+  double min = 0.0;
+  double max = 0.0;
+  bool above = false;
+};
+PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi);
+std::string PointCurveOutsideLabel(const PointCurveOutsideCount& outside);
+
 // One log-axis tick: a decade boundary (major) or its 2x/5x sub-multiple (minor).
 struct PointCurveLogTick {
   double value = 0.0;
@@ -223,7 +256,9 @@ struct PointCurveRun {
   int begin = 0;
   int end = 0;
 };
-std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count);
+// Optional values restrict runs to the inclusive visible window; outside values break runs.
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count,
+                                                  const double* values = nullptr, double lo = 0.0, double hi = 0.0);
 
 // ---- The u-globe (crystal-frame sun-direction sphere) -----------------------------------------------
 
@@ -252,6 +287,11 @@ void SunGlobeProject(const SunGlobeProjector& projector, const double u[3], doub
 uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid);
 
 // ---- The representative-ray display -----------------------------------------------------------------
+
+// Canvas and legend share the segment palette; frame tests inspect the submitted draw primitives.
+inline constexpr ImU32 kRayTraceContactColor = IM_COL32(240, 240, 240, 190);
+inline constexpr ImU32 kRayTraceSegmentColors[] = { IM_COL32(90, 160, 255, 255), IM_COL32(255, 165, 60, 255),
+                                                    IM_COL32(90, 220, 120, 255) };
 
 // The polyline the 3D view draws, straight from the 742.2 readers: entry leg (incident direction,
 // drawn from outside), the contacts' internal legs, the exit leg. The incident/exit segments'
@@ -283,7 +323,7 @@ RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const
 
 // ---- The raypath 3D orbit camera ---------------------------------------------------------------------
 
-// The 3D region's orthographic orbit basis in the display frame, z-up (the crystal's c-axis
+// The 3D region's orbit basis in the display frame, z-up (the crystal's c-axis
 // display convention): `yaw_deg` sweeps the horizontal plane from +x toward +y, `pitch_deg`
 // rises from that plane toward +z (clamped to ±88°, short of the pole). `fwd` is the view
 // direction, from the viewer INTO the scene — the eye and the visible near face sit on the
@@ -294,6 +334,23 @@ RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const
 // the SAME basis the renderer draws with (the convention's single authority; the test never
 // re-derives it).
 void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]);
+
+// The last submitted GL canvas frame, invalidated on every region submission before any early
+// return. Tests independently project the frozen C-API mesh using these exact render parameters.
+struct Ray3DFrameInfo {
+  float mvp[16] = {};
+  ImVec2 canvas_min;
+  ImVec2 canvas_size;
+  float centre[3] = {};
+  float fit = 1.0f;
+  double pose[9] = {};
+  int pool = -1;
+  int frame_count = -1;
+  uintptr_t texture_id = 0;
+  bool crystal_frame = false;
+  bool valid = false;
+};
+const Ray3DFrameInfo& LastRay3DFrameInfo();
 
 // ---- The pumps and renderers (GuiState-dependent, defined in the .cpp) ------------------------------
 
@@ -322,7 +379,7 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
 void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size);
 
 // The raypath 3D region — the ##AnalyzeRaypath3D placeholder's replacement: the crystal's
-// true-scale wireframe (nominal shape — the analysis geometry's own口径) + the current sample's
+// true-scale crystal rendered with the shared perspective/x-ray renderer + the current sample's
 // trace polyline, the world/crystal frame switch, the orbit camera, and the named
 // computing/refused/empty states.
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size);

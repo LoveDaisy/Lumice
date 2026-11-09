@@ -62,15 +62,15 @@ MapQueryState MapQueryStateFor(const MapQuerySession& map) {
   if (!map.adopted_error.empty()) {
     return MapQueryState::kRefused;
   }
-  if (map.adopted_result || map.detail_result) {
+  if (map.adopted_result) {
     return MapQueryState::kCompleted;
   }
   return MapQueryState::kWaiting;
 }
 
-bool MapRefiningFor(const MapQuerySession& map) {
+bool MapSupersededFor(const MapQuerySession& map) {
   return map.intent_valid && !map.cancelled_for_key && map.adopted_result != nullptr &&
-         map.adopted_id != map.intent_id && map.detail_id != map.intent_id && map.answered_id != map.intent_id;
+         map.adopted_id != map.intent_id && map.answered_id != map.intent_id;
 }
 
 PointQueryState PointQueryStateFor(const PointQuerySession& point) {
@@ -155,15 +155,15 @@ std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s, co
 
 std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, double now_s,
                            const InflightPoll& poll) {
-  std::string line = map.key.radius_deg < 180.0 ? "Computing captured detail map" : "Computing the all-sky map";
+  std::string line = "Computing the all-sky map";
   if (survey_outstanding)
     line += " — queues behind this class's survey";
-  line += "; camera movement does not refine";
+  line += "; camera movement does not recalculate";
   return line + StageClauseFor(poll, QueryFace::kMap) + FormatWaitElapsedSuffix(now_s - map.intent_start_s);
 }
 
-std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s, const InflightPoll& poll) {
-  return "Frozen sources remain — computing the captured target, not following the camera." +
+std::string MapSupersedingNoteFor(const MapQuerySession& map, double now_s, const InflightPoll& poll) {
+  return "Frozen map remains — retrying the full-sky request, not following the camera." +
          StageClauseFor(poll, QueryFace::kMap) + FormatWaitElapsedSuffix(now_s - map.intent_start_s);
 }
 
@@ -306,7 +306,7 @@ SurveyExecutor::SurveyExecutor() : impl_(std::make_unique<Impl>()) {
 
       // One query at a time, whichever face owns the first non-empty slot in a FIXED priority
       // order — survey, map, point, ray — not a fair FIFO queue: the selection's digest should
-      // not wait behind a view refinement that queued behind it, the point behind the digest,
+      // not wait behind a map request that queued behind it, the point behind the digest,
       // and the ray face's microsecond queries queue last (the slider is already superseding
       // them; starving them for a frame costs nothing).
       std::optional<Impl::Job> job_slot;

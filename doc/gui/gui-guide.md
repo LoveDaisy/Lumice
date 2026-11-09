@@ -211,9 +211,9 @@ The central area shows the live, lens-projected halo image. While idle the area 
 ![Render Preview with halo](../figs/gui_screenshot_example_04.jpg)
 
 The **Raypath view** map shares this same camera: a drag/wheel or shared Fit/Full-sky preset
-in either picture affects both. Observation only reprojects frozen cells; use **Refine** for
-new data detail, **Alt/Option+click** for a sky point, and the report for original resolution,
-coverage and partial status. See [the analysis manual](../user-manual/06-raypath-analysis.md#7-the-raypath-view-the-class-reference-map).
+in either picture affects both. A class selection calculates one full-sky map; observation only
+reprojects its frozen cells. **Cancel/Retry** controls that full-sky request, **Alt/Option+click**
+sets a sky point, and the report shows original resolution and partial status. See [the analysis manual](../user-manual/06-raypath-analysis.md#7-the-raypath-view-the-class-reference-map).
 
 ## Popup Editor
 

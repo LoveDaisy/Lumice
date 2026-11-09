@@ -17,7 +17,6 @@ struct MapCellReading {
   LUMICE_PathMapInfo info{};
   LUMICE_PathMapPixels pixels{};
   size_t index = 0;
-  bool detail = false;
 };
 std::optional<size_t> MapCellIndex(const LUMICE_PathMapInfo& info, const double travel[3]);
 std::optional<MapCellReading> ReadFrozenMapDirection(const MapQuerySession& map, const double travel[3]);
@@ -29,7 +28,6 @@ struct MapDisplayFrame {
   int width = 0;
   int height = 0;
   bool display_sampled = false;
-  bool compatible = false;
   bool partial = false;
   int members_evaluated = 0;
   int member_count = 0;
@@ -56,7 +54,7 @@ struct MapDisplayProbe {
 MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& view, int width, int height,
                               MapDisplayProbe* probe = nullptr);
 bool InitializeFrozenMapDisplay();
-bool PrepareFrozenMapSource(const MapHandle& source, SurveyQueryId id, bool detail);
+bool PrepareFrozenMapSource(const MapHandle& source, SurveyQueryId id);
 const ViewProjection& LastFrozenMapView();
 MapDisplayFrame LastFrozenMapAdoption();
 void PruneFrozenMapDisplay(const MapQuerySession& map);

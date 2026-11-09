@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <optional>
+#include <tuple>
 #include <utility>
 
 #include "app.hpp"                       // g_survey_executor — the cancel button reaches the one executor
@@ -15,6 +17,7 @@
 #include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
 #include "gui/canvas_report_layout.hpp"
 #include "gui/crystal_preview.hpp"  // CrystalParamHash — the mesh cache's change key
+#include "gui/crystal_renderer.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state.hpp"
@@ -74,6 +77,18 @@ const char* ExecutionText(int execution) {
 
 constexpr int kMaxRenderComponents = 64;
 
+struct CurveArm {
+  double PointCurvePoint::*value;
+  PointCurveValueKind PointCurvePoint::*kind;
+};
+constexpr CurveArm kCurveArmFields[] = {
+  { &PointCurvePoint::rho, &PointCurvePoint::rho_kind },
+  { &PointCurvePoint::area, &PointCurvePoint::area_kind },
+  { &PointCurvePoint::transmission, &PointCurvePoint::transmission_kind },
+  { &PointCurvePoint::k_carea, &PointCurvePoint::k_kind },
+  { &PointCurvePoint::product, &PointCurvePoint::product_kind },
+};
+
 }  // namespace
 
 // ---- Display state ---------------------------------------------------------------------------------
@@ -83,6 +98,7 @@ void ResetPointViewStateForNewAdoption(PointViewState* view) {
   view->sample_index = 0;
   view->playing = false;
   view->last_play_step_s = 0.0;
+  view->curve_axis = {};
   // The toggles and the camera survive: they are the user's display preferences for THIS
   // session, not per-document state.
 }
@@ -417,6 +433,107 @@ int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_r
   return best;
 }
 
+PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve) {
+  std::vector<double> positives;
+  positives.reserve(curve.points.size() * std::size(kCurveArmFields));
+  for (const PointCurvePoint& point : curve.points) {
+    for (const CurveArm& arm : kCurveArmFields) {
+      if (point.*arm.kind == PointCurveValueKind::kPositive) {
+        positives.push_back(point.*arm.value);
+      }
+    }
+  }
+  if (positives.empty()) {
+    return {};
+  }
+  const auto extrema = std::minmax_element(positives.begin(), positives.end());
+  const double lo = *extrema.first;
+  const double hi = *extrema.second;
+  if (lo >= hi / kCurveAxisNarrowRatio) {
+    return { true, lo, hi };
+  }
+  const size_t rank = static_cast<size_t>(std::ceil(kCurveAxisLowerQuantile * positives.size())) - 1;
+  std::nth_element(positives.begin(), positives.begin() + rank, positives.end());
+  return { true, std::max(positives[rank], hi * kCurveAxisNoiseRatio), hi };
+}
+
+PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel,
+                                           double anchor) {
+  if (!fit.valid) {
+    return {};
+  }
+  const double fit_lo = std::log10(fit.lo);
+  if (fit.hi == fit.lo) {
+    zoom->log_lo = fit_lo;
+    zoom->log_hi = fit_lo + 1.0;
+    return fit;  // one value has no smaller data window; the plot still gives it a full decade
+  }
+  const double fit_hi = std::log10(fit.hi);
+  const double full_span = fit_hi - fit_lo;
+  double span = zoom->log_hi - zoom->log_lo;
+  if (!(span > 0.0)) {
+    zoom->log_lo = fit_lo;
+    span = full_span;
+  }
+  span = std::clamp(span, std::min(0.25, full_span), full_span);
+  zoom->log_lo = std::clamp(zoom->log_lo, fit_lo, std::max(fit_lo, fit_hi - span));
+  if (wheel != 0.0) {
+    anchor = std::clamp(anchor, 0.0, 1.0);
+    const double new_span =
+        std::clamp(span / std::pow(kCurveAxisZoomFactor, wheel), std::min(0.25, full_span), full_span);
+    zoom->log_lo = std::clamp(zoom->log_lo + anchor * (span - new_span), fit_lo, std::max(fit_lo, fit_hi - new_span));
+    span = new_span;
+  }
+  // log subtraction and a wheel-in/out round trip can leave the full span one ULP short.
+  // Snap only the window, never the sample values, so the exact fit boundary stays included.
+  if (full_span - span <= full_span * 1e-12) {
+    zoom->log_lo = fit_lo;
+    zoom->log_hi = fit_hi;
+    return fit;
+  }
+  zoom->log_hi = zoom->log_lo + span;
+  // Keep exact fit endpoints: a log/pow round trip must not hide a boundary value as "outside".
+  return { true, zoom->log_lo <= fit_lo ? fit.lo : std::pow(10.0, zoom->log_lo),
+           zoom->log_hi >= fit_hi ? fit.hi : std::pow(10.0, zoom->log_hi) };
+}
+
+PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi) {
+  PointCurveOutsideCount outside;
+  for (const PointCurvePoint& point : curve.points) {
+    bool hidden = false;
+    for (const CurveArm& arm : kCurveArmFields) {
+      const double value = point.*arm.value;
+      if (point.*arm.kind != PointCurveValueKind::kPositive || (value >= lo && value <= hi)) {
+        continue;
+      }
+      if (outside.points == 0 && !hidden) {
+        outside.min = value;
+        outside.max = value;
+      }
+      outside.min = std::min(outside.min, value);
+      outside.max = std::max(outside.max, value);
+      outside.above = outside.above || value > hi;
+      hidden = true;
+    }
+    outside.points += hidden ? 1 : 0;
+  }
+  return outside;
+}
+
+std::string PointCurveOutsideLabel(const PointCurveOutsideCount& outside) {
+  if (outside.points == 0) {
+    return {};
+  }
+  char text[160];
+  if (outside.above) {
+    std::snprintf(text, sizeof(text), "%d points outside axis · min %.3g · max %.3g", outside.points, outside.min,
+                  outside.max);
+  } else {
+    std::snprintf(text, sizeof(text), "%d points below axis · min %.3g", outside.points, outside.min);
+  }
+  return text;
+}
+
 std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi) {
   std::vector<PointCurveLogTick> ticks;
   if (!(lo > 0.0) || !(hi > 0.0) || lo > hi) {
@@ -450,19 +567,24 @@ int PointCurveLogLabelStep(double lo, double hi, float plot_h_px, float line_h_p
   return std::max(1, static_cast<int>(std::ceil(static_cast<double>(decades) / static_cast<double>(max_labels))));
 }
 
-std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count) {
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count, const double* values,
+                                                  double lo, double hi) {
   std::vector<PointCurveRun> runs;
   if (kinds == nullptr) {
     return runs;
   }
+  const auto drawable = [&](size_t index) {
+    return kinds[index] == PointCurveValueKind::kPositive &&
+           (values == nullptr || (values[index] >= lo && values[index] <= hi));
+  };
   size_t i = 0;
   while (i < count) {
-    if (kinds[i] != PointCurveValueKind::kPositive) {
+    if (!drawable(i)) {
       ++i;
       continue;
     }
     const size_t begin = i;
-    while (i < count && kinds[i] == PointCurveValueKind::kPositive) {
+    while (i < count && drawable(i)) {
       ++i;
     }
     runs.push_back(PointCurveRun{ static_cast<int>(begin), static_cast<int>(i) });
@@ -877,6 +999,40 @@ CachedCrystalMesh& PointMeshCache() {
   return cache;
 }
 
+// Uploaded geometry is a pure function of the complete display state: frozen config hash,
+// pool, pose[9], crystal_frame, centre[3], fit. In particular centre/fit can stay unchanged
+// while a symmetric crystal rotates, so neither pose nor frame may be omitted from the key.
+using PointMeshUploadKey = std::tuple<int, int, std::array<double, 9>, bool, std::array<float, 3>, float>;
+struct PointCrystalRenderer {
+  CrystalRenderer renderer;
+  std::optional<PointMeshUploadKey> uploaded;
+  bool ready = false;
+};
+
+PointCrystalRenderer& PointRenderer() {
+  static PointCrystalRenderer renderer;
+  return renderer;
+}
+
+Ray3DFrameInfo g_ray3d_frame;
+
+std::array<float, 3> ToRay3DScene(const float display[3], const Ray3DFrameInfo& frame) {
+  return { (display[0] - frame.centre[0]) / frame.fit, (display[1] - frame.centre[1]) / frame.fit,
+           (display[2] - frame.centre[2]) / frame.fit };
+}
+
+ImVec2 ProjectSceneToPixel(const float display[3], const Ray3DFrameInfo& frame) {
+  const auto p = ToRay3DScene(display, frame);
+  const float* m = frame.mvp;
+  const float w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
+  // All content is inside the unit bounding sphere. The camera's focal half-height stays
+  // above 0.3, so its eye distance exceeds 0.3 / tan(15deg) > 1 and perspective w is positive.
+  const float x = (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]) / w;
+  const float y = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / w;
+  return ImVec2(frame.canvas_min.x + (x + 1.0f) * 0.5f * frame.canvas_size.x,
+                frame.canvas_min.y + (1.0f - y) * 0.5f * frame.canvas_size.y);
+}
+
 // The crystal param in the analysis geometry's OWN caliber (scene_to_analytic's Nominal rule):
 // every shape distribution flattened to its centre — the mesh on show is the mesh the queries ran
 // against, not a fresh sample of the document's randomized shape.
@@ -911,19 +1067,17 @@ void RotateBodyToWorld(const double pose[9], const float v[3], float out[3]) {
 }
 
 ImU32 SegmentColor(int kind, float alpha) {
-  switch (kind) {
-    case 0:
-      return IM_COL32(90, 160, 255, static_cast<int>(255 * alpha));  // entry: blue
-    case 1:
-      return IM_COL32(255, 165, 60, static_cast<int>(255 * alpha));  // internal: orange
-    default:
-      return IM_COL32(90, 220, 120, static_cast<int>(255 * alpha));  // exit: green
-  }
+  const ImU32 color = kRayTraceSegmentColors[kind == 0 ? 0 : kind == 1 ? 1 : 2];
+  return (color & ~IM_COL32_A_MASK) | (static_cast<ImU32>(255 * alpha) << IM_COL32_A_SHIFT);
 }
 
 }  // namespace
 
-// The 3D view's orthographic orbit basis in the display frame (declared in the hpp for the
+const Ray3DFrameInfo& LastRay3DFrameInfo() {
+  return g_ray3d_frame;
+}
+
+// The 3D view's orbit basis in the display frame (declared in the hpp for the
 // gui_test pin to consume the same basis the renderer draws with; the convention is doc'd in
 // doc/geometry/coordinate-convention.md §9.8).
 void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]) {
@@ -1304,6 +1458,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 // ---- The raypath 3D view -----------------------------------------------------------------------------
 
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
+  g_ray3d_frame.valid = false;
   // The canvas and frame controls never scroll with result prose. The report scrolls
   // natively; only the actual canvas registers the orbit wheel claim.
   ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
@@ -1415,36 +1570,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     current_key.point_id = point.intent_id;
     current_key.component = current->component;
     current_key.sample = current->stored;
-    switch (RayTraceDisplayStateFor(trace, current_key)) {
-      case RayTraceDisplayState::kHidden:
-        DisabledWrappedText("No representative path asked for yet.");
-        return;
-      case RayTraceDisplayState::kComputing:
-        DisabledWrappedText("Computing the representative path for this sample…");
-        return;
-      case RayTraceDisplayState::kError:
-        ImGui::TextUnformatted("Path query failed:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("%s", trace.adopted_error.c_str());
-        ImGui::PopStyleColor();
-        return;
-      case RayTraceDisplayState::kRefused: {
-        LUMICE_RepresentativeRayInfo rinfo{};
-        rinfo.struct_size = sizeof(rinfo);
-        LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
-        ImGui::TextUnformatted("No legal path for this pose:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("reason: %s | entry status: %s%s%s | corridor area %.3e (threshold %.3e)",
-                           PathTextToString(rinfo.reason).c_str(), PathTextToString(rinfo.entry_status).c_str(),
-                           rinfo.chain_failure.length > 0 ? " | chain: " : "",
-                           rinfo.chain_failure.length > 0 ? PathTextToString(rinfo.chain_failure).c_str() : "",
-                           rinfo.area_perp_internal, rinfo.area_threshold);
-        ImGui::PopStyleColor();
-        return;
-      }
-      case RayTraceDisplayState::kDrawn:
-        break;
-    }
+    const RayTraceDisplayState display_state = RayTraceDisplayStateFor(trace, current_key);
 
     // The crystal's mesh: the FROZEN binding's config (captured at DoAnalyze), in the analysis
     // geometry's nominal caliber, true scale. The pool slot comes from the snapshot's own
@@ -1476,7 +1602,8 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     RayTracePolyline line;
-    if (!BuildRayTracePolyline(*trace.adopted_result, /*extension=*/1.1f, &line)) {
+    if (display_state == RayTraceDisplayState::kDrawn &&
+        !BuildRayTracePolyline(*trace.adopted_result, /*extension=*/1.1f, &line)) {
       DisabledWrappedText("The path's readers answered empty — nothing to draw.");
       return;
     }
@@ -1591,7 +1718,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     const ImVec2 avail = canvas_size;
     const ImVec2 canvas_min = graph_min;
     const float canvas_h = canvas_size.y;
-    if (canvas_h > 0.0f) {
+    if (canvas_h > 0.0f && avail.x > 0.0f) {
       const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
       const bool active = graph_active;
       // Consume only the standing canvas claim; the report retains native wheel scrolling.
@@ -1609,81 +1736,175 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
             std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
       }
 
-      ImDrawList* dl = graph_draw_list;
-      dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
-      const float side = std::min(canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y);
-      const float scale = (side * 0.42f / fit) * std::clamp(view.orbit_zoom, 0.25f, 8.0f);
-      const ImVec2 mid((canvas_min.x + canvas_max.x) * 0.5f, (canvas_min.y + canvas_max.y) * 0.5f);
-      double fwd[3];
-      double right[3];
-      double up[3];
-      OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
-      auto project = [&](const float p[3]) {
-        const double dx = static_cast<double>(p[0]) - centre[0];
-        const double dy = static_cast<double>(p[1]) - centre[1];
-        const double dz = static_cast<double>(p[2]) - centre[2];
-        const double sx = dx * right[0] + dy * right[1] + dz * right[2];
-        const double sy = dx * up[0] + dy * up[1] + dz * up[2];
-        return ImVec2(static_cast<float>(mid.x + sx * scale), static_cast<float>(mid.y - sy * scale));
-      };
+      // Canvas failures must not suppress the independent status/legend report below.
+      const auto render_canvas = [&] {
+        PointCrystalRenderer& gl = PointRenderer();
+        const ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+        const float pixel_w = std::max(1.0f, canvas_size.x * fb_scale.x);
+        const float pixel_h = std::max(1.0f, canvas_size.y * fb_scale.y);
+        const float downscale = std::min(1.0f, 1024.0f / std::max(pixel_w, pixel_h));
+        const int width = std::max(1, static_cast<int>(std::lround(pixel_w * downscale)));
+        const int height = std::max(1, static_cast<int>(std::lround(pixel_h * downscale)));
+        // Init records its dimensions even on failure. Retry only on a size change, rather
+        // than compiling shaders and allocating partial FBOs again on every failed frame.
+        if (gl.renderer.Width() != width || gl.renderer.Height() != height) {
+          gl.renderer.Destroy();
+          gl.uploaded.reset();
+          gl.ready = gl.renderer.Init(width, height);
+          if (!gl.ready) {
+            gl.renderer.Destroy();
+          }
+        }
+        if (!gl.ready) {
+          DisabledWrappedText("The crystal renderer could not initialize — no 3D canvas available.");
+          return;
+        }
 
-      // The mesh wireframe (dim), then the trace (full alpha on top).
-      for (int e = 0; e < cache.mesh.edge_count; ++e) {
-        float a[3];
-        float b[3];
-        to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2] * 3], a);
-        to_display(&cache.mesh.vertices[cache.mesh.edges[e * 2 + 1] * 3], b);
-        dl->AddLine(project(a), project(b), IM_COL32(105, 110, 120, 120), 1.0f);
-      }
-      for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
-        const float* p0 = &line.points[s * 6];
-        const float* p1 = p0 + 3;
-        float d0[3];
-        float d1[3];
-        point_to_display(p0, d0);
-        point_to_display(p1, d1);
-        dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
-      }
-      // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
-      // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
-      // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
-      // display synthesis and marked by nothing.
-      for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
-        const float p[3] = { line.points[idx], line.points[idx + 1], line.points[idx + 2] };
-        float d[3];
-        point_to_display(p, d);
-        dl->AddCircle(project(d), UiPx(2.5f), IM_COL32(240, 240, 240, 190), 0, 1.0f);
-      }
-      // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
-      // centre (the crystal view's own anchor; the world view's entry leg already carries the
-      // incident). The tip rides the content fit's scale, the anchor does not.
-      if (view.crystal_frame) {
-        const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
-                             static_cast<float>(current->sample.sun_in_crystal[1]),
-                             static_cast<float>(current->sample.sun_in_crystal[2]) };
-        const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
-                               mesh_centre[2] + u[2] * fit * 0.6f };
-        dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
-      }
+        Ray3DFrameInfo& rendered = g_ray3d_frame;
+        rendered.canvas_min = canvas_min;
+        rendered.canvas_size = canvas_size;
+        std::copy_n(centre, 3, rendered.centre);
+        rendered.fit = fit;
+        std::copy_n(pose, 9, rendered.pose);
+        rendered.pool = pool;
+        rendered.crystal_frame = view.crystal_frame;
+        rendered.frame_count = ImGui::GetFrameCount();
+        rendered.texture_id = gl.renderer.GetTextureId();
+        std::array<double, 9> pose_key;
+        std::copy_n(pose, 9, pose_key.begin());
+        const PointMeshUploadKey upload_key{
+          pool, hash, pose_key, view.crystal_frame, { centre[0], centre[1], centre[2] }, fit
+        };
+        if (!gl.uploaded.has_value() || *gl.uploaded != upload_key) {
+          LUMICE_CrystalMesh display_mesh = cache.mesh;
+          for (int v = 0; v < display_mesh.vertex_count; ++v) {
+            float display[3];
+            to_display(&cache.mesh.vertices[v * 3], display);
+            const auto scene = ToRay3DScene(display, rendered);
+            std::copy(scene.begin(), scene.end(), &display_mesh.vertices[v * 3]);
+          }
+          // A normal follows the display rotation, but never the centring or uniform scale.
+          for (int n = 0; n < display_mesh.edge_count * 2; ++n) {
+            to_display(&cache.mesh.edge_face_normals[n * 3], &display_mesh.edge_face_normals[n * 3]);
+          }
+          gl.renderer.UpdateMesh(display_mesh.vertices, display_mesh.vertex_count, display_mesh.edges,
+                                 display_mesh.edge_count, display_mesh.triangles, display_mesh.triangle_count,
+                                 display_mesh.edge_face_normals);
+          gl.uploaded = upload_key;
+        }
+        double fwd[3];
+        double right[3];
+        double up[3];
+        OrbitBasis(view.orbit_yaw_deg, view.orbit_pitch_deg, fwd, right, up);
+        float view_rotation[16] = {};
+        for (int k = 0; k < 3; ++k) {
+          view_rotation[k * 4] = static_cast<float>(right[k]);
+          view_rotation[k * 4 + 1] = static_cast<float>(up[k]);
+          view_rotation[k * 4 + 2] = static_cast<float>(-fwd[k]);
+        }
+        view_rotation[15] = 1.0f;
+        constexpr float kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        // The mesh and overlay are now in a unit bounding sphere. Zoom is its focal-plane
+        // half-height; compensate portrait aspect to preserve the old short-side fit.
+        // At zoom=1, a focal-plane radius spans 42% of the short side, matching the old fit.
+        // A positive stand-off keeps the eye outside the unit sphere at every zoom without a
+        // clamp plateau; wheel magnification remains strictly monotone across the full range.
+        constexpr float kFitHalfHeight = 0.5f / 0.42f;
+        constexpr float kCameraStandOff = 0.3f;
+        const float zoom =
+            (kCameraStandOff + (kFitHalfHeight - kCameraStandOff) / std::clamp(view.orbit_zoom, 0.25f, 8.0f)) *
+            std::max(1.0f, static_cast<float>(height) / width);
+        gl.renderer.Render(kIdentity, zoom, CrystalStyle::kXRay, view_rotation);
+        // Use the ACTUAL integer FBO dimensions on both sides. Its aspect only differs from the
+        // logical canvas by pixel quantization; both texture and overlay undergo the same stretch.
+        CrystalRenderer::ComputeMvp(kIdentity, zoom, width, height, rendered.mvp, view_rotation);
+        rendered.valid = true;
+        ImDrawList* dl = graph_draw_list;
+        dl->PushClipRect(canvas_min, canvas_max, true);
+        // AddImage is the Image quad without a second layout item: the existing InvisibleButton
+        // remains the sole canvas interaction target, at its existing ##r3d_canvas identity.
+        dl->AddImage(static_cast<ImTextureID>(rendered.texture_id), canvas_min, canvas_max, ImVec2(0, 1), ImVec2(1, 0));
+        const auto project = [&](const float p[3]) { return ProjectSceneToPixel(p, rendered); };
+        for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
+          const float* p0 = &line.points[s * 6];
+          const float* p1 = p0 + 3;
+          float d0[3];
+          float d1[3];
+          point_to_display(p0, d0);
+          point_to_display(p1, d1);
+          dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
+        }
+        // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
+        // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
+        // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
+        // display synthesis and marked by nothing.
+        for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
+          const float* p = &line.points[idx * 3];
+          float d[3];
+          point_to_display(p, d);
+          dl->AddCircle(project(d), UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
+        }
+        // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
+        // centre (the crystal view's own anchor; the world view's entry leg already carries the
+        // incident). The tip rides the content fit's scale, the anchor does not.
+        if (display_state == RayTraceDisplayState::kDrawn && view.crystal_frame) {
+          const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
+                               static_cast<float>(current->sample.sun_in_crystal[1]),
+                               static_cast<float>(current->sample.sun_in_crystal[2]) };
+          const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
+                                 mesh_centre[2] + u[2] * fit * 0.6f };
+          dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+        }
+        dl->PopClipRect();
+      };
+      render_canvas();
     }
-    // The legend: every unit joins the previous line only while it fits — SameLine is a
-    // judgment here like everywhere else in the workspace — and the transmittance readout wraps
-    // BELOW only after the labels' line is actually ended. An AddLine between the labels
-    // submits no layout item, so a SameLine left dangling in front of a wrapped text made the
-    // line tail's sliver the wrap width of EVERY line — the legend grew past a thousand pixels
-    // of near-vertical characters at the narrowest cells.
-    ImGui::TextDisabled("entry");
-    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(0, 1.0f), 2.0f);
-    if (fits_on_line(ImGui::CalcTextSize("internal").x)) {
+    // The current pose's crystal remains visible even when its trace has no drawable path.
+    switch (display_state) {
+      case RayTraceDisplayState::kHidden:
+        DisabledWrappedText("No representative path asked for yet.");
+        return;
+      case RayTraceDisplayState::kComputing:
+        DisabledWrappedText("Computing the representative path for this sample…");
+        return;
+      case RayTraceDisplayState::kError:
+        ImGui::TextUnformatted("Path query failed:");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("%s", trace.adopted_error.c_str());
+        ImGui::PopStyleColor();
+        return;
+      case RayTraceDisplayState::kRefused: {
+        LUMICE_RepresentativeRayInfo rinfo{};
+        rinfo.struct_size = sizeof(rinfo);
+        LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
+        ImGui::TextUnformatted("No legal path for this pose:");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("reason: %s | entry status: %s%s%s | corridor area %.3e (threshold %.3e)",
+                           PathTextToString(rinfo.reason).c_str(), PathTextToString(rinfo.entry_status).c_str(),
+                           rinfo.chain_failure.length > 0 ? " | chain: " : "",
+                           rinfo.chain_failure.length > 0 ? PathTextToString(rinfo.chain_failure).c_str() : "",
+                           rinfo.area_perp_internal, rinfo.area_threshold);
+        ImGui::PopStyleColor();
+        return;
+      }
+      case RayTraceDisplayState::kDrawn:
+        break;
+    }
+
+    // Each legend unit owns a swatch item and its label; test the whole unit before SameLine.
+    const float swatch = UiPx(9.0f);
+    const char* labels[] = { "entry", "internal", "exit" };
+    for (int kind = 0; kind < 3; ++kind) {
+      const float unit_w = swatch + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(labels[kind]).x;
+      if (kind > 0 && fits_on_line(unit_w)) {
+        ImGui::SameLine();
+      }
+      const ImVec2 pos = ImGui::GetCursorScreenPos();
+      ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + swatch, pos.y + swatch), SegmentColor(kind, 1.0f));
+      ImGui::Dummy(ImVec2(swatch, ImGui::GetTextLineHeight()));
       ImGui::SameLine();
+      ImGui::TextDisabled("%s", labels[kind]);
     }
-    ImGui::TextDisabled("internal");
-    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(1, 1.0f), 2.0f);
-    if (fits_on_line(ImGui::CalcTextSize("exit").x)) {
-      ImGui::SameLine();
-    }
-    ImGui::TextDisabled("exit");
-    ImGui::GetWindowDrawList()->AddLine(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), SegmentColor(2, 1.0f), 2.0f);
     if (current->sample.interface_count >= 2) {
       char transmittance[96];
       std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",
@@ -1714,7 +1935,7 @@ namespace {
 // scope — a function-local constexpr used as an array bound inside a nested lambda reads as a
 // captured runtime value to MSVC (C2131), while clang folds it, so the two compilers disagree
 // unless the constant is unambiguously namespace-scope.
-constexpr int kCurveArms = 5;
+constexpr int kCurveArms = static_cast<int>(std::size(kCurveArmFields));
 
 // D4 — the Pose & trace window's vertical strip between the 3D region and the right column
 // (contract §4.2): the D3 splitter's recipe (invisible button + hover/active line + the one
@@ -1814,6 +2035,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     graph_draw_list->AddRectFilled(graph_min, ImVec2(graph_min.x + graph_size.x, graph_min.y + graph_h),
                                    IM_COL32(16, 18, 22, 255));
   }
+  AnalyzeRegionWheelStanding();  // latch before this region writes its claim
+  AnalyzeRegionWheelClaim(graph_hovered, AnalyzeCurveWheelOwnerId());
   ImGui::BeginChild("##PoseCurveScroll", RemainingReportSize());
   const auto render_content = [&] {
     const PointQueryState st = PointQueryStateFor(point);
@@ -1920,39 +2143,11 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
       IM_COL32(74, 222, 128, 255),   // T — green
       IM_COL32(232, 121, 249, 255),  // K — fuchsia
-      IM_COL32(250, 250, 250, 255),  // product — the headline quantity, brightest
+      kPointCurveProductColor,       // product — the headline quantity, brightest
     };
     const char* arm_labels[kCurveArms] = { "rho rad^-3", "A/a^2", "T total", "K 1/(J+eps)", "rho*A/a^2*T*K" };
-    const auto value_of = [&](int arm, size_t i) -> double {
-      const PointCurvePoint& p = curve.points[i];
-      switch (arm) {
-        case 0:
-          return p.rho;
-        case 1:
-          return p.area;
-        case 2:
-          return p.transmission;
-        case 3:
-          return p.k_carea;
-        default:
-          return p.product;
-      }
-    };
-    const auto kind_of = [&](int arm, size_t i) -> PointCurveValueKind {
-      const PointCurvePoint& p = curve.points[i];
-      switch (arm) {
-        case 0:
-          return p.rho_kind;
-        case 1:
-          return p.area_kind;
-        case 2:
-          return p.transmission_kind;
-        case 3:
-          return p.k_kind;
-        default:
-          return p.product_kind;
-      }
-    };
+    const auto value_of = [&](int arm, size_t i) -> double { return curve.points[i].*kCurveArmFields[arm].value; };
+    const auto kind_of = [&](int arm, size_t i) { return curve.points[i].*kCurveArmFields[arm].kind; };
     int positive_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
     int zero_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
     for (size_t i = 0; i < n; ++i) {
@@ -2036,32 +2231,44 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const bool canvas_hovered = graph_hovered;
       const bool canvas_active = graph_active;
       const double x_hi = n > 0 ? curve.points[n - 1].x_rad : 0.0;
-      // The shared log range: decade bounds over the union of ALL arms' usable positives — no
-      // per-arm normalization (AC1: the arms' actual magnitudes stay comparable). Computed FIRST
-      // so the left pad can budget the labels it will actually draw (a real fiber can span
-      // hundreds of decades; "1e-213" is far wider than "1e-6").
-      double v_min = 0.0;
-      double v_max = 0.0;
-      bool have_range = false;
-      for (size_t i = 0; i < n && x_hi > 0.0; ++i) {
-        for (int arm = 0; arm < kCurveArms; ++arm) {
-          if (kind_of(arm, i) != PointCurveValueKind::kPositive) {
-            continue;
-          }
-          const double v = value_of(arm, i);
-          if (!have_range || v < v_min) {
-            v_min = v;
-          }
-          if (!have_range || v > v_max) {
-            v_max = v;
-          }
-          have_range = true;
-        }
-      }
-      // How many decades sit between LABELLED majors: plot height and font size decide, so a
-      // 213-decade range labels ~8 evenly spaced exponents instead of 213 overlapping texts.
+      // One shared fit over all positive arms, followed by the session's log-domain window.
+      const PointCurveAxisRange fit = PointCurveAxisFit(curve);
       const float line_h = ImGui::GetTextLineHeight();
-      const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - UiPx(28.0f));
+      const float summary_wrap = std::max(1.0f, avail.x - UiPx(12.0f));
+      const auto summary_for = [&](const PointCurveAxisRange& range) {
+        std::string text = range.valid ? PointCurveOutsideLabel(PointCurveCountOutside(curve, range.lo, range.hi)) : "";
+        if (ImGui::CalcTextSize(text.c_str()).x > summary_wrap) {
+          // Break between fields, not inside a decimal/exponent (ImGui also wraps at '.').
+          const size_t min_field = text.find(" · min ");
+          if (min_field != std::string::npos) {
+            text.replace(min_field, std::strlen(" · "), "\n");
+            const size_t max_field = text.find(" · max ");
+            if (max_field != std::string::npos && ImGui::CalcTextSize(text.c_str() + min_field + 1).x > summary_wrap) {
+              text.replace(max_field, std::strlen(" · "), "\n");
+            }
+          }
+        }
+        return text;
+      };
+      const auto footer_height = [&](const std::string& text) {
+        if (text.empty()) {
+          return UiPx(28.0f);
+        }
+        return std::max(UiPx(28.0f), UiPx(16.0f) + ImGui::CalcTextSize(text.c_str(), nullptr, false, summary_wrap).y);
+      };
+      const PointCurveAxisRange before_wheel = PointCurveVisibleRange(fit, &view.curve_axis);
+      const std::string before_summary = summary_for(before_wheel);
+      const float before_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - footer_height(before_summary));
+      const double mouse_anchor = 1.0 - (ImGui::GetIO().MousePos.y - canvas_min.y - UiPx(10.0f)) / before_plot_h;
+      const double anchor = mouse_anchor >= 0.0 && mouse_anchor <= 1.0 ? mouse_anchor : 0.5;
+      const double wheel = AnalyzeRegionWheelStanding() && canvas_hovered ? ImGui::GetIO().MouseWheel : 0.0;
+      const PointCurveAxisRange visible = PointCurveVisibleRange(fit, &view.curve_axis, wheel, anchor);
+      const double v_min = visible.lo;
+      const double v_max = visible.hi;
+      const bool have_range = visible.valid && x_hi > 0.0;
+      const std::string outside_label = wheel == 0.0 ? before_summary : summary_for(visible);
+      const float pad_b = footer_height(outside_label);
+      const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - pad_b);
       const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
       float widest_lab = 0.0f;
       if (have_range) {
@@ -2078,7 +2285,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const float pad_l = std::max(UiPx(34.0f), widest_lab + UiPx(10.0f));  // decade labels live left of the plot
       const float pad_r = UiPx(10.0f);
       const float pad_t = UiPx(10.0f);  // the seed mark rides above the plot
-      const float pad_b = UiPx(28.0f);  // the zero row, then the x labels' strip
+      // The footer leaves the zero row intact and wraps the summary inside the same canvas.
       const ImVec2 plot_min(canvas_min.x + pad_l, canvas_min.y + pad_t);
       const ImVec2 plot_max(canvas_max.x - pad_r, canvas_max.y - pad_b);
       const float plot_w = std::max(1.0f, plot_max.x - plot_min.x);
@@ -2126,22 +2333,31 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           }
         }
       }
+      // Fit the honest tail summary beside the x labels, leaving the zero markers untouched.
+      const ImVec2 summary_size = ImGui::CalcTextSize(outside_label.c_str(), nullptr, false, summary_wrap);
+      const float summary_x = canvas_max.x - UiPx(6.0f) - summary_size.x;
+      if (!outside_label.empty()) {
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(summary_x, plot_max.y + UiPx(13.0f)),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), outside_label.c_str(), nullptr, summary_wrap);
+      }
       // The plot's frame, the x labels and the axis unit (the caliber line names rad; the axis
-      // shows where its numbers sit).
-      dl->AddRect(plot_min, plot_max, IM_COL32(90, 94, 102, 120), 0.0f, 0, 1.0f);
+      // shows where its numbers sit). The summary owns its strip; omit colliding x labels.
+      const auto x_label = [&](float x, float y, const char* text) {
+        if (outside_label.empty() || x + ImGui::CalcTextSize(text).x + UiPx(5.0f) < summary_x) {
+          dl->AddText(ImVec2(x, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
+        }
+      };
+      dl->AddRect(plot_min, plot_max, kPointCurvePlotBorderColor, 0.0f, 0, 1.0f);
       if (x_hi > 0.0) {
         char lab[24];
         const char* fmt = x_hi < 10.0 ? "%.2f" : (x_hi < 100.0 ? "%.1f" : "%.0f");
         const float axis_lab_y = plot_max.y + UiPx(13.0f);
         std::snprintf(lab, sizeof(lab), fmt, 0.0);
-        dl->AddText(ImVec2(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y),
-                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+        x_label(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
         std::snprintf(lab, sizeof(lab), fmt, x_hi * 0.5);
-        dl->AddText(ImVec2(x_to_px(x_hi * 0.5) - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y),
-                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+        x_label(x_to_px(x_hi * 0.5) - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
         std::snprintf(lab, sizeof(lab), fmt, x_hi);
-        dl->AddText(ImVec2(plot_max.x - ImGui::CalcTextSize(lab).x, axis_lab_y),
-                    ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+        x_label(plot_max.x - ImGui::CalcTextSize(lab).x, axis_lab_y, lab);
       }
       {
         const char* unit = "rad";
@@ -2179,11 +2395,13 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         // data stays visible while the legend keeps claiming the arm).
         for (int arm = 0; arm < kCurveArms; ++arm) {
           std::vector<PointCurveValueKind> kinds(static_cast<size_t>(n));
+          std::vector<double> values(n);
           for (size_t i = 0; i < n; ++i) {
             kinds[i] = kind_of(arm, i);
+            values[i] = value_of(arm, i);
           }
           const float thickness = arm == 4 ? 2.0f : 1.5f;
-          for (const PointCurveRun& run : PointCurvePositiveRuns(kinds.data(), n)) {
+          for (const PointCurveRun& run : PointCurvePositiveRuns(kinds.data(), n, values.data(), v_min, v_max)) {
             if (run.end - run.begin >= 2) {
               std::vector<ImVec2> line;
               line.reserve(static_cast<size_t>(run.end - run.begin));

@@ -48,74 +48,29 @@ double AngleBetween(const double a[3], const double b[3]) {
   return std::acos(std::max(-1.0, std::min(1.0, DotOf(a, b))));
 }
 
-// ---- The view -> window derivation (the spans derived by hand here) --------------------------------
-
-TEST(AnalyzeMapView, WindowSpecBoundsTheDiskInTheSunFrame) {
-  MapCaptureTarget view;
-  double centre[3];
-  SkyPositionOf(40.0, 0.0, centre);  // 20 degrees from the sun (alt 20, az 0)
-  for (int k = 0; k < 3; ++k) {
-    view.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  view.radius_deg = 10.0f;
-  const MapWindowSpec spec = MapWindowSpecForTarget(view, 20.0, 0.0);
-  EXPECT_FALSE(spec.full_sky);
-  EXPECT_NEAR(spec.centre_altitude_deg, 40.0, 1e-5);  // the float-quantized centre
-  EXPECT_NEAR(spec.centre_azimuth_deg, 0.0, 1e-5);
-  EXPECT_NEAR(spec.delta_span_deg, 20.0, 1e-9);
-  // The tangent-cone bound: 2·asin(sin 10° / sin 20°), the hand spelling of the cap's azimuth
-  // extent in the sun frame.
-  const double az_span = 2.0 * std::asin(std::sin(10.0 * kD2R) / std::sin(20.0 * kD2R)) * kR2D;
-  EXPECT_NEAR(spec.azimuth_span_deg, az_span, 1e-4);  // the centre's float quantization
-  EXPECT_GT(spec.rows, 0);
-  EXPECT_GT(spec.cols, 0);
-  EXPECT_LE(static_cast<long long>(spec.rows) * static_cast<long long>(spec.cols),
-            static_cast<long long>(LUMICE_PATH_MAP_MAX_PIXELS));
-}
-
-TEST(AnalyzeMapView, DiskAtAPoleTakesTheFullAzimuthCircle) {
-  MapCaptureTarget view;
-  double centre[3];
-  SkyPositionOf(20.0, 0.0, centre);  // the disk of radius 30 contains the sun frame's pole
-  for (int k = 0; k < 3; ++k) {
-    view.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  view.radius_deg = 30.0f;
-  const MapWindowSpec spec = MapWindowSpecForTarget(view, 20.0, 0.0);
-  EXPECT_NEAR(spec.azimuth_span_deg, 360.0, 1e-9);
-  // And a full-sky view stays the engine's named all-sky view with the zero grid.
-  MapCaptureTarget full;
-  const MapWindowSpec full_spec = MapWindowSpecForTarget(full, 20.0, 0.0);
-  EXPECT_TRUE(full_spec.full_sky);
-  EXPECT_EQ(full_spec.rows, 0);
-  EXPECT_EQ(full_spec.cols, 0);
-}
-
 TEST(AnalyzeMapView, RequestCarriesClassViewLambdaAndTheConstants) {
   MapIntentKey key;
   key.selection.crystal_id = 3;
   key.selection.faces = { 3, 5 };
   key.selection.layer_face_counts = { 2 };
   key.selection.generation = 7;
-  double centre[3];
-  SkyPositionOf(40.0, 0.0, centre);
-  for (int k = 0; k < 3; ++k) {
-    key.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  key.radius_deg = 10.0f;
   key.wavelength_nm = 0.0;  // the reference: no explicit buffer
 
   std::vector<int> faces;
   std::vector<int> counts;
   std::vector<double> wavelengths;
-  const SkySunAnchor sun{ 20.0, 0.0 };
-  const LUMICE_PathMapRequest request = MakeMapRequestForKey(key, sun, &faces, &counts, &wavelengths);
+  const LUMICE_PathMapRequest request = MakeMapRequestForKey(key, &faces, &counts, &wavelengths);
   EXPECT_EQ(request.crystal_id, 3);
   EXPECT_EQ(request.face_count, 2);
   EXPECT_EQ(faces, (std::vector<int>{ 3, 5 }));
   EXPECT_EQ(counts, (std::vector<int>{ 2 }));
-  EXPECT_EQ(request.full_sky, 0);
-  EXPECT_NEAR(request.centre_altitude_deg, 40.0, 1e-5);
+  EXPECT_EQ(request.full_sky, 1);
+  EXPECT_DOUBLE_EQ(request.centre_altitude_deg, 0.0);
+  EXPECT_DOUBLE_EQ(request.centre_azimuth_deg, 0.0);
+  EXPECT_DOUBLE_EQ(request.delta_span_deg, 0.0);
+  EXPECT_DOUBLE_EQ(request.azimuth_span_deg, 0.0);
+  EXPECT_EQ(request.view_rows, 0);
+  EXPECT_EQ(request.view_cols, 0);
   EXPECT_EQ(request.sample_count, kMapQuerySampleCount);
   EXPECT_EQ(request.budget_ms, LUMICE_PATH_MAP_DEFAULT_BUDGET_MS);
   EXPECT_EQ(request.wavelengths_nm, nullptr);
@@ -123,7 +78,7 @@ TEST(AnalyzeMapView, RequestCarriesClassViewLambdaAndTheConstants) {
 
   // An explicit wavelength rides its own buffer.
   key.wavelength_nm = 650.0;
-  const LUMICE_PathMapRequest red = MakeMapRequestForKey(key, sun, &faces, &counts, &wavelengths);
+  const LUMICE_PathMapRequest red = MakeMapRequestForKey(key, &faces, &counts, &wavelengths);
   ASSERT_EQ(red.wavelength_count, 1);
   ASSERT_NE(red.wavelengths_nm, nullptr);
   EXPECT_DOUBLE_EQ(red.wavelengths_nm[0], 650.0);
@@ -408,18 +363,18 @@ TEST(AnalyzeMapView, MapSessionStateTruthTable) {
   map.adopted_result = map_double();
   EXPECT_EQ(MapQueryStateFor(map), MapQueryState::kCompleted);
 
-  // Refining: an adopted map stands while a NEWER intent is unanswered — never under a cancelled
+  // Supersession: an adopted map stands while a NEWER intent is unanswered — never under a cancelled
   // intent, never with the intent answered, never without an adopted map at all.
   map.intent_id = SurveyQueryId{ 3, 1 };
   map.adopted_id = SurveyQueryId{ 3, 1 };
-  EXPECT_FALSE(MapRefiningFor(map));
+  EXPECT_FALSE(MapSupersededFor(map));
   map.intent_id = SurveyQueryId{ 3, 2 };
-  EXPECT_TRUE(MapRefiningFor(map));
+  EXPECT_TRUE(MapSupersededFor(map));
   map.cancelled_for_key = true;
-  EXPECT_FALSE(MapRefiningFor(map));
+  EXPECT_FALSE(MapSupersededFor(map));
   map.cancelled_for_key = false;
   map.adopted_result.reset();
-  EXPECT_FALSE(MapRefiningFor(map));
+  EXPECT_FALSE(MapSupersededFor(map));
 }
 
 // ---- The pump, over a real executor and a real scene -----------------------------------------------
@@ -533,7 +488,7 @@ void ExpectAdoptedMap(const GuiState& state, const std::vector<int>& faces, bool
 
 }  // namespace
 
-TEST(AnalyzeMapView, ObservationNeverIssuesAndOnlyExplicitRefineCapturesTarget) {
+TEST(AnalyzeMapView, ObservationNeverIssuesAndRetryRepeatsFullSky) {
   LUMICE_Scene* raw_scene = nullptr;
   ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
   SurveyExecutor executor;
@@ -557,35 +512,32 @@ TEST(AnalyzeMapView, ObservationNeverIssuesAndOnlyExplicitRefineCapturesTarget) 
   EXPECT_EQ(state.analysis.map.intent_id, full_id);
   EXPECT_EQ(state.analysis.map.adopted_result, full);
   EXPECT_FALSE(executor.QueryOutstanding(QueryFace::kMap));
-  EXPECT_FALSE(MapRefiningFor(state.analysis.map));
+  EXPECT_FALSE(MapSupersededFor(state.analysis.map));
   // The first adoption itself never changed the actual observation camera.
   EXPECT_EQ(renderer.fov, GuiState{}.renderer.fov);
-  MapCaptureTarget target;
-  target.centre_pos[0] = 1.0;
-  target.centre_pos[2] = 0.0;
-  target.radius_deg = 1.5;
-  ASSERT_TRUE(RefineMap(state, executor, target, now));
-  const auto detail_id = state.analysis.map.intent_id;
-  EXPECT_NE(detail_id, full_id);
+  RetryMap(state, executor, now);
+  EXPECT_EQ(state.analysis.map.intent_id, full_id);  // idle Retry is inert
+  CancelMap(state, executor);
+  for (int i = 0; i < 20; ++i)
+    PumpMapQuery(state, executor, now + i);
+  EXPECT_TRUE(state.analysis.map.cancelled_for_key);
+  EXPECT_EQ(state.analysis.map.intent_id, full_id);
+  EXPECT_EQ(state.analysis.map.adopted_result, full);
+  RetryMap(state, executor, now);
+  const auto retry_id = state.analysis.map.intent_id;
+  EXPECT_NE(retry_id, full_id);
+  EXPECT_FALSE(state.analysis.map.cancelled_for_key);
   state.renderer.fov = 80.0f;
   state.renderer.azimuth = 97.0f;
-  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.detail_result != nullptr; }, 30000));
-  EXPECT_EQ(state.analysis.map.intent_id, detail_id);
-  EXPECT_EQ(state.analysis.map.detail_id, detail_id);
-  EXPECT_EQ(state.analysis.map.adopted_result, full);
+  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.adopted_id == retry_id; }, 30000));
+  ASSERT_NO_FATAL_FAILURE(ExpectAdoptedMap(state, { 1, 2 }, true));
   EXPECT_FLOAT_EQ(state.renderer.fov, 80.0f);
   EXPECT_FLOAT_EQ(state.renderer.azimuth, 97.0f);
-  LUMICE_PathMapInfo info{};
-  info.struct_size = sizeof(info);
-  ASSERT_EQ(LUMICE_PathMapGetInfo(state.analysis.map.detail_result.get(), &info), LUMICE_PATH_READ_OK);
-  EXPECT_EQ(info.view_full_sky, 0);
-  EXPECT_NEAR(info.view_delta_max_deg - info.view_delta_min_deg, 3.0, 1e-6);
-  EXPECT_EQ(info.sample_count, 500000);
-  EXPECT_FALSE(MapRefiningFor(state.analysis.map));
+  EXPECT_FALSE(MapSupersededFor(state.analysis.map));
   executor.ShutdownAndJoin();
 }
 
-TEST(AnalyzeMapView, DeterministicLateGateCameraMotionAndMailboxPeak) {
+TEST(AnalyzeMapView, DeterministicLateGateAndMailboxPeak) {
   struct Gate {
     std::mutex mu;
     std::condition_variable cv;
@@ -670,98 +622,9 @@ TEST(AnalyzeMapView, DeterministicLateGateCameraMotionAndMailboxPeak) {
   info.struct_size = sizeof(info);
   ASSERT_EQ(LUMICE_PathMapGetInfo(reference, &info), LUMICE_PATH_READ_OK);
   EXPECT_DOUBLE_EQ(info.wavelength_nm, 650.0);
-  MapCaptureTarget target;
-  target.centre_pos[0] = 1.0;
-  target.centre_pos[2] = 0.0;
-  target.radius_deg = 1.5;
-  ASSERT_TRUE(RefineMap(state, executor, target, now));
-  ASSERT_TRUE(gate.Wait(3));
-  const auto camera_legal = state.analysis.map.intent_id;
-  state.renderer.fov = 23.0f;
-  state.renderer.azimuth = 73.0f;
-  gate.Release(3);
-  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.detail_id == camera_legal; }, 15000));
-  EXPECT_FLOAT_EQ(state.renderer.fov, 23.0f);
-  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
-  const auto previous_detail = std::weak_ptr<const LUMICE_PathMap>(state.analysis.map.detail_result);
-  ASSERT_TRUE(RefineMap(state, executor, target, now));
-  ASSERT_TRUE(gate.Wait(4));
-  const auto withdrawn = state.analysis.map.intent_id;
-  target.centre_pos[0] = 0.0;
-  target.centre_pos[2] = 1.0;
-  ASSERT_TRUE(RefineMap(state, executor, target, now));
-  const auto successor = state.analysis.map.intent_id;
-  ASSERT_NE(successor, withdrawn);
-  // A ray completion is an execution barrier: map has priority only if its drain gate opens.
-  // With the undrained D result, a correct worker reaches this ray BEFORE producing E. A
-  // broken gate produces E while D still lives, and the independent weak-handle ledger sees 4.
-  LUMICE_RepresentativeRayRequest ray{};
-  ray.struct_size = sizeof(ray);
-  ray.crystal_id = 1;
-  ray.face_count = 2;
-  ray.layer_count = 1;
-  const double identity_pose[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-  const double ray_wavelength = 650.0;
-  ray.pose = identity_pose;
-  ray.wavelengths_nm = &ray_wavelength;
-  ray.wavelength_count = 1;
-  const auto ray_id = executor.NextId(7);
-  executor.IssueRayQuery(ray_id, ray, { 1, 2 }, { 2 });
-  gate.Release(1 << 30);
-  std::optional<SurveyExecutor::Finished> barrier;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-  while (!barrier && std::chrono::steady_clock::now() < deadline) {
-    barrier = executor.TakeFinished(QueryFace::kRay);
-    if (!barrier)
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  ASSERT_TRUE(barrier.has_value());
-  EXPECT_EQ(barrier->id, ray_id);
-  EXPECT_EQ(ledger.Peak(), 3u);
-  PumpMapQuery(state, executor, now);
-  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return state.analysis.map.detail_id == successor; }, 15000));
-  EXPECT_TRUE(previous_detail.expired());
-  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
-  EXPECT_EQ(ledger.Peak(), 3u);
-  const auto* detail = state.analysis.map.detail_result.get();
-  ASSERT_TRUE(RefineMap(state, executor, target, now));
-  const auto cancelled = state.analysis.map.intent_id;
-  CancelMap(state, executor);
-  ASSERT_TRUE(PumpMapUntil(state, executor, now, [&] { return !executor.QueryOutstanding(QueryFace::kMap); }, 15000));
-  PumpMapQuery(state, executor, now);
-  EXPECT_TRUE(state.analysis.map.cancelled_for_key);
-  EXPECT_EQ(state.analysis.map.intent_id, cancelled);
-  EXPECT_EQ(state.analysis.map.detail_result.get(), detail);
-  EXPECT_EQ(state.analysis.map.adopted_result.get(), reference);
+  EXPECT_LE(ledger.Peak(), 2u);  // one adopted source plus one completion
   RecordProperty("map_peak_live_result_handles", static_cast<int>(ledger.Peak()));
   executor.ShutdownAndJoin();
-}
-
-TEST(AnalyzeMapView, SourceCompatibilityRequiresSameOrderedCompletedPrefix) {
-  LUMICE_PathMapInfo full{};
-  full.state = LUMICE_PATH_STATE_FINITE;
-  full.member_count = 12;
-  full.members_evaluated = 4;
-  full.truncated = 1;
-  full.wavelength_nm = 550.0;
-  full.sample_count = 500000;
-  auto detail = full;
-  detail.view_rows = 220;
-  detail.view_cols = 400;
-  EXPECT_TRUE(MapSourcesCompatible(full, detail));  // two partials may compose
-  detail.members_evaluated = 12;
-  detail.truncated = 0;
-  EXPECT_FALSE(MapSourcesCompatible(full, detail));  // partial full / complete detail
-  EXPECT_FALSE(MapSourcesCompatible(detail, full));  // complete full / partial detail
-  detail = full;
-  detail.view_e1[0] = 1.0;
-  EXPECT_FALSE(MapSourcesCompatible(full, detail));
-  detail = full;
-  detail.wavelength_nm = 650.0;
-  EXPECT_FALSE(MapSourcesCompatible(full, detail));
-  detail = full;
-  detail.sample_count = 250000;
-  EXPECT_FALSE(MapSourcesCompatible(full, detail));
 }
 
 TEST(AnalyzeMapView, SelectionChangeKillsTheWholeMapSession) {
@@ -793,7 +656,7 @@ TEST(AnalyzeMapView, SelectionChangeKillsTheWholeMapSession) {
   executor.ShutdownAndJoin();
 }
 
-TEST(AnalyzeMapView, IdentityChangesClearBothSourcesAndCancellationNeverAutoRetries) {
+TEST(AnalyzeMapView, IdentityChangesClearTheSourceAndCancellationNeverAutoRetries) {
   SurveyExecutor executor;
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
@@ -814,8 +677,6 @@ TEST(AnalyzeMapView, IdentityChangesClearBothSourcesAndCancellationNeverAutoRetr
   EXPECT_NE(state.analysis.map.intent_id, retry);
   EXPECT_EQ(state.analysis.map.key.wavelength_nm, 650.0);
   EXPECT_EQ(state.analysis.map.adopted_result, nullptr);
-  EXPECT_EQ(state.analysis.map.detail_result, nullptr);
-  EXPECT_EQ(state.analysis.map.key.radius_deg, 180.0f);
   executor.ShutdownAndJoin();
 }
 
@@ -913,13 +774,8 @@ TEST(AnalyzeMapView, MapWaitLineNamesTheQueueAndCarriesTheElapsed) {
   EXPECT_NE(queued_default.find("the all-sky map"), std::string::npos);
   EXPECT_EQ(queued_default.substr(queued_default.size() - elapsed.size()), elapsed);
 
-  map.key.radius_deg = 3.0f;
-  const std::string queued_moved = MapWaitLineFor(map, true, now);
-  EXPECT_NE(queued_moved.find("captured detail map"), std::string::npos);
-  EXPECT_EQ(queued_moved.substr(queued_moved.size() - elapsed.size()), elapsed);
-
   const std::string direct = MapWaitLineFor(map, /*survey_outstanding=*/false, now);
-  EXPECT_NE(direct.find("camera movement does not refine"), std::string::npos);
+  EXPECT_NE(direct.find("camera movement does not recalculate"), std::string::npos);
   EXPECT_EQ(direct.substr(direct.size() - elapsed.size()), elapsed);
 
   // A later frame-time advances the number; a restarted epoch (the rekey rule) rolls it back.
@@ -956,9 +812,9 @@ TEST(AnalyzeMapView, MapWaitLineCarriesTheStageOnlyForItsOwnFace) {
   EXPECT_NE(direct.find(" — summing the map members (1.5 s)"), std::string::npos);
 }
 
-// The refining note carries the stage clause too (751, same mechanism): while the refinement's
+// The supersession note carries the stage clause too (751, same mechanism): while the Retry's
 // map query itself is computing, its last-known phase rides the note.
-TEST(AnalyzeMapView, MapRefiningNoteCarriesTheStageWhileTheMapComputes) {
+TEST(AnalyzeMapView, MapSupersedingNoteCarriesTheStageWhileTheMapComputes) {
   MapQuerySession map;
   map.intent_valid = true;
   map.intent_start_s = 3.0;
@@ -966,20 +822,20 @@ TEST(AnalyzeMapView, MapRefiningNoteCarriesTheStageWhileTheMapComputes) {
   poll.in_flight = true;
   poll.face = QueryFace::kMap;
   poll.stage = LUMICE_PATH_POLL_STAGE_MAP_MEMBERS;
-  const std::string note = MapRefiningNoteFor(map, 4.0, poll);
-  EXPECT_NE(note.find("computing the captured target"), std::string::npos);
+  const std::string note = MapSupersedingNoteFor(map, 4.0, poll);
+  EXPECT_NE(note.find("retrying the full-sky request"), std::string::npos);
   EXPECT_NE(note.find("summing the map members"), std::string::npos);
   EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
 }
 
-// The refining note carries its own elapsed — the refinement intent's wait, the same epoch the
+// The supersession note carries its own elapsed — the Retry intent's wait, the same epoch the
 // pump stamps on every re-ask.
-TEST(AnalyzeMapView, MapRefiningNoteCarriesTheElapsed) {
+TEST(AnalyzeMapView, MapSupersedingNoteCarriesTheElapsed) {
   MapQuerySession map;
   map.intent_valid = true;
   map.intent_start_s = 3.0;
-  const std::string note = MapRefiningNoteFor(map, 4.0);
-  EXPECT_NE(note.find("Frozen sources remain"), std::string::npos);
+  const std::string note = MapSupersedingNoteFor(map, 4.0);
+  EXPECT_NE(note.find("Frozen map remains"), std::string::npos);
   EXPECT_NE(note.find("(1.0 s)"), std::string::npos);
 }
 

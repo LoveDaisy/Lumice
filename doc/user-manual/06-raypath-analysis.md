@@ -152,45 +152,28 @@ canvas keeps its own aspect ratio and physical pixel size: a wider canvas sees m
 than stretching a second camera. Fixed all-sky lenses cannot orbit/zoom; globe keeps its
 outside-in grab, zero effective roll and independent far-side hint.
 
-**Fit** means *Fit sampled map*: a shared preset, not a certificate of the class's complete
-support. In composition it fits the existing reference; explicitly select Detail to fit that
-source instead. Zero/no-band or unfittable sources disable Fit. **Full sky** selects the shared
-rectangular, full-visible, zero-pose preset. Both affect the main picture, unlock Look At while
-keeping its target, and perform no map calculation. First arrivals and class changes never
-auto-Fit or launch an implicit second refinement.
+**Fit** means *Fit sampled map*: it fits the frozen full-sky reference, not a certificate of the
+class's complete support. Zero/no-band or unfittable sources disable Fit. **Full sky** selects
+the shared rectangular, full-visible, zero-pose preset. Both affect the main picture, unlock
+Look At while keeping its target, and perform no map calculation. Arrival never auto-Fits or
+launches a second calculation.
 
-**Quality is explicit.** First selection produces one full-sky **Reference**. Zooming only
-reprojects its original cells; it does not create finer statistical bands. Narrow a zoomable
-lens to the desired region and click **Refine** once to calculate a **Detail**. The same fixed
-slot shows **Cancel** while computing, or **Retry** after cancellation/error. Refine captures
-that click's map-canvas domain, grid and quality; moving/resizing while it runs does not chase
-the camera, reissue, or pull the camera back when it arrives. Retry repeats the captured target,
-not a new current view. Full-sky-equivalent targets ask you to narrow the lens first. Globe's
-action covers its **near side only**; the far hint has its own actual source precision.
+**One full-sky calculation, frozen display.** First selection produces one **Reference**.
+Zooming only reprojects its original cells; it does not create finer statistical bands.
+The fixed action slot shows **Cancel** while computing, **Retry** after cancellation/error,
+and a disabled **Retry** while idle. Retry repeats the current full-sky request, independent
+of camera movement or canvas size. A valid existing map stays visible during that retry;
+changing wavelength, class or analyzed scene invalidates it and establishes a new reference.
 
-Only the current reference and **latest** detail are retained. Compatible detail cells replace,
-never add to, the reference; outside detail the reference remains at its original precision.
-Returning to an unreplaced detail domain needs no calculation. A new detail replaces the old
-one: returning to an old-only domain is reference resolution again, not a hidden high-resolution
-patch cache. Obtaining a new region therefore costs **one quality click plus the original
-query wait**; a fixed all-sky lens also requires switching to a zoomable lens. Changing
-wavelength/class/capture invalidates old sources and establishes a new reference.
-
-**Read the source, not the colour.** The report names Reference/Detail original Δδ×Δaz, completed
-members K/N, λ, n and bounds; the centre line says covered/outside and which source is shown.
-The cursor reads the actual direction's original binary64 value, count and status from that
-same source cell. Source-fixed colour scales and nearest-cell display do not change the
-quantities. Dashed boundaries mark detail coverage; stripes mean **unknown**, not zero, and
-singular cells stay distinct. Globe gives separate near/pick and far-hint readings; a clipped
-near side cannot turn a far hint into a point pick.
-
-Composition also requires the same captured scene/class, frame, wavelength, sampling and
-**ordered completed member prefix**. Two matching K/N partial sources may compose, but the whole
-picture remains **partial**. Different prefixes never combine, in either direction: default
-composition keeps the reference; choose **Detail only** explicitly to inspect it, with unknown
-outside its bounds. Refusals do not overwrite a valid frozen picture with a zero image. A rank-0
-arm is a separate sun-position mass marker with original-cell m/Ω; changing screen area does
-not change it, and a mixed class retains its band arm.
+**Read the source, not the colour.** The report names the reference's original Δδ×Δaz,
+completed members K/N, λ and n. The cursor reads the actual direction's original binary64
+value, count and status from that same source cell. A fixed colour scale and nearest-cell
+display do not change quantities. Stripes mean **unknown**, not zero; singular cells stay
+distinct. Globe gives separate near/pick and far-hint readings; a clipped near side cannot
+turn a far hint into a point pick. Partial results remain **partial** (K/N); refusals do not
+overwrite a valid frozen picture with zero. A rank-0 arm is a separate sun-position mass
+marker with original-cell m/Ω; changing screen area does not change it, and mixed classes
+retain their band arm.
 
 **Pointing.** Use **Alt/Option+click** to set a sky point, or drag its marker. A bare camera press
 never becomes a point pick at release. Ownership lasts until release, including modifier

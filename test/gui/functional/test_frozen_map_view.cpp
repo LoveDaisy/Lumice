@@ -239,39 +239,11 @@ bool ProjectionWitness(ImGuiTestContext* ctx, bool column = false) {
   IM_CHECK_RETV(LUMICE_AnalyzePathMap(scene.get(), &request, &full, error, sizeof(error)) == LUMICE_OK, false);
   g_probe.map.adopted_result = gui::MapHandle(full, gui::MapDeleter{});
   g_probe.map.adopted_id = gui::g_survey_executor.NextId(1770);
-  // The same physical operator, an explicit fine window about the lower edge of C01.
-  request.full_sky = 0;
-  request.centre_altitude_deg = -2.0;
-  request.delta_span_deg = 4.0;
-  request.azimuth_span_deg = 8.0;
-  request.view_rows = 200;
-  request.view_cols = 400;
-  LUMICE_PathMap* detail = nullptr;
-  IM_CHECK_RETV(LUMICE_AnalyzePathMap(scene.get(), &request, &detail, error, sizeof(error)) == LUMICE_OK, false);
-  g_probe.map.detail_result = gui::MapHandle(detail, gui::MapDeleter{});
-  g_probe.map.detail_id = gui::g_survey_executor.NextId(1770);
   gui::g_state.analysis.map = g_probe.map;  // named consumption fixture; no standing calculation intent
-  Source full_source{ g_probe.map.adopted_result }, detail_source{ g_probe.map.detail_result };
-  IM_CHECK_RETV(Read(full_source) && Read(detail_source), false);
-  IM_CHECK_RETV(full_source.info.members_evaluated == full_source.info.member_count, false);
-  IM_CHECK_RETV(detail_source.info.members_evaluated == detail_source.info.member_count, false);
-  IM_CHECK_RETV(detail_source.pixels.pixel_count == 80000, false);
-  size_t positives = 0;
-  double first_positive_delta = 180.0, min_positive = 1.0;
-  for (size_t i = 0; i < detail_source.pixels.pixel_count; ++i) {
-    if (detail_source.pixels.values[i] > 0.0) {
-      ++positives;
-      first_positive_delta = std::min(first_positive_delta, detail_source.pixels.delta_deg[i]);
-      min_positive = std::min(min_positive, detail_source.pixels.values[i]);
-    }
-  }
-  const double closed_edge = (2.0 * std::asin(detail_source.info.refractive_index * 0.5) / kDeg) - 60.0;
-  const double delta_cell =
-      (detail_source.info.view_delta_max_deg - detail_source.info.view_delta_min_deg) / detail_source.info.view_rows;
-  IM_CHECK_RETV(std::abs(first_positive_delta - 21.91) < 1e-9, false);
-  IM_CHECK_RETV(
-      closed_edge >= first_positive_delta - delta_cell * 0.5 && closed_edge < first_positive_delta + delta_cell * 0.5,
-      false);
+  Source full_source{ g_probe.map.adopted_result };
+  IM_CHECK_RETV(Read(full_source), false);
+  IM_CHECK_RETV(full_source.info.view_full_sky && full_source.info.members_evaluated == full_source.info.member_count,
+                false);
   if (column) {
     double weak = std::numeric_limits<double>::infinity();
     size_t weak_index = 0;
@@ -292,14 +264,12 @@ bool ProjectionWitness(ImGuiTestContext* ctx, bool column = false) {
     IM_CHECK_RETV(weak_read && weak_read->source == full_source.handle && weak_read->index == weak_index &&
                       weak_read->pixels.values[weak_index] == weak,
                   false);
-    ctx->LogInfo("[C16 quantity] full weak %.17g; fine minimum positive %.17g", weak, min_positive);
+    ctx->LogInfo("[C16 quantity] full weak %.17g", weak);
   }
-  IM_CHECK_RETV(positives > 0, false);
   ExportSource(full_source, column ? "frozen_map_C16_full" : "frozen_map_C01_full");
-  ExportSource(detail_source, column ? "frozen_map_C16_fine" : "frozen_map_C01_fine");
   // Handles and borrowed columns remain valid across Scene destruction.
   scene.reset();
-  size_t verified = 0, detail_seen = 0, far_seen = 0, boundary_only = 0, raw_checked = 0;
+  size_t verified = 0, far_seen = 0, boundary_only = 0, raw_checked = 0;
   double max_color_error = 0.0;
   for (int lens = 0; lens < gui::kLensTypeCount; ++lens) {
     for (int aspect = 0; aspect < 2; ++aspect) {
@@ -312,7 +282,7 @@ bool ProjectionWitness(ImGuiTestContext* ctx, bool column = false) {
       g_probe.view.roll = gui::EffectiveRollForLens(lens, 21.0f);
       g_probe.view.visible = gui::kVisibleFull;
       g_probe.view.globe_back_fade = lens == gui::kLensTypeGlobe ? 0.5f : 0.0f;
-      // Additional fine-edge arm through the actual product shader, not a coarse upscale.
+      // Zoomed full-sky cells still use the original grid through the actual product shader.
       for (int arm = 0; arm < (lens == 0 || lens == 2 ? 2 : 1); ++arm) {
         if (arm) {
           g_probe.view.fov = 4.0f;
@@ -335,12 +305,11 @@ bool ProjectionWitness(ImGuiTestContext* ctx, bool column = false) {
                 const auto& actual = root ? g_probe.probe.far_cells[pixel] : g_probe.probe.near_cells[pixel];
                 if (!d)
                   continue;  // boundary validity has a separate exact limb witness
-                const auto fine = OracleIndex(detail_source, *d);
-                const Source& source = fine ? detail_source : full_source;
-                const auto index = fine ? fine : OracleIndex(full_source, *d);
+                const Source& source = full_source;
+                const auto index = OracleIndex(source, *d);
                 if (!index)
                   continue;
-                const int slot = fine ? 2 : 1;
+                const int slot = 1;
                 if (actual[0] != slot || actual[1] != static_cast<float>(*index) ||
                     actual[2] != source.pixels.status[*index]) {
                   // Independent local screen-distance ruler: only a sub-quarter-pixel strip
@@ -386,7 +355,6 @@ bool ProjectionWitness(ImGuiTestContext* ctx, bool column = false) {
                   ++raw_checked;
                 }
                 ++verified;
-                detail_seen += fine.has_value();
                 far_seen += root;
                 if (!root && lens != gui::kLensTypeGlobe && source.pixels.status[*index] == LUMICE_PATH_MAP_PIXEL_OK) {
                   const double value = source.pixels.values[*index];
@@ -410,7 +378,7 @@ bool ProjectionWitness(ImGuiTestContext* ctx, bool column = false) {
   }
   // Oversized display pressure changes only the raster sampling. The logical camera and
   // original cells stay unchanged; no source or query is replaced to fit the display budget.
-  const auto source_id = g_probe.map.adopted_id, detail_id = g_probe.map.detail_id;
+  const auto source_id = g_probe.map.adopted_id;
   g_probe.width = 3200;
   g_probe.height = 2400;
   g_probe.requested = true;
@@ -418,20 +386,18 @@ bool ProjectionWitness(ImGuiTestContext* ctx, bool column = false) {
   ctx->Yield(2);
   IM_CHECK_RETV(g_probe.done && g_probe.frame.texture && g_probe.frame.display_sampled, false);
   IM_CHECK_RETV(g_probe.frame.width <= 1600 && g_probe.frame.height <= 1200, false);
-  IM_CHECK_RETV(g_probe.map.adopted_id == source_id && g_probe.map.detail_id == detail_id, false);
+  IM_CHECK_RETV(g_probe.map.adopted_id == source_id, false);
   const Direction sky_anchor = { -0.7351478631379983, -0.5539736496920532, -0.39073112848927377 };
   const auto original_index = OracleIndex(full_source, sky_anchor);
   const auto raw_direction = gui::ReadFrozenMapDirection(g_probe.map, sky_anchor.data());
   IM_CHECK_RETV(original_index && raw_direction && raw_direction->source == full_source.handle &&
                     raw_direction->index == *original_index,
                 false);
-  IM_CHECK_RETV(verified > 100000 && detail_seen > 1000 && far_seen > 1000, false);
+  IM_CHECK_RETV(verified > 100000 && far_seen > 1000, false);
   IM_CHECK_RETV(max_color_error <= 1e-6 && raw_checked > 1000, false);
-  IM_CHECK_RETV(RawHash(full_source.pixels) == full_source.hash && RawHash(detail_source.pixels) == detail_source.hash,
-                false);
-  ctx->LogInfo(
-      "[frozen-map] verified=%zu detail=%zu far=%zu boundary-only=%zu max-color-error=%.12g raw hashes unchanged",
-      verified, detail_seen, far_seen, boundary_only, max_color_error);
+  IM_CHECK_RETV(RawHash(full_source.pixels) == full_source.hash, false);
+  ctx->LogInfo("[frozen-map] verified=%zu far=%zu boundary-only=%zu max-color-error=%.12g raw hashes unchanged",
+               verified, far_seen, boundary_only, max_color_error);
   gui::g_state.analysis.map = {};
   g_probe = {};
   ctx->Yield(1);
@@ -609,7 +575,7 @@ bool PartialPrefixWitness(ImGuiTestContext* ctx) {
     return info;
   };
   gui::MapHandle full;
-  int prefix = 0, full_budget = 0;
+  int prefix = 0;
   request.full_sky = 1;
   // A real deadline produces the prefix. The value of K is observed, not prescribed from
   // scheduling luck. Only this real-timing fixture searches; no GUI action auto-retries.
@@ -621,51 +587,13 @@ bool PartialPrefixWitness(ImGuiTestContext* ctx) {
     const auto info = info_for(candidate);
     if (info.truncated && info.members_evaluated > 0 && info.members_evaluated < info.member_count) {
       prefix = info.members_evaluated;
-      full_budget = budget;
       full = std::move(candidate);
       break;
     }
   }
   IM_CHECK_RETV(full != nullptr && prefix > 0, false);
-  const auto frozen_frame = info_for(full);
-  request.full_sky = 0;
-  request.centre_altitude_deg = -22.0;
-  request.delta_span_deg = 4.0;
-  request.azimuth_span_deg = 8.0;
-  request.view_rows = 200;
-  request.view_cols = 400;
-  const auto matching_detail = [&](double azimuth) {
-    int low = 1, high = 15000, budget = full_budget;
-    const double delta = 22.0 * kDeg, phi = azimuth * kDeg;
-    Direction travel{};
-    for (int k = 0; k < 3; ++k)
-      travel[k] = std::cos(delta) * frozen_frame.view_incident[k] +
-                  std::sin(delta) * (std::cos(phi) * frozen_frame.view_e1[k] + std::sin(phi) * frozen_frame.view_e2[k]);
-    request.centre_altitude_deg = std::asin(-travel[2]) / kDeg;
-    request.centre_azimuth_deg = std::atan2(-travel[1], -travel[0]) / kDeg;
-    for (int attempt = 0; attempt < 14 && low <= high; ++attempt) {
-      request.budget_ms = budget;
-      auto candidate = query(request);
-      if (!candidate)
-        return gui::MapHandle{};
-      const auto info = info_for(candidate);
-      if (info.truncated && info.members_evaluated == prefix)
-        return candidate;
-      if (info.members_evaluated < prefix)
-        low = budget + 1;
-      else
-        high = budget - 1;
-      budget = low + (high - low) / 2;
-    }
-    return gui::MapHandle{};
-  };
-  auto detail = matching_detail(0.0);
-  IM_CHECK_RETV(detail != nullptr, false);
-  const auto original_detail_request = request;
   g_probe.map.adopted_result = full;
   g_probe.map.adopted_id = gui::g_survey_executor.NextId(1771);
-  g_probe.map.detail_result = detail;
-  g_probe.map.detail_id = gui::g_survey_executor.NextId(1771);
   gui::g_state.analysis.map = g_probe.map;
   g_probe.width = 640;
   g_probe.height = 480;
@@ -684,68 +612,26 @@ bool PartialPrefixWitness(ImGuiTestContext* ctx) {
     return g_probe.probe.near_cells[static_cast<size_t>(g_probe.height / 2) * g_probe.width + g_probe.width / 2][0];
   };
   IM_CHECK_RETV(capture(-22.0f), false);
-  IM_CHECK_RETV(g_probe.frame.compatible && g_probe.frame.partial && g_probe.frame.members_evaluated == prefix, false);
-  IM_CHECK_RETV(centre_slot() == 2.0f, false);
-  const auto detail_read =
+  IM_CHECK_RETV(g_probe.frame.partial && g_probe.frame.members_evaluated == prefix, false);
+  IM_CHECK_RETV(centre_slot() == 1.0f, false);
+  const auto reading =
       gui::ReadFrozenMapDirection(g_probe.map, Direction{ -std::cos(22 * kDeg), 0, std::sin(22 * kDeg) }.data());
-  IM_CHECK_RETV(detail_read && detail_read->source == detail && detail_read->info.members_evaluated == prefix, false);
+  IM_CHECK_RETV(reading && reading->source == full && reading->info.members_evaluated == prefix, false);
   IM_CHECK_RETV(capture(-60.0f) && centre_slot() == 1.0f && g_probe.frame.partial, false);
-  auto reference_read = gui::ReadFrozenMapDirection(g_probe.map, Direction{ -0.5, 0, std::sqrt(0.75) }.data());
-  IM_CHECK_RETV(reference_read && reference_read->source == full && reference_read->info.members_evaluated == prefix,
-                false);
-  // Replace the one detail with a disjoint cap, using the same real completed prefix.
-  auto next = matching_detail(90.0);
-  IM_CHECK_RETV(next != nullptr && next != detail, false);
-  g_probe.map.detail_result = next;
-  g_probe.map.detail_id = gui::g_survey_executor.NextId(1771);
-  gui::g_state.analysis.map = g_probe.map;
-  detail.reset();
-  IM_CHECK_RETV(capture(-22.0f) && centre_slot() == 1.0f && g_probe.frame.partial, false);
-  g_probe.map.source_mode = 2;
-  gui::g_state.analysis.map = g_probe.map;
-  IM_CHECK_RETV(capture(-22.0f) && centre_slot() == 0.0f, false);
-  IM_CHECK_RETV(
-      !gui::ReadFrozenMapDirection(g_probe.map, Direction{ -std::cos(22 * kDeg), 0, std::sin(22 * kDeg) }.data()),
-      false);
-  // Both mismatch directions are real C results, not fabricated metadata edits.
-  request = original_detail_request;
   request.budget_ms = 15000;
-  auto complete_detail = query(request);
-  IM_CHECK_RETV(complete_detail && !info_for(complete_detail).truncated, false);
-  g_probe.map.detail_result = complete_detail;
-  g_probe.map.detail_id = gui::g_survey_executor.NextId(1771);
-  g_probe.map.source_mode = 0;
-  gui::g_state.analysis.map = g_probe.map;
-  next.reset();
-  IM_CHECK_RETV(capture(-22.0f) && !g_probe.frame.compatible && centre_slot() == 1.0f && g_probe.frame.partial, false);
-  request.full_sky = 1;
-  request.view_rows = 0;
-  request.view_cols = 0;
-  auto complete_full = query(request);
-  IM_CHECK_RETV(complete_full && !info_for(complete_full).truncated, false);
-  g_probe.map.adopted_result = complete_full;
+  auto complete = query(request);
+  IM_CHECK_RETV(complete && !info_for(complete).truncated, false);
+  g_probe.map.adopted_result = complete;
   g_probe.map.adopted_id = gui::g_survey_executor.NextId(1771);
   gui::g_state.analysis.map = g_probe.map;
-  full.reset();
-  request.full_sky = 0;
-  request.view_rows = 200;
-  request.view_cols = 400;
-  detail = matching_detail(0.0);
-  IM_CHECK_RETV(detail != nullptr, false);
-  g_probe.map.detail_result = detail;
-  g_probe.map.detail_id = gui::g_survey_executor.NextId(1771);
-  gui::g_state.analysis.map = g_probe.map;
-  complete_detail.reset();
   scene.reset();
-  IM_CHECK_RETV(capture(-22.0f) && !g_probe.frame.compatible && centre_slot() == 1.0f && !g_probe.frame.partial, false);
-  g_probe.map.source_mode = 2;
-  gui::g_state.analysis.map = g_probe.map;
-  IM_CHECK_RETV(capture(-22.0f) && centre_slot() == 2.0f && g_probe.frame.partial, false);
-  IM_CHECK_RETV(capture(-60.0f) && centre_slot() == 0.0f, false);
-  ctx->LogInfo(
-      "[partial-prefix] real K=%d, full budget=%d ms; same-prefix composition, latest replacement and both mismatches "
-      "verified",
-      prefix, full_budget);
+  IM_CHECK_RETV(capture(-22.0f) && centre_slot() == 1.0f && !g_probe.frame.partial, false);
+  const auto complete_read =
+      gui::ReadFrozenMapDirection(g_probe.map, Direction{ -std::cos(22 * kDeg), 0, std::sin(22 * kDeg) }.data());
+  IM_CHECK_RETV(complete_read && complete_read->source == complete &&
+                    complete_read->info.members_evaluated == complete_read->info.member_count,
+                false);
+  ctx->LogInfo("[partial-prefix] real K=%d, full-sky partial display and complete replacement verified", prefix);
   gui::g_state.analysis.map = {};
   g_probe = {};
   ctx->Yield(1);
@@ -823,22 +709,19 @@ void PressureGui() {
     g_pressure.prepare = false;
     g_pressure.renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     g_pressure.version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
-    g_pressure.failed = !gui::PrepareFrozenMapSource(g_pressure.map.adopted_result, g_pressure.map.adopted_id, false);
-    g_pressure.adoptions.push_back(gui::LastFrozenMapAdoption());
-    if (!g_pressure.failed)
-      g_pressure.failed = !gui::PrepareFrozenMapSource(g_pressure.map.detail_result, g_pressure.map.detail_id, true);
+    g_pressure.failed = !gui::PrepareFrozenMapSource(g_pressure.map.adopted_result, g_pressure.map.adopted_id);
     g_pressure.adoptions.push_back(gui::LastFrozenMapAdoption());
     gui::g_state.analysis.map = g_pressure.map;
     g_pressure.prepared = true;
   }
   if (g_pressure.replace) {
     g_pressure.replace = false;
-    const auto old = std::weak_ptr<const LUMICE_PathMap>(g_pressure.map.detail_result);
-    g_pressure.failed = !gui::PrepareFrozenMapSource(g_pressure.candidate, g_pressure.candidate_id, true);
+    const auto old = std::weak_ptr<const LUMICE_PathMap>(g_pressure.map.adopted_result);
+    g_pressure.failed = !gui::PrepareFrozenMapSource(g_pressure.candidate, g_pressure.candidate_id);
     g_pressure.adoptions.push_back(gui::LastFrozenMapAdoption());
     if (!g_pressure.failed) {
-      g_pressure.map.detail_result = std::move(g_pressure.candidate);
-      g_pressure.map.detail_id = g_pressure.candidate_id;
+      g_pressure.map.adopted_result = std::move(g_pressure.candidate);
+      g_pressure.map.adopted_id = g_pressure.candidate_id;
       g_pressure.map.intent_id = g_pressure.candidate_id;
       g_pressure.map.answered_id = g_pressure.candidate_id;
       gui::g_state.analysis.map = g_pressure.map;
@@ -861,7 +744,8 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(LUMICE_SceneFromJson(config.dump().c_str(), &raw_scene) == LUMICE_OK, false);
   std::unique_ptr<LUMICE_Scene, decltype(&LUMICE_SceneDestroy)> scene(raw_scene, LUMICE_SceneDestroy);
   const auto query = [&](int slot) {
-    const auto request = lumice::test::MaximumMapRequest(slot);
+    auto request = lumice::test::MaximumMapRequest(slot);
+    request.full_sky = 1;  // replacement also exercises the sole full-sky source
     char error[512]{};
     LUMICE_PathMap* raw = nullptr;
     if (LUMICE_AnalyzePathMap(scene.get(), &request, &raw, error, sizeof(error)) != LUMICE_OK) {
@@ -871,10 +755,8 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
     return gui::MapHandle(raw, gui::MapDeleter{});
   };
   g_pressure.map.adopted_result = query(0);
-  g_pressure.map.detail_result = query(1);
-  IM_CHECK_RETV(g_pressure.map.adopted_result && g_pressure.map.detail_result, false);
+  IM_CHECK_RETV(g_pressure.map.adopted_result, false);
   g_pressure.map.adopted_id = gui::g_survey_executor.NextId(1772);
-  g_pressure.map.detail_id = gui::g_survey_executor.NextId(1772);
   // Seed a named consumer binding from the real C map identity, not an invented MC share.
   auto payload = std::make_shared<gui::AnalysisPayload>();
   payload->snapshot_generation = 1772;
@@ -894,8 +776,8 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
   const auto selection = gui::SurveySelectionKeyFor(*identity, 1772);
   g_pressure.map.intent_valid = true;
   g_pressure.map.key.selection = selection;
-  g_pressure.map.intent_id = g_pressure.map.detail_id;
-  g_pressure.map.answered_id = g_pressure.map.detail_id;
+  g_pressure.map.intent_id = g_pressure.map.adopted_id;
+  g_pressure.map.answered_id = g_pressure.map.adopted_id;
   gui::g_state.analysis.map = g_pressure.map;
   LUMICE_PathSurveyRequest survey_request{};
   survey_request.struct_size = sizeof(survey_request);
@@ -930,12 +812,12 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(g_pressure.prepared && !g_pressure.failed, false);
   LUMICE_PathMapPixels dense{};
   dense.struct_size = sizeof(dense);
-  IM_CHECK_RETV(LUMICE_PathMapGetPixels(g_pressure.map.detail_result.get(), &dense) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(LUMICE_PathMapGetPixels(g_pressure.map.adopted_result.get(), &dense) == LUMICE_PATH_READ_OK, false);
   IM_CHECK_RETV(dense.pixel_count == LUMICE_PATH_MAP_MAX_PIXELS, false);
   size_t positive = 0;
   for (size_t i = 0; i < dense.pixel_count; ++i)
     positive += dense.values[i] > 0.0 && std::isfinite(dense.values[i]);
-  IM_CHECK_RETV(positive == dense.pixel_count, false);
+  IM_CHECK_RETV(positive > 0, false);  // full sky includes finite-zero cells as well as positive bands
   g_pressure.candidate = query(2);
   g_pressure.candidate_id = gui::g_survey_executor.NextId(1772);
   IM_CHECK_RETV(g_pressure.candidate != nullptr, false);
@@ -1149,7 +1031,7 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
     { "latency_p95_ms", p95 },
     { "latency_max_ms", max_latency },
     { "observation_max_upper_ms", max_observe },
-    { "old_detail_released", g_pressure.old_released },
+    { "old_source_released", g_pressure.old_released },
     { "frame_trace", frame_trace },
     { "samples", raw }
   };
@@ -1205,7 +1087,7 @@ void RegisterFrozenMapTests(ImGuiTestEngine* engine) {
     }
   };
   t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(ProjectionWitness(ctx, true)); };
-  t = IM_REGISTER_TEST(engine, "perf_test", "partial_prefix_frozen_composition");
+  t = IM_REGISTER_TEST(engine, "perf_test", "partial_prefix_frozen_full_sky");
   t->GuiFunc = [](ImGuiTestContext*) {
     if (g_probe.requested) {
       g_probe.requested = false;

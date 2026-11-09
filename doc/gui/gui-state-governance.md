@@ -38,7 +38,7 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 
 > **Raypath view 的共享相机机制**：唯一合同见 [raypath-view-camera.md](raypath-view-camera.md) §6–8，验证边界见§10。
 > map已移除私有圆盘与相机副本互抄；两个画面消费上述T-view的同一有效帧输入，Look At仍由既有owner解析，空主图也reconcile。
-> full/latest detail的计算意图、完成代门与句柄归T-session；原格/frame/前缀是冻结结果，不是live renderer的副本。
+> 单一全天空map的计算意图、完成代门与句柄归T-session；原格/frame/前缀是冻结结果，不是live renderer的副本。
 > 观察不发查询，显式质量或真实数据身份变化才换计算意图；采纳不auto-Fit、不写相机，窗口开合不拥有结果寿命。
 > New/成功Open/新capture按现reset/binding边界清源；Revert/live edit沿原冻结与新鲜度规则。动作/覆盖/标尺/取消规则不在此复制；
 > 时间与资源完整签证仍按该合同，不把设计阶段离屏结果当产品成本。共享顶栏不承载新增质量槽。
