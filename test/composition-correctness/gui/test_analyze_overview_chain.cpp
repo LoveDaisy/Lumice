@@ -264,7 +264,10 @@ TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
     surviving += level.objects_proposed - level.objects_killed;
   }
   EXPECT_GT(surviving, 0);
-  EXPECT_TRUE(HasLine(model.conclusions, "Freezing ladder"));
+  // The ladder's mechanism sentence left the conclusions (the layering's owner example: the
+  // frozen-dim enumeration is Physics details' content); what stays is the consequence in one
+  // user sentence.
+  EXPECT_FALSE(HasLine(model.conclusions, "Freezing ladder"));
   EXPECT_TRUE(HasLine(model.conclusions, "survive the ladder"));
 
   // The ladder's image cards come through as objects tagged with their level, and the tint leg
