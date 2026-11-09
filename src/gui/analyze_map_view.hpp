@@ -200,6 +200,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
 const char* PoseButtonLabel();
 const char* PoseButtonWrappedLabel();
 
+// The Pose button's tooltip — the constant purpose text ("3D ray & pose. / Select class + sky
+// point.") that left the always-on prose slot beside the button. Surfaced like the two labels
+// above so the test layer holds the exact bytes of a text the render never draws as a visible
+// item.
+const char* PoseButtonTooltip();
+
 // The Raypath view floating window (doc/gui/analyze-interaction-contract.md §6): the non-modal
 // container the share list's class rows open. Committed from BOTH frame loops next to the
 // Colors/Summary windows, in every workspace mode — early-return while

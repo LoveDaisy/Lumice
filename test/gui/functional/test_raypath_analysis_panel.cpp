@@ -12157,8 +12157,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       } lease;
       ctx->Yield(3);
       IM_CHECK(!map_text.empty());
-      IM_CHECK(map_text.find("3D ray & pose.") != std::string::npos);
-      IM_CHECK(map_text.find("Select class + sky point.") != std::string::npos);
+      // The Pose button's constant purpose text moved into its tooltip (the disposal ledger's
+      // slot rework) — what the region draws instead, with a fresh GuiState (no class), is the
+      // no-class next step; the tooltip bytes are pinned against the exported function below.
+      IM_CHECK(map_text.find("Select a class first") != std::string::npos);
+      IM_CHECK(std::strcmp(gui::PoseButtonTooltip(), "3D ray & pose.\nSelect class + sky point.") == 0);
+      // The identity slot is the right column's first row: an empty state names its emptiness
+      // there, and the idle tier draws no status line at all ("Observe · no calculation" is
+      // gone — its explanation lives in the Cancel/Retry button's tooltip).
+      IM_CHECK(map_text.find("(no class selected)") != std::string::npos);
+      IM_CHECK(map_text.find("Observe") == std::string::npos);
       ctx->SetRef("//Layout map probe");
       IM_CHECK(!probe.analyze_pose_view_open);
       ctx->ItemClick("**/Pose & trace###pose_open");

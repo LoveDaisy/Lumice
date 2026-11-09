@@ -156,6 +156,14 @@ const char* PoseButtonWrappedLabel() {
   return kPoseButtonWrappedLabelStorage.c_str();
 }
 
+// The Pose button's tooltip: the constant purpose text that used to sit beside the button as
+// always-on prose (the disposition ledger — a fixed explanation must not occupy operation
+// area). A named function, not an inline literal, so the relocated text keeps its byte pin in
+// the tests the same way the two labels above do.
+const char* PoseButtonTooltip() {
+  return "3D ray & pose.\nSelect class + sky point.";
+}
+
 // ---- The caliber composer (pure; the unit layer holds it to the readback) -------------------------
 
 std::vector<std::string> MapCaliberLines(const MapCaliberInput& in) {
@@ -1300,6 +1308,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // the content that decides the measure (the same ladder rung the old single-column region
   // reached through its manual route).
   ImGui::BeginChild("##AnalyzeRaypathInfo", ImVec2(info_w, size.y), ImGuiChildFlags_Borders);
+  // The identity line, the right column's FIRST row (the disposition ledger's slot 1): the map's
+  // one echo of the selection, worded by the list's own source (SelectedClassRowLabelFor — the
+  // same spelling the list shows). The main window can be occluded while this window is open,
+  // so the column names the chain being looked at before anything else; the long report below
+  // no longer repeats it (its old in-report copy moved here, not duplicated).
+  const std::string identity_label = SelectedClassRowLabelFor(state);
+  if (identity_label.empty()) {
+    ImGui::TextDisabled("(no class selected)");
+  } else {
+    ImGui::TextWrapped("%s", identity_label.c_str());
+  }
   const bool quality_busy =
       map.intent_valid && !map.cancelled_for_key && map.answered_id != map.intent_id && map.adopted_id != map.intent_id;
   const bool quality_retry = map.cancelled_for_key || !map.adopted_error.empty();
@@ -1317,13 +1336,23 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     if (quality_busy)
       ImGui::SetTooltip("Cancel only this map calculation; keep the current frozen map.");
-    else
+    else if (quality_retry)
       ImGui::SetTooltip("Retry the current full-sky request, independent of the observation camera.");
+    else
+      ImGui::SetTooltip(
+          "Observation never recomputes: the map answers only an explicit full-sky request, independent of the "
+          "observation camera.");
   }
-  // One reserved short status line: asynchronous prose belongs in the scrolling report below.
-  ImGui::TextDisabled("%s", quality_busy  ? "Computing full sky" :
-                            quality_retry ? "Retry full sky" :
-                                            "Observe · no calculation");
+  // One reserved short status line, reserved at EVERY tier — the stable-space contract (§15):
+  // a state change must not move the rows below it, so the idle tier keeps the line and leaves
+  // it empty (its static explanation lives in the button's tooltip; the old constant
+  // "Observe · no calculation" is deleted — a nothing-happened line is presentation noise, an
+  // empty slot is geometry). Asynchronous prose belongs in the scrolling report below.
+  if (quality_busy || quality_retry) {
+    ImGui::TextDisabled("%s", quality_busy ? "Computing full sky" : "Retry full sky");
+  } else {
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
+  }
 
   // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
   // float shows the effective value either way; editing it asks the explicit wavelength — a key
@@ -1401,6 +1430,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   if (ImGui::IsItemHovered())
     ImGui::SetTooltip("Shared full-sky preset — changes BOTH pictures, keeps the frozen map.");
+  // The steering group's one "shared view" mark (the disposition ledger): both verbs move BOTH
+  // pictures, and the column says so once beside them — the tooltips carry the per-verb rest.
+  if (fits_on_line(ImGui::CalcTextSize("· shared view").x)) {
+    ImGui::SameLine();
+  }
+  ImGui::TextDisabled("· shared view");
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
   ImGui::Separator();
@@ -1468,16 +1503,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     intent.dir[1] = dir[1];
     intent.dir[2] = dir[2];
   }
-  char status[128];
-  if (intent.valid) {
-    float alt = 0.0f;
-    float az = 0.0f;
-    DirToAltAz(intent.dir, &alt, &az);
-    std::snprintf(status, sizeof(status), "sky point: alt %.2f° az %.2f° (%s)", alt, az,
-                  intent.from_map_pick ? "picked on the map" : "typed coordinates");
-  } else {
-    std::snprintf(status, sizeof(status), "no sky point set");
-  }
   if (fits_on_line(ImGui::CalcTextSize("Clear").x + style_fp_x * 2.0f)) {
     ImGui::SameLine();
   }
@@ -1486,6 +1511,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     intent = SkyPointIntent{};
   }
   ImGui::EndDisabled();
+  // The current target, adjacent to the inputs that name it (the disposition ledger's slot 5):
+  // it is what the point face queries — distinct from the fields above, which hold whatever the
+  // user is typing until Set is pressed, so a still-computing older target reads as the intent
+  // it is, never as the new input. The pick/typed source words live in this line's tooltip (the
+  // input group's), and the report's second echo of the target is deleted with the move.
+  if (intent.valid) {
+    float target_alt = 0.0f;
+    float target_az = 0.0f;
+    DirToAltAz(intent.dir, &target_alt, &target_az);
+    ImGui::TextDisabled("target: alt %.2f° az %.2f°", target_alt, target_az);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(intent.from_map_pick ? "Set from a map pick." : "Set from typed coordinates.");
+    }
+  } else {
+    ImGui::TextDisabled("no sky point set");
+  }
 
   // Navigation is display-only, like the main window's Selection header entry buttons (§16.3):
   // every state's entry into the pose window sits outside the growing report, available before
@@ -1498,9 +1539,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::Button(pose_label)) {
     state.analyze_pose_view_open = true;
   }
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-  ImGui::TextWrapped("3D ray & pose.\nSelect class + sky point.");
-  ImGui::PopStyleColor();
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", PoseButtonTooltip());
+  }
+  // The constant purpose text moved into the tooltip (the disposition ledger's slot 6 — a fixed
+  // explanation must not occupy operation area); the column carries instead only a next step
+  // when one exists: no class, then no point. With both present the stack stays quiet.
+  if (identity_label.empty()) {
+    ImGui::TextDisabled("Select a class first — the list is in the main window.");
+  } else if (!intent.valid) {
+    ImGui::TextDisabled("Set a sky point above to trace the ray.");
+  }
 
   ImGui::BeginChild("##MapReport", RemainingReportSize());
   if (map.adopted_result) {
@@ -1514,23 +1563,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
   ImGui::TextWrapped("Source-fixed scale; cells do not interpolate. Stripes = unknown, purple = singular (not zero).");
-  // The identity line (contract §6's status summary): the selected class named WHERE it is read.
-  // The list that carries the same label can be off-screen while this window is open (Render
-  // workspace, an occluding float), so the window re-states the list's own text — the one chain
-  // (SelectedClassRowLabelFor, the same AnalysisRowLabel spelling the list shows), not a second
-  // rendering of the selection and not a copy of the overview's report (§2.2: the survey facts
-  // stay in the main window's diagnostics). Wrapped like every legend line below: a long chain
-  // label folds, it does not clip. The Separator ends the line so the λ row's SameLine judgment
-  // below reads a fresh line — fits_on_line judges against the LAST item's rect, and the
-  // judgment it must not inherit is whatever the map region submitted before this child.
-  const std::string identity_label = SelectedClassRowLabelFor(state);
-  if (identity_label.empty()) {
-    ImGui::TextDisabled("(no class selected)");
-  } else {
-    ImGui::TextWrapped("%s", identity_label.c_str());
-  }
+  // The identity line and the sky-point echo used to sit here; both moved up the fixed slots
+  // (identity to the column's first row, the target beside the input group) and the report no
+  // longer repeats either. The Separator keeps the picture-facts above apart from the answer
+  // block below.
   ImGui::Separator();
-  ImGui::TextWrapped("%s", status);
   if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
     ImGui::TextWrapped("The engine-chosen reference wavelength is used until a map echoes it.");
   }
