@@ -193,6 +193,9 @@ try {
             $args = "/d /c `"`"$cmd`" `"$ws`" `"$($request.labels)`"`""
             $proc = Start-Process -FilePath $env:ComSpec -ArgumentList $args -PassThru -NoNewWindow `
                 -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+            # PowerShell 5.1 otherwise loses ExitCode when WaitForExit reopens an
+            # already-exited process. Retain the handle before waiting.
+            $null = $proc.Handle
             if (-not $proc.WaitForExit([int]($request.timeout * 1000))) {
                 & "$env:SystemRoot\System32\taskkill.exe" /PID $proc.Id /T /F
                 if ($LASTEXITCODE -ne 0 -and -not $proc.HasExited) {
@@ -204,7 +207,7 @@ try {
             } else {
                 $proc.WaitForExit()
                 $lines = @(Get-Content $outLog | Where-Object { $_ -match '^WIN_LEG_RESULT: ' })
-                if ($lines.Count -eq 1 -and $proc.ExitCode -eq 0 -and $lines[0] -match '^WIN_LEG_RESULT: PASS') {
+                if ($lines.Count -eq 1 -and $proc.ExitCode -eq 0 -and $lines[0] -match '^WIN_LEG_RESULT: PASS$') {
                     $result = 'PASS'
                 } elseif ($lines.Count -eq 1 -and $lines[0] -match '^WIN_LEG_RESULT: FAIL ') {
                     $result = $lines[0].Substring('WIN_LEG_RESULT: '.Length)

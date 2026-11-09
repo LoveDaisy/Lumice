@@ -125,7 +125,7 @@ if [[ ${rc} -ne 0 ]]; then
 fi
 RESULT=$(grep '^WIN_LEG_RESULT:' "${TMP}/control.log" | tr -d '\r') || RESULT=""
 case "${RESULT}" in
-  'WIN_LEG_RESULT: PASS'*) exit 0 ;;
+  'WIN_LEG_RESULT: PASS') exit 0 ;;
   'WIN_LEG_RESULT: SKIPPED '*) exit 0 ;;
   'WIN_LEG_RESULT: FAIL '*) exit 1 ;;
   *) printf 'WIN_LEG_RESULT: FAIL stage=transport reason=missing-result\n'; exit 1 ;;
