@@ -3103,9 +3103,9 @@ bool TraceProjectionHasOrbitHandedness(ImGuiTestContext* ctx) {
     ctx->LogInfo("[trace default fit] focal-plane delta %.3f px, legacy %.3f px", r.x - origin.x, expected);
     IM_CHECK_RETV(std::abs((r.x - origin.x) / expected - 1.0f) < 0.01f, false);
   }
-  const ImVec2 near = project_basis(0.2, 0, 0.5);
-  const ImVec2 far = project_basis(0.2, 0, -0.5);
-  IM_CHECK_RETV(near.x - origin.x > far.x - origin.x, false);
+  const ImVec2 near_pt = project_basis(0.2, 0, 0.5);
+  const ImVec2 far_pt = project_basis(0.2, 0, -0.5);
+  IM_CHECK_RETV(near_pt.x - origin.x > far_pt.x - origin.x, false);
   ctx->LogInfo("[trace projection] right -> +x, up -> -y, -fwd -> nearer/larger");
   return true;
 }
