@@ -160,7 +160,7 @@ finish_win_leg() {
   fi
   WIN_SUMMARY=${result#WIN_LEG_RESULT: }
   case "${WIN_SUMMARY}" in
-    PASS*)
+    PASS)
       if [[ ${rc} -eq 0 ]]; then
         record_layer win-quick-leg PASS "${elapsed}" "${WIN_LOG}"
       else

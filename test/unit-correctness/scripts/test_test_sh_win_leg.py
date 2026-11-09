@@ -59,6 +59,7 @@ def _run(tree, marker="PASS", code=0, scope="quick"):
     ("PASS", 7, "FAIL stage=transport reason=exit-7", 1),
     ("SKIPPED busy", 7, "FAIL stage=transport reason=exit-7", 1),
     ("garbage", 0, "FAIL stage=transport reason=invalid-result", 1),
+    ("PASSgarbage", 0, "FAIL stage=transport reason=invalid-result", 1),
 ])
 def test_status_and_exit_mapping(tree, marker, code, summary, exit_code):
     result, line = _run(tree, marker, code)
