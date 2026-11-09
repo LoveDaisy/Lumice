@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794211173656,
+  "lastUpdate": 1794211176095,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "826acd4bd8a4c3757162564f22e74f56e8c39510",
-          "message": "Merge pull request #478 from LoveDaisy/feat/schema3-report\n\nfeat(raypath): schema3 report - state machines, support block, unattributed, mc_evidence, schema_version=3",
-          "timestamp": "2026-10-10T10:31:01+08:00",
-          "tree_id": "6cbc9655451153e80826f2030b8cca8d1547e6bc",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/826acd4bd8a4c3757162564f22e74f56e8c39510"
-        },
-        "date": 1791599691228,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 88.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "a2c5d90a7a3f0918d628d6b49921aad3a0a7c8ed",
           "message": "Merge pull request #479 from LoveDaisy/fix/analyze-render-share-calibration\n\nShare-domain calibration: lens landing semantics + dual fold-boundary defect + cone cross-check tool (task-669)",
           "timestamp": "2026-10-10T18:45:27+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6900ae9c918346564c9aa6d5c8a9ea0273e0e881",
+          "message": "Merge pull request #581 from LoveDaisy/feat/home-win-closing-leg\n\nClosing gate: optional Windows build+ctest leg on home-win (test.sh quick)",
+          "timestamp": "2026-11-09T15:56:10+08:00",
+          "tree_id": "62b62ac09322caec461b5c0c165053b7a8bd1489",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6900ae9c918346564c9aa6d5c8a9ea0273e0e881"
+        },
+        "date": 1794211175363,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 91.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.6,
             "unit": "%"
           }
         ]
