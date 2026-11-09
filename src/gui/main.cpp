@@ -49,6 +49,8 @@ namespace gui = lumice::gui;
 
 namespace {
 
+[[maybe_unused]] const ImVec2 near = {};
+
 // The monitor's content scale as GLFW last reported it — the startup read after the window exists,
 // then every glfwSetWindowContentScaleCallback since. Initialised to 1 rather than 0 so the value is
 // a usable scale at every point in the program's life (a 0 would make the layout collapse rather
