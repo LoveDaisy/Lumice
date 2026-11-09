@@ -147,6 +147,17 @@ constexpr float kPoseViewFactorsFloor = 330.0f;
 // only multi-space spelling); it never re-spells the words.
 constexpr const char* kRaypathViewWindowTitle = "Raypath view";
 constexpr const char* kPoseViewWindowTitle = "Pose & trace";
+// The information-layering fold groups (contract §16.1): the two secondary tiers the survey and
+// point answers sort their evidence into, plus the map legend's long dictionary. The spellings
+// are ONE source — every CollapsingHeader that opens one of these groups draws this constant, so
+// the two windows' groups cannot re-spell themselves apart (a56). No flag carries `DefaultOpen`:
+// a group is closed by default, its expansion state lives in the host window's ImGui storage
+// (session-sticky, reset by restart — io.IniFilename is null, so nothing persists across
+// processes), and each window's storage is its own, so the two windows' groups count
+// independently without any GuiState field.
+constexpr const char* kSurveyPhysicsDetailsLabel = "Physics details";
+constexpr const char* kSurveyCalculationDetailsLabel = "Calculation details";
+constexpr const char* kMapLegendExplanationsLabel = "Legend explanations";
 // The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's
 // two splitters).
 constexpr float kAnalyzeSplitterSize = 8.0f;
