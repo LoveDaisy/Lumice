@@ -81,11 +81,15 @@ def find_violations_in_text(rel: str, text: str) -> list[Violation]:
     code = identifier_code(text)
     directive_lines: set[int] = set()
     continued = False
-    for lineno, line in enumerate(code.splitlines(), 1):
+    # Git hunks and diagnostics count physical LF lines, not Python's broader
+    # splitlines separators (form-feed/vertical-tab are C++ whitespace).
+    for lineno, (line, original) in enumerate(zip(code.split("\n"), text.split("\n")), 1):
         directive = continued or line.lstrip().startswith("#")
         if directive:
             directive_lines.add(lineno)
-        continued = directive and line.rstrip().endswith("\\")
+        # Line splicing precedes comment removal: a trailing backslash inside
+        # a comment still continues the directive onto the next physical line.
+        continued = directive and original.rstrip("\r").endswith("\\")
 
     violations: list[Violation] = []
     reported: set[int] = set()

@@ -83,6 +83,27 @@ def test_exempt_regions_do_not_block_commits(repo: Path, source: str) -> None:
     assert gate.diff_verdict(["--cached"], "")[0] == []
 
 
+@pytest.mark.parametrize("space", ["\f", "\v"])
+def test_directive_exemption_uses_git_physical_lines(repo: Path, space: str) -> None:
+    path = repo / "sample.cpp"
+    path.write_text(f"int a{space}b;\n#undef near\nint far;\n", encoding="utf-8")
+    git(repo, "add", ".")
+    violations, _ = gate.diff_verdict(["--cached"], "")
+    assert [v.line for v in violations] == [3]
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_directive_continuation_is_decided_before_comment_removal(
+    repo: Path, newline: str
+) -> None:
+    text = newline.join(["#define X /* comment \\", "*/ near", "int far;", ""])
+    path = repo / "sample.cpp"
+    path.write_bytes(text.encode("utf-8"))
+    git(repo, "add", ".")
+    violations, _ = gate.diff_verdict(["--cached"], "")
+    assert [v.line for v in violations] == [3]
+
+
 @pytest.mark.parametrize("prefix", [
     "int n = 100'000;", "int n = 0xAB'CD;",
     'Log(R"tag(// " far\nnear)tag");',
